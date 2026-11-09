@@ -33,6 +33,11 @@ import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
 import { xeroQueuedMessage, xeroRefundNotePromise } from "@/components/admin/dead-card-refunds-xero-copy";
+import {
+  NothingLeftOwedDialog,
+  TryCardAgainDialog,
+  type LaterStripeRefundPanelRow,
+} from "@/components/admin/dead-card-refund-row-actions";
 
 /** One dead card refund, as `listDeadCardRefunds` returns it. */
 export interface DeadCardRefundPanelRow {
@@ -55,6 +60,10 @@ export interface DeadCardRefundPanelRow {
   cardNoteCoversCents: number;
   /** Its last failure looked like a timeout or network error: Stripe may have refunded. */
   stripeMayHaveRefunded: boolean;
+  /** #4368: with nothing left owed, the later Stripe refunds its "Nothing left owed" close names. */
+  laterStripeRefunds: LaterStripeRefundPanelRow[];
+  /** #4368: why "Try the card again" is not offered, or null when it is. */
+  tryCardAgainRefusal: string | null;
 }
 
 /** One card refund closed as paid another way that Stripe also refunded, as `listCardRefundsPaidTwice` (`card-refund-paid-twice.ts`) returns it. */
@@ -100,7 +109,11 @@ function RefundListCard({ title, children }: { title: string; children: ReactNod
 
 /**
  * #3372 (owner, 7 Oct 2026: "Count + add close action"): the card refunds
- * Stripe gave up on, each with a "Paid another way" close.
+ * Stripe gave up on, each with a "Paid another way" close. #4368 (owner
+ * decision, 25 Oct 2026): beside it "Try the card again", and on a row whose
+ * owed figure reads $0 "Nothing left owed" instead
+ * (`dead-card-refund-row-actions.tsx`), gated by the same finance:edit answer
+ * under the same banner.
  *
  * Each one counts in "Refunds owed" and comes off Net Collected until it is
  * closed here. The close is gated `finance:edit` - the permission that
@@ -115,8 +128,8 @@ function RefundListCard({ title, children }: { title: string; children: ReactNod
  * member (it stays on this list for a later close). A note saying how the member was paid
  * back is required. It says up front whether a Xero refund note is raised - and,
  * for a late card charge Xero has no record of, that the charge is recorded as
- * a receipt first (#3924 round 6) - and that a refund made in the Stripe
- * dashboard is not closed here. A refusal
+ * a receipt first (#3924 round 6) - and that it is settled here, never with a
+ * new Stripe dashboard refund (#4368, decision 7). A refusal
  * shows in the dialog through `FocusedActionError`; a 409 also refreshes the
  * list. The dialog holds only the refund's id and reads the row from the list
  * (#3924 round 5, UX F1): if the refresh drops the row the dialog closes and
@@ -160,6 +173,17 @@ export function DeadCardRefundsPanel({
   // close that leaves a notice, since opening the dialog clears it.
   const listNoticeRef = useRef<HTMLParagraphElement>(null);
   const shown = useShownOnceItHadRows(rows.length);
+
+  // #4368: the "Try the card again" and "Nothing left owed" dialogs, each open for one row's id.
+  const [tryAgainId, setTryAgainId] = useState<string | null>(null);
+  const [nothingLeftId, setNothingLeftId] = useState<string | null>(null);
+  const tryAgainRow = tryAgainId === null ? null : (rows.find((row) => row.operationId === tryAgainId && row.owedCents > 0) ?? null);
+  const nothingLeftRow = nothingLeftId === null ? null : (rows.find((row) => row.operationId === nothingLeftId && row.owedCents === 0) ?? null);
+  if ((tryAgainId !== null && tryAgainRow === null) || (nothingLeftId !== null && nothingLeftRow === null)) {
+    setTryAgainId(null);
+    setNothingLeftId(null);
+    setListNotice("That card refund changed, so its dialog was closed. The list is up to date.");
+  }
 
   const target = targetId === null ? null : (rows.find((row) => row.operationId === targetId) ?? null);
   // The list moved under the open dialog (a 409's refresh, another treasurer):
@@ -229,6 +253,11 @@ export function DeadCardRefundsPanel({
     setSeenOwedCents(null);
   }
 
+  function openOther(setId: (id: string | null) => void, row: DeadCardRefundPanelRow) {
+    setListNotice("");
+    setId(row.operationId);
+  }
+
   async function submit() {
     if (!target || amountCents === null || paidBack === null) return;
     setBusy(true);
@@ -282,12 +311,13 @@ export function DeadCardRefundsPanel({
       <div className="space-y-3">
         <AdminViewOnlySectionBanner canEdit={canEdit} />
         <p className="text-sm text-muted-foreground">
-          The app will not ask Stripe for these card refunds again: Stripe stopped retrying them, or accepted
-          one and later reported it failed - a retry that failed again, or a refund made before the app
+          The app will not ask Stripe for these card refunds again on its own: Stripe stopped retrying them, or
+          accepted one and later reported it failed - a retry that failed again, or a refund made before the app
           could notice such failures, which the member may already have been paid back by hand. Each still
-          counts in Refunds owed and comes off Net Collected. If the member was paid back another way, for
-          example by bank transfer, close it here. If you refunded it in the Stripe dashboard instead, do not
-          close it here: wait for that refund to show on the payment.
+          counts in Refunds owed and comes off Net Collected until it is settled here. If you paid the member
+          back another way, for example by bank transfer, close it with Paid another way. To have the app ask
+          the card again, use Try the card again. Once a later Stripe refund covers one, it says nothing is left
+          owed: close it with Nothing left owed. Do not settle one with a new refund in the Stripe dashboard.
         </p>
         <p
           ref={listNoticeRef}
@@ -312,7 +342,7 @@ export function DeadCardRefundsPanel({
                     Booking {row.bookingReference}
                   </Link>
                   {" - "}
-                  {formatCents(row.owedCents, format)} still owed
+                  {row.owedCents === 0 ? "nothing left owed" : `${formatCents(row.owedCents, format)} still owed`}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   Refund started {clubTime.instantDate(new Date(row.raisedAt))}
@@ -321,19 +351,68 @@ export function DeadCardRefundsPanel({
                   <div className="text-xs font-medium text-warning-11">{STRIPE_MAY_HAVE_REFUNDED_WARNING}</div>
                 ) : null}
               </div>
-              <ViewOnlyActionButton
-                canEdit={canEdit}
-                describeReason={false}
-                variant="outline"
-                size="sm"
-                aria-label={`Close the card refund for booking ${row.bookingReference} as paid another way`}
-                onClick={() => open(row)}
-              >
-                Paid another way
-              </ViewOnlyActionButton>
+              {row.owedCents === 0 ? (
+                row.laterStripeRefunds.length === 0 ? (
+                  <p className="max-w-sm text-xs text-muted-foreground">
+                    No later Stripe refund on this payment covers it, so it cannot be closed here. Ask a developer to
+                    reconcile it.
+                  </p>
+                ) : (
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
+                    describeReason={false}
+                    variant="outline"
+                    size="sm"
+                    aria-label={`Close the card refund for booking ${row.bookingReference} with nothing left owed`}
+                    onClick={() => openOther(setNothingLeftId, row)}
+                  >
+                    Nothing left owed
+                  </ViewOnlyActionButton>
+                )
+              ) : (
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {row.tryCardAgainRefusal === null ? (
+                    <ViewOnlyActionButton
+                      canEdit={canEdit}
+                      describeReason={false}
+                      variant="outline"
+                      size="sm"
+                      aria-label={`Try the card again for the card refund on booking ${row.bookingReference}`}
+                      onClick={() => openOther(setTryAgainId, row)}
+                    >
+                      Try the card again
+                    </ViewOnlyActionButton>
+                  ) : (
+                    <p className="max-w-sm text-xs text-muted-foreground">{row.tryCardAgainRefusal}</p>
+                  )}
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
+                    describeReason={false}
+                    variant="outline"
+                    size="sm"
+                    aria-label={`Close the card refund for booking ${row.bookingReference} as paid another way`}
+                    onClick={() => open(row)}
+                  >
+                    Paid another way
+                  </ViewOnlyActionButton>
+                </div>
+              )}
             </li>
           ))}
         </ul>
+
+        <TryCardAgainDialog
+          row={tryAgainRow}
+          onClose={() => setTryAgainId(null)}
+          onDone={setListNotice}
+          focusNotice={() => listNoticeRef.current?.focus()}
+        />
+        <NothingLeftOwedDialog
+          row={nothingLeftRow}
+          onClose={() => setNothingLeftId(null)}
+          onDone={setListNotice}
+          focusNotice={() => listNoticeRef.current?.focus()}
+        />
 
         <Dialog open={target !== null} onOpenChange={(next) => !busy && !next && close()}>
           <DialogContent
@@ -356,8 +435,7 @@ export function DeadCardRefundsPanel({
                 <p className="font-medium text-warning-11">{STRIPE_MAY_HAVE_REFUNDED_WARNING}</p>
               ) : null}
               <p className="text-muted-foreground">
-                Refunded it in the Stripe dashboard instead? Do not close it here: wait for that refund to show on
-                the payment.
+                Settle it here, not with a new refund in the Stripe dashboard.
               </p>
               <p className="text-muted-foreground">
                 {target

@@ -48,6 +48,8 @@ function row(overrides: Partial<DeadCardRefundPanelRow> = {}): DeadCardRefundPan
     xeroRefundNote: "now",
     cardNoteCoversCents: 0,
     stripeMayHaveRefunded: false,
+    laterStripeRefunds: [],
+    tryCardAgainRefusal: null,
     ...overrides,
   };
 }
@@ -96,7 +98,9 @@ describe("the Paid another way dialog", () => {
     expect(
       screen.getByText(`A Xero refund credit note for the amount, worded "${BANK_NOTE_WORDING}", is queued when you close it.`),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Refunded it in the Stripe dashboard instead\? Do not close it here/)).toBeInTheDocument();
+    // #4368 (decision 7): settled here, never with a new Stripe dashboard refund; the old "wait for it" is gone.
+    expect(screen.getByText("Settle it here, not with a new refund in the Stripe dashboard.")).toBeInTheDocument();
+    expect(screen.queryByText(/wait for that refund/i)).not.toBeInTheDocument();
   });
 
   it("says no Xero note is queued where the app has no invoice it can credit - without claiming none is on its way", () => {
@@ -648,6 +652,150 @@ describe("view-only", () => {
     const button = screen.getByRole("button", { name: "Close the card refund for booking BK-0001 as paid another way" });
     expect(button).toBeDisabled();
     fireEvent.click(button);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * #4368 (owner decision, 25 Oct 2026: "build as shown in the mock-up"): beside
+ * "Paid another way", "Try the card again", and on a row with nothing left
+ * owed, "Nothing left owed". Their rules are the server's
+ * (`card-refund-dead-row-actions.test.ts`); this pins what the treasurer sees
+ * and sends, and that both are view-only exactly as the close is.
+ */
+const COVERING = { stripeRefundId: "re_later_1", amountCents: 15_000, madeAt: "2026-06-25T00:00:00.000Z" };
+const settledRow = (overrides: Partial<DeadCardRefundPanelRow> = {}) =>
+  row({ owedCents: 0, laterStripeRefunds: [COVERING], tryCardAgainRefusal: "Nothing is left owed on this card refund, so there is nothing to send to the card.", ...overrides });
+const tryAgainButton = () => screen.getByRole("button", { name: "Try the card again for the card refund on booking BK-0001" });
+const nothingLeftButton = () => screen.getByRole("button", { name: "Close the card refund for booking BK-0001 with nothing left owed" });
+
+describe("#4368: the list's guidance (decision 7)", () => {
+  it("MUTATION: says to settle each refund here - Paid another way, Try the card again or Nothing left owed - never with a new dashboard refund", () => {
+    render(<DeadCardRefundsPanel rows={[row()]} bankNoteWording={BANK_NOTE_WORDING} />);
+    const card = screen.getByRole("list", { name: "Card refunds Stripe gave up on" }).parentElement!;
+    expect(card).toHaveTextContent("close it with Paid another way");
+    expect(card).toHaveTextContent("use Try the card again");
+    expect(card).toHaveTextContent("close it with Nothing left owed");
+    expect(card).toHaveTextContent("Do not settle one with a new refund in the Stripe dashboard.");
+    expect(card).not.toHaveTextContent(/wait for that refund/i);
+  });
+});
+
+describe("#4368: Try the card again (decision 5)", () => {
+  it("MUTATION: asks for confirmation first - nothing is sent until the treasurer confirms", () => {
+    render(<DeadCardRefundsPanel rows={[row()]} bankNoteWording={BANK_NOTE_WORDING} />);
+    fireEvent.click(tryAgainButton());
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Try the card again?")).toBeInTheDocument();
+    expect(dialog).toHaveTextContent("The app will ask Stripe to refund $150.00 to the member's card again.");
+    expect(dialog).toHaveTextContent("checks the refunds Stripe already holds on the charge");
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: sends the figure it showed, confirmed, then says what happens and refreshes", async () => {
+    render(<DeadCardRefundsPanel rows={[row()]} bankNoteWording={BANK_NOTE_WORDING} />);
+    fireEvent.click(tryAgainButton());
+    respond(200, { success: true });
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Try the card again" }));
+
+    await waitFor(() => expect(mocks.fetch).toHaveBeenCalledTimes(1));
+    expect(mocks.fetch).toHaveBeenCalledWith(
+      "/api/admin/payments/card-refunds/op-1/try-card-again",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ expectedOwedCents: 15_000, confirmed: true }) }),
+    );
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith("The card will be asked for $150.00 again shortly."));
+    expect(mocks.refresh).toHaveBeenCalled();
+    const notice = await screen.findByText("The card refund for booking BK-0001 will be tried on the card again.");
+    expect(notice).toHaveAttribute("role", "status");
+    await waitFor(() => expect(document.activeElement).toBe(notice));
+  });
+
+  it("shows a 409 in the dialog and refreshes the list beneath it", async () => {
+    render(<DeadCardRefundsPanel rows={[row()]} bankNoteWording={BANK_NOTE_WORDING} />);
+    fireEvent.click(tryAgainButton());
+    respond(409, { error: "What is still owed on this card refund changed since you opened it." });
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Try the card again" }));
+
+    expect(await within(screen.getByRole("dialog")).findByText(/changed since you opened it/)).toBeInTheDocument();
+    expect(mocks.refresh).toHaveBeenCalled();
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: where the re-arm would refuse, the row says why and offers no button", () => {
+    const refusal = "A refund Stripe failed later is still open on this payment, and it may be the same money as this one.";
+    render(<DeadCardRefundsPanel rows={[row({ tryCardAgainRefusal: refusal })]} bankNoteWording={BANK_NOTE_WORDING} />);
+    expect(screen.getByText(refusal)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Try the card again/ })).not.toBeInTheDocument();
+    // "Paid another way" stays offered.
+    expect(screen.getByRole("button", { name: "Close the card refund for booking BK-0001 as paid another way" })).toBeEnabled();
+  });
+});
+
+describe("#4368: Nothing left owed", () => {
+  it("MUTATION: a row whose owed figure reads $0 stays on the list, says so, and offers only Nothing left owed", () => {
+    render(<DeadCardRefundsPanel rows={[settledRow()]} bankNoteWording={BANK_NOTE_WORDING} />);
+    expect(screen.getByText(/nothing left owed/)).toBeInTheDocument();
+    expect(nothingLeftButton()).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /as paid another way/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Try the card again/ })).not.toBeInTheDocument();
+  });
+
+  it("MUTATION: names the later Stripe refund that covers it, and says nothing moves", () => {
+    render(<DeadCardRefundsPanel rows={[settledRow()]} bankNoteWording={BANK_NOTE_WORDING} />);
+    fireEvent.click(nothingLeftButton());
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("re_later_1 ($150.00, 25 Jun 2026)");
+    expect(dialog).toHaveTextContent("moves no money, sends nothing to Stripe and changes nothing in Xero");
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: sends the refunds it named, confirmed, then says it closed and refreshes", async () => {
+    render(<DeadCardRefundsPanel rows={[settledRow()]} bankNoteWording={BANK_NOTE_WORDING} />);
+    fireEvent.click(nothingLeftButton());
+    respond(200, { success: true });
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Close with nothing left owed" }));
+
+    await waitFor(() =>
+      expect(mocks.fetch).toHaveBeenCalledWith(
+        "/api/admin/payments/card-refunds/op-1/nothing-left-owed",
+        expect.objectContaining({ body: JSON.stringify({ expectedStripeRefundIds: ["re_later_1"], confirmed: true }) }),
+      ),
+    );
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
+    expect(await screen.findByText("The card refund for booking BK-0001 was closed with nothing left owed.")).toHaveAttribute("role", "status");
+    expect(mocks.refresh).toHaveBeenCalled();
+  });
+
+  it("with no later Stripe refund to name, says to ask a developer and offers no close", () => {
+    render(<DeadCardRefundsPanel rows={[settledRow({ laterStripeRefunds: [] })]} bankNoteWording={BANK_NOTE_WORDING} />);
+    expect(screen.getByText(/No later Stripe refund on this payment covers it/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /nothing left owed/ })).not.toBeInTheDocument();
+  });
+
+  it("a refresh that puts money owed back on the row closes its open dialog and says why", () => {
+    const view = render(<DeadCardRefundsPanel rows={[settledRow()]} bankNoteWording={BANK_NOTE_WORDING} />);
+    fireEvent.click(nothingLeftButton());
+    view.rerender(<DeadCardRefundsPanel rows={[row()]} bankNoteWording={BANK_NOTE_WORDING} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText("That card refund changed, so its dialog was closed. The list is up to date.")).toBeInTheDocument();
+  });
+});
+
+describe("#4368: both new buttons are view-only without edit rights, as Paid another way is", () => {
+  it("MUTATION: Try the card again is disabled for a finance viewer without edit, and opens nothing", () => {
+    mocks.canEdit = false;
+    render(<DeadCardRefundsPanel rows={[row()]} bankNoteWording={BANK_NOTE_WORDING} />);
+    expect(screen.getByTestId("admin-view-only-banner")).toBeInTheDocument();
+    expect(tryAgainButton()).toBeDisabled();
+    fireEvent.click(tryAgainButton());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("MUTATION: Nothing left owed is disabled for a finance viewer without edit, and opens nothing", () => {
+    mocks.canEdit = false;
+    render(<DeadCardRefundsPanel rows={[settledRow()]} bankNoteWording={BANK_NOTE_WORDING} />);
+    expect(nothingLeftButton()).toBeDisabled();
+    fireEvent.click(nothingLeftButton());
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
