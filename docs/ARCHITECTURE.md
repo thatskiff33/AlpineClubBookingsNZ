@@ -2460,10 +2460,15 @@ to any page they can access. Since S2 (#4797) `getAdminFeatureSearchIndex`
 builds its index from the **hub registry**, not the sidebar: every
 `ADMIN_MENU_DESTINATIONS` page (a registry `kind: "page"`, so never a detail,
 print, stub, test or retired page), at its `adminHref`, grouped by its hub,
-matched on its registry `keywords` and on the names of pages merged into it;
-then the two pre-filtered queue views (Unpaid Finished Stays / Unpaid Stay
-Additions) from `buildAdminQueueViews`, which the sidebar's "Needs Attention"
-section also renders, under the Bookings hub. It therefore offers pages the
+matched on its registry `keywords` and on the sidebar section it sits in (read
+from `buildAdminNavSections`, so "Lodge Operations" still finds the Roster);
+then each retired page under its old name, at `retiredAdminPageHref` (its
+redirect's own target, so the tab or section that now holds it) and offered
+exactly when the page it was merged into is; then the two pre-filtered queue
+views (Unpaid Finished Stays / Unpaid Stay Additions) from
+`buildAdminQueueViews`, which the sidebar's "Needs Attention" section also
+renders, under the Bookings hub. Both surfaces label a page through one
+helper, `adminPageLabel`, which carries the club's hut-leader term. It therefore offers pages the
 sidebar does not link, such as the lodge-scoped Chores, Lockers, Seasons and
 Rooms & Beds, which pick their own lodge when opened without `?lodgeId=`. It
 fails **closed**: a missing permission matrix yields an empty index (the

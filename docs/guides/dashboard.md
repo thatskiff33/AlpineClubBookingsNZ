@@ -51,7 +51,11 @@ them, so you don't have to remember where a feature lives.
 - It lists **every** admin page you can open, grouped by area (Bookings,
   Finance, Lodge and so on), including pages the sidebar has no link for, such
   as Chores, Lockers, Seasons, Rooms & Beds, Email Messages and the setup
-  wizards. A page merged into another is found by its old name too.
+  wizards. The old sidebar section names, such as "Lodge Operations", still
+  find their pages.
+- A page that was merged into another keeps its old name as its own result,
+  such as **Family Suggestions**, and opens the tab of the page that now holds
+  it.
 - It only ever lists pages **you** can open: the same permission check the page
   itself makes, so a page you aren't permitted to see, a module that is turned
   off, or a Full Admin page never appears for you.
