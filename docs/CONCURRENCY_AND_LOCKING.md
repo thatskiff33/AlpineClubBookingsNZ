@@ -3444,7 +3444,7 @@ Hard-deleting the officer mid-settle or mid-closure on a booking that officer
 made or reviewed can therefore deadlock where it used to end in a `P2003`.
 PostgreSQL detects the cycle and aborts one side, which rolls back whole, so
 nothing is corrupted, and deleting an officer while their own write is in
-flight is the rarer event. Reordering delete's cascade is tracked as #4853.
+flight is the rarer event. Reordering delete's cascade is tracked as #4850.
 
 Proved against real PostgreSQL by
 `member-merge-officer-settle-races.realdb.test.ts` and, for the approval,
@@ -3457,7 +3457,7 @@ This is not a census of every `lock(1)` writer: the settle body, its reversal,
 the Stripe path, the refund-task closure and the change-request approval were
 checked, and the rule above is what a new writer follows. The policy-exception
 approval (`booking-exception-execution.ts`) has the same claim-before-booking
-shape and is tracked separately.
+shape and is tracked as #4853.
 
 ## The disciplines, by writer class
 
