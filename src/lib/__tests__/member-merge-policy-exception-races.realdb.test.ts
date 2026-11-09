@@ -26,7 +26,9 @@
  * the booking-row UPDATE it makes. The lock order under test is the engine's;
  * the hooks decide only whether it proceeds.
  *
- * Every wait is matched to the backend it waits on (`pg_blocking_pids`).
+ * The choreography and its waits, each matched to the backend it waits on
+ * (`pg_blocking_pids`), are shared with the other merge race suites
+ * (`support/member-merge-race.ts`).
  * Ordinary Vitest runs skip the file; CI's real-PostgreSQL job runs it against
  * the guarded loopback race database.
  */
@@ -35,7 +37,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { cleanHistories, createHistoryBooking, historyNames, seedHistoryFixtures } from "./support/booking-ledger-history";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
-import { backendPid, isBlocking, RACE_TRANSACTION_BUDGET, untilBlockedChain } from "./support/race-lock-waits";
+import {
+  arrivingWhilePaused, beforeBookingRow, clearPauses, createRaceMember, expectFulfilled, firstStandWhilePaused, keyShareOnMember, pauseIn,
+  previewMerge, writerArrivingWhileMergeIsParked,
+} from "./support/member-merge-race";
 
 vi.hoisted(() => {
   if (process.env.RUN_CONCURRENCY_RACE_TESTS === "1" && process.env.CONCURRENCY_RACE_DATABASE_URL) {
@@ -50,22 +55,10 @@ vi.mock("@/lib/prisma", async (importOriginal) => {
   return { ...real, prisma: withRaceTransactionBudget(real.prisma) };
 });
 
-/** A pause just before the approval takes its booking-row lock, handed the transaction's backend id. */
-const beforeBookingRow = vi.hoisted(() => ({ bookingId: null as null | string, paused: null as null | ((pid: number) => Promise<void>) }));
-vi.mock("@/lib/booking-row-lock", async (importOriginal) => {
-  const real = (await importOriginal()) as typeof import("@/lib/booking-row-lock");
-  return {
-    ...real,
-    lockBookingRowForOwnerRead: async (...args: Parameters<typeof real.lockBookingRowForOwnerRead>) => {
-      const hook = args[1] === beforeBookingRow.bookingId ? beforeBookingRow.paused : null;
-      if (hook) {
-        beforeBookingRow.paused = null;
-        await hook(await backendPid(args[0] as unknown as Prisma.TransactionClient));
-      }
-      return real.lockBookingRowForOwnerRead(...args);
-    },
-  };
-});
+/** A pause just before the approval takes its booking-row lock (slot `beforeBookingRow(id)`). */
+vi.mock("@/lib/booking-row-lock", async (importOriginal) =>
+  (await import("./support/member-merge-race")).bookingRowLockDouble(await importOriginal()),
+);
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const PREFIX = "race-4853-merge-exception-";
@@ -74,17 +67,8 @@ const OFFICER_ID = `${PREFIX}officer-full`;
 const PRICE = 20_000;
 let prisma: PrismaClient;
 
-/** A pause inside the approval after its claim, at the canonical service, handed the transaction's backend id. */
-let afterClaim: null | ((pid: number) => Promise<void>) = null;
-
-function gate() {
-  let open!: () => void;
-  const opened = new Promise<void>((resolve) => { open = resolve; });
-  return { open, opened };
-}
-
-async function member(id: string, extra: Record<string, unknown> = {}) {
-  await prisma.member.create({ data: { id, email: `${id}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Merge", lastName: id, ageTier: "ADULT", canLogin: true, ...extra } });
+function member(id: string, extra: Record<string, unknown> = {}) {
+  return createRaceMember(prisma, id, { canLogin: true, ...extra });
 }
 
 /**
@@ -135,11 +119,8 @@ async function approve(requestId: string, bookingId: string, officer: string) {
       },
       recheckCapacity: async () => ({ ok: true }),
       executeApprovedProposal: async ({ tx }) => {
-        const hook = afterClaim;
-        if (hook) {
-          afterClaim = null;
-          await hook(await backendPid(tx));
-        }
+        // A pause inside the approval after its claim, at the canonical service (slot "afterClaim").
+        await pauseIn("afterClaim", tx);
         // The canonical service's write to the booking row, without re-pricing a fixture it does not have.
         await tx.booking.update({ where: { id: bookingId }, data: { updatedAt: new Date() } });
         return { deferredPostCommit: async () => {} };
@@ -149,83 +130,12 @@ async function approve(requestId: string, bookingId: string, officer: string) {
   });
 }
 
-async function previewMerge(master: string, loser: string) {
-  const merge = await import("@/lib/member-merge");
-  const preview = await merge.buildMemberMergePreview({ masterId: master, loserId: loser, actorMemberId: OFFICER_ID });
-  expect(preview.blockers).toEqual([]);
-  return () => merge.executeMemberMerge({ masterId: master, loserId: loser, actorMemberId: OFFICER_ID, previewToken: preview.previewToken, confirmationText: preview.confirmationPhrase });
-}
-
 async function requestState(requestId: string) {
   return prisma.bookingChangeRequest.findUniqueOrThrow({ where: { id: requestId }, select: { status: true, requestedByMemberId: true, reviewedByMemberId: true } });
 }
 
 async function bookingState(id: string) {
   return prisma.booking.findUniqueOrThrow({ where: { id }, select: { memberId: true, createdById: true } });
-}
-
-function expectFulfilled(settled: PromiseSettledResult<unknown>) {
-  expect(settled.status, settled.status === "rejected" ? String(settled.reason) : "").toBe("fulfilled");
-}
-
-async function approvalArrivingWhileMergeWaitsOnTheMember(loser: string, runMerge: () => Promise<unknown>, approval: () => Promise<unknown>) {
-  const held = gate();
-  const release = gate();
-  let blockerPid = 0;
-  const keyShare = prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT 1 FROM "Member" WHERE "id" = ${loser} FOR KEY SHARE`;
-    blockerPid = await backendPid(tx);
-    held.open();
-    await release.opened;
-  }, RACE_TRANSACTION_BUDGET);
-  await held.opened;
-  let merging: Promise<unknown> = Promise.resolve();
-  let approving: Promise<unknown> = Promise.resolve();
-  try {
-    merging = runMerge();
-    await untilBlockedChain(prisma, blockerPid, 1);
-    approving = approval();
-    await untilBlockedChain(prisma, blockerPid, 2);
-  } finally {
-    release.open();
-  }
-  await keyShare;
-  const [merged, approved] = await Promise.allSettled([merging, approving]);
-  return { merged, approved };
-}
-
-async function mergeArrivingWhileApprovalHoldsItsClaim(runMerge: () => Promise<unknown>, approval: () => Promise<unknown>) {
-  const reached = gate();
-  const release = gate();
-  let approvalPid = 0;
-  afterClaim = async (pid) => {
-    approvalPid = pid;
-    reached.open();
-    await release.opened;
-  };
-  const approving = approval();
-  await reached.opened;
-  let merging: Promise<unknown> = Promise.resolve();
-  try {
-    merging = runMerge();
-    await untilBlockedChain(prisma, approvalPid, 1);
-  } finally {
-    release.open();
-  }
-  const [approved, merged] = await Promise.allSettled([approving, merging]);
-  return { merged, approved };
-}
-
-/** Whether the merge settled (either way) or came to wait on the paused approval's backend. */
-async function settledOrBlockedBy(merging: Promise<unknown>, writerPid: number): Promise<"settled" | "waiting"> {
-  let settled = false;
-  void merging.then(() => { settled = true; }, () => { settled = true; });
-  for (let attempt = 0; attempt < 1200; attempt += 1) {
-    if (settled) return "settled";
-    if (await isBlocking(prisma, writerPid)) return "waiting";
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error("the merge neither settled nor waited");
 }
 
 (RUN ? describe : describe.skip)("approving a policy exception on a booking racing a member merge (#4853)", { timeout: 180_000 }, () => {
@@ -240,8 +150,7 @@ async function settledOrBlockedBy(merging: Promise<unknown>, writerPid: number):
   }, 120_000);
 
   afterAll(async () => {
-    afterClaim = null;
-    beforeBookingRow.paused = null;
+    clearPauses();
     if (prisma) await cleanup();
   }, 120_000);
 
@@ -266,8 +175,8 @@ async function settledOrBlockedBy(merging: Promise<unknown>, writerPid: number):
   it("MUTATION: (a) a merge holding the booking and waiting for the officer's Member row makes that officer's approval wait at the booking row; the merge commits and the approval refuses cleanly", async () => {
     const { loser, master } = await mergePair("a-merge-first", true);
     const { id, requestId } = await seed("a-merge-first", loser, false);
-    const runMerge = await previewMerge(master, loser);
-    const { merged, approved } = await approvalArrivingWhileMergeWaitsOnTheMember(loser, runMerge, () => approve(requestId, id, loser));
+    const runMerge = await previewMerge(master, loser, OFFICER_ID);
+    const { merged, written: approved } = await writerArrivingWhileMergeIsParked(prisma, keyShareOnMember(loser), runMerge, () => approve(requestId, id, loser));
     expectFulfilled(merged);
     expect(approved).toMatchObject({ status: "fulfilled", value: { outcome: "notAuthorized" } });
     expect(await requestState(requestId)).toEqual({ status: "REQUESTED", requestedByMemberId: names.memberId, reviewedByMemberId: null });
@@ -277,8 +186,8 @@ async function settledOrBlockedBy(merging: Promise<unknown>, writerPid: number):
   it("MUTATION: (a) an approval by the duplicate holding its claim makes the merge wait at the booking row; both commit", async () => {
     const { loser, master } = await mergePair("a-approval-first", true);
     const { id, requestId } = await seed("a-approval-first", loser, false);
-    const runMerge = await previewMerge(master, loser);
-    const { merged, approved } = await mergeArrivingWhileApprovalHoldsItsClaim(runMerge, () => approve(requestId, id, loser));
+    const runMerge = await previewMerge(master, loser, OFFICER_ID);
+    const { held: approved, arrived: merged } = await arrivingWhilePaused(prisma, "afterClaim", () => approve(requestId, id, loser), runMerge);
     expectFulfilled(approved);
     expect(approved).toMatchObject({ status: "fulfilled", value: { outcome: "executed" } });
     expectFulfilled(merged);
@@ -289,8 +198,8 @@ async function settledOrBlockedBy(merging: Promise<unknown>, writerPid: number):
   it("(b) a merge holding the duplicate's booking and request makes the approval wait at the booking row; both commit", async () => {
     const { loser, master } = await mergePair("b-merge-first", false);
     const { id, requestId } = await seed("b-merge-first", loser, true);
-    const runMerge = await previewMerge(master, loser);
-    const { merged, approved } = await approvalArrivingWhileMergeWaitsOnTheMember(loser, runMerge, () => approve(requestId, id, OFFICER_ID));
+    const runMerge = await previewMerge(master, loser, OFFICER_ID);
+    const { merged, written: approved } = await writerArrivingWhileMergeIsParked(prisma, keyShareOnMember(loser), runMerge, () => approve(requestId, id, OFFICER_ID));
     expectFulfilled(merged);
     expectFulfilled(approved);
     expect(approved).toMatchObject({ status: "fulfilled", value: { outcome: "executed" } });
@@ -301,8 +210,8 @@ async function settledOrBlockedBy(merging: Promise<unknown>, writerPid: number):
   it("MUTATION: (b) an approval holding its claim on the duplicate's request makes the merge wait at the booking row; both commit", async () => {
     const { loser, master } = await mergePair("b-approval-first", false);
     const { id, requestId } = await seed("b-approval-first", loser, true);
-    const runMerge = await previewMerge(master, loser);
-    const { merged, approved } = await mergeArrivingWhileApprovalHoldsItsClaim(runMerge, () => approve(requestId, id, OFFICER_ID));
+    const runMerge = await previewMerge(master, loser, OFFICER_ID);
+    const { held: approved, arrived: merged } = await arrivingWhilePaused(prisma, "afterClaim", () => approve(requestId, id, OFFICER_ID), runMerge);
     expectFulfilled(approved);
     expect(approved).toMatchObject({ status: "fulfilled", value: { outcome: "executed" } });
     expectFulfilled(merged);
@@ -313,28 +222,12 @@ async function settledOrBlockedBy(merging: Promise<unknown>, writerPid: number):
   it("MUTATION: (b) an approval paused at its booking-row lock holds nothing the merge needs: the merge commits, then the approval executes on the survivor's request", async () => {
     const { loser, master } = await mergePair("b-at-the-lock", false);
     const { id, requestId } = await seed("b-at-the-lock", loser, true);
-    const runMerge = await previewMerge(master, loser);
-    const reached = gate();
-    const release = gate();
-    let approvalPid = 0;
-    beforeBookingRow.bookingId = id;
-    beforeBookingRow.paused = async (pid) => {
-      approvalPid = pid;
-      reached.open();
-      await release.opened;
-    };
-    const approving = approve(requestId, id, OFFICER_ID);
-    let merging: Promise<unknown> = Promise.resolve();
-    let first: "settled" | "waiting" = "waiting";
-    try {
-      // Taken before the claim, the lock is where this approval stops; one that never takes it cannot be paused there.
-      await Promise.race([reached.opened, approving.then(() => { throw new Error("the approval never took the booking-row lock"); })]);
-      merging = runMerge();
-      first = await settledOrBlockedBy(merging, approvalPid);
-    } finally {
-      release.open();
-    }
-    const [merged, approved] = await Promise.allSettled([merging, approving]);
+    const runMerge = await previewMerge(master, loser, OFFICER_ID);
+    // Taken before the claim, the lock is where this approval stops; one that never takes it cannot be paused there.
+    const { first, held: approved, arrived: merged } = await firstStandWhilePaused(
+      prisma, beforeBookingRow(id), () => approve(requestId, id, OFFICER_ID), runMerge,
+      { label: "the merge", neverPaused: "the approval never took the booking-row lock" },
+    );
     // Before #4853 the approval had claimed the request by here, so the merge waited on it while holding the booking.
     expect(first, "the merge waited on the approval before it took the booking row").toBe("settled");
     expectFulfilled(merged);

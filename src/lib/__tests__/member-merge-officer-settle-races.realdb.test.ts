@@ -24,20 +24,23 @@
  * The merge-first cases park merge at its `Member … FOR UPDATE` with a third
  * session holding `FOR KEY SHARE` on the duplicate's row (any FK write naming
  * the duplicate does this), so merge holds the booking row while it waits. That
- * is the moment the writer has to arrive in to deadlock. Every wait is matched
- * to the backend it waits on (`pg_blocking_pids`), never counted across the
- * database, because the CI job runs other suites against it.
+ * is the moment the writer has to arrive in to deadlock. The choreography and
+ * its waits, each matched to the backend it waits on, are shared with the other
+ * merge race suites (`support/member-merge-race.ts`).
  *
  * Ordinary Vitest runs skip the file; CI's real-PostgreSQL job runs it against
  * the guarded loopback race database.
  */
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { cleanHistories, createHistoryBooking, historyNames, parkHistoryStrand, seedHistoryFixtures } from "./support/booking-ledger-history";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
-import { backendPid, untilBlockedChain } from "./support/race-lock-waits";
+import {
+  arrivingWhilePaused, clearPauses, createRaceMember, expectFulfilled, expectRefusedByTheDeletedOfficer, keyShareOnMember, previewMerge,
+  writerArrivingWhileMergeIsParked,
+} from "./support/member-merge-race";
 
 vi.hoisted(() => {
   if (process.env.RUN_CONCURRENCY_RACE_TESTS === "1" && process.env.CONCURRENCY_RACE_DATABASE_URL) {
@@ -52,16 +55,10 @@ vi.mock("@/lib/prisma", async (importOriginal) => {
   return { ...real, prisma: withRaceTransactionBudget(real.prisma) };
 });
 
-/** A pause inside a writer's transaction after its claim, handed that transaction's backend id: pass-throughs with no hook set. */
-const pauses = vi.hoisted(() => ({ settle: null as null | ((pid: number) => Promise<void>), closure: null as null | ((pid: number) => Promise<void>) }));
-async function pauseIn(slot: "settle" | "closure", tx: unknown): Promise<void> {
-  const hook = pauses[slot];
-  if (!hook) return;
-  pauses[slot] = null;
-  await hook(await backendPid(tx as Prisma.TransactionClient));
-}
+/** Pauses inside a writer's transaction after its claim (slots "settle" and "closure"): pass-throughs unless a case arms one. */
 vi.mock("@/lib/member-money/doors", async (importOriginal) => {
   const real = (await importOriginal()) as typeof import("@/lib/member-money/doors");
+  const { pauseIn } = await import("./support/member-merge-race");
   return {
     ...real,
     postBookingReceipts: async (...args: Parameters<typeof real.postBookingReceipts>) => {
@@ -72,6 +69,7 @@ vi.mock("@/lib/member-money/doors", async (importOriginal) => {
 });
 vi.mock("@/lib/manual-refund-task-audit", async (importOriginal) => {
   const real = (await importOriginal()) as typeof import("@/lib/manual-refund-task-audit");
+  const { pauseIn } = await import("./support/member-merge-race");
   return {
     ...real,
     recordManualRefundTaskClosureAudit: async (...args: Parameters<typeof real.recordManualRefundTaskClosureAudit>) => {
@@ -88,22 +86,12 @@ const ADMIN = `${PREFIX}admin`;
 const PRICE = 20_000;
 let prisma: PrismaClient;
 
-function gate() {
-  let open!: () => void;
-  const opened = new Promise<void>((resolve) => { open = resolve; });
-  return { open, opened };
-}
-
-async function member(id: string, extra: Record<string, unknown> = {}) {
-  await prisma.member.create({ data: { id, email: `${id}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Merge", lastName: id, ageTier: "ADULT", ...extra } });
-}
-
 /** A cash booking the duplicate made for the history member, still unpaid. */
 async function bookingMadeByDuplicate(tag: string) {
   const loser = `${PREFIX}loser-${tag}`;
   const master = `${PREFIX}master-${tag}`;
-  await member(loser);
-  await member(master);
+  await createRaceMember(prisma, loser);
+  await createRaceMember(prisma, master);
   const id = `${PREFIX}b-${tag}`;
   await createHistoryBooking(prisma, names, id, { payment: { amountCents: PRICE, source: "INTERNET_BANKING" } });
   await prisma.booking.update({ where: { id }, data: { createdById: loser } });
@@ -122,13 +110,6 @@ async function reviewOnBookingMadeByDuplicate(tag: string) {
   }
   await prisma.bookingGuest.update({ where: { id: guestId }, data: { priceCents: 7_000 } });
   return { ...made, taskId };
-}
-
-async function previewMerge(master: string, loser: string) {
-  const merge = await import("@/lib/member-merge");
-  const preview = await merge.buildMemberMergePreview({ masterId: master, loserId: loser, actorMemberId: ADMIN });
-  expect(preview.blockers).toEqual([]);
-  return () => merge.executeMemberMerge({ masterId: master, loserId: loser, actorMemberId: ADMIN, previewToken: preview.previewToken, confirmationText: preview.confirmationPhrase });
 }
 
 /** The officer records the cash, as the mark-paid route does. */
@@ -153,76 +134,6 @@ async function taskState(taskId: string) {
   return prisma.manualRefundTask.findUniqueOrThrow({ where: { id: taskId }, select: { status: true, completedByMemberId: true } });
 }
 
-/** Prisma's code for a write conflict or deadlock, and PostgreSQL's own, anywhere in the error. */
-function isDeadlock(error: unknown): boolean {
-  const text = `${String(error)} ${JSON.stringify(error, Object.getOwnPropertyNames(error ?? {}))}`;
-  return /P2034|40P01|deadlock/i.test(text);
-}
-
-/**
- * Park a merge at its Member FOR UPDATE behind another session's key share on
- * the duplicate, start `writer` and wait until it queues behind the merge, then
- * let everything go. Returns both outcomes.
- */
-async function writerArrivingWhileMergeWaitsOnTheMember(loser: string, execute: () => Promise<unknown>, writer: () => Promise<unknown>) {
-  const held = gate();
-  const release = gate();
-  let blockerPid = 0;
-  const keyShare = prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT 1 FROM "Member" WHERE "id" = ${loser} FOR KEY SHARE`;
-    blockerPid = await backendPid(tx);
-    held.open();
-    await release.opened;
-  }, { maxWait: 30_000, timeout: 120_000 });
-  await held.opened;
-  let merging: Promise<unknown> = Promise.resolve();
-  let writing: Promise<unknown> = Promise.resolve();
-  try {
-    merging = execute();
-    await untilBlockedChain(prisma, blockerPid, 1);
-    writing = writer();
-    // The writer queues behind the merge, which is still waiting on the key share.
-    await untilBlockedChain(prisma, blockerPid, 2);
-  } finally {
-    release.open();
-  }
-  await keyShare;
-  const [merged, written] = await Promise.allSettled([merging, writing]);
-  return { merged, written };
-}
-
-/** Pause `writer` after its claim, start the merge, and wait until the merge queues behind it. */
-async function mergeArrivingWhileWriterHoldsTheBooking(slot: "settle" | "closure", execute: () => Promise<unknown>, writer: () => Promise<unknown>) {
-  const reached = gate();
-  const release = gate();
-  let writerPid = 0;
-  pauses[slot] = async (pid) => {
-    writerPid = pid;
-    reached.open();
-    await release.opened;
-  };
-  const writing = writer();
-  await reached.opened;
-  let merging: Promise<unknown> = Promise.resolve();
-  try {
-    merging = execute();
-    // The merge waits on the booking row the writer claimed.
-    await untilBlockedChain(prisma, writerPid, 1);
-  } finally {
-    release.open();
-  }
-  const [written, merged] = await Promise.allSettled([writing, merging]);
-  return { merged, written };
-}
-
-function expectRefusedByTheDeletedOfficer(written: PromiseSettledResult<unknown>) {
-  expect(written.status).toBe("rejected");
-  const reason = (written as PromiseRejectedResult).reason;
-  expect(isDeadlock(reason), String(reason)).toBe(false);
-  // The writer names an officer the merge removed: its FK refuses and nothing is recorded.
-  expect(reason).toMatchObject({ code: "P2003" });
-}
-
 (RUN ? describe : describe.skip)("an officer's write racing a merge of that officer's duplicate (#4840)", { timeout: 180_000 }, () => {
   beforeAll(async () => {
     const url = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -231,12 +142,11 @@ function expectRefusedByTheDeletedOfficer(written: PromiseSettledResult<unknown>
     ({ prisma } = await import("@/lib/prisma"));
     await cleanup();
     await seedHistoryFixtures(prisma, PREFIX);
-    await member(ADMIN, { role: "ADMIN", canLogin: true, accessRoles: { create: { role: "ADMIN" } } });
+    await createRaceMember(prisma, ADMIN, { role: "ADMIN", canLogin: true, accessRoles: { create: { role: "ADMIN" } } });
   }, 120_000);
 
   afterAll(async () => {
-    pauses.settle = null;
-    pauses.closure = null;
+    clearPauses();
     if (prisma) await cleanup();
   }, 120_000);
 
@@ -250,10 +160,10 @@ function expectRefusedByTheDeletedOfficer(written: PromiseSettledResult<unknown>
 
   it("MUTATION: a merge holding the booking row and waiting for the duplicate's Member row makes the settle wait at the booking row, never a deadlock", async () => {
     const { id, paymentId, loser, master } = await bookingMadeByDuplicate("merge-first");
-    const execute = await previewMerge(master, loser);
+    const execute = await previewMerge(master, loser, ADMIN);
     // The duplicate, still signed in as an officer, records the cash now.
-    const { merged, written } = await writerArrivingWhileMergeWaitsOnTheMember(loser, execute, () => markPaid(id, loser));
-    expect(merged.status, merged.status === "rejected" ? String(merged.reason) : "").toBe("fulfilled");
+    const { merged, written } = await writerArrivingWhileMergeIsParked(prisma, keyShareOnMember(loser), execute, () => markPaid(id, loser));
+    expectFulfilled(merged);
     expectRefusedByTheDeletedOfficer(written);
     expect(await state(id, paymentId)).toEqual({ status: "PAYMENT_PENDING", createdById: master, paymentStatus: "PENDING", markedPaidBy: null });
 
@@ -264,19 +174,19 @@ function expectRefusedByTheDeletedOfficer(written: PromiseSettledResult<unknown>
 
   it("a settle holding the booking row and the officer's key share makes the merge wait; both commit", async () => {
     const { id, paymentId, loser, master } = await bookingMadeByDuplicate("settle-first");
-    const execute = await previewMerge(master, loser);
-    const { merged, written } = await mergeArrivingWhileWriterHoldsTheBooking("settle", execute, () => markPaid(id, loser));
+    const execute = await previewMerge(master, loser, ADMIN);
+    const { held: written, arrived: merged } = await arrivingWhilePaused(prisma, "settle", () => markPaid(id, loser), execute);
     expect(written).toMatchObject({ status: "fulfilled", value: { bookingId: id, paymentId } });
-    expect(merged.status, merged.status === "rejected" ? String(merged.reason) : "").toBe("fulfilled");
+    expectFulfilled(merged);
     // The merge carried the booking's actor and the settle's attribution to the survivor.
     expect(await state(id, paymentId)).toEqual({ status: "PAID", createdById: master, paymentStatus: "SUCCEEDED", markedPaidBy: master });
   });
 
   it("MUTATION: a merge holding the booking row and waiting for the duplicate's Member row makes an edit review's closure wait at the booking row, never a deadlock", async () => {
     const { id, taskId, loser, master } = await reviewOnBookingMadeByDuplicate("merge-before-closure");
-    const execute = await previewMerge(master, loser);
-    const { merged, written } = await writerArrivingWhileMergeWaitsOnTheMember(loser, execute, () => dismissReview(taskId, loser));
-    expect(merged.status, merged.status === "rejected" ? String(merged.reason) : "").toBe("fulfilled");
+    const execute = await previewMerge(master, loser, ADMIN);
+    const { merged, written } = await writerArrivingWhileMergeIsParked(prisma, keyShareOnMember(loser), execute, () => dismissReview(taskId, loser));
+    expectFulfilled(merged);
     expectRefusedByTheDeletedOfficer(written);
     expect(await taskState(taskId)).toEqual({ status: "OPEN", completedByMemberId: null });
     expect((await prisma.booking.findUniqueOrThrow({ where: { id }, select: { createdById: true } })).createdById).toBe(master);
@@ -288,10 +198,10 @@ function expectRefusedByTheDeletedOfficer(written: PromiseSettledResult<unknown>
 
   it("an edit review's closure holding the booking row and the officer's key share makes the merge wait; both commit", async () => {
     const { id, taskId, loser, master } = await reviewOnBookingMadeByDuplicate("closure-first");
-    const execute = await previewMerge(master, loser);
-    const { merged, written } = await mergeArrivingWhileWriterHoldsTheBooking("closure", execute, () => dismissReview(taskId, loser));
-    expect(written.status, written.status === "rejected" ? String(written.reason) : "").toBe("fulfilled");
-    expect(merged.status, merged.status === "rejected" ? String(merged.reason) : "").toBe("fulfilled");
+    const execute = await previewMerge(master, loser, ADMIN);
+    const { held: written, arrived: merged } = await arrivingWhilePaused(prisma, "closure", () => dismissReview(taskId, loser), execute);
+    expectFulfilled(written);
+    expectFulfilled(merged);
     // The merge carried the booking's actor and the closure's officer to the survivor.
     expect(await taskState(taskId)).toEqual({ status: "DISMISSED", completedByMemberId: master });
     expect((await prisma.booking.findUniqueOrThrow({ where: { id }, select: { createdById: true } })).createdById).toBe(master);

@@ -15,8 +15,10 @@
  * The delete-first cases pause the delete right after its fence, so the writer
  * arrives while the delete holds the Member row (and, now, the booking row). The
  * writer-first cases pause the writer after its claim, so the delete arrives
- * while the writer holds the booking row and the officer's key share. Every
- * wait is matched to the backend it waits on (`pg_blocking_pids`).
+ * while the writer holds the booking row and the officer's key share. The
+ * choreography and its waits, each matched to the backend it waits on
+ * (`pg_blocking_pids`), are shared with the member-merge race suites
+ * (`support/member-merge-race.ts`).
  *
  * #4856 review: a Payment-first writer (the back-post's order: Payment row, then
  * booking row) holding a Payment the officer recorded makes the delete refuse at
@@ -26,13 +28,16 @@
  * Ordinary Vitest runs skip the file; CI's real-PostgreSQL job runs it against
  * the guarded loopback race database.
  */
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { cleanHistories, createHistoryBooking, historyNames, parkHistoryStrand, seedHistoryFixtures } from "./support/booking-ledger-history";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
-import { backendPid, isBlocking, untilBlockedChain } from "./support/race-lock-waits";
+import {
+  arrivingWhilePaused, clearPauses, createRaceMember, expectFulfilled, expectRefusedByTheDeletedOfficer, firstStandWhilePaused, isDeadlock, pauseIn,
+} from "./support/member-merge-race";
+import { RACE_TRANSACTION_BUDGET } from "./support/race-lock-waits";
 
 vi.hoisted(() => {
   if (process.env.RUN_CONCURRENCY_RACE_TESTS === "1" && process.env.CONCURRENCY_RACE_DATABASE_URL) {
@@ -47,17 +52,10 @@ vi.mock("@/lib/prisma", async (importOriginal) => {
   return { ...real, prisma: withRaceTransactionBudget(real.prisma) };
 });
 
-/** Pauses inside a transaction, handed its backend id: pass-throughs with no hook set. */
-type Slot = "delete" | "settle" | "closure";
-const pauses = vi.hoisted(() => ({ delete: null, settle: null, closure: null } as Record<"delete" | "settle" | "closure", null | ((pid: number) => Promise<void>)>));
-async function pauseIn(slot: Slot, tx: unknown): Promise<void> {
-  const hook = pauses[slot];
-  if (!hook) return;
-  pauses[slot] = null;
-  await hook(await backendPid(tx as Prisma.TransactionClient));
-}
+/** Pauses inside a transaction (slots "delete", "settle" and "closure"): pass-throughs unless a case arms one. */
 vi.mock("@/lib/xero-contact-create-recovery", async (importOriginal) => {
   const real = (await importOriginal()) as typeof import("@/lib/xero-contact-create-recovery");
+  const { pauseIn } = await import("./support/member-merge-race");
   return {
     ...real,
     lockMemberForAccountDeletionXeroFence: async (...args: Parameters<typeof real.lockMemberForAccountDeletionXeroFence>) => {
@@ -69,6 +67,7 @@ vi.mock("@/lib/xero-contact-create-recovery", async (importOriginal) => {
 });
 vi.mock("@/lib/member-money/doors", async (importOriginal) => {
   const real = (await importOriginal()) as typeof import("@/lib/member-money/doors");
+  const { pauseIn } = await import("./support/member-merge-race");
   return {
     ...real,
     postBookingReceipts: async (...args: Parameters<typeof real.postBookingReceipts>) => {
@@ -79,6 +78,7 @@ vi.mock("@/lib/member-money/doors", async (importOriginal) => {
 });
 vi.mock("@/lib/manual-refund-task-audit", async (importOriginal) => {
   const real = (await importOriginal()) as typeof import("@/lib/manual-refund-task-audit");
+  const { pauseIn } = await import("./support/member-merge-race");
   return {
     ...real,
     recordManualRefundTaskClosureAudit: async (...args: Parameters<typeof real.recordManualRefundTaskClosureAudit>) => {
@@ -96,14 +96,8 @@ const APPROVER = `${PREFIX}admin-b`;
 const PRICE = 20_000;
 let prisma: PrismaClient;
 
-function gate() {
-  let open!: () => void;
-  const opened = new Promise<void>((resolve) => { open = resolve; });
-  return { open, opened };
-}
-
-async function member(id: string, extra: Record<string, unknown> = {}) {
-  await prisma.member.create({ data: { id, email: `${id}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Delete", lastName: id, ageTier: "ADULT", ...extra } });
+function member(id: string, extra: Record<string, unknown> = {}) {
+  return createRaceMember(prisma, id, { firstName: "Delete", ...extra });
 }
 
 /** An officer, and a cash booking that officer made for the history member, still unpaid. */
@@ -160,81 +154,6 @@ async function memberExists(id: string) {
   return (await prisma.member.count({ where: { id } })) === 1;
 }
 
-function isDeadlock(error: unknown): boolean {
-  const text = `${String(error)} ${JSON.stringify(error, Object.getOwnPropertyNames(error ?? {}))}`;
-  return /P2034|40P01|deadlock/i.test(text);
-}
-
-function expectFulfilled(settled: PromiseSettledResult<unknown>) {
-  expect(settled.status, settled.status === "rejected" ? String(settled.reason) : "").toBe("fulfilled");
-}
-
-/** The writer names an officer the delete removed: its FK refuses, and nothing is recorded. */
-function expectRefusedByTheDeletedOfficer(written: PromiseSettledResult<unknown>) {
-  expect(written.status).toBe("rejected");
-  const reason = (written as PromiseRejectedResult).reason;
-  expect(isDeadlock(reason), String(reason)).toBe(false);
-  expect(reason).toMatchObject({ code: "P2003" });
-}
-
-/** Pause the delete right after its Member fence, start the writer, and wait until it queues behind the delete. */
-async function writerArrivingWhileDeleteHoldsTheFence(approve: () => Promise<unknown>, writer: () => Promise<unknown>) {
-  const reached = gate();
-  const release = gate();
-  let deletePid = 0;
-  pauses.delete = async (pid) => {
-    deletePid = pid;
-    reached.open();
-    await release.opened;
-  };
-  const deleting = approve();
-  await reached.opened;
-  let writing: Promise<unknown> = Promise.resolve();
-  try {
-    writing = writer();
-    await untilBlockedChain(prisma, deletePid, 1);
-  } finally {
-    release.open();
-  }
-  const [deleted, written] = await Promise.allSettled([deleting, writing]);
-  return { deleted, written };
-}
-
-/** Pause the writer after its claim, start the delete, and wait until it queues behind the writer. */
-async function deleteArrivingWhileWriterHoldsTheBooking(slot: "settle" | "closure", approve: () => Promise<unknown>, writer: () => Promise<unknown>) {
-  const reached = gate();
-  const release = gate();
-  let writerPid = 0;
-  pauses[slot] = async (pid) => {
-    writerPid = pid;
-    reached.open();
-    await release.opened;
-  };
-  const writing = writer();
-  await reached.opened;
-  let deleting: Promise<unknown> = Promise.resolve();
-  try {
-    deleting = approve();
-    await untilBlockedChain(prisma, writerPid, 1);
-  } finally {
-    release.open();
-  }
-  const [written, deleted] = await Promise.allSettled([writing, deleting]);
-  return { deleted, written };
-}
-
-/** Whether the delete settled (either way) or came to wait on the paused writer's backend. */
-async function settledOrBlockedBy(deleting: Promise<unknown>, writerPid: number): Promise<"settled" | "waiting"> {
-  let settled = false;
-  void deleting.then(() => { settled = true; }, () => { settled = true; });
-  for (let attempt = 0; attempt < 1200; attempt += 1) {
-    if (settled) return "settled";
-    if (await isBlocking(prisma, writerPid)) return "waiting";
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error("the delete neither settled nor waited");
-}
-
 (RUN ? describe : describe.skip)("an officer's hard-delete racing that officer's own write (#4850)", { timeout: 180_000 }, () => {
   beforeAll(async () => {
     const url = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -249,9 +168,7 @@ async function settledOrBlockedBy(deleting: Promise<unknown>, writerPid: number)
   }, 120_000);
 
   afterAll(async () => {
-    pauses.delete = null;
-    pauses.settle = null;
-    pauses.closure = null;
+    clearPauses();
     if (prisma) await cleanup();
   }, 120_000);
 
@@ -267,7 +184,7 @@ async function settledOrBlockedBy(deleting: Promise<unknown>, writerPid: number)
   it("MUTATION: a delete holding the officer's Member row makes that officer's settle wait at the booking row, never a deadlock", async () => {
     const { id, paymentId, officer } = await bookingMadeByOfficer("delete-before-settle");
     const approve = await deleteRequested(officer);
-    const { deleted, written } = await writerArrivingWhileDeleteHoldsTheFence(approve, () => markPaid(id, officer));
+    const { held: deleted, arrived: written } = await arrivingWhilePaused(prisma, "delete", approve, () => markPaid(id, officer));
     expectFulfilled(deleted);
     expectRefusedByTheDeletedOfficer(written);
     expect(await memberExists(officer)).toBe(false);
@@ -277,7 +194,7 @@ async function settledOrBlockedBy(deleting: Promise<unknown>, writerPid: number)
   it("a settle holding the booking row and the officer's key share makes the delete wait; both commit", async () => {
     const { id, paymentId, officer } = await bookingMadeByOfficer("settle-before-delete");
     const approve = await deleteRequested(officer);
-    const { deleted, written } = await deleteArrivingWhileWriterHoldsTheBooking("settle", approve, () => markPaid(id, officer));
+    const { held: written, arrived: deleted } = await arrivingWhilePaused(prisma, "settle", () => markPaid(id, officer), approve);
     expectFulfilled(written);
     expectFulfilled(deleted);
     expect(await memberExists(officer)).toBe(false);
@@ -288,7 +205,7 @@ async function settledOrBlockedBy(deleting: Promise<unknown>, writerPid: number)
   it("MUTATION: a delete holding the officer's Member row makes that officer's review closure wait at the booking row, never a deadlock", async () => {
     const { id, taskId, officer } = await reviewOnBookingMadeByOfficer("delete-before-closure");
     const approve = await deleteRequested(officer);
-    const { deleted, written } = await writerArrivingWhileDeleteHoldsTheFence(approve, () => dismissReview(taskId, officer));
+    const { held: deleted, arrived: written } = await arrivingWhilePaused(prisma, "delete", approve, () => dismissReview(taskId, officer));
     expectFulfilled(deleted);
     expectRefusedByTheDeletedOfficer(written);
     expect(await memberExists(officer)).toBe(false);
@@ -299,7 +216,7 @@ async function settledOrBlockedBy(deleting: Promise<unknown>, writerPid: number)
   it("a review closure holding the booking row and the officer's key share makes the delete wait; neither deadlocks", async () => {
     const { id, taskId, officer } = await reviewOnBookingMadeByOfficer("closure-before-delete");
     const approve = await deleteRequested(officer);
-    const { deleted, written } = await deleteArrivingWhileWriterHoldsTheBooking("closure", approve, () => dismissReview(taskId, officer));
+    const { held: written, arrived: deleted } = await arrivingWhilePaused(prisma, "closure", () => dismissReview(taskId, officer), approve);
     expectFulfilled(written);
     expect(await taskState(taskId)).toMatchObject({ status: "DISMISSED" });
     // The closure recorded a booking modification in the officer's name, so the delete's
@@ -321,30 +238,18 @@ async function settledOrBlockedBy(deleting: Promise<unknown>, writerPid: number)
     const { acquireLodgeCapacityLock } = await import("@/lib/capacity");
     const { lockPaymentForRefundedTotal } = await import("@/lib/payment-transactions");
     const { lockBookingRowForOwnerRead } = await import("@/lib/booking-row-lock");
-    const held = gate();
-    const release = gate();
-    let writerPid = 0;
     // The back-post's order through the writers' own helpers: lock(1), the lodge key, the Payment row, then the booking row.
-    const writer = prisma.$transaction(async (tx) => {
+    const writer = () => prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       await acquireLodgeCapacityLock(tx, names.lodgeId);
       await lockPaymentForRefundedTotal(tx, paymentId);
-      writerPid = await backendPid(tx);
-      held.open();
-      await release.opened;
+      await pauseIn("payment-first-before-booking-row", tx);
       await lockBookingRowForOwnerRead(tx, id);
       await tx.payment.update({ where: { id: paymentId }, data: { changeFeeCents: 300 } });
-    }, { maxWait: 30_000, timeout: 120_000 });
-    await held.opened;
-    let deleting: Promise<unknown> = Promise.resolve();
-    let first: "settled" | "waiting" = "waiting";
-    try {
-      deleting = approve();
-      first = await settledOrBlockedBy(deleting, writerPid);
-    } finally {
-      release.open();
-    }
-    const [deleted, written] = await Promise.allSettled([deleting, writer]);
+    }, RACE_TRANSACTION_BUDGET);
+    const { first, held: written, arrived: deleted } = await firstStandWhilePaused(
+      prisma, "payment-first-before-booking-row", writer, approve, { label: "the delete" },
+    );
     // Before the review fix the delete held the booking row and waited for this Payment row in its cascade.
     expect(first, "the delete waited for the Payment row the writer held").toBe("settled");
     expect(deleted.status).toBe("rejected");
