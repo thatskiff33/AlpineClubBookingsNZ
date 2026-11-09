@@ -21,6 +21,7 @@ import { parseRefundAllocationPlan } from "@/lib/open-card-refund-owed";
 import { prisma } from "@/lib/prisma";
 import { rearmedPaymentRecoveryOperationData } from "@/lib/payment-recovery-constants";
 import { listRefundsOnCardCharge } from "@/lib/card-refund-stripe-refunds";
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 
 /**
  * #4368 (owner decision, 25 Oct 2026: "build as shown in the mock-up";
@@ -291,6 +292,7 @@ async function stripeRefundsOnRowCharges(
   const charges = await prisma.paymentTransaction.findMany({
     where: { paymentId: row.paymentId, ...(ids ? { id: { in: ids } } : { source: PaymentSource.STRIPE }), stripePaymentIntentId: { not: null } },
     select: { stripePaymentIntentId: true },
+    orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
   });
   const listed: ListedStripeRefund[] = [];
   for (const intent of [...new Set(charges.flatMap((charge) => (charge.stripePaymentIntentId ? [charge.stripePaymentIntentId] : [])))]) {
