@@ -388,11 +388,22 @@ describe("the shipped next.config.ts, through Next's own pipeline", () => {
 
     expect(Array.isArray(rewrites), "must be the staged form, not a bare array")
       .toBe(false);
-    expect(rewrites).toEqual({
-      beforeFiles: [],
-      afterFiles: [...ASSET_NOT_FOUND_REWRITES],
-      fallback: [],
-    });
+    const { beforeFiles, afterFiles, fallback } = rewrites as {
+      beforeFiles: { source: string; destination: string }[];
+      afterFiles: unknown[];
+      fallback: unknown[];
+    };
+    expect(afterFiles).toEqual([...ASSET_NOT_FOUND_REWRITES]);
+    expect(fallback).toEqual([]);
+    // `beforeFiles` holds only the admin hub rewrites, an old admin URL served
+    // from its moved page (epic #4468; `next-config-admin-hub-urls.test.ts`
+    // owns them), and never an asset rule.
+    expect(
+      beforeFiles.filter(
+        ({ source, destination }) =>
+          !source.startsWith("/admin/") || !destination.startsWith("/admin/"),
+      ),
+    ).toEqual([]);
   });
 
   it("does not turn on case-sensitive routing", () => {

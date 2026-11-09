@@ -10,6 +10,7 @@ import { buildBookingRequestsHref } from "@/lib/admin-booking-requests-path";
 import { MODULE_KEYS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 import { requireCalendarDate } from "@/lib/club-time";
+import { canonicalAdminPathname } from "@/lib/admin-hubs";
 
 // All modules on; derived so it covers every module key without drifting.
 const allOn: FeatureFlags = Object.fromEntries(
@@ -48,7 +49,9 @@ function collectAdminPageRoutes() {
 
   function walk(dir: string, segments: string[]) {
     if (fs.existsSync(path.join(dir, "page.tsx"))) {
-      routes.add(`/admin/${segments.join("/")}`);
+      // In the registry's old-path form, so a page moved under its hub
+      // (epic #4468) is the page its old URL serves.
+      routes.add(canonicalAdminPathname(`/admin/${segments.join("/")}`));
     }
 
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -179,7 +182,7 @@ describe("feature-aware navigation", () => {
     for (const href of navHrefs) {
       // Deep links may carry query params (e.g. the Needs Attention
       // unpaid-finished-stays link, #1731); the page route is the pathname.
-      const pathname = href.split(/[?#]/)[0];
+      const pathname = canonicalAdminPathname(href.split(/[?#]/)[0]);
       expect(routeSet.has(pathname), `${href} should have an admin page`).toBe(
         true,
       );
