@@ -254,6 +254,21 @@ describe("Nothing left owed", () => {
     expect(mocks.claim).not.toHaveBeenCalled();
   });
 
+  it("MUTATION (review C): a row part paid by its matched refund, the rest unsent but capped to $0, names nothing and is refused", async () => {
+    // Two slices: the first filled by a refund matched to it, the second still unsent - and the payment holds nothing more.
+    const twoSlices = deadOperation({ allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 7_500 }, { paymentTransactionId: "txn-2", amountCents: 7_500 }] });
+    mocks.findOperation.mockResolvedValue(twoSlices);
+    const read = payment([twoSlices], {
+      refundedAmountCents: 20_000,
+      status: "REFUNDED",
+      refunds: [{ ...LATER_REFUND, amountCents: 7_500 }],
+    });
+    expect(laterStripeRefundsCovering(read as never, "op-1")).toEqual([]);
+    mocks.findPayment.mockResolvedValue(read);
+    await expect(nothingLeftOwed(["re_later_1"])).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/No Stripe refund on this payment is matched/) });
+    expect(mocks.claim).not.toHaveBeenCalled();
+  });
+
   it("MUTATION (review C): names only the refunds the attribution gives this row, never another later refund on the payment", async () => {
     // A second later refund, of another amount, fills no slice of this row: it is not named.
     const other = { ...LATER_REFUND, stripeRefundId: "re_other_door", amountCents: 1_000 };
