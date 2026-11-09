@@ -477,7 +477,7 @@ export function buildAdminUrlRules(
         ...pairs.map(({ oldUrl, hubUrl }) => ({
           source: oldUrl,
           destination: hubUrl,
-          permanent: false,
+          permanent: false as const,
         })),
       ],
       rewrites: { beforeFiles: [] },
@@ -489,7 +489,7 @@ export function buildAdminUrlRules(
       ...pairs.map(({ oldUrl, hubUrl }) => ({
         source: hubUrl,
         destination: oldUrl,
-        permanent: false,
+        permanent: false as const,
       })),
     ],
     rewrites: {
