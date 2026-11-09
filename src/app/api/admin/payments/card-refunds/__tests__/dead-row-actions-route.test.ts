@@ -101,7 +101,7 @@ describe("Try the card again: what it needs", () => {
     const response = await tryCardAgain(request("try-card-again", tryValid), { params });
     expect(response.status).toBe(200);
     expect(mocks.tryDeadCardRefundAgain).toHaveBeenCalledWith({ operationId: "op-1", expectedOwedCents: 15_000, actingMemberId: "treasurer-1" });
-    expect(revalidatePath).toHaveBeenCalledWith("/admin/stuck-states");
+    expect(revalidatePath).toHaveBeenCalledWith("/admin/system/stuck-states");
   });
 
   it("answers a refusal with its own status and sentence, and anything else with a plain 500", async () => {
@@ -137,7 +137,7 @@ describe("Nothing left owed: what it needs", () => {
       expectedStripeRefundIds: ["re_later_1"],
       actingMemberId: "treasurer-1",
     });
-    expect(revalidatePath).toHaveBeenCalledWith("/admin/stuck-states");
+    expect(revalidatePath).toHaveBeenCalledWith("/admin/system/stuck-states");
   });
 
   it("answers a refusal with its own status and sentence, and anything else with a plain 500", async () => {
