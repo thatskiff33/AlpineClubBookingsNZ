@@ -29,7 +29,8 @@ const mockPrisma = vi.hoisted(() => {
       update: vi.fn(),
       updateMany: vi.fn(),
     },
-    booking: countDelegate(),
+    // #4850: the delete reads the bookings naming the member, to lock them before its Member fence.
+    booking: { ...countDelegate(), findMany: vi.fn().mockResolvedValue([]) },
     bookingGuest: countDelegate(),
     payment: countDelegate(),
     paymentRefund: countDelegate(),
@@ -185,6 +186,7 @@ import {
 } from "@/lib/member-lifecycle-actions";
 import { DELETE as directDeleteMember } from "@/app/api/admin/members/[id]/route";
 import { createAuditLog } from "@/lib/audit";
+import { Prisma } from "@prisma/client";
 import {
   sendAdminMemberDeleteRejectedEmail,
   sendMemberArchiveApprovedEmail,
@@ -722,6 +724,42 @@ describe("member delete lifecycle actions", () => {
     } satisfies Partial<MemberLifecycleActionError>);
 
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #4850: the delete's SET NULL on Booking's actor columns updates every booking
+   * naming the member. Booking writers take the booking row before a Member key
+   * share, so the delete takes those rows first too, then its Member fence.
+   */
+  function rawSql(call: unknown[]): { sql: string; values: unknown[] } {
+    const [strings, ...values] = call as [TemplateStringsArray, ...Prisma.Sql[]];
+    const statement = Prisma.sql(strings, ...values);
+    return { sql: statement.sql.replace(/\s+/g, " ").trim(), values: statement.values };
+  }
+
+  it("#4850: locks the bookings naming the member, in id order, before its Member fence and its delete", async () => {
+    mockPrisma.booking.findMany.mockResolvedValueOnce([{ id: "b-1" }, { id: "b-2" }]).mockResolvedValueOnce([{ id: "b-1" }, { id: "b-2" }]);
+
+    await reviewMemberDeleteRequest({ requestId: "request-1", reviewedByMemberId: "admin-2", action: "approve", reviewNote: "Checked" });
+
+    const where = (mockPrisma.booking.findMany.mock.calls[0]![0] as { where: { OR: Array<Record<string, string>> } }).where.OR;
+    expect(where).toEqual(expect.arrayContaining([{ createdById: "member-1" }, { adminReviewedById: "member-1" }, { capacityOverriddenByMemberId: "member-1" }]));
+    const statements = mockPrisma.$executeRaw.mock.calls.map((call) => rawSql(call));
+    const bookingRows = statements.findIndex(({ sql }) => sql.includes('FROM "Booking"'));
+    const memberFence = statements.findIndex(({ sql }) => sql.includes('FROM "Member"') && sql.includes("FOR UPDATE"));
+    expect(statements[bookingRows]).toEqual({ sql: 'SELECT 1 FROM "Booking" WHERE "id" IN (?,?) ORDER BY "id" FOR NO KEY UPDATE', values: ["b-1", "b-2"] });
+    expect(memberFence).toBeGreaterThan(bookingRows);
+    expect(mockPrisma.$executeRaw.mock.invocationCallOrder[bookingRows]).toBeLessThan(mockPrisma.member.delete.mock.invocationCallOrder[0]!);
+  });
+
+  it("#4850: refuses with 409, writing nothing, when a booking names the member only after its bookings were locked", async () => {
+    mockPrisma.booking.findMany.mockResolvedValueOnce([{ id: "b-1" }]).mockResolvedValueOnce([{ id: "b-1" }, { id: "b-9" }]);
+
+    await expect(
+      reviewMemberDeleteRequest({ requestId: "request-1", reviewedByMemberId: "admin-2", action: "approve", reviewNote: "Checked" }),
+    ).rejects.toMatchObject({ statusCode: 409 });
+    expect(mockPrisma.memberLifecycleActionRequest.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.member.delete).not.toHaveBeenCalled();
   });
 
   it("approves by snapshotting, deactivating Xero links, clearing local Xero linkage, and hard deleting", async () => {

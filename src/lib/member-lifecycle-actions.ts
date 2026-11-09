@@ -42,6 +42,7 @@ import {
   serializeDate,
   serializeMember,
 } from "@/lib/member-serialization";
+import { bookingsNamingMemberSinceLocked, lockBookingRowsNamingMember } from "@/lib/member-delete-booking-rows";
 import { lockMemberForAccountDeletionXeroFence } from "@/lib/xero-contact-create-recovery";
 
 type LifecycleActionClient = Prisma.TransactionClient | typeof prisma;
@@ -1239,10 +1240,15 @@ export async function reviewMemberDeleteRequest({
     // refuses this delete; delete-first keeps the row locked until hard-delete
     // commits, after which a waiting reservation observes a missing member and
     // performs no provider call.
+    // #4850: the booking rows naming the member before that fence, as merge and every booking writer order them.
+    const lockedBookingIds = await lockBookingRowsNamingMember(tx, request.memberId);
     const fencedMember = await lockMemberForAccountDeletionXeroFence(
       tx,
       request.memberId,
     );
+    if ((await bookingsNamingMemberSinceLocked(tx, request.memberId, lockedBookingIds)).length > 0) {
+      throw new MemberLifecycleActionError("A booking naming this member changed while it was being deleted. Nothing was deleted. Try again.", 409);
+    }
 
     const eligibility = await getMemberDeleteEligibility({
       memberId: request.memberId,
