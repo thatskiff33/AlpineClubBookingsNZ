@@ -268,6 +268,8 @@ async function applyLateCaptureRefundRepair(
         reason: LATE_CAPTURE_REPAIR_REFUND_METADATA_REASON,
       },
       idempotencyKeyPrefix: `late_cancel_refund_repair_${bookingId}`,
+      // #4516 (M4c): each slice returns its own capture (plan section 5, the runner's map); its R05 posts on reserving.
+      obligation: (slice) => ({ scope: "capture-return", id: slice.paymentIntentId, ensureFaceCents: slice.amountCents }),
     });
   } catch (error) {
     // #1495: a multi-slice refund can fail partway — earlier slices already

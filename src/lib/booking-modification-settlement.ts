@@ -267,6 +267,7 @@ export async function executeBookingModificationRefund({
       // Each edit gets its own prefix: two equal reductions must create two
       // refunds, while this edit's recovery replays its original request.
       idempotencyKeyPrefix: stripeKeyPrefix,
+      obligation: { scope: "modification", id: result.bookingModificationId }, // #4516: the R05 the edit posted
     });
     const read = inlineRefundAfterAttempt(plan, refundResult);
     if (read.refusedCents > 0) logger.error({ bookingId, refusedCents: read.refusedCents }, failureMessage);

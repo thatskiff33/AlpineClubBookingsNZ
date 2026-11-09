@@ -48,7 +48,7 @@ import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-b
 import { cancelTieredAppliedCreditCents } from "@/lib/booking-payment-state";
 import { refundedPaymentCreditRestore } from "@/lib/cancel-refunded-payment-credit";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
-import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
+import { postRefundObligation, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import {
   applyLocalRefundAllocation,
   foldIntoTransactionRefundedAmount,
@@ -1973,6 +1973,12 @@ async function performBookingCancellation(
       policyKeptCents: money.policyKeptCents,
       site: "booking-cancel:paid",
     });
+    // #4516 (M4c): R05, the card refund the frozen plan above owes, moved to its own obligation beside R04, under
+    // the Payment row this claim holds; its sender reserves each slice against it before Stripe is asked.
+    if (cardRefundPlan && plannedCardRefundCents > 0) {
+      await postRefundObligation(tx, journal, { bookingId, scope: "cancellation", id: bookingId, amountCents: plannedCardRefundCents,
+        origin: "APP", actorMemberId: sessionUserId, debtorRead: "booking-row" });
+    }
 
     // #2576 §6. Cancellation is the first change class the owner names, and it
     // is the one that removes attendance outright: cancelling the booking a
@@ -2384,6 +2390,7 @@ async function performBookingCancellation(
           // email narrative below; it just no longer rides in the Stripe body.
           metadata: buildBookingCancellationRefundMetadata(bookingId),
           idempotencyKeyPrefix: `booking_cancel_refund_${bookingId}`,
+          obligation: { scope: "cancellation", id: bookingId }, // #4516: the R05 the claim posted
         });
         stripeRefundId = refundResult.refunds[0]?.refundId;
         refundMade = ownCardRefundMade(refundResult.refunds);

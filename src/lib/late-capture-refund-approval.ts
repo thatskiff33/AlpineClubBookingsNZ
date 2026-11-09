@@ -7,6 +7,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import { automaticCancelledBookingRefundTaskReasons } from "@/lib/deleted-booking-modification-payment";
 import { finishApprovedLateCaptureRefund } from "@/lib/late-capture-refund-credit-note";
 import logger from "@/lib/logger";
+import { postRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { enqueueLateCaptureApprovalRefundRecovery } from "@/lib/payment-recovery";
 import {
@@ -174,11 +175,16 @@ export async function persistLateCaptureApprovalRefundDebt({
   route,
   amountCents,
   store,
+  journal,
+  actingMemberId,
 }: {
   bookingId: string;
   route: LateCaptureRefundRoute;
   amountCents: number;
   store: Prisma.TransactionClient;
+  /** #4516 (M4c): the completion's journal context, resolved before its transaction. */
+  journal: BookingJournalContext;
+  actingMemberId: string;
 }) {
   await enqueueLateCaptureApprovalRefundRecovery({
     bookingId,
@@ -188,6 +194,10 @@ export async function persistLateCaptureApprovalRefundDebt({
     allocationPlan: route.allocation,
     store,
   });
+  // #4516 (M4c): R05 for the capture's return, beside its debt. This claim holds no `lock(1)` until M4d, so the
+  // debtor is read without the booking row (a Payment-row writer never takes one, `INV-LOCK-002`).
+  await postRefundObligation(store, journal, { bookingId, scope: "capture-return", id: route.paymentIntentId, amountCents,
+    origin: "OFFICER", actorMemberId: actingMemberId, debtorRead: "plain" });
 }
 
 /**
@@ -245,6 +255,7 @@ export async function executeLateCaptureApprovalRefund({
         bookingId,
         route.paymentIntentId,
       ),
+      obligation: { scope: "capture-return", id: route.paymentIntentId }, // #4516: the R05 the completion posted
     });
     // #4103 (`INV-PAY-130`): a refusal (failed/canceled) is not a refund: the
     // row stays open, re-planned on fresh keys, and nothing is recorded or noted.

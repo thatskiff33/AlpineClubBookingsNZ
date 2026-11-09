@@ -28,7 +28,7 @@ import { readCapacityRaceStripeRefundedForTask } from "@/lib/capacity-race-refun
 import { settlementWriteRefusal } from "@/lib/manual-refund-task-settlement-refusal";
 import { prisma } from "@/lib/prisma";
 import { clubToday } from "@/lib/club-time";
-import { resolveBookingDoorClock } from "@/lib/member-money/doors";
+import { postRefundObligation, resolveBookingDoorClock } from "@/lib/member-money/doors";
 // #3195: the $0 refusal is said by the settle SCREEN as well as thrown here, and
 // this module is `server-only` - so the sentence lives in a client-safe home and
 // both read it (`INV-SSOT`).
@@ -431,7 +431,7 @@ export async function resolveManualRefundTask(
             bookingId: task.bookingId,
             route: settlementRoute,
             amountCents: settlement.amountCents,
-            store: tx,
+            store: tx, journal, actingMemberId,
           });
         }
         else if (settlementRoute.kind === "group-settlement-mirror") await applyGroupSettlementMirrorRefund({ route: settlementRoute, store: tx }); // #3949: onto a group child's mirror, under its Payment row
@@ -544,6 +544,10 @@ export async function resolveManualRefundTask(
         store: tx, journal,
       });
     }
+    // #4516 (M4c): R05 for the review's card refund, after its closure's R21 and any credit the re-price wrote
+    // (member key before the Payment row, `INV-LOCK-002`), under the booking row taken above.
+    if (settlement && settlementRoute?.kind === "stripe-refund" && settlementRoute.refundCents > 0) await postRefundObligation(tx, journal, { bookingId: task.bookingId,
+      scope: "review", id: task.id, amountCents: settlementRoute.refundCents, origin: "OFFICER", actorMemberId: actingMemberId, debtorRead: "booking-row" });
     const chargeInvoice = settlement ? await queueEditReviewChargeInvoiceInTransaction({ bookingId: task.bookingId, route: settlementRoute, hasIssuedXeroInvoice, createdByMemberId: actingMemberId, store: tx }) : null; // #3947: the invoice route's invoice, queued LAST - its anchor key after every other lock
     await recordManualRefundTaskClosureAudit({
       task,

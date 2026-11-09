@@ -44,7 +44,7 @@ import type { ModificationPricingSides } from "@/lib/booking-modification-pricin
 import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
 import { rebasedPriceMovementCents } from "@/lib/booking-review-price-rebase-history";
 import logger from "@/lib/logger";
-import { postBookingLedgerJournal, type BookingJournalContext } from "@/lib/member-money/doors";
+import { postBookingLedgerJournal, postRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
 import { postPendingModificationCharge } from "@/lib/booking-ledger-pending-charge";
 
 /**
@@ -58,15 +58,22 @@ import { postPendingModificationCharge } from "@/lib/booking-ledger-pending-char
  * beside it, so the ledger and the edit's own history cannot be given two
  * different change fees (#3740 SSOT F5).
  */
-export async function postModificationLedgerLines({
-  store,
-  journal,
-  bookingId,
-  lodgeId,
-  bookingModification,
-  sides,
-  site,
-}: {
+export async function postModificationLedgerLines(input: ModificationLedgerInput & {
+  /**
+   * #4516 (M4c): the card refund this edit owes the member's own card (`pendingRefundAmountCents`; nothing for an
+   * organiser's card, M6), sent after it commits. Its R05 posts here, beside R02, under the booking row R02's
+   * debtor read took and then the Payment row (the edit doors' `booking row -> Payment` edge, all under `lock(1)`).
+   */
+  cardRefundCents?: number;
+}): Promise<void> {
+  await postModificationChargeLines(input);
+  if ((input.cardRefundCents ?? 0) > 0) {
+    await postRefundObligation(input.store, input.journal, { bookingId: input.bookingId, scope: "modification", id: input.bookingModification.id,
+      amountCents: input.cardRefundCents!, origin: "APP", debtorRead: "booking-row" });
+  }
+}
+
+interface ModificationLedgerInput {
   store: Prisma.TransactionClient;
   /** The context the edit resolved before its transaction (`INV-LOCK-004`). */
   journal: BookingJournalContext;
@@ -75,7 +82,17 @@ export async function postModificationLedgerLines({
   bookingModification: Pick<BookingModification, "id" | "priceDiffCents" | "changeFeeCents">;
   sides: ModificationPricingSides | null;
   site: string;
-}): Promise<void> {
+}
+
+async function postModificationChargeLines({
+  store,
+  journal,
+  bookingId,
+  lodgeId,
+  bookingModification,
+  sides,
+  site,
+}: ModificationLedgerInput): Promise<void> {
   const { id: bookingModificationId, priceDiffCents, changeFeeCents } = bookingModification;
   if (!(await bookingHasConfirmationLines(store, bookingId))) {
     // #4628: no legacy line yet, but a bank-transfer booking bound before

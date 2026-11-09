@@ -21,6 +21,12 @@
  * The third (#4015 review): a replay that has waited its longest on a carried
  * ask Stripe is still taking money on (`CarriedAskPaymentWaitExpiredError`).
  *
+ * The fourth (#4516, Ledger M4c): a card refund whose reservation the journal
+ * refused (`isCardRefundReservationRefusal`): the slice's refund debt is already
+ * reserved or paid from that card payment, so every retry is refused the same
+ * way. Stripe was not asked for it; the row goes dead for the treasurer, who
+ * checks the booking's refunds and closes it "Paid another way" if owed.
+ *
  * So the runner's failure path (`failPaymentRecoveryOperation`) ends the
  * recovery on the first such failure, through the one terminal transition
  * (`markPaymentRecoveryOperationFailed`, `INV-PAY-056`): FAILED with no retry,
@@ -37,7 +43,11 @@ import {
   AdditionalAskAttributionConflictError,
   IntentLedgerRowOnAnotherPaymentError,
 } from "@/lib/payment-intent-ledger-row-write";
+import { isCardRefundReservationRefusal } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
+
+/** #4516: what a stopped card refund's row says, and the officers' alert quotes. */
+export const CARD_REFUND_RESERVATION_REFUSED_CAUSE = "The card refund was not sent: the refund it would pay is already reserved or paid from that card payment, so retrying would be refused the same way and the app stopped. Stripe was not asked for it. Check the booking's refunds against Stripe; if money is still owed, close this refund as paid another way.";
 
 /** How the carried-ask wait's cause opens; the alert's wording keys on it (`recoveryFailureAlertMessage`). */
 const CARRIED_ASK_WAIT_EXPIRED_CAUSE_OPENING = "Stopped waiting on a card request Stripe is still taking money on.";
@@ -66,6 +76,7 @@ export async function unretryableRecoveryCause(
   operation: Pick<PaymentRecoveryOperation, "type">,
   error: unknown,
 ): Promise<string | null> {
+  if (isCardRefundReservationRefusal(error)) return CARD_REFUND_RESERVATION_REFUSED_CAUSE;
   if (operation.type !== PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT) {
     return null;
   }

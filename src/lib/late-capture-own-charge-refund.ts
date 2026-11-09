@@ -2,7 +2,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import logger from "@/lib/logger";
 import { buildLateCaptureRefundMetadata, buildLateCaptureRefundStripeKeyPrefix } from "@/lib/payment-recovery-keys";
 import { captureRefundState, isCapturedTransactionStatus, isRefusedRefundStatus } from "@/lib/payment-transaction-status";
-import { refundPaymentTransactions, type RefundAllocationSlice } from "@/lib/payment-transactions";
+import { isCardRefundReservationRefusal, refundPaymentTransactions, type RefundAllocationSlice } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -69,18 +69,24 @@ export async function refundLateCaptureFromOwnCharge(params: {
     );
   }
   const { slice, shortCents } = lateCaptureOwnChargeSlice(capture, params.amountCents);
+  let reservationRefused = false;
   const refunds =
     slice.amountCents > 0
-      ? (
-          await refundPaymentTransactions({
-            format: params.format,
-            paymentId: params.paymentId,
-            amountCents: slice.amountCents,
-            allocation: [slice],
-            metadata: buildLateCaptureRefundMetadata(params.bookingId),
-            idempotencyKeyPrefix: buildLateCaptureRefundStripeKeyPrefix(params.bookingId, params.paymentIntentId),
-          })
-        ).refunds
+      ? await refundPaymentTransactions({
+          format: params.format,
+          paymentId: params.paymentId,
+          amountCents: slice.amountCents,
+          allocation: [slice],
+          metadata: buildLateCaptureRefundMetadata(params.bookingId),
+          idempotencyKeyPrefix: buildLateCaptureRefundStripeKeyPrefix(params.bookingId, params.paymentIntentId),
+          // #4516 (M4c): the capture's return; its R05 posts in the reservation step (the webhook defers it).
+          obligation: { scope: "capture-return", id: params.paymentIntentId, ensureFaceCents: slice.amountCents },
+        }).then((result) => result.refunds, (error: unknown) => {
+          // #4516: a refused reservation sent nothing; the caller holds the capture rather than redeliver.
+          if (!isCardRefundReservationRefusal(error)) throw error;
+          reservationRefused = true;
+          return [];
+        })
       : [];
   if (shortCents > 0) {
     logger.warn(
@@ -90,6 +96,7 @@ export async function refundLateCaptureFromOwnCharge(params: {
   }
   return {
     refunds,
+    reservationRefused,
     audit: {
       refundedNowCents: refunds
         .filter((refund) => !isRefusedRefundStatus(refund.status))
