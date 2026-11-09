@@ -323,9 +323,12 @@ describe("the reservation step", () => {
     const resize = (row: { id: string }, amountCents: number) => reserveCardRefundSlice(t.db.tx, context, { paymentId: `${t.id}-payment`, obligation: debt,
       attemptKey: "superseded", senderKeyPrefix: "superseded", paymentTransactionId: row.id, amountCents, planAttemptKeys: ["superseded"], unsentKeyMayResize: true });
     await t.reserve(late, debt, "superseded", 3_000); // reserved, then the attempt died before Stripe
-    // Another charge is still another slice: refused, resize or not.
+    // Another capture, or another charge on the same capture, is still another slice: refused, resize or not.
     const other = await t.capture(500, false);
     await expect(resize(other, 2_000)).rejects.toBeInstanceOf(MemberMoneyReservationRefused);
+    const sameCapture = t.db.seed("paymentTransaction", { id: `${t.id}-tx-twin`, paymentId: `${t.id}-payment`, source: "STRIPE", kind: "ADDITIONAL", status: "SUCCEEDED",
+      amountCents: 3_000, stripePaymentIntentId: late.stripePaymentIntentId })[0] as { id: string };
+    await expect(resize(sameCapture, 2_000)).rejects.toBeInstanceOf(MemberMoneyReservationRefused);
     // A dashboard refund of 1000 since: the row now asks 2000 under the same key.
     expect(await resize(late, 2_000)).toMatchObject({ outcome: "reserved", attemptKey: "superseded#2", replayed: false });
     expect(t.release("superseded")).toMatchObject({ reason: "SUPERSEDED_KEY" });
