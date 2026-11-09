@@ -537,7 +537,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "approveAndExecuteLockedPeriodChangeRequest#1",
     tier: "GLOBAL",
     reason:
-      "#3750: approving a LOCKED_PERIOD change request on a finished stay claims the request and runs the canonical batch modification on the same transaction — a money and booking-status transition that must exclude a concurrent cancel, capture or refund of the same booking, composed with a capacity re-check. Global first, then the booking's immutable lodge key; the tx-aware service re-enters both and takes the member keys after.",
+      "#3750: approving a LOCKED_PERIOD change request on a finished stay claims the request and runs the canonical batch modification on the same transaction — a money and booking-status transition that must exclude a concurrent cancel, capture or refund of the same booking, composed with a capacity re-check. Global first, then the booking's immutable lodge key, then (#4845) the booking row before the claim; the tx-aware service re-enters all three and takes the member keys after.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -1487,9 +1487,11 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // after its lodge key, before it names its officer on the Payment row (that FK
   // takes KEY SHARE on the Member row a merge locks FOR UPDATE after holding the
   // booking row). An edit review's closure (`manual-refund-task-resolution.ts`,
-  // whose own raw statement this replaced) takes it right after its task re-read
-  // under lock(1), before its claim names the officer (`completedByMemberId`) and
-  // before any credit write names the owner (#4627). See docs/CONCURRENCY_AND_LOCKING.md -> "The M3b
+  // whose own raw statement this replaced) takes it right after lock(1), before
+  // its full task re-read, its claim naming the officer (`completedByMemberId`)
+  // and any credit write naming the owner (#4627). #4845: a locked-period
+  // change-request approval takes it right after its lodge key, before its claim
+  // names the officer and holds the request row merge re-points. See docs/CONCURRENCY_AND_LOCKING.md -> "The M3b
   // booking doors and member merge's journal transfer", the M4c paragraph and
   // "A booking writer takes the booking row before a Member key share".
   "src/lib/member-money/internal/booking-posting.ts": 1,

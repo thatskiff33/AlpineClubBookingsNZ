@@ -3395,6 +3395,22 @@ Payment row, a group child's Payment row, ledger lines (an FK `KEY SHARE` on the
 booking, which merge's `NO KEY UPDATE` does not conflict with) and plain debtor
 reads.
 
+A locked-period change-request approval (#4845,
+`approveAndExecuteLockedPeriodChangeRequest`) took `lock(1)` and the lodge key,
+then claimed the request before the canonical `modifyBookingBatch` updated the
+booking. The claim names the officer (`reviewedByMemberId`, a Member key share)
+and holds the request row, which merge re-points (`requestedBy`) after its
+booking moves and before its `Member … FOR UPDATE`. With the booking outside
+merge's lodge prefix that left two cycles: the officer is the duplicate, or the
+duplicate owns the booking and made the request. No merge guard refuses a
+pending change request (`countPendingLifecycleOrFamily` counts lifecycle,
+family-join and deletion requests), so the second is reachable without any
+officer being merged. The approval now takes the booking row right after its
+lodge key, keyed from its pre-lock read of the request's booking id (written
+once), before its role check and claim. The queue's acknowledge-only decision
+(`PUT /api/admin/booking-change-requests/[id]`) is one autocommit `updateMany`
+that touches no booking row, so it never holds the request row while waiting.
+
 Why not the other fixes:
 
 - **Merge takes its Member rows `FOR UPDATE` before its booking moves.** That
@@ -3411,7 +3427,10 @@ Why not the other fixes:
 
 If merge wins, the settle or closure waits at the booking row. It then names an
 officer the merge deleted, so its FK refuses (`P2003`), nothing is recorded, and
-the officer acts again from the surviving record. If the writer wins, merge
+the officer acts again from the surviving record. An approval waiting there
+instead finds its officer gone at its fresh role check and writes nothing; one
+by an officer who is not a merge party claims the request, now the survivor's,
+and executes. If the writer wins, merge
 waits at the booking row and moves the writer's attribution afterwards.
 
 **An accepted counterpart: member hard-delete.** Deleting a member
@@ -3428,13 +3447,17 @@ nothing is corrupted, and deleting an officer while their own write is in
 flight is the rarer event. Reordering delete's cascade is tracked separately.
 
 Proved against real PostgreSQL by
-`member-merge-officer-settle-races.realdb.test.ts`, a required step of the
+`member-merge-officer-settle-races.realdb.test.ts` and, for the approval,
+`member-merge-change-request-races.realdb.test.ts`: required steps of the
 `migration-drift` job pinned by `review-findings-contracts.test.ts`. Both
-orders are covered for each writer, and the old orders deadlock (probed). The
-positions are pinned in `manual-booking-payment.test.ts` and
-`manual-refund-task.test.ts`. This is not a census of every `lock(1)` writer:
-the settle body, its reversal, the Stripe path and the refund-task closure were
-checked, and the rule above is what a new writer follows.
+orders are covered for each writer and each cycle, and the old orders deadlock
+(probed). The positions are pinned in `manual-booking-payment.test.ts`,
+`manual-refund-task.test.ts` and `booking-change-request-execution.test.ts`.
+This is not a census of every `lock(1)` writer: the settle body, its reversal,
+the Stripe path, the refund-task closure and the change-request approval were
+checked, and the rule above is what a new writer follows. The policy-exception
+approval (`booking-exception-execution.ts`) has the same claim-before-booking
+shape and is tracked separately.
 
 ## The disciplines, by writer class
 
