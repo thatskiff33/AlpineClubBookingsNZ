@@ -530,7 +530,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "src/lib/booking-exception-execution.ts::acquireGlobalBookingLock#1",
     tier: "GLOBAL",
     reason:
-      "#2525: one helper mints the key for BOTH the atomic approve-and-execute and the terminal release (reject/cancel/supersede) of a policy-exception request. Each mutates a provisional capacity reservation and, for a modification approval, composes the canonical money/status transition, so global comes before the frozen lodge key and the tx-aware service takes the member keys after that.",
+      "#2525: one helper mints the key for BOTH the atomic approve-and-execute and the terminal release (reject/cancel/supersede) of a policy-exception request. Each mutates a provisional capacity reservation and, for a modification approval, composes the canonical money/status transition, so global comes before the frozen lodge key, then (#4853, an existing booking) the booking row before the claim, and the tx-aware service takes the member keys after that.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -1496,6 +1496,7 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // "A booking writer takes the booking row before a Member key share".
   // #4845: that one statement now lives in `booking-row-lock.ts`, outside the journal boundary, so a lock-only
   // caller names no journal module; `doors` re-exports it and `booking-posting.ts` imports it.
+  // #4853: a policy-exception approval on an existing booking takes it right after its lodge key, before its claim.
   "src/lib/booking-row-lock.ts": 1,
   // #4691 (Ledger M4a): an application batch, a refund reservation and a release
   // take the booking's Payment row (`SELECT 1 … FOR NO KEY UPDATE`) before they
