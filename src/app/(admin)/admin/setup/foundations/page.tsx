@@ -42,7 +42,7 @@ const sections: AdminHubSection[] = [
     icon: Building2,
   },
   {
-    href: "/admin/health",
+    href: adminHref("health"),
     title: "System Health",
     description:
       "Check runtime, database, provider, and background-job readiness.",

@@ -24,7 +24,7 @@ import {
   RUN_URL,
   STATUS_URL,
   type BackupStatus,
-} from "@/app/(admin)/admin/backups/backups-client";
+} from "@/app/(admin)/admin/system/backups/backups-client";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 /**

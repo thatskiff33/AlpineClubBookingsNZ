@@ -5,6 +5,7 @@ import { RefreshCw } from "lucide-react";
 import { useClubTime } from "@/components/club-time-provider";
 import { useHealthData } from "../health/_components/use-health-data";
 import { BackgroundJobsSection } from "../health/_components/background-jobs-section";
+import { adminLink } from "@/lib/admin-hubs";
 
 export default function BackgroundJobsPage() {
   // `lastRefresh` is a real INSTANT — the moment the health payload was
@@ -16,7 +17,7 @@ export default function BackgroundJobsPage() {
   return (
     <div className="p-6 space-y-6">
       <div>
-        <BackLink href="/admin/health" label="System Health" />
+        <BackLink {...adminLink("health")} />
         <div className="flex items-center justify-between mt-2">
           <h1 className="text-2xl font-bold text-foreground">Background Jobs</h1>
           <div className="flex items-center gap-3">

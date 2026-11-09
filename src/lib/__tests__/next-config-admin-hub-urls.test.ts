@@ -19,9 +19,9 @@ import { ADMIN_PAGES, ADMIN_RETIRED_PAGES, isInexactAdminPagePath } from "@/lib/
 //
 // The config's `redirects()` and `rewrites().beforeFiles` are generated from
 // the hub registry. C4 (#4801) has moved the Website pages, C5 (#4802) the
-// Finance pages and C6 (#4803) the Fees & booking rules pages, and the switch is
-// off, so each of those hub URLs redirects to its old URL and each old URL is
-// rewritten to the moved file. The five retired pages (S1 #4796) still redirect
+// Finance pages, C6 (#4803) the Fees & booking rules pages and C7 (#4804) the
+// Help & system pages, and the switch is off, so each of those hub URLs
+// redirects to its old URL and each old URL is rewritten to the moved file. The five retired pages (S1 #4796) still redirect
 // in both states. All of this is run through
 // Next's own pipeline (`unstable_getResponseFromNextConfig`, which calls the
 // real `loadCustomRoutes()`). `admin-hubs-registry.test.ts` walks every page
@@ -104,7 +104,9 @@ describe("next.config.ts with the switch off", () => {
   it("redirects each moved page's hub URL, rewrites its old URL, and keeps the asset rewrites", async () => {
     const config = await loadConfig();
     const moved = movedPages();
-    expect(new Set(moved.map((page) => page.hub))).toEqual(new Set(["website", "finance", "rules"]));
+    expect(new Set(moved.map((page) => page.hub))).toEqual(
+      new Set(["website", "finance", "rules", "system"]),
+    );
     const retired = ADMIN_RETIRED_PAGES.map(({ oldPath }) => oldPath);
     expect(
       (await config.redirects()).map(({ source, permanent }) => ({ source, permanent })),
@@ -124,7 +126,7 @@ describe("next.config.ts with the switch off", () => {
   });
 
   /**
-   * C4 (#4801), C5 (#4802) and C6 (#4803) off-state smoke. Next's config pipeline answers a
+   * C4 (#4801), C5 (#4802), C6 (#4803) and C7 (#4804) off-state smoke. Next's config pipeline answers a
    * `beforeFiles` rewrite as 200 and a redirect as 307. The old URL is served
    * from the moved file; the hub URL redirects to the old URL.
    */
@@ -256,16 +258,20 @@ describe("next.config.ts with the switch off", () => {
 
   it("leaves the pages the retired ones were merged into, and their neighbours, alone", async () => {
     const config = await loadConfig();
-    // Bookings Setup has moved (C6 #4803): its old URL is served from the moved
-    // file, as every moved page's is, and nothing redirects it.
+    // Bookings Setup (C6 #4803) and System Health (C7 #4804) have moved: each
+    // old URL is served from the moved file, as every moved page's is, and
+    // nothing redirects it.
     await expect(resolve(config, "/admin/bookings-setup")).resolves.toEqual({
       kind: "rewrite",
       url: "/admin/rules/bookings-setup",
     });
+    await expect(resolve(config, "/admin/health")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/system/health",
+    });
     for (const url of [
       "/admin/family-groups",
       "/admin/membership-cancellations",
-      "/admin/health",
       "/admin/setup",
       "/admin/setup/finance",
       "/admin/setup/foundations",
@@ -369,6 +375,37 @@ describe("next.config.ts over the moved Rules hub", () => {
       url: "/admin/rules/bookings-setup?x=1",
     });
     await expect(resolve(config, "/admin/rules/bookings-setup")).resolves.toEqual({ kind: "none" });
+  });
+});
+
+describe("next.config.ts over the moved Help & system hub", () => {
+  // Help & system moved in C7 (#4804).
+  it("PREMISE: every Help & system page has moved", () => {
+    const system = ADMIN_PAGES.filter((page) => page.hub === "system");
+    expect(system.length).toBeGreaterThan(0);
+    expect(system.filter((page) => !page.moved).map((page) => page.id)).toEqual([]);
+  });
+
+  it("off: the audit log's hub URL redirects to its old URL, and the old URL is served from the moved file, query kept", async () => {
+    const config = await loadConfig({ live: false });
+    await expect(resolve(config, "/admin/system/audit-log?q=b-1")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/audit-log?q=b-1",
+    });
+    await expect(resolve(config, "/admin/audit-log?q=b-1")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/system/audit-log?q=b-1",
+    });
+  });
+
+  it("on: Integrations Setup, merged into System Health, redirects once, straight to its hub URL and section", async () => {
+    const config = await loadConfig({ live: true });
+    const { status, location: actual } = await location(config, "/admin/setup/integrations");
+    expect(status).toBe(307);
+    const parsed = new URL(actual!, "https://example.org");
+    expect(parsed.pathname + parsed.hash).toBe("/admin/system/health#integration-readiness");
+    await expect(resolve(config, "/admin/system/health")).resolves.toEqual({ kind: "none" });
   });
 });
 

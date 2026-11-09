@@ -53,6 +53,7 @@ import {
   parseInstant,
   type BoundClubTime,
 } from "@/lib/club-time";
+import { adminHref } from "@/lib/admin-hubs";
 
 type AuditFacets = {
   eventTypes: string[];
@@ -455,7 +456,7 @@ export default function AuditLogPage() {
   ]);
 
   const auditQuery = buildAuditSearchParams().toString();
-  const currentAuditPath = auditQuery ? `/admin/audit-log?${auditQuery}` : "/admin/audit-log";
+  const currentAuditPath = auditQuery ? `${adminHref("audit-log")}?${auditQuery}` : adminHref("audit-log");
 
   useEffect(() => {
     router.replace(currentAuditPath, { scroll: false });

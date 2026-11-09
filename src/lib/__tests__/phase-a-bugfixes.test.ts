@@ -353,6 +353,7 @@ describe("#23: Cron Prisma startup check and health error display", () => {
       "app",
       "(admin)",
       "admin",
+      "system",
       "health",
       "_components",
       "shared.tsx"

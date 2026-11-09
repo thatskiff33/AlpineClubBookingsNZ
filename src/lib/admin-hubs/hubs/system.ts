@@ -18,35 +18,35 @@ export const SYSTEM_HUB = defineHub({
       area: "support",
       anchors: ["integration-readiness"],
       keywords: ["status", "diagnostics", "uptime", "monitoring"],
-      moved: false,
+      moved: true,
     },
     {
       id: "issue-reports",
       label: "Issue Reports",
       oldPath: "/admin/issue-reports",
       area: "support",
-      moved: false,
+      moved: true,
     },
     {
       id: "stuck-states",
       label: "Stuck States",
       oldPath: "/admin/stuck-states",
       area: "support",
-      moved: false,
+      moved: true,
     },
     {
       id: "background-jobs",
       label: "Background Jobs",
       oldPath: "/admin/background-jobs",
       area: "support",
-      moved: false,
+      moved: true,
     },
     {
       id: "email-deliverability",
       label: "Email Deliverability",
       oldPath: "/admin/email-deliverability",
       area: "support",
-      moved: false,
+      moved: true,
     },
     {
       id: "audit-log",
@@ -54,7 +54,7 @@ export const SYSTEM_HUB = defineHub({
       oldPath: "/admin/audit-log",
       area: "support",
       keywords: ["history", "activity", "changes", "trail"],
-      moved: false,
+      moved: true,
     },
     {
       id: "ai-diagnostics",
@@ -67,7 +67,7 @@ export const SYSTEM_HUB = defineHub({
         "diagnose", "investigate", "why", "blocked", "evidence", "troubleshoot",
         "explain",
       ],
-      moved: false,
+      moved: true,
     },
     {
       id: "ai-assistant",
@@ -76,7 +76,7 @@ export const SYSTEM_HUB = defineHub({
       area: "support",
       flags: ["aiAssistant"],
       keywords: ["ai", "assistant", "anthropic", "llm", "help", "spend cap"],
-      moved: false,
+      moved: true,
     },
     {
       id: "backups",
@@ -84,14 +84,14 @@ export const SYSTEM_HUB = defineHub({
       oldPath: "/admin/backups",
       area: "support",
       keywords: ["backup", "s3", "restore", "disaster recovery", "pg_dump"],
-      moved: false,
+      moved: true,
     },
     {
       id: "backups-setup",
       label: "Backup Setup",
       oldPath: "/admin/backups/setup",
       area: "support",
-      moved: false,
+      moved: true,
     },
     {
       // Test-only route-error probe (#4467); 404 in production.
@@ -100,7 +100,7 @@ export const SYSTEM_HUB = defineHub({
       oldPath: "/admin/testing/route-error",
       area: "overview",
       kind: "test",
-      moved: false,
+      moved: true,
     },
   ],
 });

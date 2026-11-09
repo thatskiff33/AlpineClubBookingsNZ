@@ -214,7 +214,7 @@ function FirstPaintProbe({
 async function renderAuditLogPage(
   options: { strict?: boolean; onFirstPaint?: (text: string) => void } = {},
 ) {
-  const AuditLogPage = (await import("@/app/(admin)/admin/audit-log/page")).default;
+  const AuditLogPage = (await import("@/app/(admin)/admin/system/audit-log/page")).default;
   const page = options.onFirstPaint ? (
     <FirstPaintProbe onFirstPaint={options.onFirstPaint}>
       <AuditLogPage />

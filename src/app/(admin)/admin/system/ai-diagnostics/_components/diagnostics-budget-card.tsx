@@ -11,7 +11,7 @@ import { useClubFormat } from "@/components/club-format-provider";
 import { MoneyInput } from "@/components/ui/money-input";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCents } from "@/lib/utils";
-import { centsToDollars } from "@/app/(admin)/admin/ai-assistant/budget";
+import { centsToDollars } from "@/app/(admin)/admin/system/ai-assistant/budget";
 
 /**
  * THE MONTHLY DIAGNOSTICS BUDGET, shown and edited (AID-7, #2378, owner decision 3).

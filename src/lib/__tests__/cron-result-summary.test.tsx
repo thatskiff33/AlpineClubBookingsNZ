@@ -2,7 +2,7 @@
 
 import { render, screen } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it } from "vitest";
-import { CronResultSummary } from "@/app/(admin)/admin/health/_components/shared";
+import { CronResultSummary } from "@/app/(admin)/admin/system/health/_components/shared";
 
 describe("CronResultSummary — credit-sync drift indicator (#2501)", () => {
   it("surfaces the drift count and total amount when a run finds drift", () => {

@@ -19,6 +19,7 @@ import {
 } from "@/lib/backup-config-shared";
 import type { BackupWizardContext } from "./use-backup-wizard-context";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
+import { adminHref } from "@/lib/admin-hubs";
 
 const CREDENTIALS_ENDPOINT = "/api/admin/integrations/credentials";
 const CONFIG_ENDPOINT = "/api/admin/backups/config";
@@ -665,7 +666,7 @@ export function VerificationStep({
       <p className="text-sm text-muted-foreground">
         Once verified, manage day-to-day backup settings and history on the{" "}
         <Link
-          href="/admin/backups"
+          href={adminHref("backups")}
           className="font-medium text-foreground underline decoration-brand-gold/70 decoration-2 underline-offset-4"
         >
           Database Backups

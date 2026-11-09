@@ -136,7 +136,8 @@ function fullAdminIndex(features: FeatureFlags = allOn) {
 const QUERY_NAMED_DETAILS = new Set(["/admin/display/preview"]);
 
 function isDestinationOnDisk(file: string): boolean {
-  const pagePath = toRawPathname(file);
+  // In its old-path form, so the probe is known wherever its hub has put it (C7 #4804).
+  const pagePath = canonicalAdminPathname(toRawPathname(file));
   if (pagePath.includes("[")) return false;
   if (pagePath === "/admin/testing" || pagePath.startsWith("/admin/testing/")) return false;
   if (pagePath.endsWith("/print")) return false;

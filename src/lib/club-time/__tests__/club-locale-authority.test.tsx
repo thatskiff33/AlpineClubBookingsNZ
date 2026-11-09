@@ -40,7 +40,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { formatDate as formatHealthStamp } from "@/app/(admin)/admin/health/_components/shared";
+import { formatDate as formatHealthStamp } from "@/app/(admin)/admin/system/health/_components/shared";
 import { ClubTimeProvider, useClubTime } from "@/components/club-time-provider";
 import { clubTime } from "@/lib/club-time/server";
 import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";

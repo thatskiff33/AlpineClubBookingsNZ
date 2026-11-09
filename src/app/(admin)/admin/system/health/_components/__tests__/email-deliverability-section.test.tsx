@@ -12,8 +12,8 @@ vi.mock("@/hooks/use-admin-area-edit-access", () => ({
   useAdminAreaEditAccess: () => true,
 }));
 
-import { EmailDeliverabilitySection } from "@/app/(admin)/admin/health/_components/email-deliverability-section";
-import type { HealthData } from "@/app/(admin)/admin/health/_components/types";
+import { EmailDeliverabilitySection } from "@/app/(admin)/admin/system/health/_components/email-deliverability-section";
+import type { HealthData } from "@/app/(admin)/admin/system/health/_components/types";
 
 const SECURITY_RETIREMENT_REASON =
   "Not retried: this booking email predates retry-time recipient authorization context (#2362). Re-send it by hand if the recipient still needs it.";

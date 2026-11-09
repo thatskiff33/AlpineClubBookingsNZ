@@ -1747,7 +1747,7 @@ Reference:
 `src/components/admin/booking-policies/group-discount-section.tsx` — it carries
 the section banner, which since #2160 is what every banner-hostable admin
 surface does. For the surviving per-button treatment, look at a control inside a
-dialog (`src/app/(admin)/admin/issue-reports/page.tsx`) or a leaf toolbar
+dialog (`src/app/(admin)/admin/system/issue-reports/page.tsx`) or a leaf toolbar
 component (`src/components/admin/admin-capacity-hold-controls.tsx`).
 
 The draft/snapshot half of that pattern lives in the shared

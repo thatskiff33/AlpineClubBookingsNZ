@@ -4,12 +4,16 @@
  * deletion requests.
  *
  * Section per the sidebar's `buildAdminNavSections`.
+ *
+ * The Help & system pages live under `/admin/system` (C7 #4804), and their keys
+ * are their registry old paths: see the note on `admin/finance.ts`.
  */
 import { entry, help, type HelpEntry } from "../types";
+import { getAdminPage } from "@/lib/admin-hubs";
 
 export const adminMonitoringAndSupportHelpEntries: HelpEntry[] = [
   entry(
-    "/admin/issue-reports",
+    getAdminPage("issue-reports").oldPath,
     help(
       "Issue Reports",
       "Issue reports collect screenshots and operator/member notes about problems seen in the app.",
@@ -38,7 +42,7 @@ export const adminMonitoringAndSupportHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/stuck-states",
+    getAdminPage("stuck-states").oldPath,
     help(
       "Stuck States",
       "Stuck States aggregates workflows that appear stale, inconsistent, or blocked across bookings, payments, Xero, email, waitlist, and lodge tasks.",
@@ -67,7 +71,7 @@ export const adminMonitoringAndSupportHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/health",
+    getAdminPage("health").oldPath,
     help(
       "System Health",
       "System Health shows runtime, database, provider, and readiness indicators for operators. Its Integration readiness section links the provider-backed setup pages for accounting, email and modules.",
@@ -97,7 +101,7 @@ export const adminMonitoringAndSupportHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/email-deliverability",
+    getAdminPage("email-deliverability").oldPath,
     help(
       "Email Deliverability",
       "Email Deliverability monitors SES feedback, bounces, complaints, suppressions, and reissue actions.",
@@ -126,7 +130,7 @@ export const adminMonitoringAndSupportHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/background-jobs",
+    getAdminPage("background-jobs").oldPath,
     help(
       "Background Jobs",
       "Background Jobs shows scheduled work such as cron runs, retries, payment recovery, Xero sync, email retry, and maintenance tasks.",
@@ -155,7 +159,7 @@ export const adminMonitoringAndSupportHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/audit-log",
+    getAdminPage("audit-log").oldPath,
     help(
       "Audit Log",
       "Audit Log records important admin, member, provider, and system actions for traceability.",

@@ -26,8 +26,9 @@ import {
 } from "@/hooks/use-section-edit-state";
 import { useClubTime } from "@/components/club-time-provider";
 import { requireInstant, type BoundClubTime } from "@/lib/club-time";
-import { LocalBackupCard } from "@/app/(admin)/admin/backups/local-backup-card";
+import { LocalBackupCard } from "@/app/(admin)/admin/system/backups/local-backup-card";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
+import { adminHref } from "@/lib/admin-hubs";
 
 interface BackupRunSummary {
   id: string;
@@ -336,7 +337,7 @@ function StatusCard({
             </span>
             . The{" "}
             <Link
-              href="/admin/backups/setup"
+              href={adminHref("backups-setup")}
               className="font-medium underline underline-offset-4"
             >
               guided backup setup

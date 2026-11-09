@@ -41,14 +41,14 @@ const sections: AdminHubSection[] = [
     icon: KeyRound,
   },
   {
-    href: "/admin/backups/setup",
+    href: adminHref("backups-setup"),
     title: "Database Backups",
     description:
       "Set up durable S3 backups step by step — credentials, destination, nightly schedule, and a real verification run.",
     icon: DatabaseBackup,
   },
   {
-    href: "/admin/ai-assistant",
+    href: adminHref("ai-assistant"),
     title: "AI help assistant",
     description:
       "Enter your Anthropic API key, set a monthly spend cap, and review AI usage. Hidden until the AI assistant module is enabled.",

@@ -50,6 +50,7 @@ import { BankRefundVoidsToAnswerPanel } from "@/components/admin/bank-refund-voi
 import { listBankRefundVoidsToAnswerRows } from "@/lib/bank-refund-void-follow-up";
 import { isXeroBankRefundVoidWritesEnabled } from "@/lib/xero-feature-flags";
 import { describeRefundMethod } from "@/lib/xero-refund-method";
+import { adminHref } from "@/lib/admin-hubs";
 
 const domainIcons: Record<StuckStateDomain, typeof CreditCard> = {
   payment: CreditCard,
@@ -226,7 +227,7 @@ export default async function AdminStuckStatesPage() {
         description={`Generated ${formatGeneratedAt(clubTime, dashboard.generatedAt)}`}
         actions={
           <Button asChild variant="outline" size="sm">
-            <Link href="/admin/health">System Health</Link>
+            <Link href={adminHref("health")}>System Health</Link>
           </Button>
         }
       />

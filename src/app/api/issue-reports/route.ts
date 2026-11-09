@@ -10,6 +10,7 @@ import { logAudit } from "@/lib/audit";
 import { sendAdminIssueReportAlert } from "@/lib/email";
 import { getIssueReportSensitiveDataExpiresAt } from "@/lib/issue-report-retention";
 import logger from "@/lib/logger";
+import { adminHref } from "@/lib/admin-hubs";
 
 const MAX_SCREENSHOT_BYTES = 900_000;
 
@@ -253,7 +254,7 @@ export async function POST(request: NextRequest) {
       pageUrl,
       pageTitle,
       description,
-      issueReportUrl: `${appOrigin}/admin/issue-reports?report=${encodeURIComponent(
+      issueReportUrl: `${appOrigin}${adminHref("issue-reports")}?report=${encodeURIComponent(
         issueReport.id
       )}`,
       hasScreenshot: Boolean(screenshot),

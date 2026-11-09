@@ -1854,7 +1854,7 @@ describe("view-only section banner coverage (#2160)", () => {
     // accessibility container that a banner in the page body does not reach.
     const SEPARATE_A11Y_CONTAINER = [
       "app/(admin)/admin/bookings/page.tsx",
-      "app/(admin)/admin/issue-reports/page.tsx",
+      "app/(admin)/admin/system/issue-reports/page.tsx",
       "app/(admin)/admin/member-applications/_components/approval-mapping-panel.tsx",
       "app/(admin)/admin/membership-types/page.tsx",
       "components/admin/bed-allocation-move-dialog.tsx",

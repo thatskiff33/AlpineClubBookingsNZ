@@ -1293,7 +1293,7 @@ function buildAuthSecretStrengthCheck(
             "Generate a strong value, e.g. node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\", then restart.",
           ]
         : ["Secret is set and passes the length and placeholder checks."],
-      href: "/admin/health",
+      href: adminHref("health"),
     },
     progress,
   );
@@ -1822,7 +1822,7 @@ function buildEmailCheck(
           ? `Email delivery is configured (${emailDelivery.modeLabel}).`
           : `Email delivery setup needs attention (${emailDelivery.modeLabel}).`,
       details: issues.length === 0 ? details : [...details, ...issues],
-      href: "/admin/health",
+      href: adminHref("health"),
       action: {
         type: "provider-test",
         provider: "smtp",
@@ -1860,7 +1860,7 @@ function buildSentryCheck(
         missing.length === 0
           ? ["Sentry DSN/project variables are set; values are not displayed."]
           : missing.map((name) => `${name} is missing`),
-      href: "/admin/health",
+      href: adminHref("health"),
       action: {
         type: "provider-test",
         provider: "sentry",
