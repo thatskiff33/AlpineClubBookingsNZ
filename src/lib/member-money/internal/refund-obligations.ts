@@ -150,10 +150,9 @@ export async function closeKeptCaptureReturn(tx: Db, context: BookingJournalCont
   await lockMemberMoneyPayment(tx, input.bookingId);
   const { live } = await refundObligationChain(tx, "capture-return", input.paymentIntentId);
   if (!live) return false;
-  const state = await readMemberMoneyApplicationState(tx, input.bookingId);
-  const ids = new Set(refundFamily(state, live).members.map((o) => o.id));
-  const family = memberMoneyApplicationTotals(state).families.get(live);
-  if ((family?.paid ?? 0) !== 0 || (family?.funded ?? 0) !== 0 || state.reservations.some((r) => ids.has(r.obligationId))) {
+  const family = memberMoneyApplicationTotals(await readMemberMoneyApplicationState(tx, input.bookingId)).families.get(live);
+  // An open reservation always holds its funding (the reservation step funds, then reserves), so funded covers it.
+  if ((family?.paid ?? 0) !== 0 || (family?.funded ?? 0) !== 0) {
     logger.warn({ bookingId: input.bookingId, obligationKey: live, paidCents: family?.paid ?? 0, fundedCents: family?.funded ?? 0 },
       "A kept late capture's refund debt is paid or reserved, so the keep leaves it open (#4516)");
     return false;
