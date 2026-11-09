@@ -1494,7 +1494,9 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // names the officer and holds the request row merge re-points. See docs/CONCURRENCY_AND_LOCKING.md -> "The M3b
   // booking doors and member merge's journal transfer", the M4c paragraph and
   // "A booking writer takes the booking row before a Member key share".
-  "src/lib/member-money/internal/booking-posting.ts": 1,
+  // #4845: that one statement now lives in `booking-row-lock.ts`, outside the journal boundary, so a lock-only
+  // caller names no journal module; `doors` re-exports it and `booking-posting.ts` imports it.
+  "src/lib/booking-row-lock.ts": 1,
   // #4691 (Ledger M4a): an application batch, a refund reservation and a release
   // take the booking's Payment row (`SELECT 1 … FOR NO KEY UPDATE`) before they
   // read caps. No advisory key. A caller that already holds the row adds nothing.

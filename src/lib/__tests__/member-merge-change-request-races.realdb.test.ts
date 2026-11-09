@@ -73,8 +73,9 @@ vi.mock("@/lib/booking-batch-modification-service", async (importOriginal) => {
 
 /** A pause just before a writer takes the booking-row lock, handed the transaction's backend id. */
 const beforeBookingRow = vi.hoisted(() => ({ bookingId: null as null | string, paused: null as null | ((pid: number) => Promise<void>) }));
-vi.mock("@/lib/member-money/doors", async (importOriginal) => {
-  const real = (await importOriginal()) as typeof import("@/lib/member-money/doors");
+// The one lock helper lives in `booking-row-lock.ts` (#4845); the journal's doors re-export it, so one mock covers both.
+vi.mock("@/lib/booking-row-lock", async (importOriginal) => {
+  const real = (await importOriginal()) as typeof import("@/lib/booking-row-lock");
   return {
     ...real,
     lockBookingRowForOwnerRead: async (...args: Parameters<typeof real.lockBookingRowForOwnerRead>) => {

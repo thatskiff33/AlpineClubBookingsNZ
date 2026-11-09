@@ -5,7 +5,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { getDefaultLodgeId } from "@/lib/lodges";
-import { lockBookingRowForOwnerRead } from "@/lib/member-money/doors";
+import { lockBookingRowForOwnerRead } from "@/lib/booking-row-lock";
 import { calendarDateOfDateOnlyInstant, type CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
 import { finishedStayEligibility } from "@/lib/booking-edit-policy";
@@ -358,7 +358,7 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
 
   const result: LockedPeriodExecutionResult = await db.$transaction(
     async (tx): Promise<LockedPeriodExecutionResult> => {
-      // (1) Only the immutable lock key before the locks.
+      // (1) Only the immutable keys before the locks: the booking's `lodgeId` and `bookingId`, both written once (#4845).
       const preRead = await tx.bookingChangeRequest.findUnique({
         where: { id: requestId },
         select: { kind: true, bookingId: true, booking: { select: { lodgeId: true } } },

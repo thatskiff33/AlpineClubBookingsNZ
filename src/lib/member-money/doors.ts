@@ -12,7 +12,9 @@ import "server-only";
  */
 export type { BookingChargeEvent } from "./internal/booking-charges";
 export { isBookingJournalInactive, type BookingJournalContext } from "./internal/journal-activity";
-export { lockBookingRowForOwnerRead, postBookingLedgerJournal, postMemberMergeTransfer, postPendingBookingJournal } from "./internal/booking-posting";
+// One statement, kept outside the boundary (`../booking-row-lock`) so a lock-only caller names no journal module (#4845).
+export { lockBookingRowForOwnerRead } from "../booking-row-lock";
+export { postBookingLedgerJournal, postMemberMergeTransfer, postPendingBookingJournal } from "./internal/booking-posting";
 // #4628 (M3c): a bank-transfer booking's charge before settlement, planned by the legacy side.
 export type { StandingChargeLine } from "./internal/booking-pending-charges";
 export { resolveBookingDoorClock, resolveBookingMoneyPostingContext } from "./internal/door-context";
