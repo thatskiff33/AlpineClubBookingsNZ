@@ -384,9 +384,9 @@ function expectNoDeadlock(...outcomes: PromiseSettledResult<unknown>[]) {
     const { merged, written: approved, writerFirst } = await writerArrivingWhileMergeIsParked(
       prisma, keyShareOnMember(master), runMerge, () => approveBookingRequestAs(loser), { writer: "queuesOrFinishes" },
     );
-    // Before #4855 the approval queued behind the merge's hold on the officer's row and died there.
-    expect(writerFirst, "the approval waited on the merge").toBe("settled");
     expectNoDeadlock(approved, merged);
+    // Before #4855 the approval queued behind the merge's hold on the officer's row and died there (40P01).
+    expect(writerFirst, "the approval waited on the merge").toBe("settled");
     expect(approved).toMatchObject({ status: "fulfilled", value: { type: "approved", bookingId: HELD_BOOKING_ID } });
     // The survivor's new guest row is at a lodge the merge never locked and the hold now names the duplicate:
     // either refuses the whole merge with a clean 409, nothing moved.
@@ -409,8 +409,8 @@ function expectNoDeadlock(...outcomes: PromiseSettledResult<unknown>[]) {
     expect(approved).toMatchObject({ status: "fulfilled", value: { outcome: "executed" } });
     // Before #4855 the merge's reviewer move skipped the uncommitted claim, both committed, and the loser
     // delete's SetNull cleared the reviewer.
+    expect(await changeRequestReviewer(), "the approval's reviewer was cleared").toBe(loser);
     expectRefusedForResidual(merged, "BookingChangeRequest.reviewedBy");
-    expect(await changeRequestReviewer()).toBe(loser);
     expect(await stillThere(loser)).toBe(true);
   });
 
