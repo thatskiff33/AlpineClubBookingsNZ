@@ -70,8 +70,8 @@ function openDialog(subject = row()) {
 const fullChoice = () => screen.getByRole("radio", { name: "Paid back in full" });
 const partChoice = () => screen.getByRole("radio", { name: "Paid back part of it" });
 // #4516 (owner, 2 Nov 2026): a part close's rest, asked exactly.
-const keepsChoice = () => screen.getByRole("radio", { name: "The club keeps the rest" });
-const owedChoice = () => screen.getByRole("radio", { name: "The rest is still owed to the member" });
+const keepsChoice = () => screen.getByRole("button", { name: "The club keeps the rest" });
+const owedChoice = () => screen.getByRole("button", { name: "The rest is still owed to the member" });
 const amountBox = () => screen.getByLabelText("Amount paid back") as HTMLInputElement;
 const noteBox = () => screen.getByLabelText("How was it paid back? (required)") as HTMLTextAreaElement;
 const closeButton = () => screen.getByRole("button", { name: "Close as paid another way" });
@@ -185,12 +185,15 @@ describe("the Paid another way dialog", () => {
     fireEvent.click(partChoice());
     fireEvent.change(noteBox(), { target: { value: "Bank transfer" } });
     fireEvent.change(amountBox(), { target: { value: "100.00" } });
-    expect(keepsChoice()).not.toBeChecked();
-    expect(owedChoice()).not.toBeChecked();
+    expect(screen.getByRole("group", { name: "What happens to the rest?" })).toBeInTheDocument();
+    expect(keepsChoice()).toHaveAttribute("aria-pressed", "false");
+    expect(owedChoice()).toHaveAttribute("aria-pressed", "false");
     expect(closeButton()).toBeDisabled();
     const hint = screen.getByText("Choose whether the club keeps the rest or it is still owed to the member.");
     expect(closeButton()).toHaveAttribute("aria-describedby", hint.id);
     fireEvent.click(owedChoice());
+    expect(owedChoice()).toHaveAttribute("aria-pressed", "true");
+    expect(keepsChoice()).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByText("$50.00 stays owed to the member, on this list, until it is closed.")).toHaveAttribute("role", "status");
     expect(closeButton()).toBeEnabled();
   });
@@ -198,7 +201,7 @@ describe("the Paid another way dialog", () => {
   it("a full close asks nothing about a rest", () => {
     openDialog();
     fireEvent.click(fullChoice());
-    expect(screen.queryByRole("radio", { name: "The club keeps the rest" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "The club keeps the rest" })).not.toBeInTheDocument();
   });
 
   it("MUTATION: never infers part from the amount: part of it must be less than is owed", () => {

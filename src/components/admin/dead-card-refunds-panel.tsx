@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { MoneyInput } from "@/components/ui/money-input";
+import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
 import { Textarea } from "@/components/ui/textarea";
 import {
   AdminViewOnlySectionBanner,
@@ -144,7 +145,6 @@ export function DeadCardRefundsPanel({
   const [seenOwedCents, setSeenOwedCents] = useState<number | null>(null);
   const [paidBack, setPaidBack] = useState<PaidBackChoice | null>(null);
   const [rest, setRest] = useState<PaidBackRestChoice | null>(null); // #4516: no default
-  const restName = useId();
   const [amountInput, setAmountInput] = useState("");
   // Round 7 (UX): the amount's error waits until the treasurer has typed or left the box.
   const [amountTouched, setAmountTouched] = useState(false);
@@ -431,16 +431,12 @@ export function DeadCardRefundsPanel({
                 </div>
               ) : null}
               {paidBack === "partial" ? (
-                <fieldset className="space-y-2">
-                  {/* #4516 (owner, 2 Nov 2026): asked exactly, nothing chosen for the treasurer. */}
-                  <legend className="text-sm font-medium">What happens to the rest?</legend>
+                // #4516 (owner, 2 Nov 2026): asked exactly, nothing chosen for the treasurer.
+                <OptionCardGroup label="What happens to the rest?">
                   {PAID_BACK_REST_CHOICES.map((choice) => (
-                    <label key={choice} className="flex items-center gap-2 text-sm">
-                      <input type="radio" name={restName} className="size-4" checked={rest === choice} onChange={() => setRest(choice)} />
-                      <span>{PAID_BACK_REST_LABELS[choice]}</span>
-                    </label>
+                    <OptionCard key={choice} selected={rest === choice} onSelect={() => setRest(choice)} title={PAID_BACK_REST_LABELS[choice]} />
                   ))}
-                </fieldset>
+                </OptionCardGroup>
               ) : null}
               <div className="space-y-1">
                 <Label htmlFor={noteId}>How was it paid back? (required)</Label>
