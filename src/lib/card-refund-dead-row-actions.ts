@@ -279,4 +279,3 @@ async function stripeRefundsOnRowCharges(operationId: string): Promise<ListedStr
   }
   return listed;
 }
-
