@@ -35,7 +35,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { cleanHistories, createHistoryBooking, historyNames, seedHistoryFixtures } from "./support/booking-ledger-history";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
-import { backendPid, isBlocking, untilBlockedChain } from "./support/race-lock-waits";
+import { backendPid, isBlocking, RACE_TRANSACTION_BUDGET, untilBlockedChain } from "./support/race-lock-waits";
 
 vi.hoisted(() => {
   if (process.env.RUN_CONCURRENCY_RACE_TESTS === "1" && process.env.CONCURRENCY_RACE_DATABASE_URL) {
@@ -177,7 +177,7 @@ async function approvalArrivingWhileMergeWaitsOnTheMember(loser: string, runMerg
     blockerPid = await backendPid(tx);
     held.open();
     await release.opened;
-  }, { maxWait: 30_000, timeout: 120_000 });
+  }, RACE_TRANSACTION_BUDGET);
   await held.opened;
   let merging: Promise<unknown> = Promise.resolve();
   let approving: Promise<unknown> = Promise.resolve();

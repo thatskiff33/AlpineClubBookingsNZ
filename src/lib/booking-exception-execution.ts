@@ -140,11 +140,11 @@ export interface PolicyExceptionRequestStore {
    * why a request is still pending.
    */
   readonly holdsReservation: boolean;
-  /** Immutable pre-read used only to key the locks: the lodge, and (#4853) an existing booking's row. */
+  /** Immutable pre-read used only to resolve the lodge for the lock. */
   preRead(
     tx: PrismaTransactionClient,
     requestId: string,
-  ): Promise<{ proposalSnapshot: unknown; bookingId: string | null } | null>;
+  ): Promise<{ proposalSnapshot: unknown } | null>;
   /**
    * Full fresh read under the locks, with the stored JSON left UNPARSED — the
    * engine owns the parse so "row is missing / wrong kind" (notFound) stays
@@ -205,10 +205,10 @@ export const modificationExceptionRequestStore: PolicyExceptionRequestStore = {
   async preRead(tx, requestId) {
     const row = await tx.bookingChangeRequest.findUnique({
       where: { id: requestId },
-      select: { proposalSnapshot: true, kind: true, bookingId: true },
+      select: { proposalSnapshot: true, kind: true },
     });
     if (!row || row.kind !== "POLICY_EXCEPTION") return null;
-    return { proposalSnapshot: row.proposalSnapshot, bookingId: row.bookingId };
+    return { proposalSnapshot: row.proposalSnapshot };
   },
 
   async read(tx, requestId) {
@@ -350,8 +350,7 @@ export const newBookingExceptionRequestStore: PolicyExceptionRequestStore = {
       where: { id: requestId },
       select: { proposalSnapshot: true },
     });
-    // A new booking has no row yet, so nothing for #4853's booking-row lock to take.
-    return row ? { proposalSnapshot: row.proposalSnapshot, bookingId: null } : null;
+    return row ? { proposalSnapshot: row.proposalSnapshot } : null;
   },
 
   async read(tx, requestId) {
@@ -619,10 +618,11 @@ export function parseProposalSnapshot(
  *
  * Sequence (all inside the approval transaction):
  *
- *  1. Pre-read only the immutable frozen `lodgeId`, then take global lock(1),
- *     then the per-lodge capacity lock (the canonical service re-enters the
- *     lodge lock and takes member-night / member-credit after it, preserving
- *     global -> lodge -> member order).
+ *  1. Pre-read only the immutable frozen snapshot, then take global lock(1),
+ *     the per-lodge capacity lock and, for a MODIFICATION, the row of the
+ *     booking it executes on (#4853), before the claim names the officer (the
+ *     canonical service re-enters the lodge lock and takes member-night /
+ *     member-credit after it: global -> lodge -> booking row -> member).
  *  2. Reauthorize from FRESH DB roles. A failure writes nothing.
  *  3. Re-read the request FRESH under the locks; require REQUESTED,
  *     POLICY_EXCEPTION, and the expected `version` (optimistic token). A miss
@@ -670,7 +670,7 @@ export async function approveAndExecutePolicyExceptionRequest(params: {
   try {
     result = await db.$transaction(
     async (tx): Promise<ApprovePolicyExceptionResult> => {
-      // (1) Pre-read the immutable frozen lodge, then lock global -> per-lodge.
+      // (1) Pre-read the immutable frozen snapshot, then lock global -> per-lodge -> (#4853) the booking it modifies.
       const preRead = await store.preRead(tx, requestId);
       if (!preRead) return { outcome: "notFound" };
       const preSnapshot = parseProposalSnapshot(preRead.proposalSnapshot);
@@ -678,8 +678,8 @@ export async function approveAndExecutePolicyExceptionRequest(params: {
 
       await acquireGlobalBookingLock(tx);
       await acquireLodgeCapacityLock(tx, preSnapshot.lodgeId);
-      // #4853: an existing booking's row next, before the claim names the officer and holds the request row merge re-points.
-      if (preRead.bookingId) await lockBookingRowForOwnerRead(tx, preRead.bookingId);
+      // #4853: the booking a MODIFICATION executes on, from the same frozen snapshot, before the claim names the officer and holds the request row merge re-points; a NEW_BOOKING has no row yet.
+      if (preSnapshot.kind === "MODIFICATION") await lockBookingRowForOwnerRead(tx, preSnapshot.bookingId);
 
       // (2) Reauthorize from fresh DB roles. No write yet, so a refusal is clean.
       const authorized = await hooks.reauthorizeBookingOfficer(tx, actorMemberId);

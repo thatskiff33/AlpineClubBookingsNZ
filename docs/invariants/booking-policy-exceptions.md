@@ -149,7 +149,8 @@ pure workflow logic (`src/lib/booking-exception-requests.ts`):
 ### INV-EXCEPT-010
 
 - **Approval is atomic with execution (#2525).** `approveAndExecutePolicyExceptionRequest`
-  reauthorizes from fresh DB roles, re-reads under global -> per-lodge locks,
+  reauthorizes from fresh DB roles, re-reads under global -> per-lodge locks
+  and, for an existing booking, its row (#4853, before the claim),
   applies the drift rules above, claims `REQUESTED -> APPROVED` with the `version`
   CAS, releases the reservation, and invokes the transaction-aware canonical
   booking service (`createConfirmedBooking` / `modifyBookingBatch`, made

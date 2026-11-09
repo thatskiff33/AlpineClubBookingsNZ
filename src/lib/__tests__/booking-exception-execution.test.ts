@@ -229,8 +229,8 @@ function makeHooks(
 describe("approveAndExecutePolicyExceptionRequest", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("HOLD happy path: locks global→lodge→booking row, claims, releases, executes, then post-commit", async () => {
-    const { db, tx, order } = makeDb({ row: baseRow() });
+  it("HOLD happy path: locks global→lodge, claims, releases, executes, then post-commit", async () => {
+    const { db, order } = makeDb({ row: baseRow() });
     const hooks = makeHooks({}, order);
     const result = await approveAndExecutePolicyExceptionRequest({
       requestId: "req-1",
@@ -241,13 +241,11 @@ describe("approveAndExecutePolicyExceptionRequest", () => {
     });
 
     expect(result).toEqual({ outcome: "executed", requestId: "req-1" });
-    // Lock order, claim, atomic release + execute in-tx, THEN post-commit. #4853: the
-    // booking row before the claim, whose reviewer FK takes KEY SHARE on the officer's
-    // Member row and which holds the request row member merge re-points.
+    // Lock order, claim, atomic release + execute in-tx, THEN post-commit. A NEW_BOOKING
+    // snapshot has no booking row to take yet (#4853).
     expect(order).toEqual([
       "global-lock",
       "lodge-lock",
-      "booking-row",
       "claim-approved",
       "release",
       "execute",
@@ -262,10 +260,6 @@ describe("approveAndExecutePolicyExceptionRequest", () => {
       { reasonCode: "MINIMUM_STAY", policyId: "pol-1" },
     ]);
     expect(call.override.clearedReviewed).toEqual([]);
-    // #4853: keyed from the pre-lock read of the request's booking id (written once).
-    expect(tx.bookingChangeRequest.findUnique.mock.calls[0]).toEqual([expect.objectContaining({ select: expect.objectContaining({ bookingId: true }) })]);
-    const bookingRow = tx.$executeRaw.mock.calls.find(([strings]) => strings.join("?").includes('FROM "Booking"'));
-    expect(bookingRow?.slice(1)).toEqual(["bk-1"]);
   });
 
   it("NOT AUTHORIZED: fresh-role refusal writes nothing and executes nothing", async () => {
@@ -658,6 +652,27 @@ describe("approveAndExecutePolicyExceptionRequest", () => {
     });
     expect(result.outcome).toBe("executed");
     expect(hooks.verifyLiveProposalIntegrity).toHaveBeenCalledTimes(1);
+  });
+
+  it("#4853: a MODIFICATION takes the booking row it executes on after the lodge key, before the claim", async () => {
+    // Keyed from the frozen snapshot the lodge key also comes from, so the row
+    // locked is the booking the canonical service modifies (`snapshot.bookingId`),
+    // not a second column that could disagree with it.
+    const modRow = baseRow({ proposalHash: MOD_HASH, bookingId: "column-must-not-key-the-lock" });
+    modRow.proposalSnapshot = MOD_SNAPSHOT as never;
+    const { db, tx, order } = makeDb({ row: modRow });
+    const hooks = makeHooks({ verifyLiveProposalIntegrity: vi.fn(async () => true) }, order);
+    const result = await approveAndExecutePolicyExceptionRequest({
+      requestId: "req-1",
+      expectedVersion: 1,
+      actorMemberId: "admin-1",
+      hooks,
+      db: db as never,
+    });
+    expect(result.outcome).toBe("executed");
+    expect(order.slice(0, 4)).toEqual(["global-lock", "lodge-lock", "booking-row", "claim-approved"]);
+    const bookingRow = tx.$executeRaw.mock.calls.find(([strings]) => strings.join("?").includes('FROM "Booking"'));
+    expect(bookingRow?.slice(1)).toEqual([MOD_SNAPSHOT.bookingId]);
   });
 });
 

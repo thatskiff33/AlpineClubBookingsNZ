@@ -5887,11 +5887,12 @@ wiring, checked against the contract above:
   mark-approved-then-call-service gap.
 - **Atomic approve-and-execute + terminal release**
   (`src/lib/booking-exception-execution.ts`): the approval pre-reads the immutable
-  frozen `lodgeId`, then takes global `lock(1)` (one shared
-  `acquireGlobalBookingLock` helper, so the advisory-lock inventory sees one site)
-  and `acquireLodgeCapacityLock` — the canonical service re-enters the lodge lock
-  and takes the member-night / member-credit keys after that, preserving
-  global → lodge → member order. It reauthorizes from fresh DB roles, re-reads the
+  frozen snapshot, then takes global `lock(1)` (one shared
+  `acquireGlobalBookingLock` helper, so the advisory-lock inventory sees one site),
+  `acquireLodgeCapacityLock` and, for a modification, the row of the booking the
+  snapshot names (#4853), before its claim names the officer — the canonical
+  service re-enters the lodge lock and takes the member-night / member-credit keys
+  after that, preserving global → lodge → booking row → member order. It reauthorizes from fresh DB roles, re-reads the
   request under the locks, runs the proposal-hash tamper gate and the
   `classifyPolicyExceptionDrift` gate, rechecks capacity for a NO_HOLD aggregate,
   claims `REQUESTED → APPROVED` with the integer `version` CAS, releases the

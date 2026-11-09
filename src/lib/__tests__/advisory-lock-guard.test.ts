@@ -530,7 +530,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "src/lib/booking-exception-execution.ts::acquireGlobalBookingLock#1",
     tier: "GLOBAL",
     reason:
-      "#2525: one helper mints the key for BOTH the atomic approve-and-execute and the terminal release (reject/cancel/supersede) of a policy-exception request. Each mutates a provisional capacity reservation and, for a modification approval, composes the canonical money/status transition, so global comes before the frozen lodge key and the tx-aware service takes the member keys after that.",
+      "#2525: one helper mints the key for BOTH the atomic approve-and-execute and the terminal release (reject/cancel/supersede) of a policy-exception request. Each mutates a provisional capacity reservation and, for a modification approval, composes the canonical money/status transition, so global comes before the frozen lodge key, then (#4853, an existing booking) the booking row before the claim, and the tx-aware service takes the member keys after that.",
     invariant: "INV-LOCK-002",
   },
   {
