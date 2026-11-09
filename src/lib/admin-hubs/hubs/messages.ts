@@ -19,6 +19,7 @@ export const MESSAGES_HUB = defineHub({
       oldPath: "/admin/communications",
       area: "membership",
       flags: ["communications"],
+      keywords: ["email", "newsletter", "bulk message", "broadcast"],
       moved: false,
     },
     {
@@ -27,6 +28,7 @@ export const MESSAGES_HUB = defineHub({
       oldPath: "/admin/notices",
       area: "membership",
       flags: ["memberNotices"],
+      keywords: ["news", "recent news", "notice", "announcement", "committee"],
       moved: false,
     },
     {
@@ -55,6 +57,10 @@ export const MESSAGES_HUB = defineHub({
       oldPath: "/admin/message-board",
       area: "membership",
       flags: ["commsPortal"],
+      keywords: [
+        "message board", "posts", "member posts", "moderation", "hide post",
+        "remove post",
+      ],
       moved: false,
     },
     {

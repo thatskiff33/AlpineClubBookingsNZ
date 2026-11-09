@@ -22,6 +22,7 @@
  */
 import { ADMIN_HUBS_LIVE } from "./release";
 import {
+  isAdminMenuDestination,
   normaliseHubPage,
   type AdminHubInput,
   type AdminHubPage,
@@ -120,6 +121,23 @@ export type AdminPageAnchor<Id extends AdminPageId> = DeclaredList<Id, "anchors"
 export type AdminTabbedPageId = {
   [Id in AdminPageId]: [AdminPageTab<Id>] extends [never] ? never : Id;
 }[AdminPageId];
+
+/** A page the hub menu and the command palette may offer, and the URL to link it at. */
+export interface AdminMenuDestination {
+  readonly page: AdminHubPage;
+  /** What `adminHref(page.id)` answers; a destination has no `[param]` to fill. */
+  readonly href: string;
+}
+
+/**
+ * Every menu destination (`isAdminMenuDestination`), in hub order, linked as
+ * `adminHref` links it under today's switch. The command palette's index is
+ * built from it (S2 #4797), and C13's hub menu will be: neither keeps a page
+ * list of its own.
+ */
+export const ADMIN_MENU_DESTINATIONS: readonly AdminMenuDestination[] = ADMIN_PAGES.filter(
+  isAdminMenuDestination,
+).map((page) => ({ page, href: resolveAdminHref(page, ADMIN_HUBS_LIVE) }));
 
 /** The registered page for an id; an id the registry does not know throws. */
 export function getAdminPage(id: AdminPageId): AdminHubPage {
@@ -420,15 +438,29 @@ function retiredRedirect(
   if (clash) {
     throw new Error(`admin hub rules: retired ${retired.oldPath} is still ${clash.id}'s path`);
   }
+  return {
+    source: retired.oldPath,
+    destination: retiredAdminPageHref(retired, live, pages),
+    permanent: false,
+  };
+}
+
+/**
+ * Where a retired page's content is served under the switch: the page it was
+ * merged into, at its tab and section. Its redirect goes here, and so does the
+ * command palette's entry for its old name (S2 #4797), so the two cannot
+ * disagree. Refuses a destination the registry does not have.
+ */
+export function retiredAdminPageHref(
+  retired: AdminRetiredPage,
+  live: boolean = ADMIN_HUBS_LIVE,
+  pages: readonly AdminHubPage[] = ADMIN_PAGES,
+): string {
   const target = pages.find((page) => page.id === retired.mergedInto);
   if (!target) {
     throw new Error(`admin hub rules: retired ${retired.oldPath} was merged into unknown ${retired.mergedInto}`);
   }
-  return {
-    source: retired.oldPath,
-    destination: withTabAndAnchor(target, resolveAdminHref(target, live), retired.tab, retired.anchor),
-    permanent: false,
-  };
+  return withTabAndAnchor(target, resolveAdminHref(target, live), retired.tab, retired.anchor);
 }
 
 /**

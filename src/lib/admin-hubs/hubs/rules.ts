@@ -19,6 +19,7 @@ export const RULES_HUB = defineHub({
       oldPath: "/admin/fees",
       area: "bookings",
       admission: "fees-or",
+      keywords: ["hut fees", "joining fees", "annual fees", "rates", "pricing"],
       moved: false,
     },
     {
@@ -42,6 +43,7 @@ export const RULES_HUB = defineHub({
       label: "Age Groups",
       oldPath: "/admin/age-tier-settings",
       area: "bookings",
+      keywords: ["age tiers", "child pricing", "youth", "senior"],
       moved: false,
     },
     {
@@ -50,6 +52,7 @@ export const RULES_HUB = defineHub({
       oldPath: "/admin/promo-codes",
       area: "bookings",
       flags: ["promoCodes"],
+      keywords: ["discount", "coupon", "voucher"],
       moved: false,
     },
     {

@@ -11,6 +11,7 @@ export const FINANCE_HUB = defineHub({
       label: "Payments",
       oldPath: "/admin/payments",
       area: "finance",
+      keywords: ["stripe", "transactions", "receipts"],
       moved: false,
     },
     {
@@ -40,6 +41,7 @@ export const FINANCE_HUB = defineHub({
       label: "Reports",
       oldPath: "/admin/reports",
       area: "finance",
+      keywords: ["statements", "export", "analytics", "revenue"],
       moved: false,
     },
     {
@@ -48,6 +50,7 @@ export const FINANCE_HUB = defineHub({
       oldPath: "/admin/xero",
       area: "finance",
       flags: ["xeroIntegration"],
+      keywords: ["accounting", "invoices", "reconcile"],
       moved: false,
     },
     {
