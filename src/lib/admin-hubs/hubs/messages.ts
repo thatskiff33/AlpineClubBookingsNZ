@@ -47,6 +47,9 @@ export const MESSAGES_HUB = defineHub({
       moved: false,
     },
     {
+      // #2998: moderation sits with notices, because the people who curate what
+      // members read are the same people; every handler enforces
+      // requireAdmin({ area: "membership" }).
       id: "message-board",
       label: "Message Board",
       oldPath: "/admin/message-board",

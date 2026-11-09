@@ -918,9 +918,14 @@ describe("admin route requirements", () => {
   });
 
   it("pins the any-admin admission carve-out to exactly the owner-decided pages (#2975, #3596)", () => {
+    // Generated since #4799 from the hub registry entries marked
+    // `admission: "any-admin"`: each page's old path, then its hub path, which
+    // carries the same owner decision to the page's new address.
     expect([...ANY_ADMIN_ADMISSION_PATHS]).toEqual([
       "/admin/ai-diagnostics",
+      "/admin/system/ai-diagnostics",
       "/admin/club-format",
+      "/admin/settings/club-format",
     ]);
   });
 
