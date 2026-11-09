@@ -1016,6 +1016,7 @@ export async function removeBookingGuestInTransaction({
     bookingModification,
     sides: pricingSides,
     site: "guest-removal",
+    cardRefundCents: paymentImpact.organiserChildRefund ? 0 : paymentImpact.pendingRefundAmountCents, // #4516: its R05
   });
   // #4019: this new whole-lodge PAID path bypasses the ordinary settle.
   // Post after guest/night writes and the edit, at the final price only.

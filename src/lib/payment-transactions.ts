@@ -26,7 +26,10 @@ import { IntentLedgerRowOnAnotherPaymentError, writePaymentIntentTransaction } f
 import { accountCreditDispositionCents } from "@/lib/stripe-cash-refund-evidence";
 import { readPaidAnotherWayCloseBankCashByPayment } from "@/lib/card-refund-paid-another-way-cash";
 import type { ClubFormat } from "@/lib/club-format";
-import { postBookingReceipts, type BookingJournalContext } from "@/lib/member-money/doors";
+import { MemberMoneyReservationRefused, postBookingReceipts, postCardRefundCash, reserveCardRefundSlice, resolveBookingMoneyPostingContext,
+  type BookingJournalContext, type CardRefundObligationRef, type CardRefundReservationOutcome, type CardRefundSliceReservation } from "@/lib/member-money/doors";
+import { createAuditLog } from "@/lib/audit";
+import { REFUND_SLICE_KEY_METADATA } from "@/lib/refund-slice-evidence";
 import { isLateCaptureRefundedBookingStatus } from "@/lib/additional-payment-chase";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { compareLedgerRowsNewestFirst, LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
@@ -761,6 +764,15 @@ export async function refundLedgerStartSeconds(db: PaymentStore): Promise<number
 }
 
 /**
+ * #4516 (M4c, `INV-LOCK-004`): the journal context a card refund writer posts R12/R13 or reserves with, read BEFORE
+ * any transaction here opens, and only on the root client: a caller joining its own transaction passes its own,
+ * or nothing posts (every production caller runs on the root client; the next run on the payment catches up).
+ */
+async function resolveCardRefundJournalBeforeTransaction(store: PaymentStore, given?: BookingJournalContext): Promise<BookingJournalContext | null> {
+  return given ?? (isRootPrismaClient(store) ? resolveBookingMoneyPostingContext() : null);
+}
+
+/**
  * #3640 - THE one way a Stripe card refund reaches a transaction's
  * `refundedAmountCents` mirror (`INV-PAY-103`, `INV-SSOT`). The inline refund,
  * the `charge.refunded` webhook sync and the superseded-payment refund recovery
@@ -821,6 +833,8 @@ export async function recordStripeRefundsAgainstTransaction({
   fallbackPaymentIntentId,
   stripeRefundedAmountCents = 0,
   store = prisma,
+  journal: givenJournal,
+  attemptKeys,
 }: {
   paymentId: string;
   paymentTransactionId: string;
@@ -830,7 +844,19 @@ export async function recordStripeRefundsAgainstTransaction({
   /** Stripe's cumulative `amount_refunded` for the charge, when known. */
   stripeRefundedAmountCents?: number;
   store?: PaymentStore;
+  /** #4516 (M4c): the journal's context for R12/R13; see `resolveCardRefundJournalBeforeTransaction`. */
+  journal?: BookingJournalContext;
+  /** #4516: the attempt key a sender made each refund under (its own, even when Stripe's evidence lacks it). */
+  attemptKeys?: ReadonlyMap<string, string>;
 }) {
+  const journal = await resolveCardRefundJournalBeforeTransaction(store, givenJournal);
+  // Each refund's attempt key: Stripe's `refundSliceKey` evidence (`INV-PAY-147`), then the sender's own.
+  const refundKeys = new Map<string, string>();
+  for (const refund of refunds) {
+    const evidence = refund.metadata?.[REFUND_SLICE_KEY_METADATA];
+    if (evidence) refundKeys.set(refund.id, evidence);
+  }
+  for (const [refundId, key] of attemptKeys ?? []) refundKeys.set(refundId, key);
   const recorded = await withStoreTransaction(store, async (db) => {
     await lockPaymentForRefundedTotal(db, paymentId);
     const ledgerStartSeconds = await refundLedgerStartSeconds(db);
@@ -839,6 +865,7 @@ export async function recordStripeRefundsAgainstTransaction({
     let createdRefundAmountCents = 0;
     let newlyCountedCents = 0;
     const newlyCountedRefundIds: string[] = []; // #4312: which refunds those are, for a bank transfer's own notes
+    const firstRecorded = new Set<string>(); // #4516 review L3: the rows this delivery wrote first
     let reversedCents = 0;
     const ordered = [...refunds].sort((a, b) => compareOrdinal(a.id, b.id));
     for (const refund of ordered) {
@@ -855,6 +882,7 @@ export async function recordStripeRefundsAgainstTransaction({
       if (!recorded.created) {
         continue;
       }
+      firstRecorded.add(refund.id);
       createdRefundsCount += 1;
       createdRefundAmountCents += recorded.amountCents;
       // An undated refund counts as new here: only a dated pre-ledger one was already folded in.
@@ -907,6 +935,10 @@ export async function recordStripeRefundsAgainstTransaction({
     const capOverflow = await readCardRefundCapOverflow(db, { paymentId, paymentTransactionId, discardedCents, recordedRefundCents: ledgerRefundedAmountCents, previousCents, nextCents }); // #4154 M1, F2: logged; the officers alerted after the commit
 
     const payment = await reconcilePaymentAggregates({ paymentId, store: db });
+
+    // #4516 (M4c): R12 for each refund that counts, applied only through the reservation its own key names, and
+    // R13 for one that counted and failed, under the Payment row taken first, before its debt is kept owed below.
+    if (journal) await postCardRefundCash(db, journal, { paymentId, attemptKeys: refundKeys, firstRecorded });
 
     // #4104 (`INV-PAY-128`): a refund seen failing after it counted is owed again, in this transaction.
     const { debts: failedLaterDebts, readAsRefused } = await keepFailedLaterCardRefundsOwed(db, { paymentId, paymentTransactionId, seen: failedLater, fallbackPaymentIntentId });
@@ -1482,12 +1514,23 @@ export async function refundPaymentTransactions({
   allocation,
   store = prisma,
   format,
+  obligation,
+  planAttemptKeys,
 }: {
   paymentId: string;
   amountCents: number;
   reason?: Stripe.RefundCreateParams.Reason;
   metadata?: Record<string, string>;
   idempotencyKeyPrefix?: string;
+  /**
+   * #4516 (M4c, plan section 5): the refund debt these slices pay, as its door named it. With it, each keyed slice
+   * is reserved (`reserveCardRefundAttempt`) before Stripe is asked for it. A refusal throws, as a
+   * `PartialRefundError` whose cause is `MemberMoneyReservationRefused`, before that slice is sent; the Stripe
+   * request itself, key and body, is exactly as without it.
+   */
+  obligation?: CardRefundObligationRef | ((slice: { paymentTransactionId: string; paymentIntentId: string; amountCents: number }) => CardRefundObligationRef | null) | null;
+  /** #4516: every key of the plan these slices belong to, made slices included; defaults to these slices' keys. */
+  planAttemptKeys?: readonly string[];
   /**
    * Explicit per-transaction slices to execute (#1097). When present, the
    * internal newest-first allocation is skipped and exactly these slices are
@@ -1541,6 +1584,12 @@ export async function refundPaymentTransactions({
     slices = derived.slices;
   }
 
+  const sliceKey = (slice: { transaction: { id: string }; amountCents: number; stripeKeySuffix?: string }) => idempotencyKeyPrefix
+    ? refundSliceStripeIdempotencyKey(idempotencyKeyPrefix, { paymentTransactionId: slice.transaction.id, amountCents: slice.amountCents, ...(slice.stripeKeySuffix ? { stripeKeySuffix: slice.stripeKeySuffix } : {}) })
+    : undefined;
+  const plannedKeys = planAttemptKeys ?? slices.flatMap((slice) => sliceKey(slice) ?? []);
+  const journal = await resolveCardRefundJournalBeforeTransaction(store);
+
   // #4070: Stripe's own status rides along, so a caller can tell a refund made from one it refused;
   // #4083: with the slice as sent, so a refused one can be asked for again (`refusedRefundSlices`).
   const refunds: Array<PartialRefundError["refunds"][number] & { status: string | null; slice: RefundAllocationSlice }> = [];
@@ -1559,6 +1608,15 @@ export async function refundPaymentTransactions({
       // Stripe metadata values allow 500 characters. Never truncate the evidence.
       if (idempotencyKey && idempotencyKey.length > 500) {
         throw new Error("Refund slice key exceeds Stripe metadata value limit");
+      }
+      // #4516 (M4c): the slice's debt claimed first, under Stripe's own key for it; refused, nothing is sent.
+      // A sender whose slices pay different debts (the late-capture repair: one per capture) names each slice's.
+      const sliceObligation = typeof obligation === "function"
+        ? obligation({ paymentTransactionId: transaction.id, paymentIntentId: transaction.stripePaymentIntentId, amountCents: refundAmountForTransaction })
+        : obligation;
+      if (sliceObligation && idempotencyKey && journal) {
+        await reserveCardRefundAttempt(journal, { paymentId, obligation: sliceObligation, attemptKey: idempotencyKey, senderKeyPrefix: idempotencyKeyPrefix!,
+          paymentTransactionId: transaction.id, amountCents: refundAmountForTransaction, planAttemptKeys: plannedKeys });
       }
       const sendSlice = (stampRefundSliceKey: boolean) => processRefund({
         paymentIntentId: transaction.stripePaymentIntentId,
@@ -1602,6 +1660,8 @@ export async function refundPaymentTransactions({
         refunds: [refund],
         fallbackPaymentIntentId: transaction.stripePaymentIntentId,
         store,
+        ...(journal ? { journal } : {}),
+        ...(idempotencyKey ? { attemptKeys: new Map([[refund.id, idempotencyKey]]) } : {}),
       });
       failedLaterDebts.push(...recorded.failedLaterDebts);
       if (recorded.capOverflow) capOverflows.push(recorded.capOverflow);
@@ -1646,6 +1706,44 @@ export async function refundPaymentTransactions({
     failedLaterDebts,
     capOverflows, // #4159 round 3 (6): the same, for refund money a charge's total could not hold
   };
+}
+
+/**
+ * #4516 (M4c, plan section 5): THE RESERVATION STEP for one card refund attempt, in a short transaction of its own
+ * on the root client that takes only the booking's Payment row (`reserveCardRefundSlice`), before Stripe is asked.
+ * A refusal (`MemberMoneyReservationRefused`) is logged at error level and audited here, after its transaction
+ * rolled back, then thrown: the sender asks Stripe for nothing more, the door that committed earlier stands, and
+ * the recovery runner stops the row for the treasurer rather than retry it. Never swallowed.
+ */
+export async function reserveCardRefundAttempt(journal: BookingJournalContext, input: CardRefundSliceReservation): Promise<CardRefundReservationOutcome> {
+  try {
+    return await prisma.$transaction((tx) => reserveCardRefundSlice(tx, journal, input), PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS);
+  } catch (error) {
+    if (error instanceof MemberMoneyReservationRefused) await reportCardRefundReservationRefused(input, error);
+    throw error;
+  }
+}
+
+async function reportCardRefundReservationRefused(input: CardRefundSliceReservation, error: MemberMoneyReservationRefused): Promise<void> {
+  logger.error({ err: error, paymentId: input.paymentId, attemptKey: input.attemptKey, obligation: input.obligation, amountCents: input.amountCents },
+    "A card refund's reservation was refused: Stripe was not asked for this slice and it will not be retried (#4516)");
+  try {
+    const payment = await prisma.payment.findUnique({ where: { id: input.paymentId }, select: { bookingId: true } });
+    await createAuditLog({
+      category: "payment",
+      action: "booking-payment.card-refund.reservation-refused",
+      targetId: payment?.bookingId ?? null,
+      entityType: "Payment",
+      entityId: input.paymentId,
+      severity: "critical",
+      outcome: "failure",
+      summary: "A card refund was not sent: the refund it would pay is already reserved or paid from that card payment. Check the booking's refunds before paying anything by hand.",
+      metadata: { attemptKey: input.attemptKey, obligation: { scope: input.obligation.scope, id: input.obligation.id },
+        paymentTransactionId: input.paymentTransactionId, amountCents: input.amountCents, problems: [...error.problems] },
+    });
+  } catch (auditError) {
+    logger.error({ err: auditError, paymentId: input.paymentId }, "Could not audit a refused card refund reservation (#4516)");
+  }
 }
 
 /**

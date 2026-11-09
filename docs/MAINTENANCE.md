@@ -1972,6 +1972,43 @@ A drift finding needs investigation; the command never rewrites an existing
 journal or silently resizes cash. Failure rolls back the current payment's
 transaction; earlier committed payments remain safe to replay.
 
+### Reconcile and census card refund reservations (M4c)
+
+Before a card refund slice is sent, the journal reserves its debt (#4516). A
+rollback across M4c, or a sender that died between its reservation and Stripe's
+answer, can leave a reservation open. The census lists each one, and the owner
+reconciles them on redeploy:
+
+```bash
+pnpm run member-money:refund-reservations --dry-run
+pnpm run member-money:refund-reservations --reconcile
+pnpm run member-money:refund-reservations --release <reservationId> --note "<why>"
+```
+
+The default and `--dry-run` only read. `ANSWERABLE_RESERVATION` is one a
+recovery row's plan marks made (`madeRefundId`) by a refund on record;
+`--reconcile` answers it, or releases it as REFUSED when that refund failed,
+through the one cash writer, one Payment-row transaction per payment.
+`STRANDED_RESERVATION` is one nothing names: in flight while its sender runs,
+otherwise stranded. Only the owner releases one, with `--release` and a note;
+the release is audited and reverses its funding, and a refund Stripe later
+records against it posts unapplied. `UNAPPLIED_CARD_REFUND` and
+`RESERVATION_SKIPPED_NO_RECEIPT` are refunds answered to no debt (a dashboard
+refund, a capture with no receipt, a merged debtor); `CARD_REFUND_WITHOUT_EVENT`
+is a counted refund the next cash-writer run on its payment posts.
+`PAID_ANOTHER_WAY_WITHOUT_EVENT` is a "Paid another way" close with no R14: one
+made before M4c (M9 back-posts history) or while the journal was inactive.
+`KEPT_REST_WITHOUT_CLOSE_OUT` is a part close whose record says the club kept
+the rest, whose R14 paid its debt in the journal, and whose rest has no
+close-out. A close whose debt was never in the journal posts its bank cash
+unapplied and has no debt to close out, so it is not listed. Open reservations give exit status 2.
+No provider call; nothing is matched by amount or time.
+
+Expected until the milestone that answers unapplied refunds: a refund that
+posted unapplied (a debt raised before M4c, a Stripe dashboard refund, a merged
+debtor's) pays no refund obligation, so the receipt census keeps listing its
+booking as `OVER_COLLECTED`. Both censuses list it; nothing to repair by hand.
+
 ### Census the booking ledger against its money columns (#3583)
 
 `pnpm run booking-ledger:census` is the booking ledger's cut-over gate

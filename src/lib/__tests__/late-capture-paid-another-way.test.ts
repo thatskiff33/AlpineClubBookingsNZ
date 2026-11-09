@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   readLateCaptureXeroReceipt: vi.fn(),
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
   findAskedNote: vi.fn(),
+  findRecord: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
@@ -45,7 +46,14 @@ const store = {
     findUnique: (...args: unknown[]) => mocks.findOperation(...args),
     findMany: (...args: unknown[]) => mocks.findOperations(...args),
   },
-  manualRefundTask: { findFirst: (...args: unknown[]) => mocks.findClose(...args) },
+  // #4516 (round-2 review A): every close of the capture's refund, oldest first.
+  manualRefundTask: {
+    findMany: async (...args: unknown[]) => {
+      const found = (await mocks.findClose(...args)) as unknown;
+      return Array.isArray(found) ? found : found ? [found] : [];
+    },
+    findUnique: (...args: unknown[]) => mocks.findRecord(...args),
+  },
   xeroSyncOperation: { findFirst: (...args: unknown[]) => mocks.findAskedNote(...args) },
 };
 
@@ -65,7 +73,8 @@ function closeRecord(xeroRefundNote: PaidAnotherWayXeroNote, overrides: Record<s
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.findOperation.mockResolvedValue({ id: "op-dead", idempotencyKey: "late_capture_approval_refund_recovery_pi_late" });
-  mocks.findOperations.mockResolvedValue([{ id: "op-dead" }]);
+  mocks.findOperations.mockResolvedValue([{ id: "op-dead", idempotencyKey: "late_capture_approval_refund_recovery_pi_late", paymentIntentId: "pi_late" }]);
+  mocks.findRecord.mockResolvedValue(null);
   mocks.lateIntents.mockResolvedValue(new Set<string>());
   mocks.findClose.mockResolvedValue(null);
   mocks.readLateCaptureXeroReceipt.mockResolvedValue({ kind: "none" });
@@ -83,9 +92,11 @@ describe("findLateCaptureRefundPaidAnotherWay", () => {
         OR: [
           { idempotencyKey: { in: ["late_capture_approval_refund_recovery_pi_late"] } },
           { idempotencyKey: { startsWith: "card_refund_failed_later_" }, paymentIntentId: { in: ["pi_late"] } },
+          // #4516 (round-2 review A): a still-owed rest of either, kept where its origin is this capture's.
+          { idempotencyKey: { startsWith: "card_refund_still_owed_" }, paymentIntentId: { in: ["pi_late"] } },
         ],
       },
-      select: { id: true },
+      select: { id: true, idempotencyKey: true, paymentIntentId: true },
     });
     const [{ where }] = mocks.findClose.mock.calls[0] as [{ where: Record<string, unknown> }];
     expect(where).toMatchObject({
@@ -148,7 +159,7 @@ describe("notePaidAnotherWayCloseOnReceipt: the second step, run by the receipt'
 
   it("queues the waiting close's bank-transfer note for the amount paid back, keyed on the close, dated the day it closed, crediting the receipt", async () => {
     mocks.findClose.mockResolvedValue(closeRecord("after-receipt"));
-    await expect(note()).resolves.toBe("xop-note");
+    await expect(note()).resolves.toEqual([{ noteOperationId: "xop-note", queuedNow: true }]);
     expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("p-1", 24_000, {
       refundMethod: "internet-banking",
       paidAnotherWayTaskId: "close-1",
@@ -162,7 +173,7 @@ describe("notePaidAnotherWayCloseOnReceipt: the second step, run by the receipt'
   it("MUTATION: C9 (round 7): at most once - a note already asked for this close, in any state but withdrawn, is returned, never a second", async () => {
     mocks.findClose.mockResolvedValue(closeRecord("after-receipt"));
     mocks.findAskedNote.mockResolvedValue({ id: "xop-failed-note" });
-    await expect(note()).resolves.toBe("xop-failed-note");
+    await expect(note()).resolves.toEqual([{ noteOperationId: "xop-failed-note", queuedNow: false }]);
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
     expect(mocks.findAskedNote).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -179,18 +190,67 @@ describe("notePaidAnotherWayCloseOnReceipt: the second step, run by the receipt'
     "MUTATION: leaves a close whose note is '%s' alone - it queued its own, or raises none",
     async (xeroRefundNote) => {
       mocks.findClose.mockResolvedValue(closeRecord(xeroRefundNote));
-      await expect(note()).resolves.toBeNull();
+      await expect(note()).resolves.toEqual([]);
       expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
     },
   );
 
   it("queues nothing with no close, no payment, or nothing paid back", async () => {
-    await expect(note()).resolves.toBeNull();
+    await expect(note()).resolves.toEqual([]);
     mocks.findClose.mockResolvedValue(closeRecord("after-receipt", { paymentId: null }));
-    await expect(note()).resolves.toBeNull();
+    await expect(note()).resolves.toEqual([]);
     mocks.findClose.mockResolvedValue(closeRecord("after-receipt", { amountCents: 0 }));
-    await expect(note()).resolves.toBeNull();
+    await expect(note()).resolves.toEqual([]);
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#4516 round-2 review A): a part close and the close of its still-owed rest, both waiting on the receipt, each get their own note", async () => {
+    // 300 owed: C1 paid 100 back, the rest stayed owed on its own row; C2 then closed that 200, the receipt still not in Xero.
+    mocks.findOperations.mockResolvedValue([
+      { id: "op-dead", idempotencyKey: "late_capture_approval_refund_recovery_pi_late", paymentIntentId: "pi_late" },
+      { id: "op-rest", idempotencyKey: "card_refund_still_owed_close-1", paymentIntentId: "pi_late" },
+    ]);
+    // The rest's origin: its close's record, then the approval row it closed.
+    mocks.findRecord.mockResolvedValue({ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey("op-dead", { xeroRefundNote: "after-receipt" }) });
+    mocks.findOperation.mockResolvedValue({ id: "op-dead", type: "REFUND_BOOKING_MODIFICATION", idempotencyKey: "late_capture_approval_refund_recovery_pi_late", paymentIntentId: "pi_late" });
+    mocks.findClose.mockResolvedValue([
+      closeRecord("after-receipt", { id: "close-1", amountCents: 10_000 }),
+      closeRecord("after-receipt", { id: "close-2", amountCents: 20_000, occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey("op-rest", { xeroRefundNote: "after-receipt" }) }),
+    ]);
+    mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValueOnce({ queueOperationId: "xop-c1" }).mockResolvedValueOnce({ queueOperationId: "xop-c2" });
+    await expect(note()).resolves.toEqual([{ noteOperationId: "xop-c1", queuedNow: true }, { noteOperationId: "xop-c2", queuedNow: true }]);
+    expect(mocks.enqueueXeroRefundCreditNoteOperation.mock.calls.map((call) => [call[1], (call[2] as { paidAnotherWayTaskId: string }).paidAnotherWayTaskId]))
+      .toEqual([[10_000, "close-1"], [20_000, "close-2"]]);
+    // Both rows were searched for closes, the rest's because its origin is this capture's approval row.
+    const [{ where }] = mocks.findClose.mock.calls[0] as [{ where: { occurrenceKey: { in: string[] } } }];
+    expect(where.occurrenceKey.in).toEqual(expect.arrayContaining(["card-refund-paid-another-way:op-dead", "card-refund-paid-another-way:op-rest"]));
+  });
+
+  // #4516 round-4 review 3: each close answers whether this run queued its note, so the step counts what it queued
+  // close by close. A close with nothing paid back answers nothing - even beside a note row asked for it before.
+  it("MUTATION: a close with nothing paid back answers nothing, its old note row included; the close queued now answers queued", async () => {
+    mocks.findClose.mockResolvedValue([
+      closeRecord("after-receipt", { id: "close-0", amountCents: 0 }),
+      closeRecord("after-receipt", { id: "close-1", amountCents: 24_000 }),
+    ]);
+    mocks.findAskedNote.mockImplementation(async ({ where }: { where: { requestPayload: { equals: string } } }) =>
+      (where.requestPayload.equals === "close-0" ? { id: "xop-zero" } : null));
+    await expect(note()).resolves.toEqual([{ noteOperationId: "xop-note", queuedNow: true }]);
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledTimes(1);
+  });
+
+  it("an enqueue that queues nothing answers nothing", async () => {
+    mocks.findClose.mockResolvedValue(closeRecord("after-receipt"));
+    mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({ queueOperationId: null });
+    await expect(note()).resolves.toEqual([]);
+  });
+
+  it("a still-owed row whose origin is another capture's refund is not this capture's", async () => {
+    mocks.findOperations.mockResolvedValue([{ id: "op-rest", idempotencyKey: "card_refund_still_owed_close-9", paymentIntentId: "pi_late" }]);
+    mocks.findRecord.mockResolvedValue({ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey("op-other", { xeroRefundNote: "now" }) });
+    mocks.findOperation.mockResolvedValue({ id: "op-other", type: "REFUND_BOOKING_MODIFICATION", idempotencyKey: "booking_cancel_refund_recovery_b-1", paymentIntentId: "pi_late" });
+    await expect(findLateCaptureRefundPaidAnotherWay("pi_late", store as never)).resolves.toBeNull();
+    expect(mocks.findClose).not.toHaveBeenCalled();
   });
 
   it("throws what the enqueue throws, so the receipt's worker fails its row and its retry runs this again", async () => {

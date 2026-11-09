@@ -101,14 +101,17 @@ function refundMayTakeFrom(
  * reached the card; no row, `unrecorded`. A close recorded as paid another way
  * names what it left unpaid (its record's, and each such failed-later part's),
  * and where only failed-later parts were closed that way, beside a refund that
- * was made, their amount rather than the whole (#4285 review).
+ * was made, their amount rather than the whole (#4285 review). #4516 (round-3
+ * review 1): a rest a part close left still owed (`stillOwed`) stands where its
+ * own row stands - not sent until a later close pays it.
  */
 function cardRefundStanding(
   { cardRefundState, cardRefundClose, cardRefundFailedLater = [] }: CancelledCardRefund,
   money: (cents: number) => string,
 ): Pick<CardRefundNote, "standing" | "unpaid" | "closedAnotherWay"> {
   if (cardRefundState === undefined) return { standing: "unrecorded" };
-  const states = [cardRefundState, ...cardRefundFailedLater.map((part) => part.state)];
+  const restOwed = cardRefundState === "paid-another-way" && cardRefundClose?.stillOwed ? [cardRefundClose.stillOwed.state] : [];
+  const states = [cardRefundState, ...restOwed, ...cardRefundFailedLater.map((part) => part.state)];
   if (states.some((state) => state === "stalled" || state === "on-its-way")) return { standing: "not-sent" };
   const closedParts = cardRefundFailedLater.filter((part) => part.state === "paid-another-way");
   const unpaidCents =

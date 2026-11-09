@@ -63,11 +63,18 @@ export const memberMoneyEventKeys = {
   chargeOpen: (id: string) => key(`charge-open:${part(id, "booking")}`),
   refundObligation: (scope: RefundObligationScope, id: string) => key(`refund-obligation|${scope}|${nestedPart(id)}`),
   refundFunding: (attemptKey: string) => key(`refund-funding|${nestedPart(attemptKey)}`),
+  /**
+   * #4516 (M4c): the collection a refund's funding must take back from its own receipt first (design section 4,
+   * "Un-apply"), named by the funding event it makes room for. Its own event, never part of the funding batch: a
+   * released reservation reverses its funding alone, so funding batches stay independent of each other.
+   */
+  refundUncollect: (funding: MemberMoneyEventKey) => key(`refund-uncollect|${funding}`),
   refund: (id: string) => key(`refund:${part(id, "refund")}`),
   refundAnswer: (id: string) => key(`refund-answer:${part(id, "refund")}`),
   paidAnotherWay: (id: string) => key(`paid-another-way:${part(id, "record")}`),
   handBackPaid: (id: string) => key(`hand-back-paid:${part(id, "task")}`),
-  refundCloseOut: (obligation: MemberMoneyEventKey) => key(`refund-close-out|${obligation}`),
+  /** #4516 review M1: one close-out per close record, so two kept rests of one debt each post their own. */
+  refundCloseOut: (recordId: string) => key(`refund-close-out:${part(recordId, "close record")}`),
   keptCapture: (id: string) => key(`kept-capture:${part(id, "capture")}`),
   successor: (obligationKey: string, from: string, to: string) => key(`successor|${obligationKey}|${nestedPart(from)}|${nestedPart(to)}`),
   mergeResidue: (from: string, to: string, event: MemberMoneyEventKey) => key(`merge-residue:${part(from, "from")}:${part(to, "to")}|${event}`),

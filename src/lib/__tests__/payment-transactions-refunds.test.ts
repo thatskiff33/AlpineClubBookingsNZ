@@ -44,6 +44,19 @@ vi.mock("@/lib/card-refund-failed-later", () => ({
   keepFailedLaterCardRefundsOwed: failedLater.keep,
   alertFailedLaterCardRefunds: failedLater.alert,
 }));
+// #4516 (M4c): R12/R13 and the reservation step run on PostgreSQL (`member-money-refunds.realdb.test.ts`); here,
+// where the one cash writer calls them, with what, and that a sender reserves each slice before Stripe.
+const journal = vi.hoisted(() => ({
+  context: { zone: "Pacific/Auckland" },
+  postCardRefundCash: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 0),
+  reserveCardRefundSlice: vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ outcome: "reserved", reservationId: "r-1", replayed: false })),
+}));
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  resolveBookingMoneyPostingContext: async () => journal.context,
+  postCardRefundCash: journal.postCardRefundCash,
+  reserveCardRefundSlice: journal.reserveCardRefundSlice,
+}));
 
 import {
   applyLocalRefundAllocation,
@@ -70,6 +83,7 @@ import { calculateRefundAmount } from "@/lib/policies/cancellation";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { refundRequestStripeMetadata } from "@/lib/refund-slice-evidence";
 import { createReplayWriter } from "@/test/providers/replay-write";
+import { isCardRefundReservationRefusal, MemberMoneyReservationRefused } from "@/lib/member-money";
 
 function createRefundStore() {
   const payment = {
@@ -2694,5 +2708,107 @@ describe("predatesRefundLedger", () => {
       expect(predatesRefundLedger(null, start, "pre-ledger")).toBe(true);
       expect(predatesRefundLedger(undefined, start, "since-ledger")).toBe(false);
     }
+  });
+});
+
+describe("#4516 (M4c) - the sender reserves each slice, and the one cash writer posts R12/R13", () => {
+  const PREFIX = "booking_cancel_refund_booking_1";
+  const METADATA = { bookingId: "booking_1", reason: "cancellation" };
+  /** A root client: the reservation opens its own transaction on it, as on the real one (`isRootPrismaClient`). */
+  function rootStore() {
+    const ctx = createRefundStore();
+    ctx.payment.amountCents = 8000;
+    ctx.transactions.push({ ...ctx.transactions[0]!, id: "txn_2", kind: "ADDITIONAL", stripePaymentIntentId: "pi_2", amountCents: 3000,
+      createdAt: new Date("2026-01-05T00:00:00.000Z"), updatedAt: new Date("2026-01-05T00:00:00.000Z") });
+    const tx = { ...ctx.store };
+    const root = Object.assign(ctx.store, { $connect: vi.fn(), $transaction: vi.fn(async (fn: (client: unknown) => Promise<unknown>) => fn(tx)) });
+    Object.assign(mocks.prisma, root, { auditLog: { create: vi.fn(async () => ({})) } });
+    return { ctx, root, tx };
+  }
+  const answer = (args: { paymentIntentId: string; amountCents: number; idempotencyKey?: string; stampRefundSliceKey?: boolean; metadata?: Record<string, string> }) => ({
+    id: `re_${args.paymentIntentId}`, amount: args.amountCents, currency: "nzd", status: "succeeded", created: 1770000000,
+    charge: `ch_${args.paymentIntentId}`, payment_intent: args.paymentIntentId, metadata: refundRequestStripeMetadata(args),
+  });
+  const allocation = [{ paymentTransactionId: "txn_2", amountCents: 3000 }, { paymentTransactionId: "txn_1", amountCents: 2000 }];
+  const keys = [`${PREFIX}_txn_2_3000`, `${PREFIX}_txn_1_2000`];
+
+  beforeEach(() => {
+    journal.reserveCardRefundSlice.mockReset().mockResolvedValue({ outcome: "reserved", reservationId: "r-1", replayed: false });
+    journal.postCardRefundCash.mockClear();
+    mocks.processRefund.mockReset().mockImplementation(async (args) => answer(args));
+  });
+
+  it("MUTATION: reserves each keyed slice, under Stripe's own key and the whole plan's, before Stripe is asked for it", async () => {
+    const { root } = rootStore();
+    await refundPaymentTransactions({ format: CLUB_FORMAT_TEST, paymentId: "payment_1", amountCents: 5000, allocation, metadata: METADATA,
+      idempotencyKeyPrefix: PREFIX, obligation: { scope: "cancellation", id: "booking_1" }, store: root as never });
+    expect(journal.reserveCardRefundSlice).toHaveBeenCalledTimes(2);
+    for (const [index, slice] of allocation.entries()) {
+      expect(journal.reserveCardRefundSlice).toHaveBeenNthCalledWith(index + 1, expect.anything(), journal.context, {
+        paymentId: "payment_1", obligation: { scope: "cancellation", id: "booking_1" }, attemptKey: keys[index], senderKeyPrefix: PREFIX, paymentTransactionId: slice.paymentTransactionId,
+        amountCents: slice.amountCents, planAttemptKeys: keys,
+      });
+      expect(journal.reserveCardRefundSlice.mock.invocationCallOrder[index]).toBeLessThan(mocks.processRefund.mock.invocationCallOrder[index]!);
+    }
+  });
+
+  it("MUTATION (probe 18): the Stripe request is byte-identical with a debt or without one", async () => {
+    const requests: unknown[][] = [];
+    for (const obligation of [undefined, { scope: "cancellation" as const, id: "booking_1" }]) {
+      const { root } = rootStore();
+      mocks.processRefund.mockClear();
+      await refundPaymentTransactions({ format: CLUB_FORMAT_TEST, paymentId: "payment_1", amountCents: 5000, allocation, metadata: METADATA,
+        idempotencyKeyPrefix: PREFIX, obligation, store: root as never });
+      requests.push(mocks.processRefund.mock.calls.map(([args]) => ({ ...args, body: refundRequestStripeMetadata(args) })));
+    }
+    expect(JSON.stringify(requests[1])).toBe(JSON.stringify(requests[0]));
+    expect(requests[0]).toEqual(allocation.map((slice, index) => ({ paymentIntentId: slice.paymentTransactionId === "txn_2" ? "pi_2" : "pi_1",
+      amountCents: slice.amountCents, reason: "requested_by_customer", metadata: METADATA, idempotencyKey: keys[index], stampRefundSliceKey: true,
+      body: { ...METADATA, refundSliceKey: keys[index] } })));
+  });
+
+  it("reserves nothing with no debt named, or no key to reserve under", async () => {
+    const { root } = rootStore();
+    await refundPaymentTransactions({ format: CLUB_FORMAT_TEST, paymentId: "payment_1", amountCents: 5000, allocation, metadata: METADATA, idempotencyKeyPrefix: PREFIX, store: root as never });
+    await refundPaymentTransactions({ format: CLUB_FORMAT_TEST, paymentId: "payment_1", amountCents: 1000, allocation: [{ paymentTransactionId: "txn_1", amountCents: 1000 }],
+      metadata: METADATA, obligation: { scope: "cancellation", id: "booking_1" }, store: root as never });
+    expect(journal.reserveCardRefundSlice).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: a refused reservation sends nothing for that slice or after it, is reported, and reaches its caller as the refusal", async () => {
+    const { root } = rootStore();
+    journal.reserveCardRefundSlice.mockResolvedValueOnce({ outcome: "reserved", reservationId: "r-1", replayed: false })
+      .mockRejectedValueOnce(new MemberMoneyReservationRefused(["C4_capture_cap: refund-obligation|cancellation|booking_1:pi_1"]));
+    const failure = await refundPaymentTransactions({ format: CLUB_FORMAT_TEST, paymentId: "payment_1", amountCents: 5000, allocation, metadata: METADATA,
+      idempotencyKeyPrefix: PREFIX, obligation: { scope: "cancellation", id: "booking_1" }, store: root as never }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(PartialRefundError);
+    expect((failure as PartialRefundError).completedRefundCents).toBe(3000);
+    expect((failure as PartialRefundError).cause).toBeInstanceOf(MemberMoneyReservationRefused);
+    expect(isCardRefundReservationRefusal(failure)).toBe(true);
+    expect(mocks.processRefund).toHaveBeenCalledTimes(1);
+    expect(mocks.loggerError).toHaveBeenCalledWith(expect.objectContaining({ attemptKey: keys[1] }), expect.stringContaining("#4516"));
+    expect((mocks.prisma.auditLog as { create: ReturnType<typeof vi.fn> }).create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: "booking-payment.card-refund.reservation-refused", category: "payment", severity: "critical" }),
+    }));
+  });
+
+  it("MUTATION: R12/R13 run in the cash writer's own transaction, after the aggregate and before a failed-later debt, with each refund's attempt key", async () => {
+    const { root, tx } = rootStore();
+    const evidenced = { ...answer({ paymentIntentId: "pi_1", amountCents: 1000, idempotencyKey: "evidence_key", stampRefundSliceKey: true }), id: "re_evidenced" };
+    const sent = { ...answer({ paymentIntentId: "pi_1", amountCents: 500 }), id: "re_sent" };
+    await recordStripeRefundsAgainstTransaction({ paymentId: "payment_1", paymentTransactionId: "txn_1", refunds: [evidenced, sent],
+      attemptKeys: new Map([["re_sent", "sender_key"]]), store: root as never });
+    expect(journal.postCardRefundCash).toHaveBeenCalledWith(tx, journal.context, {
+      paymentId: "payment_1", attemptKeys: new Map([["re_evidenced", "evidence_key"], ["re_sent", "sender_key"]]),
+      // #4516 review L3: the rows this delivery wrote first, the only ones whose refusal releases a reservation.
+      firstRecorded: new Set(["re_evidenced", "re_sent"]),
+    });
+    expect(journal.postCardRefundCash.mock.invocationCallOrder[0]).toBeLessThan(failedLater.keep.mock.invocationCallOrder.at(-1)!);
+  });
+
+  it("posts nothing joined to a caller's transaction that brought no context (every production caller is on the root client)", async () => {
+    const ctx = createRefundStore();
+    await recordStripeRefundsAgainstTransaction({ paymentId: "payment_1", paymentTransactionId: "txn_1", refunds: [answer({ paymentIntentId: "pi_1", amountCents: 1000 })], store: ctx.store as never });
+    expect(journal.postCardRefundCash).not.toHaveBeenCalled();
   });
 });

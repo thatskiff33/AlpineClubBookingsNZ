@@ -11,6 +11,7 @@ import {
   BOOKING_MODIFICATION_REFUND_RECOVERY_PREFIX,
   CAPACITY_CLAIM_FAILED_REFUND_RECOVERY_PREFIX,
   CARD_REFUND_FAILED_LATER_RECOVERY_PREFIX,
+  CARD_REFUND_STILL_OWED_RECOVERY_PREFIX,
   CREDIT_RELEASE_ASK_RECOVERY_PREFIX,
   DUPLICATE_CAPTURE_REFUND_RECOVERY_PREFIX,
   EDIT_FINANCIAL_REVIEW_ADDITIONAL_INTENT_RECOVERY_PREFIX,
@@ -129,6 +130,11 @@ export const RECOVERY_SCENARIO_CATALOGUE = [
     prefix: CARD_REFUND_FAILED_LATER_RECOVERY_PREFIX,
     code: "card_refund_failed_later",
     label: "a card refund the card provider accepted and later reported as failed, asked for again",
+  },
+  {
+    prefix: CARD_REFUND_STILL_OWED_RECOVERY_PREFIX,
+    code: "card_refund_still_owed",
+    label: "the rest of a card refund the treasurer paid back in part another way and said is still owed to the member",
   },
   {
     prefix: GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX,

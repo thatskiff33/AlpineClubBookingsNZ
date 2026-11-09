@@ -273,6 +273,7 @@ const B: Charge = { id: TXN_B, intent: INTENT_B, charge: CHARGE_B, cents: CHARGE
         operationId,
         amountCents,
         paidBack: amountCents === expectedOwedCents ? "full" : "partial",
+        rest: amountCents === expectedOwedCents ? null : "club-keeps", // #4516: the old rule, chosen explicitly
         expectedOwedCents,
         note: "Bank transfer, ref RACE 4280",
         actingMemberId: OFFICER_ID,

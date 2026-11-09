@@ -1490,7 +1490,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // RE-MEASURED with `pnpm run audit:census`.
     // 403 -> 404 unpinned (triyder/AlpineClubBookingsNZ#97): the link dialog's `admin`
     // row, on a finance-gated route, so outside the lodge-gated keep: unpinned.
-    ).toEqual({ pinned: 130, unpinned: 404 });
+    // 404 -> 406 unpinned (#4516): the refused card refund reservation and its OPERATOR release, `payment`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    ).toEqual({ pinned: 130, unpinned: 406 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

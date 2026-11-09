@@ -110,7 +110,11 @@ export async function holdLateCaptureForTreasurerIfRequired(
    * question cannot be completed as a hand-back while a retry is in flight.
    * `madeCents`: what the same attempt did refund beside the refusal, for the audit.
    */
-  { afterStripeRefused = false, madeCents = 0 }: { afterStripeRefused?: boolean; madeCents?: number } = {},
+  { afterStripeRefused = false, madeCents = 0, afterReservationRefused = false }: {
+    afterStripeRefused?: boolean; madeCents?: number;
+    /** #4516 (M4c): the journal refused the refund's reservation, so Stripe was never asked; held whatever the setting. */
+    afterReservationRefused?: boolean;
+  } = {},
 ): Promise<boolean> {
   const marker = { lateCaptureApprovalIntentId: capture.paymentIntentId };
   const owned = await prisma.manualRefundTask.findUnique({
@@ -135,7 +139,7 @@ export async function holdLateCaptureForTreasurerIfRequired(
     }
     return true;
   }
-  if (!afterStripeRefused && !(await readLateCaptureRefundNeedsApproval())) return false;
+  if (!afterStripeRefused && !afterReservationRefused && !(await readLateCaptureRefundNeedsApproval())) return false;
 
   const raised = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -198,6 +202,7 @@ export async function holdLateCaptureForTreasurerIfRequired(
       taskRaised: raised.created,
       refundSent: false,
       ...(afterStripeRefused ? { stripeRefusedAutomaticRefund: true, refundedBesideRefusalCents: madeCents } : {}),
+      ...(afterReservationRefused ? { reservationRefusedAutomaticRefund: true } : {}),
     }),
   });
   await announceHeldLateCapture(capture);
@@ -229,6 +234,17 @@ export async function holdLateCaptureRefusedByStripe(
   );
   await holdLateCaptureForTreasurerIfRequired({ ...capture, amountCents: refusedCents }, { afterStripeRefused: true, madeCents });
   return true;
+}
+
+/**
+ * #4516 (M4c): the journal refused the automatic refund's reservation (`isCardRefundReservationRefusal`): its debt
+ * is already reserved or paid from that card payment, so nothing was sent and a Stripe redelivery would be refused
+ * the same way. Held for a treasurer, whatever the setting, never re-thrown for redelivery (plan section 5).
+ */
+export async function holdLateCaptureReservationRefused(capture: HeldLateCapture): Promise<void> {
+  logger.error({ bookingId: capture.bookingId, paymentIntentId: capture.paymentIntentId },
+    "The automatic refund of a late capture on a cancelled booking was refused by the member-money journal; holding it for a treasurer (#4516)");
+  await holdLateCaptureForTreasurerIfRequired(capture, { afterReservationRefused: true });
 }
 
 /**

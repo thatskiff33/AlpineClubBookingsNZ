@@ -128,10 +128,12 @@ const appliedCredit = vi.hoisted(() => ({
   deriveBookingAppliedCreditCents: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 0),
 }));
 // #4516 (M4b): the receipt hook runs on PostgreSQL (`member-money-receipts.realdb.test.ts`), not on this fake store.
-const receiptDoors = vi.hoisted(() => ({ postBookingReceipts: vi.fn(async () => 0) }));
+const receiptDoors = vi.hoisted(() => ({ postBookingReceipts: vi.fn(async () => 0), postRefundObligation: vi.fn(async () => null) }));
 vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postBookingReceipts: receiptDoors.postBookingReceipts,
+  // #4516 (M4c): R05 posts on PostgreSQL (`member-money-refunds.realdb.test.ts`); here, that the claim asks for it.
+  postRefundObligation: receiptDoors.postRefundObligation,
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -1801,8 +1803,11 @@ describe("cancelBooking credit refunds", () => {
       "card"
     );
     expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(
-      expect.objectContaining({ paymentId: "payment_5", amountCents: 20000 })
+      expect.objectContaining({ paymentId: "payment_5", amountCents: 20000, obligation: { scope: "cancellation", id: expect.any(String) } })
     );
+    // #4516 (M4c): the claim moved the frozen plan's card refund to its own obligation, under its booking row.
+    expect(receiptDoors.postRefundObligation).toHaveBeenCalledWith(expect.anything(), expect.anything(),
+      expect.objectContaining({ scope: "cancellation", amountCents: 20000, debtorRead: "booking-row" }));
   });
 
   it("#3827 (INV-PAY-117): tiers off the cash NOT already promised back on an open edit refund hand-back", async () => {
@@ -2499,6 +2504,12 @@ describe("cancelBooking credit refunds", () => {
   });
 
   describe("card refund debt persisted inside the claim transaction (#1349)", () => {
+    it("MUTATION (#4516 probe 12): a journal refusal of the claim's R05 is never caught: the cancel fails before Stripe is asked", async () => {
+      receiptDoors.postRefundObligation.mockRejectedValueOnce(new Error("member-money plan refused: test"));
+      await expect(cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card")).rejects.toThrow("member-money plan refused");
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+    });
+
     it("enqueues the recovery operation with the frozen plan inside tx1, before the Stripe call", async () => {
       const result = await cancelBooking(
         "booking_1",
@@ -2550,6 +2561,7 @@ describe("cancelBooking credit refunds", () => {
           reason: "cancellation",
         },
         idempotencyKeyPrefix: "booking_cancel_refund_booking_1",
+        obligation: { scope: "cancellation", id: "booking_1" }, // #4516: the debt its slices reserve against
       });
       // Happy path closes the operation.
       expect(
