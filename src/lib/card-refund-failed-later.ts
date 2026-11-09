@@ -149,25 +149,32 @@ export class FailedLaterRefundHeldError extends Error {
 const CLOSE_IT_WHERE = 'close it under "Card refunds Stripe gave up on" on the Stuck states page';
 
 /**
+ * #4368 (#4361 decision 7): how a refund the app will not ask Stripe for again
+ * is settled - never a new Stripe dashboard refund, which on a booking paid by
+ * bank transfer is credited in Xero twice (#4327).
+ */
+const SETTLE_NOT_IN_DASHBOARD = 'settle it with "Paid another way", never with a new refund in the Stripe dashboard';
+
+/**
  * #4210 (`INV-PAY-142`; #4361 decision 7): what an officer does with a refund
  * held because a "Paid another way" close came first.
  */
-const PAID_ANOTHER_WAY_CHECK = `The bank transfer that close recorded may already have paid this money back, so it is not asked for again automatically. Check whether the member is still owed anything: after a part close the figure can include what that close recorded as no longer owed, so check its record before paying. If they are owed, pay them another way and ${CLOSE_IT_WHERE}: settle it with "Paid another way", never with a new refund in the Stripe dashboard. If nothing is left owed, there is nothing to close there: ask a developer to reconcile it`;
+const PAID_ANOTHER_WAY_CHECK = `The bank transfer that close recorded may already have paid this money back, so it is not asked for again automatically. Check whether the member is still owed anything: after a part close the figure can include what that close recorded as no longer owed, so check its record before paying. If they are owed, pay them another way and ${CLOSE_IT_WHERE}: ${SETTLE_NOT_IN_DASHBOARD}. If nothing is left owed, there is nothing to close there: ask a developer to reconcile it`;
 
 /** What the row says, for a person reading it; nothing parses it. */
 function failedLaterLastError(refundId: string, outcome: FailedLaterCardRefundDebt["outcome"]): string {
   if (outcome === "raised-dead") {
-    return `Stripe accepted retried refund ${refundId} and later reported it failed too. Not asked for again automatically: pay the member another way and ${CLOSE_IT_WHERE} (#4104).`;
+    return `Stripe accepted retried refund ${refundId} and later reported it failed too. Not asked for again automatically: pay the member another way and ${CLOSE_IT_WHERE}: ${SETTLE_NOT_IN_DASHBOARD} (#4104).`;
   }
   if (outcome === "raised-backlog") {
-    return `Stripe reported refund ${refundId} failed; it was made before this release could notice that, so it is not asked for again automatically. Check whether the member was paid back, then ${CLOSE_IT_WHERE} (#4104).`;
+    return `Stripe reported refund ${refundId} failed; it was made before this release could notice that, so it is not asked for again automatically. Check whether the member was paid back, then ${CLOSE_IT_WHERE}: ${SETTLE_NOT_IN_DASHBOARD} (#4104).`;
   }
   if (outcome === "raised-after-paid-another-way") {
     return `Stripe reported refund ${refundId} failed after the card refund that made it was closed "Paid another way". ${PAID_ANOTHER_WAY_CHECK} (#4210).`;
   }
   // #4104 review (D7): a row whose retries are already spent is never claimed again.
   if (outcome === "re-planned-dead") {
-    return `Stripe accepted refund ${refundId} and later reported it failed, so no money went back. It is still owed, and this refund's retries are already spent, so it is not asked for again automatically: pay the member another way and ${CLOSE_IT_WHERE} (#4104).`;
+    return `Stripe accepted refund ${refundId} and later reported it failed, so no money went back. It is still owed, and this refund's retries are already spent, so it is not asked for again automatically: pay the member another way and ${CLOSE_IT_WHERE}: ${SETTLE_NOT_IN_DASHBOARD} (#4104).`;
   }
   return `Stripe accepted refund ${refundId} and later reported it failed, so no money went back. It is owed again and is asked for again as a new request (#4104).`;
 }
@@ -482,11 +489,11 @@ function alertMessage(debt: FailedLaterCardRefundDebt, amount: string): string {
     case "re-planned":
       return `Stripe accepted a card refund of ${amount} and later reported it failed, so no money went back. It is owed again and will be asked for again automatically.`;
     case "re-planned-dead":
-      return `Stripe accepted a card refund of ${amount} and later reported it failed, so no money went back. It is still owed, and its retries are already spent: pay the member another way and ${CLOSE_IT_WHERE}.`;
+      return `Stripe accepted a card refund of ${amount} and later reported it failed, so no money went back. It is still owed, and its retries are already spent: pay the member another way and ${CLOSE_IT_WHERE}: ${SETTLE_NOT_IN_DASHBOARD}.`;
     case "raised-dead":
-      return `Stripe accepted a retried card refund of ${amount} and later reported it failed too, so no money went back. It is still owed and will not be asked for again automatically: pay the member another way and ${CLOSE_IT_WHERE}.`;
+      return `Stripe accepted a retried card refund of ${amount} and later reported it failed too, so no money went back. It is still owed and will not be asked for again automatically: pay the member another way and ${CLOSE_IT_WHERE}: ${SETTLE_NOT_IN_DASHBOARD}.`;
     case "raised-backlog":
-      return `Stripe reported a card refund of ${amount} failed. It was made before this release could notice such failures, so it is not asked for again automatically: check whether the member has already been paid back, and ${CLOSE_IT_WHERE}.`;
+      return `Stripe reported a card refund of ${amount} failed. It was made before this release could notice such failures, so it is not asked for again automatically: check whether the member has already been paid back, and ${CLOSE_IT_WHERE}: ${SETTLE_NOT_IN_DASHBOARD}.`;
     case "raised-after-paid-another-way":
       return `Stripe reported a card refund of ${amount} failed after the card refund that made it was closed "Paid another way". ${PAID_ANOTHER_WAY_CHECK}.`;
     case "not-resent":

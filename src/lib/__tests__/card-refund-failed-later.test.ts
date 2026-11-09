@@ -412,9 +412,10 @@ describe("the officers' alert", () => {
   it.each([
     ["raised", /\$40\.00 .*will be asked for again automatically/],
     ["re-planned", /will be asked for again automatically/],
-    ["re-planned-dead", /retries are already spent: pay the member another way and close it under "Card refunds Stripe gave up on" on the Stuck states page/],
-    ["raised-dead", /will not be asked for again automatically: pay the member another way and close it under "Card refunds Stripe gave up on"/],
-    ["raised-backlog", /before this release .* check whether the member has already been paid back, and close it under "Card refunds Stripe gave up on"/],
+    // #4368 (#4361 decision 7): each says to settle it with Paid another way, never a new dashboard refund.
+    ["re-planned-dead", /retries are already spent: pay the member another way and close it under "Card refunds Stripe gave up on" on the Stuck states page: settle it with "Paid another way", never with a new refund in the Stripe dashboard\.$/],
+    ["raised-dead", /will not be asked for again automatically: pay the member another way and close it under "Card refunds Stripe gave up on" on the Stuck states page: settle it with "Paid another way", never with a new refund in the Stripe dashboard\.$/],
+    ["raised-backlog", /before this release .* check whether the member has already been paid back, and close it under "Card refunds Stripe gave up on" on the Stuck states page: settle it with "Paid another way", never with a new refund in the Stripe dashboard\.$/],
     // #4210 (#4361 decision 7): settle it with Paid another way, never a new dashboard refund.
     ["raised-after-paid-another-way", /\$40\.00 failed after the card refund that made it was closed "Paid another way"\. .*not asked for again automatically\. Check whether the member is still owed anything: after a part close the figure can include what that close recorded as no longer owed, so check its record before paying\. .*settle it with "Paid another way", never with a new refund in the Stripe dashboard\. If nothing is left owed, there is nothing to close there: ask a developer to reconcile it\.$/],
     // #4104 review (D2): which refund, and what to do about it.

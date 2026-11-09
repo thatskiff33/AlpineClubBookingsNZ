@@ -16,7 +16,7 @@ import { stripeReferenceId } from "@/lib/stripe-references";
 
 export class UnattributedCardRefundBeforeResendError extends Error {
   constructor(readonly stripeRefundIds: string[]) {
-    super("A refund made outside the app may already have paid this debt (INV-PAY-145). The app sent nothing and stopped automatic retries. Check the Stripe refunds and the booking before paying anything else. If money is still owed, use Paid another way in Stuck States; do not make a new Stripe dashboard refund. If nothing is owed, ask a developer to reconcile the row.");
+    super("A refund made outside the app may already have paid this debt (INV-PAY-145). The app sent nothing and stopped automatic retries. Check the Stripe refunds and the booking before paying anything else. If money is still owed, use Paid another way in Stuck States; do not make a new Stripe dashboard refund. If that refund leaves nothing owed, close it with Nothing left owed in Stuck States.");
   }
 }
 

@@ -4053,3 +4053,35 @@ Historical repair needs reviewed dry-run keys, shows later reductions and
 refunds, bills each recorded positive net (B1's accepted over-billing), skips
 billed or queued changes and joins the place's other findings. Legacy review charges stay refused. Tests:
 the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.ts`.
+
+## INV-PAY-149
+
+**Related: `INV-PAY-122`** (Paid another way), **`INV-PAY-128`** (failed
+later), **`INV-PAY-145`** (preflight).
+
+- **A dead card refund is settled on Stuck States, never by a new Stripe
+  dashboard refund** (owner decisions 5 and 7 on #4361, 25 Oct 2026; #4368).
+  Beside "Paid another way" there are two settlements that record no money,
+  each finance:edit and view-only without it, as that close is.
+- **Nothing left owed.** A dead row whose owed figure reads $0 is listed while
+  a counted Stripe refund made since it was raised covers it
+  (`laterStripeRefundsCovering`), and closes to `SUCCEEDED` naming that refund.
+  No allocation, hand-back, journal posting, Stripe call or Xero row. Refused
+  (409) unless, under the locks, the figure is still $0 and the refunds named
+  are the ones the treasurer saw.
+- **Try the card again.** The row is re-armed with
+  `rearmedPaymentRecoveryOperationData`; nothing is sent until the runner's
+  preflight has read Stripe. Refused (409) with nothing owed, where the payment
+  holds less than the row's unsent slices, on a row raised dead for a person (a
+  failed-later row, a still-owed rest), while a failed-later row is open on the
+  same payment (#4492), or where the owed figure moved.
+- **One row, one winner.** Both take `lock(1)`, the row re-read, then the
+  Payment row, and claim the row as "Paid another way" does: dead and on the
+  plan read. Whichever of the three commits first wins; a closed row is never
+  re-armed, and a re-armed row is offered no close until given up again. Each is
+  audited under `payment`.
+- Limit: a lost-answer refund failing after a re-arm is raised beside the live
+  row, as for any row still retrying (#4492).
+- Proven by `card-refund-dead-row-actions.test.ts`,
+  `card-refund-dead-row-actions.realdb.test.ts`, `dead-row-actions-route.test.ts`
+  and `dead-card-refunds-panel.test.tsx`.

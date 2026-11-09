@@ -12,9 +12,9 @@ straight to the screen where you fix it. Find it at **Admin → Monitoring & Sup
 (`/admin/stuck-states`).
 
 The page is computed on each visit (it shows when it was generated). It is
-read-only apart from two money actions: closing a card refund Stripe gave up on
-as **paid another way**, and picking the refund a voided bank refund note
-recorded (both below). It complements [System Health](health.md) (which watches services)
+read-only apart from the money actions below: settling a card refund Stripe
+gave up on (**Paid another way**, **Try the card again** or **Nothing left
+owed**), and picking the refund a voided bank refund note recorded. It complements [System Health](health.md) (which watches services)
 by watching **data** — see [`ARCHITECTURE.md`](../ARCHITECTURE.md)
 (stuck-state dashboard).
 
@@ -61,7 +61,21 @@ money. Stuck card refunds are also counted in the **Exhausted recovery
 operations** row of the Operator Queue.
 
 To see them you need **Support view** (for this page) and **Finance view** (for
-the list). To close one you need **Finance edit**.
+the list). To settle one - **Paid another way**, **Try the card again** or
+**Nothing left owed** - you need **Finance edit**. With view-only access every
+button is disabled, and the banner above the list says why.
+
+**Settle each one here, never with a new refund in the Stripe dashboard**
+(owner decision 7 on #4361, 25 Oct 2026). A new dashboard refund on a booking
+paid by bank transfer is credited in Xero twice (#4327). Each row offers:
+
+- **Paid another way** - you paid the member back yourself, for example by
+  bank transfer (below).
+- **Try the card again** - the app asks Stripe to refund the card again
+  (below).
+- **Nothing left owed** - shown instead of the other two once a later Stripe
+  refund on the payment covers the refund, and the row reads **nothing left
+  owed** (below).
 
 **Before you pay the member another way, check Stripe.** Open the payment in the
 Stripe dashboard and compare its refunds with this refund's amount. A row that
@@ -71,13 +85,11 @@ already refunded, or Stripe refusing a reused key, so the refund may have gone
 through after all. An `idempotency_error` on a card refund ("Keys for
 idempotent requests can only be used with the same parameters") means Stripe
 already received the refund under that key, so it has almost certainly been
-made (#4101). If Stripe did
-refund it, or you refund it in the Stripe dashboard yourself, do not close it
-here. Wait until that refund shows on the payment: the amount still owed then
-drops, and once nothing is left owed the refund leaves this list on its own. A
-close always records money paid back, so it can never be for $0.00. A refund
-with nothing left owed still shows in the **Exhausted recovery operations**
-count: ask a developer to reconcile it.
+made (#4101). If Stripe did refund it, its refund shows on the payment once
+Stripe reports it: the amount still owed drops, and once nothing is left owed
+the row says so and offers **Nothing left owed**. **Try the card again** is
+also safe here: before it sends anything, the app reads the refunds Stripe
+already holds on the charge and counts the one it made.
 
 **A refund Stripe refused** (#4083, #4096). When a booking change or a
 cancellation refunds a card and Stripe answers straight away that the refund
@@ -179,6 +191,66 @@ refund here:
 
 The amount is recorded as refunded on the payment, the same way a refund you
 complete by hand is recorded. Stripe is not asked again.
+
+#### Try the card again
+
+Use this when you want the app to ask Stripe to refund the card again, for
+example after an outage that outlasted its retries (owner decision 5 on
+#4361).
+
+1. Under **Card refunds Stripe gave up on**, click **Try the card again** on
+   the row.
+2. The dialog says how much the card will be asked for. Click **Try the card
+   again** to confirm, or **Cancel**.
+
+The refund leaves the list and goes back to the automatic retries, from the
+start. Nothing is sent from the dialog itself. Before any refund is sent, the
+app reads the refunds Stripe already holds on the charge (#4359): a refund
+Stripe already made for this one is counted and nothing more is sent, and a
+refund made in the Stripe dashboard since stops it again for you to check.
+If the card fails again, the refund comes back to this list, and the officers
+are emailed as before. Only use it if you have not paid the member back
+another way. It is recorded in the [audit log](audit-log.md) under
+**Payment**.
+
+The row says why instead of offering the button when trying the card again
+could pay the member more than they are owed:
+
+- nothing is left owed (use **Nothing left owed**);
+- the payment now holds less than the refund would send;
+- the app raised the refund for a person to settle, not to send again: a
+  refund Stripe failed later that is not asked for again, or the rest of a
+  part close that is still owed;
+- a refund Stripe failed later is still open on the same payment. The two may
+  be the same money, so check what the member is owed and settle it with
+  **Paid another way**.
+
+If the list changes while the dialog is open, for example someone else
+settles the refund, the request is refused and the list refreshes.
+
+#### Nothing left owed
+
+When a later Stripe refund on the payment covers a refund here - Stripe's
+own answer arriving late, for example - the row reads **nothing left owed**
+and offers **Nothing left owed** instead of the other two buttons.
+
+1. Click **Nothing left owed**. The dialog names the Stripe refund that
+   covers it, with its amount and date. Check it in the Stripe dashboard.
+2. Click **Close with nothing left owed**.
+
+The refund leaves the list and the **Exhausted recovery operations** count.
+No money moves, nothing is sent to Stripe and nothing changes in Xero: the
+Stripe refund that covered it was recorded, and noted in Xero, when it
+arrived. The close, and the refund it names, are recorded in the
+[audit log](audit-log.md) under **Payment**. If the refunds on the payment
+change while the dialog is open, or something is owed again (that refund
+failed), the close is refused and the list refreshes. If the covering refund
+fails after the close, the app owes it again on a refund of its own, as for
+any refund Stripe fails later.
+
+A refund with nothing left owed and no later Stripe refund to name is not
+listed. It still shows in the **Exhausted recovery operations** count: ask a
+developer to reconcile it.
 
 **What a part close does with the rest is your choice** (owner decisions on
 #3372, 8 Oct 2026, and #4516, 2 Nov 2026):
@@ -401,7 +473,7 @@ The page has no settings. What it shows:
 | Domain cards | Per-domain (payment, booking, Xero, email, waitlist, bed allocation, lodge) counts and highest severity |
 | Operator Queue | One row per signal: domain, description, severity, owner, count, and an **Open** link to the fix screen |
 | Generated timestamp | When the dashboard was last computed (shown in the header) |
-| Card refunds Stripe gave up on | Each dead card refund still owed, with a **Paid another way** close. Shown to Finance view (on a page that needs Support view), closed with Finance edit |
+| Card refunds Stripe gave up on | Each dead card refund still owed, with **Paid another way** and **Try the card again**, and each one a later Stripe refund covers, with **Nothing left owed**. Shown to Finance view (on a page that needs Support view), settled with Finance edit |
 | Card refunds paid back twice | Each refund closed as paid another way that Stripe also refunded to the card afterwards, with both amounts and a **Resolved** action. Shown to Finance view, resolved with Finance edit |
 
 ### Who sees the named rows
@@ -434,6 +506,9 @@ without widening who can read the membership roll.
 | The dialog says what is still owed changed, or closes and says the refund is no longer waiting | A refund was recorded, or someone else closed it, while the dialog was open | Check the new amount, or the payment, before doing anything more |
 | **Paid another way** says the late card charge's Xero record "changed while you were closing it" | An officer resolved or withdrew the charge's record in Xero while you were closing the refund | Reload the page. The dialog then says what will be recorded in Xero now |
 | **Exhausted recovery operations** counts a booking change's card request that stopped on its first refusal, and the email says its card request is "already recorded for another change to the same booking" | Two changes to one booking ended up with one card request, recorded for the other change; a retry would be refused the same way, so the app stopped at once | The money is still owed. See [A booking change's card request that stopped on its first refusal](#a-booking-changes-card-request-that-stopped-on-its-first-refusal) |
+| **Try the card again** or **Nothing left owed** says the card refund "changed while you were settling it", or "is being tried again" | Someone else settled or retried it, or a refund was recorded on the payment, since the page loaded. The list refreshes behind the dialog | Check the row again before doing anything more |
+| **Nothing left owed** says "something is owed on this card refund again" | The Stripe refund that covered it failed or was taken back | Settle what is owed with **Paid another way**, or try the card again |
+| A row offers no **Try the card again** and says why | Trying the card again could pay the member more than they are owed | Follow what the row says: usually settle it with **Paid another way** |
 | **Mark resolved** says Stripe's refund to the card changed | Stripe refunded the card again since you opened the dialog | Check the new amount with the member before marking it resolved |
 
 ## Related links
