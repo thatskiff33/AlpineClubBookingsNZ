@@ -38,6 +38,7 @@ import {
   ADMIN_HUBS,
   ADMIN_PAGES,
   adminHref,
+  adminPageRoutePath,
   buildAdminUrlRules,
   resolveAdminHref,
   type AdminUrlRules,
@@ -84,11 +85,10 @@ function concrete(registryPath: string): string {
 
 /**
  * Where a page's `page.tsx` lives: its hub path once it has moved, its old path
- * until then.
+ * until then. The registry's own answer (C3 #4800), which `revalidateAdminPage`
+ * also uses, so this census checks the one definition against the disk.
  */
-function diskPath(page: AdminHubPage): string {
-  return page.moved ? page.hubPath : page.oldPath;
-}
+const diskPath = adminPageRoutePath;
 
 /**
  * The pathname the resolvers are asked about. It is always the OLD path, moved
@@ -933,10 +933,11 @@ describe("buildAdminUrlRules", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Inert until C3: nothing outside the registry imports it but the files named
-// below. Each one is a deliberate edit here, so a new reader is reviewed. In
-// production only the security map reads it (C2 #4799), and the parity census
-// proves what that map answers did not change.
+// Nothing outside the registry imports it but the files named below. Each one
+// is a deliberate edit here, so a new reader is reviewed. In production the
+// security map reads it (C2 #4799), and the parity census proves what that map
+// answers did not change; since C3 (#4800) so do next.config.ts, the sidebar's
+// active link and revalidateAdminPage, each unchanged until a page moves.
 // ---------------------------------------------------------------------------
 
 describe("the registry is inert", () => {
@@ -958,6 +959,14 @@ describe("the registry is inert", () => {
       "enumerates pages from the registry, at both paths",
     "src/lib/__tests__/coverage-matrix-areas.test.ts":
       "takes COVERAGE_MATRIX.md's areas from the registry's old paths",
+    "next.config.ts": "C3: the redirects and beforeFiles rewrites are generated",
+    "src/components/admin-sidebar.tsx": "C3: the active link is the registry's activeAdminHref",
+    "src/lib/admin-page-revalidation.ts": "C3: revalidateAdminPage revalidates a page's file path",
+    "src/lib/__tests__/admin-hubs-active-link.test.ts": "C3: activeAdminHref and its census",
+    "src/components/__tests__/admin-sidebar-active-link.test.tsx":
+      "C3: the real sidebar over a moved Finance hub",
+    "src/lib/__tests__/admin-page-revalidation.test.ts":
+      "C3: revalidateAdminPage's targets and the revalidatePath census",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;

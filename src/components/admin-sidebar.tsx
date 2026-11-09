@@ -70,6 +70,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { isFeatureHrefVisible } from "@/config/feature-routes";
+import { activeAdminHref } from "@/lib/admin-hubs";
 import type { FeatureFlags } from "@/config/schema";
 import {
   canAccessConsolidatedFeesPage,
@@ -1008,11 +1009,15 @@ function SidebarLinks({
 
   // Highlight the most specific nav item whose href is a prefix of the current
   // path, so nested routes (e.g. /admin/xero/setup) activate the deepest match
-  // rather than every ancestor (e.g. both "Xero Sync" and "Xero Setup").
-  const activeHref = visibleNavSections
-    .flatMap((section) => section.items.map((item) => item.href))
-    .filter((href) => pathname === href || pathname.startsWith(`${href}/`))
-    .reduce((best, href) => (href.length > best.length ? href : best), "");
+  // rather than every ancestor (e.g. both "Xero Sync" and "Xero Setup"). The
+  // registry decides it (C3 #4800), reading a moved page's old URL and hub URL
+  // as one page: never compare `pathname` with an href here.
+  const activeHref = activeAdminHref(
+    pathname,
+    visibleNavSections.flatMap((section) =>
+      section.items.map((item) => item.href),
+    ),
+  );
 
   return (
     <nav aria-label="Admin sections" className="flex flex-col gap-0.5">
