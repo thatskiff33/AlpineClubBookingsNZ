@@ -1,5 +1,5 @@
-- **Approving a held booking request no longer risks deadlocking with a member
-  merge (#4857).** An officer approving a booking request that had beds on
+- **Approving a held booking request no longer deadlocks with a member merge
+  when the officer who quoted the hold is the duplicate (#4857).** An officer approving a booking request that had beds on
   hold, while a duplicate member record was being merged, could leave the two
   waiting on each other until the database cancelled one. This happened when
   the officer who quoted the hold was the duplicate, and the approval linked a

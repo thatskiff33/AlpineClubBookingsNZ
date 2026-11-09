@@ -3418,8 +3418,8 @@ An officer's approval of a held booking request (#4857,
 the request and swapped the held party in place before it updated the held
 booking. The swap writes each guest's member link, so a guest newly linked to a
 member takes a key share on that Member row. The hold names the officer who
-quoted it (`createdById`), so merge holds its row when that officer is a merge
-party, and merge's `Member … FOR UPDATE` then waited on the linked guest's key
+quoted it (`createdById`), so merge holds its row when that officer is the
+duplicate, and merge's `Member … FOR UPDATE` then waited on the linked guest's key
 share while the approval waited on the booking. That needs the booking outside
 merge's lodge prefix and a guest newly linked to a merge party. The claim alone
 names no Member row: `BookingRequest.reviewedByMemberId` is not a foreign key,
@@ -3435,6 +3435,11 @@ afterwards through `cancelBooking`, so it never holds the request row while
 waiting on a booking. The school approval claims its held booking straight
 after the request, before any guest write, and the requester's quote cancel
 writes no Member key share before its booking update, so neither changes.
+The approval still takes several Member key shares in no fixed order: the
+guest links, then the approving officer through `createdById`. When the
+approving officer is the duplicate and the hold is not merge's, that can still
+meet merge's sorted `Member … FOR UPDATE` with no booking row involved. That is
+#4855's class, not this fix.
 
 Why not the other fixes:
 
@@ -3456,7 +3461,8 @@ the officer acts again from the surviving record. An approval waiting there
 instead finds its officer gone at its fresh role check and writes nothing; one
 by an officer who is not a merge party claims the request, now the survivor's,
 and executes. A booking-request approval waiting there converts the hold once
-merge commits. If the writer wins, merge
+merge commits, unless its approving officer was the merged duplicate: its
+write then fails on the FK and rolls back. If the writer wins, merge
 waits at the booking row and moves the writer's attribution afterwards. When the
 writer was a booking-request approval that linked a merge party as a guest at a
 lodge outside merge's prefix, merge then refuses with
