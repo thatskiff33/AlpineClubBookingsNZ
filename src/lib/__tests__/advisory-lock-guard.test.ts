@@ -562,6 +562,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-001",
   },
   {
+    site: "lockDeadCardRefundRow#1",
+    tier: "GLOBAL",
+    reason:
+      "#4368 (owner decision 25 Oct 2026, INV-PAY-149): the one lock(1) of the two no-money settlements of a dead card refund on Stuck States - 'Nothing left owed' (closeCardRefundNothingLeftOwed: the row to SUCCEEDED, naming the later Stripe refund that covers it) and 'Try the card again' (tryDeadCardRefundAgain: the row re-armed with rearmedPaymentRecoveryOperationData for the runner, whose INV-PAY-145 Stripe check runs before any send). Each changes whether a refund debt is open, owed or in flight, which every edit, acceptance, paid cancel and refund appeal reads separately to size a refund net of what is promised back, and each must exclude 'Paid another way' (closeCardRefundPaidAnotherWay#1) on the same row (#4492): all three claim it with the same status-guarded updateMany - dead (deadCardRefundOperationWhere) and on the plan read (onPlanWhere) - under the same keys, so whichever commits second matches nothing and writes nothing. First lock of its transaction, then the row re-read, then the Payment row (lockPaymentForRefundedTotal) BEFORE the payment is read - every refunded-total writer without lock(1), the failed-later writer among them, takes that row first - so the owed figure, the recorded refunds and the payment's other card refund rows cannot move between the read and the claim. Then the claim and the audit row; no money, no journal, no Xero row and no provider call.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "lockAndClassify#1",
     tier: "GLOBAL",
     reason:
@@ -1668,7 +1675,9 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // lock(1)) before its task's claim, the order a "Paid another way" close takes
   // the Payment row and that task's row in; #4824: an approval's plan
   // (`planLateCaptureApprovalRefund`) takes it first, before it reads what the
-  // capture holds.
+  // capture holds. #4368: and by a dead card refund's "Nothing left owed" and
+  // "Try the card again" (`lockDeadCardRefundRow`), after their lock(1) and
+  // before the payment is read, as "Paid another way" takes it.
   // Order: lock(1) -> lodge -> member credit -> Payment -> refund, recovery and
   // transaction rows. See docs/CONCURRENCY_AND_LOCKING.md -> the #3640
   // paragraph and its #4217 sequel.
