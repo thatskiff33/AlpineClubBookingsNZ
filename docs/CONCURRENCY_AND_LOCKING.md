@@ -388,8 +388,9 @@ no process holds half a lease. Release and save clear both. While no
 **Lock order: `XeroToken`, then `XeroConnection`.** A statement trigger on
 `XeroToken` syncs `XeroConnection` at the end of each `XeroToken` statement, so
 every writer of either release that touches both tables touches `XeroToken`
-first. The token store's claim, save, release, connect and delete keep that
-order, so no cycle forms with the previous release's writers. The sync is ONE
+first. The token store's claim, save, release, connect and delete, and the
+data-key re-encrypt's fence (#4456, below), keep that order, so no cycle forms
+with the previous release's writers. The sync is ONE
 statement, reading one snapshot taken once its `XeroConnection` lock is
 granted, so a refresh, connect or disconnect committing while it waits is
 never half-seen and written back stale. It row-locks the connection only to
@@ -403,7 +404,8 @@ deletes both (`saveXeroTokens`).
 **The claim takes the leases first and reads the tokens second, in the same
 transaction.** The winning `updateMany`s hold both rows' locks until the claim
 commits, and every writer of the token set (a connect, a refresh save, a
-disconnect, a verify-reset, of either release) takes one of those rows first. So
+disconnect, a verify-reset, of either release, and the data-key re-encrypt
+through `fenceXeroTokenSetRewrite`) takes one of those rows first. So
 the store copy the claim then reads is the one that belongs to its lease.
 Reading first and claiming second let a reconnect commit between the reads, and
 the refresh then overwrote it (#3454 review).
@@ -421,6 +423,40 @@ bypassed the leases makes it lose, and losing any rolls back all three.
 fences against real row locks, including against the previous release's own
 claim statement, and forces both of the trigger's interleavings with a queued
 table lock.
+
+### The data-key re-encrypt joins the row claims and takes no advisory key (#4456)
+
+`pnpm run data-keys:reencrypt` (`data-encryption-reencrypt.ts`) rewrites stored
+secrets under the current data key while the app runs. It composes no booking,
+capacity, membership or money mutation, so it takes **no advisory lock**
+(`INV-LOCK-001`: neither tier applies) and adds no key (`INV-LOCK-002`,
+`INV-LOCK-003`: nothing to order or register). Each row is one short
+transaction with no provider call, joined to the claim its existing writers
+already use:
+
+| Row | Its other writers | How the re-encrypt claims it |
+| --- | --- | --- |
+| `IntegrationCredential` | admin saves and deletes, verify-resets, the Xero connect, refresh and disconnect | `withCredentialTransaction`, the row read on that transaction, then `expect: version`: the `(ciphertext, iv, authTag)` compare-and-set. A writer that commits first makes it lose (`StaleCredentialWriteError`) |
+| the Xero token set (`xero-oauth`/`token-set`) | as above, plus the refresh lease | first `fenceXeroTokenSetRewrite`: the lease rows in the order above, `XeroToken` then `XeroConnection`, each guarded on `refreshInProgressUntil` being NULL. Any lease, held or expired, makes it lose; holding both row locks, it makes a new claim queue and then read the moved row |
+| `Member.totpSecret` | enrolment, the erasure and retention clears | `updateMany` guarded on the exact value read |
+| `TwoFactorRecoveryCode` (retiring a legacy code) | sign-in's use of a code (itself guarded on the hash it matched and `usedAt: null`), replacement, enrolment, erasure | `updateMany` guarded on the hash read and `usedAt: null`. A lost claim means the code was used or replaced meanwhile, so there is nothing left to retire and no retry |
+
+A loser writes nothing and records no audit row. A credential or an
+authenticator secret that lost is retried on the next pass (three passes, two
+seconds apart); a recovery code that lost is not, for the reason in the table. **Why the Xero fence is needed:** a
+refresh reads the version its save compares on, spends the refresh token at
+Xero, then saves. A re-encrypt committing in between would make that save
+lose with the new token already issued and the old one spent, so the
+re-encrypt must not move the row while the lease is held. **Nor while it has
+expired** (#4456 review): unlike a claim, which takes an expired lease over by
+its own clock, the fence never does, because a refresh stalled past its lease,
+or judged by a skewed clock, may still be about to save, and its save matches
+only its own lease value. An expired lease is cleared by that refresh's save or
+release, or by the next claim; until then the row stays where it is and the
+report says to run again. `data-encryption-key-ring.realdb.test.ts` proves it:
+with the lease held, and with it expired but its refresh still in flight, the
+re-encrypt loses and the refresh saves; queued behind a held `XeroToken` row
+lock in each order, the refresh's save wins and no refresh token is lost.
 
 ## The lock families
 
@@ -5774,7 +5810,9 @@ their event key's unique index makes a duplicate post collapse to one, and
 `ON CONFLICT DO NOTHING` makes a concurrent poster of the same key wait and then
 replay. A refused check looks the key up once more,
 because a same-key poster may have committed in between. Proved against real
-PostgreSQL by `member-money-posting.realdb.test.ts`.
+PostgreSQL by `member-money-posting.realdb.test.ts`. A batch that applies money,
+and a refund reservation or its release, also take the booking's Payment row
+(#4691, below). A charge or a reversal that applies nothing does not.
 
 ## The M3b booking doors and member merge's journal transfer (#4627)
 
@@ -5850,6 +5888,86 @@ order. Its participants:
 Reconciled against #4636 (M3b: the doors, the booking row lock, the inactive
 journal), #4630 (M3a) and #4634 (the finished-stay fee owed, which the planned
 confirmation includes), the last merges touching these writers.
+
+## Member-money applications and refund reservations: the booking's Payment row (#4691)
+
+Ledger M4a adds no advisory key (`INV-LOCK-001`, `INV-LOCK-002`). One participant
+joins an existing row lock (`INV-LOCK-003`): `lockMemberMoneyPayment`
+(`src/lib/member-money/internal/application-read.ts`) takes the booking's
+`Payment` row `FOR NO KEY UPDATE`, the same statement and strength as
+`lockPaymentForRefundedTotal`. It runs before the first write, inside the
+caller's transaction, for three writes only:
+
+- a batch that records applications, including a reversal that copies them;
+- a refund reservation;
+- a release of one.
+
+A charge, an adjustment, or a reversal that applies nothing does not take it, so
+the M3 doors keep the lock order they have. Within a transaction that already
+holds the row, PostgreSQL treats the second take as already held. The engine
+never takes the booking row, and it does not acquire `lock(1)` for an
+application: the Payment row is what keeps two applications, or a reservation
+and a release, from both passing the caps. A price edit still changes the live
+charge under `lock(1)` without this row, so the charge cap (C2) can be over or
+under; that is the accepted limit, and the population check does not fail it.
+M4a left the application and reservation commands inert. M4b activates receipt
+applications; refund reservations remain inert until M4c. Proved
+against real PostgreSQL by `member-money-applications.realdb.test.ts`.
+
+Reconciled against #4668, #4671, #4667, #4666, #4664, #4659, #4658, #4654, #4653
+and #4662, the merges the M4 plan checked against these writers, and against
+the open credit-release work that shares this Payment row. No new edge: the
+store does not take a booking row, and merge does not take a Payment row.
+
+M4b (#4516) activates receipt applications through `postBookingReceipts`. Its
+cash, application and exact-reversal writes run under the same Payment row as
+the legacy write (`INV-LOCK-001`–`003`). W1 retains global → lodge → member →
+Payment ordering. Saved-card capture, additional capture, superseded capture and
+cancelled-primary capture take only Payment. The cancelled-primary upsert and
+the formerly unlocked superseded-success write now enclose their legacy write
+and receipt in one Payment-row transaction. No new advisory key or provider call
+is introduced. Settings and timezone resolve before transactions.
+
+Each decision the hook acts on is read under the Payment row, never before it:
+
+- **The owner, once per call.** The receipt reads the booking's owner without
+  locking Booking, once, and every receipt it posts names that debtor. Every
+  collection lands on that owner's live obligation, the tip of the charge chain,
+  so a merge committing mid-call never drops a collection and never strands one
+  on a superseded obligation. A receipt deferred before a merge is applied
+  through the credit the merge chain carried to the owner: an exact residue
+  move, or a zero-net stand-in when the merge's snapshot netted it. D4 moves
+  merged-debtor residue hop by hop, only ever onward along the merge chain to
+  the owner; an intermediate hop may be a member that has itself merged away.
+- **Charge successors.** Merge takes no Payment row, so it posts no CHARGE
+  successor: application state it read could miss a collection committing
+  beside it. The first collection by the new owner posts the successor under
+  the Payment row, sized from the live charge less everything collected.
+- **Additional capture.** `markPaymentIntentTransactionSucceeded` decides
+  collect from the booking's status and `deletedAt` read under the Payment row
+  a cancel also takes; a route's or webhook's earlier read is not used.
+- **Superseded capture.** The flip is a status-guarded `updateMany` under the
+  Payment row. A row captured or refunded since the caller's read is left
+  alone, and a lost claim posts no receipt.
+- **C2.** The hook clamps a collection to one live-charge read and the engine
+  checks C2 against that same read. A price edit under `lock(1)` alone can
+  commit between them; the collection is then ordered before it (the accepted
+  over-collection the census reports), never a refusal that rolls back the
+  legacy capture write.
+- **Nothing to do.** With nothing selected, every receipt and reversal bridged
+  and no merged-debtor balance, the hook returns after those reads, adding no
+  per-line work under its caller's locks.
+
+The Xero receipt posts after the delivery's body completes, never from a
+`finally`, so a body that fails in SQL surfaces its own error. It collects only
+the PRIMARY rows that delivery moved to captured, and only on the paid arm.
+
+Counterpart reconciliation at M4b's base: #4776 (engine caps and Payment lock),
+#4749, #4727, #4714, #4706, #4698, #4700, #4694, #4689 and #4684. Their capture,
+recovery claims, exact markers and outbox/provider behaviour remain unchanged.
+Open #4779–#4784 and #4496 have no competing receipt writer; the owner's serial
+waiver covers them. `member-money-capture-writer-census.test.ts` inventories all
+transaction mutations, generic capture callers and each new receipt hook.
 
 ## A credit note spent outside the app: global, then the member's credit ledger (#4219)
 

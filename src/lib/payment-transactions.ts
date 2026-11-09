@@ -26,6 +26,8 @@ import { IntentLedgerRowOnAnotherPaymentError, writePaymentIntentTransaction } f
 import { accountCreditDispositionCents } from "@/lib/stripe-cash-refund-evidence";
 import { readPaidAnotherWayCloseBankCashByPayment } from "@/lib/card-refund-paid-another-way-cash";
 import type { ClubFormat } from "@/lib/club-format";
+import { postBookingReceipts, type BookingJournalContext } from "@/lib/member-money/doors";
+import { isLateCaptureRefundedBookingStatus } from "@/lib/additional-payment-chase";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { compareLedgerRowsNewestFirst, LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 // Moved to a leaf so the booking ledger's settlement sync can share them
@@ -1132,6 +1134,7 @@ export async function recordInternetBankingPaymentTransaction({
 }
 
 export async function markPaymentIntentTransactionSucceeded({
+  journal, capturedAt,
   paymentIntentId,
   amountCents,
   paymentMethodId,
@@ -1141,6 +1144,9 @@ export async function markPaymentIntentTransactionSucceeded({
   amountCents: number;
   paymentMethodId?: string | null;
   store?: PaymentStore;
+  journal: BookingJournalContext;
+  /** The provider's capture instant, which dates the receipt. */
+  capturedAt?: Date;
 }) {
   // #4217: which payment, read without writing; then that Payment row; then the
   // re-read (which may backfill a pre-ledger payment) and the write under it.
@@ -1167,7 +1173,13 @@ export async function markPaymentIntentTransactionSucceeded({
       },
     });
 
-    return reconcilePaymentAggregates({ paymentId, store: db });
+    const result = await reconcilePaymentAggregates({ paymentId, store: db });
+    // #4516: collect or hold is decided here, under the Payment row a cancel also takes, from the booking as it
+    // stands now: a capture on a cancelled or deleted booking is refunded (#3641), so it is never collected.
+    const { booking } = await db.payment.findUniqueOrThrow({ where: { id: paymentId }, select: { booking: { select: { status: true, deletedAt: true } } } });
+    const collect = !isLateCaptureRefundedBookingStatus(booking.status) && booking.deletedAt === null;
+    await postBookingReceipts(db, journal, { paymentId, decision: { paymentIntentId, collect, effectiveAt: capturedAt } });
+    return result;
   });
 }
 

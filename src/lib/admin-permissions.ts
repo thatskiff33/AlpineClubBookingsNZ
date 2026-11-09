@@ -491,6 +491,14 @@ const ROUTE_AREA_PREFIXES: Array<{
   },
 ];
 
+/**
+ * Every route-map prefix, frozen and read-only, for the hub registry's prefix
+ * census (#4798), which must see rules BELOW a hub root. Resolution never reads it.
+ */
+export const ADMIN_ROUTE_MAP_PREFIXES: readonly string[] = Object.freeze(
+  ROUTE_AREA_PREFIXES.flatMap(({ prefixes }) => prefixes),
+);
+
 const EDIT_ON_GET_PREFIXES = [
   "/api/admin/xero/callback",
   "/api/admin/xero/connect",

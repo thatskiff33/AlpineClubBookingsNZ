@@ -37,6 +37,13 @@ unkeyed hash. The key comes from the data-encryption key ring
   working at cut-over (owner decision on #4456), and `memberHoldsRetiredRecoveryCodes`
   drives the notice telling the member to generate a new set. Emailed codes
   last ten minutes and session challenges two, so theirs simply expire.
+- **Retired in the database:** `pnpm run data-keys:reencrypt
+  --retire-legacy-recovery-codes` rewrites each unused auth-secret hash as
+  `retired.legacy-auth-secret:<hex>`. No release computes a candidate with that
+  prefix (the `.` is outside every ring id's alphabet), so the code is refused
+  even where no ring is set. The row stays unused, so the notice still shows,
+  and it counts as no key's data: it never makes the app think a ring was set
+  (`data-encryption-legacy-write-guard.ts`).
 
 The bearer tokens in the first section (password reset, email verification,
 chore and nomination links) carry enough entropy for an unkeyed SHA-256 and do

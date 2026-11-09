@@ -185,6 +185,7 @@ import {
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const tx = {
+  memberMoneyEvent: { findUnique: vi.fn(async () => null) },
   $executeRaw: (...args: unknown[]) => mocks.executeRaw(...args),
   $queryRaw: (...args: unknown[]) => mocks.executeRaw(...args),
   lodge: { findFirst: (...args: unknown[]) => mocks.lodgeFindFirst(...args) },
@@ -267,7 +268,7 @@ function bookingRow(overrides: Record<string, unknown> = {}) {
 
 function paymentRow(overrides: Record<string, unknown> = {}) {
   return {
-    id: "payment-1",
+    id: "payment-1", bookingId: "booking-1",
     // #2397: an unsettled payment — the ordinary settle-from shape. A payment
     // that has already taken money (SUCCEEDED / refunded) is refused at read
     // time now, not only at the fence.

@@ -188,7 +188,11 @@ describe("POST confirm-modification-payment — capture on a deleted booking (#2
 
     // Half one: the money is on the ledger.
     expect(mocks.markPaymentIntentTransactionSucceeded).toHaveBeenCalledTimes(1);
+    // #4516 (M4b): the writer decides collect itself, under the Payment row (a deleted booking never
+    // collects); the route passes only the journal context and the capture's time, unknown on this intent.
     expect(mocks.markPaymentIntentTransactionSucceeded).toHaveBeenCalledWith({
+      journal: expect.objectContaining({ currency: expect.any(String), zone: expect.any(String) }),
+      capturedAt: undefined,
       paymentIntentId: INTENT_ID,
       amountCents: AMOUNT_CENTS,
       paymentMethodId: "pm_1",

@@ -143,6 +143,18 @@ describe("runtime-config", () => {
       expect(check.error).not.toContain(VALID);
     });
 
+    it("is NOT ready with the legacy-read switch set without a ring, or to anything but retired (#4456 PR 2)", () => {
+      readyEnv();
+      process.env.DATA_ENCRYPTION_LEGACY_KEY = "retired";
+      delete process.env.DATA_ENCRYPTION_KEYS;
+      expect(getRuntimeConfigIssues()).toEqual([expect.stringMatching(/DATA_ENCRYPTION_LEGACY_KEY=retired needs DATA_ENCRYPTION_KEYS/)]);
+      process.env.DATA_ENCRYPTION_KEYS = `k1:${VALID}`;
+      expect(getRuntimeConfigIssues()).toEqual([]);
+      process.env.DATA_ENCRYPTION_LEGACY_KEY = "yes";
+      expect(getRuntimeConfigIssues()).toEqual([expect.stringMatching(/the only accepted value is "retired"/)]);
+      delete process.env.DATA_ENCRYPTION_LEGACY_KEY;
+    });
+
     it("is NOT ready when a ring key is the auth secret itself", () => {
       readyEnv();
       process.env.AUTH_SECRET = VALID;

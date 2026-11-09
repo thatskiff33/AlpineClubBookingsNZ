@@ -141,7 +141,26 @@ describe("a keep counts an applied correction already synced in its own transact
     ...overrides,
   });
   const noteLink = (status: string | null) => ({ xeroObjectId: "cn-correction", metadata: status === null ? {} : { status } });
-  const allocationLink = { metadata: { creditNoteId: "cn-correction", invoiceId: INVOICE_ID, amountCents: 10_000 } };
+  const NOTE_ALLOCATION_ROLE = "MODIFICATION_CREDIT_NOTE_ALLOCATION";
+  const ROLELESS_ALLOCATION_ROLE = "CREDIT_NOTE_ALLOCATION";
+  const allocationLink = {
+    localModel: "BookingModification",
+    role: NOTE_ALLOCATION_ROLE,
+    metadata: { creditNoteId: "cn-correction", invoiceId: INVOICE_ID, amountCents: 10_000 },
+    updatedAt: new Date("2026-06-01T00:00:00.000Z"),
+  };
+  // `null`: no amount recorded.
+  const rolelessLink = (amountCents: number | null = 10_000, localModel = "BookingModification") => ({
+    localModel,
+    role: ROLELESS_ALLOCATION_ROLE,
+    metadata: { creditNoteId: "cn-correction", invoiceId: INVOICE_ID, ...(amountCents === null ? {} : { amountCents }) },
+    updatedAt: new Date("2026-06-02T00:00:00.000Z"),
+  });
+  type RoleClause = { role: string; localModel?: { not: string } };
+  type AllocationRow = { localModel: string; role: string };
+  // A link matches a role clause as Postgres would match it.
+  const matchesRoleClause = (link: AllocationRow, clause: RoleClause) =>
+    link.role === clause.role && (clause.localModel === undefined || link.localModel !== clause.localModel.not);
 
   function decide(input: {
     rows?: Row[];
@@ -152,8 +171,15 @@ describe("a keep counts an applied correction already synced in its own transact
     matchedPayments?: number;
   }) {
     mocks.readModificationNoteCash.mockResolvedValue(new Map([["cn-correction", "correction"]]));
-    const linkFindMany = vi.fn(async ({ where }: { where: { role: string } }) =>
-      where.role === "MODIFICATION_CREDIT_NOTE" ? (input.noteLinks ?? [noteLink("AUTHORISED")]) : (input.allocationLinks ?? [allocationLink]),
+    // Only the allocation links the query's role clauses match, as Postgres returns them.
+    const linkFindMany = vi.fn(async ({ where }: { where: { role?: string; AND?: Array<{ OR: RoleClause[] }> } }) =>
+      where.role === "MODIFICATION_CREDIT_NOTE"
+        ? (input.noteLinks ?? [noteLink("AUTHORISED")])
+        : ((input.allocationLinks ?? [allocationLink]) as AllocationRow[]).filter((link) =>
+            (where.AND ?? [{ OR: where.role ? [{ role: where.role }] : [] }]).every((group) =>
+              group.OR.some((clause) => matchesRoleClause(link, clause)),
+            ),
+          ),
     );
     const tx = {
       paymentTransaction: { findMany: vi.fn().mockResolvedValue(input.rows ?? [pendingReceipt()]) },
@@ -185,7 +211,11 @@ describe("a keep counts an applied correction already synced in its own transact
     );
     expect(linkFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ role: "MODIFICATION_CREDIT_NOTE_ALLOCATION", active: true, metadata: { path: ["invoiceId"], equals: INVOICE_ID } }),
+        where: expect.objectContaining({
+          AND: [{ OR: [{ role: NOTE_ALLOCATION_ROLE }, { role: ROLELESS_ALLOCATION_ROLE, localModel: { not: "Payment" } }] }],
+          active: true,
+          metadata: { path: ["invoiceId"], equals: INVOICE_ID },
+        }),
       }),
     );
   });
@@ -202,6 +232,48 @@ describe("a keep counts an applied correction already synced in its own transact
 
   it("MUTATION: never one whose allocation to this invoice is not linked yet - its sync, and the recount after the commit, count it", async () => {
     await expect(decide({ allocationLinks: [] }).decided).resolves.toMatchObject({ paymentColumns: null });
+  });
+
+  // #4786: an older repair could link the note's allocation role-less
+  // (`CREDIT_NOTE_ALLOCATION`); it shows the allocation linked as the note's
+  // own role does (`distinctClearingAllocations`), and the correction counts
+  // once, at what Xero applied.
+  it("MUTATION (#4786): an allocation linked only role-less counts", async () => {
+    await expect(decide({ allocationLinks: [rolelessLink()] }).decided).resolves.toMatchObject({
+      paymentColumns: { refundedAmountCents: 10_000 },
+    });
+  });
+
+  it("#4786: the inbound mirror's own-role link and the role-less one for the same allocation count the correction once", async () => {
+    await expect(decide({ allocationLinks: [allocationLink, rolelessLink()] }).decided).resolves.toMatchObject({
+      paymentColumns: { refundedAmountCents: 10_000 },
+    });
+  });
+
+  it("#4786: a role-less link for another amount beside the own-role one still counts the correction once, at what Xero applied", async () => {
+    await expect(decide({ allocationLinks: [allocationLink, rolelessLink(4_000)] }).decided).resolves.toMatchObject({
+      paymentColumns: { refundedAmountCents: 10_000 },
+    });
+  });
+
+  it("MUTATION (#4786): a role-less link with no amount recorded shows nothing linked - the recount after the commit decides", async () => {
+    await expect(decide({ allocationLinks: [rolelessLink(null)] }).decided).resolves.toMatchObject({ paymentColumns: null });
+  });
+
+  it("MUTATION (#4786): a role-less link on a payment - its refund or account note's mirror - shows nothing linked", async () => {
+    await expect(decide({ allocationLinks: [rolelessLink(10_000, "Payment")] }).decided).resolves.toMatchObject({ paymentColumns: null });
+  });
+
+  it("MUTATION (#4786): an own-role link with no amount still shows the note linked - the keep reads presence, never an amount", async () => {
+    await expect(
+      decide({ allocationLinks: [{ ...allocationLink, metadata: { creditNoteId: "cn-correction", invoiceId: INVOICE_ID } }] }).decided,
+    ).resolves.toMatchObject({ paymentColumns: { refundedAmountCents: 10_000 } });
+  });
+
+  it("#4786: an allocation link with any other role shows nothing linked", async () => {
+    await expect(
+      decide({ allocationLinks: [{ ...allocationLink, role: "APPLIED_CREDIT_ALLOCATION" }] }).decided,
+    ).resolves.toMatchObject({ paymentColumns: null });
   });
 
   it("MUTATION: never over a refunded total its rows do not explain, which may already hold the correction", async () => {

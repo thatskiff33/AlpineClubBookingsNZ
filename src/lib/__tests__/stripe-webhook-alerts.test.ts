@@ -211,7 +211,11 @@ vi.mock("@/lib/deleted-booking-modification-payment", () => ({
 }));
 
 vi.mock("@/lib/stripe", () => ({
-  constructWebhookEvent: (...args: unknown[]) => mockConstructWebhookEvent(...args),
+  constructWebhookEvent: (...args: unknown[]) => {
+    const event = mockConstructWebhookEvent(...args);
+    if (event?.type?.startsWith("payment_intent.") && event.data?.object) event.data.object.created ??= Math.floor(new Date().getTime() / 1000);
+    return event;
+  },
   listRefundsForCharge: (...args: unknown[]) => mockListRefundsForCharge(...args),
   listRefundsForPaymentIntent: (...args: unknown[]) => mockListRefundsForPaymentIntent(...args),
   processRefund: (...args: unknown[]) => mockProcessRefund(...args),
@@ -278,6 +282,7 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: (...args: unknown[]) => mockProcessedWebhookFindFirst(...args),
       updateMany: (...args: unknown[]) => mockProcessedWebhookUpdateMany(...args),
     },
+    memberMoneyEvent: { findUnique: vi.fn(async () => null) },
     payment: {
       findUnique: (...args: unknown[]) => mockPaymentFindUnique(...args),
       update: (...args: unknown[]) => mockPaymentUpdate(...args),
@@ -527,7 +532,9 @@ describe("Stripe webhook Xero alerting", () => {
     mockTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
         $executeRaw: vi.fn().mockResolvedValue(1),
+        memberMoneyEvent: { findUnique: vi.fn(async () => null) },
         payment: {
+          findUnique: vi.fn(async () => ({ bookingId: "booking-1" })),
           update: (...args: unknown[]) => mockPaymentUpdate(...args),
         },
         booking: {
@@ -664,6 +671,7 @@ describe("Stripe webhook Xero alerting", () => {
 
     expect(response.status).toBe(200);
     expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith({
+      capturedAt: expect.any(Date),
       format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_primary",
@@ -1481,6 +1489,7 @@ describe("Stripe webhook Xero alerting", () => {
       });
       expect(mockReconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: "payment-1", store: expect.anything() });
       expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith({
+      capturedAt: expect.any(Date),
         format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         paymentIntentId: "pi_lost",
@@ -2220,6 +2229,8 @@ describe("Stripe webhook Xero alerting", () => {
       // The capture is recorded truthfully, then refunded in full under the
       // idempotent late-cancel key pinned to this transaction.
       expect(mockMarkPaymentIntentTransactionSucceeded).toHaveBeenCalledWith({
+        journal: expect.any(Object),
+        capturedAt: expect.any(Date),
         paymentIntentId: "pi_additional_late",
         amountCents: 2500,
         paymentMethodId: "pm_late",
@@ -3204,6 +3215,8 @@ describe("Stripe webhook Xero alerting", () => {
 
       expect(response.status).toBe(200);
       expect(mockMarkPaymentIntentTransactionSucceeded).toHaveBeenCalledWith({
+        journal: expect.any(Object),
+        capturedAt: expect.any(Date),
         paymentIntentId: "pi_additional_late",
         amountCents: 2500,
         paymentMethodId: "pm_late",

@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { MemberMoneyRefundReservationReleaseReason, Prisma } from "@prisma/client";
 import type { ClubFormat } from "../../club-format";
 import {
   ClubTaxTreatmentUnavailableError,
@@ -8,14 +8,17 @@ import {
 import { clubCalendarDateOf, type ClubTimeZone, type Instant } from "../../club-time";
 import { clubChargeCurrencyCodeOrThrow } from "../../stripe-charge-currency";
 import {
+  MemberMoneyPlanError,
   buildMemberMoneyBatch,
   buildMemberMoneyReversal,
   type MemberMoneyPlan,
+  type MemberMoneySource,
   type MemberMoneyPostingContext,
   type MemberMoneyReversalPlan,
   type MemberMoneyTaxContext,
 } from "./plan";
-import { readMemberMoneyJournalToReverse, writeMemberMoneyBatch, type MemberMoneyPosting } from "./store";
+import { lockMemberMoneyPayment, readMemberMoneyApplicationState } from "./application-read";
+import { appendMemberMoneyReservationRelease, readMemberMoneyJournalToReverse, writeMemberMoneyBatch, type MemberMoneyPosting } from "./store";
 
 /**
  * Resolve a posting context BEFORE the business transaction opens
@@ -54,6 +57,7 @@ export function resolveMemberMoneyPostingContext(input: {
     }
   }
   return {
+    zone: input.zone,
     effectiveAt: input.effectiveAt,
     effectiveDate,
     currency: clubChargeCurrencyCodeOrThrow(input.format),
@@ -101,4 +105,26 @@ export async function reverseMemberMoneyJournal(
 ): Promise<MemberMoneyPosting> {
   const original = await readMemberMoneyJournalToReverse(tx, plan.reversesJournalId);
   return writeMemberMoneyBatch(tx, buildMemberMoneyReversal(context, plan, original), original);
+}
+
+/** Release and funding reversal commit together. ANSWERED is written only with the matched pay application. */
+export async function releaseMemberMoneyRefundReservation(
+  tx: Prisma.TransactionClient,
+  context: MemberMoneyPostingContext,
+  input: { bookingId: string; reservationId: string; reason: Exclude<MemberMoneyRefundReservationReleaseReason, "ANSWERED">; source: MemberMoneySource },
+): Promise<void> {
+  await lockMemberMoneyPayment(tx, input.bookingId);
+  const reservation = await tx.memberMoneyRefundReservation.findUnique({ where: { id: input.reservationId }, include: { release: true } });
+  if (!reservation) throw new MemberMoneyPlanError(["reservation does not exist"]);
+  const state = await readMemberMoneyApplicationState(tx, input.bookingId);
+  if (!state.obligations.some((o) => o.id === reservation.obligationId)) throw new MemberMoneyPlanError(["reservation belongs to another booking"]);
+  if (reservation.release) {
+    if (reservation.release.reason !== input.reason) throw new MemberMoneyPlanError(["reservation was released differently"]);
+    return;
+  }
+  // Append the release before reversing funding so the cap projection sees no open claim.
+  // Both roll back if the reversal refuses.
+  await appendMemberMoneyReservationRelease(tx, reservation.id, input.reason);
+  await reverseMemberMoneyJournal(tx, context, { reversesJournalId: reservation.fundingJournalId,
+    origin: "APP", source: input.source, reason: input.reason });
 }

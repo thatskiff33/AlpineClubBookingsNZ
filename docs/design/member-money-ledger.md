@@ -272,7 +272,8 @@ looks up a replay first, then completes corrections, then writes in the order
 the foreign keys need. `reverseMemberMoneyJournal` posts the exact whole-batch
 reversal under the journal's own key, so a retry replays. Outside the store a
 journal delegate is only ever read (`member-money-journal-inert-census.test.ts`).
-Applications are not yet in the plan: M4 adds them with receipts.
+M4a (#4691) added applications, exact reversals and conservation checks. M4b
+(#4516) uses them for receipts through `postBookingReceipts`.
 
 M3b ([#4627](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4627))
 wired the booking doors, through the boundary's server-only `./doors` entry; the
@@ -791,6 +792,64 @@ member carries and moves each, booking by booking, to the survivor. A door
 holding one of that member's bookings makes the owner move wait, so its charge
 is in the balances read; a door after it reads the survivor. The transfer posts
 no revenue, so it needs no `lock(1)`, which merge deliberately does not take.
+
+M4b gives the survivor CHARGE successors, but not inside merge: merge holds no
+Payment row, so it could size a successor from application state that misses
+a collection committing beside it. The survivor's first collection posts them
+instead, under the Payment row: one successor for the chain's live tip, a
+zero-net receivable pair on the survivor sized as the paragraph below says. Posted
+debtors remain immutable. Receipt writers take only the Payment row and read
+the owner once per call without locking Booking; the next receipt posting moves
+any merged-debtor residue explicitly, keyed to its source event, one merge hop
+at a time. No Payment lock is added to merge.
+
+A successor is only ever posted for the current owner, from the chain's one
+live tip, with the face the chain still has to collect: the live charge less
+everything collected. Every collection lands on the owner's live obligation.
+Faces are not a running balance: a price increase opens no obligation, so a
+collection is capped by the live charge, not by its obligation's face. A receipt
+a merged-away member's writer deferred is applied there through the credit the
+merge chain carried to the owner: the residue move's exact line, or, when a
+merge's snapshot netted the receipt into the survivor's balance, a zero-net
+`merge-follow` pair on the owner that stands in for it. The receipt census treats
+a receipt's own credit and the credits its collection applied as one source cap,
+and counts nothing for a reversed receipt.
+
+### M4b receipt posting and catch-up
+
+`postBookingReceipts` records R06/R07/R08 beside each legacy cash writer, only
+for bookings with R01. Cash posts in full. Collection is a separate, exact
+application to the selected transaction, capped by source room and live charge;
+held, duplicate and superseded captures stay unapplied. A ZERO R01 gets its
+CHARGE obligation lazily when collection needs one, without another charge.
+An officer reversal first reverses the receipt's collection exactly, through
+whichever credit it applied (its own line, a residue move's or a stand-in's),
+then the receipt itself.
+Organiser-share mirrors remain M6's. No legacy decision reader changes.
+
+A writer selects only the instruments it wrote or decided in its own
+transaction: the Stripe intent it settled, the bank rows a Xero delivery moved
+to captured, the W8 row a close wrote, or the rows an officer settle wrote.
+Each receipt's evidence records how it was posted (`postedAs`). A later call
+may collect only a `deferred` one, which a saved-card answer posts for its own
+settlement to decide. A receipt a catch-up posted, or one its writer chose not
+to collect, is never collected from a later hook's state. Who collects:
+
+| Writer | Collects when |
+| --- | --- |
+| Booking settle (card or officer) | The settle paid the booking |
+| Additional capture | The booking, read under the Payment row, is neither cancelled nor deleted |
+| Xero receipt | The delivery took the paid arm |
+| W7 part payment, W8 close | Always, for the row it wrote |
+| Saved-card answer | Never; deferred to the settle |
+| Superseded or cancelled-primary capture | Never |
+
+Each hook catches up the payment's other receipts unapplied. The owner command
+`pnpm run member-money:receipt-catch-up` defaults to a read-only census;
+`--execute` runs one Payment-row transaction per population payment. Catch-up
+uses the settlement line's `postedAt`, marked `datedBy: app-record`, without
+provider reads. Missing receipts must reach zero before M4c deploys. See
+[maintenance](../MAINTENANCE.md#catch-up-and-census-member-money-receipts-m4b).
 
 ## 11. Proposed children, in shipping order
 

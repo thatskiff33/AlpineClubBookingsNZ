@@ -16,3 +16,5 @@ export { postBookingLedgerJournal, postMemberMergeTransfer, postPendingBookingJo
 // #4628 (M3c): a bank-transfer booking's charge before settlement, planned by the legacy side.
 export type { StandingChargeLine } from "./internal/booking-pending-charges";
 export { resolveBookingDoorClock, resolveBookingMoneyPostingContext } from "./internal/door-context";
+
+export { postBookingReceipts, type BookingReceiptDecision } from "./internal/booking-receipts";

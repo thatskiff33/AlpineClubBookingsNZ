@@ -56,8 +56,10 @@ import {
   type DataKey,
 } from "@/lib/data-encryption-key-material";
 import {
+  LEGACY_READS_RETIRED_MESSAGE,
   currentDataKey,
   dataKeyById,
+  legacyReadsRetired,
 } from "@/lib/data-encryption-keys";
 
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
@@ -336,7 +338,9 @@ export function decryptCredential(params: {
     throw new CredentialDecryptError(
       params.secretSource.startsWith(DATA_KEY_SOURCE_PREFIX)
         ? `Stored integration credential could not be decrypted: the data-encryption key "${params.secretSource.slice(DATA_KEY_SOURCE_PREFIX.length)}" it was written under is not in DATA_ENCRYPTION_KEYS. Restore that key, or re-enter the credential.`
-        : "No auth secret is available to decrypt integration credentials.",
+        : legacyReadsRetired()
+          ? `Stored integration credential could not be decrypted: ${LEGACY_READS_RETIRED_MESSAGE}.`
+          : "No auth secret is available to decrypt integration credentials.",
     );
   }
   try {

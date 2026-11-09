@@ -1,0 +1,86 @@
+import { defineHub } from "../define";
+
+/** Messages & email. Mixes the `membership` and `support` areas. */
+export const MESSAGES_HUB = defineHub({
+  key: "messages",
+  label: "Messages & email",
+  prefix: "messages",
+  pages: [
+    {
+      id: "notifications",
+      label: "Notifications & Email",
+      oldPath: "/admin/notifications",
+      area: "support",
+      moved: false,
+    },
+    {
+      id: "communications",
+      label: "Communications",
+      oldPath: "/admin/communications",
+      area: "membership",
+      flags: ["communications"],
+      moved: false,
+    },
+    {
+      id: "notices",
+      label: "Member Notices",
+      oldPath: "/admin/notices",
+      area: "membership",
+      flags: ["memberNotices"],
+      moved: false,
+    },
+    {
+      id: "notice-detail",
+      label: "Member Notice",
+      oldPath: "/admin/notices/[id]",
+      area: "membership",
+      flags: ["memberNotices"],
+      kind: "detail",
+      moved: false,
+    },
+    {
+      id: "notice-new",
+      label: "New Member Notice",
+      oldPath: "/admin/notices/new",
+      area: "membership",
+      flags: ["memberNotices"],
+      moved: false,
+    },
+    {
+      id: "message-board",
+      label: "Message Board",
+      oldPath: "/admin/message-board",
+      area: "membership",
+      flags: ["commsPortal"],
+      moved: false,
+    },
+    {
+      id: "email-messages",
+      label: "Email Messages",
+      oldPath: "/admin/email-messages",
+      area: "support",
+      moved: false,
+    },
+    {
+      id: "booking-messages",
+      label: "Booking Messages",
+      oldPath: "/admin/booking-messages",
+      area: "support",
+      moved: false,
+    },
+    {
+      id: "notification-rules",
+      label: "Notification Rules",
+      oldPath: "/admin/notification-rules",
+      area: "support",
+      moved: false,
+    },
+    {
+      id: "notification-recipients",
+      label: "Notification Recipients",
+      oldPath: "/admin/notification-recipients",
+      area: "support",
+      moved: false,
+    },
+  ],
+});

@@ -17,7 +17,14 @@
  *      landing first) makes the write LOSE — no row change, no audit row — and
  *      a retry from a fresh read succeeds under the current key;
  *   4. two writers holding the same version, FORCED to meet at the claim behind
- *      a third connection's row lock, let exactly one through.
+ *      a third connection's row lock, let exactly one through;
+ *   5. (PR 2) `data-keys:reencrypt` leaves no credential, authenticator secret
+ *      or unused legacy recovery code on an old key, every value still reads
+ *      after AUTH_SECRET is rotated, and a later ring key moves them again;
+ *   6. (PR 2) a Xero token refresh racing the re-encrypt loses or wins cleanly
+ *      and no refresh token is lost: with the lease held the re-encrypt loses
+ *      and the refresh saves; forced to queue on the same `XeroToken` row lock,
+ *      whichever goes first, the refresh's save still succeeds.
  *
  * OFF by default, like every `*.realdb.test.ts`: it runs only with
  * `RUN_CONCURRENCY_RACE_TESTS=1` against `CONCURRENCY_RACE_DATABASE_URL`
@@ -57,7 +64,7 @@ function testKey(seed: number): string {
 const RING = `k1:${testKey(1)}`;
 
 /** The variables this suite changes, as it found them (#4107). */
-const SAVED_ENV = ["AUTH_SECRET", "NEXTAUTH_SECRET", "DATA_ENCRYPTION_KEYS"] as const;
+const SAVED_ENV = ["AUTH_SECRET", "NEXTAUTH_SECRET", "DATA_ENCRYPTION_KEYS", "DATA_ENCRYPTION_LEGACY_KEY"] as const;
 let savedEnv: Partial<Record<(typeof SAVED_ENV)[number], string | undefined>> | null = null;
 
 function restoreEnv() {
@@ -77,8 +84,16 @@ function deferred() {
   return { promise, resolve };
 }
 
+const RING_2 = `k2:${testKey(2)},${RING}`;
+const MEMBER_ID = "race-4456-member";
+const TENANT = "race-4456-tenant";
+const XERO_TOKEN_ENTITY = "xero-oauth:token-set";
+
 let prisma: typeof import("@/lib/prisma")["prisma"];
 let credentials: typeof import("@/lib/integration-credentials");
+let reencrypt: typeof import("@/lib/data-encryption-reencrypt");
+let twoFactor: typeof import("@/lib/two-factor");
+let xeroStore: typeof import("@/lib/xero-token-store");
 let StaleCredentialWriteError: typeof import("@/lib/integration-credential-actor")["StaleCredentialWriteError"];
 let holderClient: PrismaClient;
 let observerClient: PrismaClient;
@@ -87,6 +102,14 @@ let observerClient: PrismaClient;
   async function clear() {
     await prisma.integrationCredential.deleteMany({ where: { provider: PROVIDER } });
     await prisma.auditLog.deleteMany({ where: { entityId: { startsWith: `${PROVIDER}:` } } });
+    // PR 2's rows: the member (its codes cascade), its audit rows, and the Xero
+    // connection the race tests make (the Xero suite clears these tables too).
+    await prisma.member.deleteMany({ where: { id: MEMBER_ID } });
+    await prisma.auditLog.deleteMany({ where: { entityId: { in: [MEMBER_ID, XERO_TOKEN_ENTITY] } } });
+    await prisma.xeroToken.deleteMany();
+    await prisma.xeroConnection.deleteMany();
+    await prisma.integrationCredential.deleteMany({ where: { provider: { in: ["xero-oauth", "google"] } } });
+    await prisma.auditLog.deleteMany({ where: { entityId: { startsWith: "google:" } } });
     credentials.resetIntegrationCredentialCacheForTests();
   }
 
@@ -166,6 +189,9 @@ let observerClient: PrismaClient;
     ({ prisma } = await import("@/lib/prisma"));
     credentials = await import("@/lib/integration-credentials");
     ({ StaleCredentialWriteError } = await import("@/lib/integration-credential-actor"));
+    reencrypt = await import("@/lib/data-encryption-reencrypt");
+    twoFactor = await import("@/lib/two-factor");
+    xeroStore = await import("@/lib/xero-token-store");
     const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([
       import("@prisma/client"),
       import("@/lib/prisma-adapter"),
@@ -184,6 +210,7 @@ let observerClient: PrismaClient;
   beforeEach(async () => {
     process.env.AUTH_SECRET = AUTH;
     delete process.env.DATA_ENCRYPTION_KEYS;
+    delete process.env.DATA_ENCRYPTION_LEGACY_KEY;
     await clear();
   });
 
@@ -277,5 +304,397 @@ let observerClient: PrismaClient;
     const stored = await read("raced");
     expect(stored.status === "configured" && stored.value).toBe(winner);
     expect(await auditRows("raced")).toBe(auditBefore + 1);
+  });
+  // ---------------------------------------------------------------------------
+  // PR 2: `pnpm run data-keys:reencrypt` against real rows and row locks.
+  // ---------------------------------------------------------------------------
+
+  const noPause = async () => undefined;
+  /** What Admin → Setup shows for a ring: its current key's fingerprint. */
+  async function setupFingerprintOf(ring: string): Promise<string> {
+    const material = await import("@/lib/data-encryption-key-material");
+    const state = material.parseDataEncryptionKeys(ring, process.env.AUTH_SECRET);
+    if (state.status !== "configured") throw new Error("expected a ring");
+    return material.dataKeyFingerprint(state.current);
+  }
+  // By default the operator copies the fingerprint of the ring the command
+  // itself holds, as if the app ran the same one.
+  const runReencrypt = async (
+    options: { retire?: boolean; maxPasses?: number; providers?: string[]; expectFingerprint?: string } = {},
+  ) =>
+    reencrypt.reencryptStoredData({
+      dryRun: false,
+      retireLegacyRecoveryCodes: options.retire ?? false,
+      maxPasses: options.maxPasses,
+      pause: noPause,
+      expectFingerprint: options.expectFingerprint ?? (await setupFingerprintOf(process.env.DATA_ENCRYPTION_KEYS!)),
+      scope: { providers: options.providers ?? [PROVIDER], memberIds: [MEMBER_ID] },
+    });
+
+  const LEGACY_CODE = "AAAA-BBBB-CCCC";
+  const TOTP_SECRET = "JBSWY3DPEHPK3PXP";
+
+  /** Legacy data, as a club has it before the ring: two credentials, a TOTP member, two codes. */
+  async function seedLegacy() {
+    await set("client_id", "id-value", { expect: "absent" });
+    await set("client_secret", "secret-value", { expect: "absent" });
+    await prisma.member.create({
+      data: {
+        id: MEMBER_ID,
+        email: "race-4456@example.invalid",
+        passwordHash: "not-a-real-password",
+        firstName: "Key",
+        lastName: "Ring",
+        ageTier: "ADULT",
+        totpSecret: twoFactor.encryptTwoFactorSecret(TOTP_SECRET),
+      },
+    });
+    await prisma.twoFactorRecoveryCode.createMany({
+      data: [
+        { memberId: MEMBER_ID, codeHash: twoFactor.hashRecoveryCode(LEGACY_CODE) },
+        { memberId: MEMBER_ID, codeHash: twoFactor.hashRecoveryCode("DDDD-EEEE-FFFF"), usedAt: new Date() },
+      ],
+    });
+  }
+
+  async function storedTotp() {
+    return (await prisma.member.findUniqueOrThrow({ where: { id: MEMBER_ID }, select: { totpSecret: true } })).totpSecret!;
+  }
+
+  it("leaves no row on the old key after a run, every value still reading after AUTH_SECRET is rotated", async () => {
+    await seedLegacy();
+    process.env.DATA_ENCRYPTION_KEYS = RING;
+
+    const report = await runReencrypt({ retire: true });
+
+    expect(report.credentials).toEqual({ moved: 2, lostClaims: 0, unreadable: 0, remaining: 0 });
+    expect(report.authenticatorSecrets).toEqual({ moved: 1, lostClaims: 0, unreadable: 0, remaining: 0 });
+    expect(report.recoveryCodes).toEqual({ legacyUnused: 0, retired: 1, olderRingKeyUnused: 0 });
+    expect(await storedSource("client_id")).toEqual({ secretSource: "DATA_ENCRYPTION_KEY:k1", labelVersion: "integration-credential:v2" });
+    expect(await storedSource("client_secret")).toMatchObject({ secretSource: "DATA_ENCRYPTION_KEY:k1" });
+    expect(await storedTotp()).toMatch(/^v2:k1:/);
+    // Each credential move audited once, as the job, in its transaction.
+    const audits = await prisma.auditLog.findMany({
+      where: { entityId: { startsWith: `${PROVIDER}:` }, metadata: { path: ["systemActor"], equals: "data-key-reencrypt" } },
+      select: { entityId: true, metadata: true },
+    });
+    expect(audits.map((row) => row.entityId).sort()).toEqual([`${PROVIDER}:client_id`, `${PROVIDER}:client_secret`]);
+    expect(JSON.stringify(audits)).not.toMatch(/id-value|secret-value/);
+    expect(
+      await prisma.auditLog.findMany({ where: { entityId: MEMBER_ID }, select: { action: true }, orderBy: { action: "asc" } }),
+    ).toEqual([{ action: "security.two_factor.recovery_codes_retired" }, { action: "security.two_factor.secret_rewrapped" }]);
+
+    process.env.AUTH_SECRET = ROTATED_AUTH;
+    process.env.DATA_ENCRYPTION_LEGACY_KEY = "retired";
+    const id = await read("client_id");
+    expect(id.status === "configured" && id.value).toBe("id-value");
+    expect(twoFactor.decryptTwoFactorSecret(await storedTotp())).toBe(TOTP_SECRET);
+    // The retired code signs no one in, here or on a colour without the ring,
+    // and its member is still told to regenerate.
+    expect(await twoFactor.consumeRecoveryCode(MEMBER_ID, LEGACY_CODE)).toBe(false);
+    expect(await twoFactor.memberHoldsRetiredRecoveryCodes(MEMBER_ID)).toBe(true);
+    process.env.AUTH_SECRET = AUTH;
+    delete process.env.DATA_ENCRYPTION_LEGACY_KEY;
+    delete process.env.DATA_ENCRYPTION_KEYS;
+    expect(await twoFactor.consumeRecoveryCode(MEMBER_ID, LEGACY_CODE)).toBe(false);
+    expect(await twoFactor.memberHoldsRetiredRecoveryCodes(MEMBER_ID)).toBe(true);
+  });
+
+  it("keeps a provider verified: a moved credential keeps its own updatedAt, so the marker stays fresh (#4456 review C3)", async () => {
+    const google = await import("@/lib/google-config");
+    for (const key of ["client_id", "client_secret"]) {
+      await credentials.setIntegrationCredential({ provider: "google", key, value: `${key}-value`, actor: ADMIN, expect: { expect: "absent" } });
+    }
+    process.env.DATA_ENCRYPTION_KEYS = RING;
+    await google.recordGoogleVerified();
+    expect((await google.getGoogleSetupState()).verified).toBe(true);
+    const before = await prisma.integrationCredential.findMany({
+      where: { provider: "google", key: { in: ["client_id", "client_secret"] } },
+      select: { key: true, updatedAt: true },
+      orderBy: { key: "asc" },
+    });
+    // Long enough that a bumped timestamp would differ from the marker's. The
+    // store's compare-and-set does stamp a fresh `updatedAt` (#4788, below); the
+    // next test pins that the re-encrypt's write keeps the old one by contract.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const report = await runReencrypt({ providers: ["google"] });
+
+    expect(report.credentials).toMatchObject({ moved: 2, remaining: 0 });
+    const after = await prisma.integrationCredential.findMany({
+      where: { provider: "google", key: { in: ["client_id", "client_secret"] } },
+      select: { key: true, updatedAt: true, secretSource: true },
+      orderBy: { key: "asc" },
+    });
+    expect(after.map((row) => row.secretSource)).toEqual(["DATA_ENCRYPTION_KEY:k1", "DATA_ENCRYPTION_KEY:k1"]);
+    expect(after.map((row) => row.updatedAt.getTime())).toEqual(before.map((row) => row.updatedAt.getTime()));
+    expect((await google.getGoogleSetupState()).verified).toBe(true);
+  });
+
+  it("the store writes the timestamp it is told to keep, so the re-encrypt never depends on Prisma's own (#4456 review C3)", async () => {
+    await set("stamped", "value", { expect: "absent" });
+    const version = await versionOf("stamped");
+    const kept = new Date("2026-01-01T00:00:00.000Z");
+    process.env.DATA_ENCRYPTION_KEYS = RING;
+
+    await credentials.withCredentialTransaction([PROVIDER], (tx) =>
+      credentials.setIntegrationCredentialInTransaction({
+        tx,
+        provider: PROVIDER,
+        key: "stamped",
+        value: "value",
+        actor: { kind: "system", actor: "data-key-reencrypt" },
+        expect: { expect: "version", version },
+        cause: { kind: "data-key-reencrypt" },
+        keepUpdatedAt: kept,
+      }),
+    );
+
+    const row = await prisma.integrationCredential.findUniqueOrThrow({
+      where: { provider_key: { provider: PROVIDER, key: "stamped" } },
+      select: { updatedAt: true, secretSource: true },
+    });
+    expect(row).toEqual({ updatedAt: kept, secretSource: "DATA_ENCRYPTION_KEY:k1" });
+  });
+
+  it("a version-checked write moves updatedAt forward and reports the time it stored (#4788)", async () => {
+    // Prisma applies `@updatedAt` to the compare-and-set's `updateMany`. Under the
+    // frozen test clock a row written twice gets the same instant both times, so
+    // the row is first dated in the past to make the move visible.
+    await set("versioned", "first", { expect: "absent" });
+    const stale = new Date("2020-01-01T00:00:00.000Z");
+    await prisma.integrationCredential.update({ where: { provider_key: { provider: PROVIDER, key: "versioned" } }, data: { updatedAt: stale } });
+    const version = await versionOf("versioned");
+
+    const result = await set("versioned", "second", { expect: "version", version });
+
+    const row = await prisma.integrationCredential.findUniqueOrThrow({
+      where: { provider_key: { provider: PROVIDER, key: "versioned" } },
+      select: { updatedAt: true },
+    });
+    expect(row.updatedAt.getTime()).toBeGreaterThan(stale.getTime());
+    expect(result.updatedAt).toEqual(row.updatedAt);
+  });
+
+  it("refuses, changing nothing, when its ring has the app's key id but other bytes (#4456 review S1)", async () => {
+    await set("still-legacy", "legacy-value", { expect: "absent" });
+    process.env.DATA_ENCRYPTION_KEYS = RING;
+    await set("app-written", "ring-value", { expect: "absent" });
+    const before = await prisma.integrationCredential.findMany({ where: { provider: PROVIDER }, orderBy: { key: "asc" } });
+    // The command's environment: the right id, the wrong bytes (a stale .env, say).
+    process.env.DATA_ENCRYPTION_KEYS = `k1:${testKey(7)}`;
+
+    await expect(runReencrypt()).rejects.toThrow(/^Refused before writing anything: data the app stored under the key "k1"/);
+
+    expect(await prisma.integrationCredential.findMany({ where: { provider: PROVIDER }, orderBy: { key: "asc" } })).toEqual(before);
+    expect(await prisma.auditLog.count({ where: { entityId: `${PROVIDER}:still-legacy`, metadata: { path: ["systemActor"], equals: "data-key-reencrypt" } } })).toBe(0);
+
+    // With the app's own key it proves the key and moves the legacy row.
+    process.env.DATA_ENCRYPTION_KEYS = RING;
+    const report = await runReencrypt();
+    expect(report.keyCheckedAgainst).toBe("a stored credential");
+    expect(report.credentials).toMatchObject({ moved: 1, remaining: 0 });
+  });
+
+  it("refuses a stale two-key ring whose first key is not the app's current one, moving nothing back (#4456 review round 2, F1)", async () => {
+    // The app wrote under k1, then took k2 as current ("Adding a newer key later" step 2).
+    process.env.DATA_ENCRYPTION_KEYS = RING;
+    await set("old-key-row", "old-value", { expect: "absent" });
+    const appRing = `k2:${testKey(2)},k1:${testKey(1)}`;
+    process.env.DATA_ENCRYPTION_KEYS = appRing;
+    await set("new-key-row", "new-value", { expect: "absent" });
+    const before = await prisma.integrationCredential.findMany({ where: { provider: PROVIDER }, orderBy: { key: "asc" } });
+    // The operator copies Admin → Setup's fingerprint: the app's current key, k2.
+    const fromSetup = await setupFingerprintOf(appRing);
+    // The command's stale .env still lists k1 first. The decrypt check alone
+    // would pass: k1 really does read the k1 row.
+    process.env.DATA_ENCRYPTION_KEYS = `k1:${testKey(1)},k2:${testKey(2)}`;
+
+    await expect(runReencrypt({ expectFingerprint: fromSetup })).rejects.toThrow(
+      /^Refused before reading anything: this command would write under its key "k1"/,
+    );
+
+    expect(await prisma.integrationCredential.findMany({ where: { provider: PROVIDER }, orderBy: { key: "asc" } })).toEqual(before);
+    expect((await storedSource("new-key-row"))?.secretSource).toBe("DATA_ENCRYPTION_KEY:k2");
+  });
+
+  it("refuses a run that writes without the fingerprint, changing nothing", async () => {
+    await set("legacy-row", "v", { expect: "absent" });
+    process.env.DATA_ENCRYPTION_KEYS = RING;
+    await expect(
+      reencrypt.reencryptStoredData({ dryRun: false, retireLegacyRecoveryCodes: false, pause: noPause, scope: { providers: [PROVIDER] } }),
+    ).rejects.toThrow(/^Refused: a run that writes must be run as pnpm run data-keys:reencrypt --expect-fingerprint/);
+    expect((await storedSource("legacy-row"))?.secretSource).toBe("AUTH_SECRET");
+  });
+
+  it("moves everything again to a newer ring key, and a second run finds nothing to do", async () => {
+    await seedLegacy();
+    process.env.DATA_ENCRYPTION_KEYS = RING;
+    await runReencrypt();
+    process.env.DATA_ENCRYPTION_KEYS = RING_2;
+
+    const rotated = await runReencrypt();
+    expect(rotated.credentials).toMatchObject({ moved: 2, remaining: 0 });
+    expect(rotated.authenticatorSecrets).toMatchObject({ moved: 1, remaining: 0 });
+    expect(await storedSource("client_secret")).toMatchObject({ secretSource: "DATA_ENCRYPTION_KEY:k2" });
+    expect(await storedTotp()).toMatch(/^v2:k2:/);
+    // The legacy code was not retired, so it is still counted.
+    expect(rotated.recoveryCodes.legacyUnused).toBe(1);
+
+    const again = await runReencrypt();
+    expect(again.credentials).toEqual({ moved: 0, lostClaims: 0, unreadable: 0, remaining: 0 });
+    expect(again.authenticatorSecrets).toEqual({ moved: 0, lostClaims: 0, unreadable: 0, remaining: 0 });
+    expect(again.passes).toBe(0);
+  });
+
+  it("a dry run changes no row and writes no audit row", async () => {
+    await seedLegacy();
+    process.env.DATA_ENCRYPTION_KEYS = RING;
+    const before = await prisma.integrationCredential.findMany({ where: { provider: PROVIDER }, orderBy: { key: "asc" } });
+    const totpBefore = await storedTotp();
+
+    const report = await reencrypt.reencryptStoredData({
+      dryRun: true,
+      retireLegacyRecoveryCodes: true,
+      pause: noPause,
+      scope: { providers: [PROVIDER], memberIds: [MEMBER_ID] },
+    });
+
+    expect(report).toMatchObject({ credentials: { moved: 2, remaining: 2 }, authenticatorSecrets: { moved: 1, remaining: 1 } });
+    expect(report.recoveryCodes).toEqual({ legacyUnused: 1, retired: 1, olderRingKeyUnused: 0 });
+    expect(await prisma.integrationCredential.findMany({ where: { provider: PROVIDER }, orderBy: { key: "asc" } })).toEqual(before);
+    expect(await storedTotp()).toBe(totpBefore);
+    expect(await auditRows("client_id")).toBe(1);
+    expect(await prisma.auditLog.count({ where: { entityId: MEMBER_ID } })).toBe(0);
+  });
+
+  describe("a Xero token refresh racing the re-encrypt (#4456 PR 2)", () => {
+    function tokens(tag: string) {
+      return {
+        accessToken: `race-4456-access-${tag}`,
+        refreshToken: `race-4456-refresh-${tag}`,
+        expiresAt: new Date(Date.now() + 1_800_000),
+        tenantId: TENANT,
+      };
+    }
+
+    async function connectLegacy() {
+      await xeroStore.saveXeroTokens(tokens("connected"), { actor: ADMIN });
+      process.env.DATA_ENCRYPTION_KEYS = RING;
+    }
+
+    async function tokenSetSource() {
+      return (
+        await prisma.integrationCredential.findUniqueOrThrow({
+          where: { provider_key: { provider: "xero-oauth", key: "token-set" } },
+          select: { secretSource: true },
+        })
+      ).secretSource;
+    }
+
+    const moveTokenSet = (maxPasses = 1) => runReencrypt({ providers: ["xero-oauth"], maxPasses });
+
+    it("with the refresh lease held, the re-encrypt loses and the refresh saves its rotated pair, under the current key", async () => {
+      await connectLegacy();
+      const claim = await xeroStore.claimXeroTokenRefreshLease();
+      if (!claim.claimed) throw new Error("expected the lease");
+      // The refresh is now at Xero, its refresh token spent.
+
+      const lost = await moveTokenSet();
+      expect(lost.credentials).toMatchObject({ moved: 0, lostClaims: 1, remaining: 1 });
+      expect(await tokenSetSource()).toBe("AUTH_SECRET");
+
+      await xeroStore.saveXeroTokens(tokens("refreshed"), { actor: REFRESH_JOB, lease: claim.lease });
+      expect((await xeroStore.loadXeroTokens())?.refreshToken).toBe("race-4456-refresh-refreshed");
+      // The refresh wrote under the current key itself, so the next run has nothing to move.
+      expect(await tokenSetSource()).toBe("DATA_ENCRYPTION_KEY:k1");
+      expect((await moveTokenSet()).credentials).toEqual({ moved: 0, lostClaims: 0, unreadable: 0, remaining: 0 });
+      process.env.AUTH_SECRET = ROTATED_AUTH;
+      expect((await xeroStore.loadXeroTokens())?.refreshToken).toBe("race-4456-refresh-refreshed");
+    });
+
+    it("never takes over an EXPIRED lease: a stalled refresh still in flight saves its rotated pair (#4456 review C1)", async () => {
+      await connectLegacy();
+      // A refresh claimed ten minutes ago and is still at Xero: its two-minute lease has run out.
+      const claim = await xeroStore.claimXeroTokenRefreshLease({ now: new Date(Date.now() - 10 * 60_000) });
+      if (!claim.claimed) throw new Error("expected the lease");
+      expect(claim.leaseUntil.getTime()).toBeLessThan(Date.now());
+
+      const lost = await moveTokenSet();
+      expect(lost.credentials).toMatchObject({ moved: 0, lostClaims: 1, remaining: 1 });
+      expect(await tokenSetSource()).toBe("AUTH_SECRET");
+
+      await xeroStore.saveXeroTokens(tokens("refreshed"), { actor: REFRESH_JOB, lease: claim.lease });
+      expect((await xeroStore.loadXeroTokens())?.refreshToken).toBe("race-4456-refresh-refreshed");
+      expect(await tokenSetSource()).toBe("DATA_ENCRYPTION_KEY:k1");
+    });
+
+    it("a re-encrypt that commits first makes the next claim read the moved row, and its save wins", async () => {
+      await connectLegacy();
+      expect((await moveTokenSet()).credentials).toMatchObject({ moved: 1 });
+
+      const claim = await xeroStore.claimXeroTokenRefreshLease();
+      if (!claim.claimed) throw new Error("expected the lease");
+      expect(claim.tokens.refreshToken).toBe("race-4456-refresh-connected");
+      await xeroStore.saveXeroTokens(tokens("refreshed"), { actor: REFRESH_JOB, lease: claim.lease });
+      expect((await xeroStore.loadXeroTokens())?.refreshToken).toBe("race-4456-refresh-refreshed");
+    });
+
+    // Row-lock waiters are granted in arrival order, so each case queues its two
+    // writers one at a time behind a held `XeroToken` lock to choose who goes first.
+    it.each(["the refresh claim", "the re-encrypt"] as const)(
+      "queued behind the XeroToken row lock with %s first, no refresh token is lost",
+      async (first) => {
+        await connectLegacy();
+        const held = deferred();
+        const release = deferred();
+        const holder = holderClient.$transaction(
+          async (tx) => {
+            await tx.$executeRaw`SELECT 1 FROM "XeroToken" FOR UPDATE`;
+            held.resolve();
+            await release.promise;
+          },
+          { timeout: 15_000 },
+        );
+        await held.promise;
+
+        const claiming = () => xeroStore.claimXeroTokenRefreshLease();
+        let claimP: ReturnType<typeof claiming>;
+        let moveP: ReturnType<typeof moveTokenSet>;
+        if (first === "the refresh claim") {
+          claimP = claiming();
+          await waitForBlocked(1);
+          moveP = moveTokenSet();
+        } else {
+          moveP = moveTokenSet();
+          await waitForBlocked(1);
+          claimP = claiming();
+        }
+        await waitForBlocked(2);
+        release.resolve();
+        await holder;
+        const [claim, report] = await Promise.all([claimP, moveP]);
+
+        // The claim always wins its lease: the re-encrypt never holds one.
+        if (!claim.claimed) throw new Error("expected the lease");
+        if (first === "the refresh claim") {
+          // It found the lease held: lost, nothing written.
+          expect(report.credentials).toMatchObject({ moved: 0, lostClaims: 1 });
+          expect(claim.tokens.refreshToken).toBe("race-4456-refresh-connected");
+        } else {
+          // It moved the row first; the claim then read the moved row's version.
+          expect(report.credentials).toMatchObject({ moved: 1, lostClaims: 0 });
+          expect(await tokenSetSource()).toBe("DATA_ENCRYPTION_KEY:k1");
+        }
+        await xeroStore.saveXeroTokens(tokens("refreshed"), { actor: REFRESH_JOB, lease: claim.lease });
+        expect((await xeroStore.loadXeroTokens())?.refreshToken).toBe("race-4456-refresh-refreshed");
+
+        // Moved by the re-encrypt or, when it lost, by the refresh's own save.
+        expect(await tokenSetSource()).toBe("DATA_ENCRYPTION_KEY:k1");
+        expect((await moveTokenSet()).credentials).toMatchObject({ moved: 0, remaining: 0 });
+        process.env.AUTH_SECRET = ROTATED_AUTH;
+        expect((await xeroStore.loadXeroTokens())?.refreshToken).toBe("race-4456-refresh-refreshed");
+      },
+    );
   });
 });

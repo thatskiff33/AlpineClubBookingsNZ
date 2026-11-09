@@ -446,6 +446,24 @@ export async function getXeroTokenReadability(): Promise<XeroTokenReadability> {
 /** The claim lost to a lease held on `XeroConnection` alone; rolls our claim back. */
 class XeroConnectionLeaseHeld extends Error {}
 
+/** A lease row nobody holds at `now`: never claimed, or its lease has run out. */
+const leaseIsFreeAt = (now: Date) => ({ OR: [{ refreshInProgressUntil: null }, { refreshInProgressUntil: { lte: now } }] });
+
+/**
+ * The data-key re-encrypt's fence (#4456): rule 2's row locks, each guarded on NO lease at all, never taking one over
+ * (an expired one may be a stalled refresh). False while either is set; no connection row, no lease. CONCURRENCY_AND_LOCKING.md.
+ */
+export async function fenceXeroTokenSetRewrite(tx: XeroTokenDb): Promise<boolean> {
+  const unheld = { refreshInProgressUntil: null };
+  const tokenRow = await tx.xeroToken.findFirst({ select: { id: true }, orderBy: XERO_TOKEN_ROW_ORDER });
+  if (tokenRow) {
+    const previousRelease = await tx.xeroToken.updateMany({ where: { id: tokenRow.id, ...unheld }, data: unheld });
+    if (previousRelease.count !== 1) return false;
+  }
+  const ours = await tx.xeroConnection.updateMany({ where: { id: XERO_CONNECTION_ID, ...unheld }, data: unheld });
+  return ours.count === 1 || !(await tx.xeroConnection.findUnique({ where: { id: XERO_CONNECTION_ID }, select: { id: true } }));
+}
+
 export async function claimXeroTokenRefreshLease(options?: {
   now?: Date;
   leaseMs?: number;
@@ -454,12 +472,7 @@ export async function claimXeroTokenRefreshLease(options?: {
   const leaseUntil = new Date(
     now.getTime() + (options?.leaseMs ?? XERO_TOKEN_REFRESH_LEASE_MS)
   );
-  const leaseIsFree = {
-    OR: [
-      { refreshInProgressUntil: null },
-      { refreshInProgressUntil: { lte: now } },
-    ],
-  };
+  const leaseIsFree = leaseIsFreeAt(now);
 
   try {
     return await prisma.$transaction(async (tx): Promise<XeroTokenRefreshLeaseClaim> => {

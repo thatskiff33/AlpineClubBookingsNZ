@@ -3,7 +3,7 @@
  * link, items with one — and the rollout switch that turns its warning into a
  * failure.
  */
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -215,11 +215,9 @@ describe("validatePlanDeviation", () => {
 });
 
 describe("planDeviationVerdict: the rollout switch", () => {
-  it("is in its warning week: the shipped constant is not enforced", () => {
-    // The follow-up sets the constant to `true` and removes the warning-week
-    // sentences. Either change without the other fails here.
-    expect(PLAN_DEVIATION_ENFORCED).toBe(false);
-    expect(planDeviationVerdict("no section").status).toBe("warn");
+  it("enforces the section and keeps the template, workflow and contributor guidance in sync", () => {
+    expect(PLAN_DEVIATION_ENFORCED).toBe(true);
+    expect(planDeviationVerdict("no section").status).toBe("fail");
     const warningSentences = [
       [".github/pull_request_template.md", "`verify` warns on a missing, empty or unlinked section"],
       [".github/workflows/ci.yml", "WARNING ONLY until `PLAN_DEVIATION_ENFORCED`"],
@@ -229,6 +227,28 @@ describe("planDeviationVerdict: the rollout switch", () => {
       const text = readFileSync(join(repoRoot, path), "utf8").replace(/\s+/g, " ");
       expect([path, text.includes(sentence)]).toEqual([path, !PLAN_DEVIATION_ENFORCED]);
     }
+  });
+
+  it("exempts only known, nonempty dependency-only diffs, independent of body", () => {
+    for (const changedFiles of [
+      ["package.json"], ["pnpm-lock.yaml"], ["pnpm-workspace.yaml"],
+      ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"],
+    ]) {
+      expect(planDeviationVerdict("", { changedFiles })).toMatchObject({ status: "pass", outcome: "dependency-only" });
+    }
+    for (const changedFiles of [
+      null, [], ["README.md"], ["package.json", "docs/note.md"],
+      ["package.json", "src/lib/thing.ts"], ["fixtures/package.json"], ["package-lock.json"],
+    ]) {
+      expect(planDeviationVerdict("", { changedFiles })).toMatchObject({ status: "fail" });
+    }
+  });
+
+  it("gives the CI entrypoint the pull request's base and head for its exemption", () => {
+    const workflow = readFileSync(join(repoRoot, ".github/workflows/ci.yml"), "utf8");
+    const step = workflow.split("- name: Validate PR plan deviation")[1].split("\n      - name:")[0];
+    expect(step).toContain("PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}");
+    expect(step).toContain("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}");
   });
 
   it("warns while not enforced and fails once enforced, on the same body", () => {
@@ -252,19 +272,68 @@ describe("the CI entrypoint", () => {
     dir = undefined;
   });
 
-  const run = (text) => {
+  const run = (text, diffEnv = {}, cwd) => {
     dir = mkdtempSync(join(tmpdir(), "plan-deviation-"));
     const file = join(dir, "pr-body.md");
     writeFileSync(file, text);
     const env = { ...process.env, PR_BODY_FILE: file };
-    for (const key of ["GITHUB_TOKEN", "GH_TOKEN", "PR_NUMBER", "GITHUB_REPOSITORY", "PR_BODY"]) delete env[key];
-    return spawnSync(process.execPath, [gate], { encoding: "utf8", env });
+    for (const key of ["GITHUB_TOKEN", "GH_TOKEN", "PR_NUMBER", "GITHUB_REPOSITORY", "PR_BODY", "PR_BASE_SHA", "PR_HEAD_SHA"]) delete env[key];
+    return spawnSync(process.execPath, [gate], { encoding: "utf8", env: { ...env, ...diffEnv }, cwd });
   };
 
-  it("prints a ::warning:: annotation and exits 0 for a missing section during the rollout", () => {
-    const result = run("## Summary\n\n- a thing\n");
-    expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(/^::warning title=Plan deviation \(warning only%2C #4463 rollout\)::PR body must include/m);
+  it.each(["## Summary\n\n- a thing\n", body(""), body("- Added a column")])(
+    "fails a missing, empty or unlinked section: %s",
+    (text) => {
+      const result = run(text);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("PR plan deviation check failed:");
+      expect(result.stdout).not.toContain("::warning");
+    },
+  );
+
+  it("does not exempt an unreadable diff even when the body is valid", () => {
+    const result = run(body("- None"), { PR_BASE_SHA: "not-a-ref", PR_HEAD_SHA: "HEAD" });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("PR plan deviation check failed:");
+  });
+
+  it("uses the real diff, including both ends of a rename, regardless of author", () => {
+    // The same body must pass for manifests alone, then fail when a file is
+    // renamed from outside the allowance into package.json. --name-only would
+    // hide that old path and incorrectly grant the exemption.
+    const root = mkdtempSync(join(tmpdir(), "plan-diff-"));
+    const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+    try {
+      git("init", "--quiet");
+      git("config", "user.email", "gate-test@example.invalid");
+      git("config", "user.name", "Gate Test");
+      git("config", "commit.gpgsign", "false");
+      writeFileSync(join(root, "seed.txt"), "seed\n");
+      git("add", "-A");
+      git("commit", "--quiet", "-m", "seed");
+      const base = git("rev-parse", "HEAD");
+      writeFileSync(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+      git("add", "-A");
+      git("commit", "--quiet", "-m", "dependencies");
+      const env = { PR_BASE_SHA: base, PR_HEAD_SHA: "HEAD" };
+      for (const actor of ["dependabot[bot]", "human-contributor"]) {
+        let result = run("", { ...env, GITHUB_ACTOR: actor }, root);
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toContain("only dependency manifests and the lockfile changed");
+        rmSync(dir, { recursive: true, force: true });
+        git("mv", "seed.txt", "package.json");
+        git("commit", "--quiet", "-m", "rename source to manifest");
+        result = run("", { ...env, GITHUB_ACTOR: actor }, root);
+        expect(result.status, result.stderr).toBe(1);
+        expect(result.stderr).toContain("must include ## Plan Deviation");
+        rmSync(dir, { recursive: true, force: true });
+        // Restore the fixture with a new commit, without rewriting history.
+        git("mv", "package.json", "seed.txt");
+        git("commit", "--quiet", "-m", "restore fixture");
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("passes a body that answers None", () => {
