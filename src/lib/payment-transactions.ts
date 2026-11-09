@@ -1351,23 +1351,23 @@ type RefundableStripeTransaction = {
  */
 function buildRefundAllocationSlices<T extends RefundableStripeTransaction>(
   transactions: readonly T[],
-  amountCents: number
+  amountCents: number,
+  /** #4866: cents of a charge this plan must leave alone (`supersededCaptureHeldBack`); none by default. */
+  heldBackByTransaction?: ReadonlyMap<string, number>
 ): {
   slices: Array<{ transaction: T; amountCents: number }>;
   totalRefundableCents: number;
 } {
+  const refundableCentsOf = (transaction: T) =>
+    transaction.amountCents - transaction.refundedAmountCents - (heldBackByTransaction?.get(transaction.id) ?? 0);
   const refundableTransactions = transactions
     .filter(isStripeTransaction)
     .filter((transaction) => isCapturedTransactionStatus(transaction.status))
-    .filter(
-      (transaction) =>
-        transaction.amountCents - transaction.refundedAmountCents > 0
-    )
+    .filter((transaction) => refundableCentsOf(transaction) > 0)
     .sort(compareLedgerRowsNewestFirst); // #4132 (INV-PAY-133): a tie's last-inserted row first
 
   const totalRefundableCents = refundableTransactions.reduce(
-    (sum, transaction) =>
-      sum + (transaction.amountCents - transaction.refundedAmountCents),
+    (sum, transaction) => sum + refundableCentsOf(transaction),
     0
   );
 
@@ -1375,8 +1375,7 @@ function buildRefundAllocationSlices<T extends RefundableStripeTransaction>(
   const slices: Array<{ transaction: T; amountCents: number }> = [];
   for (const transaction of refundableTransactions) {
     if (remainingAmountCents <= 0) break;
-    const refundableAmountCents =
-      transaction.amountCents - transaction.refundedAmountCents;
+    const refundableAmountCents = refundableCentsOf(transaction);
     const sliceAmountCents = Math.min(
       remainingAmountCents,
       refundableAmountCents
@@ -1401,10 +1400,13 @@ export async function planStripeRefundAllocation({
   paymentId,
   amountCents,
   store = prisma,
+  heldBackByTransaction,
 }: {
   paymentId: string;
   amountCents: number;
   store?: PaymentStore;
+  /** #4866: a cancellation's, the live superseded captures it leaves alone (`readSupersededCaptureHeldBack`). */
+  heldBackByTransaction?: ReadonlyMap<string, number>;
 }): Promise<{
   slices: RefundAllocationSlice[];
   plannedAmountCents: number;
@@ -1415,7 +1417,7 @@ export async function planStripeRefundAllocation({
     throw new Error("Payment not found");
   }
 
-  return planCardRefundFromLedger(payment.transactions, amountCents);
+  return planCardRefundFromLedger(payment.transactions, amountCents, heldBackByTransaction);
 }
 
 /**
@@ -1427,11 +1429,14 @@ export async function planStripeRefundAllocation({
  */
 export function planCardRefundFromLedger(
   transactions: readonly RefundableStripeTransaction[],
-  amountCents: number
+  amountCents: number,
+  /** #4866: what a cancellation leaves to a live superseded capture's refund, by transaction id. */
+  heldBackByTransaction?: ReadonlyMap<string, number>
 ) {
   const { slices, totalRefundableCents } = buildRefundAllocationSlices(
     transactions,
-    amountCents
+    amountCents,
+    heldBackByTransaction
   );
   const plan: RefundAllocationSlice[] = slices.map((slice) => ({
     paymentTransactionId: slice.transaction.id,

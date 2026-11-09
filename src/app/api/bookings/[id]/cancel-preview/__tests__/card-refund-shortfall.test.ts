@@ -21,6 +21,13 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/auth", () => ({ auth: async () => ({ user: { id: "member-1" } }) }));
 vi.mock("@/lib/session-guards", () => ({ requireActiveSessionUser: async () => null }));
+// #4866: no live superseded capture on these payments (`superseded-capture-hold-back.test.ts`, its realdb proof).
+vi.mock("@/lib/superseded-capture-hold-back", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/superseded-capture-hold-back")),
+  readSupersededCaptureHeldBack: vi.fn(async () => ({ byTransaction: new Map(), totalCents: 0 })),
+  readSupersededHoldBackOperations: vi.fn(async () => []),
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUnique: mocks.bookingFindUnique },

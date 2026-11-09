@@ -9,6 +9,7 @@ import { foldMirrorRefundIntoLedger } from "@/lib/mirror-refund-fold";
 import { paidCancellationBranch } from "@/lib/paid-cancellation-event";
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { withReadOnlySnapshot } from "@/lib/read-only-snapshot";
+import { readSupersededHoldBackOperations, supersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import {
   legacyBackfillRows,
   loadPaymentWithTransactions,
@@ -27,7 +28,9 @@ import {
  *    in the claim's row order (`LEDGER_ROWS_OLDEST_FIRST`, through the loader);
  * 2. a pre-ledger payment's charges are read as its backfill would write them
  *    (`legacyBackfillRows`) - a GET must not write them, racing the cancel's own;
- * 3. the card plan is the claim's own planner (`planCardRefundFromLedger`);
+ * 3. the card plan is the claim's own planner (`planCardRefundFromLedger`),
+ *    leaving the live superseded captures alone as the claim does
+ *    (`supersededCaptureHeldBack`, #4866), on the folded rows;
  * 4. the rest is split by the non-card charges' headroom (`nonCardChargeHeadroom`,
  *    `sizeCancelCardShortfall`).
  *
@@ -59,7 +62,8 @@ export async function previewCancelCardRefundSplit(
       insertionSeq: lastSeq + 1 + index,
     })),
   ];
-  const { plannedAmountCents: plannedCardRefundCents } = planCardRefundFromLedger(ledger, params.refundAmountCents);
+  const heldBack = supersededCaptureHeldBack(await readSupersededHoldBackOperations(db, params.paymentId), rows);
+  const { plannedAmountCents: plannedCardRefundCents } = planCardRefundFromLedger(ledger, params.refundAmountCents, heldBack.byTransaction);
   return sizeCancelCardShortfall(
     { refundAmountCents: params.refundAmountCents, plannedCardRefundCents },
     () => sumHeadroomCents(nonCardChargeHeadroom(ledger.filter((row) => isCapturedTransactionStatus(row.status)))),

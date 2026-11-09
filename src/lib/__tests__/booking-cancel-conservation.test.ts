@@ -157,6 +157,11 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+// #4866: no live superseded capture on these payments (`superseded-capture-hold-back.test.ts`, its realdb proof).
+vi.mock("@/lib/superseded-capture-hold-back", () => ({
+  readSupersededCaptureHeldBack: vi.fn(async () => ({ byTransaction: new Map(), totalCents: 0 })),
+}));
+
 vi.mock("@/lib/payment-transactions", () => ({
   PartialRefundError: class PartialRefundError extends Error {
     completedRefundCents = 0;

@@ -20,6 +20,7 @@ import { hasAdminAccess } from "@/lib/access-roles";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { cancelRefundDisposition } from "@/lib/cancel-refund-method";
 import { cancelPreviewCardShortfall } from "@/lib/cancel-card-refund-shortfall-preview";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import { paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import {
   findGroupCancellationChildDebt,
@@ -187,7 +188,9 @@ export async function GET(
             creditAppliedCents: cancelTieredAppliedCreditCents(booking.payment, await deriveBookingAppliedCreditCents(booking.id)),
           },
       // #3827 (`INV-PAY-117`): cash an earlier edit already promised back by hand.
-      openNonCancellationHandBackCents: sumOpenNonCancellationHandBackCents(booking.payment.manualRefundTasks),
+      // #4866: and a live superseded capture's, which its own refund returns - as the cancel counts it.
+      openNonCancellationHandBackCents:
+        sumOpenNonCancellationHandBackCents(booking.payment.manualRefundTasks) + (await readSupersededCaptureHeldBack(prisma, booking.payment.id)).totalCents,
       finalPriceCents: booking.finalPriceCents,
       checkIn: booking.checkIn,
       policyRules: policy,

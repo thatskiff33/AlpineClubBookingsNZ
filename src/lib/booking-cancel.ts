@@ -45,6 +45,7 @@ import { BOOKING_OWNER_NAME_SELECT, bookingOwnerName } from "@/lib/booking-owner
 import logger from "@/lib/logger";
 import { cancellationKeptCents, paidCancellationMoney } from "@/lib/paid-cancellation-money";
 import { openNonCancellationHandBackCents } from "@/lib/edit-refund-hand-back";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
 import { cancelTieredAppliedCreditCents } from "@/lib/booking-payment-state";
 import { refundedPaymentCreditRestore } from "@/lib/cancel-refunded-payment-credit";
@@ -1679,13 +1680,17 @@ async function performBookingCancellation(
     // #3836: a mirror the inbound repair clamped to the card amount reads the ledger.
     const organiserExtraState = organiserByHand ? await readOrganiserExtraState(tx, bookingId) : null;
     const tieredPayment = { ...payment, ...(organiserExtraState ? { changeFeeCents: effectiveOrganiserPaidChangeFeeCents(payment.changeFeeCents, organiserExtraState) } : {}), creditAppliedCents: cancelTieredAppliedCreditCents(payment, appliedCreditCents) };
+    // #4866 (`INV-PAY-145`): a live superseded capture is its own refund's to return, never this booking's money:
+    // counted as paid by no tier, and taken by no slice of the card plan below. Under the Payment row, after the fold.
+    const supersededHeldBack = await readSupersededCaptureHeldBack(tx, payment.id);
     const money = paidCancellationMoney({
       payment: organiserCard
         ? { ...tieredPayment, refundedAmountCents: organiserCard.committedRefundCents }
         : tieredPayment,
       // #3827 (`INV-PAY-117`): read under lock(1), which every edit that raises
       // such a task also holds, so none can appear before this cancel commits.
-      openNonCancellationHandBackCents: await openNonCancellationHandBackCents(tx, payment.id),
+      // #4866: with the live superseded captures, money already on its way back.
+      openNonCancellationHandBackCents: (await openNonCancellationHandBackCents(tx, payment.id)) + supersededHeldBack.totalCents,
       finalPriceCents: fresh.finalPriceCents,
       appliedCreditCents,
       restoresToMemberLedger: restoreMemberId !== null,
@@ -1944,6 +1949,7 @@ async function performBookingCancellation(
         paymentId: payment.id,
         amountCents: refundAmountCents,
         store: tx,
+        heldBackByTransaction: supersededHeldBack.byTransaction, // #4866
       });
       cardRefundPlan = slices;
       plannedCardRefundCents = plannedAmountCents;

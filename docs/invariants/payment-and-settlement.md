@@ -1798,13 +1798,14 @@ release).
 - Before an ordinary charge-backed recovery re-sends an unmarked slice, it
   reads Stripe's refunds for that slice's intent outside every transaction:
   one request per intent, 100 results, ten-second timeout, no network
-  retries. More results, a read failure or a recording failure permits no send;
+  retries. More results, or a read or recording failure, permits no send;
   normal recovery backoff applies.
 - Refunds on the captured charge are recorded through
-  `recordStripeRefundsAgainstTransaction`, including ones the app has not seen,
+  `recordStripeRefundsAgainstTransaction`, including ones the app never saw,
   sharing `charge.refunded`'s note router, which keeps their accounting
   correction. The superseded-payment refund is sized on the ledger after this
-  recording (#4699); a stored plan's slices are still sent as written (#4103).
+  recording (#4699), which cancellations leave alone (`INV-PAY-150`); a stored
+  plan's slices are sent as written (#4103).
 - A counted refund made outside the app (`cardRefundDoorOf`), on that charge
   at or after the recovery debt's creation second, holds the entire row before
   any slice is sent, whatever its amount. Counted status comes from
@@ -1813,7 +1814,7 @@ release).
 - #4858: a plan-less superseded-payment refund left owing also holds while
   the owed figure credits it with a refund its own request did not make
   (`foreignRefundsSizingSupersededRow`).
-- A hold uses the existing guarded terminal failure: `FAILED`, attempts at the
+- A hold uses the guarded terminal failure: `FAILED`, attempts at the
   ceiling, no retry. Only a winning claim alerts officers and writes a payment
   audit entry. It neither closes the debt nor adopts the refund. Officers
   settle anything owed with **Paid another way**, never a new dashboard refund.
@@ -4089,3 +4090,34 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
 - Proven by `card-refund-dead-row-actions.test.ts`,
   `card-refund-dead-row-actions.realdb.test.ts`, `dead-row-actions-route.test.ts`
   and `dead-card-refunds-panel.test.tsx`.
+
+## INV-PAY-150
+
+**Related: `INV-PAY-145`** (plan-less superseded sizing), **`INV-PAY-117`**
+(open hand-backs), **`INV-PAY-131`** (the cancel preview).
+
+- **A cancellation leaves a live superseded capture to its own refund**
+  (#4866). A superseded intent's refund with no stored plan sizes its request
+  on its charge's ledger (#4699), so a cancellation's slice on that charge
+  shrank it and the row closed with the member short, unalerted; where the
+  booking's own money fell short of the policy's cap, the tier also counted
+  that capture as paid.
+- **What the machinery owns, per charge** (`supersededCaptureHeldBack`): what a
+  `REFUND_SUPERSEDED_PAYMENT` row not yet `SUCCEEDED` would send
+  (`reArmWouldSendCents`), held or dead included; or, while a
+  `CANCEL_PAYMENT_INTENT` row is in flight, all its charge holds once captured.
+  Never more than the charge holds.
+- **The paid claim** reads it under the Payment row, after the mirror fold. It
+  joins the open hand-backs, so no tier counts it as paid, and
+  `planCardRefundFromLedger` gives it no slice. The preview reads the same
+  figure for its refund and its card plan.
+- **The race.** The hand-off flips the charge captured under the Payment row,
+  then writes the refund row before its cancel row closes, so a claim queued
+  behind it sees one of them live. No new lock (`INV-LOCK-001` to
+  `INV-LOCK-003`).
+- Limit: an edit's, a refund request's and a capacity race's card plans still
+  take no account of it.
+- Proven by `superseded-capture-hold-back.test.ts`,
+  `cancel-card-refund-shortfall-preview.test.ts`,
+  `clipped-mirror-open-hand-back.test.ts` and
+  `superseded-refund-cancel-hold-back.realdb.test.ts`.
