@@ -3,7 +3,8 @@
 Each of these files links a Finance page, and now takes that link from the hub
 registry (`adminHref`) instead of writing the URL by hand, so the link follows
 the page when the switch goes on. The only growth in each is the one line that
-imports `adminHref`; the links themselves stay the same length.
+imports `adminHref`; the links themselves stay the same length. The three
+moved list pages also gain one named constant for their own address.
 
 file: src/app/(admin)/admin/book/page.tsx
 lines: 1664
@@ -35,7 +36,18 @@ lines: 1179
 reason: one import line, so stuck-state links come from the hub registry.
   Each link sits in the detector it belongs to.
 
-file: src/lib/xero-record-activity.ts
-lines: 822
-reason: one import line, so the payments back link comes from the hub
-  registry. Splitting the activity loader for an import would gain nothing.
+file: src/app/(admin)/admin/finance/payments/page.tsx
+lines: 1423
+reason: the page builds its own address, and router.replaces to it, from
+  adminHref: one import, and a documented constant used three times. Splitting
+  the payments board to absorb them would separate the constant from its users.
+
+file: src/app/(admin)/admin/finance/refund-requests/page.tsx
+lines: 951
+reason: as Payments: one import and a documented constant for the page's own
+  address, beside the filter state that builds on it.
+
+file: src/app/(admin)/admin/finance/subscriptions/page.tsx
+lines: 849
+reason: as Payments: one import and a documented constant for the page's own
+  address, used by the filter sync and the reset.
