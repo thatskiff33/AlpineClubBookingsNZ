@@ -27,7 +27,7 @@ import { useClubFormat } from "@/components/club-format-provider";
 import { useClubTime } from "@/components/club-time-provider";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import type { PaidAnotherWayXeroPromise } from "@/lib/card-refund-paid-another-way-xero";
-import type { PaidBackChoice } from "@/lib/card-refund-paid-back";
+import { PAID_BACK_REST_CHOICES, PAID_BACK_REST_LABELS, type PaidBackChoice, type PaidBackRestChoice } from "@/lib/card-refund-paid-back";
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
@@ -107,8 +107,11 @@ function RefundListCard({ title, children }: { title: string; children: ReactNod
  * view-only reason once, so the row buttons do not (`describeReason={false}`).
  * The dialog is the confirm step. The treasurer chooses, explicitly, "Paid back
  * in full" (the amount is what is owed) or "Paid back part of it" (an amount
- * below that, with a warning naming what stops being owed) - never inferred
- * from the amount (owner, 8 Oct 2026). A note saying how the member was paid
+ * below that) - never inferred from the amount (owner, 8 Oct 2026). A part
+ * close then asks what happens to the rest, with nothing chosen for them
+ * (#4516; owner, 2 Nov 2026: "Ask exactly and officer chooses"): the club
+ * keeps it (a warning names what stops being owed), or it is still owed to the
+ * member (it stays on this list for a later close). A note saying how the member was paid
  * back is required. It says up front whether a Xero refund note is raised - and,
  * for a late card charge Xero has no record of, that the charge is recorded as
  * a receipt first (#3924 round 6) - and that a refund made in the Stripe
@@ -140,6 +143,8 @@ export function DeadCardRefundsPanel({
   const [targetId, setTargetId] = useState<string | null>(null);
   const [seenOwedCents, setSeenOwedCents] = useState<number | null>(null);
   const [paidBack, setPaidBack] = useState<PaidBackChoice | null>(null);
+  const [rest, setRest] = useState<PaidBackRestChoice | null>(null); // #4516: no default
+  const restName = useId();
   const [amountInput, setAmountInput] = useState("");
   // Round 7 (UX): the amount's error waits until the treasurer has typed or left the box.
   const [amountTouched, setAmountTouched] = useState(false);
@@ -183,19 +188,22 @@ export function DeadCardRefundsPanel({
           ? `Part of it must be less than the ${formatCents(target.owedCents, format)} still owed. If all of it was paid back, choose Paid back in full.`
           : null;
   const noteMissing = note.trim() === "";
+  const restMissing = paidBack === "partial" && rest === null;
   const canSubmit =
-    target !== null && paidBack !== null && amountCents !== null && amountProblem === null && !noteMissing && !busy;
+    target !== null && paidBack !== null && amountCents !== null && amountProblem === null && !restMissing && !noteMissing && !busy;
   // Why the button is disabled, said beside it (#3924 round 4, U2).
   const submitHint =
     target === null || busy
       ? null
       : paidBack === null
         ? "Choose whether it was paid back in full or in part."
-        : (amountProblem ?? (noteMissing ? "Say how the member was paid back to close it." : null));
-  const noLongerOwedCents =
+        : (amountProblem ?? (restMissing ? "Choose whether the club keeps the rest or it is still owed to the member."
+          : noteMissing ? "Say how the member was paid back to close it." : null));
+  const restCents =
     target !== null && paidBack === "partial" && partialCents !== null && amountProblem === null
       ? target.owedCents - partialCents
       : null;
+  const noLongerOwedCents = rest === "club-keeps" ? restCents : null;
 
   function fail(message: string) {
     setError(message);
@@ -207,6 +215,7 @@ export function DeadCardRefundsPanel({
     setSeenOwedCents(row.owedCents);
     // A superseded payment's refund closes in full only.
     setPaidBack(row.wholeAmountOnly ? "full" : null);
+    setRest(null);
     setAmountInput("");
     setAmountTouched(false);
     setNote("");
@@ -235,6 +244,7 @@ export function DeadCardRefundsPanel({
           body: JSON.stringify({
             amountCents,
             paidBack,
+            ...(paidBack === "partial" && rest ? { rest } : {}),
             expectedOwedCents: seenOwedCents ?? target.owedCents,
             note,
             confirmed: true,
@@ -254,7 +264,7 @@ export function DeadCardRefundsPanel({
           : `Closed. ${formatCents(amountCents, format)} recorded as paid back; the other ${formatCents(
               target.owedCents - amountCents,
               format,
-            )} is no longer owed.`;
+            )} ${rest === "still-owed" ? "is still owed to the member and stays on this list." : "is kept by the club and no longer owed."}`;
       toast.success(`${recorded} ${xeroQueuedMessage(data.xeroQueued, bankNoteWording)}`);
       setListNotice(`The card refund for booking ${target.bookingReference} was closed as paid another way.`);
       close();
@@ -385,7 +395,7 @@ export function DeadCardRefundsPanel({
                     aria-describedby={target?.wholeAmountOnly ? wholeAmountHintId : undefined}
                     onChange={() => setPaidBack("partial")}
                   />
-                  <span>Paid back part of it - the rest will no longer be owed</span>
+                  <span>Paid back part of it</span>
                 </label>
                 {target?.wholeAmountOnly ? (
                   <p id={wholeAmountHintId} className="text-xs text-muted-foreground">
@@ -414,9 +424,23 @@ export function DeadCardRefundsPanel({
                   <p id={warningId} role="status" className="text-xs font-medium text-warning-11 empty:hidden">
                     {noLongerOwedCents !== null
                       ? `${formatCents(noLongerOwedCents, format)} will no longer be owed to the member, and will not be tracked anywhere.`
-                      : ""}
+                      : rest === "still-owed" && restCents !== null
+                        ? `${formatCents(restCents, format)} stays owed to the member, on this list, until it is closed.`
+                        : ""}
                   </p>
                 </div>
+              ) : null}
+              {paidBack === "partial" ? (
+                <fieldset className="space-y-2">
+                  {/* #4516 (owner, 2 Nov 2026): asked exactly, nothing chosen for the treasurer. */}
+                  <legend className="text-sm font-medium">What happens to the rest?</legend>
+                  {PAID_BACK_REST_CHOICES.map((choice) => (
+                    <label key={choice} className="flex items-center gap-2 text-sm">
+                      <input type="radio" name={restName} className="size-4" checked={rest === choice} onChange={() => setRest(choice)} />
+                      <span>{PAID_BACK_REST_LABELS[choice]}</span>
+                    </label>
+                  ))}
+                </fieldset>
               ) : null}
               <div className="space-y-1">
                 <Label htmlFor={noteId}>How was it paid back? (required)</Label>
