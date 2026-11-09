@@ -69,7 +69,7 @@ export const LATE_CAPTURE_APPROVAL_ALREADY_REFUNDED_MESSAGE =
  *
  * #4824: the booking's Payment row FIRST, then the capture. Every writer of what
  * the capture still holds takes that row before it writes - the `charge.refunded`
- * sync, a "Paid another way" close, another approval - so the held figure read
+ * sync, a "Paid another way" close, an automatic refund or its recovery replay - so the held figure read
  * under it cannot move before the claim; read before it, a refund committing in
  * between was planned again. The completion's `prepareLateCaptureDecision`
  * re-takes the row it already holds.

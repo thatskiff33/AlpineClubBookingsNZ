@@ -5996,7 +5996,7 @@ writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
   Payment row before it reads what the capture still holds and plans its
   refund (#4824), so before its task's claim (review F2), and reads the owner
   without the booking row (its `lock(1)` arrives in M4d). Read first, a
-  `charge.refunded` sync, a "Paid another way" close or another approval
+  `charge.refunded` sync, a "Paid another way" close, or an automatic refund or its recovery replay
   committing before the claim was planned again; proven against real
   PostgreSQL by `late-capture-approval-refund-race.realdb.test.ts`.
 - **A kept late capture** (the approval task dismissed) takes the same Payment
