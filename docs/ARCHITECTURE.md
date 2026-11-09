@@ -907,7 +907,7 @@ Use these ownership boundaries when adding new code:
 | Policy rules | `src/lib/policies/` | Pricing, age-tier, cancellation, change-fee, minimum-stay, member-credit, and booking-route decisions live as testable policy helpers. |
 | Operational Xero | `src/lib/xero-*.ts`, `src/lib/xero.ts` | `src/lib/xero.ts` is a compatibility facade. New code should import from the focused module that owns the behavior, not from the facade. |
 | Admin/member services | `src/lib/admin-member-xero-actions.ts`, `src/lib/member-serialization.ts`, `src/lib/member-lifecycle-actions.ts`, `src/lib/membership-cancellation-*.ts` | Shared admin/member request wrappers, DTO shape, lifecycle actions, and cancellation workflows live outside page files. |
-| Admin hub registry | `src/lib/admin-hubs/` | One entry per admin page: its hub, old and hub URLs, area or admission rule, and module flags (epic #4468). Inert until #4815 flips `ADMIN_HUBS_LIVE`; from C2 (#4799) the page half of the route-to-area map is generated from it. Relative imports only, so `next.config.ts` can load it. |
+| Admin hub registry | `src/lib/admin-hubs/` | One entry per admin page: its hub, old and hub URLs, area or admission rule, and module flags (epic #4468). Inert until #4815 flips `ADMIN_HUBS_LIVE`. Since C2 (#4799), `security-map.ts` generates the page half of the route-to-area map, the special admission paths and the admin page module gates from it, for every page's old and hub path. Since C3 (#4800), `next.config.ts` builds its redirects and `beforeFiles` rewrites from it (`buildAdminUrlRules`), the sidebar's active link is its `activeAdminHref` (a moved page's old and hub path are one page), every other `usePathname()` reader whose output depends on an admin path goes through `canonicalAdminPathname` (a key, such as help content) or `servedAdminPathname` (a URL, such as a return-to link) so the server render and the browser agree under a rewrite, `buildAdminUrlRules` refuses a dynamic page moving without a static sibling its pattern captures, and `revalidateAdminPage(id)` (`src/lib/admin-page-revalidation.ts`) is the only way production code revalidates an admin page: it refreshes the page's file path, which under a rewrite is the destination. Since S1 (#4796), a page that holds a merged page declares its `tabs` or `anchors` (linked with `adminTabHref` and `adminAnchorHref`, read by the shared `AdminPageTabs` shell), and `retired.ts` lists each page retired by a merge: `buildAdminUrlRules` gives its old URL a redirect, ahead of every other rule (a 307 for its first release, so a rollback is safe, made permanent one release later), to where its destination is served, query kept; a retired page has no file and no security-map entry. Relative imports only, so `next.config.ts` can load it. |
 | Business logic | `src/lib/` | Keep money in integer cents, dates as New Zealand date-only lodge nights, and external calls outside long database transactions where practical. |
 | Database | `prisma/schema.prisma`, `prisma/migrations/` | Schema changes must include deployable migrations and respect the blue/green migration policy. |
 | Operations | `scripts/`, `deploy/`, Compose files | Deployment helpers should be reusable by forks through environment overrides. |
@@ -2456,27 +2456,38 @@ default; a per-section collapse preference persists in localStorage.
 The admin command palette (#2092, `src/components/admin-command-palette.tsx`)
 opens on Ctrl/Cmd-K or the sidebar header "Search…" button (wired through a
 window event in `src/lib/admin-command-palette-events.ts`) and lets admins jump
-to any page they can access. Its index is derived at runtime by
-`getAdminFeatureSearchIndex`, which **reuses** `getVisibleAdminNavSections` and
-de-duplicates by href — so the palette applies exactly the sidebar's four
-visibility rules (module flag, `fullAdminOnly`, `orAccess`, permission matrix)
-plus the hut-leader relabel, and can never surface an href the admin is not
-permitted to open. The index is a deliberate **superset** of what the sidebar
-renders at any given moment, not a mirror of it: the two queue-driven "Needs
-Attention" deep links (Unpaid Finished Stays / Unpaid Stay Additions) stay
-searchable as always-accessible, pre-filtered views even when their queue is
-empty, whereas the sidebar reveals them only while their queue is non-empty. As
-defence in depth, `getAdminFeatureSearchIndex` fails **closed** — a missing
-permission matrix yields an empty index — even though `getVisibleAdminNavSections`
-keeps its pre-existing fail-open contract. There is no second registry to drift:
-`buildAdminNavSections` remains the single source of truth, optionally enriched
-with a per-entry `keywords` field that only widens palette matching.
+to any page they can access. Since S2 (#4797) `getAdminFeatureSearchIndex`
+builds its index from the **hub registry**, not the sidebar: every
+`ADMIN_MENU_DESTINATIONS` page (a registry `kind: "page"`, so never a detail,
+print, stub, test or retired page), at its `adminHref`, grouped by its hub,
+matched on its registry `keywords` and on the sidebar section it sits in (read
+from `buildAdminNavSections`, so "Lodge Operations" still finds the Roster);
+then each retired page under its old name, at `retiredAdminPageHref` (its
+redirect's own target, so the tab or section that now holds it) and offered
+exactly when the page it was merged into is; then the two pre-filtered queue
+views (Unpaid Finished Stays / Unpaid Stay Additions) from
+`buildAdminQueueViews`, which the sidebar's "Needs Attention" section also
+renders, under the Bookings hub. Both surfaces label a page through one
+helper, `adminPageLabel`, which carries the club's hut-leader term. It therefore offers pages the
+sidebar does not link, such as the lodge-scoped Chores, Lockers, Seasons and
+Rooms & Beds, which pick their own lodge when opened without `?lodgeId=`. It
+fails **closed**: a missing permission matrix yields an empty index (the
+sidebar's `getVisibleAdminNavSections` keeps its fail-open contract), and each
+entry must pass `isFeatureHrefVisible`, the `fullAdminOnly` gate and
+`canOpenAdminPathWithMatrix`, the layout guard's own admission rule, so the OR
+admissions and any-admin pages answer as the page will.
+`admin-feature-search-index.test.ts` proves both halves: a census from the page
+tree on disk, and a property test over every sweep grid and seeded role under
+every module setting. The palette ranks its own matches (`shouldFilter={false}`,
+cmdk's `defaultFilter` score, groups ordered by their best item), because cmdk
+1.1.1 never re-sorts groups and Enter would otherwise open the first match in
+hub order rather than the best one.
 
 **One nav href carries a date, and both surfaces take it from the same place
 (#3123).** The Unpaid Finished Stays entry is a deep link whose `checkOutTo`
-cut-off is the club's own day, so `buildAdminNavSections`, and therefore all three
-of `getVisibleAdminNavSections`, `getAdminFeatureSearchIndex` and
-`getRenderedAdminNavSections`, take that day as a **required first argument**. Both
+cut-off is the club's own day, so `buildAdminQueueViews`, `buildAdminNavSections`,
+and therefore all three of `getVisibleAdminNavSections`, `getAdminFeatureSearchIndex`
+and `getRenderedAdminNavSections`, take that day as a **required first argument**. Both
 the sidebar and the palette obtain it from `useClubTime()` — the same bound kernel
 from the same `ClubTimeProvider` (`INV-CONFIG-002`) — and recompute it per render.
 It was previously a module-level constant read from the container's environment
@@ -2582,8 +2593,9 @@ all while `getFirstAccessibleAdminHref` sent that same role to `/admin/payments`
 shipped preset the lodge names it needs to label a payment. Entering the shell
 now buys nothing: `guardAdminLayout` still requires the **requested path's** own
 area, every `/api/admin` route still clears `requireAdmin` against its own area
-and level, and the sidebar and command palette still filter item by item through
-`canViewAdminHrefWithMatrix`. That function answers an `ANY_ADMIN_ADMISSION_PATHS`
+and level, and the sidebar still filters item by item through
+`canViewAdminHrefWithMatrix` (the command palette through `canOpenAdminPathWithMatrix`
+since #4797). That function answers an `ANY_ADMIN_ADMISSION_PATHS`
 entry with the same any-one-area rule `canOpenAdminPath` applies to the page, so
 a link and the page it opens cannot disagree (#3596); the fee console's OR rule
 still reaches the sidebar through its own `orAccess` flag. A finance-only administrator reaches the shell and
@@ -2691,13 +2703,40 @@ custom role already deployed: module toggling and booking-messages are system
 configuration and sit under `support`; committee records and per-member
 lodge-access are member data and sit under `membership`; and `pending-counts` is
 the deliberate `overview` catch-all. `src/lib/__tests__/admin-route-area-matrix.test.ts`
-pins the full `/api/admin` route → area assignment to a frozen snapshot, so any
-prefix edit that moves a route between areas fails CI with a precise diff.
+pins the full `/api/admin` route → area assignment to a frozen snapshot, and
+every admin page's area by its old path (its hub path must resolve the same,
+#4799), so any prefix or registry edit that moves a route between areas fails CI
+with a precise diff.
 
-When you add a new admin page (`src/app/(admin)`) or `/api/admin/**` route,
-update **both** central route maps: the permission-area map in
-`src/lib/admin-permissions.ts` (`ROUTE_AREA_PREFIXES`, or
-`SPECIAL_ROUTE_AREA_PATTERNS` when the route needs a different area than its
+When you add a new admin **page** (`src/app/(admin)`), register it in the admin
+hub registry (`src/lib/admin-hubs/hubs/`) with its area, any special admission
+rule and its module flags. Since #4799 the page half of both central route
+maps is **generated** from that entry, at the page's old path and its hub
+path: `security-map.ts` emits the route-map prefixes (deepest first, because
+the resolver takes the first match, not the longest), the fee console, Rooms &
+Beds and any-admin admission paths, and the admin page prefixes of each module
+gate (which fail closed over the page's whole directory). Pin its area in
+`admin-route-area-matrix.test.ts`, and when it opens a new directory, give that
+directory its answer in the frozen oracle of `admin-hub-route-parity.test.ts`;
+both are reviewed statements of what the page must answer, independent of the
+generator. Link it with `adminHref(id)` and, after a write, refresh it with
+`revalidateAdminPage(id)`, never a literal `revalidatePath("/admin…")`
+(`admin-page-revalidation.test.ts` refuses one), so the page needs no edit
+beyond its registry entry when it moves under its hub.
+
+When a merge **retires** a page (S1 #4796), delete its file and its registry
+entry, add it to `src/lib/admin-hubs/retired.ts` with the page, tab or anchor
+that now holds it (the old URL then redirects: a 307 for one release, then a
+permanent 308 once a rollback past it is no longer possible), record its former
+area in `RETIRED_PAGE_AREAS` in `admin-route-area-matrix.test.ts`, and, if it
+had its own route-map prefix, name that prefix in the parity census's
+`ORACLE_RETIRED_PREFIXES`. The destination must admit on the retired page's
+area, or a reviewed narrower one; the registry suite fails any code that still
+links the old URL.
+
+When you add a `/api/admin/**` route, update **both** hand-written halves: the
+permission-area map in `src/lib/admin-permissions.ts` (`ROUTE_AREA_PREFIXES`,
+or `SPECIAL_ROUTE_AREA_PATTERNS` when the route needs a different area than its
 prefix) so `getAdminRouteRequirement()` gives it the right area/level, and — if
 it belongs to an optional module — the feature-gate map
 `FEATURE_ROUTE_RULES` in `src/config/feature-routes.ts`. The permission map's
@@ -2705,14 +2744,16 @@ last entry, `overview`, is a catch-all (`/admin`, `/api/admin`): a route that
 matches no more specific area silently resolves to `overview`, so a
 finance-sensitive route that forgets its prefix would be readable at plain
 overview access. `src/lib/__tests__/admin-route-map-drift.test.ts` enforces
-this: it enumerates every admin page and `/api/admin` route and fails the build
-if one lands on the overview catch-all without an intentional entry in that
-test's small, justified `OVERVIEW_ALLOWLIST`. The guard catches *unmapped*
+this: it enumerates every registered admin page, at both of its paths, and
+every `/api/admin` route, and fails the build if one lands on the overview
+catch-all without an intentional entry in that test's small, justified
+`OVERVIEW_ALLOWLIST`. The guard catches *unmapped*
 routes; it cannot catch a route *mis-mapped* by inheriting an existing wrong
 prefix, so still add a `SPECIAL_ROUTE_AREA_PATTERNS` entry by hand when a
-sensitive action lands under a broader prefix. New optional-module surfaces at
-brand-new prefixes must be added to `FEATURE_ROUTE_RULES` by hand — the guard
-only verifies existing feature prefixes still point at real files.
+sensitive action lands under a broader prefix. New optional-module API surfaces
+at brand-new prefixes must be added to `FEATURE_ROUTE_RULES` by hand (a page
+takes its gate from its registry flags) — the guard only verifies existing
+feature prefixes still point at a real route or registered page.
 
 A `FEATURE_ROUTE_RULES` entry for an **API** route usually needs a second edit to
 take effect: `config.matcher` in `src/proxy.ts` excludes the whole of `/api` bar

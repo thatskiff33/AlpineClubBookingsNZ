@@ -55,6 +55,7 @@ export const BOOKINGS_HUB = defineHub({
       oldPath: "/admin/bed-allocation",
       area: "bookings",
       flags: ["bedAllocation"],
+      keywords: ["rooms", "beds", "assign", "bunks"],
       moved: false,
     },
     {

@@ -46,6 +46,7 @@ import path from "node:path";
 
 import { blankLiterals, stripComments } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
+import { getAdminRouteRequirement } from "@/lib/admin-permissions";
 import {
   ADULT_MEMBER_HOST_SCOPES,
   type AdultMemberHostScope,
@@ -735,9 +736,9 @@ describe("combined member refusal and officer queue contracts", () => {
     ).toHaveLength(2);
     expect(page).toContain("`/bookings/${incident.bookingId}`");
 
-    const permissions = readRepoCode("src/lib/admin-permissions.ts");
-    expect(permissions).toContain('area: "bookings"');
-    expect(permissions).toContain('"/admin/bookings"');
+    // The page half of the route map is generated from the hub registry since
+    // #4799, so the page's area is asserted through the resolver itself.
+    expect(getAdminRouteRequirement("/admin/bookings", "GET")?.area).toBe("bookings");
   });
 });
 

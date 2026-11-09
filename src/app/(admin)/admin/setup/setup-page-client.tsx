@@ -21,6 +21,7 @@ import {
   UserX,
   type LucideIcon,
 } from "lucide-react";
+import { adminAnchorHref, adminHref, adminTabHref } from "@/lib/admin-hubs";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,9 +34,9 @@ import {
 import { LodgeCapacityCard } from "@/components/admin/lodge-capacity-card";
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
-import type {
-  AdminPermissionArea,
-  AdminPermissionMatrix,
+import {
+  canOpenAdminPathWithMatrix,
+  type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 
@@ -105,7 +106,6 @@ interface SetupHubCard {
   title: string;
   description: string;
   icon: LucideIcon;
-  requiredAreas: AdminPermissionArea[];
 }
 
 const setupHubCards: SetupHubCard[] = [
@@ -115,7 +115,6 @@ const setupHubCards: SetupHubCard[] = [
     description:
       "Start with the installation checklist, club identity, modules, lodge records, and system health.",
     icon: ListChecks,
-    requiredAreas: ["support"],
   },
   {
     href: "/admin/setup/finance",
@@ -123,23 +122,22 @@ const setupHubCards: SetupHubCard[] = [
     description:
       "Open finance reporting, Xero setup, sync tools, and the collapsed report-mapping editor.",
     icon: Landmark,
-    requiredAreas: ["finance"],
   },
+  // S1 (#4796): the next three cards open the pages the setup drill-downs
+  // they replaced were merged into.
   {
-    href: "/admin/setup/booking-rules",
-    title: "Booking Rules",
+    href: adminHref("bookings-setup"),
+    title: "Bookings Setup",
     description:
       "Review booking policy, seasons, age groups, promo codes, inventory, and booking copy.",
     icon: BookOpenCheck,
-    requiredAreas: ["bookings", "lodge"],
   },
   {
-    href: "/admin/setup/integrations",
-    title: "Operational Integrations",
+    href: adminAnchorHref("health", "integration-readiness"),
+    title: "Integration Readiness",
     description:
       "Check external-provider readiness, Xero connection, modules, and delivery health.",
     icon: Plug,
-    requiredAreas: ["support", "finance"],
   },
   {
     href: "/admin/membership-setup",
@@ -147,15 +145,13 @@ const setupHubCards: SetupHubCard[] = [
     description:
       "Configure membership types, member fields, and subscription lockout policy.",
     icon: BadgeCheck,
-    requiredAreas: ["membership"],
   },
   {
-    href: "/admin/setup/cancellation",
-    title: "Cancellation",
+    href: adminTabHref("membership-cancellations", "settings"),
+    title: "Membership Cancellations",
     description:
-      "Review cancellation settings, cancellation request queues, and related message copy.",
+      "Review cancellation settings and the cancellation request queue.",
     icon: UserX,
-    requiredAreas: ["membership", "support"],
   },
   {
     href: "/admin/notifications",
@@ -163,7 +159,6 @@ const setupHubCards: SetupHubCard[] = [
     description:
       "Manage delivery rules, recipients, email templates, and member-facing message text.",
     icon: Bell,
-    requiredAreas: ["support"],
   },
 ];
 
@@ -193,11 +188,13 @@ function progressLabel(progress: ProgressStatus) {
   return null;
 }
 
-function canSeeAnyRequiredArea(
-  permissionMatrix: AdminPermissionMatrix,
-  areas: AdminPermissionArea[],
-) {
-  return areas.some((area) => permissionMatrix[area] !== "none");
+/**
+ * Whether a readiness check's Open link is offered: an admin page only when it
+ * would open for this admin (S1 #4796; the cancellation settings are a
+ * membership page on a support page). The check itself stays visible.
+ */
+function canFollowCheckHref(permissionMatrix: AdminPermissionMatrix, href: string) {
+  return !/^\/admin(?:[/?#]|$)/.test(href) || canOpenAdminPathWithMatrix(permissionMatrix, href);
 }
 
 function getVisibleSetupHubCards(
@@ -208,7 +205,8 @@ function getVisibleSetupHubCards(
   return cards.filter(
     (card) =>
       isFeatureHrefVisible(card.href, features) &&
-      canSeeAnyRequiredArea(permissionMatrix, card.requiredAreas),
+      // Shown exactly when the card's page would open for this admin.
+      canOpenAdminPathWithMatrix(permissionMatrix, card.href),
   );
 }
 
@@ -588,7 +586,7 @@ export function SetupPageClient({
                           ) : null}
 
                           <div className="flex flex-wrap gap-2">
-                            {check.href ? (
+                            {check.href && canFollowCheckHref(permissionMatrix, check.href) ? (
                               <Button asChild variant="outline" size="sm">
                                 <a href={check.href}>
                                   <ExternalLink className="h-4 w-4" />

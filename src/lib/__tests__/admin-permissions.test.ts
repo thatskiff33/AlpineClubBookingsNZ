@@ -780,9 +780,9 @@ describe("admin route requirements", () => {
       area: "support",
       level: "view",
     });
-    // #4581: the Booking Rules hub is bookings work, though it sits under the
-    // support-area /admin/setup prefix; first-match-wins ordering puts it first.
-    expect(getAdminRouteRequirement("/admin/setup/booking-rules", "GET")).toEqual({
+    // #4581: the Booking Rules hub was bookings work under the support-area
+    // /admin/setup prefix; S1 (#4796) merged it into Bookings Setup, bookings too.
+    expect(getAdminRouteRequirement("/admin/bookings-setup", "GET")).toEqual({
       area: "bookings",
       level: "view",
     });
@@ -918,9 +918,14 @@ describe("admin route requirements", () => {
   });
 
   it("pins the any-admin admission carve-out to exactly the owner-decided pages (#2975, #3596)", () => {
+    // Generated since #4799 from the hub registry entries marked
+    // `admission: "any-admin"`: each page's old path, then its hub path, which
+    // carries the same owner decision to the page's new address.
     expect([...ANY_ADMIN_ADMISSION_PATHS]).toEqual([
       "/admin/ai-diagnostics",
+      "/admin/system/ai-diagnostics",
       "/admin/club-format",
+      "/admin/settings/club-format",
     ]);
   });
 
@@ -1638,10 +1643,11 @@ describe("admin page area alignment (#4581)", () => {
     expect(canViewAdminHrefWithMatrix(only("support"), "/admin/subscription-lockout")).toBe(false);
   });
 
-  it("the booking-rules hub opens for a bookings-only admin, and /admin/setup stays support", () => {
-    expect(canViewAdminHrefWithMatrix(only("bookings"), "/admin/setup/booking-rules")).toBe(true);
+  it("the booking rules page opens for a bookings-only admin, and /admin/setup stays support", () => {
+    // Booking Rules (#4581) is Bookings Setup since S1 (#4796).
+    expect(canViewAdminHrefWithMatrix(only("bookings"), "/admin/bookings-setup")).toBe(true);
     expect(canViewAdminHrefWithMatrix(only("bookings"), "/admin/setup")).toBe(false);
     expect(canViewAdminHrefWithMatrix(only("bookings"), "/admin/setup/foundations")).toBe(false);
-    expect(canViewAdminHrefWithMatrix(only("support"), "/admin/setup/booking-rules")).toBe(false);
+    expect(canViewAdminHrefWithMatrix(only("support"), "/admin/bookings-setup")).toBe(false);
   });
 });

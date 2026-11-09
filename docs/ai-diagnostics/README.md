@@ -765,7 +765,8 @@ to-the-second timestamp in the summary reads as precision the answer does not ha
 
 ### Discovery, and the module switch
 
-The page appears in the admin sidebar and command palette under Monitoring & Support.
+The page appears in the admin sidebar under Monitoring & Support, and in the command
+palette under Help & system.
 It carries no flag of its own: visibility derives from the href against
 `FEATURE_ROUTE_RULES`, where the page prefix is registered under `aiDiagnostics`. So
 switching the module off removes it from both surfaces AND 404s the route, which

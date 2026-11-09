@@ -11,11 +11,15 @@ export const RULES_HUB = defineHub({
   prefix: "rules",
   pages: [
     {
+      // The consolidated fee console (#1933, E7): `bookings` in the route map,
+      // admitted on bookings OR finance. Each section still gates its own edits
+      // by its historical area (hut fees bookings, joining and annual finance).
       id: "fees",
       label: "Fees",
       oldPath: "/admin/fees",
       area: "bookings",
       admission: "fees-or",
+      keywords: ["hut fees", "joining fees", "annual fees", "rates", "pricing"],
       moved: false,
     },
     {
@@ -39,6 +43,7 @@ export const RULES_HUB = defineHub({
       label: "Age Groups",
       oldPath: "/admin/age-tier-settings",
       area: "bookings",
+      keywords: ["age tiers", "child pricing", "youth", "senior"],
       moved: false,
     },
     {
@@ -47,6 +52,7 @@ export const RULES_HUB = defineHub({
       oldPath: "/admin/promo-codes",
       area: "bookings",
       flags: ["promoCodes"],
+      keywords: ["discount", "coupon", "voucher"],
       moved: false,
     },
     {
@@ -99,18 +105,11 @@ export const RULES_HUB = defineHub({
       moved: false,
     },
     {
-      // S1 (#4796) merges this with setup/booking-rules.
+      // S1 (#4796): also holds what was `/admin/setup/booking-rules`, which
+      // was `bookings` too (#4581).
       id: "bookings-setup",
       label: "Bookings Setup",
       oldPath: "/admin/bookings-setup",
-      area: "bookings",
-      moved: false,
-    },
-    {
-      // S1 (#4796) merges this with bookings-setup.
-      id: "setup-booking-rules",
-      label: "Booking Rules",
-      oldPath: "/admin/setup/booking-rules",
       area: "bookings",
       moved: false,
     },

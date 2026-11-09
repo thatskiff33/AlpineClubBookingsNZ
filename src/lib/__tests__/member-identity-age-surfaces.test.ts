@@ -49,7 +49,7 @@ const AGE_LABEL_SURFACES = [
   "src/components/admin/family-groups/login-holder-section.tsx",
   "src/components/admin/family-group-editor.tsx",
   "src/app/(admin)/admin/family-groups/page.tsx",
-  "src/app/(admin)/admin/family-suggestions/page.tsx",
+  "src/components/admin/family-groups/family-suggestions-panel.tsx",
 ] as const;
 
 /** Modules permitted to render it through the shared display components. */
