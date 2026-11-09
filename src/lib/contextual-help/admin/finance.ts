@@ -51,8 +51,9 @@ export const adminFinanceHelpEntries: HelpEntry[] = [
       ],
     ),
   ),
+  // The fee console is a Rules page (C6 #4803), keyed the same way.
   entry(
-    "/admin/fees",
+    getAdminPage("fees").oldPath,
     help(
       "Fees",
       "This page consolidates every fee schedule: Hut Fees (nightly rates per lodge, season, membership type and age tier), Joining Fees, and Annual Membership Fees with their invoice components and family billing recipients.",

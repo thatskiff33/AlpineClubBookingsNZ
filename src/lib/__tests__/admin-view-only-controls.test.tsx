@@ -118,8 +118,8 @@ import AdminModulesPage from "@/app/(admin)/admin/modules/page";
 import { MODULE_KEYS } from "@/config/modules";
 import { XeroRecordActivityPanel } from "@/components/admin/xero-record-activity-panel";
 import type { XeroRecordActivityData } from "@/lib/xero-record-types";
-import AgeTierSettingsPage from "@/app/(admin)/admin/age-tier-settings/page";
-import { PromoCodesPageClient } from "@/app/(admin)/admin/promo-codes/promo-codes-page-client";
+import AgeTierSettingsPage from "@/app/(admin)/admin/rules/age-tier-settings/page";
+import { PromoCodesPageClient } from "@/app/(admin)/admin/rules/promo-codes/promo-codes-page-client";
 // #1940 pass 3 delegated lanes (membership / lodge settings editors).
 import AdminMemberFieldsPage from "@/app/(admin)/admin/member-fields/page";
 import AdminMembershipTypesPage from "@/app/(admin)/admin/membership-types/page";

@@ -40,7 +40,7 @@ vi.mock("@/components/admin/analytics-integration-card", () => ({
 
 import AppearanceHubPage from "@/app/(admin)/admin/website/appearance/page";
 import DisplayHubPage from "@/app/(admin)/admin/display/page";
-import BookingsSetupHubPage from "@/app/(admin)/admin/bookings-setup/page";
+import BookingsSetupHubPage from "@/app/(admin)/admin/rules/bookings-setup/page";
 import FinanceSetupPage from "@/app/(admin)/admin/setup/finance/page";
 import FoundationsSetupHubPage from "@/app/(admin)/admin/setup/foundations/page";
 import { IntegrationReadinessSection } from "@/app/(admin)/admin/health/_components/integration-readiness-section";

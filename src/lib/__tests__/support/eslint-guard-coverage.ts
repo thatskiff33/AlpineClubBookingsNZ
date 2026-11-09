@@ -90,7 +90,7 @@ export const PRODUCTION_GUARD_ROSTER: readonly GuardRosterEntry[] = [
     why: "number formatting — drops only toLocaleString",
   },
   {
-    file: "src/app/(admin)/admin/promo-codes/promo-redemptions-panel.tsx",
+    file: "src/app/(admin)/admin/rules/promo-codes/promo-redemptions-panel.tsx",
     why: "number formatting — drops only toLocaleString",
   },
   {

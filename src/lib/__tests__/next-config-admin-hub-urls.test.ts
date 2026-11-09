@@ -18,10 +18,11 @@ import { ADMIN_PAGES, ADMIN_RETIRED_PAGES, isInexactAdminPagePath } from "@/lib/
 // `next.config.ts` and the admin hub URLs (epic #4468, C3 #4800).
 //
 // The config's `redirects()` and `rewrites().beforeFiles` are generated from
-// the hub registry. C4 (#4801) has moved the Website pages and C5 (#4802) the
-// Finance pages, and the switch is off, so each of those hub URLs redirects to
-// its old URL and each old URL is rewritten to the moved file. The five retired
-// pages (S1 #4796) still redirect in both states. All of this is run through
+// the hub registry. C4 (#4801) has moved the Website pages, C5 (#4802) the
+// Finance pages and C6 (#4803) the Fees & booking rules pages, and the switch is
+// off, so each of those hub URLs redirects to its old URL and each old URL is
+// rewritten to the moved file. The five retired pages (S1 #4796) still redirect
+// in both states. All of this is run through
 // Next's own pipeline (`unstable_getResponseFromNextConfig`, which calls the
 // real `loadCustomRoutes()`). `admin-hubs-registry.test.ts` walks every page
 // of the registry through the generated rules themselves.
@@ -103,7 +104,7 @@ describe("next.config.ts with the switch off", () => {
   it("redirects each moved page's hub URL, rewrites its old URL, and keeps the asset rewrites", async () => {
     const config = await loadConfig();
     const moved = movedPages();
-    expect(new Set(moved.map((page) => page.hub))).toEqual(new Set(["website", "finance"]));
+    expect(new Set(moved.map((page) => page.hub))).toEqual(new Set(["website", "finance", "rules"]));
     const retired = ADMIN_RETIRED_PAGES.map(({ oldPath }) => oldPath);
     expect(
       (await config.redirects()).map(({ source, permanent }) => ({ source, permanent })),
@@ -123,7 +124,7 @@ describe("next.config.ts with the switch off", () => {
   });
 
   /**
-   * C4 (#4801) and C5 (#4802) off-state smoke. Next's config pipeline answers a
+   * C4 (#4801), C5 (#4802) and C6 (#4803) off-state smoke. Next's config pipeline answers a
    * `beforeFiles` rewrite as 200 and a redirect as 307. The old URL is served
    * from the moved file; the hub URL redirects to the old URL.
    */
@@ -184,7 +185,7 @@ describe("next.config.ts with the switch off", () => {
     expect(isInexactAdminPagePath("/admin/site%2Dstyle")).toBe(true);
   });
 
-  it.each(["/admin/members", "/admin/fees", "/admin/members/x1"])(
+  it.each(["/admin/members", "/admin/lockers", "/admin/members/x1"])(
     "routes %s untouched",
     async (url) => {
       await expect(resolve(await loadConfig(), url)).resolves.toEqual({ kind: "none" });
@@ -255,10 +256,15 @@ describe("next.config.ts with the switch off", () => {
 
   it("leaves the pages the retired ones were merged into, and their neighbours, alone", async () => {
     const config = await loadConfig();
+    // Bookings Setup has moved (C6 #4803): its old URL is served from the moved
+    // file, as every moved page's is, and nothing redirects it.
+    await expect(resolve(config, "/admin/bookings-setup")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/rules/bookings-setup",
+    });
     for (const url of [
       "/admin/family-groups",
       "/admin/membership-cancellations",
-      "/admin/bookings-setup",
       "/admin/health",
       "/admin/setup",
       "/admin/setup/finance",
@@ -331,6 +337,38 @@ describe("next.config.ts over the moved Finance hub", () => {
     expect((await off.redirects()).filter((rule) => !retired.has(rule.source)).length).toBeGreaterThan(0);
     const rewrites = (await off.rewrites()) as { beforeFiles: unknown[] };
     expect(rewrites.beforeFiles.length).toBeGreaterThan(0);
+  });
+});
+
+describe("next.config.ts over the moved Rules hub", () => {
+  // Fees & booking rules moved in C6 (#4803).
+  it("PREMISE: every Fees & booking rules page has moved", () => {
+    const rules = ADMIN_PAGES.filter((page) => page.hub === "rules");
+    expect(rules.length).toBeGreaterThan(0);
+    expect(rules.filter((page) => !page.moved).map((page) => page.id)).toEqual([]);
+  });
+
+  it("off: the fee console's hub URL redirects to its old URL, and the old URL is served from the moved file, query kept", async () => {
+    const config = await loadConfig({ live: false });
+    await expect(resolve(config, "/admin/rules/fees?lodgeId=l-1")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/fees?lodgeId=l-1",
+    });
+    await expect(resolve(config, "/admin/fees?lodgeId=l-1")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/rules/fees?lodgeId=l-1",
+    });
+  });
+
+  it("on: Booking Rules, merged into Bookings Setup, redirects once, straight to its hub URL", async () => {
+    const config = await loadConfig({ live: true });
+    await expect(resolve(config, "/admin/setup/booking-rules?x=1")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/rules/bookings-setup?x=1",
+    });
+    await expect(resolve(config, "/admin/rules/bookings-setup")).resolves.toEqual({ kind: "none" });
   });
 });
 

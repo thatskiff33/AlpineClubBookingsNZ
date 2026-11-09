@@ -3050,7 +3050,7 @@ const eslintConfig = defineConfig([
       // Validation message quoting the notice body's character limit.
       "src/components/admin/notice-editor.tsx",
       // Redemption/export row counts in the promo-code panel.
-      "src/app/(admin)/admin/promo-codes/promo-redemptions-panel.tsx",
+      "src/app/(admin)/admin/rules/promo-codes/promo-redemptions-panel.tsx",
     ],
     rules: {
       "no-restricted-syntax": srcRestrictedSyntax(

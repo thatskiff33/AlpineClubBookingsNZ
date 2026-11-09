@@ -1,11 +1,12 @@
 import { BackLink } from "@/components/admin/back-link";
+import { adminLink } from "@/lib/admin-hubs";
 import { AdultMemberHostingSection } from "@/components/admin/booking-policies/adult-member-hosting-section";
 
 export default function AdultMemberHostingPage() {
   return (
     <div className="space-y-6">
       <div>
-        <BackLink href="/admin/booking-policies" label="Booking Policies" />
+        <BackLink {...adminLink("booking-policies")} />
         <h1 className="mt-2 text-2xl font-bold text-foreground">
           Adult Member Hosting
         </h1>

@@ -764,7 +764,7 @@ describe("database theme app-shell contract", () => {
 
   it("uses semantic app text roles across admin navigation and setup surfaces", () => {
     const semanticTextFiles = [
-      "src/app/(admin)/admin/booking-policies/page.tsx",
+      "src/app/(admin)/admin/rules/booking-policies/page.tsx",
       "src/app/(admin)/admin/notifications/page.tsx",
       "src/app/(admin)/admin/roster/[date]/print/page.tsx",
       "src/app/(admin)/admin/setup/finance/page.tsx",

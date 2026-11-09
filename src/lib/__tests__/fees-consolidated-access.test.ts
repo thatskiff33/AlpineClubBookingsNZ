@@ -6,7 +6,7 @@ import {
   isConsolidatedFeesPath,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
-import { feesSectionEditAccess } from "@/app/(admin)/admin/fees/_components/fees-access";
+import { feesSectionEditAccess } from "@/app/(admin)/admin/rules/fees/_components/fees-access";
 
 // The consolidated /admin/fees console (#1933, E7): admission on bookings OR
 // finance view, but each section keeps its historical edit area. These tests pin

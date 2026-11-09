@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useState, useCallback, useRef } from "react"
 import Link from "next/link"
+import { adminHref } from "@/lib/admin-hubs"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint"
@@ -18,7 +19,7 @@ import {
   useLodgeOptions,
 } from "@/components/lodge-select"
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status"
-import { readSeasonSchedule } from "../_lib/season-schedule";
+import { readSeasonSchedule } from "../../_lib/season-schedule";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
 import { useClubTime } from "@/components/club-time-provider"
 import { useClubFormat } from "@/components/club-format-provider"
@@ -346,7 +347,7 @@ export default function SeasonsPage() {
       <Alert>
         <span>
           To add a season or change its nightly rates, use{" "}
-          <Link href="/admin/fees" className="underline font-medium">Fees → Hut Fees</Link>.
+          <Link href={adminHref("fees")} className="underline font-medium">Fees → Hut Fees</Link>.
           This page edits an existing season&apos;s window (dates, name, type, active) and leaves its rates untouched.
         </span>
       </Alert>

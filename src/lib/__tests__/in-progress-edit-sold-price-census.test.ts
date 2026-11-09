@@ -326,7 +326,7 @@ const SEASON_RATE_MAPPING = /seasonId:\s*[A-Za-z_$][\w$]*\.id\b/g;
 const DECLARED_NON_MAPPINGS = [
   // Keys an existing rate row by its season before asking which rates are
   // missing. Reads `membershipTypeId` and `ageTier`, and no amount at all.
-  "src/app/(admin)/admin/fees/_components/hut-fees-section.tsx",
+  "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx",
   // The gap record itself: season id and NAME, for a warning to render.
   "src/lib/membership-type-rate-coverage.ts",
 ];

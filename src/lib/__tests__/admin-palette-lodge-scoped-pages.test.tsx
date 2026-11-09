@@ -55,7 +55,7 @@ vi.mock("@/components/confirm-dialog", () => ({
   useConfirm: () => ({ confirm: vi.fn(async () => false), confirmDialog: null }),
 }));
 
-import SeasonsPage from "@/app/(admin)/admin/seasons/page";
+import SeasonsPage from "@/app/(admin)/admin/rules/seasons/page";
 import ChoresPage from "@/app/(admin)/admin/chores/page";
 import LockersPage from "@/app/(admin)/admin/lockers/page";
 import { RoomsBedsManager } from "@/components/admin/rooms-beds-manager";

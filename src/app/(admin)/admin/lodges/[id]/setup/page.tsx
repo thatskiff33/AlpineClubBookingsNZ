@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BackLink } from "@/components/admin/back-link";
+import { adminHref } from "@/lib/admin-hubs";
 import {
   Card,
   CardContent,
@@ -823,7 +824,7 @@ export default function LodgeSetupWizardPage() {
             {copySummary(seasonCopy, "season")}
             <p className="text-sm text-muted-foreground">
               Or create them from scratch on the{" "}
-              <Link className="underline" href={configureHref("/admin/seasons")}>
+              <Link className="underline" href={configureHref(adminHref("seasons"))}>
                 seasons &amp; rates
               </Link>{" "}
               page.

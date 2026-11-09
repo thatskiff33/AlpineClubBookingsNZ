@@ -3,7 +3,7 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PromoRedemptionsPanel } from "@/app/(admin)/admin/promo-codes/promo-redemptions-panel";
+import { PromoRedemptionsPanel } from "@/app/(admin)/admin/rules/promo-codes/promo-redemptions-panel";
 
 vi.mock("@/components/lodge-select", () => ({
   useLodgeOptions: () => ({ lodges: [], loading: false }),

@@ -73,7 +73,7 @@ vi.mock("@/components/lodge-select", () => ({
   }),
 }));
 
-import { PromoCodesPageClient } from "@/app/(admin)/admin/promo-codes/promo-codes-page-client";
+import { PromoCodesPageClient } from "@/app/(admin)/admin/rules/promo-codes/promo-codes-page-client";
 
 /** The four days as a club actually stores them, and as the API serialises them. */
 const STORED = {

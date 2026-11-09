@@ -5,12 +5,16 @@
  * Section per the sidebar's `buildAdminNavSections`. Seasons sit here too — they are
  * reached from Fees rather than from a menu entry of their own, and what they
  * configure is the rate calendar.
+ *
+ * These pages live under `/admin/rules` (C6 #4803), and their keys are their
+ * registry old paths: see the note on `admin/finance.ts`.
  */
+import { getAdminPage } from "@/lib/admin-hubs";
 import { entry, help, type HelpEntry } from "../types";
 
 export const adminRatesAndPoliciesHelpEntries: HelpEntry[] = [
   entry(
-    "/admin/seasons",
+    getAdminPage("seasons").oldPath,
     help(
       "Seasons",
       "This page defines the seasonal date windows (name, type, dates, active) used by booking quotes. Nightly hut-fee rates live on the Fees page.",
@@ -39,7 +43,7 @@ export const adminRatesAndPoliciesHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/age-tier-settings",
+    getAdminPage("age-tier-settings").oldPath,
     help(
       "Age Groups",
       "Age groups define how member and guest ages map to infant, child, youth, and adult pricing or policy behavior.",
@@ -68,7 +72,7 @@ export const adminRatesAndPoliciesHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/promo-codes",
+    getAdminPage("promo-codes").oldPath,
     help(
       "Promo Codes",
       "Promo codes apply controlled discounts to eligible bookings.",
@@ -97,7 +101,7 @@ export const adminRatesAndPoliciesHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/booking-policies",
+    getAdminPage("booking-policies").oldPath,
     help(
       "Booking Policies",
       "Booking policies control cancellation rules, group discounts, minimum stays, and public request settings.",

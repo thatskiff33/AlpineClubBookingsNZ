@@ -16,6 +16,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { BackLink } from "@/components/admin/back-link";
+import { adminHref } from "@/lib/admin-hubs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -624,7 +625,7 @@ function MembershipTypeEditorDialog({
                       Each member&apos;s subscription requirement is taken from
                       their age tier. Set which tiers need a subscription on the{" "}
                       <Link
-                        href="/admin/age-tier-settings"
+                        href={adminHref("age-tier-settings")}
                         className="font-medium text-muted-foreground underline"
                       >
                         age tier settings

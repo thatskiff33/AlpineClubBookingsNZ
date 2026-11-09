@@ -876,7 +876,7 @@ function actionFallbackDrilldownLink(
   if (normalized.includes("policy")) {
     return {
       label: "Open booking policies",
-      href: "/admin/booking-policies",
+      href: adminHref("booking-policies"),
       kind: "admin",
       primary: true,
     };
@@ -884,7 +884,7 @@ function actionFallbackDrilldownLink(
   if (normalized.includes("promo")) {
     return {
       label: "Open promo codes",
-      href: "/admin/promo-codes",
+      href: adminHref("promo-codes"),
       kind: "admin",
       primary: true,
     };
@@ -892,7 +892,7 @@ function actionFallbackDrilldownLink(
   if (normalized.includes("season")) {
     return {
       label: "Open seasons",
-      href: "/admin/seasons",
+      href: adminHref("seasons"),
       kind: "admin",
       primary: true,
     };
