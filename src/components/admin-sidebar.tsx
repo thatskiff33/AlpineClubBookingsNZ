@@ -1007,17 +1007,11 @@ function SidebarLinks({
     hutLeaderLabel,
   );
 
-  // Highlight the most specific nav item whose href is a prefix of the current
-  // path, so nested routes (e.g. /admin/xero/setup) activate the deepest match
-  // rather than every ancestor (e.g. both "Xero Sync" and "Xero Setup"). The
-  // registry decides it (C3 #4800), reading a moved page's old URL and hub URL
-  // as one page: never compare `pathname` with an href here.
-  const activeHref = activeAdminHref(
-    pathname,
-    visibleNavSections.flatMap((section) =>
-      section.items.map((item) => item.href),
-    ),
-  );
+  const navHrefs = visibleNavSections.flatMap((s) => s.items.map((i) => i.href));
+  // The deepest nav item the path is at or under (/admin/xero/setup lights Xero
+  // Setup, not Xero Sync too), by the registry (C3 #4800), which reads a moved
+  // page's old and hub URL as one page. Never compare `pathname` with an href.
+  const activeHref = activeAdminHref(pathname, navHrefs);
 
   return (
     <nav aria-label="Admin sections" className="flex flex-col gap-0.5">

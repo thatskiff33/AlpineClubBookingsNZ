@@ -5,6 +5,7 @@ import {
   type AdminPageId,
 } from "@/lib/admin-hubs";
 import type { AdminHubPage } from "@/lib/admin-hubs/define";
+import { ROUTE_GROUP_BOUNDARIES } from "@/lib/route-group-boundaries";
 
 /**
  * REVALIDATING AN ADMIN PAGE (epic #4468, C3 #4800; `INV-SSOT`).
@@ -31,7 +32,7 @@ import type { AdminHubPage } from "@/lib/admin-hubs/define";
  */
 
 /** Every admin page file sits under this route group (`src/app/(admin)/admin/…`). */
-const ADMIN_ROUTE_GROUP = "/(admin)";
+const ADMIN_ROUTE_GROUP = `/${ROUTE_GROUP_BOUNDARIES.admin.group}`;
 
 /**
  * The `revalidatePath` arguments for a page.
