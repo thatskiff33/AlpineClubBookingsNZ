@@ -17,6 +17,7 @@ import {
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { loadAdminSetupPermissionMatrix } from "../permission-matrix";
+import { adminHref } from "@/lib/admin-hubs";
 
 const financeLinks = [
   {
@@ -27,14 +28,14 @@ const financeLinks = [
     icon: Landmark,
   },
   {
-    href: "/admin/xero/setup",
+    href: adminHref("xero-setup"),
     title: "Xero Setup",
     description:
       "Connect Xero and configure accounting settings used by finance workflows.",
     icon: Plug,
   },
   {
-    href: "/admin/xero#xero-section-mappings",
+    href: `${adminHref("xero")}#xero-section-mappings`,
     title: "Xero Mappings",
     description:
       "Review account, item-code, and entrance-fee mappings used by Xero sync.",

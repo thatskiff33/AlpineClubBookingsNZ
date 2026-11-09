@@ -10,7 +10,7 @@ import type { ReactNode } from "react";
  *     step against that context.
  *
  * C4 (Stripe) and C5 (Google) reuse the shell by supplying their own `Ctx` and
- * `steps`; no shell change is required. See `src/app/(admin)/admin/xero/setup/`
+ * `steps`; no shell change is required. See `src/app/(admin)/admin/finance/xero/setup/`
  * for the Xero config as the worked example.
  */
 

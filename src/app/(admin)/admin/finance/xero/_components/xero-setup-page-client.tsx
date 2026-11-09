@@ -6,6 +6,7 @@ import { XeroSetupWizard } from "../setup/xero-setup-wizard"
 import type { XeroWizardServerConfig } from "../setup/use-xero-wizard-context"
 import { WebhookAmberBadge } from "./webhook-amber-badge"
 import { useXeroConnection } from "../_hooks/use-xero-connection"
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * Xero Setup page body (#2080/#2081). The guided wizard is the whole setup
@@ -33,7 +34,7 @@ export function XeroSetupPageClient({
       <p className="mb-6 text-sm">
         Day-to-day syncing, operations, and usage live on the{" "}
         <Link
-          href="/admin/xero"
+          href={adminHref("xero")}
           className="font-medium text-foreground underline decoration-brand-gold/70 decoration-2 underline-offset-4"
         >
           Xero Sync

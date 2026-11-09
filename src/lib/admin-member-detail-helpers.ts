@@ -1,3 +1,4 @@
+import { canonicalAdminPathname } from "@/lib/admin-hubs"
 import {
   shouldDefaultPostalSameAsPhysical,
   type MemberAddressValues,
@@ -101,11 +102,15 @@ export function isCollapsibleMemberSection(
 // BackLink prepends the ← affordance, so the label stays a bare parent name
 // (no "Back to " prefix, which would duplicate the arrow — #2046).
 export function getMemberDetailBackLabel(returnTo: string) {
-  if (returnTo.startsWith("/admin/bookings")) return "Bookings"
-  if (returnTo.startsWith("/admin/payments")) return "Payments"
-  if (returnTo.startsWith("/admin/subscriptions")) return "Subscriptions"
-  if (returnTo.startsWith("/admin/refund-requests")) return "Refund Requests"
-  if (returnTo.startsWith("/admin/xero")) return "Xero"
+  // A moved Finance page is served at its hub path once the switch is on, and
+  // the server render already sees that path while the switch is off. Both
+  // forms name the same parent.
+  const path = canonicalAdminPathname(returnTo.split(/[?#]/, 1)[0] ?? returnTo)
+  if (path.startsWith("/admin/bookings")) return "Bookings"
+  if (path.startsWith("/admin/payments")) return "Payments"
+  if (path.startsWith("/admin/subscriptions")) return "Subscriptions"
+  if (path.startsWith("/admin/refund-requests")) return "Refund Requests"
+  if (path.startsWith("/admin/xero")) return "Xero"
   return "Members"
 }
 

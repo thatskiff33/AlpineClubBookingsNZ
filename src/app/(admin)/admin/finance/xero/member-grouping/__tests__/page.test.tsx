@@ -66,7 +66,7 @@ vi.mock("@/components/ui/select", () => ({
   }) => <option value={value}>{children}</option>,
 }));
 
-import XeroMemberGroupingPage from "@/app/(admin)/admin/xero/member-grouping/page";
+import XeroMemberGroupingPage from "@/app/(admin)/admin/finance/xero/member-grouping/page";
 
 const ALL_TIERS = ["INFANT", "CHILD", "YOUTH", "ADULT", "NOT_APPLICABLE"];
 

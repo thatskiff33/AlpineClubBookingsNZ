@@ -2,9 +2,9 @@
 
 import { fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
-import { OperationItem } from "@/app/(admin)/admin/xero/_components/operations-panel";
-import { resolveDialogDescription } from "@/app/(admin)/admin/xero/_components/resolve-dialog-copy";
-import type { XeroOperation } from "@/app/(admin)/admin/xero/_components/types";
+import { OperationItem } from "@/app/(admin)/admin/finance/xero/_components/operations-panel";
+import { resolveDialogDescription } from "@/app/(admin)/admin/finance/xero/_components/resolve-dialog-copy";
+import type { XeroOperation } from "@/app/(admin)/admin/finance/xero/_components/types";
 
 function makeOperation(overrides: Partial<XeroOperation> = {}): XeroOperation {
   return {

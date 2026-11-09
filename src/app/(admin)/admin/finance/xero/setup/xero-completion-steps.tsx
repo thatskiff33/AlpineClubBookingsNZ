@@ -1,5 +1,7 @@
 "use client";
 
+import { adminHref } from "@/lib/admin-hubs";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
@@ -513,7 +515,7 @@ export function FinishStep({ context }: { context: XeroWizardContext }) {
         <p className="mt-4 text-sm text-muted-foreground">
           Day-to-day syncing, operations, mappings and usage live on the{" "}
           <Link
-            href="/admin/xero"
+            href={adminHref("xero")}
             className="font-medium text-foreground underline decoration-brand-gold/70 decoration-2 underline-offset-4"
           >
             Xero Sync

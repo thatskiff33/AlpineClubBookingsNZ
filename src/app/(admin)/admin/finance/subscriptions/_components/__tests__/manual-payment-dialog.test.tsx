@@ -12,7 +12,7 @@ import {
   ManualPaymentDialog,
   type ManualPaymentSubmission,
   type ManualPaymentTarget,
-} from "@/app/(admin)/admin/subscriptions/_components/manual-payment-dialog";
+} from "@/app/(admin)/admin/finance/subscriptions/_components/manual-payment-dialog";
 
 const paidTarget: ManualPaymentTarget = {
   subscriptionId: "sub-1",

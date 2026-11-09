@@ -157,8 +157,9 @@ const nextConfig: NextConfig = {
    * redirects (307) to its old URL, and the `beforeFiles` rewrite above serves
    * the old URL from the moved file, so the proxy, the module gate and the
    * layout guard still see the old path. Once on, the old URL redirects to the
-   * hub URL and there are no rewrites. C4 (#4801) has moved the Website pages,
-   * so those rules are live while the switch stays off.
+   * hub URL and there are no rewrites. C4 (#4801) has moved the Website pages
+   * and C5 (#4802) the Finance pages, so those rules are live while the switch
+   * stays off.
    *
    * The pages S1 (#4796) merged into others (`src/lib/admin-hubs/retired.ts`)
    * each have a redirect in both states, FIRST in the list so no moved page's

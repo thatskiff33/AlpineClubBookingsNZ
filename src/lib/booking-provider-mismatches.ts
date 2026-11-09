@@ -25,6 +25,7 @@ import { explainXeroFailure } from "@/lib/xero-failure-explanation";
  * calls.
  */
 
+import { adminHref } from "@/lib/admin-hubs";
 type BookingProviderMismatchId =
   | "xero-invoice-sync-failed"
   | "xero-invoice-pending"
@@ -478,7 +479,7 @@ export async function getBookingFinancialReviewWarnings(
       label: "Money on this booking is waiting for review",
       description:
         "A change to this booking saved, but the refund or credit for it could not be worked out from what the booking has stored, so nothing has been refunded or credited and no amount has been assumed. The member has been told their change saved and that the club is working the adjustment out.",
-      href: "/admin/payments",
+      href: adminHref("payments"),
       linkLabel: "Open the settlement queue",
     },
   ];

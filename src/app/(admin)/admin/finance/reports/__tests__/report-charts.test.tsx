@@ -65,7 +65,7 @@ vi.mock("recharts", () => ({
   Legend: () => null,
 }));
 
-import { RevenueBarChart } from "@/app/(admin)/admin/reports/_components/report-charts";
+import { RevenueBarChart } from "@/app/(admin)/admin/finance/reports/_components/report-charts";
 
 describe("RevenueBarChart", () => {
   it("renders exact integer cents on the revenue axis and tooltip", () => {

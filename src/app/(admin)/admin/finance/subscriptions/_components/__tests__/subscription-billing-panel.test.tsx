@@ -20,7 +20,7 @@ vi.mock("@/components/confirm-dialog", () => ({
   useConfirm: () => ({ confirm: mocks.confirm, confirmDialog: null }),
 }));
 
-import { SubscriptionBillingPanel } from "@/app/(admin)/admin/subscriptions/_components/subscription-billing-panel";
+import { SubscriptionBillingPanel } from "@/app/(admin)/admin/finance/subscriptions/_components/subscription-billing-panel";
 
 /**
  * The club's day under the suite's default provider zone (`Pacific/Auckland`)

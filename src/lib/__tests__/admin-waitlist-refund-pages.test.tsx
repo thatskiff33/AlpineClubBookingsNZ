@@ -5,7 +5,7 @@ import { fireEvent, render, screen, waitFor, within } from "@/lib/__tests__/supp
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AdminWaitlistPage from "@/app/(admin)/admin/waitlist/page";
-import RefundRequestsPage from "@/app/(admin)/admin/refund-requests/page";
+import RefundRequestsPage from "@/app/(admin)/admin/finance/refund-requests/page";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 import { refundAppealCeilingParts } from "@/lib/manual-refund-task-settlement-rules";
 

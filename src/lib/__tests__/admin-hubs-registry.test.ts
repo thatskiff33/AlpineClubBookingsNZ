@@ -1443,10 +1443,11 @@ describe("the registry is inert", () => {
     "src/components/help-widget/help-widget-admin.tsx":
       "C3: admin help reads the pathname through canonicalAdminPathname",
     "src/components/nav-bar.tsx": "C3: the profile return-to uses servedAdminPathname",
-    "src/app/(admin)/admin/xero/page.tsx": "C3: currentXeroPath uses servedAdminPathname",
-    "src/app/(admin)/admin/xero/_components/operations-panel.tsx":
+    "src/app/(admin)/admin/finance/xero/page.tsx":
+      "C3: currentXeroPath uses servedAdminPathname; C5: the setup link is adminHref",
+    "src/app/(admin)/admin/finance/xero/_components/operations-panel.tsx":
       "C3: router.replace targets use servedAdminPathname",
-    "src/app/(admin)/admin/xero/_components/inbound-events-panel.tsx":
+    "src/app/(admin)/admin/finance/xero/_components/inbound-events-panel.tsx":
       "C3: router.replace targets use servedAdminPathname",
     "src/lib/__tests__/admin-hubs-active-link.test.ts": "C3: activeAdminHref and its census",
     "src/lib/__tests__/feature-navigation.test.ts":
@@ -1468,7 +1469,8 @@ describe("the registry is inert", () => {
       "S1: the cancellation settings card links the Settings tab",
     "src/components/admin/membership-cancellation-blocker-notice.tsx":
       "S1: the settings link is the queue's Settings tab",
-    "src/lib/setup-readiness.ts": "S1: the cancellation step links the Settings tab",
+    "src/lib/setup-readiness.ts":
+      "S1: the cancellation step links the Settings tab; C5: Xero setup and mappings",
     "src/lib/__tests__/admin-feature-search-index.test.ts":
       "S2: the palette census and its fail-closed property over every grid and seeded role",
     "src/lib/__tests__/admin-palette-lodge-scoped-pages.test.tsx":
@@ -1491,6 +1493,48 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/booking-policies/cancellation/page.tsx":
       "C4: the public-pages link is adminHref",
     "src/lib/analytics-settings-shared.ts": "C4: the privacy-policy editor link is adminHref",
+    "src/app/(admin)/admin/book/page.tsx": "C5: the Xero setup link is adminHref",
+    "src/app/(admin)/admin/dashboard/page.tsx": "C5: the payments and refunds links are adminHref",
+    "src/app/(admin)/admin/finance/internet-banking/page.tsx": "C5: its back link is adminHref",
+    "src/app/(admin)/admin/finance/xero/_components/health-diagnostics-panel.tsx":
+      "C5: the member-grouping link is adminHref",
+    "src/app/(admin)/admin/finance/xero/_components/webhook-amber-badge.tsx":
+      "C5: the webhook setup link is adminHref",
+    "src/app/(admin)/admin/finance/xero/_components/xero-setup-page-client.tsx":
+      "C5: its back link is adminHref",
+    "src/app/(admin)/admin/finance/xero/setup/xero-completion-steps.tsx":
+      "C5: the Xero admin link is adminHref",
+    "src/app/(admin)/admin/integrations/page.tsx": "C5: the Xero setup card is adminHref",
+    "src/app/(admin)/admin/modules/page.tsx": "C5: the Xero module setup link is adminHref",
+    "src/app/(admin)/admin/setup/finance/page.tsx": "C5: the Xero cards are adminHref",
+    "src/app/(admin)/admin/stripe/setup/page.tsx": "C5: the payments link is adminHref",
+    "src/components/admin/booking-requests/booking-approvals-panel.tsx":
+      "C5: the refunds link is adminHref",
+    "src/components/admin/subscription-lockout-settings-panel.tsx":
+      "C5: the Xero setup links are adminHref",
+    "src/lib/__tests__/asset-url-404.test.ts":
+      "C5: the beforeFiles pin follows the moved Website and Finance pages",
+    "src/lib/admin-member-detail-helpers.ts":
+      "C5: the member back-link label reads a Finance hub path as its old path",
+    "src/lib/audit-query.ts": "C5: audit deep links use adminHref",
+    "src/lib/booking-provider-mismatches.ts": "C5: the settlement-queue link is adminHref",
+    "src/lib/diagnostics/page-context/__tests__/registry.test.ts":
+      "C5: a diagnostics row's file is the hub path once its page has moved",
+    "src/lib/email-message-audit-defaults.ts": "C5: default email deep links use adminHref",
+    "src/lib/email-templates/admin-finance.ts": "C5: finance alert buttons use adminHref",
+    "src/lib/email-templates/admin-ops.ts": "C5: the digest's finance links use adminHref",
+    "src/lib/email-templates/admin-xero-reports.ts": "C5: the report buttons use adminHref",
+    "src/lib/email/admin-alerts-finance.ts": "C5: payment review links use adminHref",
+    "src/lib/email/admin-alerts-internet-banking-started-stay.ts":
+      "C5: the payments review link is adminHref",
+    "src/lib/email/admin-alerts-internet-banking.ts": "C5: the payments review link is adminHref",
+    "src/lib/email/admin-alerts-late-capture.ts": "C5: the payments review links are adminHref",
+    "src/lib/email/admin-alerts-settlement.ts": "C5: the payments review links are adminHref",
+    "src/lib/finance-dashboard-page/sync-health-view.ts": "C5: the Xero admin link is adminHref",
+    "src/lib/finance-sync-health.ts": "C5: the Xero admin link is adminHref",
+    "src/lib/stuck-state-dashboard.ts": "C5: stuck-state links use adminHref",
+    "src/lib/xero-record-activity.ts": "C5: the payments back link is adminHref",
+    "src/lib/xero-record-links.ts": "C5: a Xero record's URL is adminHref",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;

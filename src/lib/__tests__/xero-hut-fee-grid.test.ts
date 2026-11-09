@@ -5,7 +5,7 @@ import {
   HUT_FEE_FLAT_KEY,
   hutFeeCellKey,
   hutFeeCellsForType,
-} from "@/app/(admin)/admin/xero/_components/hut-fee-grid";
+} from "@/app/(admin)/admin/finance/xero/_components/hut-fee-grid";
 
 const TIERS = ["INFANT", "CHILD", "YOUTH", "ADULT"] as const;
 

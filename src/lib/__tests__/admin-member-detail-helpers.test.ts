@@ -33,6 +33,8 @@ describe("admin-member-detail-helpers", () => {
       expect(getMemberDetailBackLabel("/admin/subscriptions")).toBe("Subscriptions")
       expect(getMemberDetailBackLabel("/admin/refund-requests")).toBe("Refund Requests")
       expect(getMemberDetailBackLabel("/admin/xero/health")).toBe("Xero")
+      expect(getMemberDetailBackLabel("/admin/finance/payments")).toBe("Payments")
+      expect(getMemberDetailBackLabel("/admin/finance/xero/setup?step=webhooks")).toBe("Xero")
     })
 
     it("defaults to Members for unknown paths", () => {

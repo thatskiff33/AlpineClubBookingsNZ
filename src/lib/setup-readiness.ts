@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { isHttpUrl } from "@/lib/http-url";
-import { adminTabHref } from "@/lib/admin-hubs";
+import { adminHref, adminTabHref } from "@/lib/admin-hubs";
 import {
   CLUB_TIME_ZONE_FALLBACK,
   CLUB_TIME_ZONE_MAX_LENGTH,
@@ -1958,7 +1958,7 @@ function buildOperationalXeroCheck(
       ],
       // Land on the page where credentials can actually be entered (#2079); the
       // Integrations hub also links here.
-      href: "/admin/xero/setup",
+      href: adminHref("xero-setup"),
       action: {
         type: "provider-test",
         provider: "xero",
@@ -2074,7 +2074,7 @@ function buildXeroMappingCheck(
         required: false,
         message: "Xero mapping database state was not checked.",
         details: ["Review mappings from /admin/xero after connecting Xero."],
-        href: "/admin/xero#xero-section-mappings",
+        href: `${adminHref("xero")}#xero-section-mappings`,
       },
       progress,
     );
@@ -2129,7 +2129,7 @@ function buildXeroMappingCheck(
         `Hut fee item mappings: ${hutFeeMappings}`,
         `Joining fee mappings: ${entranceFeeMappings}`,
       ],
-      href: "/admin/xero#xero-section-mappings",
+      href: `${adminHref("xero")}#xero-section-mappings`,
     },
     progress,
   );

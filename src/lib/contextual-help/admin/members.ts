@@ -153,6 +153,7 @@ export const adminMembersHelpEntries: HelpEntry[] = [
       ],
     ),
   ),
+  // Old path on purpose: see the note on `admin/finance.ts` (C5 #4802).
   entry(
     "/admin/subscriptions",
     help(

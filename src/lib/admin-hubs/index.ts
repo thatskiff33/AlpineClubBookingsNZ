@@ -8,10 +8,11 @@
  * the command palette. The epic plan, in #4468's body, says what each of those does.
  *
  * Officers still open every page at its old URL while `ADMIN_HUBS_LIVE` is off.
- * C4 (#4801) has moved the Website pages: their files live under the hub, the
- * old URL is served from that file by a `beforeFiles` rewrite, and the hub URL
- * redirects back. Links go through `adminHref`, which keeps returning the old
- * URL until the switch is on. In production the registry is read by the
+ * C4 (#4801) has moved the Website pages and C5 (#4802) the Finance pages:
+ * their files live under the hub, the old URL is served from that file by a
+ * `beforeFiles` rewrite, and the hub URL redirects back. Links go through
+ * `adminHref`, which keeps returning the old URL until the switch is on.
+ * In production the registry is read by the
  * security map — C2 (#4799) generates the page half of the route map, the
  * admission paths and the admin page module gates from it (`security-map.ts`),
  * the same answer at the old path and the hub path — and, since C3 (#4800), by

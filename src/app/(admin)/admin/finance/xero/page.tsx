@@ -4,7 +4,7 @@ import { WebhookHealthPanel } from "./_components/webhook-health-panel"
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
-import { servedAdminPathname } from "@/lib/admin-hubs"
+import { adminHref, servedAdminPathname } from "@/lib/admin-hubs"
 import { useClubIdentity } from "@/components/club-identity-provider"
 import { buildPathWithSearch } from "@/lib/internal-return-path"
 import {
@@ -100,7 +100,7 @@ export default function XeroPage() {
       <p className="mb-6 text-sm">
         Account mappings and initial setup live on the{" "}
         <Link
-          href="/admin/xero/setup"
+          href={adminHref("xero-setup")}
           className="font-medium text-foreground underline decoration-brand-gold/70 decoration-2 underline-offset-4"
         >
           Xero Setup

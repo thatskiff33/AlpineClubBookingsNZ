@@ -16,10 +16,11 @@ import { canViewAdminHrefWithMatrix } from "@/lib/admin-permissions";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { getIntegrationsNeedingReentry } from "@/lib/integration-credentials";
 import { loadAdminSetupPermissionMatrix } from "@/app/(admin)/admin/setup/permission-matrix";
+import { adminHref } from "@/lib/admin-hubs";
 
 const sections: AdminHubSection[] = [
   {
-    href: "/admin/xero/setup",
+    href: adminHref("xero-setup"),
     title: "Xero Setup",
     description:
       "Connect Xero and configure the accounting settings used by finance workflows.",

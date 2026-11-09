@@ -56,8 +56,8 @@ describe("every wizard step reports its save to the shell (#4410)", () => {
       "src/app/(admin)/admin/display/setup/display-wizard-steps.tsx",
       "src/app/(admin)/admin/google/setup/google-wizard-steps.tsx",
       "src/app/(admin)/admin/stripe/setup/stripe-wizard-steps.tsx",
-      "src/app/(admin)/admin/xero/setup/xero-completion-steps.tsx",
-      "src/app/(admin)/admin/xero/setup/xero-wizard-steps.tsx",
+      "src/app/(admin)/admin/finance/xero/setup/xero-completion-steps.tsx",
+      "src/app/(admin)/admin/finance/xero/setup/xero-wizard-steps.tsx",
     ]);
   });
 });

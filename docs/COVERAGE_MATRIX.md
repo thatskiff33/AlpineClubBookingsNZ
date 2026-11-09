@@ -14,8 +14,14 @@ a task-focused operator guide with screenshots. #2049 laid the foundation and
 #2050 filled every gap, so each admin row now links a guide (no `GAP` remains) —
 keep the links current as areas change.
 
-The area list is generated from the actual route directories (excluding
-`__tests__`), so it is exhaustive and will not silently miss a surface. The
+The area list is each registered admin page's top-level URL directory, taken
+from the [hub registry](../src/lib/admin-hubs/index.ts), whose own census ties
+every entry to its page on disk, so it is exhaustive and will not silently miss a
+surface. An area keeps its row, and its URL, when its pages move under a hub
+(epic #4468): the Website hub's areas now live in
+`src/app/(admin)/admin/website/` (C4 #4801), and the Finance hub's areas
+(`internet-banking`, `payments`, `refund-requests`, `reports`, `subscriptions`,
+`xero`) now live in `src/app/(admin)/admin/finance/` (C5 #4802). The
 count that used to stand here said 70 and was measured once; it had already
 drifted from the table below by the time #2989 added a row, so it is stated as a
 rule rather than as a figure nobody re-measures.
@@ -136,7 +142,7 @@ For what an officer sees and does on each screen, use the
 
 ## Summary
 
-- **83** admin route areas, one row each. `src/app/(admin)/admin` holds two more directories that aren't areas: `__tests__`, and `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private). `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
+- **83** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
 - **2** areas are already served by a **feature hub** (`display` → lobby-display,
   `lodges` → multi-lodge). #2050 should extend, not duplicate, those hubs.
 - **13** areas have **no reference coverage** beyond their operator guide

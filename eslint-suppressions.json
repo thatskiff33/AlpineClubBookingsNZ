@@ -378,7 +378,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/payments/page.tsx": {
+  "src/app/(admin)/admin/finance/payments/page.tsx": {
     "design-system/no-raw-button": {
       "count": 3
     }
@@ -413,12 +413,12 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/refund-requests/page.tsx": {
+  "src/app/(admin)/admin/finance/refund-requests/page.tsx": {
     "design-system/no-raw-button": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/reports/page.tsx": {
+  "src/app/(admin)/admin/finance/reports/page.tsx": {
     "design-system/no-raw-select": {
       "count": 2
     }
@@ -455,7 +455,7 @@
       "count": 3
     }
   },
-  "src/app/(admin)/admin/subscriptions/_components/subscription-billing-panel.tsx": {
+  "src/app/(admin)/admin/finance/subscriptions/_components/subscription-billing-panel.tsx": {
     "jsx-a11y/no-autofocus": {
       "count": 1
     }
@@ -476,7 +476,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/xero/_components/contact-sync-panel.tsx": {
+  "src/app/(admin)/admin/finance/xero/_components/contact-sync-panel.tsx": {
     "accessibility/minimum-text-size": {
       "count": 2
     },
@@ -484,32 +484,32 @@
       "count": 2
     }
   },
-  "src/app/(admin)/admin/xero/_components/erased-member-contacts-panel.tsx": {
+  "src/app/(admin)/admin/finance/xero/_components/erased-member-contacts-panel.tsx": {
     "accessibility/minimum-text-size": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/xero/_components/failed-view-notice.tsx": {
+  "src/app/(admin)/admin/finance/xero/_components/failed-view-notice.tsx": {
     "design-system/no-raw-button": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/xero/_components/inbound-events-panel.tsx": {
+  "src/app/(admin)/admin/finance/xero/_components/inbound-events-panel.tsx": {
     "accessibility/minimum-text-size": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/xero/_components/mappings-panel.tsx": {
+  "src/app/(admin)/admin/finance/xero/_components/mappings-panel.tsx": {
     "design-system/no-raw-table": {
       "count": 2
     }
   },
-  "src/app/(admin)/admin/xero/_components/message.tsx": {
+  "src/app/(admin)/admin/finance/xero/_components/message.tsx": {
     "design-system/no-raw-button": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/xero/_components/operations-panel.tsx": {
+  "src/app/(admin)/admin/finance/xero/_components/operations-panel.tsx": {
     "accessibility/minimum-text-size": {
       "count": 2
     },
@@ -517,12 +517,12 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/xero/_components/setup-panels.tsx": {
+  "src/app/(admin)/admin/finance/xero/_components/setup-panels.tsx": {
     "design-system/no-raw-input": {
       "count": 2
     }
   },
-  "src/app/(admin)/admin/xero/_components/shared.tsx": {
+  "src/app/(admin)/admin/finance/xero/_components/shared.tsx": {
     "accessibility/minimum-text-size": {
       "count": 2
     },
@@ -536,12 +536,12 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/xero/_hooks/use-xero-connection.ts": {
+  "src/app/(admin)/admin/finance/xero/_hooks/use-xero-connection.ts": {
     "design-system/no-native-confirm": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/xero/member-grouping/page.tsx": {
+  "src/app/(admin)/admin/finance/xero/member-grouping/page.tsx": {
     "design-system/no-native-confirm": {
       "count": 2
     },

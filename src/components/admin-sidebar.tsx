@@ -199,7 +199,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
     // something pending (see the filtering in SidebarLinks).
     label: NEEDS_ATTENTION_LABEL,
     items: [
-      { href: "/admin/xero", label: "Silent Xero Webhook", icon: Bell },
+      { href: adminHref("xero"), label: "Silent Xero Webhook", icon: Bell },
       {
         href: "/admin/booking-requests",
         label: "Booking Requests",
@@ -217,7 +217,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
       },
       { href: "/admin/family-groups", label: "Family Groups", icon: Users },
       {
-        href: "/admin/refund-requests",
+        href: adminHref("refund-requests"),
         label: "Refunds & Credits",
         icon: RotateCcw,
       },
@@ -291,32 +291,32 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         orAccess: canAccessConsolidatedFeesPage,
       },
       {
-        href: "/admin/payments",
+        href: adminHref("payments"),
         label: "Payments",
         icon: CreditCard,
       },
       {
-        href: "/admin/internet-banking",
+        href: adminHref("internet-banking"),
         label: "Internet Banking",
         icon: Landmark,
       },
       {
-        href: "/admin/refund-requests",
+        href: adminHref("refund-requests"),
         label: "Refunds & Credits",
         icon: RotateCcw,
       },
       {
-        href: "/admin/reports",
+        href: adminHref("reports"),
         label: "Reports",
         icon: BarChart2,
       },
       {
-        href: "/admin/xero",
+        href: adminHref("xero"),
         label: "Xero Sync",
         icon: RefreshCw,
       },
       {
-        href: "/admin/xero/member-grouping",
+        href: adminHref("xero-member-grouping"),
         label: "Xero Member Grouping",
         icon: Users,
       },
@@ -330,7 +330,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         label: "Members",
         icon: Users,
       },
-      { href: "/admin/subscriptions", label: "Subscriptions", icon: FileText },
+      { href: adminHref("subscriptions"), label: "Subscriptions", icon: FileText },
       {
         href: "/admin/member-applications",
         label: "Applications",
@@ -926,13 +926,13 @@ function SidebarLinks({
     badges[UNSETTLED_ADDITIONS_HREF] = unsettledAdditionsCount;
   }
   if (counts.refundAppeals + counts.creditApprovals > 0) {
-    badges["/admin/refund-requests"] =
+    badges[adminHref("refund-requests")] =
       counts.refundAppeals + counts.creditApprovals;
   }
   // B5 (#2262): open cash hand-back tasks live on the payments board, which is
   // where an admin closes them once the money has actually been paid back.
   if (counts.manualRefundTasks > 0) {
-    badges["/admin/payments"] = counts.manualRefundTasks;
+    badges[adminHref("payments")] = counts.manualRefundTasks;
   }
   if (counts.membershipCancellations + counts.archiveRequests > 0) {
     badges["/admin/membership-cancellations"] =
@@ -954,7 +954,7 @@ function SidebarLinks({
   }
 
   if ((counts.xeroSilentWebhook ?? 0) > 0) {
-    badges["/admin/xero"] = counts.xeroSilentWebhook!;
+    badges[adminHref("xero")] = counts.xeroSilentWebhook!;
   }
 
   const renderedNavSections = getRenderedAdminNavSections(
@@ -1026,7 +1026,7 @@ function SidebarLinks({
                 const active = href === activeHref;
                 const badgeCount = badges[href];
                 const badgeClasses =
-                  href === "/admin/refund-requests"
+                  href === adminHref("refund-requests")
                     ? "bg-danger text-danger-foreground"
                     : "bg-warning text-warning-foreground";
 

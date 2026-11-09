@@ -38,6 +38,7 @@ import type {
   SectionKey,
   XeroHealthSnapshot,
 } from "./types"
+import { adminHref } from "@/lib/admin-hubs";
 
 type Props = {
   connected: boolean
@@ -580,7 +581,7 @@ function ContactGroupMismatchPanel({
                 </p>
               ) : null}
             </div>
-            <Link href="/admin/xero/member-grouping" className="text-sm text-primary hover:underline">Open Xero member grouping</Link>
+            <Link href={adminHref("xero-member-grouping")} className="text-sm text-primary hover:underline">Open Xero member grouping</Link>
           </div>
           {!data.cacheReady ? (
             <p className="text-sm text-muted-foreground">Refresh Xero contact groups before relying on this audit.</p>

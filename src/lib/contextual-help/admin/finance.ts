@@ -4,6 +4,12 @@
  *
  * Section per the sidebar's `buildAdminNavSections`. The separate `/finance` workspace
  * (the finance-scope help) lives in `../finance.ts`.
+ *
+ * The keys stay the pages' old paths now that the pages live under
+ * `/admin/finance` (C5 #4802). The admin help widget looks a page up by
+ * `canonicalAdminPathname`, which reads a moved page's hub URL as its old
+ * path, in either switch state. An `adminHref` key would stop matching once
+ * the switch is on.
  */
 import {
   CREDITS_OWED_LABEL,

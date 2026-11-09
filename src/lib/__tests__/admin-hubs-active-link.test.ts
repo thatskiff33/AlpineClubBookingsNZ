@@ -275,15 +275,15 @@ describe("no admin active-state check compares raw hrefs", () => {
       kind: "served",
       why: "the profile link's return-to URL; rendered in the admin layout",
     },
-    "src/app/(admin)/admin/xero/page.tsx": {
+    "src/app/(admin)/admin/finance/xero/page.tsx": {
       kind: "served",
       why: "currentXeroPath, the return-to URL in its record links",
     },
-    "src/app/(admin)/admin/xero/_components/operations-panel.tsx": {
+    "src/app/(admin)/admin/finance/xero/_components/operations-panel.tsx": {
       kind: "served",
       why: "router.replace targets for the filter state",
     },
-    "src/app/(admin)/admin/xero/_components/inbound-events-panel.tsx": {
+    "src/app/(admin)/admin/finance/xero/_components/inbound-events-panel.tsx": {
       kind: "served",
       why: "router.replace targets for the filter state",
     },

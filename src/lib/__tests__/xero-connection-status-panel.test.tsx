@@ -2,8 +2,8 @@
 
 import { render, screen } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
-import { ConnectionStatusPanel } from "@/app/(admin)/admin/xero/_components/connection-status-panel";
-import type { XeroStatus } from "@/app/(admin)/admin/xero/_components/types";
+import { ConnectionStatusPanel } from "@/app/(admin)/admin/finance/xero/_components/connection-status-panel";
+import type { XeroStatus } from "@/app/(admin)/admin/finance/xero/_components/types";
 
 describe("ConnectionStatusPanel", () => {
   it("does not imply finance report scope readiness from token presence", () => {

@@ -9,7 +9,7 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { useXeroConnection } from "@/app/(admin)/admin/xero/_hooks/use-xero-connection";
+import { useXeroConnection } from "@/app/(admin)/admin/finance/xero/_hooks/use-xero-connection";
 import {
   expectRevealed,
   installScrollIntoViewSpy,

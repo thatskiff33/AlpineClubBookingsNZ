@@ -42,7 +42,7 @@ beforeEach(() => {
   };
 });
 
-import ReportsPage from "@/app/(admin)/admin/reports/page";
+import ReportsPage from "@/app/(admin)/admin/finance/reports/page";
 import { CREDITS_OWED_LABEL, REFUNDS_OWED_LABEL } from "@/lib/refunds-and-credits-owed-shared";
 import type { ReactNode } from "react";
 import { ClubTimeProvider } from "@/components/club-time-provider";

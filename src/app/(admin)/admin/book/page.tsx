@@ -1,5 +1,7 @@
 "use client";
 
+import { adminHref } from "@/lib/admin-hubs";
+
 import type { AgeTier } from "@prisma/client";
 import { useCallback, useState, useEffect, useRef } from "react";
 import Link from "next/link";
@@ -978,7 +980,7 @@ export default function AdminBookPage() {
           <p>{error}</p>
           {errorReason === "reconnect_required" && (
             <p className="mt-1">
-              <Link href="/admin/xero/setup" className="font-medium underline">
+              <Link href={adminHref("xero-setup")} className="font-medium underline">
                 Go to Xero setup
               </Link>
             </p>
