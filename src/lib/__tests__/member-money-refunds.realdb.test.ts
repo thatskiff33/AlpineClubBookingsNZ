@@ -487,4 +487,3 @@ async function mergePair(): Promise<[string, string]> {
   for (const id of ids) await db.member.create({ data: { id, email: `${id}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Merge", lastName: "Proof", ageTier: "ADULT" } });
   return ids;
 }
-
