@@ -26,6 +26,12 @@ const COLUMNS: Record<string, readonly string[]> = {
   booking: ["id", "lodgeId", "memberId", "organisationId"],
   paymentTransaction: ["id", "paymentId", "source", "kind", "status", "amountCents", "stripePaymentIntentId", "reason"],
   bookingLedgerLine: ["id", "bookingId", "side", "kind", "anchorId", "reversesLineId", "amountCents", "postedAt", "postingKey"],
+  // #4516 (M4c): reservations and their releases, the card refund rows R12 reads, and the rows a refund's debt is read from.
+  memberMoneyRefundReservation: ["id", "attemptKey", "obligationId", "stripePaymentIntentId", "paymentTransactionId", "amountCents", "fundingJournalId", "createdAt"],
+  memberMoneyRefundReservationRelease: ["id", "reservationId", "reason", "stripeRefundId", "applicationId", "createdAt"],
+  paymentRefund: ["id", "paymentId", "paymentTransactionId", "stripeRefundId", "stripePaymentIntentId", "amountCents", "status", "stripeCreatedAt", "createdAt", "updatedAt"],
+  paymentRecoveryOperation: ["id", "type", "idempotencyKey", "bookingId", "paymentId", "paymentIntentId", "amountCents", "stripeKeyPrefix", "allocationPlan"],
+  manualRefundTask: ["id", "occurrenceKey"],
 };
 
 const one = (model: string, local: string, foreign = "id"): Relation => ({ model, many: false, local, foreign });
@@ -40,6 +46,10 @@ const RELATIONS: Record<string, Record<string, Relation>> = {
     reversedBy: { model: "memberMoneyApplication", many: false, local: "id", foreign: "reversesApplicationId" } },
   payment: { booking: one("booking", "bookingId"), transactions: many("paymentTransaction", "paymentId") },
   paymentTransaction: { payment: one("payment", "paymentId") },
+  paymentRefund: { payment: one("payment", "paymentId") },
+  memberMoneyRefundReservation: { obligation: one("memberMoneyObligation", "obligationId"), fundingJournal: one("memberMoneyJournal", "fundingJournalId"),
+    release: { model: "memberMoneyRefundReservationRelease", many: false, local: "id", foreign: "reservationId" } },
+  memberMoneyRefundReservationRelease: { reservation: one("memberMoneyRefundReservation", "reservationId") },
 };
 
 /** The unique keys a writer here relies on: a replayed event, one source link per identity, one reversal each. */
@@ -49,6 +59,9 @@ const UNIQUE: Record<string, readonly (readonly string[])[]> = {
   memberMoneyObligation: [["obligationKey"]],
   memberMoneyJournal: [["eventId"], ["reversesJournalId"]],
   memberMoneyApplication: [["applicationKey"], ["reversesApplicationId"]],
+  memberMoneyRefundReservation: [["attemptKey"]],
+  memberMoneyRefundReservationRelease: [["reservationId"]],
+  paymentRefund: [["stripeRefundId"]],
 };
 
 export class MemberMoneyMemoryDb {
@@ -64,7 +77,9 @@ export class MemberMoneyMemoryDb {
     this.tx = {
       ...delegates,
       $executeRaw: async (sql: TemplateStringsArray) => {
-        if (!sql.join("?").includes(`FROM "Payment"`)) throw new Error(`memory db: unmodelled $executeRaw ${sql.join("?")}`);
+        const text = sql.join("?");
+        // #4516: a door's debtor read locks its booking row; one lock call names a row, so it answers 1.
+        if (!text.includes(`FROM "Payment"`) && !text.includes(`FROM "Booking"`)) throw new Error(`memory db: unmodelled $executeRaw ${text}`);
         return 1;
       },
       $queryRaw: async (sql: TemplateStringsArray, ...values: unknown[]) => {
@@ -179,16 +194,21 @@ export class MemberMoneyMemoryDb {
     const sources = lines.filter((l) => l.bookingId === bookingId).map((l) => {
       const link = links.get(l.sourceLinkId as string)!;
       const transaction = link.sourceKind === "PAYMENT" ? this.tables.paymentTransaction!.find((t) => t.id === link.sourceId) : undefined;
+      const refund = link.sourceKind === "REFUND" ? this.tables.paymentRefund!.find((r) => r.stripeRefundId === link.sourceId) : undefined;
       return { id: l.id, sourceKind: link.sourceKind, account: l.account, side: l.side, amountCents: l.amountCents, debtorKind: l.debtorKind,
         memberId: l.memberId, organisationId: l.organisationId, currency: journals.get(l.journalId as string)!.currency, bookingId: l.bookingId,
-        obligationId: l.obligationId, capture: transaction?.stripePaymentIntentId ?? null, reversed: lines.some((r) => r.originalLineId === l.id) };
+        obligationId: l.obligationId, capture: (transaction ?? refund)?.stripePaymentIntentId ?? null, reversed: lines.some((r) => r.originalLineId === l.id) };
     });
     const obligations = this.tables.memberMoneyObligation!.filter((o) => lines.some((l) => l.obligationId === o.id && l.bookingId === bookingId))
       .map((o) => ({ id: o.id, key: o.obligationKey, kind: o.kind, faceCents: o.faceCents, debtorKind: o.debtorKind, memberId: o.memberId,
         organisationId: o.organisationId, currency: journals.get(o.journalId as string)!.currency }));
     const applications = this.tables.memberMoneyApplication!.filter((a) => sources.some((s) => s.id === a.sourceLineId))
       .map((a) => ({ id: a.id, sourceLineId: a.sourceLineId, obligationId: a.obligationId, amountCents: a.amountCents, reversesApplicationId: a.reversesApplicationId }));
+    // #4516: open reservations (no release) of the booking's obligations, as the SQL function projects them.
+    const released = new Set(this.tables.memberMoneyRefundReservationRelease!.map((x) => x.reservationId));
+    const reservations = this.tables.memberMoneyRefundReservation!.filter((r) => !released.has(r.id) && obligations.some((o) => o.id === r.obligationId))
+      .map((r) => ({ id: r.id, attemptKey: r.attemptKey, obligationId: r.obligationId, capture: r.stripePaymentIntentId, amountCents: r.amountCents }));
     // Through the projection's own schema, so a row this double holds in the wrong shape fails here.
-    return MemberMoneyApplicationState.parse({ sources, obligations, applications, reservations: [] });
+    return MemberMoneyApplicationState.parse({ sources, obligations, applications, reservations });
   }
 }
