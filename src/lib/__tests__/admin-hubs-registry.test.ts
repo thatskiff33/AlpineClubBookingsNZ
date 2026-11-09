@@ -43,6 +43,7 @@ import {
   adminPageRoutePath,
   adminTabHref,
   buildAdminUrlRules,
+  isInexactAdminPagePath,
   parseAdminPageTab,
   resolveAdminHref,
   type AdminUrlRules,
@@ -778,6 +779,97 @@ describe("adminHref", () => {
 // Merged pages (S1 #4796): tabs, anchors and the retired pages.
 // ---------------------------------------------------------------------------
 
+/**
+ * A registry path spelled another way at each static segment below `/admin`:
+ * `case` capitalises it, `escape` percent-encodes its first character. Dynamic
+ * segments are filled with `x123` either way.
+ */
+function respell(registryPath: string, how: "case" | "escape"): string {
+  return registryPath
+    .split("/")
+    .map((segment, index) => {
+      if (index < 2 || segment.startsWith("[")) return segment.startsWith("[") ? "x123" : segment;
+      return how === "case"
+        ? segment.charAt(0).toUpperCase() + segment.slice(1)
+        : `%${segment.charCodeAt(0).toString(16).toUpperCase()}${segment.slice(1)}`;
+    })
+    .join("/");
+}
+
+describe("isInexactAdminPagePath", () => {
+  it("passes every page's old and hub path as written, with a query, a trailing slash or a path beneath", () => {
+    const refused = ADMIN_PAGES.flatMap((page) =>
+      [page.oldPath, page.hubPath].flatMap((registryPath) => {
+        const url = concrete(registryPath);
+        return [url, `${url}/`, `${url}?tab=x&Q=Y`, `${url}/beneath/More`].filter((candidate) =>
+          isInexactAdminPagePath(candidate),
+        );
+      }),
+    );
+    expect(refused).toEqual([]);
+  });
+
+  it.each(["case", "escape"] as const)(
+    "refuses every page's old and hub path respelled by %s, and beneath it",
+    (how) => {
+      const passed = ADMIN_PAGES.flatMap((page) =>
+        [page.oldPath, page.hubPath]
+          .filter((registryPath) => registryPath.split("/").length > 2)
+          .flatMap((registryPath) => {
+            const url = respell(registryPath, how);
+            return [url, `${url}/`, `${url}?q=1`, `${url}/beneath`].filter(
+              (candidate) => !isInexactAdminPagePath(candidate),
+            );
+          }),
+      );
+      expect(passed).toEqual([]);
+      expect(respell("/admin/site-style", how)).not.toBe("/admin/site-style");
+    },
+  );
+
+  it("refuses the whole prefix respelled, and one child below an exact parent", () => {
+    for (const url of [
+      "/ADMIN/site-style",
+      "/Admin/website/site-style",
+      "/admin/appearance/Identity",
+      "/admin/website/appearance/IDENTITY",
+      "/admin/notices/NEW",
+    ]) {
+      expect(isInexactAdminPagePath(url), url).toBe(true);
+    }
+  });
+
+  it("lets a dynamic segment carry any value, and leaves paths no page has alone", () => {
+    for (const url of [
+      "/admin/members/AbC%20D",
+      "/admin/members/AbC/merge",
+      "/admin/xero/records/Booking/b-1",
+      "/admin/lodges/Main-Lodge/setup",
+      "/admin/Nope",
+      "/admin/payments/Unknown",
+      "/finance/Payments",
+      "/Dashboard",
+      "/",
+      "",
+    ]) {
+      expect(isInexactAdminPagePath(url), url).toBe(false);
+    }
+  });
+
+  it("still compares a registry whose static segment is not lower case", () => {
+    // The lower-case shortcut must not apply to it.
+    const weird = { ...ADMIN_PAGES[0]!, oldPath: "/admin/Weird", hubPath: "/admin/zz/Weird" };
+    expect(isInexactAdminPagePath("/admin/weird", [weird])).toBe(true);
+    expect(isInexactAdminPagePath("/admin/zz/weird", [weird])).toBe(true);
+    expect(isInexactAdminPagePath("/admin/Weird", [weird])).toBe(false);
+  });
+
+  it("leaves a malformed escape as it is rather than throwing", () => {
+    expect(isInexactAdminPagePath("/admin/site-%E0%A4%A")).toBe(false);
+    expect(isInexactAdminPagePath("/admin/%E0%A4%A/x")).toBe(false);
+  });
+});
+
 describe("tabs and anchors", () => {
   it("links a tab, the default one without a query, and a section", () => {
     expect(adminTabHref("family-groups", "suggestions")).toBe("/admin/family-groups?tab=suggestions");
@@ -1476,21 +1568,26 @@ describe("the registry is inert", () => {
     "src/lib/__tests__/next-config-admin-hub-urls.test.ts":
       "S1: walks each retired page's redirect through the real config",
     "src/app/(admin)/layout.tsx": "C4: the site-style banner links with adminHref",
-    "src/app/(admin)/admin/website/appearance/page.tsx": "C4: its cards link with adminHref",
+    "src/app/(admin)/admin/website/appearance/page.tsx": "C4: its cards link and title with adminLink",
     "src/app/(admin)/admin/website/appearance/identity/page.tsx":
-      "C4: its back link is adminHref",
-    "src/app/(admin)/admin/website/site-style/page.tsx": "C4: its back link is adminHref",
-    "src/app/(admin)/admin/website/site-content/page.tsx": "C4: its back link is adminHref",
-    "src/app/(admin)/admin/website/site-banners/page.tsx": "C4: its back link is adminHref",
-    "src/app/(admin)/admin/website/page-content/page.tsx": "C4: its back link is adminHref",
-    "src/app/(admin)/admin/website/image-manager/page.tsx": "C4: its back link is adminHref",
+      "C4: its back link is adminLink",
+    "src/app/(admin)/admin/website/site-style/page.tsx": "C4: its back link is adminLink",
+    "src/app/(admin)/admin/website/site-content/page.tsx": "C4: its back link is adminLink",
+    "src/app/(admin)/admin/website/site-banners/page.tsx": "C4: its back link is adminLink",
+    "src/app/(admin)/admin/website/page-content/page.tsx": "C4: its back link is adminLink",
+    "src/app/(admin)/admin/website/image-manager/page.tsx": "C4: its back link is adminLink",
     "src/app/(admin)/admin/website/mountain-conditions/page.tsx":
-      "C4: its back link is adminHref",
+      "C4: its back link is adminLink",
     "src/app/(admin)/admin/setup/foundations/page.tsx":
       "C4: the Club Identity card links with adminHref",
     "src/app/(admin)/admin/booking-policies/cancellation/page.tsx":
       "C4: the public-pages link is adminHref",
     "src/lib/analytics-settings-shared.ts": "C4: the privacy-policy editor link is adminHref",
+    "src/proxy.ts": "C4: a page reached only by another spelling of its path is a 404",
+    "src/lib/contextual-help/admin/appearance-and-website.ts":
+      "C4: the Website pages' help is keyed by each page's registry old path",
+    "src/lib/__tests__/admin-page-exact-path-proxy.test.ts":
+      "C4: the proxy's 404 for every registered page spelled another way",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;

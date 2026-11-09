@@ -1,5 +1,5 @@
 import { BackLink } from "@/components/admin/back-link";
-import { adminHref } from "@/lib/admin-hubs";
+import { adminLink } from "@/lib/admin-hubs";
 import { PageContentPanel } from "@/components/admin/page-content-panel";
 import { PublicContentSettingsPanel } from "@/components/admin/public-content-settings-panel";
 import {
@@ -14,7 +14,7 @@ export default function PageContentAdminPage() {
   return (
     <div className="space-y-6">
       <div>
-        <BackLink href={adminHref("appearance")} label="Site Appearance & Content" />
+        <BackLink {...adminLink("appearance")} />
         <h1 className="mt-2 text-2xl font-bold text-foreground">Page Content</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Create and edit database-backed website pages, then control their menu

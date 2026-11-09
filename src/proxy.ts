@@ -28,6 +28,7 @@ import {
 import { getPublicWebsiteNonce } from "./lib/release-nonce";
 import { getSetupInProgressResponse } from "./lib/setup-gate";
 import { moduleDisabledPageResponse } from "./lib/module-disabled-page";
+import { isInexactAdminPagePath } from "./lib/admin-hubs";
 import {
   hasSignedInHint,
   serialiseSignedInHintCookie,
@@ -723,6 +724,9 @@ async function getEffectiveModuleBlockResponse(
   pathname: string,
   method: string,
 ) {
+  // An admin page reached only through another spelling of its path is a 404
+  // too, before anything decides on that path (`isInexactAdminPagePath`).
+  if (isInexactAdminPagePath(pathname)) return moduleDisabledPageResponse(method, isPageShapedPath(normalisePathname(pathname)));
   if (getRequiredFeaturesForPath(pathname).length === 0) {
     return null;
   }
