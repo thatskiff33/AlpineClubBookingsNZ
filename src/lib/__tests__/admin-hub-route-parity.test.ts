@@ -489,8 +489,26 @@ describe("every page's OLD path answers exactly as main's hand-written map did",
     expect(drift).toEqual([]);
   });
 
-  it("lands every subject where main's getFirstAccessibleAdminHref did", () => {
-    const drift = SUBJECTS.flatMap((subject) => {
+  it("lands every subject, and every permission grid, where main's getFirstAccessibleAdminHref did", () => {
+    // Every grid, not just the subjects: the landing is an ORDER over the
+    // areas, and only a grid holding two areas without the earlier ones can
+    // tell two adjacent steps apart (no seeded role holds membership and
+    // finance without overview, for one).
+    const grids: AdminPermissionMatrix[] = ADMIN_PERMISSION_AREAS.reduce<AdminPermissionMatrix[]>(
+      (acc, area) =>
+        acc.flatMap((partial) =>
+          (["none", "view", "edit"] as const).map((level) => ({ ...partial, [area.key]: level })),
+        ),
+      [{} as AdminPermissionMatrix],
+    );
+    expect(grids).toHaveLength(3 ** ADMIN_PERMISSION_AREAS.length);
+    const drift = [
+      ...SUBJECTS,
+      ...grids.map((grid) => ({
+        label: JSON.stringify(grid),
+        input: { canLogin: true, accessRoles: [], adminPermissionMatrix: grid },
+      })),
+    ].flatMap((subject) => {
       const actual = getFirstAccessibleAdminHref(subject.input);
       const expected = oracleFirstAccessible(getAdminPermissionMatrix(subject.input));
       return actual === expected ? [] : [`${subject.label}: ${actual}, oracle ${expected}`];
