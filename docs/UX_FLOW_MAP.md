@@ -22,6 +22,12 @@ Every admin area in the [coverage matrix](COVERAGE_MATRIX.md) has a screen
 section below, including redirects and the developer-only testing area.
 Within an area, find a route with your editor’s search. The sidebar can group
 these screens differently; the route and linked guide identify the destination.
+
+The admin [command palette](guides/dashboard.md#find-any-page-fast-command-palette)
+(Ctrl or Cmd + K) offers every screen below that is a page in its own right,
+grouped by hub, to the admins who may open it. Detail, print, redirect,
+testing and template-preview screens are reached from their list instead. A
+lodge-scoped screen opened from it starts on the club’s first lodge.
 Admin areas require their configured view permission; editing requires the
 corresponding edit permission, and some actions require Full Admin. Hidden
 modules and lodge scope can further limit what appears.
