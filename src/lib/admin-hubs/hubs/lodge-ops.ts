@@ -57,6 +57,10 @@ export const LODGE_OPS_HUB = defineHub({
       moved: false,
     },
     {
+      // #2937: `lodge` in the route map, because the inventory is lodge-scoped
+      // (ADR-005), but admitted on lodge OR bookings: everything the page
+      // renders is bookings-gated by RoomsBedsManager from the bed-allocation
+      // APIs, and it is the only home of the allocation preferences.
       id: "rooms-beds",
       label: "Rooms & Beds",
       oldPath: "/admin/rooms-beds",
@@ -71,6 +75,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/lodge",
       area: "lodge",
       flags: ["kiosk"],
+      keywords: ["check-in", "kiosk", "arrivals"],
       moved: false,
     },
     {
@@ -127,6 +132,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/maintenance-reports",
       area: "lodge",
       flags: ["maintenanceReports"],
+      keywords: ["maintenance", "fault", "repair", "broken", "qr", "fix"],
       moved: false,
     },
     {
@@ -135,6 +141,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/display",
       area: "lodge",
       flags: ["lobbyDisplay"],
+      keywords: ["signage", "screen", "tv", "devices"],
       moved: false,
     },
     {
@@ -162,11 +169,15 @@ export const LODGE_OPS_HUB = defineHub({
       moved: false,
     },
     {
+      // One template's sandboxed preview, opened from its Preview button: it
+      // reads ?templateId= and ?previewLodge= and shows only an error without
+      // them, so no menu or palette may offer it (S2 #4797).
       id: "display-preview",
       label: "Display Preview",
       oldPath: "/admin/display/preview",
       area: "lodge",
       flags: ["lobbyDisplay"],
+      kind: "detail",
       moved: false,
     },
     {
@@ -212,11 +223,15 @@ export const LODGE_OPS_HUB = defineHub({
       moved: false,
     },
     {
+      // Lodge-area for admin visibility; write access is widened to committee
+      // members in the calendar routes themselves (src/lib/calendar-access.ts),
+      // which do not run through the admin matrix.
       id: "calendar",
       label: "Calendar",
       oldPath: "/admin/calendar",
       area: "lodge",
       flags: ["eventsCalendar"],
+      keywords: ["events", "meetings", "committee", "schedule"],
       moved: false,
     },
   ],

@@ -5,11 +5,10 @@ import { defineHub } from "../define";
  * `video-meetings`) sit beside Integrations on the plan's recommendation,
  * pending the owner's answer on #4480.
  *
- * `setup` MOVES LAST. Its directory still holds pages of three other hubs
- * (`setup/booking-rules` in Rules, `setup/cancellation` in Members,
- * `setup/integrations` in System), and a `git mv` of `setup` would carry them
- * along. Those hubs move theirs out first; the registry suite refuses a moved
- * page with an unmoved page beneath it.
+ * `setup` holds only this hub's pages since S1 (#4796) retired the three that
+ * belonged to other hubs (`setup/booking-rules`, `setup/cancellation`,
+ * `setup/integrations`; `retired.ts`), so its directory moves in one `git mv`.
+ * The registry suite still refuses a moved page with an unmoved page beneath it.
  */
 export const SETTINGS_HUB = defineHub({
   key: "settings",
@@ -45,10 +44,12 @@ export const SETTINGS_HUB = defineHub({
       moved: false,
     },
     {
+      // Login & Security (epic #2030, #2033): system configuration, like Modules.
       id: "security",
       label: "Login & Security",
       oldPath: "/admin/security",
       area: "support",
+      keywords: ["password", "2fa", "two-factor", "sign-in", "magic link"],
       moved: false,
     },
     {
@@ -57,6 +58,7 @@ export const SETTINGS_HUB = defineHub({
       oldPath: "/admin/access-roles",
       area: "support",
       fullAdminOnly: true,
+      keywords: ["permissions", "rbac", "staff roles", "admin roles"],
       moved: false,
     },
     {
@@ -64,6 +66,7 @@ export const SETTINGS_HUB = defineHub({
       label: "Privacy & Retention",
       oldPath: "/admin/privacy-retention",
       area: "support",
+      keywords: ["privacy", "retention", "anonymise", "replay", "pruning"],
       moved: false,
     },
     {
@@ -72,6 +75,10 @@ export const SETTINGS_HUB = defineHub({
       oldPath: "/admin/club-time",
       area: "support",
       fullAdminOnly: true,
+      keywords: [
+        "timezone", "time zone", "clock", "daylight saving", "dst", "iana",
+        "utc offset", "nzst", "nzdt",
+      ],
       moved: false,
     },
     {
@@ -80,6 +87,10 @@ export const SETTINGS_HUB = defineHub({
       oldPath: "/admin/club-format",
       area: "support",
       admission: "any-admin",
+      keywords: [
+        "currency", "dollars", "nzd", "money format", "locale", "language tag",
+        "number format", "date format",
+      ],
       moved: false,
     },
     {
@@ -88,6 +99,10 @@ export const SETTINGS_HUB = defineHub({
       oldPath: "/admin/environment",
       area: "support",
       fullAdminOnly: true,
+      keywords: [
+        "production", "non-production", "staging", "test site", "copy", "live site",
+        "environment", "safe mode",
+      ],
       moved: false,
     },
     {
@@ -96,6 +111,7 @@ export const SETTINGS_HUB = defineHub({
       oldPath: "/admin/config-transfer",
       area: "support",
       fullAdminOnly: true,
+      keywords: ["backup", "migration", "config transfer", "restore"],
       moved: false,
     },
     {
@@ -103,6 +119,12 @@ export const SETTINGS_HUB = defineHub({
       label: "Integrations",
       oldPath: "/admin/integrations",
       area: "finance",
+      // Google Analytics has no page of its own (#2573 put it in a dialog here),
+      // so its words ride on this page; "analytics" alone also finds Reports.
+      keywords: [
+        "api", "connections", "third-party", "webhooks", "google analytics",
+        "analytics", "ga4",
+      ],
       moved: false,
     },
     {
@@ -113,6 +135,8 @@ export const SETTINGS_HUB = defineHub({
       moved: false,
     },
     {
+      // On the Integrations hub (finance), like Xero and Stripe (#2087). NOT
+      // gated by googleLogin: setup and verify must work while it is still off.
       id: "google-setup",
       label: "Google Sign-in Setup",
       oldPath: "/admin/google/setup",
@@ -128,6 +152,9 @@ export const SETTINGS_HUB = defineHub({
       moved: false,
     },
     {
+      // MiroTalk setup (#2940), finance like the other integrations; its API is
+      // under /api/admin/integrations. No module gate: there is no module to
+      // turn off, and the page is where the club sets what was env-only.
       id: "video-meetings-setup",
       label: "Video Meetings Setup",
       oldPath: "/admin/video-meetings/setup",

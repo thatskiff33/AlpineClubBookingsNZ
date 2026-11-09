@@ -15,6 +15,7 @@ import {
 } from "@/lib/membership-cancellation-blocker-messages";
 import { formatStayDate } from "@/lib/club-time";
 import { useClubFormat } from "@/components/club-format-provider";
+import { adminTabHref } from "@/lib/admin-hubs";
 
 /**
  * Everything standing between this participant and an approval, in the server's
@@ -26,9 +27,9 @@ import { useClubFormat } from "@/components/club-format-provider";
  * strings feeding it (#2392 review, L12).
  */
 
-/** The Membership Cancellation settings page — note the singular; the queue this
- * panel appears on is the plural URL, one character apart. */
-const CANCELLATION_SETTINGS_PATH = "/admin/membership-cancellation";
+/** The Settings tab of the queue this panel appears on (S1 #4796); it was the
+ * singular `/admin/membership-cancellation`, one character from the queue. */
+const CANCELLATION_SETTINGS_PATH = adminTabHref("membership-cancellations", "settings");
 
 /**
  * Rows shown before the panel stops listing. A contact with two hundred open
@@ -165,8 +166,8 @@ export function MembershipCancellationBlockerNotice({
             <p className="mt-2">
               {hint}{" "}
               {/* The escape hatch is named in the hint but was not reachable
-                  from it; the settings live one character away from this
-                  queue's own URL (#2392 review, L11). */}
+                  from it (#2392 review, L11); the settings are this queue's
+                  own Settings tab (S1 #4796). */}
               <Link
                 href={buildHrefWithReturnTo(CANCELLATION_SETTINGS_PATH, returnTo)}
                 className="font-medium underline underline-offset-2"

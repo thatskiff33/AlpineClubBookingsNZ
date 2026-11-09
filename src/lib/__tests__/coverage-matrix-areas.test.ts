@@ -2,13 +2,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { getAdminRouteRequirement } from "@/lib/admin-permissions";
-import { adminPagePaths } from "@/lib/__tests__/helpers/admin-route-enumeration";
+import { ADMIN_PAGES } from "@/lib/admin-hubs";
 
 // docs/COVERAGE_MATRIX.md keeps one row per admin route area (#4577). Its
 // Summary count and rows drifted: it said 69 while the table had 81 rows and
 // four areas had none, and four rows named a permission area the route map
-// does not. The areas come from the shared admin page walk, never a second
-// directory listing of our own (INV-SSOT).
+// does not. The areas come from the hub registry's old paths (#4799), never a
+// second directory listing of our own (INV-SSOT): the registry's suite ties
+// each entry to its page on disk, and an old path does not change when its
+// page moves under a hub, where the top-level directory on disk would.
 
 const MATRIX = fs.readFileSync(
   path.join(process.cwd(), "docs/COVERAGE_MATRIX.md"),
@@ -22,11 +24,10 @@ const rows = MATRIX.split("\n").flatMap((line) => {
   return match ? [{ area: match[1], permission: match[2].trim() }] : [];
 });
 
-const areasOnDisk = Array.from(
+/** Each registered page's old top-level directory: `/admin/<area>/...`. */
+const registeredAreas = Array.from(
   new Set(
-    adminPagePaths
-      .map((pathname) => pathname.split("/")[2])
-      .filter((segment): segment is string => Boolean(segment)),
+    ADMIN_PAGES.map((page) => page.oldPath.slice("/admin/".length).split("/")[0]),
   ),
 ).sort();
 
@@ -34,7 +35,7 @@ describe("COVERAGE_MATRIX.md admin areas (#4577)", () => {
   it("has exactly one row for every admin area directory, and no others", () => {
     const rowAreas = rows.map((row) => row.area);
     expect(new Set(rowAreas).size).toBe(rowAreas.length);
-    expect([...rowAreas].sort()).toEqual(areasOnDisk);
+    expect([...rowAreas].sort()).toEqual(registeredAreas);
   });
 
   it("states the area count the table actually has", () => {

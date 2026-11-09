@@ -67,7 +67,7 @@ For what an officer sees and does on each screen, use the
 | `booking-policies` | bookings | `ARCHITECTURE.md` (booking policies), `CANCELLATIONS.md` | [guide](guides/booking-policies.md) | 1 |
 | `booking-requests` | bookings | `ARCHITECTURE.md` (public booking requests) | [guide](guides/booking-requests.md) | 1 |
 | `bookings` | bookings | `ARCHITECTURE.md` (booking/payment flow), `STATE_MACHINES.md` | [guide](guides/bookings.md) | 1 |
-| `bookings-setup` | bookings | — | [guide](guides/bookings-setup.md) | 1 |
+| `bookings-setup` | bookings | — | [guide](guides/bookings-setup.md) (Booking Rules merged in, S1 #4796) | 1 |
 | `calendar` | lodge | [`guides/calendar.md`](guides/calendar.md) (the calendar module; off returns Not Found) | [guide](guides/calendar.md) | — (calendar module; postdates #2050) |
 | `chores` | lodge | — | [guide](guides/chores.md) | 3 |
 | `club-format` | support (route map); page and read open to **any admin** (#3596), change **Full Admin** — both enforced in the routes | [`invariants/product-configuration.md`](invariants/product-configuration.md) (`INV-CONFIG-006`), [`CONFIGURATION.md`](../CONFIGURATION.md) | [guide](guides/club-format.md) | — (#3563, programme #3205; postdates #2050) |
@@ -83,12 +83,11 @@ For what an officer sees and does on each screen, use the
 | `display` | lodge | `lobby-display/README.md`, `lobby-display/operating.md` | [guide](guides/display.md) (+ [feature hub](lobby-display/README.md), [operating](lobby-display/operating.md)) | 4 |
 | `email-deliverability` | support | `ARCHITECTURE.md` (email), email registry | [guide](guides/email-deliverability.md) | 4 |
 | `email-messages` | support | `src/lib/email-message-registry.ts` | [guide](guides/email-messages.md) | 4 |
-| `family-groups` | membership | `ARCHITECTURE.md` (family groups / billing) | [guide](guides/family-groups.md) | 2 |
-| `family-suggestions` | membership | `ARCHITECTURE.md` (hidden family suggestions) | [guide](guides/family-suggestions.md) | 2 |
+| `family-groups` | membership | `ARCHITECTURE.md` (family groups / billing, hidden family suggestions) | [guide](guides/family-groups.md); Suggestions tab: [guide](guides/family-suggestions.md) | 2 |
 | `fee-configuration` | finance | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) (redirect → Fees) | 2 |
 | `fees` | bookings (route map); page opens on **bookings or finance** (`canAccessConsolidatedFeesPage`) | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) | 2 |
 | `google` | finance | [`guides/security.md`](guides/security.md) (Google sign-in credentials, verified in-app before the module can be enabled), [`guides/integrations.md`](guides/integrations.md) | [guide](guides/integrations.md) (`google/setup` wizard) | — (epic #2030; postdates #2050) |
-| `health` | support | — | [guide](guides/health.md) | 4 |
+| `health` | support | — | [guide](guides/health.md) (Integration readiness section, S1 #4796) | 4 |
 | `hut-leaders` | lodge | `ARCHITECTURE.md` (hut-leader auto-assign cron), `invariants/booking-dates-and-capacity.md` (`INV-DATE-031`: night cover, school-night kinds #3819) | [guide](guides/hut-leaders.md) | 3 |
 | `image-manager` | content | — | [guide](guides/image-manager.md) | 4 |
 | `induction` | membership | — | [guide](guides/induction.md) | 2 |
@@ -103,8 +102,7 @@ For what an officer sees and does on each screen, use the
 | `member-applications` | membership | `ARCHITECTURE.md` (membership application / nominations) | [guide](guides/member-applications.md) | 2 |
 | `member-fields` | membership | — | [guide](guides/member-fields.md) | 2 |
 | `members` | membership | `ARCHITECTURE.md` (members, CSV import, roles) | [guide](guides/members.md) | 2 |
-| `membership-cancellation` | membership | `CANCELLATIONS.md` | [guide](guides/membership-cancellations.md) (settings folded in) | 2 |
-| `membership-cancellations` | membership | `CANCELLATIONS.md`, `ARCHITECTURE.md` (cancellation review queue) | [guide](guides/membership-cancellations.md) | 2 |
+| `membership-cancellations` | membership | `CANCELLATIONS.md`, `ARCHITECTURE.md` (cancellation review queue) | [guide](guides/membership-cancellations.md) (Settings tab included) | 2 |
 | `membership-setup` | membership | `ARCHITECTURE.md` (membership types) | [guide](guides/membership-setup.md) | 2 |
 | `membership-types` | membership | `ARCHITECTURE.md` (seasonal membership types) | [guide](guides/membership-types.md) | 2 |
 | `modules` | support | `guides/modules.md` → Settings reference (the one module list); `CONFIGURATION.md` for storage mechanics | [guide](guides/modules.md) | 4 |
@@ -138,7 +136,7 @@ For what an officer sees and does on each screen, use the
 
 ## Summary
 
-- **85** admin route areas, one row each. `src/app/(admin)/admin` holds two more directories that aren't areas: `__tests__`, and `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private). `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
+- **83** admin route areas, one row each. `src/app/(admin)/admin` holds two more directories that aren't areas: `__tests__`, and `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private). `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
 - **2** areas are already served by a **feature hub** (`display` → lobby-display,
   `lodges` → multi-lodge). #2050 should extend, not duplicate, those hubs.
 - **13** areas have **no reference coverage** beyond their operator guide
@@ -197,12 +195,15 @@ page, matching the batch-1 pattern:
   single-area drift guard sees), and each section still gates its own edit
   controls by its historical area. The column says `finance` because that is the
   half most readers arrive from; neither single word is the rule.
-- `membership-cancellation` (singular) is a small **settings** panel (cancellation
-  copy + Xero handling) reached from **Notifications & Email**, distinct from the
-  `membership-cancellations` (plural) review queue. To avoid a confusing
-  near-identical filename, its settings are documented as a section inside the
-  [Cancellation Requests](guides/membership-cancellations.md) guide, and its row
-  links there.
+- **Five pages were merged into others (S1 #4796)**, as the owner approved on
+  #4468, and their old URLs redirect (`src/lib/admin-hubs/retired.ts`; a 307 for the
+  first release, made permanent one release later):
+  `family-suggestions` is the Suggestions tab of `family-groups`;
+  `membership-cancellation` (the cancellation settings) and `setup/cancellation`
+  are the Settings tab of `membership-cancellations`; `setup/booking-rules` is
+  part of `bookings-setup`; and `setup/integrations` is the Integration readiness
+  section of `health`. The first two were areas of their own and have no row
+  now; the Family Suggestions guide stays, linked from the `family-groups` row.
 
 Several batch-2 areas have **no direct sidebar entry**: `membership-types`,
 `member-fields`, and `subscription-lockout` are reached from the **Membership &
@@ -293,7 +294,8 @@ feature-gated surfaces; the guides document the reality:
   `site-banners`, `mountain-conditions`, `image-manager` (content hub) and
   `notification-rules`, `notification-recipients`, `email-messages`
   (notifications hub). The notifications hub also cards to `booking-messages`
-  (batch 1) and `membership-cancellation` (batch 2), which keep their own guides.
+  (batch 1) and to the cancellation settings, the Settings tab of
+  `membership-cancellations` (batch 2), which keep their own guides.
 - **`appearance/identity` is folded** into the [appearance](guides/appearance.md)
   guide (the Club Identity sub-page) rather than given its own row — the matrix
   row notes it.

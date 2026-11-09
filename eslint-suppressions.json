@@ -194,11 +194,6 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/health/page.tsx": {
-    "design-system/no-raw-button": {
-      "count": 1
-    }
-  },
   "src/app/(admin)/admin/hut-leaders/_components/custodian-bed-picker.tsx": {
     "design-system/no-raw-button": {
       "count": 1

@@ -41,11 +41,11 @@ vi.mock("@/components/admin/analytics-integration-card", () => ({
 import AppearanceHubPage from "@/app/(admin)/admin/appearance/page";
 import DisplayHubPage from "@/app/(admin)/admin/display/page";
 import BookingsSetupHubPage from "@/app/(admin)/admin/bookings-setup/page";
-import BookingRulesSetupHubPage from "@/app/(admin)/admin/setup/booking-rules/page";
-import CancellationSetupHubPage from "@/app/(admin)/admin/setup/cancellation/page";
 import FinanceSetupPage from "@/app/(admin)/admin/setup/finance/page";
 import FoundationsSetupHubPage from "@/app/(admin)/admin/setup/foundations/page";
-import OperationalIntegrationsSetupHubPage from "@/app/(admin)/admin/setup/integrations/page";
+import { IntegrationReadinessSection } from "@/app/(admin)/admin/health/_components/integration-readiness-section";
+import { AdminHubSectionCards } from "@/components/admin-hub-page";
+import { BedDouble, Coins, MessageSquareText } from "lucide-react";
 import IntegrationsHubPage from "@/app/(admin)/admin/integrations/page";
 import MembershipSetupHubPage from "@/app/(admin)/admin/membership-setup/page";
 import { loadAdminSetupPermissionMatrix } from "@/app/(admin)/admin/setup/permission-matrix";
@@ -125,10 +125,78 @@ describe("admin setup hub pages", () => {
     expect(html).toContain("Bookings Setup");
     expect(html).toContain("Rooms &amp; Beds");
     expect(html).toContain("Booking Messages");
+    // S1 (#4796): the Booking Rules page's cards are merged in here.
+    for (const href of [
+      "/admin/booking-policies",
+      "/admin/seasons",
+      "/admin/age-tier-settings",
+      "/admin/promo-codes",
+      "/admin/rooms-beds",
+      "/admin/booking-messages",
+    ]) {
+      expect(html).toContain(`href="${href}"`);
+    }
     // MG2-M-1 as ticked: the member-guest policy lives HERE rather than on a
     // new admin route, and it is threaded the module flag so it can render its
     // own not-in-use banner (MG2-M-4).
     expect(html).toContain("Member guests settings card (module on)");
+  });
+
+  it("shows a Booking Officer every Bookings Setup card they can open, and no other (S1 #4796)", async () => {
+    vi.mocked(loadAdminSetupPermissionMatrix).mockResolvedValue({
+      ...emptyAdminPermissionMatrix(),
+      overview: "view",
+      bookings: "edit",
+    });
+
+    const html = await renderPage(BookingsSetupHubPage);
+
+    for (const href of [
+      "/admin/booking-policies",
+      "/admin/seasons",
+      "/admin/age-tier-settings",
+      "/admin/promo-codes",
+      // Rooms & Beds opens on lodge OR bookings (#2937).
+      "/admin/rooms-beds",
+    ]) {
+      expect(html).toContain(`href="${href}"`);
+    }
+    // Booking Messages is `support`.
+    expect(html).not.toContain('href="/admin/booking-messages"');
+  });
+
+  it("offers a hub card exactly when its page would open, OR admissions included (S1 #4796)", () => {
+    const sections = [
+      { href: "/admin/fees", title: "Fees", description: "d", icon: Coins },
+      { href: "/admin/rooms-beds", title: "Rooms", description: "d", icon: BedDouble },
+      { href: "/admin/booking-messages", title: "Messages", description: "d", icon: MessageSquareText },
+    ];
+    const cards = (permissionMatrix: AdminPermissionMatrix) =>
+      renderToStaticMarkup(
+        <AdminHubSectionCards sections={sections} features={allOn} permissionMatrix={permissionMatrix} />,
+      );
+    // The fee console opens on bookings OR finance; Rooms & Beds on lodge OR bookings.
+    const financeOnly = cards({ ...emptyAdminPermissionMatrix(), finance: "view" });
+    expect(financeOnly).toContain('href="/admin/fees"');
+    expect(financeOnly).not.toContain('href="/admin/rooms-beds"');
+    expect(financeOnly).not.toContain('href="/admin/booking-messages"');
+    const bookingsOnly = cards({ ...emptyAdminPermissionMatrix(), bookings: "view" });
+    expect(bookingsOnly).toContain('href="/admin/fees"');
+    expect(bookingsOnly).toContain('href="/admin/rooms-beds"');
+    expect(bookingsOnly).not.toContain('href="/admin/booking-messages"');
+    const supportOnly = cards({ ...emptyAdminPermissionMatrix(), support: "view" });
+    expect(supportOnly).not.toContain('href="/admin/fees"');
+    expect(supportOnly).not.toContain('href="/admin/rooms-beds"');
+    expect(supportOnly).toContain('href="/admin/booking-messages"');
+  });
+
+  it("hides Bookings Setup's module-gated card when the module is off", async () => {
+    vi.mocked(loadEffectiveModuleFlags).mockResolvedValue({ ...allOn, promoCodes: false });
+
+    const html = await renderPage(BookingsSetupHubPage);
+
+    expect(html).not.toContain('href="/admin/promo-codes"');
+    expect(html).toContain('href="/admin/seasons"');
   });
 
   it("shows feature-gated cards when their modules are enabled", async () => {
@@ -170,13 +238,8 @@ describe("admin setup hub pages", () => {
     expect(html).toContain("/admin/backups");
   });
 
-  it("renders the new setup drill-down hub pages", async () => {
+  it("renders the setup drill-down hub pages", async () => {
     const foundationHtml = await renderPage(FoundationsSetupHubPage);
-    const bookingHtml = await renderPage(BookingRulesSetupHubPage);
-    const integrationsHtml = await renderPage(
-      OperationalIntegrationsSetupHubPage,
-    );
-    const cancellationHtml = await renderPage(CancellationSetupHubPage);
 
     expect(foundationHtml).toContain("Initial Setup");
     expect(foundationHtml).toContain("/admin/modules");
@@ -184,12 +247,43 @@ describe("admin setup hub pages", () => {
     // Identity cards under Admin > Appearance.
     expect(foundationHtml).toContain("Club Identity");
     expect(foundationHtml).toContain("/admin/appearance/identity");
-    expect(bookingHtml).toContain("Booking Rules");
-    expect(bookingHtml).toContain("/admin/booking-policies");
-    expect(integrationsHtml).toContain("Operational Integrations");
-    expect(integrationsHtml).toContain("/admin/xero/setup");
-    expect(cancellationHtml).toContain("Cancellation");
-    expect(cancellationHtml).toContain("/admin/membership-cancellation");
+  });
+
+  it("renders System Health's integration readiness, the old Operational Integrations page (S1 #4796)", () => {
+    const html = renderToStaticMarkup(
+      <IntegrationReadinessSection features={allOn} permissionMatrix={allAreasView} />,
+    );
+
+    expect(html).toContain('id="integration-readiness"');
+    expect(html).toContain("Integration readiness");
+    for (const href of [
+      "/admin/xero/setup",
+      "/admin/xero",
+      "/admin/modules",
+      "/admin/email-deliverability",
+    ]) {
+      expect(html).toContain(`href="${href}"`);
+    }
+  });
+
+  it("shows each readiness card only where its module is on and the admin can view it", () => {
+    const supportOnly = renderToStaticMarkup(
+      <IntegrationReadinessSection
+        features={allOn}
+        permissionMatrix={{ ...emptyAdminPermissionMatrix(), support: "view" }}
+      />,
+    );
+    expect(supportOnly).not.toContain('href="/admin/xero');
+    expect(supportOnly).toContain('href="/admin/modules"');
+
+    const xeroOff = renderToStaticMarkup(
+      <IntegrationReadinessSection
+        features={{ ...allOn, xeroIntegration: false }}
+        permissionMatrix={allAreasView}
+      />,
+    );
+    expect(xeroOff).not.toContain('href="/admin/xero');
+    expect(xeroOff).toContain('href="/admin/email-deliverability"');
   });
 
   it("hides the Club Identity cross-link without content access (#1966)", async () => {
@@ -208,13 +302,9 @@ describe("admin setup hub pages", () => {
     // The sub-hubs are drilled into from /admin/setup, so each gets the shared
     // BackLink (label matches the destination page's heading, "Setup Wizard").
     // Distinct from Foundations' own "Setup Checklist" card, which is a grid link.
-    const pages = [
-      FoundationsSetupHubPage,
-      BookingRulesSetupHubPage,
-      CancellationSetupHubPage,
-      OperationalIntegrationsSetupHubPage,
-      FinanceSetupPage,
-    ];
+    // Booking Rules, Cancellation and Operational Integrations are no longer
+    // sub-hubs: S1 (#4796) merged them into the pages they linked to.
+    const pages = [FoundationsSetupHubPage, FinanceSetupPage];
     for (const Page of pages) {
       const html = await renderPage(Page);
       expect(html).toContain("Setup Wizard");

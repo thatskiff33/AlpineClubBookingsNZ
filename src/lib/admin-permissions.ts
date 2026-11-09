@@ -7,6 +7,11 @@ import {
   type PrivilegeCheckInput,
   type AppAccessRole,
 } from "@/lib/access-roles";
+import { adminHref } from "@/lib/admin-hubs";
+import {
+  ADMIN_PAGE_ADMISSION_PATHS,
+  ADMIN_PAGE_ROUTE_AREAS,
+} from "@/lib/admin-hubs/security-map";
 
 export const ADMIN_PERMISSION_LEVELS = ["none", "view", "edit"] as const;
 export type AdminPermissionLevel = (typeof ADMIN_PERMISSION_LEVELS)[number];
@@ -133,46 +138,35 @@ const ADMIN_ROLE_BUNDLES: Partial<
 
 /**
  * Rooms & Beds — the room/bed inventory page, and since #2937 the home of each
- * lodge's allocation preferences. Named here because the area registration, the
- * OR rule below and the Bed Allocation board's signpost link are the three
- * places that MUST agree about this path. It is not a rename button for the
- * tree: the feature-gate list and the hub/help descriptions keep the literal,
- * each asserted from disk by its own census. `git grep` is still the rename.
+ * lodge's allocation preferences — as the Bed Allocation board's signpost links
+ * it. Its area, its OR admission and its module gate are all generated from the
+ * same registry entry (#4799), so the link cannot drift from the rules.
  */
-export const ROOMS_BEDS_PATH = "/admin/rooms-beds";
+export const ROOMS_BEDS_PATH = adminHref("rooms-beds");
 
+/**
+ * THE ROUTE MAP. The resolver takes the FIRST entry with a matching prefix, not
+ * the longest.
+ *
+ * The PAGE half is generated from the hub registry (`src/lib/admin-hubs/`,
+ * #4799), for every page's old path and its hub path, deepest prefix first: a
+ * new admin page gets its area from its registry entry, and the reasoning for an
+ * area sits on that entry. The `/api/admin` half below is hand-written and stays
+ * in its reviewed order; no API path can match a page prefix, or the reverse.
+ * `/admin` and `/api/admin` are the catch-all, last.
+ */
 const ROUTE_AREA_PREFIXES: Array<{
   area: AdminPermissionArea;
   prefixes: readonly string[];
 }> = [
+  ...ADMIN_PAGE_ROUTE_AREAS.map(({ area, prefix }) => ({ area, prefixes: [prefix] })),
   {
     area: "finance",
     prefixes: [
-      "/admin/setup/finance",
-      "/admin/integrations",
-      "/admin/xero",
-      "/admin/stripe",
-      // Google sign-in setup lives on the Integrations hub (finance), like Xero
-      // and Stripe (#2087). NOT feature-gated by googleLogin — setup + verify
-      // must be reachable while the module is still off.
-      "/admin/google",
       // Alpine Central Server (ServerNZ) integration lives on the Integrations
-      // hub (finance), like Xero/Stripe/Google. NOT feature-gated so setup +
-      // API-key entry stay reachable while the module is still off.
-      "/admin/alpine-server",
+      // hub (finance), like Xero/Stripe/Google. Off with the alpineCentralServer
+      // module (`FEATURE_ROUTE_RULES`), page and API alike.
       "/api/admin/alpine-server",
-      // Video meetings (MiroTalk) setup lives on the Integrations hub (finance)
-      // like the rest of them (#2940). Its API is already covered by the
-      // "/api/admin/integrations" prefix below. NOT feature-gated: there is no
-      // video-meetings module to turn off, and the page is how a club sets the
-      // configuration that used to be environment-only.
-      "/admin/video-meetings",
-      "/admin/payments",
-      "/admin/internet-banking",
-      "/admin/refund-requests",
-      "/admin/reports",
-      "/admin/subscriptions",
-      "/admin/fee-configuration",
       "/api/admin/integrations",
       "/api/admin/xero",
       "/api/admin/payments",
@@ -190,31 +184,6 @@ const ROUTE_AREA_PREFIXES: Array<{
   {
     area: "bookings",
     prefixes: [
-      "/admin/bookings-setup",
-      // The Booking Rules hub (#4581): every card on it is bookings work, so
-      // Booking Officers open it for their own rules. It MUST stay in an area
-      // listed BEFORE support: the resolver takes the FIRST area whose prefix
-      // matches (not the longest), so this wins over support's "/admin/setup".
-      // Cards the viewer's matrix cannot open are hidden by the hub itself.
-      "/admin/setup/booking-rules",
-      "/admin/bookings",
-      "/admin/booking-requests",
-      "/admin/book",
-      "/admin/bed-allocation",
-      "/admin/waitlist",
-      "/admin/booking-approvals",
-      "/admin/booking-change-requests",
-      "/admin/booking-policies",
-      "/admin/seasons",
-      // Consolidated fee console (#1933, E7). Registered under bookings so the
-      // route map resolves to a concrete area (drift guard) and bookings editors
-      // reach it; admission is actually OR (bookings OR finance) — see
-      // isConsolidatedFeesPath / canAccessConsolidatedFeesPage, honoured by the
-      // admin layout and sidebar. Each section still gates its own edits by its
-      // historical area (hut fees → bookings, joining/annual → finance).
-      "/admin/fees",
-      "/admin/age-tier-settings",
-      "/admin/promo-codes",
       "/api/admin/bookings",
       "/api/admin/booking-requests",
       "/api/admin/booking-reviews",
@@ -242,33 +211,6 @@ const ROUTE_AREA_PREFIXES: Array<{
   {
     area: "membership",
     prefixes: [
-      "/admin/membership-setup",
-      "/admin/members",
-      "/admin/member-applications",
-      "/admin/membership-cancellation",
-      "/admin/membership-cancellations",
-      "/admin/membership-types",
-      "/admin/member-fields",
-      "/admin/induction",
-      "/admin/communications",
-      "/admin/notices",
-      "/admin/lockers",
-      // Subscription lockout settings (#4581): the page needs the same area as
-      // its API, /api/admin/membership-lockout-settings (membership). It was
-      // support, so a Membership Officer could call the API but not open the
-      // page. The panel hides the finance (Xero) and bookings (age tier)
-      // sections from a viewer whose matrix lacks them.
-      "/admin/subscription-lockout",
-      // Club message board moderation (#2998). Membership, beside /admin/notices:
-      // the people who curate what members read are the same people. Without
-      // these two the paths fall through to the "/admin" catch-all and resolve
-      // as `overview`, which disagrees with what every one of these handlers
-      // actually enforces via requireAdmin({ area: "membership" }).
-      "/admin/message-board",
-      "/admin/family-groups",
-      "/admin/family-suggestions",
-      "/admin/deletion-requests",
-      "/admin/committee",
       "/api/admin/members",
       "/api/admin/member-applications",
       "/api/admin/induction-templates",
@@ -296,26 +238,6 @@ const ROUTE_AREA_PREFIXES: Array<{
   {
     area: "lodge",
     prefixes: [
-      "/admin/hut-leaders",
-      "/admin/roster",
-      "/admin/chores",
-      "/admin/lodge",
-      "/admin/lodges",
-      "/admin/work-parties",
-      "/admin/lodge-instructions",
-      // Rooms & Beds (#2937). Registered under lodge so the route map resolves
-      // to a concrete area (drift guard) and a lodge admin keeps reaching it;
-      // admission is actually OR (lodge OR bookings) — see isRoomsBedsPath /
-      // canAccessRoomsBedsPage, honoured by canOpenAdminPath and by the hub
-      // cards that link here. Everything the page renders is gated on the
-      // bookings area by RoomsBedsManager, because its data comes entirely from
-      // the bed-allocation APIs.
-      "/admin/rooms-beds",
-      // Club events calendar (Lodge Operations). The page is lodge-area gated
-      // for admin visibility; write access is broadened to committee members in
-      // the calendar routes themselves (src/lib/calendar-access.ts), which do
-      // not run through this admin matrix.
-      "/admin/calendar",
       "/api/admin/hut-leaders",
       "/api/admin/roster",
       "/api/admin/chores",
@@ -329,7 +251,6 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/api/admin/lodge-instructions",
       "/api/admin/lodge-settings",
       // Lobby display management (#27/#33, epic #25): lodge operations.
-      "/admin/display",
       "/api/admin/display",
       // Maintenance reports (#2780). "The maintenance officer" is not a role in
       // this product and must not become one: it is whoever the club has given
@@ -337,20 +258,12 @@ const ROUTE_AREA_PREFIXES: Array<{
       // the per-lodge QR tokens all sit in the `lodge` area, and the alert
       // audience is `{ area: "lodge", level: "edit" }` — see
       // ADMIN_NOTIFICATION_PREFERENCE_REQUIREMENT.
-      "/admin/maintenance-reports",
       "/api/admin/maintenance-reports",
     ],
   },
   {
     area: "content",
     prefixes: [
-      "/admin/appearance",
-      "/admin/page-content",
-      "/admin/site-banners",
-      "/admin/site-content",
-      "/admin/image-manager",
-      "/admin/site-style",
-      "/admin/mountain-conditions",
       "/api/admin/page-content",
       "/api/admin/public-content-settings",
       // Public Contact page committee-role selector (Club Contact panel).
@@ -369,10 +282,6 @@ const ROUTE_AREA_PREFIXES: Array<{
   {
     area: "support",
     prefixes: [
-      "/admin/access-roles",
-      "/admin/config-transfer",
-      "/admin/setup",
-      "/admin/modules",
       // Club Time — the one persisted IANA club timezone (CT-1 #2989, epic
       // #2988). Registered under support alongside /admin/modules and
       // /admin/config-transfer so an unregistered path never falls back to the
@@ -380,7 +289,6 @@ const ROUTE_AREA_PREFIXES: Array<{
       // only decides who can reach the surface: reading AND changing the club
       // timezone remain Full Admin regardless of area level (enforced in the
       // routes), exactly like the backups credential + destination writes below.
-      "/admin/club-time",
       "/api/admin/club-time-zone",
       // Club Format — the one persisted currency and locale (#3563, programme
       // #3205). Registered under support for the same reason as
@@ -388,7 +296,6 @@ const ROUTE_AREA_PREFIXES: Array<{
       // the overview catch-all. The AREA decides nothing else (#3596): the
       // page is opened on ADMISSION (`ANY_ADMIN_ADMISSION_PATHS`), and each
       // API verb carries its own explicit gate — any admin reads, Full Admin writes.
-      "/admin/club-format",
       "/api/admin/club-format",
       // Environment safety — whether this installation is the club's live site
       // or a copy (ENV-SAFETY 1 #3034, epic #2986). Registered under support for
@@ -405,30 +312,7 @@ const ROUTE_AREA_PREFIXES: Array<{
       // deliberate: the issue asks that authorized setup/admin UI show whether
       // the role is production, non-production or unknown and why. What is
       // Full-Admin-only is this page and this API, and the write.
-      "/admin/environment",
       "/api/admin/environment-safety",
-      // Login & Security page (epic #2030, child #2033): password policy today;
-      // magic-link / Google sign-in cards land here in #2034/#2035. Pinned to
-      // `support` alongside /admin/modules and the other system-config surfaces.
-      "/admin/security",
-      "/admin/privacy-retention",
-      "/admin/notifications",
-      "/admin/notification-rules",
-      "/admin/notification-recipients",
-      "/admin/booking-messages",
-      "/admin/email-messages",
-      "/admin/email-deliverability",
-      "/admin/health",
-      "/admin/background-jobs",
-      // Managed database backup: status, config, and run-now (#2095, C6).
-      // Registered under support so an unregistered path never falls back to
-      // the overview catch-all (layout.tsx). Support view = status; support
-      // edit = config/run-now; credential + destination WRITES remain Full
-      // Admin regardless of area level (enforced in the routes).
-      "/admin/backups",
-      "/admin/stuck-states",
-      "/admin/issue-reports",
-      "/admin/audit-log",
       "/api/admin/access-roles",
       "/api/admin/config-transfer",
       "/api/admin/setup",
@@ -446,6 +330,10 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/api/admin/email-settings",
       "/api/admin/email-suppressions",
       "/api/admin/health",
+      // Managed database backup: status, config, and run-now (#2095, C6).
+      // Support view = status; support edit = config/run-now; credential +
+      // destination WRITES remain Full Admin regardless of area level
+      // (enforced in the routes).
       "/api/admin/backups",
       "/api/admin/runtime-status",
       "/api/admin/stuck-states",
@@ -454,9 +342,8 @@ const ROUTE_AREA_PREFIXES: Array<{
       // AI help assistant usage + spend-cap settings (#2211, C3). Registered
       // under support alongside /api/admin/modules — support view = usage panel,
       // support edit = budget-cap change. The Anthropic key WRITE stays Full
-      // Admin on the credentials route regardless of area level. (The admin UI
-      // page /admin/ai-assistant, if added by C4, resolves here too.)
-      "/admin/ai-assistant",
+      // Admin on the credentials route regardless of area level. (The admin page
+      // /admin/ai-assistant takes the same area from its registry entry.)
       "/api/admin/ai-assistant",
       // AI Diagnostics (AID-2, #2371) — a SEPARATE admin-only paid product.
       // Registered under support so its budget + readiness API never falls back
@@ -477,8 +364,9 @@ const ROUTE_AREA_PREFIXES: Array<{
       // tool invocation re-derives the acting admin's areas server-side and refuses
       // what they may not read, the DETAILED readiness panel on the page is gated on
       // support:view in its own right, and every /api/admin/ai-diagnostics route
-      // stays here. The page falls to the overview catch-all and is recorded in
-      // OVERVIEW_ALLOWLIST with that reasoning.
+      // stays here. The page's registry entry says `overview`, admitted on
+      // `any-admin` (#4799 generates an explicit `overview` entry for it rather
+      // than leaving it to the catch-all), and OVERVIEW_ALLOWLIST records why.
       "/api/admin/ai-diagnostics",
       // The NZD -> club-currency rate for AI spend (#3354): ONE setting shared by
       // both AI modules, so its own prefix; same levels as the two budget routes.
@@ -492,11 +380,16 @@ const ROUTE_AREA_PREFIXES: Array<{
 ];
 
 /**
- * Every route-map prefix, frozen and read-only, for the hub registry's prefix
- * census (#4798), which must see rules BELOW a hub root. Resolution never reads it.
+ * The whole route map, flattened in resolution order and frozen: for the hub
+ * registry's prefix census (#4798), which must see rules BELOW a hub root, and
+ * for the ordering census (#4799). Resolution never reads it.
  */
-export const ADMIN_ROUTE_MAP_PREFIXES: readonly string[] = Object.freeze(
-  ROUTE_AREA_PREFIXES.flatMap(({ prefixes }) => prefixes),
+export const ADMIN_ROUTE_MAP: ReadonlyArray<
+  Readonly<{ area: AdminPermissionArea; prefix: string }>
+> = Object.freeze(
+  ROUTE_AREA_PREFIXES.flatMap(({ area, prefixes }) =>
+    prefixes.map((prefix) => Object.freeze({ area, prefix })),
+  ),
 );
 
 const EDIT_ON_GET_PREFIXES = [
@@ -746,16 +639,35 @@ export function hasAdminAreaAccess(
   );
 }
 
+/**
+ * Where a refused or freshly signed-in administrator lands: the first area in
+ * this order they hold at all, at that area's landing page. The pages are named
+ * by registry id (#4799), so each lands at its old URL while the hubs are off
+ * and at its hub URL once its hub has moved.
+ */
+const FIRST_ACCESSIBLE_ADMIN_HREFS: ReadonlyArray<
+  readonly [AdminPermissionArea, string]
+> = [
+  ["overview", adminHref("dashboard")],
+  ["bookings", adminHref("bookings")],
+  ["membership", adminHref("members")],
+  ["finance", adminHref("payments")],
+  ["lodge", adminHref("hut-leaders")],
+  ["content", adminHref("page-content")],
+  ["support", adminHref("health")],
+];
+
 export function getFirstAccessibleAdminHref(input: AdminPermissionInput) {
   const matrix = getAdminPermissionMatrix(input);
-  if (matrix.overview !== "none") return "/admin/dashboard";
-  if (matrix.bookings !== "none") return "/admin/bookings";
-  if (matrix.membership !== "none") return "/admin/members";
-  if (matrix.finance !== "none") return "/admin/payments";
-  if (matrix.lodge !== "none") return "/admin/hut-leaders";
-  if (matrix.content !== "none") return "/admin/page-content";
-  if (matrix.support !== "none") return "/admin/health";
-  return null;
+  return FIRST_ACCESSIBLE_ADMIN_HREFS.find(([area]) => matrix[area] !== "none")?.[1] ?? null;
+}
+
+/** `pathname` is one of `paths` or sits beneath one, after normalising. */
+function isUnderAnyPath(pathname: string, paths: readonly string[]): boolean {
+  const normalized = normalizePathname(pathname);
+  return paths.some(
+    (prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`),
+  );
 }
 
 function normalizePathname(pathname: string) {
@@ -812,14 +724,15 @@ export function getAdminRouteRequirement(
  * admitted admin" and `overview:view` are different sets — a finance-only grid
  * has standing without `overview` — so an `overview:view` rule would be a
  * carve-out, not the admission rule. Narrowing needs a fresh owner decision.
+ *
+ * Generated (#4799): each page's registry entry says `admission: "any-admin"`,
+ * and the list holds its old path and its hub path.
  */
-export const ANY_ADMIN_ADMISSION_PATHS = ["/admin/ai-diagnostics", "/admin/club-format"] as const;
+export const ANY_ADMIN_ADMISSION_PATHS: readonly string[] =
+  ADMIN_PAGE_ADMISSION_PATHS["any-admin"];
 
 export function isAnyAdminAdmissionPath(pathname: string): boolean {
-  const normalized = normalizePathname(pathname);
-  return ANY_ADMIN_ADMISSION_PATHS.some(
-    (prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`),
-  );
+  return isUnderAnyPath(pathname, ANY_ADMIN_ADMISSION_PATHS);
 }
 
 /**
@@ -846,7 +759,20 @@ export function canOpenAdminPath(
   input: AdminPermissionInput,
   pathname: string,
 ) {
-  const matrix = getAdminPermissionMatrix(input);
+  return canOpenAdminPathWithMatrix(getAdminPermissionMatrix(input), pathname);
+}
+
+/**
+ * `canOpenAdminPath` for a matrix already in hand: the same rule, in one body,
+ * for a hub card or link that must be offered exactly when its screen would
+ * open (S1 #4796). It differs from `canViewAdminHrefWithMatrix`, the sidebar's
+ * per-href filter, only on the two OR admissions (the fee console and Rooms &
+ * Beds), which that filter does not apply.
+ */
+export function canOpenAdminPathWithMatrix(
+  matrix: AdminPermissionMatrix,
+  pathname: string,
+) {
   if (isAnyAdminAdmissionPath(pathname)) {
     return hasAnyAdminAreaFromMatrix(matrix);
   }
@@ -886,15 +812,12 @@ export function canViewAdminHrefWithMatrix(
  * own edit controls by its historical area. The `getAdminRouteRequirement`
  * prefix keeps /admin/fees under bookings for the single-area drift guard; the
  * admin layout and sidebar consult these two helpers for the real OR rule.
+ *
+ * The paths are generated (#4799) from the registry entry that says
+ * `admission: "fees-or"`: the console's old path and its hub path.
  */
-export const CONSOLIDATED_FEES_PATH = "/admin/fees";
-
 export function isConsolidatedFeesPath(pathname: string): boolean {
-  const normalized = normalizePathname(pathname);
-  return (
-    normalized === CONSOLIDATED_FEES_PATH ||
-    normalized.startsWith(`${CONSOLIDATED_FEES_PATH}/`)
-  );
+  return isUnderAnyPath(pathname, ADMIN_PAGE_ADMISSION_PATHS["fees-or"]);
 }
 
 export function canAccessConsolidatedFeesPage(
@@ -923,13 +846,12 @@ export function canAccessConsolidatedFeesPage(
  * It only ever WIDENS. A bookings-area admin gets exactly what
  * `/api/admin/bed-allocation` already grants them; a lodge-only admin keeps the
  * (blank) page the manager has always rendered for them.
+ *
+ * The paths are generated (#4799) from the registry entry that says
+ * `admission: "rooms-beds-or"`: the page's old path and its hub path.
  */
 export function isRoomsBedsPath(pathname: string): boolean {
-  const normalized = normalizePathname(pathname);
-  return (
-    normalized === ROOMS_BEDS_PATH ||
-    normalized.startsWith(`${ROOMS_BEDS_PATH}/`)
-  );
+  return isUnderAnyPath(pathname, ADMIN_PAGE_ADMISSION_PATHS["rooms-beds-or"]);
 }
 
 export function canAccessRoomsBedsPage(

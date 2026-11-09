@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { servedAdminPathname } from "@/lib/admin-hubs"
 import { AlertTriangle, CheckCircle2 } from "lucide-react"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
@@ -62,7 +63,9 @@ export function OperationsPanel({
   // read as a filter already applied.
   const operationTypeHint = useFieldHint()
   const router = useRouter()
-  const pathname = usePathname()
+  // The URL this page is served at, the same on the server and in the browser
+  // once Xero moves under Finance (C3 #4800); links and replace() targets use it.
+  const pathname = servedAdminPathname(usePathname())
   const searchParams = useSearchParams()
   // Hold the latest searchParams in a ref so syncUrl can preserve the *other*
   // panel's params without taking searchParams as a reactive dependency. If it

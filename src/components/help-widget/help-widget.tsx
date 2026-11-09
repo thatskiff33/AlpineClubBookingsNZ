@@ -56,6 +56,13 @@ export type HelpWidgetProps = {
   surface: HelpWidgetSurface;
   llmEnabled: boolean;
   resolveHelp: (pathname: string) => HelpPageContent;
+  /**
+   * Rewrites the raw `usePathname()` before ANY use of it here: help content, the
+   * chat request and the diagnostics view. The admin surface passes
+   * `canonicalAdminPathname` (C3 #4800), so a moved admin page reads as its old
+   * path on the server and in the browser alike; other surfaces omit it.
+   */
+  normalisePathname?: (pathname: string) => string;
   position?: "app" | "website";
   /**
    * Typed free-text fetch target. Undefined in this PR (epic #2094 C2) — the
@@ -128,11 +135,13 @@ export function HelpWidget({
   surface,
   llmEnabled,
   resolveHelp,
+  normalisePathname,
   position = "app",
   chatEndpoint,
   diagnostics,
 }: HelpWidgetProps) {
-  const pathname = usePathname() ?? "/";
+  const rawPathname = usePathname() ?? "/";
+  const pathname = normalisePathname ? normalisePathname(rawPathname) : rawPathname;
   const content = resolveHelp(pathname);
   const { extras, hintGroup } = useHelpWidgetState();
   const { record: diagnosticsRecord, clear: clearDiagnosticsRecord } =

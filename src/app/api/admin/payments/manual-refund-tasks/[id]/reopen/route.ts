@@ -1,4 +1,5 @@
 import { revalidatePath } from "next/cache";
+import { revalidateAdminPage } from "@/lib/admin-page-revalidation";
 import { BOOKING_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -68,7 +69,7 @@ export async function POST(
       actingMemberId: guard.session.user.id,
       note: parsed.data.note ?? null,
     });
-    revalidatePath("/admin/payments");
+    revalidateAdminPage("payments");
     revalidatePath(BOOKING_DETAIL_ROUTE_PATTERN, "page");
     return NextResponse.json({
       success: true,

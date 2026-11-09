@@ -4,6 +4,8 @@ import {
   type AdminPermissionArea,
 } from "@/lib/admin-permissions";
 import { FEATURE_ROUTE_RULES } from "@/config/feature-routes";
+import { ADMIN_PAGES } from "@/lib/admin-hubs";
+import { ADMIN_PAGE_MODULE_GATES } from "@/lib/admin-hubs/security-map";
 import {
   adminApiRouteFiles,
   adminPageFiles,
@@ -34,6 +36,12 @@ import {
 // catch-all without being intentionally allowlisted, and when a feature-route
 // prefix stops matching any real file (a rename silently dropping a gate).
 //
+// PAGES COME FROM THE HUB REGISTRY (#4799). Since C2 of epic #4468 the page
+// half of both maps is generated from `src/lib/admin-hubs/`, for every page's
+// old path and its hub path, so the pages enumerated here are the registry's —
+// both paths of each — rather than the page tree's top-level directories. The
+// registry's own suite ties every entry to a `page.tsx` on disk.
+//
 // WHAT THIS GUARD DOES AND DOES NOT CATCH
 //   Catches:      an UNMAPPED admin route (falls to the overview catch-all).
 //   Does NOT catch: a MIS-mapped route that inherits an existing, wrong prefix.
@@ -62,15 +70,36 @@ import {
  * group rather than only `(admin)`.
  */
 
-type AdminRoute = { file: string; rel: string; pathname: string };
+type AdminRoute = {
+  rel: string;
+  pathname: string;
+  /** The OVERVIEW_ALLOWLIST key: a hub path is allowlisted by its old path. */
+  allowKey: string;
+};
 
-const adminRoutes: AdminRoute[] = [...adminPageFiles, ...adminApiRouteFiles].map(
-  (file) => ({
-    file,
-    rel: toRepoRelative(file),
-    pathname: toResolverPathname(file),
-  }),
+/** A concrete URL for a registry path: every `[name]` filled with `x123`. */
+function concrete(registryPath: string): string {
+  return registryPath.replace(/\[[^\]/]+\]/g, "x123");
+}
+
+const adminPageRoutes: AdminRoute[] = ADMIN_PAGES.flatMap((page) =>
+  [
+    { label: "old path", path: page.oldPath },
+    { label: "hub path", path: page.hubPath },
+  ].map(({ label, path }) => ({
+    rel: `registry page ${page.id} (${label} ${path})`,
+    pathname: concrete(path),
+    allowKey: concrete(page.oldPath),
+  })),
 );
+
+const adminApiRoutes: AdminRoute[] = adminApiRouteFiles.map((file) => ({
+  rel: toRepoRelative(file),
+  pathname: toResolverPathname(file),
+  allowKey: toResolverPathname(file),
+}));
+
+const adminRoutes: AdminRoute[] = [...adminPageRoutes, ...adminApiRoutes];
 
 // ---------------------------------------------------------------------------
 // EXPLICIT overview allowlist.
@@ -132,10 +161,13 @@ describe("admin route-map drift guard (#1322)", () => {
     // the coverage assertions vacuously pass.
     expect(adminPageFiles.length).toBeGreaterThan(40);
     expect(adminApiRouteFiles.length).toBeGreaterThan(100);
+    // Every page, at both of its paths.
+    expect(adminPageRoutes.length).toBe(2 * ADMIN_PAGES.length);
+    expect(ADMIN_PAGES.length).toBeGreaterThanOrEqual(adminPageFiles.length);
   });
 
   it("maps every admin page and /api/admin route to a specific area or an allowlisted overview route", () => {
-    const violations = adminRoutes.flatMap(({ rel, pathname }) => {
+    const violations = adminRoutes.flatMap(({ rel, pathname, allowKey }) => {
       const requirement = getAdminRouteRequirement(pathname, "GET");
 
       // The overview catch-all means this is only null if a future change
@@ -145,12 +177,13 @@ describe("admin route-map drift guard (#1322)", () => {
       }
 
       const area: AdminPermissionArea = requirement.area;
-      const allowlisted = pathname in OVERVIEW_ALLOWLIST;
+      const allowlisted = allowKey in OVERVIEW_ALLOWLIST;
 
       if (area === "overview" && !allowlisted) {
         return [
           `${rel} (${pathname}): lands on the overview catch-all. Fix one of:\n` +
-            `    - add its prefix to ROUTE_AREA_PREFIXES for the correct area (admin-permissions.ts), or\n` +
+            `    - for a page, give its hub registry entry the correct area (src/lib/admin-hubs/hubs/), or\n` +
+            `    - for an API route, add its prefix to ROUTE_AREA_PREFIXES for the correct area (admin-permissions.ts), or\n` +
             `    - add a SPECIAL_ROUTE_AREA_PATTERNS entry if it needs a different area than its prefix, or\n` +
             `    - add it to OVERVIEW_ALLOWLIST in this test with a one-line justification.`,
         ];
@@ -211,7 +244,9 @@ describe("admin route-map drift guard (#1322)", () => {
     // A feature-route prefix that no longer matches any file is a silent gate
     // drop: the module toggle stops covering the renamed/moved route. Only the
     // admin-scoped prefixes are checked here (the non-admin surface is out of
-    // this test's enumeration scope and covered by feature-routes.test.ts).
+    // this test's enumeration scope and covered by feature-routes.test.ts). A
+    // page prefix must match a registered page at one of its two paths; the
+    // registry's suite ties each entry to its `page.tsx`.
     const adminPathnames = adminRoutes.map((r) => r.pathname);
     const isAdminPrefix = (prefix: string) =>
       prefix.startsWith("/admin/") ||
@@ -234,5 +269,45 @@ describe("admin route-map drift guard (#1322)", () => {
     );
 
     expect(violations).toEqual([]);
+  });
+
+  it("takes every admin PAGE module gate from the hub registry, none by hand (#4799)", () => {
+    // A page prefix written into a rule by hand would gate a path the registry
+    // does not know, and would not follow the page to its hub path.
+    const handWritten = FEATURE_ROUTE_RULES.flatMap((rule) =>
+      (rule.prefixes ?? [])
+        .filter((prefix) => prefix === "/admin" || prefix.startsWith("/admin/"))
+        .filter((prefix) => !(ADMIN_PAGE_MODULE_GATES.get(rule.flag) ?? []).includes(prefix))
+        .map((prefix) => `${rule.flag}: ${prefix}`),
+    );
+    expect(handWritten).toEqual([]);
+    // And every generated gate reached its rule.
+    const missing = [...ADMIN_PAGE_MODULE_GATES].flatMap(([flag, prefixes]) =>
+      prefixes
+        .filter(
+          (prefix) =>
+            !FEATURE_ROUTE_RULES.some(
+              (rule) => rule.flag === flag && (rule.prefixes ?? []).includes(prefix),
+            ),
+        )
+        .map((prefix) => `${flag}: ${prefix}`),
+    );
+    expect(missing).toEqual([]);
+    expect(ADMIN_PAGE_MODULE_GATES.size).toBeGreaterThan(15);
+  });
+
+  it("exempts only registered admin pages, at both of their paths (#4799)", () => {
+    const exempt = FEATURE_ROUTE_RULES.flatMap((rule) =>
+      (rule.exemptPaths ?? []).filter((path) => path.startsWith("/admin/")),
+    );
+    expect(exempt.length).toBeGreaterThan(0);
+    const unregistered = exempt.filter(
+      (path) => !ADMIN_PAGES.some((page) => page.oldPath === path || page.hubPath === path),
+    );
+    expect(unregistered).toEqual([]);
+    const halfExempt = ADMIN_PAGES.filter(
+      (page) => exempt.includes(page.oldPath) !== exempt.includes(page.hubPath),
+    ).map((page) => page.id);
+    expect(halfExempt).toEqual([]);
   });
 });

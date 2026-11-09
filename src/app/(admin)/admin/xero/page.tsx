@@ -4,6 +4,7 @@ import { WebhookHealthPanel } from "./_components/webhook-health-panel"
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
+import { servedAdminPathname } from "@/lib/admin-hubs"
 import { useClubIdentity } from "@/components/club-identity-provider"
 import { buildPathWithSearch } from "@/lib/internal-return-path"
 import {
@@ -28,7 +29,9 @@ import { useXeroOrgShortCode } from "@/hooks/use-xero-org-short-code"
 
 export default function XeroPage() {
   const club = useClubIdentity()
-  const pathname = usePathname()
+  // The URL this page is served at, the same on the server and in the browser
+  // once Xero moves under Finance (C3 #4800); links and replace() targets use it.
+  const pathname = servedAdminPathname(usePathname())
   const searchParams = useSearchParams()
   const currentXeroPath = buildPathWithSearch(pathname, searchParams.toString())
   const {
