@@ -183,7 +183,8 @@ function makeDb(opts: {
   const tx = {
     $executeRaw: vi.fn(async (strings: TemplateStringsArray) => {
       const sql = strings.join("?");
-      order.push(sql.includes("hashtextextended") ? "lodge-lock" : "global-lock");
+      // #4853: the booking-row lock (`lockBookingRowForOwnerRead`) runs through this same client.
+      order.push(sql.includes("hashtextextended") ? "lodge-lock" : sql.includes('FROM "Booking"') ? "booking-row" : "global-lock");
       return 1;
     }),
     bookingChangeRequest: {
@@ -228,8 +229,8 @@ function makeHooks(
 describe("approveAndExecutePolicyExceptionRequest", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("HOLD happy path: locks global→lodge, claims, releases, executes, then post-commit", async () => {
-    const { db, order } = makeDb({ row: baseRow() });
+  it("HOLD happy path: locks global→lodge→booking row, claims, releases, executes, then post-commit", async () => {
+    const { db, tx, order } = makeDb({ row: baseRow() });
     const hooks = makeHooks({}, order);
     const result = await approveAndExecutePolicyExceptionRequest({
       requestId: "req-1",
@@ -240,10 +241,13 @@ describe("approveAndExecutePolicyExceptionRequest", () => {
     });
 
     expect(result).toEqual({ outcome: "executed", requestId: "req-1" });
-    // Lock order, claim, atomic release + execute in-tx, THEN post-commit.
+    // Lock order, claim, atomic release + execute in-tx, THEN post-commit. #4853: the
+    // booking row before the claim, whose reviewer FK takes KEY SHARE on the officer's
+    // Member row and which holds the request row member merge re-points.
     expect(order).toEqual([
       "global-lock",
       "lodge-lock",
+      "booking-row",
       "claim-approved",
       "release",
       "execute",
@@ -258,6 +262,10 @@ describe("approveAndExecutePolicyExceptionRequest", () => {
       { reasonCode: "MINIMUM_STAY", policyId: "pol-1" },
     ]);
     expect(call.override.clearedReviewed).toEqual([]);
+    // #4853: keyed from the pre-lock read of the request's booking id (written once).
+    expect(tx.bookingChangeRequest.findUnique.mock.calls[0]).toEqual([expect.objectContaining({ select: expect.objectContaining({ bookingId: true }) })]);
+    const bookingRow = tx.$executeRaw.mock.calls.find(([strings]) => strings.join("?").includes('FROM "Booking"'));
+    expect(bookingRow?.slice(1)).toEqual(["bk-1"]);
   });
 
   it("NOT AUTHORIZED: fresh-role refusal writes nothing and executes nothing", async () => {
@@ -842,7 +850,8 @@ function makeNewBookingDb(opts: {
   const tx = {
     $executeRaw: vi.fn(async (strings: TemplateStringsArray) => {
       const sql = strings.join("?");
-      order.push(sql.includes("hashtextextended") ? "lodge-lock" : "global-lock");
+      // #4853: the booking-row lock (`lockBookingRowForOwnerRead`) runs through this same client.
+      order.push(sql.includes("hashtextextended") ? "lodge-lock" : sql.includes('FROM "Booking"') ? "booking-row" : "global-lock");
       return 1;
     }),
     newBookingPolicyExceptionRequest: {
@@ -878,7 +887,7 @@ function newBookingRow(overrides: Record<string, unknown> = {}) {
 }
 
 describe("newBookingExceptionRequestStore", () => {
-  it("approves a new-booking request through the same algorithm and lock order", async () => {
+  it("approves a new-booking request through the same algorithm and lock order (no booking row to take yet, #4853)", async () => {
     const { db, order, updateMany, deleteMany } = makeNewBookingDb({
       row: newBookingRow(),
     });

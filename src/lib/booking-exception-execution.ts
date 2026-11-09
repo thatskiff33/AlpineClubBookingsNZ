@@ -1,5 +1,6 @@
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { lockBookingRowForOwnerRead } from "@/lib/booking-row-lock";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { releasePolicyExceptionReservation } from "@/lib/booking-exception-reservations";
 import {
@@ -139,11 +140,11 @@ export interface PolicyExceptionRequestStore {
    * why a request is still pending.
    */
   readonly holdsReservation: boolean;
-  /** Immutable pre-read used only to resolve the lodge for the lock. */
+  /** Immutable pre-read used only to key the locks: the lodge, and (#4853) an existing booking's row. */
   preRead(
     tx: PrismaTransactionClient,
     requestId: string,
-  ): Promise<{ proposalSnapshot: unknown } | null>;
+  ): Promise<{ proposalSnapshot: unknown; bookingId: string | null } | null>;
   /**
    * Full fresh read under the locks, with the stored JSON left UNPARSED — the
    * engine owns the parse so "row is missing / wrong kind" (notFound) stays
@@ -204,10 +205,10 @@ export const modificationExceptionRequestStore: PolicyExceptionRequestStore = {
   async preRead(tx, requestId) {
     const row = await tx.bookingChangeRequest.findUnique({
       where: { id: requestId },
-      select: { proposalSnapshot: true, kind: true },
+      select: { proposalSnapshot: true, kind: true, bookingId: true },
     });
     if (!row || row.kind !== "POLICY_EXCEPTION") return null;
-    return { proposalSnapshot: row.proposalSnapshot };
+    return { proposalSnapshot: row.proposalSnapshot, bookingId: row.bookingId };
   },
 
   async read(tx, requestId) {
@@ -349,7 +350,8 @@ export const newBookingExceptionRequestStore: PolicyExceptionRequestStore = {
       where: { id: requestId },
       select: { proposalSnapshot: true },
     });
-    return row ? { proposalSnapshot: row.proposalSnapshot } : null;
+    // A new booking has no row yet, so nothing for #4853's booking-row lock to take.
+    return row ? { proposalSnapshot: row.proposalSnapshot, bookingId: null } : null;
   },
 
   async read(tx, requestId) {
@@ -676,6 +678,8 @@ export async function approveAndExecutePolicyExceptionRequest(params: {
 
       await acquireGlobalBookingLock(tx);
       await acquireLodgeCapacityLock(tx, preSnapshot.lodgeId);
+      // #4853: an existing booking's row next, before the claim names the officer and holds the request row merge re-points.
+      if (preRead.bookingId) await lockBookingRowForOwnerRead(tx, preRead.bookingId);
 
       // (2) Reauthorize from fresh DB roles. No write yet, so a refusal is clean.
       const authorized = await hooks.reauthorizeBookingOfficer(tx, actorMemberId);
