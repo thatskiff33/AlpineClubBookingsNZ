@@ -740,7 +740,7 @@ describe("money cents-conversion guard: the paths it must reach", () => {
     "scripts/x.ts": "standard",
     "prisma/seed-x.ts": "standard",
     "src/lib/date-only.ts": "standard",
-    "src/app/(admin)/admin/site-style/site-style-wizard.tsx": "standard",
+    "src/app/(admin)/admin/website/site-style/site-style-wizard.tsx": "standard",
     "src/components/admin/notice-editor.tsx": "standard",
     "src/app/(admin)/admin/promo-codes/promo-redemptions-panel.tsx": "standard",
     "src/lib/club-time-zone-env.ts": "standard",

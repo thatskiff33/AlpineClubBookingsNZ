@@ -583,8 +583,24 @@ describe("the entries' shape", () => {
     expect(roots).toEqual(["dashboard"]);
   });
 
-  it("has moved no page yet (C4 #4801 makes the first move)", () => {
-    expect(ADMIN_PAGES.filter((page) => page.moved).map((page) => page.id)).toEqual([]);
+  it("has moved the Website hub, and nothing else (C4 #4801)", () => {
+    expect(
+      ADMIN_PAGES.filter((page) => page.moved)
+        .map((page) => page.id)
+        .sort(),
+    ).toEqual([
+      "appearance",
+      "club-identity",
+      "image-manager",
+      "mountain-conditions",
+      "page-content",
+      "site-banners",
+      "site-content",
+      "site-style",
+    ]);
+    expect(new Set(ADMIN_PAGES.filter((page) => page.moved).map((page) => page.hub))).toEqual(
+      new Set(["website"]),
+    );
   });
 
   /**
@@ -1395,6 +1411,22 @@ describe("the registry is inert", () => {
     "src/lib/setup-readiness.ts": "S1: the cancellation step links the Settings tab",
     "src/lib/__tests__/next-config-admin-hub-urls.test.ts":
       "S1: walks each retired page's redirect through the real config",
+    "src/app/(admin)/layout.tsx": "C4: the site-style banner links with adminHref",
+    "src/app/(admin)/admin/website/appearance/page.tsx": "C4: its cards link with adminHref",
+    "src/app/(admin)/admin/website/appearance/identity/page.tsx":
+      "C4: its back link is adminHref",
+    "src/app/(admin)/admin/website/site-style/page.tsx": "C4: its back link is adminHref",
+    "src/app/(admin)/admin/website/site-content/page.tsx": "C4: its back link is adminHref",
+    "src/app/(admin)/admin/website/site-banners/page.tsx": "C4: its back link is adminHref",
+    "src/app/(admin)/admin/website/page-content/page.tsx": "C4: its back link is adminHref",
+    "src/app/(admin)/admin/website/image-manager/page.tsx": "C4: its back link is adminHref",
+    "src/app/(admin)/admin/website/mountain-conditions/page.tsx":
+      "C4: its back link is adminHref",
+    "src/app/(admin)/admin/setup/foundations/page.tsx":
+      "C4: the Club Identity card links with adminHref",
+    "src/app/(admin)/admin/booking-policies/cancellation/page.tsx":
+      "C4: the public-pages link is adminHref",
+    "src/lib/analytics-settings-shared.ts": "C4: the privacy-policy editor link is adminHref",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;

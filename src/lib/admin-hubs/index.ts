@@ -7,13 +7,16 @@
  * security map from it, C3 the redirects and rewrites, C13 the hub menu and S2
  * the command palette. The epic plan, in #4468's body, says what each of those does.
  *
- * Inert while no page has moved. In production it is read by the security map
- * — C2 (#4799) generates the page half of the route map, the admission paths and
- * the admin page module gates from it (`security-map.ts`), changing no answer —
- * and, since C3 (#4800), by `next.config.ts` (the redirects and rewrites), the
- * sidebar's active link (`activeAdminHref`) and `revalidateAdminPage`; each of
- * those answers exactly as before until a page's `moved` is set, apart from
- * the retired pages' redirects.
+ * Officers still open every page at its old URL while `ADMIN_HUBS_LIVE` is off.
+ * C4 (#4801) has moved the Website pages: their files live under the hub, the
+ * old URL is served from that file by a `beforeFiles` rewrite, and the hub URL
+ * redirects back. Links go through `adminHref`, which keeps returning the old
+ * URL until the switch is on. In production the registry is read by the
+ * security map — C2 (#4799) generates the page half of the route map, the
+ * admission paths and the admin page module gates from it (`security-map.ts`),
+ * the same answer at the old path and the hub path — and, since C3 (#4800), by
+ * `next.config.ts` (the redirects and rewrites), the sidebar's active link
+ * (`activeAdminHref`) and `revalidateAdminPage`.
  * `src/lib/__tests__/admin-hubs-registry.test.ts` names every importer.
  * Relative imports only (see `release.ts`).
  */

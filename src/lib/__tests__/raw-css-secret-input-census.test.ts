@@ -99,7 +99,7 @@ const CLUB_THEME_CSS_REFERENCES: Record<string, string> = {
   "src/lib/lodge-display/css-tokens.ts": "prose only: explains what themeCss covers",
   "src/lib/club-theme-schema.ts": "defines buildClubThemeCss — the build that appends rawCss",
   "src/lib/club-theme.ts": "calls it: `css: buildClubThemeCss(values)`",
-  "src/app/(admin)/admin/site-style/site-style-wizard.tsx":
+  "src/app/(admin)/admin/website/site-style/site-style-wizard.tsx":
     "NOT a sink: the admin editor builds the output to SHOW as text in a <pre>, never injects it — and its only reader is the Raw CSS author",
   "src/components/website-footer-shell.tsx": "prose only: which build the shell injects",
   "src/lib/family-invite-return-address.ts": "prose only: why (public) is not a Raw-CSS surface",

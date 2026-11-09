@@ -93,10 +93,10 @@ describe("the sidebar's active link over a moved hub", () => {
     stubPendingCounts();
   });
 
-  it("PREMISE: the Finance hub really has moved in this file, and nothing else has", () => {
+  it("PREMISE: the Finance hub has moved in this file, and the Website hub has moved for real", () => {
     const moved = ADMIN_PAGES.filter((page) => page.moved);
     expect(moved.length).toBeGreaterThan(0);
-    expect(new Set(moved.map((page) => page.hub))).toEqual(new Set(["finance"]));
+    expect(new Set(moved.map((page) => page.hub))).toEqual(new Set(["finance", "website"]));
     expect(moved.find((page) => page.id === "payments")?.hubPath).toBe(
       "/admin/finance/payments",
     );

@@ -11,53 +11,54 @@ import {
   AdminHubPage,
   type AdminHubSection,
 } from "@/components/admin-hub-page";
+import { adminHref } from "@/lib/admin-hubs";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 
 const sections: AdminHubSection[] = [
   {
-    href: "/admin/appearance/identity",
+    href: adminHref("club-identity"),
     title: "Club Identity",
     description:
       "Set the club name, short name, hut-leader label, and your lodge's public details.",
     icon: BadgeInfo,
   },
   {
-    href: "/admin/site-style",
+    href: adminHref("site-style"),
     title: "Site Style",
     description:
       "Set the public theme, logo, colours, fonts, and first-run style completion.",
     icon: Palette,
   },
   {
-    href: "/admin/site-content",
+    href: adminHref("site-content"),
     title: "Site Content",
     description:
       "Edit shared public site chrome such as footer columns and reusable site text.",
     icon: PanelBottom,
   },
   {
-    href: "/admin/page-content",
+    href: adminHref("page-content"),
     title: "Page Content",
     description:
       "Manage public website pages, menus, rich text, tokens, and publishing state.",
     icon: FilePenLine,
   },
   {
-    href: "/admin/site-banners",
+    href: adminHref("site-banners"),
     title: "Site Banners",
     description:
       "Publish dated notice banners for public visitors and signed-in members.",
     icon: Megaphone,
   },
   {
-    href: "/admin/mountain-conditions",
+    href: adminHref("mountain-conditions"),
     title: "Mountain Conditions",
     description:
       "Configure Snow.nz condition widgets and public mountain condition content.",
     icon: Mountain,
   },
   {
-    href: "/admin/image-manager",
+    href: adminHref("image-manager"),
     title: "Image Manager",
     description:
       "Upload and organise filesystem images used by public content editors.",

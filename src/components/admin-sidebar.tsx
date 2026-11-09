@@ -70,7 +70,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { isFeatureHrefVisible } from "@/config/feature-routes";
-import { activeAdminHref } from "@/lib/admin-hubs";
+import { activeAdminHref, adminHref } from "@/lib/admin-hubs";
 import type { FeatureFlags } from "@/config/schema";
 import {
   canAccessConsolidatedFeesPage,
@@ -529,7 +529,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         icon: BadgeCheck,
       },
       {
-        href: "/admin/appearance",
+        href: adminHref("appearance"),
         label: "Site Appearance & Content",
         icon: Palette,
       },

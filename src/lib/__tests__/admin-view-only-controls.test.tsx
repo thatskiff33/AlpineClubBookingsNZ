@@ -96,9 +96,9 @@ import { SiteContentPanel } from "@/components/admin/site-content-panel";
 import { PageContentPanel } from "@/components/admin/page-content-panel";
 import { SiteBannersPanel } from "@/components/admin/site-banners-panel";
 import { LodgeInstructionsPanel } from "@/components/admin/lodge-instructions-panel";
-import { MountainConditionsPanel } from "@/app/(admin)/admin/mountain-conditions/_components/mountain-conditions-panel";
-import { ImageManagerClient } from "@/app/(admin)/admin/image-manager/image-manager-client";
-import { SiteStyleWizard } from "@/app/(admin)/admin/site-style/site-style-wizard";
+import { MountainConditionsPanel } from "@/app/(admin)/admin/website/mountain-conditions/_components/mountain-conditions-panel";
+import { ImageManagerClient } from "@/app/(admin)/admin/website/image-manager/image-manager-client";
+import { SiteStyleWizard } from "@/app/(admin)/admin/website/site-style/site-style-wizard";
 import { DEFAULT_CLUB_THEME_VALUES } from "@/lib/club-theme-schema";
 // #1940 panels newly brought under the view-only pattern.
 import { InductionSettingsPanel } from "@/components/admin/induction-settings-panel";

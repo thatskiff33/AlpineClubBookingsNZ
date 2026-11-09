@@ -11,16 +11,18 @@ import {
 } from "next/experimental/testing/server";
 import { prepareDestination } from "next/dist/shared/lib/router/utils/prepare-destination";
 import { ASSET_NOT_FOUND_PATH, ASSET_NOT_FOUND_REWRITES } from "@/lib/asset-url-404";
-import { ADMIN_RETIRED_PAGES } from "@/lib/admin-hubs";
+import { ADMIN_PAGES, ADMIN_RETIRED_PAGES } from "@/lib/admin-hubs";
 
 // ---------------------------------------------------------------------------
 // `next.config.ts` and the admin hub URLs (epic #4468, C3 #4800).
 //
 // The config's `redirects()` and `rewrites().beforeFiles` are generated from
-// the hub registry. Today no page has moved, so there are no rewrites and the
-// only redirects are the five retired pages' (S1 #4796); over a registry whose Finance hub has moved, the
-// REAL config yields the rules the epic plan fixes for each switch state. Both
-// are run through Next's own pipeline (`unstable_getResponseFromNextConfig`,
+// the hub registry. C4 (#4801) has moved the Website pages and the switch is
+// off, so each of those hub URLs redirects to its old URL and each old URL is
+// rewritten to the moved file. The five retired pages (S1 #4796) still redirect
+// in both states. Over a registry whose Finance hub has also moved, the REAL
+// config yields the rules the epic plan fixes for each switch state. All of
+// this is run through Next's own pipeline (`unstable_getResponseFromNextConfig`,
 // which calls the real `loadCustomRoutes()`). `admin-hubs-registry.test.ts`
 // walks every page of the registry through the generated rules themselves.
 // ---------------------------------------------------------------------------
@@ -83,18 +85,54 @@ async function location(nextConfig: NextConfig, url: string) {
   return { status: response.status, location: getRedirectUrl(response) };
 }
 
-describe("next.config.ts today: no page has moved", () => {
-  it("has only the retired pages' redirects, no beforeFiles rewrites, and keeps the asset rewrites as they were", async () => {
+describe("next.config.ts with the switch off", () => {
+  const websitePages = () =>
+    ADMIN_PAGES.filter((page) => page.moved).sort((a, b) => a.oldPath.localeCompare(b.oldPath));
+
+  it("redirects each moved page's hub URL, rewrites its old URL, and keeps the asset rewrites", async () => {
     const config = await loadConfig();
-    expect((await config.redirects()).map(({ source, permanent }) => ({ source, permanent }))).toEqual(
-      ADMIN_RETIRED_PAGES.map(({ oldPath }) => ({ source: oldPath, permanent: false })),
-    );
+    const moved = websitePages();
+    expect(moved.map((page) => page.hub)).toEqual(moved.map(() => "website"));
+    const retired = ADMIN_RETIRED_PAGES.map(({ oldPath }) => oldPath);
+    expect(
+      (await config.redirects()).map(({ source, permanent }) => ({ source, permanent })),
+    ).toEqual([
+      ...retired.map((source) => ({ source, permanent: false as const })),
+      ...moved.map((page) => ({ source: page.hubPath, permanent: false as const })),
+    ]);
     const rewrites = await config.rewrites();
     expect(rewrites).toEqual({
-      beforeFiles: [],
+      beforeFiles: moved.map((page) => ({ source: page.oldPath, destination: page.hubPath })),
       afterFiles: [...ASSET_NOT_FOUND_REWRITES],
       fallback: [],
     });
+  });
+
+  /**
+   * C4 (#4801) off-state smoke. Next's config pipeline answers a `beforeFiles`
+   * rewrite as 200 and a redirect as 307. The old URL is served from the moved
+   * file; the hub URL redirects to the old URL.
+   */
+  it("serves each Website page's old URL (200) and redirects its hub URL there", async () => {
+    const config = await loadConfig();
+    const moved = websitePages();
+    expect(moved.length).toBeGreaterThan(0);
+    for (const page of moved) {
+      const served = await unstable_getResponseFromNextConfig({
+        url: `https://example.org${page.oldPath}`,
+        nextConfig: config,
+      });
+      expect(served.status, page.oldPath).toBe(200);
+      expect(isRewrite(served), page.oldPath).toBe(true);
+      expect(new URL(getRewrittenUrl(served)!, "https://example.org").pathname).toBe(page.hubPath);
+
+      const hub = await unstable_getResponseFromNextConfig({
+        url: `https://example.org${page.hubPath}`,
+        nextConfig: config,
+      });
+      expect(hub.status, page.hubPath).toBe(307);
+      expect(new URL(getRedirectUrl(hub)!, "https://example.org").pathname).toBe(page.oldPath);
+    }
   });
 
   it.each(["/admin/payments", "/admin/finance/payments", "/admin/members/x1"])(

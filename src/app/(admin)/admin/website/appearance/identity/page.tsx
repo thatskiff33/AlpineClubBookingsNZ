@@ -1,4 +1,5 @@
 import { BackLink } from "@/components/admin/back-link";
+import { adminHref } from "@/lib/admin-hubs";
 import { ClubContactPanel } from "@/components/admin/club-contact-panel";
 import {
   CLUB_IDENTITY_TITLE,
@@ -17,7 +18,7 @@ export default function ClubIdentityAdminPage() {
   return (
     <div className="space-y-6">
       <div>
-        <BackLink href="/admin/appearance" label="Site Appearance & Content" />
+        <BackLink href={adminHref("appearance")} label="Site Appearance & Content" />
         <h1 className="mt-2 text-2xl font-bold text-foreground">
           Club Identity
         </h1>

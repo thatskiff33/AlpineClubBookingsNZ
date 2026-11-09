@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { BackLink } from "@/components/admin/back-link";
+import { adminHref } from "@/lib/admin-hubs";
 import { DefaultCancellationPolicySection } from "@/components/admin/booking-policies/default-cancellation-policy-section";
 import {
   detectStaleHoldPolicyCopy,
@@ -44,7 +45,7 @@ export default async function CancellationPolicyPage() {
           </p>
           <p className="mt-2">
             <Link
-              href="/admin/page-content"
+              href={adminHref("page-content")}
               className="font-medium underline underline-offset-4"
             >
               Edit public pages

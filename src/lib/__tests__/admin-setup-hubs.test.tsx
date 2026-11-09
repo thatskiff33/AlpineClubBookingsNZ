@@ -38,7 +38,7 @@ vi.mock("@/components/admin/analytics-integration-card", () => ({
   AnalyticsIntegrationCard: () => <div>Google Analytics integration card</div>,
 }));
 
-import AppearanceHubPage from "@/app/(admin)/admin/appearance/page";
+import AppearanceHubPage from "@/app/(admin)/admin/website/appearance/page";
 import DisplayHubPage from "@/app/(admin)/admin/display/page";
 import BookingsSetupHubPage from "@/app/(admin)/admin/bookings-setup/page";
 import FinanceSetupPage from "@/app/(admin)/admin/setup/finance/page";

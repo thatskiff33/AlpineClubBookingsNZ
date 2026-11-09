@@ -47,18 +47,23 @@ function allMoved(pages: readonly AdminHubPage[] = ADMIN_PAGES): AdminHubPage[] 
 
 const concrete = (registryPath: string) => registryPath.replace(/\[[^\]/]+\]/g, "x123");
 
-describe("activeAdminHref while no page has moved", () => {
-  it("PREMISE: no page has moved, and the sidebar has hrefs, query links among them", () => {
-    expect(ADMIN_PAGES.some((page) => page.moved)).toBe(false);
+describe("activeAdminHref while the switch is off", () => {
+  it("PREMISE: the Website hub has moved, nothing else has, and the sidebar still links the old URLs", () => {
+    const moved = ADMIN_PAGES.filter((page) => page.moved);
+    expect(moved.length).toBeGreaterThan(0);
+    expect(new Set(moved.map((page) => page.hub))).toEqual(new Set(["website"]));
+    expect(SIDEBAR_HREFS).toContain("/admin/appearance");
     expect(SIDEBAR_HREFS.length).toBeGreaterThan(40);
     expect(SIDEBAR_HREFS.some((href) => href.includes("?"))).toBe(true);
   });
 
-  it("answers exactly as the sidebar did before C3, for every page, path beneath it and hub path", () => {
+  it("answers exactly as the sidebar did before C3, except a moved page's hub URL", () => {
+    // A moved page's hub URL is the same page as its old URL. The pre-C3
+    // comparison does not know that, so it is not part of this equality.
     const pathnames = ADMIN_PAGES.flatMap((page) => [
       concrete(page.oldPath),
       `${concrete(page.oldPath)}/beneath`,
-      concrete(page.hubPath),
+      ...(page.moved ? [] : [concrete(page.hubPath)]),
     ]);
     pathnames.push("/admin", "/admin/", "/admin/nope", "/dashboard");
     const differ = pathnames.filter(
@@ -139,13 +144,28 @@ describe("activeAdminHref over a moved registry", () => {
 describe("canonicalAdminPathname and servedAdminPathname", () => {
   const moved = allMoved();
 
-  it("are the identity while no page has moved, for every page and its hub path", () => {
-    for (const page of ADMIN_PAGES) {
+  it("are the identity for every page that has not moved", () => {
+    const unmoved = ADMIN_PAGES.filter((page) => !page.moved);
+    expect(unmoved.length).toBeGreaterThan(0);
+    for (const page of unmoved) {
       for (const url of [concrete(page.oldPath), concrete(page.hubPath)]) {
         expect(canonicalAdminPathname(url)).toBe(url);
         expect(servedAdminPathname(url, false)).toBe(url);
         expect(servedAdminPathname(url, true)).toBe(url);
       }
+    }
+  });
+
+  it("reads a moved Website page's hub URL as its old URL while the switch is off", () => {
+    const moved = ADMIN_PAGES.filter((page) => page.moved);
+    expect(moved.length).toBeGreaterThan(0);
+    for (const page of moved) {
+      const oldUrl = concrete(page.oldPath);
+      const hubUrl = concrete(page.hubPath);
+      expect(canonicalAdminPathname(hubUrl)).toBe(oldUrl);
+      expect(servedAdminPathname(hubUrl, false)).toBe(oldUrl);
+      expect(servedAdminPathname(oldUrl, false)).toBe(oldUrl);
+      expect(servedAdminPathname(oldUrl, true)).toBe(hubUrl);
     }
   });
 
