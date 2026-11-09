@@ -28,14 +28,14 @@ import type { RefundsAndCreditsOwed } from "@/lib/refunds-and-credits-owed-share
 const OWING_PAYMENT_SELECT = { id: true, ...netCollectedPaymentSelect } as const satisfies Prisma.PaymentSelect;
 
 /**
- * Every open task, each with its booking's `deletedAt` (which tells a legacy
- * late capture apart) and the booking's payment, if it has one.
+ * Every open task, with the booking's payment, if it has one. Its `reason`
+ * (in the Net Collected task select) tells a legacy late capture apart (#4848).
  */
 const OPEN_TASK_QUERY = {
   where: { status: "OPEN" },
   select: {
     ...netCollectedBookingSelect.manualRefundTasks.select,
-    booking: { select: { deletedAt: true, payment: { select: OWING_PAYMENT_SELECT } } },
+    booking: { select: { payment: { select: OWING_PAYMENT_SELECT } } },
   },
 } as const satisfies Prisma.ManualRefundTaskFindManyArgs;
 
@@ -127,7 +127,7 @@ export async function readRefundsAndCreditsOwed(
     // refunded, so it counts once, at its own amount - never through the
     // organiser's payment, whose Net Collected leaves it out.
     if (isGroupOrganiserHandBackTask(task)) {
-      uncappedTaskOwedCents += openTaskOwedCents([task], task.booking).handBackCents;
+      uncappedTaskOwedCents += openTaskOwedCents([task]).handBackCents;
       continue;
     }
     const payment = task.booking.payment;
@@ -139,7 +139,7 @@ export async function readRefundsAndCreditsOwed(
       owingPayments.set(payment.id, payment);
       continue;
     }
-    const owed = openTaskOwedCents([task], task.booking);
+    const owed = openTaskOwedCents([task]);
     uncappedTaskOwedCents += owed.handBackCents + owed.lateCaptureCents;
   }
   for (const { payment } of openCardRefunds) owingPayments.set(payment.id, payment);

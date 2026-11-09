@@ -102,6 +102,8 @@ const PROVENANCE_SCANNED_FILES = [
   "src/app/api/admin/email-templates/route.ts",
   "src/lib/cancelled-booking-late-capture.ts",
   "src/lib/deleted-booking-modification-payment.ts",
+  // #4848: the frozen late-capture sentences moved here, byte for byte, citing #2773.
+  "src/lib/late-capture-reason-sentences.ts",
   "src/lib/stripe-webhook-service.ts",
   "src/lib/email-message-registry.ts",
   "src/lib/email-message-renderer.ts",

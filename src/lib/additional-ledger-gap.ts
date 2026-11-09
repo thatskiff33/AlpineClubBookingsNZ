@@ -116,6 +116,8 @@ export const netCollectedBookingSelect = Prisma.validator<Prisma.BookingSelect>(
       partPaymentReviewPaymentId: true,
       // #4042: marks a group organiser's hand-back, which is not this booking's.
       occurrenceKey: true,
+      // #4848: names a legacy NULL-kind late capture (`isLateCaptureHandBackTask`).
+      reason: true,
     },
   },
 });

@@ -184,7 +184,7 @@ describe("Net Collected, Refunds owed and Credits owed reconcile to the cent", (
     const both = owedReconciliationPaymentRow({
       ...failed,
       manualRefundTasks: [
-        { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: 10_000, partPaymentReviewPaymentId: null, occurrenceKey: null },
+        { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: 10_000, partPaymentReviewPaymentId: null, occurrenceKey: null, reason: "Cancellation refund owed by hand" },
       ],
     });
     const db = reconciliationDb();
@@ -192,7 +192,7 @@ describe("Net Collected, Refunds owed and Credits owed reconcile to the cent", (
     // card refund - and is counted once.
     const withId = { id: "pay-both", ...both };
     db.manualRefundTask.findMany.mockResolvedValue([
-      { ...both.booking.manualRefundTasks[0], booking: { deletedAt: null, payment: withId } },
+      { ...both.booking.manualRefundTasks[0], booking: { payment: withId } },
     ]);
     db.paymentRecoveryOperation.findMany = operationReads(() => [{ payment: withId }]);
     db.memberCredit.groupBy.mockResolvedValue([]);
@@ -211,7 +211,7 @@ describe("Net Collected, Refunds owed and Credits owed reconcile to the cent", (
     // The organiser's own payment holds $200.00; the group task owes $300.00
     // of joiners' refunds, which the joiners' payments already read refunded.
     const [failed] = OWED_RECONCILIATION_PAYMENTS;
-    const groupTask = { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: 30_000, partPaymentReviewPaymentId: null, occurrenceKey: "group-organiser-hand-back:settle-1" };
+    const groupTask = { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: 30_000, partPaymentReviewPaymentId: null, occurrenceKey: "group-organiser-hand-back:settle-1", reason: "Group organiser hand-back" };
     const organiser = owedReconciliationPaymentRow({ ...failed, manualRefundTasks: [groupTask] });
     const withoutTask = owedReconciliationPaymentRow({ ...failed, manualRefundTasks: [] });
 
@@ -227,14 +227,14 @@ describe("Net Collected, Refunds owed and Credits owed reconcile to the cent", (
     const before = (await readRefundsAndCreditsOwed(ownOnly as never)).refundsOwedCents;
 
     const db = reconciliationDb();
-    db.manualRefundTask.findMany.mockResolvedValue([{ ...groupTask, booking: { deletedAt: null, payment: withId } }]);
+    db.manualRefundTask.findMany.mockResolvedValue([{ ...groupTask, booking: { payment: withId } }]);
     db.paymentRecoveryOperation.findMany = operationReads(() => [{ payment: withId }]);
     db.memberCredit.groupBy.mockResolvedValue([]);
     expect((await readRefundsAndCreditsOwed(db as never)).refundsOwedCents).toBe(before + 30_000);
 
     // Its payment reached only through the task: the task alone, uncapped.
     const taskOnly = reconciliationDb();
-    taskOnly.manualRefundTask.findMany.mockResolvedValue([{ ...groupTask, booking: { deletedAt: null, payment: withId } }]);
+    taskOnly.manualRefundTask.findMany.mockResolvedValue([{ ...groupTask, booking: { payment: withId } }]);
     taskOnly.paymentRecoveryOperation.findMany = operationReads(() => []);
     taskOnly.memberCredit.groupBy.mockResolvedValue([]);
     expect((await readRefundsAndCreditsOwed(taskOnly as never)).refundsOwedCents).toBe(30_000);
@@ -242,7 +242,7 @@ describe("Net Collected, Refunds owed and Credits owed reconcile to the cent", (
 
   it("#4097 (`INV-PAY-129`): a cancellation's card refund shortfall counts in Refunds owed and off Net Collected, once", async () => {
     // $100.00 captured by card, $60.00 refunded to it, $40.00 the plan could not carry.
-    const shortfallTask = { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: 4_000, partPaymentReviewPaymentId: null, occurrenceKey: "cancel-card-shortfall:b-short" };
+    const shortfallTask = { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: 4_000, partPaymentReviewPaymentId: null, occurrenceKey: "cancel-card-shortfall:b-short", reason: "Card refund shortfall" };
     const row = owedReconciliationPaymentRow({
       bookingId: "b-short",
       memberId: "m-short",
@@ -265,7 +265,7 @@ describe("Net Collected, Refunds owed and Credits owed reconcile to the cent", (
     expect(parts.heldCashCents).toBe(0);
 
     const db = reconciliationDb();
-    db.manualRefundTask.findMany.mockResolvedValue([{ ...shortfallTask, booking: { deletedAt: null, payment: { id: "pay-short", ...row } } }]);
+    db.manualRefundTask.findMany.mockResolvedValue([{ ...shortfallTask, booking: { payment: { id: "pay-short", ...row } } }]);
     db.paymentRecoveryOperation.findMany = operationReads(() => []);
     db.memberCredit.groupBy.mockResolvedValue([]);
     expect((await readRefundsAndCreditsOwed(db as never)).refundsOwedCents).toBe(4_000);
@@ -287,7 +287,7 @@ describe("Net Collected, Refunds owed and Credits owed reconcile to the cent", (
       booking: {
         ...failed.booking,
         manualRefundTasks: [
-          { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: 10_000, partPaymentReviewPaymentId: null, occurrenceKey: null },
+          { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: 10_000, partPaymentReviewPaymentId: null, occurrenceKey: null, reason: "Cancellation refund owed by hand" },
         ],
       },
     };
@@ -449,7 +449,7 @@ describe("#3924 round 4 (M7): a hand-back promised on a payment that shows no ca
       recoveryOperations: [],
       refunds: [],
     };
-    db.manualRefundTask.findMany.mockResolvedValue([{ ...first!, booking: { deletedAt: null, payment: uncaptured } }]);
+    db.manualRefundTask.findMany.mockResolvedValue([{ ...first!, booking: { payment: uncaptured } }]);
 
     const owed = await readRefundsAndCreditsOwed(db as never);
 

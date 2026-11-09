@@ -1,12 +1,15 @@
-import { ManualRefundTaskKind } from "@prisma/client";
+import type { ManualRefundTaskKind } from "@prisma/client";
 
-import { automaticCancelledBookingRefundTaskReasons } from "@/lib/deleted-booking-modification-payment";
+import { automaticCancelledBookingRefundTaskReasons } from "@/lib/late-capture-reason-sentences";
 
 /**
  * #4843: WHICH TASKS ARE A LATE CAPTURE'S QUESTION (#2700, `INV-PAY-106`). A
  * module of its own so the frozen sentences' module does not grow; it reads
  * them (`automaticCancelledBookingRefundTaskReasons`), it never restates them.
  */
+
+/** Client-safe (#4848): the owed figures in `manual-refund-task-settlement-rules.ts` read it, so no value import. */
+const LATE_CAPTURE_KIND = "DELETED_BOOKING_LATE_CAPTURE" satisfies ManualRefundTaskKind;
 
 /** Stands in for the intent id when the frozen sentences are read as templates. */
 const INTENT_SLOT = "\u0000";
@@ -40,13 +43,11 @@ export function isAutomaticCancelledBookingRefundTaskReason(reason: string): boo
  * one of the automatic late-capture sentences. A NULL-kind row with any other
  * reason is a cancellation's own hand-back (`openHandBackOwedCents`) and is not
  * one. The still-owed check of a hand-back (`assertLateCaptureHandBackStillOwed`)
- * is gated on this, so a legacy row is checked under the Payment row too.
- *
- * `isLateCaptureAwaitingDecisionTask` (owed figures) still identifies a legacy
- * row by "NULL kind on a deleted booking" instead; the two agree on every real
- * #2700 row, and #4848 moves that reader onto this rule.
+ * is gated on this, so a legacy row is checked under the Payment row too, and
+ * (#4848) so is the owed figures' late-capture part
+ * (`isLateCaptureAwaitingDecisionTask`).
  */
 export function isLateCaptureHandBackTask(task: { kind: ManualRefundTaskKind | string | null; reason: string }): boolean {
-  if (task.kind === ManualRefundTaskKind.DELETED_BOOKING_LATE_CAPTURE) return true;
+  if (task.kind === LATE_CAPTURE_KIND) return true;
   return task.kind === null && isAutomaticCancelledBookingRefundTaskReason(task.reason);
 }
