@@ -25,7 +25,7 @@ lines: 2877
 reason: W1 posts a returned capture's R05 in the same transaction as its settle and R06, and its two senders name that debt; the hook must sit inside that transaction.
 
 file: src/lib/payment-transactions.ts
-lines: 1864
+lines: 1859
 reason: the one card refund sender reserves each slice before Stripe is asked, and the one cash writer posts R12/R13 inside its own Payment-row transaction; the reservation step's root-client transaction shares this module's Payment-row budget and refund error type, so splitting it out would create an import cycle.
 
 file: src/lib/stripe-webhook-service.ts

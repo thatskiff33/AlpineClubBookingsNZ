@@ -26,17 +26,8 @@ import { IntentLedgerRowOnAnotherPaymentError, writePaymentIntentTransaction } f
 import { accountCreditDispositionCents } from "@/lib/stripe-cash-refund-evidence";
 import { readPaidAnotherWayCloseBankCashByPayment } from "@/lib/card-refund-paid-another-way-cash";
 import type { ClubFormat } from "@/lib/club-format";
-import {
-  MemberMoneyReservationRefused,
-  postBookingReceipts,
-  postCardRefundCash,
-  reserveCardRefundSlice,
-  resolveBookingMoneyPostingContext,
-  type BookingJournalContext,
-  type CardRefundObligationRef,
-  type CardRefundReservationOutcome,
-  type CardRefundSliceReservation,
-} from "@/lib/member-money/doors";
+import { MemberMoneyReservationRefused, postBookingReceipts, postCardRefundCash, reserveCardRefundSlice, resolveBookingMoneyPostingContext,
+  type BookingJournalContext, type CardRefundObligationRef, type CardRefundReservationOutcome, type CardRefundSliceReservation } from "@/lib/member-money/doors";
 import { createAuditLog } from "@/lib/audit";
 import { REFUND_SLICE_KEY_METADATA } from "@/lib/refund-slice-evidence";
 import { isLateCaptureRefundedBookingStatus } from "@/lib/additional-payment-chase";
@@ -853,11 +844,7 @@ export async function recordStripeRefundsAgainstTransaction({
   /** Stripe's cumulative `amount_refunded` for the charge, when known. */
   stripeRefundedAmountCents?: number;
   store?: PaymentStore;
-  /**
-   * #4516 (M4c): the journal's context for R12/R13. Resolved here, before the transaction (`INV-LOCK-004`), when
-   * `store` is the root client; a caller joining its own transaction passes its own, or nothing posts (every
-   * production caller runs on the root client, and the next run on the payment catches a missed refund up).
-   */
+  /** #4516 (M4c): the journal's context for R12/R13; see `resolveCardRefundJournalBeforeTransaction`. */
   journal?: BookingJournalContext;
   /** #4516: the attempt key a sender made each refund under (its own, even when Stripe's evidence lacks it). */
   attemptKeys?: ReadonlyMap<string, string>;

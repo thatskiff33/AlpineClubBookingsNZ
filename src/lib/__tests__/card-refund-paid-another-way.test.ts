@@ -142,9 +142,9 @@ vi.mock("@/lib/prisma", () => {
         return mocks.claim(...args);
       },
       // #4516: a still-owed rest's own row.
-      create: (...args: unknown[]) => {
+      create: (args: unknown) => {
         calls.push("still-owed-row");
-        return mocks.createStillOwedRow(...args);
+        return mocks.createStillOwedRow(args);
       },
     },
     payment: {
