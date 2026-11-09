@@ -58,7 +58,7 @@ import {
 } from "@/lib/member-parent-partner-exclusivity";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { MEMBER_MERGE_RELATION_SPECS } from "@/lib/member-merge-relations";
-import { MEMBER_MERGE_PAYMENT_ATTRIBUTION_KEY, moveMergedPaymentAttributionLast } from "@/lib/member-merge-payment-attribution";
+import { MEMBER_MERGE_PAYMENT_ATTRIBUTION_SPEC, moveMergedPaymentAttributionLast } from "@/lib/member-merge-payment-attribution";
 import {
   diffFieldMergePatches,
   mergeMemberFields,
@@ -2046,7 +2046,7 @@ export async function executeMemberMerge(params: {
     // rows so audit/result never contains duplicate model entries.
     await applyLateHostingCoverageMoves(tx, masterId, loserId, relationMoves);
     // #4823: last, under the Member rows, never waiting for a Payment row (`member-merge-payment-attribution.ts`).
-    foldRelationMoveCount(relationMoves, MEMBER_MERGE_PAYMENT_ATTRIBUTION_KEY, await moveMergedPaymentAttributionLast(tx, { masterId, loserId }, () =>
+    foldRelationMoveCount(relationMoves, MEMBER_MERGE_PAYMENT_ATTRIBUTION_SPEC.key, await moveMergedPaymentAttributionLast(tx, { masterId, loserId }, () =>
       new MemberMergeError("A payment this merge must update is being changed right now. Nothing was saved. Try again in a moment.", 409, "merge_payment_row_busy")));
 
     // 3b) #2595 — reconcile the future shared DOUBLE beds this merge invalidated.
@@ -2669,7 +2669,7 @@ async function applyMoves(
   const moves: { model: string; count: number }[] = [];
   for (const s of MEMBER_MERGE_RELATION_SPECS) {
     // #4823: the Payment attribution is moved later, under the Member rows.
-    if (s.bucket !== "move" || s.key === MEMBER_MERGE_PAYMENT_ATTRIBUTION_KEY) continue;
+    if (s.bucket !== "move" || s.movedLast) continue;
     const delegate = mergeDelegate<UpdateManyDelegate>(tx, s.delegate);
     // Member SELF-relations (`parentMemberId`, `secondaryParentId`,
     // `inheritEmailFromId`, `detailsConfirmedByMemberId`) sweep ONLY the rows

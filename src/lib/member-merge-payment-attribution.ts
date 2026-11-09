@@ -37,12 +37,29 @@
  * no Payment row to update when it is deleted. It is also as late as the moves
  * can go, so merge holds the Payment rows across the fewest later waits.
  */
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
+import { MEMBER_MERGE_RELATION_SPECS, type MemberMergeRelationSpec } from "@/lib/member-merge-relations";
 import { isPostgresLockNotAvailable } from "@/lib/prisma-errors";
 
-/** The relation in `MEMBER_MERGE_RELATION_SPECS` that the generic move pass leaves to this module. */
-export const MEMBER_MERGE_PAYMENT_ATTRIBUTION_KEY = "Payment.manuallyMarkedPaidBy";
+/**
+ * The one relation the spec table marks `movedLast`, which the generic move
+ * pass skips and this module moves. Read from the table, never retyped, and
+ * checked when the module loads: the `NOWAIT` reasoning above is about Payment
+ * rows, so a second flagged relation, or a different model, fails loudly here.
+ */
+export const MEMBER_MERGE_PAYMENT_ATTRIBUTION_SPEC: MemberMergeRelationSpec = (() => {
+  const flagged = MEMBER_MERGE_RELATION_SPECS.filter((relation) => relation.movedLast);
+  const [only] = flagged;
+  if (flagged.length !== 1 || !only || only.model !== "Payment" || only.bucket !== "move") {
+    throw new Error(`#4823: exactly one "move" relation on Payment may be movedLast; found ${flagged.map((relation) => relation.key).join(", ") || "none"}.`);
+  }
+  return only;
+})();
+
+type LateMoveDelegate = {
+  updateMany(args: { where: Record<string, string>; data: Record<string, string> }): Promise<{ count: number }>;
+};
 
 /**
  * Lock every Payment row the duplicate is named on, sorted and `NOWAIT`, then
@@ -55,15 +72,19 @@ export async function moveMergedPaymentAttributionLast(
   members: { masterId: string; loserId: string },
   refuse: () => Error,
 ): Promise<number> {
+  const { model, column, delegate } = MEMBER_MERGE_PAYMENT_ATTRIBUTION_SPEC;
+  // Identifiers from the static spec table, never from input.
+  const table = Prisma.raw(`"${model}"`);
+  const memberColumn = Prisma.raw(`"${column}"`);
   try {
-    await tx.$executeRaw`SELECT 1 FROM "Payment" WHERE "manuallyMarkedPaidByMemberId" = ${members.loserId} ORDER BY "id" FOR NO KEY UPDATE NOWAIT`;
+    await tx.$executeRaw`SELECT 1 FROM ${table} WHERE ${memberColumn} = ${members.loserId} ORDER BY "id" FOR NO KEY UPDATE NOWAIT`;
   } catch (error) {
     if (isPostgresLockNotAvailable(error)) throw refuse();
     throw error;
   }
-  const moved = await tx.payment.updateMany({
-    where: { manuallyMarkedPaidByMemberId: members.loserId },
-    data: { manuallyMarkedPaidByMemberId: members.masterId },
+  const moved = await (tx as unknown as Record<string, LateMoveDelegate>)[delegate].updateMany({
+    where: { [column]: members.loserId },
+    data: { [column]: members.masterId },
   });
   return moved.count;
 }

@@ -19,8 +19,8 @@ import {
 } from "@/lib/member-merge";
 import { mergeMemberFields } from "@/lib/member-merge-field-rules";
 import { MEMBER_MERGE_RELATION_SPECS } from "@/lib/member-merge-relations";
-import { MEMBER_MERGE_PAYMENT_ATTRIBUTION_KEY } from "@/lib/member-merge-payment-attribution";
-import { BookingRequestStatus, type MemberGuestConsentStatus } from "@prisma/client";
+import { MEMBER_MERGE_PAYMENT_ATTRIBUTION_SPEC } from "@/lib/member-merge-payment-attribution";
+import { BookingRequestStatus, Prisma, type MemberGuestConsentStatus } from "@prisma/client";
 import { claimAlreadyConvertedBookingRequest } from "@/lib/booking-request-shared";
 import { classifyMemberGuestConsent } from "@/lib/member-guest-consent";
 import {
@@ -3369,6 +3369,14 @@ describe("executeMemberMerge — Payment attribution moves last, never waiting (
     return { ...defaultDelegate(), updateMany: vi.fn().mockResolvedValue({ count: moved }) };
   }
 
+  /** A tagged `$executeRaw` call composed the way Prisma composes it, identifier fragments included. */
+  function composed(call: unknown[]): { sql: string; values: unknown[] } {
+    const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
+    if (!Array.isArray(strings)) return { sql: rawStatement(strings), values };
+    const statement = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+    return { sql: statement.sql, values: statement.values };
+  }
+
   function execute(client: unknown) {
     return executeMemberMerge({
       masterId: MASTER_ID,
@@ -3380,9 +3388,12 @@ describe("executeMemberMerge — Payment attribution moves last, never waiting (
     });
   }
 
-  it("names a move relation the generic pass would otherwise take", () => {
-    const relation = MEMBER_MERGE_RELATION_SPECS.find((spec) => spec.key === MEMBER_MERGE_PAYMENT_ATTRIBUTION_KEY);
-    expect(relation).toMatchObject({ model: "Payment", delegate: "payment", column: "manuallyMarkedPaidByMemberId", bucket: "move" });
+  it("takes its relation from the one spec the table marks movedLast", () => {
+    const flagged = MEMBER_MERGE_RELATION_SPECS.filter((spec) => spec.movedLast);
+    expect(flagged).toEqual([MEMBER_MERGE_PAYMENT_ATTRIBUTION_SPEC]);
+    expect(MEMBER_MERGE_PAYMENT_ATTRIBUTION_SPEC).toMatchObject({
+      key: "Payment.manuallyMarkedPaidBy", model: "Payment", delegate: "payment", column: "manuallyMarkedPaidByMemberId", bucket: "move",
+    });
   });
 
   it("re-points the attribution once, after the Member FOR UPDATE, under a sorted NOWAIT lock", async () => {
@@ -3391,13 +3402,15 @@ describe("executeMemberMerge — Payment attribution moves last, never waiting (
 
     const result = await execute(client);
 
-    const statements = executeRaw.mock.calls.map(([statement]) => rawStatement(statement));
-    const memberLock = statements.findIndex((s) => s.includes('FROM "Member"') && s.includes("FOR UPDATE"));
-    const paymentLock = statements.findIndex((s) => s.includes('FROM "Payment"'));
+    const statements = executeRaw.mock.calls.map((call) => composed(call));
+    const memberLock = statements.findIndex(({ sql }) => sql.includes('FROM "Member"') && sql.includes("FOR UPDATE"));
+    const paymentLock = statements.findIndex(({ sql }) => sql.includes('FROM "Payment"'));
     expect(memberLock).toBeGreaterThanOrEqual(0);
     expect(paymentLock).toBeGreaterThan(memberLock);
-    expect(statements[paymentLock]).toMatch(/"manuallyMarkedPaidByMemberId" = \? ORDER BY "id" FOR NO KEY UPDATE NOWAIT$/);
-    expect(executeRaw.mock.calls[paymentLock].slice(1)).toEqual([LOSER_ID]);
+    expect(statements[paymentLock]).toEqual({
+      sql: 'SELECT 1 FROM "Payment" WHERE "manuallyMarkedPaidByMemberId" = ? ORDER BY "id" FOR NO KEY UPDATE NOWAIT',
+      values: [LOSER_ID],
+    });
 
     // Once, not also in the generic pass, and only after its own lock.
     expect(payment.updateMany).toHaveBeenCalledTimes(1);
@@ -3408,14 +3421,14 @@ describe("executeMemberMerge — Payment attribution moves last, never waiting (
     expect(payment.updateMany.mock.invocationCallOrder[0]).toBeGreaterThan(
       executeRaw.mock.invocationCallOrder[paymentLock],
     );
-    expect(result.relationMoves).toContainEqual({ model: MEMBER_MERGE_PAYMENT_ATTRIBUTION_KEY, count: 2 });
+    expect(result.relationMoves).toContainEqual({ model: "Payment.manuallyMarkedPaidBy", count: 2 });
   });
 
   it("refuses the merge with a 409, moving nothing, when another writer holds a Payment row", async () => {
     const payment = paymentDelegate(1);
     const { client, executeRaw, auditLog } = makeClient({ payment });
-    executeRaw.mockImplementation(async (strings: unknown) => {
-      if (rawStatement(strings).includes('FROM "Payment"')) {
+    executeRaw.mockImplementation(async (...call: unknown[]) => {
+      if (composed(call).sql.includes('FROM "Payment"')) {
         throw Object.assign(new Error("could not obtain lock on row in relation \"Payment\""), { code: "55P03" });
       }
       return 0;
@@ -3433,8 +3446,8 @@ describe("executeMemberMerge — Payment attribution moves last, never waiting (
     const payment = paymentDelegate(1);
     const { client, executeRaw } = makeClient({ payment });
     const broken = Object.assign(new Error("connection reset"), { code: "08006" });
-    executeRaw.mockImplementation(async (strings: unknown) => {
-      if (rawStatement(strings).includes('FROM "Payment"')) throw broken;
+    executeRaw.mockImplementation(async (...call: unknown[]) => {
+      if (composed(call).sql.includes('FROM "Payment"')) throw broken;
       return 0;
     });
 

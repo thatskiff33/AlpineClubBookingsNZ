@@ -3324,8 +3324,11 @@ Taking `lock(1)` is ruled out by "Why merge takes no global cohort key" above.
 So merge never waits for a Payment row
 (`src/lib/member-merge-payment-attribution.ts`):
 
-- The generic move pass skips the relation. Merge moves it last, after the
-  sorted `Member … FOR UPDATE` set and the late queue sweeps.
+- The spec table marks the relation `movedLast`, and the generic move pass
+  skips it on that field. The module reads its key and column from that one
+  spec and refuses to load if another relation, or another model, carries the
+  flag. Merge moves it last, after the sorted `Member … FOR UPDATE` set and the
+  late queue sweeps.
 - One statement locks every Payment row naming the duplicate:
   `SELECT 1 … ORDER BY "id" FOR NO KEY UPDATE NOWAIT`. If any row is held, the
   merge refuses with a 409 (`merge_payment_row_busy`), writes nothing, and the
@@ -3347,8 +3350,9 @@ edit doors' order, through their own lock helpers, holding the booking row
 before its Payment row makes the merge wait, and both commit; a merge holding
 both makes it wait. The settle-first race deadlocks under the old placement,
 and the door-first race under the Payment-before-booking placement (both
-probed). Pinned by position in
-`adult-member-hosting-coverage-lock.test.ts` and by shape in
+probed). The suite is a required step of the `migration-drift` job, pinned by
+`review-findings-contracts.test.ts`, as the #2672 merge races are. Pinned by
+position in `adult-member-hosting-coverage-lock.test.ts` and by shape in
 `member-merge-execute.test.ts`.
 
 Reconciled against the merged PRs that last changed member merge or these

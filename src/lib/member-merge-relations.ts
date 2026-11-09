@@ -49,6 +49,12 @@ export type MemberMergeRelationSpec = {
    * loser's inbound references are re-pointed.
    */
   readonly selfRelation?: boolean;
+  /**
+   * For `move` relations only (#4823): the generic pass skips it, and
+   * `member-merge-payment-attribution.ts` moves it last, never waiting for a
+   * row. Exactly one relation may carry it; that module refuses to load otherwise.
+   */
+  readonly movedLast?: true;
   readonly note?: string;
 };
 
@@ -57,7 +63,7 @@ function spec(
   field: string,
   column: string,
   bucket: MemberMergeBucket,
-  extra: { selfRelation?: boolean; note?: string } = {},
+  extra: { selfRelation?: boolean; movedLast?: true; note?: string } = {},
 ): MemberMergeRelationSpec {
   const delegate = model.charAt(0).toLowerCase() + model.slice(1);
   return { key: `${model}.${field}`, model, field, delegate, column, bucket, ...extra };
@@ -228,6 +234,7 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   // raised. `move` re-points that history onto the surviving member (history
   // follows the person; no collision is possible without a unique).
   spec("Payment", "manuallyMarkedPaidBy", "manuallyMarkedPaidByMemberId", "move", {
+    movedLast: true,
     note: "#4823: moved last, never waiting for a Payment row (member-merge-payment-attribution.ts)",
   }),
   spec("ManualRefundTask", "completedBy", "completedByMemberId", "move"),
