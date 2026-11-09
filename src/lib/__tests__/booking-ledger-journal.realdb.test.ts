@@ -395,6 +395,9 @@ async function untilSomeoneWaits(): Promise<void> {
     // A record that says the club kept less than the journal retained disagrees.
     await prisma.manualRefundTask.update({ where: { id: record.id }, data: { raisedAmountCents: owed - 500 } });
     expect((await judged(id)).journal).toMatchObject({ status: "DISAGREE", deltaCents: 500 });
+    // Put back, so the whole-population census below judges only what the doors posted.
+    await prisma.manualRefundTask.update({ where: { id: record.id }, data: { raisedAmountCents: owed } });
+    await expectAgreed(id);
   });
 
   it("a $0 confirmation posts R01 as a ZERO event, so the booking's later money posts and agrees", async () => {

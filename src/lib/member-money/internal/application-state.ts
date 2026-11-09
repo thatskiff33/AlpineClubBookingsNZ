@@ -24,7 +24,6 @@ const Reservation = z.object({
 export const MemberMoneyApplicationState = z.object({
   sources: z.array(Source), obligations: z.array(Obligation), applications: z.array(Application), reservations: z.array(Reservation),
 });
-export { MEMBER_MONEY_CAP_PROBLEMS, type MemberMoneyCapProblem } from "./cap-problems";
 export type ApplicationState = z.infer<typeof MemberMoneyApplicationState>;
 export type ApplicationSource = z.infer<typeof Source>;
 export type ApplicationObligation = z.infer<typeof Obligation>;
