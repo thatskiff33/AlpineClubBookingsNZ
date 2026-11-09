@@ -334,9 +334,11 @@ export function isInexactAdminPagePath(
   pages: readonly AdminHubPage[] = ADMIN_PAGES,
 ): boolean {
   const { patterns, lowercase } = pagePatterns(pages);
+  // Asked on every request and every admission: with no capital and no escape,
+  // nothing can differ. The whole string first, which needs no allocation.
+  if (lowercase && !INEXACT_CANDIDATE.test(pathname)) return false;
   const path = pathname.split(/[?#]/)[0] ?? "";
-  // Asked on every request: with no capital and no escape, nothing can differ.
-  if (lowercase && !/[A-Z%]/.test(path)) return false;
+  if (lowercase && !INEXACT_CANDIDATE.test(path)) return false;
   const segments = path.replace(/(.)\/+$/, "$1").split("/");
   return patterns.some((pattern) => {
     if (pattern.length > segments.length) return false;
@@ -353,6 +355,8 @@ export function isInexactAdminPagePath(
     return inexact;
   });
 }
+
+const INEXACT_CANDIDATE = /[A-Z%]/;
 
 const PAGE_PATTERNS = new WeakMap<
   readonly AdminHubPage[],
