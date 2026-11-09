@@ -6509,9 +6509,12 @@ cannot read refuses, and a plan that moved since it was read is refused under
 the locks (review F4). The
 failed-later writer raises its rows under the Payment row, so that check and
 the raise are ordered. STATED LIMIT: a refund another door made for the same
-money that the owed figure does not match to this row, failing after a re-arm,
-is raised beside the live row - the #4104 failed-later family's open question
-(#4492), which a re-arm does not answer. Proven by `card-refund-dead-row-actions.realdb.test.ts`: a re-arm and a
+money that the owed figure does not match to this row - or one made on the
+row's charge after the re-arm commits, which the owed figure then counts as
+the row's progress and the runner's preflight records without holding -
+failing later while the row is still open, is owed again beside the live row:
+the #4104 failed-later family's open question (#4492), which a re-arm does not
+answer; the runner-side fix is #4858. Proven by `card-refund-dead-row-actions.realdb.test.ts`: a re-arm and a
 "Paid another way" close queued behind a held `lock(1)` in both orders, a plan
 or status moved under the Payment row, "Nothing left owed" against a refund
 arriving and against it failing later, a paid failed-later row and an
