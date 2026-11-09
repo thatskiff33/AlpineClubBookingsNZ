@@ -18,5 +18,8 @@ describe("the late-capture hand-back race proof stays wired into CI (#4838)", ()
     expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
     expect(suite).toContain("recorded while the hand-back waits for the Payment row is read, and the hand-back refused");
     expect(suite).toContain("waitForBlockedBy(webhook.pid)");
+    // #4843: and every case runs on a legacy row raised before `kind` existed.
+    expect(suite).toContain('{ label: "a legacy row with no kind (#4843)", kind: null, legacy: true }');
+    expect(suite).toContain("describe.each(TASK_VARIANTS)");
   });
 });

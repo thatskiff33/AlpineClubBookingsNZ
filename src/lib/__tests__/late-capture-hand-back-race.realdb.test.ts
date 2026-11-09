@@ -23,6 +23,12 @@
  *     hand-back reads it and refuses. Read before the row, it would not.
  * And a control: with nothing racing it the hand-back records its mirror.
  *
+ * #4843: every case runs twice - on a typed `DELETED_BOOKING_LATE_CAPTURE` row,
+ * and on a legacy row raised before `kind` existed (NULL kind, on a deleted
+ * booking, with the confirm route's #2700 sentence), which only its reason
+ * identifies (`isLateCaptureHandBackTask`). Before #4843 the legacy row was
+ * handed back with no check at all.
+ *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
  * (#1881), which imports this file so CI reaches it; it owns and cleans its own
@@ -67,7 +73,13 @@ let observerClient: PrismaClient;
 let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixture"))["CLUB_FORMAT_TEST"];
 let resolveManualRefundTask: (typeof import("@/lib/manual-refund-task-resolution"))["resolveManualRefundTask"];
 let recordStripeRefundsAgainstTransaction: (typeof import("@/lib/payment-transactions"))["recordStripeRefundsAgainstTransaction"];
-let handBackReason: string;
+let reasons: { cancelled: string; deleted: string };
+
+/** #4843: the row as raised today, and as a #2700 row raised before `kind` existed. */
+const TASK_VARIANTS = [
+  { label: "a typed DELETED_BOOKING_LATE_CAPTURE row", kind: "DELETED_BOOKING_LATE_CAPTURE" as const, legacy: false },
+  { label: "a legacy row with no kind (#4843)", kind: null, legacy: true },
+];
 
 (RUN ? describe : describe.skip)(
   "a #2700 hand-back reads its late capture under the Payment row - real PostgreSQL (#4838)",
@@ -206,8 +218,8 @@ let handBackReason: string;
       ({ resolveManualRefundTask } = await import("@/lib/manual-refund-task-resolution"));
       ({ recordStripeRefundsAgainstTransaction } = await import("@/lib/payment-transactions"));
       // The REAL builder: the frozen reason sentence is the key the hand-back finds its capture by.
-      const { cancelledBookingModificationRefundReason } = await import("@/lib/deleted-booking-modification-payment");
-      handBackReason = cancelledBookingModificationRefundReason(LATE_INTENT);
+      const { cancelledBookingModificationRefundReason, deletedBookingModificationRefundReason } = await import("@/lib/deleted-booking-modification-payment");
+      reasons = { cancelled: cancelledBookingModificationRefundReason(LATE_INTENT), deleted: deletedBookingModificationRefundReason(LATE_INTENT) };
       const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([
         import("@prisma/client"),
         import("@/lib/prisma-adapter"),
@@ -273,20 +285,29 @@ let handBackReason: string;
           { id: LATE_TX_ID, paymentId: PAYMENT_ID, kind: "ADDITIONAL", source: "STRIPE", stripePaymentIntentId: LATE_INTENT, amountCents: LATE_CENTS, status: "SUCCEEDED", createdAt: new Date("2026-06-01T00:00:00.000Z") },
         ],
       });
-      // The confirm route's open question about the late capture (#2700), no approval intent.
+    });
+
+    /**
+     * The confirm route's open question about the late capture (#2700), no
+     * approval intent. A legacy row (#4843) is what the route raised before
+     * `kind` existed: NULL kind, on the deleted booking it is always raised on,
+     * with its own sentence.
+     */
+    async function raiseTask(variant: (typeof TASK_VARIANTS)[number]) {
+      if (variant.legacy) await prisma.booking.update({ where: { id: BOOKING_ID }, data: { deletedAt: new Date("2026-06-15T00:00:00.000Z") } });
       await prisma.manualRefundTask.create({
         data: {
           id: TASK_ID,
           bookingId: BOOKING_ID,
           paymentId: PAYMENT_ID,
-          kind: "DELETED_BOOKING_LATE_CAPTURE",
+          kind: variant.kind,
           status: "OPEN",
           amountCents: LATE_CENTS,
           raisedAmountCents: LATE_CENTS,
-          reason: handBackReason,
+          reason: variant.legacy ? reasons.deleted : reasons.cancelled,
         },
       });
-    });
+    }
 
     afterAll(async () => {
       resetStripeRaceHooks();
@@ -295,6 +316,12 @@ let handBackReason: string;
       );
       if (!prisma) return;
       await deleteFixtures();
+    });
+
+    describe.each(TASK_VARIANTS)("$label", (variant) => {
+    beforeEach(async () => {
+      await raiseTask(variant);
+      expect((await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: TASK_ID } })).kind).toBe(variant.kind);
     });
 
     it("control: with nothing racing it, the hand-back records the capture's money as handed back", async () => {
@@ -314,7 +341,8 @@ let handBackReason: string;
 
     // MUTATION (#4838): read the capture before the Payment row again and both cases fail - the hand-back reads the
     // capture untouched, waits for the row only at its allocation after the claim, and mirrors the $80.00 onto the
-    // primary's kept fee on top of Stripe's refund.
+    // primary's kept fee on top of Stripe's refund. (#4843: gate the check on the kind alone again and the legacy
+    // row's phase 1 and 2 cases fail too - it is not checked at all.)
     it.each([
       ["the whole capture", LATE_CENTS],
       ["part of the capture, leaving less than the task hands back", 3_000],
@@ -330,6 +358,7 @@ let handBackReason: string;
 
       await expect(closing).rejects.toMatchObject({ status: 409, message: expect.stringContaining("already been refunded") });
       await expectRefusedLeavingStripesRefundAlone(refundCents);
+    });
     });
   },
 );
