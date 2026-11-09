@@ -868,8 +868,14 @@ Before each keyed slice, `refundPaymentTransactions` reserves it under Stripe's
 own key, in a short root-client transaction holding only the Payment row. It
 funds the slice from that capture's own receipt, first taking back exactly the
 shortfall of that receipt's collection, under its own `refund-uncollect` event
-so a released reservation reverses its funding alone. A reservation the plan no
-longer carries is released (SUPERSEDED_KEY). With no receipt, no R05 in the
+so a released reservation reverses its funding alone. A reservation the same
+sender's plan no longer carries is released (SUPERSEDED_KEY); another sender's
+open reservation on the same debt is its attempt in flight, left for C3 and C4
+to judge. A key whose reservations were all released without a refund (an
+appeal re-approved after `release_claim`, a refused key sent again) reserves the
+key's next generation, `<key>#<n>`, while Stripe is sent the key unchanged; a
+key a refund answered is replayed by Stripe and reserves nothing. A retry
+replays its claim only for the same slice. With no receipt, no R05 in the
 journal, or a receipt on a member a merge moved away from, nothing is reserved
 and the refund later posts unapplied. A broken cap refuses the slice before
 Stripe is asked: the committed door stands, the sender throws, the recovery
@@ -880,12 +886,26 @@ The cash writer posts R12 once per counted refund, applied only through the
 reservation its own key names (the sender's, or Stripe's `refundSliceKey`
 evidence), else unapplied. A key arriving later answers an unapplied R12 while
 it still counts. R13 reverses the answer, the cash and the answered
-reservation's funding once, so the re-send funds again; a refund refused before
-it counted releases its reservation (REFUSED). A "Paid another way" close posts
-R14 from the close record, funded from the allocation's receipts and trimmed to
-what is open, and closes the row's reservations (CLOSED_WITHOUT_REFUND). A
-refund family's D4 successor is posted lazily, under the Payment row, by the
-first refund writer that finds the owner moved.
+reservation's funding once, so the re-send funds again. A failed refund whose
+key's reservation is still open releases it (REFUSED) when the failure is first
+seen. A "Paid another way" close posts R14 from the close record, funded from the
+allocation's receipts and trimmed to what is open, and closes the row's unmade
+slices' reservations (CLOSED_WITHOUT_REFUND); a close whose debt the journal
+does not hold posts its bank cash unapplied (Dr AR, Cr BANK). A kept rest posts
+one close-out per close record (`refund-close-out:<record>`), a retained
+component the census reads against the record's kept figure. A late capture the
+treasurer keeps reverses an unpaid, unreserved capture-return R05. A refund
+family's D4 successor is posted lazily, under the Payment row, by the first
+refund writer that finds the owner moved.
+
+**Expected after M4c, until the milestone that answers unapplied refunds.** A
+refund that posts unapplied (a debt raised before M4c, a Stripe dashboard
+refund, a refund on a member a merge moved away from) pays no refund obligation,
+so the receipt census's `OVER_COLLECTED` stays listed for its booking: the
+capture's receipt still counts as collected against a charge the refund has in
+fact given back. The refund census lists the refund itself
+(`UNAPPLIED_CARD_REFUND` or `RESERVATION_SKIPPED_NO_RECEIPT`). M4c builds no
+general fix.
 
 A rollback across M4c can strand a reservation. `pnpm run
 member-money:refund-reservations` lists them, answers those a recovery row marks

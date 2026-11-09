@@ -1190,7 +1190,7 @@ describe("markBookingPaymentSucceeded", () => {
       });
       // #4516 (M4c): the settle that cancelled for the capacity race posted the capture's return, sized by its plan.
       expect(journalDoors.postRefundObligation).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({
-        scope: "capture-return", id: "pi_race", amountCents: 10000, debtorRead: "booking-row" }));
+        scope: "capture-return", id: "pi_race", amountCents: 10000, debtorRead: "plain" })); // #4516 review F1: after its held R06
       // Happy-path close of the pre-persisted operation.
       expect(
         mocks.markCapacityClaimFailedRefundRecoverySucceeded

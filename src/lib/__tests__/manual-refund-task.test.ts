@@ -115,6 +115,7 @@ vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postRefundObligation: vi.fn(async () => null),
   withdrawRefundObligation: vi.fn(async () => false),
+  closeKeptCaptureReturn: vi.fn(async () => false),
 }));
 
 vi.mock("@/lib/booking-ledger-modification-sync", () => ({
@@ -286,7 +287,7 @@ vi.mock("@/lib/member-credit", () => {
 });
 
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
-import { postRefundObligation } from "@/lib/member-money/doors";
+import { closeKeptCaptureReturn, postRefundObligation } from "@/lib/member-money/doors";
 import { EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE } from "@/lib/manual-refund-task-settlement-rules";
 import { editRefundHandBackDismissAfterCancelMessage } from "@/lib/manual-refund-task-copy";
 import { GROUP_MIRROR_HAND_BACK_EXCEEDS_CASH_MESSAGE } from "@/lib/edit-financial-review-refund-refusals";
@@ -2696,6 +2697,8 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
           OR: [
             bookingCancelCardRefundRecoveryWhere("booking-1"),
             { paymentId: "payment-1", idempotencyKey: { startsWith: "card_refund_failed_later_" } },
+            // #4516 review M4: and a rest of either still owed after a part "Paid another way" close.
+            { paymentId: "payment-1", idempotencyKey: { startsWith: "card_refund_still_owed_" } },
           ],
         },
         orderBy: { createdAt: "asc" },
@@ -4730,6 +4733,9 @@ describe("#3639 - approving a held late-capture refund", () => {
     expect(vi.mocked(postRefundObligation)).toHaveBeenCalledWith(tx, expect.anything(), { bookingId: "booking-1", scope: "capture-return",
       id: "pi_late", amountCents: 2500, origin: "OFFICER", actorMemberId: "treasurer-1", debtorRead: "plain" });
     expect(vi.mocked(postRefundObligation).mock.invocationCallOrder[0]).toBeLessThan(mocks.refundPaymentTransactions.mock.invocationCallOrder[0]!);
+    // #4516 review F2: the Payment row before the approval's claim; an approval closes no debt.
+    expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!);
+    expect(vi.mocked(closeKeptCaptureReturn)).not.toHaveBeenCalled();
     // The debt is durable BEFORE Stripe is asked, and the claim came first.
     expect(
       mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0],
@@ -4829,6 +4835,11 @@ describe("#3639 - approving a held late-capture refund", () => {
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
     expect(mocks.enqueueLateCaptureApprovalRefundRecovery).not.toHaveBeenCalled();
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    // MUTATION (#4516 review F2, M5): the Payment row before the claim, as a "Paid another way" close orders them;
+    // then the kept capture's refund debt, if an automatic refund posted one, is closed in the same transaction.
+    expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(tx, "payment-1");
+    expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!);
+    expect(vi.mocked(closeKeptCaptureReturn)).toHaveBeenCalledWith(tx, expect.anything(), { bookingId: "booking-1", paymentIntentId: "pi_late", actorMemberId: "treasurer-1" });
   });
 
   function keep() {

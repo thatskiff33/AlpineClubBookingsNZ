@@ -44,6 +44,7 @@ const {
   mockBookingEventFindMany,
   mockReportSupersededPaymentRefund,
   mockReportUnannouncedSupersededPaymentRefund,
+  mockAnswerSupersededFirstRequest,
   mockSyncEditFinancialReviewChargeRequest,
   mockBookingModificationFindUnique,
   mockCompleteDeferredSupplementaryInvoice,
@@ -116,6 +117,8 @@ const {
   mockReportSupersededPaymentRefund: vi.fn().mockResolvedValue(undefined),
   // #4690: the next claim's half - a refund of the row's own nobody announced.
   mockReportUnannouncedSupersededPaymentRefund: vi.fn().mockResolvedValue(undefined),
+  // #4516 review L1: the first request's refund answered to its open reservation (its own suite: the module's).
+  mockAnswerSupersededFirstRequest: vi.fn().mockResolvedValue(undefined),
   mockSyncEditFinancialReviewChargeRequest: vi.fn(),
   // #3181: the edit whose additional payment is being recovered, read back for
   // the SIGNED components its deferred supplementary invoice bills.
@@ -415,6 +418,10 @@ vi.mock("@/lib/booking-events", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/booking-events")),
   recordDuplicateCaptureRefundEvent: (...args: unknown[]) =>
     mockRecordDuplicateCaptureRefundEvent(...args),
+}));
+
+vi.mock("@/lib/superseded-first-request-answer", () => ({
+  answerSupersededFirstRequest: (...args: unknown[]) => mockAnswerSupersededFirstRequest(...args),
 }));
 
 vi.mock("@/lib/superseded-additional-refund", () => ({
@@ -1228,7 +1235,8 @@ describe("payment recovery worker", () => {
     });
     // #4516 (M4c): reserved under the row's own key, against its capture's return (the R05 its door deferred), first.
     expect(mockReserveCardRefundAttempt).toHaveBeenCalledWith(expect.anything(), {
-      paymentId: "payment-1", attemptKey: "payment_recovery_cancel_txn-1_pi_superseded", paymentTransactionId: "txn-1", amountCents: 6000,
+      paymentId: "payment-1", attemptKey: "payment_recovery_cancel_txn-1_pi_superseded", senderKeyPrefix: "payment_recovery_cancel_txn-1_pi_superseded",
+      paymentTransactionId: "txn-1", amountCents: 6000,
       planAttemptKeys: ["payment_recovery_cancel_txn-1_pi_superseded"],
       obligation: { scope: "capture-return", id: "pi_superseded", ensureFaceCents: 6000 },
     });
@@ -1395,6 +1403,9 @@ describe("payment recovery worker", () => {
         CLUB_FORMAT_TEST,
       );
       expect(mockReportUnannouncedSupersededPaymentRefund.mock.invocationCallOrder[0]).toBeLessThan(closeCallOrder()!);
+      // MUTATION (#4516 review L1): the first request's refund answers the row's open reservation, before the close.
+      expect(mockAnswerSupersededFirstRequest).toHaveBeenCalledWith(expect.objectContaining({ id: "recovery-1", type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT }));
+      expect(mockAnswerSupersededFirstRequest.mock.invocationCallOrder[0]).toBeLessThan(closeCallOrder()!);
     });
   });
 

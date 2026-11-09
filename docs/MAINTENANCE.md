@@ -1995,9 +1995,17 @@ the release is audited and reverses its funding, and a refund Stripe later
 records against it posts unapplied. `UNAPPLIED_CARD_REFUND` and
 `RESERVATION_SKIPPED_NO_RECEIPT` are refunds answered to no debt (a dashboard
 refund, a capture with no receipt, a merged debtor); `CARD_REFUND_WITHOUT_EVENT`
-is a counted refund the next cash-writer run on its payment posts. Open
-reservations give exit status 2. No provider call; nothing is matched by amount
-or time.
+is a counted refund the next cash-writer run on its payment posts.
+`PAID_ANOTHER_WAY_WITHOUT_EVENT` is a "Paid another way" close with no R14: one
+made before M4c (M9 back-posts history) or while the journal was inactive.
+`KEPT_REST_WITHOUT_CLOSE_OUT` is a part close whose record says the club kept
+the rest and whose rest has no close-out. Open reservations give exit status 2.
+No provider call; nothing is matched by amount or time.
+
+Expected until the milestone that answers unapplied refunds: a refund that
+posted unapplied (a debt raised before M4c, a Stripe dashboard refund, a merged
+debtor's) pays no refund obligation, so the receipt census keeps listing its
+booking as `OVER_COLLECTED`. Both censuses list it; nothing to repair by hand.
 
 ### Census the booking ledger against its money columns (#3583)
 

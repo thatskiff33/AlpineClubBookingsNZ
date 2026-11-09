@@ -32,7 +32,7 @@ vi.mock("@/lib/auth", async () => (await import("./support/race-session-double")
 /** A pause inside the appeal's transaction, just before its R05: a pass-through with no hook set. */
 const doorHook = vi.hoisted(() => ({ beforeAppealR05: null as null | (() => Promise<void>) }));
 vi.mock("@/lib/member-money/doors", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@/lib/member-money/doors")>();
+  const real = (await importOriginal()) as typeof import("@/lib/member-money/doors");
   return {
     ...real,
     postRefundObligation: async (...args: Parameters<typeof real.postRefundObligation>) => {

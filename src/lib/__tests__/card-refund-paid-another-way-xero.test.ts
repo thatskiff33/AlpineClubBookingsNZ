@@ -47,9 +47,9 @@ import { xeroQueuedMessage, xeroRefundNotePromise } from "@/components/admin/dea
 
 const db = {
   payment: { findUnique: vi.fn(async () => ({ id: "p-1", bookingId: "b-1", refundedAmountCents: 0 })) },
-  manualRefundTask: { findUnique: vi.fn(async (_args: unknown): Promise<unknown> => null) },
+  manualRefundTask: { findUnique: vi.fn<(args: unknown) => Promise<unknown>>(async () => null) },
   // #4516 review M4: a still-owed rest's origin, through its close's record.
-  paymentRecoveryOperation: { findUnique: vi.fn(async (_args: unknown): Promise<unknown> => null) },
+  paymentRecoveryOperation: { findUnique: vi.fn<(args: unknown) => Promise<unknown>>(async () => null) },
 };
 const PAYMENT = { id: "p-1", xeroInvoiceId: "inv-1" };
 const failedLater: { idempotencyKey: string; paymentIntentId: string; amountCents: number; allocationPlan?: unknown } = {

@@ -2745,7 +2745,7 @@ describe("#4516 (M4c) - the sender reserves each slice, and the one cash writer 
     expect(journal.reserveCardRefundSlice).toHaveBeenCalledTimes(2);
     for (const [index, slice] of allocation.entries()) {
       expect(journal.reserveCardRefundSlice).toHaveBeenNthCalledWith(index + 1, expect.anything(), journal.context, {
-        paymentId: "payment_1", obligation: { scope: "cancellation", id: "booking_1" }, attemptKey: keys[index], paymentTransactionId: slice.paymentTransactionId,
+        paymentId: "payment_1", obligation: { scope: "cancellation", id: "booking_1" }, attemptKey: keys[index], senderKeyPrefix: PREFIX, paymentTransactionId: slice.paymentTransactionId,
         amountCents: slice.amountCents, planAttemptKeys: keys,
       });
       expect(journal.reserveCardRefundSlice.mock.invocationCallOrder[index]).toBeLessThan(mocks.processRefund.mock.invocationCallOrder[index]!);
@@ -2800,6 +2800,8 @@ describe("#4516 (M4c) - the sender reserves each slice, and the one cash writer 
       attemptKeys: new Map([["re_sent", "sender_key"]]), store: root as never });
     expect(journal.postCardRefundCash).toHaveBeenCalledWith(tx, journal.context, {
       paymentId: "payment_1", attemptKeys: new Map([["re_evidenced", "evidence_key"], ["re_sent", "sender_key"]]),
+      // #4516 review L3: the rows this delivery wrote first, the only ones whose refusal releases a reservation.
+      firstRecorded: new Set(["re_evidenced", "re_sent"]),
     });
     expect(journal.postCardRefundCash.mock.invocationCallOrder[0]).toBeLessThan(failedLater.keep.mock.invocationCallOrder.at(-1)!);
   });

@@ -1474,10 +1474,15 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   "src/lib/booking-ledger-back-post.ts": 2,
   // #4627 (Ledger M3b): the journal adapter takes the booking row
   // (`SELECT 1 … FOR NO KEY UPDATE`) before it reads the owner it posts as the
-  // receivable's debtor. Every door has already UPDATEd that row in the same
+  // receivable's debtor. The M3 doors have already UPDATEd that row in the same
   // transaction, after lock(1) and its lodge key, so this adds no edge; member
-  // merge's owner move is its counterpart. See docs/CONCURRENCY_AND_LOCKING.md ->
-  // "The M3b booking doors and member merge's journal transfer".
+  // merge's owner move is its counterpart. #4516 (M4c review F1): the one
+  // statement, `lockBookingRowForOwnerRead`, is also taken by an approved refund
+  // appeal right after its lock(1), before the Payment row and the request's
+  // claim (which writes no booking row), so a merge (owner move, then the
+  // request's member) cannot hold the row it waits on; W1's capture-return R05
+  // reads its owner without it. See docs/CONCURRENCY_AND_LOCKING.md -> "The M3b
+  // booking doors and member merge's journal transfer" and the M4c paragraph.
   "src/lib/member-money/internal/booking-posting.ts": 1,
   // #4691 (Ledger M4a): an application batch, a refund reservation and a release
   // take the booking's Payment row (`SELECT 1 … FOR NO KEY UPDATE`) before they
@@ -1485,8 +1490,15 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // Charges and reversals that apply nothing do not take it, so the M3 doors
   // gain no edge. #4516 (M4b): receipt collections take it, and the CHARGE
   // successor a member merge once posted is now posted only under it, by the new
-  // owner's first collection; merge itself still takes no Payment row. See
-  // docs/CONCURRENCY_AND_LOCKING.md -> "Member-money applications and refund reservations".
+  // owner's first collection. Merge takes no Payment row of its own, though its
+  // relation moves can update one (`Payment.manuallyMarkedPaidByMemberId`, M4c
+  // review F5, filed separately). #4516 (M4c): it is also taken by every refund
+  // writer: R05 at the edit doors (after their booking row), an appeal (after its
+  // booking row, before its claim) and its `release_claim` (after the request's
+  // row and its task), a late capture's approval and keep (before the task's
+  // claim, review F2), the reservation step's own short transaction, the cash
+  // writer and "Paid another way". See docs/CONCURRENCY_AND_LOCKING.md ->
+  // "Member-money applications and refund reservations" and the M4c paragraph.
   "src/lib/member-money/internal/application-read.ts": 1,
   // #4627: an edit review's closure takes its booking row straight after its claim,
   // before any credit write (giveBackCancelledShareCredit, applyLocalRefundAllocation,
@@ -1649,7 +1661,10 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // still one site, no new key. #3949: also by a group child's Internet Banking
   // hand-back route (after its completion's lock(1), before the cap read and
   // the mirror write) and the organiser cancel's recovery replay (no lock(1),
-  // before it reads whether the plan's share is written).
+  // before it reads whether the plan's share is written). #4516 (M4c review F2):
+  // and by a late capture's approval or keep (`prepareLateCaptureDecision`, no
+  // lock(1)) before its task's claim, the order a "Paid another way" close takes
+  // the Payment row and that task's row in.
   // Order: lock(1) -> lodge -> member credit -> Payment -> refund, recovery and
   // transaction rows. See docs/CONCURRENCY_AND_LOCKING.md -> the #3640
   // paragraph and its #4217 sequel.

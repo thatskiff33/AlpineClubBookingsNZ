@@ -455,6 +455,14 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(expect.anything(), "payment_1");
       const paymentRowAt = mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]!;
       expect(lockedAt).toBeLessThan(paymentRowAt);
+      // MUTATION (#4516 review F1): the booking row next, before the Payment row and the claim, as the edit doors
+      // order them, so the R05's owner read never waits on a member merge holding it while that merge waits on
+      // the request this approval claimed.
+      const bookingSql = (mocks.executeRaw.mock.calls[1]?.[0] as TemplateStringsArray).join("?");
+      expect(bookingSql).toContain('FROM "Booking"');
+      expect(bookingSql).toContain("FOR NO KEY UPDATE");
+      expect(mocks.executeRaw.mock.calls[1]?.[1]).toBe("booking_1");
+      expect(mocks.executeRaw.mock.invocationCallOrder[1]).toBeLessThan(paymentRowAt);
       const reads = [
         ...mocks.manualRefundTaskAggregate.mock.invocationCallOrder,
         ...mocks.memberCreditAggregate.mock.invocationCallOrder,
@@ -647,8 +655,9 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       expect(mocks.manualRefundTaskDeleteMany).toHaveBeenCalledWith({
         where: { occurrenceKey: "refund-request-hand-back:refund_1", status: "OPEN" },
       });
-      const releaseLock = mocks.executeRaw.mock.invocationCallOrder[1];
-      expect((mocks.executeRaw.mock.calls[1]?.[0] as TemplateStringsArray).join("?")).toContain(
+      // The approval's lock(1) and booking row (#4516 review F1), then the release's own lock(1).
+      const releaseLock = mocks.executeRaw.mock.invocationCallOrder[2];
+      expect((mocks.executeRaw.mock.calls[2]?.[0] as TemplateStringsArray).join("?")).toContain(
         "pg_advisory_xact_lock(1)",
       );
       expect(releaseLock).toBeLessThan(mocks.refundRequestUpdateMany.mock.invocationCallOrder[1]);
