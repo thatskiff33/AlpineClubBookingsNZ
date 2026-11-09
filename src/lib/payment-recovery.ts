@@ -46,7 +46,12 @@ import {
 } from "@/lib/payment-transactions";
 // #3372: the one plan parser, shared with the "Refunds owed" net-out.
 import { parseRefundAllocationPlan } from "@/lib/open-card-refund-owed";
-import { checkCardRefundResend, UnattributedCardRefundBeforeResendError } from "@/lib/card-refund-resend-preflight";
+import {
+  checkCardRefundResend,
+  holdSupersededRowSizedOnAnotherRefund,
+  preflightCardRefundResend,
+  UnattributedCardRefundBeforeResendError,
+} from "@/lib/card-refund-resend-preflight";
 import { cardRefundStillOwedCents } from "@/lib/card-refund-still-owed";
 import { onPlanWhere, refundPlanOrRetryRefusals } from "@/lib/refused-card-refund-retry";
 import { closePrePersistedRefundRow, type DoorCloseArgs } from "@/lib/pre-persisted-refund-close";
@@ -2002,7 +2007,7 @@ async function processRefundSupersededPaymentOperation(
 
   const refreshedTransaction = await readSupersededRefundCharge(operation.paymentTransactionId);
   const persistedPlan = parseRefundAllocationPlan(operation.allocationPlan);
-  const preflightPlan = await checkCardRefundResend({
+  const { plan: preflightPlan, listedByTransaction } = await preflightCardRefundResend({
     operation,
     stripeKeyPrefix: operation.idempotencyKey,
     plan: persistedPlan ?? [{ paymentTransactionId: refreshedTransaction.id, amountCents: operation.amountCents }],
@@ -2023,6 +2028,8 @@ async function processRefundSupersededPaymentOperation(
     await completePaymentRecoveryOperation(operation);
     return "done";
   }
+  // #4858: a plan-less row sized on another door's refund holds, read after the sizing read above.
+  await holdSupersededRowSizedOnAnotherRefund({ operation, listed: listedByTransaction.get(refreshedTransaction.id) ?? [] });
 
   const metadata = cardRefundOperationRefundMetadata(operation);
   // #4516 (M4c): the debt this row pays (its capture's return, the R05 posted here if its door deferred it).

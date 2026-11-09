@@ -6,6 +6,7 @@ import {
   cardRefundsAttributedByOperation,
   cardRefundSlicesByOperation,
   carriesCardRefundOperationMetadata,
+  type CardRefundAttributionRow,
   isOwnUnstampedCardRefund,
   parseRefundAllocationPlan,
   unsentSliceCents,
@@ -376,20 +377,24 @@ export function unadoptedOwnStripeRefunds(
 }
 
 /**
- * #4368 review R1: a superseded intent's refund with no plan is sized on its
- * charge's ledger, which a refund another door made counts as paid - and the
- * owed figure's attribution may give that refund to this row's slice. If it
- * then fails later, the failed-later writer (`findOwner`) does not take it as
- * this row's (it lacks this row's metadata) and raises a row of its own to pay
- * it, while this row's runner re-sizes on the ledger with that headroom back:
- * the money would go twice. So the ledger sizing is trusted only while every
- * refund the attribution gives this row is one this row's own request made
- * (`carriesCardRefundOperationMetadata`, on Stripe's own listing, read before
- * the locks). Returns the refunds that are not - another door's, the Stripe
- * dashboard's, or ones Stripe did not list.
+ * #4368 review R1, #4858 (`INV-SSOT`): THE ONE RULE OF WHEN A PLAN-LESS
+ * SUPERSEDED ROW'S LEDGER SIZING CANNOT BE TRUSTED. A superseded intent's
+ * refund with no plan is sized on its charge's ledger, which a refund another
+ * door made counts as paid - and the owed figure's attribution may give that
+ * refund to this row's slice. If it then fails later, the failed-later writer
+ * (`findOwner`) does not take it as this row's (it lacks this row's metadata)
+ * and raises a row of its own to pay it, while this row's runner re-sizes on
+ * the ledger with that headroom back: the money would go twice. So the ledger
+ * sizing is trusted only while every refund the attribution gives this row is
+ * one this row's own request made (`carriesCardRefundOperationMetadata`, on
+ * Stripe's own listing). Returns the refunds that are not - another door's,
+ * the Stripe dashboard's, or ones Stripe did not list. Its readers: "Try the
+ * card again" refuses a re-arm (read before the locks), and the runner holds
+ * the row before it sends (`holdSupersededRowSizedOnAnotherRefund`, #4858).
+ * Empty for a row with a stored plan: its slices are sent as written.
  */
 export function foreignRefundsSizingSupersededRow(
-  payment: DeadCardRefundPayment,
+  payment: CardRefundAttributionRow,
   operation: { id: string; type: string; idempotencyKey: string; stripeKeyPrefix: string | null; bookingId: string; allocationPlan: unknown },
   listed: ReadonlyArray<ListedStripeRefund>,
 ): string[] {
