@@ -470,7 +470,7 @@ are the literal `1`.
 | **Per-lodge capacity** | `hashtextextended(<lodgeId>, 0)` | `acquireLodgeCapacityLock(tx, lodgeId)` (`lodge-capacity-lock.ts`, re-exported by `capacity.ts`) | 1 | Capacity claims/checks and bed-allocation mutations for one lodge; booking admission versus lodge deactivation; hut-leader overlap, optional bed-hold writes and assignment DELETE (#2698: removing a custodian hold widens every overlapping whole-lodge hold's represented set); roster eligibility snapshots; and direct or config-transfer chore-template changes, which serialize active-template validation for that lodge. |
 | **Per-member night footprint** | `hashtext("booking-member-night"), hashtext(<memberId>)` | `lockBookingMemberNights(tx, guests)` (`booking-member-night-conflicts.ts`) | cross-lodge | Serialises the person-night guard ACROSS lodges (see below). |
 | **Per-trip hosting coverage** | `hashtext("hosting-coverage-group"), hashtext(<GroupBooking.id>)` | `lockHostingCoverageGroup` / `lockHostingCoverageGroups`, with `tryLockHostingCoverageGroup(s)` tried first (`adult-member-hosting-coverage-lock.ts`) | cross-account | Serialises `SAME_GROUP_TRIP` coverage (#3039, epic #2943). The owner key cannot do this job: it is `Booking.memberId`, the DEPENDENT's own account, while every Group Trip source belongs to somebody else — so two writers changing two bookings in one trip hold two DIFFERENT owner keys and are not serialised at all. Not the lodge key either: one lodge holds many unrelated trips. Taken immediately BEFORE the sorted owner keys, because the trip's membership is what decides which owners the reconciliation fan-out will name. Several trips are taken in sorted order, and EVERY acquisition is tried with `pg_try_advisory_xact_lock` before the blocking form — one transaction can discover two trip keys (a booking in one trip whose same-owner dependent sits in another), so sorting within a call cannot order keys discovered in two, and a conflict rolls the whole outer transaction back with the stable `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409 rather than waiting inside a booking transaction. Taken only where the lodge has `SAME_GROUP_TRIP` enabled AND the booking is in a trip. |
-| **Per-owner hosting coverage** | `hashtext("hosting-coverage-owner"), hashtext(<Booking.memberId>)` | `lockHostingCoverageOwner` / `lockHostingCoverageOwners` (`adult-member-hosting-coverage-lock.ts`) | cross-booking | Serialises `SAME_BOOKING_OWNER` coverage (#2576 §9): one booking's compliance depends on another booking of the SAME owner, so the key remains authoritative even though #2600 made allocation-participating confirmation and cancellation compose global → lodge. Taken LAST among the application lock families a caller composes, EXCEPT that since #3039 the per-TRIP hosting coverage key above sits immediately before it — so it is the second of the last two rather than the last. Roster-aware modification paths take global → lodge → roster-date → any applicable member keys → sorted queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-group → coverage-owner; queued incident reconciliation takes hosting policy-set → sorted claimed member-lifecycle keys → sorted claimed `Member FOR KEY SHARE` rows → coverage-group (only where the reconciled booking is in a Group Trip at a lodge with `SAME_GROUP_TRIP` on; the evaluator takes it fail-fast before it reads a sibling as cover) → coverage-owner. Paths that do not use roster or member keys omit those tiers. Ordinary producers try sorted owner keys before re-entering the blocking helper, while merge takes its sorted owner keys only after its one sorted participant `FOR UPDATE` statement. The key is taken only when the lodge actually has the scope enabled. |
+| **Per-owner hosting coverage** | `hashtext("hosting-coverage-owner"), hashtext(<Booking.memberId>)` | `lockHostingCoverageOwner` / `lockHostingCoverageOwners` (`adult-member-hosting-coverage-lock.ts`) | cross-booking | Serialises `SAME_BOOKING_OWNER` coverage (#2576 §9): one booking's compliance depends on another booking of the SAME owner, so the key remains authoritative even though #2600 made allocation-participating confirmation and cancellation compose global → lodge. Taken LAST among the application lock families a caller composes, EXCEPT that since #3039 the per-TRIP hosting coverage key above sits immediately before it — so it is the second of the last two rather than the last. Roster-aware modification paths take global → lodge → roster-date → any applicable member keys → sorted queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-group → coverage-owner; queued incident reconciliation takes hosting policy-set → sorted claimed member-lifecycle keys → sorted claimed `Member FOR KEY SHARE` rows → coverage-group (only where the reconciled booking is in a Group Trip at a lodge with `SAME_GROUP_TRIP` on; the evaluator takes it fail-fast before it reads a sibling as cover) → coverage-owner. Paths that do not use roster or member keys omit those tiers. Ordinary producers try sorted owner keys before re-entering the blocking helper, while merge takes its sorted owner keys only after it holds its participant rows `FOR UPDATE` (taken all at once, never holding one while waiting for another, #4855). The key is taken only when the lodge actually has the scope enabled. |
 | **Per-member credit ledger** | `hashtext("member-credit-ledger"), hashtext(<memberId>)` | `lockMemberCreditLedger(memberId, tx)` (`member-credit.ts`) | — | A member's credit-ledger balance operations (spend, negative-adjustment validation, orphan-restore repair, every applied-credit restore (`restoreCreditFromBooking`, taken inside the caller's transaction after its `lock(1)` and lodge locks, #3792), the Xero inbound applied-credit repair, and the F20 pre-payment-reduction applied-credit clamp `clampAppliedCreditToBookingPrice`, taken inside the modification transaction only when the booking carries applied credit, through its give-back `giveBackAppliedCredit`, which a credit-paid booking's review share also goes through (#3791), taken inside an `EDIT_FINANCIAL_REVIEW` completion after its `lock(1)`, its claim and its re-price, only on the account-credit route with no captured payment, and by a paid booking's price reduction (#3809, `giveBackPaidReductionCredit`), taken inside the batch, date-change and guest-removal transactions (the consent decline and expiry included) in `applyPaymentAdjustments`, after `lock(1)`, the lodge key and any roster-date keys and before any `Payment` row write, only on a PAID or COMPLETED booking with credit applied and a reduction the captured money's basis cannot return, and the #2265 stored-election consumption `consumeStoredCreditElection`, taken inside the `create-payment-intent` pay transaction and the Internet Banking switch transaction only when the booking carries an outstanding election)., and the member whole-lodge approval's credit application (`approveMemberWholeLodgeRequest`, #4019: `applyCreditToBooking` under this lock inside the approval transaction after its `lock(1)` and lodge key and BEFORE the adult-member-hosting reconcile that may take Member rows and the coverage keys). |
 | **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`, `app/api/admin/deletion-requests/[id]/route.ts`, `nomination.ts` approval mapping, `admin-family-group-requests-service.ts`, `member-merge.ts`, `adult-member-hosting-coverage-drain.ts`) | — | Archive/delete of one member; account-deletion approval (the #1756 partner-share prefix — global cohort `lock(1)` + every affected lodge, sorted — and only then member lifecycle → shared standing-subject `Member FOR UPDATE NOWAIT` → exact queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-owner before deactivation and guest unlink); overwrite of one member by application-approval mapping (E10, #1936); linking/removing one member into/from a family group on admin request review; **member merge** (dual-lock on master + loser, E11 #1937, see below — merge takes the merge-only partner-share prefix, so every affected lodge key is held BEFORE this tier while the global cohort key is deliberately NOT taken at all, and the two `member-partner-link:` keys immediately AFTER it, #2595); and the queue-drain handshake that prevents a claimed hosting item from using identities while merge re-points them. |
 | **Membership application** | `hashtext(<application key>)` | `membershipApplicationLockKey` (`nomination.ts`) | — | State transitions of one membership application. |
@@ -1250,7 +1250,13 @@ of budget (`55P03`, the code `NOWAIT` raises), lands on
 `HostingCoverageParticipantRetryError`, which merge converts into its existing
 "participants changed, nothing was saved, re-run the preview" 409. While it waits
 merge holds none of the rows, so it no longer blocks the FK writes of the
-third-party owners in the meantime. Since #3377 one connection in this deployment
+third-party owners in the meantime. **The cost, accepted:** a key share does not
+queue behind a waiting `FOR UPDATE`, and now merge must find every row free at
+the same instant. So steady key-share traffic on several participant rows at
+once (an active survivor and busy owners) can make merge return its 409 after
+10s where the old blocking statement, which kept each row once it had it, might
+have finished. The operator re-runs the merge; never holding one row while
+waiting for another is what removes the deadlock. Since #3377 one connection in this deployment
 does carry a `lock_timeout` — the `migrate` service's, described under
 ["The migration lock timeout"](#the-migration-lock-timeout-3377) below — but that
 service runs `prisma migrate deploy` and no application code, so it never reaches
@@ -2882,8 +2888,13 @@ lockAdultMemberHostingPolicySet(tx)                              policy config
         (#3271 — no-op UPSERT locks existing and absent canonical pairs;
         complete this layer before the authoritative topology re-read)
   → steps 1-3: null self-cycles, resolve collisions, applyMoves
-  → one sorted master/loser/ancillary `Member … FOR UPDATE`        member rows
-  → under-lock hosting re-plan + sorted hosting-coverage-owner     last
+  → master/loser/ancillary `Member … FOR UPDATE`, all at once:     member rows
+        sorted SKIP LOCKED attempts in a savepoint, waiting for one
+        skipped row at a time while holding none (#4855, 10s, T6)
+  → under-lock hosting re-plan
+  → residual-reference refusal: any row still naming the loser 409s
+        (#4855, member-merge-residual-references.ts)
+  → sorted hosting-coverage-owner                                  last
   → contact-create proof re-check + late owner/actor queue sweeps
   → Payment rows naming the loser, sorted, FOR NO KEY UPDATE NOWAIT
         (#4823 — then the attribution move; a held row refuses
@@ -3093,16 +3104,15 @@ filter fixes what the set contains at derivation time; it says nothing about a
 guest row *inserted* at a lodge these members had never booked, between the
 derivation at the top of the merge and the sweep. Step 3b closes that positively
 rather than by argument: it **re-derives the same guest-row lodge set** and 409s
-if the prefix does not cover it — and it does so *after* merge's sorted
-`Member … FOR UPDATE`
+if the prefix does not cover it — and it does so *after* merge holds its
+`Member … FOR UPDATE` rows
 (`lockMemberMergeHostingCoverageParticipants`). `BookingGuest.memberId` is a real
 foreign key to `Member`, so PostgreSQL takes `FOR KEY SHARE` on the referenced
 member row for every INSERT naming it and every UPDATE re-pointing onto it, and
 `FOR KEY SHARE` conflicts with `FOR UPDATE`. Once merge holds both member rows
-`FOR UPDATE`, no such write can commit until merge does — the same property
-`adult-member-hosting-queue-participants.ts` already documents from the other
-side ("blocks every FK write naming those members, so an uninvolved
-booking-create or guest-add can wait behind the tail of a merge"). So the
+`FOR UPDATE`, no such write can commit until merge does: once merge holds its
+participant rows, every FK write naming one of those members waits behind the
+tail of the merge (`adult-member-hosting-queue-participants.ts`). So the
 re-derived set is **frozen for the remainder of the transaction**, and passing
 the subset check is a statement about the future rather than about that instant.
 
@@ -3462,7 +3472,7 @@ Why not the other fixes:
   inverts the shared order. An edit door run by an officer who is the
   survivor would hold the booking row and wait for the Member row, while merge
   held the Member row and waited for the booking row. It would also split
-  #2597's one sorted participant statement: the ancillary owners are known only
+  #2597's one participant set: the ancillary owners are known only
   after the moves, and #2672's coverage re-derivation is a fence only below that
   statement.
 - **Merge takes its Member rows `NOWAIT`.** #2623 T6 kept that wait, bounded at
