@@ -214,9 +214,10 @@ const ROUTE_AREAS = buildRouteAreas(ADMIN_PAGES);
 /**
  * The route map's page half, old and hub paths alike, deepest first.
  * `admin-permissions.ts` puts it ahead of its hand-written `/api/admin` half.
+ * Frozen, entries included: the resolver reads it on every request.
  */
 export const ADMIN_PAGE_ROUTE_AREAS: readonly AdminPageRouteArea[] = Object.freeze(
-  ROUTE_AREAS.entries,
+  ROUTE_AREAS.entries.map((entry) => Object.freeze(entry)),
 );
 
 // ---------------------------------------------------------------------------
@@ -225,9 +226,22 @@ export const ADMIN_PAGE_ROUTE_AREAS: readonly AdminPageRouteArea[] = Object.free
 
 type SpecialAdmission = Exclude<AdminPageAdmission, "area">;
 
-function buildAdmissionPaths(
+/**
+ * Old and hub paths of every page admitted by a special rule, by rule, frozen.
+ *
+ * A special rule matches by PREFIX, so it reaches everything beneath the path
+ * it names. Two shapes would therefore hand it to pages that never asked for
+ * it, and both are refused rather than widened:
+ * - a dynamic page, whose rule would sit on its static head and so cover every
+ *   sibling beneath that head;
+ * - a page with another registered page beneath its old or hub path — a hub
+ *   landing page at the hub's root, say, whose `any-admin` would admit any
+ *   administrator to every page of the hub (#4799 security review, H1).
+ */
+// test seam
+export function buildAdmissionPaths(
   pages: readonly AdminHubPage[],
-): Record<SpecialAdmission, readonly string[]> {
+): Readonly<Record<SpecialAdmission, readonly string[]>> {
   const paths: Record<SpecialAdmission, string[]> = {
     "any-admin": [],
     "fees-or": [],
@@ -235,16 +249,29 @@ function buildAdmissionPaths(
   };
   for (const page of pages) {
     if (page.admission === "area") continue;
-    // A special rule matches by prefix, so a dynamic page would hand it to
-    // every sibling beneath the static head. Refuse rather than widen.
     if (staticHead(page.oldPath) !== page.oldPath) {
       throw new Error(`admin security map: ${page.id} has a ${page.admission} admission on a dynamic path`);
     }
-    for (const path of [page.oldPath, page.hubPath]) {
+    const own = [page.oldPath, page.hubPath];
+    const beneath = pages.find(
+      (other) =>
+        other !== page &&
+        [other.oldPath, other.hubPath].some((path) => own.some((root) => nestsUnder(path, root))),
+    );
+    if (beneath) {
+      throw new Error(
+        `admin security map: ${page.id} has a ${page.admission} admission over ${beneath.id}, which sits beneath it`,
+      );
+    }
+    for (const path of own) {
       if (!paths[page.admission].includes(path)) paths[page.admission].push(path);
     }
   }
-  return paths;
+  return Object.freeze({
+    "any-admin": Object.freeze(paths["any-admin"]),
+    "fees-or": Object.freeze(paths["fees-or"]),
+    "rooms-beds-or": Object.freeze(paths["rooms-beds-or"]),
+  });
 }
 
 /**
@@ -298,7 +325,10 @@ function buildModuleGates(pages: readonly AdminHubPage[]) {
       pages,
     );
     hubHalf.push(...relocated);
-    byFlag.set(flag, [...new Set([...oldHalf, ...relocated.map(({ prefix }) => prefix)])]);
+    byFlag.set(
+      flag,
+      Object.freeze([...new Set([...oldHalf, ...relocated.map(({ prefix }) => prefix)])]),
+    );
   }
   return { byFlag, hubHalf };
 }
@@ -306,8 +336,9 @@ function buildModuleGates(pages: readonly AdminHubPage[]) {
 const MODULE_GATES = buildModuleGates(ADMIN_PAGES);
 
 /**
- * The admin page prefixes each module gates, old and hub paths alike.
- * `FEATURE_ROUTE_RULES` adds them to the rule for that module.
+ * The admin page prefixes each module gates, old and hub paths alike, each list
+ * frozen. `FEATURE_ROUTE_RULES` copies them into the rule for that module once,
+ * when it loads; the map is read nowhere else at runtime.
  */
 export const ADMIN_PAGE_MODULE_GATES: ReadonlyMap<FeatureFlagKey, readonly string[]> =
   MODULE_GATES.byFlag;

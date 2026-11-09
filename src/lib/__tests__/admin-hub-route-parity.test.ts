@@ -26,6 +26,7 @@ import {
   ADMIN_PAGE_ADMISSION_PATHS,
   ADMIN_PAGE_MODULE_GATES,
   ADMIN_PAGE_ROUTE_AREAS,
+  buildAdmissionPaths,
 } from "@/lib/admin-hubs/security-map";
 import { SWEEP_GRIDS } from "@/lib/__tests__/helpers/admin-sweep-grids";
 
@@ -675,6 +676,112 @@ describe("the generated old half is main's hand-written page half", () => {
     expect(ANY_ADMIN_ADMISSION_PATHS).toEqual(ADMIN_PAGE_ADMISSION_PATHS["any-admin"]);
     for (const paths of Object.values(ADMIN_PAGE_ADMISSION_PATHS)) {
       expect(paths.filter(isHubHalf)).toHaveLength(paths.length / 2);
+    }
+  });
+});
+
+/**
+ * A special admission matches by PREFIX, so it reaches every page beneath the
+ * path it names. The generator refuses any shape that would hand it to a page
+ * that did not ask for it, rather than widen (#4799 security review, H1).
+ */
+describe("a special admission never reaches another page", () => {
+  const page = (id: string): AdminHubPage => {
+    const found = ADMIN_PAGES.find((candidate) => candidate.id === id);
+    if (!found) throw new Error(`no registry page ${id}`);
+    return found;
+  };
+
+  it("accepts today's registry, where no page sits beneath a special one", () => {
+    expect(buildAdmissionPaths(ADMIN_PAGES)).toEqual(ADMIN_PAGE_ADMISSION_PATHS);
+  });
+
+  it("refuses a hub landing page with a special admission over its hub's pages", () => {
+    // The C13 shape: a landing page AT the hub root, admitted on any-admin,
+    // would admit every administrator to every page of the hub.
+    const landing: AdminHubPage = {
+      ...page("payments"),
+      id: "finance-landing",
+      oldPath: "/admin/finance-landing",
+      hubPath: hubRoot("finance"),
+      admission: "any-admin",
+    };
+    expect(() => buildAdmissionPaths([landing, page("payments")])).toThrow(
+      /finance-landing has a any-admin admission over payments, which sits beneath it/,
+    );
+  });
+
+  it("refuses a special admission with another page beneath its old path", () => {
+    const history: AdminHubPage = {
+      ...page("fees"),
+      id: "fees-history",
+      oldPath: "/admin/fees/history",
+      hubPath: "/admin/rules/fees/history",
+      admission: "area",
+    };
+    expect(() => buildAdmissionPaths([page("fees"), history])).toThrow(
+      /fees has a fees-or admission over fees-history/,
+    );
+  });
+
+  it("refuses one with a dynamic page beneath it, and one on a dynamic path", () => {
+    const detail: AdminHubPage = {
+      ...page("rooms-beds"),
+      id: "rooms-beds-room",
+      oldPath: "/admin/rooms-beds/[id]",
+      hubPath: "/admin/lodge-ops/rooms-beds/[id]",
+      admission: "area",
+    };
+    expect(() => buildAdmissionPaths([page("rooms-beds"), detail])).toThrow(
+      /rooms-beds has a rooms-beds-or admission over rooms-beds-room/,
+    );
+    expect(() =>
+      buildAdmissionPaths([{ ...detail, admission: "rooms-beds-or" }]),
+    ).toThrow(/rooms-beds-room has a rooms-beds-or admission on a dynamic path/);
+  });
+
+  it("still accepts a special page beside, not over, another page", () => {
+    // `/admin/club-format-x` shares a string prefix with `/admin/club-format`
+    // but does not sit beneath it.
+    const sibling: AdminHubPage = {
+      ...page("club-format"),
+      id: "club-format-x",
+      oldPath: "/admin/club-format-x",
+      hubPath: "/admin/settings/club-format-x",
+      admission: "area",
+    };
+    expect(buildAdmissionPaths([page("club-format"), sibling])["any-admin"]).toEqual([
+      "/admin/club-format",
+      "/admin/settings/club-format",
+    ]);
+  });
+});
+
+/**
+ * The generated tables are read on every request, so they are frozen: nothing
+ * can widen an admission by mutating one after load (#4799 security review, H2).
+ */
+describe("the generated tables are frozen", () => {
+  it("freezes the route map's page half, entry by entry", () => {
+    expect(Object.isFrozen(ADMIN_PAGE_ROUTE_AREAS)).toBe(true);
+    expect(ADMIN_PAGE_ROUTE_AREAS.filter((entry) => !Object.isFrozen(entry))).toEqual([]);
+    expect(Object.isFrozen(ADMIN_ROUTE_MAP)).toBe(true);
+    expect(ADMIN_ROUTE_MAP.filter((entry) => !Object.isFrozen(entry))).toEqual([]);
+  });
+
+  it("freezes the admission paths, the record and each list", () => {
+    expect(Object.isFrozen(ADMIN_PAGE_ADMISSION_PATHS)).toBe(true);
+    for (const [rule, paths] of Object.entries(ADMIN_PAGE_ADMISSION_PATHS)) {
+      expect(Object.isFrozen(paths), rule).toBe(true);
+    }
+    expect(Object.isFrozen(ANY_ADMIN_ADMISSION_PATHS)).toBe(true);
+    expect(() => (ADMIN_PAGE_ADMISSION_PATHS["fees-or"] as string[]).push("/admin")).toThrow(TypeError);
+  });
+
+  it("freezes each module gate list", () => {
+    expect(ADMIN_PAGE_MODULE_GATES.size).toBeGreaterThan(15);
+    for (const [flag, prefixes] of ADMIN_PAGE_MODULE_GATES) {
+      expect(Object.isFrozen(prefixes), flag).toBe(true);
     }
   });
 });
