@@ -87,7 +87,7 @@ import {
   NOTHING_LEFT_OWED_MARKER,
   tryDeadCardRefundAgain,
 } from "@/lib/card-refund-dead-row-actions";
-import { deadCardRefundOperationWhere, laterStripeRefundsCovering, tryCardAgainRefusal } from "@/lib/card-refund-dead-row";
+import { deadCardRefundOperationWhere, laterStripeRefundsCovering, supersededCloseFillsItsCharge, tryCardAgainRefusal } from "@/lib/card-refund-dead-row";
 import { cardRefundOperationRefundMetadata } from "@/lib/payment-recovery-keys";
 import { isOwnUnstampedCardRefund } from "@/lib/open-card-refund-owed";
 import { rearmedPaymentRecoveryOperationData } from "@/lib/payment-recovery-constants";
@@ -484,6 +484,7 @@ describe("tryCardAgainRefusal: when a re-arm could pay the member more than is o
   const own = {
     id: "op-1",
     type: "REFUND_BOOKING_MODIFICATION",
+    paymentId: "p-1",
     amountCents: 15_000,
     idempotencyKey: "booking_cancel_refund_recovery_b-1",
     lastError: "Stripe: card_declined",
@@ -522,13 +523,13 @@ describe("tryCardAgainRefusal: when a re-arm could pay the member more than is o
   });
 
   describe("review S1: a superseded intent's refund with no plan is sized on its charge's ledger", () => {
-    const superseded = (charge: { amountCents: number; refundedAmountCents: number } | null) => ({
+    const superseded = (charge: { amountCents: number; refundedAmountCents: number; paymentId?: string } | null) => ({
       ...own,
       id: "op-s",
       type: "REFUND_SUPERSEDED_PAYMENT",
       idempotencyKey: "refund_superseded_payment_pi_old",
       allocationPlan: null,
-      paymentTransaction: charge,
+      paymentTransaction: charge ? { paymentId: "p-1", ...charge } : null,
     });
 
     it("MUTATION: allowed when its charge holds what it owes - its runner sends that, and no more", () => {
@@ -556,6 +557,36 @@ describe("tryCardAgainRefusal: when a re-arm could pay the member more than is o
       expect(tryCardAgainRefusal(failedLater, superseded({ amountCents: 15_000, refundedAmountCents: 0 }), owed)).toMatch(/Settle it with Paid another way/);
       // Part refunded before: Paid another way refuses it, so the refusal says to ask a developer.
       expect(tryCardAgainRefusal(failedLater, superseded({ amountCents: 15_000, refundedAmountCents: 4_000 }), owed)).toMatch(/ask a developer/);
+    });
+
+    it("MUTATION (review R2): another payment's charge is never the row's - for its size or for Paid another way", () => {
+      expect(tryCardAgainRefusal(others(), superseded({ amountCents: 15_000, refundedAmountCents: 0, paymentId: "p-other" }), owed)).toMatch(
+        /keeps no record.*ask a developer/,
+      );
+    });
+
+    it("MUTATION (review R1): refused while the owed figure gives it a refund its own request did not make", async () => {
+      const row = deadOperation({ id: "op-1", type: "REFUND_SUPERSEDED_PAYMENT", idempotencyKey: "refund_superseded_payment_pi_old", paymentTransactionId: "txn-1", allocationPlan: null, amountCents: 20_000 });
+      mocks.findOperation.mockResolvedValue(row);
+      mocks.preReadOperation.mockResolvedValue({ paymentId: "p-1", paymentTransactionId: "txn-1", allocationPlan: null });
+      // Another door refunded 5,000 of the charge after the row was raised: the owed figure gives it to this row.
+      const other = { ...LATER_REFUND, stripeRefundId: "re_other_door", amountCents: 5_000 };
+      mocks.findPayment.mockResolvedValue(payment([row], { refundedAmountCents: 5_000, status: "PARTIALLY_REFUNDED", refunds: [other] }));
+      mocks.findCharge.mockResolvedValue({ paymentId: "p-1", amountCents: 20_000, refundedAmountCents: 5_000 });
+      const otherDoor = { id: "re_other_door", object: "refund", amount: 5_000, status: "succeeded", payment_intent: "pi_1", metadata: { bookingId: "b-1", reason: "booking_modification" } };
+      mocks.listRefunds.mockResolvedValue([otherDoor]);
+      const re = () => tryDeadCardRefundAgain({ operationId: "op-1", expectedOwedCents: 15_000, actingMemberId: "treasurer-1" });
+      await expect(re()).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/part refunded by another refund \(re_other_door\)/) });
+      // Unlisted by Stripe: not shown to be its own, so refused too.
+      mocks.listRefunds.mockResolvedValue([]);
+      await expect(re()).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/re_other_door/) });
+      expect(mocks.claim).not.toHaveBeenCalled();
+      // Its own request's refund (this row's metadata) passes this rule - and, carrying no slice key and no mark, is
+      // still refused by the unmatched-own-refund rule (review B), never by this one.
+      mocks.listRefunds.mockResolvedValue([{ ...otherDoor, metadata: cardRefundOperationRefundMetadata(row) }]);
+      const own = await refusal(re());
+      expect(own.message).not.toMatch(/part refunded by another refund/);
+      expect(own.message).toMatch(/this booking's same kind of refund/);
     });
 
     it("MUTATION: the re-arm reads the charge under the locks and goes ahead", async () => {
@@ -605,5 +636,19 @@ describe("isOwnUnstampedCardRefund (#4368 review F3, S2): this row's door, no sl
     expect(isOwnUnstampedCardRefund(row, { ...door, reason: "something_else" })).toBe(false);
     expect(isOwnUnstampedCardRefund(row, { ...door, extra: "x" })).toBe(false);
     expect(isOwnUnstampedCardRefund(row, null)).toBe(false);
+  });
+});
+
+describe("supersededCloseFillsItsCharge (#4368 review R2): when Paid another way can close a superseded intent's refund", () => {
+  const owed = { ownCents: 15_000, owedCents: 15_000 };
+  const charge = { paymentId: "p-1", amountCents: 15_000, refundedAmountCents: 0 };
+
+  it("MUTATION: true only while its charge, on its own payment, holds exactly what it owes - all of it, more than nothing", () => {
+    expect(supersededCloseFillsItsCharge(charge, "p-1", owed)).toBe(true);
+    expect(supersededCloseFillsItsCharge({ ...charge, refundedAmountCents: 1 }, "p-1", owed)).toBe(false);
+    expect(supersededCloseFillsItsCharge(charge, "p-other", owed)).toBe(false);
+    expect(supersededCloseFillsItsCharge(null, "p-1", owed)).toBe(false);
+    expect(supersededCloseFillsItsCharge(charge, "p-1", { ownCents: 15_000, owedCents: 10_000 })).toBe(false);
+    expect(supersededCloseFillsItsCharge({ ...charge, refundedAmountCents: 15_000 }, "p-1", { ownCents: 0, owedCents: 0 })).toBe(false);
   });
 });

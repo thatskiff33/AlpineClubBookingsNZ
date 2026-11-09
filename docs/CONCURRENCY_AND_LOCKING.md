@@ -6498,7 +6498,10 @@ exactly the row's own unsent figure the treasurer confirms, or the row keeps no
 plan (review F1: a slice a recorded refund filled but nobody marked would be
 sent again) - except a superseded intent's refund with no plan, whose runner
 sizes one request on its charge's ledger, read under the Payment row, and so
-never sends more than the row owes (review S1); and where Stripe lists a counted refund this booking's same kind
+never sends more than the row owes (review S1) - trusted only while every
+refund the owed figure gives the row is one its own request made, by Stripe's
+listing: another door's, once failed later, would be owed on a row of its own
+while the ledger handed its headroom back (review R1); and where Stripe lists a counted refund this booking's same kind
 of refund made with no slice key that no slice is marked with
 (`unadoptedOwnStripeRefunds`). That list is read before the transaction
 through the preflight's own bounded read (`listRefundsOnCardCharge`); one it
@@ -6506,8 +6509,8 @@ cannot read refuses, and a plan that moved since it was read is refused under
 the locks (review F4). The
 failed-later writer raises its rows under the Payment row, so that check and
 the raise are ordered. STATED LIMIT: a refund another door made for the same
-money, with other metadata and not recorded here, that fails after a re-arm is
-raised beside the live row - the #4104 failed-later family's open question
+money that the owed figure does not match to this row, failing after a re-arm,
+is raised beside the live row - the #4104 failed-later family's open question
 (#4492), which a re-arm does not answer. Proven by `card-refund-dead-row-actions.realdb.test.ts`: a re-arm and a
 "Paid another way" close queued behind a held `lock(1)` in both orders, a plan
 or status moved under the Payment row, "Nothing left owed" against a refund

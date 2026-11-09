@@ -5,6 +5,7 @@ import {
   CARD_REFUND_OPERATION_WHERE,
   cardRefundsAttributedByOperation,
   cardRefundSlicesByOperation,
+  carriesCardRefundOperationMetadata,
   isOwnUnstampedCardRefund,
   parseRefundAllocationPlan,
   unsentSliceCents,
@@ -221,9 +222,7 @@ export function tryCardAgainRefusal(
     return "Nothing is left owed on this card refund, so there is nothing to send to the card.";
   }
   // Review S1: where "Paid another way" cannot close it either, the refusal says so and points to a developer.
-  const settle = paidAnotherWayCanClose(operation, owed)
-    ? "Settle it with Paid another way."
-    : "Paid another way cannot close it either, so ask a developer to reconcile it.";
+  const settle = deadRowSettleHint(operation, owed);
   if (raisedForAPerson(operation.idempotencyKey)) {
     return `The app raised this refund for a person to settle, not to send to the card again. Check what the member is owed. ${settle}`;
   }
@@ -239,7 +238,7 @@ export function tryCardAgainRefusal(
   }
   // A superseded intent's runner sends what its charge still holds, up to its amount: never more than the row's own
   // unsent figure, and less only where its charge was already part refunded - the money truly left to return (S1).
-  const sizedOnLedger = operation.type === "REFUND_SUPERSEDED_PAYMENT" && !parseRefundAllocationPlan(operation.allocationPlan)?.length;
+  const sizedOnLedger = isSizedOnLedger(operation);
   if (sizedOnLedger && sends === 0) {
     return `This refund's card charge holds nothing more to refund, so there is nothing to send to the card. ${settle}`;
   }
@@ -255,21 +254,67 @@ export function tryCardAgainRefusal(
 /** What a re-arm's send is read from: the row's stored plan, or a superseded intent's own charge (review S1). */
 export interface ReArmedRow {
   type: string;
+  paymentId: string;
   amountCents: number;
   allocationPlan: unknown;
-  /** A superseded intent's charge, as its runner reads it; null or absent where unknown. */
-  paymentTransaction?: { amountCents: number; refundedAmountCents: number } | null;
+  /** A superseded intent's charge, as its runner reads it; null or absent where unknown. Another payment's is ignored. */
+  paymentTransaction?: SupersededCharge | null;
+}
+
+/** A superseded intent's charge, as its refund's settlements read it. */
+export interface SupersededCharge {
+  paymentId: string;
+  amountCents: number;
+  refundedAmountCents: number;
+}
+
+/** The row's charge, only while it is on the row's own payment (review R2: one rule for the list, the re-arm and the close). */
+function ownCharge(operation: Pick<ReArmedRow, "paymentId" | "paymentTransaction">): SupersededCharge | null {
+  const charge = operation.paymentTransaction;
+  return charge && charge.paymentId === operation.paymentId ? charge : null;
 }
 
 /**
- * Review S1: whether "Paid another way" could close this row, so a refusal can
- * point to it. It closes any row except a superseded intent's refund whose
- * charge does not hold exactly what it owes (`assertSupersededCloseFillsItsTransaction`).
+ * #4368 review R2 (`INV-SSOT`): THE ONE RULE OF WHEN "PAID ANOTHER WAY" CAN
+ * CLOSE A SUPERSEDED INTENT'S REFUND - in full only, never for nothing, never
+ * below its own unsent figure, and only while what it owes is exactly what its
+ * charge on its own payment still holds, so the whole of it lands there and
+ * the charge reads fully refunded (#3924 round 4, M7; round 5, F3). The close
+ * enforces it (`assertSupersededCloseFillsItsTransaction`), and "Try the card
+ * again" reads it to say whether "Paid another way" is the way out.
  */
-function paidAnotherWayCanClose(operation: ReArmedRow, owed: Pick<DeadCardRefundStillOwed, "ownCents" | "owedCents">): boolean {
-  if (operation.type !== "REFUND_SUPERSEDED_PAYMENT") return true;
-  const charge = operation.paymentTransaction;
-  return !!charge && owed.ownCents > 0 && owed.owedCents === owed.ownCents && charge.amountCents - charge.refundedAmountCents === owed.ownCents;
+export function supersededCloseFillsItsCharge(
+  charge: SupersededCharge | null | undefined,
+  paymentId: string,
+  owed: Pick<DeadCardRefundStillOwed, "ownCents" | "owedCents">,
+): boolean {
+  return (
+    !!charge &&
+    charge.paymentId === paymentId &&
+    owed.ownCents > 0 &&
+    owed.owedCents === owed.ownCents &&
+    charge.amountCents - charge.refundedAmountCents === owed.ownCents
+  );
+}
+
+/**
+ * Review S1, R1: where "Paid another way" cannot close this row either - a
+ * superseded intent's refund whose charge does not hold exactly what it owes
+ * (`supersededCloseFillsItsCharge`) - a refusal points to a developer instead.
+ */
+export function deadRowSettleHint(
+  operation: Pick<ReArmedRow, "type" | "paymentId" | "paymentTransaction">,
+  owed: Pick<DeadCardRefundStillOwed, "ownCents" | "owedCents">,
+): string {
+  const canClose =
+    operation.type !== "REFUND_SUPERSEDED_PAYMENT" ||
+    supersededCloseFillsItsCharge(operation.paymentTransaction, operation.paymentId, owed);
+  return canClose ? "Settle it with Paid another way." : "Paid another way cannot close it either, so ask a developer to reconcile it.";
+}
+
+/** A superseded intent's refund with no stored plan: its runner sizes one request on its charge's ledger (S1). */
+export function isSizedOnLedger(operation: Pick<ReArmedRow, "type" | "allocationPlan">): boolean {
+  return operation.type === "REFUND_SUPERSEDED_PAYMENT" && !parseRefundAllocationPlan(operation.allocationPlan)?.length;
 }
 
 /**
@@ -289,9 +334,8 @@ function paidAnotherWayCanClose(operation: ReArmedRow, owed: Pick<DeadCardRefund
 export function reArmWouldSendCents(operation: ReArmedRow): number | null {
   const plan = parseRefundAllocationPlan(operation.allocationPlan);
   if (plan && plan.length > 0) return plan.reduce((sum, slice) => sum + (slice.madeRefundId ? 0 : slice.amountCents), 0);
-  if (operation.type === "REFUND_SUPERSEDED_PAYMENT" && operation.paymentTransaction) {
-    return refundHeadroomIncrementCents(operation.paymentTransaction, operation.amountCents);
-  }
+  const charge = ownCharge(operation);
+  if (operation.type === "REFUND_SUPERSEDED_PAYMENT" && charge) return refundHeadroomIncrementCents(charge, operation.amountCents);
   return null;
 }
 
@@ -329,4 +373,31 @@ export function unadoptedOwnStripeRefunds(
         isRecordedRefundStatus(refund.status ?? "unknown") && isOwnUnstampedCardRefund(operation, refund.metadata) && !marked.has(refund.id),
     )
     .map((refund) => refund.id);
+}
+
+/**
+ * #4368 review R1: a superseded intent's refund with no plan is sized on its
+ * charge's ledger, which a refund another door made counts as paid - and the
+ * owed figure's attribution may give that refund to this row's slice. If it
+ * then fails later, the failed-later writer (`findOwner`) does not take it as
+ * this row's (it lacks this row's metadata) and raises a row of its own to pay
+ * it, while this row's runner re-sizes on the ledger with that headroom back:
+ * the money would go twice. So the ledger sizing is trusted only while every
+ * refund the attribution gives this row is one this row's own request made
+ * (`carriesCardRefundOperationMetadata`, on Stripe's own listing, read before
+ * the locks). Returns the refunds that are not - another door's, the Stripe
+ * dashboard's, or ones Stripe did not list.
+ */
+export function foreignRefundsSizingSupersededRow(
+  payment: DeadCardRefundPayment,
+  operation: { id: string; type: string; idempotencyKey: string; stripeKeyPrefix: string | null; bookingId: string; allocationPlan: unknown },
+  listed: ReadonlyArray<ListedStripeRefund>,
+): string[] {
+  if (!isSizedOnLedger(operation)) return [];
+  return (cardRefundsAttributedByOperation(payment).get(operation.id) ?? [])
+    .filter((refund) => {
+      const onStripe = listed.find((each) => each.id === refund.stripeRefundId);
+      return !onStripe || !carriesCardRefundOperationMetadata(operation, onStripe.metadata);
+    })
+    .map((refund) => refund.stripeRefundId);
 }

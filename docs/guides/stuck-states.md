@@ -364,17 +364,17 @@ could pay the member more than they are owed:
   app would send more than is owed, or the refund keeps no record of exactly
   what it would send;
 - the card charge of a refund that replaces a superseded payment holds
-  nothing more to refund.
-
-Where **Paid another way** cannot close the refund either - a refund that
-replaces a superseded payment whose charge no longer holds exactly what it
-owes - the row says to ask a developer instead.
+  nothing more to refund, or another refund has already returned part of it;
 - the app raised the refund for a person to settle, not to send again: a
   refund Stripe failed later that is not asked for again, or the rest of a
   part close that is still owed;
 - a refund Stripe failed later is on the same payment, whether it is still
   owed or has since been sent again. The two may be the same money, so check
   what the member is owed and settle it with **Paid another way**.
+
+Where **Paid another way** cannot close the refund either - a refund that
+replaces a superseded payment whose charge no longer holds exactly what it
+owes - the row says to ask a developer instead.
 
 If the list changes while the dialog is open, for example someone else
 settles the refund, the request is refused and the list refreshes.

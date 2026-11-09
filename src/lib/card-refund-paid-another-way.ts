@@ -37,6 +37,7 @@ import {
   deadCardRefundStillOwed,
   lastErrorSuggestsStripeMayHaveRefunded,
   laterStripeRefundsCovering,
+  supersededCloseFillsItsCharge,
   tryCardAgainRefusal,
   type LaterStripeRefund,
 } from "@/lib/card-refund-dead-row";
@@ -221,7 +222,7 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
       ...DEAD_CARD_REFUND_OPERATION_SELECT,
       payment: { select: DEAD_CARD_REFUND_PAYMENT_SELECT },
       // #4368 review S1: a superseded intent's charge, which "Try the card again"'s check reads.
-      paymentTransaction: { select: { amountCents: true, refundedAmountCents: true } },
+      paymentTransaction: { select: { paymentId: true, amountCents: true, refundedAmountCents: true } },
     },
   });
   const listed = operations
@@ -303,7 +304,7 @@ function paidAnotherWayReason(bookingId: string, paidBack: PaidBackChoice, rest:
 async function assertSupersededCloseFillsItsTransaction(
   tx: Prisma.TransactionClient,
   operation: { paymentTransactionId: string | null; paymentId: string },
-  ownCents: number,
+  owed: { ownCents: number; owedCents: number },
 ): Promise<void> {
   const transaction = operation.paymentTransactionId
     ? await tx.paymentTransaction.findUnique({
@@ -311,8 +312,8 @@ async function assertSupersededCloseFillsItsTransaction(
         select: { paymentId: true, amountCents: true, refundedAmountCents: true },
       })
     : null;
-  const remainingCents = transaction ? transaction.amountCents - transaction.refundedAmountCents : null;
-  if (!transaction || transaction.paymentId !== operation.paymentId || remainingCents !== ownCents) {
+  // #4368 review R2 (`INV-SSOT`): the one rule (`supersededCloseFillsItsCharge`), which "Try the card again" reads too.
+  if (!supersededCloseFillsItsCharge(transaction, operation.paymentId, owed)) {
     throw new CardRefundPaidAnotherWayError(
       "This superseded payment's refund no longer matches what its charge still holds, so it cannot be closed here. Ask a developer to reconcile it.",
       409,
@@ -427,7 +428,7 @@ export async function closeCardRefundPaidAnotherWay(
           409,
         );
       }
-      await assertSupersededCloseFillsItsTransaction(tx, operation, ownCents);
+      await assertSupersededCloseFillsItsTransaction(tx, operation, { ownCents, owedCents });
     }
     // F4 / round 6: decided before the record, whose key carries the answer;
     // a late capture's approval task row is taken before its receipt is read.

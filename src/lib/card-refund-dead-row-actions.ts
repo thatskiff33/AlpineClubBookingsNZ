@@ -7,6 +7,8 @@ import { bookingOwner } from "@/lib/booking-owner";
 import {
   DeadCardRefundActionError,
   deadCardRefundStillOwed,
+  deadRowSettleHint,
+  foreignRefundsSizingSupersededRow,
   laterStripeRefundsCovering,
   tryCardAgainRefusal,
   unadoptedOwnStripeRefunds,
@@ -198,11 +200,21 @@ export async function tryDeadCardRefundAgain(input: TryCardAgainInput): Promise<
             select: { paymentId: true, amountCents: true, refundedAmountCents: true },
           })
         : null;
-    const refusal = tryCardAgainRefusal(payment, { ...operation, paymentTransaction: charge?.paymentId === payment.id ? charge : null }, owed);
+    const rowWithCharge = { ...operation, paymentTransaction: charge };
+    const refusal = tryCardAgainRefusal(payment, rowWithCharge, owed);
     if (refusal) throw new DeadCardRefundActionError(refusal, 409);
     // Review F4: Stripe was read for the charges of the plan read then; a plan moved since is not the one checked.
     if (read !== null && JSON.stringify(read.allocationPlan ?? null) !== JSON.stringify(operation.allocationPlan ?? null)) {
       throw new DeadCardRefundActionError(CHANGED_WHILE_SETTLING, 409);
+    }
+    // Review R1: a plan-less superseded row's ledger sizing is trusted only while every refund the owed figure gives
+    // it is one its own request made.
+    const foreign = foreignRefundsSizingSupersededRow(payment, operation, read?.listed ?? []);
+    if (foreign.length > 0) {
+      throw new DeadCardRefundActionError(
+        `This refund's card charge was part refunded by another refund (${foreign.join(", ")}), and if that refund failed later the app would owe it twice, so the card cannot be tried again. ${deadRowSettleHint(rowWithCharge, owed)}`,
+        409,
+      );
     }
     const unadopted = unadoptedOwnStripeRefunds(payment, operation, read?.listed ?? []);
     if (unadopted.length > 0) {

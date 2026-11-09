@@ -575,6 +575,26 @@ let refundCreatedSeconds = 0;
         expect(await operationNow()).toMatchObject({ status: "PENDING", attempts: 0 });
       });
 
+      it("MUTATION (review R1): another door's refund of its charge, given to it by the owed figure, refuses the re-arm", async () => {
+        // The superseded intent's whole charge is what its refund returns.
+        await prisma.paymentTransaction.update({ where: { id: TRANSACTION_ID }, data: { amountCents: REFUND_CENTS } });
+        await prisma.paymentRecoveryOperation.update({
+          where: { id: OPERATION_ID },
+          data: { type: "REFUND_SUPERSEDED_PAYMENT", paymentTransactionId: TRANSACTION_ID, allocationPlan: Prisma.DbNull },
+        });
+        // An edit's inline refund of part of the same charge, made after the row was raised: recorded, and taken by the
+        // owed figure as this row's progress. Were it to fail later, it would be owed on a row of its own while this
+        // row's runner re-sized on the ledger with its headroom back - so the re-arm is refused.
+        const otherDoor = { ...stripeRefund("succeeded", { bookingId: BOOKING_ID, reason: "booking_modification" }), id: "re_race_4368_other_door", amount: 2_000 };
+        await recordStripeRefundsAgainstTransaction({ paymentId: PAYMENT_ID, paymentTransactionId: TRANSACTION_ID, refunds: [otherDoor] as never, fallbackPaymentIntentId: INTENT });
+        stripeRaceHooks.listRefunds = async () => [otherDoor];
+        await expect(
+          actions.tryDeadCardRefundAgain({ operationId: OPERATION_ID, expectedOwedCents: REFUND_CENTS - 2_000, actingMemberId: OFFICER_ID }),
+        ).rejects.toMatchObject({ status: 409, message: expect.stringContaining("part refunded by another refund (re_race_4368_other_door)") });
+        expect(await operationNow()).toMatchObject({ status: "FAILED", attempts: 5 });
+        expect(await auditActions()).toEqual([]);
+      });
+
       it("MUTATION: a legacy booking modification's refund with no plan is refused, and points to Paid another way", async () => {
         await prisma.paymentRecoveryOperation.update({ where: { id: OPERATION_ID }, data: { allocationPlan: Prisma.DbNull } });
         await expect(tryAgain()).rejects.toMatchObject({ status: 409, message: expect.stringContaining("Settle it with Paid another way") });
