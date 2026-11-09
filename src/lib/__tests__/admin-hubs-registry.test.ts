@@ -10,11 +10,8 @@ import {
 } from "next/experimental/testing/server";
 import {
   ADMIN_PERMISSION_AREAS,
-  ADMIN_ROUTE_MAP_PREFIXES,
+  ADMIN_ROUTE_MAP,
   ADMIN_PERMISSION_LEVELS,
-  ANY_ADMIN_ADMISSION_PATHS,
-  CONSOLIDATED_FEES_PATH,
-  ROOMS_BEDS_PATH,
   canOpenAdminPath,
   getAdminRouteRequirement,
   isAnyAdminAdmissionPath,
@@ -50,18 +47,25 @@ import {
   isAdminMenuDestination,
   type AdminHubPage,
 } from "@/lib/admin-hubs/define";
+import {
+  ADMIN_PAGE_ADMISSION_PATHS,
+  adminHubOwnedPaths,
+} from "@/lib/admin-hubs/security-map";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 // ---------------------------------------------------------------------------
 // The admin hub registry (epic #4468, C1 #4798).
 //
-// C2 generates the page half of the security map from this registry, so every
-// fact it records is checked here against what TODAY's code answers for the
-// same path: the page tree on disk, `getAdminRouteRequirement`,
-// `canOpenAdminPath`, `getRequiredFeaturesForPath` and the sidebar. The page
-// list and its resolver pathnames come from the shared enumeration, so this
-// suite measures the tree exactly as the route-map drift guard does
-// (`INV-SSOT-004`).
+// Every fact the registry records is checked here against what the code
+// answers for the same path: the page tree on disk, `getAdminRouteRequirement`,
+// `canOpenAdminPath`, `getRequiredFeaturesForPath` and the sidebar. Since C2
+// (#4799) the page half of those answers is GENERATED from this registry, so
+// for the map they now prove the generator reads each entry as it says; the
+// independent statement of what each page must answer is the frozen oracle in
+// `admin-hub-route-parity.test.ts` and the page pin in
+// `admin-route-area-matrix.test.ts`. The page list and its resolver pathnames
+// come from the shared enumeration, so this suite measures the tree exactly as
+// the route-map drift guard does (`INV-SSOT-004`).
 // ---------------------------------------------------------------------------
 
 /** On-disk page path (`[id]` kept) -> the pathname the resolvers see (`x123`). */
@@ -87,11 +91,11 @@ function diskPath(page: AdminHubPage): string {
 }
 
 /**
- * The pathname today's resolvers are asked about. It is always the OLD path,
- * moved or not: until C2 regenerates the route map from this registry, the map
- * knows only old paths, and the off-state rewrite keeps the proxy and the
- * layout guard seeing them. `concrete` uses the shared enumeration's
- * placeholder, which a test below pins.
+ * The pathname the resolvers are asked about. It is always the OLD path, moved
+ * or not: the off-state rewrite keeps the proxy and the layout guard seeing it.
+ * (C2 generates the map for the hub path too; the parity census proves the two
+ * answer alike.) `concrete` uses the shared enumeration's placeholder, which a
+ * test below pins.
  */
 function resolverPath(page: AdminHubPage): string {
   return concrete(page.oldPath);
@@ -347,7 +351,7 @@ describe("each entry's admission is what today's code gives its old path", () =>
 });
 
 interface PrefixCensusSources {
-  /** Every prefix in today's route map (`ADMIN_ROUTE_MAP_PREFIXES`). */
+  /** Every prefix in today's route map (`ADMIN_ROUTE_MAP`). */
   readonly routeMapPrefixes: readonly string[];
   /** Every module-gated path, labelled. */
   readonly gatedPaths: ReadonlyArray<{ readonly path: string; readonly label: string }>;
@@ -358,12 +362,12 @@ interface PrefixCensusSources {
 }
 
 const TODAYS_SOURCES: PrefixCensusSources = {
-  routeMapPrefixes: ADMIN_ROUTE_MAP_PREFIXES,
+  routeMapPrefixes: ADMIN_ROUTE_MAP.map(({ prefix }) => prefix),
   gatedPaths: FEATURE_ROUTE_RULES.flatMap((rule) => [
     ...(rule.prefixes ?? []).map((p) => ({ path: p, label: `${rule.flag} prefix` })),
     ...(rule.exemptPaths ?? []).map((p) => ({ path: p, label: `${rule.flag} exemption` })),
   ]),
-  specialPaths: [...ANY_ADMIN_ADMISSION_PATHS, CONSOLIDATED_FEES_PATH, ROOMS_BEDS_PATH],
+  specialPaths: Object.values(ADMIN_PAGE_ADMISSION_PATHS).flat(),
   pagePaths: ON_DISK_PAGE_PATHS,
 };
 
@@ -381,6 +385,23 @@ function ownedPagePaths(
 }
 
 /**
+ * What a hub owns beneath its root: the page files it may hold there, and the
+ * rules C2 generates there from its own pages (#4799). Those rules sit under
+ * the root by design — they are each page's old-path rules relocated — so they
+ * are the hub's, not collisions; any OTHER rule beneath the root still is.
+ */
+interface Owned {
+  readonly pages: readonly string[];
+  readonly rules: readonly string[];
+}
+
+const NOTHING_OWNED: Owned = { pages: [], rules: [] };
+
+function ownedBy(hubKey: string, pages: readonly AdminHubPage[] = ADMIN_PAGES): Owned {
+  return { pages: ownedPagePaths(hubKey, pages), rules: adminHubOwnedPaths(hubKey) };
+}
+
+/**
  * Why a hub prefix cannot be used: the reasons it would collide with today's
  * security map, module gates or page tree. Empty means it is safe.
  *
@@ -392,14 +413,13 @@ function ownedPagePaths(
  * also be redirected away from its own URL when the switch goes on.
  *
  * Probing the root finds rules AT or ABOVE it; only the lists find rules
- * BELOW it, so both are needed. Once C2 generates route-map and module
- * prefixes from this registry, a moved page's own generated prefixes sit under
- * its hub root by design, and C2 must exclude them here as `owned` does for
- * the page tree.
+ * BELOW it, so both are needed. The rules C2 generates beneath the root from
+ * the hub's own pages are excluded as `owned.rules`, as moved pages are for the
+ * page tree.
  */
 function hubPrefixCollisions(
   prefix: string,
-  owned: readonly string[] = [],
+  owned: Owned = NOTHING_OWNED,
   sources: PrefixCensusSources = TODAYS_SOURCES,
 ): string[] {
   const root = hubRoot(prefix);
@@ -417,17 +437,18 @@ function hubPrefixCollisions(
     if (flags.length > 0) reasons.push(`${probe} needs the module(s) ${flags.join(", ")}`);
   }
 
+  const foreign = (path: string) => nestsUnder(path, root) && !owned.rules.includes(path);
   for (const mapPrefix of sources.routeMapPrefixes) {
-    if (nestsUnder(mapPrefix, root)) reasons.push(`the route-map prefix ${mapPrefix} sits under it`);
+    if (foreign(mapPrefix)) reasons.push(`the route-map prefix ${mapPrefix} sits under it`);
   }
   for (const { path: gated, label } of sources.gatedPaths) {
-    if (nestsUnder(gated, root)) reasons.push(`${gated} (${label}) sits under it`);
+    if (foreign(gated)) reasons.push(`${gated} (${label}) sits under it`);
   }
   for (const special of sources.specialPaths) {
-    if (nestsUnder(special, root)) reasons.push(`the special path ${special} sits under it`);
+    if (foreign(special)) reasons.push(`the special path ${special} sits under it`);
   }
   for (const page of sources.pagePaths) {
-    if (nestsUnder(page, root) && !owned.includes(page)) {
+    if (nestsUnder(page, root) && !owned.pages.includes(page)) {
       reasons.push(`the existing page ${page} sits under it`);
     }
   }
@@ -437,7 +458,7 @@ function hubPrefixCollisions(
 describe("the hub prefix census", () => {
   it("passes every hub's prefix", () => {
     const collisions = ADMIN_HUBS.flatMap((hub) =>
-      hubPrefixCollisions(hub.prefix, ownedPagePaths(hub.key)).map(
+      hubPrefixCollisions(hub.prefix, ownedBy(hub.key)).map(
         (reason) => `${hub.key} (/admin/${hub.prefix}): ${reason}`,
       ),
     );
@@ -445,8 +466,22 @@ describe("the hub prefix census", () => {
   });
 
   it("reads a non-empty route map", () => {
-    expect(ADMIN_ROUTE_MAP_PREFIXES).toContain("/admin/bookings");
-    expect(Object.isFrozen(ADMIN_ROUTE_MAP_PREFIXES)).toBe(true);
+    expect(TODAYS_SOURCES.routeMapPrefixes).toContain("/admin/bookings");
+    expect(Object.isFrozen(ADMIN_ROUTE_MAP)).toBe(true);
+  });
+
+  it("finds the rules C2 generates beneath each hub, and owns only those", () => {
+    // Non-vacuous: every hub's generated rules really do sit under its root and
+    // would otherwise be reported, so `owned.rules` is doing the excluding.
+    for (const hub of ADMIN_HUBS) {
+      const rules = adminHubOwnedPaths(hub.key);
+      expect(rules.length, hub.key).toBeGreaterThan(0);
+      expect(rules.filter((rule) => !nestsUnder(rule, hubRoot(hub.prefix))), hub.key).toEqual([]);
+    }
+    expect(hubPrefixCollisions("finance").join("\n")).toMatch(
+      /the route-map prefix \/admin\/finance\/payments sits under it/,
+    );
+    expect(hubPrefixCollisions("finance", ownedBy("finance"))).toEqual([]);
   });
 
   it.each([
@@ -461,13 +496,15 @@ describe("the hub prefix census", () => {
     expect(reasons.join("\n")).toMatch(reason);
   });
 
-  it("rejects a prefix that an existing page sits under, even off the route map", () => {
-    // `/admin/dashboard` resolves to the catch-all, so only the page tree
-    // catches it; Home may use it only because the dashboard is its landing.
+  it("lets Home own its dashboard, which is both a page and a rule at its root", () => {
+    // `/admin/dashboard` resolves to `overview` whether through its own rule or
+    // the catch-all, so no probe catches it; Home may use the prefix only
+    // because the dashboard is its landing page and the rule is generated from it.
     expect(hubPrefixCollisions("dashboard")).toEqual([
+      "the route-map prefix /admin/dashboard sits under it",
       "the existing page /admin/dashboard sits under it",
     ]);
-    expect(hubPrefixCollisions("dashboard", ownedPagePaths("dashboard"))).toEqual([]);
+    expect(hubPrefixCollisions("dashboard", ownedBy("dashboard"))).toEqual([]);
   });
 
   it("lets a hub own the pages that have moved under it, and no others", () => {
@@ -477,9 +514,9 @@ describe("the hub prefix census", () => {
     const moved = pages.find((page) => page.id === "payments")!;
     const sources = { ...TODAYS_SOURCES, pagePaths: [...ON_DISK_PAGE_PATHS, moved.hubPath] };
     expect(ownedPagePaths("finance", pages)).toEqual([moved.hubPath]);
-    expect(hubPrefixCollisions("finance", ownedPagePaths("finance", pages), sources)).toEqual([]);
+    expect(hubPrefixCollisions("finance", ownedBy("finance", pages), sources)).toEqual([]);
     // Unmoved in the registry, so the file under the hub is not the hub's.
-    expect(hubPrefixCollisions("finance", ownedPagePaths("finance"), sources)).toEqual([
+    expect(hubPrefixCollisions("finance", ownedBy("finance"), sources)).toEqual([
       `the existing page ${moved.hubPath} sits under it`,
     ]);
   });
@@ -491,7 +528,7 @@ describe("the hub prefix census", () => {
   it.each([
     [
       "route map",
-      { routeMapPrefixes: [...ADMIN_ROUTE_MAP_PREFIXES, "/admin/zz-hub/child"] },
+      { routeMapPrefixes: [...TODAYS_SOURCES.routeMapPrefixes, "/admin/zz-hub/child"] },
       "the route-map prefix /admin/zz-hub/child sits under it",
     ],
     [
@@ -513,7 +550,7 @@ describe("the hub prefix census", () => {
     ],
   ])("rejects a prefix whose only collision is nested in the %s", (_source, override, reason) => {
     expect(hubPrefixCollisions("zz-hub")).toEqual([]);
-    expect(hubPrefixCollisions("zz-hub", [], { ...TODAYS_SOURCES, ...override })).toEqual([reason]);
+    expect(hubPrefixCollisions("zz-hub", NOTHING_OWNED, { ...TODAYS_SOURCES, ...override })).toEqual([reason]);
   });
 });
 
@@ -897,7 +934,9 @@ describe("buildAdminUrlRules", () => {
 
 // ---------------------------------------------------------------------------
 // Inert until C3: nothing outside the registry imports it but the files named
-// below. Each one is a deliberate edit here, so a new reader is reviewed.
+// below. Each one is a deliberate edit here, so a new reader is reviewed. In
+// production only the security map reads it (C2 #4799), and the parity census
+// proves what that map answers did not change.
 // ---------------------------------------------------------------------------
 
 describe("the registry is inert", () => {
@@ -905,11 +944,20 @@ describe("the registry is inert", () => {
   const REGISTRY_DIR = "src/lib/admin-hubs/";
   /** Every file outside the registry that may import it, and why. */
   const IMPORTERS: Record<string, string> = {
+    "src/lib/admin-permissions.ts":
+      "C2: the route map's page half, the admission paths and the landing page are generated",
+    "src/config/feature-routes.ts": "C2: the admin page module gates are generated",
     "src/lib/__tests__/admin-hubs-registry.test.ts": "this suite",
     "src/lib/__tests__/admin-hub-route-parity.test.ts":
       "C2's census: each page's old and hub path answer as main's hand-written map did",
     "src/lib/__tests__/admin-route-area-matrix.test.ts":
       "the reviewed page -> area pin, one row per registered page",
+    "src/lib/__tests__/admin-route-authorization-proof.test.ts":
+      "sweeps every page at its old and hub path through the real guards",
+    "src/lib/__tests__/admin-route-map-drift.test.ts":
+      "enumerates pages from the registry, at both paths",
+    "src/lib/__tests__/coverage-matrix-areas.test.ts":
+      "takes COVERAGE_MATRIX.md's areas from the registry's old paths",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;

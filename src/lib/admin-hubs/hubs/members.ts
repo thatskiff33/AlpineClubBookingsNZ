@@ -139,6 +139,10 @@ export const MEMBERS_HUB = defineHub({
       moved: false,
     },
     {
+      // #4581: the area of its API, /api/admin/membership-lockout-settings. It
+      // was support, so a Membership Officer could call the API but not open
+      // the page; the panel hides its finance and bookings sections from a
+      // viewer whose matrix lacks them.
       id: "subscription-lockout",
       label: "Subscription Lockout",
       oldPath: "/admin/subscription-lockout",

@@ -55,10 +55,13 @@
  *
  * ## How it is arranged, and why each part cannot be satisfied vacuously
  *
- *   1. ENUMERATION. Every admin page and every `/api/admin` route is discovered
- *      from disk (`helpers/admin-route-enumeration.ts`), never listed here, with
- *      a floor assertion so a broken walk cannot make the sweeps pass by
- *      covering nothing.
+ *   1. ENUMERATION. Every `/api/admin` route is discovered from disk
+ *      (`helpers/admin-route-enumeration.ts`), and every admin page comes from
+ *      the hub registry at BOTH its old path and its hub path (#4799), never
+ *      listed here, with floor assertions so a broken walk cannot make the
+ *      sweeps pass by covering nothing. The registry's own suite ties each
+ *      entry to its `page.tsx`, and since C2 of epic #4468 the page half of the
+ *      map is generated from it, so a hub path must meet the same gate.
  *
  *   2. THE GATES. Every handler's explicit `permission` is read from source, and
  *      a shape the reader cannot resolve is a HARD FAILURE rather than a silent
@@ -160,6 +163,7 @@ import {
   adminPagePaths,
   allAdminPaths,
 } from "@/lib/__tests__/helpers/admin-route-enumeration";
+import { ADMIN_PAGES } from "@/lib/admin-hubs";
 import {
   adminApiRouteGates,
   handlersWithMultipleGuards,
@@ -208,6 +212,20 @@ function viewGridFor(area: AdminPermissionArea): Grid {
 }
 
 const FINANCE_ONLY = viewGridFor("finance");
+
+/**
+ * Every admin page the page sweeps attempt: each registry page at its old path
+ * and at its hub path (#4799), dynamic segments as the shared enumeration fills
+ * them. A hub path has no `page.tsx` until its hub moves, but the guard decides
+ * from the path alone, so the sweep proves the gate it will meet.
+ */
+const registryPagePaths: string[] = [
+  ...new Set(
+    ADMIN_PAGES.flatMap((page) => [page.oldPath, page.hubPath]).map((path) =>
+      path.replace(/\[[^\]/]+\]/g, "x123"),
+    ),
+  ),
+].sort();
 
 // ---------------------------------------------------------------------------
 // 2. THE GATE EACH REQUEST ACTUALLY MEETS.
@@ -372,10 +390,13 @@ describe("the admin route tree this proof runs over", () => {
     // makes every sweep below pass by asserting nothing.
     expect(adminPagePaths.length).toBeGreaterThan(80);
     expect(adminApiPaths.length).toBeGreaterThan(200);
+    // Every page on disk is a registry path, and every page has a hub twin.
+    expect(adminPagePaths.filter((pathname) => !registryPagePaths.includes(pathname))).toEqual([]);
+    expect(registryPagePaths.length).toBeGreaterThan(2 * adminPagePaths.length - 5);
   });
 
   it("resolves every discovered path through the real route map", () => {
-    const unresolved = [...allAdminPaths].filter(
+    const unresolved = [...allAdminPaths, ...registryPagePaths].filter(
       (pathname) => getAdminRouteRequirement(pathname, "GET") === null,
     );
     expect(unresolved).toEqual([]);
@@ -773,7 +794,7 @@ describe("the real requireAdmin enforces each route's real gate on every /api/ad
 describe("the real guardAdminLayout enforces the real route map on every admin page", () => {
   it("admits exactly the grids the map admits", async () => {
     const violations: string[] = [];
-    for (const pathname of adminPagePaths) {
+    for (const pathname of registryPagePaths) {
       for (const grid of SWEEP_GRIDS) {
         const expected = pageAdmitsExpected(grid, pathname);
         const actual = await pageAdmits(grid, pathname);
@@ -795,12 +816,12 @@ describe("the real guardAdminLayout enforces the real route map on every admin p
     "redirects a $label away from every single admin page",
     async (grid) => {
       const admitted: string[] = [];
-      for (const pathname of adminPagePaths) {
+      for (const pathname of registryPagePaths) {
         const result = await pageAdmits(grid, pathname);
         if (result.ok) admitted.push(pathname);
       }
       expect(admitted).toEqual([]);
-      expect(adminPagePaths.length).toBeGreaterThan(80);
+      expect(registryPagePaths.length).toBeGreaterThan(160);
     },
     120_000,
   );
@@ -810,7 +831,7 @@ describe("the real guardAdminLayout enforces the real route map on every admin p
     // redirect loop in a browser, and portal standing without `overview`
     // (#2984) is exactly the shape that produces one.
     const violations: string[] = [];
-    for (const pathname of adminPagePaths) {
+    for (const pathname of registryPagePaths) {
       for (const { grid } of AREA_GRIDS) {
         const result = await pageAdmits(grid, pathname);
         if (result.ok || result.destination === null) continue;
@@ -988,7 +1009,7 @@ describe("#2984: finance-only standing grants Finance and nothing else", () => {
   });
 
   it("enters every finance admin page", async () => {
-    const financePages = financePathsOf(adminPagePaths);
+    const financePages = financePathsOf(registryPagePaths);
     expect(financePages.length).toBeGreaterThan(8);
     const refused: string[] = [];
     for (const pathname of financePages) {
@@ -999,8 +1020,8 @@ describe("#2984: finance-only standing grants Finance and nothing else", () => {
   }, 120_000);
 
   it("is refused EVERY admin page outside finance, by attempt", async () => {
-    const financePages = new Set(financePathsOf(adminPagePaths));
-    const others = adminPagePaths.filter(
+    const financePages = new Set(financePathsOf(registryPagePaths));
+    const others = registryPagePaths.filter(
       (pathname) => !financePages.has(pathname),
     );
     expect(others.length).toBeGreaterThan(70);
@@ -1094,7 +1115,7 @@ describe("#2984: finance-only standing grants Finance and nothing else", () => {
 describe("Full Admin behaviour is unchanged", () => {
   it("is admitted to every admin page and every admin API route, read and write", async () => {
     const refused: string[] = [];
-    for (const pathname of adminPagePaths) {
+    for (const pathname of registryPagePaths) {
       if (!(await pageAdmits(FULL_ADMIN, pathname)).ok) {
         refused.push(`page ${pathname}`);
       }

@@ -907,7 +907,7 @@ Use these ownership boundaries when adding new code:
 | Policy rules | `src/lib/policies/` | Pricing, age-tier, cancellation, change-fee, minimum-stay, member-credit, and booking-route decisions live as testable policy helpers. |
 | Operational Xero | `src/lib/xero-*.ts`, `src/lib/xero.ts` | `src/lib/xero.ts` is a compatibility facade. New code should import from the focused module that owns the behavior, not from the facade. |
 | Admin/member services | `src/lib/admin-member-xero-actions.ts`, `src/lib/member-serialization.ts`, `src/lib/member-lifecycle-actions.ts`, `src/lib/membership-cancellation-*.ts` | Shared admin/member request wrappers, DTO shape, lifecycle actions, and cancellation workflows live outside page files. |
-| Admin hub registry | `src/lib/admin-hubs/` | One entry per admin page: its hub, old and hub URLs, area or admission rule, and module flags (epic #4468). Inert until #4815 flips `ADMIN_HUBS_LIVE`; from C2 (#4799) the page half of the route-to-area map is generated from it. Relative imports only, so `next.config.ts` can load it. |
+| Admin hub registry | `src/lib/admin-hubs/` | One entry per admin page: its hub, old and hub URLs, area or admission rule, and module flags (epic #4468). Inert until #4815 flips `ADMIN_HUBS_LIVE`. Since C2 (#4799), `security-map.ts` generates the page half of the route-to-area map, the special admission paths and the admin page module gates from it, for every page's old and hub path. Relative imports only, so `next.config.ts` can load it. |
 | Business logic | `src/lib/` | Keep money in integer cents, dates as New Zealand date-only lodge nights, and external calls outside long database transactions where practical. |
 | Database | `prisma/schema.prisma`, `prisma/migrations/` | Schema changes must include deployable migrations and respect the blue/green migration policy. |
 | Operations | `scripts/`, `deploy/`, Compose files | Deployment helpers should be reusable by forks through environment overrides. |
@@ -2691,13 +2691,27 @@ custom role already deployed: module toggling and booking-messages are system
 configuration and sit under `support`; committee records and per-member
 lodge-access are member data and sit under `membership`; and `pending-counts` is
 the deliberate `overview` catch-all. `src/lib/__tests__/admin-route-area-matrix.test.ts`
-pins the full `/api/admin` route → area assignment to a frozen snapshot, so any
-prefix edit that moves a route between areas fails CI with a precise diff.
+pins the full `/api/admin` route → area assignment to a frozen snapshot, and
+every admin page's area by its old path (its hub path must resolve the same,
+#4799), so any prefix or registry edit that moves a route between areas fails CI
+with a precise diff.
 
-When you add a new admin page (`src/app/(admin)`) or `/api/admin/**` route,
-update **both** central route maps: the permission-area map in
-`src/lib/admin-permissions.ts` (`ROUTE_AREA_PREFIXES`, or
-`SPECIAL_ROUTE_AREA_PATTERNS` when the route needs a different area than its
+When you add a new admin **page** (`src/app/(admin)`), register it in the admin
+hub registry (`src/lib/admin-hubs/hubs/`) with its area, any special admission
+rule and its module flags. Since #4799 the page half of both central route
+maps is **generated** from that entry, at the page's old path and its hub
+path: `security-map.ts` emits the route-map prefixes (deepest first, because
+the resolver takes the first match, not the longest), the fee console, Rooms &
+Beds and any-admin admission paths, and the admin page prefixes of each module
+gate (which fail closed over the page's whole directory). Pin its area in
+`admin-route-area-matrix.test.ts`, and when it opens a new directory, give that
+directory its answer in the frozen oracle of `admin-hub-route-parity.test.ts`;
+both are reviewed statements of what the page must answer, independent of the
+generator.
+
+When you add a `/api/admin/**` route, update **both** hand-written halves: the
+permission-area map in `src/lib/admin-permissions.ts` (`ROUTE_AREA_PREFIXES`,
+or `SPECIAL_ROUTE_AREA_PATTERNS` when the route needs a different area than its
 prefix) so `getAdminRouteRequirement()` gives it the right area/level, and — if
 it belongs to an optional module — the feature-gate map
 `FEATURE_ROUTE_RULES` in `src/config/feature-routes.ts`. The permission map's
@@ -2705,14 +2719,16 @@ last entry, `overview`, is a catch-all (`/admin`, `/api/admin`): a route that
 matches no more specific area silently resolves to `overview`, so a
 finance-sensitive route that forgets its prefix would be readable at plain
 overview access. `src/lib/__tests__/admin-route-map-drift.test.ts` enforces
-this: it enumerates every admin page and `/api/admin` route and fails the build
-if one lands on the overview catch-all without an intentional entry in that
-test's small, justified `OVERVIEW_ALLOWLIST`. The guard catches *unmapped*
+this: it enumerates every registered admin page, at both of its paths, and
+every `/api/admin` route, and fails the build if one lands on the overview
+catch-all without an intentional entry in that test's small, justified
+`OVERVIEW_ALLOWLIST`. The guard catches *unmapped*
 routes; it cannot catch a route *mis-mapped* by inheriting an existing wrong
 prefix, so still add a `SPECIAL_ROUTE_AREA_PATTERNS` entry by hand when a
-sensitive action lands under a broader prefix. New optional-module surfaces at
-brand-new prefixes must be added to `FEATURE_ROUTE_RULES` by hand — the guard
-only verifies existing feature prefixes still point at real files.
+sensitive action lands under a broader prefix. New optional-module API surfaces
+at brand-new prefixes must be added to `FEATURE_ROUTE_RULES` by hand (a page
+takes its gate from its registry flags) — the guard only verifies existing
+feature prefixes still point at a real route or registered page.
 
 A `FEATURE_ROUTE_RULES` entry for an **API** route usually needs a second edit to
 take effect: `config.matcher` in `src/proxy.ts` excludes the whole of `/api` bar

@@ -756,6 +756,16 @@ describe("admin page -> area pin (#4799)", () => {
     expect(drift).toEqual([]);
   });
 
+  it("resolves every page's hub path to the same pinned area", () => {
+    const drift = ADMIN_PAGES.flatMap((page) => {
+      const area = getAdminRouteRequirement(concretePagePath(page.hubPath), "GET")?.area;
+      return area === EXPECTED_PAGE_AREAS[page.oldPath]
+        ? []
+        : [`${page.hubPath} (hub twin of ${page.oldPath}): ${area}, pinned ${EXPECTED_PAGE_AREAS[page.oldPath]}`];
+    });
+    expect(drift).toEqual([]);
+  });
+
   it("agrees with the reviewed page anchors", () => {
     const pageAnchors = ADMIN_ROUTE_AREA_ANCHOR_ENTRIES.filter(({ pathname }) =>
       pathname.startsWith("/admin"),

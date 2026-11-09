@@ -57,6 +57,10 @@ export const LODGE_OPS_HUB = defineHub({
       moved: false,
     },
     {
+      // #2937: `lodge` in the route map, because the inventory is lodge-scoped
+      // (ADR-005), but admitted on lodge OR bookings: everything the page
+      // renders is bookings-gated by RoomsBedsManager from the bed-allocation
+      // APIs, and it is the only home of the allocation preferences.
       id: "rooms-beds",
       label: "Rooms & Beds",
       oldPath: "/admin/rooms-beds",
@@ -212,6 +216,9 @@ export const LODGE_OPS_HUB = defineHub({
       moved: false,
     },
     {
+      // Lodge-area for admin visibility; write access is widened to committee
+      // members in the calendar routes themselves (src/lib/calendar-access.ts),
+      // which do not run through the admin matrix.
       id: "calendar",
       label: "Calendar",
       oldPath: "/admin/calendar",

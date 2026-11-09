@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_ACCESS_ROLE_DEFINITIONS } from "@/lib/access-role-definitions";
 import {
   ADMIN_PERMISSION_AREAS,
+  ADMIN_ROUTE_MAP,
+  ANY_ADMIN_ADMISSION_PATHS,
   canOpenAdminPath,
   canViewAdminHrefWithMatrix,
   getAdminPermissionMatrix,
@@ -13,10 +15,18 @@ import {
   type AdminPermissionInput,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
-import { getRequiredFeaturesForPath } from "@/config/feature-routes";
+import {
+  FEATURE_ROUTE_RULES,
+  getRequiredFeaturesForPath,
+} from "@/config/feature-routes";
 import type { FeatureFlagKey } from "@/config/schema";
-import { ADMIN_PAGES } from "@/lib/admin-hubs";
-import type { AdminHubPage } from "@/lib/admin-hubs/define";
+import { ADMIN_HUBS, ADMIN_PAGES } from "@/lib/admin-hubs";
+import { hubRoot, type AdminHubPage } from "@/lib/admin-hubs/define";
+import {
+  ADMIN_PAGE_ADMISSION_PATHS,
+  ADMIN_PAGE_MODULE_GATES,
+  ADMIN_PAGE_ROUTE_AREAS,
+} from "@/lib/admin-hubs/security-map";
 import { SWEEP_GRIDS } from "@/lib/__tests__/helpers/admin-sweep-grids";
 
 // ---------------------------------------------------------------------------
@@ -48,9 +58,10 @@ import { SWEEP_GRIDS } from "@/lib/__tests__/helpers/admin-sweep-grids";
 // The probes are each page's path, a child below it, its trailing-slash
 // spelling, and every static directory above it.
 //
-// A page ADDED after C2 has no row in the frozen tables, so it resolves to the
-// oracle's catch-all and fails here: give the oracle its reviewed answer, the
-// same review a hand-written route-map entry always had.
+// A page added after C2 in a NEW directory has no row in the frozen tables, so
+// the oracle sends it to its catch-all and this census fails: give the oracle
+// its reviewed answer, the same review a hand-written route-map entry always
+// had. A page added beneath an existing directory is held to that directory's.
 // ---------------------------------------------------------------------------
 
 /** `main`'s page half of `ROUTE_AREA_PREFIXES` at 06cfa84, in resolution order. */
@@ -408,6 +419,42 @@ function pageLabel(page: AdminHubPage, probe: string): string {
   return `${page.id} (${probe})`;
 }
 
+/**
+ * Each old-path probe of a page beside its twin in the page's hub. Relocation
+ * keeps the part of the path below each directory, so a directory's twin is the
+ * hub path with that same tail removed.
+ */
+function twinProbes(page: AdminHubPage): Array<[old: string, hub: string]> {
+  const oldPath = concrete(page.oldPath);
+  const hubPath = concrete(page.hubPath);
+  const twin = (probe: string) => {
+    if (!probe.startsWith(oldPath)) {
+      const tail = oldPath.slice(probe.length);
+      if (!hubPath.endsWith(tail)) throw new Error(`${page.id}: no twin for ${probe}`);
+      return hubPath.slice(0, hubPath.length - tail.length);
+    }
+    return `${hubPath}${probe.slice(oldPath.length)}`;
+  };
+  return [oldPath, ...probesFor(oldPath)].map((probe) => [probe, twin(probe)]);
+}
+
+/** `candidate` is `root` or sits beneath it, `/`-anchored as every resolver matches. */
+function nestsUnder(candidate: string, root: string): boolean {
+  return candidate === root || candidate.startsWith(`${root}/`);
+}
+
+const HUB_ROOTS = ADMIN_HUBS.map((hub) => hubRoot(hub.prefix));
+
+/** A generated path that sits beneath a hub's root rather than at an old path. */
+function isHubHalf(path: string): boolean {
+  return HUB_ROOTS.some((root) => path !== root && nestsUnder(path, root));
+}
+
+/** The route-map entry the resolver takes for a path: the FIRST that matches. */
+function firstMatch(pathname: string) {
+  return ADMIN_ROUTE_MAP.find(({ prefix }) => nestsUnder(oracleNormalize(pathname), prefix));
+}
+
 describe("the census covers what it says", () => {
   it("sweeps the sixteen grids and every seeded role", () => {
     expect(SWEEP_GRIDS).toHaveLength(16);
@@ -415,8 +462,12 @@ describe("the census covers what it says", () => {
     expect(DEFAULT_ACCESS_ROLE_DEFINITIONS.length).toBeGreaterThanOrEqual(6);
   });
 
-  it("probes every registry page", () => {
+  it("probes every registry page, and nearly every one has a hub path of its own", () => {
     expect(ADMIN_PAGES.length).toBeGreaterThan(100);
+    // Only Home's dashboard is its hub's root, so its hub path is its old path.
+    expect(ADMIN_PAGES.filter((page) => page.hubPath === page.oldPath).map((page) => page.id)).toEqual([
+      "dashboard",
+    ]);
   });
 
   it("has an oracle that refuses and admits, rather than one answer for everyone", () => {
@@ -445,5 +496,167 @@ describe("every page's OLD path answers exactly as main's hand-written map did",
       return actual === expected ? [] : [`${subject.label}: ${actual}, oracle ${expected}`];
     });
     expect(drift).toEqual([]);
+  });
+});
+
+describe("every page's HUB path answers exactly as its old path did on main", () => {
+  it("for the page, a child, its trailing slash and every directory above it", () => {
+    const drift = ADMIN_PAGES.flatMap((page) =>
+      twinProbes(page).flatMap(([oldProbe, hubProbe]) =>
+        differences(
+          `${pageLabel(page, hubProbe)} (twin of ${oldProbe})`,
+          actualAnswer(hubProbe),
+          oracleAnswer(oldProbe),
+        ),
+      ),
+    );
+    expect(drift).toEqual([]);
+  });
+});
+
+describe("no registered page falls through to the overview catch-all", () => {
+  it("resolves every page's old and hub path through an entry generated for it", () => {
+    const fallsThrough = ADMIN_PAGES.flatMap((page) =>
+      [page.oldPath, page.hubPath].map(concrete).flatMap((pathname) => {
+        const entry = firstMatch(pathname);
+        if (!entry || entry.prefix === "/admin") return [`${page.id}: ${pathname} reaches the catch-all`];
+        // The first-match read here must be the real resolver's.
+        const actual = getAdminRouteRequirement(pathname, "GET")?.area;
+        return actual === entry.area ? [] : [`${page.id}: ${pathname} resolves ${actual}, first entry ${entry.prefix} says ${entry.area}`];
+      }),
+    );
+    expect(fallsThrough).toEqual([]);
+  });
+
+  it("keeps the catch-all itself, last", () => {
+    expect(ADMIN_ROUTE_MAP.at(-1)?.area).toBe("overview");
+    expect(ADMIN_ROUTE_MAP.filter(({ area }) => area === "overview").slice(-2).map(({ prefix }) => prefix)).toEqual([
+      "/admin",
+      "/api/admin",
+    ]);
+  });
+});
+
+/**
+ * THE ORDERING CENSUS. The resolver takes the FIRST matching prefix, not the
+ * longest, so an entry that precedes a LONGER entry nested beneath it, with a
+ * different area, would capture that entry's paths. Nothing else guards this:
+ * the generator sorts deepest first, and the hand-written `/api/admin` half is
+ * kept in its reviewed order.
+ */
+describe("the route map's order", () => {
+  function shadowed(map: ReadonlyArray<{ area: string; prefix: string }>): string[] {
+    return map.flatMap((earlier, i) =>
+      map
+        .slice(i + 1)
+        .filter(
+          (later) =>
+            later.prefix !== earlier.prefix &&
+            nestsUnder(later.prefix, earlier.prefix) &&
+            later.area !== earlier.area,
+        )
+        .map((later) => `${earlier.prefix} (${earlier.area}) precedes ${later.prefix} (${later.area})`),
+    );
+  }
+
+  it("never puts a shorter prefix of another area ahead of a longer one beneath it", () => {
+    expect(shadowed(ADMIN_ROUTE_MAP)).toEqual([]);
+  });
+
+  it("has nested prefixes of different areas to order, old and hub alike", () => {
+    // Non-vacuous: the census really is deciding something.
+    const nested = ADMIN_ROUTE_MAP.flatMap((outer) =>
+      ADMIN_ROUTE_MAP.filter(
+        (inner) =>
+          inner.prefix !== outer.prefix &&
+          outer.prefix !== "/admin" &&
+          outer.prefix !== "/api/admin" &&
+          nestsUnder(inner.prefix, outer.prefix) &&
+          inner.area !== outer.area,
+      ).map((inner) => inner.prefix),
+    );
+    expect(nested).toEqual(
+      expect.arrayContaining([
+        "/admin/setup/finance",
+        "/admin/setup/booking-rules",
+        "/admin/settings/setup/finance",
+        "/admin/rules/setup/booking-rules",
+      ]),
+    );
+  });
+
+  it("catches a shorter prefix moved ahead", () => {
+    const setup = ADMIN_ROUTE_MAP.find(({ prefix }) => prefix === "/admin/setup")!;
+    const reordered = [setup, ...ADMIN_ROUTE_MAP.filter((entry) => entry !== setup)];
+    expect(shadowed(reordered)).toEqual(
+      expect.arrayContaining(["/admin/setup (support) precedes /admin/setup/finance (finance)"]),
+    );
+  });
+});
+
+/**
+ * The C2 transition, stated structurally as well as behaviourally: the OLD half
+ * the generator emits IS main's hand-written page half, entry for entry, plus an
+ * explicit `overview` entry for each of the three directories that used to rely
+ * on the catch-all (which answers `overview` too). Set equality plus the
+ * ordering census means every old path resolves as it did, not just the probes.
+ */
+describe("the generated old half is main's hand-written page half", () => {
+  const EXPLICIT_OVERVIEW = ["/admin/ai-diagnostics", "/admin/dashboard", "/admin/testing"];
+
+  it("has the same route-map entries", () => {
+    const generated = ADMIN_PAGE_ROUTE_AREAS.filter(({ prefix }) => !isHubHalf(prefix))
+      .map(({ prefix, area }) => `${prefix} ${area}`)
+      .sort();
+    const oracle = [
+      ...ORACLE_ROUTE_AREAS.flatMap(({ area, prefixes }) =>
+        prefixes.filter((prefix) => prefix !== "/admin").map((prefix) => `${prefix} ${area}`),
+      ),
+      ...EXPLICIT_OVERVIEW.map((prefix) => `${prefix} overview`),
+    ].sort();
+    expect(generated).toEqual(oracle);
+    // The page half precedes the hand-written half and is all of `/admin/*`.
+    const pageHalf = ADMIN_ROUTE_MAP.slice(0, ADMIN_PAGE_ROUTE_AREAS.length);
+    expect(pageHalf).toEqual(ADMIN_PAGE_ROUTE_AREAS);
+    expect(
+      ADMIN_ROUTE_MAP.slice(ADMIN_PAGE_ROUTE_AREAS.length).filter(
+        ({ prefix }) => prefix.startsWith("/admin/"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("has the same module gates, and the one exemption at both paths", () => {
+    const generated = [...ADMIN_PAGE_MODULE_GATES].flatMap(([flag, prefixes]) =>
+      prefixes.filter((prefix) => !isHubHalf(prefix)).map((prefix) => `${flag} ${prefix}`),
+    );
+    const oracle = ORACLE_MODULE_GATES.flatMap(({ flag, prefixes }) =>
+      prefixes.map((prefix) => `${flag} ${prefix}`),
+    );
+    expect(generated.sort()).toEqual(oracle.sort());
+    const exempt = FEATURE_ROUTE_RULES.flatMap((rule) =>
+      (rule.exemptPaths ?? [])
+        .filter((path) => path.startsWith("/admin/"))
+        .map((path) => `${rule.flag} ${path}`),
+    );
+    expect(exempt).toEqual([
+      "lobbyDisplay /admin/display/setup",
+      "lobbyDisplay /admin/lodge-ops/display/setup",
+    ]);
+  });
+
+  it("has the same admission paths, each with its hub twin", () => {
+    expect(ADMIN_PAGE_ADMISSION_PATHS["any-admin"].filter((path) => !isHubHalf(path))).toEqual(
+      ORACLE_ANY_ADMIN_PATHS,
+    );
+    expect(ADMIN_PAGE_ADMISSION_PATHS["fees-or"].filter((path) => !isHubHalf(path))).toEqual([
+      ORACLE_FEES_PATH,
+    ]);
+    expect(ADMIN_PAGE_ADMISSION_PATHS["rooms-beds-or"].filter((path) => !isHubHalf(path))).toEqual([
+      ORACLE_ROOMS_BEDS_PATH,
+    ]);
+    expect(ANY_ADMIN_ADMISSION_PATHS).toEqual(ADMIN_PAGE_ADMISSION_PATHS["any-admin"]);
+    for (const paths of Object.values(ADMIN_PAGE_ADMISSION_PATHS)) {
+      expect(paths.filter(isHubHalf)).toHaveLength(paths.length / 2);
+    }
   });
 });

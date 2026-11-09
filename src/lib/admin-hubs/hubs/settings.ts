@@ -45,6 +45,7 @@ export const SETTINGS_HUB = defineHub({
       moved: false,
     },
     {
+      // Login & Security (epic #2030, #2033): system configuration, like Modules.
       id: "security",
       label: "Login & Security",
       oldPath: "/admin/security",
@@ -113,6 +114,8 @@ export const SETTINGS_HUB = defineHub({
       moved: false,
     },
     {
+      // On the Integrations hub (finance), like Xero and Stripe (#2087). NOT
+      // gated by googleLogin: setup and verify must work while it is still off.
       id: "google-setup",
       label: "Google Sign-in Setup",
       oldPath: "/admin/google/setup",
@@ -128,6 +131,9 @@ export const SETTINGS_HUB = defineHub({
       moved: false,
     },
     {
+      // MiroTalk setup (#2940), finance like the other integrations; its API is
+      // under /api/admin/integrations. No module gate: there is no module to
+      // turn off, and the page is where the club sets what was env-only.
       id: "video-meetings-setup",
       label: "Video Meetings Setup",
       oldPath: "/admin/video-meetings/setup",
