@@ -230,9 +230,12 @@ export function lastErrorSuggestsStripeMayHaveRefunded(lastError: string | null)
  * The dead card refunds the treasurer can settle, oldest first, with what each
  * still owes. Organiser child refunds and group settlement refunds are left
  * out, as every action on the list refuses them. #4368 (owner decision, 25 Oct
- * 2026): one that owes nothing stays on the list, with the later Stripe
- * refunds that cover it, for its "Nothing left owed" close - "Paid another
- * way" never records $0 (#3924 round 7, M6), and no Xero plan is read for it.
+ * 2026): one that owes nothing stays on the list while a later Stripe refund
+ * covers it, naming that refund, for its "Nothing left owed" close - "Paid
+ * another way" never records $0 (#3924 round 7, M6), and no Xero plan is read
+ * for it. One that owes nothing with no such refund is left out, as before: it
+ * still counts among the payment recovery operations the stuck-states page
+ * says need reconciling, for a developer.
  */
 export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
   const operations = await prisma.paymentRecoveryOperation.findMany({
@@ -244,9 +247,12 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
     .filter(
       (operation) => isOwedCardRefundOperation(operation) && !isOrganiserChildRefundKey(operation.idempotencyKey),
     )
-    .map((operation) => ({ operation, owed: deadCardRefundStillOwed(operation.payment, operation.id) }));
+    .map((operation) => ({ operation, owed: deadCardRefundStillOwed(operation.payment, operation.id) }))
+    .map((row) => ({ ...row, later: row.owed.owedCents === 0 ? laterStripeRefundsCovering(row.operation.payment, row.operation) : [] }))
+    // With nothing owed and no later Stripe refund to name, there is nothing to settle here (`INV-PAY-142`'s stated limit).
+    .filter(({ owed, later }) => owed.owedCents > 0 || later.length > 0);
   return Promise.all(
-    listed.map(async ({ operation, owed }) => {
+    listed.map(async ({ operation, owed, later }) => {
       const xeroPlan = owed.owedCents > 0
         ? await paidAnotherWayXeroPlan(prisma, operation, operation.payment, { lockApprovalTask: false })
         : null;
@@ -260,7 +266,7 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
         xeroRefundNote: xeroPlan ? paidAnotherWayXeroPromise(xeroPlan) : "none",
         cardNoteCoversCents: xeroPlan?.xeroRefundNote === "now" ? (xeroPlan.cardNoteCoversCents ?? 0) : 0,
         stripeMayHaveRefunded: lastErrorSuggestsStripeMayHaveRefunded(operation.lastError),
-        laterStripeRefunds: owed.owedCents === 0 ? laterStripeRefundsCovering(operation.payment, operation) : [],
+        laterStripeRefunds: later,
         tryCardAgainRefusal: tryCardAgainRefusal(operation.payment, operation, owed),
       };
     }),

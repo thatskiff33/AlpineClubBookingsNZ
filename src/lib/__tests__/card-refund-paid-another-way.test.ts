@@ -1360,6 +1360,15 @@ describe("the list on the stuck-states page", () => {
 
   // #4368 (owner decision, 25 Oct 2026): it was left out (M6, round 7); it now stays, for its
   // "Nothing left owed" close, naming the refund that covers it - never offered as a $0 "Paid another way".
+  it("MUTATION: M6 (round 7), #4368: still leaves out one that owes nothing when no later Stripe refund covers it", async () => {
+    const sent = deadOperation();
+    // The payment holds nothing more to refund, and no Stripe refund was made since the row was raised.
+    mocks.listOperations.mockResolvedValue([
+      { ...sent, payment: payment(sent, { refundedAmountCents: 20_000, status: "REFUNDED", refunds: [] }) },
+    ]);
+    expect(await listDeadCardRefunds()).toEqual([]);
+  });
+
   it("MUTATION: #4368: keeps a refund that owes nothing, with the later Stripe refund covering it and no re-send offered", async () => {
     const sent = deadOperation();
     mocks.listOperations.mockResolvedValue([

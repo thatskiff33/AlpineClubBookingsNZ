@@ -352,23 +352,16 @@ export function DeadCardRefundsPanel({
                 ) : null}
               </div>
               {row.owedCents === 0 ? (
-                row.laterStripeRefunds.length === 0 ? (
-                  <p className="max-w-sm text-xs text-muted-foreground">
-                    No later Stripe refund on this payment covers it, so it cannot be closed here. Ask a developer to
-                    reconcile it.
-                  </p>
-                ) : (
-                  <ViewOnlyActionButton
-                    canEdit={canEdit}
-                    describeReason={false}
-                    variant="outline"
-                    size="sm"
-                    aria-label={`Close the card refund for booking ${row.bookingReference} with nothing left owed`}
-                    onClick={() => openOther(setNothingLeftId, row)}
-                  >
-                    Nothing left owed
-                  </ViewOnlyActionButton>
-                )
+                <ViewOnlyActionButton
+                  canEdit={canEdit}
+                  describeReason={false}
+                  variant="outline"
+                  size="sm"
+                  aria-label={`Close the card refund for booking ${row.bookingReference} with nothing left owed`}
+                  onClick={() => openOther(setNothingLeftId, row)}
+                >
+                  Nothing left owed
+                </ViewOnlyActionButton>
               ) : (
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   {row.tryCardAgainRefusal === null ? (

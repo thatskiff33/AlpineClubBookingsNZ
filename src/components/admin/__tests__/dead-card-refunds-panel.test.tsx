@@ -766,12 +766,6 @@ describe("#4368: Nothing left owed", () => {
     expect(mocks.refresh).toHaveBeenCalled();
   });
 
-  it("with no later Stripe refund to name, says to ask a developer and offers no close", () => {
-    render(<DeadCardRefundsPanel rows={[settledRow({ laterStripeRefunds: [] })]} bankNoteWording={BANK_NOTE_WORDING} />);
-    expect(screen.getByText(/No later Stripe refund on this payment covers it/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /nothing left owed/ })).not.toBeInTheDocument();
-  });
-
   it("a refresh that puts money owed back on the row closes its open dialog and says why", () => {
     const view = render(<DeadCardRefundsPanel rows={[settledRow()]} bankNoteWording={BANK_NOTE_WORDING} />);
     fireEvent.click(nothingLeftButton());
