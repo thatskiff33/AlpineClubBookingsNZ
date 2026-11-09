@@ -189,7 +189,16 @@ export async function tryDeadCardRefundAgain(input: TryCardAgainInput): Promise<
   return prisma.$transaction(async (tx) => {
     const { operation, payment, booking } = await lockDeadCardRefundRow(tx, input.operationId, REFUSALS);
     const owed = deadCardRefundStillOwed(payment, operation.id);
-    const refusal = tryCardAgainRefusal(payment, operation, owed);
+    // Review S1: a superseded intent's charge, read under the Payment row its refund writers take: its runner sizes
+    // one request on it, and "Paid another way" closes it only while it holds exactly what the row owes.
+    const charge =
+      operation.type === "REFUND_SUPERSEDED_PAYMENT" && operation.paymentTransactionId
+        ? await tx.paymentTransaction.findUnique({
+            where: { id: operation.paymentTransactionId },
+            select: { paymentId: true, amountCents: true, refundedAmountCents: true },
+          })
+        : null;
+    const refusal = tryCardAgainRefusal(payment, { ...operation, paymentTransaction: charge?.paymentId === payment.id ? charge : null }, owed);
     if (refusal) throw new DeadCardRefundActionError(refusal, 409);
     // Review F4: Stripe was read for the charges of the plan read then; a plan moved since is not the one checked.
     if (read !== null && JSON.stringify(read.allocationPlan ?? null) !== JSON.stringify(operation.allocationPlan ?? null)) {

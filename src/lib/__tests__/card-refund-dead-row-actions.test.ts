@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   preReadOperation: vi.fn(),
   preReadCharges: vi.fn(),
   listRefunds: vi.fn<(intent: string, options?: unknown) => Promise<unknown[]>>(),
+  // #4368 review S1: a superseded intent's charge, read under the Payment row.
+  findCharge: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -62,6 +64,12 @@ vi.mock("@/lib/prisma", () => {
       },
     },
     booking: { findUnique: (...args: unknown[]) => mocks.findBooking(...args) },
+    paymentTransaction: {
+      findUnique: (...args: unknown[]) => {
+        calls.push("read-charge");
+        return mocks.findCharge(...args);
+      },
+    },
   };
   return {
     prisma: {
@@ -81,6 +89,7 @@ import {
 } from "@/lib/card-refund-dead-row-actions";
 import { deadCardRefundOperationWhere, laterStripeRefundsCovering, tryCardAgainRefusal } from "@/lib/card-refund-dead-row";
 import { cardRefundOperationRefundMetadata } from "@/lib/payment-recovery-keys";
+import { isOwnUnstampedCardRefund } from "@/lib/open-card-refund-owed";
 import { rearmedPaymentRecoveryOperationData } from "@/lib/payment-recovery-constants";
 
 const CREATED = new Date("2026-06-20T00:00:00.000Z");
@@ -474,6 +483,8 @@ describe("tryCardAgainRefusal: when a re-arm could pay the member more than is o
   const owed = { ownCents: 15_000, owedCents: 15_000 };
   const own = {
     id: "op-1",
+    type: "REFUND_BOOKING_MODIFICATION",
+    amountCents: 15_000,
     idempotencyKey: "booking_cancel_refund_recovery_b-1",
     lastError: "Stripe: card_declined",
     allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 15_000 }] as unknown,
@@ -510,6 +521,60 @@ describe("tryCardAgainRefusal: when a re-arm could pay the member more than is o
     expect(tryCardAgainRefusal(others(), { ...own, allocationPlan: null }, owed)).toMatch(/keeps no record of exactly what it would send/);
   });
 
+  describe("review S1: a superseded intent's refund with no plan is sized on its charge's ledger", () => {
+    const superseded = (charge: { amountCents: number; refundedAmountCents: number } | null) => ({
+      ...own,
+      id: "op-s",
+      type: "REFUND_SUPERSEDED_PAYMENT",
+      idempotencyKey: "refund_superseded_payment_pi_old",
+      allocationPlan: null,
+      paymentTransaction: charge,
+    });
+
+    it("MUTATION: allowed when its charge holds what it owes - its runner sends that, and no more", () => {
+      expect(tryCardAgainRefusal(others(), superseded({ amountCents: 15_000, refundedAmountCents: 0 }), owed)).toBeNull();
+    });
+
+    it("MUTATION: allowed when its charge was part refunded before - the runner sends only what the charge still holds", () => {
+      expect(tryCardAgainRefusal(others(), superseded({ amountCents: 15_000, refundedAmountCents: 4_000 }), owed)).toBeNull();
+    });
+
+    it("MUTATION: refused when its charge holds nothing more, or is not known - and, as Paid another way cannot close it, points to a developer", () => {
+      expect(tryCardAgainRefusal(others(), superseded({ amountCents: 15_000, refundedAmountCents: 15_000 }), owed)).toMatch(
+        /holds nothing more to refund.*ask a developer/,
+      );
+      expect(tryCardAgainRefusal(others(), superseded(null), owed)).toMatch(/keeps no record of exactly what it would send.*ask a developer/);
+    });
+
+    it("MUTATION: a legacy booking modification's refund with no plan is still refused, pointing to Paid another way", () => {
+      expect(tryCardAgainRefusal(others(), { ...own, allocationPlan: null }, owed)).toMatch(/keeps no record.*Settle it with Paid another way/);
+    });
+
+    it("MUTATION: a superseded row's other refusals point to Paid another way only while it can close the row", () => {
+      const failedLater = others({ id: "op-y", idempotencyKey: "card_refund_failed_later_re_x", status: "FAILED" });
+      // Its charge holds exactly what it owes: Paid another way closes it.
+      expect(tryCardAgainRefusal(failedLater, superseded({ amountCents: 15_000, refundedAmountCents: 0 }), owed)).toMatch(/Settle it with Paid another way/);
+      // Part refunded before: Paid another way refuses it, so the refusal says to ask a developer.
+      expect(tryCardAgainRefusal(failedLater, superseded({ amountCents: 15_000, refundedAmountCents: 4_000 }), owed)).toMatch(/ask a developer/);
+    });
+
+    it("MUTATION: the re-arm reads the charge under the locks and goes ahead", async () => {
+      const row = deadOperation({ id: "op-1", type: "REFUND_SUPERSEDED_PAYMENT", idempotencyKey: "refund_superseded_payment_pi_old", paymentTransactionId: "txn-1", allocationPlan: null });
+      mocks.findOperation.mockResolvedValue(row);
+      mocks.preReadOperation.mockResolvedValue({ paymentId: "p-1", paymentTransactionId: "txn-1", allocationPlan: null });
+      mocks.findPayment.mockResolvedValue(payment([row]));
+      mocks.findCharge.mockResolvedValue({ paymentId: "p-1", amountCents: 15_000, refundedAmountCents: 0 });
+      await expect(tryDeadCardRefundAgain({ operationId: "op-1", expectedOwedCents: 15_000, actingMemberId: "treasurer-1" })).resolves.toMatchObject({ operationId: "op-1" });
+      expect(calls).toContain("read-charge");
+      expect(calls.indexOf("read-charge")).toBeGreaterThan(calls.indexOf("lock-payment-row"));
+      // Another payment's charge is never read as this row's: refused.
+      mocks.claim.mockClear();
+      mocks.findCharge.mockResolvedValue({ paymentId: "p-other", amountCents: 15_000, refundedAmountCents: 0 });
+      await expect(tryDeadCardRefundAgain({ operationId: "op-1", expectedOwedCents: 15_000, actingMemberId: "treasurer-1" })).rejects.toMatchObject({ status: 409 });
+      expect(mocks.claim).not.toHaveBeenCalled();
+    });
+  });
+
   it("MUTATION (review B): refuses where its last failure says Stripe may have refunded after all", () => {
     expect(tryCardAgainRefusal(others(), { ...own, lastError: "StripeConnectionError: socket hang up" }, owed)).toMatch(/Stripe may have made this refund after all/);
   });
@@ -523,3 +588,23 @@ describe("tryCardAgainRefusal: when a re-arm could pay the member more than is o
     expect(tryCardAgainRefusal(others({ id: "op-2", idempotencyKey: "booking_modification_refund_m2", status: "FAILED" }), own, owed)).toBeNull();
   });
 });
+
+describe("isOwnUnstampedCardRefund (#4368 review F3, S2): this row's door, no slice key", () => {
+  const row = deadOperation();
+  const door = cardRefundOperationRefundMetadata(row);
+
+  it("MUTATION: true for exactly the row's door metadata with no slice key", () => {
+    expect(isOwnUnstampedCardRefund(row, door)).toBe(true);
+  });
+
+  it("MUTATION: false once the refund carries a slice key - the runner adopts it by that key", () => {
+    expect(isOwnUnstampedCardRefund(row, { ...door, refundSliceKey: "k" })).toBe(false);
+  });
+
+  it("MUTATION: false for another door's metadata, an extra key, or none at all", () => {
+    expect(isOwnUnstampedCardRefund(row, { ...door, reason: "something_else" })).toBe(false);
+    expect(isOwnUnstampedCardRefund(row, { ...door, extra: "x" })).toBe(false);
+    expect(isOwnUnstampedCardRefund(row, null)).toBe(false);
+  });
+});
+

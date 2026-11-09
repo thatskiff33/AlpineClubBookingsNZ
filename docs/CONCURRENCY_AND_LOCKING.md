@@ -6496,7 +6496,9 @@ where the row's last failure says Stripe may have refunded; where what the
 runner would send - every plan slice not marked `madeRefundId`, whole - is not
 exactly the row's own unsent figure the treasurer confirms, or the row keeps no
 plan (review F1: a slice a recorded refund filled but nobody marked would be
-sent again); and where Stripe lists a counted refund this booking's same kind
+sent again) - except a superseded intent's refund with no plan, whose runner
+sizes one request on its charge's ledger, read under the Payment row, and so
+never sends more than the row owes (review S1); and where Stripe lists a counted refund this booking's same kind
 of refund made with no slice key that no slice is marked with
 (`unadoptedOwnStripeRefunds`). That list is read before the transaction
 through the preflight's own bounded read (`listRefundsOnCardCharge`); one it

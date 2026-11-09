@@ -13,6 +13,7 @@ import { getNetCollectedCashParts } from "@/lib/payment-net-collected";
 import { PAYMENT_RECOVERY_EXHAUSTED_WHERE } from "@/lib/payment-recovery-constants";
 import { cardRefundFailedLaterRefundId, cardRefundStillOwedCloseRecordId } from "@/lib/payment-recovery-keys";
 import { isRecordedRefundStatus } from "@/lib/payment-transaction-status";
+import { refundHeadroomIncrementCents } from "@/lib/refund-headroom";
 
 /**
  * #3372, #4368: ONE DEAD CARD REFUND ROW, AS EVERY STUCK-STATES ACTION ON IT READS
@@ -200,8 +201,11 @@ function raisedForAPerson(idempotencyKey: string): boolean {
  *   A slice a recorded refund filled but nobody marked (a refund made before
  *   slice evidence, a mark that failed) would be sent again, so the unmarked
  *   slices must add up to exactly the row's own unsent figure. A row with no
- *   stored plan (its runner derives what it sends at the time) cannot be
- *   checked at all.
+ *   stored plan cannot be checked, except a superseded intent's refund, whose
+ *   runner sizes one request on its charge's ledger (review S1).
+ * Where "Paid another way" cannot close the row either (a superseded intent's
+ * refund whose charge does not hold exactly what it owes), the refusal points
+ * to a developer instead (review S1).
  * - #4492: ANY refund Stripe failed later (`card_refund_failed_later_<refund>`)
  *   on the same payment, open or closed: it may be the same money as this row
  *   (a refund this row's door made whose answer was lost, then failed), and
@@ -210,45 +214,85 @@ function raisedForAPerson(idempotencyKey: string): boolean {
  */
 export function tryCardAgainRefusal(
   payment: { recoveryOperations: ReadonlyArray<{ id: string; idempotencyKey: string }> },
-  operation: { id: string; idempotencyKey: string; lastError: string | null; allocationPlan: unknown },
+  operation: ReArmedRow & { id: string; idempotencyKey: string; lastError: string | null },
   owed: Pick<DeadCardRefundStillOwed, "ownCents" | "owedCents">,
 ): string | null {
   if (owed.owedCents === 0) {
     return "Nothing is left owed on this card refund, so there is nothing to send to the card.";
   }
+  // Review S1: where "Paid another way" cannot close it either, the refusal says so and points to a developer.
+  const settle = paidAnotherWayCanClose(operation, owed)
+    ? "Settle it with Paid another way."
+    : "Paid another way cannot close it either, so ask a developer to reconcile it.";
   if (raisedForAPerson(operation.idempotencyKey)) {
-    return "The app raised this refund for a person to settle, not to send to the card again. Check what the member is owed and settle it with Paid another way.";
+    return `The app raised this refund for a person to settle, not to send to the card again. Check what the member is owed. ${settle}`;
   }
   if (lastErrorSuggestsStripeMayHaveRefunded(operation.lastError)) {
-    return "Stripe may have made this refund after all, and the app cannot tell, so the card cannot be tried again. Check the Stripe dashboard: if Stripe refunded it, it shows here as nothing left owed once Stripe reports it; if not, settle it with Paid another way.";
+    return `Stripe may have made this refund after all, and the app cannot tell, so the card cannot be tried again. Check the Stripe dashboard: if Stripe refunded it, it shows here as nothing left owed once Stripe reports it. If not: ${settle}`;
   }
   if (owed.owedCents !== owed.ownCents) {
-    return "This payment now holds less than this refund would send to the card, so the card cannot be tried again. Settle it with Paid another way.";
+    return `This payment now holds less than this refund would send to the card, so the card cannot be tried again. ${settle}`;
   }
-  const sends = reArmWouldSendCents(operation.allocationPlan);
+  const sends = reArmWouldSendCents(operation);
   if (sends === null) {
-    return "This refund keeps no record of exactly what it would send, so the app cannot check it against what is owed, and the card cannot be tried again. Settle it with Paid another way.";
+    return `This refund keeps no record of exactly what it would send, so the app cannot check it against what is owed, and the card cannot be tried again. ${settle}`;
   }
-  if (sends !== owed.ownCents) {
-    return "Part of this refund was already refunded without being marked on it, so trying the card again would send more than is owed. Settle it with Paid another way.";
+  // A superseded intent's runner sends what its charge still holds, up to its amount: never more than the row's own
+  // unsent figure, and less only where its charge was already part refunded - the money truly left to return (S1).
+  const sizedOnLedger = operation.type === "REFUND_SUPERSEDED_PAYMENT" && !parseRefundAllocationPlan(operation.allocationPlan)?.length;
+  if (sizedOnLedger && sends === 0) {
+    return `This refund's card charge holds nothing more to refund, so there is nothing to send to the card. ${settle}`;
+  }
+  if (sizedOnLedger ? sends > owed.ownCents : sends !== owed.ownCents) {
+    return `Part of this refund was already refunded without being marked on it, so trying the card again would send a different amount from what is owed. ${settle}`;
   }
   if (payment.recoveryOperations.some((other) => other.id !== operation.id && cardRefundFailedLaterRefundId(other.idempotencyKey) !== null)) {
-    return "A refund Stripe failed later is on this payment, and it may be the same money as this one. Do not try the card again: check what the member is owed and settle it with Paid another way.";
+    return `A refund Stripe failed later is on this payment, and it may be the same money as this one. Do not try the card again: check what the member is owed. ${settle}`;
   }
   return null;
 }
 
+/** What a re-arm's send is read from: the row's stored plan, or a superseded intent's own charge (review S1). */
+export interface ReArmedRow {
+  type: string;
+  amountCents: number;
+  allocationPlan: unknown;
+  /** A superseded intent's charge, as its runner reads it; null or absent where unknown. */
+  paymentTransaction?: { amountCents: number; refundedAmountCents: number } | null;
+}
+
 /**
- * #4368 review F1: what the runner would send for a re-armed row - every
- * stored plan slice not marked `madeRefundId`, at its whole amount
- * (`refundPlanOrRetryRefusals`, `processBookingModificationRefundOperation`) -
- * or null for a row with no stored plan, whose runner sizes its request at the
- * time.
+ * Review S1: whether "Paid another way" could close this row, so a refusal can
+ * point to it. It closes any row except a superseded intent's refund whose
+ * charge does not hold exactly what it owes (`assertSupersededCloseFillsItsTransaction`).
  */
-export function reArmWouldSendCents(allocationPlan: unknown): number | null {
-  const plan = parseRefundAllocationPlan(allocationPlan);
-  if (!plan || plan.length === 0) return null;
-  return plan.reduce((sum, slice) => sum + (slice.madeRefundId ? 0 : slice.amountCents), 0);
+function paidAnotherWayCanClose(operation: ReArmedRow, owed: Pick<DeadCardRefundStillOwed, "ownCents" | "owedCents">): boolean {
+  if (operation.type !== "REFUND_SUPERSEDED_PAYMENT") return true;
+  const charge = operation.paymentTransaction;
+  return !!charge && owed.ownCents > 0 && owed.owedCents === owed.ownCents && charge.amountCents - charge.refundedAmountCents === owed.ownCents;
+}
+
+/**
+ * #4368 review F1, S1: what the runner would send for a re-armed row.
+ *
+ * - A stored plan: every slice not marked `madeRefundId`, at its whole amount
+ *   (`refundPlanOrRetryRefusals`, `processBookingModificationRefundOperation`).
+ * - A superseded intent's refund with no plan: one request its runner sizes on
+ *   the ledger after the preflight records Stripe's refunds - what its charge
+ *   still holds, up to its amount (`refundHeadroomIncrementCents`,
+ *   `processRefundSupersededPaymentOperation`). Read under the Payment row by
+ *   the re-arm; any refund recorded after only lowers it.
+ * - Any other row with no plan (a legacy booking modification's, whose runner
+ *   derives its plan at the time), or a superseded one whose charge is not
+ *   known: null - it cannot be checked.
+ */
+export function reArmWouldSendCents(operation: ReArmedRow): number | null {
+  const plan = parseRefundAllocationPlan(operation.allocationPlan);
+  if (plan && plan.length > 0) return plan.reduce((sum, slice) => sum + (slice.madeRefundId ? 0 : slice.amountCents), 0);
+  if (operation.type === "REFUND_SUPERSEDED_PAYMENT" && operation.paymentTransaction) {
+    return refundHeadroomIncrementCents(operation.paymentTransaction, operation.amountCents);
+  }
+  return null;
 }
 
 /** A refund as Stripe lists it for an intent, as the re-arm reads it before its locks. */

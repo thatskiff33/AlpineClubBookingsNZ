@@ -687,7 +687,7 @@ describe("#4368: Try the card again (decision 5)", () => {
     fireEvent.click(tryAgainButton());
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("Try the card again?")).toBeInTheDocument();
-    expect(dialog).toHaveTextContent("The app will ask Stripe to refund $150.00 to the member's card again.");
+    expect(dialog).toHaveTextContent("The app will ask Stripe to refund up to $150.00 to the member's card again.");
     expect(dialog).toHaveTextContent("reads the refunds Stripe already holds on the charge");
     expect(mocks.fetch).not.toHaveBeenCalled();
   });

@@ -217,7 +217,12 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
   const operations = await prisma.paymentRecoveryOperation.findMany({
     where: deadCardRefundOperationWhere,
     orderBy: { createdAt: "asc" },
-    select: { ...DEAD_CARD_REFUND_OPERATION_SELECT, payment: { select: DEAD_CARD_REFUND_PAYMENT_SELECT } },
+    select: {
+      ...DEAD_CARD_REFUND_OPERATION_SELECT,
+      payment: { select: DEAD_CARD_REFUND_PAYMENT_SELECT },
+      // #4368 review S1: a superseded intent's charge, which "Try the card again"'s check reads.
+      paymentTransaction: { select: { amountCents: true, refundedAmountCents: true } },
+    },
   });
   const listed = operations
     .filter(

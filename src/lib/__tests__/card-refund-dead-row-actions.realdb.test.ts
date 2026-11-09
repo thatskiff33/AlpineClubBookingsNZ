@@ -29,6 +29,7 @@
  * `race-4368-` fixtures. Stripe is the harness's one shared double.
  */
 import type Stripe from "stripe";
+import { Prisma } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
@@ -556,6 +557,27 @@ let refundCreatedSeconds = 0;
           throw new Error("Stripe refund preflight is incomplete (INV-PAY-145); no refund was sent.");
         };
         await expect(tryAgain()).rejects.toMatchObject({ status: 409, message: expect.stringContaining("could not be read") });
+        expect(await operationNow()).toMatchObject({ status: "FAILED", attempts: 5 });
+      });
+    });
+
+    describe("review S1: a superseded intent's refund with no plan is sized on its charge", () => {
+      it("MUTATION: re-armed against what its charge holds, part refunded before; a legacy row with no plan is still refused", async () => {
+        // The row becomes a superseded intent's refund of the charge, with no stored plan; Stripe refunded part of the
+        // charge before the row was raised, so its runner sends only what the charge still holds.
+        await prisma.paymentTransaction.update({ where: { id: TRANSACTION_ID }, data: { refundedAmountCents: PAID_CENTS - REFUND_CENTS } });
+        await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: PAID_CENTS - REFUND_CENTS, status: "PARTIALLY_REFUNDED" } });
+        await prisma.paymentRecoveryOperation.update({
+          where: { id: OPERATION_ID },
+          data: { type: "REFUND_SUPERSEDED_PAYMENT", paymentTransactionId: TRANSACTION_ID, allocationPlan: Prisma.DbNull },
+        });
+        await expect(tryAgain()).resolves.toMatchObject({ operationId: OPERATION_ID });
+        expect(await operationNow()).toMatchObject({ status: "PENDING", attempts: 0 });
+      });
+
+      it("MUTATION: a legacy booking modification's refund with no plan is refused, and points to Paid another way", async () => {
+        await prisma.paymentRecoveryOperation.update({ where: { id: OPERATION_ID }, data: { allocationPlan: Prisma.DbNull } });
+        await expect(tryAgain()).rejects.toMatchObject({ status: 409, message: expect.stringContaining("Settle it with Paid another way") });
         expect(await operationNow()).toMatchObject({ status: "FAILED", attempts: 5 });
       });
     });

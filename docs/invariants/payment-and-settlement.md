@@ -4061,24 +4061,24 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
 later), **`INV-PAY-145`** (preflight).
 
 - **A dead card refund is settled on Stuck States, never by a new Stripe
-  dashboard refund** (decisions 5 and 7 on #4361; #4368). Two settlements
-  beside "Paid another way" record no money; finance:edit, as it.
+  dashboard refund** (owner decisions 5 and 7 on #4361; #4368). Two
+  settlements beside "Paid another way" record no money; finance:edit, as it.
 - **Nothing left owed.** A dead row with nothing owed and nothing of its own
   unsent is listed while Stripe refunds the owed figure's attribution gives it
-  exist, and closes to `SUCCEEDED` naming them. No allocation, hand-back,
-  journal posting, Stripe call or Xero row. A $0 off the payment's cap alone is
-  a developer's. Refused (409) unless all that still holds under the locks and
-  the refunds named are the ones the treasurer saw.
+  exist, and closes to `SUCCEEDED` naming them; it moves no money and calls no
+  provider. A $0 off the payment's cap alone is a developer's. Re-checked under
+  the locks against the refunds the treasurer saw.
 - **Try the card again** re-arms the row with
   `rearmedPaymentRecoveryOperationData`; the runner's preflight reads Stripe
-  before any send. A re-arm runs outside Stripe's key window, so where the app
-  cannot show a re-send is safe it refuses (409): nothing owed; a row raised
-  for a person (failed-later, still-owed rest); a may-have-refunded failure;
-  the payment holding less than the row's unsent slices; unmarked plan slices
-  not adding up to them; any failed-later row
-  on the payment, open or paid (#4492); a counted, unstamped, unmarked refund
-  Stripe lists from this booking's same door (read before the locks;
-  unreadable refuses); or a moved owed figure or plan.
+  first. A re-arm runs outside Stripe's key window, so where a re-send cannot
+  be shown safe it refuses (409): nothing owed; a row raised for a person; a
+  may-have-refunded failure; the payment holding less than the row's unsent
+  slices; unmarked plan slices not adding up to them (a plan-less superseded
+  one: what its charge holds); any failed-later row on the payment, open or
+  paid (#4492); a counted, unstamped, unmarked refund Stripe lists from this
+  booking's same door (unreadable refuses); or a moved owed figure or plan.
+  Where "Paid another way" cannot close it either, the refusal points to a
+  developer.
 - **One row, one winner.** All three settlements share `lockDeadCardRefundRow`
   (`lock(1)`, the row, then the Payment row) and its claim: dead, on the plan
   read. A closed row is never re-armed, nor a re-armed one closed until given
