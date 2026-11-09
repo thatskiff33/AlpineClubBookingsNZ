@@ -9,7 +9,7 @@
   own duplicate record is merged away first, the approval saves nothing and
   they approve it again from their surviving record.
 
-  One rarer case is not fixed here and is tracked separately. The officer is
+  One rarer case is not fixed here and is tracked separately (#4855). The officer is
   the duplicate being merged, the booking is not one the merge moves, and the
   approval also adds a guest member or credits the booking's owner. The
   approval and the merge can still wait on each other until the database

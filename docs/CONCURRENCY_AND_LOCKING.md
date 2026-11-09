@@ -3442,7 +3442,7 @@ The approval's claim takes the officer's Member key share, and its later Member
 key shares (a guest member the change adds, a credit to the booking's owner)
 can wait on merge's id-ordered `Member … FOR UPDATE`, which in turn waits on
 the officer's row. PostgreSQL aborts one side (`40P01`). It is tracked as its
-own issue, separate from #4845, which closes only the cycles that run through
+own issue (#4855), separate from #4845, which closes only the cycles that run through
 the booking row.
 
 **An accepted counterpart: member hard-delete.** Deleting a member
