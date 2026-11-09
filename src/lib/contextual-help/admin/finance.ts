@@ -5,12 +5,12 @@
  * Section per the sidebar's `buildAdminNavSections`. The separate `/finance` workspace
  * (the finance-scope help) lives in `../finance.ts`.
  *
- * The keys stay the pages' old paths now that the pages live under
- * `/admin/finance` (C5 #4802). The admin help widget looks a page up by
- * `canonicalAdminPathname`, which reads a moved page's hub URL as its old
- * path, in either switch state. An `adminHref` key would stop matching once
- * the switch is on.
+ * The Finance pages' keys are their registry OLD paths, also now that the pages
+ * live under `/admin/finance` (C5 #4802), and never `adminHref`: the admin help
+ * widget looks a page up by `canonicalAdminPathname`, which reads a moved page's
+ * hub URL as its old path, in either switch state.
  */
+import { getAdminPage } from "@/lib/admin-hubs";
 import {
   CREDITS_OWED_LABEL,
   REFUNDS_AND_CREDITS_OWED_NOTE,
@@ -20,7 +20,7 @@ import { entry, help, type HelpEntry } from "../types";
 
 export const adminFinanceHelpEntries: HelpEntry[] = [
   entry(
-    "/admin/refund-requests",
+    getAdminPage("refund-requests").oldPath,
     help(
       "Refunds & Credits",
       "This page reviews refund appeals, member-credit requests, and related payment recovery decisions.",
@@ -81,7 +81,7 @@ export const adminFinanceHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/payments",
+    getAdminPage("payments").oldPath,
     help(
       "Payments",
       "Payments shows payment records, reconciliation state, and recovery actions across Stripe and Internet Banking paths.",
@@ -111,7 +111,7 @@ export const adminFinanceHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/internet-banking",
+    getAdminPage("internet-banking").oldPath,
     help(
       "Internet Banking",
       "This page configures and monitors Internet Banking payment instructions and Xero invoice settlement behavior.",
@@ -140,7 +140,7 @@ export const adminFinanceHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/reports",
+    getAdminPage("reports").oldPath,
     help(
       "Reports",
       "Reports provides admin-facing operational exports and summaries for stay-night bookings, booked revenue, collected cash, members, and lodge activity.",
@@ -183,7 +183,7 @@ export const adminFinanceHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/xero/setup",
+    getAdminPage("xero-setup").oldPath,
     help(
       "Xero Setup",
       "Xero Setup connects and maps the operational Xero integration used by accounting, Internet Banking, contacts, and finance reports.",
@@ -215,7 +215,7 @@ export const adminFinanceHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/xero",
+    getAdminPage("xero").oldPath,
     help(
       "Xero Sync",
       "Xero Sync monitors accounting connection health, queued operations, contact links, invoices, and replayable provider failures.",

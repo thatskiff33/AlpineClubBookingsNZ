@@ -33,27 +33,14 @@ type Config = NextConfig & {
 };
 
 /**
- * The real `next.config.ts`, loaded fresh. With `movedHub`, that hub's fragment
- * has every page moved; with `live`, the switch reads that value. Nothing else
- * is replaced.
+ * The real `next.config.ts`, loaded fresh. With `live`, the switch reads that
+ * value. Nothing else is replaced.
  */
-async function loadConfig(options: { live?: boolean; movedHub?: string } = {}) {
+async function loadConfig(options: { live?: boolean } = {}) {
   vi.resetModules();
   vi.doUnmock("@/lib/admin-hubs/release");
-  vi.doUnmock("@/lib/admin-hubs/hubs/finance");
   if (options.live !== undefined) {
     vi.doMock("@/lib/admin-hubs/release", () => ({ ADMIN_HUBS_LIVE: options.live }));
-  }
-  if (options.movedHub) {
-    vi.doMock(`@/lib/admin-hubs/hubs/${options.movedHub}`, async (importOriginal) => {
-      const original = await importOriginal<Record<string, { pages: { moved: boolean }[] }>>();
-      return Object.fromEntries(
-        Object.entries(original).map(([name, fragment]) => [
-          name,
-          { ...fragment, pages: fragment.pages.map((page) => ({ ...page, moved: true })) },
-        ]),
-      );
-    });
   }
   return (await import("../../../next.config")).default as Config;
 }
@@ -284,9 +271,16 @@ describe("next.config.ts with the switch off", () => {
   });
 });
 
-describe("next.config.ts over a moved Finance hub", () => {
+describe("next.config.ts over the moved Finance hub", () => {
+  // Finance moved for real in C5 (#4802); until then this block mocked the move.
+  it("PREMISE: every Finance page has moved", () => {
+    const finance = ADMIN_PAGES.filter((page) => page.hub === "finance");
+    expect(finance.length).toBeGreaterThan(0);
+    expect(finance.filter((page) => !page.moved).map((page) => page.id)).toEqual([]);
+  });
+
   it("off: the hub URL redirects (307) to the old URL, query kept; the old URL is rewritten to the moved file", async () => {
-    const config = await loadConfig({ live: false, movedHub: "finance" });
+    const config = await loadConfig({ live: false });
     await expect(resolve(config, "/admin/finance/payments?tab=open")).resolves.toEqual({
       kind: "redirect",
       status: 307,
@@ -304,7 +298,7 @@ describe("next.config.ts over a moved Finance hub", () => {
   });
 
   it("on: the old URL redirects (307) to the hub URL, query kept, and nothing is rewritten", async () => {
-    const config = await loadConfig({ live: true, movedHub: "finance" });
+    const config = await loadConfig({ live: true });
     await expect(resolve(config, "/admin/payments?tab=open")).resolves.toEqual({
       kind: "redirect",
       status: 307,
@@ -319,7 +313,7 @@ describe("next.config.ts over a moved Finance hub", () => {
   it.each([false, true])(
     "keeps the asset rewrites working and in place alongside the admin rules (live=%s)",
     async (live) => {
-      const config = await loadConfig({ live, movedHub: "finance" });
+      const config = await loadConfig({ live });
       const rewrites = (await config.rewrites()) as { afterFiles: unknown[]; fallback: unknown[] };
       expect(rewrites.afterFiles).toEqual([...ASSET_NOT_FOUND_REWRITES]);
       expect(rewrites.fallback).toEqual([]);
@@ -331,7 +325,7 @@ describe("next.config.ts over a moved Finance hub", () => {
   );
 
   it("PREMISE: the moved state really does produce rules, so the state above is not vacuous", async () => {
-    const off = await loadConfig({ live: false, movedHub: "finance" });
+    const off = await loadConfig({ live: false });
     // The moved pages' own redirects, beside the retired pages'.
     const retired = new Set<string>(ADMIN_RETIRED_PAGES.map(({ oldPath }) => oldPath));
     expect((await off.redirects()).filter((rule) => !retired.has(rule.source)).length).toBeGreaterThan(0);

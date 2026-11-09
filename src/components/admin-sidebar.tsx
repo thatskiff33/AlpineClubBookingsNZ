@@ -217,11 +217,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         icon: ClipboardList,
       },
       { href: "/admin/family-groups", label: "Family Groups", icon: Users },
-      {
-        href: adminHref("refund-requests"),
-        label: "Refunds & Credits",
-        icon: RotateCcw,
-      },
+      { ...adminLink("refund-requests"), icon: RotateCcw },
       {
         href: "/admin/membership-cancellations",
         label: "Cancellation Requests",
@@ -291,36 +287,12 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         icon: DollarSign,
         orAccess: canAccessConsolidatedFeesPage,
       },
-      {
-        href: adminHref("payments"),
-        label: "Payments",
-        icon: CreditCard,
-      },
-      {
-        href: adminHref("internet-banking"),
-        label: "Internet Banking",
-        icon: Landmark,
-      },
-      {
-        href: adminHref("refund-requests"),
-        label: "Refunds & Credits",
-        icon: RotateCcw,
-      },
-      {
-        href: adminHref("reports"),
-        label: "Reports",
-        icon: BarChart2,
-      },
-      {
-        href: adminHref("xero"),
-        label: "Xero Sync",
-        icon: RefreshCw,
-      },
-      {
-        href: adminHref("xero-member-grouping"),
-        label: "Xero Member Grouping",
-        icon: Users,
-      },
+      { ...adminLink("payments"), icon: CreditCard },
+      { ...adminLink("internet-banking"), icon: Landmark },
+      { ...adminLink("refund-requests"), icon: RotateCcw },
+      { ...adminLink("reports"), icon: BarChart2 },
+      { ...adminLink("xero"), icon: RefreshCw },
+      { ...adminLink("xero-member-grouping"), icon: Users },
     ],
   },
   {
@@ -331,7 +303,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         label: "Members",
         icon: Users,
       },
-      { href: adminHref("subscriptions"), label: "Subscriptions", icon: FileText },
+      { ...adminLink("subscriptions"), icon: FileText },
       {
         href: "/admin/member-applications",
         label: "Applications",

@@ -4,6 +4,7 @@
  *
  * Section per the sidebar's `buildAdminNavSections`.
  */
+import { getAdminPage } from "@/lib/admin-hubs";
 import { entry, help, type HelpEntry } from "../types";
 
 export const adminMembersHelpEntries: HelpEntry[] = [
@@ -153,9 +154,9 @@ export const adminMembersHelpEntries: HelpEntry[] = [
       ],
     ),
   ),
-  // Old path on purpose: see the note on `admin/finance.ts` (C5 #4802).
+  // Keyed by its registry old path: see the note on `admin/finance.ts` (C5 #4802).
   entry(
-    "/admin/subscriptions",
+    getAdminPage("subscriptions").oldPath,
     help(
       "Subscriptions",
       "Subscriptions tracks membership subscription invoices, payment state, lockout behavior, and season-specific dues.",

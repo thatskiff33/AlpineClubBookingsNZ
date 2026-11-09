@@ -1689,6 +1689,12 @@ describe("the registry is inert", () => {
     "src/lib/stuck-state-dashboard.ts": "C5: stuck-state links use adminHref",
     "src/lib/xero-record-activity.ts": "C5: the payments back link is adminHref",
     "src/lib/xero-record-links.ts": "C5: a Xero record's URL is adminHref",
+    "src/lib/contextual-help/admin/finance.ts":
+      "C5: the Finance pages' help is keyed by each page's registry old path",
+    "src/lib/contextual-help/admin/members.ts":
+      "C5: the Subscriptions help is keyed by its registry old path",
+    "src/lib/contextual-help/questions-admin.ts":
+      "C5: the Finance pages' question chips are keyed by each page's registry old path",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;

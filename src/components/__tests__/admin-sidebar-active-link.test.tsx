@@ -13,10 +13,10 @@
  * path either side is written in, or it is wrong after a move and the server
  * and client renders disagree.
  *
- * This file renders the REAL sidebar over a registry whose Finance hub has
- * moved (the hub fragment is replaced, nothing else), so the wiring from
- * `usePathname()` through `activeAdminHref` to the link's class is what is
- * measured. The registry function's own cases are in
+ * This file renders the REAL sidebar over the real registry, whose Finance hub
+ * has moved (C5 #4802; until then the hub fragment was replaced here), so the
+ * wiring from `usePathname()` through `activeAdminHref` to the link's class is
+ * what is measured. The registry function's own cases are in
  * `src/lib/__tests__/admin-hubs-active-link.test.ts`.
  */
 
@@ -35,17 +35,6 @@ vi.mock("next/navigation", () => ({
   usePathname: () => state.pathname,
   useRouter: () => ({ push: vi.fn() }),
 }));
-
-// A synthetic moved registry: every Finance page has moved under `/admin/finance`.
-vi.mock("@/lib/admin-hubs/hubs/finance", async (importOriginal) => {
-  const original = (await importOriginal()) as typeof import("@/lib/admin-hubs/hubs/finance");
-  return {
-    FINANCE_HUB: {
-      ...original.FINANCE_HUB,
-      pages: original.FINANCE_HUB.pages.map((page) => ({ ...page, moved: true })),
-    },
-  };
-});
 
 import { AdminSidebar } from "@/components/admin-sidebar";
 import { ADMIN_PAGES } from "@/lib/admin-hubs";
@@ -93,13 +82,17 @@ describe("the sidebar's active link over a moved hub", () => {
     stubPendingCounts();
   });
 
-  it("PREMISE: the Finance hub has moved in this file, and the Website hub has moved for real", () => {
+  it("PREMISE: the Finance and Website hubs have moved, and nothing else has", () => {
     const moved = ADMIN_PAGES.filter((page) => page.moved);
     expect(moved.length).toBeGreaterThan(0);
     expect(new Set(moved.map((page) => page.hub))).toEqual(new Set(["finance", "website"]));
     expect(moved.find((page) => page.id === "payments")?.hubPath).toBe(
       "/admin/finance/payments",
     );
+    // Every Finance page, so the nested Xero cases below are both moved.
+    expect(
+      ADMIN_PAGES.filter((page) => page.hub === "finance" && !page.moved).map((page) => page.id),
+    ).toEqual([]);
   });
 
   it.each([
