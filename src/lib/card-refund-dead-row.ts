@@ -340,7 +340,7 @@ export function reArmWouldSendCents(operation: ReArmedRow): number | null {
   return null;
 }
 
-/** A refund as Stripe lists it for an intent, as the re-arm reads it before its locks. */
+/** A refund as Stripe lists it for an intent, as the re-arm and the runner's hold read it; a `Stripe.Refund` is one as listed. */
 export interface ListedStripeRefund {
   id: string;
   status?: string | null;

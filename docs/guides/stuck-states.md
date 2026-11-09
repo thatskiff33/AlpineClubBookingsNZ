@@ -100,13 +100,18 @@ straight away when either is true:
 
 - a refund made in the Stripe dashboard since the debt arose is on the charge;
 - for a refund that replaces a superseded payment, another part of the app -
-  a cancellation or a booking change, say - has since refunded part of the
-  same charge. The app would otherwise send only the rest, and if that other
-  refund later failed, the member could be paid twice.
+  a booking change whose card refund went through first time, say - has
+  since refunded part of the same charge. The app would otherwise send only
+  the rest, and if that other refund later failed, the member could be paid
+  twice.
 
 The officers' email and the [audit log](audit-log.md) (under **Payment**) say
 which, and name the Stripe refund. Check the booking and the Stripe refunds,
-then settle anything still owed with **Paid another way**.
+then settle anything still owed with **Paid another way**. One exception: if
+the refund the email names has since failed - it then shows here as a refund
+Stripe failed later, a row of its own - do **not** close this one with **Paid
+another way**. The two may be the same money, and that row asks for it again,
+so ask a developer to reconcile them (#4492).
 
 **A refund Stripe refused** (#4083, #4096). When a booking change or a
 cancellation refunds a card and Stripe answers straight away that the refund

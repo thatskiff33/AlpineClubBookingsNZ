@@ -272,7 +272,7 @@ describe("a plan-less superseded row sized on another refund holds (#4858)", () 
     succeededAt: null,
   };
   const ownMetadata = cardRefundOperationRefundMetadata(superseded);
-  const otherDoor = { bookingId: "booking-test", reason: "booking_cancellation" };
+  const otherDoor = { bookingId: "booking-test", reason: "date_change_price_decrease" }; // An edit's inline refund (review F2).
   const madeAfter = new Date("2026-06-21T00:00:00.000Z");
   const ledgerRefund = (id: string, overrides: Record<string, unknown> = {}) => ({
     stripeRefundId: id, paymentTransactionId: "transaction-test", amountCents: 2000, status: "succeeded", createdAt: madeAfter, stripeCreatedAt: madeAfter, ...overrides,

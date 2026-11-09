@@ -6783,9 +6783,11 @@ listing). It adds one plain read of the payment's card refund rows and
 recorded refunds, outside any transaction, and no key, lock or site
 (`INV-LOCK-001`, `INV-LOCK-002`, `INV-LOCK-003`). It reads AFTER the sizing read of the charge, so every
 refund the size counted is checked. A refund recorded between the two reads is
-checked without being counted and holds the row conservatively; one that fails
-between them was counted, so the row asks for less and the failed-later row
-owes it once. A refund recorded after both reads neither sizes the send nor
+checked without being counted and holds the row conservatively. One that fails
+between them was counted but is not checked: the row asks for less and is not
+held. That is the case of a refund failing before the runner holds on it,
+which this hold does not cover - the #4492 open question (both pinned in
+`payment-recovery.test.ts`, "#4858"). A refund recorded after both reads neither sizes the send nor
 holds it: as #4699 states, Stripe refuses a request beyond what the charge
 still holds, and the next attempt reads that refund.
 Proven on real Postgres by `superseded-refund-another-door-hold.realdb.test.ts`:

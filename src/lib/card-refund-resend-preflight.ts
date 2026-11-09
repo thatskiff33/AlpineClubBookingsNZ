@@ -35,7 +35,7 @@ export class AnotherRefundSizesSupersededRowError extends UnattributedCardRefund
   constructor(stripeRefundIds: string[]) {
     super(
       stripeRefundIds,
-      "Another refund on this card charge, which this refund did not make, counts toward what this refund owes (INV-PAY-145, #4858). If that refund failed later, the member could be paid twice, so the app sent nothing and stopped automatic retries. Check the Stripe refunds and the booking before paying anything else. If money is still owed, use Paid another way in Stuck States; do not make a new Stripe dashboard refund.",
+      "Another refund on this card charge, which this refund did not make, counts toward what this refund owes (INV-PAY-145, #4858). If that refund failed later, the member could be paid twice, so the app sent nothing and stopped automatic retries. Check the Stripe refunds and the booking before paying anything else. If the refund named here has since failed (it then shows as a refund of its own that Stripe failed later), do not close this one with Paid another way: ask a developer (#4492). Otherwise, if money is still owed, use Paid another way in Stuck States; do not make a new Stripe dashboard refund.",
     );
   }
 }
@@ -195,10 +195,6 @@ export async function holdSupersededRowSizedOnAnotherRefund({
   if (!isSizedOnLedger(operation)) return;
   const payment = await prisma.payment.findUnique({ where: { id: operation.paymentId }, select: netCollectedCardRefundSelect });
   if (!payment) throw new Error("Refund preflight could not read the payment (INV-PAY-145)");
-  const foreign = foreignRefundsSizingSupersededRow(
-    payment,
-    operation,
-    listed.map((refund) => ({ id: refund.id, status: refund.status ?? null, metadata: refund.metadata ?? null })),
-  );
+  const foreign = foreignRefundsSizingSupersededRow(payment, operation, listed);
   if (foreign.length > 0) throw new AnotherRefundSizesSupersededRowError(foreign);
 }

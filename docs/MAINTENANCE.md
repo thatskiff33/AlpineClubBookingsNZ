@@ -2486,7 +2486,10 @@ refund. Its owed figure keeps the existing attribution rule.
 Check the booking, the recorded refunds and Stripe before moving more money.
 If money remains owed, settle it with **Paid another way** in
 [Stuck States](guides/stuck-states.md), rather than another Stripe dashboard
-refund. If nothing remains owed, ask a developer to reconcile the held row.
+refund. If nothing remains owed, ask a developer to reconcile the held row. A
+row held under #4858 whose named refund has since failed (it then has a
+failed-later row of its own) is a developer's too, never a **Paid another way**
+close: that row asks for the same money again (#4492).
 A preflight read or recording failure uses normal backoff and sends nothing;
 an intent with more than 100 refunds requires investigation because the single
 page cannot establish complete evidence. No production repair runs automatically.

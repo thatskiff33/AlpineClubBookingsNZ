@@ -59,6 +59,7 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let runPaymentRecoveryOperationNow: (typeof import("@/lib/payment-recovery"))["runPaymentRecoveryOperationNow"];
 let recordStripeRefundsAgainstTransaction: (typeof import("@/lib/payment-transactions"))["recordStripeRefundsAgainstTransaction"];
+let listDeadCardRefunds: (typeof import("@/lib/card-refund-paid-another-way"))["listDeadCardRefunds"];
 let keys: typeof import("@/lib/payment-recovery-keys");
 let recoveryAlert: typeof import("@/lib/payment-recovery-alert");
 let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixture"))["CLUB_FORMAT_TEST"];
@@ -229,6 +230,7 @@ let raisedSeconds = 0;
       harnessRole = declareEnvironmentRoleForSuite("non-production");
       ({ runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery"));
       ({ recordStripeRefundsAgainstTransaction } = await import("@/lib/payment-transactions"));
+      ({ listDeadCardRefunds } = await import("@/lib/card-refund-paid-another-way"));
       keys = await import("@/lib/payment-recovery-keys");
       recoveryAlert = await import("@/lib/payment-recovery-alert");
       ({ MAX_PAYMENT_RECOVERY_ATTEMPTS } = await import("@/lib/payment-recovery-constants"));
@@ -335,6 +337,13 @@ let raisedSeconds = 0;
         where: { idempotencyKey: keys.buildCardRefundFailedLaterRecoveryKey(OTHER_DOOR_REFUND) },
       });
       expect(failedLater).toMatchObject({ amountCents: OTHER_DOOR_CENTS, status: "PENDING" });
+      // Review F1, the state an officer sees now, as it stands (the #4492 question is not decided here): the held
+      // row owes its whole charge again beside the failed-later row, and "Try the card again" is refused for it.
+      // The hold's message tells the officer not to close it with "Paid another way" but to ask a developer.
+      const panel = (await listDeadCardRefunds()).find((row) => row.operationId === operationId);
+      expect(panel).toMatchObject({ owedCents: SUPERSEDED_CENTS });
+      expect(panel?.tryCardAgainRefusal).toMatch(/failed later is on this payment/);
+      expect((await rowNow(operationId)).lastError).toMatch(/has since failed .* ask a developer \(#4492\)/);
 
       // The held row is never claimed again; the failed-later row re-sends the other door's refund, once.
       expect(await runPaymentRecoveryOperationNow(operationId, CLUB_FORMAT_TEST)).toBe("not-claimed");
