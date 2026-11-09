@@ -45,6 +45,7 @@ import { BOOKING_OWNER_NAME_SELECT, bookingOwnerName } from "@/lib/booking-owner
 import logger from "@/lib/logger";
 import { cancellationKeptCents, paidCancellationMoney } from "@/lib/paid-cancellation-money";
 import { openNonCancellationHandBackCents } from "@/lib/edit-refund-hand-back";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
 import { cancelTieredAppliedCreditCents } from "@/lib/booking-payment-state";
 import { refundedPaymentCreditRestore } from "@/lib/cancel-refunded-payment-credit";
@@ -1647,6 +1648,8 @@ async function performBookingCancellation(
     // compare-and-set (#3640): the charge.refunded webhook takes no lock, so a
     // card refund it commits between this read and the write survives. #4119:
     // the walk is shared with the cancel preview, which folds in memory.
+    // #4866 (`INV-PAY-150`): live superseded captures, read before the fold; no fold, tier, card slice or credit takes them.
+    const supersededHeldBack = await readSupersededCaptureHeldBack(tx, payment.id);
     await foldMirrorRefundIntoLedger(
       payment,
       () => tx.paymentTransaction.findMany({
@@ -1654,7 +1657,7 @@ async function performBookingCancellation(
         orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
         select: { id: true, amountCents: true, refundedAmountCents: true },
       }),
-      (row, amountCents) => foldIntoTransactionRefundedAmount({ paymentTransactionId: row.id, amountCents, store: tx }),
+      (row, amountCents) => foldIntoTransactionRefundedAmount({ paymentTransactionId: row.id, amountCents, store: tx }), supersededHeldBack.byTransaction,
     );
 
     // Freeze the refund plan from the LOCKED read. Change fees (from prior
@@ -1685,7 +1688,7 @@ async function performBookingCancellation(
         : tieredPayment,
       // #3827 (`INV-PAY-117`): read under lock(1), which every edit that raises
       // such a task also holds, so none can appear before this cancel commits.
-      openNonCancellationHandBackCents: await openNonCancellationHandBackCents(tx, payment.id),
+      openNonCancellationHandBackCents: (await openNonCancellationHandBackCents(tx, payment.id)) + supersededHeldBack.totalCents, // #4866
       finalPriceCents: fresh.finalPriceCents,
       appliedCreditCents,
       restoresToMemberLedger: restoreMemberId !== null,
@@ -1904,11 +1907,7 @@ async function performBookingCancellation(
       manualRefundTaskId = task.id;
       if (organiserExtraState && organiserExtraState.invoices.length > 0) await bindOrganiserExtraRefundToHandBack(tx, { bookingId, handBackTaskId: task.id, scopeId: `cancel:${bookingId}` });
     } else if (branch === "credit") {
-      await applyLocalRefundAllocation({
-        paymentId: payment.id,
-        amountCents: refundAmountCents,
-        store: tx,
-      });
+      await applyLocalRefundAllocation({ paymentId: payment.id, amountCents: refundAmountCents, store: tx, heldBackByTransaction: supersededHeldBack.byTransaction }); // #4866
       // #3369: a refund AS CREDIT credits a member's account, and an
       // organisation has none. The officer refunds a school by the money path
       // instead; this branch is unreachable for one, and saying so beats
@@ -1944,6 +1943,7 @@ async function performBookingCancellation(
         paymentId: payment.id,
         amountCents: refundAmountCents,
         store: tx,
+        heldBackByTransaction: supersededHeldBack.byTransaction, // #4866
       });
       cardRefundPlan = slices;
       plannedCardRefundCents = plannedAmountCents;

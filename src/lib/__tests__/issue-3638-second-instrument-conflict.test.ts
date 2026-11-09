@@ -1185,11 +1185,15 @@ describe("the settling capture skips one the superseded-intent machinery holds, 
       id: true,
       type: true,
       status: true,
+      paymentId: true,
       paymentIntentId: true,
       paymentTransactionId: true,
       idempotencyKey: true,
       attempts: true,
       nextRetryAt: true,
+      // #4866: what a superseded refund would still send, for a cancellation's hold-back (the same read).
+      amountCents: true,
+      allocationPlan: true,
     },
   };
 
@@ -1247,15 +1251,18 @@ describe("the settling capture skips one the superseded-intent machinery holds, 
               (operation.type === PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT &&
                 isPaymentRecoveryOperationInFlight(operation))),
         )
-        .map(({ id, type, status, paymentIntentId, paymentTransactionId, idempotencyKey, attempts, nextRetryAt }) => ({
+        .map(({ id, type, status, paymentId, paymentIntentId, paymentTransactionId, idempotencyKey, attempts, nextRetryAt, amountCents, allocationPlan }) => ({
           id,
           type,
           status,
+          paymentId,
           paymentIntentId,
           paymentTransactionId,
           idempotencyKey,
           attempts,
           nextRetryAt,
+          amountCents,
+          allocationPlan,
         }));
     });
   }

@@ -119,6 +119,9 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
     "reads only which candidate intents are already recorded (a Set of intent ids).",
   "src/lib/orphaned-applied-credit-backfill.ts > CANDIDATE_BOOKING_SELECT":
     "reads only each row's status to ask whether ANY row was captured (`.some`).",
+  "src/lib/superseded-capture-hold-back.ts > readSupersededCaptureHeldBack":
+    "#4866: each live superseded row looks its own charge up by id (`find` on its paymentTransactionId); the " +
+    "per-charge cents are a map and their total a sum, neither depending on the order.",
   "src/lib/refund-allocation-unwind.ts > unwindableHandBackCents":
     "#4162: sums each row's refunded total less its card refunds; a sum does not depend on the order " +
     "(the unwind itself orders its rows, oldest first).",

@@ -1351,23 +1351,23 @@ type RefundableStripeTransaction = {
  */
 function buildRefundAllocationSlices<T extends RefundableStripeTransaction>(
   transactions: readonly T[],
-  amountCents: number
+  amountCents: number,
+  /** #4866: cents of a charge this plan must leave alone (`supersededCaptureHeldBack`); none by default. */
+  heldBackByTransaction?: ReadonlyMap<string, number>
 ): {
   slices: Array<{ transaction: T; amountCents: number }>;
   totalRefundableCents: number;
 } {
+  const refundableCentsOf = (transaction: T) =>
+    transaction.amountCents - transaction.refundedAmountCents - (heldBackByTransaction?.get(transaction.id) ?? 0);
   const refundableTransactions = transactions
     .filter(isStripeTransaction)
     .filter((transaction) => isCapturedTransactionStatus(transaction.status))
-    .filter(
-      (transaction) =>
-        transaction.amountCents - transaction.refundedAmountCents > 0
-    )
+    .filter((transaction) => refundableCentsOf(transaction) > 0)
     .sort(compareLedgerRowsNewestFirst); // #4132 (INV-PAY-133): a tie's last-inserted row first
 
   const totalRefundableCents = refundableTransactions.reduce(
-    (sum, transaction) =>
-      sum + (transaction.amountCents - transaction.refundedAmountCents),
+    (sum, transaction) => sum + refundableCentsOf(transaction),
     0
   );
 
@@ -1375,8 +1375,7 @@ function buildRefundAllocationSlices<T extends RefundableStripeTransaction>(
   const slices: Array<{ transaction: T; amountCents: number }> = [];
   for (const transaction of refundableTransactions) {
     if (remainingAmountCents <= 0) break;
-    const refundableAmountCents =
-      transaction.amountCents - transaction.refundedAmountCents;
+    const refundableAmountCents = refundableCentsOf(transaction);
     const sliceAmountCents = Math.min(
       remainingAmountCents,
       refundableAmountCents
@@ -1401,10 +1400,12 @@ export async function planStripeRefundAllocation({
   paymentId,
   amountCents,
   store = prisma,
+  heldBackByTransaction,
 }: {
   paymentId: string;
   amountCents: number;
   store?: PaymentStore;
+  heldBackByTransaction?: ReadonlyMap<string, number>; // #4866: a cancellation's (`readSupersededCaptureHeldBack`)
 }): Promise<{
   slices: RefundAllocationSlice[];
   plannedAmountCents: number;
@@ -1415,7 +1416,7 @@ export async function planStripeRefundAllocation({
     throw new Error("Payment not found");
   }
 
-  return planCardRefundFromLedger(payment.transactions, amountCents);
+  return planCardRefundFromLedger(payment.transactions, amountCents, heldBackByTransaction);
 }
 
 /**
@@ -1427,11 +1428,13 @@ export async function planStripeRefundAllocation({
  */
 export function planCardRefundFromLedger(
   transactions: readonly RefundableStripeTransaction[],
-  amountCents: number
+  amountCents: number,
+  heldBackByTransaction?: ReadonlyMap<string, number> // #4866: `buildRefundAllocationSlices`
 ) {
   const { slices, totalRefundableCents } = buildRefundAllocationSlices(
     transactions,
-    amountCents
+    amountCents,
+    heldBackByTransaction
   );
   const plan: RefundAllocationSlice[] = slices.map((slice) => ({
     paymentTransactionId: slice.transaction.id,
@@ -1805,7 +1808,7 @@ export class RefundAllocationExceedsCapturedError extends Error {
 export async function applyLocalRefundAllocation({
   paymentId,
   amountCents,
-  preferTransactionIds = [], onlyTransactionIds,
+  preferTransactionIds = [], onlyTransactionIds, heldBackByTransaction,
   store = prisma,
 }: {
   paymentId: string;
@@ -1813,6 +1816,7 @@ export async function applyLocalRefundAllocation({
   /** #3372 ("Paid another way"): placed FIRST, in order - the charges an unsent card refund was for. */
   preferTransactionIds?: readonly string[];
   /** #4154: placed on these charges and no other; short of headroom there, it throws as any shortfall does. */ onlyTransactionIds?: readonly string[];
+  heldBackByTransaction?: ReadonlyMap<string, number>; // #4866: a cancellation's (`readSupersededCaptureHeldBack`)
   store?: PaymentStore;
 }) {
   await withStoreTransaction(store, async (db) => {
@@ -1830,11 +1834,9 @@ export async function applyLocalRefundAllocation({
           compareLedgerRowsNewestFirst(a, b)
       );
 
-    const totalRefundableCents = capturedTransactions.reduce(
-      (sum, transaction) =>
-        sum + Math.max(transaction.amountCents - transaction.refundedAmountCents, 0),
-      0
-    );
+    const placeableCents = (transaction: (typeof capturedTransactions)[number]) =>
+      Math.max(transaction.amountCents - transaction.refundedAmountCents - (heldBackByTransaction?.get(transaction.id) ?? 0), 0);
+    const totalRefundableCents = capturedTransactions.reduce((sum, transaction) => sum + placeableCents(transaction), 0);
     if (amountCents > totalRefundableCents) {
       throw new RefundAllocationExceedsCapturedError();
     }
@@ -1844,12 +1846,9 @@ export async function applyLocalRefundAllocation({
       if (remainingAmountCents <= 0) {
         break;
       }
-      remainingAmountCents -= await addWithinHeadroom(
-        db,
-        transaction.id,
-        remainingAmountCents,
-        { writeStatus: true }
-      );
+      // #4866: never into what a live superseded capture's own refund still has to send.
+      const askCents = heldBackByTransaction?.has(transaction.id) ? Math.min(remainingAmountCents, placeableCents(transaction)) : remainingAmountCents;
+      if (askCents > 0) remainingAmountCents -= await addWithinHeadroom(db, transaction.id, askCents, { writeStatus: true });
     }
     if (remainingAmountCents > 0) {
       throw new RefundAllocationRacedError();

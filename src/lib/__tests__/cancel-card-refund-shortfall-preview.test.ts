@@ -33,6 +33,7 @@ import { foldMirrorRefundIntoLedger } from "@/lib/mirror-refund-fold";
 import { compareLedgerRowsOldestFirst, LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { paidCancellationBranch } from "@/lib/paid-cancellation-event";
 import { planStripeRefundAllocation } from "@/lib/payment-transactions";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 type Txn = {
@@ -75,7 +76,7 @@ function bank(cents: number, refunded = 0, day = 20): Txn {
  * The transactions come back oldest first, ties in insertion order
  * (`LEDGER_ROWS_OLDEST_FIRST`, #4132): each row is numbered in the order given.
  */
-function store(transactions: Txn[], payment: Partial<PaymentRow> = {}) {
+function store(transactions: Txn[], payment: Partial<PaymentRow> = {}, supersededRefunds: Array<{ paymentTransactionId: string; amountCents: number }> = []) {
   const rows = transactions.map((row, index) => ({ ...row, insertionSeq: index + 1 }));
   const row: PaymentRow = {
     id: "payment-1",
@@ -99,15 +100,27 @@ function store(transactions: Txn[], payment: Partial<PaymentRow> = {}) {
       findUnique: vi.fn(async () => ({
         ...row,
         transactions: ordered().map((txn) => ({ ...txn })),
+        // #4866: the owed figure's inputs the shared ownership reading reads (`readSupersededCaptureOwnership`).
+        recoveryOperations: [],
+        refunds: [],
       })),
     },
     paymentTransaction: {
-      findMany: vi.fn(async ({ where }: { where: { status: { in: string[] } } }) => rows.filter((txn) => where.status.in.includes(txn.status)).map((txn) => ({ ...txn }))),
+      findMany: vi.fn(async ({ where }: { where: { status?: { in: string[] } } }) => rows.filter((txn) => !where.status || where.status.in.includes(txn.status)).map((txn) => ({ ...txn }))),
       create: vi.fn(async ({ data }: { data: Omit<Txn, "id" | "createdAt"> }) => {
         const created = { ...data, id: `txn-backfilled-${rows.length}`, createdAt: new Date(Date.UTC(2026, 6, 1)), insertionSeq: rows.length + 1 } as Txn & { insertionSeq: number };
         rows.push(created);
         return created;
       }),
+    },
+    // #4866: the live superseded captures' plan-less refund rows, none unless a case gives them.
+    paymentRecoveryOperation: {
+      findMany: vi.fn(async () =>
+        supersededRefunds.map((row, index) => ({
+          id: `op-${index}`, type: "REFUND_SUPERSEDED_PAYMENT", status: "PENDING", paymentId: "payment-1", paymentIntentId: `pi_of_${row.paymentTransactionId}`,
+          idempotencyKey: `payment_recovery_refund_${row.paymentTransactionId}`, attempts: 0, nextRetryAt: null, allocationPlan: null, ...row,
+        })),
+      ),
     },
     manualRefundTask: {
       createMany: vi.fn(async ({ data }: { data: Array<{ occurrenceKey: string; amountCents: number }> }) => {
@@ -124,7 +137,14 @@ function store(transactions: Txn[], payment: Partial<PaymentRow> = {}) {
 
 /** What the cancel's claim does with the same inputs: plan, then raise what the plan cannot carry. */
 async function cancelSide(db: ReturnType<typeof store>, refundAmountCents: number) {
-  const { plannedAmountCents } = await planStripeRefundAllocation({ paymentId: "payment-1", amountCents: refundAmountCents, store: db as never });
+  // #4866: the claim leaves the live superseded captures alone, read as it reads them.
+  const heldBack = await readSupersededCaptureHeldBack(db as never, "payment-1");
+  const { plannedAmountCents } = await planStripeRefundAllocation({
+    paymentId: "payment-1",
+    amountCents: refundAmountCents,
+    store: db as never,
+    heldBackByTransaction: heldBack.byTransaction,
+  });
   const raised = await raiseCancelCardShortfallHandBack(db as never, {
     bookingId: "booking-1",
     paymentId: "payment-1",
@@ -151,6 +171,29 @@ describe("the cancel preview sizes the card line as the cancel does (#4119)", ()
     expect(previewDb.paymentTransaction.create).not.toHaveBeenCalled();
     expect(previewDb.manualRefundTask.createMany).not.toHaveBeenCalled();
     expect(await cancelSide(store(ledger), due)).toEqual(preview);
+  });
+
+  it("#4866: a live superseded capture is in neither card plan, the newest charge though it is", async () => {
+    const ledger = [card(10_000, 0, 1), card(6_500, 0, 5)];
+    const superseded = [{ paymentTransactionId: "txn-card-5", amountCents: 6_500 }];
+    const preview = await previewCancelCardRefundSplit(store(ledger, {}, superseded) as never, { paymentId: "payment-1", refundAmountCents: 13_000 });
+    expect(preview).toEqual({ cardCents: 10_000, bankCents: 0, checkCents: 3_000 });
+    expect(await cancelSide(store(ledger, {}, superseded), 13_000)).toEqual(preview);
+    // Without it, the newest charge carries the refund whole.
+    expect(await previewCancelCardRefundSplit(store(ledger) as never, { paymentId: "payment-1", refundAmountCents: 13_000 })).toBeNull();
+  });
+
+  it("#4866: the mirror fold leaves an older superseded capture alone too, so the booking's charge carries the note", async () => {
+    // A $65.00 superseded capture (oldest), the $130.00 booking charge, $20.00 refunded on the mirror only.
+    const db = store([card(6_500, 0, 1), card(13_000, 0, 5)], { status: "PARTIALLY_REFUNDED", refundedAmountCents: 2_000 }, [
+      { paymentTransactionId: "txn-card-1", amountCents: 6_500 },
+    ]);
+    // Folded onto the booking's charge: it can carry $110.00 of a $130.00 refund, never the superseded $65.00.
+    expect(await previewCancelCardRefundSplit(db as never, { paymentId: "payment-1", refundAmountCents: 13_000 })).toEqual({
+      cardCents: 11_000,
+      bankCents: 0,
+      checkCents: 2_000,
+    });
   });
 
   it("a pre-ledger payment: read as its backfill would write it, without writing, and as the cancel then plans it", async () => {
@@ -224,6 +267,29 @@ describe("the mirror fold is one walk (#1491, #4119)", () => {
     apply.mockClear();
     await foldMirrorRefundIntoLedger({ status: "PARTIALLY_REFUNDED", refundedAmountCents: 1_000 }, rows, apply);
     expect(apply).not.toHaveBeenCalled();
+  });
+
+  /** Every offer the walk makes, each row taking all it is offered up to what it will take. */
+  const offers = async (refundedAmountCents: number, heldBack?: ReadonlyMap<string, number>) => {
+    const offered: Array<[string, number]> = [];
+    await foldMirrorRefundIntoLedger({ status: "PARTIALLY_REFUNDED", refundedAmountCents }, rows, (row, cents) => {
+      offered.push([row.id, cents]);
+      return Math.min(cents, row.amountCents - row.refundedAmountCents);
+    }, heldBack);
+    return offered;
+  };
+
+  it("#4866: an empty hold-back folds exactly as none", async () => {
+    for (const refunded of [1_000, 1_500, 4_000, 9_000]) {
+      expect(await offers(refunded, new Map())).toEqual(await offers(refunded));
+    }
+  });
+
+  it("#4866: never folds into a live superseded capture's held cents, and carries the rest on", async () => {
+    // "a" holds $20.00, all of it its superseded refund's: nothing offered there, all $30.00 to "b".
+    expect(await offers(4_000, new Map([["a", 2_000]]))).toEqual([["b", 3_000]]);
+    // Held in part: only the rest of "a" is offered.
+    expect(await offers(4_000, new Map([["a", 500]]))).toEqual([["a", 1_500], ["b", 1_500]]);
   });
 });
 

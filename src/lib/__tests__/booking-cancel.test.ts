@@ -253,6 +253,11 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+// #4866: no live superseded capture on these payments (`superseded-capture-hold-back.test.ts`, its realdb proof).
+vi.mock("@/lib/superseded-capture-hold-back", () => ({
+  readSupersededCaptureHeldBack: vi.fn(async () => ({ byTransaction: new Map(), totalCents: 0 })),
+}));
+
 vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
   // #4097: the card plan's own predicate, real: a shortfall's non-card charges are its complement.
   isStripeTransaction: ((await importOriginal()) as typeof import("@/lib/payment-transactions")).isStripeTransaction,
@@ -592,6 +597,7 @@ describe("cancelBooking credit refunds", () => {
       paymentId: "payment_1",
       amountCents: 5000,
       store: expect.anything(),
+      heldBackByTransaction: new Map(),
     });
     // #4685: the row names the credit tx1 wrote, so its note stamps that credit by id.
     expect(mocks.enqueueXeroAccountCreditNoteOperation).toHaveBeenCalledWith(
@@ -1904,6 +1910,7 @@ describe("cancelBooking credit refunds", () => {
       paymentId: "payment_4",
       amountCents: 5000,
       store: expect.anything(),
+      heldBackByTransaction: new Map(),
     });
   });
 
@@ -2536,6 +2543,7 @@ describe("cancelBooking credit refunds", () => {
         paymentId: "payment_1",
         amountCents: 5000,
         store: mocks.lastTx,
+        heldBackByTransaction: new Map(),
       });
       // Ordering: debt persisted BEFORE the external Stripe call.
       expect(
