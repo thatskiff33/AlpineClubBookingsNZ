@@ -40,11 +40,11 @@ import {
 import {
   ANALYTICS_BANNER_MESSAGE_MAX_LENGTH,
   ANALYTICS_STATUS_LABELS,
-  PRIVACY_POLICY_ADMIN_HREF,
   type AnalyticsIntegrationStatus,
   type AnalyticsSettingsValues,
   type PrivacyPolicyPageState,
 } from "@/lib/analytics-settings-shared";
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * Google Analytics as a peer integration on Admin -> Integrations (#2573, owner
@@ -337,7 +337,7 @@ export function AnalyticsIntegrationCard() {
                 This website has no published privacy policy page, so visitors have
                 nowhere to read how the club uses Google Analytics. Publish one under{" "}
                 <Link
-                  href={privacyPolicy?.adminHref ?? PRIVACY_POLICY_ADMIN_HREF}
+                  href={privacyPolicy?.adminHref ?? adminHref("page-content")}
                   className="underline"
                 >
                   Website pages

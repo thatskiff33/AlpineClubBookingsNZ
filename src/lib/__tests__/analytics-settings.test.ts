@@ -633,3 +633,25 @@ describe("hard cutover: no runtime read of the environment variable", () => {
     expect(stripComments(source)).not.toMatch(/process\s*\.\s*env/);
   });
 });
+
+// #4834: the public consent banner imports `analytics-settings-shared`, so anything
+// that module imports ships in every public page's bundle. The admin hub registry
+// (`adminHref`) is admin routing, so the module must not reach it: the links to the
+// admin editor are built where they are used, in the server module and the admin card.
+describe("the shared analytics module stays out of the admin hub registry", () => {
+  const IMPORT_OF_ADMIN_HUBS =
+    /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;
+
+  it.each([
+    "src/lib/analytics-settings-shared.ts",
+    "src/components/analytics-consent.tsx",
+  ])("%s does not import @/lib/admin-hubs", (relativePath) => {
+    // Test helper: reads a fixed repo file under process.cwd(); relativePath is a
+    // literal in this file, not user input.
+    const source = readFileSync(
+      path.resolve(process.cwd(), relativePath),
+      "utf8",
+    );
+    expect(stripComments(source)).not.toMatch(IMPORT_OF_ADMIN_HUBS);
+  });
+});
