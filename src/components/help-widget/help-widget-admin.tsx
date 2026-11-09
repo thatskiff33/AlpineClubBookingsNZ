@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
+import { canonicalAdminPathname } from "@/lib/admin-hubs";
 import { getContextualHelp } from "@/lib/contextual-help";
 import type { HelpPageContent } from "@/lib/help/types";
 import { HelpWidget } from "./help-widget";
@@ -36,6 +37,9 @@ export function HelpWidgetAdmin({
       surface={scope}
       llmEnabled={llmEnabled}
       resolveHelp={resolveHelp}
+      // Help keys stay on OLD admin paths: a moved page's hub path reads as its
+      // old path, on the server and in the browser alike (C3 #4800).
+      normalisePathname={canonicalAdminPathname}
       position="app"
       chatEndpoint={chatEndpoint}
       diagnostics={diagnostics}

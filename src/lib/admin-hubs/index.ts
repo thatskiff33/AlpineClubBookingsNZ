@@ -6,10 +6,13 @@
  * from it, C3 the redirects and rewrites, C13 the hub menu and S2 the command
  * palette. The epic plan, in #4468's body, says what each of those does.
  *
- * INERT until C3: in production only the security map reads it — C2 (#4799)
- * generates the page half of the route map, the admission paths and the admin
- * page module gates from it (`security-map.ts`), changing no answer — and
- * `src/lib/__tests__/admin-hubs-registry.test.ts` names every other importer.
+ * Inert while no page has moved. In production it is read by the security map
+ * — C2 (#4799) generates the page half of the route map, the admission paths and
+ * the admin page module gates from it (`security-map.ts`), changing no answer —
+ * and, since C3 (#4800), by `next.config.ts` (the redirects and rewrites), the
+ * sidebar's active link (`activeAdminHref`) and `revalidateAdminPage`; each of
+ * those answers exactly as before until a page's `moved` is set.
+ * `src/lib/__tests__/admin-hubs-registry.test.ts` names every importer.
  * Relative imports only (see `release.ts`).
  */
 import { ADMIN_HUBS_LIVE } from "./release";
@@ -93,14 +96,155 @@ export function resolveAdminHref(
   });
 }
 
+/** The registered page for an id; an id the registry does not know throws. */
+export function getAdminPage(id: AdminPageId): AdminHubPage {
+  const page = PAGES_BY_ID.get(id);
+  if (!page) throw new Error(`admin hub registry: unknown admin page "${id}"`);
+  return page;
+}
+
 /** The URL to link an admin page at, under today's `ADMIN_HUBS_LIVE`. */
 export function adminHref<Id extends AdminPageId>(
   id: Id,
   ...args: AdminHrefArgs<Id>
 ): string {
-  const page = PAGES_BY_ID.get(id);
-  if (!page) throw new Error(`adminHref: unknown admin page "${id}"`);
-  return resolveAdminHref(page, ADMIN_HUBS_LIVE, args[0]);
+  return resolveAdminHref(getAdminPage(id), ADMIN_HUBS_LIVE, args[0]);
+}
+
+/**
+ * The path of the page's FILE under `src/app/(admin)`: its hub path once its
+ * directory has moved, its old path until then. The switch does not enter into
+ * it. While off, a moved page's old URL is served from this file through a
+ * `beforeFiles` rewrite; while on, its hub URL is served from it directly.
+ *
+ * It is what `revalidatePath` must be given (C3 #4800). Next tags a rendered
+ * page with the path of the route that rendered it, never the URL the browser
+ * asked for: `getImplicitTags(page, resolvedPathname)` in
+ * `next/dist/server/app-render/app-render.js`, where `resolvedPathname` is the
+ * matched route's own page path (`route-module.js`), and Next's `revalidatePath`
+ * reference: "When using rewrites, you must pass the destination path".
+ */
+export function adminPageRoutePath(page: AdminHubPage): string {
+  return page.moved ? page.hubPath : page.oldPath;
+}
+
+/** One whole `[name]` path segment. */
+const DYNAMIC_PATH_SEGMENT = /^\[([^\]/]+)\]$/;
+
+type RelocatedPath = "oldPath" | "hubPath";
+
+/**
+ * `pathname` relocated from one of a MOVED page's two paths to the other: the
+ * longest moved page whose `from` path is at or above it decides, its dynamic
+ * segments carried across by name, whatever lies beneath kept. Anything no
+ * moved page covers comes back unchanged. Only moved pages are read: an unmoved
+ * page's hub path is served by nothing, so no browser can be at it.
+ */
+function relocateAdminPathname(
+  pathname: string,
+  pages: readonly AdminHubPage[],
+  from: RelocatedPath,
+  to: RelocatedPath,
+): string {
+  const segments = pathname.split("/");
+  let best: { page: AdminHubPage; params: Map<string, string>; length: number } | null =
+    null;
+  for (const page of pages) {
+    if (!page.moved || page.hubPath === page.oldPath) continue;
+    const pattern = page[from].split("/");
+    if (pattern.length > segments.length) continue;
+    if (best && pattern.length <= best.length) continue;
+    const params = new Map<string, string>();
+    const matches = pattern.every((segment, index) => {
+      const value = segments[index]!;
+      const dynamic = DYNAMIC_PATH_SEGMENT.exec(segment);
+      if (!dynamic) return segment === value;
+      params.set(dynamic[1]!, value);
+      return value !== "";
+    });
+    if (matches) best = { page, params, length: pattern.length };
+  }
+  if (!best) return pathname;
+  const { page, params, length } = best;
+  const head = page[to].split("/").map((segment) => {
+    const dynamic = DYNAMIC_PATH_SEGMENT.exec(segment);
+    return dynamic ? params.get(dynamic[1]!)! : segment;
+  });
+  return [...head, ...segments.slice(length)].join("/");
+}
+
+/**
+ * An admin pathname in its OLD-path form: a moved page's hub path, or a path
+ * beneath one, becomes the old path it relocates; anything else is unchanged.
+ * It is the registry's `samePage()` key (C3 #4800).
+ *
+ * Use it wherever a `usePathname()` value is used as a KEY (help content, the
+ * sidebar's highlight). While the switch is off a moved page is served at its
+ * old URL by a rewrite, and the two renders disagree about the path: on the
+ * server `usePathname()` reads the request Next rendered, the rewrite's
+ * destination (Next's `usePathname` reference, "Avoid hydration mismatch with
+ * rewrites"), while in the browser the router starts from `location`, the old
+ * URL (`create-initial-router-state.js`). Both map to one answer here. Once the
+ * switch is on the browser is at the hub path, and old-path keys still match.
+ */
+export function canonicalAdminPathname(
+  pathname: string,
+  pages: readonly AdminHubPage[] = ADMIN_PAGES,
+): string {
+  return relocateAdminPathname(pathname, pages, "hubPath", "oldPath");
+}
+
+/**
+ * An admin pathname in the form the browser is served it at under the switch:
+ * the old-path form while off, a moved page's hub path once on, as `adminHref`
+ * links it. Use it wherever a `usePathname()` value becomes a URL (a return-to
+ * link, a `router.replace` target): it is the same on the server and in the
+ * browser, and it never sends the officer through a redirect.
+ */
+export function servedAdminPathname(
+  pathname: string,
+  live: boolean = ADMIN_HUBS_LIVE,
+  pages: readonly AdminHubPage[] = ADMIN_PAGES,
+): string {
+  const canonical = canonicalAdminPathname(pathname, pages);
+  return live ? relocateAdminPathname(canonical, pages, "oldPath", "hubPath") : canonical;
+}
+
+/** `href` as the path the sidebar compares, its query or fragment kept on the end. */
+function toOldAdminHref(href: string, pages: readonly AdminHubPage[]): string {
+  const cut = href.search(/[?#]/);
+  return cut === -1
+    ? canonicalAdminPathname(href, pages)
+    : canonicalAdminPathname(href.slice(0, cut), pages) + href.slice(cut);
+}
+
+/**
+ * The sidebar's active link (C3 #4800): of `hrefs`, the deepest one the current
+ * `pathname` is at or beneath, or `""` for none. Both sides are compared in
+ * `canonicalAdminPathname` form, so a moved page's old path and hub path are the
+ * SAME page here, whichever either side is written in, and the server and
+ * browser renders cannot split.
+ *
+ * An href with a query (the sidebar's dated queue links) is never active, as
+ * before: a pathname carries no query to match it.
+ */
+export function activeAdminHref(
+  pathname: string,
+  hrefs: readonly string[],
+  pages: readonly AdminHubPage[] = ADMIN_PAGES,
+): string {
+  const current = canonicalAdminPathname(pathname, pages);
+  let active = "";
+  let activeLength = -1;
+  for (const href of hrefs) {
+    const target = toOldAdminHref(href, pages);
+    const within = current === target || current.startsWith(`${target}/`);
+    if (within && target.length > activeLength) {
+      active = href;
+      activeLength = target.length;
+    }
+  }
+  return active;
 }
 
 /** A redirect in the shape `next.config.ts` hands to Next. Always a 307. */
@@ -144,8 +288,40 @@ function dynamicSegmentCount(path: string): number {
 }
 
 /**
+ * Refuses a registry in which a dynamic page's rule would capture a static
+ * sibling that is not moving with it (#4800 review). Rules match whole paths,
+ * so `/admin/notices/:id` matches `/admin/notices/new`: if only `notice-detail`
+ * had moved, its rules would send `/admin/notices/new` to
+ * `/admin/<hub>/notices/new`, where no file is, in both switch states. A
+ * dynamic page and every static page its pattern matches must share `moved`.
+ */
+function assertNoCapturedSibling(pages: readonly AdminHubPage[]): void {
+  for (const dynamicPage of pages) {
+    const pattern = dynamicPage.oldPath.split("/");
+    if (!pattern.some((segment) => DYNAMIC_PATH_SEGMENT.test(segment))) continue;
+    for (const sibling of pages) {
+      if (sibling === dynamicPage || sibling.moved === dynamicPage.moved) continue;
+      const segments = sibling.oldPath.split("/");
+      if (segments.length !== pattern.length) continue;
+      const captured = pattern.every((segment, index) =>
+        DYNAMIC_PATH_SEGMENT.test(segment)
+          ? !DYNAMIC_PATH_SEGMENT.test(segments[index]!)
+          : segment === segments[index],
+      );
+      if (captured) {
+        throw new Error(
+          `admin hub rules: ${dynamicPage.id} (${dynamicPage.oldPath}) would capture ` +
+            `${sibling.id} (${sibling.oldPath}); move them together`,
+        );
+      }
+    }
+  }
+}
+
+/**
  * The redirects and rewrites for the MOVED pages; nothing for the rest, so
- * today's registry yields none.
+ * today's registry yields none. A registry in which a moved dynamic page would
+ * capture an unmoved static sibling, or the reverse, is refused.
  *
  * - Off: the hub URL redirects (307) to the old URL, and a `beforeFiles`
  *   rewrite serves the old URL from the moved file, so the proxy, the module
@@ -164,6 +340,7 @@ export function buildAdminUrlRules(
   live: boolean,
   pages: readonly AdminHubPage[] = ADMIN_PAGES,
 ): AdminUrlRules {
+  assertNoCapturedSibling(pages);
   const moved = pages
     .filter((page) => page.moved && page.hubPath !== page.oldPath)
     .sort(
