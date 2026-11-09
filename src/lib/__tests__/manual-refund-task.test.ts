@@ -4999,6 +4999,9 @@ describe("#3639 - a #2700 hand-back asks what already happened to its capture", 
       amountCents: 2500,
       store: tx,
     });
+    // #4838: the Payment row before the capture is read, and so before the claim.
+    expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.paymentTransactionFindMany.mock.invocationCallOrder[0]!);
+    expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!);
   });
 
   it("refuses, before the claim, a capture Stripe already refunded - the task stays OPEN", async () => {
@@ -5008,6 +5011,27 @@ describe("#3639 - a #2700 hand-back asks what already happened to its capture", 
 
     await expect(complete()).rejects.toMatchObject({ status: 409 });
 
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+  });
+
+  // #4838 (MUTATION: read the capture before the lock again): a `charge.refunded` sync holds the Payment row while
+  // the hand-back waits for it, and commits a dashboard refund of the capture as it lets go. The hand-back reads its
+  // capture only once it has the row, so it sees that refund and refuses; read first, the mirror would land on the
+  // primary's headroom and count one refund twice.
+  it("reads its capture under the Payment row, so a refund committed while it waited is refused (#4838)", async () => {
+    armHandBack({ refundedAmountCents: 0 });
+    mocks.lockPaymentForRefundedTotal.mockImplementationOnce(async () => {
+      mocks.paymentTransactionFindMany.mockResolvedValue([
+        { stripePaymentIntentId: "pi_primary", amountCents: 12000, refundedAmountCents: 0 },
+        { stripePaymentIntentId: "pi_mod", amountCents: 2500, refundedAmountCents: 2500 },
+      ]);
+    });
+
+    await expect(complete()).rejects.toMatchObject({ status: 409, message: expect.stringContaining("already been refunded") });
+
+    expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(tx, "payment-1");
+    expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.paymentTransactionFindMany.mock.invocationCallOrder[0]!);
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
   });

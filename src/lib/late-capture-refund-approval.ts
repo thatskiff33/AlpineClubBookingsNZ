@@ -142,6 +142,13 @@ export async function planLateCaptureApprovalRefund({
  * so it is refused before the claim and the task stays OPEN to be dismissed.
  * The capture is the one whose frozen reason sentence this task carries
  * (`automaticCancelledBookingRefundTaskReasons` is that key), which is exact.
+ *
+ * #4838: read under the booking's Payment row, as the approval's plan is
+ * (#4824). The hand-back's allocation caps at the whole payment, not this
+ * capture, so a `charge.refunded` sync committing between an unlocked read and
+ * the claim let the mirror land on another charge's headroom - one refund
+ * counted twice. Payment row, then the claim; nothing on this kind's route
+ * takes a lodge, member-credit or task-row lock in between.
  */
 export async function assertLateCaptureHandBackStillOwed({
   task,
@@ -152,6 +159,7 @@ export async function assertLateCaptureHandBackStillOwed({
   amountCents: number;
   store: Prisma.TransactionClient;
 }): Promise<void> {
+  if (task.paymentId) await lockPaymentForRefundedTotal(store, task.paymentId);
   const captures = task.paymentId
     ? await store.paymentTransaction.findMany({
         where: { paymentId: task.paymentId, stripePaymentIntentId: { not: null } },
