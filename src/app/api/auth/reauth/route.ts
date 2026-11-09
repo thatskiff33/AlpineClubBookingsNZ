@@ -70,7 +70,9 @@ export async function POST(request: NextRequest) {
     case "method-not-allowed":
       return NextResponse.json(
         {
-          error: "Use your authenticator app to confirm it's you.",
+          error: outcome.methods.includes("TOTP")
+            ? "Use your authenticator app to confirm it's you."
+            : "Use your password to confirm it's you.",
           code: "STEP_UP_METHOD_NOT_ALLOWED",
           methods: outcome.methods,
         },

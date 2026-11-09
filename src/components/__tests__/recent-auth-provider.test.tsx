@@ -267,6 +267,24 @@ describe("the confirm-it's-you dialog (#4616)", () => {
     expect(reauthCalls(fetchMock, "POST")).toHaveLength(1);
   });
 
+  it("answers a question left open when the provider goes away as cancelled", async () => {
+    const fetchMock = stubServer({ actionReplies: [refusal] });
+    const onResult = vi.fn();
+    const { unmount } = render(
+      <RecentAuthProvider>
+        <RestoreButton onResult={onResult} />
+      </RecentAuthProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await screen.findByLabelText("Authenticator code");
+    unmount();
+
+    await waitFor(() => expect(onResult).toHaveBeenCalledTimes(1));
+    expect((onResult.mock.calls[0]?.[0] as Response).status).toBe(403);
+    expect(actionCalls(fetchMock)).toHaveLength(1);
+  });
+
   it("refuses to run outside a provider", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     expect(() => render(<RestoreButton onResult={vi.fn()} />)).toThrow(

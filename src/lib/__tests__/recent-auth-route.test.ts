@@ -163,6 +163,7 @@ describe("POST /api/auth/reauth (#4616)", () => {
 
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({
+      error: "Use your authenticator app to confirm it's you.",
       code: "STEP_UP_METHOD_NOT_ALLOWED",
       methods: ["TOTP"],
     });
@@ -177,7 +178,10 @@ describe("POST /api/auth/reauth (#4616)", () => {
 
     const asCode = await POST(post({ method: "TOTP", code: "123456" }));
     expect(asCode.status).toBe(409);
-    expect(await asCode.json()).toMatchObject({ methods: ["PASSWORD"] });
+    expect(await asCode.json()).toMatchObject({
+      error: "Use your password to confirm it's you.",
+      methods: ["PASSWORD"],
+    });
     expect(mocks.verifyStoredTotpCode).not.toHaveBeenCalled();
 
     mocks.compare.mockResolvedValue(true);

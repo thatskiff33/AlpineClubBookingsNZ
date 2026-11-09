@@ -69,7 +69,9 @@ describe("which step-up method a person uses (#4616)", () => {
     expect(resolveStepUpMethods(none)).toEqual(["PASSWORD"]);
   });
 
-  it("does not count an app that is switched off or has no stored secret", () => {
+  it("does not count an app that is switched off, has no stored secret, or is an emailed-code enrolment", () => {
+    // A leftover secret on an emailed-code enrolment is still not an app.
+    expect(hasAuthenticatorApp({ ...app, twoFactorMethod: "EMAIL" })).toBe(false);
     expect(hasAuthenticatorApp({ ...app, twoFactorEnabled: false })).toBe(false);
     expect(hasAuthenticatorApp({ ...app, totpSecret: null })).toBe(false);
     expect(hasAuthenticatorApp({ ...app, totpSecret: "" })).toBe(false);
