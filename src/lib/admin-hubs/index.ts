@@ -7,7 +7,8 @@
  * security map from it, C3 the redirects and rewrites, C13 the hub menu and S2
  * the command palette. The epic plan, in #4468's body, says what each of those does.
  *
- * Inert while no page has moved. In production it is read by the security map
+ * The Website hub's pages have moved (C4 #4801); the other hubs follow, one
+ * PR each, in the epic plan's order. In production it is read by the security map
  * — C2 (#4799) generates the page half of the route map, the admission paths and
  * the admin page module gates from it (`security-map.ts`), changing no answer —
  * and, since C3 (#4800), by `next.config.ts` (the redirects and rewrites), the
