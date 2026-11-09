@@ -3444,7 +3444,7 @@ Hard-deleting the officer mid-settle or mid-closure on a booking that officer
 made or reviewed can therefore deadlock where it used to end in a `P2003`.
 PostgreSQL detects the cycle and aborts one side, which rolls back whole, so
 nothing is corrupted, and deleting an officer while their own write is in
-flight is the rarer event. Reordering delete's cascade is tracked separately.
+flight is the rarer event. Reordering delete's cascade is tracked as #4853.
 
 Proved against real PostgreSQL by
 `member-merge-officer-settle-races.realdb.test.ts` and, for the approval,
