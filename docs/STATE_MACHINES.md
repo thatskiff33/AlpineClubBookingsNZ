@@ -4730,7 +4730,7 @@ DEAD -> SUCCEEDED     ("Paid another way": finance:edit, lock(1), then the
                        row's reservations close without a refund)
 (none) -> DEAD        (#4516, owner 2 Nov 2026: a part close the treasurer says
                        is "still owed" carries the rest to a row of its own,
-                       card_refund_still_owed_<task>, born dead; a later close
+                       card_refund_still_owed_<task>, born dead (PENDING, attempts spent); a later close
                        settles it. "The club keeps it" raises none)
 ```
 

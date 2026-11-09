@@ -652,7 +652,7 @@ describe("closing a dead card refund as paid another way", () => {
       }));
       expect(mocks.createStillOwedRow).toHaveBeenCalledWith(expect.objectContaining({
         data: expect.objectContaining({
-          type: "REFUND_BOOKING_MODIFICATION", status: "FAILED", attempts: 5, nextRetryAt: null,
+          type: "REFUND_BOOKING_MODIFICATION", status: "PENDING", attempts: 5, nextRetryAt: null,
           bookingId: "b-1", paymentId: "p-1", paymentIntentId: "pi_1", amountCents: 5_000,
           idempotencyKey: "card_refund_still_owed_task-1", stripeKeyPrefix: "card_refund_still_owed_task-1",
           allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 5_000 }],

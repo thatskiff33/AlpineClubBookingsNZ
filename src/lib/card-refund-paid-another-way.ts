@@ -348,7 +348,7 @@ export interface CardRefundPaidAnotherWayResult {
 
 /** The record's reason: what happened, and what the treasurer chose for the rest. */
 function paidAnotherWayReason(bookingId: string, paidBack: PaidBackChoice, rest: PaidBackRestChoice | null): string {
-  return `A card refund on booking ${formatBookingReference(bookingId)} that Stripe gave up on was ${paidAnotherWayOutcome(paidBack, rest)} by the treasurer (#3372).`.slice(
+  return `A card refund on booking ${formatBookingReference(bookingId)} that Stripe gave up on was ${paidAnotherWayOutcome(paidBack, rest, " by the treasurer")} (#3372).`.slice(
     0,
     MANUAL_REFUND_TASK_REASON_MAX,
   );

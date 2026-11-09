@@ -773,6 +773,15 @@ export async function refundLedgerStartSeconds(db: PaymentStore): Promise<number
 }
 
 /**
+ * #4516 (M4c, `INV-LOCK-004`): the journal context a card refund writer posts R12/R13 or reserves with, read BEFORE
+ * any transaction here opens, and only on the root client: a caller joining its own transaction passes its own,
+ * or nothing posts (every production caller runs on the root client; the next run on the payment catches up).
+ */
+async function resolveCardRefundJournalBeforeTransaction(store: PaymentStore, given?: BookingJournalContext): Promise<BookingJournalContext | null> {
+  return given ?? (isRootPrismaClient(store) ? resolveBookingMoneyPostingContext() : null);
+}
+
+/**
  * #3640 - THE one way a Stripe card refund reaches a transaction's
  * `refundedAmountCents` mirror (`INV-PAY-103`, `INV-SSOT`). The inline refund,
  * the `charge.refunded` webhook sync and the superseded-payment refund recovery
@@ -853,7 +862,7 @@ export async function recordStripeRefundsAgainstTransaction({
   /** #4516: the attempt key a sender made each refund under (its own, even when Stripe's evidence lacks it). */
   attemptKeys?: ReadonlyMap<string, string>;
 }) {
-  const journal = givenJournal ?? (isRootPrismaClient(store) ? await resolveBookingMoneyPostingContext() : null);
+  const journal = await resolveCardRefundJournalBeforeTransaction(store, givenJournal);
   // Each refund's attempt key: Stripe's `refundSliceKey` evidence (`INV-PAY-147`), then the sender's own.
   const refundKeys = new Map<string, string>();
   for (const refund of refunds) {
@@ -1590,8 +1599,7 @@ export async function refundPaymentTransactions({
     ? refundSliceStripeIdempotencyKey(idempotencyKeyPrefix, { paymentTransactionId: slice.transaction.id, amountCents: slice.amountCents, ...(slice.stripeKeySuffix ? { stripeKeySuffix: slice.stripeKeySuffix } : {}) })
     : undefined;
   const plannedKeys = planAttemptKeys ?? slices.flatMap((slice) => sliceKey(slice) ?? []);
-  // #4516 (`INV-LOCK-004`): the journal's context, read before any transaction here opens; on the root client only.
-  const journal = isRootPrismaClient(store) ? await resolveBookingMoneyPostingContext() : null;
+  const journal = await resolveCardRefundJournalBeforeTransaction(store);
 
   // #4070: Stripe's own status rides along, so a caller can tell a refund made from one it refused;
   // #4083: with the slice as sent, so a refused one can be asked for again (`refusedRefundSlices`).

@@ -97,7 +97,8 @@ const DOORS: Record<string, string> = {
   "src/lib/manual-refund-task-resolution.ts": "R05 for an edit review's card refund",
   "src/lib/late-capture-refund-approval.ts": "R05 for a treasurer-approved late capture's return",
   "src/lib/card-refund-paid-another-way-rest.ts": "R14 for a paid-another-way close, its reservations closed, a kept rest's close-out",
-  "scripts/member-money-refund-reservations.ts": "dry-run-first refund census; exact reconciliation and OPERATOR release of reservations",
+  "scripts/member-money-refund-reservations.ts": "dry-run-first refund census; exact reconciliation of reservations",
+  "src/lib/card-refund-reservation-operator.ts": "the owner's audited OPERATOR release of a reservation nothing can answer",
 
   "src/lib/booking-ledger-confirmation-sync.ts": "R01: a confirmation's lines, beside the legacy write",
   "src/lib/booking-ledger-group-settlement-sync.ts": "R01: a group-settled child's confirmation lines",

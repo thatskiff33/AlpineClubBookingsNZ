@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { compareOrdinal } from "@/lib/ordinal-order";
 import { readMemberMoneyApplicationState } from "./application-read";
 import { memberMoneyApplicationTotals, refundFamilyKey, type ApplicationObligation, type ApplicationState } from "./application-state";
 import { eventPosted } from "./booking-journal-read";
@@ -119,7 +120,7 @@ async function uncollect(tx: Db, context: MemberMoneyPostingContext, state: Appl
   const charges = new Set(state.obligations.filter((o) => o.kind === "CHARGE").map((o) => o.id));
   const collections = state.applications
     .filter((a) => a.sourceLineId === input.receiptLineId && a.reversesApplicationId === null && charges.has(a.obligationId) && live(state, a.id))
-    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    .sort((a, b) => compareOrdinal(a.id, b.id));
   const applications: MemberMoneyApplicationPlan[] = [];
   let taken = 0;
   let lastObligation: ApplicationObligation | undefined;

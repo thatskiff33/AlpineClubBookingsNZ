@@ -17,7 +17,7 @@ import type { RefundAllocationSlice } from "@/lib/payment-transactions";
  * - "club-keeps": today's rule. The rest is owed nowhere; the journal clears it into a retained booking charge.
  * - "still-owed": the rest stays owed to the member. The close records what was paid on its own record, which
  *   closes the row it paid for exactly that (`raisedAmountCents` = the amount, so nothing reads as written off),
- *   and the rest moves to a row of its own (`buildCardRefundStillOwedRecoveryKey`), born dead: attempts spent and
+ *   and the rest moves to a row of its own (`buildCardRefundStillOwedRecoveryKey`), born dead: PENDING, attempts spent and
  *   no retry time, so the runner never claims it and nothing is sent to Stripe for it. "Refunds owed", Net
  *   Collected and the dead card refund list count it as every dead row is counted; a later close pays it, in full
  *   or in part again. The journal leaves the refund obligation open for the rest.
@@ -74,7 +74,8 @@ export async function carryStillOwedRest(tx: Prisma.TransactionClient, input: {
   const row = await tx.paymentRecoveryOperation.create({
     data: {
       type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
-      status: PaymentRecoveryOperationStatus.FAILED,
+      // Dead as a failed-later row is raised dead (`INV-PAY-128`): PENDING with its attempts spent, never claimed.
+      status: PaymentRecoveryOperationStatus.PENDING,
       attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS,
       nextRetryAt: null,
       bookingId: input.operation.bookingId,
@@ -93,9 +94,10 @@ export async function carryStillOwedRest(tx: Prisma.TransactionClient, input: {
 }
 
 /** What the close's record and audit say happened, with the treasurer's choice for the rest. */
-export function paidAnotherWayOutcome(paidBack: PaidBackChoice, rest: PaidBackRestChoice | null): string {
-  if (paidBack === "full") return "paid back in full another way";
-  return rest === "still-owed" ? "paid back in part another way; the rest is still owed to the member" : "paid back in part another way; the club keeps the rest";
+export function paidAnotherWayOutcome(paidBack: PaidBackChoice, rest: PaidBackRestChoice | null, by = ""): string {
+  const how = `paid back in ${paidBack === "full" ? "full" : "part"} another way${by}`;
+  if (paidBack === "full") return how;
+  return `${how}; ${rest === "still-owed" ? "the rest is still owed to the member" : "the club keeps the rest"}`;
 }
 
 /**

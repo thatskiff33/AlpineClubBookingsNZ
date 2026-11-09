@@ -3,11 +3,12 @@
  * of every population payment's card refund journal. `--reconcile` answers (or releases, REFUSED) the reservations a
  * recovery row marks made by an exact refund on record, through the one cash writer: the reconciliation a redeploy
  * after a rollback across M4c runs. `--release <reservationId> --note "<why>"` releases one reservation nothing can
- * answer (OPERATOR), with its funding, and audits it. No provider call; nothing is matched by amount or time.
+ * answer (OPERATOR), with its funding, audited (`card-refund-reservation-operator.ts`). No provider call; nothing
+ * is matched by amount or time.
  */
 import { Prisma } from "@prisma/client";
-import { createAuditLog } from "../src/lib/audit";
-import { readBookingRefundCensus, reconcileMadeRefundReservations, receiptPopulationPaymentIds, releaseReservationByOperator } from "../src/lib/member-money";
+import { releaseCardRefundReservationByOperator } from "../src/lib/card-refund-reservation-operator";
+import { readBookingRefundCensus, reconcileMadeRefundReservations, receiptPopulationPaymentIds } from "../src/lib/member-money";
 import { isBookingJournalInactive, resolveBookingMoneyPostingContext } from "../src/lib/member-money/doors";
 import { prisma } from "../src/lib/prisma";
 
@@ -39,14 +40,7 @@ async function main() {
     const reservationId = args[release + 1];
     const why = note >= 0 ? args[note + 1]?.trim() : "";
     if (!reservationId || !why) throw new Error(`--release needs a reservation id and a --note saying why. ${USAGE}`);
-    const released = await prisma.$transaction(async (tx) => {
-      const result = await releaseReservationByOperator(tx, context, { reservationId });
-      await createAuditLog({ category: "payment", action: "booking-payment.card-refund.reservation-released-by-operator", targetId: result.bookingId,
-        entityType: "MemberMoneyRefundReservation", entityId: reservationId, severity: "critical", outcome: "success",
-        summary: "An owner released a card refund reservation nothing could answer; its funding was reversed.", details: why,
-        metadata: { attemptKey: result.attemptKey, amountCents: result.amountCents } }, tx);
-      return result;
-    });
+    const released = await releaseCardRefundReservationByOperator(context, { reservationId, note: why });
     console.log(JSON.stringify({ mode: "release", reservationId, ...released }, null, 2));
     return;
   }

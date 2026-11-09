@@ -374,7 +374,7 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       // The record closes exactly what it paid: nothing reads as written off.
       expect(record).toMatchObject({ amountCents: paidCents, raisedAmountCents: paidCents });
       const rest = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { idempotencyKey: buildCardRefundStillOwedRecoveryKey(record.id) } });
-      expect(rest).toMatchObject({ id: first.stillOwedOperationId, status: "FAILED", attempts: 5, nextRetryAt: null, amountCents: REFUND_CENTS - paidCents });
+      expect(rest).toMatchObject({ id: first.stillOwedOperationId, status: "PENDING", attempts: 5, nextRetryAt: null, amountCents: REFUND_CENTS - paidCents });
       // Refunds owed keeps the rest; the dead list offers it for a close.
       expect(await owedNow()).toBe(REFUND_CENTS - paidCents);
       expect((await listDeadCardRefunds()).find((row) => row.operationId === rest.id)).toMatchObject({ owedCents: REFUND_CENTS - paidCents, wholeAmountOnly: false });
