@@ -3,7 +3,7 @@ import { PaymentRecoveryOperationStatus } from "@prisma/client";
 
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import { buildOrganiserChildCancellationRefundKey } from "@/lib/payment-recovery-keys";
-import { paidAnotherWayCloseCents } from "@/lib/manual-refund-task-settlement-rules";
+import { paidAnotherWayCloseCents } from "@/lib/paid-another-way-close-cents";
 
 /**
  * #4125: where a card cancel's refund stands when no REFUNDED event says it was
