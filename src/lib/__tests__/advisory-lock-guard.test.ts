@@ -1680,7 +1680,8 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // lock(1)) before its task's claim, the order a "Paid another way" close takes
   // the Payment row and that task's row in; #4824: an approval's plan
   // (`planLateCaptureApprovalRefund`) takes it first, before it reads what the
-  // capture holds.
+  // capture holds; #4838: so does a #2700 hand-back's still-owed check
+  // (`assertLateCaptureHandBackStillOwed`, no lock(1)), before its claim.
   // Order: lock(1) -> lodge -> member credit -> Payment -> refund, recovery and
   // transaction rows. See docs/CONCURRENCY_AND_LOCKING.md -> the #3640
   // paragraph and its #4217 sequel.
