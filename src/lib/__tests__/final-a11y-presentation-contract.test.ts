@@ -8,7 +8,7 @@ function source(path: string) {
 }
 
 const migratedAdminChrome = [
-  "src/app/(admin)/admin/age-tier-settings/page.tsx",
+  "src/app/(admin)/admin/rules/age-tier-settings/page.tsx",
   "src/app/(admin)/admin/lockers/page.tsx",
   "src/app/(admin)/admin/committee/page.tsx",
   "src/app/(admin)/admin/hut-leaders/page.tsx",

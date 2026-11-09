@@ -14,7 +14,8 @@
  * and client renders disagree.
  *
  * This file renders the REAL sidebar over the real registry, whose Finance hub
- * has moved (C5 #4802; until then the hub fragment was replaced here), so the
+ * has moved (C5 #4802; until then the hub fragment was replaced here), as has
+ * Fees & booking rules (C6 #4803), so the
  * wiring from `usePathname()` through `activeAdminHref` to the link's class is
  * what is measured. The registry function's own cases are in
  * `src/lib/__tests__/admin-hubs-active-link.test.ts`.
@@ -82,10 +83,10 @@ describe("the sidebar's active link over a moved hub", () => {
     stubPendingCounts();
   });
 
-  it("PREMISE: the Finance and Website hubs have moved, and nothing else has", () => {
+  it("PREMISE: the Finance, Website and Rules hubs have moved, and nothing else has", () => {
     const moved = ADMIN_PAGES.filter((page) => page.moved);
     expect(moved.length).toBeGreaterThan(0);
-    expect(new Set(moved.map((page) => page.hub))).toEqual(new Set(["finance", "website"]));
+    expect(new Set(moved.map((page) => page.hub))).toEqual(new Set(["finance", "website", "rules"]));
     expect(moved.find((page) => page.id === "payments")?.hubPath).toBe(
       "/admin/finance/payments",
     );
@@ -104,6 +105,10 @@ describe("the sidebar's active link over a moved hub", () => {
     ["a nested page's old URL", "/admin/xero/member-grouping", ["Xero Member Grouping"]],
     ["a nested page's hub URL", "/admin/finance/xero/member-grouping", ["Xero Member Grouping"]],
     ["a parent page's hub URL", "/admin/finance/xero", ["Xero Sync"]],
+    // C6 (#4803): the fee console, and a policy page with no menu entry of its own.
+    ["the fee console's hub URL", "/admin/rules/fees", ["Fees"]],
+    ["a policy page's old URL", "/admin/booking-policies/cancellation", ["Booking Policies"]],
+    ["a policy page's hub URL", "/admin/rules/booking-policies/cancellation", ["Booking Policies"]],
   ])("highlights the same link at %s (%s)", async (_label, pathname, expected) => {
     await expect(activeLabels(pathname)).resolves.toEqual([...expected].sort());
   });

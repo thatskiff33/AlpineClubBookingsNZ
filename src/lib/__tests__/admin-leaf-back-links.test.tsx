@@ -81,7 +81,7 @@ vi.mock("@/components/admin/induction-template-manager", () => ({
   InductionTemplateManager: () => null,
 }));
 
-import BookingPeriodsPage from "@/app/(admin)/admin/booking-policies/periods/page";
+import BookingPeriodsPage from "@/app/(admin)/admin/rules/booking-policies/periods/page";
 import AdminMembershipTypesPage from "@/app/(admin)/admin/membership-types/page";
 import SiteContentAdminPage from "@/app/(admin)/admin/website/site-content/page";
 // #2046: the five Lobby Display leaves and the converted [id]-aware drill-downs.

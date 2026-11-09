@@ -258,21 +258,9 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
       // windows and stays lodge-scoped (#130, ADR-005) — reached from Fees → Hut
       // Fees and the lodge hub's "Seasons & Rates" card, not a standalone entry.
       // The command palette offers it (S2 #4797); the page picks a lodge itself.
-      {
-        href: "/admin/age-tier-settings",
-        label: "Age Groups",
-        icon: Sliders,
-      },
-      {
-        href: "/admin/promo-codes",
-        label: "Promo Codes",
-        icon: Tag,
-      },
-      {
-        href: "/admin/booking-policies",
-        label: "Booking Policies",
-        icon: XCircle,
-      },
+      { ...adminLink("age-tier-settings"), icon: Sliders },
+      { ...adminLink("promo-codes"), icon: Tag },
+      { ...adminLink("booking-policies"), icon: XCircle },
     ],
   },
   {
@@ -282,8 +270,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
       // Annual Fees (finance). Shown to anyone with view on either area via the
       // OR predicate, since its prefix resolves to bookings only.
       {
-        href: "/admin/fees",
-        label: "Fees",
+        ...adminLink("fees"),
         icon: DollarSign,
         orAccess: canAccessConsolidatedFeesPage,
       },
@@ -469,11 +456,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         icon: BadgeCheck,
       },
       { ...adminLink("appearance"), icon: Palette },
-      {
-        href: "/admin/bookings-setup",
-        label: "Bookings Setup",
-        icon: BedDouble,
-      },
+      { ...adminLink("bookings-setup"), icon: BedDouble },
       {
         href: "/admin/integrations",
         label: "Integrations",

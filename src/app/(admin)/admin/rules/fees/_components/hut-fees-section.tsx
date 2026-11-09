@@ -3,6 +3,7 @@
 import type { AgeTier } from "@prisma/client";
 import { useEffect, useLayoutEffect, useMemo, useState, useCallback, useRef } from "react";
 import Link from "next/link";
+import { adminHref } from "@/lib/admin-hubs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FieldHint, describedByFieldHint, useFieldHint } from "@/components/ui/field-hint";
@@ -51,7 +52,7 @@ import {
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope";
-import { readSeasonSchedule } from "../../_lib/season-schedule";
+import { readSeasonSchedule } from "../../../_lib/season-schedule";
 import { MissingHutRatesNotice } from "./missing-hut-rates-notice";
 
 // The Hut Fees section of the consolidated /admin/fees console (#1933, E7):
@@ -904,7 +905,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
           </CardTitle>
           <CardDescription>
             Nightly hut rates per lodge, season, membership type, and age tier. Season windows
-            (dates/active) are also editable on <Link href="/admin/seasons" className="underline">Seasons</Link>.
+            (dates/active) are also editable on <Link href={adminHref("seasons")} className="underline">Seasons</Link>.
           </CardDescription>
         </div>
         {/* #2701: a season created with no lodge resolved is priced onto the

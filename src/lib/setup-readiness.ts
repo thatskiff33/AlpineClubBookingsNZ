@@ -1416,7 +1416,7 @@ function buildBookingPolicyCheck(
         details: [
           "Review this in /admin/setup after migrations and seed data have run.",
         ],
-        href: "/admin/booking-policies",
+        href: adminHref("booking-policies"),
       },
       progress,
     );
@@ -1441,7 +1441,7 @@ function buildBookingPolicyCheck(
         `Booking defaults: ${hasDefaults ? "configured" : "not configured"}`,
         `Group discount: ${db?.groupDiscountConfigured ? "configured" : "using defaults"}`,
       ],
-      href: "/admin/booking-policies",
+      href: adminHref("booking-policies"),
     },
     progress,
   );
@@ -1513,7 +1513,7 @@ function buildAgeTierCheck(
         details: [
           "The CLI validated config age tiers; seeded database settings are checked in /admin/setup.",
         ],
-        href: "/admin/age-tier-settings",
+        href: adminHref("age-tier-settings"),
       },
       progress,
     );
@@ -1564,7 +1564,7 @@ function buildAgeTierCheck(
             ]
           : []),
       ],
-      href: "/admin/age-tier-settings",
+      href: adminHref("age-tier-settings"),
     },
     progress,
   );
@@ -1585,9 +1585,9 @@ function buildSeasonRateCheck(
         required: true,
         message: "Database seasons and rates were not checked.",
         details: [
-          "Run seed data or configure seasons from /admin/seasons after login.",
+          `Run seed data or configure seasons from ${adminHref("seasons")} after login.`,
         ],
-        href: "/admin/seasons",
+        href: adminHref("seasons"),
       },
       progress,
     );
@@ -1652,7 +1652,7 @@ function buildSeasonRateCheck(
               ? "The public hut-fees page block would show fewer than two nightly-rate columns for some seasons; publish at least two membership types' rates so visitors can compare them."
               : `${seasonCount} season${seasonCount === 1 ? "" : "s"} configured.`,
       details: [`Configured seasons: ${seasonCount}`, ...gapDetails, ...embedDetails],
-      href: "/admin/seasons",
+      href: adminHref("seasons"),
     },
     progress,
   );

@@ -6,7 +6,7 @@
  * the same three fallback questions answer for every unmapped page.
  *
  * A moved page's chips are keyed by its registry old path, as its entry is
- * (C5 #4802; see `admin/finance.ts`).
+ * (C5 #4802, C6 #4803; see `admin/finance.ts`).
  */
 import { getAdminPage } from "@/lib/admin-hubs";
 import type { HelpQuestion } from "./types";
@@ -142,7 +142,7 @@ export const ADMIN_HELP_QUESTIONS: Record<string, HelpQuestion[]> = {
       a: "The operation status marks it as failed in a way retry cannot fix. Investigate the provider error before acting.",
     },
   ],
-  "/admin/seasons": [
+  [getAdminPage("seasons").oldPath]: [
     {
       q: "What do seasons control?",
       a: "The seasonal date windows — name, type, dates, active — that decide which nightly rates a booking quote uses.",

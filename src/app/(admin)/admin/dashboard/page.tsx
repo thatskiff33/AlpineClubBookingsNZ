@@ -912,7 +912,7 @@ export default async function AdminDashboardPage() {
             </CardHeader>
             <CardContent>
               <Button asChild variant="outline" size="sm" className="w-full">
-                <Link href="/admin/seasons">
+                <Link href={adminHref("seasons")}>
                   Manage Seasons
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>
@@ -956,7 +956,7 @@ export default async function AdminDashboardPage() {
             </CardHeader>
             <CardContent>
               <Button asChild variant="outline" size="sm" className="w-full">
-                <Link href="/admin/promo-codes">
+                <Link href={adminHref("promo-codes")}>
                   Manage Promos
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>

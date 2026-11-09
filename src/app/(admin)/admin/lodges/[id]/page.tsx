@@ -27,6 +27,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BackLink } from "@/components/admin/back-link";
+import { adminHref } from "@/lib/admin-hubs";
 import { LodgeSettingsLinkCard } from "./_components/lodge-settings-link-card";
 import {
   useAdminAreaEditAccess,
@@ -94,8 +95,8 @@ export default function LodgeConfigurationHubPage() {
   // link the layout would refuse, nor a summary fetch the API would 403.
   const canOpenLockers = useCanOpenAdminPath("/admin/lockers") === true;
   // #4643: the card follows the fee console (bookings OR finance); its count, the seasons API (bookings).
-  const canOpenFees = useCanOpenAdminPath("/admin/fees") === true;
-  const canReadSeasons = useCanOpenAdminPath("/admin/seasons") === true;
+  const canOpenFees = useCanOpenAdminPath(adminHref("fees")) === true;
+  const canReadSeasons = useCanOpenAdminPath(adminHref("seasons")) === true;
   const [lodge, setLodge] = useState<LodgeRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -353,7 +354,7 @@ export default function LodgeConfigurationHubPage() {
       // Consolidated fee console (#1933, E7): hut nightly rates now live in
       // Fees → Hut Fees with the lodge pre-selected (?lodgeId=). Season windows
       // remain editable on /admin/seasons.
-      href: `/admin/fees?lodgeId=${encodeURIComponent(lodgeId)}`,
+      href: `${adminHref("fees")}?lodgeId=${encodeURIComponent(lodgeId)}`,
       summary: seasons,
       emptyHint: "No seasons yet — nights here cannot be priced until one exists.",
       unit: "season",

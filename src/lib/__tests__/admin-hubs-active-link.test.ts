@@ -48,12 +48,13 @@ function allMoved(pages: readonly AdminHubPage[] = ADMIN_PAGES): AdminHubPage[] 
 const concrete = (registryPath: string) => registryPath.replace(/\[[^\]/]+\]/g, "x123");
 
 describe("activeAdminHref while the switch is off", () => {
-  it("PREMISE: the Website and Finance hubs have moved, nothing else has, and the sidebar still links the old URLs", () => {
+  it("PREMISE: the Website, Finance and Rules hubs have moved, nothing else has, and the sidebar still links the old URLs", () => {
     const moved = ADMIN_PAGES.filter((page) => page.moved);
     expect(moved.length).toBeGreaterThan(0);
-    expect(new Set(moved.map((page) => page.hub))).toEqual(new Set(["website", "finance"]));
+    expect(new Set(moved.map((page) => page.hub))).toEqual(new Set(["website", "finance", "rules"]));
     expect(SIDEBAR_HREFS).toContain("/admin/appearance");
     expect(SIDEBAR_HREFS).toContain("/admin/payments");
+    expect(SIDEBAR_HREFS).toContain("/admin/fees");
     expect(SIDEBAR_HREFS.length).toBeGreaterThan(40);
     expect(SIDEBAR_HREFS.some((href) => href.includes("?"))).toBe(true);
   });

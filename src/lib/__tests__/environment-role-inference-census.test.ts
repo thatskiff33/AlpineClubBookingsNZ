@@ -250,7 +250,7 @@ const NOT_ENVIRONMENT_SAFETY_READS: Allowance[] = [
       "Warn-only diagnostic on the seasonal-assignment path; changes no outcome.",
   },
   {
-    file: "src/app/(admin)/admin/promo-codes/promo-codes-page-client.tsx",
+    file: "src/app/(admin)/admin/rules/promo-codes/promo-codes-page-client.tsx",
     reads: 1,
     reason:
       "Dev-only console guard in a client component; ships nothing to production.",

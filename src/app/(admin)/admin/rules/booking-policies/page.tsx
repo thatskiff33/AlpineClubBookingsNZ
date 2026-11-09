@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { adminHref } from "@/lib/admin-hubs";
 import {
   Card,
   CardDescription,
@@ -16,42 +17,42 @@ import {
 
 const sections = [
   {
-    href: "/admin/booking-policies/cancellation",
+    href: adminHref("booking-policies-cancellation"),
     title: "Default Cancellation Policy",
     description:
       "Refund rules applied to all bookings unless a period overrides them.",
     icon: XCircle,
   },
   {
-    href: "/admin/booking-policies/periods",
+    href: adminHref("booking-policies-periods"),
     title: "Date-Specific Periods",
     description:
       "Override the default cancellation policy for specific date ranges.",
     icon: CalendarRange,
   },
   {
-    href: "/admin/booking-policies/group-discount",
+    href: adminHref("booking-policies-group-discount"),
     title: "Group Discount",
     description:
       "Charge all guests at member rates once a booking reaches a minimum size.",
     icon: Users,
   },
   {
-    href: "/admin/booking-policies/minimum-stay",
+    href: adminHref("booking-policies-minimum-stay"),
     title: "Minimum Night Stay",
     description:
       "Require minimum nights when a booking touches certain days of the week.",
     icon: CalendarClock,
   },
   {
-    href: "/admin/booking-policies/adult-member-hosting",
+    href: adminHref("booking-policies-adult-member-hosting"),
     title: "Adult Member Hosting",
     description:
       "Ask that an adult member stays on the same booking as any non-member guest.",
     icon: UserCheck,
   },
   {
-    href: "/admin/booking-policies/public-requests",
+    href: adminHref("booking-policies-public-requests"),
     title: "Public Booking Requests",
     description:
       "Control whether the public request form shows indicative pricing.",

@@ -222,9 +222,9 @@ describe("lodge-scope ownership follows the committed scope (#2887)", () => {
 const SCOPE_OWNERSHIP_REFS: ReadonlyArray<{ file: string; ref: string; scope: string }> = [
   { file: "src/app/(admin)/admin/chores/page.tsx", ref: "activeScopeRef", scope: "scopedLodgeId" },
   { file: "src/app/(admin)/admin/lockers/page.tsx", ref: "activeScopeRef", scope: "scopedLodgeId" },
-  { file: "src/app/(admin)/admin/seasons/page.tsx", ref: "activeScopeRef", scope: "scopedLodgeId" },
+  { file: "src/app/(admin)/admin/rules/seasons/page.tsx", ref: "activeScopeRef", scope: "scopedLodgeId" },
   {
-    file: "src/app/(admin)/admin/fees/_components/hut-fees-section.tsx",
+    file: "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx",
     ref: "activeScopeRef",
     scope: "scopedLodgeId",
   },

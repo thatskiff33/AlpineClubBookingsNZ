@@ -378,7 +378,7 @@ describe("admin bed allocation", () => {
     const featureRoutes = readRepoFile("src/config/feature-routes.ts");
     const sidebar = readRepoFile("src/components/admin-sidebar.tsx");
     const bookingsSetupHub = readRepoFile(
-      "src/app/(admin)/admin/bookings-setup/page.tsx"
+      "src/app/(admin)/admin/rules/bookings-setup/page.tsx"
     );
 
     expect(featureRoutes).toContain('flag: "bedAllocation"');
