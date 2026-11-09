@@ -1771,6 +1771,8 @@ advisory-lock participants, no DB CHECK constraint).
   PENDING/REQUESTED lifecycle, deletion, or family-join request on either member.
   The whole merge runs in one transaction under the dual `member-lifecycle`
   advisory lock (see CONCURRENCY_AND_LOCKING.md), re-runs the guards, and
+  never waits for a Payment row it re-attributes (#4823): if another writer holds
+  one, it refuses and the operator retries. It also
   re-verifies an HMAC preview token (over both ids, both `updatedAt`, and an
   outcome digest) so a drifted preview 409s. The admin must type
   `MERGE <loser full name>` (whitespace-normalised) to confirm, and one critical
@@ -1786,7 +1788,8 @@ advisory-lock participants, no DB CHECK constraint).
 
 - **Refused attempts are audited too (#2498).** Every refusal — self-merge,
   missing member, `merge_blocked`, wrong confirmation phrase, `preview_drift`,
-  the #2595 `partner_share_lodge_drift` arm, and the
+  the #2595 `partner_share_lodge_drift` arm, the #4823
+  `merge_payment_row_busy` arm, and the
   `merge_drift_in_transaction` field/family-link arms — throws from
   inside the transaction and rolls it (and the `MEMBER_MERGED` audit) back. A
   single boundary in `executeMemberMerge` then writes one best-effort
