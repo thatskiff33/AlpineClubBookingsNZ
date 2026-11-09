@@ -392,10 +392,10 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         // comes looking.
         //
         // No explicit flag is needed: `isFeatureHrefVisible` derives visibility
-        // from the href against FEATURE_ROUTE_RULES, and this PR registered
-        // "/admin/ai-diagnostics" under the `aiDiagnostics` rule — so with the
-        // module off the entry disappears from the sidebar, matching the 404 the
-        // route itself now returns.
+        // from the href against FEATURE_ROUTE_RULES, whose `aiDiagnostics` rule
+        // has been generated from this page's registry entry since #4799, at its
+        // old and its hub path — so with the module off the entry disappears from
+        // the sidebar, matching the 404 the route itself returns.
         //
         // ADMISSION, NOT AN AREA (ADR-002 §1, owner-ratified #2370): any admitted
         // administrator may open the shell, and the link follows that rule with

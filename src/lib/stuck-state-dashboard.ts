@@ -37,7 +37,7 @@ import {
   type XeroAdminHealthSnapshot,
 } from "@/lib/xero-admin-health";
 
-import { adminHref } from "@/lib/admin-hubs";
+import { adminHref, adminAnchorHref } from "@/lib/admin-hubs";
 const PAYMENT_PROCESSING_STALE_MINUTES = 30;
 const PAYMENT_PENDING_OVERDUE_MINUTES = 15;
 const BED_ALLOCATION_LOOKAHEAD_DAYS = 7;
@@ -1153,7 +1153,7 @@ export async function getStuckStateDashboard(input?: {
       severity: "warning",
       owner: "Finance",
       count: bankRefundVoidsToAnswer,
-      href: input?.viewerCanViewFinance ? `${adminHref("stuck-states")}#bank-refund-voids` : adminHref("xero"),
+      href: input?.viewerCanViewFinance ? adminAnchorHref("stuck-states", "bank-refund-voids") : adminHref("xero"),
       summary: `${bankRefundVoidsToAnswer} bank ${plural(bankRefundVoidsToAnswer, "refund")} had ${bankRefundVoidsToAnswer === 1 ? "its" : "their"} Xero credit note voided, and the app could not tell which refund the note recorded (or another note has held it back for over a week). Pick the refund on this page and the app takes it back out of the records for the treasurer to re-confirm.`,
     });
   }

@@ -61,6 +61,7 @@ import {
 } from "@/lib/admin-hubs/security-map";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { xeroSectionId } from "@/app/(admin)/admin/finance/xero/_components/types";
+import { BANK_REFUND_VOIDS_ANCHOR } from "@/components/admin/bank-refund-voids-to-answer-panel";
 
 // ---------------------------------------------------------------------------
 // The admin hub registry (epic #4468, C1 #4798).
@@ -1021,6 +1022,7 @@ describe("tabs and anchors", () => {
       ["membership-cancellations", ["requests", "settings"], []],
       ["family-groups", ["groups", "suggestions"], []],
       ["health", [], ["integration-readiness"]],
+      ["stuck-states", [], ["bank-refund-voids"]],
     ]);
   });
 
@@ -1062,17 +1064,51 @@ describe("tabs and anchors", () => {
     "xero-section-mappings": 'id={xeroSectionId("mappings")}',
   };
 
+  /**
+   * An anchor whose element is a shared component's, outside the page's
+   * directory: the page must render the component, and the component must give
+   * its element the id through the registry-typed constant pinned below.
+   */
+  const COMPONENT_ANCHORS: Record<
+    string,
+    { readonly renders: string; readonly file: string; readonly id: string }
+  > = {
+    "bank-refund-voids": {
+      renders: "<BankRefundVoidsToAnswerPanel",
+      file: "src/components/admin/bank-refund-voids-to-answer-panel.tsx",
+      id: "id={BANK_REFUND_VOIDS_ANCHOR}",
+    },
+  };
+
+  /** Why `anchor` is not rendered by `page`, or `null` when it is. */
+  function anchorDrift(page: AdminHubPage, anchor: string): string | null {
+    const source = pageSources(page);
+    const component = COMPONENT_ANCHORS[anchor];
+    if (component !== undefined) {
+      if (!source.includes(component.renders)) return `${page.id}: no ${component.renders}`;
+      const own = stripComments(fs.readFileSync(path.join(process.cwd(), component.file), "utf8"));
+      return own.includes(component.id) ? null : `${page.id}: ${component.file} has no ${component.id}`;
+    }
+    const minted = MINTED_ANCHORS[anchor];
+    const found = minted === undefined ? source.includes(`"${anchor}"`) : source.includes(minted);
+    return found ? null : `${page.id}: no "${anchor}"`;
+  }
+
   it("has each anchored page render every anchor as an element id", () => {
     const drift = ADMIN_PAGES.flatMap((page) =>
-      page.anchors
-        .filter((anchor) => {
-          const source = pageSources(page);
-          const minted = MINTED_ANCHORS[anchor];
-          return !(minted === undefined ? source.includes(`"${anchor}"`) : source.includes(minted));
-        })
-        .map((anchor) => `${page.id}: no "${anchor}"`),
+      page.anchors.flatMap((anchor) => anchorDrift(page, anchor) ?? []),
     );
     expect(drift).toEqual([]);
+  });
+
+  it("declares the voided bank refund notes anchor as the id its panel is given (C7 #4804)", () => {
+    // The panel writes `id={BANK_REFUND_VOIDS_ANCHOR}`; its stuck-state row links
+    // with adminAnchorHref. One spelling, typed against the registry.
+    expect(BANK_REFUND_VOIDS_ANCHOR).toBe("bank-refund-voids");
+    expect(getAdminPage("stuck-states").anchors).toEqual([BANK_REFUND_VOIDS_ANCHOR]);
+    expect(adminAnchorHref("stuck-states", BANK_REFUND_VOIDS_ANCHOR)).toBe(
+      "/admin/stuck-states#bank-refund-voids",
+    );
   });
 });
 
@@ -1823,7 +1859,8 @@ describe("the registry is inert", () => {
     "src/lib/email/admin-alerts-settlement.ts": "C5: the payments review links are adminHref",
     "src/lib/finance-dashboard-page/sync-health-view.ts": "C5: the Xero admin link is adminHref",
     "src/lib/finance-sync-health.ts": "C5: the Xero admin link is adminHref",
-    "src/lib/stuck-state-dashboard.ts": "C5, C7: stuck-state links use adminHref",
+    "src/lib/stuck-state-dashboard.ts":
+      "C5, C7: stuck-state links use adminHref; C7: the voided bank refund notes row is adminAnchorHref",
     "src/lib/xero-record-activity.ts": "C5: the payments back link is adminLink",
     "src/lib/xero-record-links.ts": "C5: a Xero record's URL is adminHref",
     "src/lib/contextual-help/admin/finance.ts":
@@ -1894,6 +1931,10 @@ describe("the registry is inert", () => {
     "src/lib/contextual-help/admin/monitoring-and-support.ts":
       "C7: the Help & system pages' help is keyed by each page's registry old path",
     "src/lib/route-error-probe.ts": "C7: the probe's path is adminHref",
+    "src/components/admin/bank-refund-voids-to-answer-panel.tsx":
+      "C7: its card's id is the Stuck States page's registry anchor",
+    "src/lib/__tests__/stuck-state-dashboard.test.ts":
+      "C7: the voided bank refund notes row links the registry anchor",
     "src/lib/setup-readiness-data-keys.ts": "C7: the data-key check links System Health with adminHref",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;

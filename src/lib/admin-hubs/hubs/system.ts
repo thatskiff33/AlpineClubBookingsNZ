@@ -32,6 +32,8 @@ export const SYSTEM_HUB = defineHub({
       label: "Stuck States",
       oldPath: "/admin/stuck-states",
       area: "support",
+      // The voided bank refund notes panel (#4162), linked from its stuck-state row.
+      anchors: ["bank-refund-voids"],
       moved: true,
     },
     {
