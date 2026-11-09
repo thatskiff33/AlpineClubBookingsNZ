@@ -7,8 +7,10 @@ Audience: Operator
 A helper that auto-detects likely family groups among members who are **not yet in
 a family group**, by looking for shared email addresses and shared last names, and
 lets you confirm a suggestion into a real group, skip it for now, or hide it
-permanently. Find it at **Admin → Members → Family Suggestions**
-(`/admin/family-suggestions`).
+permanently. Find it on the **Suggestions** tab of **Admin → Members → Family
+Groups** (`/admin/family-groups?tab=suggestions`). It was its own page,
+`/admin/family-suggestions`, until the two were merged (#4796); that address
+still opens the tab.
 
 Family suggestions are a **membership** permission area: membership view to
 browse, membership **edit** to create, hide, or reset suggestions.
@@ -24,7 +26,7 @@ browse, membership **edit** to create, hide, or reset suggestions.
 
 ### Review and act on suggestions
 
-1. Go to **Admin → Members → Family Suggestions**. Stat cards show Total Members,
+1. Go to **Admin → Members → Family Groups** and open the **Suggestions** tab. Stat cards show Total Members,
    Ungrouped Members, and the number of Suggestions; each suggestion lists its
    candidate members and a confidence badge.
 

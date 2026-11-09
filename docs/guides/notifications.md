@@ -56,7 +56,7 @@ The hub has no settings of its own. Each card links to a tool that does:
 | Recipients | `/admin/notification-recipients` | Per-admin toggles for each system alert, scoped to the areas their role can edit | [Recipients](notification-recipients.md) |
 | Email Messages | `/admin/email-messages` | Shared email variables + audited template subject/body | [Email Messages](email-messages.md) |
 | Booking Messages | `/admin/booking-messages` | Member-facing booking/payment/cancellation copy | [Booking Messages](booking-messages.md) |
-| Membership Cancellation | `/admin/membership-cancellation` | Cancellation copy + Xero handling | [Cancellation Requests](membership-cancellations.md) |
+| Membership Cancellation | `/admin/membership-cancellations?tab=settings` (the Settings tab of Cancellation Requests since #4796) | Cancellation copy + Xero handling | [Cancellation Requests](membership-cancellations.md) |
 
 ## Troubleshooting
 

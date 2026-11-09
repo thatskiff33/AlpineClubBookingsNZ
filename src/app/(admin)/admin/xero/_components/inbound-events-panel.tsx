@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { servedAdminPathname } from "@/lib/admin-hubs"
 import { Button } from "@/components/ui/button"
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button"
 import {
@@ -56,7 +57,9 @@ export function InboundEventsPanel({
   // read as a filter already applied.
   const eventTypeHint = useFieldHint()
   const router = useRouter()
-  const pathname = usePathname()
+  // The URL this page is served at, the same on the server and in the browser
+  // once Xero moves under Finance (C3 #4800); links and replace() targets use it.
+  const pathname = servedAdminPathname(usePathname())
   const searchParams = useSearchParams()
   // Hold the latest searchParams in a ref so syncUrl can preserve the *other*
   // panel's params without taking searchParams as a reactive dependency. If it

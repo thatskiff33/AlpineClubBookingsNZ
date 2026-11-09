@@ -2,10 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { stripComments } from "./support/strip-comments";
-import {
-  ADMIN_MEMBER_DETAIL_ROUTE_PATTERN,
-  BOOKING_DETAIL_ROUTE_PATTERN,
-} from "@/lib/page-route-patterns";
+import { BOOKING_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
 
 /**
  * #3635: a `revalidatePath(pattern, "page")` pattern must name a real page
@@ -18,8 +15,9 @@ const pageFileFor = (pattern: string) => fileFor(pattern, "page");
 
 describe("revalidatePath page patterns (#3635)", () => {
   it.each([
+    // Admin pages are checked from the registry, every page in both places,
+    // by `admin-page-revalidation.test.ts` (C3 #4800).
     ["BOOKING_DETAIL_ROUTE_PATTERN", BOOKING_DETAIL_ROUTE_PATTERN],
-    ["ADMIN_MEMBER_DETAIL_ROUTE_PATTERN", ADMIN_MEMBER_DETAIL_ROUTE_PATTERN],
   ])("%s names a page file on disk", (_name, pattern) => {
     expect(existsSync(pageFileFor(pattern)), pageFileFor(pattern)).toBe(true);
   });

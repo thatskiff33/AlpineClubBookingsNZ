@@ -295,22 +295,31 @@ describe("the admin security preamble has exactly one implementation (#2378)", (
     const permissions = executableCode(
       readFileSync(join(import.meta.dirname, "..", "admin-permissions.ts"), "utf8"),
     );
-    const start = permissions.indexOf("export function canOpenAdminPath");
+    const bodyOf = (name: string) => {
+      const start = permissions.indexOf(`export function ${name}(`);
+      expect(start, `${name} is gone from admin-permissions.ts`).toBeGreaterThan(-1);
+      return permissions.slice(start, permissions.indexOf("\nexport ", start + 1));
+    };
+    // #4796: the rule has one body, `canOpenAdminPathWithMatrix`, so a hub card
+    // can be offered exactly when its page opens. `canOpenAdminPath` must be a
+    // bare delegation to it — nothing it could skip or short-circuit.
+    const wrapper = bodyOf("canOpenAdminPath")
+      .replace(/^export function canOpenAdminPath\([^)]*\)\s*\{/, "")
+      .replace(/\}\s*$/, "")
+      .replace(/\s+/g, " ")
+      .trim();
     expect(
-      start,
-      "canOpenAdminPath is gone from admin-permissions.ts",
-    ).toBeGreaterThan(-1);
-    const body = permissions.slice(
-      start,
-      permissions.indexOf("\nexport ", start + 1),
-    );
+      wrapper,
+      "canOpenAdminPath must only delegate to canOpenAdminPathWithMatrix",
+    ).toBe("return canOpenAdminPathWithMatrix(getAdminPermissionMatrix(input), pathname);");
+    const body = bodyOf("canOpenAdminPathWithMatrix");
     for (const symbol of ADMISSION_HELPER_MUST_PERFORM) {
       // `LEVEL_RANK` is a lookup table, not a call, so it is matched as an
       // index rather than with a trailing paren. Everything else is invoked.
       const performed = symbol === "LEVEL_RANK" ? `${symbol}[` : `${symbol}(`;
       expect(
         body,
-        `canOpenAdminPath no longer performs "${symbol}" — an import alone is not performing it`,
+        `canOpenAdminPathWithMatrix no longer performs "${symbol}" — an import alone is not performing it`,
       ).toContain(performed);
     }
   });

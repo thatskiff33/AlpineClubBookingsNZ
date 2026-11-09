@@ -388,7 +388,8 @@ describe("admin bed allocation", () => {
     expect(getRequiredFeaturesForPath("/admin/rooms-beds")).toContain("bedAllocation");
     expect(featureRoutes).toContain('"/api/admin/bed-allocation"');
     expect(sidebar).toContain('href: "/admin/bed-allocation"');
-    expect(bookingsSetupHub).toContain('href: "/admin/rooms-beds"');
+    // Linked through the hub registry since S1 (#4796).
+    expect(bookingsSetupHub).toContain('href: adminHref("rooms-beds")');
   });
 
   it("blocks deactivating a bed with current or future allocations, naming the occupant", async () => {
