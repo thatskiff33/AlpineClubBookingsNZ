@@ -1498,6 +1498,10 @@ describe("the registry is inert", () => {
       "C4: the privacy policy's edit link is Page Content's adminHref",
     "src/components/admin/analytics-integration-card.tsx":
       "C4: the privacy policy link falls back to Page Content's adminHref",
+    "e2e/admin-roles.spec.ts": "C4: opens Page Content at its adminHref",
+    "e2e/club-identity-smoke.spec.ts": "C4: opens Club Identity at its adminHref",
+    "e2e/pre-setup/setup-gate.spec.ts": "C4: reaches Site Style at its adminHref",
+    "e2e/tools/capture-screenshots.ts": "C4: captures the Website pages at their adminHref",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;

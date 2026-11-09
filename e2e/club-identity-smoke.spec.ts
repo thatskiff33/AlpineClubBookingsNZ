@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "./helpers/accessibility";
 import { storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN } from "./helpers/fixtures";
+import { adminHref } from "@/lib/admin-hubs";
 
 // E3 follow-up #1966 (PR #1957 / issue #1929): renaming the club in
 // Admin > Appearance > Club Identity must reach the public site within the
@@ -67,7 +68,7 @@ async function saveClubIdentity(page: Page): Promise<void> {
 }
 
 async function openIdentityPage(page: Page): Promise<void> {
-  await page.goto("/admin/appearance/identity");
+  await page.goto(adminHref("club-identity"));
   await expect(
     page.getByRole("heading", { name: "Club Identity" }),
   ).toBeVisible();

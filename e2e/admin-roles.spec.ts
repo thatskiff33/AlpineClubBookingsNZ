@@ -1,6 +1,7 @@
 import { expect, test } from "./helpers/accessibility";
 import { loginPersona } from "./helpers/auth";
 import { relDateOnly, ROLE_PERSONAS } from "./helpers/fixtures";
+import { adminHref } from "@/lib/admin-hubs";
 
 // High row (docs/END_TO_END_TEST_MATRIX.md): "Role boundaries for full admin,
 // read-only admin, booking officer, membership officer, Treasurer, content
@@ -64,7 +65,7 @@ test("booking officer manages bookings but is blocked from content", async ({
   await expect(page).toHaveURL(/\/admin\/bookings/);
 
   // Out-of-area: content = none → redirected to the overview dashboard.
-  await page.goto("/admin/page-content");
+  await page.goto(adminHref("page-content"));
   await expect(page).toHaveURL(/\/admin\/dashboard/);
 });
 
@@ -78,7 +79,7 @@ test("membership officer manages members but is blocked from content", async ({
   await expect(page).toHaveURL(/\/admin\/members/);
 
   // Out-of-area: content = none → redirected to the overview dashboard.
-  await page.goto("/admin/page-content");
+  await page.goto(adminHref("page-content"));
   await expect(page).toHaveURL(/\/admin\/dashboard/);
 });
 
@@ -88,8 +89,8 @@ test("content manager edits content but is blocked from membership", async ({
   await loginPersona(page, ROLE_PERSONAS.ADMIN_CONTENT.email);
 
   // In-area: content = edit.
-  await page.goto("/admin/page-content");
-  await expect(page).toHaveURL(/\/admin\/page-content/);
+  await page.goto(adminHref("page-content"));
+  await expect(page).toHaveURL(new RegExp(adminHref("page-content")));
 
   // Out-of-area: membership = none, overview = view → redirected to dashboard.
   await page.goto("/admin/members");
@@ -107,7 +108,7 @@ test("treasurer edits finance but is blocked from content", async ({ page }) => 
   await expect(page).toHaveURL(/\/finance/);
 
   // Out-of-area: content = none → redirected to the overview dashboard.
-  await page.goto("/admin/page-content");
+  await page.goto(adminHref("page-content"));
   await expect(page).toHaveURL(/\/admin\/dashboard/);
 });
 

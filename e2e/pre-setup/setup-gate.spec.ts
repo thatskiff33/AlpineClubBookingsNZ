@@ -1,5 +1,6 @@
 import { expect, test } from "../helpers/accessibility";
 import { setSiteSetupComplete } from "../helpers/setup-state";
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * The pre-setup gate ON THE WIRE (#2420, review finding F5).
@@ -113,7 +114,7 @@ test("the operator can still reach everything needed to finish setup", async ({
   // The whole point of the gate is that it does not lock the admin out of the
   // wizard that ends it. Un-authenticated here, so a redirect to login is the
   // expected answer for the admin pages — what matters is that it is NOT 503.
-  for (const url of ["/admin/site-style", "/admin", "/login"]) {
+  for (const url of [adminHref("site-style"), "/admin", "/login"]) {
     const response = await request.get(url, { maxRedirects: 0 });
 
     expect(response.status(), `${url} must not be gated`).not.toBe(503);

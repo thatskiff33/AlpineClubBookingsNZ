@@ -49,6 +49,7 @@ import {
   E2E_ADMIN,
   WAITLISTER,
 } from "../helpers/fixtures";
+import { adminHref } from "../../src/lib/admin-hubs";
 
 type Capture = {
   /** Stable filename stem and CLI selector, e.g. "admin-dashboard". */
@@ -169,16 +170,16 @@ const CAPTURES: Capture[] = [
   { name: "admin-xero-member-grouping", route: "/admin/xero/member-grouping", area: "admin" },
   // Batch 4 (#2050): comms, content & support-platform operator guides.
   // Content — the Site Appearance & Content hub and its sub-pages.
-  { name: "admin-appearance", route: "/admin/appearance", area: "admin" },
-  { name: "admin-appearance-identity", route: "/admin/appearance/identity", area: "admin" },
-  { name: "admin-site-style", route: "/admin/site-style", area: "admin" },
-  { name: "admin-site-content", route: "/admin/site-content", area: "admin" },
-  { name: "admin-page-content", route: "/admin/page-content", area: "admin" },
-  { name: "admin-site-banners", route: "/admin/site-banners", area: "admin" },
+  { name: "admin-appearance", route: adminHref("appearance"), area: "admin" },
+  { name: "admin-appearance-identity", route: adminHref("club-identity"), area: "admin" },
+  { name: "admin-site-style", route: adminHref("site-style"), area: "admin" },
+  { name: "admin-site-content", route: adminHref("site-content"), area: "admin" },
+  { name: "admin-page-content", route: adminHref("page-content"), area: "admin" },
+  { name: "admin-site-banners", route: adminHref("site-banners"), area: "admin" },
   // mountain-conditions is gated by the `skifieldConditions` flag, which the
   // demo seed defaults ON (prisma/schema.prisma) — so it captures normally.
-  { name: "admin-mountain-conditions", route: "/admin/mountain-conditions", area: "admin" },
-  { name: "admin-image-manager", route: "/admin/image-manager", area: "admin" },
+  { name: "admin-mountain-conditions", route: adminHref("mountain-conditions"), area: "admin" },
+  { name: "admin-image-manager", route: adminHref("image-manager"), area: "admin" },
   // Comms — the Notifications & Email hub, its sub-pages, and deliverability.
   { name: "admin-notifications", route: "/admin/notifications", area: "admin" },
   { name: "admin-notification-rules", route: "/admin/notification-rules", area: "admin" },
