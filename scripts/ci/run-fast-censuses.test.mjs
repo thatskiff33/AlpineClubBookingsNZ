@@ -26,6 +26,8 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { DEFAULT_BASE_REF } from "../lib/budget-base-ref.mjs";
+
 import {
   FAST_CENSUS_COMMANDS,
   FAST_CENSUS_SUITES,
@@ -125,9 +127,26 @@ describe("runner execution", () => {
     expect(resolveInvariantBaselineRef(REPO_ROOT, docCall[2].env)).toBe(exactBase);
     for (const key of Object.keys(inherited).filter((key) => key !== "DOC_INDEX_BASE_REF")) expect(docCall[2].env[key], key).toBeUndefined();
     const budget = spawn.mock.calls.find(([, args]) => args.includes("scripts/ci/check-file-size-budget.ts"));
-    expect(budget[1].slice(-2)).toEqual(["--base", exactBase]);
+    // The size ratchet is NOT judged against the epic SHA (#4831).
+    expect(budget[1].slice(-2)).toEqual(["--base", DEFAULT_BASE_REF]);
+    expect(budget[1]).not.toContain(exactBase);
     expect(budget[2].env.GITHUB_EVENT_NAME).toBe(event);
     expect(inherited.GITHUB_EVENT_NAME).toBe(event);
+  });
+
+  it("judges the file-size ratchet against origin/main, with or without --base (#4831)", () => {
+    // The sync passes the pre-sync epic SHA. Read against it, a fragment `main`
+    // already landed counts as this change's, so a main-side allowance for a file
+    // the epic left longer refused the sync while PR CI, measuring against
+    // origin/main, stayed green. The ref is explicit, and the one PR CI names.
+    expect(DEFAULT_BASE_REF).toBe("origin/main");
+    for (const argv of [[], ["--base", "origin/epic/1-x"]]) {
+      simulate();
+      main(argv, {});
+      const budget = spawn.mock.calls.find(([, args]) => args.includes("scripts/ci/check-file-size-budget.ts"));
+      const baseFlags = budget[1].filter((arg, i, all) => all[i - 1] === "--base");
+      expect(baseFlags, JSON.stringify(argv)).toEqual(["origin/main"]);
+    }
   });
 
   it("preserves ordinary event authority without an explicit diagnostic base", () => {
