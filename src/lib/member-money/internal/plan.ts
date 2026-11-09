@@ -13,6 +13,7 @@ import { MAX_INTEGER_CENTS } from "../../money-input";
 import { stableDigest, stableStringify } from "../../stable-digest";
 import { formatCentsPlain } from "../../utils";
 import { DEBTOR_ACCOUNTS, isTaxedRevenue, MEMBER_MONEY_ACCOUNTS, type TaxedRevenueAccount } from "./accounts";
+import { capProblem, MEMBER_MONEY_CAP_PROBLEMS } from "./cap-problems";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
 import { splitTaxInclusiveGross, type MemberMoneyTaxSplit } from "./tax";
 
@@ -530,7 +531,7 @@ export function buildMemberMoneyBatch(context: MemberMoneyPostingContext, plan: 
       if (application.reversesApplicationId) problems.push("an application reversal must name the original posted source line");
       const total = (applied.get(index) ?? 0) + application.amountCents;
       applied.set(index, total);
-      if (total > line.amountCents) problems.push("C1: applications exceed their source line");
+      if (total > line.amountCents) problems.push(capProblem(MEMBER_MONEY_CAP_PROBLEMS.C1, "applications exceed their source line"));
     } else {
       if (blank(application.source.lineId)) problems.push("an application source line id is blank");
       source = application.source;

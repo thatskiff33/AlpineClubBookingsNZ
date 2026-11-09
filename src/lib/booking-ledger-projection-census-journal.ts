@@ -23,8 +23,18 @@
  * `UNBRIDGED_CHARGE_LINE` integrity finding (a door that wrote the
  * legacy line and skipped the journal), which holds the gate. A booking
  * confirmed before M3b is NOT_APPLICABLE: M9 back-posts its whole history.
+ *
+ * #4516 review M2: the one journal charge no legacy line carries is the rest a
+ * part "Paid another way" close let the club keep (R14's close-out, a component
+ * per close record, `refundCloseOutIdentity`). The legacy ledger keeps that rest
+ * on the close's record instead (`paidAnotherWayUnpaidCents`), so each close-out
+ * component in the journal counts on the ledger side as its record's kept rest:
+ * the two agree exactly when the journal kept what the record says. A close-out
+ * whose record is gone, or says otherwise, disagrees. A kept rest the journal
+ * never closed out is the refund census's (`KEPT_REST_WITHOUT_CLOSE_OUT`).
  */
-import { isJournalEraBooking, journalComponentOfLegacyLine, MemberMoneyPlanError } from "@/lib/member-money";
+import { isJournalEraBooking, journalComponentOfLegacyLine, MemberMoneyPlanError, refundCloseOutRecordOfIdentity } from "@/lib/member-money";
+import { paidAnotherWayUnpaidCents } from "@/lib/manual-refund-task-settlement-rules";
 import type { BookingLedgerEvaluation, BookingLedgerIdentityResult, BookingLedgerIntegrityFinding } from "@/lib/booking-ledger-projection-census";
 import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-row";
 import type { BookingLedgerCensusReport } from "@/lib/booking-ledger-projection-census-report";
@@ -108,6 +118,11 @@ export function journalChargeComparison(row: BookingLedgerCensusRow): {
       continue;
     }
     ledgerCents += line.amountCents;
+  }
+  const keptByRecord = new Map(row.tasks.map((task) => [task.id, paidAnotherWayUnpaidCents({ amountCents: task.amountCents, raisedAmountCents: task.raisedAmountCents ?? null })]));
+  for (const component of row.journal.components) {
+    const recordId = refundCloseOutRecordOfIdentity(component.chargeIdentity);
+    if (recordId !== null) ledgerCents += keptByRecord.get(recordId) ?? 0;
   }
 
   const columnCents = row.journal.components.reduce((sum, component) => sum + component.liveGrossCents, 0);

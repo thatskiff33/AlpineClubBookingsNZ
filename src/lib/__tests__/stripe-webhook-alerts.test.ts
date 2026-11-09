@@ -2245,6 +2245,8 @@ describe("Stripe webhook Xero alerting", () => {
           reason: "cancelled_booking_late_capture",
         },
         idempotencyKeyPrefix: "late_cancel_refund_booking-9_pi_additional_late",
+        // #4516 (M4c): the capture's return; this webhook defers its R05 to the reservation step.
+        obligation: { scope: "capture-return", id: "pi_additional_late", ensureFaceCents: 2500 },
       });
       // #2761: its own alert, not the generic "Payment Failed" mail. Exactly one
       // notification for the event — the old sender is not called on this path at

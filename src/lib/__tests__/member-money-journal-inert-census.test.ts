@@ -55,6 +55,15 @@ const READERS: Record<string, { reason: string; importOnly: boolean }> = {
     reason: "the census row carries the journal's charges (a type import)",
     importOnly: false,
   },
+  // #4516 (M4c): the one test for a refused card refund reservation, through the boundary's index.
+  "src/lib/recovery-unretryable-cause.ts": {
+    reason: "the recovery runner stops a card refund row whose reservation was refused (a pure error test)",
+    importOnly: true,
+  },
+  "src/lib/late-capture-own-charge-refund.ts": {
+    reason: "a webhook's late-capture refund holds the capture when its reservation was refused (a pure error test)",
+    importOnly: true,
+  },
   "scripts/booking-ledger-census.ts": {
     reason: "the census command asks whether the club's journal is inactive (a pure decision on its format)",
     importOnly: false,
@@ -82,6 +91,16 @@ const DOORS: Record<string, string> = {
   "src/lib/credit-release-ask-close.ts": "R07 Xero-paid release receipts",
   "src/lib/internet-banking-part-payment-at-cancel.ts": "R07 recognised part bank cash",
   "scripts/member-money-receipt-catch-up.ts": "R26 dry-run-first catch-up receipts unapplied",
+  // #4516 (M4c): card refunds. R05 at the doors, the senders' reservations, R12/R13 in the cash writer, R14.
+  "src/lib/booking-cancel.ts": "R05 for a paid card cancellation's frozen plan",
+  "src/app/api/admin/refund-requests/[id]/route.ts": "R05 (with its concession) for an approved appeal; withdrawn with release_claim",
+  "src/lib/manual-refund-task-resolution.ts": "R05 for an edit review's card refund",
+  "src/lib/late-capture-refund-approval.ts": "R05 for a treasurer-approved late capture's return",
+  "src/lib/card-refund-paid-another-way-rest.ts": "R14 for a paid-another-way close, its reservations closed, a kept rest's close-out",
+  "scripts/member-money-refund-reservations.ts": "dry-run-first refund census; exact reconciliation of reservations",
+  "src/lib/card-refund-reservation-operator.ts": "the owner's audited OPERATOR release of a reservation nothing can answer",
+  // #4516 review L1: a superseded intent's first request, answered to its open reservation by the one cash writer.
+  "src/lib/superseded-first-request-answer.ts": "the one cash writer answering a superseded row's first request to its open reservation",
 
   "src/lib/booking-ledger-confirmation-sync.ts": "R01: a confirmation's lines, beside the legacy write",
   "src/lib/booking-ledger-group-settlement-sync.ts": "R01: a group-settled child's confirmation lines",
@@ -103,7 +122,6 @@ const CONTEXT_RESOLVERS: readonly string[] = [
   "src/app/api/bookings/[id]/guests/route.ts",
   "src/app/api/bookings/[id]/guests/[guestId]/route.ts",
   "src/lib/booking-batch-modification-service.ts",
-  "src/lib/booking-cancel.ts",
   "src/lib/booking-date-modification-service.ts",
   "src/lib/booking-guest-removal-service.ts",
   "src/lib/cron-confirm-pending.ts",
@@ -111,7 +129,6 @@ const CONTEXT_RESOLVERS: readonly string[] = [
   "src/lib/group-cancel.ts",
   "src/lib/group-settlement.ts",
   "src/lib/internet-banking-payment-cron.ts",
-  "src/lib/manual-refund-task-resolution.ts",
   "src/lib/member-guest-consent-service.ts",
   "src/lib/school-booking-request.ts",
   "src/lib/stored-night-price-repair-store.ts",
@@ -128,6 +145,8 @@ const CONTEXT_RESOLVERS: readonly string[] = [
   // #4738: the zero-price confirm doors post their confirmation's R01 likewise.
   "src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts",
   "src/app/api/admin/bookings/[id]/force-confirm/route.ts",
+  // #4516 (M4c): a paid-another-way close resolves the context its R14 posts with, before its transaction.
+  "src/lib/card-refund-paid-another-way.ts",
   "src/app/api/bookings/[id]/confirm-draft/route.ts",
   "src/app/api/bookings/[id]/waitlist-confirm/route.ts",
 ];
@@ -139,7 +158,7 @@ const WRITER = "src/lib/member-money/internal/store.ts";
 /** The command's entry points: nothing outside the boundary calls them; M3b's doors go through `./doors`. */
 const POSTING_COMMAND = /\b(postMemberMoneyEvent|reverseMemberMoneyJournal|writeMemberMoneyBatch)\b/;
 /** M3b's door entry points (#4627), and M3c's pending charge (#4628). */
-const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts)\b/;
+const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn)\b/;
 const DELEGATE_WRITE = /\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/;
 /**
  * Every name that reaches a journal row through Prisma: each relation's
@@ -300,10 +319,10 @@ describe("member money journal stays inert in M1 (#4513)", () => {
     expect('import { postMemberMoneyEvent } from "@/lib/member-money";').toMatch(POSTING_COMMAND);
   });
 
-  it("has no production caller of the inert M4a reservation commands (#4691)", () => {
+  it("reaches the M4a reservation commands only inside the boundary (#4691, #4516)", () => {
     const command = /\b(reserveMemberMoneyRefund|releaseMemberMoneyRefundReservation)\b/;
     const callers = productionSourceFiles(ROOT).filter((file) => !file.startsWith(BOUNDARY) && command.test(readFileSync(join(ROOT, file), "utf8")));
-    expect(callers, "a door calls the reservation engine; M4a stays inert").toEqual([]);
+    expect(callers, "a door calls the reservation engine directly; M4c's senders go through ./doors").toEqual([]);
     expect('reserveMemberMoneyRefund(tx, plan)').toMatch(command);
   });
 

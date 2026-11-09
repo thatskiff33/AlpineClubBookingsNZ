@@ -90,6 +90,7 @@ const CENSUS_SELECT = {
       paymentId: true,
       lateCaptureApprovalIntentId: true,
       occurrenceKey: true,
+      raisedAmountCents: true,
     },
   },
   modifications: {

@@ -74,6 +74,11 @@ vi.mock("@/lib/xero-sync", () => ({
 }));
 vi.mock("@/lib/late-capture-paid-another-way", () => ({
   findLateCaptureRefundPaidAnotherWay: (...a: unknown[]) => mocks.findClose(...a),
+  // #4516 (round-2 review A): every close of the capture's refund; one here, unless a test lists several.
+  findLateCaptureRefundPaidAnotherWayCloses: async (...a: unknown[]) => {
+    const found = (await mocks.findClose(...a)) as unknown;
+    return Array.isArray(found) ? found : found ? [found] : [];
+  },
 }));
 vi.mock("@/lib/late-capture-xero-receipt", () => ({
   // Round 11: the note step never reads the card-refund verdict.
@@ -187,7 +192,7 @@ beforeEach(() => {
   mocks.findClose.mockResolvedValue(null);
   mocks.operationCount.mockResolvedValue(0);
   mocks.upsertLink.mockResolvedValue({});
-  mocks.noteClose.mockResolvedValue(null);
+  mocks.noteClose.mockResolvedValue([]);
   mocks.getResolvedAccountMapping.mockResolvedValue({
     code: "200",
     itemCode: null,
@@ -652,11 +657,11 @@ describe("createXeroKeptLateCaptureInvoice", () => {
 describe("queueWaitingPaidAnotherWayNote", () => {
   beforeEach(() => {
     mocks.taskFindUnique.mockResolvedValue({ id: "task_kept" });
-    mocks.noteClose.mockResolvedValue("op_note");
+    mocks.noteClose.mockResolvedValue([{ noteOperationId: "op_note", queuedNow: true }]);
   });
 
   it("MUTATION: reads the receipt under the approval task's lock and credits the invoice Xero holds", async () => {
-    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBe("op_note");
+    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBe(1);
     expect(lockedTask()).toBe(true);
     expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.readReceipt.mock.invocationCallOrder[0]);
     expect(mocks.readReceipt).toHaveBeenCalledWith("pi_kept", db);
@@ -674,14 +679,25 @@ describe("queueWaitingPaidAnotherWayNote", () => {
     ["resolved by hand", { kind: "resolved-by-hand" }],
   ])("MUTATION: queues nothing while the receipt is %s", async (_when, receipt) => {
     mocks.readReceipt.mockResolvedValue(receipt);
-    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBeNull();
+    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBe(0);
     expect(mocks.noteClose).not.toHaveBeenCalled();
   });
 
   it("nothing for a capture with no approval task", async () => {
     mocks.taskFindUnique.mockResolvedValue(null);
-    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBeNull();
+    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBe(0);
     expect(mocks.executeRaw).not.toHaveBeenCalled();
+  });
+
+  // #4516 round-3 review 2, round-4 review 3: the step counts the notes each close says it queued now - a close's
+  // note asked for before is answered, never counted, and nothing is read another way and subtracted.
+  it("MUTATION: counts only the notes each close says it queued now", async () => {
+    mocks.noteClose.mockResolvedValue([{ noteOperationId: "op_note_1", queuedNow: false }]);
+    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBe(0);
+    mocks.noteClose.mockResolvedValue([{ noteOperationId: "op_note_1", queuedNow: false }, { noteOperationId: "op_note_2", queuedNow: true }]);
+    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBe(1);
+    // Never a count of the closes' note rows read beside the step.
+    expect(mocks.operationCount).not.toHaveBeenCalled();
   });
 });
 
@@ -690,7 +706,7 @@ describe("queueWaitingPaidAnotherWayNote", () => {
 describe("queueWaitingPaidAnotherWayNotesForPayment", () => {
   beforeEach(() => {
     mocks.taskFindUnique.mockResolvedValue({ id: "task_kept" });
-    mocks.noteClose.mockResolvedValue("op_note");
+    mocks.noteClose.mockResolvedValue([{ noteOperationId: "op_note", queuedNow: true }]);
   });
 
   it("MUTATION: runs the one note step, under each approval task's lock, for every approved late capture on the payment", async () => {
@@ -698,7 +714,7 @@ describe("queueWaitingPaidAnotherWayNotesForPayment", () => {
       { lateCaptureApprovalIntentId: "pi_kept" },
       { lateCaptureApprovalIntentId: "pi_other" },
     ]);
-    mocks.noteClose.mockResolvedValueOnce("op_note").mockResolvedValueOnce(null);
+    mocks.noteClose.mockResolvedValueOnce([{ noteOperationId: "op_note", queuedNow: true }]).mockResolvedValueOnce([]);
     await expect(queueWaitingPaidAnotherWayNotesForPayment("pay_1")).resolves.toBe(1);
     expect(mocks.taskFindMany).toHaveBeenCalledWith({
       where: { paymentId: "pay_1", status: "COMPLETED", lateCaptureApprovalIntentId: { not: null } },
@@ -714,25 +730,14 @@ describe("queueWaitingPaidAnotherWayNotesForPayment", () => {
   });
 
   // Round 10: the count is of notes queued NOW - a close whose note row was
-  // asked for before, read under the same lock, is not counted again.
+  // asked for before, answered under the same lock, is not counted again.
   it("MUTATION: round 10: counts only notes it queued now, never a close's note row asked for before", async () => {
     mocks.taskFindMany.mockResolvedValue([{ lateCaptureApprovalIntentId: "pi_kept" }]);
-    mocks.findClose.mockResolvedValue({ id: "close-1", paymentId: "pay_1" });
-    mocks.noteClose.mockResolvedValue("op_note");
-    mocks.operationCount.mockResolvedValue(1);
+    mocks.noteClose.mockResolvedValue([{ noteOperationId: "op_note", queuedNow: false }]);
     await expect(queueWaitingPaidAnotherWayNotesForPayment("pay_1")).resolves.toBe(0);
-    expect(mocks.operationCount).toHaveBeenCalledWith({
-      where: expect.objectContaining({
-        entityType: "CREDIT_NOTE",
-        localId: "pay_1",
-        requestPayload: { path: ["paidAnotherWayTaskId"], equals: "close-1" },
-        status: { not: "CANCELLED" },
-      }),
-    });
-    // Asked under the task's row lock, before the step.
-    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.operationCount.mock.invocationCallOrder[0]);
-    expect(mocks.operationCount.mock.invocationCallOrder[0]).toBeLessThan(mocks.noteClose.mock.invocationCallOrder[0]);
-    mocks.operationCount.mockResolvedValue(0);
+    // Answered under the task's row lock.
+    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.noteClose.mock.invocationCallOrder[0]);
+    mocks.noteClose.mockResolvedValue([{ noteOperationId: "op_note", queuedNow: true }]);
     await expect(queueWaitingPaidAnotherWayNotesForPayment("pay_1")).resolves.toBe(1);
   });
 

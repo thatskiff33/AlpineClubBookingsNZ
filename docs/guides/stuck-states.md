@@ -162,10 +162,14 @@ refund here:
 4. Choose how much you paid back. Nothing is chosen for you, and the app never
    guesses from the amount:
    - **Paid back in full**: the amount is fixed at what is still owed.
-   - **Paid back part of it - the rest will no longer be owed**: type the
-     amount you paid. It must be more than nil and less than what is owed. The
-     dialog then says in dollars how much will no longer be owed. A problem
-     with the amount is shown once you have typed it or left the box.
+   - **Paid back part of it**: type the amount you paid. It must be more than
+     nil and less than what is owed. A problem with the amount is shown once
+     you have typed it or left the box. Then answer **What happens to the
+     rest?** Nothing is chosen for you, and the close waits for an answer:
+     - **The club keeps the rest**: the dialog says in dollars how much will
+       no longer be owed.
+     - **The rest is still owed to the member**: the dialog says how much
+       stays on this list.
 
    A refund that replaces a superseded card payment closes only in full.
 5. Under **How was it paid back? (required)**, say how you paid the member
@@ -176,14 +180,24 @@ refund here:
 The amount is recorded as refunded on the payment, the same way a refund you
 complete by hand is recorded. Stripe is not asked again.
 
-**Paying back part of it ends the refund** (owner decision on #3372, 8 Oct
-2026). The rest stops being owed anywhere: it leaves Refunds owed and nothing
-tracks it any more. A later refund on the same booking, for example from a
-booking change reviewed after the cancellation, pays only its own share - it
-does not pick up the difference. After a **full** close, Net Collected stays
-where it was: the money moves from "owed back" to "refunded".
-After a partial close, Net Collected goes **up** by the amount given up, because
-the club is no longer treating it as owed.
+**What a part close does with the rest is your choice** (owner decisions on
+#3372, 8 Oct 2026, and #4516, 2 Nov 2026):
+
+- **The club keeps the rest**: the rest stops being owed. It leaves Refunds
+  owed, and the club's records keep it as part of what the booking was
+  charged. A later refund on the same booking, for example from a booking
+  change reviewed after the cancellation, pays only its own share - it does
+  not pick up the difference. Net Collected goes **up** by the amount kept,
+  because the club no longer treats it as owed.
+- **The rest is still owed to the member**: the rest stays in Refunds owed, as
+  an entry of its own on this list. Stripe is not asked for it again. When you
+  pay it back, close that entry as paid another way too, in full or in part.
+  Until then, the member's booking page and payment link say both parts: what
+  you paid back, and that the rest is still being refunded. After that close,
+  they say everything you paid back.
+
+After a **full** close, Net Collected stays where it was: the money moves from
+"owed back" to "refunded".
 
 **Xero** (owner decisions on #3372, 8 Oct 2026). Every kind of card refund - a
 cancellation's, an approved refund request's, a booking change's, a late card

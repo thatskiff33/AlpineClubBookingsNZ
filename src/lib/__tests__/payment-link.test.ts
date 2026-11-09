@@ -14,6 +14,8 @@ vi.mock("@/lib/prisma", () => ({
       upsert: vi.fn(),
       // #3638: the attach re-reads the payment's source under lock(1).
       findUnique: vi.fn(),
+      // #4145: a card refund closed "Paid another way" reads what its payment's refunds made.
+      findMany: vi.fn().mockResolvedValue([]),
     },
     booking: {
       findUnique: vi.fn(),
@@ -37,6 +39,9 @@ vi.mock("@/lib/prisma", () => ({
     manualRefundTask: {
       findMany: vi.fn().mockResolvedValue([]),
       count: vi.fn().mockResolvedValue(0),
+      // #4145, #4516: a card refund row's "Paid another way" close record, and a still-owed rest's.
+      findFirst: vi.fn().mockResolvedValue(null),
+      findUnique: vi.fn().mockResolvedValue(null),
     },
     // #4300: the superseded-intent check reads the intent's own ledger row; none by default.
     paymentTransaction: {
@@ -160,6 +165,7 @@ import {
   revokePaymentLinksForBooking,
 } from "@/lib/payment-link";
 import { getPaymentLinkContext } from "@/lib/payment-link-context";
+import { givenCardRefundPaidInPart, type CardRefundReadFakes } from "./support/card-refund-paid-in-part";
 import { reissuePaymentLinkForToken } from "@/lib/payment-link-reissue";
 import { createPaymentIntentForPaymentLink } from "@/lib/payment-link-intent";
 import {
@@ -625,6 +631,46 @@ describe("getPaymentLinkContext", () => {
 
     expect(context.narrative.message).toContain("$120.00 is being refunded to you; the club will be in touch about the card refund.");
     expect(context.narrative.message).not.toContain("on its way");
+  });
+
+  // #4516 (round-3 review 1): a dead card refund the treasurer paid back in part, the rest still owed - the page says
+  // both parts, never the whole as still owed; once a later close pays the rest, all that was paid back.
+  describe("a card refund paid back in part, the rest still owed (#4516)", () => {
+    const fakes = {
+      rows: vi.mocked(prisma.paymentRecoveryOperation.findMany),
+      row: vi.mocked(prisma.paymentRecoveryOperation.findUnique),
+      closeRecord: vi.mocked(prisma.manualRefundTask.findFirst),
+      record: vi.mocked(prisma.manualRefundTask.findUnique),
+      payments: vi.mocked(prisma.payment.findMany),
+    } as unknown as CardRefundReadFakes;
+    afterEach(() => {
+      fakes.rows.mockResolvedValue([]);
+      fakes.row.mockResolvedValue(null);
+      fakes.closeRecord.mockResolvedValue(null);
+      fakes.record.mockResolvedValue(null);
+    });
+
+    it.each([
+      ["while the rest is still owed", false, "$40.00 could not go back to your card and was paid back to you another way and $80.00 is being refunded to you; the club will be in touch about the card refund."],
+      ["once a later close paid the rest", true, "$120.00 could not go back to your card and was paid back to you another way."],
+    ] as const)("MUTATION: says what was paid back %s", async (_when, restClosed, said) => {
+      mockedFindUnique.mockResolvedValue(baseLink({ booking: baseBooking({ status: BookingStatus.CANCELLED }) }) as never);
+      mockedBookingEventFindMany.mockResolvedValue([
+        { type: BookingEventType.MEMBER_PAID, occurredAt: new Date("2026-05-02T00:00:00.000Z"), amountCents: 12000, reason: null, snapshot: null },
+        {
+          type: BookingEventType.CANCELLED,
+          occurredAt: new Date("2026-05-05T00:00:00.000Z"),
+          amountCents: 12000,
+          reason: null,
+          snapshot: { refundMethod: "card", refundPercentage: 100, paidAmountCents: 12000, settledAmountCents: 12000, retainedAmountCents: 0 },
+        },
+      ] as never);
+      givenCardRefundPaidInPart(fakes, { bookingId: "booking-1", refundCents: 12000, paidBackCents: 4000, restClosed });
+
+      const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
+
+      expect(context.narrative.message).toContain(`Under the cancellation policy in effect at the time, ${said}`);
+    });
   });
 });
 

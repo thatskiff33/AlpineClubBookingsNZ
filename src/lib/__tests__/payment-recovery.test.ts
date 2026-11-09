@@ -44,6 +44,8 @@ const {
   mockBookingEventFindMany,
   mockReportSupersededPaymentRefund,
   mockReportUnannouncedSupersededPaymentRefund,
+  mockAnswerSupersededFirstRequest,
+  mockSupersededFirstRequestUnsent,
   mockSyncEditFinancialReviewChargeRequest,
   mockBookingModificationFindUnique,
   mockCompleteDeferredSupplementaryInvoice,
@@ -116,6 +118,9 @@ const {
   mockReportSupersededPaymentRefund: vi.fn().mockResolvedValue(undefined),
   // #4690: the next claim's half - a refund of the row's own nobody announced.
   mockReportUnannouncedSupersededPaymentRefund: vi.fn().mockResolvedValue(undefined),
+  // #4516 review L1: the first request's refund answered to its open reservation (its own suite: the module's).
+  mockAnswerSupersededFirstRequest: vi.fn().mockResolvedValue(undefined),
+  mockSupersededFirstRequestUnsent: vi.fn().mockResolvedValue(false),
   mockSyncEditFinancialReviewChargeRequest: vi.fn(),
   // #3181: the edit whose additional payment is being recovered, read back for
   // the SIGNED components its deferred supplementary invoice bills.
@@ -153,10 +158,20 @@ vi.mock("@/lib/edit-financial-review-charge", () => ({
 const openTransactions = vi.hoisted(() => ({ count: 0 }));
 // #4516 (M4b): the receipt hook runs on PostgreSQL (`member-money-receipts.realdb.test.ts`), not on this fake store.
 const receiptDoors = vi.hoisted(() => ({ postBookingReceipts: vi.fn(async () => 0) }));
-vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
-  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
-  postBookingReceipts: receiptDoors.postBookingReceipts,
-}));
+vi.mock("@/lib/member-money/doors", async (importOriginal) => {
+  const original = (await importOriginal()) as typeof import("@/lib/member-money/doors");
+  return {
+    ...original,
+    postBookingReceipts: receiptDoors.postBookingReceipts,
+    // #4516 (M4c): a row's debt by its key alone; one the journal must resolve (failed later, still owed) names none here.
+    resolveCardRefundObligation: async (_db: unknown, row: Parameters<typeof original.cardRefundObligationOfRecoveryKey>[0]) => {
+      const mapped = original.cardRefundObligationOfRecoveryKey(row);
+      return mapped?.kind === "door" ? mapped.ref : null;
+    },
+  };
+});
+// #4516 (M4c): the reservation step runs on PostgreSQL (`member-money-refunds.realdb.test.ts`).
+const mockReserveCardRefundAttempt = vi.hoisted(() => vi.fn(async () => ({ outcome: "skipped", reason: "outside-population" })));
 vi.mock("@/lib/prisma", () => {
   const prisma = {
     $executeRaw: (...args: unknown[]) => mockExecuteRaw(...args),
@@ -386,6 +401,7 @@ vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
     mockRecordStripeRefundsAgainstTransaction(...args),
   refundPaymentTransactions: (...args: unknown[]) =>
     mockRefundPaymentTransactions(...args),
+  reserveCardRefundAttempt: (...args: unknown[]) => mockReserveCardRefundAttempt(...(args as [])),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mockUpsertPaymentIntentTransaction(...args),
   // #4300: the one lookup naming an intent's payment, for the superseded check.
@@ -404,6 +420,12 @@ vi.mock("@/lib/booking-events", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/booking-events")),
   recordDuplicateCaptureRefundEvent: (...args: unknown[]) =>
     mockRecordDuplicateCaptureRefundEvent(...args),
+}));
+
+vi.mock("@/lib/superseded-first-request-answer", () => ({
+  answerSupersededFirstRequest: (...args: unknown[]) => mockAnswerSupersededFirstRequest(...args),
+  // #4516 round-2 C: whether the row's own key was never used at Stripe (its own suite: the module's).
+  supersededFirstRequestUnsent: (...args: unknown[]) => mockSupersededFirstRequestUnsent(...args),
 }));
 
 vi.mock("@/lib/superseded-additional-refund", () => ({
@@ -1204,14 +1226,28 @@ describe("payment recovery worker", () => {
       payment_intent: "pi_superseded",
     });
 
+    // #4516 round-2 C: Stripe lists nothing the row's own key made, so a stale reservation of it may be resized.
+    mockSupersededFirstRequestUnsent.mockResolvedValueOnce(true);
     await processPaymentRecoveryOperations({ limit: 1 });
 
+    expect(mockSupersededFirstRequestUnsent).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: "payment_recovery_cancel_txn-1_pi_superseded" }));
     expect(mockRecordStripeRefundsAgainstTransaction).toHaveBeenCalledWith({
       paymentId: "payment-1",
       paymentTransactionId: "txn-1",
       refunds: [expect.objectContaining({ id: "re_idempotent", amount: 3000 })],
       fallbackPaymentIntentId: "pi_superseded",
+      // #4516 (M4c): the journal's context, and the row's own key as this refund's attempt key, for R12.
+      journal: expect.anything(),
+      attemptKeys: new Map([["re_idempotent", "payment_recovery_cancel_txn-1_pi_superseded"]]),
     });
+    // #4516 (M4c): reserved under the row's own key, against its capture's return (the R05 its door deferred), first.
+    expect(mockReserveCardRefundAttempt).toHaveBeenCalledWith(expect.anything(), {
+      paymentId: "payment-1", attemptKey: "payment_recovery_cancel_txn-1_pi_superseded", senderKeyPrefix: "payment_recovery_cancel_txn-1_pi_superseded",
+      paymentTransactionId: "txn-1", amountCents: 6000,
+      planAttemptKeys: ["payment_recovery_cancel_txn-1_pi_superseded"], unsentKeyMayResize: true,
+      obligation: { scope: "capture-return", id: "pi_superseded", ensureFaceCents: 6000 },
+    });
+    expect(mockReserveCardRefundAttempt.mock.invocationCallOrder[0]).toBeLessThan(mockProcessRefund.mock.invocationCallOrder[0]!);
     for (const write of [mockPaymentTransactionUpdate, mockPaymentTransactionUpdateMany]) {
       expect(write).not.toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1374,6 +1410,9 @@ describe("payment recovery worker", () => {
         CLUB_FORMAT_TEST,
       );
       expect(mockReportUnannouncedSupersededPaymentRefund.mock.invocationCallOrder[0]).toBeLessThan(closeCallOrder()!);
+      // MUTATION (#4516 review L1): the first request's refund answers the row's open reservation, before the close.
+      expect(mockAnswerSupersededFirstRequest).toHaveBeenCalledWith(expect.objectContaining({ id: "recovery-1", type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT }));
+      expect(mockAnswerSupersededFirstRequest.mock.invocationCallOrder[0]).toBeLessThan(closeCallOrder()!);
     });
   });
 
@@ -2665,6 +2704,31 @@ describe("payment recovery worker", () => {
     );
   });
 
+  it("MUTATION (#4516 probe 13): a refused reservation stops the row dead on its first attempt - FAILED, no retry time, attempts spent - never retried", async () => {
+    const { MemberMoneyReservationRefused } = await import("@/lib/member-money");
+    const { PartialRefundError } = await import("@/lib/payment-transactions");
+    const { CARD_REFUND_RESERVATION_REFUSED_CAUSE } = await import("@/lib/recovery-unretryable-cause");
+    const cancelOp = makeOperation({
+      id: "recovery-refused", type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION, attempts: 1, amountCents: 8000,
+      idempotencyKey: "booking_cancel_refund_recovery_booking-1", allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 8000 }], paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(cancelOp);
+    mockPaymentRecoveryFindMany.mockImplementation((args?: { where?: { attempts?: { gte?: number } } }) =>
+      Promise.resolve(isStaleWorkerSweep(args) ? [] : [{ ...cancelOp, status: "PENDING" }]),
+    );
+    mockRefundPaymentTransactions.mockRejectedValue(new PartialRefundError({ completedRefundCents: 0, refunds: [], format: CLUB_FORMAT_TEST,
+      cause: new MemberMoneyReservationRefused(["C4_capture_cap: refund-obligation|cancellation|booking-1:pi"]) }));
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.failed).toBe(1);
+    expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ obligation: { scope: "cancellation", id: "booking-1" } }));
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: "recovery-refused", attempts: 1 }),
+      data: expect.objectContaining({ status: PaymentRecoveryOperationStatus.FAILED, lastError: CARD_REFUND_RESERVATION_REFUSED_CAUSE, nextRetryAt: null }),
+    }));
+  });
+
   it("replays a capacity-race refund recovery under the stored inline Stripe key prefix with the reconstructed inline metadata", async () => {
     const capacityOp = makeOperation({
       id: "recovery-capacity",
@@ -2702,6 +2766,9 @@ describe("payment recovery worker", () => {
       allocation: [{ paymentTransactionId: "txn-1", amountCents: 10000 }],
       metadata: { bookingId: "booking-1", reason: "capacity_claim_failed" },
       idempotencyKeyPrefix: "capacity_claim_failed_booking-1_pi_original",
+      // #4516 (M4c): the capture's return its settle posted, and the whole plan's keys (none superseded).
+      obligation: { scope: "capture-return", id: "pi_original" },
+      planAttemptKeys: ["capacity_claim_failed_booking-1_pi_original_txn-1_10000"],
     });
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({

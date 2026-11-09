@@ -140,7 +140,7 @@ describe("M4a applications", () => {
 });
 describe("M4a stable keys", () => {
   it("gives each event builder a distinct namespace, accepts colon-nested Stripe keys verbatim", () => {
-    const built = [keys.bookingCharge("x"), keys.modification("x"), keys.cancellation("x", 0), keys.reviewClose("x", "x"), keys.backPost("x"), keys.chargeRestatement("x"), keys.merge("x", "x"), keys.reversal("x"), keys.capture("x"), keys.receipt("x", "x"), keys.collect(keys.capture("x")), keys.chargeOpen("x"), keys.refundFunding("x:a"), keys.refund("x"), keys.refundAnswer("x"), keys.paidAnotherWay("x"), keys.handBackPaid("x"), keys.refundCloseOut(keys.refundObligation("review", "x")), keys.keptCapture("x"), keys.successor(keys.refundObligation("review", "x"), "x", "x"), keys.mergeResidue("x", "x", keys.capture("x")), keys.mergeFollow(keys.capture("x"), "x"),
+    const built = [keys.bookingCharge("x"), keys.modification("x"), keys.cancellation("x", 0), keys.reviewClose("x", "x"), keys.backPost("x"), keys.chargeRestatement("x"), keys.merge("x", "x"), keys.reversal("x"), keys.capture("x"), keys.receipt("x", "x"), keys.collect(keys.capture("x")), keys.chargeOpen("x"), keys.refundFunding("x:a"), keys.refund("x"), keys.refundAnswer("x"), keys.paidAnotherWay("x"), keys.handBackPaid("x"), keys.refundCloseOut("x"), keys.keptCapture("x"), keys.successor(keys.refundObligation("review", "x"), "x", "x"), keys.mergeResidue("x", "x", keys.capture("x")), keys.mergeFollow(keys.capture("x"), "x"),
       ...(["cancellation", "modification", "refund-request", "review", "capture-return", "hand-back"] as const).map((scope) => keys.refundObligation(scope, "x"))];
     expect(new Set(built).size).toBe(built.length);
     expect(keys.refund("re_1")).toBe("refund:re_1");

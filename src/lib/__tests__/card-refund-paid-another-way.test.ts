@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   // #4145: the booking's events, by query - the cancel the made part is dated after, and the once-check's.
   findBookingEvents: vi.fn<(args: unknown) => Promise<Array<{ type: string; reason?: string | null; snapshot: unknown; occurredAt?: Date }>>>(async () => []),
   createBookingEvent: vi.fn<(args: unknown) => Promise<unknown>>(async () => ({})),
+  createStillOwedRow: vi.fn<(args: unknown) => Promise<{ id: string }>>(async () => ({ id: "op-rest" })),
 }));
 
 vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
@@ -41,6 +42,21 @@ vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
 }));
 vi.mock("@/lib/refund-note-eligible-cash", () => ({
   resolveRefundNoteEligibleCash: async () => ({ eligibleCashCents: await mocks.noteEligibleCashCents() }),
+}));
+
+// #4516 (M4c): the close's journal posting runs on PostgreSQL (`member-money-refunds.realdb.test.ts`); here, its
+// call, its order and what it is told.
+const journalDoors = vi.hoisted(() => ({
+  postPaidAnotherWayClose: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 0),
+  resolveCardRefundObligation: vi.fn(async () => ({ scope: "cancellation", id: "b-1" })),
+}));
+vi.mock("@/lib/member-money/doors", () => ({
+  resolveBookingMoneyPostingContext: async () => ({ journal: "context" }),
+  resolveCardRefundObligation: journalDoors.resolveCardRefundObligation,
+  postPaidAnotherWayClose: (...args: unknown[]) => {
+    calls.push("journal");
+    return journalDoors.postPaidAnotherWayClose(...args);
+  },
 }));
 
 vi.mock("server-only", () => ({}));
@@ -125,6 +141,11 @@ vi.mock("@/lib/prisma", () => {
         calls.push("claim");
         return mocks.claim(...args);
       },
+      // #4516: a still-owed rest's own row.
+      create: (args: unknown) => {
+        calls.push("still-owed-row");
+        return mocks.createStillOwedRow(args);
+      },
     },
     payment: {
       findUnique: (...args: unknown[]) => {
@@ -173,7 +194,7 @@ import {
   listDeadCardRefunds,
   PAID_ANOTHER_WAY_MARKER,
 } from "@/lib/card-refund-paid-another-way";
-import type { PaidBackChoice } from "@/lib/card-refund-paid-back";
+import type { PaidBackChoice, PaidBackRestChoice } from "@/lib/card-refund-paid-back";
 import { getNetCollectedPaymentParts } from "@/lib/payment-net-collected";
 import { openCardRefundOwedCents } from "@/lib/open-card-refund-owed";
 import { CAPACITY_RACE_REFUND_EVENT_REASON } from "@/lib/booking-events";
@@ -190,6 +211,8 @@ function deadOperation(overrides: Record<string, unknown> = {}) {
     idempotencyKey: "booking_cancel_refund_recovery_b-1",
     bookingId: "b-1",
     paymentId: "p-1",
+    paymentIntentId: "pi_1",
+    stripeKeyPrefix: null,
     paymentTransactionId: null,
     allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 15_000 }],
     amountCents: 15_000,
@@ -237,11 +260,14 @@ const close = (
   note: string | null = "Bank transfer, ref 123",
   paidBack: PaidBackChoice = amountCents === 15_000 ? "full" : "partial",
   expectedOwedCents = 15_000,
+  // #4516: a part close says what happens to the rest; these cases keep the old rule unless they say otherwise.
+  rest: PaidBackRestChoice | null = paidBack === "partial" ? "club-keeps" : null,
 ) =>
   closeCardRefundPaidAnotherWay({
     operationId: "op-1",
     amountCents,
     paidBack,
+    rest,
     expectedOwedCents,
     note,
     actingMemberId: "treasurer-1",
@@ -284,6 +310,7 @@ describe("closing a dead card refund as paid another way", () => {
       "allocate",
       "record",
       "ledger-line",
+      "journal", // #4516: R14, after the record and its line, before Xero
       "xero-note",
       "audit",
     ]);
@@ -394,6 +421,16 @@ describe("closing a dead card refund as paid another way", () => {
     expect(mocks.createBookingEvent).toHaveBeenCalledWith({
       data: expect.objectContaining({ amountCents: 5_000, occurredAt: new Date("2026-06-25T00:00:00.000Z") }),
     });
+  });
+
+  it("MUTATION (#4516 review L2): the journal closes the reservations of the row's unmade slices only, never one a made slice's refund answers", async () => {
+    mixedSlices();
+
+    await close(10_000, "Bank transfer", "full", 10_000);
+
+    expect(journalDoors.postPaidAnotherWayClose).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({
+      attemptKeys: ["booking_cancel_refund_recovery_b-1", "booking_cancel_refund_b-1_txn-2_2000", "booking_cancel_refund_b-1_txn-3_10000"],
+    }));
   });
 
   it("#4145 MUTATION: a capacity race's row records its made part as the capacity race's event, through the same writer and with no booking-wide once-check", async () => {
@@ -549,7 +586,7 @@ describe("closing a dead card refund as paid another way", () => {
         status: "COMPLETED",
         completedByMemberId: "treasurer-1",
         note: "Bank transfer, ref 123",
-        reason: expect.stringContaining("paid back in part another way by the treasurer; the rest is no longer owed"),
+        reason: expect.stringContaining("paid back in part another way by the treasurer; the club keeps the rest"),
       }),
       select: { id: true },
     });
@@ -615,6 +652,52 @@ describe("closing a dead card refund as paid another way", () => {
       }),
       expect.anything(),
     );
+  });
+
+  describe("#4516 (M4c): the rest of a part close, as the treasurer chose", () => {
+    it("still owed: the record closes exactly what was paid, and the rest moves to a dead row of its own", async () => {
+      const result = await close(10_000, "Bank transfer", "partial", 15_000, "still-owed");
+      expect(mocks.createRecord).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ amountCents: 10_000, raisedAmountCents: 10_000, reason: expect.stringContaining("the rest is still owed to the member") }),
+      }));
+      expect(mocks.createStillOwedRow).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          type: "REFUND_BOOKING_MODIFICATION", status: "PENDING", attempts: 5, nextRetryAt: null,
+          bookingId: "b-1", paymentId: "p-1", paymentIntentId: "pi_1", amountCents: 5_000,
+          idempotencyKey: "card_refund_still_owed_task-1", stripeKeyPrefix: "card_refund_still_owed_task-1",
+          allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 5_000 }],
+        }),
+      }));
+      expect(result).toMatchObject({ rest: "still-owed", stillOwedOperationId: "op-rest" });
+      expect(mocks.createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+        summary: expect.stringContaining("the rest is still owed to the member"),
+        metadata: expect.objectContaining({ rest: "still-owed", stillOwedCents: 5_000, noLongerOwedCents: 0, stillOwedOperationId: "op-rest" }),
+      }), expect.anything());
+    });
+
+    it("the club keeps it: no row for the rest, and the record keeps what was owed, as before", async () => {
+      await close(10_000, "Bank transfer", "partial", 15_000, "club-keeps");
+      expect(mocks.createStillOwedRow).not.toHaveBeenCalled();
+      expect(mocks.createRecord).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ amountCents: 10_000, raisedAmountCents: 15_000, reason: expect.stringContaining("the club keeps the rest") }),
+      }));
+    });
+
+    it("MUTATION: the journal is told the bank cash, the exact choice, the row's keys and its charges, after the record and its line", async () => {
+      await close(10_000, "Bank transfer", "partial", 15_000, "club-keeps");
+      expect(journalDoors.postPaidAnotherWayClose).toHaveBeenCalledWith(expect.anything(), { journal: "context" }, expect.objectContaining({
+        bookingId: "b-1", obligation: { scope: "cancellation", id: "b-1" }, recordId: "task-1", amountCents: 10_000, restCents: 5_000, rest: "club-keeps",
+        attemptKeys: ["booking_cancel_refund_recovery_b-1", "booking_cancel_refund_b-1_txn-1_15000"], transactionIds: ["txn-1"], actorMemberId: "treasurer-1",
+      }));
+      expect(calls.indexOf("journal")).toBeGreaterThan(calls.indexOf("ledger-line"));
+      expect(calls.indexOf("journal")).toBeGreaterThan(calls.indexOf("record"));
+    });
+
+    it("a full close tells the journal there is no rest", async () => {
+      await close();
+      expect(journalDoors.postPaidAnotherWayClose).toHaveBeenCalledWith(expect.anything(), expect.anything(),
+        expect.objectContaining({ amountCents: 15_000, restCents: 0, rest: null }));
+    });
   });
 
   it("M3: a cancellation's card refund queues its own bank-transfer note for exactly the amount, keyed on the record", async () => {
@@ -780,6 +863,7 @@ describe("closing a dead card refund as paid another way", () => {
         "allocate",
         "record",
         "ledger-line",
+        "journal", // #4516: R14
         // #4324 (review C4): the task row again, then (a change capture only) its anchor.
         "lock-approval-task",
         "read-approval-task",
@@ -1116,6 +1200,18 @@ describe("a close that must not happen writes nothing", () => {
 
     it("an answer that is neither", async () => {
       await expectRefusal(close(15_000, "Bank transfer", "most" as PaidBackChoice), 400);
+      expect(calls).toEqual([]);
+    });
+  });
+
+  describe("#4516 (owner, 2 Nov 2026: \"Ask exactly and officer chooses\"): a part close says what happens to the rest", () => {
+    it("MUTATION: a part close with no answer for the rest is refused, with nothing written - there is no default", async () => {
+      await expectRefusal(close(10_000, "Bank transfer", "partial", 15_000, null), 400);
+      expect(calls).toEqual([]);
+    });
+
+    it("a full close carrying an answer for a rest it does not have is refused", async () => {
+      await expectRefusal(close(15_000, "Bank transfer", "full", 15_000, "still-owed"), 400);
       expect(calls).toEqual([]);
     });
   });

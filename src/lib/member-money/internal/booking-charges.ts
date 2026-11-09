@@ -89,6 +89,20 @@ export function bookingChargeIdentity(bookingId: string): string {
   return `booking:${bookingId}:charge`;
 }
 
+/**
+ * #4516 (M4c): the retained component a "Paid another way" close posts for the rest the club keeps (R14's
+ * close-out), one per close record. It names its booking, as every component identity must, and its record, so
+ * the journal comparison can ask that record what it kept (`refundCloseOutRecordOfIdentity`).
+ */
+export function refundCloseOutIdentity(bookingId: string, recordId: string): string {
+  return `booking:${bookingId}:refund-close-out:${recordId}`;
+}
+/** The close record a close-out component names, or null for any other component. */
+export function refundCloseOutRecordOfIdentity(chargeIdentity: string): string | null {
+  const match = /^booking:[^:]+:refund-close-out:([^:]+)$/.exec(chargeIdentity);
+  return match ? match[1]! : null;
+}
+
 /** A component's map key, the engine's own (`componentKey`). */
 export const bookingComponentKey = (component: BookingChargeComponent): string =>
   componentKey(component.account, component.chargeIdentity);

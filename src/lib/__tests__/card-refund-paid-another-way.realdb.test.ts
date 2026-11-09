@@ -122,6 +122,8 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
       await prisma.refundRequest.deleteMany({ where: { bookingId: BOOKING_ID } });
+      // #4516: a still-owed rest's own row.
+      await prisma.paymentRecoveryOperation.deleteMany({ where: { paymentId: PAYMENT_ID, idempotencyKey: { startsWith: "card_refund_still_owed_" } } });
     }
 
     async function deleteFixtures() {
@@ -351,6 +353,7 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
         operationId: OPERATION_ID,
         amountCents: paidCents,
         paidBack: "partial",
+        rest: "club-keeps", // #4516: the old rule, now the treasurer's explicit choice
         expectedOwedCents: REFUND_CENTS,
         note: "Bank transfer, part, ref RACE",
         actingMemberId: OFFICER_ID,
@@ -358,6 +361,27 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       const outcome = await read();
       expect(outcome).toMatchObject({ cardRefundState: "made", cardRefundOwedCents: 0, cardRefundClosedUnpaidCents: REFUND_CENTS - paidCents });
       expect(approvedAppealRefundedCents(REFUND_CENTS, outcome ?? {})).toBe(paidCents);
+    });
+
+    it("#4516 (owner, 2 Nov 2026): a part close whose rest is still owed keeps the rest in Refunds owed and on the dead list, and a later close pays it", async () => {
+      const { listDeadCardRefunds } = await import("@/lib/card-refund-paid-another-way");
+      const { buildCardRefundStillOwedRecoveryKey } = await import("@/lib/payment-recovery-keys");
+      const paidCents = 2_000;
+      const first = await closeCardRefundPaidAnotherWay({ operationId: OPERATION_ID, amountCents: paidCents, paidBack: "partial", rest: "still-owed",
+        expectedOwedCents: REFUND_CENTS, note: "Bank transfer, part, ref RACE", actingMemberId: OFFICER_ID });
+      expect(first).toMatchObject({ rest: "still-owed", stillOwedOperationId: expect.any(String) });
+      const record = await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: BOOKING_ID, occurrenceKey: `card-refund-paid-another-way:${OPERATION_ID}` } });
+      // The record closes exactly what it paid: nothing reads as written off.
+      expect(record).toMatchObject({ amountCents: paidCents, raisedAmountCents: paidCents });
+      const rest = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { idempotencyKey: buildCardRefundStillOwedRecoveryKey(record.id) } });
+      expect(rest).toMatchObject({ id: first.stillOwedOperationId, status: "PENDING", attempts: 5, nextRetryAt: null, amountCents: REFUND_CENTS - paidCents });
+      // Refunds owed keeps the rest; the dead list offers it for a close.
+      expect(await owedNow()).toBe(REFUND_CENTS - paidCents);
+      expect((await listDeadCardRefunds()).find((row) => row.operationId === rest.id)).toMatchObject({ owedCents: REFUND_CENTS - paidCents, wholeAmountOnly: false });
+      await closeCardRefundPaidAnotherWay({ operationId: rest.id, amountCents: REFUND_CENTS - paidCents, paidBack: "full",
+        expectedOwedCents: REFUND_CENTS - paidCents, note: "Bank transfer, the rest, ref RACE", actingMemberId: OFFICER_ID });
+      expect(await owedNow()).toBe(0);
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } })).refundedAmountCents).toBe(REFUND_CENTS);
     });
 
     it("#4312 F2: a re-send's mark committed between the close's owed read and its claim fails the claim - a 409, nothing recorded", async () => {
@@ -916,6 +940,60 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
         await prisma.xeroSyncOperation.update({ where: { id: notes[0]!.id }, data: { status: "FAILED" } });
         await expect(runWorker(kept[0]!.id)).resolves.toBe(RECEIPT_LINK.xeroObjectId);
         expect((await noteRows()).map((row) => row.id)).toEqual([first]);
+      });
+
+      it("MUTATION (#4516 round-2 review A): a part close and its still-owed rest's close, both waiting for the receipt, each get their own note when it lands", async () => {
+        const paidCents = 2_000;
+        const part = await closeCardRefundPaidAnotherWay({ operationId: OPERATION_ID, amountCents: paidCents, paidBack: "partial", rest: "still-owed",
+          expectedOwedCents: REFUND_CENTS, note: "Bank transfer, part, ref RACE", actingMemberId: OFFICER_ID });
+        expect(part.xeroQueued).toBe("receipt-then-refund-note");
+        // The rest, closed while the receipt is still on its way to Xero: its note waits for the receipt too.
+        await closeCardRefundPaidAnotherWay({ operationId: part.stillOwedOperationId!, amountCents: REFUND_CENTS - paidCents, paidBack: "full",
+          expectedOwedCents: REFUND_CENTS - paidCents, note: "Bank transfer, the rest, ref RACE", actingMemberId: OFFICER_ID });
+        const records = await prisma.manualRefundTask.findMany({
+          where: { bookingId: BOOKING_ID, occurrenceKey: { startsWith: "card-refund-paid-another-way:" } }, orderBy: { completedAt: "asc" },
+        });
+        expect(records.map((record) => record.occurrenceKey?.endsWith(":note-after-receipt"))).toEqual([true, true]);
+        expect(await noteRows()).toHaveLength(0);
+        const kept = await prisma.xeroSyncOperation.findMany({ where: KEPT_ROW });
+        expect(kept).toHaveLength(1);
+
+        await expect(runWorker(kept[0]!.id)).resolves.toBe(RECEIPT_LINK.xeroObjectId);
+        const notes = await noteRows();
+        expect(notes.map((row) => [(row.requestPayload as { paidAnotherWayTaskId: string }).paidAnotherWayTaskId,
+          (row.requestPayload as { refundAmountCents: number }).refundAmountCents]).sort()).toEqual(
+          records.map((record) => [record.id, record.amountCents]).sort(),
+        );
+        expect(notes.every((row) => (row.requestPayload as { creditsInvoiceId: string }).creditsInvoiceId === RECEIPT_LINK.xeroObjectId)).toBe(true);
+        // At most once each: the row's retry queues nothing more.
+        await expect(runWorker(kept[0]!.id)).resolves.toBe(RECEIPT_LINK.xeroObjectId);
+        expect(await noteRows()).toHaveLength(2);
+      });
+
+      // #4516 round-4 review 3: the note step counts what each close says it queued now. A close with nothing paid
+      // back answers nothing, even beside a note row asked for it before, so it never offsets a note queued now.
+      it("MUTATION (#4516 round-4 review 3): a close with nothing paid back beside its old note row never offsets the note queued now - the step answers 1", async () => {
+        const { queueWaitingPaidAnotherWayNote } = await import("@/lib/paid-another-way-receipt-note");
+        const part = await closeCardRefundPaidAnotherWay({ operationId: OPERATION_ID, amountCents: 2_000, paidBack: "partial", rest: "still-owed",
+          expectedOwedCents: REFUND_CENTS, note: "Bank transfer, part, ref RACE", actingMemberId: OFFICER_ID });
+        await closeCardRefundPaidAnotherWay({ operationId: part.stillOwedOperationId!, amountCents: REFUND_CENTS - 2_000, paidBack: "full",
+          expectedOwedCents: REFUND_CENTS - 2_000, note: "Bank transfer, the rest, ref RACE", actingMemberId: OFFICER_ID });
+        const [first, second] = await prisma.manualRefundTask.findMany({
+          where: { bookingId: BOOKING_ID, occurrenceKey: { startsWith: "card-refund-paid-another-way:" } }, orderBy: { completedAt: "asc" },
+        });
+        const kept = await prisma.xeroSyncOperation.findMany({ where: KEPT_ROW });
+        await expect(runWorker(kept[0]!.id)).resolves.toBe(RECEIPT_LINK.xeroObjectId);
+        const noteOf = async (recordId: string) =>
+          (await noteRows()).find((row) => (row.requestPayload as { paidAnotherWayTaskId: string }).paidAnotherWayTaskId === recordId);
+        // The first close now reads as paying back nothing, its note row still asked; the second's note was never asked.
+        await prisma.manualRefundTask.update({ where: { id: first!.id }, data: { amountCents: 0 } });
+        await prisma.xeroSyncOperation.delete({ where: { id: (await noteOf(second!.id))!.id } });
+
+        await expect(queueWaitingPaidAnotherWayNote(LATE_INTENT)).resolves.toBe(1);
+        expect(await noteOf(second!.id)).toBeDefined();
+        expect(await noteRows()).toHaveLength(2);
+        // Run again: nothing more is queued now.
+        await expect(queueWaitingPaidAnotherWayNote(LATE_INTENT)).resolves.toBe(0);
       });
     });
   },

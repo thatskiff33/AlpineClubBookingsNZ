@@ -12,9 +12,18 @@ import "server-only";
  */
 export type { BookingChargeEvent } from "./internal/booking-charges";
 export { isBookingJournalInactive, type BookingJournalContext } from "./internal/journal-activity";
-export { postBookingLedgerJournal, postMemberMergeTransfer, postPendingBookingJournal } from "./internal/booking-posting";
+export { lockBookingRowForOwnerRead, postBookingLedgerJournal, postMemberMergeTransfer, postPendingBookingJournal } from "./internal/booking-posting";
 // #4628 (M3c): a bank-transfer booking's charge before settlement, planned by the legacy side.
 export type { StandingChargeLine } from "./internal/booking-pending-charges";
 export { resolveBookingDoorClock, resolveBookingMoneyPostingContext } from "./internal/door-context";
 
 export { postBookingReceipts, type BookingReceiptDecision } from "./internal/booking-receipts";
+
+// #4516 (M4c): card refunds. R05 at the doors, the sender's reservation step, R12/R13 in the one cash writer,
+// a "Paid another way" close's R14, and which debt a recovery row pays.
+export { closeKeptCaptureReturn, postRefundObligation, withdrawRefundObligation, type RefundObligationDoor } from "./internal/refund-obligations";
+export { reserveCardRefundSlice, type CardRefundObligationRef, type CardRefundReservationOutcome, type CardRefundSliceReservation } from "./internal/refund-reservations";
+export { postCardRefundCash } from "./internal/refund-cash";
+export { postPaidAnotherWayClose, type PaidAnotherWayJournalClose, type PaidAnotherWayRest } from "./internal/refund-closes";
+export { cardRefundObligationOfRecoveryKey, resolveCardRefundObligation, type CardRefundRecoveryRow } from "./internal/refund-obligation-map";
+export { MemberMoneyReservationRefused } from "./internal/store";

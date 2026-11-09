@@ -551,7 +551,9 @@ const CANCEL_ADDITIONAL_INTENT = "pi_race_4083_cancel_additional";
         (await prisma.alertCooldown.findMany({ where: { key: { startsWith: "late-capture-approval-close-lost:" } } })).map((row) => row.key);
       const records = () => prisma.auditLog.count({ where: { targetId: BOOKING_ID, action: RECORD_ACTION } });
       const persist = () =>
-        prisma.$transaction((tx) => approval.persistLateCaptureApprovalRefundDebt({ bookingId: BOOKING_ID, route: ROUTE, amountCents: REFUSED_CENTS, store: tx }));
+        // #4516: this booking has no R01, so the debt's R05 posts nothing whatever the context; an inactive one says so.
+        prisma.$transaction((tx) => approval.persistLateCaptureApprovalRefundDebt({ bookingId: BOOKING_ID, route: ROUTE, amountCents: REFUSED_CENTS, store: tx,
+          journal: { inactive: "unusable-currency", detail: "not this suite's" }, actingMemberId: MEMBER_ID }));
       const approve = () =>
         approval.executeLateCaptureApprovalRefund({ bookingId: BOOKING_ID, taskId: "race-4126-task", actingMemberId: MEMBER_ID, route: ROUTE, amountCents: REFUSED_CENTS, format: CLUB_FORMAT_TEST });
       /** Stripe makes the refund - the same one for every ask under the same keys, as an idempotent replay answers. */

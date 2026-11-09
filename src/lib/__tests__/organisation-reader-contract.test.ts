@@ -459,6 +459,13 @@ const DECLARED_FILES: Record<string, string> = {
     "bookingOwnerDebtor maps the booking's owner, member or organisation, through bookingOwnerProviderMetadata onto the receivable's debtor; one helper for the doors and the receipts",
   "src/lib/member-money/internal/booking-receipts.ts":
     "a receipt's debtor is the booking's owner (read once, without the booking row lock), and a collection applies to the obligation of the debtor its receivable line names, member or organisation",
+  // #4516 (Ledger M4c): a refund debt, its cash and its successor name the booking's owner as debtor, as receipts do.
+  "src/lib/member-money/internal/refund-obligations.ts":
+    "a refund debt's debtor is the booking's owner, member or organisation, read under the door's lock tier (booking row, or plainly for a Payment-row-only writer)",
+  "src/lib/member-money/internal/refund-cash.ts":
+    "an unapplied card refund names the booking's owner as debtor; an answered one names its refund debt's debtor, member or organisation",
+  "src/lib/member-money/internal/refund-family.ts":
+    "a refund family's live tip is the owner's: a successor carries the tip's remaining payable from its debtor to the owner, member or organisation",
 
   // #4457: the privacy-retention census classifies every Prisma model by name.
   "src/lib/privacy-retention-classification.ts":

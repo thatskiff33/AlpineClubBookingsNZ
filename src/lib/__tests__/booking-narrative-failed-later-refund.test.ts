@@ -212,6 +212,14 @@ describe("#4166 round 2: paid-another-way parts, and the dated and undated parts
     );
   });
 
+  // #4516 (round-3 review 1): its row closed in part with the rest still owed - the reader splits the rest off as a
+  // part of its own, where it stands - says both, and the club follows the rest up.
+  it("MUTATION: a failed-later row paid back in part, the rest still owed, says both parts", () => {
+    expect(narrate([PAID, CANCELLED, cardRefunded(9000)], [failedLater(4000, "paid-another-way", { paidBackCents: 4000, unpaidCents: 0 }), failedLater(5000, "stalled")])).toBe(
+      `${LEAD}$50.00 is being refunded to you, $40.00 could not go back to your card and was paid back to you another way and $30.00 was retained; the club will be in touch about the card refund.${END}`,
+    );
+  });
+
   it("a failed-later row paid another way in part, alone, says 'remaining' after the clause before it", () => {
     expect(narrate([PAID, CANCELLED, cardRefunded(9000)], [failedLater(9000, "paid-another-way", { paidBackCents: 5000, unpaidCents: 4000 })])).toBe(
       `${LEAD}$50.00 could not go back to your card and was paid back to you another way, the club checked the remaining $40.00 and closed it and $30.00 was retained.${END}`,

@@ -1,6 +1,8 @@
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
-import { postBookingReceipts, resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
+import { postBookingReceipts, resolveBookingMoneyPostingContext, resolveCardRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
+import { answerSupersededFirstRequest, supersededFirstRequestUnsent } from "@/lib/superseded-first-request-answer";
 import { withStoreTransaction } from "@/lib/db-transaction";
+import { cardRefundOperationStripeKeyPrefix } from "@/lib/card-refund-stripe-key-prefix";
 import {
   ADDITIONAL_ASK_QUEUE_TRANSACTION_OPTIONS,
   assertAdditionalAskSizingCurrent,
@@ -38,6 +40,7 @@ import {
   recordStripeRefundsAgainstTransaction,
   refundHeadroomIncrementCents,
   refundPaymentTransactions,
+  reserveCardRefundAttempt,
   upsertPaymentIntentTransaction,
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
@@ -636,8 +639,8 @@ import {
   buildRefundRequestRefundRecoveryIdempotencyKey,
   buildRefundRequestRefundStripeKeyPrefix,
   cardRefundOperationRefundMetadata,
+  refundSliceStripeIdempotencyKey,
   buildSupersededPaymentRefundRecoveryIdempotencyKey,
-  buildLegacyModificationRefundStripeKeyPrefix,
   REFUND_REQUEST_REFUND_RECOVERY_PREFIX,
   isLateCaptureRefundStripeKeyPrefix,
   bookingModificationIdForAdditionalIntentRecoveryKey,
@@ -2015,12 +2018,15 @@ async function processRefundSupersededPaymentOperation(
   // #4690: a refund of this row's own that an earlier attempt made but never announced (it was
   // reaped, or crashed, before its notice) is announced here, once, before the close.
   if (outstandingCents <= 0) {
+    await answerSupersededFirstRequest(operation); // #4516 review L1: its first request's refund answers the key's open reservation
     if ((await reportUnannouncedSupersededPaymentRefund(operation, format)) === "in-flight") return waitOnSupersededRefundReport(operation, format);
     await completePaymentRecoveryOperation(operation);
     return "done";
   }
 
   const metadata = cardRefundOperationRefundMetadata(operation);
+  // #4516 (M4c): the debt this row pays (its capture's return, the R05 posted here if its door deferred it).
+  const obligation = await resolveCardRefundObligation(prisma, operation);
   // #4103 (`INV-PAY-130`): a refusal is never closed or reported. The first ask
   // keeps the row's own key, so a refund made but unrecorded is replayed; a
   // refusal moves to a one-slice plan on a fresh key, which later attempts send.
@@ -2038,7 +2044,16 @@ async function processRefundSupersededPaymentOperation(
           allocation,
           metadata,
           idempotencyKeyPrefix: operation.idempotencyKey,
+          obligation,
+          planAttemptKeys: plan.map((slice) => refundSliceStripeIdempotencyKey(operation.idempotencyKey, slice)),
         });
+      }
+      // #4516 (M4c): this row's one request is reserved under its own key, as a slice is (plan section 5).
+      const journal = await resolveBookingMoneyPostingContext();
+      if (obligation) {
+        await reserveCardRefundAttempt(journal, { paymentId: operation.paymentId, obligation, attemptKey: operation.idempotencyKey,
+          senderKeyPrefix: operation.idempotencyKey, paymentTransactionId: refreshedTransaction.id, amountCents: outstandingCents,
+          planAttemptKeys: [operation.idempotencyKey], unsentKeyMayResize: await supersededFirstRequestUnsent(operation) }); // #4516 round-2 C
       }
       const refund = await processRefund({
         paymentIntentId: operation.paymentIntentId,
@@ -2059,6 +2074,8 @@ async function processRefundSupersededPaymentOperation(
         paymentTransactionId: refreshedTransaction.id,
         refunds: [refund],
         fallbackPaymentIntentId: operation.paymentIntentId,
+        journal,
+        attemptKeys: new Map([[refund.id, operation.idempotencyKey]]),
       });
       // #4104 review (ML2): a replayed key reads Stripe's original answer; the
       // ledger knows the refund failed since, and this row moves it itself.
@@ -2164,10 +2181,7 @@ async function processBookingModificationRefundOperation(
   // (booking_cancel_refund_<bookingId>, #1160), and modification recoveries
   // read the prefix stored at enqueue time (#1152). Legacy modification rows
   // without a stored prefix keep their operation-scoped prefix.
-  // A refund request's own key only: an appeal's organiser-card debt is not this route's.
-  const refundRequestId = isRefundRequestRefundRecoveryKey(operation.idempotencyKey)
-    ? operation.idempotencyKey.slice(REFUND_REQUEST_REFUND_RECOVERY_PREFIX.length)
-    : null;
+  // A refund request's own key only (`cardRefundOperationStripeKeyPrefix`): an appeal's organiser-card debt is not this route's.
   const isBookingCancellationRecovery = operation.idempotencyKey.startsWith(
     BOOKING_CANCELLATION_REFUND_RECOVERY_PREFIX,
   );
@@ -2175,41 +2189,12 @@ async function processBookingModificationRefundOperation(
   // #4104 review (CM): the body comes from the one builder a failed-later
   // refund's owner check reads too (`cardRefundOperationRefundMetadata`).
   const metadata = cardRefundOperationRefundMetadata(operation);
-  let idempotencyKeyPrefix: string;
-  if (refundRequestId) {
-    // #1507: replay the inline appeal-refund body VERBATIM. The admin approve
-    // route and this branch both build the metadata from
-    // buildRefundRequestRefundMetadata, so under the shared
-    // `refund_request_<id>` idempotency key Stripe replays the original refund
-    // rather than rejecting the reused key with idempotency_error (which
-    // previously sent the inline-succeeded-but-unrecorded scenario to
-    // retry-exhaustion). The shape reconstructs purely from the persisted
-    // bookingId + refundRequestId, so pre-fix rows replay through this same path
-    // (the inline body — reason:"refund_appeal_approved" — is unchanged, so no
-    // pre-deploy sliver).
-    idempotencyKeyPrefix = buildRefundRequestRefundStripeKeyPrefix(refundRequestId);
-  } else if (isBookingCancellationRecovery) {
-    // #1494: replay the inline cancel body VERBATIM - the same
-    // buildBookingCancellationRefundMetadata helper builds both, from the
-    // persisted bookingId alone - so under the shared
-    // `booking_cancel_refund_<bookingId>` key Stripe replays the original
-    // refund rather than reject the key with idempotency_error.
-    idempotencyKeyPrefix = `booking_cancel_refund_${operation.bookingId}`;
-  } else {
-    // #1507: replay the inline modification-refund body VERBATIM. The inline
-    // settlement helper stamps a per-path reason (date change / batch / guest
-    // removal); this branch reconstructs that exact reason from the persisted
-    // Stripe key prefix (#1152) via bookingModificationRefundReasonForKeyPrefix
-    // and builds the body from the same buildBookingModificationRefundMetadata
-    // helper the inline path uses, so under the shared stored prefix Stripe
-    // replays the original refund instead of rejecting the reused key with
-    // idempotency_error. Legacy rows without a stored prefix fall back to the
-    // historical recovery reason + operation-scoped key (they were never
-    // shared-key with the inline refund).
-    idempotencyKeyPrefix =
-      operation.stripeKeyPrefix ??
-      buildLegacyModificationRefundStripeKeyPrefix(operation.id);
-  }
+  // #1507/#1494/#1152: the inline door's prefix, rebuilt from the row, so Stripe replays the original refund
+  // under the shared key instead of refusing it; one rule (`cardRefundOperationStripeKeyPrefix`, #4516), which a
+  // "Paid another way" close also reads to name this row's reservations.
+  const idempotencyKeyPrefix = cardRefundOperationStripeKeyPrefix(operation);
+  // #4516 (M4c): the refund debt this row pays (`resolveCardRefundObligation`); none sends as before.
+  const obligation = await resolveCardRefundObligation(prisma, operation);
 
   let plan = parseRefundAllocationPlan(operation.allocationPlan);
   const preflightPlan = await checkCardRefundResend({
@@ -2300,6 +2285,9 @@ async function processBookingModificationRefundOperation(
       allocation,
       metadata,
       idempotencyKeyPrefix,
+      obligation,
+      // The whole plan, made slices included: a made slice's reservation is answered, never superseded.
+      planAttemptKeys: plan.map((slice) => refundSliceStripeIdempotencyKey(idempotencyKeyPrefix, slice)),
     })),
   }));
 
