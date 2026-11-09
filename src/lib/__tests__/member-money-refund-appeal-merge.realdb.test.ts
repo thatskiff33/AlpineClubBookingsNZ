@@ -6,6 +6,9 @@
  * the claim instead, the merge (owner move, then the request's member) held the booking row the appeal waited on
  * while waiting on the request the appeal held: PostgreSQL broke the cycle by aborting one of them.
  *
+ * The choreography is shared with the member-merge race suites (`support/member-merge-race.ts`): every wait is
+ * matched to the backend it waits on (`pg_blocking_pids`), never counted across the database (#4861).
+ *
  * Ordinary Vitest runs skip the file; CI's real-PostgreSQL job runs it against the guarded loopback race database.
  */
 import { NextRequest } from "next/server";
@@ -14,6 +17,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { cleanHistories, createHistoryBooking, historyNames, seedHistoryFixtures, settleHistoryByCard } from "./support/booking-ledger-history";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
+import { arrivingWhilePaused, clearPauses, createRaceMember, expectFulfilled, previewMerge, writerArrivingWhileMergeIsParked } from "./support/member-merge-race";
 import { raceSession } from "./support/race-session-double";
 import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
 
@@ -29,18 +33,21 @@ vi.mock("@/lib/stripe", async (importOriginal) =>
 );
 vi.mock("@/lib/auth", async () => (await import("./support/race-session-double")).raceAuthDouble());
 
-/** A pause inside the appeal's transaction, just before its R05: a pass-through with no hook set. */
-const doorHook = vi.hoisted(() => ({ beforeAppealR05: null as null | (() => Promise<void>) }));
+/** The route opens its transaction with no options: give it a budget the race, not the runner, decides (#4844 review F5). */
+vi.mock("@/lib/prisma", async (importOriginal) => {
+  const real = (await importOriginal()) as typeof import("@/lib/prisma");
+  const { withRaceTransactionBudget } = await import("./support/race-lock-waits");
+  return { ...real, prisma: withRaceTransactionBudget(real.prisma) };
+});
+
+/** A pause inside the appeal's transaction, just before its R05 (slot "beforeAppealR05"): a pass-through unless a case arms it. */
 vi.mock("@/lib/member-money/doors", async (importOriginal) => {
   const real = (await importOriginal()) as typeof import("@/lib/member-money/doors");
+  const { pauseIn } = await import("./support/member-merge-race");
   return {
     ...real,
     postRefundObligation: async (...args: Parameters<typeof real.postRefundObligation>) => {
-      const hook = args[2].scope === "refund-request" ? doorHook.beforeAppealR05 : null;
-      if (hook) {
-        doorHook.beforeAppealR05 = null;
-        await hook();
-      }
+      if (args[2].scope === "refund-request") await pauseIn("beforeAppealR05", args[0]);
       return real.postRefundObligation(...args);
     },
   };
@@ -53,34 +60,12 @@ const ADMIN = `${PREFIX}admin`;
 const PRICE = 20_000;
 let prisma: PrismaClient;
 
-function gate() {
-  let open!: () => void;
-  const opened = new Promise<void>((resolve) => { open = resolve; });
-  return { open, opened };
-}
-
-/** Until at least `count` backends wait on a row or advisory lock in this database. */
-async function untilWaiting(count: number): Promise<void> {
-  for (let attempt = 0; attempt < 400; attempt += 1) {
-    const [{ waiting }] = await prisma.$queryRaw<Array<{ waiting: number }>>`
-      SELECT count(*)::int AS waiting FROM pg_catalog.pg_stat_activity
-      WHERE datname = current_database() AND wait_event_type = 'Lock'`;
-    if (waiting >= count) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error(`fewer than ${count} backends ever waited on a lock`);
-}
-
-async function member(id: string, extra: Record<string, unknown> = {}) {
-  await prisma.member.create({ data: { id, email: `${id}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Merge", lastName: id, ageTier: "ADULT", ...extra } });
-}
-
 /** A card booking the duplicate member owns, settled on the ledger and in the journal, with a PENDING appeal. */
 async function appealOnDuplicatesBooking(tag: string) {
   const loser = `${PREFIX}loser-${tag}`;
   const master = `${PREFIX}master-${tag}`;
-  await member(loser);
-  await member(master);
+  await createRaceMember(prisma, loser);
+  await createRaceMember(prisma, master);
   const id = `${PREFIX}b-${tag}`;
   await createHistoryBooking(prisma, { ...names, memberId: loser }, id, { payment: { amountCents: PRICE, source: "STRIPE", intent: `pi_${id}` } });
   await settleHistoryByCard(id, PRICE);
@@ -107,13 +92,6 @@ async function approve(requestId: string): Promise<number> {
   }
 }
 
-async function previewMerge(master: string, loser: string) {
-  const merge = await import("@/lib/member-merge");
-  const preview = await merge.buildMemberMergePreview({ masterId: master, loserId: loser, actorMemberId: ADMIN });
-  expect(preview.blockers).toEqual([]);
-  return () => merge.executeMemberMerge({ masterId: master, loserId: loser, actorMemberId: ADMIN, previewToken: preview.previewToken, confirmationText: preview.confirmationPhrase });
-}
-
 async function appealDebtor(requestId: string) {
   const obligation = await prisma.memberMoneyObligation.findUnique({ where: { obligationKey: `refund-obligation|refund-request|${requestId}` }, select: { memberId: true } });
   return obligation?.memberId ?? null;
@@ -134,7 +112,7 @@ async function conservationHolds(bookingId: string) {
     ({ prisma } = await import("@/lib/prisma"));
     await cleanup();
     await seedHistoryFixtures(prisma, PREFIX);
-    await member(ADMIN, { role: "ADMIN", canLogin: true, accessRoles: { create: { role: "ADMIN" } } });
+    await createRaceMember(prisma, ADMIN, { role: "ADMIN", canLogin: true, accessRoles: { create: { role: "ADMIN" } } });
     resetStripeRaceHooks();
     stripeRaceHooks.refund = async (args) => ({ id: `re_${args.idempotencyKey}`.slice(0, 200), object: "refund", amount: args.amountCents, currency: "nzd",
       status: "succeeded", created: 1_782_864_000, payment_intent: args.paymentIntentId, charge: `ch_${args.paymentIntentId}`, metadata: args.metadata ?? {}, reason: args.reason });
@@ -142,7 +120,7 @@ async function conservationHolds(bookingId: string) {
 
   afterAll(async () => {
     resetStripeRaceHooks();
-    doorHook.beforeAppealR05 = null;
+    clearPauses();
     if (prisma) await cleanup();
   }, 120_000);
 
@@ -156,26 +134,12 @@ async function conservationHolds(bookingId: string) {
 
   it("MUTATION: the appeal holds the booking row first; the merge waits for it, and both commit", async () => {
     const { id, loser, master, requestId } = await appealOnDuplicatesBooking("appeal-first");
-    const reached = gate();
-    const release = gate();
-    doorHook.beforeAppealR05 = async () => {
-      reached.open();
-      await release.opened;
-    };
-    const approving = approve(requestId);
-    await reached.opened;
-    let merging: Promise<unknown> = Promise.resolve();
-    try {
-      const execute = await previewMerge(master, loser);
-      merging = execute();
-      // The merge reaches the owner move and waits on the booking row the appeal holds.
-      await untilWaiting(1);
-    } finally {
-      release.open();
-    }
-    const [approved, merged] = await Promise.allSettled([approving, merging]);
+    // The merge reaches the owner move and waits on the booking row the appeal holds.
+    const { held: approved, arrived: merged } = await arrivingWhilePaused(
+      prisma, "beforeAppealR05", () => approve(requestId), async () => (await previewMerge(master, loser, ADMIN))(),
+    );
     expect(approved).toEqual({ status: "fulfilled", value: 200 });
-    expect(merged.status, merged.status === "rejected" ? String(merged.reason) : "").toBe("fulfilled");
+    expectFulfilled(merged);
     expect(await appealDebtor(requestId)).toBe(loser);
     expect((await prisma.refundRequest.findUniqueOrThrow({ where: { id: requestId }, select: { memberId: true, status: true } }))).toEqual({ memberId: master, status: "APPROVED" });
     await conservationHolds(id);
@@ -183,29 +147,12 @@ async function conservationHolds(bookingId: string) {
 
   it("the merge holds the booking row first; the appeal waits for it, and reads the survivor as owner", async () => {
     const { id, loser, master, requestId } = await appealOnDuplicatesBooking("merge-first");
-    const held = gate();
-    const release = gate();
-    // The request's row, held, so the merge stops right after its owner move.
-    const blocker = prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT 1 FROM "RefundRequest" WHERE "id" = ${requestId} FOR UPDATE`;
-      held.open();
-      await release.opened;
-    }, { maxWait: 30_000, timeout: 120_000 });
-    await held.opened;
-    let merging: Promise<unknown> = Promise.resolve();
-    let approving: Promise<number> = Promise.resolve(0);
-    try {
-      const execute = await previewMerge(master, loser);
-      merging = execute();
-      await untilWaiting(1);
-      approving = approve(requestId);
-      await untilWaiting(2);
-    } finally {
-      release.open();
-    }
-    await blocker;
-    const [approved, merged] = await Promise.allSettled([approving, merging]);
-    expect(merged.status, merged.status === "rejected" ? String(merged.reason) : "").toBe("fulfilled");
+    const execute = await previewMerge(master, loser, ADMIN);
+    // The request's row, held, so the merge stops right after its owner move; the appeal queues behind the merge.
+    const { merged, written: approved } = await writerArrivingWhileMergeIsParked(
+      prisma, (tx) => tx.$executeRaw`SELECT 1 FROM "RefundRequest" WHERE "id" = ${requestId} FOR UPDATE`, execute, () => approve(requestId),
+    );
+    expectFulfilled(merged);
     expect(approved).toEqual({ status: "fulfilled", value: 200 });
     expect(await appealDebtor(requestId)).toBe(master);
     await conservationHolds(id);
