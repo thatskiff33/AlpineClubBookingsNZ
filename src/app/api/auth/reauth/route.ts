@@ -29,6 +29,22 @@ const stepUpProofSchema: z.ZodType<StepUpProof> = z.discriminatedUnion("method",
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
+/**
+ * An app enrolment with no stored secret offers no method (`INV-AUTH-008`
+ * fails closed): the person is told why instead of being offered the password.
+ */
+function stepUpUnavailableResponse() {
+  return NextResponse.json(
+    {
+      error:
+        "Your authenticator app setup can't be checked, so it can't confirm it's you. Ask a club administrator for help.",
+      code: "STEP_UP_UNAVAILABLE",
+      methods: [],
+    },
+    { status: 409, headers: NO_STORE },
+  );
+}
+
 export async function GET() {
   const guard = await requireActiveSession();
   if (!guard.ok) return guard.response;
@@ -37,7 +53,9 @@ export async function GET() {
   if (!member) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
   }
-  return NextResponse.json({ methods: resolveStepUpMethods(member) }, { headers: NO_STORE });
+  const methods = resolveStepUpMethods(member);
+  if (methods.length === 0) return stepUpUnavailableResponse();
+  return NextResponse.json({ methods }, { headers: NO_STORE });
 }
 
 export async function POST(request: NextRequest) {
@@ -67,6 +85,8 @@ export async function POST(request: NextRequest) {
   switch (outcome.kind) {
     case "verified":
       break;
+    case "unavailable":
+      return stepUpUnavailableResponse();
     case "method-not-allowed":
       return NextResponse.json(
         {

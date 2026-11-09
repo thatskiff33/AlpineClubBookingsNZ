@@ -11,9 +11,11 @@ import {
   hasAuthenticatorApp,
   isRecentAuthRefusal,
   isRecentlyAuthenticated,
-  recentAuthRequiredBody,
   resolveStepUpMethods,
 } from "@/lib/recent-auth-policy";
+
+/** What `requireRecentAuth` sends (its builder is private to `recent-auth.ts`). */
+const REFUSAL_BODY = { error: "Please confirm it's you to continue.", code: RECENT_AUTH_REQUIRED_CODE };
 
 const SECOND_MS = 1000;
 
@@ -69,12 +71,18 @@ describe("which step-up method a person uses (#4616)", () => {
     expect(resolveStepUpMethods(none)).toEqual(["PASSWORD"]);
   });
 
-  it("does not count an app that is switched off, has no stored secret, or is an emailed-code enrolment", () => {
+  it("decides the app from the enrolment: switched off or an emailed-code enrolment is not one", () => {
     // A leftover secret on an emailed-code enrolment is still not an app.
     expect(hasAuthenticatorApp({ ...app, twoFactorMethod: "EMAIL" })).toBe(false);
+    expect(resolveStepUpMethods({ ...app, twoFactorMethod: "EMAIL" })).toEqual(["PASSWORD"]);
     expect(hasAuthenticatorApp({ ...app, twoFactorEnabled: false })).toBe(false);
-    expect(hasAuthenticatorApp({ ...app, totpSecret: null })).toBe(false);
-    expect(hasAuthenticatorApp({ ...app, totpSecret: "" })).toBe(false);
+  });
+
+  it("fails closed on an app enrolment with no stored secret: no method, never the password", () => {
+    for (const totpSecret of [null, ""]) {
+      expect(hasAuthenticatorApp({ ...app, totpSecret })).toBe(true);
+      expect(resolveStepUpMethods({ ...app, totpSecret })).toEqual([]);
+    }
   });
 
   it("never offers an emailed or recovery code", () => {
@@ -91,18 +99,15 @@ describe("which step-up method a person uses (#4616)", () => {
 
 describe("recognising the refusal (#4616)", () => {
   it("recognises requireRecentAuth's body at its status, and leaves the body readable", async () => {
-    const refusal = Response.json(recentAuthRequiredBody(), { status: 403 });
+    const refusal = Response.json(REFUSAL_BODY, { status: 403 });
     expect(await isRecentAuthRefusal(refusal)).toBe(true);
-    expect(await refusal.json()).toEqual({
-      error: "Please confirm it's you to continue.",
-      code: RECENT_AUTH_REQUIRED_CODE,
-    });
+    expect(await refusal.json()).toEqual(REFUSAL_BODY);
   });
 
   it("does not mistake another 403, the code at another status, or a non-JSON body", async () => {
     expect(await isRecentAuthRefusal(Response.json({ error: "Forbidden" }, { status: 403 }))).toBe(false);
-    expect(await isRecentAuthRefusal(Response.json(recentAuthRequiredBody(), { status: 401 }))).toBe(false);
-    expect(await isRecentAuthRefusal(Response.json(recentAuthRequiredBody(), { status: 200 }))).toBe(false);
+    expect(await isRecentAuthRefusal(Response.json(REFUSAL_BODY, { status: 401 }))).toBe(false);
+    expect(await isRecentAuthRefusal(Response.json(REFUSAL_BODY, { status: 200 }))).toBe(false);
     expect(await isRecentAuthRefusal(new Response("nope", { status: 403 }))).toBe(false);
   });
 });
