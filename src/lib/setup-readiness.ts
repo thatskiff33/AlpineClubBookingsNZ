@@ -1447,9 +1447,6 @@ function buildBookingPolicyCheck(
   );
 }
 
-/** The cancellation settings: Membership Cancellations' Settings tab since S1 (#4796). */
-const MEMBERSHIP_CANCELLATION_SETTINGS_HREF = adminTabHref("membership-cancellations", "settings");
-
 function buildMembershipCancellationCheck(
   db: SetupDatabaseSnapshot | undefined,
   progress: SetupProgressState,
@@ -1467,7 +1464,7 @@ function buildMembershipCancellationCheck(
         details: [
           "Review this on the Settings tab of Membership Cancellations after migrations have run.",
         ],
-        href: MEMBERSHIP_CANCELLATION_SETTINGS_HREF,
+        href: adminTabHref("membership-cancellations", "settings"),
       },
       progress,
     );
@@ -1492,7 +1489,7 @@ function buildMembershipCancellationCheck(
           db.membershipCancellationArchiveContacts ? "enabled" : "disabled"
         }`,
       ],
-      href: MEMBERSHIP_CANCELLATION_SETTINGS_HREF,
+      href: adminTabHref("membership-cancellations", "settings"),
     },
     progress,
   );

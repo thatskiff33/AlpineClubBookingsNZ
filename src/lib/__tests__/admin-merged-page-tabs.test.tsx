@@ -113,7 +113,7 @@ describe("Family Groups' Suggestions tab", () => {
     render(<FamilyGroupsPage />);
 
     expect(await screen.findByText(SUGGESTIONS_VIEW_ONLY)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Reset hidden/i })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Reset hidden (1)" })).toBeDisabled();
     expect(screen.getByRole("tab", { name: "Suggestions" })).toHaveAttribute("aria-selected", "true");
     // The Groups tab is not mounted, so its controls are not offered here.
     expect(screen.queryByRole("button", { name: /New Group/i })).not.toBeInTheDocument();
@@ -124,7 +124,9 @@ describe("Family Groups' Suggestions tab", () => {
     sessionMatrix = matrix({ membership: "edit" });
     render(<FamilyGroupsPage />);
 
-    expect(await screen.findByRole("button", { name: /Reset hidden/i })).toBeEnabled();
+    // The count is in the label once the suggestions have loaded; until then
+    // the button is disabled for every admin.
+    expect(await screen.findByRole("button", { name: "Reset hidden (1)" })).toBeEnabled();
     expect(screen.queryByText(SUGGESTIONS_VIEW_ONLY)).not.toBeInTheDocument();
   });
 

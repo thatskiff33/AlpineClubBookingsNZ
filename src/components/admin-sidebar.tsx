@@ -371,7 +371,6 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
       },
       // Lockers is lodge-scoped (#130, ADR-005) — reached via the lodge hub's
       // "Lockers" card, not a standalone sidebar entry.
-      // Family Suggestions is the page's Suggestions tab since S1 (#4796).
       {
         href: "/admin/family-groups",
         label: "Family Groups",

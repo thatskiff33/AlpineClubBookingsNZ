@@ -797,17 +797,16 @@ describe("tabs and anchors", () => {
       .join("\n");
   }
 
-  it("has each tabbed page read its tab from the registry and offer every tab", () => {
+  it("has each tabbed page render the shared tab shell for itself, with every tab", () => {
+    // `AdminPageTabs` reads `?tab=` through `parseAdminPageTab`; the tabs a page
+    // hands it are typed against the registry, but only this sees a tab left out.
     const drift = ADMIN_PAGES.filter((page) => page.tabs.length > 0).flatMap((page) => {
-      const source = pageSources(page);
+      const source = pageSources(page).replace(/\s+/g, " ");
       return [
-        ...(source.includes(`parseAdminPageTab("${page.id}"`) ? [] : [`${page.id}: no parseAdminPageTab`]),
+        ...(source.includes(`<AdminPageTabs page="${page.id}"`) ? [] : [`${page.id}: no AdminPageTabs`]),
         ...page.tabs
-          .filter((tab) => !source.includes(`<TabsTrigger value="${tab}"`))
-          .map((tab) => `${page.id}: no trigger for "${tab}"`),
-        ...page.tabs
-          .filter((tab) => !source.includes(`<TabsContent value="${tab}"`))
-          .map((tab) => `${page.id}: no content for "${tab}"`),
+          .filter((tab) => !source.includes(`{ value: "${tab}",`))
+          .map((tab) => `${page.id}: no "${tab}" tab`),
       ];
     });
     expect(drift).toEqual([]);
@@ -1379,10 +1378,10 @@ describe("the registry is inert", () => {
       "C3: the real sidebar over a moved Finance hub",
     "src/lib/__tests__/admin-page-revalidation.test.ts":
       "C3: revalidateAdminPage's targets and the revalidatePath census",
-    "src/app/(admin)/admin/family-groups/page.tsx":
-      "S1: reads its Suggestions tab with parseAdminPageTab",
-    "src/app/(admin)/admin/membership-cancellations/page.tsx":
-      "S1: reads its Settings tab with parseAdminPageTab",
+    "src/components/admin/admin-page-tabs.tsx":
+      "S1: the tab shell reads and links a page's tabs through the registry",
+    "src/components/admin/membership-cancellation-settings-tab.tsx":
+      "S1: the Settings tab links Email Messages with adminHref",
     "src/app/(admin)/admin/bookings-setup/page.tsx": "S1: its cards link with adminHref",
     "src/app/(admin)/admin/health/_components/integration-readiness-section.tsx":
       "S1: its cards link with adminHref; its id is the registry's anchor",
