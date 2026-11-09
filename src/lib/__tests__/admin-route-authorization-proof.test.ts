@@ -163,7 +163,7 @@ import {
   adminPagePaths,
   allAdminPaths,
 } from "@/lib/__tests__/helpers/admin-route-enumeration";
-import { ADMIN_PAGES } from "@/lib/admin-hubs";
+import { ADMIN_PAGES, canonicalAdminPathname } from "@/lib/admin-hubs";
 import {
   adminApiRouteGates,
   handlersWithMultipleGuards,
@@ -226,6 +226,16 @@ const registryPagePaths: string[] = [
     ),
   ),
 ].sort();
+
+/**
+ * Every admin page URL served today: each page file's own path, and, for a page
+ * moved under its hub (C4 #4801 onwards), the old URL its `beforeFiles` rewrite
+ * serves it at, which is the path the guards see while the switch is off.
+ */
+const servedPagePaths: ReadonlySet<string> = new Set([
+  ...adminPagePaths,
+  ...adminPagePaths.map((pathname) => canonicalAdminPathname(pathname)),
+]);
 
 // ---------------------------------------------------------------------------
 // 2. THE GATE EACH REQUEST ACTUALLY MEETS.
@@ -908,7 +918,7 @@ describe("the reviewed route-to-area anchors, enforced through the real guards",
 
   it("names only routes that exist, so the table cannot rot", () => {
     const missing = anchorEntries
-      .filter(({ pathname }) => !allAdminPaths.has(pathname))
+      .filter(({ pathname }) => !allAdminPaths.has(pathname) && !servedPagePaths.has(pathname))
       .map(({ pathname }) => pathname);
     expect(missing).toEqual([]);
     expect(anchorEntries.length).toBeGreaterThan(25);
@@ -917,7 +927,7 @@ describe("the reviewed route-to-area anchors, enforced through the real guards",
   it("admits the area's own holder and refuses every other area's", async () => {
     const violations: string[] = [];
     for (const { area, pathname } of anchorEntries) {
-      const isPage = adminPagePaths.includes(pathname);
+      const isPage = servedPagePaths.has(pathname);
       for (const other of AREAS) {
         const grid = viewGridFor(other);
         const result = isPage
@@ -939,7 +949,7 @@ describe("the reviewed route-to-area anchors, enforced through the real guards",
   it("admits a Full Admin to every anchor", async () => {
     const refused: string[] = [];
     for (const { pathname } of anchorEntries) {
-      const isPage = adminPagePaths.includes(pathname);
+      const isPage = servedPagePaths.has(pathname);
       const result = isPage
         ? await pageAdmits(FULL_ADMIN, pathname)
         : await apiAdmits(FULL_ADMIN, pathname, "GET");
