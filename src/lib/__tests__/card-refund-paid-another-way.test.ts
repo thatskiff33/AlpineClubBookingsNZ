@@ -1351,12 +1351,25 @@ describe("the list on the stuck-states page", () => {
         wholeAmountOnly: false,
         xeroRefundNote: "now",
         stripeMayHaveRefunded: false,
+        laterStripeRefunds: [],
+        tryCardAgainRefusal: null,
       }),
     ]);
     expect(mocks.listOperations).toHaveBeenCalledWith(expect.objectContaining({ where: deadCardRefundOperationWhere }));
   });
 
-  it("MUTATION: M6 (round 7): leaves out a refund that owes nothing, which no close may record", async () => {
+  // #4368 (owner decision, 25 Oct 2026): it was left out (M6, round 7); it now stays, for its
+  // "Nothing left owed" close, naming the refund that covers it - never offered as a $0 "Paid another way".
+  it("MUTATION: M6 (round 7), #4368: still leaves out one that owes nothing when no later Stripe refund covers it", async () => {
+    const sent = deadOperation();
+    // The payment holds nothing more to refund, and no Stripe refund was made since the row was raised.
+    mocks.listOperations.mockResolvedValue([
+      { ...sent, payment: payment(sent, { refundedAmountCents: 20_000, status: "REFUNDED", refunds: [] }) },
+    ]);
+    expect(await listDeadCardRefunds()).toEqual([]);
+  });
+
+  it("MUTATION: #4368: keeps a refund that owes nothing, with the later Stripe refund covering it and no re-send offered", async () => {
     const sent = deadOperation();
     mocks.listOperations.mockResolvedValue([
       {
@@ -1365,12 +1378,20 @@ describe("the list on the stuck-states page", () => {
           refundedAmountCents: 15_000,
           status: "PARTIALLY_REFUNDED",
           refunds: [
-            { paymentTransactionId: "txn-1", amountCents: 15_000, status: "succeeded", createdAt: new Date("2026-06-20T01:00:00.000Z") },
+            { stripeRefundId: "re_later", paymentTransactionId: "txn-1", amountCents: 15_000, status: "succeeded", createdAt: new Date("2026-06-20T01:00:00.000Z") },
           ],
         }),
       },
     ]);
-    expect(await listDeadCardRefunds()).toEqual([]);
+    expect(await listDeadCardRefunds()).toEqual([
+      expect.objectContaining({
+        operationId: "op-1",
+        owedCents: 0,
+        xeroRefundNote: "none",
+        laterStripeRefunds: [{ stripeRefundId: "re_later", amountCents: 15_000, madeAt: "2026-06-20T01:00:00.000Z" }],
+        tryCardAgainRefusal: expect.stringContaining("Nothing is left owed"),
+      }),
+    ]);
   });
 });
 
