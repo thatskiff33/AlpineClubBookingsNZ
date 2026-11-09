@@ -1345,6 +1345,50 @@ describe("review finding source/schema contracts", () => {
     }
   });
 
+  it("runs the member hard-delete officer race suite against the same dedicated PostgreSQL (#4850)", () => {
+    // A hard-delete locks the booking rows naming the member before its Member
+    // fence. `member-lifecycle-actions.test.ts` pins the order against a mock;
+    // only the realdb suite shows PostgreSQL forms no wait-for cycle, and it
+    // `describe.skip`s itself without the harness env vars.
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    const migrateStep = workflow.indexOf(
+      "name: Migrate dedicated advisory-lock race database"
+    );
+    const raceStep = workflow.indexOf(
+      "name: Test member hard-delete officer races against dedicated PostgreSQL"
+    );
+    expect(migrateStep).toBeGreaterThan(-1);
+    expect(
+      raceStep,
+      "ci.yml no longer runs member-delete-officer-races.realdb.test.ts. " +
+        "That suite self-skips without RUN_CONCURRENCY_RACE_TESTS, so removing " +
+        "the step silently un-tests the #4850 lock order."
+    ).toBeGreaterThan(migrateStep);
+    const stepBlock = workflow.slice(
+      raceStep,
+      workflow.indexOf("      - name:", raceStep + 1)
+    );
+    expect(stepBlock).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
+    expect(stepBlock).not.toContain("CONCURRENCY_RACE_DATABASE_URL:");
+    expect(stepBlock).toContain(
+      "pnpm exec vitest run src/lib/__tests__/member-delete-officer-races.realdb.test.ts"
+    );
+
+    const suite = readRepoFile(
+      "src/lib/__tests__/member-delete-officer-races.realdb.test.ts"
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    for (const caseName of [
+      "MUTATION: a delete holding the officer's Member row makes that officer's settle wait at the booking row, never a deadlock",
+      "a settle holding the booking row and the officer's key share makes the delete wait; both commit",
+      "MUTATION: a delete holding the officer's Member row makes that officer's review closure wait at the booking row, never a deadlock",
+      "a review closure holding the booking row and the officer's key share makes the delete wait; neither deadlocks",
+      "MUTATION: a Payment-first writer holding a payment the officer recorded makes the delete refuse at once, never wait; the writer then commits",
+    ]) {
+      expect(suite, `#4850 case missing: ${caseName}`).toContain(caseName);
+    }
+  });
+
   it("runs the page-content delete race against a real PostgreSQL in CI (#3852)", () => {
     // The suite describe.skip's itself without the harness env vars, so an
     // unwired step would turn the only proof that PostgreSQL gives the loser of
