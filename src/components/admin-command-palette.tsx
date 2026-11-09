@@ -192,7 +192,9 @@ export function AdminCommandPalette({
           <CommandGroup key={section} heading={section}>
             {entries.map((entry) => (
               <CommandItem
-                key={entry.href}
+                // A retired page's entry can share its href with another
+                // (two old names, one tab), never its label too.
+                key={`${entry.href} ${entry.label}`}
                 value={searchValue(entry)}
                 onSelect={() => handleSelect(entry.href)}
                 className="group"

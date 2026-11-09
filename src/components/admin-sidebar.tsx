@@ -75,10 +75,12 @@ import {
   ADMIN_MENU_DESTINATIONS,
   ADMIN_RETIRED_PAGES,
   activeAdminHref,
+  canonicalAdminPathname,
   getAdminPage,
+  retiredAdminPageHref,
   type AdminPageId,
 } from "@/lib/admin-hubs";
-import type { AdminHubPage } from "@/lib/admin-hubs/define";
+import { isAdminMenuDestination, type AdminHubPage } from "@/lib/admin-hubs/define";
 import type { FeatureFlags } from "@/config/schema";
 import {
   canAccessConsolidatedFeesPage,
@@ -588,16 +590,34 @@ export function getVisibleAdminNavSections(
                 ? item.orAccess(permissionMatrix)
                 : canViewAdminHrefWithMatrix(permissionMatrix, item.href))),
         )
-        .map((item) =>
-          item.href === "/admin/hut-leaders"
-            ? { ...item, label: pluralHutLeaderLabel(hutLeaderLabel) }
-            : item,
-        ),
+        .map((item) => {
+          const id = PAGE_ID_BY_OLD_PATH.get(canonicalAdminPathname(item.href));
+          return id
+            ? { ...item, label: adminPageLabel({ id, label: item.label }, { hutLeaderLabel }) }
+            : item;
+        }),
     }))
     .filter((section) => section.items.length > 0);
 }
 
-/** A single searchable page in the admin feature palette (#2092). */
+/**
+ * The label an admin page is shown under, for the sidebar and the palette
+ * alike, keyed by its registry id: the club's plural hut-leader term on Hut
+ * Leaders (#3976), the given label everywhere else.
+ */
+export function adminPageLabel(
+  page: { readonly id: string; readonly label: string },
+  { hutLeaderLabel }: { readonly hutLeaderLabel: string },
+): string {
+  return page.id === "hut-leaders" ? pluralHutLeaderLabel(hutLeaderLabel) : page.label;
+}
+
+/** A page's old path -> its registry id, so a sidebar link finds `adminPageLabel`. */
+const PAGE_ID_BY_OLD_PATH: ReadonlyMap<string, string> = new Map(
+  ADMIN_MENU_DESTINATIONS.map(({ page }) => [page.oldPath, page.id]),
+);
+
+/** A single searchable entry in the admin feature palette (#2092). */
 export interface AdminFeatureSearchEntry {
   /** Destination the palette navigates to on selection. */
   href: string;
@@ -605,7 +625,7 @@ export interface AdminFeatureSearchEntry {
   label: string;
   /** The label of the hub the page belongs to: the palette's group heading. */
   section: string;
-  /** Extra match terms: the page's registry keywords and retired page names. */
+  /** Extra match terms: the page's registry keywords and its old sidebar section. */
   keywords?: readonly string[];
 }
 
@@ -619,19 +639,26 @@ const HUB_LABEL_BY_KEY: ReadonlyMap<string, string> = new Map(
 );
 
 /**
- * A page's palette keywords: its registry keywords, then the name of every page
- * merged into it (S1 #4796), so an officer who still types "Booking Rules" finds
- * Bookings Setup. Case-insensitively de-duplicated.
+ * Each sidebar href -> the label of the sidebar section it sits in, read from
+ * `buildAdminNavSections` itself. A page listed twice keeps its natural
+ * section, which comes after "Needs Attention"; the queue views, listed only
+ * there, keep "Needs Attention". The palette's groups are hubs now, so this is
+ * what still finds a page by the section name an officer learned (S2 #4797).
  */
-function paletteKeywords(page: AdminHubPage): readonly string[] {
-  const words = [
-    ...page.keywords,
-    ...ADMIN_RETIRED_PAGES.filter((retired) => retired.mergedInto === page.id).map(
-      (retired) => retired.label,
-    ),
-  ];
+function sidebarSectionByHref(clubToday: CalendarDate): ReadonlyMap<string, string> {
+  const byHref = new Map<string, string>();
+  for (const section of buildAdminNavSections(clubToday)) {
+    if (!section.label) continue;
+    for (const item of section.items) byHref.set(item.href, section.label);
+  }
+  return byHref;
+}
+
+/** `words` with any repeat (ignoring case) and any empty word dropped. */
+function distinctWords(words: ReadonlyArray<string | undefined>): string[] {
   const seen = new Set<string>();
-  return words.filter((word) => {
+  return words.filter((word): word is string => {
+    if (!word) return false;
     const key = word.toLowerCase();
     if (seen.has(key)) return false;
     seen.add(key);
@@ -641,12 +668,17 @@ function paletteKeywords(page: AdminHubPage): readonly string[] {
 
 /**
  * The admin feature palette's index (#2092), built from the hub registry (S2
- * #4797): every menu destination (`ADMIN_MENU_DESTINATIONS`, so never a detail,
- * print, stub, test or retired page), linked at its `adminHref`, grouped by its
- * hub and carrying its keywords; then the sidebar's pre-filtered queue views
- * (`buildAdminQueueViews`), under the hub of the page they filter. It is no
- * longer the sidebar's list: the sidebar links only some pages, and the palette
- * offers every page this admin may open.
+ * #4797), in three parts, each grouped under a hub:
+ * - every menu destination (`ADMIN_MENU_DESTINATIONS`, so never a detail,
+ *   print, stub, test or retired page), linked at its `adminHref`, matched on
+ *   its registry keywords and its old sidebar section name;
+ * - every retired page (`ADMIN_RETIRED_PAGES`), under its old name, linked at
+ *   the tab or section of the page that now holds it (`retiredAdminPageHref`,
+ *   its redirect's own target) and offered exactly when that page is;
+ * - the sidebar's pre-filtered queue views (`buildAdminQueueViews`), under the
+ *   hub of the page they filter.
+ * The sidebar links only some pages; the palette offers every page this admin
+ * may open.
  *
  * Every entry passes all of these, so the palette fails CLOSED:
  * - a permission matrix was supplied (none yields an EMPTY index; the sidebar's
@@ -672,23 +704,46 @@ export function getAdminFeatureSearchIndex(
     (!page.fullAdminOnly || isFullAdmin === true) &&
     canOpenAdminPathWithMatrix(permissionMatrix, href);
   const hubLabel = (page: AdminHubPage) => HUB_LABEL_BY_KEY.get(page.hub) ?? page.hub;
+  const sidebarSections = sidebarSectionByHref(clubToday);
+  const sidebarSection = (href: string) =>
+    sidebarSections.get(href) ?? sidebarSections.get(canonicalAdminPathname(href));
 
   const pages = ADMIN_MENU_DESTINATIONS.filter(({ page, href }) =>
     offers(href, page),
   ).map(({ page, href }) => ({
     href,
-    label:
-      page.id === "hut-leaders" ? pluralHutLeaderLabel(hutLeaderLabel) : page.label,
+    label: adminPageLabel(page, { hutLeaderLabel }),
     section: hubLabel(page),
-    keywords: paletteKeywords(page),
+    keywords: distinctWords([...page.keywords, sidebarSection(href)]),
   }));
+  const retired = ADMIN_RETIRED_PAGES.flatMap((retiredPage) => {
+    const page = getAdminPage(retiredPage.mergedInto);
+    const href = retiredAdminPageHref(retiredPage);
+    return isAdminMenuDestination(page) && offers(href, page)
+      ? [
+          {
+            href,
+            label: retiredPage.label,
+            section: hubLabel(page),
+            keywords: distinctWords([page.label, sidebarSection(page.oldPath)]),
+          },
+        ]
+      : [];
+  });
   const queueViews = buildAdminQueueViews(clubToday).flatMap((view) => {
     const page = getAdminPage(view.page);
     return offers(view.href, page)
-      ? [{ href: view.href, label: view.label, section: hubLabel(page) }]
+      ? [
+          {
+            href: view.href,
+            label: view.label,
+            section: hubLabel(page),
+            keywords: distinctWords([sidebarSection(view.href)]),
+          },
+        ]
       : [];
   });
-  return [...pages, ...queueViews];
+  return [...pages, ...retired, ...queueViews];
 }
 
 type AdminNavBadgeMap = Record<string, number>;

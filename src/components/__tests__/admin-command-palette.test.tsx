@@ -208,10 +208,32 @@ describe("AdminCommandPalette", () => {
 
     const input = await screen.findByPlaceholderText("Search admin features…");
     fireEvent.change(input, { target: { value: "Chores" } });
-    await waitFor(() => expect(screen.getByRole("option", { name: /^Chores/ })).not.toBeNull());
-    fireEvent.keyDown(input, { key: "Enter" });
+    // Clicked, not Enter: cmdk 1.1.1 never reorders groups by score, so the
+    // first fuzzy match in hub order is the one Enter would open.
+    fireEvent.click(await screen.findByRole("option", { name: /^Chores/ }));
 
     expect(pushMock).toHaveBeenCalledWith("/admin/chores");
+  });
+
+  it("opens a retired page's name on the tab that holds it (S2 #4797)", async () => {
+    renderPalette();
+    pressCtrlK();
+
+    const input = await screen.findByPlaceholderText("Search admin features…");
+    fireEvent.change(input, { target: { value: "Family Suggestions" } });
+    fireEvent.click(await screen.findByRole("option", { name: /^Family Suggestions/ }));
+
+    expect(pushMock).toHaveBeenCalledWith("/admin/family-groups?tab=suggestions");
+  });
+
+  it("still finds pages by their old sidebar section name", async () => {
+    renderPalette();
+    pressCtrlK();
+
+    const input = await screen.findByPlaceholderText("Search admin features…");
+    fireEvent.change(input, { target: { value: "Setup & Configuration" } });
+    await waitFor(() => expect(screen.getByRole("option", { name: /^Modules/ })).not.toBeNull());
+    expect(screen.getByRole("option", { name: /^Access Roles/ })).not.toBeNull();
   });
 
   it("groups Lobby Display under Lodge with no duplicate", async () => {

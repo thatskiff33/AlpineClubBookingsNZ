@@ -14,7 +14,9 @@ import {
 } from "@/lib/admin-permissions";
 import {
   ADMIN_FEATURE_SEARCH_GROUP_ORDER,
+  adminPageLabel,
   getAdminFeatureSearchIndex,
+  getVisibleAdminNavSections,
   type AdminFeatureSearchEntry,
 } from "@/components/admin-sidebar";
 import {
@@ -23,8 +25,13 @@ import {
   ADMIN_PAGES,
   ADMIN_RETIRED_PAGES,
   adminHref,
+  buildAdminUrlRules,
   canonicalAdminPathname,
+  getAdminPage,
+  retiredAdminPageHref,
 } from "@/lib/admin-hubs";
+import { ADMIN_HUBS_LIVE } from "@/lib/admin-hubs/release";
+import type { AdminHubPage } from "@/lib/admin-hubs/define";
 import { requireCalendarDate } from "@/lib/club-time";
 import {
   buildUnpaidFinishedStaysHref,
@@ -97,11 +104,18 @@ function hrefs(index: readonly AdminFeatureSearchEntry[]): Set<string> {
   return new Set(index.map((entry) => entry.href));
 }
 
-/** The index's PAGES, as old paths: the queue views (deep links) left out. */
+/** A retired page's palette entry: its old name, at its redirect's target. */
+function isRetiredEntry(entry: AdminFeatureSearchEntry): boolean {
+  return ADMIN_RETIRED_PAGES.some(
+    (retired) => retired.label === entry.label && retiredAdminPageHref(retired) === entry.href,
+  );
+}
+
+/** The index's PAGES, as old paths: the queue views and retired names left out. */
 function indexedPagePaths(index: readonly AdminFeatureSearchEntry[]): Set<string> {
   return new Set(
     index
-      .filter((entry) => !QUEUE_VIEW_HREFS.has(entry.href))
+      .filter((entry) => !QUEUE_VIEW_HREFS.has(entry.href) && !isRetiredEntry(entry))
       .map((entry) => canonicalAdminPathname(entry.href)),
   );
 }
@@ -222,8 +236,12 @@ describe("getAdminFeatureSearchIndex — every admin page, from disk", () => {
 
   it("indexes each page once, at its adminHref, under its hub", () => {
     const index = fullAdminIndex();
-    const all = index.map((entry) => entry.href);
-    expect(new Set(all).size).toBe(all.length);
+    const pageHrefs = index
+      .filter((entry) => !isRetiredEntry(entry))
+      .map((entry) => entry.href);
+    expect(new Set(pageHrefs).size).toBe(pageHrefs.length);
+    const keys = index.map((entry) => `${entry.href} ${entry.label}`);
+    expect(new Set(keys).size).toBe(keys.length);
     const hubLabel = new Map<string, string>(ADMIN_HUBS.map((hub) => [hub.key, hub.label]));
     for (const { page, href } of ADMIN_MENU_DESTINATIONS) {
       const entry = index.find((candidate) => candidate.href === href);
@@ -291,22 +309,125 @@ describe("getAdminFeatureSearchIndex — keywords", () => {
     );
   });
 
-  it("keeps S1's Family Suggestions keyword on Family Groups, once", () => {
+  it("does not repeat a retired page's name as its destination's keyword", () => {
     const words = keywordsOf(adminHref("family-groups")).map((word) => word.toLowerCase());
-    expect(words).toContain("family suggestions");
-    expect(words.filter((word) => word === "family suggestions")).toHaveLength(1);
+    expect(words).not.toContain("family suggestions");
+    expect(words).toContain("suggested families");
   });
 
-  it("finds a merged page by its retired name", () => {
-    for (const retired of ADMIN_RETIRED_PAGES) {
-      const destination = ADMIN_MENU_DESTINATIONS.find(
-        ({ page }) => page.id === retired.mergedInto,
-      );
-      expect(
-        keywordsOf(destination!.href).map((word) => word.toLowerCase()),
-        retired.oldPath,
-      ).toContain(retired.label.toLowerCase());
+  /*
+    The palette's groups are hubs since S2, so the sidebar section names an
+    officer learned ("Lodge Operations", "Setup & Configuration") ride on each
+    page as a keyword, read from the sidebar itself.
+  */
+  it("finds a page by its old sidebar section name", () => {
+    expect(keywordsOf(adminHref("roster"))).toContain("Lodge Operations");
+    expect(keywordsOf(adminHref("modules"))).toContain("Setup & Configuration");
+    expect(keywordsOf(adminHref("bed-allocation"))).toContain("Bookings & Beds");
+    expect(keywordsOf(adminHref("promo-codes"))).toContain("Rates & Policies");
+    expect(keywordsOf(adminHref("health"))).toContain("Monitoring & Support");
+    // Listed in Needs Attention too, but keeps its natural section.
+    expect(keywordsOf(adminHref("booking-requests"))).toContain("Bookings & Beds");
+    expect(keywordsOf(adminHref("booking-requests"))).not.toContain("Needs Attention");
+    // The queue views sit only in Needs Attention.
+    expect(keywordsOf(buildUnpaidFinishedStaysHref(CLUB_DAY))).toContain("Needs Attention");
+    // A page the sidebar does not link has no section to carry.
+    expect(keywordsOf(adminHref("chores"))).toEqual([]);
+  });
+
+  it("carries every sidebar section name onto the pages it lists", () => {
+    const index = fullAdminIndex();
+    const missing: string[] = [];
+    for (const section of getVisibleAdminNavSections(CLUB_DAY, allOn, fullMatrix, true)) {
+      if (!section.label || section.label === "Needs Attention") continue;
+      for (const item of section.items) {
+        const entry = index.find((candidate) => candidate.href === item.href);
+        if (!entry) missing.push(`${item.href}: not indexed`);
+        else if (!entry.keywords?.includes(section.label)) missing.push(`${item.href}: no "${section.label}"`);
+      }
     }
+    expect(missing).toEqual([]);
+  });
+});
+
+// --- retired pages, by their old names ---------------------------------------
+
+describe("getAdminFeatureSearchIndex — a retired page under its old name", () => {
+  const retiredEntry = (index: readonly AdminFeatureSearchEntry[], label: string) =>
+    index.find((entry) => entry.label === label && isRetiredEntry(entry));
+
+  it("lands on the tab or section that holds it, as its redirect does", () => {
+    const index = fullAdminIndex();
+    const redirects = new Map(
+      buildAdminUrlRules(ADMIN_HUBS_LIVE).redirects.map((rule) => [rule.source, rule.destination]),
+    );
+    expect(ADMIN_RETIRED_PAGES.length).toBe(5);
+    for (const retired of ADMIN_RETIRED_PAGES) {
+      const entry = retiredEntry(index, retired.label);
+      expect(entry, retired.label).toBeDefined();
+      expect(entry!.href).toBe(redirects.get(retired.oldPath));
+      const destination = getAdminPage(retired.mergedInto);
+      expect(entry!.section).toBe(ADMIN_HUBS.find((hub) => hub.key === destination.hub)!.label);
+    }
+    // Pinned, so a target cannot drift to a default tab unnoticed.
+    expect(retiredEntry(index, "Family Suggestions")?.href).toBe("/admin/family-groups?tab=suggestions");
+    expect(retiredEntry(index, "Membership Cancellation Settings")?.href).toBe(
+      "/admin/membership-cancellations?tab=settings",
+    );
+    expect(retiredEntry(index, "Cancellation Setup")?.href).toBe("/admin/membership-cancellations?tab=settings");
+    expect(retiredEntry(index, "Booking Rules")?.href).toBe("/admin/bookings-setup");
+    expect(retiredEntry(index, "Integrations Readiness")?.href).toBe("/admin/health#integration-readiness");
+  });
+
+  it("is offered exactly when the page that holds it is", () => {
+    const grids = [
+      matrix({ membership: "view" }),
+      matrix({ bookings: "view" }),
+      matrix({ support: "view" }),
+      matrix({ content: "edit" }),
+      fullMatrix,
+      matrix({}),
+    ];
+    for (const grid of grids) {
+      const index = getAdminFeatureSearchIndex(CLUB_DAY, allOn, grid, false);
+      const offered = hrefs(index);
+      for (const retired of ADMIN_RETIRED_PAGES) {
+        const destination = ADMIN_MENU_DESTINATIONS.find(({ page }) => page.id === retired.mergedInto)!;
+        expect(Boolean(retiredEntry(index, retired.label)), `${retired.label} ${JSON.stringify(grid)}`).toBe(
+          offered.has(destination.href),
+        );
+      }
+    }
+    expect(retiredEntry(getAdminFeatureSearchIndex(CLUB_DAY, allOn, matrix({ membership: "view" }), false), "Cancellation Setup")).toBeDefined();
+    expect(retiredEntry(getAdminFeatureSearchIndex(CLUB_DAY, allOn, matrix({ bookings: "view" }), false), "Family Suggestions")).toBeUndefined();
+  });
+});
+
+// --- the hut-leader label, one helper ----------------------------------------
+
+describe("adminPageLabel — one relabel for the sidebar and the palette", () => {
+  it("pluralises the club's term on Hut Leaders only", () => {
+    expect(adminPageLabel(getAdminPage("hut-leaders"), { hutLeaderLabel: "Warden" })).toBe("Wardens");
+    expect(adminPageLabel(getAdminPage("roster"), { hutLeaderLabel: "Warden" })).toBe("Roster");
+  });
+
+  it("is what both surfaces show", () => {
+    const sidebarLabels = getVisibleAdminNavSections(CLUB_DAY, allOn, fullMatrix, true, "Warden")
+      .flatMap((section) => section.items)
+      .filter((item) => item.href === adminHref("hut-leaders"))
+      .map((item) => item.label);
+    expect(sidebarLabels).toEqual(["Wardens", "Wardens"]);
+    expect(
+      getAdminFeatureSearchIndex(CLUB_DAY, allOn, fullMatrix, true, "Warden").find(
+        (entry) => entry.href === adminHref("hut-leaders"),
+      )?.label,
+    ).toBe("Wardens");
+  });
+
+  it("is the only place the sidebar module pluralises the term", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "src/components/admin-sidebar.tsx"), "utf8");
+    expect(source.match(/pluralHutLeaderLabel\(/g)).toHaveLength(1);
+    expect(source).toMatch(/export function adminPageLabel\([\s\S]*?pluralHutLeaderLabel\(/);
   });
 });
 
@@ -361,6 +482,14 @@ describe("getAdminFeatureSearchIndex — it never offers a page that will not op
 
   it("offers exactly the pages each subject may open, under every module setting", () => {
     const pageByHref = new Map(ADMIN_MENU_DESTINATIONS.map(({ page, href }) => [href, page]));
+    /** The page an entry opens: a destination, or the page a retired name was merged into. */
+    const pageOf = (entry: AdminFeatureSearchEntry): AdminHubPage | undefined => {
+      const retired = ADMIN_RETIRED_PAGES.find(
+        (candidate) =>
+          candidate.label === entry.label && retiredAdminPageHref(candidate) === entry.href,
+      );
+      return retired ? getAdminPage(retired.mergedInto) : pageByHref.get(entry.href);
+    };
     const failures: string[] = [];
     for (const subject of SUBJECTS) {
       const permissionMatrix = getAdminPermissionMatrix(subject.input);
@@ -369,8 +498,9 @@ describe("getAdminFeatureSearchIndex — it never offers a page that will not op
         const index = getAdminFeatureSearchIndex(CLUB_DAY, features, permissionMatrix, fullAdmin);
         const offered = hrefs(index);
         const who = `${subject.label}, ${label}`;
-        for (const href of offered) {
-          const page = pageByHref.get(href);
+        for (const entry of index) {
+          const { href } = entry;
+          const page = pageOf(entry);
           if (!canOpenAdminPath(subject.input, href)) failures.push(`${who}: ${href} refused`);
           if (getDisabledFeatureForPath(pathnameOf(href), features) !== null) {
             failures.push(`${who}: ${href} module off`);
@@ -388,6 +518,13 @@ describe("getAdminFeatureSearchIndex — it never offers a page that will not op
             getDisabledFeatureForPath(href, features) === null &&
             (!page.fullAdminOnly || fullAdmin);
           if (opens && !offered.has(href)) failures.push(`${who}: ${href} withheld`);
+          // A retired name is offered exactly when the page holding it is.
+          for (const retired of ADMIN_RETIRED_PAGES.filter((r) => r.mergedInto === page.id)) {
+            const named = index.some(
+              (entry) => entry.label === retired.label && entry.href === retiredAdminPageHref(retired),
+            );
+            if (named !== offered.has(href)) failures.push(`${who}: ${retired.label} ${named ? "offered" : "withheld"} unlike ${page.id}`);
+          }
         }
       }
     }

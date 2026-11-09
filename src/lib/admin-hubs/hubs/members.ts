@@ -58,7 +58,8 @@ export const MEMBERS_HUB = defineHub({
       oldPath: "/admin/family-groups",
       area: "membership",
       tabs: ["groups", "suggestions"],
-      keywords: ["family suggestions", "suggested families"],
+      // "Family Suggestions" is the palette's own entry for the retired page.
+      keywords: ["suggested families"],
       moved: false,
     },
     {

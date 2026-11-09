@@ -435,15 +435,29 @@ function retiredRedirect(
   if (clash) {
     throw new Error(`admin hub rules: retired ${retired.oldPath} is still ${clash.id}'s path`);
   }
+  return {
+    source: retired.oldPath,
+    destination: retiredAdminPageHref(retired, live, pages),
+    permanent: false,
+  };
+}
+
+/**
+ * Where a retired page's content is served under the switch: the page it was
+ * merged into, at its tab and section. Its redirect goes here, and so does the
+ * command palette's entry for its old name (S2 #4797), so the two cannot
+ * disagree. Refuses a destination the registry does not have.
+ */
+export function retiredAdminPageHref(
+  retired: AdminRetiredPage,
+  live: boolean = ADMIN_HUBS_LIVE,
+  pages: readonly AdminHubPage[] = ADMIN_PAGES,
+): string {
   const target = pages.find((page) => page.id === retired.mergedInto);
   if (!target) {
     throw new Error(`admin hub rules: retired ${retired.oldPath} was merged into unknown ${retired.mergedInto}`);
   }
-  return {
-    source: retired.oldPath,
-    destination: withTabAndAnchor(target, resolveAdminHref(target, live), retired.tab, retired.anchor),
-    permanent: false,
-  };
+  return withTabAndAnchor(target, resolveAdminHref(target, live), retired.tab, retired.anchor);
 }
 
 /**
