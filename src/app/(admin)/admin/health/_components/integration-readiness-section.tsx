@@ -60,7 +60,7 @@ export function IntegrationReadinessSection({
     <section
       id={INTEGRATION_READINESS_ANCHOR}
       aria-labelledby={`${INTEGRATION_READINESS_ANCHOR}-heading`}
-      className="space-y-4 px-6 pb-6"
+      className="space-y-4"
     >
       <div>
         <h2

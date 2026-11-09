@@ -157,10 +157,18 @@ const nextConfig: NextConfig = {
    * redirects (307) to its old URL, and the `beforeFiles` rewrite above serves
    * the old URL from the moved file, so the proxy, the module gate and the
    * layout guard still see the old path. Once on, the old URL redirects to the
-   * hub URL and there are no rewrites. No page has moved yet, so both lists are
-   * empty and this config routes exactly as before
-   * (`next-config-admin-hub-urls.test.ts` proves both, through Next's own
-   * pipeline).
+   * hub URL and there are no rewrites. No page has moved yet, so there are no
+   * rewrites and no moved-page redirects.
+   *
+   * The pages S1 (#4796) merged into others (`src/lib/admin-hubs/retired.ts`)
+   * each have a redirect in both states, FIRST in the list so no moved page's
+   * pattern can claim a retired URL: from the retired URL straight to where the
+   * page it was merged into is served, at its tab or section, query kept. They
+   * are 307s for their first release, so a rollback leaves no cached redirect
+   * to a tab the old code lacks, and become 308s one release later. Next runs
+   * these redirects before the proxy, so nothing is served at a retired URL.
+   * `next-config-admin-hub-urls.test.ts` proves both, through Next's own
+   * pipeline.
    *
    * The rewrite is `beforeFiles`, as the epic plan fixes it: it is a moved
    * page's only route at its old path, so it is applied before Next consults the

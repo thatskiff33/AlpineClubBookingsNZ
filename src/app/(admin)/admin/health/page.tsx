@@ -4,8 +4,9 @@ import { AdminHealthDashboard } from "./_components/health-dashboard";
 import { IntegrationReadinessSection } from "./_components/integration-readiness-section";
 
 /**
- * System Health: the live checks, then integration readiness, which was the
- * Operational Integrations page until S1 (#4796) folded it in here.
+ * System Health: integration readiness, which was the Operational Integrations
+ * page until S1 (#4796) folded it in here, under the heading and above the
+ * live checks, so its anchor does not move when they load.
  */
 export default async function AdminHealthPage() {
   const [features, permissionMatrix] = await Promise.all([
@@ -14,12 +15,13 @@ export default async function AdminHealthPage() {
   ]);
 
   return (
-    <div>
-      <AdminHealthDashboard />
-      <IntegrationReadinessSection
-        features={features}
-        permissionMatrix={permissionMatrix}
-      />
-    </div>
+    <AdminHealthDashboard
+      readiness={
+        <IntegrationReadinessSection
+          features={features}
+          permissionMatrix={permissionMatrix}
+        />
+      }
+    />
   );
 }

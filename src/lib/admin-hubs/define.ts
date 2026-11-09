@@ -160,9 +160,9 @@ export function normaliseHubPage(
 
 /**
  * A page that no longer exists because it was merged into another (S1 #4796).
- * Its old URL redirects permanently to the page it was merged into, at the tab
- * or section that now holds its content; `buildAdminUrlRules` generates the
- * rule. A retired page is not a page: it has no file, no hub path and no entry
+ * Its old URL redirects (307 for its first release, permanent one release
+ * later) to the page it was merged into, at the tab or section that now holds
+ * its content; `buildAdminUrlRules` generates the rule. A retired page is not a page: it has no file, no hub path and no entry
  * in the security map, because the redirect runs before the proxy and nothing
  * else is served at its URL.
  */

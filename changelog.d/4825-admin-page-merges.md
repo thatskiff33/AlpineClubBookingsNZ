@@ -5,7 +5,7 @@
   Wizard's Cancellation page as well. The Setup Wizard's **Booking Rules** page
   is part of **Bookings Setup**, and its **Operational Integrations** page is
   the **Integration readiness** section of **System Health**. Each old address
-  redirects permanently to the tab or section that holds its content, keeping
+  redirects to the tab or section that holds its content, keeping
   any query string, so bookmarks and links keep working. No one can open
   anything they could not open before: each tab and section needs the same
   permission its old page did, and the Setup Wizard's cancellation content now

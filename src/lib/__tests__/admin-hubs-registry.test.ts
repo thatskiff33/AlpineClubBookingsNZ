@@ -917,7 +917,7 @@ describe("retired pages", () => {
     const rules = buildAdminUrlRules(true, [payments, zz], [retired]);
     await expect(resolveThrough(rules, "/admin/zz/old")).resolves.toEqual({
       kind: "redirect",
-      status: 308,
+      status: 307,
       url: "/admin/payments",
     });
     await expect(resolveThrough(rules, "/admin/zz/x1")).resolves.toEqual({
@@ -928,7 +928,7 @@ describe("retired pages", () => {
   });
 
   it.each([false, true])(
-    "each redirects once, permanently, to its tab, query kept (live=%s)",
+    "each redirects once, temporarily for now, to its tab, query kept (live=%s)",
     async (live) => {
       await expect(walkRegistry(ADMIN_PAGES, live)).resolves.toEqual([]);
     },
@@ -941,7 +941,7 @@ describe("retired pages", () => {
       const pages = ADMIN_PAGES.map((page) => ({ ...page, moved: targets.has(page.id) }));
       await expect(walkRegistry(pages, live)).resolves.toEqual([]);
       const destinations = buildAdminUrlRules(live, pages)
-        .redirects.filter((rule) => rule.permanent)
+        .redirects.filter((rule) => ADMIN_RETIRED_PAGES.some((retired) => retired.oldPath === rule.source))
         .map((rule) => rule.destination);
       expect(destinations).toContain(
         live ? "/admin/membership/family-groups?tab=suggestions" : "/admin/family-groups?tab=suggestions",
@@ -1110,7 +1110,8 @@ async function walkPage(rules: AdminUrlRules, page: AdminHubPage, live: boolean)
 }
 
 /**
- * Walks one retired page's URL through the rules: one permanent redirect,
+ * Walks one retired page's URL through the rules: one redirect (a 307 until
+ * the release after S1, see `AdminUrlRedirect`),
  * straight to where its destination is SERVED in this state (the old path,
  * rewritten to the moved file, while off; the hub path once on), at its tab
  * and section, the request's query kept and its `tab` overridden; and the
@@ -1132,7 +1133,7 @@ async function walkRetired(
   const query = new URLSearchParams(QUERY);
   if (retired.tab !== undefined) query.set("tab", retired.tab);
   const expected = {
-    status: 308,
+    status: 307,
     url: canonicalUrl(`${served}?${query}`),
     hash: retired.anchor === undefined ? "" : `#${retired.anchor}`,
   };
@@ -1185,27 +1186,27 @@ describe("buildAdminUrlRules", () => {
         {
           source: "/admin/family-suggestions",
           destination: "/admin/family-groups?tab=suggestions",
-          permanent: true,
+          permanent: false,
         },
         {
           source: "/admin/membership-cancellation",
           destination: "/admin/membership-cancellations?tab=settings",
-          permanent: true,
+          permanent: false,
         },
         {
           source: "/admin/setup/cancellation",
           destination: "/admin/membership-cancellations?tab=settings",
-          permanent: true,
+          permanent: false,
         },
         {
           source: "/admin/setup/booking-rules",
           destination: "/admin/bookings-setup",
-          permanent: true,
+          permanent: false,
         },
         {
           source: "/admin/setup/integrations",
           destination: "/admin/health#integration-readiness",
-          permanent: true,
+          permanent: false,
         },
       ],
       rewrites: { beforeFiles: [] },

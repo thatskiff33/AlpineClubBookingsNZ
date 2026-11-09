@@ -87,7 +87,7 @@ describe("next.config.ts today: no page has moved", () => {
   it("has only the retired pages' redirects, no beforeFiles rewrites, and keeps the asset rewrites as they were", async () => {
     const config = await loadConfig();
     expect((await config.redirects()).map(({ source, permanent }) => ({ source, permanent }))).toEqual(
-      ADMIN_RETIRED_PAGES.map(({ oldPath }) => ({ source: oldPath, permanent: true })),
+      ADMIN_RETIRED_PAGES.map(({ oldPath }) => ({ source: oldPath, permanent: false })),
     );
     const rewrites = await config.rewrites();
     expect(rewrites).toEqual({
@@ -124,9 +124,12 @@ describe("next.config.ts today: no page has moved", () => {
     ],
     ["/admin/setup/booking-rules?x=1", "https://example.org/admin/bookings-setup?x=1"],
     ["/admin/setup/integrations", "https://example.org/admin/health#integration-readiness"],
-  ])("redirects %s permanently to %s", async (url, expected) => {
+  ])("redirects %s to %s, a 307 until its release is out", async (url, expected) => {
+    // Not yet permanent: a browser caches a 308 with no expiry, so a rollback
+    // would leave old links bouncing to tabs the old code does not have. The
+    // retired redirects become 308s one release later.
     const { status, location: actual } = await location(await loadConfig(), url);
-    expect(status).toBe(308);
+    expect(status).toBe(307);
     const parse = (href: string) => {
       const parsed = new URL(href, "https://example.org");
       return {
@@ -229,8 +232,9 @@ describe("next.config.ts over a moved Finance hub", () => {
 
   it("PREMISE: the moved state really does produce rules, so the state above is not vacuous", async () => {
     const off = await loadConfig({ live: false, movedHub: "finance" });
-    // The moved pages' own redirects, beside the retired pages' permanent ones.
-    expect((await off.redirects()).filter((rule) => !rule.permanent).length).toBeGreaterThan(0);
+    // The moved pages' own redirects, beside the retired pages'.
+    const retired = new Set<string>(ADMIN_RETIRED_PAGES.map(({ oldPath }) => oldPath));
+    expect((await off.redirects()).filter((rule) => !retired.has(rule.source)).length).toBeGreaterThan(0);
     const rewrites = (await off.rewrites()) as { beforeFiles: unknown[] };
     expect(rewrites.beforeFiles.length).toBeGreaterThan(0);
   });

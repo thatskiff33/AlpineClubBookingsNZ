@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -19,8 +20,13 @@ import { Button } from "@/components/ui/button";
 import { useHealthData } from "./use-health-data";
 import type { HealthCheck } from "./types";
 
-/** The live health checks: everything on System Health above its readiness section. */
-export function AdminHealthDashboard() {
+/**
+ * System Health's live checks. `readiness` (the Integration readiness section,
+ * S1 #4796) renders directly under the heading in every state, ABOVE the
+ * checks that load after mount, so `#integration-readiness` lands where the
+ * browser first scrolled it and the loaded data does not push it away.
+ */
+export function AdminHealthDashboard({ readiness }: { readiness?: ReactNode } = {}) {
   // `lastRefresh` is a real INSTANT — the moment the health payload was
   // fetched — so it is shown in the club's persisted zone, not the viewer's
   // (CT-4, #2870; INV-CONFIG-002).
@@ -36,6 +42,7 @@ export function AdminHealthDashboard() {
     return (
       <div className="p-6">
         <h1 className="text-2xl font-bold text-foreground mb-6">System Health</h1>
+        {readiness ? <div className="mb-6">{readiness}</div> : null}
         <div className="animate-pulse space-y-4">
           {[1, 2, 3].map((i) => (
             <div key={i} className="h-32 bg-muted rounded-lg" />
@@ -49,6 +56,7 @@ export function AdminHealthDashboard() {
     return (
       <div className="p-6">
         <h1 className="text-2xl font-bold text-foreground mb-6">System Health</h1>
+        {readiness ? <div className="mb-6">{readiness}</div> : null}
         <div className="bg-danger-3 border border-danger-6 rounded-lg p-4 text-danger-11">
           Failed to load health data: {error}
         </div>
@@ -56,7 +64,7 @@ export function AdminHealthDashboard() {
     );
   }
 
-  if (!data) return null;
+  if (!data) return readiness ? <div className="p-6">{readiness}</div> : null;
 
   const { health, webhookStats, recentWebhooks, systemInfo } = data;
   const checkEntries = Object.entries(health.checks) as [string, HealthCheck][];
@@ -90,6 +98,8 @@ export function AdminHealthDashboard() {
           </Button>
         </div>
       </div>
+
+      {readiness}
 
       {/* Overall Status */}
       <div className="bg-card border rounded-lg p-4 flex items-center gap-4">

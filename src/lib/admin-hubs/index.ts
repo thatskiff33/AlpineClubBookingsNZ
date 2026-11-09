@@ -13,7 +13,7 @@
  * and, since C3 (#4800), by `next.config.ts` (the redirects and rewrites), the
  * sidebar's active link (`activeAdminHref`) and `revalidateAdminPage`; each of
  * those answers exactly as before until a page's `moved` is set, apart from
- * the retired pages' permanent redirects.
+ * the retired pages' redirects.
  * `src/lib/__tests__/admin-hubs-registry.test.ts` names every importer.
  * Relative imports only (see `release.ts`).
  */
@@ -318,13 +318,15 @@ export function activeAdminHref(
 }
 
 /**
- * A redirect in the shape `next.config.ts` hands to Next: a 307 for a moved
- * page (the switch flips it), a 308 for a retired one.
+ * A redirect in the shape `next.config.ts` hands to Next. A 307 for now, a
+ * retired page's included: a 308 is cached by the browser with no expiry, so
+ * a rollback would leave old links bouncing to tabs the old code lacks. The
+ * retired redirects become 308s one release after S1 (#4796) ships.
  */
 export interface AdminUrlRedirect {
   readonly source: string;
   readonly destination: string;
-  readonly permanent: boolean;
+  readonly permanent: false;
 }
 
 export interface AdminUrlRewrite {
@@ -392,7 +394,8 @@ function assertNoCapturedSibling(pages: readonly AdminHubPage[]): void {
 }
 
 /**
- * A retired page's permanent redirect to the URL its content is served at
+ * A retired page's redirect (a 307 for its first release, then permanent;
+ * see `AdminUrlRedirect`) to the URL its content is served at
  * under the switch: the page it was merged into, at its tab and section. Next
  * merges the request's query into the destination's, the destination's `tab`
  * winning. Refuses a retired path that is dynamic or that any registered page
@@ -421,13 +424,13 @@ function retiredRedirect(
   return {
     source: retired.oldPath,
     destination: withTabAndAnchor(target, resolveAdminHref(target, live), retired.tab, retired.anchor),
-    permanent: true,
+    permanent: false,
   };
 }
 
 /**
- * The redirects and rewrites for the MOVED pages, after the permanent
- * redirects of the RETIRED ones (S1 #4796). An unmoved page has none. A
+ * The redirects and rewrites for the MOVED pages, after the redirects of the
+ * RETIRED ones (S1 #4796). An unmoved page has none. A
  * registry in which a moved dynamic page would capture an unmoved static
  * sibling, or the reverse, is refused.
  *

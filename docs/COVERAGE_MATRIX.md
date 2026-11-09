@@ -196,7 +196,8 @@ page, matching the batch-1 pattern:
   controls by its historical area. The column says `finance` because that is the
   half most readers arrive from; neither single word is the rule.
 - **Five pages were merged into others (S1 #4796)**, as the owner approved on
-  #4468, and their old URLs redirect permanently (`src/lib/admin-hubs/retired.ts`):
+  #4468, and their old URLs redirect (`src/lib/admin-hubs/retired.ts`; a 307 for the
+  first release, made permanent one release later):
   `family-suggestions` is the Suggestions tab of `family-groups`;
   `membership-cancellation` (the cancellation settings) and `setup/cancellation`
   are the Settings tab of `membership-cancellations`; `setup/booking-rules` is

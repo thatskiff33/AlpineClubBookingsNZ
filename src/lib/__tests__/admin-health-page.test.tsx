@@ -135,6 +135,24 @@ describe("AdminHealthPage", () => {
     ).toBeNull();
   });
 
+  it("renders the readiness section above the checks while loading and once loaded (S1 #4796)", async () => {
+    // `#integration-readiness` is scrolled to on first paint; the checks load
+    // after mount, so the section must already sit above where they appear.
+    let resolveFetch: (value: unknown) => void = () => {};
+    fetchMock.mockReturnValue(new Promise((resolve) => (resolveFetch = resolve)));
+    render(<AdminHealthPage readiness={<section id="integration-readiness">Readiness</section>} />);
+
+    const heading = screen.getByRole("heading", { level: 1, name: "System Health" });
+    const loading = document.getElementById("integration-readiness")!;
+    expect(loading).not.toBeNull();
+    expect(heading.compareDocumentPosition(loading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    resolveFetch({ ok: true, json: async () => healthResponse() });
+    const status = await screen.findByText("System is healthy");
+    const loaded = document.getElementById("integration-readiness")!;
+    expect(loaded.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("renders cron schedule, threshold, and local finance sync timing", async () => {
     // Cron job rendering moved to the Background Jobs page when the System
     // Health page was split into per-section routes.
