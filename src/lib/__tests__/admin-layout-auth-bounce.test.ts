@@ -58,7 +58,7 @@ vi.mock("@/components/app-providers", () => ({
 }));
 vi.mock("@/components/admin-sidebar", () => ({
   AdminSidebar: () => null,
-  ADMIN_NAV_SECTION_ORDER: [],
+  ADMIN_FEATURE_SEARCH_GROUP_ORDER: [],
   getAdminFeatureSearchIndex: () => [],
 }));
 vi.mock("@/components/help-widget/help-widget-context", () => ({

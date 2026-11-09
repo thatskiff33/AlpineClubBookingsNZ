@@ -116,7 +116,7 @@ vi.mock("@/components/website-footer", () => ({
 
 vi.mock("@/components/admin-sidebar", () => ({
   AdminSidebar: () => <aside>Admin sidebar</aside>,
-  ADMIN_NAV_SECTION_ORDER: [],
+  ADMIN_FEATURE_SEARCH_GROUP_ORDER: [],
   getAdminFeatureSearchIndex: () => [],
 }));
 

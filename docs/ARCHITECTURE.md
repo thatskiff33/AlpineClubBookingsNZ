@@ -2456,27 +2456,38 @@ default; a per-section collapse preference persists in localStorage.
 The admin command palette (#2092, `src/components/admin-command-palette.tsx`)
 opens on Ctrl/Cmd-K or the sidebar header "Search…" button (wired through a
 window event in `src/lib/admin-command-palette-events.ts`) and lets admins jump
-to any page they can access. Its index is derived at runtime by
-`getAdminFeatureSearchIndex`, which **reuses** `getVisibleAdminNavSections` and
-de-duplicates by href — so the palette applies exactly the sidebar's four
-visibility rules (module flag, `fullAdminOnly`, `orAccess`, permission matrix)
-plus the hut-leader relabel, and can never surface an href the admin is not
-permitted to open. The index is a deliberate **superset** of what the sidebar
-renders at any given moment, not a mirror of it: the two queue-driven "Needs
-Attention" deep links (Unpaid Finished Stays / Unpaid Stay Additions) stay
-searchable as always-accessible, pre-filtered views even when their queue is
-empty, whereas the sidebar reveals them only while their queue is non-empty. As
-defence in depth, `getAdminFeatureSearchIndex` fails **closed** — a missing
-permission matrix yields an empty index — even though `getVisibleAdminNavSections`
-keeps its pre-existing fail-open contract. There is no second registry to drift:
-`buildAdminNavSections` remains the single source of truth, optionally enriched
-with a per-entry `keywords` field that only widens palette matching.
+to any page they can access. Since S2 (#4797) `getAdminFeatureSearchIndex`
+builds its index from the **hub registry**, not the sidebar: every
+`ADMIN_MENU_DESTINATIONS` page (a registry `kind: "page"`, so never a detail,
+print, stub, test or retired page), at its `adminHref`, grouped by its hub,
+matched on its registry `keywords` and on the sidebar section it sits in (read
+from `buildAdminNavSections`, so "Lodge Operations" still finds the Roster);
+then each retired page under its old name, at `retiredAdminPageHref` (its
+redirect's own target, so the tab or section that now holds it) and offered
+exactly when the page it was merged into is; then the two pre-filtered queue
+views (Unpaid Finished Stays / Unpaid Stay Additions) from
+`buildAdminQueueViews`, which the sidebar's "Needs Attention" section also
+renders, under the Bookings hub. Both surfaces label a page through one
+helper, `adminPageLabel`, which carries the club's hut-leader term. It therefore offers pages the
+sidebar does not link, such as the lodge-scoped Chores, Lockers, Seasons and
+Rooms & Beds, which pick their own lodge when opened without `?lodgeId=`. It
+fails **closed**: a missing permission matrix yields an empty index (the
+sidebar's `getVisibleAdminNavSections` keeps its fail-open contract), and each
+entry must pass `isFeatureHrefVisible`, the `fullAdminOnly` gate and
+`canOpenAdminPathWithMatrix`, the layout guard's own admission rule, so the OR
+admissions and any-admin pages answer as the page will.
+`admin-feature-search-index.test.ts` proves both halves: a census from the page
+tree on disk, and a property test over every sweep grid and seeded role under
+every module setting. The palette ranks its own matches (`shouldFilter={false}`,
+cmdk's `defaultFilter` score, groups ordered by their best item), because cmdk
+1.1.1 never re-sorts groups and Enter would otherwise open the first match in
+hub order rather than the best one.
 
 **One nav href carries a date, and both surfaces take it from the same place
 (#3123).** The Unpaid Finished Stays entry is a deep link whose `checkOutTo`
-cut-off is the club's own day, so `buildAdminNavSections`, and therefore all three
-of `getVisibleAdminNavSections`, `getAdminFeatureSearchIndex` and
-`getRenderedAdminNavSections`, take that day as a **required first argument**. Both
+cut-off is the club's own day, so `buildAdminQueueViews`, `buildAdminNavSections`,
+and therefore all three of `getVisibleAdminNavSections`, `getAdminFeatureSearchIndex`
+and `getRenderedAdminNavSections`, take that day as a **required first argument**. Both
 the sidebar and the palette obtain it from `useClubTime()` — the same bound kernel
 from the same `ClubTimeProvider` (`INV-CONFIG-002`) — and recompute it per render.
 It was previously a module-level constant read from the container's environment
@@ -2582,8 +2593,9 @@ all while `getFirstAccessibleAdminHref` sent that same role to `/admin/payments`
 shipped preset the lodge names it needs to label a payment. Entering the shell
 now buys nothing: `guardAdminLayout` still requires the **requested path's** own
 area, every `/api/admin` route still clears `requireAdmin` against its own area
-and level, and the sidebar and command palette still filter item by item through
-`canViewAdminHrefWithMatrix`. That function answers an `ANY_ADMIN_ADMISSION_PATHS`
+and level, and the sidebar still filters item by item through
+`canViewAdminHrefWithMatrix` (the command palette through `canOpenAdminPathWithMatrix`
+since #4797). That function answers an `ANY_ADMIN_ADMISSION_PATHS`
 entry with the same any-one-area rule `canOpenAdminPath` applies to the page, so
 a link and the page it opens cannot disagree (#3596); the fee console's OR rule
 still reaches the sidebar through its own `orAccess` flag. A finance-only administrator reaches the shell and
