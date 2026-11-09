@@ -162,7 +162,11 @@ function createParticipantPauseClient(
           target.$transaction(async (tx) => {
             const txProxy = new Proxy(tx, {
               get(txTarget, txProperty) {
-                if (txProperty === "$executeRaw") {
+                // #4855: the participant lock reads back the rows it took, so it is a
+                // `$queryRaw`; the other Member locks this client may pause on are
+                // `$executeRaw`. Both are watched, and the first match is the pause.
+                if (txProperty === "$executeRaw" || txProperty === "$queryRaw") {
+                  const method = txProperty;
                   return async (query: unknown, ...values: unknown[]) => {
                     const statement = rawStatement(query);
                     const isParticipantLock =
@@ -175,10 +179,10 @@ function createParticipantPauseClient(
                       await pause.release.promise;
                     }
                     const result = (await Reflect.apply(
-                      txTarget.$executeRaw,
+                      txTarget[method] as (...args: unknown[]) => unknown,
                       txTarget,
                       [query, ...values],
-                    )) as number;
+                    )) as unknown;
                     if (isParticipantLock && pause.position === "after") {
                       consumed = true;
                       pause.reached.resolve();
@@ -2823,8 +2827,7 @@ let deletionApprovalWasReleased: (typeof import("@/lib/deletion-request-decision
         code: "merge_drift_in_transaction",
         details: {
           driftFields: ["BookingGuest.member"],
-          bookingGuestIds: [IDS.mergeGuestBeforeLock],
-          bookingIds: [IDS.mergeBooking],
+          residualRowIds: { "BookingGuest.member": [IDS.mergeGuestBeforeLock] },
         },
       });
 
