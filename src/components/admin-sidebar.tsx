@@ -495,11 +495,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         label: "Membership & Members",
         icon: BadgeCheck,
       },
-      {
-        href: adminHref("appearance"),
-        label: "Site Appearance & Content",
-        icon: Palette,
-      },
+      { href: adminHref("appearance"), label: "Site Appearance & Content", icon: Palette },
       {
         href: "/admin/bookings-setup",
         label: "Bookings Setup",
