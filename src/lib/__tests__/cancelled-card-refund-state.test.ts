@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PaymentRecoveryOperationStatus } from "@prisma/client";
 
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
+import { buildOrganiserChildCancellationRefundKey } from "@/lib/payment-recovery-keys";
 
 /**
  * #4125: where a card cancel's refund stands when no REFUNDED event says it was
@@ -210,48 +211,100 @@ describe("readCardShortfallTaskStatuses reads a dead card part as stalled (#4125
   });
 });
 
-// #4516 (round-2 review B): a part "Paid another way" close of the cancel's card refund whose rest stays owed on a
-// row of its own (`card_refund_still_owed_<record>`) leaves the card part stalled, never "nothing left owed".
-describe("a cancel's card refund closed in part, its rest still owed (#4516 round-2 review B)", () => {
+// #4516 (round-2 review B, round-3 review 1): a part "Paid another way" close of the cancel's card refund whose rest
+// stays owed on a row of its own (`card_refund_still_owed_<record>`). The cancel reads as closed "Paid another way",
+// its rest said beside the close (`stillOwed`) - never "nothing left owed", and never the whole as still owed - and
+// once a later close pays the rest, what that close paid back and left unpaid is the close's too.
+describe("a cancel's card refund closed in part, its rest still owed (#4516 round-3 review 1)", () => {
   const CANCEL_KEY = "booking_cancel_refund_recovery_booking-1";
-  const closed = row({ id: "op-cancel", idempotencyKey: CANCEL_KEY, status: PaymentRecoveryOperationStatus.SUCCEEDED, nextRetryAt: null });
-  const rest = (overrides: Partial<Row> = {}) => row({ id: "op-rest", idempotencyKey: "card_refund_still_owed_close-1", attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS, nextRetryAt: null, ...overrides });
+  const DEBT_KEY = buildOrganiserChildCancellationRefundKey("settlement-1", "booking-1");
+  type Close = { id: string; closes: string; amountCents: number; raisedAmountCents: number };
+  type Owed = Row & { amountCents: number };
+  const closedRow = (id: string, idempotencyKey: string, amountCents: number): Owed =>
+    ({ ...row({ id, idempotencyKey, status: PaymentRecoveryOperationStatus.SUCCEEDED, nextRetryAt: null }), amountCents });
+  /** A rest still owed: born dead, keyed by the close that left it. */
+  const rest = (id: string, closeId: string, amountCents: number, overrides: Partial<Row> = {}): Owed =>
+    ({ ...row({ id, idempotencyKey: `card_refund_still_owed_${closeId}`, attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS, nextRetryAt: null, ...overrides }), amountCents });
+  const restPaid = (id: string, closeId: string, amountCents: number) => rest(id, closeId, amountCents, { status: PaymentRecoveryOperationStatus.SUCCEEDED });
+
+  /** The rows and the records closing them, as the store reads them. */
+  function given(rows: Owed[], closes: Close[]) {
+    db.findMany.mockImplementation(async ({ where }: { where: { OR?: unknown; idempotencyKey?: unknown } }) => {
+      if (where.OR) return rows.filter((each) => each.idempotencyKey === CANCEL_KEY);
+      return JSON.stringify(where.idempotencyKey ?? "").includes("still_owed") ? rows.filter((each) => each.idempotencyKey.startsWith("card_refund_still_owed_")) : [];
+    });
+    db.findUnique.mockImplementation(async ({ where }: { where: { id?: string; idempotencyKey?: string } }) =>
+      rows.find((each) => each.id === where.id || each.idempotencyKey === where.idempotencyKey) ?? null);
+    db.findClose.mockImplementation(async ({ where }: { where: { occurrenceKey: { in: string[] } } }) => {
+      const close = closes.find((each) => where.occurrenceKey.in.some((key) => key.split(":")[1] === each.closes));
+      return close ? { amountCents: close.amountCents, raisedAmountCents: close.raisedAmountCents } : null;
+    });
+    db.findRecord.mockImplementation(async ({ where }: { where: { id: string } }) => {
+      const close = closes.find((each) => each.id === where.id);
+      return close ? { kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: `card-refund-paid-another-way:${close.closes}` } : null;
+    });
+  }
+  // $300.00 died; the treasurer paid $100.00 by bank and left $200.00 still owed.
+  const cancel = closedRow("op-cancel", CANCEL_KEY, 30_000);
+  const firstClose: Close = { id: "close-1", closes: "op-cancel", amountCents: 10_000, raisedAmountCents: 10_000 };
+
   beforeEach(() => {
     vi.clearAllMocks();
-    // The cancel's row was closed as paid another way, in part.
-    db.findClose.mockImplementation(async ({ where }: { where: { occurrenceKey: { in: string[] } } }) =>
-      where.occurrenceKey.in.some((key) => key.includes("op-cancel")) ? { amountCents: 3_000, raisedAmountCents: 3_000 } : null);
-    // The rest's record names the cancel's row it closed.
-    db.findRecord.mockResolvedValue({ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "card-refund-paid-another-way:op-cancel" });
-    db.findUnique.mockImplementation(async ({ where }: { where: { id?: string; idempotencyKey?: string } }) =>
-      where.id === "op-cancel" || where.idempotencyKey === CANCEL_KEY ? closed : null);
     db.payments.mockResolvedValue([]);
     db.tasks.mockResolvedValue([{ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "cancel-card-shortfall:booking-1", status: "OPEN" }]);
   });
 
-  it("MUTATION: the booking page's narrative reads the card refund stalled while the rest is owed, and paid another way once it is closed", async () => {
-    const rows = (rests: Row[]) => db.findMany.mockImplementation(async ({ where }: { where: { OR?: unknown; idempotencyKey?: unknown } }) =>
-      where.OR ? [closed] : JSON.stringify(where.idempotencyKey ?? "").includes("still_owed") ? rests : []);
-    rows([rest()]);
-    expect(await readCancelledCardRefund("booking-1")).toEqual({ cardRefundState: "stalled" });
+  it("MUTATION: while the rest is owed, the cancel reads paid another way with the rest beside the close", async () => {
+    given([cancel, rest("op-rest", "close-1", 20_000)], [firstClose]);
+    expect(await readCancelledCardRefund("booking-1")).toEqual({
+      cardRefundState: "paid-another-way",
+      cardRefundClose: { paidBackCents: 10_000, unpaidCents: 0, madeCents: 0, stillOwed: { amountCents: 20_000, state: "stalled" } },
+    });
     expect(db.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { bookingId: "booking-1", idempotencyKey: { startsWith: "card_refund_still_owed_" } },
     }));
-    rows([rest({ status: PaymentRecoveryOperationStatus.SUCCEEDED })]);
-    expect(await readCancelledCardRefundState("booking-1")).toBe("paid-another-way");
   });
 
-  it("MUTATION: the shortfall's card part reads stalled while the rest is owed", async () => {
-    db.findMany.mockResolvedValue([rest()]);
-    expect(await readCardShortfallTaskStatuses("booking-1")).toEqual({ bank: "OPEN", card: "stalled" });
+  it("MUTATION: once a later close pays the rest, what it paid back - and any it left unpaid - is the close's too", async () => {
+    given([cancel, restPaid("op-rest", "close-1", 20_000)], [firstClose, { id: "close-2", closes: "op-rest", amountCents: 20_000, raisedAmountCents: 20_000 }]);
+    expect(await readCancelledCardRefund("booking-1")).toEqual({
+      cardRefundState: "paid-another-way",
+      cardRefundClose: { paidBackCents: 30_000, unpaidCents: 0, madeCents: 0 },
+    });
+    // Paid back in part, the club keeping the rest of it.
+    given([cancel, restPaid("op-rest", "close-1", 20_000)], [firstClose, { id: "close-2", closes: "op-rest", amountCents: 15_000, raisedAmountCents: 20_000 }]);
+    expect((await readCancelledCardRefund("booking-1")).cardRefundClose).toEqual({ paidBackCents: 25_000, unpaidCents: 5_000, madeCents: 0 });
+  });
+
+  it("a rest closed in part again, its own rest still owed, is followed back to the cancel", async () => {
+    given(
+      [cancel, restPaid("op-rest", "close-1", 20_000), rest("op-rest-again", "close-2", 15_000)],
+      [firstClose, { id: "close-2", closes: "op-rest", amountCents: 5_000, raisedAmountCents: 5_000 }],
+    );
+    expect((await readCancelledCardRefund("booking-1")).cardRefundClose).toEqual({
+      paidBackCents: 15_000, unpaidCents: 0, madeCents: 0, stillOwed: { amountCents: 15_000, state: "stalled" },
+    });
+  });
+
+  it("MUTATION: the shortfall's card part reads paid another way, so the narrative says both parts from the close", async () => {
+    given([cancel, rest("op-rest", "close-1", 20_000)], [firstClose]);
+    expect(await readCardShortfallTaskStatuses("booking-1")).toEqual({ bank: "OPEN", card: "paid-another-way" });
   });
 
   it("a rest whose origin is another door's row is not the cancel's", async () => {
-    db.findRecord.mockResolvedValue({ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "card-refund-paid-another-way:op-appeal" });
-    db.findUnique.mockImplementation(async ({ where }: { where: { id?: string; idempotencyKey?: string } }) =>
-      where.id === "op-appeal" ? row({ id: "op-appeal", idempotencyKey: "refund_request_refund_req-1" }) : where.idempotencyKey === CANCEL_KEY ? closed : null);
-    db.findMany.mockResolvedValue([rest()]);
-    expect(await readCardShortfallTaskStatuses("booking-1")).toEqual({ bank: "OPEN", card: "paid-another-way" });
+    const appeal = closedRow("op-appeal", "refund_request_refund_req-1", 30_000);
+    given([cancel, appeal, rest("op-rest", "close-appeal", 20_000)], [firstClose, { id: "close-appeal", closes: "op-appeal", amountCents: 10_000, raisedAmountCents: 10_000 }]);
+    expect((await readCancelledCardRefund("booking-1")).cardRefundClose).toEqual({ paidBackCents: 10_000, unpaidCents: 0, madeCents: 0 });
+  });
+
+  it("MUTATION: an organiser-card child's debt closed in part says its rest still owed the same way", async () => {
+    const debt = closedRow("op-debt", DEBT_KEY, 30_000);
+    given([debt, rest("op-rest", "close-debt", 20_000)], [{ id: "close-debt", closes: "op-debt", amountCents: 10_000, raisedAmountCents: 10_000 }]);
+    expect(await readOrganiserChildCancelledCardRefund("booking-1", "settlement-1")).toEqual({
+      cardRefundState: "paid-another-way",
+      cardRefundClose: { paidBackCents: 10_000, unpaidCents: 0, madeCents: 0, stillOwed: { amountCents: 20_000, state: "stalled" } },
+      amountCents: 30_000,
+    });
   });
 });
 

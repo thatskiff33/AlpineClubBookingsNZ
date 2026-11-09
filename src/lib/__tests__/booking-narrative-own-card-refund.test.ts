@@ -278,3 +278,44 @@ describe("#4145: a member's card cancel is settled by its own card refund event"
     expect(narrate([legacy, event(BookingEventType.REFUNDED, "2026-05-06T00:00:00.000Z", { amountCents: 9000 })])).toContain("$90.00 was refunded on 6 May 2026");
   });
 });
+
+// #4516 (round-3 review 1, `INV-PAY-122`): a close that paid back part of the card refund and left the rest still owed
+// to the member (on a row of its own, read beside the close as `stillOwed`). The page says both parts - what was paid
+// back, and the rest where it stands - never the whole as still owed, and never the rest as gone; once a later close
+// pays the rest, what it paid back (and any it left the club to close) is said with the first.
+describe("#4516: a card refund paid back in part, the rest still owed", () => {
+  const owing = (paidBackCents: number, owedCents: number, extra: { unpaid?: number; made?: number } = {}): PaidAnotherWayClose =>
+    ({ ...closed(paidBackCents, extra), stillOwed: { amountCents: owedCents, state: "stalled" } });
+  const FOLLOW_UP = "; the club will be in touch about the card refund";
+
+  it("MUTATION: while the rest is owed, the page says what was paid back and that the rest is still being refunded", () => {
+    expect(narrate([cancelled()], "paid-another-way", {}, owing(3000, 6000))).toBe(
+      `${LEAD}$30.00 could not go back to your card and was paid back to you another way, $60.00 is being refunded to you and $30.00 was retained${FOLLOW_UP}${END}`,
+    );
+  });
+
+  it("MUTATION: once a later close pays the rest, the page says all that was paid back - and what the club closed of it", () => {
+    expect(narrate([cancelled()], "paid-another-way", {}, closed(9000))).toBe(
+      `${LEAD}$90.00 could not go back to your card and was paid back to you another way and $30.00 was retained${END}`,
+    );
+    expect(narrate([cancelled()], "paid-another-way", {}, closed(7000, { unpaid: 2000 }))).toBe(
+      `${LEAD}$70.00 could not go back to your card and was paid back to you another way, the club checked the remaining $20.00 and closed it and $30.00 was retained${END}`,
+    );
+  });
+
+  it("after part went to the card: the card's part, what was paid back, and the rest still owed", () => {
+    expect(narrate([cancelled(), cardRefunded("2026-05-05T01:00:00.000Z", 3000, true)], "paid-another-way", {}, owing(2000, 4000, { made: 3000 }))).toBe(
+      `${LEAD}$30.00 was refunded to your card on 5 May 2026, $20.00 could not go back to your card and was paid back to you another way, $40.00 is being refunded to you and $30.00 was retained${FOLLOW_UP}${END}`,
+    );
+  });
+
+  it("MUTATION: a shortfall's card part says both parts too, and the club follows up the rest", () => {
+    const shortfall = cancelled({ settledAmountCents: 10000, retainedAmountCents: 2000, cardShortfall: { cardCents: 6000, bankCents: 4000, checkCents: 0 } });
+    expect(narrate([shortfall], undefined, { bank: "OPEN", card: "paid-another-way" }, owing(2000, 4000))).toBe(
+      `${LEAD}$20.00 could not go back to your card and was paid back to you another way, $40.00 is being refunded to you, $40.00 is being refunded to you by bank transfer and $20.00 was retained${FOLLOW_UP}${END}`,
+    );
+    expect(narrate([shortfall], undefined, { bank: "OPEN", card: "paid-another-way" }, closed(6000))).toBe(
+      `${LEAD}$60.00 could not go back to your card and was paid back to you another way, $40.00 is being refunded to you by bank transfer and $20.00 was retained${END}`,
+    );
+  });
+});

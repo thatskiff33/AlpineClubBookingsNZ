@@ -164,6 +164,12 @@ export interface PaidAnotherWayClose {
   paidBackCents: number;
   unpaidCents: number;
   madeCents: number;
+  /**
+   * #4516 (`INV-PAY-122`): what a part close left still owed to the member and nothing has paid since, on a row of
+   * its own (`card_refund_still_owed_<record>`), and where that row stands - born dead, `stalled`, until a later close
+   * pays it. What later closes of it paid back and left unpaid is in the two figures above. Absent when none is owed.
+   */
+  stillOwed?: { amountCents: number; state: CardRefundState };
 }
 
 /**
@@ -173,9 +179,11 @@ export interface PaidAnotherWayClose {
  * what the officer paid back and what the close left unpaid (its record), and
  * any card part no event dates - an up-front event a cancel wrote before #4145
  * was written whatever became of the refund - undated, from the refunds
- * themselves. A part the row's payment no longer held when it closed (capped
- * below its slices) is none of these, and is not said. Returns the clauses and
- * the cents they say.
+ * themselves. #4516: a rest a part close left still owed is said last, where
+ * its own row stands (`stillOwed`). A part the row's payment no longer held
+ * when it closed (capped below its slices) is none of these, and is not said.
+ * Returns the clauses, the cents they say, and whether one is stalled (the club
+ * follows it up).
  */
 function ownCardRefundClauses(
   cents: number,
@@ -196,7 +204,9 @@ function ownCardRefundClauses(
   // A caller that read no record (an older page) says the rest was paid back, as before.
   const paidBack = Math.min(close?.paidBackCents ?? cents - datedCents, cents - datedCents);
   const unpaid = Math.min(close?.unpaidCents ?? 0, cents - datedCents - paidBack);
-  const undatedMade = Math.min(Math.max(0, (close?.madeCents ?? 0) - made.markedCents), cents - datedCents - paidBack - unpaid);
+  // #4516 (round-3 review 1): what a part close left still owed, never dropped from what the member is told.
+  const owed = Math.min(close?.stillOwed?.amountCents ?? 0, cents - datedCents - paidBack - unpaid);
+  const undatedMade = Math.min(Math.max(0, (close?.madeCents ?? 0) - made.markedCents), cents - datedCents - paidBack - unpaid - owed);
   // #4166: a card part that failed later is said by its own row (the reader counts it in `madeCents`).
   const { kept: [keptDated = 0, keptUndated = 0], told } = lessFailedLater([datedCents, undatedMade], failedLater, { club, format });
   const clauses = keptDated > 0 && made.on ? [cardRefundClause(money(keptDated), "settled", club.instantDate(made.on))] : [];
@@ -208,7 +218,13 @@ function ownCardRefundClauses(
     { paidBackCents: paidBack + told.paidAnotherWay.paidBackCents, unpaidCents: unpaid + told.paidAnotherWay.unpaidCents },
     money,
   );
-  return { clauses, saidCents: keptDated + keptUndated + told.saidCents + paidBack + unpaid, stalled: told.stalled };
+  const stillOwed = owed > 0 ? close?.stillOwed : undefined;
+  if (stillOwed) clauses.push(cardRefundClause(money(owed), stillOwed.state, null));
+  return {
+    clauses,
+    saidCents: keptDated + keptUndated + told.saidCents + paidBack + unpaid + owed,
+    stalled: told.stalled || stillOwed?.state === "stalled",
+  };
 }
 
 /**
@@ -228,12 +244,12 @@ function cardShortfallClause(
 ): string {
   const money = (cents: number) => formatCents(cents, format);
   const clauses: string[] = [];
-  let failedLaterStalled = false;
+  let cardPartStalled = false;
   if (parts.cardCents > 0) {
     // The card part as its own refund stands, as the cancellation email says it.
     const card = ownCardRefundClauses(parts.cardCents, statuses.card ?? "settled", { cardEvent, made, close, failedLater }, { club, format });
     clauses.push(...card.clauses);
-    failedLaterStalled = card.stalled;
+    cardPartStalled = card.stalled;
   }
   if (parts.bankCents > 0) {
     const status = statuses.bank ?? "OPEN";
@@ -260,8 +276,8 @@ function cardShortfallClause(
   if (retainedAmountCents > 0) clauses.push(`${money(retainedAmountCents)} was retained`);
   const joined = joinClauses(clauses, "no refund was due");
   // #4125: a dead card part is the club's to follow up.
-  // #4166: so is a part of it that failed later and is stalled on its own row.
-  return withClubFollowUp(joined, (parts.cardCents > 0 && statuses.card === "stalled") || failedLaterStalled ? [STALLED_CARD_REFUND] : []);
+  // #4166: so is a part of it that failed later and is stalled on its own row; #4516, a rest still owed on its own.
+  return withClubFollowUp(joined, (parts.cardCents > 0 && statuses.card === "stalled") || cardPartStalled ? [STALLED_CARD_REFUND] : []);
 }
 
 /**

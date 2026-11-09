@@ -45,7 +45,8 @@ type CloseRecord = { amountCents: number | null; raisedAmountCents: number | nul
 /**
  * #4125: where a card cancel's refund stands on its recovery row, for the
  * narrative (`cardRefundState`); #4145: closed "Paid another way", what that
- * close's record says (`cardRefundClose`) - paid back, left unpaid, and made.
+ * close's record says (`cardRefundClose`) - paid back, left unpaid, and made;
+ * #4516: and a rest it left still owed, with what later closes of it paid.
  */
 export interface CancelledCardRefund {
   cardRefundState?: CardRefundState;
@@ -108,31 +109,48 @@ export async function readCardShortfallTaskStatuses(bookingId: string, store: Ca
     where: { idempotencyKey: buildBookingCancellationRefundIdempotencyKey(bookingId) },
     select: { id: true, idempotencyKey: true, status: true, attempts: true, nextRetryAt: true },
   });
-  if (cardRefund) {
-    // #4516 (round-2 review B): a rest of it still owed after a part "Paid another way" close is the card part's too.
-    const own = (await cardRefundRowState(cardRefund, store)).state;
-    const states = own === "paid-another-way" ? [own, ...(await stillOwedRestStates(bookingId, [cardRefund.idempotencyKey], store))] : [own];
-    statuses.card = FURTHEST_FROM_DONE_FIRST.find((state) => states.includes(state));
-  }
+  // #4516 (round-3 review 1): a part close's rest still owed is said beside the close (`cardRefundClose.stillOwed`,
+  // `readCancelledCardRefund`), so the card part stays "paid another way" and the narrative says both parts.
+  if (cardRefund) statuses.card = (await cardRefundRowState(cardRefund, store)).state;
   return statuses;
 }
 
 /**
- * #4516 (round-2 review B, `INV-SSOT`): where each rest still owed after a part "Paid another way" close of one of
- * these rows stands (`card_refund_still_owed_<record>`, read as the row it was first owed on,
- * `cardRefundStillOwedOrigin`): a rest nothing has paid is a dead row, `stalled`, until a later close.
+ * #4516 (round-3 review 1, `INV-PAY-122`): what part "Paid another way" closes of one row left still owed - each rest
+ * on a row of its own (`card_refund_still_owed_<record>`), read as the row it was first owed on
+ * (`cardRefundStillOwedOrigin`, through every close of a rest closed in part again): what later closes of those rests
+ * paid back and left unpaid, and what nothing has paid yet, where it stands (born dead: `stalled`).
  */
-async function stillOwedRestStates(bookingId: string, originKeys: readonly string[], store: CardRefundStore): Promise<CardRefundState[]> {
+type StillOwedRests = { paidBackCents: number; unpaidCents: number; owed?: { amountCents: number; state: CardRefundState } };
+
+/** Each row's still-owed rests by the row's id: read once, and only when a close asks (`INV-SSOT`: the one reading). */
+function stillOwedRestsReader(bookingId: string, store: CardRefundStore): (originId: string) => Promise<StillOwedRests | undefined> {
+  let read: Promise<Map<string, StillOwedRests>> | undefined;
+  return async (originId) => (await (read ??= readStillOwedRests(bookingId, store))).get(originId);
+}
+
+async function readStillOwedRests(bookingId: string, store: CardRefundStore): Promise<Map<string, StillOwedRests>> {
   const rests = await store.paymentRecoveryOperation.findMany({
     where: { bookingId, idempotencyKey: { startsWith: CARD_REFUND_STILL_OWED_RECOVERY_PREFIX } },
-    select: { id: true, idempotencyKey: true, status: true, attempts: true, nextRetryAt: true },
+    select: { id: true, idempotencyKey: true, amountCents: true, status: true, attempts: true, nextRetryAt: true },
   });
-  const states: CardRefundState[] = [];
+  const byOrigin = new Map<string, StillOwedRests>();
   for (const rest of rests ?? []) {
     const origin = await cardRefundStillOwedOrigin(store, rest.idempotencyKey);
-    if (origin && originKeys.includes(origin.idempotencyKey)) states.push((await cardRefundRowState(rest, store)).state);
+    if (!origin) continue;
+    const sum = byOrigin.get(origin.id) ?? { paidBackCents: 0, unpaidCents: 0 };
+    const { state, record } = await cardRefundRowState(rest, store);
+    if (record) {
+      // Closed again: what that close paid back and left unpaid. A rest it left owed again is a row of its own.
+      sum.paidBackCents += record.amountCents ?? rest.amountCents;
+      sum.unpaidCents += paidAnotherWayUnpaidCents(record);
+    } else {
+      const states = [state, ...(sum.owed ? [sum.owed.state] : [])];
+      sum.owed = { amountCents: (sum.owed?.amountCents ?? 0) + rest.amountCents, state: FURTHEST_FROM_DONE_FIRST.find((each) => states.includes(each)) ?? state };
+    }
+    byOrigin.set(origin.id, sum);
   }
-  return states;
+  return byOrigin;
 }
 
 /**
@@ -147,6 +165,10 @@ async function stillOwedRestStates(bookingId: string, originKeys: readonly strin
  * takes as on its way. Several rows (a second intent's capacity race) read as
  * the one furthest from done: a dead one first, then one still being sent.
  * #4285 review: read through `store`, a caller's transaction where it passes one.
+ * #4516 (round-3 review 1): a close that paid back part and left the rest still
+ * owed reads as closed "Paid another way", its rest beside it
+ * (`cardRefundClose.stillOwed`), so the member is told both parts - and, once a
+ * later close pays the rest, what that close paid back and left unpaid too.
  */
 export async function readCancelledCardRefund(bookingId: string, store: CardRefundStore = prisma): Promise<CancelledCardRefund> {
   const rows = await store.paymentRecoveryOperation.findMany({
@@ -157,15 +179,7 @@ export async function readCancelledCardRefund(bookingId: string, store: CardRefu
   // `startsWith` is SQL LIKE, where `_` matches any one character, so the query alone
   // would let booking `ab`'s read take booking `abc`'s rows: the exact rule decides (#4147).
   const own = rows.filter((row) => isBookingCancelCardRefundRecoveryKey(bookingId, row.idempotencyKey));
-  const read = await cancelledCardRefundOf(bookingId, own, store);
-  // #4516 (round-2 review B): a rest still owed after a part close of one of them stands where it stands, so a
-  // cancel closed in part with the rest owed is never read as nothing left to send. Only a closed cancel has one.
-  const rests = read.cardRefundState === "paid-another-way" ? await stillOwedRestStates(bookingId, own.map((row) => row.idempotencyKey), store) : [];
-  const cardRefundState = FURTHEST_FROM_DONE_FIRST.find((state) => state === read.cardRefundState || rests.includes(state));
-  if (cardRefundState === read.cardRefundState) return read;
-  const stalled: CancelledCardRefund = { ...read, cardRefundState };
-  delete stalled.cardRefundClose;
-  return stalled;
+  return cancelledCardRefundOf(bookingId, own, store);
 }
 
 /**
@@ -193,7 +207,8 @@ export async function readOrganiserChildCancelledCardRefund(
 async function cancelledCardRefundOf(bookingId: string, own: CancelCardRefundRow[], store: CardRefundStore): Promise<CancelledCardRefund> {
   const standings = await Promise.all(own.map(async (row) => ({ row, ...(await cardRefundRowState(row, store)) })));
   const cardRefundState = FURTHEST_FROM_DONE_FIRST.find((state) => standings.some((each) => each.state === state));
-  const failedLater = await readFailedLaterCardRefunds(bookingId, standings, store);
+  const restsOf = stillOwedRestsReader(bookingId, store);
+  const failedLater = await readFailedLaterCardRefunds(bookingId, standings, store, restsOf);
   const planned = { ...capacityRacePlanCents(bookingId, own), ...(failedLater.parts.length > 0 ? { cardRefundFailedLater: failedLater.parts } : {}) };
   if (cardRefundState !== "paid-another-way") return { cardRefundState, ...planned };
   const closed = standings.flatMap(({ row, record }) => (record ? [{ row, record }] : []));
@@ -205,14 +220,21 @@ async function cancelledCardRefundOf(bookingId: string, own: CancelCardRefundRow
     const payment = payments.find((each) => each.id === row.paymentId);
     return payment ? cardRefundMadeForOperation(payment, row.id).madeCents : 0;
   };
+  // #4516 (round-3 review 1): a part close's rest still owed - and what later closes of it paid - is the close's too.
+  const rests = (await Promise.all(closed.map(({ row }) => restsOf(row.id)))).flatMap((each) => (each ? [each] : []));
+  const owed = rests.flatMap((each) => (each.owed ? [each.owed] : []));
+  const stillOwed = owed.length > 0
+    ? { amountCents: owed.reduce((sum, each) => sum + each.amountCents, 0), state: FURTHEST_FROM_DONE_FIRST.find((state) => owed.some((each) => each.state === state)) ?? "stalled" }
+    : undefined;
   return {
     cardRefundState,
     ...planned,
     cardRefundClose: {
-      paidBackCents: closed.reduce((sum, { record }) => sum + (record.amountCents ?? 0), 0),
-      unpaidCents: closed.reduce((sum, { record }) => sum + paidAnotherWayUnpaidCents(record), 0),
+      paidBackCents: closed.reduce((sum, { record }) => sum + (record.amountCents ?? 0), 0) + rests.reduce((sum, each) => sum + each.paidBackCents, 0),
+      unpaidCents: closed.reduce((sum, { record }) => sum + paidAnotherWayUnpaidCents(record), 0) + rests.reduce((sum, each) => sum + each.unpaidCents, 0),
       // #4166: a part that failed later counts as the close found it; the narrative says it by its own row.
       madeCents: closed.reduce((sum, { row }) => sum + made(row) + (failedLater.madeByRow.get(row.id) ?? 0), 0),
+      ...(stillOwed ? { stillOwed } : {}),
     },
   };
 }
@@ -238,6 +260,7 @@ async function readFailedLaterCardRefunds(
   bookingId: string,
   standings: ReadonlyArray<{ row: { id: string; succeededAt: Date | null }; state: CardRefundState }>,
   store: CardRefundStore,
+  restsOf: (originId: string) => Promise<StillOwedRests | undefined>,
 ): Promise<{ parts: FailedLaterCardRefund[]; madeByRow: Map<string, number> }> {
   const none = { parts: [], madeByRow: new Map<string, number>() };
   const closed = standings.filter(({ state }) => state === "settled" || state === "paid-another-way");
@@ -297,13 +320,19 @@ async function readFailedLaterCardRefunds(
       madeByRow.set(root, (madeByRow.get(root) ?? 0) + head.row.amountCents);
     }
     const { state, record } = await cardRefundRowState(row, store);
+    // #4516 (round-3 review 1): a part close's rest still owed is a part of its own, said where it stands.
+    const rests = record ? await restsOf(row.id) : undefined;
+    const owedCents = Math.min(rests?.owed?.amountCents ?? 0, row.amountCents);
     parts.push({
-      amountCents: row.amountCents,
+      amountCents: row.amountCents - owedCents,
       state,
       ...(dated ? {} : { dated }),
       ...(state === "settled" ? { madeAt: row.succeededAt } : {}),
-      ...(record ? { paidBackCents: record.amountCents ?? row.amountCents, unpaidCents: paidAnotherWayUnpaidCents(record) } : {}),
+      ...(record
+        ? { paidBackCents: (record.amountCents ?? row.amountCents) + (rests?.paidBackCents ?? 0), unpaidCents: paidAnotherWayUnpaidCents(record) + (rests?.unpaidCents ?? 0) }
+        : {}),
     });
+    if (owedCents > 0 && rests?.owed) parts.push({ amountCents: owedCents, state: rests.owed.state, ...(dated ? {} : { dated }) });
   }
   return { parts, madeByRow };
 }
