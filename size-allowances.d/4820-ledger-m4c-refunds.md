@@ -21,7 +21,7 @@ lines: 1253
 reason: one argument passes the edit's card refund to the R05 posted beside its R02, inside the edit's transaction.
 
 file: src/lib/payment-reconciliation.ts
-lines: 2881
+lines: 2882
 reason: W1 posts a returned capture's R05 in the same transaction as its settle and R06, and its two senders name that debt; the hook must sit inside that transaction.
 
 file: src/lib/payment-transactions.ts
