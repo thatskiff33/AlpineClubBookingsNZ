@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockPrisma = vi.hoisted(() => {
@@ -744,12 +747,47 @@ describe("member delete lifecycle actions", () => {
 
     const where = (mockPrisma.booking.findMany.mock.calls[0]![0] as { where: { OR: Array<Record<string, string>> } }).where.OR;
     expect(where).toEqual(expect.arrayContaining([{ createdById: "member-1" }, { adminReviewedById: "member-1" }, { capacityOverriddenByMemberId: "member-1" }]));
+    // The owner is not an actor column: its FK is Restrict and eligibility refuses an owner.
+    expect(where).not.toContainEqual({ memberId: "member-1" });
     const statements = mockPrisma.$executeRaw.mock.calls.map((call) => rawSql(call));
     const bookingRows = statements.findIndex(({ sql }) => sql.includes('FROM "Booking"'));
     const memberFence = statements.findIndex(({ sql }) => sql.includes('FROM "Member"') && sql.includes("FOR UPDATE"));
     expect(statements[bookingRows]).toEqual({ sql: 'SELECT 1 FROM "Booking" WHERE "id" IN (?,?) ORDER BY "id" FOR NO KEY UPDATE', values: ["b-1", "b-2"] });
     expect(memberFence).toBeGreaterThan(bookingRows);
     expect(mockPrisma.$executeRaw.mock.invocationCallOrder[bookingRows]).toBeLessThan(mockPrisma.member.delete.mock.invocationCallOrder[0]!);
+    // The drift re-check reads the set again only once the fence holds (#4856 review F4).
+    expect(mockPrisma.booking.findMany.mock.invocationCallOrder[1]).toBeGreaterThan(mockPrisma.$executeRaw.mock.invocationCallOrder[memberFence]!);
+    // #4856 review F3: the Payment rows naming the member, NOWAIT, under the fence and before the delete.
+    const paymentRows = statements.findIndex(({ sql }) => sql.includes('FROM "Payment"'));
+    expect(statements[paymentRows]).toEqual({ sql: 'SELECT 1 FROM "Payment" WHERE "manuallyMarkedPaidByMemberId" = ? ORDER BY "id" FOR NO KEY UPDATE NOWAIT', values: ["member-1"] });
+    expect(paymentRows).toBeGreaterThan(memberFence);
+    expect(mockPrisma.$executeRaw.mock.invocationCallOrder[paymentRows]).toBeLessThan(mockPrisma.member.delete.mock.invocationCallOrder[0]!);
+  });
+
+  it("#4850: lists every SET NULL Booking actor column in the schema, and not the Restrict owner", async () => {
+    const { BOOKING_ACTOR_COLUMNS } = await import("@/lib/member-delete-booking-rows");
+    const schema = readFileSync(path.join(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const booking = /^model Booking \{([\s\S]*?)^\}/m.exec(schema)![1]!;
+    const setNull = [...booking.matchAll(/^\s+\w+\s+Member\?\s+@relation\([^)]*fields: \[(\w+)\][^)]*onDelete: SetNull\)/gm)].map((match) => match[1]);
+    expect([...BOOKING_ACTOR_COLUMNS].sort()).toEqual(setNull.sort());
+    expect(setNull.length).toBeGreaterThan(5);
+  });
+
+  it("#4856: refuses with 409, writing nothing, when another writer holds a Payment row naming the member", async () => {
+    mockPrisma.$executeRaw.mockImplementation(async (...call: unknown[]) => {
+      if (rawSql(call).sql.includes('FROM "Payment"')) throw Object.assign(new Error("could not obtain lock"), { code: "55P03" });
+      return 1;
+    });
+    try {
+      await expect(
+        reviewMemberDeleteRequest({ requestId: "request-1", reviewedByMemberId: "admin-2", action: "approve", reviewNote: "Checked" }),
+      ).rejects.toMatchObject({ statusCode: 409 });
+      expect(mockPrisma.memberLifecycleActionRequest.updateMany).not.toHaveBeenCalled();
+      expect(mockPrisma.member.delete).not.toHaveBeenCalled();
+    } finally {
+      mockPrisma.$executeRaw.mockReset();
+      mockPrisma.$executeRaw.mockResolvedValue(1);
+    }
   });
 
   it("#4850: refuses with 409, writing nothing, when a booking names the member only after its bookings were locked", async () => {

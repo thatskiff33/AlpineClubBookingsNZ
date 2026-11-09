@@ -42,7 +42,7 @@ import {
   serializeDate,
   serializeMember,
 } from "@/lib/member-serialization";
-import { bookingsNamingMemberSinceLocked, lockBookingRowsNamingMember } from "@/lib/member-delete-booking-rows";
+import { bookingsNamingMemberSinceLocked, lockBookingRowsNamingMember, lockPaymentRowsNamingMemberNowait } from "@/lib/member-delete-booking-rows";
 import { lockMemberForAccountDeletionXeroFence } from "@/lib/xero-contact-create-recovery";
 
 type LifecycleActionClient = Prisma.TransactionClient | typeof prisma;
@@ -1249,6 +1249,8 @@ export async function reviewMemberDeleteRequest({
     if ((await bookingsNamingMemberSinceLocked(tx, request.memberId, lockedBookingIds)).length > 0) {
       throw new MemberLifecycleActionError("A booking naming this member changed while it was being deleted. Nothing was deleted. Try again.", 409);
     }
+    await lockPaymentRowsNamingMemberNowait(tx, request.memberId, () =>
+      new MemberLifecycleActionError("A payment naming this member is being changed right now. Nothing was deleted. Try again in a moment.", 409));
 
     const eligibility = await getMemberDeleteEligibility({
       memberId: request.memberId,

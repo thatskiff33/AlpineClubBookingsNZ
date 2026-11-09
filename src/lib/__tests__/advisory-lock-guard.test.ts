@@ -1524,9 +1524,13 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // BEFORE its Member-row Xero fence, so its ON DELETE SET NULL on Booking's
   // actor columns updates only rows it already holds: booking row, then Member,
   // the order merge and every booking writer take. The set is re-read under the
-  // fence and a late booking refuses the delete (409). See
+  // fence and a late booking refuses the delete (409). The second statement, under
+  // the fence, takes the Payment rows naming the member `ORDER BY "id" FOR NO KEY
+  // UPDATE NOWAIT`, as merge does (#4823): Payment-first writers (a card settle,
+  // the back-post) would otherwise meet the booking rows the delete already
+  // holds; a held row refuses it (409). See
   // docs/CONCURRENCY_AND_LOCKING.md -> "A booking writer takes the booking row before a Member key share".
-  "src/lib/member-delete-booking-rows.ts": 1,
+  "src/lib/member-delete-booking-rows.ts": 2,
   // #3635 (review outbox F1/F4): the kept-late-capture enqueue and the
   // worker's send-time decision lock the #3639 approval task's row
   // (`SELECT 1 … FOR UPDATE`), the row the dismissal, reopen and approval
