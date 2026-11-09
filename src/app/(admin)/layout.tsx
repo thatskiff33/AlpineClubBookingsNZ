@@ -18,6 +18,7 @@ import { getWebsiteThemeRenderState } from "@/lib/club-theme";
 import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { CardPaymentsRefusedBanner } from "@/components/admin/card-payments-refused-banner";
+import { adminHref } from "@/lib/admin-hubs";
 
 export default async function AdminLayout({
   children,
@@ -103,7 +104,7 @@ export default async function AdminLayout({
                       Complete your site style before opening the public website.
                     </p>
                     <Link
-                      href="/admin/site-style"
+                      href={adminHref("site-style")}
                       className="rounded-md bg-brand-gold px-3 py-2 text-sm font-semibold text-brand-charcoal shadow-sm transition-shadow hover:shadow-md"
                     >
                       Open Site Style

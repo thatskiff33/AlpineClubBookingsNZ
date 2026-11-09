@@ -11,15 +11,17 @@ import {
 } from "next/experimental/testing/server";
 import { prepareDestination } from "next/dist/shared/lib/router/utils/prepare-destination";
 import { ASSET_NOT_FOUND_PATH, ASSET_NOT_FOUND_REWRITES } from "@/lib/asset-url-404";
-import { ADMIN_RETIRED_PAGES } from "@/lib/admin-hubs";
+import { ADMIN_PAGES, ADMIN_RETIRED_PAGES } from "@/lib/admin-hubs";
 
 // ---------------------------------------------------------------------------
 // `next.config.ts` and the admin hub URLs (epic #4468, C3 #4800).
 //
 // The config's `redirects()` and `rewrites().beforeFiles` are generated from
-// the hub registry. Today no page has moved, so there are no rewrites and the
-// only redirects are the five retired pages' (S1 #4796); over a registry whose Finance hub has moved, the
-// REAL config yields the rules the epic plan fixes for each switch state. Both
+// the hub registry. Today the Website hub has moved (C4 #4801): its pages' rules
+// follow the five retired pages' redirects (S1 #4796), and with the switch off
+// each old URL is served from the moved file and each hub URL bounces to it.
+// Over a registry whose Finance hub has moved too, the REAL config yields the
+// rules the epic plan fixes for each switch state. All
 // are run through Next's own pipeline (`unstable_getResponseFromNextConfig`,
 // which calls the real `loadCustomRoutes()`). `admin-hubs-registry.test.ts`
 // walks every page of the registry through the generated rules themselves.
@@ -83,18 +85,78 @@ async function location(nextConfig: NextConfig, url: string) {
   return { status: response.status, location: getRedirectUrl(response) };
 }
 
-describe("next.config.ts today: no page has moved", () => {
-  it("has only the retired pages' redirects, no beforeFiles rewrites, and keeps the asset rewrites as they were", async () => {
+/** The pages moved today: the Website hub (C4 #4801). */
+const MOVED_TODAY = ADMIN_PAGES.filter((page) => page.moved);
+
+describe("next.config.ts today: the Website hub has moved", () => {
+  it("has the retired pages' redirects, then a hub-URL redirect and an old-URL beforeFiles rewrite for each moved page, and keeps the asset rewrites as they were", async () => {
     const config = await loadConfig();
-    expect((await config.redirects()).map(({ source, permanent }) => ({ source, permanent }))).toEqual(
-      ADMIN_RETIRED_PAGES.map(({ oldPath }) => ({ source: oldPath, permanent: false })),
-    );
+    expect(MOVED_TODAY.length).toBeGreaterThan(0);
+    const byPath = (a: { source: string }, b: { source: string }) =>
+      a.source.localeCompare(b.source);
+    expect((await config.redirects()).map(({ source, permanent }) => ({ source, permanent }))).toEqual([
+      ...ADMIN_RETIRED_PAGES.map(({ oldPath }) => ({ source: oldPath, permanent: false })),
+      ...MOVED_TODAY.map((page) => ({ source: page.hubPath, permanent: false })).sort(byPath),
+    ]);
     const rewrites = await config.rewrites();
     expect(rewrites).toEqual({
-      beforeFiles: [],
+      beforeFiles: MOVED_TODAY.map((page) => ({
+        source: page.oldPath,
+        destination: page.hubPath,
+      })).sort((a, b) => a.source.localeCompare(b.source)),
       afterFiles: [...ASSET_NOT_FOUND_REWRITES],
       fallback: [],
     });
+  });
+
+  /**
+   * The off-state smoke test (C4 #4801): through Next's own config pipeline,
+   * each moved page's OLD URL is served, by a rewrite, from the page file that
+   * now sits at its hub path, with no redirect first, so the proxy, the module
+   * gate and the layout guard see the old path as before; and its HUB URL
+   * redirects (307) to the old URL, query kept, which is then served the same way.
+   */
+  it.each(MOVED_TODAY.map((page) => [page.id, page.oldPath, page.hubPath]))(
+    "off: serves %s's old URL %s from its moved file, and bounces its hub URL %s there",
+    async (_id, oldPath, hubPath) => {
+      const config = await loadConfig();
+      const file = path.join(process.cwd(), "src", "app", "(admin)", `.${hubPath}`, "page.tsx");
+      expect(fs.existsSync(file), file).toBe(true);
+      expect(
+        fs.existsSync(path.join(process.cwd(), "src", "app", "(admin)", `.${oldPath}`, "page.tsx")),
+      ).toBe(false);
+      await expect(resolve(config, `${oldPath}?q=a%20b`)).resolves.toEqual({
+        kind: "rewrite",
+        url: `${hubPath}?q=a+b`,
+      });
+      await expect(resolve(config, `${hubPath}?q=a%20b`)).resolves.toEqual({
+        kind: "redirect",
+        status: 307,
+        url: `${oldPath}?q=a+b`,
+      });
+    },
+  );
+
+  it("off: leaves the old URL's own children and lookalikes to the filesystem", async () => {
+    // Each rule matches its whole path, so a child the registry does not move
+    // with it, and a prefix lookalike, are not rewritten or redirected.
+    const config = await loadConfig();
+    for (const url of ["/admin/site-style-x", "/admin/website", "/admin/website/nope"]) {
+      await expect(resolve(config, url), url).resolves.toEqual({ kind: "none" });
+    }
+  });
+
+  it("on: redirects each moved page's old URL (307) to its hub URL, and rewrites nothing", async () => {
+    const config = await loadConfig({ live: true });
+    for (const page of MOVED_TODAY) {
+      await expect(resolve(config, `${page.oldPath}?q=1`), page.id).resolves.toEqual({
+        kind: "redirect",
+        status: 307,
+        url: `${page.hubPath}?q=1`,
+      });
+      await expect(resolve(config, page.hubPath), page.id).resolves.toEqual({ kind: "none" });
+    }
+    expect(((await config.rewrites()) as { beforeFiles: unknown[] }).beforeFiles).toEqual([]);
   });
 
   it.each(["/admin/payments", "/admin/finance/payments", "/admin/members/x1"])(

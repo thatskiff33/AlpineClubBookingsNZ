@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { getClubThemeForAdmin } from "@/lib/club-theme";
 import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
 import { SiteStyleWizard } from "./site-style-wizard";
+import { adminHref } from "@/lib/admin-hubs";
 
 export default async function SiteStylePage() {
   const theme = await getClubThemeForAdmin();
@@ -11,7 +12,7 @@ export default async function SiteStylePage() {
   return (
     <div className={`space-y-8 ${clubThemeFontVariableClassName}`}>
       <div>
-        <BackLink href="/admin/appearance" label="Site Appearance & Content" />
+        <BackLink href={adminHref("appearance")} label="Site Appearance & Content" />
         <h1 className="mt-2 text-2xl font-bold text-foreground">Site Style</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Set the brand colours and fonts used by the public website, member area,

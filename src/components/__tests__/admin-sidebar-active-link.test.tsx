@@ -93,10 +93,10 @@ describe("the sidebar's active link over a moved hub", () => {
     stubPendingCounts();
   });
 
-  it("PREMISE: the Finance hub really has moved in this file, and nothing else has", () => {
+  it("PREMISE: the Finance hub really has moved in this file, beside the Website hub moved on disk (C4 #4801)", () => {
     const moved = ADMIN_PAGES.filter((page) => page.moved);
     expect(moved.length).toBeGreaterThan(0);
-    expect(new Set(moved.map((page) => page.hub))).toEqual(new Set(["finance"]));
+    expect(new Set(moved.map((page) => page.hub))).toEqual(new Set(["finance", "website"]));
     expect(moved.find((page) => page.id === "payments")?.hubPath).toBe(
       "/admin/finance/payments",
     );
@@ -111,6 +111,14 @@ describe("the sidebar's active link over a moved hub", () => {
     ["a nested page's old URL", "/admin/xero/member-grouping", ["Xero Member Grouping"]],
     ["a nested page's hub URL", "/admin/finance/xero/member-grouping", ["Xero Member Grouping"]],
     ["a parent page's hub URL", "/admin/finance/xero", ["Xero Sync"]],
+    // The Website hub, moved for real (C4 #4801).
+    ["a Website page's old URL", "/admin/appearance", ["Site Appearance & Content"]],
+    ["a Website page's hub URL", "/admin/website/appearance", ["Site Appearance & Content"]],
+    [
+      "a nested Website page's hub URL",
+      "/admin/website/appearance/identity",
+      ["Site Appearance & Content"],
+    ],
   ])("highlights the same link at %s (%s)", async (_label, pathname, expected) => {
     await expect(activeLabels(pathname)).resolves.toEqual([...expected].sort());
   });

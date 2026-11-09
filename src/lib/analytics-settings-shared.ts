@@ -99,12 +99,6 @@ export interface AnalyticsRuntimeConfig {
   privacyPolicyPath: string | null;
 }
 
-/**
- * Where an admin edits the canonical privacy policy: the existing website content
- * editor (`src/app/(admin)/admin/page-content/page.tsx`), not a new screen.
- */
-export const PRIVACY_POLICY_ADMIN_HREF = "/admin/page-content";
-
 export interface PrivacyPolicyPageState {
   /** A `PageContent` row exists for the canonical slug. */
   exists: boolean;

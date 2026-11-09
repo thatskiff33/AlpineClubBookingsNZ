@@ -1,11 +1,12 @@
 import { BackLink } from "@/components/admin/back-link";
 import { SiteBannersPanel } from "@/components/admin/site-banners-panel";
+import { adminHref } from "@/lib/admin-hubs";
 
 export default function SiteBannersAdminPage() {
   return (
     <div className="space-y-6">
       <div>
-        <BackLink href="/admin/appearance" label="Site Appearance & Content" />
+        <BackLink href={adminHref("appearance")} label="Site Appearance & Content" />
         <h1 className="mt-2 text-2xl font-bold text-foreground">
           Site Banners
         </h1>

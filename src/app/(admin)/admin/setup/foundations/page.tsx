@@ -5,6 +5,7 @@ import {
 } from "@/components/admin-hub-page";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { loadAdminSetupPermissionMatrix } from "../permission-matrix";
+import { adminHref } from "@/lib/admin-hubs";
 
 const sections: AdminHubSection[] = [
   {
@@ -20,7 +21,7 @@ const sections: AdminHubSection[] = [
     // club name / short name / hut-leader label overrides here. The href gates
     // on the content area via canViewAdminHrefWithMatrix, matching the
     // /api/admin/club-identity content:view/edit guard.
-    href: "/admin/appearance/identity",
+    href: adminHref("club-identity"),
     title: "Club Identity",
     description:
       "Override the club name, short name, hut-leader label, and your lodge's public details shown across the site and emails.",

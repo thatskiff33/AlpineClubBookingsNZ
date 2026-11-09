@@ -47,9 +47,11 @@ function allMoved(pages: readonly AdminHubPage[] = ADMIN_PAGES): AdminHubPage[] 
 
 const concrete = (registryPath: string) => registryPath.replace(/\[[^\]/]+\]/g, "x123");
 
+/** The registry as it stood before C4 (#4801): no page moved. */
+const UNMOVED: readonly AdminHubPage[] = ADMIN_PAGES.map((page) => ({ ...page, moved: false }));
+
 describe("activeAdminHref while no page has moved", () => {
-  it("PREMISE: no page has moved, and the sidebar has hrefs, query links among them", () => {
-    expect(ADMIN_PAGES.some((page) => page.moved)).toBe(false);
+  it("PREMISE: the sidebar has hrefs, query links among them", () => {
     expect(SIDEBAR_HREFS.length).toBeGreaterThan(40);
     expect(SIDEBAR_HREFS.some((href) => href.includes("?"))).toBe(true);
   });
@@ -63,9 +65,37 @@ describe("activeAdminHref while no page has moved", () => {
     pathnames.push("/admin", "/admin/", "/admin/nope", "/dashboard");
     const differ = pathnames.filter(
       (pathname) =>
-        activeAdminHref(pathname, SIDEBAR_HREFS) !== legacyActiveHref(pathname, SIDEBAR_HREFS),
+        activeAdminHref(pathname, SIDEBAR_HREFS, UNMOVED) !==
+        legacyActiveHref(pathname, SIDEBAR_HREFS),
     );
     expect(differ).toEqual([]);
+  });
+});
+
+describe("activeAdminHref over today's registry", () => {
+  it("PREMISE: some pages have moved (the Website hub, C4 #4801) and some have not", () => {
+    expect(ADMIN_PAGES.some((page) => page.moved)).toBe(true);
+    expect(ADMIN_PAGES.some((page) => !page.moved)).toBe(true);
+  });
+
+  it("lights at every page's served URLs exactly what the sidebar lit at its old URL before C3", () => {
+    // A moved page is reached at its old URL (the browser) and its hub URL (the
+    // server render under the rewrite); an unmoved one only at its old URL.
+    const differ = ADMIN_PAGES.flatMap((page) => {
+      const oldUrl = concrete(page.oldPath);
+      const want = legacyActiveHref(oldUrl, SIDEBAR_HREFS);
+      const wantBeneath = legacyActiveHref(`${oldUrl}/beneath`, SIDEBAR_HREFS);
+      const urls = page.moved ? [oldUrl, concrete(page.hubPath)] : [oldUrl];
+      return urls.flatMap((url) => [
+        ...(activeAdminHref(url, SIDEBAR_HREFS) === want ? [] : [url]),
+        ...(activeAdminHref(`${url}/beneath`, SIDEBAR_HREFS) === wantBeneath ? [] : [`${url}/beneath`]),
+      ]);
+    });
+    expect(differ).toEqual([]);
+    // Non-vacuous: a moved page's hub URL lights its sidebar link.
+    expect(activeAdminHref("/admin/website/appearance/identity", SIDEBAR_HREFS)).toBe(
+      "/admin/appearance",
+    );
   });
 });
 
@@ -142,11 +172,27 @@ describe("canonicalAdminPathname and servedAdminPathname", () => {
   it("are the identity while no page has moved, for every page and its hub path", () => {
     for (const page of ADMIN_PAGES) {
       for (const url of [concrete(page.oldPath), concrete(page.hubPath)]) {
-        expect(canonicalAdminPathname(url)).toBe(url);
-        expect(servedAdminPathname(url, false)).toBe(url);
-        expect(servedAdminPathname(url, true)).toBe(url);
+        expect(canonicalAdminPathname(url, UNMOVED)).toBe(url);
+        expect(servedAdminPathname(url, false, UNMOVED)).toBe(url);
+        expect(servedAdminPathname(url, true, UNMOVED)).toBe(url);
       }
     }
+  });
+
+  it("map today's moved pages, and only those, by default", () => {
+    for (const page of ADMIN_PAGES) {
+      const oldUrl = concrete(page.oldPath);
+      const hubUrl = concrete(page.hubPath);
+      if (page.moved) {
+        expect(canonicalAdminPathname(hubUrl), page.id).toBe(oldUrl);
+        expect(servedAdminPathname(hubUrl), page.id).toBe(oldUrl);
+      } else {
+        expect(canonicalAdminPathname(hubUrl), page.id).toBe(hubUrl);
+      }
+      expect(canonicalAdminPathname(oldUrl), page.id).toBe(oldUrl);
+      expect(servedAdminPathname(oldUrl), page.id).toBe(oldUrl);
+    }
+    expect(canonicalAdminPathname("/admin/website/site-style")).toBe("/admin/site-style");
   });
 
   it.each(ADMIN_PAGES.map((page) => page.id))(
@@ -189,6 +235,20 @@ describe("canonicalAdminPathname and servedAdminPathname", () => {
     // PREMISE: the raw hub URL really would lose the page's help.
     expect(getContextualHelp("/admin/finance/payments", "admin")).toBe(fallback);
     expect(getContextualHelp("/admin/payments", "admin")).not.toBe(fallback);
+  });
+
+  it("keep each page moved today on its own old-path help, through the default registry", () => {
+    const fallback = getContextualHelp("/admin/no-such-page", "admin");
+    const movedToday = ADMIN_PAGES.filter((page) => page.moved);
+    expect(movedToday.length).toBeGreaterThan(0);
+    const differ = movedToday.flatMap((page) => {
+      const want = getContextualHelp(concrete(page.oldPath), "admin");
+      return want !== fallback &&
+        getContextualHelp(canonicalAdminPathname(concrete(page.hubPath)), "admin") === want
+        ? []
+        : [page.id];
+    });
+    expect(differ).toEqual([]);
   });
 });
 

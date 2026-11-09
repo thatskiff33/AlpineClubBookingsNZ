@@ -3046,7 +3046,7 @@ const eslintConfig = defineConfig([
     // one restriction is lifted — both date restrictions still apply here.
     files: [
       // Character counter: "12,345 / 50,000 characters" on the raw-CSS box.
-      "src/app/(admin)/admin/site-style/site-style-wizard.tsx",
+      "src/app/(admin)/admin/website/site-style/site-style-wizard.tsx",
       // Validation message quoting the notice body's character limit.
       "src/components/admin/notice-editor.tsx",
       // Redemption/export row counts in the promo-code panel.

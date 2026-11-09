@@ -5,6 +5,7 @@ import {
   detectStaleHoldPolicyCopy,
   holdCopyTitle,
 } from "@/lib/hold-policy-copy";
+import { adminHref } from "@/lib/admin-hubs";
 
 export default async function CancellationPolicyPage() {
   const staleHoldCopy = await detectStaleHoldPolicyCopy();
@@ -44,7 +45,7 @@ export default async function CancellationPolicyPage() {
           </p>
           <p className="mt-2">
             <Link
-              href="/admin/page-content"
+              href={adminHref("page-content")}
               className="font-medium underline underline-offset-4"
             >
               Edit public pages

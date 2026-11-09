@@ -75,6 +75,7 @@ import {
   ADMIN_MENU_DESTINATIONS,
   ADMIN_RETIRED_PAGES,
   activeAdminHref,
+  adminHref,
   canonicalAdminPathname,
   getAdminPage,
   retiredAdminPageHref,
@@ -495,7 +496,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         icon: BadgeCheck,
       },
       {
-        href: "/admin/appearance",
+        href: adminHref("appearance"),
         label: "Site Appearance & Content",
         icon: Palette,
       },

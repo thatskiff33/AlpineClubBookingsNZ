@@ -583,8 +583,22 @@ describe("the entries' shape", () => {
     expect(roots).toEqual(["dashboard"]);
   });
 
-  it("has moved no page yet (C4 #4801 makes the first move)", () => {
-    expect(ADMIN_PAGES.filter((page) => page.moved).map((page) => page.id)).toEqual([]);
+  /**
+   * The pages C4–C12 have moved so far, hub by hub, in the plan's order: each
+   * move adds its hub here, as `"every page"` or, for a hub moved in two PRs
+   * (Lodge, Club settings), the ids its first PR moves.
+   */
+  const MOVED_SO_FAR: Readonly<Record<string, "every page" | readonly string[]>> = {
+    website: "every page", // C4 #4801
+  };
+
+  it("has moved exactly the pages C4–C12 have reached so far", () => {
+    const expected = ADMIN_PAGES.filter((page) => {
+      const moved = MOVED_SO_FAR[page.hub];
+      return moved === "every page" || (moved?.includes(page.id) ?? false);
+    }).map((page) => page.id);
+    expect(expected.length).toBeGreaterThan(0);
+    expect(ADMIN_PAGES.filter((page) => page.moved).map((page) => page.id)).toEqual(expected);
   });
 
   /**
@@ -1200,8 +1214,9 @@ async function walkRegistry(
 }
 
 describe("buildAdminUrlRules", () => {
-  it("returns only the retired pages' redirects for today's registry, in either state", () => {
-    // No page has moved, so every destination is served at its old path either way.
+  it("returns the retired pages' redirects, then the moved Website pages' rules, for today's registry", () => {
+    // No retired page was merged into a moved page, so every retired redirect
+    // goes to an old path in either state.
     const retired = {
       redirects: [
         {
@@ -1232,13 +1247,57 @@ describe("buildAdminUrlRules", () => {
       ],
       rewrites: { beforeFiles: [] },
     };
-    expect(buildAdminUrlRules(false)).toEqual(retired);
-    expect(buildAdminUrlRules(true)).toEqual(retired);
-    expect(buildAdminUrlRules(false, ADMIN_PAGES, [])).toEqual({
+    // The Website hub (C4 #4801), static paths in path order: old -> hub.
+    const website = [
+      ["/admin/appearance", "/admin/website/appearance"],
+      ["/admin/appearance/identity", "/admin/website/appearance/identity"],
+      ["/admin/image-manager", "/admin/website/image-manager"],
+      ["/admin/mountain-conditions", "/admin/website/mountain-conditions"],
+      ["/admin/page-content", "/admin/website/page-content"],
+      ["/admin/site-banners", "/admin/website/site-banners"],
+      ["/admin/site-content", "/admin/website/site-content"],
+      ["/admin/site-style", "/admin/website/site-style"],
+    ] as const;
+    expect(buildAdminUrlRules(false)).toEqual({
+      redirects: [
+        ...retired.redirects,
+        ...website.map(([oldUrl, hubUrl]) => ({
+          source: hubUrl,
+          destination: oldUrl,
+          permanent: false,
+        })),
+      ],
+      rewrites: {
+        beforeFiles: website.map(([oldUrl, hubUrl]) => ({ source: oldUrl, destination: hubUrl })),
+      },
+    });
+    expect(buildAdminUrlRules(true)).toEqual({
+      redirects: [
+        ...retired.redirects,
+        ...website.map(([oldUrl, hubUrl]) => ({
+          source: oldUrl,
+          destination: hubUrl,
+          permanent: false,
+        })),
+      ],
+      rewrites: { beforeFiles: [] },
+    });
+    const unmoved = ADMIN_PAGES.map((page) => ({ ...page, moved: false }));
+    expect(buildAdminUrlRules(false, unmoved)).toEqual(retired);
+    expect(buildAdminUrlRules(true, unmoved)).toEqual(retired);
+    expect(buildAdminUrlRules(false, unmoved, [])).toEqual({
       redirects: [],
       rewrites: { beforeFiles: [] },
     });
   });
+
+  it.each([false, true])(
+    "resolves today's registry, the Website hub moved, with no loop or chain, query kept (live=%s)",
+    async (live) => {
+      expect(ADMIN_PAGES.some((page) => page.moved)).toBe(true);
+      await expect(walkRegistry(ADMIN_PAGES, live)).resolves.toEqual([]);
+    },
+  );
 
   const synthetic: AdminHubPage = {
     id: "synthetic",
@@ -1422,6 +1481,23 @@ describe("the registry is inert", () => {
       "S2: the lodge-scoped pages open from their palette href",
     "src/lib/__tests__/next-config-admin-hub-urls.test.ts":
       "S1: walks each retired page's redirect through the real config",
+    "src/app/(admin)/layout.tsx": "C4: the incomplete-style banner links Site Style with adminHref",
+    "src/app/(admin)/admin/website/appearance/page.tsx": "C4: its cards link with adminHref",
+    "src/app/(admin)/admin/website/appearance/identity/page.tsx": "C4: its back link uses adminHref",
+    "src/app/(admin)/admin/website/image-manager/page.tsx": "C4: its back link uses adminHref",
+    "src/app/(admin)/admin/website/mountain-conditions/page.tsx":
+      "C4: its back link uses adminHref",
+    "src/app/(admin)/admin/website/page-content/page.tsx": "C4: its back link uses adminHref",
+    "src/app/(admin)/admin/website/site-banners/page.tsx": "C4: its back link uses adminHref",
+    "src/app/(admin)/admin/website/site-content/page.tsx": "C4: its back link uses adminHref",
+    "src/app/(admin)/admin/website/site-style/page.tsx": "C4: its back link uses adminHref",
+    "src/app/(admin)/admin/booking-policies/cancellation/page.tsx":
+      "C4: links Page Content with adminHref",
+    "src/app/(admin)/admin/setup/foundations/page.tsx": "C4: links Club Identity with adminHref",
+    "src/lib/analytics-privacy-policy.ts":
+      "C4: the privacy policy's edit link is Page Content's adminHref",
+    "src/components/admin/analytics-integration-card.tsx":
+      "C4: the privacy policy link falls back to Page Content's adminHref",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;

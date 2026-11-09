@@ -3,10 +3,8 @@ import "server-only";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { toPagePath } from "@/lib/page-content";
-import {
-  PRIVACY_POLICY_ADMIN_HREF,
-  type PrivacyPolicyPageState,
-} from "@/lib/analytics-settings-shared";
+import { adminHref } from "@/lib/admin-hubs";
+import type { PrivacyPolicyPageState } from "@/lib/analytics-settings-shared";
 
 /**
  * The club's canonical privacy policy, as the Google Analytics setup panel needs to
@@ -26,9 +24,14 @@ import {
  *
  * The same state answers a second question, for the VISITOR rather than the admin:
  * `resolveAnalyticsRuntimeConfig` uses it to decide whether the consent banner may
- * link the policy at the point of the decision. `PRIVACY_POLICY_ADMIN_HREF` and
- * {@link PrivacyPolicyPageState} therefore live in `analytics-settings-shared.ts`,
- * which the `"use client"` admin card can import; this module keeps the read.
+ * link the policy at the point of the decision. {@link PrivacyPolicyPageState}
+ * therefore lives in `analytics-settings-shared.ts`, which the `"use client"` admin
+ * card can import; this module keeps the read.
+ *
+ * The admin edits the policy in the existing website content editor, Page Content,
+ * linked by its hub registry id (epic #4468, C4 #4801), not in a new screen. The
+ * link is made here and in the card, never in the shared module, so the public
+ * consent banner's bundle does not carry the admin page registry.
  */
 
 const PRIVACY_PAGE_SLUG = "privacy";
@@ -41,7 +44,7 @@ const PRIVACY_PAGE_SLUG = "privacy";
 export async function loadPrivacyPolicyPageState(): Promise<PrivacyPolicyPageState> {
   const base = {
     publicPath: toPagePath(PRIVACY_PAGE_SLUG),
-    adminHref: PRIVACY_POLICY_ADMIN_HREF,
+    adminHref: adminHref("page-content"),
   };
 
   try {
