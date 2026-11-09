@@ -509,6 +509,13 @@ import "./late-capture-record-recovery.realdb.test";
 // the approval refuses - no second refund owed. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4824-` fixtures.
 import "./late-capture-approval-refund-race.realdb.test";
+// #4838 reuses it to prove a #2700 hand-back of a late capture reads what the
+// capture still holds under the Payment row: a `charge.refunded` sync recording
+// a dashboard refund of it, before the hand-back or while it waits for that row,
+// is read and the hand-back refused - never mirrored onto the kept fee as well.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4838-` fixtures.
+import "./late-capture-hand-back-race.realdb.test";
 // #4132 reuses it to prove a payment's ledger rows written in one transaction
 // keep insertion order (`createdAt`, then `insertionSeq`) after CLUSTER
 // deliberately changes heap order, through the loader, mirror, reduction's ask and

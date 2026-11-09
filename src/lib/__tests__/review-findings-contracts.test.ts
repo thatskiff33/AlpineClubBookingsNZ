@@ -1144,6 +1144,51 @@ describe("review finding source/schema contracts", () => {
     }
   });
 
+  it("runs the member-merge Payment row race suite against the same dedicated PostgreSQL (#4823)", () => {
+    // Merge never waits for a Payment row: it takes them last, sorted and
+    // NOWAIT, because lock(1) writers take a booking's Payment and booking rows
+    // in both orders. `member-merge-execute.test.ts` pins the statement against a
+    // mock; only the realdb suite shows PostgreSQL forms no wait-for cycle, and it
+    // `describe.skip`s itself without the harness env vars. Same shape as #2672.
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    const migrateStep = workflow.indexOf(
+      "name: Migrate dedicated advisory-lock race database"
+    );
+    const paymentRaceStep = workflow.indexOf(
+      "name: Test member-merge Payment row races against dedicated PostgreSQL"
+    );
+    expect(migrateStep).toBeGreaterThan(-1);
+    expect(
+      paymentRaceStep,
+      "ci.yml no longer runs member-merge-payment-row-races.realdb.test.ts. " +
+        "That suite self-skips without RUN_CONCURRENCY_RACE_TESTS, so removing " +
+        "the step silently un-tests the #4823 lock order."
+    ).toBeGreaterThan(migrateStep);
+    const stepBlock = workflow.slice(
+      paymentRaceStep,
+      workflow.indexOf("      - name:", paymentRaceStep + 1)
+    );
+    expect(stepBlock).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
+    expect(stepBlock).not.toContain("CONCURRENCY_RACE_DATABASE_URL:");
+    expect(stepBlock).toContain(
+      "pnpm exec vitest run src/lib/__tests__/member-merge-payment-row-races.realdb.test.ts"
+    );
+
+    // The races the fix stands on, by name: each is the one a mutation reddens.
+    const suite = readRepoFile(
+      "src/lib/__tests__/member-merge-payment-row-races.realdb.test.ts"
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    for (const caseName of [
+      "MUTATION: a card settle holding the Payment row makes the merge refuse at once, never wait; the settle commits and a re-run merges",
+      "a merge holding the Payment row makes the card settle wait; both commit",
+      "MUTATION: an edit door holding the booking row, before its Payment row, makes the merge wait; both commit",
+      "a merge holding both rows makes the edit door wait at the booking row; both commit",
+    ]) {
+      expect(suite, `#4823 case missing: ${caseName}`).toContain(caseName);
+    }
+  });
+
   it("runs the page-content delete race against a real PostgreSQL in CI (#3852)", () => {
     // The suite describe.skip's itself without the harness env vars, so an
     // unwired step would turn the only proof that PostgreSQL gives the loser of

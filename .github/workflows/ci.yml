@@ -1205,6 +1205,18 @@ jobs:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-merge-shared-double-races.realdb.test.ts
 
+      # #4823: member merge takes its Payment rows last and NOWAIT, because
+      # lock(1) writers take a booking's Payment and booking rows in both orders.
+      # Whether that leaves a wait-for cycle is a claim about PostgreSQL itself:
+      # a mock pins the statement, only this suite shows a card settle and the
+      # edit-door order racing a merge, in both orders, with no deadlock. It
+      # self-skips without the env vars (same #1881 harness and database), so
+      # `review-findings-contracts.test.ts` fails if this step goes missing.
+      - name: Test member-merge Payment row races against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-merge-payment-row-races.realdb.test.ts
+
       # #3583: the booking ledger's cut-over gate, run the way the owner runs it
       # (docs/MAINTENANCE.md) over a seeded history: booking histories made by
       # the REAL writers with their lines stripped, in a database of their own on

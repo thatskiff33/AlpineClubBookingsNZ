@@ -2645,7 +2645,8 @@ sorted order, and no global cohort key (#2595) → sorted member-lifecycle →
 sorted member-partner-link (#2595) →
 relation moves → one sorted master/loser/ancillary Member FOR UPDATE → under-lock
 re-plan → sorted coverage-owner → unresolved Xero contact-create proof re-check →
-late owner+actor sweeps → unbacked shared-double reconciliation (#2595) →
+late owner+actor sweeps → Payment attribution, sorted `NOWAIT` (#4823) →
+unbacked shared-double reconciliation (#2595) →
 actorless enqueue → loser delete**. #2595 adds two tiers: the lodge prefix at the
 TOP, before the member-lifecycle pair (see "Merge joins the bed-allocation
 cohort" below for why it cannot sit at its point of use), and the partner-link
@@ -2877,6 +2878,9 @@ lockAdultMemberHostingPolicySet(tx)                              policy config
   → one sorted master/loser/ancillary `Member … FOR UPDATE`        member rows
   → under-lock hosting re-plan + sorted hosting-coverage-owner     last
   → contact-create proof re-check + late owner/actor queue sweeps
+  → Payment rows naming the loser, sorted, FOR NO KEY UPDATE NOWAIT
+        (#4823 — then the attribution move; a held row refuses
+        the merge. See "Member merge never waits for a Payment row")
   → step 3b: sweepUnbackedFutureSharedDoublesWithLocksHeld
              (handed the locked lodge set. MUST stay below the
               `Member … FOR UPDATE` line above: it first re-derives
@@ -3288,6 +3292,74 @@ Two consequences worth stating plainly, because neither is obvious from the code
   `mergeMemberFields` is a closed enumeration that can emit no other column),
   which is why judging the bed-nights at step 3b gives the same answer as judging
   them after the field merge.
+
+#### Member merge never waits for a Payment row (#4823)
+
+Merge moves one Payment column: `Payment.manuallyMarkedPaidByMemberId`, the
+officer who recorded a cash settlement. Before #4823 the generic pass moved it
+after the booking moves and waited for each row. Merge takes no `lock(1)`, so
+that order could deadlock: merge held a booking row and waited for its Payment
+row, while a `lock(1)` writer that takes the Payment row first held it and
+waited for the booking row.
+
+The `lock(1)` writers take a booking's two rows in both orders:
+
+| Order | Writers |
+| --- | --- |
+| Payment → booking | a card settle (W1: its PAID claim and R01's owner read), the back-post |
+| booking → Payment | the edit doors (after their lodge key), an edit review, an approved appeal |
+
+Two `lock(1)` holders never interleave, so neither order is a defect between
+them. Merge is not a `lock(1)` holder, so neither fixed place for the Payment
+rows is safe for merge. Moving them before the booking moves, the settle's
+order, would only change which writer deadlocks. Merge would hold the Payment
+row and wait for the booking row an edit door holds, while the door waited for
+that Payment row. Merge's lodge prefix fences the settle and the doors only
+where the booking's lodge is in it. A booking merge holds through an actor
+column (the duplicate made it, or overrode its capacity) can be at a lodge
+neither member has a guest row in. An approved appeal never meets merge on one
+of these rows: it refuses a cash-settled payment before its transaction opens.
+Taking `lock(1)` is ruled out by "Why merge takes no global cohort key" above.
+
+So merge never waits for a Payment row
+(`src/lib/member-merge-payment-attribution.ts`):
+
+- The spec table marks the relation `movedLast`, and the generic move pass
+  skips it on that field. The module reads its key and column from that one
+  spec and refuses to load if another relation, or another model, carries the
+  flag. Merge moves it last, after the sorted `Member … FOR UPDATE` set and the
+  late queue sweeps.
+- One statement locks every Payment row naming the duplicate:
+  `SELECT 1 … ORDER BY "id" FOR NO KEY UPDATE NOWAIT`. If any row is held, the
+  merge refuses with a 409 (`merge_payment_row_busy`), writes nothing, and the
+  refusal is audited. The operator retries. A lock nobody waits for cannot be
+  part of a wait-for cycle, so the order of the two families no longer matters.
+- Under the Member rows the set cannot grow. Naming the duplicate on a Payment
+  row is an FK write, which needs `FOR KEY SHARE` on the duplicate's Member row.
+  So the lock covers every row the update changes, and the duplicate's
+  `onDelete: SetNull` finds no Payment row to update at the delete.
+- Being last, merge holds the Payment rows across the fewest later waits.
+
+No advisory key is added, and no writer's own order changes. Nothing else in
+merge locks a Payment row: its other moves update no Payment column, and D4's
+`postMemberMergeTransfer` posts no successor. Proved against real
+PostgreSQL by `member-merge-payment-row-races.realdb.test.ts`: a card settle
+holding its Payment row makes the merge refuse at once, and the settle then
+commits. A merge holding the row makes the settle wait, and both commit. The
+edit doors' order, through their own lock helpers, holding the booking row
+before its Payment row makes the merge wait, and both commit; a merge holding
+both makes it wait. The settle-first race deadlocks under the old placement,
+and the door-first race under the Payment-before-booking placement (both
+probed). The suite is a required step of the `migration-drift` job, pinned by
+`review-findings-contracts.test.ts`, as the #2672 merge races are. Pinned by
+position in `adult-member-hosting-coverage-lock.test.ts` and by shape in
+`member-merge-execute.test.ts`.
+
+Reconciled against the merged PRs that last changed member merge or these
+writers: #4820 (M4c refunds: the appeal's booking-row-first order, W1's
+capture-return read), #4791 (M4b receipts), #4776 (the engine's Payment lock),
+#4729 and #4636 (member merge, D4's transfer), #4792, #4761, #4754, #4749 and
+#4750.
 
 ## The disciplines, by writer class
 
@@ -5917,8 +5989,8 @@ against real PostgreSQL by `member-money-applications.realdb.test.ts`.
 Reconciled against #4668, #4671, #4667, #4666, #4664, #4659, #4658, #4654, #4653
 and #4662, the merges the M4 plan checked against these writers, and against
 the open credit-release work that shares this Payment row. No new edge: the
-store does not take a booking row, and merge takes no Payment row of its own
-(its relation moves can update one; see M4c below).
+store does not take a booking row, and merge never waits for a Payment row
+(#4823: see "Member merge never waits for a Payment row").
 
 M4b (#4516) activates receipt applications through `postBookingReceipts`. Its
 cash, application and exact-reversal writes run under the same Payment row as
@@ -5940,7 +6012,7 @@ Each decision the hook acts on is read under the Payment row, never before it:
   move, or a zero-net stand-in when the merge's snapshot netted it. D4 moves
   merged-debtor residue hop by hop, only ever onward along the merge chain to
   the owner; an intermediate hop may be a member that has itself merged away.
-- **Charge successors.** Merge takes no Payment row, so it posts no CHARGE
+- **Charge successors.** Merge reads no application state under a Payment row, so it posts no CHARGE
   successor: application state it read could miss a collection committing
   beside it. The first collection by the new owner posts the successor under
   the Payment row, sized from the live charge less everything collected.
@@ -5988,9 +6060,9 @@ writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
   re-price, so any member credit key comes before the Payment row. A duplicate
   or capacity-race capture posts in W1's body after its held R06 and reads the
   owner without the booking row (review F1), defensively: W1 holds the Payment
-  row there, and a merge can update a Payment row after its owner move (F5
-  below), so the booking row taken then would add a Payment → booking edge
-  against it. No other cycle is known: a journal line names its debtor by id,
+  row there, so the booking row taken then would add a Payment → booking edge
+  against a merge, which holds booking rows from its owner move on (#4823 made
+  merge never wait for a Payment row). No other cycle is known: a journal line names its debtor by id,
   with no foreign key, so the R06 takes no lock on the Member row. A
   treasurer-approved late capture takes the
   Payment row before it reads what the capture still holds and plans its
@@ -6002,6 +6074,13 @@ writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
 - **A kept late capture** (the approval task dismissed) takes the same Payment
   row before its claim and reverses an unpaid, unreserved capture-return R05 an
   automatic refund posted (review M5).
+- **A #2700 hand-back** of a late capture (no approval intent) takes the same
+  Payment row before it reads what its capture still holds, then claims
+  (#4838). Nothing between takes a lodge, member-credit or task-row lock: the
+  group-mirror and card-shortfall routes return before locking for this kind.
+  Read first, a `charge.refunded` sync committing before the claim let the
+  mirror land on another charge's headroom as well; proven by
+  `late-capture-hand-back-race.realdb.test.ts`.
 - **An appeal's `release_claim`** takes global → the request's row → its
   hand-back task → Payment, releases the approval's open reservations under its
   own keys with their funding and reverses its R05 in the same transaction. A
@@ -6023,9 +6102,10 @@ writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
 - **"Paid another way"** posts R14, its CLOSED_WITHOUT_REFUND releases and a
   kept rest's close-out under global → Payment (→ the late capture's approval
   task row), after its record and line.
-- **Merge** takes no `lock(1)` and no Payment row of its own, but its relation
-  moves can update one: `Payment.manuallyMarkedPaidByMemberId` names the officer
-  who marked it paid (review F5, pre-existing, filed separately). A refund
+- **Merge** takes no `lock(1)`. It updates one Payment column,
+  `manuallyMarkedPaidByMemberId` (the officer who marked it paid), last and
+  `NOWAIT` (review F5, fixed by #4823: "Member merge never waits for a Payment
+  row"). A refund
   family's successor is posted by the first refund writer that finds the owner
   moved, under the Payment row, sized from the tip's remaining refund-payable
   balance, as M4b posts CHARGE successors. A reservation made before a merge is
@@ -6041,9 +6121,11 @@ row only under `lock(1)` (W1's R01, the back-post); two `lock(1)` holders never
 interleave. Against a merge, which takes no `lock(1)`, a door that reads the
 owner under the booking row takes that row before anything the merge takes
 after its owner move (the request's row, a Member row's `FOR UPDATE`), proved
-in both orders by `member-money-refund-appeal-merge.realdb.test.ts`.
+in both orders by `member-money-refund-appeal-merge.realdb.test.ts`. Merge takes
+its Payment rows `NOWAIT`, so it is in neither direction's cycle (#4823).
 Payment → the approval task row in a "Paid another way" close, and Payment →
-that task's claim in a late-capture approval or keep, in the same order.
+that task's claim in a late-capture approval or keep, in the same order; a
+#2700 hand-back's claim the same (#4838), and its dismissal takes no Payment row.
 Payment-row-only writers never take a booking row.
 
 Counterpart reconciliation at M4c's base (`0d678da`): #4791 (M4b receipts),
