@@ -897,6 +897,32 @@ describe("#3030 - pricing an unknown amount at completion", () => {
     expect(result.amountAmended).toBe(false);
   });
 
+  it("#4840: takes the booking row after lock(1) and the task re-read, before the claim names the officer", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Priced from the June invoice: two nights at $45.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 9000,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST);
+
+    // The claim's `completedByMemberId` takes KEY SHARE on the officer's Member row, and member merge
+    // holds booking rows before its Member FOR UPDATE: so the booking row has to come first.
+    const statements = mocks.executeRaw.mock.calls.map(([strings]) => (strings as TemplateStringsArray).join("?"));
+    const bookingRow = statements.findIndex((sql) => sql.includes('FROM "Booking"') && sql.includes("FOR NO KEY UPDATE"));
+    expect(statements[0]).toContain("pg_advisory_xact_lock(1)");
+    expect(bookingRow).toBeGreaterThan(0);
+    expect(statements.filter((sql) => sql.includes('FROM "Booking"'))).toHaveLength(1);
+    const bookingRowAt = mocks.executeRaw.mock.invocationCallOrder[bookingRow]!;
+    expect(bookingRowAt).toBeGreaterThan(mocks.manualRefundTaskFindUnique.mock.invocationCallOrder[1]!);
+    expect(bookingRowAt).toBeLessThan(mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!);
+    expect(bookingRowAt).toBeLessThan(mocks.applyLocalRefundAllocation.mock.invocationCallOrder[0]!);
+  });
+
   it("refuses to complete an unpriced task when the caller claims it already has its final amount - the unknown is NOT zero", async () => {
     mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
 
