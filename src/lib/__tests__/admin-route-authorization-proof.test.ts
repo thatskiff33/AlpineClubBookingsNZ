@@ -1149,8 +1149,11 @@ describe("#2984: finance-only standing grants Finance and nothing else", () => {
   }, 120_000);
 
   it("reaches the consolidated fee console, which admits on bookings OR finance (#1933)", async () => {
-    expect(allAdminPaths.has("/admin/fees")).toBe(true);
+    // The console's file is under the Rules hub (C6 #4803); its old URL is still
+    // the route the layout guard sees, and the hub URL answers the same.
+    expect(anchorRouteExists("/admin/fees")).toBe(true);
     expect((await pageAdmits(FINANCE_ONLY, "/admin/fees")).ok).toBe(true);
+    expect((await pageAdmits(FINANCE_ONLY, "/admin/rules/fees")).ok).toBe(true);
     expect((await pageAdmits(viewGridFor("bookings"), "/admin/fees")).ok).toBe(
       true,
     );
