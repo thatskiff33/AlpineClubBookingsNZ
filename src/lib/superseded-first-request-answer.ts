@@ -3,21 +3,17 @@ import type { PaymentRecoveryOperation } from "@prisma/client";
 import logger from "@/lib/logger";
 import { isRefundReservationOpen } from "@/lib/member-money";
 import { isBookingJournalInactive, postCardRefundCash, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
-import { carriesCardRefundOperationMetadata } from "@/lib/open-card-refund-owed";
+import { isOwnUnstampedCardRefund } from "@/lib/open-card-refund-owed";
 import { isRecordedRefundStatus } from "@/lib/payment-transaction-status";
 import { PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
-import { REFUND_SLICE_KEY_METADATA } from "@/lib/refund-slice-evidence";
-import { listRefundsForPaymentIntent } from "@/lib/stripe";
-import { stripeReferenceId } from "@/lib/stripe-references";
+import { listRefundsOnCardCharge } from "@/lib/card-refund-stripe-refunds";
 
 type SupersededRow = Pick<PaymentRecoveryOperation, "id" | "type" | "idempotencyKey" | "stripeKeyPrefix" | "bookingId" | "paymentId" | "paymentIntentId">;
 
 /** The refunds Stripe lists that this row's first request made: its metadata, no slice key. Every status. */
-function ownFirstRequestRefunds(operation: SupersededRow, refunds: Awaited<ReturnType<typeof listRefundsForPaymentIntent>>) {
-  return refunds.filter((refund) =>
-    (!refund.payment_intent || stripeReferenceId(refund.payment_intent) === operation.paymentIntentId) &&
-    carriesCardRefundOperationMetadata(operation, refund.metadata) && !refund.metadata?.[REFUND_SLICE_KEY_METADATA]);
+function ownFirstRequestRefunds(operation: SupersededRow, refunds: Awaited<ReturnType<typeof listRefundsOnCardCharge>>) {
+  return refunds.filter((refund) => isOwnUnstampedCardRefund(operation, refund.metadata));
 }
 
 /**
@@ -30,7 +26,7 @@ function ownFirstRequestRefunds(operation: SupersededRow, refunds: Awaited<Retur
 export async function supersededFirstRequestUnsent(operation: SupersededRow): Promise<boolean> {
   if (!(await isRefundReservationOpen(prisma, operation.idempotencyKey))) return false;
   try {
-    return ownFirstRequestRefunds(operation, await listRefundsForPaymentIntent(operation.paymentIntentId, { timeoutMs: 10_000, singlePage: true })).length === 0;
+    return ownFirstRequestRefunds(operation, await listRefundsOnCardCharge(operation.paymentIntentId)).length === 0;
   } catch (err) {
     logger.warn({ operationId: operation.id, paymentIntentId: operation.paymentIntentId, err },
       "A superseded refund row's open reservation was not resized: Stripe's refunds could not be read (#4516)");
@@ -52,9 +48,9 @@ export async function answerSupersededFirstRequest(operation: SupersededRow): Pr
   const journal = await resolveBookingMoneyPostingContext();
   if (isBookingJournalInactive(journal) || !(await isRefundReservationOpen(prisma, operation.idempotencyKey))) return;
   const logContext = { operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: operation.paymentIntentId };
-  let refunds: Awaited<ReturnType<typeof listRefundsForPaymentIntent>>;
+  let refunds: Awaited<ReturnType<typeof listRefundsOnCardCharge>>;
   try {
-    refunds = await listRefundsForPaymentIntent(operation.paymentIntentId, { timeoutMs: 10_000, singlePage: true });
+    refunds = await listRefundsOnCardCharge(operation.paymentIntentId);
   } catch (err) {
     logger.warn({ ...logContext, err }, "A superseded refund row's open reservation was not answered: Stripe's refunds could not be read (#4516)");
     return;

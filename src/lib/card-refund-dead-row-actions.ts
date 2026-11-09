@@ -18,8 +18,7 @@ import logger from "@/lib/logger";
 import { parseRefundAllocationPlan } from "@/lib/open-card-refund-owed";
 import { prisma } from "@/lib/prisma";
 import { rearmedPaymentRecoveryOperationData } from "@/lib/payment-recovery-constants";
-import { listRefundsForPaymentIntent } from "@/lib/stripe";
-import { stripeReferenceId } from "@/lib/stripe-references";
+import { listRefundsOnCardCharge } from "@/lib/card-refund-stripe-refunds";
 
 /**
  * #4368 (owner decision, 25 Oct 2026: "build as shown in the mock-up";
@@ -46,10 +45,13 @@ import { stripeReferenceId } from "@/lib/stripe-references";
  *   adopted (`INV-PAY-147`), and one made outside the app holds the row again.
  *   A re-arm runs outside Stripe's 24-hour key window, so where the app cannot
  *   show a new request would not pay twice it refuses (409): the rules of
- *   `tryCardAgainRefusal`, and (review B) a refund this row's own door made
- *   that carries no slice key and nothing here accounts for
- *   (`unadoptedOwnStripeRefunds`), read from Stripe before the locks. Also
- *   refused unless the owed figure is the one the treasurer saw.
+ *   `tryCardAgainRefusal` (among them, review F1: what the runner would send -
+ *   every unmarked plan slice - must be exactly the row's own unsent figure),
+ *   and (review B) a refund this booking's same kind of refund made that
+ *   carries no slice key and no slice is marked with
+ *   (`unadoptedOwnStripeRefunds`), read from Stripe before the locks for the
+ *   plan the row still holds under them (review F4). Also refused unless the
+ *   owed figure is the one the treasurer saw.
  *
  * ONE ROW, ONE WINNER (#4492). "Paid another way" and these two take the same
  * locks and the same claim (`card-refund-dead-row-lock.ts`): whichever commits
@@ -183,16 +185,20 @@ export async function tryDeadCardRefundAgain(input: TryCardAgainInput): Promise<
     throw new DeadCardRefundActionError("Say what you saw still owed, in whole cents, more than nothing.", 400);
   }
   // Review B: Stripe's refunds on the row's charges, read before any lock (no provider call runs under them).
-  const listed = await stripeRefundsOnRowCharges(input.operationId);
+  const read = await stripeRefundsOnRowCharges(input.operationId);
   return prisma.$transaction(async (tx) => {
     const { operation, payment, booking } = await lockDeadCardRefundRow(tx, input.operationId, REFUSALS);
     const owed = deadCardRefundStillOwed(payment, operation.id);
     const refusal = tryCardAgainRefusal(payment, operation, owed);
     if (refusal) throw new DeadCardRefundActionError(refusal, 409);
-    const unadopted = unadoptedOwnStripeRefunds(payment, operation, listed);
+    // Review F4: Stripe was read for the charges of the plan read then; a plan moved since is not the one checked.
+    if (read !== null && JSON.stringify(read.allocationPlan ?? null) !== JSON.stringify(operation.allocationPlan ?? null)) {
+      throw new DeadCardRefundActionError(CHANGED_WHILE_SETTLING, 409);
+    }
+    const unadopted = unadoptedOwnStripeRefunds(payment, operation, read?.listed ?? []);
     if (unadopted.length > 0) {
       throw new DeadCardRefundActionError(
-        `Stripe holds a refund this card refund's own request made (${unadopted.join(", ")}) that the app cannot match to what is owed, so a new request could pay the member twice and the card cannot be tried again. Check it in the Stripe dashboard, and settle anything still owed with Paid another way.`,
+        `Stripe holds a refund made by this booking's same kind of refund (${unadopted.join(", ")}) that the app cannot match to what is owed, so a new request could pay the member twice and the card cannot be tried again. Check it in the Stripe dashboard, and settle anything still owed with Paid another way.`,
         409,
       );
     }
@@ -245,18 +251,20 @@ const STRIPE_UNREADABLE =
 /**
  * #4368 review (B): the refunds Stripe lists on the charges this row would
  * refund - its plan's, a superseded intent's own, or (a legacy row with
- * neither) every card charge of its payment - read before the transaction, one
- * bounded single-page request per intent, as the runner's preflight reads them
- * (`INV-PAY-145`). Anything Stripe will not answer in full refuses the re-arm:
+ * neither) every card charge of its payment - read before the transaction,
+ * through the preflight's own bounded read (`listRefundsOnCardCharge`,
+ * `INV-PAY-145`), with the plan they were read for (review F4). Anything Stripe will not answer in full refuses the re-arm:
  * nothing unread can show a re-send is safe. Read unlocked; the decision
  * (`unadoptedOwnStripeRefunds`) is taken under the locks.
  */
-async function stripeRefundsOnRowCharges(operationId: string): Promise<ListedStripeRefund[]> {
+async function stripeRefundsOnRowCharges(
+  operationId: string,
+): Promise<{ allocationPlan: unknown; listed: ListedStripeRefund[] } | null> {
   const row = await prisma.paymentRecoveryOperation.findUnique({
     where: { id: operationId },
     select: { paymentId: true, paymentTransactionId: true, allocationPlan: true },
   });
-  if (!row) return []; // The transaction refuses it (404).
+  if (!row) return null; // The transaction refuses it (404).
   const planned = [...new Set((parseRefundAllocationPlan(row.allocationPlan) ?? []).map((slice) => slice.paymentTransactionId).filter((id) => id !== ""))];
   const ids = planned.length > 0 ? planned : row.paymentTransactionId ? [row.paymentTransactionId] : null;
   const charges = await prisma.paymentTransaction.findMany({
@@ -265,17 +273,15 @@ async function stripeRefundsOnRowCharges(operationId: string): Promise<ListedStr
   });
   const listed: ListedStripeRefund[] = [];
   for (const intent of [...new Set(charges.flatMap((charge) => (charge.stripePaymentIntentId ? [charge.stripePaymentIntentId] : [])))]) {
-    let refunds: Awaited<ReturnType<typeof listRefundsForPaymentIntent>>;
+    let refunds: Awaited<ReturnType<typeof listRefundsOnCardCharge>>;
     try {
-      refunds = await listRefundsForPaymentIntent(intent, { timeoutMs: 10_000, singlePage: true });
+      refunds = await listRefundsOnCardCharge(intent);
     } catch (err) {
       logger.warn({ err, operationId, paymentIntentId: intent }, "Try the card again refused: Stripe's refunds could not be read (#4368)");
       throw new DeadCardRefundActionError(STRIPE_UNREADABLE, 409);
     }
-    for (const refund of refunds) {
-      if (refund.payment_intent && stripeReferenceId(refund.payment_intent) !== intent) continue;
-      listed.push({ id: refund.id, status: refund.status ?? null, metadata: refund.metadata ?? null });
-    }
+    for (const refund of refunds) listed.push({ id: refund.id, status: refund.status ?? null, metadata: refund.metadata ?? null });
   }
-  return listed;
+  // Review F4: the plan these charges were read for, checked against the row under the locks.
+  return { allocationPlan: row.allocationPlan, listed };
 }

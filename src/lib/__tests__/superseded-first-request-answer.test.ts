@@ -21,8 +21,11 @@ vi.mock("@/lib/member-money/doors", () => ({
   postCardRefundCash: mocks.cash,
   resolveBookingMoneyPostingContext: async () => mocks.journal,
 }));
+// #4368 review F3: the one "own refund with no slice key" predicate (`isOwnUnstampedCardRefund`); its door-metadata half
+// is doubled here by operation id, and its slice-key half is the real rule.
 vi.mock("@/lib/open-card-refund-owed", () => ({
-  carriesCardRefundOperationMetadata: (operation: { id: string }, metadata: Record<string, string> | null) => metadata?.operationId === operation.id,
+  isOwnUnstampedCardRefund: (operation: { id: string }, metadata: Record<string, string> | null) =>
+    metadata?.operationId === operation.id && !metadata?.refundSliceKey,
 }));
 vi.mock("@/lib/payment-transactions", () => ({ PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS: { maxWait: 1, timeout: 1 } }));
 vi.mock("@/lib/prisma", () => ({ prisma: { $transaction: async (run: (tx: unknown) => unknown) => run(mocks.tx) } }));

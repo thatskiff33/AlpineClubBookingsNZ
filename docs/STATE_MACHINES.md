@@ -4743,8 +4743,9 @@ DEAD -> PENDING       (#4368 "Try the card again": finance:edit, lock(1), then t
                        Payment row; refused (409) where the app cannot show a
                        re-send would not pay twice (tryCardAgainRefusal: any
                        failed-later row on the payment, a may-have-refunded
-                       failure; or an unmatched own refund Stripe lists) or
-                       the owed figure moved; the same status-guarded claim, on the plan read;
+                       failure, unmarked slices not adding up to what is
+                       owed; or an unmatched refund of the same kind Stripe
+                       lists) or the owed figure or plan moved; the same status-guarded claim, on the plan read;
                        rearmedPaymentRecoveryOperationData - attempts 0, due
                        now; the runner's INV-PAY-145 preflight runs before any
                        send; audited under `payment`; INV-PAY-149)

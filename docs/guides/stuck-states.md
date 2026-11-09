@@ -346,9 +346,9 @@ start. Nothing is sent from the dialog itself. Before any refund is sent, the
 app reads the refunds Stripe already holds on the charge (#4359): one it can
 match to this refund is counted instead of sent again, and one made in the
 Stripe dashboard since stops it again for you to check. Where Stripe holds a
-refund this one's own request made that the app cannot match - an older one,
-made before refunds carried the details that match them - the button refuses
-rather than risk paying twice.
+refund of the same kind on the booking that the app cannot match - an older
+one, made before refunds carried the details that match them - the button
+refuses rather than risk paying twice.
 If the card fails again, the refund comes back to this list, and the officers
 are emailed as before. Only use it if you have not paid the member back
 another way. It is recorded in the [audit log](audit-log.md) under
@@ -360,6 +360,9 @@ could pay the member more than they are owed:
 - nothing is left owed (use **Nothing left owed**);
 - its last failure looks like Stripe may have refunded it after all;
 - the payment now holds less than the refund would send;
+- part of the refund was already refunded without being marked on it, so the
+  app would send more than is owed, or the refund keeps no record of exactly
+  what it would send;
 - the app raised the refund for a person to settle, not to send again: a
   refund Stripe failed later that is not asked for again, or the rest of a
   part close that is still owed;

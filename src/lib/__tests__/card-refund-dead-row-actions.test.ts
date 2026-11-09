@@ -399,7 +399,7 @@ describe("Try the card again (decision 5)", () => {
       mocks.listRefunds.mockResolvedValue([listed()]);
       const error = await refusal(tryAgain());
       expect(error.status).toBe(409);
-      expect(error.message).toMatch(/Stripe holds a refund this card refund's own request made \(re_lost_answer\)/);
+      expect(error.message).toMatch(/Stripe holds a refund made by this booking's same kind of refund \(re_lost_answer\)/);
       expect(mocks.claim).not.toHaveBeenCalled();
     });
 
@@ -411,6 +411,25 @@ describe("Try the card again (decision 5)", () => {
     ])("MUTATION: allowed when %s", async (_label, overrides) => {
       mocks.listRefunds.mockResolvedValue([listed(overrides)]);
       await expect(tryAgain()).resolves.toMatchObject({ operationId: "op-1" });
+    });
+
+    it("MUTATION (review F1): refused even when the owed figure's attribution matches it to a row - the runner sends by marks", async () => {
+      // Recorded, and matched to this row's slice by the attribution, but never marked on it.
+      mocks.listRefunds.mockResolvedValue([listed({ id: "re_later_1" })]);
+      const twoSlices = deadOperation({ allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 15_000 }, { paymentTransactionId: "txn-1", amountCents: 15_000 }], amountCents: 30_000 });
+      mocks.findOperation.mockResolvedValue(twoSlices);
+      mocks.preReadOperation.mockResolvedValue({ paymentId: "p-1", paymentTransactionId: null, allocationPlan: twoSlices.allocationPlan });
+      mocks.findPayment.mockResolvedValue(payment([twoSlices], { amountCents: 40_000, refundedAmountCents: 15_000, refunds: [LATER_REFUND] }));
+      await expect(tryAgain()).rejects.toMatchObject({ status: 409 });
+      expect(mocks.claim).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION (review F4): refused when the plan Stripe was read for is not the one under the locks", async () => {
+      mocks.preReadOperation.mockResolvedValue({ paymentId: "p-1", paymentTransactionId: null, allocationPlan: [{ paymentTransactionId: "txn-9", amountCents: 15_000 }] });
+      const error = await refusal(tryAgain());
+      expect(error.status).toBe(409);
+      expect(error.message).toMatch(/changed while you were settling it/);
+      expect(mocks.claim).not.toHaveBeenCalled();
     });
 
     it("MUTATION: allowed when a slice of a row is marked with it", async () => {
@@ -441,7 +460,12 @@ describe("Try the card again (decision 5)", () => {
 
 describe("tryCardAgainRefusal: when a re-arm could pay the member more than is owed", () => {
   const owed = { ownCents: 15_000, owedCents: 15_000 };
-  const own = { id: "op-1", idempotencyKey: "booking_cancel_refund_recovery_b-1", lastError: "Stripe: card_declined" };
+  const own = {
+    id: "op-1",
+    idempotencyKey: "booking_cancel_refund_recovery_b-1",
+    lastError: "Stripe: card_declined",
+    allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 15_000 }] as unknown,
+  };
   const others = (...rows: Array<{ id: string; idempotencyKey: string; status: string }>) => ({
     recoveryOperations: rows.map((row) => ({ type: "REFUND_BOOKING_MODIFICATION", ...row })),
   });
@@ -461,6 +485,17 @@ describe("tryCardAgainRefusal: when a re-arm could pay the member more than is o
   it("MUTATION: refuses a row the app raised dead for a person: a failed-later row, or a part close's still-owed rest", () => {
     expect(tryCardAgainRefusal(others(), { ...own, id: "op-y", idempotencyKey: "card_refund_failed_later_re_x" }, owed)).toMatch(/for a person to settle/);
     expect(tryCardAgainRefusal(others(), { ...own, id: "op-r", idempotencyKey: "card_refund_still_owed_task-1" }, owed)).toMatch(/for a person to settle/);
+  });
+
+  it("MUTATION (review F1): refuses unless what the runner would send - every unmarked slice - is exactly the row's own unsent figure", () => {
+    // $50 + $50: the first made by a refund nobody marked (filled by it in the owed figure), the second dead.
+    const unmarked = { ...own, allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 5_000 }, { paymentTransactionId: "txn-1", amountCents: 5_000 }] };
+    expect(tryCardAgainRefusal(others(), unmarked, { ownCents: 5_000, owedCents: 5_000 })).toMatch(/already refunded without being marked/);
+    // Marked: the runner sends only the second, which is what is confirmed.
+    const marked = { ...own, allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 5_000, madeRefundId: "re_made" }, { paymentTransactionId: "txn-1", amountCents: 5_000 }] };
+    expect(tryCardAgainRefusal(others(), marked, { ownCents: 5_000, owedCents: 5_000 })).toBeNull();
+    // No stored plan: what it would send cannot be checked.
+    expect(tryCardAgainRefusal(others(), { ...own, allocationPlan: null }, owed)).toMatch(/keeps no record of exactly what it would send/);
   });
 
   it("MUTATION (review B): refuses where its last failure says Stripe may have refunded after all", () => {

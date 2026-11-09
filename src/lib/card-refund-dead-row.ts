@@ -5,7 +5,7 @@ import {
   CARD_REFUND_OPERATION_WHERE,
   cardRefundsAttributedByOperation,
   cardRefundSlicesByOperation,
-  carriesCardRefundOperationMetadata,
+  isOwnUnstampedCardRefund,
   parseRefundAllocationPlan,
   unsentSliceCents,
 } from "@/lib/open-card-refund-owed";
@@ -13,7 +13,6 @@ import { getNetCollectedCashParts } from "@/lib/payment-net-collected";
 import { PAYMENT_RECOVERY_EXHAUSTED_WHERE } from "@/lib/payment-recovery-constants";
 import { cardRefundFailedLaterRefundId, cardRefundStillOwedCloseRecordId } from "@/lib/payment-recovery-keys";
 import { isRecordedRefundStatus } from "@/lib/payment-transaction-status";
-import { REFUND_SLICE_KEY_METADATA } from "@/lib/refund-slice-evidence";
 
 /**
  * #3372, #4368: ONE DEAD CARD REFUND ROW, AS EVERY STUCK-STATES ACTION ON IT READS
@@ -195,6 +194,14 @@ function raisedForAPerson(idempotencyKey: string): boolean {
  * - The payment holds less than the row's own unsent slices: the runner sends
  *   a stored plan's slices as written (`INV-PAY-146`), so it could send more
  *   than the figures say is owed. "Paid another way" closes it instead.
+ * - (Review F1) What the runner would send is not what the treasurer confirms:
+ *   it sends every plan slice not marked `madeRefundId`, whole, whatever the
+ *   owed figure says, and the preflight marks a slice only by its slice key.
+ *   A slice a recorded refund filled but nobody marked (a refund made before
+ *   slice evidence, a mark that failed) would be sent again, so the unmarked
+ *   slices must add up to exactly the row's own unsent figure. A row with no
+ *   stored plan (its runner derives what it sends at the time) cannot be
+ *   checked at all.
  * - #4492: ANY refund Stripe failed later (`card_refund_failed_later_<refund>`)
  *   on the same payment, open or closed: it may be the same money as this row
  *   (a refund this row's door made whose answer was lost, then failed), and
@@ -203,7 +210,7 @@ function raisedForAPerson(idempotencyKey: string): boolean {
  */
 export function tryCardAgainRefusal(
   payment: { recoveryOperations: ReadonlyArray<{ id: string; idempotencyKey: string }> },
-  operation: { id: string; idempotencyKey: string; lastError: string | null },
+  operation: { id: string; idempotencyKey: string; lastError: string | null; allocationPlan: unknown },
   owed: Pick<DeadCardRefundStillOwed, "ownCents" | "owedCents">,
 ): string | null {
   if (owed.owedCents === 0) {
@@ -218,10 +225,30 @@ export function tryCardAgainRefusal(
   if (owed.owedCents !== owed.ownCents) {
     return "This payment now holds less than this refund would send to the card, so the card cannot be tried again. Settle it with Paid another way.";
   }
+  const sends = reArmWouldSendCents(operation.allocationPlan);
+  if (sends === null) {
+    return "This refund keeps no record of exactly what it would send, so the app cannot check it against what is owed, and the card cannot be tried again. Settle it with Paid another way.";
+  }
+  if (sends !== owed.ownCents) {
+    return "Part of this refund was already refunded without being marked on it, so trying the card again would send more than is owed. Settle it with Paid another way.";
+  }
   if (payment.recoveryOperations.some((other) => other.id !== operation.id && cardRefundFailedLaterRefundId(other.idempotencyKey) !== null)) {
     return "A refund Stripe failed later is on this payment, and it may be the same money as this one. Do not try the card again: check what the member is owed and settle it with Paid another way.";
   }
   return null;
+}
+
+/**
+ * #4368 review F1: what the runner would send for a re-armed row - every
+ * stored plan slice not marked `madeRefundId`, at its whole amount
+ * (`refundPlanOrRetryRefusals`, `processBookingModificationRefundOperation`) -
+ * or null for a row with no stored plan, whose runner sizes its request at the
+ * time.
+ */
+export function reArmWouldSendCents(allocationPlan: unknown): number | null {
+  const plan = parseRefundAllocationPlan(allocationPlan);
+  if (!plan || plan.length === 0) return null;
+  return plan.reduce((sum, slice) => sum + (slice.madeRefundId ? 0 : slice.amountCents), 0);
 }
 
 /** A refund as Stripe lists it for an intent, as the re-arm reads it before its locks. */
@@ -232,17 +259,18 @@ export interface ListedStripeRefund {
 }
 
 /**
- * #4368 review (B): the refunds Stripe lists on this row's charges that THIS
- * ROW'S DOOR made (its metadata, `carriesCardRefundOperationMetadata`), that
- * still count, that carry no slice key (`INV-PAY-147`: made before slice
- * evidence, or by an unkeyed send) and that nothing here accounts for - no
- * slice of any row is marked with it, and the attribution gives it to none.
- * The runner adopts a refund only by its slice key, and a re-arm runs outside
- * Stripe's 24-hour key window, so a request sent for this row could pay any of
- * these again: the re-arm refuses while there is one.
+ * #4368 review (B, F1): the refunds Stripe lists on this row's charges that a
+ * request like this row's made - this booking's same kind of refund
+ * (`isOwnUnstampedCardRefund`: its door's metadata, no slice key, so no slice
+ * key ties it to a slice) - that still count and that no slice of any row is
+ * marked with. The runner adopts a refund only by its slice key and a re-arm
+ * runs outside Stripe's 24-hour key window, so a request sent for this row
+ * could pay any of these again: the re-arm refuses while there is one. Being
+ * matched by the owed figure's attribution does not clear it - the runner
+ * sends by marks, not by that figure (review F1).
  */
 export function unadoptedOwnStripeRefunds(
-  payment: DeadCardRefundPayment,
+  payment: Pick<DeadCardRefundPayment, "recoveryOperations">,
   operation: { type: string; idempotencyKey: string; stripeKeyPrefix: string | null; bookingId: string },
   listed: ReadonlyArray<ListedStripeRefund>,
 ): string[] {
@@ -251,15 +279,10 @@ export function unadoptedOwnStripeRefunds(
       (parseRefundAllocationPlan(row.allocationPlan) ?? []).flatMap((slice) => (slice.madeRefundId ? [slice.madeRefundId] : [])),
     ),
   );
-  const attributed = new Set([...cardRefundsAttributedByOperation(payment).values()].flat().map((refund) => refund.stripeRefundId));
   return listed
     .filter(
       (refund) =>
-        isRecordedRefundStatus(refund.status ?? "unknown") &&
-        carriesCardRefundOperationMetadata(operation, refund.metadata) &&
-        !refund.metadata?.[REFUND_SLICE_KEY_METADATA] &&
-        !marked.has(refund.id) &&
-        !attributed.has(refund.id),
+        isRecordedRefundStatus(refund.status ?? "unknown") && isOwnUnstampedCardRefund(operation, refund.metadata) && !marked.has(refund.id),
     )
     .map((refund) => refund.id);
 }

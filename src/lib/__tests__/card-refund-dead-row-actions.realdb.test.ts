@@ -522,6 +522,27 @@ let refundCreatedSeconds = 0;
         expect(await auditActions()).toEqual([]);
       });
 
+      it("MUTATION (review F1): $50 + $50, the first made by an unmarked own refund the owed figure counts: 409 - the runner would send both", async () => {
+        const HALF = REFUND_CENTS / 2;
+        await prisma.paymentRecoveryOperation.update({
+          where: { id: OPERATION_ID },
+          data: { allocationPlan: [{ paymentTransactionId: TRANSACTION_ID, amountCents: HALF }, { paymentTransactionId: TRANSACTION_ID, amountCents: HALF }] },
+        });
+        const row = await operationNow();
+        // Slice 1's refund: made under the row's door with no slice key, recorded and matched - never marked on the plan.
+        const made = { ...stripeRefund("succeeded", cardRefundOperationRefundMetadata(row)), id: "re_race_4368_unmarked", amount: HALF };
+        await recordStripeRefundsAgainstTransaction({ paymentId: PAYMENT_ID, paymentTransactionId: TRANSACTION_ID, refunds: [made] as never, fallbackPaymentIntentId: INTENT });
+        stripeRaceHooks.listRefunds = async () => [made];
+        // The treasurer is shown $25.00 owed; the runner would send both unmarked slices, $50.00.
+        expect(await owedNow()).toBe(HALF);
+        await expect(
+          actions.tryDeadCardRefundAgain({ operationId: OPERATION_ID, expectedOwedCents: HALF, actingMemberId: OFFICER_ID }),
+        ).rejects.toMatchObject({ status: 409, message: expect.stringContaining("already refunded without being marked") });
+        expect(await operationNow()).toMatchObject({ status: "FAILED", attempts: 5 });
+        expect((await listDeadCardRefunds()).find((each) => each.operationId === OPERATION_ID)?.tryCardAgainRefusal).toMatch(/without being marked/);
+        expect(await auditActions()).toEqual([]);
+      });
+
       it("a refund Stripe lists with this row's metadata AND its slice key is the runner's to adopt: the re-arm goes ahead", async () => {
         const row = await operationNow();
         stripeRaceHooks.listRefunds = async () => [

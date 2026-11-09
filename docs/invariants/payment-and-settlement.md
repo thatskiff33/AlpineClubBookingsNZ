@@ -4061,8 +4061,8 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
 later), **`INV-PAY-145`** (preflight).
 
 - **A dead card refund is settled on Stuck States, never by a new Stripe
-  dashboard refund** (owner decisions 5 and 7 on #4361; #4368). Two
-  settlements beside "Paid another way" record no money; finance:edit, as it.
+  dashboard refund** (decisions 5 and 7 on #4361; #4368). Two settlements
+  beside "Paid another way" record no money; finance:edit, as it.
 - **Nothing left owed.** A dead row with nothing owed and nothing of its own
   unsent is listed while Stripe refunds the owed figure's attribution gives it
   exist, and closes to `SUCCEEDED` naming them. No allocation, hand-back,
@@ -4074,16 +4074,17 @@ later), **`INV-PAY-145`** (preflight).
   before any send. A re-arm runs outside Stripe's key window, so where the app
   cannot show a re-send is safe it refuses (409): nothing owed; a row raised
   for a person (failed-later, still-owed rest); a may-have-refunded failure;
-  the payment holding less than the row's unsent slices; any failed-later row
-  on the payment, open or paid (#4492); a counted refund Stripe lists that this
-  row's door made, unstamped and unaccounted for (read before the locks;
-  unreadable refuses); or a moved owed figure.
+  the payment holding less than the row's unsent slices; unmarked plan slices
+  not adding up to them; any failed-later row
+  on the payment, open or paid (#4492); a counted, unstamped, unmarked refund
+  Stripe lists from this booking's same door (read before the locks;
+  unreadable refuses); or a moved owed figure or plan.
 - **One row, one winner.** All three settlements share `lockDeadCardRefundRow`
   (`lock(1)`, the row, then the Payment row) and its claim: dead, on the plan
-  read. A closed row is never re-armed; a re-armed row is offered no close
-  until given up again. Each is audited under `payment`.
+  read. A closed row is never re-armed, nor a re-armed one closed until given
+  up again. Each is audited under `payment`.
 - Limit: another door's unrecorded refund failing after a re-arm is raised
-  beside the live row (#4492).
+  beside the live row (#4104, #4492).
 - Proven by `card-refund-dead-row-actions.test.ts`,
   `card-refund-dead-row-actions.realdb.test.ts`, `dead-row-actions-route.test.ts`
   and `dead-card-refunds-panel.test.tsx`.

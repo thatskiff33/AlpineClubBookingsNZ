@@ -6492,16 +6492,21 @@ re-armed row is NOT as safe as one on its original retries. Where the app
 cannot show a new request would not pay twice, the re-arm refuses (#4368
 review A, B): while ANY refund Stripe failed later is on the payment, open or
 paid (#4492: once it is re-sent and paid the given-up row reads owed again);
-where the row's last failure says Stripe may have refunded; and where Stripe
-lists a counted refund this row's own door made with no slice key that no
-slice is marked with and the attribution gives to no row
-(`unadoptedOwnStripeRefunds`). That list is read before the transaction, one
-bounded single-page request per intent; one it cannot read refuses. The
+where the row's last failure says Stripe may have refunded; where what the
+runner would send - every plan slice not marked `madeRefundId`, whole - is not
+exactly the row's own unsent figure the treasurer confirms, or the row keeps no
+plan (review F1: a slice a recorded refund filled but nobody marked would be
+sent again); and where Stripe lists a counted refund this booking's same kind
+of refund made with no slice key that no slice is marked with
+(`unadoptedOwnStripeRefunds`). That list is read before the transaction
+through the preflight's own bounded read (`listRefundsOnCardCharge`); one it
+cannot read refuses, and a plan that moved since it was read is refused under
+the locks (review F4). The
 failed-later writer raises its rows under the Payment row, so that check and
 the raise are ordered. STATED LIMIT: a refund another door made for the same
 money, with other metadata and not recorded here, that fails after a re-arm is
-raised beside the live row - #4492's open question, which a re-arm does not
-answer. Proven by `card-refund-dead-row-actions.realdb.test.ts`: a re-arm and a
+raised beside the live row - the #4104 failed-later family's open question
+(#4492), which a re-arm does not answer. Proven by `card-refund-dead-row-actions.realdb.test.ts`: a re-arm and a
 "Paid another way" close queued behind a held `lock(1)` in both orders, a plan
 or status moved under the Payment row, "Nothing left owed" against a refund
 arriving and against it failing later, a paid failed-later row and an
