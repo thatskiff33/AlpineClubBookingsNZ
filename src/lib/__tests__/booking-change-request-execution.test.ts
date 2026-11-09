@@ -62,7 +62,9 @@ const PRE_TRANSACTION = { marker: "pre" } as unknown as BatchModificationPreTran
 
 const tx = {
   $executeRaw: (...args: unknown[]) => {
-    mocks.calls.push("global-lock");
+    const sql = (args[0] as TemplateStringsArray).join("?");
+    // #4845: the booking-row lock (`lockBookingRowForOwnerRead`) runs through this same client.
+    mocks.calls.push(sql.includes('FROM "Booking"') && sql.includes("FOR NO KEY UPDATE") ? "booking-row" : "global-lock");
     return mocks.executeRaw(...args);
   },
   bookingChangeRequest: {
@@ -178,7 +180,7 @@ beforeEach(() => {
   mocks.calls.length = 0;
   mocks.reauthorize.mockResolvedValue(true);
   mocks.requestFindUnique
-    .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", booking: { lodgeId: "lodge-1" } })
+    .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", bookingId: "booking-1", booking: { lodgeId: "lodge-1" } })
     .mockResolvedValueOnce(requestRow());
   mocks.bookingFindUnique.mockResolvedValue(finishedBooking);
   mocks.updateMany.mockResolvedValue({ count: 1 });
@@ -199,7 +201,7 @@ beforeEach(() => {
 });
 
 describe("approveAndExecuteLockedPeriodChangeRequest (#3750)", () => {
-  it("locks global -> lodge, reauthorises, claims, modifies on the same tx, links, commits, THEN runs provider work", async () => {
+  it("locks global -> lodge -> booking row, reauthorises, claims, modifies on the same tx, links, commits, THEN runs provider work", async () => {
     const result = await run();
 
     expect(result).toMatchObject({
@@ -209,9 +211,12 @@ describe("approveAndExecuteLockedPeriodChangeRequest (#3750)", () => {
       removedGuestCount: 0,
       additionalAmountCents: 4_500,
     });
+    // #4845: the booking row before the claim, whose reviewer FK takes KEY SHARE on the officer's Member row
+    // and which holds the request row member merge re-points: booking row first, as merge orders them.
     expect(mocks.calls).toEqual([
       "global-lock",
       "lodge-lock",
+      "booking-row",
       "reauthorize",
       "claim",
       "modify",
@@ -220,6 +225,10 @@ describe("approveAndExecuteLockedPeriodChangeRequest (#3750)", () => {
       "post-commit",
     ]);
     expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledWith(tx, "lodge-1");
+    // Keyed from the pre-lock read (the request's booking id, written once), not from a post-lock read.
+    expect(mocks.requestFindUnique.mock.calls[0]![0]).toMatchObject({ select: { bookingId: true } });
+    const bookingRow = mocks.executeRaw.mock.calls.find(([strings]) => (strings as TemplateStringsArray).join("?").includes('FROM "Booking"'));
+    expect(bookingRow?.slice(1)).toEqual(["booking-1"]);
   });
 
   it("claims with the version CAS and bumps it, recording both notes and the reviewer", async () => {
@@ -283,7 +292,7 @@ describe("approveAndExecuteLockedPeriodChangeRequest (#3750)", () => {
   it("executes every part of a mixed request: dates, removals, ranges and adds (decision 4)", async () => {
     mocks.requestFindUnique.mockReset();
     mocks.requestFindUnique
-      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", booking: { lodgeId: "lodge-1" } })
+      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", bookingId: "booking-1", booking: { lodgeId: "lodge-1" } })
       .mockResolvedValueOnce(
         requestRow({
           requestedChanges: storedRequest({
@@ -312,7 +321,7 @@ describe("approveAndExecuteLockedPeriodChangeRequest (#3750)", () => {
   it("a second approval that lost the race does nothing at all", async () => {
     mocks.requestFindUnique.mockReset();
     mocks.requestFindUnique
-      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", booking: { lodgeId: "lodge-1" } })
+      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", bookingId: "booking-1", booking: { lodgeId: "lodge-1" } })
       .mockResolvedValueOnce(requestRow({ status: "APPROVED", version: 4 }));
     expect(await run()).toEqual({ outcome: "claimLost" });
     expect(mocks.updateMany).not.toHaveBeenCalled();
@@ -323,7 +332,7 @@ describe("approveAndExecuteLockedPeriodChangeRequest (#3750)", () => {
   it("a stale version is a lost claim, not an execution", async () => {
     mocks.requestFindUnique.mockReset();
     mocks.requestFindUnique
-      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", booking: { lodgeId: "lodge-1" } })
+      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", bookingId: "booking-1", booking: { lodgeId: "lodge-1" } })
       .mockResolvedValueOnce(requestRow({ version: 4 }));
     expect(await run()).toEqual({ outcome: "claimLost" });
     expect(mocks.modifyBookingBatch).not.toHaveBeenCalled();
@@ -369,7 +378,7 @@ describe("approveAndExecuteLockedPeriodChangeRequest (#3750)", () => {
   it("keeps the request pending when a guest's stored range has moved since the request (round 7, F1)", async () => {
     mocks.requestFindUnique.mockReset();
     mocks.requestFindUnique
-      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", booking: { lodgeId: "lodge-1" } })
+      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", bookingId: "booking-1", booking: { lodgeId: "lodge-1" } })
       .mockResolvedValueOnce(
         requestRow({
           requestedChanges: {
@@ -399,7 +408,7 @@ describe("approveAndExecuteLockedPeriodChangeRequest (#3750)", () => {
     const nights = ["2026-06-10", "2026-06-12"];
     mocks.requestFindUnique.mockReset();
     mocks.requestFindUnique
-      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", booking: { lodgeId: "lodge-1" } })
+      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", bookingId: "booking-1", booking: { lodgeId: "lodge-1" } })
       .mockResolvedValueOnce(
         requestRow({
           requestedChanges: storedRequest({
@@ -437,7 +446,7 @@ describe("approveAndExecuteLockedPeriodChangeRequest (#3750)", () => {
     const queue = () => {
       mocks.requestFindUnique.mockReset();
       mocks.requestFindUnique
-        .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", booking: { lodgeId: "lodge-1" } })
+        .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", bookingId: "booking-1", booking: { lodgeId: "lodge-1" } })
         .mockResolvedValueOnce(requestRow({ requestedChanges: withNights }));
     };
     // 12 June came off g2 after the request was sent; the range is unmoved.
@@ -462,7 +471,7 @@ describe("approveAndExecuteLockedPeriodChangeRequest (#3750)", () => {
     const at = (night: string) => ({ stayDate: new Date(`${night}T00:00:00.000Z`) });
     mocks.requestFindUnique.mockReset();
     mocks.requestFindUnique
-      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", booking: { lodgeId: "lodge-1" } })
+      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", bookingId: "booking-1", booking: { lodgeId: "lodge-1" } })
       .mockResolvedValueOnce(
         requestRow({
           requestedChanges: {
@@ -498,7 +507,7 @@ describe("approveAndExecuteLockedPeriodChangeRequest (#3750)", () => {
     // live guest, whose own nights have a gap the snapshot never described.
     mocks.requestFindUnique.mockReset();
     mocks.requestFindUnique
-      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", booking: { lodgeId: "lodge-1" } })
+      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", bookingId: "booking-1", booking: { lodgeId: "lodge-1" } })
       .mockResolvedValueOnce(
         requestRow({
           requestedChanges: {
@@ -534,7 +543,7 @@ describe("approveAndExecuteLockedPeriodChangeRequest (#3750)", () => {
     const gapped = ["2026-06-10", "2026-06-12"];
     mocks.requestFindUnique.mockReset();
     mocks.requestFindUnique
-      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", booking: { lodgeId: "lodge-1" } })
+      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", bookingId: "booking-1", booking: { lodgeId: "lodge-1" } })
       .mockResolvedValueOnce(
         requestRow({
           requestedChanges: {
@@ -583,7 +592,7 @@ describe("approveAndExecuteLockedPeriodChangeRequest (#3750)", () => {
     const gapped = ["2026-06-10", "2026-06-12"];
     mocks.requestFindUnique.mockReset();
     mocks.requestFindUnique
-      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", booking: { lodgeId: "lodge-1" } })
+      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", bookingId: "booking-1", booking: { lodgeId: "lodge-1" } })
       .mockResolvedValueOnce(
         requestRow({
           requestedChanges: {
@@ -633,7 +642,7 @@ describe("approveAndExecuteLockedPeriodChangeRequest (#3750)", () => {
       mocks.updateMany.mockClear();
       mocks.requestFindUnique.mockReset();
       mocks.requestFindUnique
-        .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", booking: { lodgeId: "lodge-1" } })
+        .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", bookingId: "booking-1", booking: { lodgeId: "lodge-1" } })
         .mockResolvedValueOnce(
           requestRow({
             requestedChanges: {
@@ -680,7 +689,7 @@ describe("approveAndExecuteLockedPeriodChangeRequest (#3750)", () => {
     expect(mocks.updateMany).not.toHaveBeenCalled();
 
     mocks.requestFindUnique
-      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", booking: { lodgeId: "lodge-1" } })
+      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", bookingId: "booking-1", booking: { lodgeId: "lodge-1" } })
       .mockResolvedValueOnce(requestRow());
     mocks.bookingFindUnique.mockResolvedValue({
       ...finishedBooking,
@@ -700,7 +709,7 @@ describe("approveAndExecuteLockedPeriodChangeRequest (#3750)", () => {
   it("keeps an unreadable stored request pending", async () => {
     mocks.requestFindUnique.mockReset();
     mocks.requestFindUnique
-      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", booking: { lodgeId: "lodge-1" } })
+      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", bookingId: "booking-1", booking: { lodgeId: "lodge-1" } })
       .mockResolvedValueOnce(requestRow({ requestedChanges: { requested: "nonsense" } }));
     expect(await run()).toEqual({
       outcome: "keptPending",
@@ -711,7 +720,7 @@ describe("approveAndExecuteLockedPeriodChangeRequest (#3750)", () => {
   it("refuses a request with nothing structural to apply", async () => {
     mocks.requestFindUnique.mockReset();
     mocks.requestFindUnique
-      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", booking: { lodgeId: "lodge-1" } })
+      .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", bookingId: "booking-1", booking: { lodgeId: "lodge-1" } })
       .mockResolvedValueOnce(
         requestRow({
           requestedChanges: storedRequest({

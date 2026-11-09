@@ -10,6 +10,7 @@ import {
   type BookingChargeEvent,
   type LegacyChargeLine,
 } from "./booking-charges";
+import { lockBookingRowForOwnerRead } from "../../booking-row-lock";
 import { memberMergeSnapshotSources } from "./booking-receipts";
 import { bookingOwnerDebtor, eventPosted, readBookingLiveComponents, receivableBalances } from "./booking-journal-read";
 import {
@@ -53,15 +54,6 @@ import { linkLegacyLinesToPostedBatch, type MemberMoneyPosting } from "./store";
  */
 
 type Db = Prisma.TransactionClient;
-
-/**
- * The booking row lock an owner read takes (`FOR NO KEY UPDATE`, an UPDATE's own strength). A door whose owner read
- * comes after writes of its own takes it first, where its lock order puts the booking row (#4516 review F1: an
- * approved appeal right after `lock(1)`, before the Payment row and its request's claim). Taken again, a no-op.
- */
-export async function lockBookingRowForOwnerRead(tx: Db, bookingId: string): Promise<void> {
-  await tx.$executeRaw`SELECT 1 FROM "Booking" WHERE "id" = ${bookingId} FOR NO KEY UPDATE`;
-}
 
 /**
  * The booking's owner, read under its row lock: the receivable's debtor
