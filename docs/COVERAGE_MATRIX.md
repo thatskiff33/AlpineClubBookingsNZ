@@ -18,16 +18,19 @@ The area list is each registered admin page's top-level URL directory, taken
 from the [hub registry](../src/lib/admin-hubs/index.ts), whose own census ties
 every entry to its page on disk, so it is exhaustive and will not silently miss a
 surface. A hub's directory under `src/app/(admin)/admin/` (such as `website/`,
-`finance/`, `rules/` or `system/`) is not an area: it holds areas. An area keeps
+`finance/`, `rules/`, `system/` or `messages/`) is not an area: it holds areas. An area keeps
 its row, and its URL, when its pages move under a hub (epic #4468): the Website
 hub's areas live in `website/` (C4 #4801), the Finance hub's areas
 (`internet-banking`, `payments`, `refund-requests`, `reports`,
 `subscriptions`, `xero`) in `finance/` (C5 #4802), the Fees & booking rules
 hub's areas (`age-tier-settings`, `booking-policies`, `bookings-setup`,
 `fee-configuration`, `fees`, `promo-codes`, `seasons`) in `rules/` (C6 #4803),
-and the Help & system hub's areas (`ai-assistant`, `ai-diagnostics`,
+the Help & system hub's areas (`ai-assistant`, `ai-diagnostics`,
 `audit-log`, `background-jobs`, `backups`, `email-deliverability`, `health`,
-`issue-reports`, `stuck-states`, `testing`) in `system/` (C7 #4804). The
+`issue-reports`, `stuck-states`, `testing`) in `system/` (C7 #4804), and the
+Messages & email hub's areas (`booking-messages`, `communications`,
+`email-messages`, `message-board`, `notices`, `notification-recipients`,
+`notification-rules`, `notifications`) in `messages/` (C8 #4805). The
 count that used to stand here said 70 and was measured once; it had already
 drifted from the table below by the time #2989 added a row, so it is stated as a
 rule rather than as a figure nobody re-measures.
@@ -148,7 +151,7 @@ For what an officer sees and does on each screen, use the
 
 ## Summary
 
-- **83** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
+- **83** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
 - **2** areas are already served by a **feature hub** (`display` → lobby-display,
   `lodges` → multi-lodge). #2050 should extend, not duplicate, those hubs.
 - **13** areas have **no reference coverage** beyond their operator guide

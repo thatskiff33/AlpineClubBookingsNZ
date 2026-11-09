@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { BackLink } from "@/components/admin/back-link";
-import { adminLink } from "@/lib/admin-hubs";
+import { adminHref, adminLink } from "@/lib/admin-hubs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getClubThemeForAdmin } from "@/lib/club-theme";
 import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
@@ -41,7 +41,7 @@ export default async function SiteStylePage() {
             Setup
           </Link>
           <Link
-            href="/admin/email-messages"
+            href={adminHref("email-messages")}
             className="font-medium text-foreground underline decoration-brand-gold/70 decoration-2 underline-offset-4"
           >
             Email messages

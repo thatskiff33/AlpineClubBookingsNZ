@@ -6,7 +6,7 @@
  * the same three fallback questions answer for every unmapped page.
  *
  * A moved page's chips are keyed by its registry old path, as its entry is
- * (C5 #4802, C6 #4803, C7 #4804; see `admin/finance.ts`).
+ * (C5 #4802, C6 #4803, C7 #4804, C8 #4805; see `admin/finance.ts`).
  */
 import { getAdminPage } from "@/lib/admin-hubs";
 import type { HelpQuestion } from "./types";
@@ -204,7 +204,7 @@ export const ADMIN_HELP_QUESTIONS: Record<string, HelpQuestion[]> = {
       a: "In Bookings Setup -> Rooms & Beds, at the foot of the page, for the lodge chosen at the top. This board links to it for the lodge you are looking at. Changes there apply to the next allocation run and never move a guest who is already placed.",
     },
   ],
-  "/admin/communications": [
+  [getAdminPage("communications").oldPath]: [
     {
       q: "What does Communications do?",
       a: "It sends and reviews member email or notification messages.",

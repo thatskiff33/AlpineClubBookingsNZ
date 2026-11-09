@@ -192,8 +192,9 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
       ],
     ),
   ),
+  // Keyed by its registry old path: see the note on `admin/finance.ts` (C8 #4805).
   entry(
-    "/admin/notifications",
+    getAdminPage("notifications").oldPath,
     help(
       "Notifications & Email",
       "Notifications & Email groups delivery rules, recipients, automated message wording, and member-facing notification copy.",
@@ -399,8 +400,9 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
       ],
     ),
   ),
+  // Keyed by its registry old path: see the note on `admin/finance.ts` (C8 #4805).
   entry(
-    "/admin/booking-messages",
+    getAdminPage("booking-messages").oldPath,
     help(
       "Booking Messages",
       "Booking Messages edits reusable wording shown or sent during booking workflows.",

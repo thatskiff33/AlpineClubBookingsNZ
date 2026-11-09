@@ -19,8 +19,8 @@ import { ADMIN_PAGES, ADMIN_RETIRED_PAGES, isInexactAdminPagePath } from "@/lib/
 //
 // The config's `redirects()` and `rewrites().beforeFiles` are generated from
 // the hub registry. C4 (#4801) has moved the Website pages, C5 (#4802) the
-// Finance pages, C6 (#4803) the Fees & booking rules pages and C7 (#4804) the
-// Help & system pages, and the switch is off, so each of those hub URLs
+// Finance pages, C6 (#4803) the Fees & booking rules pages, C7 (#4804) the
+// Help & system pages and C8 (#4805) the Messages & email pages, and the switch is off, so each of those hub URLs
 // redirects to its old URL and each old URL is rewritten to the moved file. The five retired pages (S1 #4796) still redirect
 // in both states. All of this is run through
 // Next's own pipeline (`unstable_getResponseFromNextConfig`, which calls the
@@ -105,7 +105,7 @@ describe("next.config.ts with the switch off", () => {
     const config = await loadConfig();
     const moved = movedPages();
     expect(new Set(moved.map((page) => page.hub))).toEqual(
-      new Set(["website", "finance", "rules", "system"]),
+      new Set(["website", "finance", "rules", "system", "messages"]),
     );
     const retired = ADMIN_RETIRED_PAGES.map(({ oldPath }) => oldPath);
     expect(
@@ -126,7 +126,7 @@ describe("next.config.ts with the switch off", () => {
   });
 
   /**
-   * C4 (#4801), C5 (#4802), C6 (#4803) and C7 (#4804) off-state smoke. Next's config pipeline answers a
+   * C4 (#4801), C5 (#4802), C6 (#4803), C7 (#4804) and C8 (#4805) off-state smoke. Next's config pipeline answers a
    * `beforeFiles` rewrite as 200 and a redirect as 307. The old URL is served
    * from the moved file; the hub URL redirects to the old URL.
    */
@@ -406,6 +406,66 @@ describe("next.config.ts over the moved Help & system hub", () => {
     const parsed = new URL(actual!, "https://example.org");
     expect(parsed.pathname + parsed.hash).toBe("/admin/system/health#integration-readiness");
     await expect(resolve(config, "/admin/system/health")).resolves.toEqual({ kind: "none" });
+  });
+});
+
+describe("next.config.ts over the moved Messages & email hub", () => {
+  // Messages & email moved in C8 (#4805).
+  it("PREMISE: every Messages & email page has moved", () => {
+    const messages = ADMIN_PAGES.filter((page) => page.hub === "messages");
+    expect(messages).toHaveLength(10);
+    expect(messages.filter((page) => !page.moved).map((page) => page.id)).toEqual([]);
+  });
+
+  it("off: a notice's hub URL redirects to its old URL, and the old URL is served from the moved file, query kept", async () => {
+    const config = await loadConfig({ live: false });
+    await expect(resolve(config, "/admin/messages/notices/n-1?page=2")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/notices/n-1?page=2",
+    });
+    await expect(resolve(config, "/admin/notices/n-1?page=2")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/messages/notices/n-1?page=2",
+    });
+  });
+
+  it("off: the new-notice page is served from its own file, and the Message Board keeps its tab and search", async () => {
+    const config = await loadConfig({ live: false });
+    await expect(resolve(config, "/admin/notices/new")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/messages/notices/new",
+    });
+    await expect(resolve(config, "/admin/messages/message-board?tab=hidden&q=ski")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/message-board?tab=hidden&q=ski",
+    });
+    await expect(resolve(config, "/admin/message-board?tab=hidden&q=ski")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/messages/message-board?tab=hidden&q=ski",
+    });
+  });
+
+  it.each([false, true])("leaves the hub's root alone, which no page is at yet (live=%s)", async (live) => {
+    await expect(resolve(await loadConfig({ live }), "/admin/messages")).resolves.toEqual({
+      kind: "none",
+    });
+  });
+
+  it("on: the old URL redirects once, straight to the hub URL", async () => {
+    const config = await loadConfig({ live: true });
+    await expect(resolve(config, "/admin/notifications")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/messages/notifications",
+    });
+    await expect(resolve(config, "/admin/notices/new")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/messages/notices/new",
+    });
+    await expect(resolve(config, "/admin/messages/notifications")).resolves.toEqual({ kind: "none" });
   });
 });
 

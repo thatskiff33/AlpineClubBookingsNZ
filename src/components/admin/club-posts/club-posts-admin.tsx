@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import type { AdminClubPost, AdminPostTab } from "@/lib/club-posts-admin";
 import { useClubTime } from "@/components/club-time-provider";
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * Club message board moderation (#2998, epic #2992).
@@ -94,7 +95,7 @@ export function ClubPostsAdmin({
   function href(next: AdminPostTab): string {
     const params = new URLSearchParams({ tab: next });
     if (query.trim()) params.set("q", query.trim());
-    return `/admin/message-board?${params}`;
+    return `${adminHref("message-board")}?${params}`;
   }
 
   // THE FRAME. Banner and feedback region render in every state — including a
@@ -138,7 +139,7 @@ export function ClubPostsAdmin({
         ))}
         <form
           className="ml-auto flex gap-2"
-          action="/admin/message-board"
+          action={adminHref("message-board")}
           method="get"
         >
           <input type="hidden" name="tab" value={tab} />

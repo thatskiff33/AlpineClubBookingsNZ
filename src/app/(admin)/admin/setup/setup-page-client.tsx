@@ -154,7 +154,7 @@ const setupHubCards: SetupHubCard[] = [
     icon: UserX,
   },
   {
-    href: "/admin/notifications",
+    href: adminHref("notifications"),
     title: "Email Messages / Notifications",
     description:
       "Manage delivery rules, recipients, email templates, and member-facing message text.",
