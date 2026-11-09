@@ -3,7 +3,7 @@ import {
   AdminHubPage,
   type AdminHubSection,
 } from "@/components/admin-hub-page";
-import { adminHref } from "@/lib/admin-hubs";
+import { adminHref, getAdminPage } from "@/lib/admin-hubs";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { loadAdminSetupPermissionMatrix } from "../permission-matrix";
 
@@ -22,7 +22,7 @@ const sections: AdminHubSection[] = [
     // on the content area via canViewAdminHrefWithMatrix, matching the
     // /api/admin/club-identity content:view/edit guard.
     href: adminHref("club-identity"),
-    title: "Club Identity",
+    title: getAdminPage("club-identity").label,
     description:
       "Override the club name, short name, hut-leader label, and your lodge's public details shown across the site and emails.",
     icon: BadgeInfo,

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { BackLink } from "@/components/admin/back-link";
-import { adminHref } from "@/lib/admin-hubs";
+import { adminLink } from "@/lib/admin-hubs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getClubThemeForAdmin } from "@/lib/club-theme";
 import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
@@ -12,7 +12,7 @@ export default async function SiteStylePage() {
   return (
     <div className={`space-y-8 ${clubThemeFontVariableClassName}`}>
       <div>
-        <BackLink href={adminHref("appearance")} label="Site Appearance & Content" />
+        <BackLink {...adminLink("appearance")} />
         <h1 className="mt-2 text-2xl font-bold text-foreground">Site Style</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Set the brand colours and fonts used by the public website, member area,
