@@ -267,6 +267,7 @@ vi.mock("@/lib/member-credit", () => ({
 }));
 
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
+import { postRefundObligation } from "@/lib/member-money/doors";
 import {
   chooseEditReviewChargeRoute,
   syncEditFinancialReviewChargeRequest,
@@ -730,6 +731,8 @@ describe("a completed review that asks the member for money (#3170)", () => {
 
     expect(mocks.planStripeRefundAllocation).not.toHaveBeenCalled();
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+    // #4516 (M4c): and no refund debt: nothing is owed back on a charge.
+    expect(vi.mocked(postRefundObligation)).not.toHaveBeenCalled();
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
     expect(mocks.createBookingModificationCredit).not.toHaveBeenCalled();
     expect(
@@ -759,6 +762,13 @@ describe("a completed review that asks the member for money (#3170)", () => {
     expect(mocks.planStripeRefundAllocation).toHaveBeenCalledTimes(1);
     expect(mocks.refundPaymentTransactions).toHaveBeenCalledTimes(1);
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+    // MUTATION (#4516, M4c probe 10): the review's R05 posts in the claim, before its sender asks Stripe, as the
+    // debt the sender's slices are reserved against.
+    expect(vi.mocked(postRefundObligation)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(postRefundObligation)).toHaveBeenCalledWith(tx, expect.anything(), { bookingId: "booking-1", scope: "review", id: "task-1",
+      amountCents: 20000, origin: "OFFICER", actorMemberId: "admin-1", debtorRead: "booking-row" });
+    expect(vi.mocked(postRefundObligation).mock.invocationCallOrder[0]).toBeLessThan(mocks.refundPaymentTransactions.mock.invocationCallOrder[0]!);
+    expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ obligation: { scope: "review", id: "task-1" } }));
   });
 
   it("answers the minter's captured-card guard with the payment as it stands NOW", async () => {

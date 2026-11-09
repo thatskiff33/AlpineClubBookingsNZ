@@ -286,6 +286,7 @@ vi.mock("@/lib/member-credit", () => {
 });
 
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
+import { postRefundObligation } from "@/lib/member-money/doors";
 import { EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE } from "@/lib/manual-refund-task-settlement-rules";
 import { editRefundHandBackDismissAfterCancelMessage } from "@/lib/manual-refund-task-copy";
 import { GROUP_MIRROR_HAND_BACK_EXCEEDS_CASH_MESSAGE } from "@/lib/edit-financial-review-refund-refusals";
@@ -4724,6 +4725,11 @@ describe("#3639 - approving a held late-capture refund", () => {
       idempotencyKeyPrefix: "late_cancel_refund_booking-1_pi_late",
       obligation: { scope: "capture-return", id: "pi_late" }, // #4516: the R05 the completion posted
     });
+    // MUTATION (#4516, M4c probe 10): that R05, posted in the claim beside the debt, its owner read without the
+    // booking row (this claim holds no `lock(1)` until M4d), before Stripe is asked.
+    expect(vi.mocked(postRefundObligation)).toHaveBeenCalledWith(tx, expect.anything(), { bookingId: "booking-1", scope: "capture-return",
+      id: "pi_late", amountCents: 2500, origin: "OFFICER", actorMemberId: "treasurer-1", debtorRead: "plain" });
+    expect(vi.mocked(postRefundObligation).mock.invocationCallOrder[0]).toBeLessThan(mocks.refundPaymentTransactions.mock.invocationCallOrder[0]!);
     // The debt is durable BEFORE Stripe is asked, and the claim came first.
     expect(
       mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0],

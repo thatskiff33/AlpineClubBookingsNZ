@@ -138,6 +138,7 @@ vi.mock("@/lib/payment-recovery-alert", () => ({
 
 import { PUT } from "@/app/api/admin/refund-requests/[id]/route";
 import { PartialRefundError } from "@/lib/payment-transactions";
+import { withdrawRefundObligation } from "@/lib/member-money/doors";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("PUT /api/admin/refund-requests/[id]", () => {
@@ -654,6 +655,11 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       expect(mocks.refundRequestUpdateMany.mock.invocationCallOrder[1]).toBeLessThan(
         mocks.manualRefundTaskDeleteMany.mock.invocationCallOrder[0],
       );
+      // MUTATION (#4516, M4c probe 10): the approval's R05 is withdrawn in that same transaction, after the release.
+      expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({
+        scope: "refund-request", id: "refund_1", actorMemberId: "admin_1" }));
+      expect(mocks.manualRefundTaskDeleteMany.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(withdrawRefundObligation).mock.invocationCallOrder[0]!);
     });
 
     it("a release that lost the request to someone else deletes nothing", async () => {
@@ -669,6 +675,7 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       await PUT(approveFor(2500), { params: Promise.resolve({ id: "refund_1" }) });
 
       expect(mocks.manualRefundTaskDeleteMany).not.toHaveBeenCalled();
+      expect(vi.mocked(withdrawRefundObligation)).not.toHaveBeenCalled();
     });
 
     // L3: a CARD payment whose ledger plans short of the approved amount is

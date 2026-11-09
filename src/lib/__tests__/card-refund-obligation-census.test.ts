@@ -30,10 +30,23 @@ const SENDERS: Record<string, number> = {
   "src/lib/xero-booking-repair-passes.ts": 1, // capture-return per slice
 };
 
-function calls(file: string): Array<{ args: string }> {
+/**
+ * Every production edit that posts its lines (`postModificationLedgerLines`), and whether it passes the edit's card
+ * refund for the R05 posted beside them. The two that pass none owe nothing back: a guest added, and an admin date
+ * shift, which re-dates each night at its own figure.
+ */
+const MODIFICATION_LINE_SITES: Record<string, { withCardRefund: number; withoutCardRefund: number }> = {
+  "src/app/api/bookings/[id]/guests/route.ts": { withCardRefund: 0, withoutCardRefund: 1 }, // guest-add
+  "src/lib/booking-batch-modification-service.ts": { withCardRefund: 1, withoutCardRefund: 0 },
+  "src/lib/booking-date-modification-service.ts": { withCardRefund: 1, withoutCardRefund: 1 }, // the admin date shift
+  "src/lib/booking-guest-acceptance-reprice.ts": { withCardRefund: 1, withoutCardRefund: 0 },
+  "src/lib/booking-guest-removal-service.ts": { withCardRefund: 1, withoutCardRefund: 0 },
+};
+
+function calls(file: string, call: RegExp = CALL): Array<{ args: string }> {
   const source = readFileSync(join(ROOT, file), "utf8");
   const masked = blankLiterals(source);
-  return [...masked.matchAll(CALL)].flatMap((match) => {
+  return [...masked.matchAll(call)].flatMap((match) => {
     const open = match.index! + match[0].length - 1;
     // The declaration `function refundPaymentTransactions(` is not a call.
     if (/function\s+$/.test(masked.slice(Math.max(0, match.index! - 20), match.index!))) return [];
@@ -54,5 +67,16 @@ describe("every card refund sender names the debt its slices pay (#4516)", () =>
     // Fixture proof: a call without one is caught, a call with one is not.
     expect(/\bobligation\b/.test("({ paymentId, amountCents, allocation, metadata, idempotencyKeyPrefix })")).toBe(false);
     expect(/\bobligation\b/.test("({ paymentId, obligation: { scope: \"cancellation\", id } })")).toBe(true);
+  });
+
+  it("MUTATION: every edit that can owe a card refund back passes it to the R05 beside its lines", () => {
+    const LINES = /\bpostModificationLedgerLines\s*\(/g;
+    const sites = productionSourceFiles(ROOT).flatMap((file) => {
+      const found = calls(file, LINES);
+      if (found.length === 0) return [];
+      const withCardRefund = found.filter((call) => /\bcardRefundCents\s*:/.test(call.args)).length;
+      return [[file, { withCardRefund, withoutCardRefund: found.length - withCardRefund }] as const];
+    });
+    expect(Object.fromEntries(sites), "an edit posts its lines without its card refund: its refund would post unapplied").toEqual(MODIFICATION_LINE_SITES);
   });
 });
