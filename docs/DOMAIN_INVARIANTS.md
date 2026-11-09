@@ -356,7 +356,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-142` | A refund failing after a Paid another way close is held |
 | `INV-PAY-143` | An unminted approved whole-lodge booking reprices as unpaid |
 | `INV-PAY-144` | A kept change capture is recorded by the document its evidence names |
-| `INV-PAY-145` | Charge-backed refund recovery checks Stripe and holds unexpected dashboard refunds |
+| `INV-PAY-145` | Recovery holds on outside-app refunds, and plan-less superseded on another door's |
 | `INV-PAY-146` | Edit card refunds freeze allocation before Stripe and preserve replay keys |
 | `INV-PAY-147` | Refund slice evidence prevents replay after Stripe forgets idempotency keys |
 | `INV-PAY-148` | Organiser bank-transfer edit invoices, unpaid-first netting and historical repair |

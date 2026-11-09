@@ -303,7 +303,7 @@ async function stripeRefundsOnRowCharges(
       logger.warn({ err, operationId, paymentIntentId: intent }, "Try the card again refused: Stripe's refunds could not be read (#4368)");
       throw new DeadCardRefundActionError(STRIPE_UNREADABLE, 409);
     }
-    for (const refund of refunds) listed.push({ id: refund.id, status: refund.status ?? null, metadata: refund.metadata ?? null });
+    listed.push(...refunds); // A `Stripe.Refund` is a `ListedStripeRefund` as listed (#4858 review F4).
   }
   // Review F4: the plan these charges were read for, checked against the row under the locks.
   return { allocationPlan: row.allocationPlan, listed };

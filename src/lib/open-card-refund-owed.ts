@@ -278,11 +278,14 @@ export interface RecordedCardRefundRow {
   stripeCreatedAt?: Date | null;
 }
 
-/** A payment as `openCardRefundOwedCents` reads it. */
-export type CardRefundOwedPaymentRow = BookingPaymentState & {
+/** What the attribution of recorded refunds to card refund rows reads of a payment (`attributeRecordedRefunds`). */
+export interface CardRefundAttributionRow {
   recoveryOperations: ReadonlyArray<CardRefundOperationRow>;
   refunds: ReadonlyArray<RecordedCardRefundRow>;
-};
+}
+
+/** A payment as `openCardRefundOwedCents` reads it. */
+export type CardRefundOwedPaymentRow = BookingPaymentState & CardRefundAttributionRow;
 
 /**
  * Whether a card refund operation's money belongs to the payment it hangs on.
@@ -475,7 +478,7 @@ export function cardRefundSlicesByOperation(
  * the app recorded AFTER its close (`lateCentsByOperation`).
  */
 function attributeRecordedRefunds(
-  payment: CardRefundOwedPaymentRow,
+  payment: CardRefundAttributionRow,
   /** #4104: told which slice each recorded refund filled, and with how much (`cardRefundSliceFilledBy`). */
   onFill?: (refund: RecordedCardRefundRow, operation: CardRefundOperationRow, sliceIndex: number, cents: number) => void,
 ): {
@@ -601,7 +604,7 @@ export function cardRefundMadeForOperation(
  * the attribution gives no row is in no entry.
  */
 export function cardRefundsAttributedByOperation(
-  payment: CardRefundOwedPaymentRow,
+  payment: CardRefundAttributionRow,
 ): Map<string, RecordedCardRefundRow[]> {
   const byOperation = new Map<string, RecordedCardRefundRow[]>();
   attributeRecordedRefunds(payment, (refund, operation, _sliceIndex, cents) => {

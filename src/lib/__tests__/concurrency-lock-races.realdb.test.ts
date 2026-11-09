@@ -762,6 +762,13 @@ import "./xero-erased-contact-status-metadata.realdb.test";
 // made. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
 // `race-4690-` fixtures.
 import "./superseded-refund-notice-once.realdb.test";
+// #4858 reuses it to prove a superseded intent's refund with no stored plan
+// holds, rather than sends, while another door's refund since it was raised
+// sizes it: that door's ledger write racing the runner's preflight on the
+// Payment row, and that refund then failing later, owed once on a row of its
+// own. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4858-` fixtures.
+import "./superseded-refund-another-door-hold.realdb.test";
 // #4685 reuses it to prove an account-credit Xero note stamps the one credit it
 // was raised for, by id, and that a row queued without the id still stamps.
 // Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own

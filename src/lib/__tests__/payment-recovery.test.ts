@@ -196,7 +196,12 @@ vi.mock("@/lib/prisma", () => {
       findFirst: (...args: unknown[]) => mock4316.transactionFindFirst(...args),
     },
     payment: {
-      findUnique: (...args: unknown[]) => mockPaymentFindUnique(...args),
+      // #4858: the superseded runner's hold reads the attribution's relations; a fixture that names none has none.
+      findUnique: async (...args: unknown[]) => {
+        const row = (await mockPaymentFindUnique(...args)) as Record<string, unknown> | null | undefined;
+        const select = (args[0] as { select?: { refunds?: unknown } } | undefined)?.select;
+        return row && select?.refunds ? { recoveryOperations: [], refunds: [], ...row } : row;
+      },
       update: (...args: unknown[]) => mock4316.paymentUpdate(...args),
     },
     booking: {
@@ -522,6 +527,7 @@ import {
   buildAdditionalIntentRecoveryIdempotencyKey,
   buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
   buildEditFinancialReviewAdditionalIntentStripeKey,
+  cardRefundOperationRefundMetadata,
 } from "@/lib/payment-recovery-keys";
 import { PENDING_ASK_NETTED_BY_REDUCTION_NOTE } from "@/lib/additional-ask-recovery-close";
 import { WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE } from "@/lib/additional-ask-reissue";
@@ -1426,20 +1432,42 @@ describe("payment recovery worker", () => {
     records a refund, as the real writer does.
   */
   describe("sizes the superseded-payment refund after the preflight records what Stripe lists (#4699)", () => {
-    const cancellationRefund = (amount: number) => ({
+    // The row was raised 2026-05-23 (`makeOperation`). #4858: another door's refund Stripe made since then
+    // holds the row instead (below); one made before it was raised is only taken off the ask.
+    const BEFORE_RAISED = new Date("2026-05-22T00:00:00.000Z");
+    const SINCE_RAISED = new Date("2026-05-24T00:00:00.000Z");
+    const cancellationRefund = (amount: number, madeAt = BEFORE_RAISED, metadata: Record<string, string> = buildBookingCancellationRefundMetadata("booking-1")) => ({
       id: "re_cancellation",
       amount,
       currency: "nzd",
       status: "succeeded",
       payment_intent: "pi_superseded",
-      created: Math.floor(new Date("2026-05-24T00:00:00.000Z").getTime() / 1000),
-      metadata: buildBookingCancellationRefundMetadata("booking-1"),
+      created: Math.floor(madeAt.getTime() / 1000),
+      metadata,
     });
+    /**
+     * #4858 review F2: the door that can trigger the hold - an edit's inline card refund that succeeded first
+     * time, so no recovery row holds it as a slice (a cancellation pre-persists its row and plan first).
+     */
+    const editRefund = (amount: number, madeAt: Date) => ({
+      ...cancellationRefund(amount, madeAt, buildBookingModificationRefundMetadata("booking-1", "date_change_price_decrease")),
+      id: "re_edit_inline",
+    });
+    const ledgerRow = (refund: { id: string; amount: number; status: string; created: number }) => {
+      const madeAt = new Date(refund.created * 1000);
+      return { stripeRefundId: refund.id, paymentTransactionId: "txn-1", amountCents: refund.amount, status: refund.status, createdAt: madeAt, stripeCreatedAt: madeAt };
+    };
     let ledgerRefundedCents = 0;
+    /** The refunds the (mocked) one writer recorded, as the hold's payment read returns them. */
+    let ledgerRows: Array<Record<string, unknown>> = [];
+    const supersededRow = () => makeOperation({ type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT });
     beforeEach(() => {
       ledgerRefundedCents = 0;
-      mockPaymentRecoveryFindUnique.mockResolvedValue(
-        makeOperation({ type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT }),
+      ledgerRows = [];
+      mockPaymentRecoveryFindUnique.mockResolvedValue(supersededRow());
+      const payment = mockPaymentFindUnique.getMockImplementation();
+      mockPaymentFindUnique.mockImplementation(async (args?: { select?: { refunds?: unknown } }) =>
+        args?.select?.refunds ? { recoveryOperations: [{ ...supersededRow(), succeededAt: null }], refunds: ledgerRows } : payment?.(args),
       );
       mockPaymentTransactionFindUnique.mockImplementation(async () => ({
         id: "txn-1",
@@ -1449,18 +1477,22 @@ describe("payment recovery worker", () => {
         refundedAmountCents: ledgerRefundedCents,
         status: PaymentStatus.SUCCEEDED,
       }));
-      mockRecordStripeRefundsAgainstTransaction.mockImplementation(async ({ refunds }: { refunds: Array<{ amount: number }> }) => {
-        ledgerRefundedCents += refunds.reduce((sum, refund) => sum + refund.amount, 0);
+      mockRecordStripeRefundsAgainstTransaction.mockImplementation(async ({ refunds }: { refunds: Array<{ id: string; amount: number; status: string; created: number }> }) => {
+        for (const refund of refunds) {
+          if (ledgerRows.some((row) => row.stripeRefundId === refund.id)) continue;
+          ledgerRefundedCents += refund.amount;
+          ledgerRows.push(ledgerRow(refund));
+        }
         return { readAsRefused: [], payment: { id: "payment-1", source: "STRIPE" }, appliedCents: 0, newlyCountedRefundIds: [] };
       });
       mockProcessRefund.mockImplementation(async ({ amountCents }: { amountCents: number }) => {
         // Stripe's own answer: never more than the charge still holds.
         if (amountCents > 6000 - ledgerRefundedCents) throw new Error("Refund amount is greater than unrefunded amount on charge");
-        return { id: "re_superseded", amount: amountCents, currency: "nzd", status: "succeeded", payment_intent: "pi_superseded" };
+        return { id: "re_superseded", amount: amountCents, currency: "nzd", status: "succeeded", payment_intent: "pi_superseded", created: Math.floor(Date.now() / 1000) };
       });
     });
 
-    it("MUTATION: asks Stripe only for what the charge holds after another door's listed refund, and announces that", async () => {
+    it("MUTATION: asks Stripe only for what the charge holds after another door's listed refund made before the row, and announces that", async () => {
       mockListRefundsForPaymentIntent.mockResolvedValue([cancellationRefund(2000)]);
 
       const result = await processPaymentRecoveryOperations({ limit: 1 });
@@ -1487,6 +1519,112 @@ describe("payment recovery worker", () => {
       expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ status: PaymentRecoveryOperationStatus.SUCCEEDED }) }),
       );
+    });
+
+    /*
+      #4858: another door's refund Stripe made on the charge since the row was raised is counted as the
+      row's progress, so the runner would ask for the rest - and were that refund to fail later, it would
+      be owed on a row of its own while this row re-sized with its headroom back. The row is held instead,
+      on the outside-app hold's path: guarded terminal failure, alert and payment audit; nothing sent.
+    */
+    it("MUTATION (#4858): another door's refund made since the row was raised holds it, and nothing is sent", async () => {
+      mockListRefundsForPaymentIntent.mockResolvedValue([editRefund(2000, SINCE_RAISED)]);
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ succeeded: 0, failed: 1, retried: 0 });
+      expect(mockProcessRefund).not.toHaveBeenCalled();
+      expect(mockReportSupersededPaymentRefund).not.toHaveBeenCalled();
+      expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ id: "recovery-1", attempts: 1 }),
+        data: expect.objectContaining({ status: "FAILED", attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS, nextRetryAt: null, lastError: expect.stringContaining("#4858") }),
+      }));
+      expect(mockPaymentRecoveryUpdateMany).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "SUCCEEDED" }) }));
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(expect.objectContaining({ errorMessage: expect.stringContaining("Paid another way") }), CLUB_FORMAT_TEST);
+      expect(mockCreateAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+        category: "payment", action: "booking-payment.card-refund.resend-held", metadata: expect.objectContaining({ stripeRefundIds: ["re_edit_inline"] }),
+      }));
+    });
+
+    /*
+      #4858 review F5: the hold reads the payment AFTER the sizing read of the charge. These two put a ledger
+      write in the gap between them, as `charge.refunded` or another door's writer would commit it.
+    */
+    it("MUTATION (#4858): another door's refund recorded between the sizing read and the hold's read holds the row, though the size did not count it", async () => {
+      // Stripe's list lags: the preflight records nothing, and the sizing read sees the whole charge.
+      mockListRefundsForPaymentIntent.mockResolvedValue([]);
+      const read = mockPaymentFindUnique.getMockImplementation()!;
+      mockPaymentFindUnique.mockImplementation(async (args?: { select?: { refunds?: unknown } }) => {
+        if (args?.select?.refunds && ledgerRows.length === 0) ledgerRows.push(ledgerRow(editRefund(2000, SINCE_RAISED)));
+        return read(args);
+      });
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ succeeded: 0, failed: 1 });
+      expect(mockProcessRefund).not.toHaveBeenCalled();
+      expect(mockCreateAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+        action: "booking-payment.card-refund.resend-held", metadata: expect.objectContaining({ stripeRefundIds: ["re_edit_inline"] }),
+      }));
+    });
+
+    it("MUTATION (#4858): another door's refund recorded just before the sizing read is counted by it and checked by the hold read after it", async () => {
+      // Stripe's list lags; the refund commits after the preflight's provider read, before the sizing read.
+      let listed = false;
+      mockListRefundsForPaymentIntent.mockImplementation(async () => {
+        listed = true;
+        return [];
+      });
+      const charge = mockPaymentTransactionFindUnique.getMockImplementation()!;
+      mockPaymentTransactionFindUnique.mockImplementation(async (...args: unknown[]) => {
+        if (listed && ledgerRows.length === 0) {
+          const refund = editRefund(2000, SINCE_RAISED);
+          ledgerRows.push(ledgerRow(refund));
+          ledgerRefundedCents += refund.amount;
+        }
+        return charge(...args);
+      });
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ succeeded: 0, failed: 1 });
+      expect(mockProcessRefund).not.toHaveBeenCalled();
+    });
+
+    it("STATED LIMIT (#4858, #4492): another door's refund that fails between the two reads was counted but is not checked: the row asks for less and is not held", async () => {
+      mockListRefundsForPaymentIntent.mockResolvedValue([editRefund(2000, SINCE_RAISED)]);
+      const read = mockPaymentFindUnique.getMockImplementation()!;
+      mockPaymentFindUnique.mockImplementation(async (args?: { select?: { refunds?: unknown } }) => {
+        if (args?.select?.refunds) ledgerRows = ledgerRows.map((row) => ({ ...row, status: "failed" }));
+        return read(args);
+      });
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ succeeded: 1, failed: 0 });
+      expect(mockProcessRefund).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ amountCents: 4000 }));
+    });
+
+    it("MUTATION (#4858): the row's own refund since it was raised is not held: the rest is asked for", async () => {
+      mockListRefundsForPaymentIntent.mockResolvedValue([cancellationRefund(2000, SINCE_RAISED, cardRefundOperationRefundMetadata(supersededRow()))]);
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ succeeded: 1, failed: 0, retried: 0 });
+      expect(mockProcessRefund).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ amountCents: 4000 }));
+    });
+
+    it("MUTATION (#4858): a row with a stored plan is not held by another door's refund: its slices are sent as written", async () => {
+      mockPaymentRecoveryFindUnique.mockResolvedValue(
+        makeOperation({ type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT, allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4000 }] }),
+      );
+      mockListRefundsForPaymentIntent.mockResolvedValue([editRefund(2000, SINCE_RAISED)]);
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ failed: 0 });
+      expect(mockRefundPaymentTransactions).toHaveBeenCalledTimes(1);
+      expect(mockPaymentFindUnique).not.toHaveBeenCalledWith(expect.objectContaining({ select: expect.objectContaining({ refunds: expect.anything() }) }));
     });
   });
 

@@ -4042,6 +4042,9 @@ Stripe request, outside any transaction. A read, not a writer: no advisory lock
 (`INV-LOCK-001`), no key (`INV-LOCK-002`), no site (`INV-LOCK-003`). A refund
 another door makes between that read and the request is the race `INV-PAY-145`
 states: Stripe refuses the excess and the row retries, moving no money twice.
+#4858: a row with no stored plan then reads its payment, a third plain read,
+and holds if another door's refund since it was raised sizes it (see
+"Charge-backed refund recovery preflight" below).
 Round 6: the retire closes waiting recoveries before it stamps the rows - the
 runner's own order (its claim hold writes the recovery, then its row; since
 #4217 both take the `Payment` row before either) - and a
@@ -6714,12 +6717,12 @@ cannot read refuses, and a plan that moved since it was read is refused under
 the locks (review F4). The
 failed-later writer raises its rows under the Payment row, so that check and
 the raise are ordered. STATED LIMIT: a refund another door made for the same
-money that the owed figure does not match to this row - or one made on the
-row's charge after the re-arm commits, which the owed figure then counts as
-the row's progress and the runner's preflight records without holding -
-failing later while the row is still open, is owed again beside the live row:
-the #4104 failed-later family's open question (#4492), which a re-arm does not
-answer; the runner-side fix is #4858. Proven by `card-refund-dead-row-actions.realdb.test.ts`: a re-arm and a
+money that the owed figure does not match to this row, failing later while the row is still open,
+is owed again beside the live row: the #4104 failed-later family's open
+question (#4492), which a re-arm does not answer. One made on a plan-less
+superseded row's charge after the re-arm commits, which the owed figure then
+counts as the row's progress, no longer reaches a send: the runner holds the
+row first, by this same rule (#4858, below). Proven by `card-refund-dead-row-actions.realdb.test.ts`: a re-arm and a
 "Paid another way" close queued behind a held `lock(1)` in both orders, a plan
 or status moved under the Payment row, "Nothing left owed" against a refund
 arriving and against it failing later, a paid failed-later row and an
@@ -6844,6 +6847,30 @@ unchanged.
 Once recorded evidence requires a hold, the check stops immediately. A read or
 recording failure on a later charge cannot replace that hold with normal retry
 backoff; the conclusive charge's refund ids remain in the hold audit.
+
+#4858: a superseded intent's refund with no stored plan, sized on its charge's
+ledger after the preflight (#4699), holds the same way before it sends while
+the owed figure credits it with a refund its own request did not make
+(`holdSupersededRowSizedOnAnotherRefund`, the rule "Try the card again" reads,
+`foreignRefundsSizingSupersededRow`, against the preflight's own Stripe
+listing). It adds one plain read of the payment's card refund rows and
+recorded refunds, outside any transaction, and no key, lock or site
+(`INV-LOCK-001`, `INV-LOCK-002`, `INV-LOCK-003`). It reads AFTER the sizing read of the charge, so every
+refund the size counted is checked. A refund recorded between the two reads is
+checked without being counted and holds the row conservatively. One that fails
+between them was counted but is not checked: the row asks for less and is not
+held. That is the case of a refund failing before the runner holds on it,
+which this hold does not cover - the #4492 open question (both pinned in
+`payment-recovery.test.ts`, "#4858"). A refund recorded after both reads neither sizes the send nor
+holds it: as #4699 states, Stripe refuses a request beyond what the charge
+still holds, and the next attempt reads that refund.
+Proven on real Postgres by `superseded-refund-another-door-hold.realdb.test.ts`:
+the other door's ledger write holds the Payment row while the runner's
+preflight queues behind it; the runner then holds, sends nothing, and that
+refund failing later is owed once, on a row of its own. Counterparts
+reconciled: the ten latest merged PRs on this runner and preflight, #4849,
+#4820, #4791, #4749, #4727, #4714, #4698, #4700, #4694 and #4689; none takes a
+lock this read could invert.
 
 The read cannot exclude a Stripe dashboard action made after it returns. Stripe
 has no lock shared with the database, so holding a database transaction during

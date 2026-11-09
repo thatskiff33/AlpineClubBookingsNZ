@@ -4608,7 +4608,12 @@ Another door's refund listed but not yet recorded comes off the ask, so an
 attempt without a stored plan never asks Stripe for more than the charge still
 holds (a stored plan's slices are sent as written, #4103); one that leaves
 nothing, or the row's own refund an earlier attempt made, takes the
-nothing-outstanding branch below on that same attempt.
+nothing-outstanding branch below on that same attempt. #4858: one that leaves
+something to ask, made by another door since the row was raised, holds the row
+instead (the `INV-PAY-145` hold: dead, alerted and
+audited, nothing sent). Sized on it, the row would ask for the rest; were that
+refund to fail later while the row was open, its own failed-later row and this
+row, re-sized, would both pay it.
 
 ```text
 attempt makes and records the refund -> report (once per row) -> close
@@ -4703,6 +4708,10 @@ PROCESSING -> FAILED  (Stripe answered a slice failed/canceled: re-planned on th
 PROCESSING -> FAILED  (charge-backed preflight finds a counted outside-app refund
                        on a planned charge since this debt arose: DEAD immediately,
                        no retry, audited and alerted; no slice sent; INV-PAY-145)
+PROCESSING -> FAILED  (#4858: a superseded refund with no stored plan, still owing,
+                       that the owed figure credits with a refund its own request
+                       did not make - another door's since it was raised: the
+                       same hold, nothing sent; INV-PAY-145)
 PROCESSING -> FAILED  (attempts spent: DEAD, alerted once; still owed)
 (none) -> PENDING     (a refund Stripe accepted, then failed: a new row per
                        Stripe refund, card_refund_failed_later_<refund>, under

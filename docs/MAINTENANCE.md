@@ -2475,15 +2475,21 @@ somebody who would rather query a replica by hand.
 
 An ordinary charge-backed recovery stops automatic retries when Stripe already
 holds a counted dashboard refund on its charge made since the debt arose
-(`INV-PAY-145`). The officer alert and the payment audit entry explain that the
-member may already have been paid. The row is exhausted in the existing recovery
-queue, with no new refund sent; it is not automatically closed or matched to the
-dashboard refund. Its owed figure keeps the existing attribution rule.
+(`INV-PAY-145`). A superseded payment's refund with no stored plan also stops
+when another door's refund on its charge since the row was raised would size
+what it sends (#4858): were that refund to fail later, the member could be paid
+twice. The officer alert and the payment audit entry say which, and why the
+member may be paid twice. The row is exhausted in the existing recovery queue,
+with no new refund sent; it is not automatically closed or matched to that
+refund. Its owed figure keeps the existing attribution rule.
 
 Check the booking, the recorded refunds and Stripe before moving more money.
 If money remains owed, settle it with **Paid another way** in
 [Stuck States](guides/stuck-states.md), rather than another Stripe dashboard
-refund. If nothing remains owed, ask a developer to reconcile the held row.
+refund. If nothing remains owed, ask a developer to reconcile the held row. A
+row held under #4858 whose named refund has since failed (it then has a
+failed-later row of its own) is a developer's too, never a **Paid another way**
+close: that row asks for the same money again (#4492).
 A preflight read or recording failure uses normal backoff and sends nothing;
 an intent with more than 100 refunds requires investigation because the single
 page cannot establish complete evidence. No production repair runs automatically.

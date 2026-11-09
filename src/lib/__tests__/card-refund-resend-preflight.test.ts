@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type Stripe from "stripe";
 
-const { list, record, updateMany } = vi.hoisted(() => ({ list: vi.fn(), record: vi.fn(), updateMany: vi.fn() }));
-vi.mock("@/lib/prisma", () => ({ prisma: { paymentRecoveryOperation: { updateMany } } }));
+const { list, record, updateMany, paymentFindUnique } = vi.hoisted(() => ({ list: vi.fn(), record: vi.fn(), updateMany: vi.fn(), paymentFindUnique: vi.fn() }));
+vi.mock("@/lib/prisma", () => ({ prisma: { paymentRecoveryOperation: { updateMany }, payment: { findUnique: paymentFindUnique } } }));
 vi.mock("@/lib/xero-error-alert", () => ({ notifyXeroSyncError: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@/lib/recorded-card-refund-notes", () => ({ queueRecordedCardRefundNotes: vi.fn().mockResolvedValue({ queueOperationId: null }) }));
 vi.mock("@/lib/stripe", () => ({ listRefundsForPaymentIntent: list }));
@@ -10,7 +10,14 @@ vi.mock("@/lib/payment-transactions", () => ({ recordStripeRefundsAgainstTransac
 import { refundSliceStripeIdempotencyKey } from "@/lib/payment-recovery-keys";
 import { REFUND_SLICE_KEY_METADATA } from "@/lib/refund-slice-evidence";
 import { queueRecordedCardRefundNotes } from "@/lib/recorded-card-refund-notes";
-import { checkCardRefundResend, UnattributedCardRefundBeforeResendError } from "@/lib/card-refund-resend-preflight";
+import {
+  AnotherRefundSizesSupersededRowError,
+  checkCardRefundResend,
+  holdSupersededRowSizedOnAnotherRefund,
+  preflightCardRefundResend,
+  UnattributedCardRefundBeforeResendError,
+} from "@/lib/card-refund-resend-preflight";
+import { cardRefundOperationRefundMetadata } from "@/lib/payment-recovery-keys";
 
 const arose = new Date("2026-06-30T12:00:00.750Z");
 const args = {
@@ -238,4 +245,123 @@ describe("card refund preflight", () => {
     expect(queueRecordedCardRefundNotes).toHaveBeenCalledTimes(1);
   });
 
+});
+
+/*
+  #4858 (`INV-PAY-145`): a superseded intent's refund with no stored plan is sized on its charge's
+  ledger, so another door's refund on that charge since the row was raised counts as its progress.
+  Were that refund to fail later, it would be owed on a row of its own while this row re-sized with
+  its headroom back. The runner holds the row instead, by the rule "Try the card again" refuses a
+  re-arm by (`foreignRefundsSizingSupersededRow`): the owed figure's attribution, read from the
+  ledger, against Stripe's listing of the charge.
+*/
+describe("a plan-less superseded row sized on another refund holds (#4858)", () => {
+  const raised = new Date("2026-06-20T10:00:00.400Z");
+  const superseded = {
+    id: "superseded-row",
+    type: "REFUND_SUPERSEDED_PAYMENT" as const,
+    status: "PROCESSING",
+    paymentId: "payment-test",
+    bookingId: "booking-test",
+    idempotencyKey: "payment_recovery_cancel_transaction-test_pi_test",
+    stripeKeyPrefix: null,
+    allocationPlan: null,
+    amountCents: 6000,
+    paymentTransactionId: "transaction-test",
+    createdAt: raised,
+    succeededAt: null,
+  };
+  const ownMetadata = cardRefundOperationRefundMetadata(superseded);
+  const otherDoor = { bookingId: "booking-test", reason: "date_change_price_decrease" }; // An edit's inline refund (review F2).
+  const madeAfter = new Date("2026-06-21T00:00:00.000Z");
+  const ledgerRefund = (id: string, overrides: Record<string, unknown> = {}) => ({
+    stripeRefundId: id, paymentTransactionId: "transaction-test", amountCents: 2000, status: "succeeded", createdAt: madeAfter, stripeCreatedAt: madeAfter, ...overrides,
+  });
+  const listed = (id: string, metadata: Record<string, string>) => refund({ id, amount: 2000, metadata, created: Math.floor(madeAfter.getTime() / 1000) });
+  const paymentWith = (refunds: unknown[], recoveryOperations: unknown[] = [superseded]) =>
+    paymentFindUnique.mockResolvedValue({ recoveryOperations, refunds });
+
+  beforeEach(() => {
+    paymentFindUnique.mockReset();
+  });
+
+  it("MUTATION: another door's counted refund on its charge since it was raised holds it, with that refund named, on the outside-app hold's path", async () => {
+    paymentWith([ledgerRefund("re_other")]);
+    const held = holdSupersededRowSizedOnAnotherRefund({ operation: superseded, listed: [listed("re_other", otherDoor)] });
+    await expect(held).rejects.toBeInstanceOf(AnotherRefundSizesSupersededRowError);
+    await expect(held).rejects.toBeInstanceOf(UnattributedCardRefundBeforeResendError);
+    await expect(held).rejects.toMatchObject({ stripeRefundIds: ["re_other"], message: expect.stringContaining("#4858") });
+    expect(paymentFindUnique).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ where: { id: "payment-test" } }));
+  });
+
+  it("MUTATION: a counted refund on its charge that Stripe did not list holds it: the app cannot show it is the row's own", async () => {
+    paymentWith([ledgerRefund("re_unlisted")]);
+    await expect(holdSupersededRowSizedOnAnotherRefund({ operation: superseded, listed: [] })).rejects.toMatchObject({ stripeRefundIds: ["re_unlisted"] });
+  });
+
+  it("MUTATION: not held while every refund attributed to it is its own request's", async () => {
+    paymentWith([ledgerRefund("re_own")]);
+    await expect(holdSupersededRowSizedOnAnotherRefund({ operation: superseded, listed: [listed("re_own", ownMetadata)] })).resolves.toBeUndefined();
+  });
+
+  it("MUTATION: not held, and nothing read, for a row with a stored plan: its slices are sent as written", async () => {
+    paymentWith([ledgerRefund("re_other")]);
+    const planned = { ...superseded, allocationPlan: [{ paymentTransactionId: "transaction-test", amountCents: 6000 }] };
+    await expect(holdSupersededRowSizedOnAnotherRefund({ operation: planned, listed: [listed("re_other", otherDoor)] })).resolves.toBeUndefined();
+    expect(paymentFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: not held for another door's refund Stripe made before the row was raised", async () => {
+    const before = new Date("2026-06-20T09:59:59.000Z");
+    paymentWith([ledgerRefund("re_before", { createdAt: before, stripeCreatedAt: before })]);
+    await expect(holdSupersededRowSizedOnAnotherRefund({ operation: superseded, listed: [listed("re_before", otherDoor)] })).resolves.toBeUndefined();
+  });
+
+  it("not held for another door's refund matched to a slice: a row that marked it owes it, not this one", async () => {
+    const marking = {
+      ...superseded,
+      id: "cancellation-row",
+      type: "REFUND_BOOKING_MODIFICATION",
+      status: "SUCCEEDED",
+      idempotencyKey: "booking_cancel_refund_recovery_booking-test",
+      allocationPlan: [{ paymentTransactionId: "transaction-test", amountCents: 2000, madeRefundId: "re_marked" }],
+      amountCents: 2000,
+      createdAt: madeAfter,
+      succeededAt: madeAfter,
+    };
+    paymentWith([ledgerRefund("re_marked")], [superseded, marking]);
+    await expect(holdSupersededRowSizedOnAnotherRefund({ operation: superseded, listed: [listed("re_marked", otherDoor)] })).resolves.toBeUndefined();
+  });
+
+  it.each(["failed", "canceled"])("not held for another door's refund the ledger reads %s: it no longer counts", async (status) => {
+    paymentWith([ledgerRefund("re_other", { status })]);
+    await expect(holdSupersededRowSizedOnAnotherRefund({ operation: superseded, listed: [listed("re_other", otherDoor)] })).resolves.toBeUndefined();
+  });
+
+  it("a booking modification's refund with no plan is not the superseded runner's: nothing read", async () => {
+    await expect(
+      holdSupersededRowSizedOnAnotherRefund({ operation: { ...superseded, type: "REFUND_BOOKING_MODIFICATION" }, listed: [] }),
+    ).resolves.toBeUndefined();
+    expect(paymentFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("fails closed (a retry, not a hold) if the payment cannot be read", async () => {
+    paymentFindUnique.mockResolvedValue(null);
+    const read = holdSupersededRowSizedOnAnotherRefund({ operation: superseded, listed: [] });
+    await expect(read).rejects.toThrow("could not read the payment");
+    await expect(read).rejects.not.toBeInstanceOf(UnattributedCardRefundBeforeResendError);
+  });
+
+  it("the preflight hands back what Stripe listed on each charge it read, an empty list included", async () => {
+    const second = { paymentTransactionId: "transaction-second", amountCents: 2000 };
+    const other = refund({ id: "re_app", metadata: otherDoor });
+    list.mockImplementation(async (intent) => (intent === "pi_test" ? [other] : []));
+    const result = await preflightCardRefundResend({
+      ...args,
+      plan: [...args.plan, second],
+      transactions: [...args.transactions, { id: "transaction-second", stripePaymentIntentId: "pi_second" }],
+    });
+    expect(result.plan).toEqual([...args.plan, second]);
+    expect([...result.listedByTransaction]).toEqual([["transaction-test", [other]], ["transaction-second", []]]);
+  });
 });
