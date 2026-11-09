@@ -378,18 +378,34 @@ describe("the shipped next.config.ts, through Next's own pipeline", () => {
     },
   );
 
-  it("ships the rules in afterFiles, and only there", async () => {
+  it("ships the asset rules in afterFiles, and the moved-page rewrites in beforeFiles", async () => {
     // The stage cannot be read back from `unstable_getResponseFromNextConfig` —
     // it flattens beforeFiles/afterFiles/fallback into one list — so it is
-    // asserted against the config's own return value. This is the assertion that
-    // fails if the rules are moved to `beforeFiles`, which would put them AHEAD
-    // of the filesystem check and 404 every real image and chunk in the app.
+    // asserted against the config's own return value. Asset rules in
+    // `beforeFiles` would run ahead of the filesystem check and 404 every real
+    // image and chunk. The Website move's rewrites belong in `beforeFiles`:
+    // they serve each old URL from the file now under `/admin/website`.
     const rewrites = await nextConfig.rewrites!();
 
     expect(Array.isArray(rewrites), "must be the staged form, not a bare array")
       .toBe(false);
     expect(rewrites).toEqual({
-      beforeFiles: [],
+      beforeFiles: [
+        { source: "/admin/appearance", destination: "/admin/website/appearance" },
+        {
+          source: "/admin/appearance/identity",
+          destination: "/admin/website/appearance/identity",
+        },
+        { source: "/admin/image-manager", destination: "/admin/website/image-manager" },
+        {
+          source: "/admin/mountain-conditions",
+          destination: "/admin/website/mountain-conditions",
+        },
+        { source: "/admin/page-content", destination: "/admin/website/page-content" },
+        { source: "/admin/site-banners", destination: "/admin/website/site-banners" },
+        { source: "/admin/site-content", destination: "/admin/website/site-content" },
+        { source: "/admin/site-style", destination: "/admin/website/site-style" },
+      ],
       afterFiles: [...ASSET_NOT_FOUND_REWRITES],
       fallback: [],
     });

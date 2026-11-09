@@ -1195,43 +1195,78 @@ async function walkRegistry(
 }
 
 describe("buildAdminUrlRules", () => {
-  it("returns only the retired pages' redirects for today's registry, in either state", () => {
-    // No page has moved, so every destination is served at its old path either way.
-    const retired = {
-      redirects: [
-        {
-          source: "/admin/family-suggestions",
-          destination: "/admin/family-groups?tab=suggestions",
-          permanent: false,
-        },
-        {
-          source: "/admin/membership-cancellation",
-          destination: "/admin/membership-cancellations?tab=settings",
-          permanent: false,
-        },
-        {
-          source: "/admin/setup/cancellation",
-          destination: "/admin/membership-cancellations?tab=settings",
-          permanent: false,
-        },
-        {
-          source: "/admin/setup/booking-rules",
-          destination: "/admin/bookings-setup",
-          permanent: false,
-        },
-        {
-          source: "/admin/setup/integrations",
-          destination: "/admin/health#integration-readiness",
-          permanent: false,
-        },
-      ],
+  it("returns the retired redirects and the Website pages' move rules", () => {
+    // C4 moved the Website pages under `/admin/website`. Off: each hub URL
+    // redirects to the old URL, and a beforeFiles rewrite serves the old URL
+    // from the moved file. On: the old URL redirects to the hub URL, and there
+    // are no rewrites. Retired pages still come first, at their old destinations.
+    const retiredRedirects = [
+      {
+        source: "/admin/family-suggestions",
+        destination: "/admin/family-groups?tab=suggestions",
+        permanent: false,
+      },
+      {
+        source: "/admin/membership-cancellation",
+        destination: "/admin/membership-cancellations?tab=settings",
+        permanent: false,
+      },
+      {
+        source: "/admin/setup/cancellation",
+        destination: "/admin/membership-cancellations?tab=settings",
+        permanent: false,
+      },
+      {
+        source: "/admin/setup/booking-rules",
+        destination: "/admin/bookings-setup",
+        permanent: false,
+      },
+      {
+        source: "/admin/setup/integrations",
+        destination: "/admin/health#integration-readiness",
+        permanent: false,
+      },
+    ];
+    const websiteMoves = [
+      ["/admin/appearance", "/admin/website/appearance"],
+      ["/admin/appearance/identity", "/admin/website/appearance/identity"],
+      ["/admin/image-manager", "/admin/website/image-manager"],
+      ["/admin/mountain-conditions", "/admin/website/mountain-conditions"],
+      ["/admin/page-content", "/admin/website/page-content"],
+      ["/admin/site-banners", "/admin/website/site-banners"],
+      ["/admin/site-content", "/admin/website/site-content"],
+      ["/admin/site-style", "/admin/website/site-style"],
+    ] as const;
+    expect(
+      ADMIN_PAGES.filter((page) => page.moved)
+        .map((page) => [page.oldPath, page.hubPath])
+        .sort((a, b) => a[0].localeCompare(b[0])),
+    ).toEqual([...websiteMoves]);
+    const off = websiteMoves.map(([oldUrl, hubUrl]) => ({
+      source: hubUrl,
+      destination: oldUrl,
+      permanent: false as const,
+    }));
+    const on = websiteMoves.map(([oldUrl, hubUrl]) => ({
+      source: oldUrl,
+      destination: hubUrl,
+      permanent: false as const,
+    }));
+    const beforeFiles = websiteMoves.map(([oldUrl, hubUrl]) => ({
+      source: oldUrl,
+      destination: hubUrl,
+    }));
+    expect(buildAdminUrlRules(false)).toEqual({
+      redirects: [...retiredRedirects, ...off],
+      rewrites: { beforeFiles },
+    });
+    expect(buildAdminUrlRules(true)).toEqual({
+      redirects: [...retiredRedirects, ...on],
       rewrites: { beforeFiles: [] },
-    };
-    expect(buildAdminUrlRules(false)).toEqual(retired);
-    expect(buildAdminUrlRules(true)).toEqual(retired);
+    });
     expect(buildAdminUrlRules(false, ADMIN_PAGES, [])).toEqual({
-      redirects: [],
-      rewrites: { beforeFiles: [] },
+      redirects: off,
+      rewrites: { beforeFiles },
     });
   });
 
@@ -1391,6 +1426,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/xero/_components/inbound-events-panel.tsx":
       "C3: router.replace targets use servedAdminPathname",
     "src/lib/__tests__/admin-hubs-active-link.test.ts": "C3: activeAdminHref and its census",
+    "src/lib/__tests__/feature-navigation.test.ts":
+      "C4: a nav href's page file is the hub path once the Website pages have moved",
     "src/components/__tests__/admin-sidebar-active-link.test.tsx":
       "C3: the real sidebar over a moved Finance hub",
     "src/lib/__tests__/admin-page-revalidation.test.ts":

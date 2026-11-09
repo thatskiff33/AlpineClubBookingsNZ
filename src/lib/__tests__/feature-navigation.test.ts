@@ -7,6 +7,7 @@ import {
 } from "@/components/admin-sidebar";
 import { getNavBarLinks } from "@/components/nav-bar";
 import { buildBookingRequestsHref } from "@/lib/admin-booking-requests-path";
+import { ADMIN_PAGES, adminPageRoutePath } from "@/lib/admin-hubs";
 import { MODULE_KEYS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 import { requireCalendarDate } from "@/lib/club-time";
@@ -59,6 +60,20 @@ function collectAdminPageRoutes() {
 
   for (const root of roots) walk(root, []);
   return routes;
+}
+
+/**
+ * A nav href has a page when a `page.tsx` serves it. A moved page's file lives
+ * at its hub path (`/admin/website/...`); while the switch is off the sidebar
+ * still links the old URL, and a `beforeFiles` rewrite serves that URL from
+ * the moved file.
+ */
+function navHrefHasAdminPage(routeSet: Set<string>, pathname: string): boolean {
+  if (routeSet.has(pathname)) return true;
+  const page = ADMIN_PAGES.find(
+    (entry) => entry.oldPath === pathname || entry.hubPath === pathname,
+  );
+  return page !== undefined && routeSet.has(adminPageRoutePath(page));
 }
 
 describe("feature-aware navigation", () => {
@@ -180,7 +195,7 @@ describe("feature-aware navigation", () => {
       // Deep links may carry query params (e.g. the Needs Attention
       // unpaid-finished-stays link, #1731); the page route is the pathname.
       const pathname = href.split(/[?#]/)[0];
-      expect(routeSet.has(pathname), `${href} should have an admin page`).toBe(
+      expect(navHrefHasAdminPage(routeSet, pathname), `${href} should have an admin page`).toBe(
         true,
       );
     }
