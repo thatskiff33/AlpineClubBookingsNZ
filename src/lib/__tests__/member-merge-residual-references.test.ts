@@ -7,6 +7,9 @@
  * touching this file, and a new exclusion (a cascade relation, a second
  * `movedLast`, a late sweep) fails it until its reason is reviewed (`INV-SSOT`).
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { MEMBER_MERGE_RELATION_SPECS } from "@/lib/member-merge-relations";
@@ -14,6 +17,8 @@ import {
   findMemberMergeResidualReferences,
   MEMBER_MERGE_RESIDUAL_REFERENCE_PLAN,
 } from "@/lib/member-merge-residual-references";
+
+import { stripComments } from "./support/strip-comments";
 
 /** The relations not checked, and why: each is handled another way. */
 const EXCLUDED: Record<string, RegExp> = {
@@ -25,8 +30,8 @@ const EXCLUDED: Record<string, RegExp> = {
   "Member.detailsConfirmedBy": /#2437/,
   // Moved last, NOWAIT, under the Member rows (#4823).
   "Payment.manuallyMarkedPaidBy": /#4823/,
-  // Swept late under the Member rows (#2597).
-  "HostingCoverageReevaluation.member": /applyLateHostingCoverageMoves/,
+  // Swept late under the Member rows (#2597): the table's `sweptLate` flag.
+  "HostingCoverageReevaluation.member": /^sweptLate: .*applyLateHostingCoverageMoves/,
   // The duplicate's own auth identity and ephemeral rows, dropped with it.
   "PasswordResetToken.member": /cascade/,
   "MagicLinkToken.member": /cascade/,
@@ -52,6 +57,21 @@ describe("member merge's residual-reference census (#4855)", () => {
     );
     expect(Object.keys(excluded).sort()).toEqual(Object.keys(EXCLUDED).sort());
     for (const [key, reason] of Object.entries(EXCLUDED)) expect(excluded[key], key).toMatch(reason);
+  });
+
+  it("excludes a relation as swept late only because merge's late sweep moves exactly the flagged relations", () => {
+    // One list (`INV-SSOT`): the exclusion and `applyLateHostingCoverageMoves`
+    // both read `sweptLate`. Drop the flag and the exclusion goes with it (the
+    // pinned set above fails); drop the sweep's use of it and this fails.
+    const flagged = MEMBER_MERGE_RELATION_SPECS.filter((spec) => spec.sweptLate).map((spec) => spec.key);
+    expect(flagged).toEqual(["HostingCoverageReevaluation.member"]);
+    const merge = stripComments(readFileSync(join(import.meta.dirname, "..", "member-merge.ts"), "utf8"));
+    const start = merge.indexOf("async function applyLateHostingCoverageMoves(");
+    expect(start).toBeGreaterThan(-1);
+    const sweep = merge.slice(start, merge.indexOf("\n}\n", start));
+    expect(sweep).toContain("for (const spec of MEMBER_MERGE_LATE_SWEPT_SPECS)");
+    expect(merge).toContain("const MEMBER_MERGE_LATE_SWEPT_SPECS = MEMBER_MERGE_RELATION_SPECS.filter((spec) => spec.sweptLate);");
+    expect(sweep).not.toContain("hostingCoverageReevaluation.updateMany({\n    where: { memberId");
   });
 
   it("checks every other moved or resolved relation, the officer columns among them", () => {

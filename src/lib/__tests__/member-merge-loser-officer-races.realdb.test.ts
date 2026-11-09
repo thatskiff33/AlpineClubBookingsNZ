@@ -388,10 +388,10 @@ function expectNoDeadlock(...outcomes: PromiseSettledResult<unknown>[]) {
     // Before #4855 the approval queued behind the merge's hold on the officer's row and died there (40P01).
     expect(writerFirst, "the approval waited on the merge").toBe("settled");
     expect(approved).toMatchObject({ status: "fulfilled", value: { type: "approved", bookingId: HELD_BOOKING_ID } });
-    // The survivor's new guest row is at a lodge the merge never locked and the hold now names the duplicate:
-    // either refuses the whole merge with a clean 409, nothing moved.
-    expect(merged).toMatchObject({ status: "rejected", reason: { statusCode: 409 } });
-    expect(["merge_drift_in_transaction", "partner_share_lodge_drift"]).toContain((merged as PromiseRejectedResult).reason.code);
+    // The approval named the duplicate as the hold's maker after merge's moves ran: under its Member rows the
+    // residual check refuses the whole merge with a clean 409, nothing moved. The lodge has no hosting rule, so
+    // no hosting re-plan refuses first, and #2672's `partner_share_lodge_drift` (later in merge) is never reached.
+    expectRefusedForResidual(merged, "Booking.createdBy");
     const held = await prisma.booking.findUniqueOrThrow({ where: { id: HELD_BOOKING_ID }, select: { status: true, createdById: true, guests: { select: { memberId: true } } } });
     expect(held).toEqual({ status: "PENDING", createdById: loser, guests: [{ memberId: master }] });
     expect(await stillThere(loser)).toBe(true);

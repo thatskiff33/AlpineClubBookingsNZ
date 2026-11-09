@@ -56,6 +56,14 @@ export type MemberMergeRelationSpec = {
    * row. Exactly one relation may carry it; that module refuses to load otherwise.
    */
   readonly movedLast?: true;
+  /**
+   * For `move` relations only (#4855): moved by the generic pass AND swept again
+   * by `applyLateHostingCoverageMoves` under merge's Member rows, so a row
+   * committed between the two is carried forward rather than refused. The late
+   * sweep moves exactly the flagged relations, and the residual-reference check
+   * (`member-merge-residual-references.ts`) skips exactly them.
+   */
+  readonly sweptLate?: true;
   readonly note?: string;
 };
 
@@ -64,7 +72,7 @@ function spec(
   field: string,
   column: string,
   bucket: MemberMergeBucket,
-  extra: { selfRelation?: boolean; movedLast?: true; note?: string } = {},
+  extra: { selfRelation?: boolean; movedLast?: true; sweptLate?: true; note?: string } = {},
 ): MemberMergeRelationSpec {
   const delegate = model.charAt(0).toLowerCase() + model.slice(1);
   return { key: `${model}.${field}`, model, field, delegate, column, bucket, ...extra };
@@ -176,7 +184,10 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   // the master in the same merge, so work left pointing at the loser would find
   // no bookings and a genuinely uncovered stay would never be noticed. There is
   // no member-scoped unique constraint, so a move can never collide.
-  spec("HostingCoverageReevaluation", "member", "memberId", "move"),
+  spec("HostingCoverageReevaluation", "member", "memberId", "move", {
+    sweptLate: true,
+    note: "#2597: swept again under merge's Member rows, with its FK-less actor twin",
+  }),
   spec("GroupBooking", "organiserMember", "organiserMemberId", "move"),
   spec("GroupBookingJoin", "joinerMember", "joinerMemberId", "resolve", {
     note: "@@unique(groupBookingId,joinerMemberId)",

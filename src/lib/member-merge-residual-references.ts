@@ -19,19 +19,11 @@
  * showed (#2437's rule). Reads take no row locks.
  *
  * The relations come from `MEMBER_MERGE_RELATION_SPECS`, so a new relation is
- * checked unless it falls in one of the exclusions below, each with its reason.
+ * checked unless the table marks it as handled another way (`cascade`,
+ * `movedLast`, `selfRelation`, `sweptLate`), each with its reason.
  * `member-merge-residual-references.test.ts` pins that list (`INV-SSOT`).
  */
 import { MEMBER_MERGE_RELATION_SPECS, mergeDelegate, type MemberMergeRelationSpec } from "@/lib/member-merge-relations";
-
-/**
- * Relations that `move` or `resolve` and are still not checked here, by key,
- * each handled later in the same transaction under the Member rows.
- */
-const LATER_UNDER_THE_MEMBER_ROWS: Readonly<Record<string, string>> = {
-  "HostingCoverageReevaluation.member":
-    "swept late by applyLateHostingCoverageMoves under the Member rows, with its FK-less actor twin (#2597)",
-};
 
 export type MemberMergeResidualReferenceEntry =
   | { readonly key: string; readonly checked: true; readonly spec: MemberMergeRelationSpec }
@@ -47,8 +39,9 @@ function planFor(spec: MemberMergeRelationSpec): MemberMergeResidualReferenceEnt
   if (spec.selfRelation) {
     return { key: spec.key, checked: false, reason: "a Member self-relation: the step-5 inbound re-check refuses a late link (#2437)" };
   }
-  const later = LATER_UNDER_THE_MEMBER_ROWS[spec.key];
-  if (later) return { key: spec.key, checked: false, reason: later };
+  if (spec.sweptLate) {
+    return { key: spec.key, checked: false, reason: "sweptLate: moved again by applyLateHostingCoverageMoves under the Member rows (#2597)" };
+  }
   return { key: spec.key, checked: true, spec };
 }
 
@@ -56,13 +49,6 @@ function planFor(spec: MemberMergeRelationSpec): MemberMergeResidualReferenceEnt
 export const MEMBER_MERGE_RESIDUAL_REFERENCE_PLAN: readonly MemberMergeResidualReferenceEntry[] = Object.freeze(
   MEMBER_MERGE_RELATION_SPECS.map(planFor),
 );
-
-for (const key of Object.keys(LATER_UNDER_THE_MEMBER_ROWS)) {
-  const spec = MEMBER_MERGE_RELATION_SPECS.find((candidate) => candidate.key === key);
-  if (!spec || spec.bucket === "cascade") {
-    throw new Error(`member-merge-residual-references: "${key}" is excluded but is not a moved relation spec.`);
-  }
-}
 
 /** How many row ids per relation a refusal carries. */
 const RESIDUAL_ROW_SAMPLE = 20;

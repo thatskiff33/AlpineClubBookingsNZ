@@ -2701,21 +2701,34 @@ function foldRelationMoveCount(
   }
 }
 
+/**
+ * The relations swept again under merge's Member rows (#2597), read from the
+ * table's `sweptLate` flag so the sweep and the residual check's exclusion are
+ * one list (#4855, `INV-SSOT`). Refuses to load if a non-`move` relation
+ * carries the flag.
+ */
+const MEMBER_MERGE_LATE_SWEPT_SPECS = MEMBER_MERGE_RELATION_SPECS.filter((spec) => spec.sweptLate);
+for (const spec of MEMBER_MERGE_LATE_SWEPT_SPECS) {
+  if (spec.bucket !== "move" || spec.movedLast || spec.selfRelation) {
+    throw new Error(`#4855: only a plain "move" relation may be sweptLate; ${spec.key} is not.`);
+  }
+}
+
 async function applyLateHostingCoverageMoves(
   tx: Prisma.TransactionClient,
   masterId: string,
   loserId: string,
   relationMoves: { model: string; count: number }[],
 ): Promise<void> {
-  const owner = await tx.hostingCoverageReevaluation.updateMany({
-    where: { memberId: loserId },
-    data: { memberId: masterId },
-  });
-  foldRelationMoveCount(
-    relationMoves,
-    "HostingCoverageReevaluation.member",
-    owner.count,
-  );
+  // #4855: exactly the relations the table marks `sweptLate`, which the
+  // residual-reference check skips for that reason.
+  for (const spec of MEMBER_MERGE_LATE_SWEPT_SPECS) {
+    const swept = await mergeDelegate<UpdateManyDelegate>(tx, spec.delegate).updateMany({
+      where: { [spec.column]: loserId },
+      data: { [spec.column]: masterId },
+    });
+    foldRelationMoveCount(relationMoves, spec.key, swept.count);
+  }
 
   const actor = await tx.hostingCoverageReevaluation.updateMany({
     where: { actorMemberId: loserId },
