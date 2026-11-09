@@ -514,16 +514,27 @@ describe("the hub prefix census", () => {
   });
 
   it("lets a hub own the pages that have moved under it, and no others", () => {
-    const pages = ADMIN_PAGES.map((page) =>
-      page.id === "payments" ? { ...page, moved: true } : page,
-    );
-    const moved = pages.find((page) => page.id === "payments")!;
-    const sources = { ...TODAYS_SOURCES, pagePaths: [...ON_DISK_PAGE_PATHS, moved.hubPath] };
-    expect(ownedPagePaths("finance", pages)).toEqual([moved.hubPath]);
-    expect(hubPrefixCollisions("finance", ownedBy("finance", pages), sources)).toEqual([]);
+    // C5 (#4802) moved every Finance page, so their files sit under the hub.
+    const financeHubPaths = [
+      "/admin/finance/payments",
+      "/admin/finance/internet-banking",
+      "/admin/finance/refund-requests",
+      "/admin/finance/subscriptions",
+      "/admin/finance/reports",
+      "/admin/finance/xero",
+      "/admin/finance/xero/member-grouping",
+      "/admin/finance/xero/records/[localModel]/[localId]",
+      "/admin/finance/xero/setup",
+    ];
+    expect(ownedPagePaths("finance")).toEqual(financeHubPaths);
+    expect(hubPrefixCollisions("finance", ownedBy("finance"))).toEqual([]);
     // Unmoved in the registry, so the file under the hub is not the hub's.
-    expect(hubPrefixCollisions("finance", ownedBy("finance"), sources)).toEqual([
-      `the existing page ${moved.hubPath} sits under it`,
+    const pages = ADMIN_PAGES.map((page) =>
+      page.id === "payments" ? { ...page, moved: false } : page,
+    );
+    expect(ownedPagePaths("finance", pages)).toEqual(financeHubPaths.slice(1));
+    expect(hubPrefixCollisions("finance", ownedBy("finance", pages))).toEqual([
+      "the existing page /admin/finance/payments sits under it",
     ]);
   });
 
@@ -584,7 +595,7 @@ describe("the entries' shape", () => {
     expect(roots).toEqual(["dashboard"]);
   });
 
-  it("has moved the Website hub, and nothing else (C4 #4801)", () => {
+  it("has moved the Website and Finance hubs, and nothing else (C4 #4801, C5 #4802)", () => {
     expect(
       ADMIN_PAGES.filter((page) => page.moved)
         .map((page) => page.id)
@@ -593,15 +604,30 @@ describe("the entries' shape", () => {
       "appearance",
       "club-identity",
       "image-manager",
+      "internet-banking",
       "mountain-conditions",
       "page-content",
+      "payments",
+      "refund-requests",
+      "reports",
       "site-banners",
       "site-content",
       "site-style",
+      "subscriptions",
+      "xero",
+      "xero-member-grouping",
+      "xero-record",
+      "xero-setup",
     ]);
     expect(new Set(ADMIN_PAGES.filter((page) => page.moved).map((page) => page.hub))).toEqual(
-      new Set(["website"]),
+      new Set(["website", "finance"]),
     );
+    // Each of those hubs moved whole: no page of theirs was left behind.
+    expect(
+      ADMIN_PAGES.filter((page) => ["website", "finance"].includes(page.hub) && !page.moved).map(
+        (page) => page.id,
+      ),
+    ).toEqual([]);
   });
 
   /**
@@ -1044,11 +1070,17 @@ describe("retired pages", () => {
     const payments = ADMIN_PAGES.find((page) => page.id === "payments")!;
     const retired: AdminRetiredPage = { oldPath: "/admin/zz/old", label: "Old", mergedInto: "payments" };
     const rules = buildAdminUrlRules(true, [payments, zz], [retired]);
+    // Payments has moved (C5 #4802), so live, its content is served at the hub URL.
+    expect(payments.moved).toBe(true);
     await expect(resolveThrough(rules, "/admin/zz/old")).resolves.toEqual({
       kind: "redirect",
       status: 307,
-      url: "/admin/payments",
+      url: "/admin/finance/payments",
     });
+    // Off, the retired redirect goes to the old URL, where Payments is served.
+    await expect(
+      resolveThrough(buildAdminUrlRules(false, [payments, zz], [retired]), "/admin/zz/old"),
+    ).resolves.toEqual({ kind: "redirect", status: 307, url: "/admin/payments" });
     await expect(resolveThrough(rules, "/admin/zz/x1")).resolves.toEqual({
       kind: "redirect",
       status: 307,
@@ -1308,11 +1340,13 @@ async function walkRegistry(
 }
 
 describe("buildAdminUrlRules", () => {
-  it("returns the retired redirects and the Website pages' move rules", () => {
-    // C4 moved the Website pages under `/admin/website`. Off: each hub URL
-    // redirects to the old URL, and a beforeFiles rewrite serves the old URL
-    // from the moved file. On: the old URL redirects to the hub URL, and there
-    // are no rewrites. Retired pages still come first, at their old destinations.
+  it("returns the retired redirects and the Website and Finance pages' move rules", () => {
+    // C4 (#4801) moved the Website pages under `/admin/website`, and C5 (#4802)
+    // the Finance pages under `/admin/finance`. Off: each hub URL redirects to
+    // the old URL, and a beforeFiles rewrite serves the old URL from the moved
+    // file. On: the old URL redirects to the hub URL, and there are no
+    // rewrites. Retired pages still come first, at their old destinations in
+    // both states, since no page they were merged into has moved.
     const retiredRedirects = [
       {
         source: "/admin/family-suggestions",
@@ -1340,32 +1374,53 @@ describe("buildAdminUrlRules", () => {
         permanent: false,
       },
     ];
-    const websiteMoves = [
+    // Static paths in old-path order, then the one dynamic page, its `[name]`
+    // segments as Next's `:name`.
+    const staticMoves = [
       ["/admin/appearance", "/admin/website/appearance"],
       ["/admin/appearance/identity", "/admin/website/appearance/identity"],
       ["/admin/image-manager", "/admin/website/image-manager"],
+      ["/admin/internet-banking", "/admin/finance/internet-banking"],
       ["/admin/mountain-conditions", "/admin/website/mountain-conditions"],
       ["/admin/page-content", "/admin/website/page-content"],
+      ["/admin/payments", "/admin/finance/payments"],
+      ["/admin/refund-requests", "/admin/finance/refund-requests"],
+      ["/admin/reports", "/admin/finance/reports"],
       ["/admin/site-banners", "/admin/website/site-banners"],
       ["/admin/site-content", "/admin/website/site-content"],
       ["/admin/site-style", "/admin/website/site-style"],
+      ["/admin/subscriptions", "/admin/finance/subscriptions"],
+      ["/admin/xero", "/admin/finance/xero"],
+      ["/admin/xero/member-grouping", "/admin/finance/xero/member-grouping"],
+      ["/admin/xero/setup", "/admin/finance/xero/setup"],
+    ] as const;
+    const xeroRecord = [
+      "/admin/xero/records/[localModel]/[localId]",
+      "/admin/finance/xero/records/[localModel]/[localId]",
     ] as const;
     expect(
       ADMIN_PAGES.filter((page) => page.moved)
         .map((page) => [page.oldPath, page.hubPath])
         .sort((a, b) => a[0].localeCompare(b[0])),
-    ).toEqual([...websiteMoves]);
-    const off = websiteMoves.map(([oldUrl, hubUrl]) => ({
+    ).toEqual([...staticMoves, xeroRecord].sort((a, b) => a[0].localeCompare(b[0])));
+    const moves = [
+      ...staticMoves,
+      [
+        "/admin/xero/records/:localModel/:localId",
+        "/admin/finance/xero/records/:localModel/:localId",
+      ],
+    ] as const;
+    const off = moves.map(([oldUrl, hubUrl]) => ({
       source: hubUrl,
       destination: oldUrl,
       permanent: false as const,
     }));
-    const on = websiteMoves.map(([oldUrl, hubUrl]) => ({
+    const on = moves.map(([oldUrl, hubUrl]) => ({
       source: oldUrl,
       destination: hubUrl,
       permanent: false as const,
     }));
-    const beforeFiles = websiteMoves.map(([oldUrl, hubUrl]) => ({
+    const beforeFiles = moves.map(([oldUrl, hubUrl]) => ({
       source: oldUrl,
       destination: hubUrl,
     }));
