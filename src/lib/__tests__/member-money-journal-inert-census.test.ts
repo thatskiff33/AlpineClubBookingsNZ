@@ -28,6 +28,7 @@ const ALLOWED: Record<string, string> = {
   "src/lib/privacy-retention-classification.ts": "privacy schedule classification strings; no journal access",
   "scripts/verify-member-money-journal.ts": "operator verifier in a READ ONLY transaction",
   "src/lib/booking-ledger-capture-kinds.ts": "#4516: the one capture-kind map names each kind's receipt cash account and origin; no row read or written",
+  "src/lib/booking-change-request-execution.ts": "#4845: takes the booking row through the doors' one lock helper before its claim; its canonical service posts, it reads and writes no journal row",
 };
 
 /**
