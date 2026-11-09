@@ -28,7 +28,7 @@ vi.mock("@/lib/payment-transactions", () => ({ PAYMENT_ROW_WAIT_TRANSACTION_OPTI
 vi.mock("@/lib/prisma", () => ({ prisma: { $transaction: async (run: (tx: unknown) => unknown) => run(mocks.tx) } }));
 vi.mock("@/lib/stripe", () => ({ listRefundsForPaymentIntent: mocks.list }));
 
-import { answerSupersededFirstRequest } from "@/lib/superseded-first-request-answer";
+import { answerSupersededFirstRequest, supersededFirstRequestUnsent } from "@/lib/superseded-first-request-answer";
 
 const operation = { id: "op-1", type: "REFUND_SUPERSEDED_PAYMENT", idempotencyKey: "payment_recovery_refund_txn_pi", stripeKeyPrefix: null,
   bookingId: "b-1", paymentId: "p-1", paymentIntentId: "pi_1" } as never;
@@ -60,6 +60,19 @@ describe("a superseded intent's first request, made and never answered (#4516 re
     await answerSupersededFirstRequest(operation);
     expect(mocks.list).not.toHaveBeenCalled();
     expect(mocks.cash).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (round-2 review C): the key is unused only while it holds an open reservation and Stripe lists no refund its request made, in any state", async () => {
+    mocks.list.mockResolvedValue([refund("re_slice", { operationId: "op-1", refundSliceKey: "k_txn_100" }), refund("re_other", { operationId: "another" })]);
+    expect(await supersededFirstRequestUnsent(operation)).toBe(true);
+    mocks.list.mockResolvedValue([refund("re_failed", { operationId: "op-1" }, "failed")]);
+    expect(await supersededFirstRequestUnsent(operation)).toBe(false);
+    mocks.list.mockRejectedValue(new Error("stripe down"));
+    expect(await supersededFirstRequestUnsent(operation)).toBe(false);
+    mocks.list.mockClear();
+    mocks.open.mockResolvedValue(false);
+    expect(await supersededFirstRequestUnsent(operation)).toBe(false);
+    expect(mocks.list).not.toHaveBeenCalled();
   });
 
   it("leaves the reservation for the census when no single refund is the request's, or Stripe cannot be read", async () => {

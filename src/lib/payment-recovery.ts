@@ -1,6 +1,6 @@
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { postBookingReceipts, resolveBookingMoneyPostingContext, resolveCardRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
-import { answerSupersededFirstRequest } from "@/lib/superseded-first-request-answer";
+import { answerSupersededFirstRequest, supersededFirstRequestUnsent } from "@/lib/superseded-first-request-answer";
 import { withStoreTransaction } from "@/lib/db-transaction";
 import { cardRefundOperationStripeKeyPrefix } from "@/lib/card-refund-stripe-key-prefix";
 import {
@@ -2053,7 +2053,7 @@ async function processRefundSupersededPaymentOperation(
       if (obligation) {
         await reserveCardRefundAttempt(journal, { paymentId: operation.paymentId, obligation, attemptKey: operation.idempotencyKey,
           senderKeyPrefix: operation.idempotencyKey, paymentTransactionId: refreshedTransaction.id, amountCents: outstandingCents,
-          planAttemptKeys: [operation.idempotencyKey] });
+          planAttemptKeys: [operation.idempotencyKey], unsentKeyMayResize: await supersededFirstRequestUnsent(operation) }); // #4516 round-2 C
       }
       const refund = await processRefund({
         paymentIntentId: operation.paymentIntentId,

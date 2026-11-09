@@ -297,6 +297,26 @@ describe("the reservation step", () => {
     expect(await t.reserve(late, debt, "superseded", 3_000)).toMatchObject({ outcome: "reserved", replayed: true });
   });
 
+  it("MUTATION (round-2 review C): a key the sender found unused at Stripe is resized: its stale reservation released, the next generation reserved at the new cents", async () => {
+    const t = await setup();
+    await t.capture(10_000);
+    const late = await t.capture(3_000, false);
+    const debt = { scope: "capture-return" as const, id: late.stripePaymentIntentId, ensureFaceCents: 3_000 };
+    const resize = (row: { id: string }, amountCents: number) => reserveCardRefundSlice(t.db.tx, context, { paymentId: `${t.id}-payment`, obligation: debt,
+      attemptKey: "superseded", senderKeyPrefix: "superseded", paymentTransactionId: row.id, amountCents, planAttemptKeys: ["superseded"], unsentKeyMayResize: true });
+    await t.reserve(late, debt, "superseded", 3_000); // reserved, then the attempt died before Stripe
+    // Another charge is still another slice: refused, resize or not.
+    const other = await t.capture(500, false);
+    await expect(resize(other, 2_000)).rejects.toBeInstanceOf(MemberMoneyReservationRefused);
+    // A dashboard refund of 1000 since: the row now asks 2000 under the same key.
+    expect(await resize(late, 2_000)).toMatchObject({ outcome: "reserved", attemptKey: "superseded#2", replayed: false });
+    expect(t.release("superseded")).toMatchObject({ reason: "SUPERSEDED_KEY" });
+    expect(t.family(R05("capture-return", late.stripePaymentIntentId))).toMatchObject({ funded: 2_000, reserved: 2_000 });
+    // The same cents again is the new generation's retry.
+    expect(await resize(late, 2_000)).toMatchObject({ outcome: "reserved", attemptKey: "superseded#2", replayed: true });
+    expect(t.caps()).toEqual([]);
+  });
+
   it("MUTATION (review F3): a sender supersedes only its own keys; another sender's open reservation on the same debt stands, and caps refuse the second", async () => {
     const t = await setup();
     await t.capture(10_000);

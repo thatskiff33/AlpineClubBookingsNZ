@@ -45,6 +45,7 @@ const {
   mockReportSupersededPaymentRefund,
   mockReportUnannouncedSupersededPaymentRefund,
   mockAnswerSupersededFirstRequest,
+  mockSupersededFirstRequestUnsent,
   mockSyncEditFinancialReviewChargeRequest,
   mockBookingModificationFindUnique,
   mockCompleteDeferredSupplementaryInvoice,
@@ -119,6 +120,7 @@ const {
   mockReportUnannouncedSupersededPaymentRefund: vi.fn().mockResolvedValue(undefined),
   // #4516 review L1: the first request's refund answered to its open reservation (its own suite: the module's).
   mockAnswerSupersededFirstRequest: vi.fn().mockResolvedValue(undefined),
+  mockSupersededFirstRequestUnsent: vi.fn().mockResolvedValue(false),
   mockSyncEditFinancialReviewChargeRequest: vi.fn(),
   // #3181: the edit whose additional payment is being recovered, read back for
   // the SIGNED components its deferred supplementary invoice bills.
@@ -422,6 +424,8 @@ vi.mock("@/lib/booking-events", async (importOriginal) => ({
 
 vi.mock("@/lib/superseded-first-request-answer", () => ({
   answerSupersededFirstRequest: (...args: unknown[]) => mockAnswerSupersededFirstRequest(...args),
+  // #4516 round-2 C: whether the row's own key was never used at Stripe (its own suite: the module's).
+  supersededFirstRequestUnsent: (...args: unknown[]) => mockSupersededFirstRequestUnsent(...args),
 }));
 
 vi.mock("@/lib/superseded-additional-refund", () => ({
@@ -1222,8 +1226,11 @@ describe("payment recovery worker", () => {
       payment_intent: "pi_superseded",
     });
 
+    // #4516 round-2 C: Stripe lists nothing the row's own key made, so a stale reservation of it may be resized.
+    mockSupersededFirstRequestUnsent.mockResolvedValueOnce(true);
     await processPaymentRecoveryOperations({ limit: 1 });
 
+    expect(mockSupersededFirstRequestUnsent).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: "payment_recovery_cancel_txn-1_pi_superseded" }));
     expect(mockRecordStripeRefundsAgainstTransaction).toHaveBeenCalledWith({
       paymentId: "payment-1",
       paymentTransactionId: "txn-1",
@@ -1237,7 +1244,7 @@ describe("payment recovery worker", () => {
     expect(mockReserveCardRefundAttempt).toHaveBeenCalledWith(expect.anything(), {
       paymentId: "payment-1", attemptKey: "payment_recovery_cancel_txn-1_pi_superseded", senderKeyPrefix: "payment_recovery_cancel_txn-1_pi_superseded",
       paymentTransactionId: "txn-1", amountCents: 6000,
-      planAttemptKeys: ["payment_recovery_cancel_txn-1_pi_superseded"],
+      planAttemptKeys: ["payment_recovery_cancel_txn-1_pi_superseded"], unsentKeyMayResize: true,
       obligation: { scope: "capture-return", id: "pi_superseded", ensureFaceCents: 6000 },
     });
     expect(mockReserveCardRefundAttempt.mock.invocationCallOrder[0]).toBeLessThan(mockProcessRefund.mock.invocationCallOrder[0]!);

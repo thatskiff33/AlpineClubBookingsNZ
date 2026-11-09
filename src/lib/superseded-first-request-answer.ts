@@ -11,6 +11,33 @@ import { REFUND_SLICE_KEY_METADATA } from "@/lib/refund-slice-evidence";
 import { listRefundsForPaymentIntent } from "@/lib/stripe";
 import { stripeReferenceId } from "@/lib/stripe-references";
 
+type SupersededRow = Pick<PaymentRecoveryOperation, "id" | "type" | "idempotencyKey" | "stripeKeyPrefix" | "bookingId" | "paymentId" | "paymentIntentId">;
+
+/** The refunds Stripe lists that this row's first request made: its metadata, no slice key. Every status. */
+function ownFirstRequestRefunds(operation: SupersededRow, refunds: Awaited<ReturnType<typeof listRefundsForPaymentIntent>>) {
+  return refunds.filter((refund) =>
+    (!refund.payment_intent || stripeReferenceId(refund.payment_intent) === operation.paymentIntentId) &&
+    carriesCardRefundOperationMetadata(operation, refund.metadata) && !refund.metadata?.[REFUND_SLICE_KEY_METADATA]);
+}
+
+/**
+ * #4516 (round-2 review C): may this row's one request be reserved again at another amount? Only where its key
+ * holds an open reservation and Stripe lists no refund the request made, in any state: the attempt that reserved
+ * it died before Stripe was asked, so the key was never used and its outstanding amount (moved since, say by a
+ * refund made in the Stripe dashboard) is what it now asks. A key with no open reservation needs nothing; one
+ * Stripe cannot be read for, or that made a refund, keeps the refusal (`reserveCardRefundSlice`, review L1).
+ */
+export async function supersededFirstRequestUnsent(operation: SupersededRow): Promise<boolean> {
+  if (!(await isRefundReservationOpen(prisma, operation.idempotencyKey))) return false;
+  try {
+    return ownFirstRequestRefunds(operation, await listRefundsForPaymentIntent(operation.paymentIntentId, { timeoutMs: 10_000, singlePage: true })).length === 0;
+  } catch (err) {
+    logger.warn({ operationId: operation.id, paymentIntentId: operation.paymentIntentId, err },
+      "A superseded refund row's open reservation was not resized: Stripe's refunds could not be read (#4516)");
+    return false;
+  }
+}
+
 /**
  * #4516 review L1: A SUPERSEDED INTENT'S FIRST REQUEST, MADE AND NEVER ANSWERED. A superseded intent's refund row
  * asks Stripe once under its own key (`idempotencyKey`, with no slice evidence, so its body stays the one #4103
@@ -21,9 +48,7 @@ import { stripeReferenceId } from "@/lib/stripe-references";
  * request is sent without one), and is the only such refund. Anything else leaves the reservation for the census
  * (`STRANDED_RESERVATION`) and the owner's OPERATOR release. A read Stripe refuses decides nothing here.
  */
-export async function answerSupersededFirstRequest(
-  operation: Pick<PaymentRecoveryOperation, "id" | "type" | "idempotencyKey" | "stripeKeyPrefix" | "bookingId" | "paymentId" | "paymentIntentId">,
-): Promise<void> {
+export async function answerSupersededFirstRequest(operation: SupersededRow): Promise<void> {
   const journal = await resolveBookingMoneyPostingContext();
   if (isBookingJournalInactive(journal) || !(await isRefundReservationOpen(prisma, operation.idempotencyKey))) return;
   const logContext = { operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: operation.paymentIntentId };
@@ -34,10 +59,7 @@ export async function answerSupersededFirstRequest(
     logger.warn({ ...logContext, err }, "A superseded refund row's open reservation was not answered: Stripe's refunds could not be read (#4516)");
     return;
   }
-  const own = refunds.filter((refund) =>
-    (!refund.payment_intent || stripeReferenceId(refund.payment_intent) === operation.paymentIntentId) &&
-    carriesCardRefundOperationMetadata(operation, refund.metadata) && !refund.metadata?.[REFUND_SLICE_KEY_METADATA] &&
-    isRecordedRefundStatus(refund.status ?? "unknown"));
+  const own = ownFirstRequestRefunds(operation, refunds).filter((refund) => isRecordedRefundStatus(refund.status ?? "unknown"));
   if (own.length !== 1) {
     logger.warn({ ...logContext, ownRefundIds: own.map((refund) => refund.id) },
       "A superseded refund row's open reservation was not answered: no single refund is its first request's (#4516)");

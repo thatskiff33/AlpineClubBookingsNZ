@@ -36,7 +36,9 @@ import { MemberMoneyReservationRefused, reserveMemberMoneyRefund } from "./store
  *    re-plan never strands one. Another sender's open reservation on the same debt is its attempt in flight, never
  *    released here (#4516 review F3): C3 and C4 decide whether there is room beside it.
  * 4. The key's own reservations, every generation (`reservationGenerationKey`): an open one is this slice's retry,
- *    replayed only if it reserved the same slice (capture, charge and cents; review L1), else refused; one that
+ *    replayed only if it reserved the same slice (capture, charge and cents; review L1), else refused, unless the
+ *    sender found no refund made under the key and only the cents moved (round-2 review C: released, and the next
+ *    generation reserved at the new cents); one that
  *    answered a refund means Stripe made it and will replay it, so nothing is reserved again; otherwise (none, or
  *    each released without a refund) the key's next generation is reserved, so the slice never leaves unreserved
  *    (review F4).
@@ -67,6 +69,13 @@ export interface CardRefundSliceReservation {
   amountCents: number;
   /** Every key of the plan being sent, made slices included: a reservation under any other key is superseded. */
   planAttemptKeys: readonly string[];
+  /**
+   * #4516 (round-2 review C): the sender has read Stripe and found no refund made under this key, so an open
+   * reservation of it for other cents (a superseded intent's one request, its outstanding amount moved since a
+   * crash before Stripe) is stale: released, SUPERSEDED_KEY, and the key's next generation reserved at these
+   * cents. Never another capture or charge.
+   */
+  unsentKeyMayResize?: boolean;
 }
 
 export type CardRefundReservationOutcome =
@@ -113,7 +122,13 @@ export async function reserveCardRefundSlice(tx: Db, context: BookingJournalCont
   const generations = await tx.memberMoneyRefundReservation.findMany({ where: reservationGenerationsWhere(input.attemptKey),
     select: { id: true, attemptKey: true, obligationId: true, stripePaymentIntentId: true, paymentTransactionId: true, amountCents: true,
       release: { select: { reason: true } } } });
-  const open = generations.find((generation) => !generation.release);
+  let open = generations.find((generation) => !generation.release);
+  if (open && input.unsentKeyMayResize && familyIds.has(open.obligationId) && open.stripePaymentIntentId === capture
+    && open.paymentTransactionId === input.paymentTransactionId && open.amountCents !== input.amountCents) {
+    await releaseMemberMoneyRefundReservation(tx, context, { bookingId, reservationId: open.id, reason: "SUPERSEDED_KEY",
+      source: { kind: "PAYMENT", id: input.paymentTransactionId, version: `resized:${open.attemptKey}` } });
+    open = undefined;
+  }
   if (open) {
     // Review L1: a retry replays its own claim only for the same slice. A key that reserved another (a row whose one
     // request carries no slice, sent again for a changed amount) would have Stripe replay the original refund, or
