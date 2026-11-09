@@ -41,6 +41,10 @@ export function isAutomaticCancelledBookingRefundTaskReason(reason: string): boo
  * reason is a cancellation's own hand-back (`openHandBackOwedCents`) and is not
  * one. The still-owed check of a hand-back (`assertLateCaptureHandBackStillOwed`)
  * is gated on this, so a legacy row is checked under the Payment row too.
+ *
+ * `isLateCaptureAwaitingDecisionTask` (owed figures) still identifies a legacy
+ * row by "NULL kind on a deleted booking" instead; the two agree on every real
+ * #2700 row, and #4848 moves that reader onto this rule.
  */
 export function isLateCaptureHandBackTask(task: { kind: ManualRefundTaskKind | string | null; reason: string }): boolean {
   if (task.kind === ManualRefundTaskKind.DELETED_BOOKING_LATE_CAPTURE) return true;
