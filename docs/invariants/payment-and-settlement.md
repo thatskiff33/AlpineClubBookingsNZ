@@ -1797,32 +1797,34 @@ release).
 
 - Before an ordinary charge-backed recovery re-sends an unmarked slice, it
   reads Stripe's refunds for that slice's intent outside every transaction:
-  one request per intent, 100 results, a ten-second timeout and no network
+  one request per intent, 100 results, ten-second timeout, no network
   retries. More results, a read failure or a recording failure permits no send;
   normal recovery backoff applies.
 - Refunds on the captured charge are recorded through
-  `recordStripeRefundsAgainstTransaction`, including ones the app has not seen.
-  The existing note router is shared with `charge.refunded`, so recording first
-  does not suppress the refund's accounting correction. The superseded-payment
-  refund is sized on the ledger after this recording (#4699); a stored plan's
-  slices are still sent as written (#4103).
+  `recordStripeRefundsAgainstTransaction`, including ones the app has not seen,
+  sharing `charge.refunded`'s note router, which keeps their accounting
+  correction. The superseded-payment refund is sized on the ledger after this
+  recording (#4699); a stored plan's slices are still sent as written (#4103).
 - A counted refund made outside the app (`cardRefundDoorOf`), on that charge
   at or after the recovery debt's creation second, holds the entire row before
-  any slice is sent, regardless of the refund's amount. Counted status comes
-  from `isRecordedRefundStatus`; a stored refusal overrides a stale counted
+  any slice is sent, whatever its amount. Counted status comes from
+  `isRecordedRefundStatus`; a stored refusal overrides a stale counted
   listing. Stripe timestamps are compared in whole seconds.
+- #4858: a plan-less superseded-payment refund left owing also holds while
+  the owed figure credits it with a refund its own request did not make
+  (`foreignRefundsSizingSupersededRow`).
 - A hold uses the existing guarded terminal failure: `FAILED`, attempts at the
   ceiling, no retry. Only a winning claim alerts officers and writes a payment
-  audit entry. It neither closes the debt nor adopts the dashboard refund.
-  Officers check the booking and Stripe; any outstanding payment is recorded
-  with **Paid another way**, never a new dashboard refund.
+  audit entry. It neither closes the debt nor adopts the refund. Officers
+  settle anything owed with **Paid another way**, never a new dashboard refund.
 - Stripe keys stay unchanged; slice evidence is adopted under `INV-PAY-147`.
-  Specialised organiser-child and legacy group-settlement executors are outside
-  this charge-backed rule. A dashboard refund made after the provider read can
-  still race the send; this read is not a Stripe-side lock.
+  Organiser-child and legacy group-settlement executors are outside this
+  rule. A refund made after the provider read can still race the send; this
+  read is not a Stripe-side lock.
 - Proven by `card-refund-resend-preflight.test.ts`, `payment-recovery.test.ts`,
   `stripe.test.ts`, `recorded-card-refund-notes.test.ts`,
-  `superseded-refund-notice-once.realdb.test.ts` and the existing webhook
+  `superseded-refund-notice-once.realdb.test.ts`,
+  `superseded-refund-another-door-hold.realdb.test.ts` and the webhook
   contracts.
 
 ## INV-PAY-146
@@ -4081,9 +4083,9 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
   (`lock(1)`, row, Payment row) and its claim: dead, on the plan read. A closed
   row is never re-armed, nor a re-armed one closed until given up again. Each is
   audited (`payment`).
-- Limit: another door's refund of the same money - not matched to the row, or
-  made on its charge after the re-arm - failing later is owed beside it (#4104,
-  #4492, #4858).
+- Limit: another door's unmatched refund of the same money, failing later, is
+  owed beside the row (#4104, #4492); one its charge takes after a re-arm holds
+  the runner (#4858).
 - Proven by `card-refund-dead-row-actions.test.ts`,
   `card-refund-dead-row-actions.realdb.test.ts`, `dead-row-actions-route.test.ts`
   and `dead-card-refunds-panel.test.tsx`.
