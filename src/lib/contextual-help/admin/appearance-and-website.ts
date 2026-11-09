@@ -6,6 +6,11 @@
  * Split out of "Setup & Configuration" rather than invented: `/admin/appearance`
  * is the hub the sidebar links, and every page here is one of its cards. Kept
  * separate because the settings section would otherwise be half the corpus.
+ *
+ * The keys stay the pages' OLD paths now that the pages live under
+ * `/admin/website` (C4 #4801), and must not become `adminHref`: the admin help
+ * widget looks a page up by `canonicalAdminPathname`, which reads a moved page's
+ * hub URL as its old path, in either switch state.
  */
 import { entry, help, type HelpEntry } from "../types";
 
