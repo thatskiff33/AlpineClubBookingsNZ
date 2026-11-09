@@ -523,9 +523,10 @@ export async function lockMemberMergeHostingCoverageParticipants(
     ...params.ownerMemberIds,
   ]);
   const deadline = performance.now() + MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS;
+  // What is left of the one budget, read again before each step that can wait.
+  const remainingBudget = () => Math.ceil(deadline - performance.now());
   for (;;) {
-    const remaining = Math.ceil(deadline - performance.now());
-    if (remaining <= 0) throw new HostingCoverageParticipantRetryError();
+    if (remainingBudget() <= 0) throw new HostingCoverageParticipantRetryError();
     await db.$executeRaw(ATTEMPT_SAVEPOINT.open);
     const locked = await db.$executeRaw(Prisma.sql`
       SELECT 1
@@ -541,6 +542,9 @@ export async function lockMemberMergeHostingCoverageParticipants(
     }
     await db.$executeRaw(ATTEMPT_SAVEPOINT.rollBack);
     await db.$executeRaw(ATTEMPT_SAVEPOINT.release);
+    // Read after the attempt and its probe, so the wait ends inside the 10s total.
+    const remaining = remainingBudget();
+    if (remaining <= 0) throw new HostingCoverageParticipantRetryError();
     const waited = await waitForOneParticipantRow(db, busy, remaining);
     if (waited !== "free") throw new HostingCoverageParticipantRetryError();
   }

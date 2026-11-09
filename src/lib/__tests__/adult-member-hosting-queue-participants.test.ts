@@ -519,6 +519,40 @@ describe("hosting coverage queue participant fence (#2597)", () => {
     }
   });
 
+  it("bounds each wait by what is left AFTER the attempt and its probe, so the waits stay inside the 10s total", async () => {
+    // The attempt and the probe themselves take time (here 3s, then 2s). The
+    // wait is handed what is left at the moment it starts, never the figure
+    // read before the attempt; and with nothing left it refuses without waiting.
+    let now = 1_000;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      const { db, statements } = mergeParticipantDb([2, 0, 1, 2, 0]);
+      const answer = db.$executeRaw.getMockImplementation()!;
+      let attempts = 0;
+      db.$executeRaw.mockImplementation((sql) => {
+        const text = (sql.strings ?? []).join("?");
+        if (text.includes('IN (') && text.includes("SKIP LOCKED")) {
+          attempts += 1;
+          now += attempts === 1 ? 3_000 : MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS;
+        } else if (text.includes("SKIP LOCKED")) {
+          now += 2_000;
+        }
+        return answer(sql);
+      });
+      await expect(
+        lockMemberMergeHostingCoverageParticipants(db as never, PARTICIPANTS),
+      ).rejects.toBeInstanceOf(HostingCoverageParticipantRetryError);
+      const texts = statements().map((statement) => statement.text);
+      const bounds = statements().filter((statement) => statement.text.includes("lock_timeout")).map((statement) => Number(statement.values[0]));
+      expect(bounds).toEqual([MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS - 5_000]);
+      // The second attempt spent the rest: no second wait was started.
+      expect(texts.filter((text) => text === WAIT)).toHaveLength(1);
+      expect(attempts).toBe(2);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it("refuses source owner or lodge drift after the participant lock", async () => {
     const ownerDriftDb = makeDb(["owner-1"], {
       ...SOURCE,
