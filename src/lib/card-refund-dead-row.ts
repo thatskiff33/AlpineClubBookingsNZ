@@ -154,7 +154,7 @@ function raisedForAPerson(idempotencyKey: string): boolean {
  *   re-sending this row while that one is owed could pay the member twice.
  */
 export function tryCardAgainRefusal(
-  payment: Pick<DeadCardRefundPayment, "recoveryOperations">,
+  payment: { recoveryOperations: ReadonlyArray<{ id: string; type: string; status: string; idempotencyKey: string }> },
   operation: { id: string; idempotencyKey: string },
   owed: Pick<DeadCardRefundStillOwed, "ownCents" | "owedCents">,
 ): string | null {

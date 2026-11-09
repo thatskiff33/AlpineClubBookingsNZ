@@ -21,8 +21,8 @@ vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
   useAdminAreaEditAccess: () => mocks.canEdit,
 }));
 
+import { CardRefundsPaidTwiceList } from "@/components/admin/card-refunds-paid-twice-list";
 import {
-  CardRefundsPaidTwiceList,
   DeadCardRefundsPanel,
   STRIPE_MAY_HAVE_REFUNDED_WARNING,
   type DeadCardRefundPanelRow,

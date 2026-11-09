@@ -44,7 +44,8 @@ import {
 import { cn } from "@/lib/utils";
 import { listDeadCardRefunds } from "@/lib/card-refund-paid-another-way";
 import { listCardRefundsPaidTwice } from "@/lib/card-refund-paid-twice";
-import { CardRefundsPaidTwiceList, DeadCardRefundsPanel } from "@/components/admin/dead-card-refunds-panel";
+import { DeadCardRefundsPanel } from "@/components/admin/dead-card-refunds-panel";
+import { CardRefundsPaidTwiceList } from "@/components/admin/card-refunds-paid-twice-list";
 import { BankRefundVoidsToAnswerPanel } from "@/components/admin/bank-refund-voids-to-answer-panel";
 import { listBankRefundVoidsToAnswerRows } from "@/lib/bank-refund-void-follow-up";
 import { isXeroBankRefundVoidWritesEnabled } from "@/lib/xero-feature-flags";

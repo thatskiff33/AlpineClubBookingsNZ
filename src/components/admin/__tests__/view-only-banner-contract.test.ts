@@ -667,7 +667,7 @@ const FIGURES = {
    * 99 -> 100 (#4162): the stuck-states page's voided bank refund notes panel,
    * finance-gated inside a support page for the same reason.
    */
-  bannerComponents: 104, // #4457 adds the retention banner alongside #4555’s Xero banners. 100/99 -> 101 (central-server lane, 20 Oct 2026): the Central lodge card. MEASURED.
+  bannerComponents: 105, // 104 -> 105 (#4368): "Card refunds paid back twice" moved out of the dead card refund panel into its own file, banner and all. MEASURED. // #4457 adds the retention banner alongside #4555’s Xero banners. 100/99 -> 101 (central-server lane, 20 Oct 2026): the Central lodge card. MEASURED.
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older
