@@ -269,8 +269,8 @@ const HAND_WRITTEN_FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     // the API re-checks the flag itself as well so the gate does not live only
     // in middleware.
     //
-    // Only the member surfaces are listed here. The admin moderation screens
-    // arrive in a later child and add their own prefixes to this same rule.
+    // The admin moderation page, /admin/message-board, is gated through its hub
+    // registry entry's `commsPortal` flag (#4799), like every admin page.
     flag: "commsPortal",
     prefixes: [
       "/message-board",
