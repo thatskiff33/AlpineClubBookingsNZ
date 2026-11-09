@@ -192,8 +192,8 @@ export async function recordReviewClosurePricing({
   /** #4627: the journal's posting context, resolved by the caller before any transaction. */
   journal: BookingJournalContext;
 }): Promise<void> {
-  // #4627: the caller (`resolveManualRefundTask`) has already taken the booking
-  // row, straight after its claim and before any credit write, so the journal's
+  // #4627, #4840: the caller (`resolveManualRefundTask`) has already taken the
+  // booking row, before its task re-read and claim, so the journal's
   // owner read at the end adds no edge against member merge.
   // Sequentially, on the caller's transaction: each write is its own
   // compare-and-set, and a refusal from any of them rolls the whole closure back

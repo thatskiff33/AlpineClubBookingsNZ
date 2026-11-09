@@ -3385,8 +3385,11 @@ An edit review's closure took its booking row straight after its claim
 (#4627), to stay ahead of its credit writes. But the claim itself writes
 `completedByMemberId`, the officer, so the officer's key share came first. The
 closure takes `lock(1)` and no lodge key, so merge's lodge prefix never fenced
-it. It now takes the booking row (`lockBookingRowForOwnerRead`) right after its
-task re-read under `lock(1)`, before the claim and before any credit write. The
+it. It now takes the booking row (`lockBookingRowForOwnerRead`) right after
+`lock(1)`, keyed from its first read of the task's kind and booking id (both
+written once), and before the full re-read. So the booking owner that names the
+credit recipient is read under the lock, and the claim and every credit write
+come after it. The
 other task kinds take no booking row after their claim: their routes touch the
 Payment row, a group child's Payment row, ledger lines (an FK `KEY SHARE` on the
 booking, which merge's `NO KEY UPDATE` does not conflict with) and plain debtor
@@ -3410,6 +3413,19 @@ If merge wins, the settle or closure waits at the booking row. It then names an
 officer the merge deleted, so its FK refuses (`P2003`), nothing is recorded, and
 the officer acts again from the surviving record. If the writer wins, merge
 waits at the booking row and moves the writer's attribution afterwards.
+
+**An accepted counterpart: member hard-delete.** Deleting a member
+(`member-lifecycle-actions.ts`) locks that Member row `FOR UPDATE` first, as its
+Xero fence, and only then lets `ON DELETE SET NULL` update the booking rows that
+name the member as an actor (`createdById`, `adminReviewedById`, `deletedById`,
+`capacityOverriddenByMemberId` and the rest). That is Member, then booking: the
+opposite of merge and of the writers above. Merge and delete order the two rows
+oppositely, so a writer cannot agree with both, and #4840 sides with merge.
+Hard-deleting the officer mid-settle or mid-closure on a booking that officer
+made or reviewed can therefore deadlock where it used to end in a `P2003`.
+PostgreSQL detects the cycle and aborts one side, which rolls back whole, so
+nothing is corrupted, and deleting an officer while their own write is in
+flight is the rarer event. Reordering delete's cascade is tracked separately.
 
 Proved against real PostgreSQL by
 `member-merge-officer-settle-races.realdb.test.ts`, a required step of the
@@ -5972,7 +5988,10 @@ Ledger M3b adds no advisory key and no new lock site. Its participants:
   `Member … FOR UPDATE`). The same inversion was already reachable through the
   closure's credit give-back and local refund allocation, which insert
   `MemberCredit` rows. So `resolveManualRefundTask` takes an edit review's
-  booking row straight after its status claim, before any of those writes.
+  booking row before any of those writes. Since #4840 it takes it before the
+  claim too, right after `lock(1)` and before the task re-read, because the
+  claim's `completedByMemberId` is itself a Member key share (see "A booking
+  writer takes the booking row before a Member key share").
 - **Member merge** takes no `lock(1)` (see "Merge joins the bed-allocation
   cohort"). Its transfer posts no revenue, so the engine needs no key, and it
   runs after the booking-owner move and the sorted `Member … FOR UPDATE` set. The
