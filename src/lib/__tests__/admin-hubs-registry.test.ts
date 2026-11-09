@@ -894,6 +894,40 @@ describe("retired pages", () => {
     ).toThrow(/payments has no "settings" tab/);
   });
 
+  it("are redirected ahead of a moved page whose pattern would claim them", async () => {
+    // A retired static path beside a moved dynamic page: once live, the moved
+    // page's `/admin/zz/:id` redirect matches `/admin/zz/old` too, so the
+    // retired rule must come first to win.
+    const zz: AdminHubPage = {
+      id: "zz-detail",
+      label: "ZZ",
+      hub: "finance",
+      oldPath: "/admin/zz/[id]",
+      hubPath: "/admin/finance/zz/[id]",
+      area: "finance",
+      admission: "area",
+      flags: [],
+      kind: "detail",
+      fullAdminOnly: false,
+      tabs: [],
+      anchors: [],
+      moved: true,
+    };
+    const payments = ADMIN_PAGES.find((page) => page.id === "payments")!;
+    const retired: AdminRetiredPage = { oldPath: "/admin/zz/old", label: "Old", mergedInto: "payments" };
+    const rules = buildAdminUrlRules(true, [payments, zz], [retired]);
+    await expect(resolveThrough(rules, "/admin/zz/old")).resolves.toEqual({
+      kind: "redirect",
+      status: 308,
+      url: "/admin/payments",
+    });
+    await expect(resolveThrough(rules, "/admin/zz/x1")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/finance/zz/x1",
+    });
+  });
+
   it.each([false, true])(
     "each redirects once, permanently, to its tab, query kept (live=%s)",
     async (live) => {
