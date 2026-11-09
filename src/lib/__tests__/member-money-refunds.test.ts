@@ -334,6 +334,20 @@ describe("a Paid another way close", () => {
     expect(t.caps()).toEqual([]);
   });
 
+  it("MUTATION (probe 9): cash is never refused for a cap: a close whose receipts cannot fund it still posts its bank cash, funding trimmed", async () => {
+    const t = await cancelled();
+    await t.reserve(t.row, { scope: "cancellation", id: t.id }, t.key, 8_000);
+    await t.refund(t.row, "re_cancel", 8_000, "succeeded", t.key); // the capture's 8000 refunded; 2000 left collected
+    await t.r05("refund-request", "appeal", 3_000, { concession: true });
+    const posted = await postPaidAnotherWayClose(t.db.tx, context, { bookingId: t.id, obligation: { scope: "refund-request", id: "appeal" }, recordId: "appeal-close",
+      amountCents: 3_000, restCents: 0, rest: null, attemptKeys: [], transactionIds: [t.row.id], closedAt: new Date(context.effectiveAt), actorMemberId: OFFICER });
+    expect(posted).toBeGreaterThan(0);
+    expect(t.db.rows("memberMoneyLine", { journalId: t.journalOf(keys.paidAnotherWay("appeal-close"))!.id }).map((l) => `${l.side} ${l.account} ${l.amountCents}`).sort())
+      .toEqual(["CREDIT BANK 3000", "DEBIT REFUND_PAYABLE 3000"]);
+    expect(t.family(R05("refund-request", "appeal"))).toMatchObject({ funded: 2_000, paid: 3_000 });
+    expect(t.caps()).toEqual([]);
+  });
+
   it("posts nothing for a debt not in the journal, a row that maps to none, or an inactive journal", async () => {
     const t = await cancelled();
     expect(await postPaidAnotherWayClose(t.db.tx, context, { bookingId: t.id, obligation: { scope: "modification", id: "missing" }, recordId: "r", amountCents: 1, restCents: 0, rest: null,

@@ -2686,6 +2686,31 @@ describe("payment recovery worker", () => {
     );
   });
 
+  it("MUTATION (#4516 probe 13): a refused reservation stops the row dead on its first attempt - FAILED, no retry time, attempts spent - never retried", async () => {
+    const { MemberMoneyReservationRefused } = await import("@/lib/member-money");
+    const { PartialRefundError } = await import("@/lib/payment-transactions");
+    const { CARD_REFUND_RESERVATION_REFUSED_CAUSE } = await import("@/lib/recovery-unretryable-cause");
+    const cancelOp = makeOperation({
+      id: "recovery-refused", type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION, attempts: 1, amountCents: 8000,
+      idempotencyKey: "booking_cancel_refund_recovery_booking-1", allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 8000 }], paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(cancelOp);
+    mockPaymentRecoveryFindMany.mockImplementation((args?: { where?: { attempts?: { gte?: number } } }) =>
+      Promise.resolve(isStaleWorkerSweep(args) ? [] : [{ ...cancelOp, status: "PENDING" }]),
+    );
+    mockRefundPaymentTransactions.mockRejectedValue(new PartialRefundError({ completedRefundCents: 0, refunds: [], format: CLUB_FORMAT_TEST,
+      cause: new MemberMoneyReservationRefused(["C4_capture_cap: refund-obligation|cancellation|booking-1:pi"]) }));
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.failed).toBe(1);
+    expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ obligation: { scope: "cancellation", id: "booking-1" } }));
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: "recovery-refused", attempts: 1 }),
+      data: expect.objectContaining({ status: PaymentRecoveryOperationStatus.FAILED, lastError: CARD_REFUND_RESERVATION_REFUSED_CAUSE, nextRetryAt: null }),
+    }));
+  });
+
   it("replays a capacity-race refund recovery under the stored inline Stripe key prefix with the reconstructed inline metadata", async () => {
     const capacityOp = makeOperation({
       id: "recovery-capacity",

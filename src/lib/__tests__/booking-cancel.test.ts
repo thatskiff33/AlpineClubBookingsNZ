@@ -2504,6 +2504,12 @@ describe("cancelBooking credit refunds", () => {
   });
 
   describe("card refund debt persisted inside the claim transaction (#1349)", () => {
+    it("MUTATION (#4516 probe 12): a journal refusal of the claim's R05 is never caught: the cancel fails before Stripe is asked", async () => {
+      receiptDoors.postRefundObligation.mockRejectedValueOnce(new Error("member-money plan refused: test"));
+      await expect(cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card")).rejects.toThrow("member-money plan refused");
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+    });
+
     it("enqueues the recovery operation with the frozen plan inside tx1, before the Stripe call", async () => {
       const result = await cancelBooking(
         "booking_1",
