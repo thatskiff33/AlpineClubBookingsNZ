@@ -109,8 +109,9 @@ describe("revalidateAdminPage", () => {
   );
 
   it("names a page file on disk for every registered page, before and after it moves", async () => {
-    // The tree as it is: of the hubs `loadWith` sets, only Finance has moved (C5 #4802).
-    const { adminPageRevalidationTarget, registry } = await loadWith(false, ["finance"]);
+    // The tree as it is: of the hubs `loadWith` sets, Finance (C5 #4802) and Help &
+    // system (C7 #4804) have moved.
+    const { adminPageRevalidationTarget, registry } = await loadWith(false, ["finance", "system"]);
     const fileFor = ([target, type]: readonly [string, ("page" | undefined)?]) =>
       type === "page"
         ? path.join("src", "app", `.${target}`, "page.tsx")

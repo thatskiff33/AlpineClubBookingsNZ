@@ -19,6 +19,7 @@ import { useClubTime } from "@/components/club-time-provider";
 import { Button } from "@/components/ui/button";
 import { useHealthData } from "./use-health-data";
 import type { HealthCheck } from "./types";
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * System Health's live checks. `readiness` (the Integration readiness section,
@@ -148,7 +149,7 @@ export function AdminHealthDashboard({ readiness }: { readiness?: ReactNode } = 
       {/* Related monitoring */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Link
-          href="/admin/email-deliverability"
+          href={adminHref("email-deliverability")}
           className="bg-card border rounded-lg p-4 flex items-center justify-between hover:border-brand-gold/70 transition-colors"
         >
           <div className="flex items-center gap-3">
@@ -161,7 +162,7 @@ export function AdminHealthDashboard({ readiness }: { readiness?: ReactNode } = 
           <ChevronRight className="h-4 w-4 text-muted-foreground" />
         </Link>
         <Link
-          href="/admin/background-jobs"
+          href={adminHref("background-jobs")}
           className="bg-card border rounded-lg p-4 flex items-center justify-between hover:border-brand-gold/70 transition-colors"
         >
           <div className="flex items-center gap-3">

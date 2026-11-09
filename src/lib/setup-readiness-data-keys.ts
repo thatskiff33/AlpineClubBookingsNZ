@@ -25,6 +25,7 @@ import {
 } from "@/lib/data-encryption-key-material";
 import { wrappingKeyIdOf } from "@/lib/integration-crypto";
 import { RETIRED_RECOVERY_CODE_KEY_ID } from "@/lib/two-factor-key-format";
+import { adminHref } from "@/lib/admin-hubs";
 
 type CountsByKeyId = Readonly<Record<string, number>>;
 
@@ -191,7 +192,7 @@ export function buildDataEncryptionKeyCheck(
     description:
       "Stored provider credentials and authenticator-app secrets are encrypted under this key ring, so AUTH_SECRET can be rotated without losing them.",
     required: false as const,
-    href: "/admin/health",
+    href: adminHref("health"),
   };
   const ring = parseDataEncryptionKeys(rawRing, authSecret, rawLegacyKey);
 

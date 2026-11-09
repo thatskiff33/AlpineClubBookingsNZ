@@ -43,6 +43,7 @@
 import Link from "next/link";
 import { clubTime } from "@/lib/club-time/server";
 import type { WithheldEmailRemedy } from "@/lib/booking-email-suppression";
+import { adminHref } from "@/lib/admin-hubs";
 
 export interface WithheldEmailGroupView {
   templateName: string;
@@ -202,7 +203,7 @@ export async function BookingWithheldEmailsBanner({
         failed for any other reason shows up under{" "}
         <Link
           className="font-medium underline"
-          href="/admin/email-deliverability"
+          href={adminHref("email-deliverability")}
         >
           Admin &rarr; Email deliverability
         </Link>{" "}

@@ -778,7 +778,7 @@ function entityDrilldownLink(
     case "MemberLifecycleActionRequest":
       return {
         label: "Open lifecycle audit",
-        href: `/admin/audit-log?entityType=MemberLifecycleActionRequest&q=${encodeURIComponent(entityId)}`,
+        href: `${adminHref("audit-log")}?entityType=MemberLifecycleActionRequest&q=${encodeURIComponent(entityId)}`,
         kind: "admin",
         primary: true,
       };

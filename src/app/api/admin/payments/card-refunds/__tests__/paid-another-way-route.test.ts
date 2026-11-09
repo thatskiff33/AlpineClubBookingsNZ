@@ -123,7 +123,7 @@ describe("what the close needs", () => {
       actingMemberId: "treasurer-1",
     });
     await expect(response.json()).resolves.toMatchObject({ success: true, xeroQueued: "nothing" });
-    expect(revalidatePath).toHaveBeenCalledWith("/admin/stuck-states");
+    expect(revalidatePath).toHaveBeenCalledWith("/admin/system/stuck-states");
   });
 
   it("answers a refusal with its own status and sentence - a second click's 409", async () => {

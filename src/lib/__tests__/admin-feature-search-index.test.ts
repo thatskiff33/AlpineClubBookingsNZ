@@ -128,15 +128,18 @@ function fullAdminIndex(features: FeatureFlags = allOn) {
 
 /**
  * Whether a page on disk is somewhere an officer goes on purpose, decided from
- * the path and the file alone, never from the registry: no `[param]`, not the
- * test probe, not a print view, not a file that only redirects, and not the one
- * reviewed page that names its record in the query (`display/preview`, which
- * shows only an error without `?templateId=`).
+ * the path and the file alone, never from a page's registry entry: no
+ * `[param]`, not the test probe, not a print view, not a file that only
+ * redirects, and not the one reviewed page that names its record in the query
+ * (`display/preview`, which shows only an error without `?templateId=`). The
+ * path is read in its old-path form (`canonicalAdminPathname`), which consults
+ * the registry only for where a hub has moved a directory, never for a page's
+ * kind (C7 #4804).
  */
 const QUERY_NAMED_DETAILS = new Set(["/admin/display/preview"]);
 
 function isDestinationOnDisk(file: string): boolean {
-  const pagePath = toRawPathname(file);
+  const pagePath = canonicalAdminPathname(toRawPathname(file));
   if (pagePath.includes("[")) return false;
   if (pagePath === "/admin/testing" || pagePath.startsWith("/admin/testing/")) return false;
   if (pagePath.endsWith("/print")) return false;

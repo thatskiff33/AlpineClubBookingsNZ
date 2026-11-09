@@ -415,6 +415,7 @@ describe("the shipped next.config.ts, through Next's own pipeline", () => {
         "/admin/website/appearance",
         "/admin/finance/payments",
         "/admin/rules/fees",
+        "/admin/system/health",
         "/admin/finance/xero/records/:localModel/:localId",
       ]),
     );

@@ -228,7 +228,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         label: "Deletion Requests",
         icon: Trash2,
       },
-      { href: "/admin/issue-reports", label: "Issue Reports", icon: Bug },
+      { ...adminLink("issue-reports"), icon: Bug },
       { href: "/admin/hut-leaders", label: "Hut Leaders", icon: Bell },
     ],
   },
@@ -373,38 +373,18 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
   {
     label: "Monitoring & Support",
     items: [
-      { href: "/admin/issue-reports", label: "Issue Reports", icon: Bug },
-      {
-        href: "/admin/stuck-states",
-        label: "Stuck States",
-        icon: AlertTriangle,
-      },
-      {
-        href: "/admin/health",
-        label: "System Health",
-        icon: Activity,
-      },
-      {
-        href: "/admin/email-deliverability",
-        label: "Email Deliverability",
-        icon: Mail,
-      },
-      { href: "/admin/background-jobs", label: "Background Jobs", icon: Clock },
+      { ...adminLink("issue-reports"), icon: Bug },
+      { ...adminLink("stuck-states"), icon: AlertTriangle },
+      { ...adminLink("health"), icon: Activity },
+      { ...adminLink("email-deliverability"), icon: Mail },
+      { ...adminLink("background-jobs"), icon: Clock },
       {
         href: "/admin/privacy-retention",
         label: "Privacy & Retention",
         icon: Shield,
       },
-      {
-        href: "/admin/backups",
-        label: "Database Backups",
-        icon: DatabaseBackup,
-      },
-      {
-        href: "/admin/ai-assistant",
-        label: "AI help assistant",
-        icon: Bot,
-      },
+      { ...adminLink("backups"), icon: DatabaseBackup },
+      { ...adminLink("ai-assistant"), icon: Bot },
       {
         // AI Diagnostics (AID-7, #2378) — a separate read-only investigation
         // product, not the help assistant above. Listed here because "why is this
@@ -412,10 +392,10 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         // comes looking.
         //
         // No explicit flag is needed: `isFeatureHrefVisible` derives visibility
-        // from the href against FEATURE_ROUTE_RULES, and this PR registered
-        // "/admin/ai-diagnostics" under the `aiDiagnostics` rule — so with the
-        // module off the entry disappears from the sidebar, matching the 404 the
-        // route itself now returns.
+        // from the href against FEATURE_ROUTE_RULES, whose `aiDiagnostics` rule
+        // has been generated from this page's registry entry since #4799, at its
+        // old and its hub path — so with the module off the entry disappears from
+        // the sidebar, matching the 404 the route itself returns.
         //
         // ADMISSION, NOT AN AREA (ADR-002 §1, owner-ratified #2370): any admitted
         // administrator may open the shell, and the link follows that rule with
@@ -423,15 +403,10 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         // `ANY_ADMIN_ADMISSION_PATHS` entry as `canOpenAdminPath` does (#3596).
         // The href's `overview` map area stopped meaning "any admin" when #2984
         // made portal standing any one of the seven areas.
-        href: "/admin/ai-diagnostics",
-        label: "AI Diagnostics",
+        ...adminLink("ai-diagnostics"),
         icon: Stethoscope,
       },
-      {
-        href: "/admin/audit-log",
-        label: "Audit Log",
-        icon: Shield,
-      },
+      { ...adminLink("audit-log"), icon: Shield },
       {
         href: "/admin/deletion-requests",
         label: "Deletion Requests",
@@ -899,7 +874,7 @@ function SidebarLinks({
       counts.deletionRequests + counts.memberDeleteRequests;
   }
   if (counts.issueReports > 0) {
-    badges["/admin/issue-reports"] = counts.issueReports;
+    badges[adminHref("issue-reports")] = counts.issueReports;
   }
   if (counts.unassignedHutLeaderDates > 0) {
     badges["/admin/hut-leaders"] = counts.unassignedHutLeaderDates;

@@ -45,8 +45,14 @@
  * the same URL, so the flag would throw again.
  */
 
-/** Where the probe lives. Under `/admin` so it renders inside the admin layout. */
-export const ROUTE_ERROR_PROBE_PATH = "/admin/testing/route-error";
+import { adminHref } from "./admin-hubs";
+
+/**
+ * Where the probe lives. Under `/admin` so it renders inside the admin layout;
+ * its file is under the Help & system hub (C7 #4804), so its URL is the
+ * registry's. A relative import: the Playwright spec reads this module too.
+ */
+export const ROUTE_ERROR_PROBE_PATH = adminHref("testing-route-error");
 
 /** The cookie that makes the probe throw, and the one value that does. */
 export const ROUTE_ERROR_PROBE_COOKIE = "route-error-probe";

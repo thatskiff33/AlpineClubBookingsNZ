@@ -6,7 +6,7 @@
  * the same three fallback questions answer for every unmapped page.
  *
  * A moved page's chips are keyed by its registry old path, as its entry is
- * (C5 #4802, C6 #4803; see `admin/finance.ts`).
+ * (C5 #4802, C6 #4803, C7 #4804; see `admin/finance.ts`).
  */
 import { getAdminPage } from "@/lib/admin-hubs";
 import type { HelpQuestion } from "./types";
@@ -258,7 +258,7 @@ export const ADMIN_HELP_QUESTIONS: Record<string, HelpQuestion[]> = {
       a: "Hut-leader coverage and booking state for the selected date.",
     },
   ],
-  "/admin/audit-log": [
+  [getAdminPage("audit-log").oldPath]: [
     {
       q: "What does the audit log record?",
       a: "Important admin, member, provider, and system actions, for traceability.",

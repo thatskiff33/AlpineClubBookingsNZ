@@ -881,7 +881,7 @@ describe("admin route requirements", () => {
    *
    *  - `/admin/ai-diagnostics` — ADR-002 §1, owner-ratified on #2370. Note the
    *    prefix form: any future page under
-   *    `src/app/(admin)/admin/ai-diagnostics/**` inherits any-admin admission
+   *    `src/app/(admin)/admin/system/ai-diagnostics/**` inherits any-admin admission
    *    without touching this list, which is why the reason is about the SHELL
    *    rather than about one page.
    *  - `/admin/club-format` — owner decision on #3596: any admin may VIEW the

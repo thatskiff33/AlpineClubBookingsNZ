@@ -24,7 +24,7 @@ on, and answered by one route. The pieces, in order:
    the Help bubble. It shares the bubble's doorway with Page help but is a wholly
    separate surface: its own conversation (`use-diagnostics-chat.ts`), its own
    endpoint, its own consent controls, its own provenance line. The setup/status
-   page at `src/app/(admin)/admin/ai-diagnostics/page.tsx` owns readiness and the
+   page at `src/app/(admin)/admin/system/ai-diagnostics/page.tsx` owns readiness and the
    budget only; **all asking happens in the bubble** (owner decision D8).
 2. **The ask route** — `src/app/api/admin/ai-diagnostics/ask/route.ts`. A single
    `POST` handler that runs twelve ordered gates before any answer is produced

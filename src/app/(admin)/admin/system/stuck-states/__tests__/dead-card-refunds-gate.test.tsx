@@ -45,7 +45,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
 
-import AdminStuckStatesPage from "@/app/(admin)/admin/stuck-states/page";
+import AdminStuckStatesPage from "@/app/(admin)/admin/system/stuck-states/page";
 
 /**
  * #3372 (owner, 7 Oct 2026) and #3924 round 4 (U6): the stuck-states page is

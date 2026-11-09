@@ -153,7 +153,7 @@ import DeletionRequestsClient from "@/app/(admin)/admin/deletion-requests/deleti
 import MemberApplicationsPage from "@/app/(admin)/admin/member-applications/page";
 import MembershipCancellationsPage from "@/app/(admin)/admin/membership-cancellations/page";
 // #1997 admin action-button surfaces (support / communications lane).
-import AdminIssueReportsPage from "@/app/(admin)/admin/issue-reports/page";
+import AdminIssueReportsPage from "@/app/(admin)/admin/system/issue-reports/page";
 import CommunicationsPage from "@/app/(admin)/admin/communications/page";
 import { FamilySuggestionsPanel } from "@/components/admin/family-groups/family-suggestions-panel";
 // #1997 member-detail action cards (membership / finance lane).

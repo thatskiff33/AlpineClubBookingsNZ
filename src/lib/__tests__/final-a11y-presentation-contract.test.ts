@@ -15,7 +15,7 @@ const migratedAdminChrome = [
   "src/app/(admin)/admin/hut-leaders/_components/assignment-form.tsx",
   "src/app/(admin)/admin/work-parties/page.tsx",
   "src/components/admin/family-groups/family-suggestions-panel.tsx",
-  "src/app/(admin)/admin/stuck-states/page.tsx",
+  "src/app/(admin)/admin/system/stuck-states/page.tsx",
   "src/app/(admin)/admin/waitlist/page.tsx",
 ];
 

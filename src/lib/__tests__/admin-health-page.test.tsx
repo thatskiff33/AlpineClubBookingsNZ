@@ -4,8 +4,8 @@ import { render, screen, waitFor } from "@/lib/__tests__/support/club-time-rende
 import { beforeEach, describe, expect, it, vi } from "vitest";
 // The live checks of System Health; its server page adds the integration
 // readiness section below them (S1 #4796), covered in admin-setup-hubs.test.tsx.
-import { AdminHealthDashboard as AdminHealthPage } from "@/app/(admin)/admin/health/_components/health-dashboard";
-import BackgroundJobsPage from "@/app/(admin)/admin/background-jobs/page";
+import { AdminHealthDashboard as AdminHealthPage } from "@/app/(admin)/admin/system/health/_components/health-dashboard";
+import BackgroundJobsPage from "@/app/(admin)/admin/system/background-jobs/page";
 
 const fetchMock = vi.fn();
 

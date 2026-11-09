@@ -27,6 +27,13 @@ import { useClubTime } from "@/components/club-time-provider";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import { formatCents } from "@/lib/utils";
+import type { AdminPageAnchor } from "@/lib/admin-hubs";
+
+/**
+ * The panel's element id: the Stuck States page's registry anchor, which its
+ * stuck-state row links to with `adminAnchorHref` (C7 #4804).
+ */
+export const BANK_REFUND_VOIDS_ANCHOR: AdminPageAnchor<"stuck-states"> = "bank-refund-voids";
 
 /** One voided note a person looks at, as `listBankRefundVoidsToAnswerRows` returns it (serialised). */
 export interface BankRefundVoidToAnswerRow {
@@ -155,7 +162,7 @@ export function BankRefundVoidsToAnswerPanel({
   const canSubmit = target !== null && !busy && (target.mode === "pick" ? pickedLineId !== null : note.trim() !== "");
 
   return (
-    <Card id="bank-refund-voids">
+    <Card id={BANK_REFUND_VOIDS_ANCHOR}>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-lg">
           <Landmark className="h-5 w-5 text-muted-foreground" />

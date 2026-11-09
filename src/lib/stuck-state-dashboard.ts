@@ -37,7 +37,7 @@ import {
   type XeroAdminHealthSnapshot,
 } from "@/lib/xero-admin-health";
 
-import { adminHref } from "@/lib/admin-hubs";
+import { adminHref, adminAnchorHref } from "@/lib/admin-hubs";
 const PAYMENT_PROCESSING_STALE_MINUTES = 30;
 const PAYMENT_PENDING_OVERDUE_MINUTES = 15;
 const BED_ALLOCATION_LOOKAHEAD_DAYS = 7;
@@ -306,7 +306,7 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     severity: "critical",
     owner: "Finance",
     count: counts.cancelledUnrecordedRefunds,
-    href: "/admin/health",
+    href: adminHref("health"),
     summary: `${counts.cancelledUnrecordedRefunds} cancelled ${plural(
       counts.cancelledUnrecordedRefunds,
       "booking",
@@ -321,7 +321,7 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     severity: "critical",
     owner: "Finance",
     count: counts.exhaustedFailed,
-    href: "/admin/health",
+    href: adminHref("health"),
     summary: `${counts.exhaustedFailed} payment recovery ${plural(
       counts.exhaustedFailed,
       "operation",
@@ -334,7 +334,7 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     severity: "critical",
     owner: "Finance",
     count: counts.staleProcessing,
-    href: "/admin/health",
+    href: adminHref("health"),
     summary: `${counts.staleProcessing} payment recovery ${plural(
       counts.staleProcessing,
       "operation",
@@ -360,7 +360,7 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     severity: "warning",
     owner: "Finance",
     count: counts.overduePending,
-    href: "/admin/health",
+    href: adminHref("health"),
     summary: `${counts.overduePending} payment recovery ${plural(
       counts.overduePending,
       "operation",
@@ -560,7 +560,7 @@ async function addEmailItems(
     severity: "critical",
     owner: "System",
     count: adminAlertDelivery.summary.recentCount,
-    href: "/admin/email-deliverability",
+    href: adminHref("email-deliverability"),
     summary: `${adminAlertDelivery.summary.recentCount} admin alert ${plural(
       adminAlertDelivery.summary.recentCount,
       "delivery",
@@ -574,7 +574,7 @@ async function addEmailItems(
     severity: "critical",
     owner: "Admin",
     count: tokenRecovery.summary.activeCount,
-    href: "/admin/email-deliverability",
+    href: adminHref("email-deliverability"),
     summary: `${tokenRecovery.summary.activeCount} failed nomination, setup, or cancellation-confirmation ${plural(
       tokenRecovery.summary.activeCount,
       "email",
@@ -587,7 +587,7 @@ async function addEmailItems(
     severity: "warning",
     owner: "Admin",
     count: exhaustedFailures.summary.activeCount,
-    href: "/admin/email-deliverability",
+    href: adminHref("email-deliverability"),
     summary: `${exhaustedFailures.summary.activeCount} email ${plural(
       exhaustedFailures.summary.activeCount,
       "failure",
@@ -601,7 +601,7 @@ async function addEmailItems(
     severity: "warning",
     owner: "Admin",
     count: deliverability.summary.activeCount,
-    href: "/admin/email-deliverability",
+    href: adminHref("email-deliverability"),
     summary: `${deliverability.summary.activeCount} recipient ${plural(
       deliverability.summary.activeCount,
       "address",
@@ -801,7 +801,7 @@ async function addLodgeItems(
     severity: "info",
     owner: "Admin",
     count: openIssueReports,
-    href: "/admin/issue-reports",
+    href: adminHref("issue-reports"),
     summary: `${openIssueReports} member or lodge issue ${plural(
       openIssueReports,
       "report",
@@ -1153,7 +1153,7 @@ export async function getStuckStateDashboard(input?: {
       severity: "warning",
       owner: "Finance",
       count: bankRefundVoidsToAnswer,
-      href: input?.viewerCanViewFinance ? "/admin/stuck-states#bank-refund-voids" : adminHref("xero"),
+      href: input?.viewerCanViewFinance ? adminAnchorHref("stuck-states", "bank-refund-voids") : adminHref("xero"),
       summary: `${bankRefundVoidsToAnswer} bank ${plural(bankRefundVoidsToAnswer, "refund")} had ${bankRefundVoidsToAnswer === 1 ? "its" : "their"} Xero credit note voided, and the app could not tell which refund the note recorded (or another note has held it back for over a week). Pick the refund on this page and the app takes it back out of the records for the treasurer to re-confirm.`,
     });
   }

@@ -1,10 +1,10 @@
 {
-  "src/app/(admin)/admin/ai-diagnostics/_components/diagnostics-budget-card.tsx": {
+  "src/app/(admin)/admin/system/ai-diagnostics/_components/diagnostics-budget-card.tsx": {
     "design-system/no-raw-button": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/audit-log/page.tsx": {
+  "src/app/(admin)/admin/system/audit-log/page.tsx": {
     "accessibility/minimum-text-size": {
       "count": 2
     },
@@ -12,17 +12,17 @@
       "count": 2
     }
   },
-  "src/app/(admin)/admin/background-jobs/page.tsx": {
+  "src/app/(admin)/admin/system/background-jobs/page.tsx": {
     "design-system/no-raw-button": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/backups/backups-client.tsx": {
+  "src/app/(admin)/admin/system/backups/backups-client.tsx": {
     "design-system/no-raw-input": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/backups/local-backup-card.tsx": {
+  "src/app/(admin)/admin/system/backups/local-backup-card.tsx": {
     "design-system/no-raw-input": {
       "count": 1
     },
@@ -30,7 +30,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/backups/setup/backup-wizard-steps.tsx": {
+  "src/app/(admin)/admin/system/backups/setup/backup-wizard-steps.tsx": {
     "design-system/no-raw-input": {
       "count": 1
     }
@@ -149,7 +149,7 @@
       "count": 4
     }
   },
-  "src/app/(admin)/admin/email-deliverability/page.tsx": {
+  "src/app/(admin)/admin/system/email-deliverability/page.tsx": {
     "design-system/no-raw-button": {
       "count": 1
     }
@@ -184,12 +184,12 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/health/_components/email-deliverability-section.tsx": {
+  "src/app/(admin)/admin/system/health/_components/email-deliverability-section.tsx": {
     "design-system/no-raw-button": {
       "count": 3
     }
   },
-  "src/app/(admin)/admin/health/_components/shared.tsx": {
+  "src/app/(admin)/admin/system/health/_components/shared.tsx": {
     "design-system/no-raw-button": {
       "count": 1
     }

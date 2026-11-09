@@ -83,10 +83,12 @@ describe("the sidebar's active link over a moved hub", () => {
     stubPendingCounts();
   });
 
-  it("PREMISE: the Finance, Website and Rules hubs have moved, and nothing else has", () => {
+  it("PREMISE: the Finance, Website, Rules and Help & system hubs have moved, and nothing else has", () => {
     const moved = ADMIN_PAGES.filter((page) => page.moved);
     expect(moved.length).toBeGreaterThan(0);
-    expect(new Set(moved.map((page) => page.hub))).toEqual(new Set(["finance", "website", "rules"]));
+    expect(new Set(moved.map((page) => page.hub))).toEqual(
+      new Set(["finance", "website", "rules", "system"]),
+    );
     expect(moved.find((page) => page.id === "payments")?.hubPath).toBe(
       "/admin/finance/payments",
     );
@@ -108,6 +110,9 @@ describe("the sidebar's active link over a moved hub", () => {
     // C6 (#4803): the fee console, and a policy page with no menu entry of its own.
     ["the fee console's hub URL", "/admin/rules/fees", ["Fees"]],
     ["a policy page's old URL", "/admin/booking-policies/cancellation", ["Booking Policies"]],
+    // C7 (#4804): System Health, and Backup Setup, which has no menu entry of its own.
+    ["System Health's hub URL", "/admin/system/health", ["System Health"]],
+    ["Backup Setup's hub URL", "/admin/system/backups/setup", ["Database Backups"]],
     ["a policy page's hub URL", "/admin/rules/booking-policies/cancellation", ["Booking Policies"]],
   ])("highlights the same link at %s (%s)", async (_label, pathname, expected) => {
     await expect(activeLabels(pathname)).resolves.toEqual([...expected].sort());
