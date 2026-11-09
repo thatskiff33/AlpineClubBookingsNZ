@@ -1482,8 +1482,8 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // claim (which writes no booking row), so a merge (owner move, then the
   // request's member) cannot hold the row it waits on. W1's capture-return R05
   // reads its owner without it, defensively (round 2: W1 holds the Payment row
-  // there, which a merge's relation move can update after its owner move; no
-  // other cycle is known). See docs/CONCURRENCY_AND_LOCKING.md -> "The M3b
+  // there, so the booking row would add a Payment -> booking edge; since #4823 a
+  // merge never waits for a Payment row). See docs/CONCURRENCY_AND_LOCKING.md -> "The M3b
   // booking doors and member merge's journal transfer" and the M4c paragraph.
   "src/lib/member-money/internal/booking-posting.ts": 1,
   // #4691 (Ledger M4a): an application batch, a refund reservation and a release
@@ -1492,9 +1492,9 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // Charges and reversals that apply nothing do not take it, so the M3 doors
   // gain no edge. #4516 (M4b): receipt collections take it, and the CHARGE
   // successor a member merge once posted is now posted only under it, by the new
-  // owner's first collection. Merge takes no Payment row of its own, though its
-  // relation moves can update one (`Payment.manuallyMarkedPaidByMemberId`, M4c
-  // review F5, filed separately). #4516 (M4c): it is also taken by every refund
+  // owner's first collection. Merge posts no successor; it re-points one Payment
+  // column (`manuallyMarkedPaidByMemberId`), never waiting for the row (#4823,
+  // counted under member-merge-payment-attribution.ts). #4516 (M4c): it is also taken by every refund
   // writer: R05 at the edit doors (after their booking row), an appeal (after its
   // booking row, before its claim) and its `release_claim` (after the request's
   // row and its task), a late capture's approval and keep (before the task's
@@ -1502,6 +1502,16 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // writer and "Paid another way". See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Member-money applications and refund reservations" and the M4c paragraph.
   "src/lib/member-money/internal/application-read.ts": 1,
+  // #4823: member merge re-points `Payment.manuallyMarkedPaidByMemberId` with one
+  // sorted `SELECT 1 … ORDER BY "id" FOR NO KEY UPDATE NOWAIT` over every row
+  // naming the duplicate, then the update. Merge takes no lock(1) and holds
+  // booking rows from its owner move on; lock(1) writers take a booking's Payment
+  // row before its booking row (a card settle, the back-post) and after it (the
+  // edit doors, an edit review), so no waiting position is acyclic and merge
+  // never waits: a held row refuses the merge (409). Taken
+  // after merge's sorted Member FOR UPDATE, so the set cannot grow. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> "Member merge never waits for a Payment row".
+  "src/lib/member-merge-payment-attribution.ts": 1,
   // #4627: an edit review's closure takes its booking row straight after its claim,
   // before any credit write (giveBackCancelledShareCredit, applyLocalRefundAllocation,
   // an account-credit mint: each a KEY SHARE on the owner's Member row), so neither

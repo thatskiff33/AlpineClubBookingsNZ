@@ -459,6 +459,11 @@ describe("the per-owner coverage lock (#2576 §9)", () => {
       "const residualLoserGuestRows = await tx.bookingGuest.findMany(",
       "await lockHostingCoverageOwners(",
       "await applyLateHostingCoverageMoves(",
+      // #4823: the Payment attribution is the LAST relation move. Merge takes no
+      // lock(1) and holds booking rows from `applyMoves` on, while lock(1)
+      // writers take a booking's Payment and booking rows in both orders, so it
+      // must sit below the Member rows (its set is then complete) and never wait.
+      "await moveMergedPaymentAttributionLast(tx,",
       // #2595 step 3b: after the moves and every drift refusal, before the Xero
       // teardown, and its alert strictly after the transaction commits.
       //
@@ -503,6 +508,16 @@ describe("the per-owner coverage lock (#2576 §9)", () => {
         "sorted `Member … FOR UPDATE` that participant lock takes. Below it the set is FROZEN for " +
         "the rest of the transaction and the check is a fence. Above it, it is only a visibility " +
         "check about that instant and #2672 is reopened.",
+    ).toBeGreaterThan(body.indexOf(participantLockMarker));
+
+    // #4823 — restated on its own so the failure says why.
+    expect(
+      body.indexOf("await moveMergedPaymentAttributionLast(tx,"),
+      "The Payment attribution must move BELOW lockMemberMergeHostingCoverageParticipants " +
+        "(and so below applyMoves' booking moves). Merge holds booking rows without lock(1); " +
+        "lock(1) writers take a Payment row before its booking row (a card settle) and after " +
+        "it (the edit doors), so merge may only take Payment rows NOWAIT, and only once the Member " +
+        "rows are locked, when no writer can make another Payment row name the duplicate.",
     ).toBeGreaterThan(body.indexOf(participantLockMarker));
 
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
