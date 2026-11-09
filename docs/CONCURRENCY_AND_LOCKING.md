@@ -6006,6 +6006,10 @@ writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
   Payment row, sized from the tip's remaining refund-payable balance, as M4b
   posts CHARGE successors. A reservation made before a merge is answered on the
   survivor's successor; the family caps count both.
+- **The owner's command** (`member-money:refund-reservations`): `--reconcile`
+  runs the cash writer for one payment per transaction under its Payment row;
+  an OPERATOR release takes only the Payment row and audits in the same
+  transaction. The census is a read-only repeatable-read snapshot.
 
 New edges, and why they cannot deadlock: Payment → booking row only under
 `lock(1)` (the appeal, as W1); booking row → Payment only under `lock(1)` (edit
