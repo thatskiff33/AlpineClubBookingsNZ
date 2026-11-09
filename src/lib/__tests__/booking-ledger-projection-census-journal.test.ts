@@ -57,6 +57,24 @@ describe("the JOURNAL comparison (#4627)", () => {
     expect(result.integrity).toEqual([]);
   });
 
+  it("MUTATION (#4516 review M2): a part \"Paid another way\" close's kept rest counts as its record says, so the journal's close-out agrees", () => {
+    const record = { id: "close-1", kind: "CANCELLED_BOOKING_HAND_BACK" as const, status: "COMPLETED" as const, amountCents: 5000, raisedAmountCents: 8000,
+      settlementDirection: null, paymentId: null, lateCaptureApprovalIntentId: null, occurrenceKey: "card-refund-paid-another-way:op-1" };
+    const charges = (closeOutCents: number) => ({
+      charged: true,
+      components: [
+        { account: "BOOKING_REVENUE" as const, chargeIdentity: CHARGE, liveGrossCents: 12000 },
+        { account: "BOOKING_REVENUE" as const, chargeIdentity: `booking:${B}:refund-close-out:close-1`, liveGrossCents: closeOutCents },
+      ],
+      bridgedLineIds: all(["n1", "n2"]),
+    });
+    const agreed = journalChargeComparison({ ...row([nightA, nightB], charges(3000)), tasks: [record] });
+    expect(agreed.identity).toMatchObject({ status: "AGREE", columnCents: 15000, ledgerCents: 15000 });
+    // A close-out the record does not say, or whose record is gone, disagrees.
+    expect(journalChargeComparison({ ...row([nightA, nightB], charges(2500)), tasks: [record] }).identity).toMatchObject({ status: "DISAGREE", deltaCents: -500 });
+    expect(journalChargeComparison(row([nightA, nightB], charges(3000))).identity).toMatchObject({ status: "DISAGREE", deltaCents: 3000 });
+  });
+
   it("disagrees when the journal carries a different total from the bridged lines", () => {
     const result = journalChargeComparison(row([nightA, fee], {
       charged: true,

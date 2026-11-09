@@ -73,7 +73,8 @@ export const memberMoneyEventKeys = {
   refundAnswer: (id: string) => key(`refund-answer:${part(id, "refund")}`),
   paidAnotherWay: (id: string) => key(`paid-another-way:${part(id, "record")}`),
   handBackPaid: (id: string) => key(`hand-back-paid:${part(id, "task")}`),
-  refundCloseOut: (obligation: MemberMoneyEventKey) => key(`refund-close-out|${obligation}`),
+  /** #4516 review M1: one close-out per close record, so two kept rests of one debt each post their own. */
+  refundCloseOut: (recordId: string) => key(`refund-close-out:${part(recordId, "close record")}`),
   keptCapture: (id: string) => key(`kept-capture:${part(id, "capture")}`),
   successor: (obligationKey: string, from: string, to: string) => key(`successor|${obligationKey}|${nestedPart(from)}|${nestedPart(to)}`),
   mergeResidue: (from: string, to: string, event: MemberMoneyEventKey) => key(`merge-residue:${part(from, "from")}:${part(to, "to")}|${event}`),

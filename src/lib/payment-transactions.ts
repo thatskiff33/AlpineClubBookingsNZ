@@ -865,6 +865,7 @@ export async function recordStripeRefundsAgainstTransaction({
     let createdRefundAmountCents = 0;
     let newlyCountedCents = 0;
     const newlyCountedRefundIds: string[] = []; // #4312: which refunds those are, for a bank transfer's own notes
+    const firstRecorded = new Set<string>(); // #4516 review L3: the rows this delivery wrote first
     let reversedCents = 0;
     const ordered = [...refunds].sort((a, b) => compareOrdinal(a.id, b.id));
     for (const refund of ordered) {
@@ -881,6 +882,7 @@ export async function recordStripeRefundsAgainstTransaction({
       if (!recorded.created) {
         continue;
       }
+      firstRecorded.add(refund.id);
       createdRefundsCount += 1;
       createdRefundAmountCents += recorded.amountCents;
       // An undated refund counts as new here: only a dated pre-ledger one was already folded in.
@@ -936,7 +938,7 @@ export async function recordStripeRefundsAgainstTransaction({
 
     // #4516 (M4c): R12 for each refund that counts, applied only through the reservation its own key names, and
     // R13 for one that counted and failed, under the Payment row taken first, before its debt is kept owed below.
-    if (journal) await postCardRefundCash(db, journal, { paymentId, attemptKeys: refundKeys });
+    if (journal) await postCardRefundCash(db, journal, { paymentId, attemptKeys: refundKeys, firstRecorded });
 
     // #4104 (`INV-PAY-128`): a refund seen failing after it counted is owed again, in this transaction.
     const { debts: failedLaterDebts, readAsRefused } = await keepFailedLaterCardRefundsOwed(db, { paymentId, paymentTransactionId, seen: failedLater, fallbackPaymentIntentId });
@@ -1613,8 +1615,8 @@ export async function refundPaymentTransactions({
         ? obligation({ paymentTransactionId: transaction.id, paymentIntentId: transaction.stripePaymentIntentId, amountCents: refundAmountForTransaction })
         : obligation;
       if (sliceObligation && idempotencyKey && journal) {
-        await reserveCardRefundAttempt(journal, { paymentId, obligation: sliceObligation, attemptKey: idempotencyKey, paymentTransactionId: transaction.id,
-          amountCents: refundAmountForTransaction, planAttemptKeys: plannedKeys });
+        await reserveCardRefundAttempt(journal, { paymentId, obligation: sliceObligation, attemptKey: idempotencyKey, senderKeyPrefix: idempotencyKeyPrefix!,
+          paymentTransactionId: transaction.id, amountCents: refundAmountForTransaction, planAttemptKeys: plannedKeys });
       }
       const sendSlice = (stampRefundSliceKey: boolean) => processRefund({
         paymentIntentId: transaction.stripePaymentIntentId,

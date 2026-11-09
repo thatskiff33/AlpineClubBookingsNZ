@@ -423,7 +423,7 @@ export function DeadCardRefundsPanel({
                   />
                   <p id={warningId} role="status" className="text-xs font-medium text-warning-11 empty:hidden">
                     {noLongerOwedCents !== null
-                      ? `${formatCents(noLongerOwedCents, format)} will no longer be owed to the member, and will not be tracked anywhere.`
+                      ? `${formatCents(noLongerOwedCents, format)} will no longer be owed to the member: the club keeps it, as this close records.`
                       : rest === "still-owed" && restCents !== null
                         ? `${formatCents(restCents, format)} stays owed to the member, on this list, until it is closed.`
                         : ""}

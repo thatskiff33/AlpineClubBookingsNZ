@@ -1641,10 +1641,14 @@ async function settleAndPostBookingReceipts(tx: Prisma.TransactionClient, bookin
       : result.outcome === "manual_paid" ? { transactionIds: result.receiptTransactionIds, effectiveAt: result.settledAt } : {}),
   } });
   // #4516 (M4c): a capture this settle returns (a duplicate, or one the capacity race cancelled) owes its R05,
-  // after its held R06, sized by the frozen plan its recovery row carries; its sender reserves against it.
+  // after its held R06, sized by the frozen plan its recovery row carries; its sender reserves against it. Review F1:
+  // the owner is read without the booking row. The held R06 above already wrote journal lines naming the owner (a
+  // KEY SHARE on its Member row), so taking the booking row now would wait on a merge's owner move while that merge
+  // waits on the Member row (`Member … FOR UPDATE`): a cycle. A merge in between leaves the debt on the merged-away
+  // member, where the family's lazy successor finds it (`refundFamilyTip`).
   if ((result.outcome === "duplicate_capture" || result.outcome === "capacity_failed") && settlement.kind === "stripe" && result.plannedRefundCents > 0) {
     await postRefundObligation(tx, journal, { bookingId, scope: "capture-return", id: settlement.paymentIntentId, amountCents: result.plannedRefundCents,
-      origin: "APP", debtorRead: "booking-row" });
+      origin: "APP", debtorRead: "plain" });
   }
   return result;
 }

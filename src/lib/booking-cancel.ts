@@ -15,6 +15,7 @@ import { sendAdminManualRefundTaskAlert, sendBookingCancelledEmail } from "./ema
 import { logAudit } from "./audit";
 import { closeRefundRowRecordingEvent, recordBookingEvent } from "./booking-events";
 import { cancelCardRefundEventReason } from "@/lib/cancel-card-refund-event-reason";
+import { bookingCancelRefundStripeKeyPrefix } from "@/lib/card-refund-stripe-key-prefix";
 import {
   paidCancellationBranch,
   writePaidCancellationEvent,
@@ -2389,7 +2390,7 @@ async function performBookingCancellation(
           // idempotency_error. refundPercentage still drives the audit/event/
           // email narrative below; it just no longer rides in the Stripe body.
           metadata: buildBookingCancellationRefundMetadata(bookingId),
-          idempotencyKeyPrefix: `booking_cancel_refund_${bookingId}`,
+          idempotencyKeyPrefix: bookingCancelRefundStripeKeyPrefix(bookingId),
           obligation: { scope: "cancellation", id: bookingId }, // #4516: the R05 the claim posted
         });
         stripeRefundId = refundResult.refunds[0]?.refundId;

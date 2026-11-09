@@ -9,7 +9,7 @@ import { isBookingJournalInactive, type BookingJournalContext } from "./journal-
 import { memberMoneyApplicationKeys, memberMoneyEventKeys } from "./keys";
 import type { MemberMoneyPostingContext, MemberMoneySource } from "./plan";
 import { postMemberMoneyEvent, releaseMemberMoneyRefundReservation, reverseMemberMoneyJournal } from "./post";
-import { refundFamilyTip, type RefundBooking } from "./refund-family";
+import { refundFamilyTip, stripeKeyOfReservation, type RefundBooking } from "./refund-family";
 import { refundDebtor } from "./refund-obligations";
 
 /**
@@ -27,7 +27,10 @@ import { refundDebtor } from "./refund-obligations";
  *   through that key's reservation, while the refund still counts. No cash moves again.
  * - **R13**: a refund that counted and then failed or was cancelled reverses, once, its answer, its R12 and the
  *   funding of the reservation it answered, in that order, so the debt is owed again and its receipt is free to
- *   fund the re-send. A refund refused before it ever counted releases its reservation (REFUSED) with its funding.
+ *   fund the re-send. A failed refund whose key's reservation is still open releases it (REFUSED) with its
+ *   funding, when its failure is first seen: an R12 that posted unapplied and was never answered, at its R13
+ *   (review L3); a refund that never counted, in the delivery that first records it. Never on a later run or a
+ *   redelivery: by then the key may be reserved afresh for a re-send (`reservationGenerationKey`) that is not its.
  */
 
 type Db = Prisma.TransactionClient;
@@ -39,11 +42,15 @@ async function journalOf(tx: Db, eventKey: string) {
   return event?.journal ?? null;
 }
 
-/** The open reservation an attempt key names, if it can answer this refund: same capture, same cents. */
+/**
+ * The open reservation an attempt key names, if it can answer this refund: same capture, same cents. A key names
+ * its Stripe key's open generation, whichever it is (`reservationGenerationKey`): a key has at most one open.
+ */
 async function answeringReservation(tx: Db, bookingId: string, row: RefundRow, attemptKey: string | undefined) {
   if (!attemptKey) return null;
   const state = await readMemberMoneyApplicationState(tx, bookingId);
-  const reservation = state.reservations.find((r) => r.attemptKey === attemptKey);
+  const stripeKey = stripeKeyOfReservation(attemptKey);
+  const reservation = state.reservations.find((r) => stripeKeyOfReservation(r.attemptKey) === stripeKey);
   if (!reservation) return null;
   if (reservation.capture !== row.stripePaymentIntentId || reservation.amountCents !== row.amountCents) {
     logger.error({ bookingId, stripeRefundId: row.stripeRefundId, attemptKey }, "A card refund names a reservation it cannot answer (capture or cents differ); it posts unapplied (#4516)");
@@ -62,6 +69,8 @@ export async function postCardRefundCash(tx: Db, context: BookingJournalContext,
   paymentId: string;
   /** Stripe refund id to the attempt key it answers: the sender's own key, or the refund's `refundSliceKey`. */
   attemptKeys: ReadonlyMap<string, string>;
+  /** The refunds whose card refund row this delivery first recorded: a never-counted one releases only then. */
+  firstRecorded?: ReadonlySet<string>;
 }): Promise<number> {
   if (isBookingJournalInactive(context)) return 0;
   const payment = await tx.payment.findUnique({ where: { id: input.paymentId }, select: { bookingId: true, booking: { select: { lodgeId: true } } } });
@@ -82,15 +91,14 @@ export async function postCardRefundCash(tx: Db, context: BookingJournalContext,
       continue;
     }
     const failed = receiptFactContext(context, row.updatedAt);
-    if (r12 && !r12.reversedBy) {
-      posted += await reverseFailedRefund(tx, failed, row.stripeRefundId, r12.id);
-    } else if (!r12) {
-      const reservation = await answeringReservation(tx, booking.bookingId, row, attemptKey);
-      if (reservation) {
-        await releaseMemberMoneyRefundReservation(tx, failed, { bookingId: booking.bookingId, reservationId: reservation.id, reason: "REFUSED",
-          source: { kind: "REFUND", id: row.stripeRefundId, version: `refused:${reservation.attemptKey}` } });
-        posted++;
-      }
+    const firstSeen = r12 ? !r12.reversedBy : input.firstRecorded?.has(row.stripeRefundId) === true;
+    if (r12 && !r12.reversedBy) posted += await reverseFailedRefund(tx, failed, row.stripeRefundId, r12.id);
+    // An answered reservation was consumed, so only one this refund never answered is still open here.
+    const reservation = firstSeen ? await answeringReservation(tx, booking.bookingId, row, attemptKey) : null;
+    if (reservation) {
+      await releaseMemberMoneyRefundReservation(tx, failed, { bookingId: booking.bookingId, reservationId: reservation.id, reason: "REFUSED",
+        source: { kind: "REFUND", id: row.stripeRefundId, version: `refused:${reservation.attemptKey}` } });
+      posted++;
     }
   }
   return posted;

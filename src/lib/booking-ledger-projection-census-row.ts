@@ -113,6 +113,8 @@ export type BookingLedgerCensusRow = {
     lateCaptureApprovalIntentId: string | null;
     /** Marks an edit's or a refund request's hand-back (`isNonCancellationHandBackTask`, #3827). */
     occurrenceKey: string | null;
+    /** #4516 review M2: with `amountCents`, what a "Paid another way" close kept (`paidAnotherWayUnpaidCents`). */
+    raisedAmountCents?: number | null;
   }>;
   modifications: ReadonlyArray<{
     id: string;

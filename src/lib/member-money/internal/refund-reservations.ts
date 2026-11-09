@@ -6,9 +6,19 @@ import { lineDebtor, ownedBy } from "./booking-receipts";
 import { isBookingJournalInactive, type BookingJournalContext } from "./journal-activity";
 import { memberMoneyEventKeys, type RefundObligationScope } from "./keys";
 import { releaseMemberMoneyRefundReservation } from "./post";
-import { asReservationRefusal, cardReceiptLine, fundRefundFromReceipt, refundFamilyTip, refundObligationChain } from "./refund-family";
+import {
+  asReservationRefusal,
+  cardReceiptLine,
+  fundRefundFromReceipt,
+  isSenderStripeKey,
+  refundFamilyTip,
+  refundObligationChain,
+  reservationGenerationKey,
+  reservationGenerationsWhere,
+  stripeKeyOfReservation,
+} from "./refund-family";
 import { postRefundObligation, refundDebtor } from "./refund-obligations";
-import { reserveMemberMoneyRefund } from "./store";
+import { MemberMoneyReservationRefused, reserveMemberMoneyRefund } from "./store";
 
 /**
  * THE RESERVATION STEP (#4516, Ledger M4c; plan section 5). Before a card refund slice is sent, in a short
@@ -21,10 +31,17 @@ import { reserveMemberMoneyRefund } from "./store";
  *    today and its refund later posts unapplied (census `RESERVATION_SKIPPED_NO_RECEIPT`, `UNAPPLIED_CARD_REFUND`).
  * 2. A door that defers its R05 to its sender (a superseded intent's refund, an automatic late capture's) gives
  *    its face; the R05 posts here.
- * 3. Every open reservation of the same family on the same capture whose key the plan being sent no longer
- *    carries is released, SUPERSEDED_KEY, and its funding reversed: a re-plan never strands one.
- * 4. The slice is funded from its receipt, taking back that receipt's own collection for any shortfall.
- * 5. C3 and C4 are checked and the reservation written. A broken cap throws `MemberMoneyReservationRefused`
+ * 3. Every open reservation of the same family on the same capture under one of THIS sender's own keys (its key
+ *    prefix's) that the plan being sent no longer carries is released, SUPERSEDED_KEY, and its funding reversed: a
+ *    re-plan never strands one. Another sender's open reservation on the same debt is its attempt in flight, never
+ *    released here (#4516 review F3): C3 and C4 decide whether there is room beside it.
+ * 4. The key's own reservations, every generation (`reservationGenerationKey`): an open one is this slice's retry,
+ *    replayed only if it reserved the same slice (capture, charge and cents; review L1), else refused; one that
+ *    answered a refund means Stripe made it and will replay it, so nothing is reserved again; otherwise (none, or
+ *    each released without a refund) the key's next generation is reserved, so the slice never leaves unreserved
+ *    (review F4).
+ * 5. The slice is funded from its receipt, taking back that receipt's own collection for any shortfall.
+ * 6. C3 and C4 are checked and the reservation written. A broken cap throws `MemberMoneyReservationRefused`
  *    BEFORE Stripe is asked; nothing here commits, the door that committed earlier stands, and the caller reports
  *    the refusal without retrying it.
  */
@@ -44,6 +61,8 @@ export interface CardRefundSliceReservation {
   obligation: CardRefundObligationRef;
   /** Stripe's idempotency key for the slice, verbatim. */
   attemptKey: string;
+  /** The sender's Stripe key prefix (`idempotencyKeyPrefix`, or a row's own key): the keys it may supersede. */
+  senderKeyPrefix: string;
   paymentTransactionId: string;
   amountCents: number;
   /** Every key of the plan being sent, made slices included: a reservation under any other key is superseded. */
@@ -51,10 +70,10 @@ export interface CardRefundSliceReservation {
 }
 
 export type CardRefundReservationOutcome =
-  | { outcome: "reserved"; reservationId: string; replayed: boolean }
+  | { outcome: "reserved"; reservationId: string; attemptKey: string; replayed: boolean }
   | { outcome: "skipped"; reason: "inactive" | "outside-population" | "no-receipt" | "no-obligation" | "merged-debtor" | "key-already-decided" };
 
-/** Steps 1-5 for one slice, inside the caller's short root-client transaction. */
+/** Steps 1-6 for one slice, inside the caller's short root-client transaction. */
 export async function reserveCardRefundSlice(tx: Db, context: BookingJournalContext, input: CardRefundSliceReservation): Promise<CardRefundReservationOutcome> {
   if (isBookingJournalInactive(context)) return { outcome: "skipped", reason: "inactive" };
   const payment = await tx.payment.findUnique({ where: { id: input.paymentId }, select: { bookingId: true } });
@@ -84,25 +103,36 @@ export async function reserveCardRefundSlice(tx: Db, context: BookingJournalCont
   const state = await readMemberMoneyApplicationState(tx, bookingId);
   const familyIds = new Set(state.obligations.filter((o) => o.kind === "REFUND" && refundFamilyKey(o.key) === live).map((o) => o.id));
   for (const reservation of state.reservations) {
-    if (!familyIds.has(reservation.obligationId) || reservation.capture !== capture || input.planAttemptKeys.includes(reservation.attemptKey)) continue;
+    const stripeKey = stripeKeyOfReservation(reservation.attemptKey);
+    if (!familyIds.has(reservation.obligationId) || reservation.capture !== capture || input.planAttemptKeys.includes(stripeKey)
+      || !isSenderStripeKey(stripeKey, input.senderKeyPrefix)) continue;
     await releaseMemberMoneyRefundReservation(tx, context, { bookingId, reservationId: reservation.id, reason: "SUPERSEDED_KEY",
       source: { kind: "PAYMENT", id: input.paymentTransactionId, version: `superseded:${reservation.attemptKey}` } });
   }
 
-  const prior = await tx.memberMoneyRefundReservation.findUnique({ where: { attemptKey: input.attemptKey }, select: { id: true, obligationId: true, release: { select: { id: true } } } });
-  if (prior) {
-    // The same key reserved before: an open one of this family is this slice's (a retry); any other was decided.
-    return !prior.release && familyIds.has(prior.obligationId)
-      ? { outcome: "reserved", reservationId: prior.id, replayed: true }
-      : { outcome: "skipped", reason: "key-already-decided" };
+  const generations = await tx.memberMoneyRefundReservation.findMany({ where: reservationGenerationsWhere(input.attemptKey),
+    select: { id: true, attemptKey: true, obligationId: true, stripePaymentIntentId: true, paymentTransactionId: true, amountCents: true,
+      release: { select: { reason: true } } } });
+  const open = generations.find((generation) => !generation.release);
+  if (open) {
+    // Review L1: a retry replays its own claim only for the same slice. A key that reserved another (a row whose one
+    // request carries no slice, sent again for a changed amount) would have Stripe replay the original refund, or
+    // refuse the key, not make this one: refused before it is asked.
+    if (!familyIds.has(open.obligationId) || open.stripePaymentIntentId !== capture || open.paymentTransactionId !== input.paymentTransactionId
+      || open.amountCents !== input.amountCents) {
+      throw new MemberMoneyReservationRefused([`key ${input.attemptKey} already reserves another slice or debt (${open.amountCents} from ${open.paymentTransactionId})`]);
+    }
+    return { outcome: "reserved", reservationId: open.id, attemptKey: open.attemptKey, replayed: true };
   }
-  const fundingKey = memberMoneyEventKeys.refundFunding(input.attemptKey);
+  if (generations.some((generation) => generation.release?.reason === "ANSWERED")) return { outcome: "skipped", reason: "key-already-decided" };
+  const attemptKey = reservationGenerationKey(input.attemptKey, generations.length + 1);
+  const fundingKey = memberMoneyEventKeys.refundFunding(attemptKey);
   const funding = await fundRefundFromReceipt(tx, context, { bookingId, receiptLineId: receipt.id, obligationKey: tip.key, amountCents: input.amountCents,
     fundingKey, source: { kind: "PAYMENT", id: input.paymentTransactionId, version: fundingKey }, reason: "Fund a card refund slice from its capture" });
   try {
-    const reserved = await reserveMemberMoneyRefund(tx, { bookingId, attemptKey: input.attemptKey, obligationKey: tip.key, stripePaymentIntentId: capture,
+    const reserved = await reserveMemberMoneyRefund(tx, { bookingId, attemptKey, obligationKey: tip.key, stripePaymentIntentId: capture,
       paymentTransactionId: input.paymentTransactionId, amountCents: input.amountCents, fundingJournalId: funding!.journalId });
-    return { outcome: "reserved", reservationId: reserved.id, replayed: reserved.replayed };
+    return { outcome: "reserved", reservationId: reserved.id, attemptKey, replayed: reserved.replayed };
   } catch (error) {
     throw asReservationRefusal(error);
   }

@@ -7,7 +7,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import { automaticCancelledBookingRefundTaskReasons } from "@/lib/deleted-booking-modification-payment";
 import { finishApprovedLateCaptureRefund } from "@/lib/late-capture-refund-credit-note";
 import logger from "@/lib/logger";
-import { postRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
+import { closeKeptCaptureReturn, postRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { enqueueLateCaptureApprovalRefundRecovery } from "@/lib/payment-recovery";
 import {
@@ -17,6 +17,7 @@ import {
 } from "@/lib/payment-recovery-keys";
 import {
   isCapturedTransactionStatus,
+  lockPaymentForRefundedTotal,
   refundPaymentTransactions,
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
@@ -198,6 +199,27 @@ export async function persistLateCaptureApprovalRefundDebt({
   // debtor is read without the booking row (a Payment-row writer never takes one, `INV-LOCK-002`).
   await postRefundObligation(store, journal, { bookingId, scope: "capture-return", id: route.paymentIntentId, amountCents,
     origin: "OFFICER", actorMemberId: actingMemberId, debtorRead: "plain" });
+}
+
+/**
+ * #4516 review F2 and M5: BEFORE a late capture's approval task is claimed, approved or kept. The booking's Payment
+ * row first, the order a "Paid another way" close takes them in (`lock(1)`, the Payment row, then this task): a
+ * claim that took the task first and the Payment row after would wait on a close holding the row while that close
+ * waits on the task. A keep (a dismissal) then closes the capture's refund debt, if an automatic refund of it
+ * posted one that nothing paid or holds (`closeKeptCaptureReturn`): a kept capture owes nothing back. A lost claim
+ * throws after this and rolls it back with the transaction.
+ */
+export async function prepareLateCaptureDecision(store: Prisma.TransactionClient, journal: BookingJournalContext, input: {
+  task: { bookingId: string; paymentId: string | null; lateCaptureApprovalIntentId: string | null };
+  resolution: "completed" | "dismissed";
+  actingMemberId: string;
+}): Promise<void> {
+  const { task } = input;
+  if (!task.lateCaptureApprovalIntentId || !task.paymentId) return;
+  await lockPaymentForRefundedTotal(store, task.paymentId);
+  if (input.resolution === "dismissed") {
+    await closeKeptCaptureReturn(store, journal, { bookingId: task.bookingId, paymentIntentId: task.lateCaptureApprovalIntentId, actorMemberId: input.actingMemberId });
+  }
 }
 
 /**

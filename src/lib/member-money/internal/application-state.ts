@@ -1,5 +1,6 @@
 import { MemberMoneyAccount, MemberMoneySide } from "@prisma/client";
 import { z } from "zod";
+import { MEMBER_MONEY_CAP_PROBLEMS, type MemberMoneyCapProblem } from "./cap-problems";
 import { memberMoneyApplicationKeys } from "./keys";
 import { applicationRole } from "./plan";
 
@@ -23,6 +24,7 @@ const Reservation = z.object({
 export const MemberMoneyApplicationState = z.object({
   sources: z.array(Source), obligations: z.array(Obligation), applications: z.array(Application), reservations: z.array(Reservation),
 });
+export { MEMBER_MONEY_CAP_PROBLEMS, type MemberMoneyCapProblem } from "./cap-problems";
 export type ApplicationState = z.infer<typeof MemberMoneyApplicationState>;
 export type ApplicationSource = z.infer<typeof Source>;
 export type ApplicationObligation = z.infer<typeof Obligation>;
@@ -92,21 +94,21 @@ export function memberMoneyApplicationTotals(state: ApplicationState): Applicati
   return totals;
 }
 
-export function memberMoneyConservationProblems(state: ApplicationState): { identity: string; problem: string }[] {
+export function memberMoneyConservationProblems(state: ApplicationState): { identity: string; problem: MemberMoneyCapProblem }[] {
   const totals = memberMoneyApplicationTotals(state);
-  const problems: { identity: string; problem: string }[] = [];
+  const problems: { identity: string; problem: MemberMoneyCapProblem }[] = [];
   for (const source of state.sources) {
     const net = totals.sources.get(source.id) ?? 0;
-    if (net < 0 || net > source.amountCents) problems.push({ identity: source.id, problem: "C1_source_cap" });
+    if (net < 0 || net > source.amountCents) problems.push({ identity: source.id, problem: MEMBER_MONEY_CAP_PROBLEMS.C1 });
   }
   for (const [key, family] of totals.families) {
     const root = state.obligations.find((o) => o.key === key && o.kind === "REFUND");
     if (!root || family.funded < 0 || family.paid < 0 || family.funded > root.faceCents || family.paid + family.reserved > root.faceCents) {
-      problems.push({ identity: key, problem: "C3_refund_family_cap" });
+      problems.push({ identity: key, problem: MEMBER_MONEY_CAP_PROBLEMS.C3 });
     }
     for (const [capture, instrument] of family.captures) {
       if (instrument.funded < 0 || instrument.paid < 0 || instrument.paid + instrument.reserved > instrument.funded) {
-        problems.push({ identity: `${key}:${capture}`, problem: "C4_capture_cap" });
+        problems.push({ identity: `${key}:${capture}`, problem: MEMBER_MONEY_CAP_PROBLEMS.C4 });
       }
     }
   }

@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { compareOrdinal } from "@/lib/ordinal-order";
 import { readMemberMoneyApplicationState } from "./application-read";
 import { memberMoneyApplicationTotals, refundFamilyKey, type ApplicationObligation, type ApplicationState } from "./application-state";
+import { capProblem, isMemberMoneyCapProblem, MEMBER_MONEY_CAP_PROBLEMS } from "./cap-problems";
 import { eventPosted } from "./booking-journal-read";
 import { debtorId, lineDebtor, ownedBy } from "./booking-receipts";
 import {
@@ -34,8 +35,6 @@ import { MemberMoneyReservationRefused, writeMemberMoneyBatch, type ApplicationC
 type Db = Prisma.TransactionClient;
 export type RefundBooking = { bookingId: string; lodgeId: string };
 
-/** A conservation cap a reservation or funding would break: the refusals a sender reports, never retries. */
-const CAP_PROBLEM = /\bC[134](?:_|:)/;
 
 /**
  * The R05 key a door's refund debt lives under now: its chain's live tip (`memberMoneyChainKey`), or null when no
@@ -96,9 +95,43 @@ export async function cardReceiptLine(tx: Db, paymentIntentId: string) {
   return event.journal.lines[0] ?? null;
 }
 
+/**
+ * A RESERVATION'S ATTEMPT KEY (#4516 review F4). A Stripe key's first reservation is that key, verbatim. One made
+ * after every earlier reservation of the key was released without a refund answering it (an appeal re-approved
+ * after `release_claim`, a re-send of a refused or superseded key) is the key's next generation, `<key>#<n>`: the
+ * journal claims the debt again while Stripe is sent the key exactly as before, so a refund it made under that key
+ * is replayed and never repeated. `#` is never in a Stripe key.
+ */
+const GENERATION_MARK = "#";
+export function reservationGenerationKey(stripeKey: string, generation: number): string {
+  if (stripeKey.length === 0 || stripeKey.includes(GENERATION_MARK) || !Number.isSafeInteger(generation) || generation < 1) {
+    throw new MemberMoneyPlanError([`a reservation's Stripe key must be non-empty with no '${GENERATION_MARK}', and its generation a positive integer`]);
+  }
+  return generation === 1 ? stripeKey : `${stripeKey}${GENERATION_MARK}${generation}`;
+}
+/** The Stripe key a reservation was made for, whatever its generation. */
+export function stripeKeyOfReservation(attemptKey: string): string {
+  const mark = attemptKey.indexOf(GENERATION_MARK);
+  return mark < 0 ? attemptKey : attemptKey.slice(0, mark);
+}
+/** Every generation of one Stripe key's reservations, as a where clause. */
+export function reservationGenerationsWhere(stripeKey: string) {
+  return { OR: [{ attemptKey: stripeKey }, { attemptKey: { startsWith: `${stripeKey}${GENERATION_MARK}` } }] };
+}
+
+/**
+ * Whether a reservation's Stripe key is one the sender with this key prefix made (`refundSliceStripeIdempotencyKey`
+ * for any of its slices, or the prefix itself for a row's one keyed request). A sender supersedes or withdraws only
+ * its own keys (#4516 review F3): another sender's open reservation on the same debt is that sender's attempt in
+ * flight, and C3 and C4 decide whether there is room beside it.
+ */
+export function isSenderStripeKey(stripeKey: string, senderKeyPrefix: string): boolean {
+  return stripeKey === senderKeyPrefix || stripeKey.startsWith(`${senderKeyPrefix}_`);
+}
+
 /** A refusal for a broken cap; any other plan error is a fault, rethrown as it is. */
 export function asReservationRefusal(error: unknown): unknown {
-  if (error instanceof MemberMoneyPlanError && !(error instanceof MemberMoneyReservationRefused) && error.problems.some((p) => CAP_PROBLEM.test(p))) {
+  if (error instanceof MemberMoneyPlanError && !(error instanceof MemberMoneyReservationRefused) && error.problems.some(isMemberMoneyCapProblem)) {
     return new MemberMoneyReservationRefused(error.problems);
   }
   return error;
@@ -132,7 +165,7 @@ async function uncollect(tx: Db, context: MemberMoneyPostingContext, state: Appl
     taken += application.amountCents;
   }
   if (taken < input.shortfallCents) {
-    throw new MemberMoneyReservationRefused([`C1_source_cap: receipt line ${input.receiptLineId} cannot hold the refund it would fund`]);
+    throw new MemberMoneyReservationRefused([capProblem(MEMBER_MONEY_CAP_PROBLEMS.C1, `receipt line ${input.receiptLineId} cannot hold the refund it would fund`)]);
   }
   if (taken > input.shortfallCents) {
     applications.push({ key: memberMoneyApplicationKeys.application(eventKey, input.receiptLineId, lastObligation!.key), source: { lineId: input.receiptLineId },

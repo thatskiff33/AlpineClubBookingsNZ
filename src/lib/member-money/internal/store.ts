@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { MemberMoneyRefundReservationReleaseReason, Prisma } from "@prisma/client";
 import { MAX_INTEGER_CENTS } from "../../money-input";
+import { capProblem } from "./cap-problems";
 import { applicationRoleOf, sameApplicationDebtor, memberMoneyConservationProblems, memberMoneyApplicationTotals, refundFamilyKey, type ApplicationState } from "./application-state";
 import { lockMemberMoneyPayment, readMemberMoneyApplicationState } from "./application-read";
 import { readBookingLiveChargeCents } from "./booking-journal-read";
@@ -411,7 +412,7 @@ async function prepareApplications(db: Db, batch: BuiltBatch, lineIds: string[],
       reversesApplicationId: application.reversesApplicationId });
   }
   state.reservations = state.reservations.filter((r) => !consumed.has(r.id));
-  problems.push(...memberMoneyConservationProblems(state).map((p) => `${p.problem}: ${p.identity}`));
+  problems.push(...memberMoneyConservationProblems(state).map((p) => capProblem(p.problem, p.identity)));
   const before = memberMoneyApplicationTotals(originalState).collected;
   const after = memberMoneyApplicationTotals(state).collected;
   const liveCharge = check?.liveChargeCents ?? await readBookingLiveChargeCents(db, bookingId);
@@ -464,7 +465,7 @@ export async function reserveMemberMoneyRefund(db: Db, plan: MemberMoneyReservat
   const id = randomUUID();
   state.reservations.push({ id, attemptKey: plan.attemptKey, obligationId: obligation.id, capture: plan.stripePaymentIntentId, amountCents: plan.amountCents });
   const problems = memberMoneyConservationProblems(state);
-  if (problems.length) throw new MemberMoneyReservationRefused(problems.map((p) => `${p.problem}: ${p.identity}`));
+  if (problems.length) throw new MemberMoneyReservationRefused(problems.map((p) => capProblem(p.problem, p.identity)));
   await db.memberMoneyRefundReservation.createMany({ data: [{ id, attemptKey: plan.attemptKey, obligationId: obligation.id,
     stripePaymentIntentId: plan.stripePaymentIntentId, paymentTransactionId: plan.paymentTransactionId, amountCents: plan.amountCents, fundingJournalId: plan.fundingJournalId }] });
   return { id, replayed: false };

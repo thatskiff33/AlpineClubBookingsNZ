@@ -174,7 +174,7 @@ describe("the Paid another way dialog", () => {
 
     fireEvent.change(amountBox(), { target: { value: "100.00" } });
     fireEvent.click(keepsChoice());
-    const warning = screen.getByText("$50.00 will no longer be owed to the member, and will not be tracked anywhere.");
+    const warning = screen.getByText("$50.00 will no longer be owed to the member: the club keeps it, as this close records.");
     expect(warning).toHaveAttribute("role", "status");
     expect(amountBox().getAttribute("aria-describedby")).toContain(warning.id);
     expect(closeButton()).toBeEnabled();

@@ -27,7 +27,7 @@ import {
 import { inlineRefundAfterAttempt } from "@/lib/refused-card-refund-retry";
 import { NO_CARD_REFUND_OWED, queueUnmadeRefundRequestCardRefund, refundRequestCardRefundAnswer } from "@/lib/refund-request-card-refund";
 import { buildRefundRequestRefundMetadata, buildRefundRequestRefundStripeKeyPrefix } from "@/lib/payment-recovery-keys";
-import { postRefundObligation, resolveBookingMoneyPostingContext, withdrawRefundObligation } from "@/lib/member-money/doors";
+import { lockBookingRowForOwnerRead, postRefundObligation, resolveBookingMoneyPostingContext, withdrawRefundObligation } from "@/lib/member-money/doors";
 import { notesEachCardRefund, queueRefundRequestCardNotes } from "@/lib/card-refund-own-note";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { formatStayDate } from "@/lib/club-time";
@@ -156,6 +156,10 @@ export async function PUT(
     const journal = await resolveBookingMoneyPostingContext(); // #4516 (`INV-LOCK-004`): before the transaction
     const capped = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      // #4516 review F1: the booking row next, before the Payment row and the request's claim, as the edit doors
+      // order them. Its R05 reads the owner under this row; taken after the claim instead, a member merge (owner
+      // move, then the request's member) would hold the row this waits on while waiting on the request it holds.
+      await lockBookingRowForOwnerRead(tx, booking.id);
       // #3956 review: a request another approval or decline settled while this
       // one waited for the lock is "already reviewed", never a cap refusal read
       // from money that approval has since spoken for. The claim below stays the
@@ -462,7 +466,7 @@ export async function PUT(
               });
               // #4516 (M4c): the approval's R05 goes with it, its open reservations released, under the Payment row.
               await withdrawRefundObligation(tx, journal, { bookingId: booking.id, scope: "refund-request", id, actorMemberId: session.user.id,
-                reason: "Refund appeal approval released: its card refund was never sent" });
+                reason: "Refund appeal approval released: its card refund was never sent", senderKeyPrefix: buildRefundRequestRefundStripeKeyPrefix(id) });
             }
           })
           .catch((revertErr: unknown) => {

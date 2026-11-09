@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 
+import { cardRefundStillOwedOrigin } from "@/lib/card-refund-still-owed-origin";
 import { findLateCapturePaymentIntents, readPaidAnotherWayLateCaptureXeroReceipt } from "@/lib/late-capture-xero-receipt";
 import {
   cardRefundPaidAnotherWayClosesWhere,
@@ -61,12 +62,16 @@ function lateCaptureRefundOperationsWhere(paymentIntentIds: readonly string[]) {
 /**
  * The late capture a card refund row refunds: an approval row's own capture,
  * or (#4104) a failed-later row's intent when that intent is a late capture.
+ * #4516 review M4: a still-owed rest of either refunds the same capture, so it
+ * is asked of the row the rest was first owed on (`cardRefundStillOwedOrigin`).
  * Null for any other row.
  */
 export async function lateCaptureIntentOfCardRefundOperation(
   operation: { idempotencyKey: string; paymentIntentId?: string | null },
-  store: Pick<Prisma.TransactionClient, "manualRefundTask"> = prisma,
+  store: Pick<Prisma.TransactionClient, "manualRefundTask" | "paymentRecoveryOperation"> = prisma,
 ): Promise<string | null> {
+  const origin = await cardRefundStillOwedOrigin(store, operation.idempotencyKey);
+  if (origin) return lateCaptureIntentOfCardRefundOperation(origin, store);
   const approved = lateCaptureIntentOfApprovalRefundRecoveryKey(operation.idempotencyKey);
   if (approved !== null) return approved;
   const intent = operation.paymentIntentId;

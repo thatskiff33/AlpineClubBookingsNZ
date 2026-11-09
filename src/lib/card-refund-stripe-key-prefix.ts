@@ -6,6 +6,11 @@ import {
   isRefundRequestRefundRecoveryKey,
 } from "@/lib/payment-recovery-keys";
 
+/** #1494: a paid cancellation's card refund slices, inline and replayed by its recovery row, under one prefix. */
+export function bookingCancelRefundStripeKeyPrefix(bookingId: string): string {
+  return `booking_cancel_refund_${bookingId}`;
+}
+
 /**
  * #4516 (M4c, `INV-SSOT`): the Stripe key prefix a card refund row's slices are sent under, the one rule the
  * recovery runner sends by and a "Paid another way" close reads to name the reservations it closes: a superseded
@@ -19,6 +24,6 @@ export function cardRefundOperationStripeKeyPrefix(operation: {
   if (isRefundRequestRefundRecoveryKey(operation.idempotencyKey)) {
     return buildRefundRequestRefundStripeKeyPrefix(operation.idempotencyKey.slice(REFUND_REQUEST_REFUND_RECOVERY_PREFIX.length));
   }
-  if (operation.idempotencyKey.startsWith(BOOKING_CANCELLATION_REFUND_RECOVERY_PREFIX)) return `booking_cancel_refund_${operation.bookingId}`;
+  if (operation.idempotencyKey.startsWith(BOOKING_CANCELLATION_REFUND_RECOVERY_PREFIX)) return bookingCancelRefundStripeKeyPrefix(operation.bookingId);
   return operation.stripeKeyPrefix ?? buildLegacyModificationRefundStripeKeyPrefix(operation.id);
 }

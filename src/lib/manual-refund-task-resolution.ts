@@ -74,7 +74,7 @@ export type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolu
 import type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
 import { MANUAL_REFUND_TASK_RESOLUTION_SELECT } from "@/lib/manual-refund-task-resolution-select";
 import type { ClubFormat } from "@/lib/club-format";
-import { persistLateCaptureApprovalRefundDebt } from "@/lib/late-capture-refund-approval";
+import { persistLateCaptureApprovalRefundDebt, prepareLateCaptureDecision } from "@/lib/late-capture-refund-approval";
 import { settleKeptLateCaptureRecordOnApproval } from "@/lib/xero-kept-late-capture-invoice";
 import {
   finishKeptLateCaptureXeroRecord,
@@ -341,7 +341,7 @@ export async function resolveManualRefundTask(
         : null,
       store: tx,
     });
-
+    await prepareLateCaptureDecision(tx, journal, { task, resolution, actingMemberId }); // #4516 review F2, M5: Payment row before the claim; a keep's R05
     const now = new Date();
     const claimed = await tx.manualRefundTask.updateMany({
       where: { id: task.id, status: ManualRefundTaskStatus.OPEN },

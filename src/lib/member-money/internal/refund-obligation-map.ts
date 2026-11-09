@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import { CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX } from "../../manual-refund-task-settlement-rules";
+import { cardRefundStillOwedOrigin } from "../../card-refund-still-owed-origin";
 import {
   BOOKING_CANCELLATION_REFUND_RECOVERY_PREFIX,
   BOOKING_MODIFICATION_REFUND_RECOVERY_PREFIX,
@@ -77,25 +77,30 @@ export function refundDoorOfObligationKey(key: string): CardRefundObligationRef 
 
 type Db = Pick<Prisma.TransactionClient, "memberMoneyEvent" | "manualRefundTask" | "paymentRecoveryOperation">;
 
+/** The debt an applied card refund paid: its R12's pay, or (review L4) the answer that applied it later. */
+async function paidByRefund(db: Db, stripeRefundId: string): Promise<string | null> {
+  for (const eventKey of [memberMoneyEventKeys.refund(stripeRefundId), memberMoneyEventKeys.refundAnswer(stripeRefundId)]) {
+    const event = await db.memberMoneyEvent.findUnique({ where: { eventKey },
+      select: { journal: { select: { applications: { select: { obligation: { select: { obligationKey: true } } } } } } } });
+    const paid = event?.journal?.applications[0]?.obligation.obligationKey;
+    if (paid) return paid;
+  }
+  return null;
+}
+
 /**
  * The debt a row pays, resolved exactly. A failed-later row owes what the failed refund answered (its R12's pay,
- * reversed by R13); one that posted unapplied names no debt. A still-owed row owes what its part close's own row
- * did, followed back through each close.
+ * or the answer that applied it, reversed by R13); one that posted unapplied and was never answered names no debt.
+ * A still-owed row owes what the row it was first owed on did (`cardRefundStillOwedOrigin`).
  */
-export async function resolveCardRefundObligation(db: Db, row: CardRefundRecoveryRow, depth = 0): Promise<CardRefundObligationRef | null> {
+export async function resolveCardRefundObligation(db: Db, row: CardRefundRecoveryRow): Promise<CardRefundObligationRef | null> {
   const mapped = cardRefundObligationOfRecoveryKey(row);
-  if (!mapped || depth > 20) return null;
+  if (!mapped) return null;
   if (mapped.kind === "door") return mapped.ref;
   if (mapped.kind === "failed-later") {
-    const r12 = await db.memberMoneyEvent.findUnique({ where: { eventKey: memberMoneyEventKeys.refund(mapped.stripeRefundId) },
-      select: { journal: { select: { applications: { select: { obligation: { select: { obligationKey: true } } } } } } } });
-    const paid = r12?.journal?.applications[0]?.obligation.obligationKey;
+    const paid = await paidByRefund(db, mapped.stripeRefundId);
     return paid ? refundDoorOfObligationKey(paid) : null;
   }
-  const record = await db.manualRefundTask.findUnique({ where: { id: mapped.closeRecordId }, select: { occurrenceKey: true } });
-  const operationId = record?.occurrenceKey?.startsWith(CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX)
-    ? record.occurrenceKey.slice(CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX.length).split(":")[0] : null;
-  const closed = operationId ? await db.paymentRecoveryOperation.findUnique({ where: { id: operationId },
-    select: { type: true, idempotencyKey: true, bookingId: true, paymentIntentId: true, amountCents: true } }) : null;
-  return closed ? resolveCardRefundObligation(db, closed, depth + 1) : null;
+  const origin = await cardRefundStillOwedOrigin(db, row.idempotencyKey);
+  return origin ? resolveCardRefundObligation(db, origin) : null;
 }

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  closeKeptCaptureReturn,
   postBookingReceipts,
   postMemberMergeTransfer,
   postPaidAnotherWayClose,
@@ -103,8 +104,12 @@ const r05 = (id: string, scope: CardRefundObligationRef["scope"], scopeId: strin
     return postRefundObligation(tx, context, { bookingId: id, scope, id: scopeId, amountCents, origin: "APP", debtorRead: "booking-row", concession });
   });
 
-const reserve = (id: string, row: { id: string }, obligation: CardRefundObligationRef, attemptKey: string, amountCents: number, planAttemptKeys = [attemptKey]) =>
-  db.$transaction((tx) => reserveCardRefundSlice(tx, context, { paymentId: `${id}-payment`, obligation, attemptKey, paymentTransactionId: row.id, amountCents, planAttemptKeys }));
+/** A key's sender: the slice keys of a cancel or an appeal by their own prefix; any other test key is its own. */
+const senderOf = (id: string, row: { id: string }, attemptKey: string) => attemptKey.startsWith(`booking_cancel_refund_${id}`) ? `booking_cancel_refund_${id}`
+  : attemptKey.includes(`_${row.id}_`) ? attemptKey.slice(0, attemptKey.indexOf(`_${row.id}_`)) : attemptKey;
+const reserve = (id: string, row: { id: string }, obligation: CardRefundObligationRef, attemptKey: string, amountCents: number, planAttemptKeys = [attemptKey],
+  senderKeyPrefix = senderOf(id, row, attemptKey)) =>
+  db.$transaction((tx) => reserveCardRefundSlice(tx, context, { paymentId: `${id}-payment`, obligation, attemptKey, senderKeyPrefix, paymentTransactionId: row.id, amountCents, planAttemptKeys }));
 
 /** Stripe's answer for a refund, recorded through the one cash writer, with its slice key as Stripe returns it. */
 const refund = (id: string, row: { id: string; stripePaymentIntentId: string | null }, refundId: string, amountCents: number,
@@ -283,7 +288,7 @@ async function cancelledPaidBooking() {
     expect(posted).toBeGreaterThan(0);
     expect((await reservationOf(key))?.release?.reason).toBe("CLOSED_WITHOUT_REFUND");
     expect(await family(R05("cancellation", id), id)).toMatchObject({ funded: 5_000, paid: 8_000, reserved: 0 });
-    expect(await event(memberMoneyEventKeys.refundCloseOut(R05("cancellation", id)))).not.toBeNull();
+    expect(await event(memberMoneyEventKeys.refundCloseOut(`${id}-close`))).not.toBeNull();
     const t = await totals(id);
     expect(t.collected).toBe(5_000); // the kept fee and the retained rest, both collected from the one receipt
     await capsHold(id);
@@ -300,7 +305,7 @@ async function cancelledPaidBooking() {
     });
     await close(`${id}-part`, 5_000, 3_000, "still-owed");
     expect(await family(R05("cancellation", id), id)).toMatchObject({ paid: 5_000, reserved: 0 });
-    expect(await event(memberMoneyEventKeys.refundCloseOut(R05("cancellation", id)))).toBeNull();
+    expect(await event(memberMoneyEventKeys.refundCloseOut(`${id}-part`))).toBeNull();
     await close(`${id}-rest`, 3_000, 0, null);
     expect(await family(R05("cancellation", id), id)).toMatchObject({ funded: 8_000, paid: 8_000 });
     await capsHold(id);
@@ -329,12 +334,83 @@ async function cancelledPaidBooking() {
     await reserve(id, row, { scope: "refund-request", id: requestId }, key, 1_000);
     expect(await db.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-      return withdrawRefundObligation(tx, context, { bookingId: id, scope: "refund-request", id: requestId, reason: "release_claim" });
+      return withdrawRefundObligation(tx, context, { bookingId: id, scope: "refund-request", id: requestId, reason: "release_claim", senderKeyPrefix: `refund_request_${requestId}` });
     })).toBe(true);
     expect((await reservationOf(key))?.release?.reason).toBe("SUPERSEDED_KEY");
     expect((await event(R05("refund-request", requestId)))?.journal?.reversedBy).not.toBeNull();
     const again = await r05(id, "refund-request", requestId, 1_000, true);
     expect(String(again).startsWith(`${R05("refund-request", requestId)}|after|`)).toBe(true);
+    await capsHold(id);
+
+    // Review F4: the re-approval sends the same Stripe key, so a refund Stripe made under it is replayed, never
+    // repeated; the journal reserves the key's next generation against the new R05, and the refund pays it.
+    resetStripeRaceHooks();
+    stripeRaceHooks.refund = async (args) => ({ id: `re_${args.idempotencyKey}`, object: "refund", amount: args.amountCents, currency: "nzd", status: "succeeded",
+      created: 1_782_864_000, payment_intent: args.paymentIntentId, charge: `ch_${args.paymentIntentId}`, metadata: refundRequestStripeMetadata(args), reason: args.reason });
+    try {
+      await refundPaymentTransactions({ format: CLUB_FORMAT_TEST, paymentId: `${id}-payment`, amountCents: 1_000, allocation: [{ paymentTransactionId: row.id, amountCents: 1_000 }],
+        metadata: { bookingId: id, reason: "refund_appeal_approved" }, idempotencyKeyPrefix: `refund_request_${requestId}`, obligation: { scope: "refund-request", id: requestId } });
+    } finally {
+      resetStripeRaceHooks();
+    }
+    expect((await reservationOf(`${key}#2`))?.release?.reason).toBe("ANSWERED");
+    expect(await family(String(again), id)).toMatchObject({ paid: 1_000, reserved: 0 });
+    await capsHold(id);
+    expect(await refundCensus(id)).toEqual([]);
+  });
+
+  it("MUTATION (review F3): a second sender of one capture-return debt never releases the first's reservation in flight, and is refused", async () => {
+    const id = await booking();
+    await capture(id, 10_000);
+    const late = await db.paymentTransaction.create({ data: { paymentId: `${id}-payment`, source: "STRIPE", kind: "ADDITIONAL", status: "SUCCEEDED", amountCents: 3_000, stripePaymentIntentId: `${id}-late` } });
+    await db.$transaction((tx) => syncBookingLedgerSettlements({ paymentId: `${id}-payment`, store: tx }));
+    await db.$transaction((tx) => postBookingReceipts(tx, context, { paymentId: `${id}-payment`, decision: { paymentIntentId: late.stripePaymentIntentId!, collect: false } }));
+    const debt = { scope: "capture-return" as const, id: late.stripePaymentIntentId!, ensureFaceCents: 3_000 };
+    const webhookPrefix = `late_cancel_refund_${id}_${late.stripePaymentIntentId}`;
+    const webhookKey = `${webhookPrefix}_${late.id}_3000`;
+    const repairPrefix = `late_cancel_refund_repair_${id}`;
+    const repairKey = `${repairPrefix}_${late.id}_3000`;
+    await reserve(id, late, debt, webhookKey, 3_000, [webhookKey], webhookPrefix);
+    await expect(reserve(id, late, debt, repairKey, 3_000, [repairKey], repairPrefix)).rejects.toBeInstanceOf(MemberMoneyReservationRefused);
+    expect((await reservationOf(webhookKey))?.release).toBeNull();
+    expect(await reservationOf(repairKey)).toBeNull();
+    expect(await family(R05("capture-return", late.stripePaymentIntentId!), id)).toMatchObject({ funded: 3_000, reserved: 3_000, paid: 0 });
+    await capsHold(id);
+
+    // Review M5: Stripe refuses the webhook's refund, and the treasurer keeps the capture: its debt is reversed.
+    await refund(id, late, "re_m4c_kept", 3_000, { evidence: webhookKey, status: "failed" });
+    expect((await reservationOf(webhookKey))?.release?.reason).toBe("REFUSED");
+    expect(await db.$transaction((tx) => closeKeptCaptureReturn(tx, context, { bookingId: id, paymentIntentId: late.stripePaymentIntentId!, actorMemberId: names.officerId }))).toBe(true);
+    expect((await event(R05("capture-return", late.stripePaymentIntentId!)))?.journal?.reversedBy).not.toBeNull();
+    await capsHold(id);
+  });
+
+  it("MUTATION (review M1): two closes of one debt that each let the club keep a rest post a close-out each, so nothing is left open", async () => {
+    const { id, row } = await cancelledPaidBooking();
+    const close = (recordId: string, amountCents: number, restCents: number) => db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      return postPaidAnotherWayClose(tx, context, { bookingId: id, obligation: { scope: "cancellation", id }, recordId, amountCents, restCents, rest: "club-keeps",
+        attemptKeys: [], transactionIds: [row.id], closedAt: new Date(context.effectiveAt), actorMemberId: names.officerId });
+    });
+    await close(`${id}-first`, 3_000, 1_000);
+    await close(`${id}-second`, 3_000, 1_000);
+    expect(await event(memberMoneyEventKeys.refundCloseOut(`${id}-first`))).not.toBeNull();
+    expect(await event(memberMoneyEventKeys.refundCloseOut(`${id}-second`))).not.toBeNull();
+    expect(await family(R05("cancellation", id), id)).toMatchObject({ paid: 8_000, reserved: 0 });
+    await capsHold(id);
+  });
+
+  it("MUTATION (review M3): a close whose debt is not in the journal still posts its bank cash, unapplied, to the owner", async () => {
+    const { id } = await cancelledPaidBooking();
+    const posted = await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      return postPaidAnotherWayClose(tx, context, { bookingId: id, obligation: { scope: "modification", id: `${id}-before-m4c` }, recordId: `${id}-old-row`, amountCents: 2_500,
+        restCents: 0, rest: null, attemptKeys: [], transactionIds: [], closedAt: new Date(context.effectiveAt), actorMemberId: names.officerId });
+    });
+    expect(posted).toBe(1);
+    const r14 = await event(memberMoneyEventKeys.paidAnotherWay(`${id}-old-row`));
+    expect(r14?.journal?.lines.map((l) => `${l.side} ${l.account} ${l.amountCents} ${l.memberId ?? ""}`).sort()).toEqual(["CREDIT BANK 2500 ", `DEBIT MEMBER_RECEIVABLE 2500 ${names.memberId}`]);
+    expect(r14?.journal?.applications).toEqual([]);
     await capsHold(id);
   });
 

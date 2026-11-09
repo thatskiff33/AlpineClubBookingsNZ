@@ -1,5 +1,6 @@
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { postBookingReceipts, resolveBookingMoneyPostingContext, resolveCardRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
+import { answerSupersededFirstRequest } from "@/lib/superseded-first-request-answer";
 import { withStoreTransaction } from "@/lib/db-transaction";
 import { cardRefundOperationStripeKeyPrefix } from "@/lib/card-refund-stripe-key-prefix";
 import {
@@ -2017,6 +2018,7 @@ async function processRefundSupersededPaymentOperation(
   // #4690: a refund of this row's own that an earlier attempt made but never announced (it was
   // reaped, or crashed, before its notice) is announced here, once, before the close.
   if (outstandingCents <= 0) {
+    await answerSupersededFirstRequest(operation); // #4516 review L1: its first request's refund answers the key's open reservation
     if ((await reportUnannouncedSupersededPaymentRefund(operation, format)) === "in-flight") return waitOnSupersededRefundReport(operation, format);
     await completePaymentRecoveryOperation(operation);
     return "done";
@@ -2050,7 +2052,8 @@ async function processRefundSupersededPaymentOperation(
       const journal = await resolveBookingMoneyPostingContext();
       if (obligation) {
         await reserveCardRefundAttempt(journal, { paymentId: operation.paymentId, obligation, attemptKey: operation.idempotencyKey,
-          paymentTransactionId: refreshedTransaction.id, amountCents: outstandingCents, planAttemptKeys: [operation.idempotencyKey] });
+          senderKeyPrefix: operation.idempotencyKey, paymentTransactionId: refreshedTransaction.id, amountCents: outstandingCents,
+          planAttemptKeys: [operation.idempotencyKey] });
       }
       const refund = await processRefund({
         paymentIntentId: operation.paymentIntentId,

@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import logger from "../../logger";
 import { lockMemberMoneyPayment, readMemberMoneyApplicationState } from "./application-read";
 import { memberMoneyApplicationTotals } from "./application-state";
+import { refundCloseOutIdentity } from "./booking-charges";
 import { eventPosted, readBookingLiveChargeCents } from "./booking-journal-read";
 import { lineDebtor, ownedBy, receiptFactContext } from "./booking-receipts";
 import { isBookingJournalInactive, type BookingJournalContext } from "./journal-activity";
@@ -15,6 +16,7 @@ import {
   refundFamilyOpenCents,
   refundFamilyTip,
   refundObligationChain,
+  stripeKeyOfReservation,
   writeWithLiveCharge,
 } from "./refund-family";
 import { refundDebtor } from "./refund-obligations";
@@ -27,10 +29,12 @@ import type { CardRefundObligationRef } from "./refund-reservations";
  * 1. The closed row's reservations close without a refund (CLOSED_WITHOUT_REFUND), their funding reversed.
  * 2. Dr RP, Cr BANK for exactly what the treasurer paid back (`paid-another-way:<record>`), paying the family's
  *    live tip, funded from the receipts of the charges the allocation placed it on. Cash is never refused for a
- *    cap: the applications trim to what is open (design section 4).
+ *    cap: the applications trim to what is open (design section 4). A close whose debt is not in the journal (a
+ *    row raised before M4c, or one no door maps) still posts its bank cash, unapplied: Dr AR to the booking's
+ *    owner, Cr BANK (#4516 review M3).
  * 3. A part close says what happens to the rest, as the treasurer chose, never by default:
  *    - "club-keeps": the rest of the debt is cleared into a retained booking charge, taxed like the charge, once
- *      per debt (`refund-close-out|<R05 key>`), and the receipts that funded nothing collect it;
+ *      per close record (`refund-close-out:<record>`, review M1), and the receipts that funded nothing collect it;
  *    - "still-owed": nothing more posts; the debt stays open for the rest, for a later refund or close.
  */
 
@@ -60,23 +64,20 @@ export interface PaidAnotherWayJournalClose {
 
 /** The R14 and, for a kept rest, the close-out. Returns the batches posted. */
 export async function postPaidAnotherWayClose(tx: Db, context: BookingJournalContext, input: PaidAnotherWayJournalClose): Promise<number> {
-  if (isBookingJournalInactive(context) || !input.obligation) return 0;
+  if (isBookingJournalInactive(context)) return 0;
   if (!(await eventPosted(tx, memberMoneyEventKeys.bookingCharge(input.bookingId)))) return 0;
   await lockMemberMoneyPayment(tx, input.bookingId);
-  const { live } = await refundObligationChain(tx, input.obligation.scope, input.obligation.id);
-  if (!live) {
-    logger.warn({ bookingId: input.bookingId, obligation: input.obligation }, "A paid-another-way close's refund debt is not in the journal; its bank cash is not posted (#4516)");
-    return 0;
-  }
   const at = receiptFactContext(context, input.closedAt);
   const { lodgeId } = await tx.booking.findUniqueOrThrow({ where: { id: input.bookingId }, select: { lodgeId: true } });
   const booking = { bookingId: input.bookingId, lodgeId };
   const owner = await refundDebtor(tx, input.bookingId, "plain");
+  const live = input.obligation ? (await refundObligationChain(tx, input.obligation.scope, input.obligation.id)).live : null;
+  if (!live) return postUnappliedClose(tx, at, { booking, owner, input });
   let posted = 0;
 
   const before = await readMemberMoneyApplicationState(tx, input.bookingId);
   const familyIds = new Set(refundFamily(before, live).members.map((o) => o.id));
-  for (const reservation of before.reservations.filter((r) => familyIds.has(r.obligationId) && input.attemptKeys.includes(r.attemptKey))) {
+  for (const reservation of before.reservations.filter((r) => familyIds.has(r.obligationId) && input.attemptKeys.includes(stripeKeyOfReservation(r.attemptKey)))) {
     await releaseMemberMoneyRefundReservation(tx, at, { bookingId: input.bookingId, reservationId: reservation.id, reason: "CLOSED_WITHOUT_REFUND",
       source: { kind: "OFFICER_FACT", id: input.recordId, version: `closed:${reservation.attemptKey}` } });
     posted++;
@@ -125,7 +126,7 @@ async function postCloseOut(tx: Db, context: Parameters<typeof writeWithLiveChar
   receipts: ReadonlyArray<{ transactionId: string; line: { id: string } }>; input: PaidAnotherWayJournalClose;
 }): Promise<number> {
   const { booking, tip, input } = args;
-  const eventKey = memberMoneyEventKeys.refundCloseOut(args.rootKey as Parameters<typeof memberMoneyEventKeys.refundCloseOut>[0]);
+  const eventKey = memberMoneyEventKeys.refundCloseOut(input.recordId);
   if (await eventPosted(tx, eventKey)) return 0;
   const state = await readMemberMoneyApplicationState(tx, booking.bookingId);
   const totals = memberMoneyApplicationTotals(state);
@@ -151,8 +152,26 @@ async function postCloseOut(tx: Db, context: Parameters<typeof writeWithLiveChar
     legs: [
       { type: "amount", account: "REFUND_PAYABLE", side: "DEBIT", amountCents: input.restCents, debtor: lineDebtor(tip), booking, obligationKey: tip.key, evidence },
       { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: input.restCents, booking,
-        chargeIdentity: `booking:${booking.bookingId}:refund-close-out:${input.recordId}`, evidence },
+        chargeIdentity: refundCloseOutIdentity(booking.bookingId, input.recordId), evidence },
     ],
     applications }, { liveChargeCents: liveAfter });
+  return 1;
+}
+
+/** Review M3: R14 for a close whose debt the journal does not hold, its bank cash on the owner's receivable. */
+async function postUnappliedClose(tx: Db, context: Parameters<typeof writeWithLiveCharge>[1], args: {
+  booking: { bookingId: string; lodgeId: string }; owner: Awaited<ReturnType<typeof refundDebtor>>; input: PaidAnotherWayJournalClose;
+}): Promise<number> {
+  const { booking, owner, input } = args;
+  const eventKey = memberMoneyEventKeys.paidAnotherWay(input.recordId);
+  if (await eventPosted(tx, eventKey)) return 0;
+  logger.warn({ bookingId: booking.bookingId, obligation: input.obligation, recordId: input.recordId },
+    "A paid-another-way close's refund debt is not in the journal; its bank cash posts unapplied (#4516)");
+  const evidence = { recordId: input.recordId, rest: input.rest, restCents: input.restCents, unapplied: true };
+  const leg = { type: "amount" as const, amountCents: input.amountCents, booking, evidence };
+  await writeWithLiveCharge(tx, context, { kind: "REFUND", eventKey, origin: "OFFICER", actorMemberId: input.actorMemberId,
+    source: { kind: "OFFICER_FACT", id: input.recordId, version: eventKey }, reason: "Refund paid another way, not yet answered to a debt",
+    legs: [{ ...leg, account: "MEMBER_RECEIVABLE", side: "DEBIT", debtor: owner }, { ...leg, account: "BANK", side: "CREDIT" }],
+  }, { liveChargeCents: await readBookingLiveChargeCents(tx, booking.bookingId) });
   return 1;
 }

@@ -47,7 +47,9 @@ import { xeroQueuedMessage, xeroRefundNotePromise } from "@/components/admin/dea
 
 const db = {
   payment: { findUnique: vi.fn(async () => ({ id: "p-1", bookingId: "b-1", refundedAmountCents: 0 })) },
-  manualRefundTask: { findUnique: vi.fn(async () => null) },
+  manualRefundTask: { findUnique: vi.fn(async (_args: unknown): Promise<unknown> => null) },
+  // #4516 review M4: a still-owed rest's origin, through its close's record.
+  paymentRecoveryOperation: { findUnique: vi.fn(async (_args: unknown): Promise<unknown> => null) },
 };
 const PAYMENT = { id: "p-1", xeroInvoiceId: "inv-1" };
 const failedLater: { idempotencyKey: string; paymentIntentId: string; amountCents: number; allocationPlan?: unknown } = {
@@ -161,6 +163,21 @@ describe("a failed-later row closed as paid another way (#4104, money 2; delta M
       } as never),
     ).toEqual({ xeroRefundNote: "now" });
     expect(mocks.coveredCents).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#4516 review M4b): a still-owed rest of a failed-later row is answered by that row's card note, never noted twice", async () => {
+    // $100 failed later with its $100 card note in Xero; $30 paid back in part, $70 still owed. Closing the $70:
+    // the notes exceed the cash standing behind them ($100 noted, $30 counted) by exactly the rest.
+    mocks.coveredCents.mockResolvedValue(10_000);
+    mocks.eligibleCashCents.mockResolvedValue(3_000);
+    db.manualRefundTask.findUnique.mockResolvedValueOnce({ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "card-refund-paid-another-way:op-failed" });
+    db.paymentRecoveryOperation.findUnique.mockResolvedValueOnce({ ...failedLater, id: "op-failed", amountCents: 10_000, allocationPlan: null });
+    const rest = { idempotencyKey: "card_refund_still_owed_task-1", paymentIntentId: "pi_1", amountCents: 7_000,
+      allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 7_000 }] };
+    const xeroPlan = await plan(rest);
+    expect(xeroPlan).toEqual({ xeroRefundNote: "now", cardNoteCoversCents: 7_000 });
+    expect(await queue(xeroPlan, 7_000)).toBe("covered-by-card-note");
+    expect(mocks.enqueueNote).not.toHaveBeenCalled();
   });
 
   it("a close with no invoice to credit queues nothing, card note or not", async () => {

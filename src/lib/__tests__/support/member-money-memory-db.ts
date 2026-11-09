@@ -31,7 +31,7 @@ const COLUMNS: Record<string, readonly string[]> = {
   memberMoneyRefundReservationRelease: ["id", "reservationId", "reason", "stripeRefundId", "applicationId", "createdAt"],
   paymentRefund: ["id", "paymentId", "paymentTransactionId", "stripeRefundId", "stripePaymentIntentId", "amountCents", "status", "stripeCreatedAt", "createdAt", "updatedAt"],
   paymentRecoveryOperation: ["id", "type", "idempotencyKey", "bookingId", "paymentId", "paymentIntentId", "amountCents", "stripeKeyPrefix", "allocationPlan"],
-  manualRefundTask: ["id", "occurrenceKey"],
+  manualRefundTask: ["id", "occurrenceKey", "kind", "status", "amountCents", "raisedAmountCents"],
 };
 
 const one = (model: string, local: string, foreign = "id"): Relation => ({ model, many: false, local, foreign });

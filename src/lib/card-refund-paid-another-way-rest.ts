@@ -119,7 +119,9 @@ export async function closePaidAnotherWayRest(tx: Prisma.TransactionClient, jour
   const prefix = cardRefundOperationStripeKeyPrefix(operation);
   await postPaidAnotherWayClose(tx, journal, { bookingId: operation.bookingId, obligation: await resolveCardRefundObligation(tx, operation), recordId: input.recordId,
     amountCents: input.amountCents, restCents, rest: input.paidBack === "full" ? null : input.rest,
-    attemptKeys: [operation.idempotencyKey, ...(parseRefundAllocationPlan(operation.allocationPlan) ?? []).map((slice) => refundSliceStripeIdempotencyKey(prefix, slice))],
+    // #4516 review L2: a slice already made answers its own reservation when its refund is recorded; never closed here.
+    attemptKeys: [operation.idempotencyKey, ...(parseRefundAllocationPlan(operation.allocationPlan) ?? [])
+      .filter((slice) => !slice.madeRefundId).map((slice) => refundSliceStripeIdempotencyKey(prefix, slice))],
     transactionIds: input.unsentTransactionIds, closedAt: input.closedAt, actorMemberId: input.actingMemberId });
   return { restCents, stillOwedOperationId };
 }
