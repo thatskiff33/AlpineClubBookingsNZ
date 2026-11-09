@@ -334,7 +334,7 @@ async function cancelledPaidBooking() {
     expect((await reservationOf(key))?.release?.reason).toBe("SUPERSEDED_KEY");
     expect((await event(R05("refund-request", requestId)))?.journal?.reversedBy).not.toBeNull();
     const again = await r05(id, "refund-request", requestId, 1_000, true);
-    expect(again).toMatch(new RegExp(`^${R05("refund-request", requestId).replace(/[|]/g, "\\|")}\\|after\\|`));
+    expect(String(again).startsWith(`${R05("refund-request", requestId)}|after|`)).toBe(true);
     await capsHold(id);
   });
 
