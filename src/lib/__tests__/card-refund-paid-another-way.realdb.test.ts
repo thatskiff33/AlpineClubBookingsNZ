@@ -969,6 +969,32 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
         await expect(runWorker(kept[0]!.id)).resolves.toBe(RECEIPT_LINK.xeroObjectId);
         expect(await noteRows()).toHaveLength(2);
       });
+
+      // #4516 round-4 review 3: the note step counts what each close says it queued now. A close with nothing paid
+      // back answers nothing, even beside a note row asked for it before, so it never offsets a note queued now.
+      it("MUTATION (#4516 round-4 review 3): a close with nothing paid back beside its old note row never offsets the note queued now - the step answers 1", async () => {
+        const { queueWaitingPaidAnotherWayNote } = await import("@/lib/paid-another-way-receipt-note");
+        const part = await closeCardRefundPaidAnotherWay({ operationId: OPERATION_ID, amountCents: 2_000, paidBack: "partial", rest: "still-owed",
+          expectedOwedCents: REFUND_CENTS, note: "Bank transfer, part, ref RACE", actingMemberId: OFFICER_ID });
+        await closeCardRefundPaidAnotherWay({ operationId: part.stillOwedOperationId!, amountCents: REFUND_CENTS - 2_000, paidBack: "full",
+          expectedOwedCents: REFUND_CENTS - 2_000, note: "Bank transfer, the rest, ref RACE", actingMemberId: OFFICER_ID });
+        const [first, second] = await prisma.manualRefundTask.findMany({
+          where: { bookingId: BOOKING_ID, occurrenceKey: { startsWith: "card-refund-paid-another-way:" } }, orderBy: { completedAt: "asc" },
+        });
+        const kept = await prisma.xeroSyncOperation.findMany({ where: KEPT_ROW });
+        await expect(runWorker(kept[0]!.id)).resolves.toBe(RECEIPT_LINK.xeroObjectId);
+        const noteOf = async (recordId: string) =>
+          (await noteRows()).find((row) => (row.requestPayload as { paidAnotherWayTaskId: string }).paidAnotherWayTaskId === recordId);
+        // The first close now reads as paying back nothing, its note row still asked; the second's note was never asked.
+        await prisma.manualRefundTask.update({ where: { id: first!.id }, data: { amountCents: 0 } });
+        await prisma.xeroSyncOperation.delete({ where: { id: (await noteOf(second!.id))!.id } });
+
+        await expect(queueWaitingPaidAnotherWayNote(LATE_INTENT)).resolves.toBe(1);
+        expect(await noteOf(second!.id)).toBeDefined();
+        expect(await noteRows()).toHaveLength(2);
+        // Run again: nothing more is queued now.
+        await expect(queueWaitingPaidAnotherWayNote(LATE_INTENT)).resolves.toBe(0);
+      });
     });
   },
 );

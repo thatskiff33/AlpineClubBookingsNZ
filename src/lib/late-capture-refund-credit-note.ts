@@ -455,7 +455,9 @@ export async function finishApprovedLateCaptureRefundAfterReplay(operation: {
  * worker runs this on every run of the receipt's row, so a note row already
  * asked for a record - in any state but withdrawn; a failed one is retried as
  * its own row - is returned, never a second. Returns each waiting close's note
- * row id. Throws: the worker then fails its row with the link standing, and the
+ * row, and whether this run queued it (#4516 round-4 review 3: one asked for
+ * before is never queued now, so the note step counts what it queued, close by
+ * close). Throws: the worker then fails its row with the link standing, and the
  * row's retry runs this again.
  */
 export async function notePaidAnotherWayCloseOnReceipt(params: {
@@ -464,19 +466,22 @@ export async function notePaidAnotherWayCloseOnReceipt(params: {
   receiptInvoiceId: string;
   clubZone: ClubTimeZone;
   store: Prisma.TransactionClient;
-}): Promise<string[]> {
-  const noted: string[] = [];
+}): Promise<WaitingCloseNote[]> {
+  const noted: WaitingCloseNote[] = [];
   for (const close of await findLateCaptureRefundPaidAnotherWayCloses(params.paymentIntentId, params.store)) {
-    const noteOperationId = await noteOneWaitingClose(close, params);
-    if (noteOperationId !== null) noted.push(noteOperationId);
+    const note = await noteOneWaitingClose(close, params);
+    if (note !== null) noted.push(note);
   }
   return noted;
 }
 
+/** A waiting close's bank-transfer note row, and whether this run queued it (never one asked for before). */
+export type WaitingCloseNote = { noteOperationId: string; queuedNow: boolean };
+
 async function noteOneWaitingClose(
   close: LateCaptureRefundPaidAnotherWay,
   params: { receiptInvoiceId: string; clubZone: ClubTimeZone; store: Prisma.TransactionClient },
-): Promise<string | null> {
+): Promise<WaitingCloseNote | null> {
   if (paidAnotherWayCloseXeroNote(close) !== "after-receipt" || close.paymentId === null) return null;
   const amountCents = Math.max(0, close.amountCents ?? 0);
   if (amountCents === 0) return null;
@@ -485,7 +490,7 @@ async function noteOneWaitingClose(
     where: { ...paidAnotherWayCloseNoteRowsWhere(close.paymentId, close.id), status: { not: "CANCELLED" } },
     select: { id: true },
   });
-  if (asked) return asked.id;
+  if (asked) return { noteOperationId: asked.id, queuedNow: false };
   const queued = await enqueueXeroRefundCreditNoteOperation(close.paymentId, amountCents, {
     refundMethod: "internet-banking",
     paidAnotherWayTaskId: close.id,
@@ -496,5 +501,5 @@ async function noteOneWaitingClose(
     ...(close.completedByMemberId ? { createdByMemberId: close.completedByMemberId } : {}),
     store: params.store,
   });
-  return queued.queueOperationId;
+  return queued.queueOperationId ? { noteOperationId: queued.queueOperationId, queuedNow: true } : null;
 }
