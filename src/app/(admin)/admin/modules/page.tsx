@@ -1,5 +1,7 @@
 "use client";
 
+import { adminHref } from "@/lib/admin-hubs";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
@@ -86,7 +88,7 @@ function readinessLabel(status: ModuleReadinessStatus) {
 // release note, and two rows away from the Xero and Google sign-in cards that do
 // show the affordance.
 const MODULE_SETUP_HREFS: Partial<Record<ModuleKey, string>> = {
-  xeroIntegration: "/admin/xero/setup",
+  xeroIntegration: adminHref("xero-setup"),
   googleLogin: "/admin/google/setup",
   analytics: "/admin/integrations",
   // The Alpine Central Server setup lives on the Integrations hub (as a card

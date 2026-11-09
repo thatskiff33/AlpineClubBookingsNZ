@@ -73,7 +73,7 @@ export const PRODUCTION_GUARD_ROSTER: readonly GuardRosterEntry[] = [
   { file: "src/app/(finance)/finance/x/page.tsx", why: "a finance screen" },
   { file: "src/app/(public)/x/page.tsx", why: "a public screen" },
   {
-    file: "src/app/(admin)/admin/xero/_components/x.tsx",
+    file: "src/app/(admin)/admin/finance/xero/_components/x.tsx",
     why: "the Xero admin screens, deliberately NOT money modules: they render API-budget percentages",
   },
   // --- outside src/, where the money-adjacent backfills live -----------------

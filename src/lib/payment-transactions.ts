@@ -4,6 +4,7 @@ import {
   PaymentTransactionKind,
   Prisma,
 } from "@prisma/client";
+import { refundHeadroomIncrementCents } from "@/lib/refund-headroom";
 import { prisma } from "@/lib/prisma";
 import { refundSliceStripeIdempotencyKey } from "@/lib/payment-recovery-keys";
 import { processRefund } from "@/lib/stripe";
@@ -629,10 +630,8 @@ async function addWithinHeadroom(
   return nextCents - previousCents;
 }
 
-/** What of `amountCents` a captured row's refunded total can still take: capped at its headroom. Pure (#4119: the cancel preview's in-memory fold). */
-export function refundHeadroomIncrementCents(row: { amountCents: number; refundedAmountCents: number }, amountCents: number): number {
-  return Math.min(Math.max(row.amountCents - row.refundedAmountCents, 0), Math.max(amountCents, 0));
-}
+/** What of `amountCents` a captured row's refunded total can still take (`refund-headroom.ts`, #4368 review S1). */
+export { refundHeadroomIncrementCents };
 
 /**
  * The migration that shipped the first `PaymentRefund` writers (ebd633858,

@@ -25,7 +25,7 @@ import {
   isAppliedPaymentStatus,
   isAppliedPaymentsDate,
   isAppliedPaymentsSearch,
-} from "@/app/(admin)/admin/payments/_applied-query-vocabulary";
+} from "@/app/(admin)/admin/finance/payments/_applied-query-vocabulary";
 import { adminPaymentsQuerySchema } from "@/lib/admin-payments-service";
 import { AGE_TIER_VALUES } from "@/lib/age-tier-schema";
 import { DIAGNOSTICS_PAGE_CONTEXT_BOUNDS } from "@/lib/diagnostics/page-context/types";

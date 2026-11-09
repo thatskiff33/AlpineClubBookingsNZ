@@ -183,7 +183,8 @@ function makeDb(opts: {
   const tx = {
     $executeRaw: vi.fn(async (strings: TemplateStringsArray) => {
       const sql = strings.join("?");
-      order.push(sql.includes("hashtextextended") ? "lodge-lock" : "global-lock");
+      // #4853: the booking-row lock (`lockBookingRowForOwnerRead`) runs through this same client.
+      order.push(sql.includes("hashtextextended") ? "lodge-lock" : sql.includes('FROM "Booking"') ? "booking-row" : "global-lock");
       return 1;
     }),
     bookingChangeRequest: {
@@ -240,7 +241,8 @@ describe("approveAndExecutePolicyExceptionRequest", () => {
     });
 
     expect(result).toEqual({ outcome: "executed", requestId: "req-1" });
-    // Lock order, claim, atomic release + execute in-tx, THEN post-commit.
+    // Lock order, claim, atomic release + execute in-tx, THEN post-commit. A NEW_BOOKING
+    // snapshot has no booking row to take yet (#4853).
     expect(order).toEqual([
       "global-lock",
       "lodge-lock",
@@ -651,6 +653,28 @@ describe("approveAndExecutePolicyExceptionRequest", () => {
     expect(result.outcome).toBe("executed");
     expect(hooks.verifyLiveProposalIntegrity).toHaveBeenCalledTimes(1);
   });
+
+  it("#4853: a MODIFICATION takes the booking row it executes on after the lodge key, before the claim", async () => {
+    // Keyed from the frozen snapshot the lodge key also comes from, so the row
+    // locked is the booking the canonical service modifies (`snapshot.bookingId`),
+    // not a second column that could disagree with it.
+    const modRow = baseRow({ proposalHash: MOD_HASH });
+    modRow.proposalSnapshot = MOD_SNAPSHOT as never;
+    modRow.bookingId = "column-must-not-key-the-lock";
+    const { db, tx, order } = makeDb({ row: modRow });
+    const hooks = makeHooks({ verifyLiveProposalIntegrity: vi.fn(async () => true) }, order);
+    const result = await approveAndExecutePolicyExceptionRequest({
+      requestId: "req-1",
+      expectedVersion: 1,
+      actorMemberId: "admin-1",
+      hooks,
+      db: db as never,
+    });
+    expect(result.outcome).toBe("executed");
+    expect(order.slice(0, 4)).toEqual(["global-lock", "lodge-lock", "booking-row", "claim-approved"]);
+    const bookingRow = tx.$executeRaw.mock.calls.find(([strings]) => strings.join("?").includes('FROM "Booking"'));
+    expect(bookingRow?.slice(1)).toEqual([MOD_SNAPSHOT.bookingId]);
+  });
 });
 
 describe("resolvePolicyExceptionRequestTerminal", () => {
@@ -842,7 +866,8 @@ function makeNewBookingDb(opts: {
   const tx = {
     $executeRaw: vi.fn(async (strings: TemplateStringsArray) => {
       const sql = strings.join("?");
-      order.push(sql.includes("hashtextextended") ? "lodge-lock" : "global-lock");
+      // #4853: the booking-row lock (`lockBookingRowForOwnerRead`) runs through this same client.
+      order.push(sql.includes("hashtextextended") ? "lodge-lock" : sql.includes('FROM "Booking"') ? "booking-row" : "global-lock");
       return 1;
     }),
     newBookingPolicyExceptionRequest: {
@@ -878,7 +903,7 @@ function newBookingRow(overrides: Record<string, unknown> = {}) {
 }
 
 describe("newBookingExceptionRequestStore", () => {
-  it("approves a new-booking request through the same algorithm and lock order", async () => {
+  it("approves a new-booking request through the same algorithm and lock order (no booking row to take yet, #4853)", async () => {
     const { db, order, updateMany, deleteMany } = makeNewBookingDb({
       row: newBookingRow(),
     });

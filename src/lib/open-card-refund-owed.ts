@@ -130,6 +130,22 @@ export function carriesCardRefundOperationMetadata(
 }
 
 /**
+ * #4368 review F3 (`INV-SSOT`): a refund this row's door made with no slice
+ * evidence (`INV-PAY-147`) - its metadata (`carriesCardRefundOperationMetadata`)
+ * and no `refundSliceKey`: made before slices carried their key, or by an
+ * unkeyed send. No slice key can tie it to a slice, so only a mark or a
+ * reader that knows its one request can (a superseded intent's first request,
+ * `superseded-first-request-answer.ts`; "Try the card again"'s refusal,
+ * `unadoptedOwnStripeRefunds`).
+ */
+export function isOwnUnstampedCardRefund(
+  operation: Parameters<typeof cardRefundOperationRefundMetadata>[0],
+  metadata: Record<string, string> | null | undefined,
+): boolean {
+  return carriesCardRefundOperationMetadata(operation, metadata) && !metadata?.[REFUND_SLICE_KEY_METADATA];
+}
+
+/**
  * #4312 round 7 (#4104, `INV-ADDPAY-047`): WHICH REFUNDS STRIPE FAILED LATER A
  * REFUND WAS SENT AGAIN FOR, by the record the recovery replay keeps and by
  * nothing else. The replay sends a slice for its failures
@@ -576,6 +592,25 @@ export function cardRefundMadeForOperation(
     if (lastMadeAt === null || madeAt.getTime() > lastMadeAt.getTime()) lastMadeAt = madeAt;
   });
   return { madeCents, lastMadeAt };
+}
+
+/**
+ * #4368 review (C): the recorded refunds the attribution the owed figure runs
+ * (`attributeRecordedRefunds`) gives each card refund row's slices, by row id -
+ * marked or matched, the refunds that paid that row and nothing else. A refund
+ * the attribution gives no row is in no entry.
+ */
+export function cardRefundsAttributedByOperation(
+  payment: CardRefundOwedPaymentRow,
+): Map<string, RecordedCardRefundRow[]> {
+  const byOperation = new Map<string, RecordedCardRefundRow[]>();
+  attributeRecordedRefunds(payment, (refund, operation, _sliceIndex, cents) => {
+    if (cents <= 0) return;
+    const taken = byOperation.get(operation.id) ?? [];
+    if (!taken.includes(refund)) taken.push(refund);
+    byOperation.set(operation.id, taken);
+  });
+  return byOperation;
 }
 
 /**

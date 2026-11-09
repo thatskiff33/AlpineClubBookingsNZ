@@ -1508,6 +1508,12 @@ describe("declineBookingRequest", () => {
   });
 });
 
+/** `lockBookingRowForOwnerRead`'s statement (#4857); other raw statements here are not all template arrays. */
+function isHeldBookingRowLock(statement: unknown): boolean {
+  const sql = Array.isArray(statement) ? statement.join("?") : JSON.stringify(statement);
+  return sql.includes('FROM "Booking" WHERE') && sql.includes("FOR NO KEY UPDATE");
+}
+
 describe("approveBookingRequest", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1828,19 +1834,25 @@ describe("approveBookingRequest", () => {
     // #3029 F1 adds a third, between them: the in-place guest rewrite locks the
     // held party's BookingGuest rows FOR UPDATE before reading the dietary
     // values it keeps or replaces (`lockBookingGuestRowsForUpdate`).
+    //
+    // #4857 adds the held booking's own row right after the advisory locks
+    // (`lockBookingRowForOwnerRead`); the order is pinned in its own test below.
     const rawStatements = vi.mocked(prisma.$executeRaw).mock.calls;
-    expect(rawStatements).toHaveLength(3);
+    expect(rawStatements).toHaveLength(4);
     expect(JSON.stringify(rawStatements[0][0])).toContain(
       "pg_advisory_xact_lock"
     );
-    expect(JSON.stringify(rawStatements[1][0])).toContain('FROM \\"BookingGuest\\"');
-    expect(JSON.stringify(rawStatements[1][0])).toContain("FOR UPDATE");
+    expect(JSON.stringify(rawStatements[1][0])).toContain('FROM \\"Booking\\"');
+    expect(JSON.stringify(rawStatements[1][0])).toContain("FOR NO KEY UPDATE");
+    expect(rawStatements[1].slice(1)).toEqual(["held-1"]);
+    expect(JSON.stringify(rawStatements[2][0])).toContain('FROM \\"BookingGuest\\"');
+    expect(JSON.stringify(rawStatements[2][0])).toContain("FOR UPDATE");
     // Pin the fence's own statement too. This is the one assertion across the
     // widened suites that would FAIL if the lock were deleted from
     // acquireHostingCoverageQueueParticipantProof — the rest model what the
     // fence reads without asserting that it locked, so without this the seam
     // could be gutted and stay green.
-    expect(JSON.stringify(rawStatements[2][0])).toContain(
+    expect(JSON.stringify(rawStatements[3][0])).toContain(
       "FOR KEY SHARE NOWAIT"
     );
     expect(
@@ -1869,6 +1881,83 @@ describe("approveBookingRequest", () => {
       where: { id: "held-1" },
       select: { id: true, lodgeId: true, memberId: true, status: true },
     });
+  });
+
+  it("takes the held booking's row after the lodge key and before the claim, keyed from the pre-lock read (#4857)", async () => {
+    // Member merge holds booking rows, then takes `Member … FOR UPDATE`. The guest
+    // swap takes a key share on a newly linked guest's Member row, so the held
+    // booking's row comes first, as merge orders them, and before the claim too.
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({
+        status: BookingRequestStatus.PRICED,
+        priceCents: 12000,
+        lodgeId: null,
+        heldBookingId: "held-1",
+      }) as never
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockedBookingFindUnique
+      .mockResolvedValueOnce({ lodgeId: "held-lodge" } as never)
+      .mockResolvedValueOnce({
+        id: "held-1",
+        lodgeId: "held-lodge",
+        memberId: "held-member",
+        status: BookingStatus.AWAITING_REVIEW,
+      } as never);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "held-member",
+      canLogin: false,
+      role: "NON_MEMBER",
+      archivedAt: null,
+      active: true,
+    } as never);
+    mockedCheckCapacity.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    } as never);
+    vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([{ id: "g1" }] as never);
+    vi.mocked(prisma.bookingGuest.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.booking.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+
+    await approveBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" });
+
+    const raw = vi.mocked(prisma.$executeRaw).mock;
+    const rowLock = raw.calls.findIndex(([strings]) => isHeldBookingRowLock(strings));
+    expect(rowLock, "the approval never took the held booking's row").toBeGreaterThan(-1);
+    // Keyed from the pre-transaction read the lodge key came from, not from a read under the locks.
+    expect(raw.calls[rowLock]!.slice(1)).toEqual(["held-1"]);
+    expect(mockedBookingFindUnique.mock.invocationCallOrder[0]).toBeLessThan(raw.invocationCallOrder[rowLock]!);
+    const order = raw.invocationCallOrder[rowLock]!;
+    expect(raw.invocationCallOrder[0]).toBeLessThan(order); // lock(1)
+    expect(mockedAcquireLodgeCapacityLock.mock.invocationCallOrder[0]).toBeLessThan(order);
+    // Before the locked re-read, the request claim, the guest swap and the booking's own update.
+    expect(order).toBeLessThan(vi.mocked(prisma.bookingRequest.findUnique).mock.invocationCallOrder[1]!);
+    expect(order).toBeLessThan(mockedUpdateMany.mock.invocationCallOrder[0]!);
+    expect(order).toBeLessThan(vi.mocked(prisma.bookingGuest.update).mock.invocationCallOrder[0]!);
+    expect(order).toBeLessThan(vi.mocked(prisma.booking.updateMany).mock.invocationCallOrder[0]!);
+  });
+
+  it("takes no booking row for a fresh conversion, which creates its booking (#4857)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({ status: BookingRequestStatus.PRICED, priceCents: 12000 }) as never
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] } as never);
+    vi.mocked(prisma.member.create).mockResolvedValue({ id: "member-1" } as never);
+    vi.mocked(prisma.booking.create).mockResolvedValue({ id: "booking-1" } as never);
+    vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+
+    await expect(
+      approveBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" })
+    ).resolves.toMatchObject({ type: "approved", bookingId: "booking-1" });
+    const bookingRowLocks = vi.mocked(prisma.$executeRaw).mock.calls.filter(([strings]) => isHeldBookingRowLock(strings));
+    expect(bookingRowLocks).toEqual([]);
   });
 
   describe("held branch re-checks capacity for the new guest list (#3817 review)", () => {

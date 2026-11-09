@@ -41,6 +41,7 @@ import type { ClubFormat } from "@/lib/club-format";
 
 // ---- N-04: Admin Alert — Payment Failure ----
 
+import { adminHref } from "@/lib/admin-hubs";
 export function adminPaymentFailureTemplate(data: {
   memberName: string;
   /**
@@ -94,7 +95,7 @@ export function adminPaymentFailureTemplate(data: {
       { label: "Error", value: escapeHtml(data.errorMessage) },
       { label: "Reference", value: escapeHtml(data.paymentIntentId) },
     ])}
-    ${button("View Payments", BASE_URL + "/admin/payments")}
+    ${button("View Payments", BASE_URL + adminHref("payments"))}
   `);
 }
 
@@ -608,7 +609,7 @@ export function adminXeroSyncErrorTemplate(data: {
       { label: "Error Message", value: escapeHtml(data.errorMessage) },
       { label: "Timestamp", value: emailClubDateTime(data.timestamp) },
     ])}
-    ${button("View Xero Status", BASE_URL + "/admin/xero")}
+    ${button("View Xero Status", BASE_URL + adminHref("xero"))}
   `);
 }
 
@@ -664,7 +665,7 @@ export function adminXeroRepeatedFailureTemplate(data: {
     ${alertBox("The same Xero sync correlation key has failed repeatedly and now needs operator attention.", "warning")}
     ${infoTable(infoRows)}
     ${links.length > 0 ? paragraph(links.join(" &nbsp;|&nbsp; ")) : ""}
-    ${button("Open Xero Admin", BASE_URL + "/admin/xero")}
+    ${button("Open Xero Admin", BASE_URL + adminHref("xero"))}
   `);
 }
 
@@ -694,6 +695,6 @@ export function adminRefundRequestTemplate(data: {
       ...(data.requestedAmountCents ? [{ label: "Requested", value: formatCents(data.requestedAmountCents, format) }] : []),
     ])}
     ${alertBox(escapeHtml(data.reason), "info")}
-    ${button("Review Appeal", BASE_URL + "/admin/refund-requests")}
+    ${button("Review Appeal", BASE_URL + adminHref("refund-requests"))}
   `);
 }

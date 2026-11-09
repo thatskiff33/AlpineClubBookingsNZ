@@ -160,8 +160,9 @@ const nextConfig: NextConfig = {
    * letter case, and the guards do not, so the proxy answers a page path spelled
    * any other way with a 404 (`isInexactAdminPagePath`): admin page URLs are
    * served only at their exact spelling. Once on, the old URL redirects to the
-   * hub URL and there are no rewrites. C4 (#4801) has moved the Website pages,
-   * so those rules are live while the switch stays off.
+   * hub URL and there are no rewrites. C4 (#4801) has moved the Website pages
+   * and C5 (#4802) the Finance pages, so those rules are live while the switch
+   * stays off.
    *
    * The pages S1 (#4796) merged into others (`src/lib/admin-hubs/retired.ts`)
    * each have a redirect in both states, FIRST in the list so no moved page's

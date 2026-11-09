@@ -530,7 +530,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "src/lib/booking-exception-execution.ts::acquireGlobalBookingLock#1",
     tier: "GLOBAL",
     reason:
-      "#2525: one helper mints the key for BOTH the atomic approve-and-execute and the terminal release (reject/cancel/supersede) of a policy-exception request. Each mutates a provisional capacity reservation and, for a modification approval, composes the canonical money/status transition, so global comes before the frozen lodge key and the tx-aware service takes the member keys after that.",
+      "#2525: one helper mints the key for BOTH the atomic approve-and-execute and the terminal release (reject/cancel/supersede) of a policy-exception request. Each mutates a provisional capacity reservation and, for a modification approval, composes the canonical money/status transition, so global comes before the frozen lodge key, then (#4853, an existing booking) the booking row before the claim, and the tx-aware service takes the member keys after that.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -555,10 +555,10 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
-    site: "closeCardRefundPaidAnotherWay#1",
+    site: "lockDeadCardRefundRow#1",
     tier: "GLOBAL",
     reason:
-      "#3372 (owner, 7 Oct 2026: 'Count + add close action'): closing a dead card refund as paid another way moves the payment's refundedAmountCents and closes a refund debt in one commit, and every edit, acceptance, paid cancel and refund appeal reads those two separately to size a refund net of what is promised back - under lock(1) the close cannot commit between the two reads. First lock of its transaction, then the operation re-read, then the Payment row (lockPaymentForRefundedTotal, #3924 round 4) BEFORE the payment is read - every refunded-total writer without lock(1) - every Stripe refund recorder, and a cancellation hand-back's completion - takes the Payment row first, so the owed figure cannot move between the read and the allocation, and under it the owed figure is checked against the one the treasurer saw (expectedOwedCents, a 409 when it moved, #3924 round 7) - then, for a late capture's refund only (#3924 round 6), the approval task's row before it reads the capture's Xero receipt; under that row the close also puts a receipt row that failed before reaching Xero from FAILED back to PENDING (status-guarded; a lost claim is re-read, and an officer's resolve or withdrawal of that row is a 409, round 8); one that may already have reached Xero is left FAILED for an officer (round 9). The task row's note-step holders, each in a transaction of its own: the receipt's worker in two - the receipt's link, then the waiting close's note (round 7, C9) - and the same note step run by a change's invoice sent for the capture (round 8, including its retry from its own row, round 9), by the repair tool's QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE action (round 8), and by the nightly credit reconciliation (round 9); none of them holds another lock. Its other holders: the dismissal, reopen and approval claims (the resolution's status-fenced claim, whose dismissal queues the kept receipt under the row it holds; a late capture's task takes no lock(1) there, resolveManualRefundTask#1), and the kept-capture enqueue the repair tool's QUEUE_KEPT_LATE_CAPTURE_INVOICE runs in a transaction of its own; none of them takes lock(1) or the Payment row after the task row. Then the status-guarded claim, the allocation (re-taking the row it holds), and the close's hand-back task and ledger line; the Xero note, or the late capture's receipt, is an outbox row kicked after the commit, so no provider call runs under it.",
+      "#4368 review D (INV-SSOT): the ONE lock(1) of every settlement of a dead card refund row, in card-refund-dead-row-lock.ts - 'Paid another way' (closeCardRefundPaidAnotherWay) and the two no-money settlements, each with its own refusals. 'PAID ANOTHER WAY': #3372 (owner, 7 Oct 2026: 'Count + add close action'): closing a dead card refund as paid another way moves the payment's refundedAmountCents and closes a refund debt in one commit, and every edit, acceptance, paid cancel and refund appeal reads those two separately to size a refund net of what is promised back - under lock(1) the close cannot commit between the two reads. First lock of its transaction, then the operation re-read, then the Payment row (lockPaymentForRefundedTotal, #3924 round 4) BEFORE the payment is read - every refunded-total writer without lock(1) - every Stripe refund recorder, and a cancellation hand-back's completion - takes the Payment row first, so the owed figure cannot move between the read and the allocation, and under it the owed figure is checked against the one the treasurer saw (expectedOwedCents, a 409 when it moved, #3924 round 7) - then, for a late capture's refund only (#3924 round 6), the approval task's row before it reads the capture's Xero receipt; under that row the close also puts a receipt row that failed before reaching Xero from FAILED back to PENDING (status-guarded; a lost claim is re-read, and an officer's resolve or withdrawal of that row is a 409, round 8); one that may already have reached Xero is left FAILED for an officer (round 9). The task row's note-step holders, each in a transaction of its own: the receipt's worker in two - the receipt's link, then the waiting close's note (round 7, C9) - and the same note step run by a change's invoice sent for the capture (round 8, including its retry from its own row, round 9), by the repair tool's QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE action (round 8), and by the nightly credit reconciliation (round 9); none of them holds another lock. Its other holders: the dismissal, reopen and approval claims (the resolution's status-fenced claim, whose dismissal queues the kept receipt under the row it holds; a late capture's task takes no lock(1) there, resolveManualRefundTask#1), and the kept-capture enqueue the repair tool's QUEUE_KEPT_LATE_CAPTURE_INVOICE runs in a transaction of its own; none of them takes lock(1) or the Payment row after the task row. Then the status-guarded claim, the allocation (re-taking the row it holds), and the close's hand-back task and ledger line; the Xero note, or the late capture's receipt, is an outbox row kicked after the commit, so no provider call runs under it. 'NOTHING LEFT OWED' AND 'TRY THE CARD AGAIN': #4368 (owner decision 25 Oct 2026, INV-PAY-149): the one lock(1) of the two no-money settlements of a dead card refund on Stuck States - 'Nothing left owed' (closeCardRefundNothingLeftOwed: the row to SUCCEEDED, naming the later Stripe refund that covers it) and 'Try the card again' (tryDeadCardRefundAgain: the row re-armed with rearmedPaymentRecoveryOperationData for the runner, whose INV-PAY-145 Stripe check runs before any send). Each changes whether a refund debt is open, owed or in flight, which every edit, acceptance, paid cancel and refund appeal reads separately to size a refund net of what is promised back, and each must exclude 'Paid another way' (closeCardRefundPaidAnotherWay#1) on the same row (#4492): all three claim it with the same status-guarded updateMany - dead (deadCardRefundOperationWhere) and on the plan read (onPlanWhere) - under the same keys, so whichever commits second matches nothing and writes nothing. First lock of its transaction, then the row re-read, then the Payment row (lockPaymentForRefundedTotal) BEFORE the payment is read - every refunded-total writer without lock(1), the failed-later writer among them, takes that row first - so the owed figure, the recorded refunds and the payment's other card refund rows cannot move between the read and the claim. Then the claim and the audit row; no money, no journal, no Xero row and no provider call.",
     invariant: "INV-LOCK-001",
   },
   {
@@ -621,7 +621,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "approveBookingRequest#1",
     tier: "GLOBAL",
     reason:
-      "Accepting a request converts a held booking. Hold-release and cancel serialise on this key alone, so with only the per-lodge key a release could cancel the held booking out from under a converting accept.",
+      "Accepting a request converts a held booking. Hold-release and cancel serialise on this key alone, so with only the per-lodge key a release could cancel the held booking out from under a converting accept. Global first, then the hold's immutable lodge key, then (#4857) the held booking's row before the claim and the guest swap.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -1491,11 +1491,14 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // its full task re-read, its claim naming the officer (`completedByMemberId`)
   // and any credit write naming the owner (#4627). #4845: a locked-period
   // change-request approval takes it right after its lodge key, before its claim
-  // names the officer and holds the request row merge re-points. See docs/CONCURRENCY_AND_LOCKING.md -> "The M3b
+  // names the officer and holds the request row merge re-points. #4857: a held booking-request approval
+  // (`booking-request.ts`) takes it on the hold right after its lodge key, before its claim and the guest swap
+  // whose member links take key shares. See docs/CONCURRENCY_AND_LOCKING.md -> "The M3b
   // booking doors and member merge's journal transfer", the M4c paragraph and
   // "A booking writer takes the booking row before a Member key share".
   // #4845: that one statement now lives in `booking-row-lock.ts`, outside the journal boundary, so a lock-only
   // caller names no journal module; `doors` re-exports it and `booking-posting.ts` imports it.
+  // #4853: a policy-exception approval on an existing booking takes it right after its lodge key, before its claim.
   "src/lib/booking-row-lock.ts": 1,
   // #4691 (Ledger M4a): an application batch, a refund reservation and a release
   // take the booking's Payment row (`SELECT 1 … FOR NO KEY UPDATE`) before they
@@ -1698,6 +1701,9 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // (`planLateCaptureApprovalRefund`) takes it first, before it reads what the
   // capture holds; #4838: so does a #2700 hand-back's still-owed check
   // (`assertLateCaptureHandBackStillOwed`, no lock(1)), before its claim.
+  // #4368: and by a dead card refund's "Nothing left owed" and
+  // "Try the card again" (`lockDeadCardRefundRow`), after their lock(1) and
+  // before the payment is read, as "Paid another way" takes it.
   // Order: lock(1) -> lodge -> member credit -> Payment -> refund, recovery and
   // transaction rows. See docs/CONCURRENCY_AND_LOCKING.md -> the #3640
   // paragraph and its #4217 sequel.

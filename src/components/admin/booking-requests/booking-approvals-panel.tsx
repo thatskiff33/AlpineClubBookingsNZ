@@ -1,5 +1,7 @@
 "use client";
 
+import { adminHref } from "@/lib/admin-hubs";
+
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -364,7 +366,7 @@ export function BookingApprovalsPanel({
               booking change requests
             </Link>{" "}
             and{" "}
-            <Link className="underline" href="/admin/refund-requests">
+            <Link className="underline" href={adminHref("refund-requests")}>
               refund requests
             </Link>
             .

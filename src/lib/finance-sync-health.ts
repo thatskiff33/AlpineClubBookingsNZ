@@ -16,6 +16,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { formatMonthOnly } from "@/lib/date-only";
 import type { ClubDateFormat } from "@/lib/club-time";
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * Treasurer sync-confidence view: aggregates the health signals the platform
@@ -82,7 +83,7 @@ export interface FinanceSyncHealthSourceData {
   format: ClubDateFormat;
 }
 
-const XERO_ADMIN_HREF = "/admin/xero";
+const XERO_ADMIN_HREF = adminHref("xero");
 const MAPPINGS_HREF = "/admin/setup/finance";
 
 const STATEMENT_KIND_LABELS: Record<FinanceMonthlyStatementKind, string> = {

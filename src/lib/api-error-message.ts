@@ -45,7 +45,7 @@
  * {@link apiErrorMessageFromBody} and keeps only its extension, so the two
  * answers above hold there too:
  *
- *  - `src/app/(admin)/admin/xero/_components/api.ts` — the Xero routes
+ *  - `src/app/(admin)/admin/finance/xero/_components/api.ts` — the Xero routes
  *    sometimes answer with a `message` key rather than `error`; that second key
  *    is read once and handed to the shared rule as the fallback.
  *  - `src/components/admin/email-settings/email-message-settings-panel.tsx` —

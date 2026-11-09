@@ -1233,6 +1233,30 @@ describe("review finding source/schema contracts", () => {
     }
   });
 
+  it("runs the member-merge policy-exception race suite against the same dedicated PostgreSQL (#4853)", () => {
+    // The suite `describe.skip`s itself without the harness env vars; only it shows the approval's booking-row-first order forms no cycle with merge.
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    const raceStep = workflow.indexOf("name: Test member-merge policy-exception races against dedicated PostgreSQL");
+    expect(raceStep, "ci.yml no longer runs member-merge-policy-exception-races.realdb.test.ts").toBeGreaterThan(
+      workflow.indexOf("name: Migrate dedicated advisory-lock race database"),
+    );
+    const stepBlock = workflow.slice(raceStep, workflow.indexOf("      - name:", raceStep + 1));
+    expect(stepBlock).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
+    expect(stepBlock).not.toContain("CONCURRENCY_RACE_DATABASE_URL:");
+    expect(stepBlock).toContain("pnpm exec vitest run src/lib/__tests__/member-merge-policy-exception-races.realdb.test.ts");
+    const suite = readRepoFile("src/lib/__tests__/member-merge-policy-exception-races.realdb.test.ts");
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    for (const caseName of [
+      "MUTATION: (a) a merge holding the booking and waiting for the officer's Member row makes that officer's approval wait at the booking row; the merge commits and the approval refuses cleanly",
+      "MUTATION: (a) an approval by the duplicate holding its claim makes the merge wait at the booking row; both commit",
+      "(b) a merge holding the duplicate's booking and request makes the approval wait at the booking row; both commit",
+      "MUTATION: (b) an approval holding its claim on the duplicate's request makes the merge wait at the booking row; both commit",
+      "MUTATION: (b) an approval paused at its booking-row lock holds nothing the merge needs: the merge commits, then the approval executes on the survivor's request",
+    ]) {
+      expect(suite, `#4853 case missing: ${caseName}`).toContain(caseName);
+    }
+  });
+
   it("runs the member-merge change-request race suite against the same dedicated PostgreSQL (#4845)", () => {
     // A locked-period approval takes the booking row before its claim, because
     // merge holds booking rows and then re-points the request and takes Member
@@ -1275,6 +1299,49 @@ describe("review finding source/schema contracts", () => {
       "MUTATION: (b) an approval paused at its booking-row lock holds nothing the merge needs: the merge commits, then the approval executes on the survivor's request",
     ]) {
       expect(suite, `#4845 case missing: ${caseName}`).toContain(caseName);
+    }
+  });
+
+  it("runs the member-merge booking-request race suite against the same dedicated PostgreSQL (#4857)", () => {
+    // A held booking-request approval takes the held booking's row before its
+    // claim and guest swap, because merge holds booking rows and then takes
+    // Member FOR UPDATE. `booking-request.test.ts` pins the order against a
+    // mock; only the realdb suite shows PostgreSQL forms no wait-for cycle, and
+    // it `describe.skip`s itself without the harness env vars.
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    const migrateStep = workflow.indexOf(
+      "name: Migrate dedicated advisory-lock race database"
+    );
+    const raceStep = workflow.indexOf(
+      "name: Test member-merge booking-request races against dedicated PostgreSQL"
+    );
+    expect(migrateStep).toBeGreaterThan(-1);
+    expect(
+      raceStep,
+      "ci.yml no longer runs member-merge-booking-request-races.realdb.test.ts. " +
+        "That suite self-skips without RUN_CONCURRENCY_RACE_TESTS, so removing " +
+        "the step silently un-tests the #4857 lock order."
+    ).toBeGreaterThan(migrateStep);
+    const stepBlock = workflow.slice(
+      raceStep,
+      workflow.indexOf("      - name:", raceStep + 1)
+    );
+    expect(stepBlock).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
+    expect(stepBlock).not.toContain("CONCURRENCY_RACE_DATABASE_URL:");
+    expect(stepBlock).toContain(
+      "pnpm exec vitest run src/lib/__tests__/member-merge-booking-request-races.realdb.test.ts"
+    );
+
+    const suite = readRepoFile(
+      "src/lib/__tests__/member-merge-booking-request-races.realdb.test.ts"
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    for (const caseName of [
+      "MUTATION: a merge holding the held booking and waiting for the Member rows makes the approval wait at the booking row before it links the survivor; both commit",
+      "MUTATION: an approval holding its claim makes the merge wait at the held booking's row; the approval commits and the merge refuses cleanly",
+      "MUTATION: an approval paused at its booking-row lock holds nothing the merge needs: the merge commits, then the approval converts the hold",
+    ]) {
+      expect(suite, `#4857 case missing: ${caseName}`).toContain(caseName);
     }
   });
 

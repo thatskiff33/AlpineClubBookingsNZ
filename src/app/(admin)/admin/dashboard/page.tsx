@@ -80,6 +80,7 @@ import {
   buildUnsettledAdditionalUpcomingStaysWhere,
 } from "@/lib/unpaid-finished-stays";
 import { buildUnpaidFinishedStaysHref, buildUnsettledAdditionalStaysHref } from "@/lib/unpaid-finished-stays-hrefs";
+import { adminHref } from "@/lib/admin-hubs";
 
 // #2264: the upcoming check-ins list renders its date range in a fixed-width
 // column, so it stays compact — day plus short month, no year. F3 (#3079)
@@ -426,7 +427,7 @@ export default async function AdminDashboardPage() {
   );
   const canViewPayments = canViewAdminHrefWithMatrix(
     permissionMatrix,
-    "/admin/payments",
+    adminHref("payments"),
   );
   const showOfficerRow =
     canViewBookings ||
@@ -488,7 +489,7 @@ export default async function AdminDashboardPage() {
       </div>
 
       {hasPendingAdminReviews && (
-        <Link href="/admin/refund-requests">
+        <Link href={adminHref("refund-requests")}>
           <Card className="border-info-6 bg-info-3 hover:shadow-md transition-shadow cursor-pointer">
             <CardContent className="flex items-start gap-3 pt-5">
               <AlertTriangle className="h-5 w-5 text-info-11 flex-shrink-0 mt-0.5" />
@@ -761,7 +762,7 @@ export default async function AdminDashboardPage() {
           )}
 
           {canViewPayments && (
-            <Link href="/admin/payments" className="group">
+            <Link href={adminHref("payments")} className="group">
               <Card className="border-border bg-card hover:shadow-sm transition-shadow cursor-pointer">
                 {/* #3372: on a narrow screen the figures stack under the
                     title rather than squeezing beside it. */}

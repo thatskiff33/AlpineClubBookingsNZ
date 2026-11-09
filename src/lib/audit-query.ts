@@ -13,6 +13,7 @@ import {
 } from "./audit-structured-detail";
 import { formatCents } from "./utils";
 import type { ClubFormat } from "@/lib/club-format";
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * The Admin Audit Log's category filter, DERIVED from the canonical taxonomy
@@ -749,14 +750,14 @@ function entityDrilldownLink(
     case "MemberSubscription":
       return {
         label: `${titleCaseAction(entityType)} activity`,
-        href: `/admin/xero/records/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`,
+        href: adminHref("xero-record", { localModel: entityType, localId: entityId }),
         kind: entityType === "Payment" ? "payment" : "xero",
         primary: true,
       };
     case "RefundRequest":
       return {
         label: "Open refunds",
-        href: "/admin/refund-requests",
+        href: adminHref("refund-requests"),
         kind: "admin",
         primary: true,
       };
@@ -835,7 +836,7 @@ function actionFallbackDrilldownLink(
   if (normalized.includes("refund")) {
     return {
       label: "Open refunds",
-      href: "/admin/refund-requests",
+      href: adminHref("refund-requests"),
       kind: "admin",
       primary: true,
     };
@@ -867,7 +868,7 @@ function actionFallbackDrilldownLink(
   if (normalized.includes("xero")) {
     return {
       label: "Open Xero",
-      href: "/admin/xero",
+      href: adminHref("xero"),
       kind: "xero",
       primary: true,
     };
@@ -966,7 +967,7 @@ export function buildAuditDrilldownLinks(params: {
   if (paymentId) {
     addDrilldownLink(links, {
       label: "Payment activity",
-      href: `/admin/xero/records/Payment/${encodeURIComponent(paymentId)}`,
+      href: adminHref("xero-record", { localModel: "Payment", localId: paymentId }),
       kind: "payment",
       primary: links.length === 0,
     });

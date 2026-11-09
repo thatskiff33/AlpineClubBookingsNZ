@@ -30,6 +30,7 @@ import type { FeatureFlags } from "@/config/schema";
 import { isPublicWebsitePath } from "@/lib/setup-gate";
 import * as assetNotFoundRoute from "@/app/asset-not-found/route";
 import nextConfig from "../../../next.config";
+import { ADMIN_PAGES } from "@/lib/admin-hubs";
 import { config, getFeatureFlagBlockResponse } from "../../proxy";
 
 /**
@@ -384,28 +385,40 @@ describe("the shipped next.config.ts, through Next's own pipeline", () => {
     // asserted against the config's own return value. Asset rules in
     // `beforeFiles` would run ahead of the filesystem check and 404 every real
     // image and chunk. The Website move's rewrites belong in `beforeFiles`:
-    // they serve each old URL from the file now under `/admin/website`.
+    // they serve each old URL from the file now under its hub.
     const rewrites = await nextConfig.rewrites!();
+    const nextPattern = (path: string) =>
+      path
+        .split("/")
+        .map((segment) => {
+          const simple = /^\[([A-Za-z][A-Za-z0-9]*)\]$/.exec(segment);
+          return simple ? `:${simple[1]}` : segment;
+        })
+        .join("/");
+    const dynamicCount = (path: string) =>
+      path.split("/").filter((segment) => segment.startsWith("[")).length;
+    const movedRewrites = ADMIN_PAGES.filter((page) => page.moved && page.hubPath !== page.oldPath)
+      .sort(
+        (a, b) =>
+          dynamicCount(a.oldPath) - dynamicCount(b.oldPath) ||
+          a.oldPath.localeCompare(b.oldPath),
+      )
+      .map((page) => ({
+        source: nextPattern(page.oldPath),
+        destination: nextPattern(page.hubPath),
+      }));
 
     expect(Array.isArray(rewrites), "must be the staged form, not a bare array")
       .toBe(false);
+    expect(movedRewrites.map((rule) => rule.destination)).toEqual(
+      expect.arrayContaining([
+        "/admin/website/appearance",
+        "/admin/finance/payments",
+        "/admin/finance/xero/records/:localModel/:localId",
+      ]),
+    );
     expect(rewrites).toEqual({
-      beforeFiles: [
-        { source: "/admin/appearance", destination: "/admin/website/appearance" },
-        {
-          source: "/admin/appearance/identity",
-          destination: "/admin/website/appearance/identity",
-        },
-        { source: "/admin/image-manager", destination: "/admin/website/image-manager" },
-        {
-          source: "/admin/mountain-conditions",
-          destination: "/admin/website/mountain-conditions",
-        },
-        { source: "/admin/page-content", destination: "/admin/website/page-content" },
-        { source: "/admin/site-banners", destination: "/admin/website/site-banners" },
-        { source: "/admin/site-content", destination: "/admin/website/site-content" },
-        { source: "/admin/site-style", destination: "/admin/website/site-style" },
-      ],
+      beforeFiles: movedRewrites,
       afterFiles: [...ASSET_NOT_FOUND_REWRITES],
       fallback: [],
     });

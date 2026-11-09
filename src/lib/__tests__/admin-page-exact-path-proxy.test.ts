@@ -48,6 +48,21 @@ const capitalised = (registryPath: string) =>
     )
     .join("/");
 
+/**
+ * The last character of the last static segment percent-escaped. Never a
+ * dynamic segment's: that takes any value, so escaping it spells another
+ * record (`/admin/xero/records/[localModel]/[localId%5D`), not the same page.
+ */
+const escaped = (registryPath: string) => {
+  const segments = registryPath.split("/");
+  let index = segments.length - 1;
+  while (/^\[.+\]$/.test(segments[index]!)) index -= 1;
+  const segment = segments[index]!;
+  segments[index] =
+    `${segment.slice(0, -1)}%${segment.charCodeAt(segment.length - 1).toString(16).toUpperCase()}`;
+  return segments.join("/");
+};
+
 const MOVED = ADMIN_PAGES.filter((page) => page.moved);
 
 beforeEach(() => {
@@ -79,7 +94,8 @@ describe("the proxy serves admin pages only at their exact spelling", () => {
         capitalised(oldPath),
         capitalised(hubPath),
         oldPath.toUpperCase(),
-        `${oldPath.slice(0, -1)}%${oldPath.charCodeAt(oldPath.length - 1).toString(16).toUpperCase()}`,
+        escaped(oldPath),
+        escaped(hubPath),
       ]) {
         const response = await proxy(request(`${url}?tab=x`));
         expect(response.status, url).toBe(404);

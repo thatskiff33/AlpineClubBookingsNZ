@@ -219,7 +219,7 @@ const THEMED_NEUTRAL_ALLOWLIST = new Set<string>(
     // Reports: the six `print:border-slate-300` PRINT-ONLY variants (the
     // file's screen classes are fully tokenised). Print output is paper, not
     // theme.
-    "src/app/(admin)/admin/reports/page.tsx",
+    "src/app/(admin)/admin/finance/reports/page.tsx",
     // Signage: `bg-black` letterboxes simulating a display screen.
     "src/app/(admin)/admin/display/builder/display-builder.tsx",
     "src/app/(admin)/admin/display/preview/page.tsx",

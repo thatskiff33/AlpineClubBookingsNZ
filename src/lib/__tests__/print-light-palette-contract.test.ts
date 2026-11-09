@@ -644,7 +644,7 @@ function listComponentFiles(path: string): string[] {
 const PRINTABLE_SURFACE_ROOTS = [
   "src/app/(finance)",
   "src/components/finance",
-  "src/app/(admin)/admin/reports",
+  "src/app/(admin)/admin/finance/reports",
   "src/app/(admin)/admin/roster",
   "src/app/(admin)/admin/induction",
   "src/app/(authenticated)/lodge-instructions",

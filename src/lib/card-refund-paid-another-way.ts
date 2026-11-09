@@ -2,7 +2,6 @@ import "server-only";
 
 import { ManualRefundTaskKind, PaymentRecoveryOperationStatus, type Prisma } from "@prisma/client";
 
-import { netCollectedPaymentSelect } from "@/lib/additional-ledger-gap";
 import { createAuditLog } from "@/lib/audit";
 import { planHandBackLine } from "@/lib/booking-ledger-credit-posting";
 import { buildBookingLedgerRows, writeBookingLedgerRows } from "@/lib/booking-ledger-write";
@@ -31,19 +30,23 @@ import { MANUAL_REFUND_TASK_REASON_MAX, normaliseManualPaymentNote } from "@/lib
 import { paidAnotherWayCardNoteCoverContext } from "@/lib/card-refund-paid-another-way-cash";
 import { cardRefundPaidAnotherWayOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
 import {
-  CARD_REFUND_OPERATION_WHERE,
-  cardRefundSlicesByOperation,
-  isOwedCardRefundOperation,
-  unsentSliceCents,
-} from "@/lib/open-card-refund-owed";
-import { getNetCollectedCashParts } from "@/lib/payment-net-collected";
+  DEAD_CARD_REFUND_OPERATION_SELECT,
+  DEAD_CARD_REFUND_PAYMENT_SELECT,
+  DeadCardRefundActionError as CardRefundPaidAnotherWayError,
+  deadCardRefundOperationWhere,
+  deadCardRefundStillOwed,
+  lastErrorSuggestsStripeMayHaveRefunded,
+  laterStripeRefundsCovering,
+  supersededCloseFillsItsCharge,
+  tryCardAgainRefusal,
+  type LaterStripeRefund,
+} from "@/lib/card-refund-dead-row";
+import { deadRowClaimWhere, lockDeadCardRefundRow } from "@/lib/card-refund-dead-row-lock";
+import { isOwedCardRefundOperation } from "@/lib/open-card-refund-owed";
 import { prisma } from "@/lib/prisma";
-import { isPaymentRecoveryOperationExhausted, PAYMENT_RECOVERY_EXHAUSTED_WHERE } from "@/lib/payment-recovery-constants";
 import { isOrganiserChildRefundKey } from "@/lib/payment-recovery-keys";
-import { onPlanWhere } from "@/lib/refused-card-refund-retry";
 import {
   applyLocalRefundAllocation,
-  lockPaymentForRefundedTotal,
   RefundAllocationExceedsCapturedError,
   RefundAllocationRacedError,
 } from "@/lib/payment-transactions";
@@ -124,7 +127,8 @@ import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-
  *   group organiser-cancel settlement's refund is not owed on the payment it
  *   hangs on (`isOwedCardRefundOperation`). Both are refused.
  *
- * LOCKS (`INV-LOCK-001`): the global key first - it moves a payment's refunded
+ * LOCKS (`INV-LOCK-001`; `lockDeadCardRefundRow`, shared with the other two
+ * settlements of a dead row since #4368): the global key first - it moves a payment's refunded
  * total and closes a refund debt, which every edit, acceptance, paid cancel and
  * refund appeal reads separately to size a refund net of what is promised back
  * - then the operation is re-read, then the PAYMENT ROW
@@ -148,81 +152,18 @@ import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-
 /** What `lastError` says on an operation closed here, for a person reading the row. Nothing parses it. */
 export const PAID_ANOTHER_WAY_MARKER = "Closed by the treasurer: paid another way (#3372)";
 
-/** The card refund operations the worker will never claim again (`isPaymentRecoveryOperationExhausted`'s twin). */
-export const deadCardRefundOperationWhere = {
-  ...CARD_REFUND_OPERATION_WHERE,
-  ...PAYMENT_RECOVERY_EXHAUSTED_WHERE,
-} satisfies Prisma.PaymentRecoveryOperationWhereInput;
-
-/** A refusal with the status the route answers. Thrown before or inside the transaction, so nothing commits. */
-export class CardRefundPaidAnotherWayError extends Error {
-  constructor(
-    message: string,
-    readonly status: 400 | 404 | 409,
-  ) {
-    super(message);
-    this.name = "CardRefundPaidAnotherWayError";
-  }
-}
-
-const OPERATION_SELECT = {
-  id: true,
-  type: true,
-  status: true,
-  attempts: true,
-  idempotencyKey: true,
-  bookingId: true,
-  paymentId: true,
-  paymentIntentId: true,
-  paymentTransactionId: true,
-  allocationPlan: true,
-  amountCents: true,
-  createdAt: true,
-  lastError: true,
-  stripeKeyPrefix: true,
-} as const satisfies Prisma.PaymentRecoveryOperationSelect;
-
-const PAYMENT_SELECT = {
-  id: true,
-  xeroInvoiceId: true,
-  ...netCollectedPaymentSelect,
-} as const satisfies Prisma.PaymentSelect;
-
-type ClosablePayment = Prisma.PaymentGetPayload<{ select: typeof PAYMENT_SELECT }>;
-
-/** What one dead card refund still has to send: its own unsent slices, and what the figures say is owed. */
-interface StillOwed {
-  /** Its own unsent slices, before any cap. */
-  ownCents: number;
-  /** `ownCents` capped at the card refund part Net Collected takes off its payment: the most a close may record. */
-  owedCents: number;
-  /** The transactions its unsent slices are on, in its plan's order. */
-  unsentTransactionIds: string[];
-  /** #4516: its unsent slices, what each still had to send, in its plan's order (a still-owed rest's plan). */
-  unsent: { paymentTransactionId: string; amountCents: number }[];
-}
+/** The card refund operations the worker will never claim again (`card-refund-dead-row.ts`, #4368). */
+export { deadCardRefundOperationWhere };
 
 /**
- * What one dead card refund still owes, in cents: its own unsent slices
- * (`cardRefundSlicesByOperation`), capped at the card refund part Net
- * Collected takes off its payment, so the close can never record more than the
- * figures say is owed.
+ * A refusal with the status the route answers. Thrown before or inside the
+ * transaction, so nothing commits. The one refusal class of every settlement of
+ * a dead row (`DeadCardRefundActionError`, #4368 review D).
  */
-function stillOwed(payment: ClosablePayment, operationId: string): StillOwed {
-  const own = cardRefundSlicesByOperation(payment).find(({ operation }) => operation.id === operationId);
-  const unsent = (own?.slices ?? []).filter((slice) => unsentSliceCents(slice) > 0);
-  const ownCents = unsent.reduce((sum, slice) => sum + unsentSliceCents(slice), 0);
-  return {
-    ownCents,
-    owedCents: Math.min(ownCents, getNetCollectedCashParts(payment).cardRefundOwedCents),
-    // #3924 round 4 (M7): only the charges it still had to refund - a sent
-    // slice's transaction is no longer where this money belongs.
-    unsentTransactionIds: [
-      ...new Set(unsent.map((slice) => slice.paymentTransactionId).filter((id) => id !== "")),
-    ],
-    unsent: unsent.map((slice) => ({ paymentTransactionId: slice.paymentTransactionId, amountCents: unsentSliceCents(slice) })),
-  };
-}
+export { CardRefundPaidAnotherWayError };
+
+/** #3924 round 4 (M7): moved to `card-refund-dead-row.ts` (#4368), which "Try the card again" reads too. */
+export { lastErrorSuggestsStripeMayHaveRefunded };
 
 export interface DeadCardRefundRow {
   operationId: string;
@@ -251,65 +192,65 @@ export interface DeadCardRefundRow {
   cardNoteCoversCents: number;
   /** Its last failure looked like a timeout or a network error, so Stripe may have refunded after all. */
   stripeMayHaveRefunded: boolean;
+  /**
+   * #4368: with nothing left owed (`owedCents` 0, and nothing of its own unsent),
+   * the Stripe refunds the attribution gives it, which its "Nothing left owed"
+   * close names (`laterStripeRefundsCovering`); empty while something is owed.
+   */
+  laterStripeRefunds: LaterStripeRefund[];
+  /** #4368 (decision 5): why "Try the card again" may not re-arm it, or null when it may (`tryCardAgainRefusal`). */
+  tryCardAgainRefusal: string | null;
 }
 
 /**
- * #3924 round 4 (M7): whether a refund's last failure looks like a timeout, a
- * network error, a Stripe server error, or Stripe saying the money is already
- * back - the failures where the refund may have gone through with its answer
- * lost. The panel then tells the treasurer to check the Stripe dashboard before
- * paying the member again. A hint only: it reads the worker's wording, and
- * decides nothing.
- *
- * #3924 round 5 (money F5, concurrency F3): a 5xx is matched only beside a
- * status word ("status 502", "statusCode: 503"), never any three digits
- * starting with 5 - "$500.00" is an amount, not a server error.
- *
- * #4101: Stripe refusing a reused idempotency key ("Keys for idempotent requests
- * can only be used with the same parameters...", `idempotency_error`) means an
- * earlier request under that key reached Stripe, and a refund replay's earlier
- * request is the refund itself. A guest-acceptance re-price refund's replay
- * died this way before #4101 although Stripe had made the refund.
- */
-export function lastErrorSuggestsStripeMayHaveRefunded(lastError: string | null): boolean {
-  if (!lastError) return false;
-  return /time[- ]?out|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|socket hang up|network|connection (?:error|reset|closed|refused)|StripeConnectionError|StripeAPIError|status(?:Code)?\D{0,3}5\d\d\b|has already been refunded|greater than (?:the )?unrefunded amount|idempotent requests can only be used with the same parameters|idempotency_error/i.test(
-    lastError,
-  );
-}
-
-/**
- * The dead card refunds the treasurer can close, oldest first, with what each
+ * The dead card refunds the treasurer can settle, oldest first, with what each
  * still owes. Organiser child refunds and group settlement refunds are left
- * out, as the close refuses them; so is one that owes nothing (#3924 round 7,
- * M6), which no close may record - it still counts among the payment
- * recovery operations the stuck-states page says need reconciling.
+ * out, as every action on the list refuses them. #4368 (owner decision, 25 Oct
+ * 2026; review C): one that owes nothing stays on the list while Stripe
+ * refunds the attribution gives it cover all of its own slices, naming them,
+ * for its "Nothing left owed" close - "Paid
+ * another way" never records $0 (#3924 round 7, M6), and no Xero plan is read
+ * for it. One that owes nothing with no such refund is left out, as before: it
+ * still counts among the payment recovery operations the stuck-states page
+ * says need reconciling, for a developer.
  */
 export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
   const operations = await prisma.paymentRecoveryOperation.findMany({
     where: deadCardRefundOperationWhere,
     orderBy: { createdAt: "asc" },
-    select: { ...OPERATION_SELECT, payment: { select: PAYMENT_SELECT } },
+    select: {
+      ...DEAD_CARD_REFUND_OPERATION_SELECT,
+      payment: { select: DEAD_CARD_REFUND_PAYMENT_SELECT },
+      // #4368 review S1: a superseded intent's charge, which "Try the card again"'s check reads.
+      paymentTransaction: { select: { paymentId: true, amountCents: true, refundedAmountCents: true } },
+    },
   });
-  const closable = operations
+  const listed = operations
     .filter(
       (operation) => isOwedCardRefundOperation(operation) && !isOrganiserChildRefundKey(operation.idempotencyKey),
     )
-    .map((operation) => ({ operation, owedCents: stillOwed(operation.payment, operation.id).owedCents }))
-    .filter(({ owedCents }) => owedCents > 0);
+    .map((operation) => ({ operation, owed: deadCardRefundStillOwed(operation.payment, operation.id) }))
+    .map((row) => ({ ...row, later: row.owed.owedCents === 0 ? laterStripeRefundsCovering(row.operation.payment, row.operation.id) : [] }))
+    // #4368 review C: with nothing owed and no Stripe refund the attribution gives this row - a $0 off the payment's
+    // cap alone, or a slice handed to a failed-later row - there is nothing to settle here (`INV-PAY-142`'s stated limit).
+    .filter(({ owed, later }) => owed.owedCents > 0 || later.length > 0);
   return Promise.all(
-    closable.map(async ({ operation, owedCents }) => {
-      const xeroPlan = await paidAnotherWayXeroPlan(prisma, operation, operation.payment, { lockApprovalTask: false });
+    listed.map(async ({ operation, owed, later }) => {
+      const xeroPlan = owed.owedCents > 0
+        ? await paidAnotherWayXeroPlan(prisma, operation, operation.payment, { lockApprovalTask: false })
+        : null;
       return {
         operationId: operation.id,
         bookingId: operation.bookingId,
         bookingReference: formatBookingReference(operation.bookingId),
         raisedAt: operation.createdAt.toISOString(),
-        owedCents,
+        owedCents: owed.owedCents,
         wholeAmountOnly: operation.type === "REFUND_SUPERSEDED_PAYMENT",
-        xeroRefundNote: paidAnotherWayXeroPromise(xeroPlan),
-        cardNoteCoversCents: xeroPlan.xeroRefundNote === "now" ? (xeroPlan.cardNoteCoversCents ?? 0) : 0,
+        xeroRefundNote: xeroPlan ? paidAnotherWayXeroPromise(xeroPlan) : "none",
+        cardNoteCoversCents: xeroPlan?.xeroRefundNote === "now" ? (xeroPlan.cardNoteCoversCents ?? 0) : 0,
         stripeMayHaveRefunded: lastErrorSuggestsStripeMayHaveRefunded(operation.lastError),
+        laterStripeRefunds: later,
+        tryCardAgainRefusal: tryCardAgainRefusal(operation.payment, operation, owed),
       };
     }),
   );
@@ -363,7 +304,7 @@ function paidAnotherWayReason(bookingId: string, paidBack: PaidBackChoice, rest:
 async function assertSupersededCloseFillsItsTransaction(
   tx: Prisma.TransactionClient,
   operation: { paymentTransactionId: string | null; paymentId: string },
-  ownCents: number,
+  owed: { ownCents: number; owedCents: number },
 ): Promise<void> {
   const transaction = operation.paymentTransactionId
     ? await tx.paymentTransaction.findUnique({
@@ -371,8 +312,8 @@ async function assertSupersededCloseFillsItsTransaction(
         select: { paymentId: true, amountCents: true, refundedAmountCents: true },
       })
     : null;
-  const remainingCents = transaction ? transaction.amountCents - transaction.refundedAmountCents : null;
-  if (!transaction || transaction.paymentId !== operation.paymentId || remainingCents !== ownCents) {
+  // #4368 review R2 (`INV-SSOT`): the one rule (`supersededCloseFillsItsCharge`), which "Try the card again" reads too.
+  if (!supersededCloseFillsItsCharge(transaction, operation.paymentId, owed)) {
     throw new CardRefundPaidAnotherWayError(
       "This superseded payment's refund no longer matches what its charge still holds, so it cannot be closed here. Ask a developer to reconcile it.",
       409,
@@ -447,48 +388,16 @@ export async function closeCardRefundPaidAnotherWay(
   const journal = await resolveBookingMoneyPostingContext({ zone: clubZone }); // #4516: R14, before the transaction
 
   const result = await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-    const operation = await tx.paymentRecoveryOperation.findUnique({
-      where: { id: input.operationId },
-      select: OPERATION_SELECT,
+    // `lock(1)`, the row re-read, then (C1) the payment row before the payment is read (`lockDeadCardRefundRow`, #4368 review D).
+    // The record and its line are read by the booking (the census loads both by it), so the payment's booking must be the row's.
+    const { operation, payment, booking } = await lockDeadCardRefundRow(tx, input.operationId, {
+      notOwedKind: "This is not a card refund that can be closed here.",
+      organiserChild: "This refund comes out of the group organiser's card payment, so it cannot be closed here. Ask a developer to reconcile it.",
+      closed: "This card refund has already been closed.",
+      notGivenUp: "This card refund is still being retried, so it cannot be closed yet.",
+      otherBooking: "This card refund's payment belongs to another booking, so it cannot be closed here. Ask a developer to reconcile it.",
     });
-    if (!operation) throw new CardRefundPaidAnotherWayError("Card refund not found.", 404);
-    if (!isOwedCardRefundOperation(operation)) {
-      throw new CardRefundPaidAnotherWayError("This is not a card refund that can be closed here.", 409);
-    }
-    if (isOrganiserChildRefundKey(operation.idempotencyKey)) {
-      throw new CardRefundPaidAnotherWayError(
-        "This refund comes out of the group organiser's card payment, so it cannot be closed here. Ask a developer to reconcile it.",
-        409,
-      );
-    }
-    const dead = isPaymentRecoveryOperationExhausted(operation);
-    if (!dead) {
-      throw new CardRefundPaidAnotherWayError(
-        operation.status === PaymentRecoveryOperationStatus.SUCCEEDED
-          ? "This card refund has already been closed."
-          : "This card refund is still being retried, so it cannot be closed yet.",
-        409,
-      );
-    }
-
-    // C1: the payment row before the payment is read - `lock(1)`, then this.
-    await lockPaymentForRefundedTotal(tx, operation.paymentId);
-    const payment = await tx.payment.findUnique({ where: { id: operation.paymentId }, select: PAYMENT_SELECT });
-    if (!payment) throw new CardRefundPaidAnotherWayError("Card refund not found.", 404);
-    const booking = await tx.booking.findUnique({
-      where: { id: payment.bookingId },
-      select: { id: true, lodgeId: true, memberId: true },
-    });
-    // The record and its line are read by the booking (the census loads both
-    // by it), so they go on the payment's booking, which must be the operation's.
-    if (!booking || booking.id !== operation.bookingId) {
-      throw new CardRefundPaidAnotherWayError(
-        "This card refund's payment belongs to another booking, so it cannot be closed here. Ask a developer to reconcile it.",
-        409,
-      );
-    }
-    const { ownCents, owedCents, unsentTransactionIds, unsent } = stillOwed(payment, operation.id);
+    const { ownCents, owedCents, unsentTransactionIds, unsent } = deadCardRefundStillOwed(payment, operation.id);
     // C7: the figure the treasurer chose against, read under the payment row.
     if (owedCents !== input.expectedOwedCents) {
       throw new CardRefundPaidAnotherWayError(
@@ -519,7 +428,7 @@ export async function closeCardRefundPaidAnotherWay(
           409,
         );
       }
-      await assertSupersededCloseFillsItsTransaction(tx, operation, ownCents);
+      await assertSupersededCloseFillsItsTransaction(tx, operation, { ownCents, owedCents });
     }
     // F4 / round 6: decided before the record, whose key carries the answer;
     // a late capture's approval task row is taken before its receipt is read.
@@ -532,7 +441,7 @@ export async function closeCardRefundPaidAnotherWay(
     // so a re-send's mark (`markResentSlices`, `pairResendRecordedFirst`)
     // landing in between fails the claim - one plan, read and closed.
     const claimed = await tx.paymentRecoveryOperation.updateMany({
-      where: { id: operation.id, ...deadCardRefundOperationWhere, ...onPlanWhere(operation.allocationPlan) },
+      where: deadRowClaimWhere(operation),
       data: {
         status: PaymentRecoveryOperationStatus.SUCCEEDED,
         succeededAt: closedAt,

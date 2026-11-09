@@ -48,11 +48,12 @@ function allMoved(pages: readonly AdminHubPage[] = ADMIN_PAGES): AdminHubPage[] 
 const concrete = (registryPath: string) => registryPath.replace(/\[[^\]/]+\]/g, "x123");
 
 describe("activeAdminHref while the switch is off", () => {
-  it("PREMISE: the Website hub has moved, nothing else has, and the sidebar still links the old URLs", () => {
+  it("PREMISE: the Website and Finance hubs have moved, nothing else has, and the sidebar still links the old URLs", () => {
     const moved = ADMIN_PAGES.filter((page) => page.moved);
     expect(moved.length).toBeGreaterThan(0);
-    expect(new Set(moved.map((page) => page.hub))).toEqual(new Set(["website"]));
+    expect(new Set(moved.map((page) => page.hub))).toEqual(new Set(["website", "finance"]));
     expect(SIDEBAR_HREFS).toContain("/admin/appearance");
+    expect(SIDEBAR_HREFS).toContain("/admin/payments");
     expect(SIDEBAR_HREFS.length).toBeGreaterThan(40);
     expect(SIDEBAR_HREFS.some((href) => href.includes("?"))).toBe(true);
   });
@@ -275,15 +276,15 @@ describe("no admin active-state check compares raw hrefs", () => {
       kind: "served",
       why: "the profile link's return-to URL; rendered in the admin layout",
     },
-    "src/app/(admin)/admin/xero/page.tsx": {
+    "src/app/(admin)/admin/finance/xero/page.tsx": {
       kind: "served",
       why: "currentXeroPath, the return-to URL in its record links",
     },
-    "src/app/(admin)/admin/xero/_components/operations-panel.tsx": {
+    "src/app/(admin)/admin/finance/xero/_components/operations-panel.tsx": {
       kind: "served",
       why: "router.replace targets for the filter state",
     },
-    "src/app/(admin)/admin/xero/_components/inbound-events-panel.tsx": {
+    "src/app/(admin)/admin/finance/xero/_components/inbound-events-panel.tsx": {
       kind: "served",
       why: "router.replace targets for the filter state",
     },
