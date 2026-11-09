@@ -55,12 +55,21 @@ import { linkLegacyLinesToPostedBatch, type MemberMoneyPosting } from "./store";
 type Db = Prisma.TransactionClient;
 
 /**
+ * The booking row lock an owner read takes (`FOR NO KEY UPDATE`, an UPDATE's own strength). A door whose owner read
+ * comes after writes of its own takes it first, where its lock order puts the booking row (#4516 review F1: an
+ * approved appeal right after `lock(1)`, before the Payment row and its request's claim). Taken again, a no-op.
+ */
+export async function lockBookingRowForOwnerRead(tx: Db, bookingId: string): Promise<void> {
+  await tx.$executeRaw`SELECT 1 FROM "Booking" WHERE "id" = ${bookingId} FOR NO KEY UPDATE`;
+}
+
+/**
  * The booking's owner, read under its row lock: the receivable's debtor
  * (`bookingOwnerDebtor`, exactly one). Lock raw, read typed (#2289): the lock
  * selects a constant, the owner comes back through the Prisma model.
  */
-async function lockedBookingDebtor(tx: Db, bookingId: string): Promise<MemberMoneyDebtor> {
-  await tx.$executeRaw`SELECT 1 FROM "Booking" WHERE "id" = ${bookingId} FOR NO KEY UPDATE`;
+export async function lockedBookingDebtor(tx: Db, bookingId: string): Promise<MemberMoneyDebtor> {
+  await lockBookingRowForOwnerRead(tx, bookingId);
   const booking = await tx.booking.findUnique({ where: { id: bookingId }, select: { memberId: true, organisationId: true } });
   if (!booking) throw new MemberMoneyPlanError([`booking ${bookingId} does not exist`]);
   return bookingOwnerDebtor(booking);

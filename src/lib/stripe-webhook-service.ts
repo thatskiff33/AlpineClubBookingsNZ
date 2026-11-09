@@ -1,6 +1,7 @@
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { postBookingReceipts, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
+import { isCardRefundReservationRefusal } from "@/lib/member-money";
 import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
@@ -32,7 +33,7 @@ import {
   reportWithheldLateCaptureRefund,
 } from "@/lib/cancelled-booking-late-capture";
 import { CANCELLED_BOOKING_LATE_CAPTURE_REASON } from "@/lib/cancellation-settled-money";
-import { holdLateCaptureForTreasurerIfRequired, holdLateCaptureRefusedByStripe } from "@/lib/late-capture-refund-hold";
+import { holdLateCaptureForTreasurerIfRequired, holdLateCaptureRefusedByStripe, holdLateCaptureReservationRefused } from "@/lib/late-capture-refund-hold";
 import { queueLateCaptureRefundCreditNote } from "@/lib/late-capture-refund-credit-note";
 import {
   describeLateCaptureFromBooking,
@@ -1569,16 +1570,26 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
   // this refund; and a task that already owns this capture decides it.
   if (await holdLateCaptureForTreasurerIfRequired(lateCapture)) return;
 
-  const refundResult = await refundPaymentTransactions({
-    format,
-    paymentId: booking.payment.id,
-    amountCents: paymentIntent.amount,
-    // Pinned to THIS transaction (#4131, the one rule), so replays mint identical Stripe keys regardless of the
-    // payment's other transactions. Unrefunded: `acknowledgeSettledLateNotice` above returns on any refund of it.
-    allocation: [lateCaptureOwnChargeSlice({ id: paymentTransaction.id, status: PaymentStatus.SUCCEEDED, amountCents: paymentIntent.amount, refundedAmountCents: 0 }, paymentIntent.amount).slice],
-    metadata: buildLateCaptureRefundMetadata(booking.id),
-    idempotencyKeyPrefix: buildLateCaptureRefundStripeKeyPrefix(booking.id, paymentIntent.id),
-  });
+  let refundResult: Awaited<ReturnType<typeof refundPaymentTransactions>>;
+  try {
+    refundResult = await refundPaymentTransactions({
+      format,
+      paymentId: booking.payment.id,
+      amountCents: paymentIntent.amount,
+      // Pinned to THIS transaction (#4131, the one rule), so replays mint identical Stripe keys regardless of the
+      // payment's other transactions. Unrefunded: `acknowledgeSettledLateNotice` above returns on any refund of it.
+      allocation: [lateCaptureOwnChargeSlice({ id: paymentTransaction.id, status: PaymentStatus.SUCCEEDED, amountCents: paymentIntent.amount, refundedAmountCents: 0 }, paymentIntent.amount).slice],
+      metadata: buildLateCaptureRefundMetadata(booking.id),
+      idempotencyKeyPrefix: buildLateCaptureRefundStripeKeyPrefix(booking.id, paymentIntent.id),
+      // #4516 (M4c): the capture's return; this webhook defers its R05 to the reservation step.
+      obligation: { scope: "capture-return", id: paymentIntent.id, ensureFaceCents: paymentIntent.amount },
+    });
+  } catch (error) {
+    // #4516: a refused reservation is never re-thrown for Stripe's redelivery, which would be refused the same way.
+    if (!isCardRefundReservationRefusal(error)) throw error;
+    await holdLateCaptureReservationRefused(lateCapture);
+    return;
+  }
   if (await holdLateCaptureRefusedByStripe(lateCapture, refundResult.refunds)) return;
   const refundId = refundResult.refunds[0]?.refundId ?? null;
 
@@ -1753,7 +1764,9 @@ async function handleCancelledBookingPaymentSucceeded(
   if (await holdLateCaptureForTreasurerIfRequired(lateCapture)) return;
 
   // #4131 (`INV-PAY-106`): from the capture's OWN charge only, capped at what it holds.
-  const { refunds, audit } = await refundLateCaptureFromOwnCharge({ format, bookingId: booking.id, paymentId: booking.payment.id, paymentIntentId: paymentIntent.id, amountCents: paymentIntent.amount });
+  const { refunds, audit, reservationRefused } = await refundLateCaptureFromOwnCharge({ format, bookingId: booking.id, paymentId: booking.payment.id, paymentIntentId: paymentIntent.id, amountCents: paymentIntent.amount });
+  // #4516: refused by the journal before Stripe was asked; held for a treasurer, never redelivered.
+  if (reservationRefused) return holdLateCaptureReservationRefused(lateCapture);
   if (await holdLateCaptureRefusedByStripe(lateCapture, refunds)) {
     // #4103: the one slice on the capture's own charge was refused, so it made nothing; the note still answers the capture's own earlier refunds.
     await queueLateCaptureRefundCreditNote({ paymentId: booking.payment.id, paymentIntentId: paymentIntent.id });

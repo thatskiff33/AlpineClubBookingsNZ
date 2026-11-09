@@ -58,10 +58,11 @@ import {
   readSizeAllowances,
   type SizeAllowance,
 } from "../lib/file-size-allowances";
+import { DEFAULT_BASE_REF } from "../lib/budget-base-ref.mjs";
 import { isMainModule } from "../lib/is-main-module.mjs";
 
 /** The ref a change is judged against unless told otherwise. */
-export const DEFAULT_BASE_REF = "origin/main";
+export { DEFAULT_BASE_REF };
 
 const SEVERITY_HEADINGS = {
   unusable: "UNUSABLE — the comparison cannot be trusted",

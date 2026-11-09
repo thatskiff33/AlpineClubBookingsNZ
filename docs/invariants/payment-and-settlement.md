@@ -1612,9 +1612,9 @@ short).
 **Related: `INV-PAY-130`** (no door says "refunded" on a refusal).
 
 - **A cancel's card refund is recorded by the close that made it, once**
-  (#4125, #4145). A member's cancel and a capacity race write REFUNDED only
-  with the close moving their pre-persisted recovery row to `SUCCEEDED`, in
-  its transaction (`closeRefundRowRecordingEvent`).
+  (#4125, #4145). Member and capacity-race cancels write REFUNDED only with
+  the close moving their pre-persisted recovery row to `SUCCEEDED`, in its
+  transaction (`closeRefundRowRecordingEvent`).
   - **Never on a failure**: an inline refund that threw, was refused or was
     part-made writes none; the page reads the row (`readCancelledCardRefund`).
   - **Dated by that close, for the frozen plan's total**; a failed insert
@@ -1622,9 +1622,10 @@ short).
   - **Paid another way records only what reached the card**: the slices
     recorded refunds filled, dated by Stripe's latest, never before the
     cancel, marked as that close's (`isMadeBeforePaidAnotherWayEvent`). The
-    page tells each part from its source: card refunds by their events (a
-    capacity race's every row), or undated by the close's rule
-    (`cardRefundMadeForOperation`); the record's paid-back amount; and only
+    page tells each part from its source: card refunds by their events (every
+    capacity-race row), or undated by the close's rule
+    (`cardRefundMadeForOperation`); the record's paid-back amount; a
+    still-owed rest by its row; and only
     `paidAnotherWayUnpaidCents` as closed. A capped part is unsaid; a
     capacity race, capped at its rows' plans, follows it up.
   - **One per cancel**: a pre-#4145 cancel's up-front event means a later
@@ -2853,31 +2854,31 @@ _Legacy: settles tasks raised before #4317._
 - **"Paid another way" records the close as a completed hand-back and ends the
   refund** (#3372, owner 7 Oct 2026). `closeCardRefundPaidAnotherWay`
   (finance:edit) takes `lock(1)`, then the payment row, refuses (409) unless
-  what is owed is the figure the treasurer saw, and claims a dead row to
+  what is owed is what the treasurer saw, and claims a dead row to
   `SUCCEEDED` with a status guard. It records the amount with
-  `applyLocalRefundAllocation` on the unsent slices' charges, writes a
-  COMPLETED hand-back task under `card-refund-paid-another-way:<row>` and its
-  `BANK_REFUND` line (`INV-MONEY-035`), and audits under `payment`. No Stripe call.
+  `applyLocalRefundAllocation` on the unsent slices' charges, writes a COMPLETED
+  hand-back task under `card-refund-paid-another-way:<row>`, its `BANK_REFUND`
+  line (`INV-MONEY-035`) and R14, and audits under `payment`. No Stripe call.
   - **Full or part, chosen** (8 Oct): "full" is exactly what is owed,
-    "partial" strictly between nil and it, never $0; else 400. The rest is owed
-    nowhere; a review's netting counts the refund at its full raised amount.
+    "partial" strictly between nil and it; else 400.
+  - **Its rest, chosen** (#4516, 2 Nov), no default; else 400. "Club keeps
+    it": owed nowhere; reviews net the full raised amount; the journal retains
+    it. "Still owed": the task records the paid part; a dead row
+    (`card_refund_still_owed_<task>`) keeps the rest owed.
   - **Xero** (8 Oct): every kind queues a bank-transfer note keyed on the
-    task, sized by it less its own notes, dated the close's day, where there is
-    an invoice to credit; else none (`:no-xero-note`). No card note fills that
-    cash.
+    task, sized by it less its own notes, dated the close's day, where an
+    invoice exists to credit; else none (`:no-xero-note`). No card note fills
+    that cash.
   - **A late capture: receipt, then credit** (8 Oct). The note names the
     capture's receipt by its invoice, never by intent. With none in Xero, the
     close queues it (`INV-PAY-110`), requeuing a failed one that cannot have
-    reached Xero, or awaits one on its way; the link, then the note at most
-    once, are written under the approval task's row, which the close takes
-    before reading the receipt (`:note-after-receipt`). Cash evidence counts a
-    close only once noted.
+    reached Xero, or awaits one in flight; link, then note at most once, under
+    the approval task's row, taken before the receipt is read
+    (`:note-after-receipt`). Cash evidence counts a close only once noted.
   - A superseded intent's row closes whole, only while its charge holds exactly
     what it owes. An organiser child's is refused.
-  - A refund Stripe made inside a closed row's window (its clock) but recorded
-    later is listed as paid twice. The treasurer marks it Resolved with a note
-    against the card figure seen, kept on the task and audited; no money moves
-    (9 Oct).
+  - A refund made inside a closed row's window, recorded later, lists as paid
+    twice; an audited note on the task resolves it; no money moves (9 Oct).
 
 ## INV-PAY-070
 

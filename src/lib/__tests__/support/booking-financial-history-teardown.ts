@@ -89,6 +89,13 @@ async function releaseMemberMoneyJournalForTeardown(tx: Prisma.TransactionClient
   const journals = batches.map((batch) => batch.journalId);
   const events = batches.map((batch) => batch.eventId);
   await tx.$executeRaw`SET LOCAL session_replication_role = replica`;
+  // #4516 (M4c): a reservation names its obligation and its funding batch, and a release its reservation.
+  const reservations = tx.$queryRaw<{ id: string }[]>`SELECT r.id FROM "MemberMoneyRefundReservation" r
+    WHERE r."fundingJournalId" = ANY(${journals}::text[])
+      OR r."obligationId" IN (SELECT o.id FROM "MemberMoneyObligation" o WHERE o."journalId" = ANY(${journals}::text[]))`;
+  const reservationIds = (await reservations).map((row) => row.id);
+  await tx.$executeRaw`DELETE FROM "MemberMoneyRefundReservationRelease" WHERE "reservationId" = ANY(${reservationIds}::text[])`;
+  await tx.$executeRaw`DELETE FROM "MemberMoneyRefundReservation" WHERE id = ANY(${reservationIds}::text[])`;
   await tx.$executeRaw`DELETE FROM "MemberMoneyApplication" WHERE "journalId" = ANY(${journals}::text[])`;
   await tx.$executeRaw`DELETE FROM "MemberMoneySourcePosting" WHERE "journalId" = ANY(${journals}::text[])`;
   await tx.$executeRaw`DELETE FROM "MemberMoneyLine" WHERE "journalId" = ANY(${journals}::text[])`;

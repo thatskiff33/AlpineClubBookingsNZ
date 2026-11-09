@@ -44,6 +44,13 @@ const mocks = vi.hoisted(() => ({
   runOrganiserChildRefundDebtNow: vi.fn(),
 }));
 
+// #4516 (M4c): R05 posts on PostgreSQL (`member-money-refunds.realdb.test.ts`), not on this fake store.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  postRefundObligation: vi.fn(async () => null),
+  withdrawRefundObligation: vi.fn(async () => false),
+}));
+
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
 vi.mock("@/lib/session-guards", async () => ({
   requireAdmin: (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock,

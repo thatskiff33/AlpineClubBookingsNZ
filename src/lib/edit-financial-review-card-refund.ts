@@ -84,6 +84,7 @@ export async function executeEditReviewCardRefund({
       // The slices frozen inside the transaction, so an inline attempt and a
       // cron replay send byte-identical requests.
       allocation: route.allocation,
+      obligation: { scope: "review", id: taskId }, // #4516: the R05 the completion posted
     });
     // #4103: a refusal is still owed - re-planned, never closed or reported.
     const refused = await keepRefusalOwed(refundResult);

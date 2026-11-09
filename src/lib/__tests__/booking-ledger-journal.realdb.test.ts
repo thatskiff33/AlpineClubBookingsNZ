@@ -374,6 +374,32 @@ async function untilSomeoneWaits(): Promise<void> {
     await expectAgreed(id);
   });
 
+  it("#4516 review M2: a part \"Paid another way\" close the club keeps the rest of agrees, its close-out read against its record", async () => {
+    const id = await newBooking();
+    expect(await settleDoor(id)).toBe(true);
+    expect(await cancelDoor(id, 4_000)).toBe(true);
+    const owed = PRICE - 4_000;
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await doors.postRefundObligation(tx, JOURNAL, { bookingId: id, scope: "cancellation", id, amountCents: owed, origin: "APP", debtorRead: "booking-row" });
+    });
+    const record = await prisma.manualRefundTask.create({ data: { bookingId: id, kind: "CANCELLED_BOOKING_HAND_BACK", status: "COMPLETED", reason: "Paid another way (race 4516)",
+      amountCents: 10_000, raisedAmountCents: owed, occurrenceKey: `card-refund-paid-another-way:${id}-row`, completedAt: new Date(), completedByMemberId: names.officerId } });
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await doors.postPaidAnotherWayClose(tx, JOURNAL, { bookingId: id, obligation: { scope: "cancellation", id }, recordId: record.id, amountCents: 10_000,
+        restCents: owed - 10_000, rest: "club-keeps", attemptKeys: [], transactionIds: [], closedAt: new Date(), actorMemberId: names.officerId });
+    });
+    expect(await prisma.memberMoneyEvent.count({ where: { eventKey: moneyKeys.refundCloseOut(record.id) } })).toBe(1);
+    await expectAgreed(id);
+    // A record that says the club kept less than the journal retained disagrees.
+    await prisma.manualRefundTask.update({ where: { id: record.id }, data: { raisedAmountCents: owed - 500 } });
+    expect((await judged(id)).journal).toMatchObject({ status: "DISAGREE", deltaCents: 500 });
+    // Put back, so the whole-population census below judges only what the doors posted.
+    await prisma.manualRefundTask.update({ where: { id: record.id }, data: { raisedAmountCents: owed } });
+    await expectAgreed(id);
+  });
+
   it("a $0 confirmation posts R01 as a ZERO event, so the booking's later money posts and agrees", async () => {
     const id = `${PREFIX}b${++sequence}`;
     const free = { priceCents: 0, priceSource: "SOLD" } as const;

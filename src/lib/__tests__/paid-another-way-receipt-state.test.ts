@@ -40,6 +40,11 @@ vi.mock("@/lib/late-capture-xero-receipt", async (importOriginal) => ({
 }));
 vi.mock("@/lib/late-capture-paid-another-way", () => ({
   findLateCaptureRefundPaidAnotherWay: (...a: unknown[]) => mocks.close(...a),
+  // #4516 (round-2 review A): every close of the capture's refund; one here unless a test gives a list.
+  findLateCaptureRefundPaidAnotherWayCloses: async (...a: unknown[]) => {
+    const found = (await mocks.close(...a)) as unknown;
+    return Array.isArray(found) ? found : found ? [found] : [];
+  },
 }));
 vi.mock("@/lib/club-time-zone-runtime", () => ({ readClubTimeZoneOutsideRequest: vi.fn() }));
 vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({ lockKeptLateCaptureTask: vi.fn() }));
@@ -108,6 +113,18 @@ describe("readPaidAnotherWayReceiptState: recordByHandCents (rounds 11 and 12)",
     await expect(readPaidAnotherWayReceiptState("pi_late")).resolves.toMatchObject({ recordByHandCents: 6000 });
     mocks.refunds.mockResolvedValue([]);
     await expect(readPaidAnotherWayReceiptState("pi_late")).resolves.toMatchObject({ recordByHandCents: 6000 });
+  });
+
+  it("MUTATION (#4516 round-2 review A): a part close and its still-owed rest's close count together, and the note is asked only when both are", async () => {
+    const waiting = (id: string, amountCents: number) => ({ id, paymentId: "payment_1", amountCents, kind: "CANCELLED_BOOKING_HAND_BACK",
+      occurrenceKey: `card-refund-paid-another-way:op-${id}:note-after-receipt` });
+    mocks.close.mockResolvedValue([waiting("close_1", 2000), waiting("close_2", 4000)]);
+    // 4000 card - 1000 noted + 2000 + 4000 closed.
+    await expect(readPaidAnotherWayReceiptState("pi_late")).resolves.toMatchObject({ close: { id: "close_1", amountCents: 6000 }, noteAsked: false, recordByHandCents: 9000 });
+    mocks.noteRows.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+    await expect(readPaidAnotherWayReceiptState("pi_late")).resolves.toMatchObject({ noteAsked: false });
+    mocks.noteRows.mockResolvedValue(1);
+    await expect(readPaidAnotherWayReceiptState("pi_late")).resolves.toMatchObject({ noteAsked: true });
   });
 
   it("is nothing for a receipt the app recorded: its note follows", async () => {

@@ -19,7 +19,9 @@ import {
   type PaidAnotherWayXeroPromise,
   type PaidAnotherWayXeroQueued,
 } from "@/lib/card-refund-paid-another-way-xero";
-import { PAID_BACK_CHOICES, type PaidBackChoice } from "@/lib/card-refund-paid-back";
+import { PAID_BACK_CHOICES, type PaidBackChoice, type PaidBackRestChoice } from "@/lib/card-refund-paid-back";
+import { closePaidAnotherWayRest, paidAnotherWayOutcome, paidBackChoiceRefusal, paidBackRestRefusal } from "@/lib/card-refund-paid-another-way-rest";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { recordCardRefundMadeBeforePaidAnotherWay } from "@/lib/cancel-card-refund-paid-another-way-event";
@@ -78,10 +80,8 @@ import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-
  *   is still owed; "partial" for more than nothing and less than that. Never
  *   for nothing, of any kind (#3924 round 7, M6), and only against the owed
  *   figure the treasurer saw (`expectedOwedCents`, round 7, C7). The
- *   choice is never inferred from the amount. A part close is final: what was
- *   not paid back stops being owed anywhere - "Refunds owed", Net Collected,
- *   this list, and a later review's netting, which counts the refund at its
- *   full raised amount (`edit-financial-review-cancel-netting.ts`).
+ *   choice is never inferred from the amount. #4516: a part close also says
+ *   what happens to the rest, with no default (`card-refund-paid-another-way-rest.ts`).
  * - A SUPERSEDED INTENT'S REFUND closes in full only, on its own transaction,
  *   only while what it owes IS what that transaction still holds, never capped
  *   and never for nothing (#3924 round 5, F3): the reconciliation reads a
@@ -179,6 +179,7 @@ const OPERATION_SELECT = {
   amountCents: true,
   createdAt: true,
   lastError: true,
+  stripeKeyPrefix: true,
 } as const satisfies Prisma.PaymentRecoveryOperationSelect;
 
 const PAYMENT_SELECT = {
@@ -197,6 +198,8 @@ interface StillOwed {
   owedCents: number;
   /** The transactions its unsent slices are on, in its plan's order. */
   unsentTransactionIds: string[];
+  /** #4516: its unsent slices, what each still had to send, in its plan's order (a still-owed rest's plan). */
+  unsent: { paymentTransactionId: string; amountCents: number }[];
 }
 
 /**
@@ -217,6 +220,7 @@ function stillOwed(payment: ClosablePayment, operationId: string): StillOwed {
     unsentTransactionIds: [
       ...new Set(unsent.map((slice) => slice.paymentTransactionId).filter((id) => id !== "")),
     ],
+    unsent: unsent.map((slice) => ({ paymentTransactionId: slice.paymentTransactionId, amountCents: unsentSliceCents(slice) })),
   };
 }
 
@@ -315,8 +319,10 @@ export interface CardRefundPaidAnotherWayInput {
   operationId: string;
   /** What the treasurer paid back, in cents: exactly what is owed for "full", less than it for "partial". */
   amountCents: number;
-  /** Paid back in full, or in part with the rest no longer owed - the treasurer's explicit choice. */
+  /** Paid back in full, or in part - the treasurer's explicit choice. */
   paidBack: PaidBackChoice;
+  /** #4516 (owner, 2 Nov 2026): a part close's rest, kept by the club or still owed; required for part, absent for full. */
+  rest?: PaidBackRestChoice | null;
   /**
    * What the treasurer saw still owed when they chose (#3924 round 7,
    * concurrency C7). A close against a figure that has since moved is refused
@@ -335,37 +341,14 @@ export interface CardRefundPaidAnotherWayResult {
   amountCents: number;
   owedCents: number;
   paidBack: PaidBackChoice;
+  rest: PaidBackRestChoice | null; stillOwedOperationId: string | null; // #4516: the choice, and the row a still-owed rest moved to
   /** What was queued in Xero for this close. */
   xeroQueued: PaidAnotherWayXeroQueued;
 }
 
-/**
- * The full-or-part rule (owner, 8 Oct 2026), against what is still owed:
- * "full" is exactly that; "partial" is more than nothing and less than that.
- * A refusal is a 400: the request does not say a consistent thing.
- */
-function assertPaidBackChoice(paidBack: PaidBackChoice, amountCents: number, owedCents: number): void {
-  if (paidBack === "full" && amountCents !== owedCents) {
-    throw new CardRefundPaidAnotherWayError(
-      "Paid back in full must be exactly what is still owed. Refresh and check the amount.",
-      400,
-    );
-  }
-  if (paidBack === "partial" && !(amountCents > 0 && amountCents < owedCents)) {
-    throw new CardRefundPaidAnotherWayError(
-      "Paid back part of it must be more than nothing and less than what is still owed.",
-      400,
-    );
-  }
-}
-
-/** The record's reason: what happened, and whether the rest stopped being owed. */
-function paidAnotherWayReason(bookingId: string, paidBack: PaidBackChoice): string {
-  const how =
-    paidBack === "full"
-      ? "was paid back in full another way by the treasurer"
-      : "was paid back in part another way by the treasurer; the rest is no longer owed";
-  return `A card refund on booking ${formatBookingReference(bookingId)} that Stripe gave up on ${how} (#3372).`.slice(
+/** The record's reason: what happened, and what the treasurer chose for the rest. */
+function paidAnotherWayReason(bookingId: string, paidBack: PaidBackChoice, rest: PaidBackRestChoice | null): string {
+  return `A card refund on booking ${formatBookingReference(bookingId)} that Stripe gave up on was ${paidAnotherWayOutcome(paidBack, rest, " by the treasurer")} (#3372).`.slice(
     0,
     MANUAL_REFUND_TASK_REASON_MAX,
   );
@@ -454,10 +437,14 @@ export async function closeCardRefundPaidAnotherWay(
   if (!Number.isSafeInteger(input.expectedOwedCents) || input.expectedOwedCents < 0) {
     throw new CardRefundPaidAnotherWayError("Say what you saw still owed, in whole cents.", 400);
   }
+  const rest = input.rest ?? null;
+  const restRefusal = paidBackRestRefusal(input.paidBack, rest); // #4516: no default for a part close's rest
+  if (restRefusal) throw new CardRefundPaidAnotherWayError(restRefusal, 400);
   // `INV-LOCK-004`: the club's zone, for a late charge's receipt date, is read
   // before the transaction.
   const clubZone: ClubTimeZone = await readClubTimeZoneOutsideRequest();
   const format = await getClubFormat(); // #4145: a cancel's made part's event, below
+  const journal = await resolveBookingMoneyPostingContext({ zone: clubZone }); // #4516: R14, before the transaction
 
   const result = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -501,7 +488,7 @@ export async function closeCardRefundPaidAnotherWay(
         409,
       );
     }
-    const { ownCents, owedCents, unsentTransactionIds } = stillOwed(payment, operation.id);
+    const { ownCents, owedCents, unsentTransactionIds, unsent } = stillOwed(payment, operation.id);
     // C7: the figure the treasurer chose against, read under the payment row.
     if (owedCents !== input.expectedOwedCents) {
       throw new CardRefundPaidAnotherWayError(
@@ -515,7 +502,8 @@ export async function closeCardRefundPaidAnotherWay(
         409,
       );
     }
-    assertPaidBackChoice(input.paidBack, input.amountCents, owedCents);
+    const choiceRefusal = paidBackChoiceRefusal(input.paidBack, input.amountCents, owedCents); // the full-or-part rule (8 Oct 2026)
+    if (choiceRefusal) throw new CardRefundPaidAnotherWayError(choiceRefusal, 400);
     if (operation.type === "REFUND_SUPERSEDED_PAYMENT") {
       if (input.paidBack !== "full") {
         throw new CardRefundPaidAnotherWayError(
@@ -592,12 +580,13 @@ export async function closeCardRefundPaidAnotherWay(
           xeroRefundNote: xeroPlan.xeroRefundNote,
         }),
         amountCents: input.amountCents,
-        raisedAmountCents: owedCents,
+        // #4516: a still-owed rest moves to its own row, so this record closes exactly what it paid.
+        raisedAmountCents: rest === "still-owed" ? input.amountCents : owedCents,
         status: "COMPLETED",
         completedAt: closedAt,
         completedByMemberId: input.actingMemberId,
         note,
-        reason: paidAnotherWayReason(booking.id, input.paidBack),
+        reason: paidAnotherWayReason(booking.id, input.paidBack, rest),
         // #4104 delta review (A-F1): what a card note already in Xero answers
         // of the close, so its share counts it covered.
         ...cardNoteCoverReviewContext(paidAnotherWayCardNoteCoversCents(xeroPlan, input.amountCents)),
@@ -613,6 +602,9 @@ export async function closeCardRefundPaidAnotherWay(
     });
     // #4145 (`INV-PAY-134`): a cancel's slices made before this close went back to the card.
     await recordCardRefundMadeBeforePaidAnotherWay(tx, operation, { payment, format });
+    // #4516 (`INV-PAY-122`): a still-owed rest's own row, then R14 and a kept rest's close-out in the journal.
+    const { restCents, stillOwedOperationId } = await closePaidAnotherWayRest(tx, journal, { operation, recordId: record.id, amountCents: input.amountCents,
+      owedCents, paidBack: input.paidBack, rest, unsent, unsentTransactionIds, closedAt, actingMemberId: input.actingMemberId });
 
     // M3 / round 5 / round 6: the note now, or the late charge's receipt first.
     let xeroQueued: PaidAnotherWayXeroQueued;
@@ -650,11 +642,7 @@ export async function closeCardRefundPaidAnotherWay(
         category: "payment",
         severity: "important",
         outcome: "success",
-        summary: `${
-          input.paidBack === "full"
-            ? "Card refund Stripe gave up on closed as paid back in full another way"
-            : "Card refund Stripe gave up on closed as paid back in part another way; the rest is no longer owed"
-        }${paidAnotherWayXeroAuditFollowUp(xeroQueued)}`,
+        summary: `Card refund Stripe gave up on closed as ${paidAnotherWayOutcome(input.paidBack, rest)}${paidAnotherWayXeroAuditFollowUp(xeroQueued)}`,
         details: note,
         metadata: {
           operationId: operation.id,
@@ -662,9 +650,10 @@ export async function closeCardRefundPaidAnotherWay(
           paymentId: payment.id,
           operationType: operation.type,
           paidBack: input.paidBack,
+          rest, stillOwedOperationId,
           amountCents: input.amountCents,
           owedCents,
-          noLongerOwedCents: owedCents - input.amountCents,
+          noLongerOwedCents: rest === "still-owed" ? 0 : restCents, stillOwedCents: rest === "still-owed" ? restCents : 0,
           manualRefundTaskId: record.id,
           xeroQueued,
         },
@@ -678,7 +667,7 @@ export async function closeCardRefundPaidAnotherWay(
       paymentId: payment.id,
       amountCents: input.amountCents,
       owedCents,
-      paidBack: input.paidBack,
+      paidBack: input.paidBack, rest, stillOwedOperationId,
       xeroQueued,
     };
   });

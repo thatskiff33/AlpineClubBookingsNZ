@@ -2052,6 +2052,7 @@ export async function modifyBookingBatch({
       bookingModification,
       sides: pricingSides,
       site: "batch-modify",
+      cardRefundCents: payments.organiserChildRefund ? 0 : payments.pendingRefundAmountCents, // #4516: its R05
     });
     // #4019: this new whole-lodge PAID path bypasses the ordinary settle.
     // Post after guest/night writes and the edit, at the final price only.

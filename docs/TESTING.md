@@ -1625,8 +1625,10 @@ your branch, and before you push or flip a pull request ready.** It catches the
 20 Sep 2026 shape — #3526, #3520 and #3522 each published the `stripComments`
 importer count against a base `main` had already left, and three green pull
 requests made a red `main` — while the composed tree is still on your machine.
-On a child of an epic, pass `--base origin/epic/<n>-<slug>` so the file-size
-ratchet and invariant retention judge against the branch you will merge into.
+On a child of an epic, pass `--base origin/epic/<n>-<slug>` so invariant
+retention judges against the branch you will merge into. The file-size ratchet
+inside it ignores `--base` and always judges against `origin/main`, as PR CI
+does, so an allowance `main` already landed stays spent (#4831).
 The automated sync passes the exact pre-sync epic SHA. With an explicit base,
 the runner clears inherited GitHub event identity only for its diagnostic
 `docs:indexcheck` child; ordinary CI keeps its authoritative PR/push baseline.

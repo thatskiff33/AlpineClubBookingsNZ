@@ -22,6 +22,10 @@ const mocks = vi.hoisted(() => ({
   openFinancialReview: vi.fn(),
   bookingEvents: vi.fn(),
   recoveryRows: vi.fn(),
+  recoveryRow: vi.fn(),
+  closeRecord: vi.fn(),
+  record: vi.fn(),
+  payments: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -29,9 +33,11 @@ vi.mock("@/lib/prisma", () => ({
     auditLog: { findMany: vi.fn().mockResolvedValue([]) },
     bookingEvent: { findMany: mocks.bookingEvents },
     memberCredit: { aggregate: mocks.memberCreditAggregate },
-    // #4097, #4125: a cancelled booking's shortfall tasks and card refund rows.
-    manualRefundTask: { findMany: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(0) },
-    paymentRecoveryOperation: { findUnique: vi.fn().mockResolvedValue(null), findMany: mocks.recoveryRows },
+    // #4097, #4125: a cancelled booking's shortfall tasks and card refund rows; #4145, #4516: a row's
+    // "Paid another way" close record, a still-owed rest's record, and the payment's refunds.
+    manualRefundTask: { findMany: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(0), findFirst: mocks.closeRecord, findUnique: mocks.record },
+    paymentRecoveryOperation: { findUnique: mocks.recoveryRow, findMany: mocks.recoveryRows },
+    payment: { findMany: mocks.payments },
   },
 }));
 vi.mock("@/lib/booking-history", () => ({
@@ -55,6 +61,7 @@ import {
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import { bookingAppliedCreditWhere } from "@/lib/member-credit-booking-rows";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { givenCardRefundPaidInPart } from "@/lib/__tests__/support/card-refund-paid-in-part";
 
 const CLUB = bindClubTime(requireClubTimeZone("Pacific/Auckland"), CLUB_FORMAT_TEST);
 
@@ -127,6 +134,10 @@ beforeEach(() => {
   mocks.openFinancialReview.mockResolvedValue(false);
   mocks.bookingEvents.mockResolvedValue([]);
   mocks.recoveryRows.mockResolvedValue([]);
+  mocks.recoveryRow.mockResolvedValue(null);
+  mocks.closeRecord.mockResolvedValue(null);
+  mocks.record.mockResolvedValue(null);
+  mocks.payments.mockResolvedValue([]);
 });
 
 // #4125: the booking page reads a cancelled booking's card refund row, so a
@@ -152,6 +163,33 @@ describe("booking page history narrative reads a cancelled card refund's row (#4
 
     expect(narrative.message).toContain("$200.00 is being refunded to you; the club will be in touch about the card refund.");
     expect(narrative.message).not.toContain("on its way");
+  });
+
+  // #4516 (round-3 review 1): a dead card refund the treasurer paid back in part, the rest still owed - both parts,
+  // never the whole as still owed; once a later close pays the rest, all that was paid back.
+  it.each([
+    ["while the rest is still owed", false, "$50.00 could not go back to your card and was paid back to you another way and $150.00 is being refunded to you; the club will be in touch about the card refund."],
+    ["once a later close paid the rest", true, "$200.00 could not go back to your card and was paid back to you another way."],
+  ] as const)("MUTATION: a card refund paid back in part says what was paid back %s", async (_when, restClosed, said) => {
+    mocks.bookingEvents.mockResolvedValue([
+      { type: BookingEventType.MEMBER_PAID, occurredAt: new Date("2026-05-02T00:00:00.000Z"), actorMemberId: null, amountCents: 20000, reason: null, snapshot: null },
+      {
+        type: BookingEventType.CANCELLED,
+        occurredAt: new Date("2026-05-05T00:00:00.000Z"),
+        actorMemberId: null,
+        amountCents: 20000,
+        reason: null,
+        snapshot: { refundMethod: "card", refundPercentage: 100, paidAmountCents: 20000, settledAmountCents: 20000, retainedAmountCents: 0 },
+      },
+    ]);
+    givenCardRefundPaidInPart(
+      { rows: mocks.recoveryRows, row: mocks.recoveryRow, closeRecord: mocks.closeRecord, record: mocks.record, payments: mocks.payments },
+      { bookingId: "booking-1", refundCents: 20000, paidBackCents: 5000, restClosed },
+    );
+
+    const narrative = await narrativeFor({ ...(bookingWith(null) as object), status: "CANCELLED" } as never);
+
+    expect(narrative.message).toContain(`Under the cancellation policy in effect at the time, ${said}`);
   });
 });
 

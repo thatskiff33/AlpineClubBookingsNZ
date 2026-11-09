@@ -23,6 +23,9 @@
  *   it was paid back another way. Where part did go back first, that close
  *   records the part, dated by Stripe's refund and marked as its own, and the
  *   page says both - and, paid back in part, the rest the club closed.
+ * - #4516: paid back in part with the rest still owed on a row of its own -
+ *   the booking page and the payment-link page (`getPaymentLinkContext`) say
+ *   both parts, and once a later close pays the rest, all that was paid back.
  * - The deploy boundary: a cancel made before #4145 wrote its event up front;
  *   the runner then closes the row and writes no second one.
  * - The cancel's close landing while the runner holds the row: only the close
@@ -105,6 +108,10 @@ let readCancelledCardRefund: (typeof import("@/lib/cancel-card-refund-shortfall-
 const readCancelledCardRefundState = async (bookingId: string) => (await readCancelledCardRefund(bookingId)).cardRefundState;
 let readCardShortfallTaskStatuses: (typeof import("@/lib/cancel-card-refund-shortfall-status"))["readCardShortfallTaskStatuses"];
 let resolveBookingNarrative: (typeof import("@/lib/booking-narrative"))["resolveBookingNarrative"];
+let getPaymentLinkContext: (typeof import("@/lib/payment-link-context"))["getPaymentLinkContext"];
+let issueActionToken: (typeof import("@/lib/action-tokens"))["issueActionToken"];
+let hashActionToken: (typeof import("@/lib/action-tokens"))["hashActionToken"];
+let formatSpy: { mockRestore: () => void } | undefined;
 let parseRefundAllocationPlan: (typeof import("@/lib/open-card-refund-owed"))["parseRefundAllocationPlan"];
 let club: ReturnType<(typeof import("@/lib/club-time"))["bindClubTime"]>;
 let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixture"))["CLUB_FORMAT_TEST"];
@@ -116,6 +123,7 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
     async function deletePaymentRows() {
       await prisma.auditLog.deleteMany({ where: { targetId: { in: [BOOKING_ID, PAYMENT_ID] } } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
+      await prisma.paymentLink.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [PAYMENT_ID, BOOKING_ID] } } });
       await prisma.xeroObjectLink.deleteMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
       // #4627: the doors post journal batches bridged to these lines; release them first.
@@ -240,6 +248,15 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
         CLUB_FORMAT_TEST,
       ).message;
     }
+    /**
+     * #4516: the public payment-link page's narrative, from its own context (`getPaymentLinkContext`) for a link to
+     * this booking - the page's readers on the rows, not the booking page's copy of them.
+     */
+    async function paymentLinkNarrative(): Promise<string> {
+      const { token } = issueActionToken();
+      await prisma.paymentLink.create({ data: { bookingId: BOOKING_ID, tokenHash: hashActionToken(token), expiresAt: new Date("2026-12-01T00:00:00.000Z") } });
+      return (await getPaymentLinkContext(token, { readOpenFinancialReview: async () => false })).narrative.message;
+    }
     const refundedOn = (occurredAt: Date) => `$100.00 was refunded on ${club.instantDate(occurredAt)} and $100.00 was retained`;
     const ON_ITS_WAY = "$100.00 is on its way to your original payment method and $100.00 was retained";
 
@@ -253,8 +270,12 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
       ({ closeCardRefundPaidAnotherWay } = await import("@/lib/card-refund-paid-another-way"));
       ({ readCancelledCardRefund, readCardShortfallTaskStatuses } = await import("@/lib/cancel-card-refund-shortfall-status"));
       ({ resolveBookingNarrative } = await import("@/lib/booking-narrative"));
+      ({ getPaymentLinkContext } = await import("@/lib/payment-link-context"));
+      ({ issueActionToken, hashActionToken } = await import("@/lib/action-tokens"));
       ({ parseRefundAllocationPlan } = await import("@/lib/open-card-refund-owed"));
       ({ CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture"));
+      // The payment-link page resolves the club's format once per request (React `cache`): the fixture's here.
+      formatSpy = vi.spyOn(await import("@/lib/club-format-server"), "clubFormatValues").mockResolvedValue(CLUB_FORMAT_TEST);
       const { bindClubTime, requireClubTimeZone } = await import("@/lib/club-time");
       club = bindClubTime(requireClubTimeZone("Pacific/Auckland"), CLUB_FORMAT_TEST);
 
@@ -282,6 +303,7 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
 
     afterAll(async () => {
       resetStripeRaceHooks();
+      formatSpy?.mockRestore();
       if (!prisma) return;
       await deleteFixtures();
     });
@@ -458,6 +480,7 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
         operationId: row.id,
         amountCents: 5_000,
         paidBack: "partial",
+        rest: "club-keeps", // #4516: the old rule, now the treasurer's explicit choice
         expectedOwedCents: 7_000,
         note: "Bank transfer, ref RACE 4145 in part",
         actingMemberId: OFFICER_ID,
@@ -472,6 +495,58 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
         `$30.00 was refunded to your card on ${club.instantDate(FROZEN_AT)}, $50.00 could not go back to your card and was paid back to you another way, the club checked the remaining $20.00 and closed it and $100.00 was retained`,
       );
       expect(message).not.toContain("$70.00 could not go back");
+    });
+
+    // #4516 (round-3 review 1, `INV-PAY-122`): the treasurer pays back $40.00 by bank and leaves $60.00 still owed on a
+    // row of its own (`card_refund_still_owed_<record>`). Both pages say both parts - never the whole as still owed,
+    // never the $40.00 gone - and once a later close pays the rest, all that was paid back (and what the club closed).
+    it.each([
+      ["in full", { amountCents: 6_000, paidBack: "full" } as const, "$100.00 could not go back to your card and was paid back to you another way and $100.00 was retained"],
+      [
+        "in part, the club keeping the rest",
+        { amountCents: 4_000, paidBack: "partial", rest: "club-keeps" } as const,
+        "$80.00 could not go back to your card and was paid back to you another way, the club checked the remaining $20.00 and closed it and $100.00 was retained",
+      ],
+    ])("paid back in part with the rest still owed: both pages say both parts, then what the rest's close (%s) paid", async (_how, restClose, said) => {
+      await paidBooking();
+      stripeAnswers(() => "throws");
+      await cancel();
+      const row = await rowNow();
+      await prisma.paymentRecoveryOperation.update({ where: { id: row.id }, data: { status: "FAILED", attempts: 5, nextRetryAt: null } });
+
+      await closeCardRefundPaidAnotherWay({
+        operationId: row.id,
+        amountCents: 4_000,
+        paidBack: "partial",
+        rest: "still-owed",
+        expectedOwedCents: REFUND_CENTS,
+        note: "Bank transfer, ref RACE 4145 first part",
+        actingMemberId: OFFICER_ID,
+      });
+
+      const owing = "$40.00 could not go back to your card and was paid back to you another way, $60.00 is being refunded to you and $100.00 was retained; the club will be in touch about the card refund";
+      expect(await readCancelledCardRefund(BOOKING_ID)).toEqual({
+        cardRefundState: "paid-another-way",
+        cardRefundClose: { paidBackCents: 4_000, unpaidCents: 0, madeCents: 0, stillOwed: { amountCents: 6_000, state: "stalled" } },
+      });
+      expect(await narrative()).toContain(owing);
+      expect(await paymentLinkNarrative()).toContain(owing);
+
+      const rest = await prisma.paymentRecoveryOperation.findFirstOrThrow({ where: { bookingId: BOOKING_ID, idempotencyKey: { startsWith: "card_refund_still_owed_" } } });
+      expect(rest).toMatchObject({ amountCents: 6_000, status: "PENDING" });
+      vi.setSystemTime(RUNNER_AT);
+      await closeCardRefundPaidAnotherWay({
+        operationId: rest.id,
+        ...restClose,
+        expectedOwedCents: 6_000,
+        note: "Bank transfer, ref RACE 4145 the rest",
+        actingMemberId: OFFICER_ID,
+      });
+
+      expect(await refundedEvents()).toEqual([]);
+      expect(await narrative()).toContain(said);
+      expect(await paymentLinkNarrative()).toContain(said);
+      expect(await narrative()).not.toContain("is being refunded");
     });
 
     it("the deploy boundary, paid another way: an up-front event, $60.00 made inline and the rest closed - no second event, and the page says the card's part from the close's record, never as closed", async () => {

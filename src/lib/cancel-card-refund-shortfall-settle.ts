@@ -16,6 +16,8 @@ import { cancelCardShortfallOccurrenceKey, cancelCardShortfallPart } from "@/lib
 import { isPaymentRecoveryOperationExhausted, isPaymentRecoveryOperationInFlight } from "@/lib/payment-recovery-constants";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { bookingCancelCardRefundRecoveryWhere, CARD_REFUND_FAILED_LATER_RECOVERY_PREFIX, isBookingCancelCardRefundRecoveryKey } from "@/lib/payment-recovery-keys";
+import { CARD_REFUND_STILL_OWED_RECOVERY_PREFIX } from "@/lib/card-refund-still-owed-keys";
+import { cardRefundStillOwedOrigin } from "@/lib/card-refund-still-owed-origin";
 import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import { isStripeTransaction, lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import { LEDGER_ROWS_NEWEST_FIRST } from "@/lib/payment-ledger-order";
@@ -156,19 +158,26 @@ export async function cardShortfallSettlement(
   // this payment Stripe failed later and that is owed again by a row of its own
   // (`card_refund_failed_later_<refund>`) - card money still moving either way.
   // #4154: the cancel's own rows are #4147's one rule - a member cancel's row, or a capacity race's per intent.
+  // #4516 review M4: and a rest of either still owed after a part "Paid another way" close (`card_refund_still_owed_<record>`),
+  // asked of the row it was first owed on.
   const cardRefunds = await store.paymentRecoveryOperation.findMany({
     where: {
       OR: [
         bookingCancelCardRefundRecoveryWhere(task.bookingId),
         { paymentId: task.paymentId, idempotencyKey: { startsWith: CARD_REFUND_FAILED_LATER_RECOVERY_PREFIX } },
+        { paymentId: task.paymentId, idempotencyKey: { startsWith: CARD_REFUND_STILL_OWED_RECOVERY_PREFIX } },
       ],
     },
     orderBy: { createdAt: "asc" },
     select: { idempotencyKey: true, status: true, attempts: true, nextRetryAt: true, lastError: true },
   });
-  const ownOrFailedLater = (cardRefunds ?? []).filter(
-    (row) => row.idempotencyKey.startsWith(CARD_REFUND_FAILED_LATER_RECOVERY_PREFIX) || isBookingCancelCardRefundRecoveryKey(task.bookingId, row.idempotencyKey),
-  );
+  const isOwnOrFailedLater = (key: string) =>
+    key.startsWith(CARD_REFUND_FAILED_LATER_RECOVERY_PREFIX) || isBookingCancelCardRefundRecoveryKey(task.bookingId, key);
+  const ownOrFailedLater: typeof cardRefunds = [];
+  for (const row of cardRefunds ?? []) {
+    const origin = await cardRefundStillOwedOrigin(store, row.idempotencyKey);
+    if (isOwnOrFailedLater(origin?.idempotencyKey ?? row.idempotencyKey)) ownOrFailedLater.push(row);
+  }
   const says: CardRefundRefusals =
     raceIntentId === null
       ? CANCEL_CARD_REFUND_REFUSALS

@@ -89,7 +89,7 @@ vi.mock("@/lib/stripe-capture-date", () => ({
 // #3924 round 8: the note step a paid-another-way close waits on.
 vi.mock("@/lib/paid-another-way-receipt-note", () => ({
   // No waiting close unless a test says so (the mocks reset to undefined).
-  queueWaitingPaidAnotherWayNote: async (...a: unknown[]) => (await mocks.queueWaitingPaidAnotherWayNote(...a)) ?? null,
+  queueWaitingPaidAnotherWayNote: async (...a: unknown[]) => (await mocks.queueWaitingPaidAnotherWayNote(...a)) ?? 0,
 }));
 
 vi.mock("@/lib/xero-links", () => ({
@@ -963,7 +963,7 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
     };
 
     it("MUTATION: runs the note step for the capture once the invoice's row has completed", async () => {
-      mocks.queueWaitingPaidAnotherWayNote.mockResolvedValue("op_note");
+      mocks.queueWaitingPaidAnotherWayNote.mockResolvedValue(1);
       await expect(sendReleasedChange("pi_late")).resolves.toBe("inv_supp");
       expect(mocks.queueWaitingPaidAnotherWayNote).toHaveBeenCalledWith("pi_late");
       expect(mocks.completeXeroSyncOperation.mock.invocationCallOrder[0]).toBeLessThan(
