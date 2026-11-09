@@ -49,6 +49,7 @@ export const SETTINGS_HUB = defineHub({
       label: "Login & Security",
       oldPath: "/admin/security",
       area: "support",
+      keywords: ["password", "2fa", "two-factor", "sign-in", "magic link"],
       moved: false,
     },
     {
@@ -57,6 +58,7 @@ export const SETTINGS_HUB = defineHub({
       oldPath: "/admin/access-roles",
       area: "support",
       fullAdminOnly: true,
+      keywords: ["permissions", "rbac", "staff roles", "admin roles"],
       moved: false,
     },
     {
@@ -64,6 +66,7 @@ export const SETTINGS_HUB = defineHub({
       label: "Privacy & Retention",
       oldPath: "/admin/privacy-retention",
       area: "support",
+      keywords: ["privacy", "retention", "anonymise", "replay", "pruning"],
       moved: false,
     },
     {
@@ -72,6 +75,10 @@ export const SETTINGS_HUB = defineHub({
       oldPath: "/admin/club-time",
       area: "support",
       fullAdminOnly: true,
+      keywords: [
+        "timezone", "time zone", "clock", "daylight saving", "dst", "iana",
+        "utc offset", "nzst", "nzdt",
+      ],
       moved: false,
     },
     {
@@ -80,6 +87,10 @@ export const SETTINGS_HUB = defineHub({
       oldPath: "/admin/club-format",
       area: "support",
       admission: "any-admin",
+      keywords: [
+        "currency", "dollars", "nzd", "money format", "locale", "language tag",
+        "number format", "date format",
+      ],
       moved: false,
     },
     {
@@ -88,6 +99,10 @@ export const SETTINGS_HUB = defineHub({
       oldPath: "/admin/environment",
       area: "support",
       fullAdminOnly: true,
+      keywords: [
+        "production", "non-production", "staging", "test site", "copy", "live site",
+        "environment", "safe mode",
+      ],
       moved: false,
     },
     {
@@ -96,6 +111,7 @@ export const SETTINGS_HUB = defineHub({
       oldPath: "/admin/config-transfer",
       area: "support",
       fullAdminOnly: true,
+      keywords: ["backup", "migration", "config transfer", "restore"],
       moved: false,
     },
     {
@@ -103,6 +119,12 @@ export const SETTINGS_HUB = defineHub({
       label: "Integrations",
       oldPath: "/admin/integrations",
       area: "finance",
+      // Google Analytics has no page of its own (#2573 put it in a dialog here),
+      // so its words ride on this page; "analytics" alone also finds Reports.
+      keywords: [
+        "api", "connections", "third-party", "webhooks", "google analytics",
+        "analytics", "ga4",
+      ],
       moved: false,
     },
     {
