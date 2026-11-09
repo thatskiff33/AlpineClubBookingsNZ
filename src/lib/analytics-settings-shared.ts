@@ -22,7 +22,6 @@
  * BOTH layers need lives here; anything that reads the database or the
  * environment stays in the server module.
  */
-import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * The suggested default banner message (owner decision section 11). Editable
@@ -99,13 +98,6 @@ export interface AnalyticsRuntimeConfig {
    */
   privacyPolicyPath: string | null;
 }
-
-/**
- * Where an admin edits the canonical privacy policy: the existing website content
- * editor (`src/app/(admin)/admin/website/page-content/page.tsx`), not a new screen.
- * `adminHref` so the link follows the hub switch (#4801).
- */
-export const PRIVACY_POLICY_ADMIN_HREF = adminHref("page-content");
 
 export interface PrivacyPolicyPageState {
   /** A `PageContent` row exists for the canonical slug. */

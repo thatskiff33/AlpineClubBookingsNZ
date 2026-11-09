@@ -1582,7 +1582,9 @@ describe("the registry is inert", () => {
       "C4: the Club Identity card links with adminHref",
     "src/app/(admin)/admin/booking-policies/cancellation/page.tsx":
       "C4: the public-pages link is adminHref",
-    "src/lib/analytics-settings-shared.ts": "C4: the privacy-policy editor link is adminHref",
+    "src/lib/analytics-privacy-policy.ts": "C4: the privacy-policy editor link is adminHref",
+    "src/components/admin/analytics-integration-card.tsx":
+      "C4: the privacy-policy fallback link is adminHref",
     "src/proxy.ts": "C4: a page reached only by another spelling of its path is a 404",
     "src/lib/contextual-help/admin/appearance-and-website.ts":
       "C4: the Website pages' help is keyed by each page's registry old path",
