@@ -395,7 +395,9 @@ describe("the shipped next.config.ts, through Next's own pipeline", () => {
     expect(rewrites.afterFiles).toEqual([...ASSET_NOT_FOUND_REWRITES]);
     expect(rewrites.fallback).toEqual([]);
     const assetSources = new Set(ASSET_NOT_FOUND_REWRITES.map((rule) => rule.source));
-    expect(rewrites.beforeFiles.filter((rule) => assetSources.has(rule.source))).toEqual(
+    // `beforeFiles` is optional on Next's rewrite return type. An absent stage
+    // holds no asset rule, which is the same fact as an empty filtered list.
+    expect((rewrites.beforeFiles ?? []).filter((rule) => assetSources.has(rule.source))).toEqual(
       [],
     );
   });

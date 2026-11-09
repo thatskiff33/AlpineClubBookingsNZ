@@ -12,8 +12,8 @@ import {
   adminPageCachePathFor,
   buildAdminUrlRules,
   samePage,
-  type AdminHubPage,
 } from "@/lib/admin-hubs";
+import { type AdminHubPage } from "@/lib/admin-hubs/define";
 import { ADMIN_HUBS_LIVE } from "@/lib/admin-hubs/release";
 import { revalidateAdminPage } from "@/lib/admin-hubs/revalidate";
 import { buildUnpaidFinishedStaysHref } from "@/lib/unpaid-finished-stays-hrefs";
