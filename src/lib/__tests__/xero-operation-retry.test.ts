@@ -158,6 +158,11 @@ vi.mock("@/lib/xero-applied-credit-deallocation", () => ({
 vi.mock("@/lib/late-capture-paid-another-way", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/late-capture-paid-another-way")),
   findLateCaptureRefundPaidAnotherWay: mocks.findLateCaptureRefundPaidAnotherWay,
+  // #4516 (round-2 review A): every close of the capture's refund; one here.
+  findLateCaptureRefundPaidAnotherWayCloses: async (...a: unknown[]) => {
+    const found = (await mocks.findLateCaptureRefundPaidAnotherWay(...(a as []))) as unknown;
+    return found ? [found] : [];
+  },
 }));
 vi.mock("@/lib/late-capture-refund-credit-note", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/late-capture-refund-credit-note")),

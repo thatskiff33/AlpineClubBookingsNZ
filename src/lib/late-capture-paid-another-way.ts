@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 
+import { CARD_REFUND_STILL_OWED_RECOVERY_PREFIX, cardRefundStillOwedCloseRecordId } from "@/lib/card-refund-still-owed-keys";
 import { cardRefundStillOwedOrigin } from "@/lib/card-refund-still-owed-origin";
 import { findLateCapturePaymentIntents, readPaidAnotherWayLateCaptureXeroReceipt } from "@/lib/late-capture-xero-receipt";
 import {
@@ -48,15 +49,35 @@ export interface LateCaptureRefundPaidAnotherWay {
  * #4104: the card refund rows a late capture's refund can be closed on - its
  * approval row, and a row owing a refund of it that Stripe failed later
  * (`card_refund_failed_later_<refund>`, on the capture's own intent) - so the
- * close keeps `INV-PAY-110`'s routing whichever row it was.
+ * close keeps `INV-PAY-110`'s routing whichever row it was. #4516 (round-2
+ * review A): and a still-owed rest of either (`card_refund_still_owed_<record>`,
+ * carrying its origin's intent), kept only where its origin is that capture's
+ * (`lateCaptureRefundOperations`).
  */
 function lateCaptureRefundOperationsWhere(paymentIntentIds: readonly string[]) {
   return {
     OR: [
       { idempotencyKey: { in: paymentIntentIds.map((intent) => buildLateCaptureApprovalRefundRecoveryIdempotencyKey(intent)) } },
       { idempotencyKey: { startsWith: CARD_REFUND_FAILED_LATER_RECOVERY_PREFIX }, paymentIntentId: { in: [...paymentIntentIds] } },
+      { idempotencyKey: { startsWith: CARD_REFUND_STILL_OWED_RECOVERY_PREFIX }, paymentIntentId: { in: [...paymentIntentIds] } },
     ],
   };
+}
+
+/** Those rows, each with the capture it refunds: a still-owed rest's is asked of its origin, and one of another capture's is left out. */
+async function lateCaptureRefundOperations(paymentIntentIds: readonly string[], store: CloseStore) {
+  const rows = await store.paymentRecoveryOperation.findMany({
+    where: lateCaptureRefundOperationsWhere(paymentIntentIds),
+    select: { id: true, idempotencyKey: true, paymentIntentId: true },
+  });
+  const found: Array<{ id: string; intent: string }> = [];
+  for (const row of rows ?? []) {
+    const approved = lateCaptureIntentOfApprovalRefundRecoveryKey(row.idempotencyKey);
+    const intent = approved ?? (cardRefundStillOwedCloseRecordId(row.idempotencyKey) === null
+      ? row.paymentIntentId : await lateCaptureIntentOfCardRefundOperation(row, store));
+    if (intent !== null && paymentIntentIds.includes(intent)) found.push({ id: row.id, intent });
+  }
+  return found;
 }
 
 /**
@@ -79,18 +100,19 @@ export async function lateCaptureIntentOfCardRefundOperation(
   return (await findLateCapturePaymentIntents([intent], store)).has(intent) ? intent : null;
 }
 
-/** The close of this capture's approved card refund, or null when it was never closed as paid another way. */
-export async function findLateCaptureRefundPaidAnotherWay(
+/**
+ * Every close of this capture's approved card refund, oldest first (#4516 round-2 review A): a part close whose rest
+ * stays owed is followed by a close of that rest, and each close's bank-transfer note is its own.
+ */
+export async function findLateCaptureRefundPaidAnotherWayCloses(
   paymentIntentId: string,
   store: CloseStore = prisma,
-): Promise<LateCaptureRefundPaidAnotherWay | null> {
-  const operations = await store.paymentRecoveryOperation.findMany({
-    where: lateCaptureRefundOperationsWhere([paymentIntentId]),
-    select: { id: true },
-  });
-  if ((operations ?? []).length === 0) return null;
-  return store.manualRefundTask.findFirst({
+): Promise<LateCaptureRefundPaidAnotherWay[]> {
+  const operations = await lateCaptureRefundOperations([paymentIntentId], store);
+  if (operations.length === 0) return [];
+  return store.manualRefundTask.findMany({
     where: cardRefundPaidAnotherWayClosesWhere(operations.map((operation) => operation.id)),
+    orderBy: [{ completedAt: "asc" }, { id: "asc" }],
     select: {
       id: true,
       kind: true,
@@ -101,6 +123,14 @@ export async function findLateCaptureRefundPaidAnotherWay(
       completedByMemberId: true,
     },
   });
+}
+
+/** The first close of this capture's approved card refund, or null when it was never closed as paid another way. */
+export async function findLateCaptureRefundPaidAnotherWay(
+  paymentIntentId: string,
+  store: CloseStore = prisma,
+): Promise<LateCaptureRefundPaidAnotherWay | null> {
+  return (await findLateCaptureRefundPaidAnotherWayCloses(paymentIntentId, store))[0] ?? null;
 }
 
 /**
@@ -115,16 +145,7 @@ export async function readLateCaptureRefundsPaidAnotherWay(
 ): Promise<Map<string, { xeroRefundNote: PaidAnotherWayXeroNote; raisedAt: Date }>> {
   const found = new Map<string, { xeroRefundNote: PaidAnotherWayXeroNote; raisedAt: Date }>();
   if (paymentIntentIds.length === 0) return found;
-  const intentByKey = new Map(
-    paymentIntentIds.map((intent) => [buildLateCaptureApprovalRefundRecoveryIdempotencyKey(intent), intent]),
-  );
-  const operations = await store.paymentRecoveryOperation.findMany({
-    where: lateCaptureRefundOperationsWhere(paymentIntentIds),
-    select: { id: true, idempotencyKey: true, paymentIntentId: true },
-  });
-  const intentByOperation = new Map(
-    (operations ?? []).map((row) => [row.id, intentByKey.get(row.idempotencyKey) ?? row.paymentIntentId]),
-  );
+  const intentByOperation = new Map((await lateCaptureRefundOperations(paymentIntentIds, store)).map((row) => [row.id, row.intent]));
   if (intentByOperation.size === 0) return found;
   const [closes, tasks] = await Promise.all([
     store.manualRefundTask.findMany({
@@ -142,7 +163,8 @@ export async function readLateCaptureRefundsPaidAnotherWay(
     const intent = operationId === null ? undefined : intentByOperation.get(operationId);
     const xeroRefundNote = paidAnotherWayCloseXeroNote(close);
     const raisedAt = intent === undefined ? undefined : raisedAtByIntent.get(intent);
-    if (intent !== undefined && xeroRefundNote !== null && raisedAt !== undefined) {
+    // #4516 (round-2 review A): of a capture's closes, one whose note still waits for the receipt says so.
+    if (intent !== undefined && xeroRefundNote !== null && raisedAt !== undefined && found.get(intent)?.xeroRefundNote !== "after-receipt") {
       found.set(intent, { xeroRefundNote, raisedAt });
     }
   }

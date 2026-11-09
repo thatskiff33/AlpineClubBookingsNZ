@@ -941,6 +941,34 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
         await expect(runWorker(kept[0]!.id)).resolves.toBe(RECEIPT_LINK.xeroObjectId);
         expect((await noteRows()).map((row) => row.id)).toEqual([first]);
       });
+
+      it("MUTATION (#4516 round-2 review A): a part close and its still-owed rest's close, both waiting for the receipt, each get their own note when it lands", async () => {
+        const paidCents = 2_000;
+        const part = await closeCardRefundPaidAnotherWay({ operationId: OPERATION_ID, amountCents: paidCents, paidBack: "partial", rest: "still-owed",
+          expectedOwedCents: REFUND_CENTS, note: "Bank transfer, part, ref RACE", actingMemberId: OFFICER_ID });
+        expect(part.xeroQueued).toBe("receipt-then-refund-note");
+        // The rest, closed while the receipt is still on its way to Xero: its note waits for the receipt too.
+        await closeCardRefundPaidAnotherWay({ operationId: part.stillOwedOperationId!, amountCents: REFUND_CENTS - paidCents, paidBack: "full",
+          expectedOwedCents: REFUND_CENTS - paidCents, note: "Bank transfer, the rest, ref RACE", actingMemberId: OFFICER_ID });
+        const records = await prisma.manualRefundTask.findMany({
+          where: { bookingId: BOOKING_ID, occurrenceKey: { startsWith: "card-refund-paid-another-way:" } }, orderBy: { completedAt: "asc" },
+        });
+        expect(records.map((record) => record.occurrenceKey?.endsWith(":note-after-receipt"))).toEqual([true, true]);
+        expect(await noteRows()).toHaveLength(0);
+        const kept = await prisma.xeroSyncOperation.findMany({ where: KEPT_ROW });
+        expect(kept).toHaveLength(1);
+
+        await expect(runWorker(kept[0]!.id)).resolves.toBe(RECEIPT_LINK.xeroObjectId);
+        const notes = await noteRows();
+        expect(notes.map((row) => [(row.requestPayload as { paidAnotherWayTaskId: string }).paidAnotherWayTaskId,
+          (row.requestPayload as { refundAmountCents: number }).refundAmountCents]).sort()).toEqual(
+          records.map((record) => [record.id, record.amountCents]).sort(),
+        );
+        expect(notes.every((row) => (row.requestPayload as { creditsInvoiceId: string }).creditsInvoiceId === RECEIPT_LINK.xeroObjectId)).toBe(true);
+        // At most once each: the row's retry queues nothing more.
+        await expect(runWorker(kept[0]!.id)).resolves.toBe(RECEIPT_LINK.xeroObjectId);
+        expect(await noteRows()).toHaveLength(2);
+      });
     });
   },
 );

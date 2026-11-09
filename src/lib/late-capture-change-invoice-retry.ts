@@ -1,6 +1,6 @@
 import type { ClubFormat } from "@/lib/club-format";
 import { cardNoteMayBeInXeroSentence } from "@/lib/late-capture-card-note-wording";
-import { findLateCaptureRefundPaidAnotherWay } from "@/lib/late-capture-paid-another-way";
+import { findLateCaptureRefundPaidAnotherWayCloses } from "@/lib/late-capture-paid-another-way";
 import { findActiveSupplementaryInvoiceLink } from "@/lib/late-capture-xero-receipt";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
@@ -64,7 +64,9 @@ export async function linkedChangeInvoiceRetryRefusal(
   const linked = await findActiveSupplementaryInvoiceLink([operation]);
   if (!linked) return null;
   const paymentIntentId = String(payload.paymentIntentId);
-  const close = await findLateCaptureRefundPaidAnotherWay(paymentIntentId);
+  // #4516 (round-2 review A): every close of the capture's refund, a part close's still-owed rest's included.
+  const closes = await findLateCaptureRefundPaidAnotherWayCloses(paymentIntentId);
+  const close = closes[0] ?? null;
   const task = await prisma.manualRefundTask.findUnique({
     where: { lateCaptureApprovalIntentId: paymentIntentId },
     select: { paymentId: true },
@@ -76,7 +78,7 @@ export async function linkedChangeInvoiceRetryRefusal(
     ? await readUnnotedLateCaptureCardRefunds(paymentId, paymentIntentId)
     : { byHandCents: 0, mayBeInXeroCents: 0, notesCanStillLand: false, notedLaterCents: 0 };
   return linkedChangeInvoiceRetryRefusalMessage(
-    { closeCents: close ? Math.max(0, close.amountCents ?? 0) : null, ...card },
+    { closeCents: close ? closes.reduce((sum, each) => sum + Math.max(0, each.amountCents ?? 0), 0) : null, ...card },
     format,
   );
 }
