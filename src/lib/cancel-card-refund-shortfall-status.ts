@@ -20,6 +20,8 @@ import {
 import { isPaymentRecoveryOperationInFlight } from "@/lib/payment-recovery-constants";
 import { prisma } from "@/lib/prisma";
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
+import { CARD_REFUND_STILL_OWED_RECOVERY_PREFIX } from "@/lib/card-refund-still-owed-keys";
+import { cardRefundStillOwedOrigin } from "@/lib/card-refund-still-owed-origin";
 import type { FailedLaterCardRefund, PaidAnotherWayClose } from "@/lib/booking-narrative-cancelled-post-payment";
 import { netCollectedCardRefundSelect } from "@/lib/additional-ledger-gap";
 import { cardRefundMadeForOperation, cardRefundPaymentBeforeFailure, cardRefundSliceFilledBy, parseRefundAllocationPlan } from "@/lib/open-card-refund-owed";
@@ -104,10 +106,33 @@ export async function readCardShortfallTaskStatuses(bookingId: string, store: Ca
   if (Object.keys(statuses).length === 0) return statuses;
   const cardRefund = await store.paymentRecoveryOperation.findUnique({
     where: { idempotencyKey: buildBookingCancellationRefundIdempotencyKey(bookingId) },
-    select: { id: true, status: true, attempts: true, nextRetryAt: true },
+    select: { id: true, idempotencyKey: true, status: true, attempts: true, nextRetryAt: true },
   });
-  if (cardRefund) statuses.card = (await cardRefundRowState(cardRefund, store)).state;
+  if (cardRefund) {
+    // #4516 (round-2 review B): a rest of it still owed after a part "Paid another way" close is the card part's too.
+    const own = (await cardRefundRowState(cardRefund, store)).state;
+    const states = own === "paid-another-way" ? [own, ...(await stillOwedRestStates(bookingId, [cardRefund.idempotencyKey], store))] : [own];
+    statuses.card = FURTHEST_FROM_DONE_FIRST.find((state) => states.includes(state));
+  }
   return statuses;
+}
+
+/**
+ * #4516 (round-2 review B, `INV-SSOT`): where each rest still owed after a part "Paid another way" close of one of
+ * these rows stands (`card_refund_still_owed_<record>`, read as the row it was first owed on,
+ * `cardRefundStillOwedOrigin`): a rest nothing has paid is a dead row, `stalled`, until a later close.
+ */
+async function stillOwedRestStates(bookingId: string, originKeys: readonly string[], store: CardRefundStore): Promise<CardRefundState[]> {
+  const rests = await store.paymentRecoveryOperation.findMany({
+    where: { bookingId, idempotencyKey: { startsWith: CARD_REFUND_STILL_OWED_RECOVERY_PREFIX } },
+    select: { id: true, idempotencyKey: true, status: true, attempts: true, nextRetryAt: true },
+  });
+  const states: CardRefundState[] = [];
+  for (const rest of rests ?? []) {
+    const origin = await cardRefundStillOwedOrigin(store, rest.idempotencyKey);
+    if (origin && originKeys.includes(origin.idempotencyKey)) states.push((await cardRefundRowState(rest, store)).state);
+  }
+  return states;
 }
 
 /**
@@ -132,7 +157,15 @@ export async function readCancelledCardRefund(bookingId: string, store: CardRefu
   // `startsWith` is SQL LIKE, where `_` matches any one character, so the query alone
   // would let booking `ab`'s read take booking `abc`'s rows: the exact rule decides (#4147).
   const own = rows.filter((row) => isBookingCancelCardRefundRecoveryKey(bookingId, row.idempotencyKey));
-  return cancelledCardRefundOf(bookingId, own, store);
+  const read = await cancelledCardRefundOf(bookingId, own, store);
+  // #4516 (round-2 review B): a rest still owed after a part close of one of them stands where it stands, so a
+  // cancel closed in part with the rest owed is never read as nothing left to send. Only a closed cancel has one.
+  const rests = read.cardRefundState === "paid-another-way" ? await stillOwedRestStates(bookingId, own.map((row) => row.idempotencyKey), store) : [];
+  const cardRefundState = FURTHEST_FROM_DONE_FIRST.find((state) => state === read.cardRefundState || rests.includes(state));
+  if (cardRefundState === read.cardRefundState) return read;
+  const stalled: CancelledCardRefund = { ...read, cardRefundState };
+  delete stalled.cardRefundClose;
+  return stalled;
 }
 
 /**

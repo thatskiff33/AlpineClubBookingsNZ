@@ -14,11 +14,12 @@ const db = vi.hoisted(() => ({
   findClose: vi.fn(),
   tasks: vi.fn(),
   payments: vi.fn(),
+  findRecord: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     paymentRecoveryOperation: { findMany: db.findMany, findUnique: db.findUnique },
-    manualRefundTask: { findFirst: db.findClose, findMany: db.tasks },
+    manualRefundTask: { findFirst: db.findClose, findMany: db.tasks, findUnique: db.findRecord },
     payment: { findMany: db.payments },
   },
 }));
@@ -206,6 +207,51 @@ describe("readCardShortfallTaskStatuses reads a dead card part as stalled (#4125
     db.findUnique.mockResolvedValue(found);
 
     expect(await readCardShortfallTaskStatuses("booking-1")).toEqual({ bank: "OPEN", card });
+  });
+});
+
+// #4516 (round-2 review B): a part "Paid another way" close of the cancel's card refund whose rest stays owed on a
+// row of its own (`card_refund_still_owed_<record>`) leaves the card part stalled, never "nothing left owed".
+describe("a cancel's card refund closed in part, its rest still owed (#4516 round-2 review B)", () => {
+  const CANCEL_KEY = "booking_cancel_refund_recovery_booking-1";
+  const closed = row({ id: "op-cancel", idempotencyKey: CANCEL_KEY, status: PaymentRecoveryOperationStatus.SUCCEEDED, nextRetryAt: null });
+  const rest = (overrides: Partial<Row> = {}) => row({ id: "op-rest", idempotencyKey: "card_refund_still_owed_close-1", attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS, nextRetryAt: null, ...overrides });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // The cancel's row was closed as paid another way, in part.
+    db.findClose.mockImplementation(async ({ where }: { where: { occurrenceKey: { in: string[] } } }) =>
+      where.occurrenceKey.in.some((key) => key.includes("op-cancel")) ? { amountCents: 3_000, raisedAmountCents: 3_000 } : null);
+    // The rest's record names the cancel's row it closed.
+    db.findRecord.mockResolvedValue({ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "card-refund-paid-another-way:op-cancel" });
+    db.findUnique.mockImplementation(async ({ where }: { where: { id?: string; idempotencyKey?: string } }) =>
+      where.id === "op-cancel" || where.idempotencyKey === CANCEL_KEY ? closed : null);
+    db.payments.mockResolvedValue([]);
+    db.tasks.mockResolvedValue([{ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "cancel-card-shortfall:booking-1", status: "OPEN" }]);
+  });
+
+  it("MUTATION: the booking page's narrative reads the card refund stalled while the rest is owed, and paid another way once it is closed", async () => {
+    const rows = (rests: Row[]) => db.findMany.mockImplementation(async ({ where }: { where: { OR?: unknown; idempotencyKey?: unknown } }) =>
+      where.OR ? [closed] : JSON.stringify(where.idempotencyKey ?? "").includes("still_owed") ? rests : []);
+    rows([rest()]);
+    expect(await readCancelledCardRefund("booking-1")).toEqual({ cardRefundState: "stalled" });
+    expect(db.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { bookingId: "booking-1", idempotencyKey: { startsWith: "card_refund_still_owed_" } },
+    }));
+    rows([rest({ status: PaymentRecoveryOperationStatus.SUCCEEDED })]);
+    expect(await readCancelledCardRefundState("booking-1")).toBe("paid-another-way");
+  });
+
+  it("MUTATION: the shortfall's card part reads stalled while the rest is owed", async () => {
+    db.findMany.mockResolvedValue([rest()]);
+    expect(await readCardShortfallTaskStatuses("booking-1")).toEqual({ bank: "OPEN", card: "stalled" });
+  });
+
+  it("a rest whose origin is another door's row is not the cancel's", async () => {
+    db.findRecord.mockResolvedValue({ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "card-refund-paid-another-way:op-appeal" });
+    db.findUnique.mockImplementation(async ({ where }: { where: { id?: string; idempotencyKey?: string } }) =>
+      where.id === "op-appeal" ? row({ id: "op-appeal", idempotencyKey: "refund_request_refund_req-1" }) : where.idempotencyKey === CANCEL_KEY ? closed : null);
+    db.findMany.mockResolvedValue([rest()]);
+    expect(await readCardShortfallTaskStatuses("booking-1")).toEqual({ bank: "OPEN", card: "paid-another-way" });
   });
 });
 
