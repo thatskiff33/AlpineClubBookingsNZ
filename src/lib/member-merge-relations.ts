@@ -227,7 +227,9 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   // who recorded a cash settlement, and who closed the hand-back task it
   // raised. `move` re-points that history onto the surviving member (history
   // follows the person; no collision is possible without a unique).
-  spec("Payment", "manuallyMarkedPaidBy", "manuallyMarkedPaidByMemberId", "move"),
+  spec("Payment", "manuallyMarkedPaidBy", "manuallyMarkedPaidByMemberId", "move", {
+    note: "#4823: moved last, never waiting for a Payment row (member-merge-payment-attribution.ts)",
+  }),
   spec("ManualRefundTask", "completedBy", "completedByMemberId", "move"),
 
   // --- Reports / lodge / hut leader ---

@@ -296,7 +296,7 @@ export async function postMemberMergeTransfer(
   const balances = receivableBalances(economicRows, (row) => `${row.bookingId ?? ""}\u0000${row.lodgeId ?? ""}`);
   const plan = planMemberMergeTransfer({ ...input, balances: [...balances].map(([key, cents]) => ({ ...places.get(key)!, cents })) });
   const eventKey = memberMoneyEventKeys.merge(input.fromMemberId, input.toMemberId);
-  // M4b: no CHARGE successor here. Merge holds no Payment row, so application state read here could miss a
+  // M4b: no CHARGE successor here. Merge holds no Payment row here (#4823 takes some later), so application state read here could miss a
   // collection committing beside it; the first collection after the owner move posts the successor under that row.
   return postMemberMoneyEvent(tx, context, {
     ...(plan ?? { kind: "ZERO", eventKey, origin: "OFFICER", actorMemberId: input.actorMemberId,

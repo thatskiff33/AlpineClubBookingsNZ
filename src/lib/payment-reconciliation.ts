@@ -1643,9 +1643,9 @@ async function settleAndPostBookingReceipts(tx: Prisma.TransactionClient, bookin
   // #4516 (M4c): a capture this settle returns (a duplicate, or one the capacity race cancelled) owes its R05,
   // after its held R06, sized by the frozen plan its recovery row carries; its sender reserves against it. Review F1
   // (corrected in round 2): the owner is read without the booking row, defensively. W1 holds the Payment row here,
-  // and a member merge, which takes no lock(1), can update a Payment row after its owner move (its relation move of
-  // `manuallyMarkedPaidByMemberId`, filed separately): the booking row taken now would add one more Payment -> booking
-  // edge against it. No other cycle is known (journal lines name their debtor by id, with no foreign key). A merge in
+  // so the booking row taken now would add one more Payment -> booking edge against a member merge, which takes no
+  // lock(1) and holds booking rows from its owner move on (#4823 made merge never wait for a Payment row, its own
+  // edge). No other cycle is known (journal lines name their debtor by id, with no foreign key). A merge in
   // between leaves the debt on the merged-away member, where the family's lazy successor finds it (`refundFamilyTip`).
   if ((result.outcome === "duplicate_capture" || result.outcome === "capacity_failed") && settlement.kind === "stripe" && result.plannedRefundCents > 0) {
     await postRefundObligation(tx, journal, { bookingId, scope: "capture-return", id: settlement.paymentIntentId, amountCents: result.plannedRefundCents,
