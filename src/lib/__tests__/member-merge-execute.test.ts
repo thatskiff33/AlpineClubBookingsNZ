@@ -237,7 +237,11 @@ function makeClient(overrides: Record<string, unknown> = {}) {
 
   // One stable spy lets tests distinguish advisory-lock statements from the
   // id-ordered Member `FOR UPDATE` statement (#2243, #2597).
-  const executeRaw = vi.fn((sql: unknown) => Promise.resolve(uncontendedRawCount(sql)));
+  // Typed as the real raw call (a template, then its values) so tests can read either.
+  const executeRaw = vi.fn((sql: unknown, ...values: unknown[]): Promise<number> => {
+    void values;
+    return Promise.resolve(uncontendedRawCount(sql));
+  });
 
   const tx = new Proxy(
     {},
