@@ -188,6 +188,15 @@ function memberFindManyForTest(args: unknown) {
     .map((id) => ({ id }));
 }
 
+/**
+ * #4855: merge's participant lock counts the rows its `SKIP LOCKED` attempt
+ * took; uncontended, that is every id it named. Every other statement: 0.
+ */
+function uncontendedRawCount(sql: unknown): number {
+  if (!rawStatement(sql).includes("SKIP LOCKED")) return 0;
+  return ((sql as { values?: readonly unknown[] }).values ?? []).filter((value) => typeof value === "string").length;
+}
+
 function makeClient(overrides: Record<string, unknown> = {}) {
   const memberDelegate = {
     ...defaultDelegate(),
@@ -228,23 +237,13 @@ function makeClient(overrides: Record<string, unknown> = {}) {
 
   // One stable spy lets tests distinguish advisory-lock statements from the
   // id-ordered Member `FOR UPDATE` statement (#2243, #2597).
-  const executeRaw = vi.fn().mockResolvedValue(0);
-  // #4855: the participant lock reads back which rows its `SKIP LOCKED` attempt
-  // took; uncontended, that is every id it named.
-  const queryRaw = vi.fn((sql: unknown) =>
-    Promise.resolve(
-      ((sql as { values?: readonly unknown[] }).values ?? [])
-        .filter((value): value is string => typeof value === "string")
-        .map((id) => ({ id })),
-    ),
-  );
+  const executeRaw = vi.fn((sql: unknown) => Promise.resolve(uncontendedRawCount(sql)));
 
   const tx = new Proxy(
     {},
     {
       get(_t, prop: string) {
         if (prop === "$executeRaw") return executeRaw;
-        if (prop === "$queryRaw") return queryRaw;
         if (prop === "member") return cache.get("member");
         if (prop in overrides) return overrides[prop as keyof typeof overrides];
         if (!cache.has(prop)) cache.set(prop, defaultDelegate());
@@ -277,7 +276,6 @@ function makeClient(overrides: Record<string, unknown> = {}) {
     client,
     tx,
     executeRaw,
-    queryRaw,
     member: cache.get("member"),
     auditLog: cache.get("auditLog"),
   };
@@ -439,7 +437,7 @@ describe("executeMemberMerge", () => {
       ...defaultDelegate(),
       findMany: vi.fn().mockResolvedValue([]),
     };
-    const { client, queryRaw, member, auditLog } = makeClient({
+    const { client, executeRaw, member, auditLog } = makeClient({
       xeroSyncOperation,
       xeroObjectLink,
     });
@@ -466,14 +464,13 @@ describe("executeMemberMerge", () => {
     });
 
     expect(xeroSyncOperation.findFirst).toHaveBeenCalledTimes(4);
-    // #4855: the participant lock reads back the rows it took, so it is a `$queryRaw`.
-    const participantLockCall = queryRaw.mock.calls.findIndex(([statement]) =>
+    const participantLockCall = executeRaw.mock.calls.findIndex(([statement]) =>
       rawStatement(statement).includes('FROM "Member"'),
     );
     expect(participantLockCall).toBeGreaterThanOrEqual(0);
     expect(
       xeroSyncOperation.findFirst.mock.invocationCallOrder[2],
-    ).toBeGreaterThan(queryRaw.mock.invocationCallOrder[participantLockCall]);
+    ).toBeGreaterThan(executeRaw.mock.invocationCallOrder[participantLockCall]);
     expect((member as { delete: ReturnType<typeof vi.fn> }).delete).not.toHaveBeenCalled();
     expect(xeroObjectLink.findMany).not.toHaveBeenCalled();
     expectRefusedAudit(
@@ -1839,7 +1836,7 @@ describe("member-photo reconciliation at execute time (MP1, #189)", () => {
     // can commit blob M2 between the fresh read and the update; the merge then
     // overwrites the pointer and nothing sweeps M2 (the reconcile only sweeps the
     // LOSER's blobs), leaving an orphaned public asset.
-    const { client, executeRaw, queryRaw } = makeClient();
+    const { client, executeRaw } = makeClient();
 
     await executeMemberMerge({
       masterId: MASTER_ID,
@@ -1853,18 +1850,19 @@ describe("member-photo reconciliation at execute time (MP1, #189)", () => {
     const statements = executeRaw.mock.calls.map(([statement]) =>
       rawStatement(statement),
     );
-    // #4855: the participant lock is a `$queryRaw` that reads back the rows it took.
-    const rowLocks = queryRaw.mock.calls.map(([statement]) => rawStatement(statement));
-    const rowLockIndex = rowLocks.findIndex((s) => s.includes("FOR UPDATE"));
+    const rowLockIndex = statements.findIndex((s) => s.includes("FOR UPDATE"));
     expect(rowLockIndex).toBeGreaterThanOrEqual(0);
-    expect(rowLocks[rowLockIndex]).toContain('FROM "Member"');
-    expect(rowLocks[rowLockIndex]).toContain('ORDER BY "id"');
+    expect(statements[rowLockIndex]).toContain('FROM "Member"');
+    expect(statements[rowLockIndex]).toContain('ORDER BY "id"');
     // One statement covering both ids, sorted — same ordering rule as the two
     // advisory locks above it, so the mirror merge cannot deadlock against it.
-    const lockInput = queryRaw.mock.calls[rowLockIndex][0] as {
+    const lockInput = executeRaw.mock.calls[rowLockIndex][0] as {
       values?: string[];
     };
-    expect(lockInput.values).toEqual([MASTER_ID, LOSER_ID].sort());
+    const lockArgs =
+      lockInput.values ??
+      (executeRaw.mock.calls[rowLockIndex].slice(1) as string[]);
+    expect(lockArgs).toEqual([MASTER_ID, LOSER_ID].sort());
     // Hosting policy-set first, then the #2595 partner-share lodge prefix, then
     // both lifecycle keys in sorted order. This is the counterpart order shared
     // with policy reconciliation and the drain.
@@ -2192,7 +2190,7 @@ describe("member-photo reconciliation at execute time (MP1, #189)", () => {
         mergeHasPolicyLock.resolve();
         await letMergeContinue.promise;
       }
-      return 0;
+      return uncontendedRawCount(strings);
     });
 
     const core: MemberMergePreviewCore = {
@@ -3431,17 +3429,15 @@ describe("executeMemberMerge — Payment attribution moves last, never waiting (
 
   it("re-points the attribution once, after the Member FOR UPDATE, under a sorted NOWAIT lock", async () => {
     const payment = paymentDelegate(2);
-    const { client, executeRaw, queryRaw } = makeClient({ payment });
+    const { client, executeRaw } = makeClient({ payment });
 
     const result = await execute(client);
 
     const statements = executeRaw.mock.calls.map((call) => composed(call));
-    // #4855: the Member lock is a `$queryRaw`, so the two are ordered by call order.
-    const memberLock = queryRaw.mock.calls.findIndex(([statement]) => rawStatement(statement).includes('FROM "Member"') && rawStatement(statement).includes("FOR UPDATE"));
+    const memberLock = statements.findIndex(({ sql }) => sql.includes('FROM "Member"') && sql.includes("FOR UPDATE"));
     const paymentLock = statements.findIndex(({ sql }) => sql.includes('FROM "Payment"'));
     expect(memberLock).toBeGreaterThanOrEqual(0);
-    expect(paymentLock).toBeGreaterThanOrEqual(0);
-    expect(executeRaw.mock.invocationCallOrder[paymentLock]).toBeGreaterThan(queryRaw.mock.invocationCallOrder[memberLock]);
+    expect(paymentLock).toBeGreaterThan(memberLock);
     expect(statements[paymentLock]).toEqual({
       sql: 'SELECT 1 FROM "Payment" WHERE "manuallyMarkedPaidByMemberId" = ? ORDER BY "id" FOR NO KEY UPDATE NOWAIT',
       values: [LOSER_ID],
@@ -3466,7 +3462,7 @@ describe("executeMemberMerge — Payment attribution moves last, never waiting (
       if (composed(call).sql.includes('FROM "Payment"')) {
         throw Object.assign(new Error("could not obtain lock on row in relation \"Payment\""), { code: "55P03" });
       }
-      return 0;
+      return uncontendedRawCount(call[0]);
     });
 
     const refused = await execute(client).catch((error: unknown) => error);
@@ -3483,7 +3479,7 @@ describe("executeMemberMerge — Payment attribution moves last, never waiting (
     const broken = Object.assign(new Error("connection reset"), { code: "08006" });
     executeRaw.mockImplementation(async (...call: unknown[]) => {
       if (composed(call).sql.includes('FROM "Payment"')) throw broken;
-      return 0;
+      return uncontendedRawCount(call[0]);
     });
 
     await expect(execute(client)).rejects.toBe(broken);

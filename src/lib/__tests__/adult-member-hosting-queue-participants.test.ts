@@ -367,91 +367,96 @@ describe("hosting coverage queue participant fence (#2597)", () => {
   });
 
   /**
-   * A merge participant client: `$executeRaw` takes the savepoints and the lock
-   * bound, `$queryRaw` answers each row-lock statement in turn (the
-   * `SKIP LOCKED` attempt returns the rows it locked; a single-row wait returns
-   * its row, or rejects), and the typed read returns `typed`.
+   * A merge participant client. Every statement goes through `$executeRaw`;
+   * `lockCounts` answers the row-lock statements in turn with the number of
+   * rows each locked (or a rejection), and everything else (savepoints, the
+   * lock bound) returns 0. The typed read returns `typed`.
    */
   function mergeParticipantDb(
-    lockAnswers: Array<string[] | { reject: unknown }>,
+    lockCounts: Array<number | { reject: unknown }>,
     typed = ["loser-1", "master-1", "owner-1"],
   ) {
-    const answers = [...lockAnswers];
+    const answers = [...lockCounts];
     const db = {
-      $executeRaw: vi.fn().mockResolvedValue(0),
-      $queryRaw: vi.fn(() => {
+      $executeRaw: vi.fn((sql: { strings?: readonly string[] }) => {
+        if (!/FOR UPDATE/.test((sql.strings ?? []).join("?"))) return Promise.resolve(0);
         const next = answers.shift();
         if (next === undefined) throw new Error("an unexpected row-lock statement");
-        if (!Array.isArray(next)) return Promise.reject(next.reject);
-        return Promise.resolve(next.map((id) => ({ id })));
+        return typeof next === "number" ? Promise.resolve(next) : Promise.reject(next.reject);
       }),
       member: { findMany: vi.fn().mockResolvedValue(typed.map((id) => ({ id }))) },
     };
-    /** Every statement in issue order: savepoints and bounds from `$executeRaw`, locks from `$queryRaw`. */
+    /** Every statement in issue order, whitespace folded. */
     const statements = () =>
-      [...db.$executeRaw.mock.calls.map((call, index) => ({ order: db.$executeRaw.mock.invocationCallOrder[index], sql: call[0] })),
-        ...db.$queryRaw.mock.calls.map((call, index) => ({ order: db.$queryRaw.mock.invocationCallOrder[index], sql: (call as unknown[])[0] }))]
-        .sort((x, y) => x.order - y.order)
-        .map(({ sql }) => {
-          const statement = sql as { strings?: readonly string[]; values?: readonly unknown[] };
-          return { text: (statement.strings ?? []).join("?").replace(/\s+/g, " ").trim(), values: statement.values ?? [] };
-        });
+      db.$executeRaw.mock.calls.map(([sql]) => ({
+        text: (sql.strings ?? []).join("?").replace(/\s+/g, " ").trim(),
+        values: (sql as { values?: readonly unknown[] }).values ?? [],
+      }));
     return { db, statements };
   }
 
   const PARTICIPANTS = { masterId: "master-1", loserId: "loser-1", ownerMemberIds: ["owner-1"] };
   const ALL = ["loser-1", "master-1", "owner-1"];
+  const ATTEMPT = 'SELECT 1 FROM "Member" WHERE "id" IN (?,?,?) ORDER BY "id" FOR UPDATE SKIP LOCKED';
+  const PROBE = 'SELECT 1 FROM "Member" WHERE "id" = ? FOR UPDATE SKIP LOCKED';
+  const WAIT = 'SELECT 1 FROM "Member" WHERE "id" = ? FOR UPDATE';
 
   it("refuses a merge participant set when the typed read omits a locked id", async () => {
-    const { db } = mergeParticipantDb([ALL], ["master-1", "owner-1"]);
+    const { db } = mergeParticipantDb([3], ["master-1", "owner-1"]);
     await expect(
       lockMemberMergeHostingCoverageParticipants(db as never, PARTICIPANTS),
     ).rejects.toBeInstanceOf(HostingCoverageParticipantRetryError);
   });
 
   it("takes every participant row in one SKIP LOCKED statement inside a released savepoint, with no lock bound, when none is busy (#4855)", async () => {
-    const { db, statements } = mergeParticipantDb([ALL]);
+    const { db, statements } = mergeParticipantDb([3]);
     await expect(
       lockMemberMergeHostingCoverageParticipants(db as never, PARTICIPANTS),
     ).resolves.toEqual(ALL);
     expect(statements().map((statement) => statement.text)).toEqual([
       "SAVEPOINT member_merge_participants_attempt",
-      'SELECT "id" FROM "Member" WHERE "id" IN (?,?,?) ORDER BY "id" FOR UPDATE SKIP LOCKED',
+      ATTEMPT,
       "RELEASE SAVEPOINT member_merge_participants_attempt",
     ]);
     expect(statements()[1].values).toEqual(ALL);
   });
 
   it("waits for a busy row ALONE, holding none of the others, then takes the whole set (#4855, #2623 T6)", async () => {
-    // The first attempt skips master-1 (a writer's key share). Merge releases
-    // what it did lock, waits for master-1 by itself under what is left of the
-    // 10s bound, releases it and its bound with the savepoint, and tries again.
-    const { db, statements } = mergeParticipantDb([["loser-1", "owner-1"], ["master-1"], ALL]);
+    // The first attempt skips master-1 (a writer's key share): it locks 2 of 3,
+    // and the row-by-row probe finds loser-1 held (by this attempt) and
+    // master-1 not. Merge releases what it locked, waits for master-1 by itself
+    // under what is left of the 10s bound, releases it and its bound with the
+    // savepoint, and tries again.
+    const { db, statements } = mergeParticipantDb([2, 1, 0, 1, 3]);
     await expect(
       lockMemberMergeHostingCoverageParticipants(db as never, PARTICIPANTS),
     ).resolves.toEqual(ALL);
     const texts = statements().map((statement) => statement.text);
     expect(texts).toEqual([
       "SAVEPOINT member_merge_participants_attempt",
-      'SELECT "id" FROM "Member" WHERE "id" IN (?,?,?) ORDER BY "id" FOR UPDATE SKIP LOCKED',
+      ATTEMPT,
+      PROBE,
+      PROBE,
       "ROLLBACK TO SAVEPOINT member_merge_participants_attempt",
       "RELEASE SAVEPOINT member_merge_participants_attempt",
       "SAVEPOINT member_merge_participant_wait",
       "SELECT set_config('lock_timeout', ?, true)",
-      'SELECT "id" FROM "Member" WHERE "id" = ? FOR UPDATE',
+      WAIT,
       "ROLLBACK TO SAVEPOINT member_merge_participant_wait",
       "RELEASE SAVEPOINT member_merge_participant_wait",
       "SAVEPOINT member_merge_participants_attempt",
-      'SELECT "id" FROM "Member" WHERE "id" IN (?,?,?) ORDER BY "id" FOR UPDATE SKIP LOCKED',
+      ATTEMPT,
       "RELEASE SAVEPOINT member_merge_participants_attempt",
     ]);
+    expect(statements()[2].values).toEqual(["loser-1"]);
+    expect(statements()[3].values).toEqual(["master-1"]);
     // The wait is BLOCKING (a short overlap still succeeds) and bounded by the
     // remaining budget, never more than the T6 bound and never 0 ("forever").
     expect(texts.join("\n")).not.toContain("NOWAIT");
-    const bound = Number(statements()[5].values[0]);
+    const bound = Number(statements()[7].values[0]);
     expect(bound).toBeGreaterThan(0);
     expect(bound).toBeLessThanOrEqual(MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS);
-    expect(statements()[6].values).toEqual(["master-1"]);
+    expect(statements()[8].values).toEqual(["master-1"]);
     // No bound outlives its savepoint: nothing restores it by hand (#2623 F4).
     expect(texts.join("\n")).not.toMatch(/SET LOCAL lock_timeout|RESET/);
   });
@@ -461,7 +466,7 @@ describe("hosting coverage queue participant fence (#2597)", () => {
     // NOWAIT raises, so the bounded wait lands on the error member merge already
     // converts into its clean "nothing was saved" 409.
     const { db, statements } = mergeParticipantDb([
-      ["loser-1", "owner-1"],
+      2, 0,
       { reject: { driverAdapterError: { cause: { originalCode: "55P03" } } } },
     ]);
     await expect(
@@ -475,37 +480,36 @@ describe("hosting coverage queue participant fence (#2597)", () => {
   });
 
   it("refuses when a busy participant row turns out to be gone", async () => {
-    const { db } = mergeParticipantDb([["loser-1", "owner-1"], []]);
+    const { db } = mergeParticipantDb([2, 0, 0]);
     await expect(
       lockMemberMergeHostingCoverageParticipants(db as never, PARTICIPANTS),
     ).rejects.toBeInstanceOf(HostingCoverageParticipantRetryError);
-    expect(db.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(db.member.findMany).not.toHaveBeenCalled();
   });
 
   it("cannot spin: once the T6 budget is spent it refuses instead of trying again", async () => {
-    // Every wait frees its row at once, but the row is always busy again; the
-    // monotonic clock moves past the bound, and the next attempt never starts.
+    // Every wait frees its row at once, but the row is busy again on the next
+    // attempt; the monotonic clock moves past the bound, and no third attempt starts.
     let now = 1_000;
     const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
     try {
-      const busy = ["loser-1", "owner-1"];
-      const { db } = mergeParticipantDb([busy, ["master-1"], busy, ["master-1"]]);
-      db.$queryRaw.mockImplementationOnce(() => Promise.resolve(busy.map((id) => ({ id }))));
-      db.$queryRaw.mockImplementationOnce(() => {
-        now += MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS / 2;
-        return Promise.resolve([{ id: "master-1" }]);
-      });
-      db.$queryRaw.mockImplementationOnce(() => Promise.resolve(busy.map((id) => ({ id }))));
-      db.$queryRaw.mockImplementationOnce(() => {
-        now += MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS;
-        return Promise.resolve([{ id: "master-1" }]);
+      const { db } = mergeParticipantDb([2, 0, 1, 2, 0, 1]);
+      const answer = db.$executeRaw.getMockImplementation()!;
+      let waits = 0;
+      db.$executeRaw.mockImplementation((sql) => {
+        const text = (sql.strings ?? []).join("?");
+        if (/FOR UPDATE\s*$/.test(text)) {
+          waits += 1;
+          now += waits === 1 ? MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS / 2 : MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS;
+        }
+        return answer(sql);
       });
       await expect(
         lockMemberMergeHostingCoverageParticipants(db as never, PARTICIPANTS),
       ).rejects.toBeInstanceOf(HostingCoverageParticipantRetryError);
-      expect(db.$queryRaw).toHaveBeenCalledTimes(4);
+      expect(waits).toBe(2);
       const lockBounds = db.$executeRaw.mock.calls
-        .map((call) => call[0] as { strings?: readonly string[]; values?: readonly unknown[] })
+        .map(([sql]) => sql as { strings?: readonly string[]; values?: readonly unknown[] })
         .filter((statement) => (statement.strings ?? []).join("?").includes("lock_timeout"))
         .map((statement) => Number(statement.values?.[0]));
       // Each wait gets only what is left: the full bound, then half of it.
@@ -774,15 +778,11 @@ describe("participant fence source contract (#2619)", () => {
     return code.slice(start, end === -1 ? undefined : end);
   }
 
-  it("never makes a client's $queryRaw a condition, and the acquire function never names it", () => {
+  it("never names $queryRaw, which this module has never called", () => {
     // The dropped half of the old condition, and the reason a client that COULD
-    // lock was read as unlockable: the bypass demanded a method the acquire
-    // function does not use and `ParticipantDb` does not declare. Since #4855
-    // merge's participant lock reads which rows its `SKIP LOCKED` attempt took
-    // through `$queryRaw`, so the module names it; no code may branch on it.
-    const code = readModuleCode();
-    expect(code).not.toMatch(/typeof\s+[\w.]+\.\$queryRaw|["']\$queryRaw["']\s+in\b|\.\$queryRaw\s*(?:===|!==|==|!=)/);
-    expect(acquireFunctionBody(code)).not.toContain("$queryRaw");
+    // lock was read as unlockable: the bypass demanded a method the module does
+    // not use and `ParticipantDb` does not declare.
+    expect(readModuleCode()).not.toContain("$queryRaw");
   });
 
   it("issues no proof before the row lock, and refuses a client that cannot lock", () => {

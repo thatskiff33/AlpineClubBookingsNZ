@@ -1233,12 +1233,13 @@ own `timeout: 120_000` allowed.
 
 **Since #4855 merge never waits for one of these rows while holding another**
 ("Merge never holds a Member row while waiting for another (#4855)" below). Each
-attempt is one sorted `SELECT … FOR UPDATE SKIP LOCKED` inside a savepoint. When it
-returns every id, merge holds them all, so the uncontended path is one statement.
-Otherwise the savepoint is rolled back, releasing what it did lock, and merge waits
-for the first skipped row alone (`FOR UPDATE`, in a second savepoint, under
-`set_config('lock_timeout', <what is left of the 10s>, true)`), rolls that back
-too and tries again. The deadline is read from a monotonic clock before each
+attempt is one sorted `SELECT 1 … FOR UPDATE SKIP LOCKED` inside a savepoint,
+counted rather than read (`INV-OPS-001`). When it locks every id, merge holds them
+all, so the uncontended path is one statement. Otherwise a row-by-row
+`SKIP LOCKED` probe finds the first row it skipped, the savepoint is rolled back,
+releasing what it did lock, and merge waits for that row alone (`FOR UPDATE`, in
+a second savepoint, under `set_config('lock_timeout', <what is left of the 10s>,
+true)`), rolls that back too and tries again. The deadline is read from a monotonic clock before each
 attempt, so the loop either takes every row or spends the budget; it cannot spin.
 Rolling back to a savepoint restores the `lock_timeout` in force before it, so the
 rest of the merge transaction's locks (sorted coverage-owner keys, the loser

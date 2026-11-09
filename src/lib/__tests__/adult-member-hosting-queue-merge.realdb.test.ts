@@ -162,11 +162,7 @@ function createParticipantPauseClient(
           target.$transaction(async (tx) => {
             const txProxy = new Proxy(tx, {
               get(txTarget, txProperty) {
-                // #4855: the participant lock reads back the rows it took, so it is a
-                // `$queryRaw`; the other Member locks this client may pause on are
-                // `$executeRaw`. Both are watched, and the first match is the pause.
-                if (txProperty === "$executeRaw" || txProperty === "$queryRaw") {
-                  const method = txProperty;
+                if (txProperty === "$executeRaw") {
                   return async (query: unknown, ...values: unknown[]) => {
                     const statement = rawStatement(query);
                     const isParticipantLock =
@@ -179,10 +175,10 @@ function createParticipantPauseClient(
                       await pause.release.promise;
                     }
                     const result = (await Reflect.apply(
-                      txTarget[method] as (...args: unknown[]) => unknown,
+                      txTarget.$executeRaw,
                       txTarget,
                       [query, ...values],
-                    )) as unknown;
+                    )) as number;
                     if (isParticipantLock && pause.position === "after") {
                       consumed = true;
                       pause.reached.resolve();

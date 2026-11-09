@@ -1,9 +1,7 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { z } from "zod";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { isPostgresLockNotAvailable } from "@/lib/prisma-errors";
-import { decodeRawRows } from "@/lib/raw-sql-rows";
 import { ApiError } from "@/lib/api-error";
 import type { HostingCoverageReevaluationInput } from "@/lib/adult-member-hosting-coverage-queue";
 
@@ -394,10 +392,7 @@ async function setTransactionLockTimeout(
   );
 }
 
-type MemberMergeParticipantDb = Pick<PrismaClient, "$executeRaw" | "$queryRaw" | "member">;
-
-/** A row a participant lock took: its id, read back so merge knows which it holds (#2289's decoder). */
-const LOCKED_MEMBER_ROW = z.object({ id: z.string() });
+type MemberMergeParticipantDb = Pick<PrismaClient, "$executeRaw" | "member">;
 
 /**
  * The two savepoints, as fixed statements: one around each acquisition attempt,
@@ -422,8 +417,8 @@ const WAIT_SAVEPOINT = {
  * most `milliseconds`. The row is taken `FOR UPDATE` — the strength merge needs,
  * so the wait outlasts every key share on it — and released straight away by
  * the savepoint's rollback, which also drops the `lock_timeout` set inside it.
- * Returns whether the row still exists; a cancelled wait (`55P03`) means the
- * bound ran out.
+ * A lock selects a constant (`INV-OPS-001`), so the row count says whether the
+ * row still exists; a cancelled wait (`55P03`) means the bound ran out.
  */
 async function waitForOneParticipantRow(
   db: MemberMergeParticipantDb,
@@ -434,13 +429,13 @@ async function waitForOneParticipantRow(
   let outcome: "free" | "missing" | "timedOut";
   try {
     await setTransactionLockTimeout(db, milliseconds);
-    const rows = decodeRawRows(await db.$queryRaw(Prisma.sql`
-      SELECT "id"
+    const locked = await db.$executeRaw(Prisma.sql`
+      SELECT 1
       FROM "Member"
       WHERE "id" = ${memberId}
       FOR UPDATE
-    `), LOCKED_MEMBER_ROW, "member merge participant wait");
-    outcome = rows.length === 1 ? "free" : "missing";
+    `);
+    outcome = locked === 1 ? "free" : "missing";
   } catch (error) {
     if (!isPostgresLockNotAvailable(error)) throw error;
     outcome = "timedOut";
@@ -448,6 +443,27 @@ async function waitForOneParticipantRow(
   await db.$executeRaw(WAIT_SAVEPOINT.rollBack);
   await db.$executeRaw(WAIT_SAVEPOINT.release);
   return outcome;
+}
+
+/**
+ * The first participant row this attempt could not lock, read row by row with
+ * `SKIP LOCKED` inside the attempt's savepoint: a row the attempt already holds
+ * counts 1, a row another transaction holds (or one that is gone) counts 0.
+ */
+async function firstSkippedParticipantRow(
+  db: MemberMergeParticipantDb,
+  ids: readonly string[],
+): Promise<string | undefined> {
+  for (const id of ids) {
+    const locked = await db.$executeRaw(Prisma.sql`
+      SELECT 1
+      FROM "Member"
+      WHERE "id" = ${id}
+      FOR UPDATE SKIP LOCKED
+    `);
+    if (locked !== 1) return id;
+  }
+  return undefined;
 }
 
 /**
@@ -468,11 +484,14 @@ async function waitForOneParticipantRow(
  * never holds part of the set while it waits.
  *
  * EACH ATTEMPT, inside a savepoint: one `FOR UPDATE SKIP LOCKED` over the
- * sorted set. If it returns every id, merge holds them all — on the fast path
- * this is the same single statement as before. Otherwise the savepoint is
- * rolled back, releasing what it did lock, and merge waits for the first
- * skipped row ALONE (`waitForOneParticipantRow`), releases that too and tries
- * again. A row that is gone is a changed participant set, not contention.
+ * sorted set. If it locks every id, merge holds them all — on the fast path
+ * this is the same single statement as before. Otherwise merge finds the first
+ * row it skipped (`firstSkippedParticipantRow`), rolls the savepoint back,
+ * releasing what it did lock, waits for that row ALONE
+ * (`waitForOneParticipantRow`), releases that too and tries again. A row that
+ * is gone is a changed participant set, not contention. Every statement selects
+ * a constant and is counted, never read (`INV-OPS-001`, #2289); the typed read
+ * below is the identity proof.
  *
  * STILL A WAIT, AND STILL BOUNDED (#2623 T6). Merge is irreversible admin work,
  * so a short overlap with an ordinary writer must still succeed: it waits, in
@@ -508,15 +527,14 @@ export async function lockMemberMergeHostingCoverageParticipants(
     const remaining = Math.ceil(deadline - performance.now());
     if (remaining <= 0) throw new HostingCoverageParticipantRetryError();
     await db.$executeRaw(ATTEMPT_SAVEPOINT.open);
-    const lockedRows = decodeRawRows(await db.$queryRaw(Prisma.sql`
-      SELECT "id"
+    const locked = await db.$executeRaw(Prisma.sql`
+      SELECT 1
       FROM "Member"
       WHERE "id" IN (${Prisma.join(ids)})
       ORDER BY "id"
       FOR UPDATE SKIP LOCKED
-    `), LOCKED_MEMBER_ROW, "member merge participant attempt");
-    const locked = new Set(lockedRows.map((row) => row.id));
-    const busy = ids.find((id) => !locked.has(id));
+    `);
+    const busy = locked === ids.length ? undefined : await firstSkippedParticipantRow(db, ids);
     if (busy === undefined) {
       await db.$executeRaw(ATTEMPT_SAVEPOINT.release);
       break;
