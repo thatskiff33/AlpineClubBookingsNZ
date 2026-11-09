@@ -83,6 +83,7 @@ import {
   buildUnsettledAdditionalStaysHref,
 } from "@/lib/unpaid-finished-stays-hrefs";
 import { openAdminCommandPalette } from "@/lib/admin-command-palette-events";
+import { samePage } from "@/lib/admin-hubs";
 
 interface NavSection {
   label?: string;
@@ -1006,12 +1007,12 @@ function SidebarLinks({
     hutLeaderLabel,
   );
 
-  // Highlight the most specific nav item whose href is a prefix of the current
-  // path, so nested routes (e.g. /admin/xero/setup) activate the deepest match
-  // rather than every ancestor (e.g. both "Xero Sync" and "Xero Setup").
+  // Highlight the most specific nav item that is this page, at either its old
+  // URL or its hub URL (`samePage`). Nested routes (e.g. /admin/xero/setup)
+  // activate the deepest match rather than every ancestor.
   const activeHref = visibleNavSections
     .flatMap((section) => section.items.map((item) => item.href))
-    .filter((href) => pathname === href || pathname.startsWith(`${href}/`))
+    .filter((href) => samePage(pathname, href))
     .reduce((best, href) => (href.length > best.length ? href : best), "");
 
   return (

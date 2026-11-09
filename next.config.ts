@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs/config";
 import { ASSET_NOT_FOUND_REWRITES } from "./src/lib/asset-url-404";
+import { buildAdminUrlRules } from "./src/lib/admin-hubs";
+import { ADMIN_HUBS_LIVE } from "./src/lib/admin-hubs/release";
 import { PUBLIC_WEBSITE_NONCE_SEED_ENV_VAR } from "./src/lib/release-nonce-seed";
 
 /**
@@ -52,6 +54,13 @@ function resolvePublicWebsiteNonceSeed(): string {
     `build:${randomUUID()}`
   );
 }
+
+/**
+ * Admin hub redirects and rewrites (#4800, C3), generated from the registry.
+ * While `ADMIN_HUBS_LIVE` is off and no page has moved, both lists are empty,
+ * so this changes no address an officer can open.
+ */
+const adminUrlRules = buildAdminUrlRules(ADMIN_HUBS_LIVE);
 
 const nextConfig: NextConfig = {
   env: {
@@ -140,10 +149,19 @@ const nextConfig: NextConfig = {
    *
    * Relative import, not the `@/` alias: this file is loaded by Next's own
    * config loader, which does not apply the tsconfig path mapping.
+   *
+   * Admin hub rules go in `beforeFiles` for the opposite reason (#4468, C3).
+   * While the switch is off, a moved page's file lives at its hub URL and the
+   * old URL must be rewritten onto it BEFORE the filesystem is checked —
+   * otherwise the old URL 404s, because nothing is left at that path. Asset
+   * rules stay in `afterFiles`, where a real file is served before they run.
    */
+  async redirects() {
+    return [...adminUrlRules.redirects];
+  },
   async rewrites() {
     return {
-      beforeFiles: [],
+      beforeFiles: [...adminUrlRules.rewrites.beforeFiles],
       afterFiles: [...ASSET_NOT_FOUND_REWRITES],
       fallback: [],
     };

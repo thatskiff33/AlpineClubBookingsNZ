@@ -1,4 +1,5 @@
 import { revalidatePath } from "next/cache";
+import { revalidateAdminPage } from "@/lib/admin-hubs/revalidate";
 import { ADMIN_MEMBER_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -78,8 +79,8 @@ const mutationSchema = z.discriminatedUnion("action", [
 ]);
 
 function invalidate() {
-  revalidatePath("/admin/subscriptions");
-  revalidatePath("/admin/stuck-states");
+  revalidateAdminPage("subscriptions");
+  revalidateAdminPage("stuck-states");
   revalidatePath(ADMIN_MEMBER_DETAIL_ROUTE_PATTERN, "page");
 }
 

@@ -1,4 +1,4 @@
-import { revalidatePath } from "next/cache";
+import { revalidateAdminPage } from "@/lib/admin-hubs/revalidate";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import logger from "@/lib/logger";
@@ -37,8 +37,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
   try {
     const result = await pickRefundForUnmatchedVoid({ linkId: id, lineId: parsed.data.lineId, actingMemberId: guard.session.user.id });
-    revalidatePath("/admin/stuck-states");
-    revalidatePath("/admin/payments");
+    revalidateAdminPage("stuck-states");
+    revalidateAdminPage("payments");
     return NextResponse.json({ success: true, ...result });
   } catch (error) {
     if (error instanceof BankRefundVoidAnswerRefusal) {

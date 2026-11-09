@@ -1,4 +1,5 @@
 import { revalidatePath } from "next/cache";
+import { revalidateAdminPage } from "@/lib/admin-hubs/revalidate";
 import { BOOKING_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -208,7 +209,7 @@ export async function POST(
       format,
     );
     await reconcileHandMadeNoteAfterCompletion(bankRefundVoidAnswer); // #4162: catch a void since the check
-    revalidatePath("/admin/payments");
+    revalidateAdminPage("payments");
     revalidatePath(BOOKING_DETAIL_ROUTE_PATTERN, "page");
     return NextResponse.json({
       success: true,

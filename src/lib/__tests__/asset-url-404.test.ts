@@ -378,21 +378,26 @@ describe("the shipped next.config.ts, through Next's own pipeline", () => {
     },
   );
 
-  it("ships the rules in afterFiles, and only there", async () => {
+  it("ships the asset rules in afterFiles, and only there", async () => {
     // The stage cannot be read back from `unstable_getResponseFromNextConfig` —
     // it flattens beforeFiles/afterFiles/fallback into one list — so it is
     // asserted against the config's own return value. This is the assertion that
-    // fails if the rules are moved to `beforeFiles`, which would put them AHEAD
-    // of the filesystem check and 404 every real image and chunk in the app.
+    // fails if the asset rules are moved to `beforeFiles`, which would put them
+    // AHEAD of the filesystem check and 404 every real image and chunk in the
+    // app. Admin hub rewrites (#4800) are allowed in `beforeFiles`; an asset
+    // source there is not.
     const rewrites = await nextConfig.rewrites!();
 
-    expect(Array.isArray(rewrites), "must be the staged form, not a bare array")
-      .toBe(false);
-    expect(rewrites).toEqual({
-      beforeFiles: [],
-      afterFiles: [...ASSET_NOT_FOUND_REWRITES],
-      fallback: [],
-    });
+    expect(Array.isArray(rewrites), "must be the staged form, not a bare array").toBe(
+      false,
+    );
+    if (Array.isArray(rewrites)) return;
+    expect(rewrites.afterFiles).toEqual([...ASSET_NOT_FOUND_REWRITES]);
+    expect(rewrites.fallback).toEqual([]);
+    const assetSources = new Set(ASSET_NOT_FOUND_REWRITES.map((rule) => rule.source));
+    expect(rewrites.beforeFiles.filter((rule) => assetSources.has(rule.source))).toEqual(
+      [],
+    );
   });
 
   it("does not turn on case-sensitive routing", () => {

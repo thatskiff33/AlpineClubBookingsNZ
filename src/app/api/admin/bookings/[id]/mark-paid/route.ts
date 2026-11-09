@@ -1,4 +1,5 @@
 import { revalidatePath } from "next/cache";
+import { revalidateAdminPage } from "@/lib/admin-hubs/revalidate";
 import { BOOKING_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
@@ -213,9 +214,9 @@ export async function POST(
             actingMemberId: guard.session.user.id,
           },
     );
-    revalidatePath("/admin/bookings");
+    revalidateAdminPage("bookings");
     revalidatePath(BOOKING_DETAIL_ROUTE_PATTERN, "page");
-    revalidatePath("/admin/payments");
+    revalidateAdminPage("payments");
     return NextResponse.json({
       success: true,
       booking: result,

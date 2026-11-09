@@ -1,4 +1,5 @@
 import { revalidatePath } from "next/cache";
+import { revalidateAdminPage } from "@/lib/admin-hubs/revalidate";
 import { ADMIN_MEMBER_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
@@ -101,7 +102,7 @@ export async function POST(
             actingMemberId: guard.session.user.id,
           },
     );
-    revalidatePath("/admin/subscriptions");
+    revalidateAdminPage("subscriptions");
     revalidatePath(ADMIN_MEMBER_DETAIL_ROUTE_PATTERN, "page");
     return NextResponse.json({
       success: true,

@@ -1,4 +1,4 @@
-import { revalidatePath } from "next/cache";
+import { revalidateAdminPage } from "@/lib/admin-hubs/revalidate";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import logger from "@/lib/logger";
@@ -63,7 +63,7 @@ export async function POST(
       note,
       actingMemberId: guard.session.user.id,
     });
-    revalidatePath("/admin/stuck-states");
+    revalidateAdminPage("stuck-states");
     return NextResponse.json({ success: true, ...result });
   } catch (error) {
     if (error instanceof BankRefundVoidAnswerRefusal) {

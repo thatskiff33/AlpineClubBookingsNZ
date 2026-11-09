@@ -933,13 +933,12 @@ describe("buildAdminUrlRules", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Inert until C3: nothing outside the registry imports it but the files named
-// below. Each one is a deliberate edit here, so a new reader is reviewed. In
-// production only the security map reads it (C2 #4799), and the parity census
-// proves what that map answers did not change.
+// Every file outside the registry that imports it is named here, so a new
+// reader is reviewed. C3 (#4800) added the URL plumbing. Nothing an officer
+// opens changes while `ADMIN_HUBS_LIVE` is off and no page has moved.
 // ---------------------------------------------------------------------------
 
-describe("the registry is inert", () => {
+describe("the registry's importers are reviewed", () => {
   const ROOT = process.cwd();
   const REGISTRY_DIR = "src/lib/admin-hubs/";
   /** Every file outside the registry that may import it, and why. */
@@ -958,6 +957,17 @@ describe("the registry is inert", () => {
       "enumerates pages from the registry, at both paths",
     "src/lib/__tests__/coverage-matrix-areas.test.ts":
       "takes COVERAGE_MATRIX.md's areas from the registry's old paths",
+    "next.config.ts": "C3: redirects and beforeFiles rewrites from buildAdminUrlRules",
+    "src/components/admin-sidebar.tsx": "C3: the active link goes through samePage",
+    "src/lib/__tests__/admin-hub-url-plumbing.test.ts": "C3: rules, active link, rewrite revalidation",
+    "src/app/api/admin/subscription-billing/route.ts": "C3: revalidateAdminPage",
+    "src/app/api/admin/subscriptions/[id]/manual-payment/route.ts": "C3: revalidateAdminPage",
+    "src/app/api/admin/setup/finance-report-mappings/route.ts": "C3: revalidateAdminPage",
+    "src/app/api/admin/payments/bank-refund-voids/[id]/answered/route.ts": "C3: revalidateAdminPage",
+    "src/app/api/admin/payments/bank-refund-voids/[id]/pick/route.ts": "C3: revalidateAdminPage",
+    "src/app/api/admin/payments/manual-refund-tasks/[id]/reopen/route.ts": "C3: revalidateAdminPage",
+    "src/app/api/admin/payments/manual-refund-tasks/[id]/route.ts": "C3: revalidateAdminPage",
+    "src/app/api/admin/bookings/[id]/mark-paid/route.ts": "C3: revalidateAdminPage",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;

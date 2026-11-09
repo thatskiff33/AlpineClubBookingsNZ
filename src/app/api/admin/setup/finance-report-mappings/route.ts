@@ -1,4 +1,5 @@
 import { revalidatePath } from "next/cache";
+import { revalidateAdminPage } from "@/lib/admin-hubs/revalidate";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
@@ -135,8 +136,8 @@ export async function PUT(request: NextRequest) {
   });
 
   revalidatePath("/finance");
-  revalidatePath("/admin/setup");
-  revalidatePath("/admin/setup/finance");
+  revalidateAdminPage("setup");
+  revalidateAdminPage("setup-finance");
 
   return NextResponse.json(await getFinanceReportMappingsState(format));
 }
