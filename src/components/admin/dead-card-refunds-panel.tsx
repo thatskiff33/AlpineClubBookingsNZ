@@ -139,7 +139,7 @@ export function DeadCardRefundsPanel({
   // #4368: the "Try the card again" and "Nothing left owed" dialogs, each open for one row's id.
   const [tryAgainId, setTryAgainId] = useState<string | null>(null);
   const [nothingLeftId, setNothingLeftId] = useState<string | null>(null);
-  const tryAgainRow = tryAgainId === null ? null : (rows.find((row) => row.operationId === tryAgainId && row.owedCents > 0) ?? null);
+  const tryAgainRow = tryAgainId === null ? null : (rows.find((row) => row.operationId === tryAgainId && row.owedCents > 0 && row.tryCardAgainRefusal === null) ?? null);
   const nothingLeftRow = nothingLeftId === null ? null : (rows.find((row) => row.operationId === nothingLeftId && row.owedCents === 0) ?? null);
   if ((tryAgainId !== null && tryAgainRow === null) || (nothingLeftId !== null && nothingLeftRow === null)) {
     setTryAgainId(null);

@@ -65,9 +65,11 @@ the list). To settle one - **Paid another way**, **Try the card again** or
 **Nothing left owed** - you need **Finance edit**. With view-only access every
 button is disabled, and the banner above the list says why.
 
-**Settle each one here, never with a new refund in the Stripe dashboard**
-(owner decision 7 on #4361, 25 Oct 2026). A new dashboard refund on a booking
-paid by bank transfer is credited in Xero twice (#4327). Each row offers:
+**Settle each one on this list here, never with a new refund in the Stripe
+dashboard** (owner decision 7 on #4361, 25 Oct 2026). A new dashboard refund
+on a booking paid by bank transfer is credited in Xero twice (#4327). An old
+group organiser's refund, or a stale group payment's, is not on this list:
+ask a developer to settle it. Each row offers:
 
 - **Paid another way** - you paid the member back yourself, for example by
   bank transfer (below).
@@ -87,9 +89,9 @@ idempotent requests can only be used with the same parameters") means Stripe
 already received the refund under that key, so it has almost certainly been
 made (#4101). If Stripe did refund it, its refund shows on the payment once
 Stripe reports it: the amount still owed drops, and once nothing is left owed
-the row says so and offers **Nothing left owed**. **Try the card again** is
-also safe here: before it sends anything, the app reads the refunds Stripe
-already holds on the charge and counts the one it made.
+the row says so and offers **Nothing left owed**. Such a row does not offer
+**Try the card again**: the app cannot tell whether Stripe already refunded
+it, and asking again could pay the member twice.
 
 **A refund Stripe refused** (#4083, #4096). When a booking change or a
 cancellation refunds a card and Stripe answers straight away that the refund
@@ -110,7 +112,8 @@ Stripe again as a fresh request. A late-charge refund from the booking repair
 tool that Stripe refuses fails, and running the repair again asks Stripe
 afresh. An old group organiser's refund, or the refund of a stale group
 payment, fails and is retried automatically as a fresh request; if the
-officers' alert says it failed for good, refund it in the Stripe dashboard.
+officers' alert says it failed for good, ask a developer to settle it: it is
+not on the list below.
 
 **A refund Stripe accepted and failed later** (#4104). Stripe can accept a card
 refund as pending and report it failed days later, for example when the card
@@ -152,8 +155,8 @@ A refund the app did not make for the booking - one made by hand in the Stripe
 dashboard, or an older group refund - that fails is not asked for again and is
 not counted under Refunds owed. The officers are emailed with its Stripe refund
 id, and the [audit log](audit-log.md) records it under **Payment**. Find it in
-the Stripe dashboard: if the member is still owed, refund them again there, or
-pay them another way. Raise no refund note for it in Xero: the card refund
+the Stripe dashboard: if the member is still owed, pay them another way and
+record it - never with a new refund in the Stripe dashboard. Raise no refund note for it in Xero: the card refund
 credit note raised while Stripe counted it, if there is one, already records
 it, and a second note would credit them twice. If they are no longer owed, the Xero
 reconciliation report lists that note as refund coverage above the refunded
@@ -340,9 +343,12 @@ example after an outage that outlasted its retries (owner decision 5 on
 
 The refund leaves the list and goes back to the automatic retries, from the
 start. Nothing is sent from the dialog itself. Before any refund is sent, the
-app reads the refunds Stripe already holds on the charge (#4359): a refund
-Stripe already made for this one is counted and nothing more is sent, and a
-refund made in the Stripe dashboard since stops it again for you to check.
+app reads the refunds Stripe already holds on the charge (#4359): one it can
+match to this refund is counted instead of sent again, and one made in the
+Stripe dashboard since stops it again for you to check. Where Stripe holds a
+refund this one's own request made that the app cannot match - an older one,
+made before refunds carried the details that match them - the button refuses
+rather than risk paying twice.
 If the card fails again, the refund comes back to this list, and the officers
 are emailed as before. Only use it if you have not paid the member back
 another way. It is recorded in the [audit log](audit-log.md) under
@@ -352,22 +358,25 @@ The row says why instead of offering the button when trying the card again
 could pay the member more than they are owed:
 
 - nothing is left owed (use **Nothing left owed**);
+- its last failure looks like Stripe may have refunded it after all;
 - the payment now holds less than the refund would send;
 - the app raised the refund for a person to settle, not to send again: a
   refund Stripe failed later that is not asked for again, or the rest of a
   part close that is still owed;
-- a refund Stripe failed later is still open on the same payment. The two may
-  be the same money, so check what the member is owed and settle it with
-  **Paid another way**.
+- a refund Stripe failed later is on the same payment, whether it is still
+  owed or has since been sent again. The two may be the same money, so check
+  what the member is owed and settle it with **Paid another way**.
 
 If the list changes while the dialog is open, for example someone else
 settles the refund, the request is refused and the list refreshes.
 
 ### Nothing left owed
 
-When a later Stripe refund on the payment covers a refund here - Stripe's
-own answer arriving late, for example - the row reads **nothing left owed**
-and offers **Nothing left owed** instead of the other two buttons.
+When Stripe refunds on the payment have paid everything a refund here still
+had to send - Stripe's own answer arriving late, for example - the row reads
+**nothing left owed** and offers **Nothing left owed** instead of the other two
+buttons. Only refunds the app matches to this refund count: one on the same
+charge, for exactly the amount it still had to send, made after it started.
 
 1. Click **Nothing left owed**. The dialog names the Stripe refund that
    covers it, with its amount and date. Check it in the Stripe dashboard.
@@ -382,8 +391,9 @@ failed), the close is refused and the list refreshes. If the covering refund
 fails after the close, the app owes it again on a refund of its own, as for
 any refund Stripe fails later.
 
-A refund with nothing left owed and no later Stripe refund to name is not
-listed. It still shows in the **Exhausted recovery operations** count: ask a
+A refund with nothing left owed and no Stripe refund matched to it is not
+listed - for example when the payment holds nothing more to refund because of
+a refund of another amount. It still shows in the **Exhausted recovery operations** count: ask a
 developer to reconcile it.
 
 ### Pick the refund a voided bank refund note recorded

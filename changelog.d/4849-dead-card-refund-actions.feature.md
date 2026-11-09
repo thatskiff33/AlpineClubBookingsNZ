@@ -3,16 +3,18 @@
   on** now offers **Try the card again** beside **Paid another way**. After a
   confirm dialog the app puts the refund back to its automatic retries; before
   anything is sent it reads the refunds Stripe already holds on the charge, so
-  a refund Stripe already made is counted and one made in the Stripe dashboard
-  stops it again for you to check. Where trying the card could pay the member
-  more than they are owed - for example while a refund Stripe failed later is
-  still open on the same payment - the row says why and offers only **Paid
-  another way**.
+  one it can match is counted rather than sent again, and one made in the
+  Stripe dashboard stops it again for you to check. Where the app cannot show
+  that asking again would not pay the member twice - a refund Stripe failed
+  later is on the same payment, the last failure suggests Stripe may have
+  refunded after all, or Stripe holds an older refund of this one's it cannot
+  match - the row says why, or the request is refused with the reason, and
+  **Paid another way** remains.
 
-  A refund a later Stripe refund has covered now stays on the list, reads
-  "nothing left owed" and offers **Nothing left owed**: its dialog names that
-  Stripe refund, and closing it moves no money, sends nothing to Stripe and
-  changes nothing in Xero. Before, such a refund dropped off the list and
+  A refund that Stripe refunds matched to it have paid in full now stays on the
+  list, reads "nothing left owed" and offers **Nothing left owed**: its dialog
+  names those Stripe refunds, and closing it moves no money, sends nothing to
+  Stripe and changes nothing in Xero. Before, such a refund dropped off the list and
   needed a developer.
 
   The guidance on the page, in the Stuck States guide and in the officers'

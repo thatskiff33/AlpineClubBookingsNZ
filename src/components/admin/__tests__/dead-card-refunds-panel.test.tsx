@@ -688,7 +688,7 @@ describe("#4368: Try the card again (decision 5)", () => {
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("Try the card again?")).toBeInTheDocument();
     expect(dialog).toHaveTextContent("The app will ask Stripe to refund $150.00 to the member's card again.");
-    expect(dialog).toHaveTextContent("checks the refunds Stripe already holds on the charge");
+    expect(dialog).toHaveTextContent("reads the refunds Stripe already holds on the charge");
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
 
@@ -719,6 +719,18 @@ describe("#4368: Try the card again (decision 5)", () => {
     expect(await within(screen.getByRole("dialog")).findByText(/changed since you opened it/)).toBeInTheDocument();
     expect(mocks.refresh).toHaveBeenCalled();
     expect(mocks.toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (review UX-4): a refresh that makes the re-arm refused closes its open dialog and says why", () => {
+    const view = render(<DeadCardRefundsPanel rows={[row()]} bankNoteWording={BANK_NOTE_WORDING} />);
+    fireEvent.click(tryAgainButton());
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    view.rerender(
+      <DeadCardRefundsPanel rows={[row({ tryCardAgainRefusal: "A refund Stripe failed later is on this payment." })]} bankNoteWording={BANK_NOTE_WORDING} />,
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText("That card refund changed, so its dialog was closed. The list is up to date.")).toBeInTheDocument();
+    expect(mocks.fetch).not.toHaveBeenCalled();
   });
 
   it("MUTATION: where the re-arm would refuse, the row says why and offers no button", () => {

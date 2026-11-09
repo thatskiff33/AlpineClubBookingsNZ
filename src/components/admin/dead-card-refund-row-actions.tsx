@@ -130,9 +130,9 @@ export function TryCardAgainDialog({ row, onClose, onDone, focusNotice }: Dialog
           <DialogTitle>Try the card again?</DialogTitle>
           <DialogDescription>
             The app will ask Stripe to refund {formatCents(owedCents, format)} to the member&apos;s card again. Before
-            anything is sent it checks the refunds Stripe already holds on the charge: a refund Stripe already made for
-            this one is counted and nothing more is sent, and a refund made in the Stripe dashboard stops it again for
-            you to check.
+            anything is sent it reads the refunds Stripe already holds on the charge: one it can match to this refund
+            is counted instead of sent again, and one made in the Stripe dashboard, or one it cannot match, stops it
+            for you to check.
           </DialogDescription>
         </DialogHeader>
         <p className="text-sm text-muted-foreground">

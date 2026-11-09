@@ -74,6 +74,7 @@ let runPaymentRecoveryOperationNow: (typeof import("@/lib/payment-recovery"))["r
 let openCardRefundOwedCents: (typeof import("@/lib/open-card-refund-owed"))["openCardRefundOwedCents"];
 let netCollectedCardRefundSelect: (typeof import("@/lib/additional-ledger-gap"))["netCollectedCardRefundSelect"];
 let recoveryAlert: typeof import("@/lib/payment-recovery-alert");
+let cardRefundOperationRefundMetadata: (typeof import("@/lib/payment-recovery-keys"))["cardRefundOperationRefundMetadata"];
 let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixture"))["CLUB_FORMAT_TEST"];
 let realElapsedMs: (typeof import("@/lib/__tests__/helpers/clock"))["realElapsedMs"];
 let lockHolderClient: import("@prisma/client").PrismaClient;
@@ -124,6 +125,7 @@ let refundCreatedSeconds = 0;
       ({ openCardRefundOwedCents } = await import("@/lib/open-card-refund-owed"));
       ({ netCollectedCardRefundSelect } = await import("@/lib/additional-ledger-gap"));
       recoveryAlert = await import("@/lib/payment-recovery-alert");
+      ({ cardRefundOperationRefundMetadata } = await import("@/lib/payment-recovery-keys"));
       ({ CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture"));
       ({ realElapsedMs } = await import("@/lib/__tests__/helpers/clock"));
       const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([
@@ -174,6 +176,8 @@ let refundCreatedSeconds = 0;
       await deletePaymentRows();
       alertSpy = vi.spyOn(recoveryAlert, "alertPaymentRecoveryOfficers").mockResolvedValue(null);
       asked = [];
+      // Review B: the re-arm reads Stripe's refunds on the row's charge before its locks; none unless a case lists some.
+      stripeRaceHooks.listRefunds = async () => [];
       // A Payment with no Xero invoice: a "Paid another way" close queues no note, so nothing here touches Xero.
       await prisma.payment.create({
         data: { id: PAYMENT_ID, bookingId: BOOKING_ID, amountCents: PAID_CENTS, source: "STRIPE", status: "SUCCEEDED", stripePaymentIntentId: INTENT },
@@ -195,7 +199,7 @@ let refundCreatedSeconds = 0;
           idempotencyKey: `booking_cancel_refund_recovery_${BOOKING_ID}`,
           attempts: 5,
           nextRetryAt: null,
-          lastError: "Stripe: connection reset",
+          lastError: "Stripe: card_declined",
           createdAt: RAISED_AT,
         },
       });
@@ -429,11 +433,17 @@ let refundCreatedSeconds = 0;
         expect(await operationNow()).toMatchObject({ status: "SUCCEEDED" });
       });
 
-      it("MUTATION: the row closed under the Payment row while the close waited is not claimed twice", async () => {
+      it("MUTATION: the row moved off dead under the Payment row while the close waited is not claimed", async () => {
         await record("succeeded");
         const holder = await holdOpen(async (tx) => {
           await tx.$executeRaw`SELECT 1 FROM "Payment" WHERE "id" = ${PAYMENT_ID} FOR NO KEY UPDATE`;
-          await tx.paymentRecoveryOperation.update({ where: { id: OPERATION_ID }, data: { status: "SUCCEEDED", succeededAt: new Date(), nextRetryAt: null } });
+          // Moved off "dead" while still open, so the refund is still this row's and every read check passes:
+          // only the claim's dead guard can refuse it. (A row closed outright reads nothing owed and is refused before
+          // the claim - see the "closed first" case above.)
+          await tx.paymentRecoveryOperation.update({
+            where: { id: OPERATION_ID },
+            data: { status: "PROCESSING", processingStartedAt: new Date() },
+          });
         });
         const closing = settle(nothingLeftOwed());
         await waitForBlockedBy(holder.pid);
@@ -466,9 +476,24 @@ let refundCreatedSeconds = 0;
         const failedLater = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { idempotencyKey: `card_refund_failed_later_${LATER_REFUND}` } });
         expect(failedLater).toMatchObject({ amountCents: REFUND_CENTS, status: "PENDING" });
         // The #4492 pair: the given-up row and the failed-later row may be the same money; the re-arm is refused.
-        await expect(tryAgain()).rejects.toMatchObject({ status: 409, message: expect.stringContaining("failed later is still open on this payment") });
+        await expect(tryAgain()).rejects.toMatchObject({ status: 409, message: expect.stringContaining("failed later is on this payment") });
         expect(await operationNow()).toMatchObject({ status: "FAILED", attempts: 5 });
-        expect((await listDeadCardRefunds()).find((row) => row.operationId === OPERATION_ID)?.tryCardAgainRefusal).toMatch(/failed later is still open/);
+        expect((await listDeadCardRefunds()).find((row) => row.operationId === OPERATION_ID)?.tryCardAgainRefusal).toMatch(/failed later is on this payment/);
+
+        // Review A: the failed-later row is re-sent and paid. The given-up row still reads its 5,000 owed, but the
+        // member has had it back: a re-arm now would pay twice, so it is still refused.
+        stripeRaceHooks.refund = async (args) => {
+          asked.push({ idempotencyKey: args.idempotencyKey, amountCents: args.amountCents });
+          return { id: "re_race_4368_resent", object: "refund", amount: args.amountCents, currency: "nzd", status: "succeeded",
+            created: refundCreatedSeconds + 60, charge: CHARGE, payment_intent: args.paymentIntentId, metadata: args.metadata ?? {} };
+        };
+        expect(await runPaymentRecoveryOperationNow(failedLater.id, CLUB_FORMAT_TEST)).toBe("succeeded");
+        expect(asked).toEqual([expect.objectContaining({ amountCents: REFUND_CENTS })]);
+        expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: failedLater.id } })).toMatchObject({ status: "SUCCEEDED" });
+        expect(await operationNow()).toMatchObject({ status: "FAILED", attempts: 5 });
+        await expect(tryAgain()).rejects.toMatchObject({ status: 409, message: expect.stringContaining("failed later is on this payment") });
+        expect(asked).toHaveLength(1);
+        expect(await operationNow()).toMatchObject({ status: "FAILED", attempts: 5 });
       });
 
       it("the close first: the failure is owed once more on a row of its own, never on the closed row", async () => {
@@ -480,6 +505,53 @@ let refundCreatedSeconds = 0;
         expect(raised).toEqual([expect.objectContaining({ idempotencyKey: `card_refund_failed_later_${LATER_REFUND}`, amountCents: REFUND_CENTS })]);
         // Owed exactly once: the refund that failed, never the closed row's slice too.
         expect(await owedNow()).toBe(REFUND_CENTS);
+      });
+    });
+
+    // ------------------------- review B and C: what the app cannot prove, it refuses
+
+    describe("review B: a refund this row's own request made, unmatched, refuses the re-arm", () => {
+      it("MUTATION: Stripe lists a refund with this row's door metadata and no slice key that nothing here accounts for: 409, nothing re-armed", async () => {
+        const row = await operationNow();
+        // Made under the row's key before refunds carried slice evidence, its answer lost; never recorded here.
+        stripeRaceHooks.listRefunds = async () => [
+          { ...stripeRefund("succeeded", cardRefundOperationRefundMetadata(row)), id: "re_race_4368_lost_answer" },
+        ];
+        await expect(tryAgain()).rejects.toMatchObject({ status: 409, message: expect.stringContaining("re_race_4368_lost_answer") });
+        expect(await operationNow()).toMatchObject({ status: "FAILED", attempts: 5 });
+        expect(await auditActions()).toEqual([]);
+      });
+
+      it("a refund Stripe lists with this row's metadata AND its slice key is the runner's to adopt: the re-arm goes ahead", async () => {
+        const row = await operationNow();
+        stripeRaceHooks.listRefunds = async () => [
+          { ...stripeRefund("succeeded", { ...cardRefundOperationRefundMetadata(row), refundSliceKey: "a-slice-key" }), id: "re_race_4368_stamped" },
+        ];
+        await expect(tryAgain()).resolves.toMatchObject({ operationId: OPERATION_ID });
+      });
+
+      it("MUTATION: a Stripe list that cannot be read refuses the re-arm, and nothing is written", async () => {
+        stripeRaceHooks.listRefunds = async () => {
+          throw new Error("Stripe refund preflight is incomplete (INV-PAY-145); no refund was sent.");
+        };
+        await expect(tryAgain()).rejects.toMatchObject({ status: 409, message: expect.stringContaining("could not be read") });
+        expect(await operationNow()).toMatchObject({ status: "FAILED", attempts: 5 });
+      });
+    });
+
+    describe("review C: Nothing left owed names only what paid this row", () => {
+      it("MUTATION: a $0 off the payment's cap alone - a dashboard refund of the whole charge, not this row's slice - is not listed and is refused", async () => {
+        // A refund of the whole charge: the payment holds nothing more, but it fills no slice of this row.
+        await recordStripeRefundsAgainstTransaction({
+          paymentId: PAYMENT_ID,
+          paymentTransactionId: TRANSACTION_ID,
+          refunds: [{ ...stripeRefund("succeeded", {}), id: "re_race_4368_whole", amount: PAID_CENTS }] as never,
+          fallbackPaymentIntentId: INTENT,
+        });
+        expect(await owedNow()).toBe(0);
+        expect((await listDeadCardRefunds()).map((row) => row.operationId)).not.toContain(OPERATION_ID);
+        await expect(nothingLeftOwed(["re_race_4368_whole"])).rejects.toMatchObject({ status: 409, message: expect.stringContaining("No Stripe refund on this payment is matched") });
+        expect(await operationNow()).toMatchObject({ status: "FAILED", attempts: 5 });
       });
     });
 

@@ -13,9 +13,20 @@ const mocks = vi.hoisted(() => ({
   findPayment: vi.fn(),
   findBooking: vi.fn(),
   createAuditLog: vi.fn(),
+  // #4368 review B: the re-arm's unlocked read of the row's charges, and Stripe's refunds on them.
+  preReadOperation: vi.fn(),
+  preReadCharges: vi.fn(),
+  listRefunds: vi.fn<(intent: string, options?: unknown) => Promise<unknown[]>>(),
 }));
 
 vi.mock("server-only", () => ({}));
+vi.mock("@/lib/logger", () => ({ default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
+vi.mock("@/lib/stripe", () => ({
+  listRefundsForPaymentIntent: (intent: string, options?: unknown) => {
+    calls.push("stripe-list");
+    return mocks.listRefunds(intent, options);
+  },
+}));
 vi.mock("@/lib/payment-transactions", () => ({
   lockPaymentForRefundedTotal: () => {
     calls.push("lock-payment-row");
@@ -52,7 +63,14 @@ vi.mock("@/lib/prisma", () => {
     },
     booking: { findUnique: (...args: unknown[]) => mocks.findBooking(...args) },
   };
-  return { prisma: { $transaction: (fn: (client: typeof tx) => Promise<unknown>) => fn(tx) } };
+  return {
+    prisma: {
+      $transaction: (fn: (client: typeof tx) => Promise<unknown>) => fn(tx),
+      // Unlocked, before the transaction: the re-arm's read of the charges it would refund (review B).
+      paymentRecoveryOperation: { findUnique: (...args: unknown[]) => mocks.preReadOperation(...args) },
+      paymentTransaction: { findMany: (...args: unknown[]) => mocks.preReadCharges(...args) },
+    },
+  };
 });
 
 import {
@@ -61,7 +79,8 @@ import {
   NOTHING_LEFT_OWED_MARKER,
   tryDeadCardRefundAgain,
 } from "@/lib/card-refund-dead-row-actions";
-import { deadCardRefundOperationWhere, tryCardAgainRefusal } from "@/lib/card-refund-dead-row";
+import { deadCardRefundOperationWhere, laterStripeRefundsCovering, tryCardAgainRefusal } from "@/lib/card-refund-dead-row";
+import { cardRefundOperationRefundMetadata } from "@/lib/payment-recovery-keys";
 import { rearmedPaymentRecoveryOperationData } from "@/lib/payment-recovery-constants";
 
 const CREATED = new Date("2026-06-20T00:00:00.000Z");
@@ -83,7 +102,7 @@ function deadOperation(overrides: Record<string, unknown> = {}) {
     amountCents: 15_000,
     createdAt: CREATED,
     succeededAt: null as Date | null,
-    lastError: "Stripe: connection reset",
+    lastError: "Stripe: card_declined",
     ...overrides,
   };
 }
@@ -151,6 +170,9 @@ beforeEach(() => {
   mocks.findBooking.mockResolvedValue({ id: "b-1", memberId: "member-1" });
   mocks.claim.mockResolvedValue({ count: 1 });
   mocks.createAuditLog.mockResolvedValue(undefined);
+  mocks.preReadOperation.mockResolvedValue({ paymentId: "p-1", paymentTransactionId: null, allocationPlan: PLAN });
+  mocks.preReadCharges.mockResolvedValue([{ stripePaymentIntentId: "pi_1" }]);
+  mocks.listRefunds.mockResolvedValue([]);
 });
 
 describe("the locks both actions take (INV-LOCK-001/002)", () => {
@@ -160,7 +182,13 @@ describe("the locks both actions take (INV-LOCK-001/002)", () => {
   ] as const)("MUTATION: %s takes lock(1), re-reads the row, locks the Payment row BEFORE reading it, then claims and audits", async (_label, act, read) => {
     mocks.findPayment.mockResolvedValue(read);
     await act();
-    expect(calls).toEqual(["lock(1)", "read-operation", "lock-payment-row", "read-payment", "claim", "audit"]);
+    expect(calls.filter((call) => call !== "stripe-list")).toEqual(["lock(1)", "read-operation", "lock-payment-row", "read-payment", "claim", "audit"]);
+  });
+
+  it("MUTATION (review B): the re-arm reads Stripe's refunds on the row's charges before it takes any lock - never under them", async () => {
+    await tryAgain();
+    expect(calls).toEqual(["stripe-list", "lock(1)", "read-operation", "lock-payment-row", "read-payment", "claim", "audit"]);
+    expect(mocks.listRefunds).toHaveBeenCalledWith("pi_1", { timeoutMs: 10_000, singlePage: true });
   });
 });
 
@@ -211,7 +239,7 @@ describe("Nothing left owed", () => {
     expect(mocks.createAuditLog).not.toHaveBeenCalled();
   });
 
-  it("MUTATION: refused when no later Stripe refund covers it - one made before the row was raised does not", async () => {
+  it("MUTATION (review C): a $0 off the payment's cap alone - its own slice unsent - names nothing and is refused, for a developer", async () => {
     // The payment holds nothing more, so the row owes $0 - but the only refund was made the day before it was raised.
     mocks.findPayment.mockResolvedValue(
       payment([deadOperation()], {
@@ -222,8 +250,18 @@ describe("Nothing left owed", () => {
     );
     const error = await refusal(nothingLeftOwed());
     expect(error.status).toBe(409);
-    expect(error.message).toMatch(/No later Stripe refund on this payment covers this card refund/);
+    expect(error.message).toMatch(/No Stripe refund on this payment is matched to this card refund/);
     expect(mocks.claim).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (review C): names only the refunds the attribution gives this row, never another later refund on the payment", async () => {
+    // A second later refund, of another amount, fills no slice of this row: it is not named.
+    const other = { ...LATER_REFUND, stripeRefundId: "re_other_door", amountCents: 1_000 };
+    const read = coveredPayment([LATER_REFUND, other]);
+    expect(laterStripeRefundsCovering(read as never, "op-1").map((refund) => refund.stripeRefundId)).toEqual(["re_later_1"]);
+    mocks.findPayment.mockResolvedValue(read);
+    await expect(nothingLeftOwed(["re_later_1", "re_other_door"])).rejects.toMatchObject({ status: 409 });
+    expect((await nothingLeftOwed(["re_later_1"])).coveredBy.map((refund) => refund.stripeRefundId)).toEqual(["re_later_1"]);
   });
 
   it("MUTATION: refused when a refund that no longer counts is the only cover", async () => {
@@ -231,16 +269,14 @@ describe("Nothing left owed", () => {
       payment([deadOperation()], { refundedAmountCents: 20_000, status: "REFUNDED", refunds: [{ ...LATER_REFUND, status: "failed" }] }),
     );
     const error = await refusal(nothingLeftOwed());
-    expect(error.message).toMatch(/No later Stripe refund/);
+    expect(error.message).toMatch(/No Stripe refund on this payment is matched/);
   });
 
   it("MUTATION: refused when the refunds it names are not the ones under the locks", async () => {
     const error = await refusal(nothingLeftOwed(["re_someone_else"]));
     expect(error.status).toBe(409);
     expect(error.message).toMatch(/Stripe refunds on this payment changed/);
-    const more = await refusal(
-      (mocks.findPayment.mockResolvedValue(coveredPayment([LATER_REFUND, { ...LATER_REFUND, stripeRefundId: "re_later_2", amountCents: 100 }])), nothingLeftOwed()),
-    );
+    const more = await refusal(nothingLeftOwed(["re_later_1", "re_later_2"]));
     expect(more.message).toMatch(/Stripe refunds on this payment changed/);
     expect(mocks.claim).not.toHaveBeenCalled();
   });
@@ -280,7 +316,7 @@ describe("Try the card again (decision 5)", () => {
         severity: "important",
         actorMemberId: "treasurer-1",
         entityId: "op-1",
-        metadata: expect.objectContaining({ owedCents: 15_000, previousAttempts: 5, previousStatus: "FAILED", previousLastError: "Stripe: connection reset" }),
+        metadata: expect.objectContaining({ owedCents: 15_000, previousAttempts: 5, previousStatus: "FAILED", previousLastError: "Stripe: card_declined" }),
       }),
       expect.anything(),
     );
@@ -328,14 +364,69 @@ describe("Try the card again (decision 5)", () => {
     mocks.findPayment.mockResolvedValue(payment([deadOperation(), failedLater], { amountCents: 40_000 }));
     const error = await refusal(tryAgain());
     expect(error.status).toBe(409);
-    expect(error.message).toMatch(/failed later is still open on this payment/);
+    expect(error.message).toMatch(/failed later is on this payment/);
     expect(mocks.claim).not.toHaveBeenCalled();
+  });
+
+  describe("review B: a refund this row's own request made that Stripe holds and nothing here accounts for", () => {
+    /** A refund on the row's charge, as Stripe lists it: this row's door metadata unless a case says otherwise. */
+    const listed = (overrides: Record<string, unknown> = {}) => ({
+      id: "re_lost_answer",
+      object: "refund",
+      amount: 15_000,
+      status: "succeeded",
+      payment_intent: "pi_1",
+      metadata: cardRefundOperationRefundMetadata(deadOperation()),
+      ...overrides,
+    });
+
+    it("MUTATION: one with no slice key, counted, adopted by no slice and attributed to none, refuses the re-arm", async () => {
+      mocks.listRefunds.mockResolvedValue([listed()]);
+      const error = await refusal(tryAgain());
+      expect(error.status).toBe(409);
+      expect(error.message).toMatch(/Stripe holds a refund this card refund's own request made \(re_lost_answer\)/);
+      expect(mocks.claim).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["it carries a slice key (the runner adopts it)", { metadata: { ...cardRefundOperationRefundMetadata(deadOperation()), refundSliceKey: "k" } }],
+      ["another door made it (other metadata)", { metadata: { bookingId: "b-1", reason: "something_else" } }],
+      ["it failed (no money went back)", { status: "failed" }],
+      ["it is on another intent", { payment_intent: "pi_other" }],
+    ])("MUTATION: allowed when %s", async (_label, overrides) => {
+      mocks.listRefunds.mockResolvedValue([listed(overrides)]);
+      await expect(tryAgain()).resolves.toMatchObject({ operationId: "op-1" });
+    });
+
+    it("MUTATION: allowed when a slice of a row is marked with it", async () => {
+      mocks.listRefunds.mockResolvedValue([listed()]);
+      const marked = deadOperation({ id: "op-done", status: "SUCCEEDED", attempts: 1, idempotencyKey: "booking_modification_refund_m9", allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 15_000, madeRefundId: "re_lost_answer" }] });
+      mocks.findPayment.mockResolvedValue(payment([deadOperation(), marked], { amountCents: 40_000 }));
+      await expect(tryAgain()).resolves.toMatchObject({ operationId: "op-1" });
+    });
+
+    it("MUTATION: a Stripe list it cannot read in full refuses the re-arm before any lock", async () => {
+      mocks.listRefunds.mockRejectedValue(new Error("Stripe refund preflight is incomplete"));
+      const error = await refusal(tryAgain());
+      expect(error.status).toBe(409);
+      expect(error.message).toMatch(/could not be read just now/);
+      expect(calls).toEqual(["stripe-list"]);
+    });
+
+    it("reads every charge of a legacy row with no plan", async () => {
+      mocks.preReadOperation.mockResolvedValue({ paymentId: "p-1", paymentTransactionId: null, allocationPlan: null });
+      mocks.preReadCharges.mockResolvedValue([{ stripePaymentIntentId: "pi_1" }, { stripePaymentIntentId: "pi_2" }]);
+      mocks.findOperation.mockResolvedValue(deadOperation({ allocationPlan: null }));
+      await tryAgain().catch(() => undefined);
+      expect(mocks.preReadCharges).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ paymentId: "p-1", source: "STRIPE" }) }));
+      expect(mocks.listRefunds.mock.calls.map(([intent]) => intent)).toEqual(["pi_1", "pi_2"]);
+    });
   });
 });
 
 describe("tryCardAgainRefusal: when a re-arm could pay the member more than is owed", () => {
   const owed = { ownCents: 15_000, owedCents: 15_000 };
-  const own = { id: "op-1", idempotencyKey: "booking_cancel_refund_recovery_b-1" };
+  const own = { id: "op-1", idempotencyKey: "booking_cancel_refund_recovery_b-1", lastError: "Stripe: card_declined" };
   const others = (...rows: Array<{ id: string; idempotencyKey: string; status: string }>) => ({
     recoveryOperations: rows.map((row) => ({ type: "REFUND_BOOKING_MODIFICATION", ...row })),
   });
@@ -353,15 +444,20 @@ describe("tryCardAgainRefusal: when a re-arm could pay the member more than is o
   });
 
   it("MUTATION: refuses a row the app raised dead for a person: a failed-later row, or a part close's still-owed rest", () => {
-    expect(tryCardAgainRefusal(others(), { id: "op-y", idempotencyKey: "card_refund_failed_later_re_x" }, owed)).toMatch(/for a person to settle/);
-    expect(tryCardAgainRefusal(others(), { id: "op-r", idempotencyKey: "card_refund_still_owed_task-1" }, owed)).toMatch(/for a person to settle/);
+    expect(tryCardAgainRefusal(others(), { ...own, id: "op-y", idempotencyKey: "card_refund_failed_later_re_x" }, owed)).toMatch(/for a person to settle/);
+    expect(tryCardAgainRefusal(others(), { ...own, id: "op-r", idempotencyKey: "card_refund_still_owed_task-1" }, owed)).toMatch(/for a person to settle/);
   });
 
-  it("MUTATION: #4492: refuses beside an open failed-later row - live or dead - but not beside a closed one or another plain row", () => {
+  it("MUTATION (review B): refuses where its last failure says Stripe may have refunded after all", () => {
+    expect(tryCardAgainRefusal(others(), { ...own, lastError: "StripeConnectionError: socket hang up" }, owed)).toMatch(/Stripe may have made this refund after all/);
+  });
+
+  it("MUTATION: #4492 (review A): refuses beside any failed-later row on the payment - live, dead or paid - but not beside another plain row", () => {
     const failedLater = { id: "op-y", idempotencyKey: "card_refund_failed_later_re_x" };
-    expect(tryCardAgainRefusal(others({ ...failedLater, status: "PENDING" }), own, owed)).toMatch(/failed later is still open/);
-    expect(tryCardAgainRefusal(others({ ...failedLater, status: "FAILED" }), own, owed)).toMatch(/failed later is still open/);
-    expect(tryCardAgainRefusal(others({ ...failedLater, status: "SUCCEEDED" }), own, owed)).toBeNull();
+    expect(tryCardAgainRefusal(others({ ...failedLater, status: "PENDING" }), own, owed)).toMatch(/failed later is on this payment/);
+    expect(tryCardAgainRefusal(others({ ...failedLater, status: "FAILED" }), own, owed)).toMatch(/failed later is on this payment/);
+    // Review A: re-sent and paid, the row reads owed again - re-sending it would pay twice.
+    expect(tryCardAgainRefusal(others({ ...failedLater, status: "SUCCEEDED" }), own, owed)).toMatch(/failed later is on this payment/);
     expect(tryCardAgainRefusal(others({ id: "op-2", idempotencyKey: "booking_modification_refund_m2", status: "FAILED" }), own, owed)).toBeNull();
   });
 });

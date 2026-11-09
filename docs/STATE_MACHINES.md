@@ -4733,16 +4733,18 @@ DEAD -> SUCCEEDED     ("Paid another way": finance:edit, lock(1), then the
                        card_refund_still_owed_<task>, born dead (PENDING, attempts spent); a later close
                        settles it. "The club keeps it" raises none)
 DEAD -> SUCCEEDED     (#4368 "Nothing left owed": finance:edit, lock(1), then the
-                       Payment row; refused (409) unless what is owed reads $0
-                       and the later Stripe refunds covering it are the ones the
-                       treasurer saw; the same status-guarded claim, on the plan
+                       Payment row; refused (409) unless what is owed reads $0,
+                       nothing of its own is unsent, and the Stripe refunds the
+                       attribution gives it are the ones the treasurer saw; the same status-guarded claim, on the plan
                        read; lastError is the nothing-left-owed marker; no
                        money, journal, Stripe or Xero change; audited under
                        `payment`; INV-PAY-149)
 DEAD -> PENDING       (#4368 "Try the card again": finance:edit, lock(1), then the
-                       Payment row; refused (409) where a re-send could pay more
-                       than is owed (tryCardAgainRefusal) or the owed figure
-                       moved; the same status-guarded claim, on the plan read;
+                       Payment row; refused (409) where the app cannot show a
+                       re-send would not pay twice (tryCardAgainRefusal: any
+                       failed-later row on the payment, a may-have-refunded
+                       failure; or an unmatched own refund Stripe lists) or
+                       the owed figure moved; the same status-guarded claim, on the plan read;
                        rearmedPaymentRecoveryOperationData - attempts 0, due
                        now; the runner's INV-PAY-145 preflight runs before any
                        send; audited under `payment`; INV-PAY-149)
@@ -4974,7 +4976,8 @@ organiser-cancel settlement's refund (`isOwedCardRefundOperation`); a
 superseded intent's refund closes whole, never at nil, and only while its
 charge still holds exactly what it owes. The rules are
 `INV-PAY-121` and `INV-PAY-122`; the lock is registered as
-`closeCardRefundPaidAnotherWay#1`. To verify:
+`lockDeadCardRefundRow#1`, shared with "Nothing left owed" and "Try the card
+again" (#4368). To verify:
 `card-refund-paid-another-way.test.ts`, `open-card-refund-owed.test.ts`,
 `xero-kept-late-capture-ledger.test.ts` (round 6: the Xero books of a late
 charge's close, whatever order the outbox runs in) and

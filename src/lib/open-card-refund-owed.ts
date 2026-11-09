@@ -579,6 +579,25 @@ export function cardRefundMadeForOperation(
 }
 
 /**
+ * #4368 review (C): the recorded refunds the attribution the owed figure runs
+ * (`attributeRecordedRefunds`) gives each card refund row's slices, by row id -
+ * marked or matched, the refunds that paid that row and nothing else. A refund
+ * the attribution gives no row is in no entry.
+ */
+export function cardRefundsAttributedByOperation(
+  payment: CardRefundOwedPaymentRow,
+): Map<string, RecordedCardRefundRow[]> {
+  const byOperation = new Map<string, RecordedCardRefundRow[]>();
+  attributeRecordedRefunds(payment, (refund, operation, _sliceIndex, cents) => {
+    if (cents <= 0) return;
+    const taken = byOperation.get(operation.id) ?? [];
+    if (!taken.includes(refund)) taken.push(refund);
+    byOperation.set(operation.id, taken);
+  });
+  return byOperation;
+}
+
+/**
  * #3924 round 5 (concurrency F2): what Stripe refunded to the card for each of
  * these closed operations AFTER the treasurer closed it as paid another way -
  * a refund Stripe made before the close and the app recorded after it
