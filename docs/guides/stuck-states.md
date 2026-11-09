@@ -192,6 +192,9 @@ complete by hand is recorded. Stripe is not asked again.
 - **The rest is still owed to the member**: the rest stays in Refunds owed, as
   an entry of its own on this list. Stripe is not asked for it again. When you
   pay it back, close that entry as paid another way too, in full or in part.
+  Until then, the member's booking page and payment link say both parts: what
+  you paid back, and that the rest is still being refunded. After that close,
+  they say everything you paid back.
 
 After a **full** close, Net Collected stays where it was: the money moves from
 "owed back" to "refunded".

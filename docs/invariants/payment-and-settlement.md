@@ -1624,18 +1624,19 @@ short).
     cancel, marked as that close's (`isMadeBeforePaidAnotherWayEvent`). The
     page tells each part from its source: card refunds by their events (a
     capacity race's every row), or undated by the close's rule
-    (`cardRefundMadeForOperation`); the record's paid-back amount; and only
+    (`cardRefundMadeForOperation`); the record's paid-back amount; a
+    still-owed rest by its row; and only
     `paidAnotherWayUnpaidCents` as closed. A capped part is unsaid; a
     capacity race, capped at its rows' plans, follows it up.
   - **One per cancel**: a pre-#4145 cancel's up-front event means a later
-    close records none; the page prefers an open or paid-another-way row to it.
+    close records none; the page prefers an open or paid-another-way row.
   - **Stated limits, history only.** While both colours serve, an old cancel
     can write its up-front event after a new close recorded one, and an old
     runner close a new cancel's row with none. An old worker re-planning a
     failed-later row drops `madeByOperationId`; the page matches by amount.
   - **A refund failing later is told by the row owing it** (#4166).
   - **The cancel's own event is its settlement** (`isCancelCardRefundEvent`),
-    never an edit review's or hand-back's that landed first.
+    never an edit review's or hand-back's.
   - Proven by `booking-cancel.test.ts`, `payment-recovery.test.ts`,
     `card-refund-paid-another-way.test.ts`,
     `booking-narrative-own-card-refund.test.ts`,

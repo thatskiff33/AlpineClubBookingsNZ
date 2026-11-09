@@ -6,5 +6,7 @@
   A refund the journal would over-pay is not sent and lands on the stuck-states
   list for the treasurer. Closing a card refund as paid another way in part
   now asks whether the club keeps the rest or it is still owed to the member;
-  a rest still owed stays in "Refunds owed" until a later close. A dry-run-first
+  a rest still owed stays in "Refunds owed" until a later close, and the
+  member's booking page and payment link say both what was paid back and that
+  the rest is still being refunded. A dry-run-first
   owner command lists and reconciles reservations. Stripe requests are unchanged.
