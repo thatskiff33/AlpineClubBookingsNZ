@@ -102,10 +102,13 @@ import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { auditAndPaymentsDateRangePresets } from "@/lib/date-range-presets";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
+import { adminHref } from "@/lib/admin-hubs";
 import { useClubFormat } from "@/components/club-format-provider";
 import { formatFinanceNumber } from "@/lib/finance-format";
 
 // #2264 — the id of the single hint shared by the three amount filter boxes.
+/** Where this page is served under the switch: its own address, as officers see it. */
+const PAYMENTS_HREF = adminHref("payments");
 const PAYMENT_AMOUNT_HINT_ID = "payment-amount-filter-hint";
 
 type PaymentSortBy =
@@ -586,11 +589,11 @@ export default function PaymentsPage() {
   ]);
 
   const paymentsQuery = buildPaymentsSearchParams().toString();
-  const currentPaymentsPath = paymentsQuery ? `/admin/payments?${paymentsQuery}` : "/admin/payments";
+  const currentPaymentsPath = paymentsQuery ? `${PAYMENTS_HREF}?${paymentsQuery}` : PAYMENTS_HREF;
 
   useEffect(() => {
     const query = buildPaymentsSearchParams().toString();
-    router.replace(query ? `/admin/payments?${query}` : "/admin/payments", { scroll: false });
+    router.replace(query ? `${PAYMENTS_HREF}?${query}` : PAYMENTS_HREF, { scroll: false });
   }, [buildPaymentsSearchParams, router]);
 
   const fetchData = useCallback(async () => {
@@ -746,7 +749,7 @@ export default function PaymentsPage() {
     setPage(1);
     const params = resetPaymentsDatasetSearchParams(searchParams.toString(), clubToday);
     const query = params.toString();
-    router.replace(query ? `/admin/payments?${query}` : "/admin/payments", {
+    router.replace(query ? `${PAYMENTS_HREF}?${query}` : PAYMENTS_HREF, {
       scroll: false,
     });
   }

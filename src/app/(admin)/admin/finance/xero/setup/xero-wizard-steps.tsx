@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { adminHref } from "@/lib/admin-hubs";
 import { CopyField, useStepSaving } from "@/components/admin/integration-wizard";
 import type { WizardStepHelpers } from "@/components/admin/integration-wizard";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
@@ -22,7 +23,8 @@ import type {
 } from "./use-xero-wizard-context";
 
 const CREDENTIALS_ENDPOINT = "/api/admin/integrations/credentials";
-const CONNECT_RETURN = "/admin/xero/setup";
+// Where Xero sends the officer back after consent: this page, as it is served.
+const CONNECT_RETURN = adminHref("xero-setup");
 
 // A credential's "set at" is a real INSTANT, shown in the club's persisted zone
 // rather than the viewer's or the build's (CT-4, #2870; INV-CONFIG-002).

@@ -43,6 +43,7 @@ import {
   adminPageRoutePath,
   adminTabHref,
   buildAdminUrlRules,
+  getAdminPage,
   isInexactAdminPagePath,
   parseAdminPageTab,
   resolveAdminHref,
@@ -59,6 +60,7 @@ import {
   adminHubOwnedPaths,
 } from "@/lib/admin-hubs/security-map";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { xeroSectionId } from "@/app/(admin)/admin/finance/xero/_components/types";
 
 // ---------------------------------------------------------------------------
 // The admin hub registry (epic #4468, C1 #4798).
@@ -906,6 +908,14 @@ describe("tabs and anchors", () => {
     expect(adminAnchorHref("health", "integration-readiness")).toBe(
       "/admin/health#integration-readiness",
     );
+    expect(adminAnchorHref("xero", "xero-section-mappings")).toBe("/admin/xero#xero-section-mappings");
+  });
+
+  it("declares Xero's mappings anchor as the id its card is given (C5 #4802)", () => {
+    // The card writes `id={xeroSectionId("mappings")}`; the links go through the
+    // registry. One spelling, or a renamed section would leave every link short.
+    expect(xeroSectionId("mappings")).toBe("xero-section-mappings");
+    expect(getAdminPage("xero").anchors).toEqual([xeroSectionId("mappings")]);
   });
 
   it("reads a tab, falling back to the first for anything it does not declare", () => {
@@ -925,11 +935,12 @@ describe("tabs and anchors", () => {
     expect(() => adminAnchorHref("health", "nowhere")).toThrow(/no "nowhere" anchor/);
   });
 
-  it("names tabs and anchors only on the pages that hold a merged page", () => {
+  it("names tabs and anchors only on the pages that hold a merged page or a linked section", () => {
     expect(
       ADMIN_PAGES.filter((page) => page.tabs.length > 0 || page.anchors.length > 0)
         .map((page) => [page.id, [...page.tabs], [...page.anchors]]),
     ).toEqual([
+      ["xero", [], ["xero-section-mappings"]],
       ["membership-cancellations", ["requests", "settings"], []],
       ["family-groups", ["groups", "suggestions"], []],
       ["health", [], ["integration-readiness"]],
@@ -966,10 +977,22 @@ describe("tabs and anchors", () => {
     expect(drift).toEqual([]);
   });
 
+  /**
+   * An anchor whose element id is minted by a helper, not written out: the
+   * expression the page must render instead, pinned equal to the anchor above.
+   */
+  const MINTED_ANCHORS: Record<string, string> = {
+    "xero-section-mappings": 'id={xeroSectionId("mappings")}',
+  };
+
   it("has each anchored page render every anchor as an element id", () => {
     const drift = ADMIN_PAGES.flatMap((page) =>
       page.anchors
-        .filter((anchor) => !pageSources(page).includes(`"${anchor}"`))
+        .filter((anchor) => {
+          const source = pageSources(page);
+          const minted = MINTED_ANCHORS[anchor];
+          return !(minted === undefined ? source.includes(`"${anchor}"`) : source.includes(minted));
+        })
         .map((anchor) => `${page.id}: no "${anchor}"`),
     );
     expect(drift).toEqual([]);
@@ -1617,7 +1640,7 @@ describe("the registry is inert", () => {
     "src/components/admin/membership-cancellation-blocker-notice.tsx":
       "S1: the settings link is the queue's Settings tab",
     "src/lib/setup-readiness.ts":
-      "S1: the cancellation step links the Settings tab; C5: Xero setup and mappings",
+      "S1: the cancellation step links the Settings tab; C5: Xero setup, and the mappings anchor and label",
     "src/lib/__tests__/admin-feature-search-index.test.ts":
       "S2: the palette census and its fail-closed property over every grid and seeded role",
     "src/lib/__tests__/admin-palette-lodge-scoped-pages.test.tsx":
@@ -1648,7 +1671,8 @@ describe("the registry is inert", () => {
     "src/lib/__tests__/admin-page-exact-path-proxy.test.ts":
       "C4: the proxy's 404 for every registered page spelled another way",
     "src/app/(admin)/admin/book/page.tsx": "C5: the Xero setup link is adminHref",
-    "src/app/(admin)/admin/dashboard/page.tsx": "C5: the payments and refunds links are adminHref",
+    "src/app/(admin)/admin/dashboard/page.tsx":
+      "C5: the payments and refunds links, and the payments permission check, are adminHref",
     "src/app/(admin)/admin/finance/internet-banking/page.tsx": "C5: its back link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/health-diagnostics-panel.tsx":
       "C5: the member-grouping link is adminHref",
@@ -1660,7 +1684,8 @@ describe("the registry is inert", () => {
       "C5: the Xero admin link is adminHref",
     "src/app/(admin)/admin/integrations/page.tsx": "C5: the Xero setup card is adminHref",
     "src/app/(admin)/admin/modules/page.tsx": "C5: the Xero module setup link is adminHref",
-    "src/app/(admin)/admin/setup/finance/page.tsx": "C5: the Xero cards are adminHref",
+    "src/app/(admin)/admin/setup/finance/page.tsx":
+      "C5: the Xero cards are adminHref and the mappings card adminAnchorHref",
     "src/app/(admin)/admin/stripe/setup/page.tsx": "C5: the payments link is adminHref",
     "src/components/admin/booking-requests/booking-approvals-panel.tsx":
       "C5: the refunds link is adminHref",
@@ -1669,7 +1694,7 @@ describe("the registry is inert", () => {
     "src/lib/__tests__/asset-url-404.test.ts":
       "C5: the beforeFiles pin follows the moved Website and Finance pages",
     "src/lib/admin-member-detail-helpers.ts":
-      "C5: the member back-link label reads a Finance hub path as its old path",
+      "C5: the member back-link label is the registry label of the Bookings or Finance page it returns to",
     "src/lib/audit-query.ts": "C5: audit deep links use adminHref",
     "src/lib/booking-provider-mismatches.ts": "C5: the settlement-queue link is adminHref",
     "src/lib/diagnostics/page-context/__tests__/registry.test.ts":
@@ -1687,7 +1712,7 @@ describe("the registry is inert", () => {
     "src/lib/finance-dashboard-page/sync-health-view.ts": "C5: the Xero admin link is adminHref",
     "src/lib/finance-sync-health.ts": "C5: the Xero admin link is adminHref",
     "src/lib/stuck-state-dashboard.ts": "C5: stuck-state links use adminHref",
-    "src/lib/xero-record-activity.ts": "C5: the payments back link is adminHref",
+    "src/lib/xero-record-activity.ts": "C5: the payments back link is adminLink",
     "src/lib/xero-record-links.ts": "C5: a Xero record's URL is adminHref",
     "src/lib/contextual-help/admin/finance.ts":
       "C5: the Finance pages' help is keyed by each page's registry old path",
@@ -1695,6 +1720,22 @@ describe("the registry is inert", () => {
       "C5: the Subscriptions help is keyed by its registry old path",
     "src/lib/contextual-help/questions-admin.ts":
       "C5: the Finance pages' question chips are keyed by each page's registry old path",
+    "src/app/(admin)/admin/finance/payments/page.tsx": "C5: its own address is adminHref",
+    "src/app/(admin)/admin/finance/refund-requests/page.tsx": "C5: its own address is adminHref",
+    "src/app/(admin)/admin/finance/subscriptions/page.tsx": "C5: its own address is adminHref",
+    "src/app/(admin)/admin/finance/xero/records/[localModel]/[localId]/page.tsx":
+      "C5: the fallback back link is adminLink",
+    "src/app/(admin)/admin/finance/xero/setup/xero-wizard-steps.tsx":
+      "C5: the OAuth connect step returns to Xero Setup at its adminHref",
+    "src/app/api/admin/xero/callback/route.ts":
+      "C5: the OAuth callback's default landing is Xero Sync at its adminHref",
+    "src/lib/cron-credit-reconciliation.ts": "C5: the refund credit-note alert links Xero Sync at its adminHref",
+    "src/lib/__tests__/admin-member-detail-helpers.test.ts":
+      "C5: the member back-link labels are the registry's",
+    "src/lib/__tests__/admin-moved-page-literals.test.ts":
+      "C5: no production code spells a moved page's old URL as a literal",
+    "src/lib/__tests__/xero-oauth-return-path.test.ts":
+      "C5: the OAuth return-path check accepts both Xero landing pages at either place",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;

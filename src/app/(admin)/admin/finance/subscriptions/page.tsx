@@ -71,6 +71,7 @@ import { useXeroOrgShortCode } from "@/hooks/use-xero-org-short-code";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { CHIP_TONE_CLASSES } from "@/lib/chip-tones";
 import { getXeroContactGroupTone } from "@/lib/xero-contact-group-tone";
+import { adminHref } from "@/lib/admin-hubs";
 import { useConfirm } from "@/components/confirm-dialog";
 import { SubscriptionBillingPanel } from "./_components/subscription-billing-panel";
 import {
@@ -152,6 +153,9 @@ const subscriptionSortColumns = new Set<SubscriptionSortBy>([
   "xeroInvoice",
   "paidAt",
 ]);
+
+/** Where this page is served under the switch: its own address, as officers see it. */
+const SUBSCRIPTIONS_HREF = adminHref("subscriptions");
 
 function parsePageParam(value: string | null) {
   const page = Number(value);
@@ -407,12 +411,12 @@ export default function SubscriptionsPage() {
 
   const subscriptionsQuery = buildSubscriptionsSearchParams().toString();
   const currentSubscriptionsPath = subscriptionsQuery
-    ? `/admin/subscriptions?${subscriptionsQuery}`
-    : "/admin/subscriptions";
+    ? `${SUBSCRIPTIONS_HREF}?${subscriptionsQuery}`
+    : SUBSCRIPTIONS_HREF;
 
   useEffect(() => {
     const query = buildSubscriptionsSearchParams().toString();
-    router.replace(query ? `/admin/subscriptions?${query}` : "/admin/subscriptions", { scroll: false });
+    router.replace(query ? `${SUBSCRIPTIONS_HREF}?${query}` : SUBSCRIPTIONS_HREF, { scroll: false });
   }, [buildSubscriptionsSearchParams, router]);
 
   const fetchData = useCallback(async () => {
@@ -469,7 +473,7 @@ export default function SubscriptionsPage() {
     setPage(1);
     const params = resetSubscriptionsDatasetSearchParams(searchParams.toString());
     const query = params.toString();
-    router.replace(query ? `/admin/subscriptions?${query}` : "/admin/subscriptions", {
+    router.replace(query ? `${SUBSCRIPTIONS_HREF}?${query}` : SUBSCRIPTIONS_HREF, {
       scroll: false,
     });
   }

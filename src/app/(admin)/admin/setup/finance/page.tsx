@@ -17,7 +17,7 @@ import {
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { loadAdminSetupPermissionMatrix } from "../permission-matrix";
-import { adminHref } from "@/lib/admin-hubs";
+import { adminAnchorHref, adminHref } from "@/lib/admin-hubs";
 
 const financeLinks = [
   {
@@ -35,7 +35,7 @@ const financeLinks = [
     icon: Plug,
   },
   {
-    href: `${adminHref("xero")}#xero-section-mappings`,
+    href: adminAnchorHref("xero", "xero-section-mappings"),
     title: "Xero Mappings",
     description:
       "Review account, item-code, and entrance-fee mappings used by Xero sync.",

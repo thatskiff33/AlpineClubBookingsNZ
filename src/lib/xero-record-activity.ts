@@ -27,7 +27,7 @@ import type {
   XeroRecordReference,
 } from "@/lib/xero-record-types";
 
-import { adminHref } from "@/lib/admin-hubs";
+import { adminLink } from "@/lib/admin-hubs";
 interface XeroRecordScope {
   rootRecord: XeroRecordReference
   scopeRecords: XeroRecordReference[]
@@ -193,10 +193,7 @@ async function getPaymentScope(localId: string, format: ClubFormat): Promise<Xer
     rootRecord,
     scopeRecords: [rootRecord],
     relatedRecords: [relatedBooking],
-    backLink: {
-      href: adminHref("payments"),
-      label: "Payments",
-    },
+    backLink: adminLink("payments"),
   };
 }
 

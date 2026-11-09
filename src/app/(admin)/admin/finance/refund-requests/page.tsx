@@ -29,6 +29,7 @@ import {
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice"
 import { getCancellationSettlementBreakdown, type CancellationCreditEntry } from "@/lib/payment-status-display"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
+import { adminHref } from "@/lib/admin-hubs"
 import { useClubTime } from "@/components/club-time-provider"
 import { parseInstant, type BoundClubTime, formatStayDateOrNull } from "@/lib/club-time"
 import { MoneyInput } from "@/components/ui/money-input"
@@ -46,6 +47,9 @@ import {
   ORGANISER_CARD_APPEAL_CEILING_NOTE,
   ORGANISER_CARD_APPEAL_PENDING_ADMIN_NOTE,
 } from "@/lib/group-organiser-paid"
+
+/** Where this page is served under the switch: its own address, as officers see it. */
+const REFUND_REQUESTS_HREF = adminHref("refund-requests")
 
 type ReviewFilter = "PENDING" | "APPROVED" | "REJECTED" | "ALL"
 const reviewFilters = new Set<ReviewFilter>(["PENDING", "APPROVED", "REJECTED", "ALL"])
@@ -195,8 +199,8 @@ export default function RefundRequestsPage() {
   if (filter !== "PENDING") currentParams.set("status", filter)
   const currentQuery = currentParams.toString()
   const currentRefundRequestsPath = currentQuery
-    ? `/admin/refund-requests?${currentQuery}`
-    : "/admin/refund-requests"
+    ? `${REFUND_REQUESTS_HREF}?${currentQuery}`
+    : REFUND_REQUESTS_HREF
 
   useEffect(() => {
     router.replace(currentRefundRequestsPath, { scroll: false })

@@ -13,6 +13,7 @@ import {
 } from "./audit-structured-detail";
 import { formatCents } from "./utils";
 import type { ClubFormat } from "@/lib/club-format";
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * The Admin Audit Log's category filter, DERIVED from the canonical taxonomy
@@ -21,7 +22,6 @@ import type { ClubFormat } from "@/lib/club-format";
  * category the filter does not offer is a category an operator cannot search
  * for, however many rows carry it.
  */
-import { adminHref } from "@/lib/admin-hubs";
 export const AUDIT_TIMELINE_CATEGORY_OPTIONS: readonly {
   value: AuditTimelineCategory;
   label: string;

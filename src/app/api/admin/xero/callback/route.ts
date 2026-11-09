@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
+import { adminHref } from "@/lib/admin-hubs";
 import { handleXeroCallback } from "@/lib/xero";
 import logger from "@/lib/logger";
 import { getAuditRequestContext } from "@/lib/audit";
@@ -47,7 +48,7 @@ export async function GET(request: NextRequest) {
   const returnPath =
     sanitizeXeroOAuthReturnPath(
       request.cookies.get(XERO_OAUTH_RETURN_COOKIE)?.value,
-    ) ?? "/admin/xero";
+    ) ?? adminHref("xero");
   // Append our own query params with the right separator: a sanitised return
   // path may already carry a query (e.g. ?step=connect), so a bare "?" would
   // produce a malformed "…?a=b?connected=true" (#2080 hardening).

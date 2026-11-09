@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { sanitizeXeroOAuthReturnPath } from "@/lib/xero-oauth-state";
+import { getAdminPage, resolveAdminHref } from "@/lib/admin-hubs";
 
 // The post-OAuth return path (#2080) is attacker-influenceable (a query param
 // that becomes a redirect target), so it must only ever resolve to a
@@ -12,6 +13,19 @@ describe("sanitizeXeroOAuthReturnPath", () => {
     expect(sanitizeXeroOAuthReturnPath("/admin/integrations")).toBe(
       "/admin/integrations",
     );
+  });
+
+  it("accepts the Xero landing pages at either place, so the round-trip survives the switch (C5 #4802)", () => {
+    // The connect step returns to Xero Setup, and the callback's default is Xero
+    // Sync, each at its adminHref: the old path while off, the hub path once on.
+    for (const id of ["xero", "xero-setup"] as const) {
+      for (const live of [false, true]) {
+        const landing = resolveAdminHref(getAdminPage(id), live);
+        expect(sanitizeXeroOAuthReturnPath(landing), landing).toBe(landing);
+        expect(sanitizeXeroOAuthReturnPath(`${landing}?step=connect`)).toBe(`${landing}?step=connect`);
+      }
+    }
+    expect(resolveAdminHref(getAdminPage("xero-setup"), true)).toBe("/admin/finance/xero/setup");
   });
 
   it("rejects null / empty / non-admin paths", () => {

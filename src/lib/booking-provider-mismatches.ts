@@ -10,6 +10,7 @@ import {
   type BookingInvoiceSyncFault,
 } from "@/lib/booking-invoice-sync-status";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
+import { adminHref } from "@/lib/admin-hubs";
 import { findResolvedBookingInvoiceCreate } from "@/lib/xero-resolved-in-xero-fences";
 import { readRefundCreditNoteGap } from "@/lib/xero-admin-health";
 import { explainXeroFailure } from "@/lib/xero-failure-explanation";
@@ -25,7 +26,6 @@ import { explainXeroFailure } from "@/lib/xero-failure-explanation";
  * calls.
  */
 
-import { adminHref } from "@/lib/admin-hubs";
 type BookingProviderMismatchId =
   | "xero-invoice-sync-failed"
   | "xero-invoice-pending"

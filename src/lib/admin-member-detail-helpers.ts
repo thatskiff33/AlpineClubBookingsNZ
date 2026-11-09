@@ -1,4 +1,4 @@
-import { canonicalAdminPathname } from "@/lib/admin-hubs"
+import { ADMIN_PAGES, activeAdminHref } from "@/lib/admin-hubs"
 import {
   shouldDefaultPostalSameAsPhysical,
   type MemberAddressValues,
@@ -98,20 +98,27 @@ export function isCollapsibleMemberSection(
   return collapsibleMemberSections.includes(value as CollapsibleMemberSection)
 }
 
+/**
+ * The parents a member link names on its way back: Bookings and the Finance
+ * pages. A dynamic page (a Xero record) is left out, so a path beneath it falls
+ * to its static parent.
+ */
+const MEMBER_BACK_PARENTS = ADMIN_PAGES.filter(
+  (page) => (page.id === "bookings" || page.hub === "finance") && !page.oldPath.includes("[")
+)
+
 // The label names the parent surface the back-link returns to; the shared
 // BackLink prepends the ← affordance, so the label stays a bare parent name
-// (no "Back to " prefix, which would duplicate the arrow — #2046).
+// (no "Back to " prefix, which would duplicate the arrow — #2046). It is that
+// page's registry label (C5 #4802), and `activeAdminHref` reads a moved page's
+// hub path as its old path, so either form names the same parent.
 export function getMemberDetailBackLabel(returnTo: string) {
-  // A moved Finance page is served at its hub path once the switch is on, and
-  // the server render already sees that path while the switch is off. Both
-  // forms name the same parent.
-  const path = canonicalAdminPathname(returnTo.split(/[?#]/, 1)[0] ?? returnTo)
-  if (path.startsWith("/admin/bookings")) return "Bookings"
-  if (path.startsWith("/admin/payments")) return "Payments"
-  if (path.startsWith("/admin/subscriptions")) return "Subscriptions"
-  if (path.startsWith("/admin/refund-requests")) return "Refund Requests"
-  if (path.startsWith("/admin/xero")) return "Xero"
-  return "Members"
+  const path = returnTo.split(/[?#]/, 1)[0] ?? returnTo
+  const owner = activeAdminHref(
+    path,
+    MEMBER_BACK_PARENTS.map((page) => page.oldPath)
+  )
+  return MEMBER_BACK_PARENTS.find((page) => page.oldPath === owner)?.label ?? "Members"
 }
 
 export function formatAdminName(admin: AdminActor | null | undefined) {

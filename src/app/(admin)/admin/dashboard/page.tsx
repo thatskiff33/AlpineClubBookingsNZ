@@ -427,7 +427,7 @@ export default async function AdminDashboardPage() {
   );
   const canViewPayments = canViewAdminHrefWithMatrix(
     permissionMatrix,
-    "/admin/payments",
+    adminHref("payments"),
   );
   const showOfficerRow =
     canViewBookings ||
