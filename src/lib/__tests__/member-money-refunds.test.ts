@@ -155,6 +155,26 @@ describe("the reservation step", () => {
     expect(t.family(t.root)).toMatchObject({ funded: 8_000, reserved: 8_000 });
   });
 
+  it("MUTATION (probe 15): takes back collection only from the receipt of the slice's own capture, never another", async () => {
+    const t = await setup();
+    const first = await t.capture(6_000);
+    const second = await t.capture(4_000);
+    await t.cancel(2_000);
+    await t.r05("cancellation", t.id, 8_000);
+    const applied = (row: { stripePaymentIntentId: string }) => {
+      const line = t.db.rows("memberMoneyLine", { journalId: t.journalOf(keys.capture(row.stripePaymentIntentId))!.id, account: "MEMBER_RECEIVABLE", side: "CREDIT" })[0]!;
+      return memberMoneyApplicationTotals(t.state()).sources.get(line.id as string) ?? 0;
+    };
+    await t.reserve(first, { scope: "cancellation", id: t.id }, "k_first", 3_000);
+    expect([applied(first), applied(second)]).toEqual([6_000, 4_000]); // 3000 collected + 3000 funded; untouched
+    await t.reserve(second, { scope: "cancellation", id: t.id }, "k_second", 4_000, ["k_first", "k_second"]);
+    expect(t.db.rows("memberMoneyApplication").filter((a) => a.reversesApplicationId !== null).length).toBe(2);
+    expect(memberMoneyApplicationTotals(t.state()).collected).toBe(3_000);
+    expect([applied(first), applied(second)]).toEqual([6_000, 4_000]);
+    expect(t.family(R05("cancellation", t.id))).toMatchObject({ funded: 7_000, reserved: 7_000 });
+    expect(t.caps()).toEqual([]);
+  });
+
   it("MUTATION (probe 14): a re-plan to a new key releases the superseded reservation, reverses its funding, and funds again", async () => {
     const t = await cancelled();
     await t.reserve(t.row, { scope: "cancellation", id: t.id }, t.key, 8_000);
@@ -259,11 +279,13 @@ describe("R12 and R13 in the one cash writer", () => {
 
     const u = await cancelled({ id: "second" });
     await u.refund(u.row, "re_failed", 8_000);
-    await u.refund(u.row, "re_failed", 8_000, "failed");
     await u.reserve(u.row, { scope: "cancellation", id: u.id }, u.key, 8_000);
+    // The key arrives in the same delivery that says the refund failed: the failure wins, nothing answers it.
     await u.refund(u.row, "re_failed", 8_000, "failed", u.key);
     expect(u.event(keys.refundAnswer("re_failed"))).toBeNull();
+    expect(u.reversed(keys.refund("re_failed"))).toBe(true);
     expect(u.release(u.key)).toBeNull();
+    expect(u.family(u.root)).toMatchObject({ paid: 0, reserved: 8_000 });
   });
 
   it("R13 reverses the answer, the cash and the answered reservation's funding once, so the re-send funds again", async () => {
