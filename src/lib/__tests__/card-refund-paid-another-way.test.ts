@@ -423,6 +423,16 @@ describe("closing a dead card refund as paid another way", () => {
     });
   });
 
+  it("MUTATION (#4516 review L2): the journal closes the reservations of the row's unmade slices only, never one a made slice's refund answers", async () => {
+    mixedSlices();
+
+    await close(10_000, "Bank transfer", "full", 10_000);
+
+    expect(journalDoors.postPaidAnotherWayClose).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({
+      attemptKeys: ["booking_cancel_refund_recovery_b-1", "booking_cancel_refund_b-1_txn-2_2000", "booking_cancel_refund_b-1_txn-3_10000"],
+    }));
+  });
+
   it("#4145 MUTATION: a capacity race's row records its made part as the capacity race's event, through the same writer and with no booking-wide once-check", async () => {
     mixedSlices("capacity_claim_failed_refund_recovery_b-1_pi_1");
 

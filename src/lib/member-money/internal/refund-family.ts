@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { compareOrdinal } from "@/lib/ordinal-order";
+import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import { readMemberMoneyApplicationState } from "./application-read";
 import { memberMoneyApplicationTotals, refundFamilyKey, type ApplicationObligation, type ApplicationState } from "./application-state";
 import { capProblem, isMemberMoneyCapProblem, MEMBER_MONEY_CAP_PROBLEMS } from "./cap-problems";
@@ -116,7 +117,8 @@ export function stripeKeyOfReservation(attemptKey: string): string {
 }
 /** Every generation of one Stripe key's reservations, as a where clause. */
 export function reservationGenerationsWhere(stripeKey: string) {
-  return { OR: [{ attemptKey: stripeKey }, { attemptKey: { startsWith: `${stripeKey}${GENERATION_MARK}` } }] };
+  // `exactPrefix` (INV-SSOT-006): a Stripe key carries `_`, which LIKE would read as any character.
+  return { OR: [{ attemptKey: stripeKey }, { attemptKey: exactPrefix(`${stripeKey}${GENERATION_MARK}`) }] };
 }
 
 /**
