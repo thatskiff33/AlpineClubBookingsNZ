@@ -1483,8 +1483,12 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // request's member) cannot hold the row it waits on. W1's capture-return R05
   // reads its owner without it, defensively (round 2: W1 holds the Payment row
   // there, so the booking row would add a Payment -> booking edge; since #4823 a
-  // merge never waits for a Payment row). See docs/CONCURRENCY_AND_LOCKING.md -> "The M3b
-  // booking doors and member merge's journal transfer" and the M4c paragraph.
+  // merge never waits for a Payment row). #4840: a manual settle takes it right
+  // after its lodge key, before it names its officer on the Payment row (that FK
+  // takes KEY SHARE on the Member row a merge locks FOR UPDATE after holding the
+  // booking row). See docs/CONCURRENCY_AND_LOCKING.md -> "The M3b
+  // booking doors and member merge's journal transfer", the M4c paragraph and
+  // "A booking writer takes the booking row before a Member key share".
   "src/lib/member-money/internal/booking-posting.ts": 1,
   // #4691 (Ledger M4a): an application batch, a refund reservation and a release
   // take the booking's Payment row (`SELECT 1 … FOR NO KEY UPDATE`) before they
