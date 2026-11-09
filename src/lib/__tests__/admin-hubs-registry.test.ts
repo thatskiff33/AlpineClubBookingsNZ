@@ -1748,7 +1748,7 @@ describe("the registry is inert", () => {
     "src/components/admin/booking-requests/booking-approvals-panel.tsx":
       "C5: the refunds link is adminHref",
     "src/components/admin/subscription-lockout-settings-panel.tsx":
-      "C5: the Xero setup links are adminHref; C6: the fee configuration and age tier links",
+      "C5: the Xero setup links are adminHref; C6: the fee console and age tier links",
     "src/lib/__tests__/asset-url-404.test.ts":
       "C5: the beforeFiles pin follows the moved Website and Finance pages",
     "src/lib/admin-member-detail-helpers.ts":
@@ -1805,10 +1805,12 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/rules/booking-policies/public-requests/page.tsx":
       "C6: its back link is adminLink",
     "src/app/(admin)/admin/rules/fee-configuration/page.tsx": "C6: it redirects to the fee console's adminHref",
+    "src/lib/__tests__/fee-configuration-redirect.test.ts":
+      "C6: pins the Fee Configuration stub's redirect to the fee console's adminHref",
     "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx": "C6: the Seasons link is adminHref",
     "src/app/(admin)/admin/rules/seasons/page.tsx": "C6: the Fees link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/mappings-panel.tsx":
-      "C6: the fee configuration link is adminHref",
+      "C6: the fee console link is adminHref",
     "src/app/(admin)/admin/lodges/[id]/page.tsx":
       "C6: the Seasons & Rates card's link, and the fees and seasons permission checks, are adminHref",
     "src/app/(admin)/admin/lodges/[id]/setup/page.tsx": "C6: the seasons link is adminHref",

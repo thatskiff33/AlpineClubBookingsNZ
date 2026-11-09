@@ -592,7 +592,7 @@ function EntranceFeeTable({ isEditingMappings, items, codes, setCodes }: { isEdi
       <p className="text-xs text-muted-foreground">
         Map each joining fee category to a Xero Item. Joining fee <strong>amounts</strong> are
         not configured here — they are managed per membership type on the{" "}
-        <Link href={adminHref("fee-configuration")} className="underline underline-offset-2">fee configuration</Link> page.
+        <Link href={adminHref("fees")} className="underline underline-offset-2">fee configuration</Link> page.
       </p>
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-sm">

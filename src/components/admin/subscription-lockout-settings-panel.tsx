@@ -658,7 +658,7 @@ export function SubscriptionLockoutSettingsPanel({
               With look-through on, an invoice also counts when a line uses any
               item code from your{" "}
               <Link
-                href={adminHref("fee-configuration")}
+                href={adminHref("fees")}
                 className="font-medium underline"
               >
                 fee configuration
@@ -694,7 +694,7 @@ export function SubscriptionLockoutSettingsPanel({
                   the fallback item code and account code above are matched. Add
                   item codes on the{" "}
                   <Link
-                    href={adminHref("fee-configuration")}
+                    href={adminHref("fees")}
                     className="font-medium underline"
                   >
                     fee configuration
