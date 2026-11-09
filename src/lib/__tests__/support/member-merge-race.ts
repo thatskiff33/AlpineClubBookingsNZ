@@ -36,7 +36,7 @@ type Settled = PromiseSettledResult<unknown>;
 type PauseHook = (pid: number) => Promise<void>;
 type RawTx = Parameters<typeof backendPid>[0];
 
-export function gate() {
+function gate() {
   let open!: () => void;
   const opened = new Promise<void>((resolve) => { open = resolve; });
   return { open, opened };
@@ -92,9 +92,8 @@ export async function arrivingWhilePaused(
   slot: string,
   holder: () => Promise<unknown>,
   arriving: () => Promise<unknown>,
-  neverPaused?: string,
 ): Promise<{ held: Settled; arrived: Settled }> {
-  const pause = armPause(slot, holder, neverPaused);
+  const pause = armPause(slot, holder);
   let arrival: Promise<unknown> = Promise.resolve();
   try {
     const holderPid = await pause.reached;
@@ -137,7 +136,7 @@ export async function firstStandWhilePaused(
  * longest budget any copy had (1,200 polls); a shorter one only fails a slow
  * runner, it never proves more.
  */
-export async function settledOrBlockedBy(
+async function settledOrBlockedBy(
   prisma: PrismaClient,
   pending: Promise<unknown>,
   writerPid: number,
