@@ -4,7 +4,8 @@
  *
  * Split verbatim out of `member-merge.ts` (#3128), which was 3,814 lines and the
  * largest file in the repository. This is the declarative half: a table and the
- * one factory that builds its rows. It reads no database, holds no lock and
+ * one factory that builds its rows, plus the one resolver of a spec's Prisma
+ * delegate by name (`mergeDelegate`). It reads no database, holds no lock and
  * imports nothing from the merge engine, which is what made it separable --
  * `member-merge.ts` imports this module, never the other way round.
  */
@@ -373,3 +374,22 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
     note: "@id memberId; a fact about the loser's own row, dropped with it (#3369)",
   }),
 ];
+
+/**
+ * The ONE place a Prisma delegate is resolved from a merge spec's `delegate`
+ * NAME (#2800, `INV-SSOT`). Every step of the merge drives the client
+ * dynamically off `MEMBER_MERGE_RELATION_SPECS`, so a name that does not
+ * resolve means a spec has drifted from the schema — and a merge that quietly
+ * skipped that model would leave the duplicate's rows pointing at a member the
+ * merge is about to archive. There is no safe way to continue past it, so it
+ * refuses (INV-LIFE).
+ */
+export function mergeDelegate<Delegate>(db: unknown, delegate: string): Delegate {
+  const resolved = (db as Record<string, Delegate | undefined>)[delegate];
+  if (resolved === undefined) {
+    throw new Error(
+      `Member merge cannot resolve the Prisma delegate "${delegate}"; the merge spec no longer matches the schema.`,
+    );
+  }
+  return resolved;
+}

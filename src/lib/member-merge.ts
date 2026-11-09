@@ -57,8 +57,9 @@ import {
   loadMemberMergeExclusivityTopology,
 } from "@/lib/member-parent-partner-exclusivity";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
-import { MEMBER_MERGE_RELATION_SPECS } from "@/lib/member-merge-relations";
+import { MEMBER_MERGE_RELATION_SPECS, mergeDelegate } from "@/lib/member-merge-relations";
 import { MEMBER_MERGE_PAYMENT_ATTRIBUTION_SPEC, moveMergedPaymentAttributionLast } from "@/lib/member-merge-payment-attribution";
+import { findMemberMergeResidualReferences } from "@/lib/member-merge-residual-references";
 import {
   diffFieldMergePatches,
   mergeMemberFields,
@@ -880,25 +881,6 @@ async function countBlockedSubscriptionSeasons(
 // ---------------------------------------------------------------------------
 // Preview builder
 // ---------------------------------------------------------------------------
-
-/**
- * The ONE place a Prisma delegate is resolved from a merge spec's `delegate`
- * NAME (#2800, `INV-SSOT`). Every step of the merge drives the client
- * dynamically off `MEMBER_MERGE_RELATION_SPECS`, so a name that does not
- * resolve means a spec has drifted from the schema — and a merge that quietly
- * skipped that model would leave the duplicate's rows pointing at a member the
- * merge is about to archive. There is no safe way to continue past it, so it
- * refuses (INV-LIFE).
- */
-function mergeDelegate<Delegate>(db: unknown, delegate: string): Delegate {
-  const resolved = (db as Record<string, Delegate | undefined>)[delegate];
-  if (resolved === undefined) {
-    throw new Error(
-      `Member merge cannot resolve the Prisma delegate "${delegate}"; the merge spec no longer matches the schema.`,
-    );
-  }
-  return resolved;
-}
 
 type CountingDelegate = { count: (args: unknown) => Promise<number> };
 type FindManyDelegate<Row> = { findMany: (args: unknown) => Promise<Row[]> };
@@ -1958,20 +1940,25 @@ export async function executeMemberMerge(params: {
       throw error;
     }
 
-    const residualLoserOwnedBookings = await tx.booking.findMany({
-      where: { memberId: loserId },
-      orderBy: { id: "asc" },
-      select: { id: true },
-    });
-    if (residualLoserOwnedBookings.length > 0) {
+    // #4855: under the Member rows, nothing may still name the duplicate. A
+    // write naming it that was in flight when `applyMoves` and the resolvers ran
+    // committed past them (a booking it came to own, a guest row linked to it,
+    // an officer's reviewer or maker column), and the loser delete's `onDelete`
+    // would then clear, drop or refuse it. Naming the duplicate needs `FOR KEY
+    // SHARE` on its row, so from here the set cannot grow: one read per relation
+    // (`member-merge-residual-references.ts`, from the relation table) and any
+    // row refuses the whole merge. A refusal, never a late move: a late guest
+    // row's booking may be outside the hosting proof planned above, and a late
+    // move would lock rows after the Member rows (#4840). Before the D4
+    // transfer, so a booking that came to name the duplicate late is never left
+    // out of it.
+    const residualReferences = await findMemberMergeResidualReferences(tx, loserId);
+    if (residualReferences.driftFields.length > 0) {
       throw new MemberMergeError(
-        "Booking ownership changed while the merge was running. Nothing was saved. Re-run the preview and try again.",
+        "Records naming the duplicate changed while the merge was running. Nothing was saved. Re-run the preview and try again.",
         409,
         "merge_drift_in_transaction",
-        {
-          driftFields: ["Booking.member"],
-          bookingIds: residualLoserOwnedBookings.map((booking) => booking.id),
-        },
+        residualReferences,
       );
     }
 
@@ -1984,35 +1971,6 @@ export async function executeMemberMerge(params: {
     // re-point a booking back. It posts no revenue, so it needs no `lock(1)`,
     // which merge deliberately does not take (see the lodge-key note above).
     await postMemberMergeTransfer(tx, journal, { fromMemberId: loserId, toMemberId: masterId, actorMemberId });
-
-    // BookingGuest.member is an onDelete:SetNull attendance identity, so a row
-    // inserted after applyMoves would otherwise disappear silently when the
-    // loser is deleted. Re-read under the one sorted Member FOR UPDATE set and
-    // refuse the whole merge if ANY loser-linked guest remains. This must be a
-    // refusal rather than a late move: the hosting plan above was derived before
-    // this row moved, and its booking/owner/coverage key may be outside the exact
-    // proof. A guest inserted after the Member lock blocks on the loser's FK
-    // key-share check and fails after deletion; one committed before the lock is
-    // visible here, including when its booking was already a plan candidate.
-    const residualLoserGuestRows = await tx.bookingGuest.findMany({
-      where: { memberId: loserId },
-      orderBy: { id: "asc" },
-      select: { id: true, bookingId: true },
-    });
-    if (residualLoserGuestRows.length > 0) {
-      throw new MemberMergeError(
-        "Booking attendance changed while the merge was running. Nothing was saved. Re-run the preview and try again.",
-        409,
-        "merge_drift_in_transaction",
-        {
-          driftFields: ["BookingGuest.member"],
-          bookingGuestIds: residualLoserGuestRows.map((guest) => guest.id),
-          bookingIds: [
-            ...new Set(residualLoserGuestRows.map((guest) => guest.bookingId)),
-          ].sort(),
-        },
-      );
-    }
 
     // Member rows precede coverage-owner keys in the #2597 order. Blocking is
     // safe here: an ordinary producer that already owns one key also holds a

@@ -26,15 +26,21 @@
  *   committed reviewer is still null), merge waits on L, the approval commits,
  *   and the loser delete's `onDelete: SetNull` clears the reviewer.
  *
- * Each case asserts what must hold once #4855 is fixed: no side dies on a
- * deadlock, and the reviewer the approval recorded survives on a live member.
- * Each currently fails, so each is `it.fails` until the fix lands; the failure
- * each one shows today is in its comment.
+ * Before #4855, (a) and (b) deadlocked (`40P01`: merge died in (a), the
+ * approval in (b)) and (c) cleared the reviewer. Now merge never waits for a
+ * Member row while holding another (`lockMemberMergeHostingCoverageParticipants`)
+ * and, once it holds them, refuses with a 409 if any row still names the
+ * duplicate (`member-merge-residual-references.ts`). In each case the writer
+ * commits, merge refuses cleanly, and what the writer recorded stays on the
+ * duplicate, who is still there. Two more cases write a row naming the
+ * duplicate in the same window through a `Cascade` relation (which the delete
+ * used to drop silently) and a `Restrict` one (which used to fail the delete
+ * with an unmapped FK error): merge refuses both with the same 409.
  *
  * Ordinary Vitest runs skip the file; CI's real-PostgreSQL job runs it against
  * the guarded loopback race database.
  */
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
@@ -304,6 +310,7 @@ function expectNoDeadlock(...outcomes: PromiseSettledResult<unknown>[]) {
     await prisma.bookingEvent.deleteMany({ where: { bookingId: { in: bookingIds } } });
     await prisma.manualRefundTask.deleteMany({ where: { paymentId: { in: payments } } });
     await prisma.memberCredit.deleteMany({ where: { memberId: { startsWith: PREFIX } } });
+    await prisma.issueReport.deleteMany({ where: { memberId: { startsWith: PREFIX } } });
     await prisma.bookingModification.deleteMany({ where: { bookingId: BOOKING_ID } });
     await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [...bookingIds, ...payments] } } });
     await prisma.hostingCoverageReevaluation.deleteMany({ where: { memberId: { startsWith: PREFIX } } });
@@ -342,33 +349,55 @@ function expectNoDeadlock(...outcomes: PromiseSettledResult<unknown>[]) {
     return { loser, master };
   }
 
-  // Today: the merge holds the survivor's row and waits on the officer's, the approval holds the
-  // officer's share and waits on the survivor's for its credit; PostgreSQL aborts one side with 40P01.
-  it.fails("(a) a change-request approval by the duplicate, crediting the survivor whose row merge locks first, never deadlocks with the merge", async () => {
+  /** Merge refused with its clean 409 because, under its Member rows, `driftField` still named the duplicate. */
+  function expectRefusedForResidual(merged: PromiseSettledResult<unknown>, driftField: string) {
+    expect(merged).toMatchObject({ status: "rejected", reason: { statusCode: 409, code: "merge_drift_in_transaction" } });
+    const details = (merged as PromiseRejectedResult).reason.details as { driftFields: string[] };
+    expect(details.driftFields).toContain(driftField);
+  }
+
+  async function stillThere(memberId: string) {
+    return (await prisma.member.count({ where: { id: memberId } })) === 1;
+  }
+
+  it("(a) a change-request approval by the duplicate, crediting the survivor, never deadlocks with the merge: the approval commits and the merge refuses, keeping the reviewer", async () => {
     const { loser, master } = await mergePair("a", true);
     await seedChangeRequest(master);
     const figures = await checkFigures(loser);
     const runMerge = await previewMerge(master, loser, OFFICER_ID);
+    // The merge waits on the officer's row ALONE, holding the survivor's no more, so the credit goes through.
     const { held: approved, arrived: merged } = await arrivingWhilePaused(
       prisma, "afterClaim", () => executeChangeRequest(loser, { expectedFigures: figures }), runMerge,
     );
     expectNoDeadlock(approved, merged);
+    expect(approved).toMatchObject({ status: "fulfilled", value: { outcome: "executed" } });
+    expectRefusedForResidual(merged, "BookingChangeRequest.reviewedBy");
+    expect(await changeRequestReviewer()).toBe(loser);
+    expect(await stillThere(loser)).toBe(true);
+    expect(await prisma.memberCredit.count({ where: { memberId: master, sourceBookingId: BOOKING_ID } })).toBe(1);
   });
 
-  // Today: the approval holds the survivor's share (its guest link) and waits on the officer's row
-  // (`createdById`), which merge locked first and holds while it waits on the survivor's; 40P01.
-  it.fails("(b) a held booking-request approval by the duplicate, linking a guest to the survivor whose row merge locks second, never deadlocks with the merge", async () => {
+  it("(b) a held booking-request approval by the duplicate, linking a guest to the survivor, never deadlocks with the merge: the approval commits and the merge refuses", async () => {
     const { loser, master } = await mergePair("b", false);
     await seedBookingRequest(master);
     const runMerge = await previewMerge(master, loser, OFFICER_ID);
-    const { merged, written: approved } = await writerArrivingWhileMergeIsParked(
-      prisma, keyShareOnMember(master), runMerge, () => approveBookingRequestAs(loser),
+    const { merged, written: approved, writerFirst } = await writerArrivingWhileMergeIsParked(
+      prisma, keyShareOnMember(master), runMerge, () => approveBookingRequestAs(loser), { writer: "queuesOrFinishes" },
     );
+    // Before #4855 the approval queued behind the merge's hold on the officer's row and died there.
+    expect(writerFirst, "the approval waited on the merge").toBe("settled");
     expectNoDeadlock(approved, merged);
+    expect(approved).toMatchObject({ status: "fulfilled", value: { type: "approved", bookingId: HELD_BOOKING_ID } });
+    // The survivor's new guest row is at a lodge the merge never locked and the hold now names the duplicate:
+    // either refuses the whole merge with a clean 409, nothing moved.
+    expect(merged).toMatchObject({ status: "rejected", reason: { statusCode: 409 } });
+    expect(["merge_drift_in_transaction", "partner_share_lodge_drift"]).toContain((merged as PromiseRejectedResult).reason.code);
+    const held = await prisma.booking.findUniqueOrThrow({ where: { id: HELD_BOOKING_ID }, select: { status: true, createdById: true, guests: { select: { memberId: true } } } });
+    expect(held).toEqual({ status: "PENDING", createdById: loser, guests: [{ memberId: master }] });
+    expect(await stillThere(loser)).toBe(true);
   });
 
-  // Today: both commit, and the loser delete's SetNull clears the reviewer the approval recorded.
-  it.fails("(c) a change-request approval by the duplicate that merge waits on keeps its reviewer: the survivor if the merge commits, the duplicate if it refuses", async () => {
+  it("(c) a change-request approval by the duplicate that merge waits on keeps its reviewer: the approval commits and the merge refuses", async () => {
     const { loser, master } = await mergePair("c", false);
     await seedChangeRequest(OWNER_ID);
     const figures = await checkFigures(loser);
@@ -376,9 +405,39 @@ function expectNoDeadlock(...outcomes: PromiseSettledResult<unknown>[]) {
     const { held: approved, arrived: merged } = await arrivingWhilePaused(
       prisma, "afterClaim", () => executeChangeRequest(loser, { expectedFigures: figures }), runMerge,
     );
+    expectNoDeadlock(approved, merged);
     expect(approved).toMatchObject({ status: "fulfilled", value: { outcome: "executed" } });
-    const reviewer = await changeRequestReviewer();
-    expect(reviewer, "the approval's reviewer was cleared").not.toBeNull();
-    expect(reviewer).toBe(merged.status === "fulfilled" ? master : loser);
+    // Before #4855 the merge's reviewer move skipped the uncommitted claim, both committed, and the loser
+    // delete's SetNull cleared the reviewer.
+    expectRefusedForResidual(merged, "BookingChangeRequest.reviewedBy");
+    expect(await changeRequestReviewer()).toBe(loser);
+    expect(await stillThere(loser)).toBe(true);
+  });
+
+  /** A row naming the duplicate, written by another session while the merge runs and committed once the merge waits on it. */
+  async function mergeWithLateRow(tag: string, write: (tx: Prisma.TransactionClient, loser: string) => Promise<unknown>) {
+    const { loser, master } = await mergePair(tag, false);
+    const runMerge = await previewMerge(master, loser, OFFICER_ID);
+    // The row's FK write holds a key share on the duplicate, so the merge's moves skip it and the merge parks on it.
+    const { merged } = await writerArrivingWhileMergeIsParked(
+      prisma, (tx) => write(tx, loser), runMerge, () => Promise.resolve(), { writer: "queuesOrFinishes" },
+    );
+    return { loser, merged };
+  }
+
+  it("refuses a merge, rather than dropping it, when a Cascade row naming the duplicate commits under it", async () => {
+    const { loser, merged } = await mergeWithLateRow("cascade", (tx, id) =>
+      tx.issueReport.create({ data: { memberId: id, pageUrl: "https://example.invalid/race-4855", description: "Race 4855 late report" } }));
+    // Before #4855 the merge committed and the loser delete cascaded the report away.
+    expectRefusedForResidual(merged, "IssueReport.member");
+    expect(await prisma.issueReport.count({ where: { memberId: loser } })).toBe(1);
+  });
+
+  it("refuses a merge with its clean 409, not an FK error, when a Restrict row naming the duplicate commits under it", async () => {
+    const { loser, merged } = await mergeWithLateRow("restrict", (tx, id) =>
+      tx.memberCredit.create({ data: { memberId: id, amountCents: 1_000, type: "ADMIN_ADJUSTMENT", description: "Race 4855 late credit" } }));
+    // Before #4855 the loser delete failed on the FK (P2003) and the operator saw a 500.
+    expectRefusedForResidual(merged, "MemberCredit.member");
+    expect(await prisma.memberCredit.count({ where: { memberId: loser } })).toBe(1);
   });
 });

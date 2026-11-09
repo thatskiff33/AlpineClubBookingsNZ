@@ -366,102 +366,153 @@ describe("hosting coverage queue participant fence (#2597)", () => {
     expect(db.member.findMany).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * A merge participant client: `$executeRaw` takes the savepoints and the lock
+   * bound, `$queryRaw` answers each row-lock statement in turn (the
+   * `SKIP LOCKED` attempt returns the rows it locked; a single-row wait returns
+   * its row, or rejects), and the typed read returns `typed`.
+   */
+  function mergeParticipantDb(
+    lockAnswers: Array<string[] | { reject: unknown }>,
+    typed = ["loser-1", "master-1", "owner-1"],
+  ) {
+    const answers = [...lockAnswers];
+    const db = {
+      $executeRaw: vi.fn().mockResolvedValue(0),
+      $queryRaw: vi.fn(() => {
+        const next = answers.shift();
+        if (next === undefined) throw new Error("an unexpected row-lock statement");
+        if (!Array.isArray(next)) return Promise.reject(next.reject);
+        return Promise.resolve(next.map((id) => ({ id })));
+      }),
+      member: { findMany: vi.fn().mockResolvedValue(typed.map((id) => ({ id }))) },
+    };
+    /** Every statement in issue order: savepoints and bounds from `$executeRaw`, locks from `$queryRaw`. */
+    const statements = () =>
+      [...db.$executeRaw.mock.calls.map((call, index) => ({ order: db.$executeRaw.mock.invocationCallOrder[index], sql: call[0] })),
+        ...db.$queryRaw.mock.calls.map((call, index) => ({ order: db.$queryRaw.mock.invocationCallOrder[index], sql: (call as unknown[])[0] }))]
+        .sort((x, y) => x.order - y.order)
+        .map(({ sql }) => {
+          const statement = sql as { strings?: readonly string[]; values?: readonly unknown[] };
+          return { text: (statement.strings ?? []).join("?").replace(/\s+/g, " ").trim(), values: statement.values ?? [] };
+        });
+    return { db, statements };
+  }
+
+  const PARTICIPANTS = { masterId: "master-1", loserId: "loser-1", ownerMemberIds: ["owner-1"] };
+  const ALL = ["loser-1", "master-1", "owner-1"];
+
   it("refuses a merge participant set when the typed read omits a locked id", async () => {
-    const db = {
-      $executeRaw: vi.fn().mockResolvedValue(0),
-      member: {
-        findMany: vi.fn().mockResolvedValue([
-          { id: "master-1" },
-          { id: "owner-1" },
-        ]),
-      },
-    };
-
+    const { db } = mergeParticipantDb([ALL], ["master-1", "owner-1"]);
     await expect(
-      lockMemberMergeHostingCoverageParticipants(db as never, {
-        masterId: "master-1",
-        loserId: "loser-1",
-        ownerMemberIds: ["owner-1"],
-      }),
+      lockMemberMergeHostingCoverageParticipants(db as never, PARTICIPANTS),
     ).rejects.toBeInstanceOf(HostingCoverageParticipantRetryError);
   });
 
-  it("bounds the merge participant wait and restores the timeout after it (#2623 T6)", async () => {
-    const db = {
-      $executeRaw: vi.fn().mockResolvedValue(0),
-      member: {
-        findMany: vi
-          .fn()
-          .mockResolvedValue([{ id: "loser-1" }, { id: "master-1" }, { id: "owner-1" }]),
-      },
-    };
-
+  it("takes every participant row in one SKIP LOCKED statement inside a released savepoint, with no lock bound, when none is busy (#4855)", async () => {
+    const { db, statements } = mergeParticipantDb([ALL]);
     await expect(
-      lockMemberMergeHostingCoverageParticipants(db as never, {
-        masterId: "master-1",
-        loserId: "loser-1",
-        ownerMemberIds: ["owner-1"],
-      }),
-    ).resolves.toEqual(["loser-1", "master-1", "owner-1"]);
-
-    const statements = db.$executeRaw.mock.calls.map(
-      (call) =>
-        (call[0] as { strings?: readonly string[]; values?: readonly unknown[] }),
-    );
-    expect(statements).toHaveLength(3);
-    // Bound, lock, release — in that order, and the lock is still BLOCKING.
-    // `member-merge.ts` documents the wait as deliberate: NOWAIT would fail an
-    // irreversible admin operation far more often than the hazard justifies.
-    expect(statements[0].strings?.join("?")).toContain(
-      "set_config('lock_timeout', ?, true)",
-    );
-    expect(statements[0].values).toEqual([
-      String(MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS),
+      lockMemberMergeHostingCoverageParticipants(db as never, PARTICIPANTS),
+    ).resolves.toEqual(ALL);
+    expect(statements().map((statement) => statement.text)).toEqual([
+      "SAVEPOINT member_merge_participants_attempt",
+      'SELECT "id" FROM "Member" WHERE "id" IN (?,?,?) ORDER BY "id" FOR UPDATE SKIP LOCKED',
+      "RELEASE SAVEPOINT member_merge_participants_attempt",
     ]);
-    expect(statements[1].strings?.join("?")).toMatch(/FOR UPDATE\s*$/);
-    expect(statements[1].strings?.join("?")).not.toContain("NOWAIT");
-    // Released rather than left in force: the rest of the merge transaction takes
-    // further locks whose failures are NOT mapped onto the participant retry.
-    //
-    // To DEFAULT, not to a hardcoded `0` (#2623 F4). `0` means "wait forever",
-    // not "whatever it was", so on a deployment carrying
-    // `ALTER DATABASE … SET lock_timeout` the old form DELETED the operator's
-    // bound for merge's remaining locks. `SET LOCAL` rather than `RESET` because
-    // `RESET` is session-scoped and survives the commit on a pooled connection,
-    // destroying a caller's own session setting. Both measured on real
-    // PostgreSQL — see `clearTransactionLockTimeout`.
-    expect(statements[2].strings?.join("?")).toContain(
-      "SET LOCAL lock_timeout TO DEFAULT",
-    );
-    expect(statements[2].strings?.join("?")).not.toContain("set_config");
-    expect(statements[2].values).toEqual([]);
+    expect(statements()[1].values).toEqual(ALL);
   });
 
-  it("maps a merge participant lock_timeout onto the stable retry (#2623 T6)", async () => {
-    // PostgreSQL raises a `lock_timeout` cancellation as SQLSTATE 55P03, the same
-    // code NOWAIT raises, so the bounded wait lands on the error member merge
-    // already converts into its clean "nothing was saved" 409.
-    const db = {
-      $executeRaw: vi
-        .fn()
-        .mockResolvedValueOnce(0)
-        .mockRejectedValueOnce({
-          driverAdapterError: { cause: { originalCode: "55P03" } },
-        }),
-      member: { findMany: vi.fn() },
-    };
-
+  it("waits for a busy row ALONE, holding none of the others, then takes the whole set (#4855, #2623 T6)", async () => {
+    // The first attempt skips master-1 (a writer's key share). Merge releases
+    // what it did lock, waits for master-1 by itself under what is left of the
+    // 10s bound, releases it and its bound with the savepoint, and tries again.
+    const { db, statements } = mergeParticipantDb([["loser-1", "owner-1"], ["master-1"], ALL]);
     await expect(
-      lockMemberMergeHostingCoverageParticipants(db as never, {
-        masterId: "master-1",
-        loserId: "loser-1",
-        ownerMemberIds: [],
-      }),
+      lockMemberMergeHostingCoverageParticipants(db as never, PARTICIPANTS),
+    ).resolves.toEqual(ALL);
+    const texts = statements().map((statement) => statement.text);
+    expect(texts).toEqual([
+      "SAVEPOINT member_merge_participants_attempt",
+      'SELECT "id" FROM "Member" WHERE "id" IN (?,?,?) ORDER BY "id" FOR UPDATE SKIP LOCKED',
+      "ROLLBACK TO SAVEPOINT member_merge_participants_attempt",
+      "RELEASE SAVEPOINT member_merge_participants_attempt",
+      "SAVEPOINT member_merge_participant_wait",
+      "SELECT set_config('lock_timeout', ?, true)",
+      'SELECT "id" FROM "Member" WHERE "id" = ? FOR UPDATE',
+      "ROLLBACK TO SAVEPOINT member_merge_participant_wait",
+      "RELEASE SAVEPOINT member_merge_participant_wait",
+      "SAVEPOINT member_merge_participants_attempt",
+      'SELECT "id" FROM "Member" WHERE "id" IN (?,?,?) ORDER BY "id" FOR UPDATE SKIP LOCKED',
+      "RELEASE SAVEPOINT member_merge_participants_attempt",
+    ]);
+    // The wait is BLOCKING (a short overlap still succeeds) and bounded by the
+    // remaining budget, never more than the T6 bound and never 0 ("forever").
+    expect(texts.join("\n")).not.toContain("NOWAIT");
+    const bound = Number(statements()[5].values[0]);
+    expect(bound).toBeGreaterThan(0);
+    expect(bound).toBeLessThanOrEqual(MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS);
+    expect(statements()[6].values).toEqual(["master-1"]);
+    // No bound outlives its savepoint: nothing restores it by hand (#2623 F4).
+    expect(texts.join("\n")).not.toMatch(/SET LOCAL lock_timeout|RESET/);
+  });
+
+  it("maps a single-row wait that runs out of budget onto the stable retry, after recovering the transaction (#2623 T6)", async () => {
+    // PostgreSQL raises a `lock_timeout` cancellation as SQLSTATE 55P03, the code
+    // NOWAIT raises, so the bounded wait lands on the error member merge already
+    // converts into its clean "nothing was saved" 409.
+    const { db, statements } = mergeParticipantDb([
+      ["loser-1", "owner-1"],
+      { reject: { driverAdapterError: { cause: { originalCode: "55P03" } } } },
+    ]);
+    await expect(
+      lockMemberMergeHostingCoverageParticipants(db as never, PARTICIPANTS),
     ).rejects.toBeInstanceOf(HostingCoverageParticipantRetryError);
-    // No typed read, and no attempt to run a third statement in a transaction the
-    // cancelled one has already aborted.
+    expect(statements().slice(-2).map((statement) => statement.text)).toEqual([
+      "ROLLBACK TO SAVEPOINT member_merge_participant_wait",
+      "RELEASE SAVEPOINT member_merge_participant_wait",
+    ]);
     expect(db.member.findMany).not.toHaveBeenCalled();
-    expect(db.$executeRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses when a busy participant row turns out to be gone", async () => {
+    const { db } = mergeParticipantDb([["loser-1", "owner-1"], []]);
+    await expect(
+      lockMemberMergeHostingCoverageParticipants(db as never, PARTICIPANTS),
+    ).rejects.toBeInstanceOf(HostingCoverageParticipantRetryError);
+    expect(db.$queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it("cannot spin: once the T6 budget is spent it refuses instead of trying again", async () => {
+    // Every wait frees its row at once, but the row is always busy again; the
+    // monotonic clock moves past the bound, and the next attempt never starts.
+    let now = 1_000;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      const busy = ["loser-1", "owner-1"];
+      const { db } = mergeParticipantDb([busy, ["master-1"], busy, ["master-1"]]);
+      db.$queryRaw.mockImplementationOnce(() => Promise.resolve(busy.map((id) => ({ id }))));
+      db.$queryRaw.mockImplementationOnce(() => {
+        now += MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS / 2;
+        return Promise.resolve([{ id: "master-1" }]);
+      });
+      db.$queryRaw.mockImplementationOnce(() => Promise.resolve(busy.map((id) => ({ id }))));
+      db.$queryRaw.mockImplementationOnce(() => {
+        now += MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS;
+        return Promise.resolve([{ id: "master-1" }]);
+      });
+      await expect(
+        lockMemberMergeHostingCoverageParticipants(db as never, PARTICIPANTS),
+      ).rejects.toBeInstanceOf(HostingCoverageParticipantRetryError);
+      expect(db.$queryRaw).toHaveBeenCalledTimes(4);
+      const lockBounds = db.$executeRaw.mock.calls
+        .map((call) => call[0] as { strings?: readonly string[]; values?: readonly unknown[] })
+        .filter((statement) => (statement.strings ?? []).join("?").includes("lock_timeout"))
+        .map((statement) => Number(statement.values?.[0]));
+      // Each wait gets only what is left: the full bound, then half of it.
+      expect(lockBounds).toEqual([MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS, MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS / 2]);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("refuses source owner or lodge drift after the participant lock", async () => {
@@ -723,11 +774,15 @@ describe("participant fence source contract (#2619)", () => {
     return code.slice(start, end === -1 ? undefined : end);
   }
 
-  it("never names $queryRaw, which this module has never called", () => {
+  it("never makes a client's $queryRaw a condition, and the acquire function never names it", () => {
     // The dropped half of the old condition, and the reason a client that COULD
-    // lock was read as unlockable: the bypass demanded a method the module does
-    // not use and `ParticipantDb` does not declare.
-    expect(readModuleCode()).not.toContain("$queryRaw");
+    // lock was read as unlockable: the bypass demanded a method the acquire
+    // function does not use and `ParticipantDb` does not declare. Since #4855
+    // merge's participant lock reads which rows its `SKIP LOCKED` attempt took
+    // through `$queryRaw`, so the module names it; no code may branch on it.
+    const code = readModuleCode();
+    expect(code).not.toMatch(/typeof\s+[\w.]+\.\$queryRaw|["']\$queryRaw["']\s+in\b|\.\$queryRaw\s*(?:===|!==|==|!=)/);
+    expect(acquireFunctionBody(code)).not.toContain("$queryRaw");
   });
 
   it("issues no proof before the row lock, and refuses a client that cannot lock", () => {
