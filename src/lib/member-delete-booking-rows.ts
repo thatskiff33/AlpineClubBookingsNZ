@@ -10,11 +10,10 @@
  * row that names the member. Taken only there, after the Member row
  * `FOR UPDATE` (the Xero fence), that was Member, then booking. A writer that
  * held such a booking row and then named the member (a manual settle, an edit
- * review's closure, a change-request approval since #4845: each FK takes
+ * review's closure, and the change-request, policy-exception and held
+ * booking-request approvals since #4845, #4853 and #4857: each FK takes
  * `FOR KEY SHARE` on the Member row) waited on the delete while the delete
- * waited on it. The approvals that still name their officer in a claim before
- * they take the booking row (policy exceptions, #4853; booking requests, #4857)
- * are brought into the same order by those issues, not here.
+ * waited on it.
  *
  * The set is read, then locked, sorted, before the fence. It can grow until the
  * fence holds: a writer that names the member on another booking needs the

@@ -10,5 +10,5 @@
   first, the delete goes ahead or is refused by its usual checks. If a booking
   starts naming the member, or a payment they recorded is being changed, while
   the delete is under way, the delete stops, saves nothing, and asks you to try
-  again. Approving a policy exception or a booking request is brought into the
-  same order separately (#4853, #4857); change requests already were (#4845).
+  again. Approving a change request, a policy exception or a held booking
+  request already takes the booking first (#4845, #4853, #4857).

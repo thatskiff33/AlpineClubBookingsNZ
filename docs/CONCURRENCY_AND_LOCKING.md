@@ -3525,11 +3525,12 @@ running inside the delete: no writer is known to take one of those rows
 (`ManualRefundTask.completedByMemberId` and the rest) before a booking row it
 then waits for.
 
-Two approvals still name their officer in a claim before they take the
-booking row: a policy exception (#4853) and a booking request (#4857). Against
-the delete's new order, as against merge, each can deadlock until its own issue
-brings it booking-row first. The change-request approval no longer does: it is
-booking-row first since #4845 (above).
+The three approvals that name their officer in a claim take the booking row
+before that claim: the change-request approval (#4845), the policy-exception
+approval (#4853) and the held booking-request approval (#4857), all above. So
+against the delete's order, as against merge, none waits on a Member row while
+holding what the delete needs; the delete's own race suite does not run them,
+and this rests on that shared order.
 
 Proved against real PostgreSQL by
 `member-merge-officer-settle-races.realdb.test.ts`; for the approvals,
