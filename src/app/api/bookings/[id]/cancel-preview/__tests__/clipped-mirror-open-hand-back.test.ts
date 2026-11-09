@@ -27,7 +27,11 @@ vi.mock("@/lib/session-guards", () => ({ requireActiveSessionUser: async () => n
 vi.mock("@/lib/superseded-capture-hold-back", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/superseded-capture-hold-back")),
   readSupersededCaptureHeldBack: vi.fn(async () => ({ byTransaction: new Map(), totalCents: mocks.supersededHeldBackCents })),
-  readSupersededHoldBackOperations: vi.fn(async () => []),
+}));
+
+vi.mock("@/lib/superseded-intent-ownership", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/superseded-intent-ownership")),
+  readSupersededCaptureOwnership: vi.fn(async () => ({ owning: [], owedAgainByIntent: new Map() })),
 }));
 
 vi.mock("@/lib/prisma", () => ({

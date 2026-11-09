@@ -283,6 +283,59 @@ async function readSupersededRefundsOwedAgain(tx: OwnershipReader, paymentId: st
   return { operations, payment };
 }
 
+/** The cancel rows the Xero reading counts: only one still in flight hands its capture to anybody. */
+const IN_FLIGHT_SUPERSEDED_CANCEL_WHERE = {
+  type: PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT,
+  AND: [PAYMENT_RECOVERY_OPERATION_IN_FLIGHT_WHERE],
+} satisfies Prisma.PaymentRecoveryOperationWhereInput;
+
+/** A superseded-intent row that still owns its capture, as `readSupersededCaptureOwnership` returns it. */
+export type SupersededOwningRow = {
+  type: PaymentRecoveryOperationType;
+  paymentId: string;
+  paymentTransactionId: string | null;
+  amountCents: number;
+  allocationPlan: unknown;
+};
+
+/**
+ * #4866 (`INV-SSOT`): THE XERO READING'S OWNERSHIP, IN CENTS, for a reader that
+ * must leave owned money alone (a cancellation's hold-back,
+ * `superseded-capture-hold-back.ts`): the same rows `readSupersededCaptureHolds`
+ * reads - a superseded refund not yet SUCCEEDED, a cancel still in flight
+ * (`owning`) - and, per capture's intent, what open rows owe back again after
+ * Stripe failed a superseded refund later (`supersededRefundsOwedAgainCents`,
+ * #4221). The payment is read only when a superseded row exists. Read under
+ * the caller's lock or snapshot.
+ */
+export async function readSupersededCaptureOwnership(
+  tx: OwnershipReader,
+  paymentId: string,
+): Promise<{ owning: SupersededOwningRow[]; owedAgainByIntent: Map<string, number> }> {
+  const operations = await tx.paymentRecoveryOperation.findMany({
+    where: { paymentId, OR: [...SUPERSEDED_REFUND_OWED_AGAIN_WHERE, IN_FLIGHT_SUPERSEDED_CANCEL_WHERE] },
+    select: {
+      id: true, type: true, status: true, paymentId: true, paymentIntentId: true, paymentTransactionId: true,
+      idempotencyKey: true, attempts: true, nextRetryAt: true, amountCents: true, allocationPlan: true,
+    },
+  });
+  const isSuperseded = (row: OwnershipRow) =>
+    row.type === PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT || row.type === PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT;
+  if (!operations.some(isSuperseded)) return { owning: [], owedAgainByIntent: new Map() };
+  const payment = await tx.payment.findUnique({
+    where: { id: paymentId },
+    select: { status: true, amountCents: true, refundedAmountCents: true, ...netCollectedCardRefundSelect },
+  });
+  return {
+    // A cancel row here is in flight (the only cancel rows read); a superseded refund owns until it closes.
+    owning: operations.filter(
+      (row) => row.type === PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT ||
+        (row.type === PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT && row.status !== PaymentRecoveryOperationStatus.SUCCEEDED),
+    ),
+    owedAgainByIntent: supersededRefundsOwedAgainCents(operations, payment),
+  };
+}
+
 /** Whether open rows owe a capture back again for at least all it still holds. */
 function isOwedBackInFull(owedCents: number, capture: OwnershipCapture): boolean {
   return owedCents >= capture.amountCents - capture.refundedAmountCents;
@@ -375,9 +428,7 @@ export async function readSupersededCaptureHolds(
   paymentId: string,
   captures: readonly OwnershipCapture[],
 ): Promise<{ holdsForMember: Set<string>; owedBackAtAll: Set<string>; refundInFlight: Set<string>; refundStopped: Set<string> }> {
-  const { operations, payment } = await readSupersededRefundsOwedAgain(tx, paymentId, [
-    { type: PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT, AND: [PAYMENT_RECOVERY_OPERATION_IN_FLIGHT_WHERE] },
-  ]);
+  const { operations, payment } = await readSupersededRefundsOwedAgain(tx, paymentId, [IN_FLIGHT_SUPERSEDED_CANCEL_WHERE]);
   const owned = owedBackInFull(operations, payment, captures);
   for (const operation of operations) {
     // A failed-later row counts only through `supersededRefundsOwedAgainCents`,

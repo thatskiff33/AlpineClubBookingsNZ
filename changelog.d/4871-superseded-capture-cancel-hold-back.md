@@ -8,5 +8,7 @@
   not reach its price, the cancellation policy was also applied to the
   superseded payment as if it had been paid for the booking. A cancellation now
   leaves that payment to its own refund: it is not counted as paid for the
-  booking, and the cancellation's card refund comes from the booking's other
-  card payments. The cancellation preview shows the same figures.
+  booking, and the cancellation's card refund, or its refund as account
+  credit, comes from the booking's other payments. The same holds while the
+  superseded payment's refund is being sent again after Stripe failed it. The
+  cancellation preview shows the same figures.

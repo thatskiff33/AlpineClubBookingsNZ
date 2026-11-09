@@ -94,6 +94,7 @@ let harnessRole: { restore: () => void } | undefined;
       await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [BOOKING_ID, PAYMENT_ID] } } });
       await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: [BOOKING_ID, PAYMENT_ID] } } });
       await releaseBookingFinancialHistoryForTeardown(prisma, [BOOKING_ID]);
+      await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } }); // the credit arm's cancellation credit
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
@@ -130,7 +131,7 @@ let harnessRole: { restore: () => void } | undefined;
       /** "refund": captured, its refund row (R) live with no plan; "handing-off": not yet captured, its cancel row live. */
       superseded: "refund" | "handing-off";
     }): Promise<string> {
-      await prisma.cancellationPolicy.create({ data: { lodgeId: LODGE_ID, daysBeforeStay: 0, refundPercentage, fixedFeeCents: 0 } });
+      await prisma.cancellationPolicy.create({ data: { lodgeId: LODGE_ID, daysBeforeStay: 0, refundPercentage, fixedFeeCents: 0, creditRefundPercentage: refundPercentage, creditFixedFeeCents: 0 } });
       await prisma.booking.create({
         data: { id: BOOKING_ID, memberId: MEMBER_ID, lodgeId: LODGE_ID, checkIn: CHECK_IN, checkOut: CHECK_OUT, status, totalPriceCents: priceCents, finalPriceCents: priceCents },
       });
@@ -192,15 +193,15 @@ let harnessRole: { restore: () => void } | undefined;
       return row.id;
     }
 
-    async function cancel() {
+    async function cancel(refundMethod: "card" | "credit" = "card") {
       const { cancelBooking } = await import("@/lib/booking-cancel");
-      return cancelBooking(BOOKING_ID, MEMBER_ID, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+      return cancelBooking(BOOKING_ID, MEMBER_ID, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, refundMethod);
     }
 
     /** The cancellation's frozen card plan, by charge. */
     async function cancelPlan(): Promise<Array<{ paymentTransactionId: string; amountCents: number }>> {
-      const row = await prisma.paymentRecoveryOperation.findFirst({
-        where: { bookingId: BOOKING_ID, type: "REFUND_BOOKING_MODIFICATION" },
+      const row = await prisma.paymentRecoveryOperation.findUnique({
+        where: { idempotencyKey: keys.buildBookingCancellationRefundIdempotencyKey(BOOKING_ID) },
         select: { allocationPlan: true },
       });
       return ((row?.allocationPlan ?? []) as Array<{ paymentTransactionId: string; amountCents: number }>).map(({ paymentTransactionId, amountCents }) => ({
@@ -368,6 +369,48 @@ let harnessRole: { restore: () => void } | undefined;
       expect(made).toEqual([{ paymentIntentId: SUPERSEDED_INTENT, amountCents: SUPERSEDED_CENTS }]);
       // No hand-back for a "shortfall" the card plan never had to carry.
       expect(await prisma.manualRefundTask.count({ where: { bookingId: BOOKING_ID } })).toBe(0);
+    });
+
+    it("the credit arm - the booking's money refunded as account credit: the allocation leaves the capture alone, and R returns the whole of it", async () => {
+      const supersededRefund = await seed({ status: "PAID", priceCents: PRIMARY_CENTS, primaryCents: PRIMARY_CENTS, refundPercentage: 100, superseded: "refund" });
+
+      expect(await cancel("credit")).toMatchObject({ status: 200, data: { refundAmountCents: PRIMARY_CENTS } });
+      // Before #4866 the credit was spread newest first: the superseded charge read refunded in full, the primary half.
+      const charges = await prisma.paymentTransaction.findMany({ where: { paymentId: PAYMENT_ID }, orderBy: { id: "asc" }, select: { id: true, refundedAmountCents: true } });
+      expect(charges).toEqual([
+        { id: PRIMARY_TXN, refundedAmountCents: PRIMARY_CENTS },
+        { id: SUPERSEDED_TXN, refundedAmountCents: 0 },
+      ]);
+      expect(made).toEqual([]);
+
+      expect(await runPaymentRecoveryOperationNow(supersededRefund, CLUB_FORMAT_TEST)).toBe("succeeded");
+      expect(made).toEqual([{ paymentIntentId: SUPERSEDED_INTENT, amountCents: SUPERSEDED_CENTS }]);
+    });
+
+    it("owed back again - R closed, its refund failed later, a failed-later row open: the cancel leaves the capture to that row", async () => {
+      const supersededRefund = await seed({ status: "PAID", priceCents: PRIMARY_CENTS, primaryCents: PRIMARY_CENTS, refundPercentage: 100, superseded: "refund" });
+      // R made its refund and closed; Stripe failed it later, so the charge holds it all again and a row of its own owes it (#4104).
+      await prisma.paymentRecoveryOperation.update({ where: { id: supersededRefund }, data: { status: "SUCCEEDED", succeededAt: new Date("2026-06-16T00:00:00.000Z") } });
+      await prisma.paymentRecoveryOperation.create({
+        data: {
+          type: "REFUND_BOOKING_MODIFICATION",
+          status: "PENDING",
+          bookingId: BOOKING_ID,
+          paymentId: PAYMENT_ID,
+          paymentTransactionId: SUPERSEDED_TXN,
+          paymentIntentId: SUPERSEDED_INTENT,
+          amountCents: SUPERSEDED_CENTS,
+          allocationPlan: [{ paymentTransactionId: SUPERSEDED_TXN, amountCents: SUPERSEDED_CENTS }],
+          idempotencyKey: keys.buildCardRefundFailedLaterRecoveryKey("re_race_4866_failed_later"),
+          nextRetryAt: new Date(0),
+          createdAt: new Date("2026-06-20T00:00:00.000Z"),
+        },
+      });
+
+      expect(await cancel()).toMatchObject({ status: 200, data: { refundAmountCents: PRIMARY_CENTS } });
+      // Before #4866's shared reading: [superseded 6500, primary 6500], and the CANCELLED event kept $65 that row returns.
+      expect(await cancelPlan()).toEqual([{ paymentTransactionId: PRIMARY_TXN, amountCents: PRIMARY_CENTS }]);
+      expect(madeOn(SUPERSEDED_INTENT)).toBe(0);
     });
 
     it("the race: the hand-off flips the superseded charge captured under the Payment row while the cancel waits; the cancel leaves it to the hand-off", async () => {

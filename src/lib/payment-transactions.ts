@@ -1808,7 +1808,7 @@ export class RefundAllocationExceedsCapturedError extends Error {
 export async function applyLocalRefundAllocation({
   paymentId,
   amountCents,
-  preferTransactionIds = [], onlyTransactionIds,
+  preferTransactionIds = [], onlyTransactionIds, heldBackByTransaction,
   store = prisma,
 }: {
   paymentId: string;
@@ -1816,6 +1816,7 @@ export async function applyLocalRefundAllocation({
   /** #3372 ("Paid another way"): placed FIRST, in order - the charges an unsent card refund was for. */
   preferTransactionIds?: readonly string[];
   /** #4154: placed on these charges and no other; short of headroom there, it throws as any shortfall does. */ onlyTransactionIds?: readonly string[];
+  heldBackByTransaction?: ReadonlyMap<string, number>; // #4866: a cancellation's (`readSupersededCaptureHeldBack`)
   store?: PaymentStore;
 }) {
   await withStoreTransaction(store, async (db) => {
@@ -1833,11 +1834,9 @@ export async function applyLocalRefundAllocation({
           compareLedgerRowsNewestFirst(a, b)
       );
 
-    const totalRefundableCents = capturedTransactions.reduce(
-      (sum, transaction) =>
-        sum + Math.max(transaction.amountCents - transaction.refundedAmountCents, 0),
-      0
-    );
+    const placeableCents = (transaction: (typeof capturedTransactions)[number]) =>
+      Math.max(transaction.amountCents - transaction.refundedAmountCents - (heldBackByTransaction?.get(transaction.id) ?? 0), 0);
+    const totalRefundableCents = capturedTransactions.reduce((sum, transaction) => sum + placeableCents(transaction), 0);
     if (amountCents > totalRefundableCents) {
       throw new RefundAllocationExceedsCapturedError();
     }
@@ -1847,12 +1846,9 @@ export async function applyLocalRefundAllocation({
       if (remainingAmountCents <= 0) {
         break;
       }
-      remainingAmountCents -= await addWithinHeadroom(
-        db,
-        transaction.id,
-        remainingAmountCents,
-        { writeStatus: true }
-      );
+      // #4866: never into what a live superseded capture's own refund still has to send.
+      const askCents = heldBackByTransaction?.has(transaction.id) ? Math.min(remainingAmountCents, placeableCents(transaction)) : remainingAmountCents;
+      if (askCents > 0) remainingAmountCents -= await addWithinHeadroom(db, transaction.id, askCents, { writeStatus: true });
     }
     if (remainingAmountCents > 0) {
       throw new RefundAllocationRacedError();

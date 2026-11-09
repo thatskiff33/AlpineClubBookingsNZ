@@ -9,12 +9,17 @@ import { describe, expect, it } from "vitest";
 
 import { planCardRefundFromLedger } from "@/lib/payment-transactions";
 import {
-  supersededCaptureHeldBack,
-  supersededHoldBackOperationWhere,
+  readSupersededCaptureHeldBack,
+  supersededCaptureHeldBack as heldBackOf,
   type SupersededHoldBackCharge,
-  type SupersededHoldBackOperation,
 } from "@/lib/superseded-capture-hold-back";
-import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
+import type { SupersededOwningRow } from "@/lib/superseded-intent-ownership";
+
+type SupersededHoldBackOperation = SupersededOwningRow;
+
+/** The owning rows alone, nothing owed back again unless given. */
+const supersededCaptureHeldBack = (owning: SupersededHoldBackOperation[], charges: SupersededHoldBackCharge[], owedAgainByIntent = new Map<string, number>()) =>
+  heldBackOf({ owning, owedAgainByIntent }, charges);
 
 const PAYMENT = "pay-4866";
 
@@ -22,12 +27,13 @@ const charge = (id: string, amountCents: number, refundedAmountCents = 0, status
   id,
   paymentId: PAYMENT,
   status,
+  stripePaymentIntentId: `pi_${id}`,
   amountCents,
   refundedAmountCents,
 });
 
 const supersededRefund = (paymentTransactionId: string, amountCents: number, allocationPlan: unknown = null): SupersededHoldBackOperation => ({
-  type: "REFUND_SUPERSEDED_PAYMENT",
+  type: "REFUND_SUPERSEDED_PAYMENT" as const,
   paymentId: PAYMENT,
   paymentTransactionId,
   amountCents,
@@ -35,7 +41,7 @@ const supersededRefund = (paymentTransactionId: string, amountCents: number, all
 });
 
 const cancelRow = (paymentTransactionId: string, amountCents: number): SupersededHoldBackOperation => ({
-  type: "CANCEL_PAYMENT_INTENT",
+  type: "CANCEL_PAYMENT_INTENT" as const,
   paymentId: PAYMENT,
   paymentTransactionId,
   amountCents,
@@ -80,25 +86,41 @@ describe("supersededCaptureHeldBack (#4866)", () => {
     expect(supersededCaptureHeldBack([{ ...supersededRefund("sup", 6_500), paymentTransactionId: null }], [charge("sup", 6_500)]).totalCents).toBe(0);
   });
 
-  it("reads a refund row until it closes, whatever its state, and a cancel row only while in flight", () => {
-    expect(supersededHoldBackOperationWhere(PAYMENT)).toEqual({
-      paymentId: PAYMENT,
-      OR: [
-        { type: "REFUND_SUPERSEDED_PAYMENT", status: { not: "SUCCEEDED" } },
-        {
-          type: "CANCEL_PAYMENT_INTENT",
-          AND: [
-            {
-              OR: [
-                { status: "PROCESSING" },
-                { status: "PENDING", attempts: { lt: MAX_PAYMENT_RECOVERY_ATTEMPTS } },
-                { status: "FAILED", nextRetryAt: { not: null }, attempts: { lt: MAX_PAYMENT_RECOVERY_ATTEMPTS } },
-              ],
-            },
-          ],
-        },
-      ],
+  it("holds what open rows owe back again after a superseded refund failed later, by the capture's intent (#4221's cents)", () => {
+    // R closed; its refund failed later; a failed-later row owes the $65.00 again: the charge holds it all again.
+    expect(supersededCaptureHeldBack([], [charge("prim", 13_000), charge("sup", 6_500)], new Map([["pi_sup", 6_500]]))).toEqual({
+      byTransaction: new Map([["sup", 6_500]]),
+      totalCents: 6_500,
     });
+    // Never more than the charge holds, and nothing on a charge no longer captured.
+    expect(supersededCaptureHeldBack([], [charge("sup", 6_500, 2_000, "PARTIALLY_REFUNDED")], new Map([["pi_sup", 6_500]])).totalCents).toBe(4_500);
+    expect(supersededCaptureHeldBack([supersededRefund("sup", 6_500)], [charge("sup", 6_500)], new Map([["pi_sup", 6_500]])).totalCents).toBe(6_500);
+    expect(supersededCaptureHeldBack([], [charge("sup", 6_500, 0, "PENDING")], new Map([["pi_sup", 6_500]])).totalCents).toBe(0);
+  });
+
+  it("reads ownership through the Xero reading's one home: the same rows, and the payment only when a superseded row exists", async () => {
+    const findMany = async ({ where }: { where: { OR: unknown[] } }) => {
+      seenWhere.push(where);
+      return rows;
+    };
+    const seenWhere: unknown[] = [];
+    let rows: unknown[] = [];
+    let paymentReads = 0;
+    const db = {
+      paymentRecoveryOperation: { findMany },
+      payment: { findUnique: async () => { paymentReads += 1; return { status: "SUCCEEDED", amountCents: 6_500, refundedAmountCents: 0, recoveryOperations: [], refunds: [] }; } },
+      paymentTransaction: { findMany: async () => [charge("sup", 6_500)] },
+    };
+    expect(await readSupersededCaptureHeldBack(db as never, PAYMENT)).toEqual({ byTransaction: new Map(), totalCents: 0 });
+    expect(paymentReads).toBe(0);
+    // The shared reading's rows: superseded refunds of any status, open failed-later and card refund rows, in-flight cancels.
+    expect(JSON.stringify(seenWhere[0])).toContain("REFUND_SUPERSEDED_PAYMENT");
+    expect(JSON.stringify(seenWhere[0])).toContain("CANCEL_PAYMENT_INTENT");
+    expect(JSON.stringify(seenWhere[0])).toContain(String.raw`card\\_refund\\_failed\\_later\\_`); // the failed-later key prefix, escaped for LIKE
+    rows = [{ id: "r", type: "REFUND_SUPERSEDED_PAYMENT", status: "SUCCEEDED", paymentId: PAYMENT, paymentIntentId: "pi_sup", paymentTransactionId: "sup", idempotencyKey: "k", attempts: 1, nextRetryAt: null, amountCents: 6_500, allocationPlan: null }];
+    // A closed superseded refund owns nothing of its own; nothing owed back again here.
+    expect(await readSupersededCaptureHeldBack(db as never, PAYMENT)).toEqual({ byTransaction: new Map(), totalCents: 0 });
+    expect(paymentReads).toBe(1);
   });
 });
 

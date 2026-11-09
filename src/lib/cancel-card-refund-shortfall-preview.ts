@@ -9,7 +9,8 @@ import { foldMirrorRefundIntoLedger } from "@/lib/mirror-refund-fold";
 import { paidCancellationBranch } from "@/lib/paid-cancellation-event";
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { withReadOnlySnapshot } from "@/lib/read-only-snapshot";
-import { readSupersededHoldBackOperations, supersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
+import { supersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
+import { readSupersededCaptureOwnership } from "@/lib/superseded-intent-ownership";
 import {
   legacyBackfillRows,
   loadPaymentWithTransactions,
@@ -62,7 +63,7 @@ export async function previewCancelCardRefundSplit(
       insertionSeq: lastSeq + 1 + index,
     })),
   ];
-  const heldBack = supersededCaptureHeldBack(await readSupersededHoldBackOperations(db, params.paymentId), rows);
+  const heldBack = supersededCaptureHeldBack(await readSupersededCaptureOwnership(db, params.paymentId), rows);
   const { plannedAmountCents: plannedCardRefundCents } = planCardRefundFromLedger(ledger, params.refundAmountCents, heldBack.byTransaction);
   return sizeCancelCardShortfall(
     { refundAmountCents: params.refundAmountCents, plannedCardRefundCents },

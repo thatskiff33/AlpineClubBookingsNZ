@@ -4098,19 +4098,23 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
 
 - **A cancellation leaves a live superseded capture to its own refund**
   (#4866). A superseded intent's refund with no stored plan sizes its request
-  on its charge's ledger (#4699), so a cancellation's slice on that charge
-  shrank it and the row closed with the member short, unalerted; where the
+  on its charge's ledger (#4699), so a cancellation's card slice or credit
+  allocation on that charge shrank it and the row closed with the member
+  short, unalerted; where the
   booking's own money fell short of the policy's cap, the tier also counted
   that capture as paid.
-- **What the machinery owns, per charge** (`supersededCaptureHeldBack`): what a
+- **What the machinery owns, per charge** (`supersededCaptureHeldBack`), by the
+  Xero reading's rule (`readSupersededCaptureOwnership`): what a
   `REFUND_SUPERSEDED_PAYMENT` row not yet `SUCCEEDED` would send
-  (`reArmWouldSendCents`), held or dead included; or, while a
-  `CANCEL_PAYMENT_INTENT` row is in flight, all its charge holds once captured.
-  Never more than the charge holds.
+  (`reArmWouldSendCents`), held or dead included; while a
+  `CANCEL_PAYMENT_INTENT` row is in flight, all its captured charge holds; and
+  what open rows owe back again after Stripe failed one later
+  (`supersededRefundsOwedAgainCents`). Never more than the charge holds.
 - **The paid claim** reads it under the Payment row, after the mirror fold. It
-  joins the open hand-backs, so no tier counts it as paid, and
-  `planCardRefundFromLedger` gives it no slice. The preview reads the same
-  figure for its refund and its card plan.
+  joins the open hand-backs, so no tier counts it as paid;
+  `planCardRefundFromLedger` gives it no slice, nor does a refund as account
+  credit (`applyLocalRefundAllocation`). The preview reads the same figure for
+  its refund and its card plan.
 - **The race.** The hand-off flips the charge captured under the Payment row,
   then writes the refund row before its cancel row closes, so a claim queued
   behind it sees one of them live. No new lock (`INV-LOCK-001` to

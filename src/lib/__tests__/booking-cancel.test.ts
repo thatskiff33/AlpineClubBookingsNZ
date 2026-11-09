@@ -597,6 +597,7 @@ describe("cancelBooking credit refunds", () => {
       paymentId: "payment_1",
       amountCents: 5000,
       store: expect.anything(),
+      heldBackByTransaction: new Map(),
     });
     // #4685: the row names the credit tx1 wrote, so its note stamps that credit by id.
     expect(mocks.enqueueXeroAccountCreditNoteOperation).toHaveBeenCalledWith(
@@ -1909,6 +1910,7 @@ describe("cancelBooking credit refunds", () => {
       paymentId: "payment_4",
       amountCents: 5000,
       store: expect.anything(),
+      heldBackByTransaction: new Map(),
     });
   });
 

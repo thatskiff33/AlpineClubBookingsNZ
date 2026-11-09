@@ -100,6 +100,9 @@ function store(transactions: Txn[], payment: Partial<PaymentRow> = {}, supersede
       findUnique: vi.fn(async () => ({
         ...row,
         transactions: ordered().map((txn) => ({ ...txn })),
+        // #4866: the owed figure's inputs the shared ownership reading reads (`readSupersededCaptureOwnership`).
+        recoveryOperations: [],
+        refunds: [],
       })),
     },
     paymentTransaction: {
@@ -113,7 +116,10 @@ function store(transactions: Txn[], payment: Partial<PaymentRow> = {}, supersede
     // #4866: the live superseded captures' plan-less refund rows, none unless a case gives them.
     paymentRecoveryOperation: {
       findMany: vi.fn(async () =>
-        supersededRefunds.map((row) => ({ type: "REFUND_SUPERSEDED_PAYMENT", paymentId: "payment-1", allocationPlan: null, ...row })),
+        supersededRefunds.map((row, index) => ({
+          id: `op-${index}`, type: "REFUND_SUPERSEDED_PAYMENT", status: "PENDING", paymentId: "payment-1", paymentIntentId: `pi_of_${row.paymentTransactionId}`,
+          idempotencyKey: `payment_recovery_refund_${row.paymentTransactionId}`, attempts: 0, nextRetryAt: null, allocationPlan: null, ...row,
+        })),
       ),
     },
     manualRefundTask: {

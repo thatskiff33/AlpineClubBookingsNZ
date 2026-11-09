@@ -1907,11 +1907,7 @@ async function performBookingCancellation(
       manualRefundTaskId = task.id;
       if (organiserExtraState && organiserExtraState.invoices.length > 0) await bindOrganiserExtraRefundToHandBack(tx, { bookingId, handBackTaskId: task.id, scopeId: `cancel:${bookingId}` });
     } else if (branch === "credit") {
-      await applyLocalRefundAllocation({
-        paymentId: payment.id,
-        amountCents: refundAmountCents,
-        store: tx,
-      });
+      await applyLocalRefundAllocation({ paymentId: payment.id, amountCents: refundAmountCents, store: tx, heldBackByTransaction: supersededHeldBack.byTransaction }); // #4866
       // #3369: a refund AS CREDIT credits a member's account, and an
       // organisation has none. The officer refunds a school by the money path
       // instead; this branch is unreachable for one, and saying so beats
