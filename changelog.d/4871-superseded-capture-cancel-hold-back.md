@@ -10,5 +10,6 @@
   leaves that payment to its own refund: it is not counted as paid for the
   booking, and the cancellation's card refund, or its refund as account
   credit, comes from the booking's other payments. The same holds while the
-  superseded payment's refund is being sent again after Stripe failed it. The
-  cancellation preview shows the same figures.
+  superseded payment's refund is being sent again after Stripe failed it, and
+  when an earlier credit note is attributed to the payment's card charges at
+  the cancellation. The cancellation preview shows the same figures.

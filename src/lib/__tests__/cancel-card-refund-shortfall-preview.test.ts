@@ -183,6 +183,19 @@ describe("the cancel preview sizes the card line as the cancel does (#4119)", ()
     expect(await previewCancelCardRefundSplit(store(ledger) as never, { paymentId: "payment-1", refundAmountCents: 13_000 })).toBeNull();
   });
 
+  it("#4866: the mirror fold leaves an older superseded capture alone too, so the booking's charge carries the note", async () => {
+    // A $65.00 superseded capture (oldest), the $130.00 booking charge, $20.00 refunded on the mirror only.
+    const db = store([card(6_500, 0, 1), card(13_000, 0, 5)], { status: "PARTIALLY_REFUNDED", refundedAmountCents: 2_000 }, [
+      { paymentTransactionId: "txn-card-1", amountCents: 6_500 },
+    ]);
+    // Folded onto the booking's charge: it can carry $110.00 of a $130.00 refund, never the superseded $65.00.
+    expect(await previewCancelCardRefundSplit(db as never, { paymentId: "payment-1", refundAmountCents: 13_000 })).toEqual({
+      cardCents: 11_000,
+      bankCents: 0,
+      checkCents: 2_000,
+    });
+  });
+
   it("a pre-ledger payment: read as its backfill would write it, without writing, and as the cancel then plans it", async () => {
     // No ledger rows: a $150.00 card intent with $30.00 of it refunded, on the record only.
     const legacy = { stripePaymentIntentId: "pi_legacy", amountCents: 15_000, refundedAmountCents: 3_000, status: "PARTIALLY_REFUNDED" };
@@ -254,6 +267,29 @@ describe("the mirror fold is one walk (#1491, #4119)", () => {
     apply.mockClear();
     await foldMirrorRefundIntoLedger({ status: "PARTIALLY_REFUNDED", refundedAmountCents: 1_000 }, rows, apply);
     expect(apply).not.toHaveBeenCalled();
+  });
+
+  /** Every offer the walk makes, each row taking all it is offered up to what it will take. */
+  const offers = async (refundedAmountCents: number, heldBack?: ReadonlyMap<string, number>) => {
+    const offered: Array<[string, number]> = [];
+    await foldMirrorRefundIntoLedger({ status: "PARTIALLY_REFUNDED", refundedAmountCents }, rows, (row, cents) => {
+      offered.push([row.id, cents]);
+      return Math.min(cents, row.amountCents - row.refundedAmountCents);
+    }, heldBack);
+    return offered;
+  };
+
+  it("#4866: an empty hold-back folds exactly as none", async () => {
+    for (const refunded of [1_000, 1_500, 4_000, 9_000]) {
+      expect(await offers(refunded, new Map())).toEqual(await offers(refunded));
+    }
+  });
+
+  it("#4866: never folds into a live superseded capture's held cents, and carries the rest on", async () => {
+    // "a" holds $20.00, all of it its superseded refund's: nothing offered there, all $30.00 to "b".
+    expect(await offers(4_000, new Map([["a", 2_000]]))).toEqual([["b", 3_000]]);
+    // Held in part: only the rest of "a" is offered.
+    expect(await offers(4_000, new Map([["a", 500]]))).toEqual([["a", 1_500], ["b", 1_500]]);
   });
 });
 

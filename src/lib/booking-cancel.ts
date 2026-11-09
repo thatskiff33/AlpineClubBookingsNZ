@@ -1648,6 +1648,8 @@ async function performBookingCancellation(
     // compare-and-set (#3640): the charge.refunded webhook takes no lock, so a
     // card refund it commits between this read and the write survives. #4119:
     // the walk is shared with the cancel preview, which folds in memory.
+    // #4866 (`INV-PAY-150`): live superseded captures, read before the fold; no fold, tier, card slice or credit takes them.
+    const supersededHeldBack = await readSupersededCaptureHeldBack(tx, payment.id);
     await foldMirrorRefundIntoLedger(
       payment,
       () => tx.paymentTransaction.findMany({
@@ -1655,7 +1657,7 @@ async function performBookingCancellation(
         orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
         select: { id: true, amountCents: true, refundedAmountCents: true },
       }),
-      (row, amountCents) => foldIntoTransactionRefundedAmount({ paymentTransactionId: row.id, amountCents, store: tx }),
+      (row, amountCents) => foldIntoTransactionRefundedAmount({ paymentTransactionId: row.id, amountCents, store: tx }), supersededHeldBack.byTransaction,
     );
 
     // Freeze the refund plan from the LOCKED read. Change fees (from prior
@@ -1680,8 +1682,6 @@ async function performBookingCancellation(
     // #3836: a mirror the inbound repair clamped to the card amount reads the ledger.
     const organiserExtraState = organiserByHand ? await readOrganiserExtraState(tx, bookingId) : null;
     const tieredPayment = { ...payment, ...(organiserExtraState ? { changeFeeCents: effectiveOrganiserPaidChangeFeeCents(payment.changeFeeCents, organiserExtraState) } : {}), creditAppliedCents: cancelTieredAppliedCreditCents(payment, appliedCreditCents) };
-    // #4866 (`INV-PAY-150`): a live superseded capture is its own refund's to return - no tier counts it as paid, no card slice takes it.
-    const supersededHeldBack = await readSupersededCaptureHeldBack(tx, payment.id);
     const money = paidCancellationMoney({
       payment: organiserCard
         ? { ...tieredPayment, refundedAmountCents: organiserCard.committedRefundCents }

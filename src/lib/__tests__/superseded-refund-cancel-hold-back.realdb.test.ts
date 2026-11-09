@@ -1,11 +1,13 @@
 /**
- * Real-PostgreSQL proof of #4866 (`INV-PAY-145`): a cancellation leaves a live
+ * Real-PostgreSQL proof of #4866 (`INV-PAY-150`): a cancellation leaves a live
  * superseded intent's capture to the machinery returning it.
  *
  * A superseded intent's refund with no stored plan (R) sizes its one request on
  * its charge's ledger (#4699). Before #4866 a cancellation counted that capture
- * as money paid for the booking and its card plan (`planCardRefundFromLedger`,
- * newest charge first) could refund part of it (X) for the booking. R then sent
+ * as money paid for the booking, and its card plan (`planCardRefundFromLedger`,
+ * newest charge first), its credit allocation (`applyLocalRefundAllocation`)
+ * or its mirror fold (`foldMirrorRefundIntoLedger`, oldest first) could put
+ * part of it (X) to the booking. R then sent
  * only what the charge still held, the rest less X, and closed: the member was
  * short X, or, where the booking's own money did not reach the policy's cap,
  * had R's money tiered by the policy. Nothing told an officer.
@@ -19,6 +21,13 @@
  *   policy tiers the booking's money only, and R returns the whole capture;
  * - the capture the payment's only money: the cancel refunds nothing of it, and
  *   R returns it all;
+ * - the credit arm: the booking's money refunded as account credit is
+ *   allocated to the booking's charge, and R returns the whole capture;
+ * - owed back again: R closed, Stripe failed its refund later and a row of its
+ *   own owes it; the cancel leaves the capture to that row;
+ * - the mirror fold: a folded credit note on a PARTIALLY_REFUNDED mirror lands
+ *   on the booking's charge, never the older superseded one, so R returns the
+ *   whole capture and the policy tiers the booking's money net of the note;
  * - the race: the superseded intent's hand-off flips its charge captured under
  *   the Payment row while the cancel waits on that row. The cancel then sees a
  *   captured charge whose refund row is not yet written, its cancel row still
@@ -123,7 +132,13 @@ let harnessRole: { restore: () => void } | undefined;
       primaryCents,
       refundPercentage,
       superseded,
+      supersededOlder = false,
+      mirrorRefundedCents = 0,
     }: {
+      /** The superseded charge created before the primary (the usual order for a superseded primary intent). */
+      supersededOlder?: boolean;
+      /** Refunded on the payment's mirror only (a folded credit note): PARTIALLY_REFUNDED, no ledger row shows it. */
+      mirrorRefundedCents?: number;
       status: "PAID" | "PAYMENT_PENDING";
       priceCents: number;
       primaryCents: number;
@@ -141,14 +156,15 @@ let harnessRole: { restore: () => void } | undefined;
           id: PAYMENT_ID,
           bookingId: BOOKING_ID,
           amountCents: primaryCents + (captured ? SUPERSEDED_CENTS : 0),
+          refundedAmountCents: mirrorRefundedCents,
           source: "STRIPE",
-          status: "SUCCEEDED",
+          status: mirrorRefundedCents > 0 ? "PARTIALLY_REFUNDED" : "SUCCEEDED",
           stripePaymentIntentId: primaryCents > 0 ? PRIMARY_INTENT : SUPERSEDED_INTENT,
         },
       });
       if (primaryCents > 0) {
         await prisma.paymentTransaction.create({
-          data: { id: PRIMARY_TXN, paymentId: PAYMENT_ID, kind: "PRIMARY", source: "STRIPE", stripePaymentIntentId: PRIMARY_INTENT, amountCents: primaryCents, status: "SUCCEEDED", createdAt: new Date("2026-05-01T00:00:00.000Z") },
+          data: { id: PRIMARY_TXN, paymentId: PAYMENT_ID, kind: "PRIMARY", source: "STRIPE", stripePaymentIntentId: PRIMARY_INTENT, amountCents: primaryCents, status: "SUCCEEDED", createdAt: new Date(supersededOlder ? "2026-06-01T00:00:00.000Z" : "2026-05-01T00:00:00.000Z") },
         });
       }
       await prisma.paymentTransaction.create({
@@ -160,7 +176,7 @@ let harnessRole: { restore: () => void } | undefined;
           stripePaymentIntentId: SUPERSEDED_INTENT,
           amountCents: SUPERSEDED_CENTS,
           status: captured ? "SUCCEEDED" : "PENDING",
-          createdAt: new Date("2026-06-01T00:00:00.000Z"),
+          createdAt: new Date(supersededOlder ? "2026-05-01T00:00:00.000Z" : "2026-06-01T00:00:00.000Z"),
         },
       });
       const row = await prisma.paymentRecoveryOperation.create({
@@ -411,6 +427,25 @@ let harnessRole: { restore: () => void } | undefined;
       // Before #4866's shared reading: [superseded 6500, primary 6500], and the CANCELLED event kept $65 that row returns.
       expect(await cancelPlan()).toEqual([{ paymentTransactionId: PRIMARY_TXN, amountCents: PRIMARY_CENTS }]);
       expect(madeOn(SUPERSEDED_INTENT)).toBe(0);
+    });
+
+    it("the mirror fold - a folded $20.00 credit note lands on the booking's charge, never the older superseded one: R returns all $65.00", async () => {
+      // P1 superseded ($65.00, older), P2 the primary ($130.00); $20.00 refunded on the mirror only; a 50% tier.
+      const supersededRefund = await seed({ status: "PAID", priceCents: PRIMARY_CENTS, primaryCents: PRIMARY_CENTS, refundPercentage: 50, superseded: "refund", supersededOlder: true, mirrorRefundedCents: 2_000 });
+
+      // The booking's money net of the note: $110.00, half back. Before the fix the fold put the $20.00 on P1
+      // (oldest first), R's figure shrank to $45.00, and the tier ran on $130.00: $65.00 + $45.00, $10.00 short.
+      expect(await cancel()).toMatchObject({ status: 200, data: { refundAmountCents: 5_500 } });
+      // Neither the fold nor the card plan touched the superseded charge.
+      expect(await prisma.paymentTransaction.findUniqueOrThrow({ where: { id: SUPERSEDED_TXN }, select: { refundedAmountCents: true } })).toEqual({
+        refundedAmountCents: 0,
+      });
+      expect(await cancelPlan()).toEqual([{ paymentTransactionId: PRIMARY_TXN, amountCents: 5_500 }]);
+
+      expect(await runPaymentRecoveryOperationNow(supersededRefund, CLUB_FORMAT_TEST)).toBe("succeeded");
+      expect(madeOn(SUPERSEDED_INTENT)).toBe(SUPERSEDED_CENTS);
+      expect(madeOn(PRIMARY_INTENT)).toBe(5_500);
+      expect(await prisma.manualRefundTask.count({ where: { bookingId: BOOKING_ID } })).toBe(0);
     });
 
     it("the race: the hand-off flips the superseded charge captured under the Payment row while the cancel waits; the cancel leaves it to the hand-off", async () => {

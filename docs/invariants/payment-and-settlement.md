@@ -4110,8 +4110,9 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
   `CANCEL_PAYMENT_INTENT` row is in flight, all its captured charge holds; and
   what open rows owe back again after Stripe failed one later
   (`supersededRefundsOwedAgainCents`). Never more than the charge holds.
-- **The paid claim** reads it under the Payment row, after the mirror fold. It
-  joins the open hand-backs, so no tier counts it as paid;
+- **The paid claim** reads it under the Payment row, before the mirror fold,
+  which folds into none of it (`foldMirrorRefundIntoLedger`). It joins the open
+  hand-backs, so no tier counts it as paid;
   `planCardRefundFromLedger` gives it no slice, nor does a refund as account
   credit (`applyLocalRefundAllocation`). The preview reads the same figure for
   its refund and its card plan.
