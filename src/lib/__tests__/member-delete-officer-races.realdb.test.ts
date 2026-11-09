@@ -320,7 +320,7 @@ async function settledOrBlockedBy(deleting: Promise<unknown>, writerPid: number)
     const approve = await deleteRequested(officer);
     const { acquireLodgeCapacityLock } = await import("@/lib/capacity");
     const { lockPaymentForRefundedTotal } = await import("@/lib/payment-transactions");
-    const { lockBookingRowForOwnerRead } = await import("@/lib/member-money/doors");
+    const { lockBookingRowForOwnerRead } = await import("@/lib/booking-row-lock");
     const held = gate();
     const release = gate();
     let writerPid = 0;

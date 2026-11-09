@@ -1233,6 +1233,51 @@ describe("review finding source/schema contracts", () => {
     }
   });
 
+  it("runs the member-merge change-request race suite against the same dedicated PostgreSQL (#4845)", () => {
+    // A locked-period approval takes the booking row before its claim, because
+    // merge holds booking rows and then re-points the request and takes Member
+    // FOR UPDATE. `booking-change-request-execution.test.ts` pins the order
+    // against a mock; only the realdb suite shows PostgreSQL forms no wait-for
+    // cycle, and it `describe.skip`s itself without the harness env vars.
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    const migrateStep = workflow.indexOf(
+      "name: Migrate dedicated advisory-lock race database"
+    );
+    const raceStep = workflow.indexOf(
+      "name: Test member-merge change-request races against dedicated PostgreSQL"
+    );
+    expect(migrateStep).toBeGreaterThan(-1);
+    expect(
+      raceStep,
+      "ci.yml no longer runs member-merge-change-request-races.realdb.test.ts. " +
+        "That suite self-skips without RUN_CONCURRENCY_RACE_TESTS, so removing " +
+        "the step silently un-tests the #4845 lock order."
+    ).toBeGreaterThan(migrateStep);
+    const stepBlock = workflow.slice(
+      raceStep,
+      workflow.indexOf("      - name:", raceStep + 1)
+    );
+    expect(stepBlock).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
+    expect(stepBlock).not.toContain("CONCURRENCY_RACE_DATABASE_URL:");
+    expect(stepBlock).toContain(
+      "pnpm exec vitest run src/lib/__tests__/member-merge-change-request-races.realdb.test.ts"
+    );
+
+    const suite = readRepoFile(
+      "src/lib/__tests__/member-merge-change-request-races.realdb.test.ts"
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    for (const caseName of [
+      "MUTATION: (a) a merge holding the booking and waiting for the officer's Member row makes that officer's approval wait at the booking row; the merge commits and the approval refuses cleanly",
+      "MUTATION: (a) an approval by the duplicate holding its claim makes the merge wait at the booking row; both commit",
+      "(b) a merge holding the duplicate's booking and request makes the approval wait at the booking row; both commit",
+      "MUTATION: (b) an approval holding its claim on the duplicate's request makes the merge wait at the booking row; both commit",
+      "MUTATION: (b) an approval paused at its booking-row lock holds nothing the merge needs: the merge commits, then the approval executes on the survivor's request",
+    ]) {
+      expect(suite, `#4845 case missing: ${caseName}`).toContain(caseName);
+    }
+  });
+
   it("runs the member hard-delete officer race suite against the same dedicated PostgreSQL (#4850)", () => {
     // A hard-delete locks the booking rows naming the member before its Member
     // fence. `member-lifecycle-actions.test.ts` pins the order against a mock;

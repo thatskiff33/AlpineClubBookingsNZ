@@ -3395,6 +3395,24 @@ Payment row, a group child's Payment row, ledger lines (an FK `KEY SHARE` on the
 booking, which merge's `NO KEY UPDATE` does not conflict with) and plain debtor
 reads.
 
+A locked-period change-request approval (#4845,
+`approveAndExecuteLockedPeriodChangeRequest`) took `lock(1)` and the lodge key,
+then claimed the request before the canonical `modifyBookingBatch` updated the
+booking. The claim names the officer (`reviewedByMemberId`, a Member key share)
+and holds the request row, which merge re-points (`requestedBy`) after its
+booking moves and before its `Member … FOR UPDATE`. With the booking outside
+merge's lodge prefix that left two cycles: the officer is the duplicate, or the
+duplicate owns the booking and made the request. No merge guard refuses a
+pending change request (`countPendingLifecycleOrFamily` counts lifecycle,
+family-join and deletion requests), so the second is reachable without any
+officer being merged. The approval now takes the booking row
+(`lockBookingRowForOwnerRead`, imported from `src/lib/booking-row-lock.ts`, which
+the journal's doors re-export, so its approval names no journal module) right after its
+lodge key, keyed from its pre-lock read of the request's booking id (written
+once), before its role check and claim. The queue's acknowledge-only decision
+(`PUT /api/admin/booking-change-requests/[id]`) is one autocommit `updateMany`
+that touches no booking row, so it never holds the request row while waiting.
+
 Why not the other fixes:
 
 - **Merge takes its Member rows `FOR UPDATE` before its booking moves.** That
@@ -3411,8 +3429,21 @@ Why not the other fixes:
 
 If merge wins, the settle or closure waits at the booking row. It then names an
 officer the merge deleted, so its FK refuses (`P2003`), nothing is recorded, and
-the officer acts again from the surviving record. If the writer wins, merge
+the officer acts again from the surviving record. An approval waiting there
+instead finds its officer gone at its fresh role check and writes nothing; one
+by an officer who is not a merge party claims the request, now the survivor's,
+and executes. If the writer wins, merge
 waits at the booking row and moves the writer's attribution afterwards.
+
+One cycle remains for the locked-period approval, and it is not new. When the
+officer is a merge party that loses, and the booking is outside merge's lodge
+prefix and owned by neither merge party, merge never waits at the booking row.
+The approval's claim takes the officer's Member key share, and its later Member
+key shares (a guest member the change adds, a credit to the booking's owner)
+can wait on merge's id-ordered `Member … FOR UPDATE`, which in turn waits on
+the officer's row. PostgreSQL aborts one side (`40P01`). It is tracked as its
+own issue (#4855), separate from #4845, which closes only the cycles that run through
+the booking row.
 
 **Member hard-delete follows the same order (#4850).** Deleting a member
 (`member-lifecycle-actions.ts`) locked that Member row `FOR UPDATE` first, as its
@@ -3455,21 +3486,27 @@ running inside the delete: no writer is known to take one of those rows
 (`ManualRefundTask.completedByMemberId` and the rest) before a booking row it
 then waits for.
 
-This is not yet the whole story. Three approvals name their officer in a claim
-before they take the booking row: a change request (#4845), a policy exception
-(#4853) and a booking request (#4857). Against the delete's new order each can
-deadlock until its own issue brings it booking-row first.
+Two approvals still name their officer in a claim before they take the
+booking row: a policy exception (#4853) and a booking request (#4857). Against
+the delete's new order, as against merge, each can deadlock until its own issue
+brings it booking-row first. The change-request approval no longer does: it is
+booking-row first since #4845 (above).
 
 Proved against real PostgreSQL by
-`member-merge-officer-settle-races.realdb.test.ts` and, for the delete,
+`member-merge-officer-settle-races.realdb.test.ts`, for the approval
+`member-merge-change-request-races.realdb.test.ts`, and for the delete
 `member-delete-officer-races.realdb.test.ts`: required steps of the
 `migration-drift` job pinned by `review-findings-contracts.test.ts`. Both
-orders are covered for each writer, and the old orders deadlock (probed); the
-delete's suite also shows a Payment-first writer making it refuse at once. The
-positions are pinned in `manual-booking-payment.test.ts`,
-`manual-refund-task.test.ts` and `member-lifecycle-actions.test.ts`. This is not a census of every `lock(1)` writer:
-the settle body, its reversal, the Stripe path and the refund-task closure were
-checked, and the rule above is what a new writer follows.
+orders are covered for each writer and each cycle, and the old orders deadlock
+(probed); the delete's suite also shows a Payment-first writer making it refuse
+at once. The positions are pinned in `manual-booking-payment.test.ts`,
+`manual-refund-task.test.ts`, `booking-change-request-execution.test.ts` and
+`member-lifecycle-actions.test.ts`. This is not a census of every `lock(1)`
+writer: the settle body, its reversal, the Stripe path, the refund-task closure,
+the change-request approval and the member hard-delete were checked, and the
+rule above is what a new writer follows. The policy-exception approval
+(`booking-exception-execution.ts`, #4853) and the booking-request approval
+(#4857) keep the claim-before-booking shape until their own issues land.
 
 ## The disciplines, by writer class
 
@@ -5910,10 +5947,15 @@ Approving a `LOCKED_PERIOD` change request on a finished stay
 adds one registered global site, `approveAndExecuteLockedPeriodChangeRequest#1`
 (`INV-LOCK-002`, `INV-LOCK-003`). Order, in one transaction:
 
-1. Pre-read only the booking's immutable `lodgeId`; take global `lock(1)`
-   inline, then `acquireLodgeCapacityLock`. The canonical `modifyBookingBatch`
-   re-enters both (no-ops) and takes the member-night / member-credit keys after
-   them, so the order stays global → lodge → member.
+1. Pre-read only the booking's immutable `lodgeId` and `bookingId` (both
+   written once); take global `lock(1)` inline, then `acquireLodgeCapacityLock`,
+   then the booking row (`lockBookingRowForOwnerRead`, #4845), before the role
+   check and the claim. The claim names the officer (a Member key share) and holds
+   the request row a member merge re-points, so the booking row comes first, as
+   merge orders them ("A booking writer takes the booking row before a Member
+   key share"). The canonical `modifyBookingBatch` re-enters all three (no-ops)
+   and takes the member-night / member-credit keys after them, so the order
+   stays global → lodge → booking row → member.
 2. Reauthorise the officer from fresh roles (`reauthorizeBookingOfficerFromDb`).
 3. Re-read the request under the locks: `REQUESTED`, `LOCKED_PERIOD`, the
    expected `version`. Check drift (the booking's dates and guest set against the

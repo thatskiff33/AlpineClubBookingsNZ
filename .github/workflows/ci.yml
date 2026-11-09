@@ -1228,6 +1228,17 @@ jobs:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-merge-officer-settle-races.realdb.test.ts
 
+      # #4845: a locked-period change-request approval takes the booking row
+      # before its claim names the officer and holds the request row member merge
+      # re-points. Only this suite shows PostgreSQL forms no wait-for cycle, for
+      # both cycles in both orders. It self-skips without the env vars (same
+      # #1881 harness and database), so `review-findings-contracts.test.ts` fails
+      # if this step goes missing.
+      - name: Test member-merge change-request races against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-merge-change-request-races.realdb.test.ts
+
       # #4850: member hard-delete locks the booking rows naming the member before
       # its Member-row fence, the order the settle and the review closure take.
       # Only this suite shows PostgreSQL forms no wait-for cycle, in both orders.
