@@ -1216,43 +1216,46 @@ participants → coverage-owner.
 
 Member merge owns the blocking counterpart. After its bounded relation moves it
 plans the survivor's attendance plus the captured loser-owned bookings, then takes
-one sorted `Member FOR UPDATE` statement over master, loser and every ancillary
-queue owner. It re-plans under those rows; a new guest, booking, owner or lodge that
-changes the participant fingerprint returns the merge's existing safe 409 rather
-than acquiring another row late.
+master, loser and every ancillary queue owner `FOR UPDATE`, all at once. It re-plans
+under those rows; a new guest, booking, owner or lodge that changes the participant
+fingerprint returns the merge's existing safe 409 rather than acquiring another row
+late.
 
-**That statement waits, but only for `MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS`
-(10s)** (#2623 T6). It stays BLOCKING rather than `NOWAIT` because merge is
+**Merge waits for those rows, but only for `MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS`
+(10s)** (#2623 T6). It waits rather than failing at once because merge is
 irreversible admin work and a short overlap with an ordinary writer should still
 succeed. What was wrong was the wait being unbounded *while holding*: the merge
 transaction still holds the adult-member hosting policy-set advisory key here, and
-its own `FOR UPDATE` on up to `HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT` (50)
-THIRD-PARTY owners blocks every FK write naming them — so an uninvolved
-booking-create or guest-add waited behind the tail of a merge, for as long as the
-merge transaction's own `timeout: 120_000` allowed. The bound is applied with
-`set_config('lock_timeout', …, true)` immediately before the statement and restored
-with `SET LOCAL lock_timeout TO DEFAULT` immediately after a successful acquisition,
-so the rest of the merge
-transaction's locks — sorted coverage-owner keys, the loser delete — keep their own
-unmapped failure semantics. **`DEFAULT`, not a hardcoded `0`**: `0` means "wait
-forever" rather than "whatever it was", so on a deployment that sets `lock_timeout`
-at the database or role level, restoring `0` would delete the operator's bound for
-the rest of the merge. `SET LOCAL` rather than `RESET` because `RESET` is
-session-scoped and survives the commit on a pooled connection, silently clearing a
-session-level setting the caller had made. **On the connections this code runs
-on, `DEFAULT` still resolves to `0`**, so restoring it is byte-for-byte the old
-behaviour and remains hardening against a deployment that adds a bound rather
-than a live bug. Since #3377 one connection in this deployment DOES carry a
-`lock_timeout` — the `migrate` service's, described under
-["The migration lock timeout"](#the-migration-lock-timeout-3377) below — but
-that service runs `prisma migrate deploy` and no application code, so it never
-reaches this helper. PostgreSQL raises a `lock_timeout` cancellation as
-SQLSTATE `55P03`, the same code `NOWAIT` raises, so it lands on
-`HostingCoverageParticipantRetryError` and merge converts it into its existing
-"participants changed, nothing was saved, re-run the preview" 409. There is no
-restore on the failure path because the cancelled statement leaves the transaction
-aborted. Both halves — that it stops, and that it still waits — are proven against
-real PostgreSQL in `adult-member-hosting-queue-merge.realdb.test.ts`. Only then does it take the sorted coverage-owner
+its `FOR UPDATE` on up to `HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT` (50) THIRD-PARTY
+owners blocked every FK write naming them, so an uninvolved booking-create or
+guest-add waited behind the tail of a merge, for as long as the merge transaction's
+own `timeout: 120_000` allowed.
+
+**Since #4855 merge never waits for one of these rows while holding another**
+("Merge never holds a Member row while waiting for another (#4855)" below). Each
+attempt is one sorted `SELECT … FOR UPDATE SKIP LOCKED` inside a savepoint. When it
+returns every id, merge holds them all, so the uncontended path is one statement.
+Otherwise the savepoint is rolled back, releasing what it did lock, and merge waits
+for the first skipped row alone (`FOR UPDATE`, in a second savepoint, under
+`set_config('lock_timeout', <what is left of the 10s>, true)`), rolls that back
+too and tries again. The deadline is read from a monotonic clock before each
+attempt, so the loop either takes every row or spends the budget; it cannot spin.
+Rolling back to a savepoint restores the `lock_timeout` in force before it, so the
+rest of the merge transaction's locks (sorted coverage-owner keys, the loser
+delete) keep their own unmapped failure semantics, including a `lock_timeout` an
+operator sets at the database or role level (#2623 F4 measured why neither `0`
+nor `RESET` is a safe undo). A row that has disappeared, or a wait that runs out
+of budget (`55P03`, the code `NOWAIT` raises), lands on
+`HostingCoverageParticipantRetryError`, which merge converts into its existing
+"participants changed, nothing was saved, re-run the preview" 409. While it waits
+merge holds none of the rows, so it no longer blocks the FK writes of the
+third-party owners in the meantime. Since #3377 one connection in this deployment
+does carry a `lock_timeout` — the `migrate` service's, described under
+["The migration lock timeout"](#the-migration-lock-timeout-3377) below — but that
+service runs `prisma migrate deploy` and no application code, so it never reaches
+this helper. Both halves — that it stops, and that it still waits — are proven against
+real PostgreSQL in `adult-member-hosting-queue-merge.realdb.test.ts`. Only then does it refuse
+any row still naming the duplicate (#4855), take the sorted coverage-owner
 keys, sweep both live queue pointers (`memberId` and the FK-less `actorMemberId`),
 fold those late counts into the existing relation totals, enqueue actorless
 merge-generated `SYSTEM_CHANGE` work under the private exact proof, and delete the
@@ -2627,10 +2630,12 @@ fan-out read, then one exact, sorted `Member FOR KEY SHARE NOWAIT` statement per
 high-level enqueue seam containing every planned source owner plus the non-null
 actor. The booking-request hold takes the matching lodge → exact sorted linked
 `Member FOR KEY SHARE` path and re-reads active/archive state before its versioned
-claim. Merge takes the blocking counterpart only after its relation moves: one
-sorted `Member FOR UPDATE` statement over master, loser and every ancillary owner
-in the bounded survivor-attendance/captured-booking plan. It then re-plans under
-those rows, takes sorted coverage-owner keys, runs the late owner and actor queue
+claim. Merge takes the blocking counterpart only after its relation moves:
+`Member FOR UPDATE` over master, loser and every ancillary owner in the bounded
+survivor-attendance/captured-booking plan, all at once, waiting for at most one
+of them at a time and holding none while it waits (#4855). It then re-plans under
+those rows, refuses any row still naming the duplicate (#4855), takes sorted
+coverage-owner keys, runs the late owner and actor queue
 sweeps, emits actorless merge work under the exact participant proof, and deletes
 the loser. A plan mismatch returns 409; it never acquires a participant late.
 
@@ -2643,8 +2648,9 @@ later conflict rolls back earlier calls instead of forming a hold-and-wait cycle
 The composed merge order is **hosting policy-set → every affected lodge key in
 sorted order, and no global cohort key (#2595) → sorted member-lifecycle →
 sorted member-partner-link (#2595) →
-relation moves → one sorted master/loser/ancillary Member FOR UPDATE → under-lock
-re-plan → sorted coverage-owner → unresolved Xero contact-create proof re-check →
+relation moves → master/loser/ancillary Member FOR UPDATE, all at once, never
+holding one while waiting for another (#4855) → under-lock re-plan →
+residual-reference refusal (#4855) → sorted coverage-owner → unresolved Xero contact-create proof re-check →
 late owner+actor sweeps → Payment attribution, sorted `NOWAIT` (#4823) →
 unbacked shared-double reconciliation (#2595) →
 actorless enqueue → loser delete**. #2595 adds two tiers: the lodge prefix at the
@@ -3443,9 +3449,11 @@ after the request, before any guest write, and the requester's quote cancel
 writes no Member key share before its booking update, so neither changes.
 The approval still takes several Member key shares in no fixed order: the
 guest links, then the approving officer through `createdById`. When the
-approving officer is the duplicate and the hold is not merge's, that can still
-meet merge's sorted `Member … FOR UPDATE` with no booking row involved. That is
-#4855's class, not this fix.
+approving officer is the duplicate and the hold is not merge's, that met merge's
+sorted `Member … FOR UPDATE` with no booking row involved. That was #4855's
+class, not this fix: since #4855 merge never holds a Member row while waiting for
+another, so the approval commits and merge refuses with a 409 (see "Merge never
+holds a Member row while waiting for another (#4855)" below).
 
 Why not the other fixes:
 
@@ -3456,9 +3464,10 @@ Why not the other fixes:
   #2597's one sorted participant statement: the ancillary owners are known only
   after the moves, and #2672's coverage re-derivation is a fence only below that
   statement.
-- **Merge takes its Member rows `NOWAIT`.** #2623 T6 kept that wait blocking,
-  bounded at 10s, because ordinary writers hold key shares on these rows all
-  the time.
+- **Merge takes its Member rows `NOWAIT`.** #2623 T6 kept that wait, bounded at
+  10s, because ordinary writers hold key shares on these rows all the time. Since
+  #4855 merge still waits within that bound, but for one row at a time while
+  holding none of the others, which is what #4855 needed and T6 allows.
 - **Merge takes `lock(1)`.** Ruled out by "Why merge takes no global cohort key".
 
 If merge wins, the settle or closure waits at the booking row. It then names an
@@ -3474,15 +3483,15 @@ writer was a booking-request approval that linked a merge party as a guest at a
 lodge outside merge's prefix, merge then refuses with
 `partner_share_lodge_drift` (#2672), a clean 409 the operator re-runs.
 
-One cycle remains for the locked-period approval, and it is not new. When the
+One cycle was left for the locked-period approval, and it was not new. When the
 officer is a merge party that loses, and the booking is outside merge's lodge
 prefix and owned by neither merge party, merge never waits at the booking row.
 The approval's claim takes the officer's Member key share, and its later Member
 key shares (a guest member the change adds, a credit to the booking's owner)
-can wait on merge's id-ordered `Member … FOR UPDATE`, which in turn waits on
-the officer's row. PostgreSQL aborts one side (`40P01`). It is tracked as its
-own issue (#4855), separate from #4845, which closes only the cycles that run through
-the booking row.
+waited on merge's id-ordered `Member … FOR UPDATE`, which in turn waited on the
+officer's row, and PostgreSQL aborted one side (`40P01`). #4845 closed only the
+cycles that run through the booking row; #4855 closed this one in merge itself
+(the next section).
 
 **Member hard-delete follows the same order (#4850).** Deleting a member
 (`member-lifecycle-actions.ts`) locked that Member row `FOR UPDATE` first, as its
@@ -3549,6 +3558,73 @@ Payment-first writer making it refuse at once. The positions are pinned in
 writer: the settle body, its reversal, the Stripe path, the refund-task
 closure, the three approvals and the member hard-delete were checked, and the
 rule above is what a new writer follows.
+
+#### Merge never holds a Member row while waiting for another (#4855)
+
+The #4840 rule orders the booking row against a writer's first Member key share.
+It does not order several Member key shares against each other, and it does not
+fence a write merge never reaches through a booking row. Merge's participant
+statement was one blocking `SELECT … ORDER BY "id" FOR UPDATE`, which locks rows
+in id order and holds the earlier ones while it waits for a later one. A writer
+that held a later row and then named an earlier one closed a cycle. Reproduced on
+real PostgreSQL, both with the officer as the duplicate L and the booking at a
+lodge outside merge's prefix:
+
+- a locked-period change-request approval: its claim takes L's key share, merge
+  locks the survivor M (sorting first) and waits on L, and `modifyBookingBatch`'s
+  credit to the owner M then waited on merge; merge died with `40P01`;
+- a held booking-request approval by L, who did not quote the hold: its guest
+  swap takes M's key share (a key share does not queue behind a waiting
+  `FOR UPDATE`), merge locks L (sorting first) and waits on M, and the booking
+  update naming L (`createdById`) then waited on merge; the approval died.
+
+No writer-side order can rule this out. Key shares are taken implicitly, in
+statement order, and one INSERT checks its foreign keys in schema order, not id
+order; the writers (the three approvals, the refund-task closure, the admin
+credit-adjustment review, the edit doors run by an officer) do not know their
+whole member set in advance. A per-writer fence (refusing an officer write while
+its actor is merging) would need a census of every writer. So the rule is merge's
+own: **merge never waits for a Member row while it holds another**
+(`lockMemberMergeHostingCoverageParticipants`). Each attempt is one sorted
+`FOR UPDATE SKIP LOCKED` in a savepoint; a partial result is rolled back, merge
+waits for the first skipped row alone under what is left of the #2623 T6 budget,
+releases it, and tries again (the #2623 T6 paragraph, "Member merge owns the
+blocking counterpart", under "Same-owner coverage takes a per-owner key (#2576)",
+has the mechanics). A lock merge waits for while holding no
+other Member row cannot close a cycle through Member rows. The writer commits and
+merge then takes its rows.
+
+That leaves the second half of #4855: what the writer committed. Merge re-points
+the duplicate's relations before its Member rows, and an UPDATE sees only
+committed rows, so a write naming L that was in flight then commits past the move
+(the approval's `reviewedByMemberId`, the hold's `createdById`). The loser delete's
+`onDelete` then cleared it (`SetNull`: the reviewer silently gone, reproduced),
+dropped it (`Cascade`) or failed the merge with an unmapped FK error
+(`Restrict`). So, once merge holds its Member rows, **any row still naming the
+duplicate refuses the merge** with `merge_drift_in_transaction` and the relations
+in `driftFields` (`member-merge-residual-references.ts`). Under the Member rows the
+set cannot grow: naming L is an FK write, which needs L's key share. The relations
+come from `MEMBER_MERGE_RELATION_SPECS`; `cascade` relations, the `movedLast`
+Payment attribution (#4823), the Member self-relations (#2437's step-5 re-check)
+and the late-swept `HostingCoverageReevaluation.member` (#2597) are excluded, each
+with its reason, pinned by `member-merge-residual-references.test.ts`. It replaces
+the two checks merge had for `Booking.member` and `BookingGuest.member`, at the
+first one's place, before the D4 transfer. It refuses rather than moving: a late
+move would lock those rows after the Member rows, the order #4840 forbids, and
+would absorb rows the preview never showed (#2437). Reads take no row locks.
+
+So in every such race the writer commits what it recorded, against a duplicate
+who still exists, and merge returns its 409; the operator re-runs the preview.
+No advisory key is added and no writer changes. Merge's order is in "Member
+merge — dual member-lifecycle lock". Proved against real PostgreSQL by
+`member-merge-loser-officer-races.realdb.test.ts` (a required step of the
+`migration-drift` job pinned by `review-findings-contracts.test.ts`): the two
+approvals above and the reviewer case, plus a `Cascade` and a `Restrict` row
+written in the window; restoring the single blocking statement deadlocks both
+approvals, and removing the refusal clears the reviewer (both probed). The
+statements are pinned in `adult-member-hosting-queue-participants.test.ts`, the
+position in `adult-member-hosting-coverage-lock.test.ts`, and the row-lock count
+in `advisory-lock-guard.test.ts`.
 
 ## The disciplines, by writer class
 
