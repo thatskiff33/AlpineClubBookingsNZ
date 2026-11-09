@@ -6,6 +6,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Bell, Mail, MessageSquareText, Send, UserX } from "lucide-react";
+import { adminTabHref } from "@/lib/admin-hubs";
 
 const sections = [
   {
@@ -37,7 +38,8 @@ const sections = [
     icon: MessageSquareText,
   },
   {
-    href: "/admin/membership-cancellation",
+    // The Settings tab of Membership Cancellations since S1 (#4796).
+    href: adminTabHref("membership-cancellations", "settings"),
     title: "Membership Cancellation",
     description:
       "Configure cancellation copy and Xero handling for member cancellation requests.",

@@ -6,7 +6,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { useConfirm } from "@/components/confirm-dialog"
-import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { AdminDataTable } from "@/components/admin/admin-data-table"
 import {
   AdminViewOnlySectionBanner,
@@ -54,7 +53,14 @@ interface SuggestionsData {
   hiddenCount: number
 }
 
-export default function FamilySuggestionsPage() {
+/**
+ * The Suggestions tab of Family Groups (S1 #4796), which was its own page at
+ * `/admin/family-suggestions` until the owner approved merging the two on
+ * #4468. Same area (`membership`) and the same gating as the page had: it
+ * mounts only while its tab is open, and a view-only membership admin browses
+ * but cannot create, hide or reset.
+ */
+export function FamilySuggestionsPanel() {
   // Create-group / hide / reset-hidden all POST membership-area
   // family-suggestions routes; a view-only membership admin browses the
   // suggestions but cannot act (#1997).
@@ -198,26 +204,30 @@ export default function FamilySuggestionsPage() {
       {viewOnlyBanner}
       <div className="space-y-6">
       {confirmDialog}
-      <AdminPageHeader
-        title="Family Group Suggestions"
-        description="Review suggested family groups based on shared emails and last names among ungrouped members."
-        actions={
-          <>
-            <ViewOnlyActionButton
-              canEdit={canEdit}
-              describeReason={false}
-              onClick={handleResetHidden}
-              disabled={loading || resetting || !data?.hiddenCount}
-              variant="outline"
-            >
-              {resetting ? "Resetting..." : `Reset hidden (${data?.hiddenCount ?? 0})`}
-            </ViewOnlyActionButton>
-            <Button onClick={fetchSuggestions} disabled={loading} variant="outline">
-              {loading ? "Loading..." : "Refresh"}
-            </Button>
-          </>
-        }
-      />
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 space-y-1">
+          <h2 className="text-lg font-semibold text-foreground">
+            Family Group Suggestions
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Review suggested family groups based on shared emails and last names among ungrouped members.
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            describeReason={false}
+            onClick={handleResetHidden}
+            disabled={loading || resetting || !data?.hiddenCount}
+            variant="outline"
+          >
+            {resetting ? "Resetting..." : `Reset hidden (${data?.hiddenCount ?? 0})`}
+          </ViewOnlyActionButton>
+          <Button onClick={fetchSuggestions} disabled={loading} variant="outline">
+            {loading ? "Loading..." : "Refresh"}
+          </Button>
+        </div>
+      </div>
 
       {error && (
         <div className="rounded-md border border-danger/20 bg-danger-muted p-3 text-sm text-danger">

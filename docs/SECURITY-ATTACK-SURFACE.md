@@ -255,6 +255,15 @@ These family rules are enforced by automated tests (issue #1132):
   gates. It also fails a registered page that falls through to the `overview`
   catch-all, and a route-map entry placed ahead of a longer entry of another
   area beneath it, because the resolver takes the first match, not the longest.
+  Three route-map prefixes, those of the pages S1 (#4796) merged into others
+  that had one (`/admin/setup/booking-rules`, `/admin/membership-cancellation`,
+  `/admin/family-suggestions`), are left out of the comparison by name, and
+  only those (`ORACLE_RETIRED_PREFIXES`); the other two retired pages sat under
+  `/admin/setup`'s own prefix. A retired page has no entry, because its redirect
+  in `next.config.ts` (a 307 for its first release, permanent one release
+  later) runs before the proxy and nothing is served at its URL. `admin-route-area-matrix.test.ts` keeps each one's former area and
+  checks its destination admits on the same area, bar the one reviewed change
+  (`/admin/setup/cancellation`, `support`, now a `membership` tab: narrower).
 
 ### Public or Provider-Signed Exceptions
 

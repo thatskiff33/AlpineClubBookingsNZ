@@ -5,11 +5,10 @@ import { defineHub } from "../define";
  * `video-meetings`) sit beside Integrations on the plan's recommendation,
  * pending the owner's answer on #4480.
  *
- * `setup` MOVES LAST. Its directory still holds pages of three other hubs
- * (`setup/booking-rules` in Rules, `setup/cancellation` in Members,
- * `setup/integrations` in System), and a `git mv` of `setup` would carry them
- * along. Those hubs move theirs out first; the registry suite refuses a moved
- * page with an unmoved page beneath it.
+ * `setup` holds only this hub's pages since S1 (#4796) retired the three that
+ * belonged to other hubs (`setup/booking-rules`, `setup/cancellation`,
+ * `setup/integrations`; `retired.ts`), so its directory moves in one `git mv`.
+ * The registry suite still refuses a moved page with an unmoved page beneath it.
  */
 export const SETTINGS_HUB = defineHub({
   key: "settings",

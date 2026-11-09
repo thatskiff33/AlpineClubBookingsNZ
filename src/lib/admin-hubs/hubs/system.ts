@@ -10,18 +10,13 @@ export const SYSTEM_HUB = defineHub({
   prefix: "system",
   pages: [
     {
+      // S1 (#4796): its integration readiness section is what was
+      // `/admin/setup/integrations`, which was `support` too.
       id: "health",
       label: "System Health",
       oldPath: "/admin/health",
       area: "support",
-      moved: false,
-    },
-    {
-      // S1 (#4796) folds this readiness page into health.
-      id: "setup-integrations",
-      label: "Integrations Readiness",
-      oldPath: "/admin/setup/integrations",
-      area: "support",
+      anchors: ["integration-readiness"],
       moved: false,
     },
     {

@@ -70,11 +70,12 @@ export const adminMonitoringAndSupportHelpEntries: HelpEntry[] = [
     "/admin/health",
     help(
       "System Health",
-      "System Health shows runtime, database, provider, and readiness indicators for operators.",
+      "System Health shows runtime, database, provider, and readiness indicators for operators. Its Integration readiness section links the provider-backed setup pages for accounting, email and modules.",
       [
         "Check readiness and dependency status before investigating user reports.",
         "Use timestamps and provider health messages to distinguish stale data from current outages.",
         "Escalate recurring failures to deployment or provider support workflows.",
+        "Under Integration readiness, open Xero Setup before connecting or changing accounting sync, and review Modules before enabling provider-backed workflows.",
       ],
       [
         {
@@ -86,6 +87,11 @@ export const adminMonitoringAndSupportHelpEntries: HelpEntry[] = [
           name: "Provider status",
           description:
             "Health or connectivity information for external services.",
+        },
+        {
+          name: "Integration readiness",
+          description:
+            "Links to Xero Setup, Xero Sync, Modules and Email Deliverability, each shown where its module is on and you can open it.",
         },
       ],
     ),

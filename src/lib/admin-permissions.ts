@@ -759,7 +759,20 @@ export function canOpenAdminPath(
   input: AdminPermissionInput,
   pathname: string,
 ) {
-  const matrix = getAdminPermissionMatrix(input);
+  return canOpenAdminPathWithMatrix(getAdminPermissionMatrix(input), pathname);
+}
+
+/**
+ * `canOpenAdminPath` for a matrix already in hand: the same rule, in one body,
+ * for a hub card or link that must be offered exactly when its screen would
+ * open (S1 #4796). It differs from `canViewAdminHrefWithMatrix`, the sidebar's
+ * per-href filter, only on the two OR admissions (the fee console and Rooms &
+ * Beds), which that filter does not apply.
+ */
+export function canOpenAdminPathWithMatrix(
+  matrix: AdminPermissionMatrix,
+  pathname: string,
+) {
   if (isAnyAdminAdmissionPath(pathname)) {
     return hasAnyAdminAreaFromMatrix(matrix);
   }

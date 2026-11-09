@@ -46,8 +46,10 @@ enough — every sub-page is captured and detailed where it lives.
    [Membership Types](membership-types.md), reactivate the type, and restore the
    expected booking behavior if prompted.
 3. Use the **hub cards** to open a configuration area: Initial Setup, Finance,
-   Booking Rules, Operational Integrations, Membership & Members, Cancellation,
-   or Email Messages / Notifications.
+   Bookings Setup, Integration Readiness, Membership & Members, Membership
+   Cancellations, or Email Messages / Notifications. Booking Rules, Operational
+   Integrations and Cancellation were drill-downs of their own until #4796
+   merged each into the page it linked to; their old addresses still work.
 
 ## Settings reference
 
@@ -58,10 +60,10 @@ the areas it links to:
 | --- | --- | --- |
 | Initial Setup | Install checklist, club identity, modules, lodge records, health (`/admin/setup/foundations`) | support |
 | Finance | Finance reporting, Xero setup, sync tools, report mappings — collapsed by default (`/admin/setup/finance`) | finance |
-| Booking Rules | Booking policy, seasons, age groups, promos, inventory, copy (`/admin/setup/booking-rules`) | bookings (the hub page itself, #4581); its cards need bookings, lodge or support |
-| Operational Integrations | Provider readiness, Xero connection, modules, delivery health (`/admin/setup/integrations`) | support, finance |
+| Bookings Setup | Booking policy, seasons, age groups, promos, inventory, copy ([bookings-setup](bookings-setup.md)) | bookings; each of its cards shows only to an admin who can open it |
+| Integration Readiness | Xero connection, modules, delivery health: a section of System Health ([health](health.md#integration-readiness)) | support; its Xero cards need finance |
 | Membership & Members | Membership types, member fields, subscription lockout ([membership-setup](membership-setup.md)) | membership |
-| Cancellation | Cancellation settings, request queues, message copy (`/admin/setup/cancellation`) | membership, support |
+| Membership Cancellations | Cancellation settings and the request queue: the Settings tab of [Cancellation Requests](membership-cancellations.md) | membership |
 | Email Messages / Notifications | Delivery rules, recipients, templates, member copy ([notifications](notifications.md)) | support |
 
 Provider tests cover Stripe, SMTP (email), Sentry, and Xero. Each check is

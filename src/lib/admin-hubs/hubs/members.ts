@@ -41,41 +41,22 @@ export const MEMBERS_HUB = defineHub({
       moved: false,
     },
     {
+      // S1 (#4796): the settings tab holds what was
+      // `/admin/membership-cancellation` and `/admin/setup/cancellation`.
       id: "membership-cancellations",
       label: "Cancellation Requests",
       oldPath: "/admin/membership-cancellations",
       area: "membership",
+      tabs: ["requests", "settings"],
       moved: false,
     },
     {
-      // S1 (#4796) merges this into a settings tab of membership-cancellations.
-      id: "membership-cancellation",
-      label: "Membership Cancellation Settings",
-      oldPath: "/admin/membership-cancellation",
-      area: "membership",
-      moved: false,
-    },
-    {
-      // S1 (#4796) merges this into a settings tab of membership-cancellations.
-      id: "setup-cancellation",
-      label: "Cancellation Setup",
-      oldPath: "/admin/setup/cancellation",
-      area: "support",
-      moved: false,
-    },
-    {
+      // S1 (#4796): the suggestions tab is what was `/admin/family-suggestions`.
       id: "family-groups",
       label: "Family Groups",
       oldPath: "/admin/family-groups",
       area: "membership",
-      moved: false,
-    },
-    {
-      // S1 (#4796) merges this into a tab of family-groups.
-      id: "family-suggestions",
-      label: "Family Suggestions",
-      oldPath: "/admin/family-suggestions",
-      area: "membership",
+      tabs: ["groups", "suggestions"],
       moved: false,
     },
     {

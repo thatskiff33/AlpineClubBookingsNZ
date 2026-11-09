@@ -283,15 +283,14 @@ describe("the cancellation review queue's blocker panel", () => {
       />,
     );
 
-    // The settings page is the SINGULAR path — one character from the queue's
-    // own URL, which is exactly why naming it in prose was not enough.
+    // The settings are the queue's own Settings tab since S1 (#4796), no
+    // longer the singular path one character from the queue's URL.
     const link = screen.getByRole("link", {
       name: "Open Membership Cancellation settings",
     });
-    expect(link.getAttribute("href")).toContain("/admin/membership-cancellation");
-    expect(link.getAttribute("href")).not.toContain(
-      "/admin/membership-cancellations?",
-    );
+    const href = new URL(link.getAttribute("href")!, "https://example.org");
+    expect(href.pathname).toBe("/admin/membership-cancellations");
+    expect(href.searchParams.get("tab")).toBe("settings");
   });
 
   it("renders a failed check as its own explanation, with the way out", () => {
