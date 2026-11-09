@@ -19,6 +19,7 @@
  */
 import { ADMIN_HUBS_LIVE } from "./release";
 import {
+  isAdminMenuDestination,
   normaliseHubPage,
   type AdminHubInput,
   type AdminHubPage,
@@ -117,6 +118,23 @@ export type AdminPageAnchor<Id extends AdminPageId> = DeclaredList<Id, "anchors"
 export type AdminTabbedPageId = {
   [Id in AdminPageId]: [AdminPageTab<Id>] extends [never] ? never : Id;
 }[AdminPageId];
+
+/** A page the hub menu and the command palette may offer, and the URL to link it at. */
+export interface AdminMenuDestination {
+  readonly page: AdminHubPage;
+  /** What `adminHref(page.id)` answers; a destination has no `[param]` to fill. */
+  readonly href: string;
+}
+
+/**
+ * Every menu destination (`isAdminMenuDestination`), in hub order, linked as
+ * `adminHref` links it under today's switch. The command palette's index is
+ * built from it (S2 #4797), and C13's hub menu will be: neither keeps a page
+ * list of its own.
+ */
+export const ADMIN_MENU_DESTINATIONS: readonly AdminMenuDestination[] = ADMIN_PAGES.filter(
+  isAdminMenuDestination,
+).map((page) => ({ page, href: resolveAdminHref(page, ADMIN_HUBS_LIVE) }));
 
 /** The registered page for an id; an id the registry does not know throws. */
 export function getAdminPage(id: AdminPageId): AdminHubPage {

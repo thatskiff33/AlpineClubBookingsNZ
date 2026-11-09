@@ -176,7 +176,7 @@ describe("AdminCommandPalette", () => {
     opener.remove();
   });
 
-  it("orders groups by canonical sidebar section order, not dedup insertion order", async () => {
+  it("groups by hub, in menu order (S2 #4797)", async () => {
     renderPalette();
     pressCtrlK();
     await screen.findByPlaceholderText("Search admin features…");
@@ -186,23 +186,35 @@ describe("AdminCommandPalette", () => {
       document.body.querySelectorAll("[cmdk-group-heading]"),
     ).map((el) => el.textContent);
 
-    // Matches the sidebar's buildAdminNavSections order. Regression guard:
-    // the de-dup keys "Bookings & Beds" pages first under "Needs Attention",
-    // which must not drag that group ahead of "Needs Attention".
+    // The hub registry's order. The queue views are listed after every page in
+    // the index; they must still land in Bookings, not in a group of their own.
     expect(headings).toEqual([
-      "General",
-      "Needs Attention",
-      "Bookings & Beds",
-      "Rates & Policies",
+      "Home",
+      "Bookings",
+      "Fees & booking rules",
       "Finance",
       "Members",
-      "Lodge Operations",
-      "Monitoring & Support",
-      "Setup & Configuration",
+      "Lodge",
+      "Website",
+      "Messages & email",
+      "Help & system",
+      "Club settings",
     ]);
   });
 
-  it("groups Lobby Display under Lodge Operations with no duplicate", async () => {
+  it("offers a page the sidebar does not link (S2 #4797)", async () => {
+    renderPalette();
+    pressCtrlK();
+
+    const input = await screen.findByPlaceholderText("Search admin features…");
+    fireEvent.change(input, { target: { value: "Chores" } });
+    await waitFor(() => expect(screen.getByRole("option", { name: /^Chores/ })).not.toBeNull());
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(pushMock).toHaveBeenCalledWith("/admin/chores");
+  });
+
+  it("groups Lobby Display under Lodge with no duplicate", async () => {
     renderPalette();
     pressCtrlK();
 
@@ -215,7 +227,7 @@ describe("AdminCommandPalette", () => {
       matches[0]
         .closest("[cmdk-group]")
         ?.querySelector("[cmdk-group-heading]")?.textContent,
-    ).toBe("Lodge Operations");
+    ).toBe("Lodge");
   });
 
   it("does not restore focus to the opener when a selection navigates away", async () => {
@@ -248,14 +260,14 @@ describe("AdminCommandPalette", () => {
   });
 
   it("never reveals an href the admin cannot access (interaction path)", async () => {
-    // Bookings-only, non-full-admin: same filter as getVisibleAdminNavSections.
+    // Bookings-only, non-full-admin.
     renderPalette(matrix({ bookings: "view" }), false);
     pressCtrlK();
 
     await screen.findByPlaceholderText("Search admin features…");
 
     // A bookings page is offered…
-    expect(screen.getByText("Bookings")).not.toBeNull();
+    expect(screen.getByRole("option", { name: /^Bookings$/ })).not.toBeNull();
     // …but membership and fullAdminOnly pages are absent from the palette DOM.
     expect(screen.queryByText("Members")).toBeNull();
     expect(screen.queryByText("Export & Import")).toBeNull();

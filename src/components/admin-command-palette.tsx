@@ -13,7 +13,7 @@ import {
   CommandShortcut,
 } from "@/components/ui/command";
 import {
-  ADMIN_NAV_SECTION_ORDER,
+  ADMIN_FEATURE_SEARCH_GROUP_ORDER,
   getAdminFeatureSearchIndex,
   type AdminFeatureSearchEntry,
 } from "@/components/admin-sidebar";
@@ -22,25 +22,15 @@ import type { FeatureFlags } from "@/config/schema";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import { ADMIN_COMMAND_PALETTE_OPEN_EVENT } from "@/lib/admin-command-palette-events";
 
-/** Fallback heading for entries whose sidebar section has no label. */
-const UNGROUPED_SECTION = "General";
-
-/** Group headings in canonical sidebar-section order (label-less -> General). */
-const CANONICAL_GROUP_ORDER: string[] = ADMIN_NAV_SECTION_ORDER.map(
-  (label) => label ?? UNGROUPED_SECTION,
-);
-
 function groupBySection(
   entries: AdminFeatureSearchEntry[],
 ): Array<{ section: string; entries: AdminFeatureSearchEntry[] }> {
-  // Bucket entries by heading first. We deliberately do NOT let bucket-creation
-  // order decide group order: getAdminFeatureSearchIndex de-duplicates by href
-  // and a page first seen under "Needs Attention" keeps that early insertion
-  // slot even after its natural-section label overwrites the value, which would
-  // otherwise pull its natural group to the wrong position.
+  // Bucket entries by hub first. We deliberately do NOT let bucket-creation
+  // order decide group order: the index lists the queue views after every page,
+  // so a hub first seen there would otherwise land in the wrong position.
   const bucketBySection = new Map<string, AdminFeatureSearchEntry[]>();
   for (const entry of entries) {
-    const section = entry.section ?? UNGROUPED_SECTION;
+    const section = entry.section;
     const bucket = bucketBySection.get(section);
     if (bucket) {
       bucket.push(entry);
@@ -49,13 +39,12 @@ function groupBySection(
     }
   }
 
-  // Emit groups in canonical sidebar order (Needs Attention lands in its own
-  // natural slot). Any heading not in the canonical list is appended in
-  // first-encounter order as a defensive fallback.
+  // Emit groups in hub (menu) order. Any heading not in that list is appended
+  // in first-encounter order as a defensive fallback.
   const groups: Array<{ section: string; entries: AdminFeatureSearchEntry[] }> =
     [];
   const emitted = new Set<string>();
-  for (const section of CANONICAL_GROUP_ORDER) {
+  for (const section of ADMIN_FEATURE_SEARCH_GROUP_ORDER) {
     const bucket = bucketBySection.get(section);
     if (bucket && !emitted.has(section)) {
       groups.push({ section, entries: bucket });
@@ -109,18 +98,18 @@ export function AdminCommandPalette({
     openRef.current = open;
   }, [open]);
 
-  // The index is derived from getVisibleAdminNavSections (via
-  // getAdminFeatureSearchIndex), so every href here is one this admin is
-  // permitted to open, on any interaction path. It is a deliberate superset of
-  // what the sidebar renders right now — the queue-driven "Needs Attention"
-  // deep links are always searchable even when their queue is empty — never a
-  // permission superset.
+  // getAdminFeatureSearchIndex builds the index from the hub registry and keeps
+  // only the pages this admin may open (the layout guard's own admission rule,
+  // module visibility and Full Admin), so every href here opens, on any
+  // interaction path. It offers more than the sidebar renders — every admin
+  // page, and the queue views even when their queue is empty — never a page
+  // the admin may not open (S2 #4797).
   /*
     The SAME authority the sidebar uses, for the same reason (#3123). One entry
     in this index — the unpaid-finished-stays queue — is a deep link whose
     `checkOutTo` bound is the club's own day, and the sidebar renders that link
     beside its badge count. Both surfaces now derive it from
-    `buildAdminNavSections`, one definition, fed the club's day from THIS
+    `buildAdminQueueViews`, one definition, fed the club's day from THIS
     provider; before #3123 the day came from a module-level constant evaluated
     once per bundle load, so the palette and the sidebar could only ever agree by
     both being stale together. `admin-sidebar-club-time.test.tsx` pins the two

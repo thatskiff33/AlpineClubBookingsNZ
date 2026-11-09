@@ -15,6 +15,7 @@ export const MEMBERS_HUB = defineHub({
       label: "Members",
       oldPath: "/admin/members",
       area: "membership",
+      keywords: ["users", "people", "contacts", "membership"],
       moved: false,
     },
     {
@@ -57,6 +58,7 @@ export const MEMBERS_HUB = defineHub({
       oldPath: "/admin/family-groups",
       area: "membership",
       tabs: ["groups", "suggestions"],
+      keywords: ["family suggestions", "suggested families"],
       moved: false,
     },
     {

@@ -31,7 +31,9 @@ export type AdminPageAdmission =
  * reached from one, or not at all.
  *
  * - `page`: a screen an officer opens on purpose.
- * - `detail`: one record's screen, reached from its list (any `[param]` path).
+ * - `detail`: one record's screen, reached from its list: any `[param]` path,
+ *   and a static path that names its record in the query and cannot open
+ *   without it (`display/preview`, S2 #4797).
  * - `print`: a printable view of one record.
  * - `stub`: a `page.tsx` that only redirects, kept so old links still work.
  * - `test`: a test-only probe that 404s in production.
@@ -63,6 +65,13 @@ export interface AdminHubPageInput {
   readonly kind?: AdminPageKind;
   /** The menu hides the page from anyone but a Full Admin. Defaults to `false`. */
   readonly fullAdminOnly?: boolean;
+  /**
+   * Words the command palette (S2 #4797) also finds the page by: synonyms,
+   * acronyms and the names of things on it that its label does not say. They
+   * only widen the match; they never decide who is offered the page. Defaults
+   * to none.
+   */
+  readonly keywords?: readonly string[];
   /**
    * The page's `?tab=` values, the first being the one it opens on, for a page
    * that holds a page merged into it (S1 #4796). `adminTabHref` links a tab and
@@ -106,6 +115,7 @@ export interface AdminHubPage {
   readonly flags: readonly FeatureFlagKey[];
   readonly kind: AdminPageKind;
   readonly fullAdminOnly: boolean;
+  readonly keywords: readonly string[];
   readonly tabs: readonly string[];
   readonly anchors: readonly string[];
   readonly moved: boolean;
@@ -152,6 +162,7 @@ export function normaliseHubPage(
     flags: page.flags ?? [],
     kind: page.kind ?? "page",
     fullAdminOnly: page.fullAdminOnly ?? false,
+    keywords: page.keywords ?? [],
     tabs: page.tabs ?? [],
     anchors: page.anchors ?? [],
     moved: page.moved,

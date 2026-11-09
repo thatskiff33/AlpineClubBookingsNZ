@@ -17,6 +17,7 @@ export const SYSTEM_HUB = defineHub({
       oldPath: "/admin/health",
       area: "support",
       anchors: ["integration-readiness"],
+      keywords: ["status", "diagnostics", "uptime", "monitoring"],
       moved: false,
     },
     {
@@ -52,6 +53,7 @@ export const SYSTEM_HUB = defineHub({
       label: "Audit Log",
       oldPath: "/admin/audit-log",
       area: "support",
+      keywords: ["history", "activity", "changes", "trail"],
       moved: false,
     },
     {
@@ -61,6 +63,10 @@ export const SYSTEM_HUB = defineHub({
       area: "overview",
       admission: "any-admin",
       flags: ["aiDiagnostics"],
+      keywords: [
+        "diagnose", "investigate", "why", "blocked", "evidence", "troubleshoot",
+        "explain",
+      ],
       moved: false,
     },
     {
@@ -69,6 +75,7 @@ export const SYSTEM_HUB = defineHub({
       oldPath: "/admin/ai-assistant",
       area: "support",
       flags: ["aiAssistant"],
+      keywords: ["ai", "assistant", "anthropic", "llm", "help", "spend cap"],
       moved: false,
     },
     {
@@ -76,6 +83,7 @@ export const SYSTEM_HUB = defineHub({
       label: "Database Backups",
       oldPath: "/admin/backups",
       area: "support",
+      keywords: ["backup", "s3", "restore", "disaster recovery", "pg_dump"],
       moved: false,
     },
     {

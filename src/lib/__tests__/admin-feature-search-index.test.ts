@@ -1,25 +1,66 @@
+import fs from "node:fs";
+import path from "node:path";
+import { AccessRole } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 import { MODULE_KEYS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
-import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
+import { getDisabledFeatureForPath } from "@/config/feature-routes";
+import { DEFAULT_ACCESS_ROLE_DEFINITIONS } from "@/lib/access-role-definitions";
+import { isFullAdmin, type PrivilegeCheckInput } from "@/lib/access-roles";
 import {
+  canOpenAdminPath,
+  getAdminPermissionMatrix,
+  type AdminPermissionMatrix,
+} from "@/lib/admin-permissions";
+import {
+  ADMIN_FEATURE_SEARCH_GROUP_ORDER,
   getAdminFeatureSearchIndex,
-  getVisibleAdminNavSections,
+  type AdminFeatureSearchEntry,
 } from "@/components/admin-sidebar";
+import {
+  ADMIN_HUBS,
+  ADMIN_MENU_DESTINATIONS,
+  ADMIN_PAGES,
+  ADMIN_RETIRED_PAGES,
+  adminHref,
+  canonicalAdminPathname,
+} from "@/lib/admin-hubs";
 import { requireCalendarDate } from "@/lib/club-time";
+import {
+  buildUnpaidFinishedStaysHref,
+  buildUnsettledAdditionalStaysHref,
+} from "@/lib/unpaid-finished-stays-hrefs";
+import {
+  adminPageFiles,
+  toRawPathname,
+  toRepoRelative,
+} from "@/lib/__tests__/helpers/admin-route-enumeration";
+import { SWEEP_GRIDS } from "@/lib/__tests__/helpers/admin-sweep-grids";
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
+
+// ---------------------------------------------------------------------------
+// THE ADMIN FEATURE PALETTE'S INDEX (#2092; built from the hub registry since
+// S2 #4797).
+//
+// Two halves. The census proves the palette offers every admin page a Full
+// Admin can open, and nothing that is not a page, from the page tree on disk.
+// The property test proves it fails closed: for every sweep grid and every
+// seeded role, under every module setting, no entry is offered whose path the
+// layout guard (`canOpenAdminPath`) refuses, whose module is off, or that is
+// Full Admin only for anyone else; and nothing the viewer may open is withheld.
+// ---------------------------------------------------------------------------
 
 /**
- * #3123 — the club's day, first and REQUIRED on all three nav exports. One nav
- * href is a dated deep link (the unpaid-finished-stays queue), so the sidebar and
- * the command palette have to be handed the SAME day or their link and its badge
- * describe different queues. Nothing in this file asserts on that href's date, so
- * one fixed day serves every call.
+ * #3123: the club's day, first and REQUIRED. One entry is a dated deep link
+ * (the unpaid-finished-stays queue); the frozen test day serves every call.
  */
 const CLUB_DAY = requireCalendarDate("2026-07-01");
 
-
 const allOn: FeatureFlags = Object.fromEntries(
   MODULE_KEYS.map((key) => [key, true]),
+) as FeatureFlags;
+const allOff: FeatureFlags = Object.fromEntries(
+  MODULE_KEYS.map((key) => [key, false]),
 ) as FeatureFlags;
 
 function matrix(
@@ -47,249 +88,378 @@ const fullMatrix = matrix({
   support: "edit",
 });
 
-/**
- * The invariant, expressed as a test seam: the palette index MUST expose
- * exactly the (de-duplicated) set of hrefs the sidebar's
- * getVisibleAdminNavSections would show the same admin — no more, no less.
- */
-function visibleHrefs(
-  features: FeatureFlags,
-  permissionMatrix?: AdminPermissionMatrix,
-  isFullAdmin?: boolean,
-  hutLeaderLabel = "Hut Leader",
-): Set<string> {
+const QUEUE_VIEW_HREFS = new Set([
+  buildUnpaidFinishedStaysHref(CLUB_DAY),
+  buildUnsettledAdditionalStaysHref(),
+]);
+
+function hrefs(index: readonly AdminFeatureSearchEntry[]): Set<string> {
+  return new Set(index.map((entry) => entry.href));
+}
+
+/** The index's PAGES, as old paths: the queue views (deep links) left out. */
+function indexedPagePaths(index: readonly AdminFeatureSearchEntry[]): Set<string> {
   return new Set(
-    getVisibleAdminNavSections(
-      CLUB_DAY,
-      features,
-      permissionMatrix,
-      isFullAdmin,
-      hutLeaderLabel,
-    ).flatMap((section) => section.items.map((item) => item.href)),
+    index
+      .filter((entry) => !QUEUE_VIEW_HREFS.has(entry.href))
+      .map((entry) => canonicalAdminPathname(entry.href)),
   );
 }
 
-describe("getAdminFeatureSearchIndex — derivation", () => {
-  it("indexes every visible nav page exactly once (no duplicates across sections)", () => {
-    const index = getAdminFeatureSearchIndex(CLUB_DAY, allOn, fullMatrix, true);
-    const hrefs = index.map((entry) => entry.href);
+function fullAdminIndex(features: FeatureFlags = allOn) {
+  return getAdminFeatureSearchIndex(CLUB_DAY, features, fullMatrix, true);
+}
 
-    // De-duplicated: "Needs Attention" re-lists pages from their home sections,
-    // but each page appears exactly once in the index.
-    expect(new Set(hrefs).size).toBe(hrefs.length);
-    // Covers exactly the set the sidebar would render — the single source of truth.
-    expect(new Set(hrefs)).toEqual(visibleHrefs(allOn, fullMatrix, true));
+// --- the census, from disk ---------------------------------------------------
+
+/**
+ * Whether a page on disk is somewhere an officer goes on purpose, decided from
+ * the path and the file alone, never from the registry: no `[param]`, not the
+ * test probe, not a print view, not a file that only redirects, and not the one
+ * reviewed page that names its record in the query (`display/preview`, which
+ * shows only an error without `?templateId=`).
+ */
+const QUERY_NAMED_DETAILS = new Set(["/admin/display/preview"]);
+
+function isDestinationOnDisk(file: string): boolean {
+  const pagePath = toRawPathname(file);
+  if (pagePath.includes("[")) return false;
+  if (pagePath === "/admin/testing" || pagePath.startsWith("/admin/testing/")) return false;
+  if (pagePath.endsWith("/print")) return false;
+  if (QUERY_NAMED_DETAILS.has(pagePath)) return false;
+  const source = stripComments(fs.readFileSync(file, "utf8"));
+  const redirectsOnly =
+    /\b(?:permanentRedirect|redirect)\(/.test(source) && !/\breturn\b/.test(source);
+  return !redirectsOnly;
+}
+
+const DISK_DESTINATIONS = adminPageFiles
+  .filter(isDestinationOnDisk)
+  .map((file) => canonicalAdminPathname(toRawPathname(file)));
+const DISK_NON_DESTINATIONS = adminPageFiles
+  .filter((file) => !isDestinationOnDisk(file))
+  .map((file) => ({ file: toRepoRelative(file), path: toRawPathname(file) }));
+
+/**
+ * The pages the palette offers that the sidebar does not link: the areas #130
+ * and the setup work left reachable only from a hub card, a setup checklist or
+ * another page. Pinned so the gain is reviewed, not incidental.
+ */
+const NEWLY_INDEXED = [
+  "/admin/alpine-server/setup",
+  "/admin/appearance/identity",
+  "/admin/backups/setup",
+  "/admin/booking-messages",
+  "/admin/booking-policies/adult-member-hosting",
+  "/admin/booking-policies/cancellation",
+  "/admin/booking-policies/group-discount",
+  "/admin/booking-policies/minimum-stay",
+  "/admin/booking-policies/periods",
+  "/admin/booking-policies/public-requests",
+  "/admin/chores",
+  "/admin/display/builder",
+  "/admin/display/devices",
+  "/admin/display/layouts",
+  "/admin/display/reference",
+  "/admin/display/setup",
+  "/admin/display/templates",
+  "/admin/email-messages",
+  "/admin/google/setup",
+  "/admin/image-manager",
+  "/admin/induction/settings",
+  "/admin/lockers",
+  "/admin/member-fields",
+  "/admin/membership-types",
+  "/admin/mountain-conditions",
+  "/admin/notices/new",
+  "/admin/notification-recipients",
+  "/admin/notification-rules",
+  "/admin/page-content",
+  "/admin/rooms-beds",
+  "/admin/seasons",
+  "/admin/setup/finance",
+  "/admin/setup/foundations",
+  "/admin/site-banners",
+  "/admin/site-content",
+  "/admin/site-style",
+  "/admin/stripe/setup",
+  "/admin/subscription-lockout",
+  "/admin/video-meetings/setup",
+  "/admin/xero/setup",
+];
+
+describe("getAdminFeatureSearchIndex — every admin page, from disk", () => {
+  it("offers a Full Admin exactly the destination pages on disk", () => {
+    const indexed = indexedPagePaths(fullAdminIndex());
+    expect(DISK_DESTINATIONS.length).toBeGreaterThan(80);
+    expect([...indexed].sort()).toEqual([...new Set(DISK_DESTINATIONS)].sort());
   });
 
-  it("labels a de-duplicated page by its natural section, not Needs Attention", () => {
-    const index = getAdminFeatureSearchIndex(CLUB_DAY, allOn, fullMatrix, true);
-    const bookingRequests = index.find(
-      (entry) => entry.href === "/admin/booking-requests",
+  it("never offers a detail, print, stub or test page, even to a Full Admin", () => {
+    const indexed = indexedPagePaths(fullAdminIndex());
+    const offered = DISK_NON_DESTINATIONS.filter(({ path: pagePath }) =>
+      indexed.has(canonicalAdminPathname(pagePath)),
     );
-
-    expect(bookingRequests?.section).toBe("Bookings & Beds");
+    expect(DISK_NON_DESTINATIONS.length).toBeGreaterThanOrEqual(17);
+    expect(offered).toEqual([]);
+    for (const page of ADMIN_PAGES.filter((candidate) => candidate.kind !== "page")) {
+      expect(indexed.has(page.oldPath), page.id).toBe(false);
+    }
   });
 
-  it("indexes Lobby Display once under Lodge Operations", () => {
-    const lobbyDisplayEntries = getAdminFeatureSearchIndex(
-      CLUB_DAY,
-      allOn,
-      fullMatrix,
-      true,
-    ).filter((entry) => entry.href === "/admin/display");
-
-    expect(lobbyDisplayEntries).toEqual([
-      expect.objectContaining({
-        label: "Lobby Display",
-        section: "Lodge Operations",
-      }),
-    ]);
+  it("never offers a retired page's old URL", () => {
+    const offered = hrefs(fullAdminIndex());
+    expect(ADMIN_RETIRED_PAGES.length).toBeGreaterThan(0);
+    for (const retired of ADMIN_RETIRED_PAGES) {
+      expect(offered.has(retired.oldPath), retired.oldPath).toBe(false);
+    }
   });
 
-  it("carries the hut-leader relabel through from getVisibleAdminNavSections", () => {
-    const index = getAdminFeatureSearchIndex(
-      CLUB_DAY,
-      allOn,
-      fullMatrix,
-      true,
-      "Warden",
-    );
-    const hutLeaders = index.find(
-      (entry) => entry.href === "/admin/hut-leaders",
-    );
-
-    expect(hutLeaders?.label).toBe("Wardens");
+  it("offers each page the sidebar does not link", () => {
+    const indexed = indexedPagePaths(fullAdminIndex());
+    expect(NEWLY_INDEXED.filter((pagePath) => !indexed.has(pagePath))).toEqual([]);
   });
 
-  it("does not double the s on a label the club saved as a plural (#3976)", () => {
-    const index = getAdminFeatureSearchIndex(
-      CLUB_DAY,
-      allOn,
-      fullMatrix,
-      true,
-      "Hut Leaders",
-    );
-    const hutLeaders = index.find(
-      (entry) => entry.href === "/admin/hut-leaders",
-    );
-
-    expect(hutLeaders?.label).toBe("Hut Leaders");
+  it("indexes each page once, at its adminHref, under its hub", () => {
+    const index = fullAdminIndex();
+    const all = index.map((entry) => entry.href);
+    expect(new Set(all).size).toBe(all.length);
+    const hubLabel = new Map<string, string>(ADMIN_HUBS.map((hub) => [hub.key, hub.label]));
+    for (const { page, href } of ADMIN_MENU_DESTINATIONS) {
+      const entry = index.find((candidate) => candidate.href === href);
+      expect(entry, page.id).toBeDefined();
+      expect(entry!.section).toBe(hubLabel.get(page.hub));
+      if (page.id !== "hut-leaders") expect(entry!.label).toBe(page.label);
+    }
+    expect(index.find((entry) => entry.href === adminHref("payments"))).toMatchObject({
+      label: "Payments",
+      section: "Finance",
+    });
+    expect(index.find((entry) => entry.href === adminHref("chores"))).toMatchObject({
+      label: "Chores",
+      section: "Lodge",
+    });
   });
 
-  it("carries optional keywords through to the index entry", () => {
-    const index = getAdminFeatureSearchIndex(CLUB_DAY, allOn, fullMatrix, true);
-    const xero = index.find((entry) => entry.href === "/admin/xero");
-
-    expect(xero?.keywords).toContain("accounting");
+  it("groups by hub, in menu order", () => {
+    expect(ADMIN_FEATURE_SEARCH_GROUP_ORDER).toEqual(ADMIN_HUBS.map((hub) => hub.label));
+    const sections = new Set(fullAdminIndex().map((entry) => entry.section));
+    expect([...sections].every((section) => ADMIN_FEATURE_SEARCH_GROUP_ORDER.includes(section))).toBe(true);
   });
 
-  /*
-    A card that lives INSIDE a hub page has to be findable through that hub's href.
+  it("keeps the queue views, dated by the club's day, under Bookings", () => {
+    const index = fullAdminIndex();
+    expect(index.find((entry) => entry.href === buildUnpaidFinishedStaysHref(CLUB_DAY))).toMatchObject({
+      label: "Unpaid Finished Stays",
+      section: "Bookings",
+    });
+    expect(index.find((entry) => entry.href === buildUnsettledAdditionalStaysHref())).toMatchObject({
+      label: "Unpaid Stay Additions",
+      section: "Bookings",
+    });
+  });
 
-    The index is built from hrefs, so a surface with no href of its own cannot
-    appear in it — and #2573 deliberately gave Google Analytics no route, putting
-    its configuration in a dialog on the Integrations hub instead (owner
-    clarification 4). The hub therefore carries the search terms, which is the house
-    convention: Backups carries "s3"/"pg_dump", the AI help assistant carries
-    "anthropic"/"spend cap".
-
-    Worth pinning rather than trusting: "analytics" alone is ambiguous in this tree —
-    `/admin/reports` already claims it for Financial Reports — so before this the
-    palette answered the obvious search with the wrong screen, and answered "google
-    analytics" and "ga4" with nothing.
-  */
-  it("finds Google Analytics through the Integrations hub it lives on", () => {
-    const index = getAdminFeatureSearchIndex(CLUB_DAY, allOn, fullMatrix, true);
-    const integrations = index.find(
-      (entry) => entry.href === "/admin/integrations",
-    );
-
-    expect(integrations?.keywords).toEqual(
-      expect.arrayContaining(["google analytics", "analytics", "ga4"]),
-    );
-    // The pre-existing terms stay: this widened the entry, it did not replace it.
-    expect(integrations?.keywords).toEqual(
-      expect.arrayContaining(["api", "connections", "third-party", "webhooks"]),
-    );
+  it("carries the hut-leader relabel, without doubling a saved plural (#3976)", () => {
+    const label = (term: string) =>
+      getAdminFeatureSearchIndex(CLUB_DAY, allOn, fullMatrix, true, term).find(
+        (entry) => entry.href === adminHref("hut-leaders"),
+      )?.label;
+    expect(label("Warden")).toBe("Wardens");
+    expect(label("Hut Leaders")).toBe("Hut Leaders");
   });
 });
 
-describe("getAdminFeatureSearchIndex — permission filtering (the invariant)", () => {
-  it("matches getVisibleAdminNavSections for a limited (bookings-only) matrix", () => {
-    const limited = matrix({ bookings: "view" });
-    const index = getAdminFeatureSearchIndex(CLUB_DAY, allOn, limited, false);
-    const hrefs = new Set(index.map((entry) => entry.href));
+describe("getAdminFeatureSearchIndex — keywords", () => {
+  const keywordsOf = (href: string) =>
+    fullAdminIndex().find((entry) => entry.href === href)?.keywords ?? [];
 
-    expect(hrefs).toEqual(visibleHrefs(allOn, limited, false));
-    // Bookings pages are in; other areas are out.
-    expect(hrefs.has("/admin/bookings")).toBe(true);
-    expect(hrefs.has("/admin/members")).toBe(false);
-    // fullAdminOnly export/import never leaks to a non-full-admin.
-    expect(hrefs.has("/admin/config-transfer")).toBe(false);
+  it("carries the registry keywords the sidebar used to hold", () => {
+    expect(keywordsOf(adminHref("xero"))).toContain("accounting");
+    expect(keywordsOf(adminHref("club-time"))).toEqual(
+      expect.arrayContaining(["timezone", "daylight saving", "iana"]),
+    );
   });
 
-  it("hides fullAdminOnly pages from a non-full-admin even with support edit (no matrix leak)", () => {
-    const supportEditor = matrix({ support: "edit" });
-
-    const asNonFullAdmin = new Set(
-      getAdminFeatureSearchIndex(CLUB_DAY, allOn, supportEditor, false).map(
-        (entry) => entry.href,
-      ),
+  /*
+    Google Analytics has no page of its own: #2573 put its configuration in a
+    dialog on Integrations, so the page carries its words. "analytics" alone is
+    also Reports' keyword, which is why the specific terms matter.
+  */
+  it("finds Google Analytics through the Integrations page it lives on", () => {
+    expect(keywordsOf(adminHref("integrations"))).toEqual(
+      expect.arrayContaining(["google analytics", "analytics", "ga4", "api", "webhooks"]),
     );
-    const asFullAdmin = new Set(
-      getAdminFeatureSearchIndex(CLUB_DAY, allOn, supportEditor, true).map(
-        (entry) => entry.href,
-      ),
-    );
-
-    // The support matrix alone would satisfy the /admin/config-transfer prefix
-    // requirement; fullAdminOnly must still gate it. This is the exact leak the
-    // invariant warns about.
-    expect(asNonFullAdmin.has("/admin/config-transfer")).toBe(false);
-    expect(asNonFullAdmin.has("/admin/access-roles")).toBe(false);
-    // A full admin with the same matrix sees them.
-    expect(asFullAdmin.has("/admin/config-transfer")).toBe(true);
-    expect(asFullAdmin.has("/admin/access-roles")).toBe(true);
   });
 
-  it("honours the orAccess predicate for /admin/fees (finance-only view reaches it)", () => {
-    const financeOnly = matrix({ finance: "view" });
-    const index = getAdminFeatureSearchIndex(CLUB_DAY, allOn, financeOnly, false);
-    const hrefs = new Set(index.map((entry) => entry.href));
-
-    // /admin/fees resolves to the bookings prefix, but its orAccess admits a
-    // finance-only viewer — the palette must match that OR rule, not the prefix.
-    expect(hrefs.has("/admin/fees")).toBe(true);
-    expect(hrefs).toEqual(visibleHrefs(allOn, financeOnly, false));
-
-    // Neither bookings nor finance → no Fees entry.
-    const membershipOnly = matrix({ membership: "view" });
-    const membershipHrefs = new Set(
-      getAdminFeatureSearchIndex(CLUB_DAY, allOn, membershipOnly, false).map(
-        (entry) => entry.href,
-      ),
-    );
-    expect(membershipHrefs.has("/admin/fees")).toBe(false);
+  it("keeps S1's Family Suggestions keyword on Family Groups, once", () => {
+    const words = keywordsOf(adminHref("family-groups")).map((word) => word.toLowerCase());
+    expect(words).toContain("family suggestions");
+    expect(words.filter((word) => word === "family suggestions")).toHaveLength(1);
   });
 
-  it("fails closed: an undefined permission matrix yields an EMPTY index (deny by default)", () => {
-    // Defence in depth (#2092): getVisibleAdminNavSections fails OPEN on a
-    // missing matrix (its pre-existing, shared contract), but the palette index
-    // must NOT — a missing matrix returns nothing rather than every page.
+  it("finds a merged page by its retired name", () => {
+    for (const retired of ADMIN_RETIRED_PAGES) {
+      const destination = ADMIN_MENU_DESTINATIONS.find(
+        ({ page }) => page.id === retired.mergedInto,
+      );
+      expect(
+        keywordsOf(destination!.href).map((word) => word.toLowerCase()),
+        retired.oldPath,
+      ).toContain(retired.label.toLowerCase());
+    }
+  });
+});
+
+// --- the property: it fails closed -------------------------------------------
+
+interface Subject {
+  readonly label: string;
+  readonly input: PrivilegeCheckInput;
+}
+
+/** The sixteen sweep grids, every enum role and every seeded role definition. */
+const SUBJECTS: Subject[] = [
+  ...SWEEP_GRIDS.map((grid) => ({ label: grid.label, input: grid.member as PrivilegeCheckInput })),
+  ...Object.values(AccessRole).map((role) => ({
+    label: `enum ${role}`,
+    input: { canLogin: true, accessRoles: [role] },
+  })),
+  ...DEFAULT_ACCESS_ROLE_DEFINITIONS.map((definition) => ({
+    label: `seeded definition ${definition.key}`,
+    input: {
+      canLogin: true,
+      accessRoles: [
+        {
+          role: definition.systemRole,
+          roleDefinitionId: definition.id,
+          roleDefinition: definition,
+        },
+      ],
+    } as PrivilegeCheckInput,
+  })),
+];
+
+/** Every module on, every module off, and each module off on its own. */
+const FEATURE_SETS: Array<{ label: string; features: FeatureFlags }> = [
+  { label: "all on", features: allOn },
+  { label: "all off", features: allOff },
+  ...MODULE_KEYS.map((key) => ({
+    label: `${key} off`,
+    features: { ...allOn, [key]: false } as FeatureFlags,
+  })),
+];
+
+const pathnameOf = (href: string) => href.split(/[?#]/)[0]!;
+
+describe("getAdminFeatureSearchIndex — it never offers a page that will not open", () => {
+  it("covers every grid, enum role and seeded role", () => {
+    expect(SUBJECTS.length).toBe(
+      16 + Object.values(AccessRole).length + DEFAULT_ACCESS_ROLE_DEFINITIONS.length,
+    );
+    expect(DEFAULT_ACCESS_ROLE_DEFINITIONS.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it("offers exactly the pages each subject may open, under every module setting", () => {
+    const pageByHref = new Map(ADMIN_MENU_DESTINATIONS.map(({ page, href }) => [href, page]));
+    const failures: string[] = [];
+    for (const subject of SUBJECTS) {
+      const permissionMatrix = getAdminPermissionMatrix(subject.input);
+      const fullAdmin = isFullAdmin(subject.input);
+      for (const { label, features } of FEATURE_SETS) {
+        const index = getAdminFeatureSearchIndex(CLUB_DAY, features, permissionMatrix, fullAdmin);
+        const offered = hrefs(index);
+        const who = `${subject.label}, ${label}`;
+        for (const href of offered) {
+          const page = pageByHref.get(href);
+          if (!canOpenAdminPath(subject.input, href)) failures.push(`${who}: ${href} refused`);
+          if (getDisabledFeatureForPath(pathnameOf(href), features) !== null) {
+            failures.push(`${who}: ${href} module off`);
+          }
+          if (page && page.flags.some((flag) => features[flag] !== true)) {
+            failures.push(`${who}: ${href} needs ${page.flags.join("+")}`);
+          }
+          if (page?.fullAdminOnly && !fullAdmin) failures.push(`${who}: ${href} is Full Admin only`);
+          if (!page && !QUEUE_VIEW_HREFS.has(href)) failures.push(`${who}: ${href} is not a destination`);
+        }
+        // Nothing the subject may open is withheld (the census half, per subject).
+        for (const { page, href } of ADMIN_MENU_DESTINATIONS) {
+          const opens =
+            canOpenAdminPath(subject.input, href) &&
+            getDisabledFeatureForPath(href, features) === null &&
+            (!page.fullAdminOnly || fullAdmin);
+          if (opens && !offered.has(href)) failures.push(`${who}: ${href} withheld`);
+        }
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it("fails closed: no permission matrix yields an EMPTY index", () => {
     expect(getAdminFeatureSearchIndex(CLUB_DAY, allOn, undefined, true)).toEqual([]);
     expect(getAdminFeatureSearchIndex(CLUB_DAY, allOn, undefined, false)).toEqual([]);
-    // The sidebar seam still fails open, so this is genuinely palette-scoped.
+  });
+
+  it("offers a plain member's empty matrix nothing", () => {
+    expect(getAdminFeatureSearchIndex(CLUB_DAY, allOn, matrix({}), false)).toEqual([]);
+  });
+
+  it("hides every Full Admin page from support:edit without Full Admin", () => {
+    const supportEditor = matrix({ support: "edit" });
+    const asOfficer = hrefs(getAdminFeatureSearchIndex(CLUB_DAY, allOn, supportEditor, false));
+    const asFullAdmin = hrefs(getAdminFeatureSearchIndex(CLUB_DAY, allOn, supportEditor, true));
+    const fullAdminOnly = ADMIN_MENU_DESTINATIONS.filter(({ page }) => page.fullAdminOnly);
+    expect(fullAdminOnly.map(({ page }) => page.id).sort()).toEqual([
+      "access-roles",
+      "club-time",
+      "config-transfer",
+      "environment",
+    ]);
+    for (const { href } of fullAdminOnly) {
+      expect(asOfficer.has(href), href).toBe(false);
+      expect(asFullAdmin.has(href), href).toBe(true);
+    }
+  });
+
+  it("follows the OR admissions: the fee console and Rooms & Beds", () => {
+    const offered = (over: Parameters<typeof matrix>[0]) =>
+      hrefs(getAdminFeatureSearchIndex(CLUB_DAY, allOn, matrix(over), false));
+    expect(offered({ finance: "view" }).has(adminHref("fees"))).toBe(true);
+    expect(offered({ membership: "view" }).has(adminHref("fees"))).toBe(false);
+    expect(offered({ bookings: "view" }).has(adminHref("rooms-beds"))).toBe(true);
+    expect(offered({ lodge: "view" }).has(adminHref("rooms-beds"))).toBe(true);
+    expect(offered({ finance: "view" }).has(adminHref("rooms-beds"))).toBe(false);
+  });
+
+  it("offers any admin the any-admin pages, and no one else", () => {
     expect(
-      getVisibleAdminNavSections(CLUB_DAY, allOn, undefined, true).length,
-    ).toBeGreaterThan(0);
+      hrefs(getAdminFeatureSearchIndex(CLUB_DAY, allOn, matrix({ content: "view" }), false)).has(
+        adminHref("club-format"),
+      ),
+    ).toBe(true);
   });
 
-  it("respects module-flag visibility (a disabled module drops its pages)", () => {
-    const xeroOff = { ...allOn, xeroIntegration: false } as FeatureFlags;
-    const index = getAdminFeatureSearchIndex(CLUB_DAY, xeroOff, fullMatrix, true);
-    const hrefs = new Set(index.map((entry) => entry.href));
+  it("drops a disabled module's pages and keeps its setup wizard (#2249)", () => {
+    const off = hrefs(fullAdminIndex({ ...allOn, lobbyDisplay: false } as FeatureFlags));
+    expect(off.has(adminHref("display"))).toBe(false);
+    expect(off.has(adminHref("display-templates"))).toBe(false);
+    expect(off.has(adminHref("display-setup"))).toBe(true);
 
-    expect(hrefs.has("/admin/xero")).toBe(false);
-    expect(hrefs).toEqual(visibleHrefs(xeroOff, fullMatrix, true));
+    const xeroOff = hrefs(fullAdminIndex({ ...allOn, xeroIntegration: false } as FeatureFlags));
+    expect(xeroOff.has(adminHref("xero"))).toBe(false);
+    expect(xeroOff.has(adminHref("xero-setup"))).toBe(false);
+    expect(xeroOff.has(adminHref("internet-banking"))).toBe(false);
+
+    const diagnosticsOff = hrefs(fullAdminIndex({ ...allOn, aiDiagnostics: false } as FeatureFlags));
+    expect(diagnosticsOff.has(adminHref("ai-diagnostics"))).toBe(false);
+    expect(diagnosticsOff.has(adminHref("ai-assistant"))).toBe(true);
   });
+});
 
-  it("indexes AI Diagnostics when its module is on, and drops it when off (#2378)", () => {
-    // The nav entry carries no explicit flag of its own — visibility is derived
-    // from the href against FEATURE_ROUTE_RULES, where #2378 registered
-    // "/admin/ai-diagnostics" under the `aiDiagnostics` rule. This asserts that
-    // derivation actually reaches the palette, because the sidebar comment claims
-    // it does and a claim about a mechanism two modules away is exactly the kind
-    // that quietly stops being true.
-    const on = getAdminFeatureSearchIndex(CLUB_DAY, allOn, fullMatrix, true);
-    expect(new Set(on.map((entry) => entry.href))).toContain(
-      "/admin/ai-diagnostics",
-    );
-
-    const diagnosticsOff = { ...allOn, aiDiagnostics: false } as FeatureFlags;
-    const off = getAdminFeatureSearchIndex(CLUB_DAY, diagnosticsOff, fullMatrix, true);
-    const hrefs = new Set(off.map((entry) => entry.href));
-
-    // Off means GONE from discovery, matching the 404 the route itself returns —
-    // a palette entry that navigates to a 404 is worse than no entry.
-    expect(hrefs.has("/admin/ai-diagnostics")).toBe(false);
-    expect(hrefs).toEqual(visibleHrefs(diagnosticsOff, fullMatrix, true));
-    // The help ASSISTANT is a different product on a different flag and must not
-    // disappear with it.
-    expect(hrefs.has("/admin/ai-assistant")).toBe(true);
-  });
-
-  it("drops Lobby Display when its module is disabled", () => {
-    const lobbyDisplayOff = {
-      ...allOn,
-      lobbyDisplay: false,
-    } as FeatureFlags;
-    const index = getAdminFeatureSearchIndex(
-      CLUB_DAY,
-      lobbyDisplayOff,
-      fullMatrix,
-      true,
-    );
-
-    expect(index.some((entry) => entry.href === "/admin/display")).toBe(false);
+describe("the census reads the tree it claims to", () => {
+  it("classifies display/preview as a page that needs its query", () => {
+    const file = adminPageFiles.find((candidate) => toRawPathname(candidate) === "/admin/display/preview");
+    expect(file).toBeDefined();
+    expect(fs.readFileSync(file!, "utf8")).toMatch(/No template to preview/);
+    expect(path.basename(file!)).toBe("page.tsx");
   });
 });

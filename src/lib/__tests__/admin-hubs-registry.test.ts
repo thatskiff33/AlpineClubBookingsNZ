@@ -669,6 +669,26 @@ describe("which pages are menu and palette destinations", () => {
     return /\b(?:permanentRedirect|redirect)\(/.test(source) && !/\breturn\b/.test(source);
   }
 
+  /**
+   * Static pages that name their record in the QUERY and cannot open without
+   * it, so they are details although no `[param]` says so (S2 #4797). Each is
+   * reviewed: the page must show only an error when opened bare, because the
+   * command palette would otherwise offer a link that errors.
+   */
+  const QUERY_DETAIL_PAGES: Readonly<Record<string, string>> = {
+    "display-preview": "needs ?templateId= and ?previewLodge=; says so and stops without them",
+  };
+
+  it("finds each query-named detail page reading its query", () => {
+    for (const id of Object.keys(QUERY_DETAIL_PAGES)) {
+      const page = ADMIN_PAGES.find((candidate) => candidate.id === id);
+      expect(page, id).toBeDefined();
+      const file = PAGE_FILE_BY_PATH.get(diskPath(page!));
+      const source = stripComments(fs.readFileSync(path.join(process.cwd(), file!), "utf8"));
+      expect(source, id).toMatch(/location\.search|useSearchParams|searchParams/);
+    }
+  });
+
   it("classifies every page from its path and its file", () => {
     const drift = ADMIN_PAGES.flatMap((page) => {
       const expected = page.oldPath.startsWith("/admin/testing/")
@@ -677,7 +697,7 @@ describe("which pages are menu and palette destinations", () => {
           ? "stub"
           : page.oldPath.endsWith("/print")
             ? "print"
-            : /\[[^\]/]+\]/.test(page.oldPath)
+            : /\[[^\]/]+\]/.test(page.oldPath) || page.id in QUERY_DETAIL_PAGES
               ? "detail"
               : "page";
       return expected === page.kind ? [] : [`${page.id}: registry ${page.kind}, expected ${expected}`];
@@ -700,7 +720,7 @@ describe("which pages are menu and palette destinations", () => {
     expect(
       ADMIN_PAGES.filter((page) => page.kind === "test").map((page) => page.id),
     ).toEqual(["testing-route-error"]);
-    expect(ADMIN_PAGES.filter((page) => !isAdminMenuDestination(page))).toHaveLength(16);
+    expect(ADMIN_PAGES.filter((page) => !isAdminMenuDestination(page))).toHaveLength(17);
   });
 });
 
@@ -908,6 +928,7 @@ describe("retired pages", () => {
       flags: [],
       kind: "detail",
       fullAdminOnly: false,
+      keywords: [],
       tabs: [],
       anchors: [],
       moved: true,
@@ -1230,6 +1251,7 @@ describe("buildAdminUrlRules", () => {
     flags: [],
     kind: "detail",
     fullAdminOnly: false,
+    keywords: [],
     tabs: [],
     anchors: [],
     moved: true,
@@ -1364,7 +1386,8 @@ describe("the registry is inert", () => {
     "src/lib/__tests__/coverage-matrix-areas.test.ts":
       "takes COVERAGE_MATRIX.md's areas from the registry's old paths",
     "next.config.ts": "C3: the redirects and beforeFiles rewrites are generated",
-    "src/components/admin-sidebar.tsx": "C3: the active link is the registry's activeAdminHref",
+    "src/components/admin-sidebar.tsx":
+      "C3: the active link is the registry's activeAdminHref; S2: the palette index is ADMIN_MENU_DESTINATIONS",
     "src/lib/admin-page-revalidation.ts": "C3: revalidateAdminPage revalidates a page's file path",
     "src/components/help-widget/help-widget-admin.tsx":
       "C3: admin help reads the pathname through canonicalAdminPathname",
@@ -1393,6 +1416,10 @@ describe("the registry is inert", () => {
     "src/components/admin/membership-cancellation-blocker-notice.tsx":
       "S1: the settings link is the queue's Settings tab",
     "src/lib/setup-readiness.ts": "S1: the cancellation step links the Settings tab",
+    "src/lib/__tests__/admin-feature-search-index.test.ts":
+      "S2: the palette census and its fail-closed property over every grid and seeded role",
+    "src/lib/__tests__/admin-palette-lodge-scoped-pages.test.tsx":
+      "S2: the lodge-scoped pages open from their palette href",
     "src/lib/__tests__/next-config-admin-hub-urls.test.ts":
       "S1: walks each retired page's redirect through the real config",
   };

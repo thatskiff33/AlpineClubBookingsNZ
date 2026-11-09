@@ -49,13 +49,8 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushMock }),
 }));
 
-import {
-  AdminSidebar,
-  ADMIN_NAV_SECTION_ORDER,
-  getVisibleAdminNavSections,
-} from "@/components/admin-sidebar";
+import { AdminSidebar } from "@/components/admin-sidebar";
 import { AdminCommandPalette } from "@/components/admin-command-palette";
-import { requireCalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /** Behind Greenwich, and NOT what `APP_TIME_ZONE` resolves to under test. */
@@ -240,9 +235,9 @@ describe("the sidebar and the command palette come from ONE definition", () => {
 
   it("navigates the palette to the very href the sidebar link carries", async () => {
     /*
-      THE REGRESSION THIS FILE EXISTS FOR. `getAdminFeatureSearchIndex` derives
-      the palette's entries from `buildAdminNavSections`, the same builder the
-      sidebar renders — so a partial migration that dated one surface and not the
+      THE REGRESSION THIS FILE EXISTS FOR. `getAdminFeatureSearchIndex` takes
+      the queue views from `buildAdminQueueViews`, the same builder the sidebar
+      renders them from — so a partial migration that dated one surface and not the
       other would show a link and a search result pointing at two different
       queues. Both are rendered here under ONE provider and compared to EACH
       OTHER rather than to a literal, so this fails on any divergence and not
@@ -281,26 +276,6 @@ describe("the sidebar and the command palette come from ONE definition", () => {
   });
 });
 
-describe("the nav section order is day-independent, as its probe day claims", () => {
-  it("is the same list whichever day the builder is given", () => {
-    /*
-      `ADMIN_NAV_SECTION_ORDER` is built by calling `buildAdminNavSections` with
-      a fixed probe day, on the stated ground that the club's day changes one
-      href and never a LABEL. That is a claim about the nav table, and a future
-      section keyed off a date would silently falsify it. Re-derive the order
-      from real builder calls under two different days and compare.
-    */
-    const labelsOn = (day: string) =>
-      getVisibleAdminNavSections(requireCalendarDate(day), allOn).map(
-        (section) => section.label,
-      );
-
-    expect(labelsOn(DAY_BEHIND)).toEqual(labelsOn(DAY_AHEAD));
-    expect(ADMIN_NAV_SECTION_ORDER).toEqual([...new Set(labelsOn(DAY_AHEAD))]);
-    expect(ADMIN_NAV_SECTION_ORDER.length).toBeGreaterThan(5);
-  });
-});
-
 describe("the module holds no import-time day, and no environment-zone helper", () => {
   const SOURCE = readFileSync(
     path.join(__dirname, "..", "admin-sidebar.tsx"),
@@ -326,7 +301,7 @@ describe("the module holds no import-time day, and no environment-zone helper", 
     );
     // And the one place that builds it takes the day as a parameter.
     expect(SOURCE).toContain(
-      "const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] =>",
+      "const buildAdminQueueViews = (clubToday: CalendarDate) =>",
     );
   });
 });
