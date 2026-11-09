@@ -1162,8 +1162,10 @@ narrow them:
   yet paid, and each late card charge waiting for the treasurer's decision.
   It drops when you mark a task paid back (or dismiss it), when Stripe pays
   the refund, or when the treasurer keeps or refunds the late charge. A card
-  refund Stripe gave up on stays in it until you close it as **Paid another
-  way** on [Stuck States](stuck-states.md#close-a-card-refund-stripe-gave-up-on).
+  refund Stripe gave up on stays in it until you settle it on
+  [Stuck States](stuck-states.md#close-a-card-refund-stripe-gave-up-on): closed
+  as **Paid another way** or **Nothing left owed**, or paid by Stripe after
+  **Try the card again** (#4368).
   It also holds one club-wide amount that belongs to no booking: what the
   card refunds of group cancellations from before #3653 still have to send
   (owner decision on #3372, 8 Oct 2026).
