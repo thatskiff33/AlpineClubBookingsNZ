@@ -7,7 +7,7 @@ import {
   type PrivilegeCheckInput,
   type AppAccessRole,
 } from "@/lib/access-roles";
-import { adminHref } from "@/lib/admin-hubs";
+import { adminHref, isInexactAdminPagePath } from "@/lib/admin-hubs";
 import {
   ADMIN_PAGE_ADMISSION_PATHS,
   ADMIN_PAGE_ROUTE_AREAS,
@@ -773,6 +773,8 @@ export function canOpenAdminPathWithMatrix(
   matrix: AdminPermissionMatrix,
   pathname: string,
 ) {
+  // Fail closed on a page reached only through letter case or a percent-escape.
+  if (isInexactAdminPagePath(pathname)) return false;
   if (isAnyAdminAdmissionPath(pathname)) {
     return hasAnyAdminAreaFromMatrix(matrix);
   }

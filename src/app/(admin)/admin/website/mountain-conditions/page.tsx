@@ -7,13 +7,13 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { MountainConditionsPanel } from "./_components/mountain-conditions-panel";
-import { adminHref } from "@/lib/admin-hubs";
+import { adminLink } from "@/lib/admin-hubs";
 
 export default function MountainConditionsAdminPage() {
   return (
     <div className="space-y-6">
       <div>
-        <BackLink href={adminHref("appearance")} label="Site Appearance & Content" />
+        <BackLink {...adminLink("appearance")} />
         <h1 className="mt-2 text-2xl font-bold text-foreground">
           Mountain Conditions
         </h1>

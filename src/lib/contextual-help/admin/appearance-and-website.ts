@@ -7,16 +7,17 @@
  * is the hub the sidebar links, and every page here is one of its cards. Kept
  * separate because the settings section would otherwise be half the corpus.
  *
- * The keys stay the pages' OLD paths now that the pages live under
- * `/admin/website` (C4 #4801), and must not become `adminHref`: the admin help
- * widget looks a page up by `canonicalAdminPathname`, which reads a moved page's
- * hub URL as its old path, in either switch state.
+ * The keys are the pages' registry OLD paths, also now that the pages live under
+ * `/admin/website` (C4 #4801), and never `adminHref`: the admin help widget looks
+ * a page up by `canonicalAdminPathname`, which reads a moved page's hub URL as its
+ * old path, in either switch state.
  */
+import { getAdminPage } from "@/lib/admin-hubs";
 import { entry, help, type HelpEntry } from "../types";
 
 export const adminAppearanceAndWebsiteHelpEntries: HelpEntry[] = [
   entry(
-    "/admin/appearance",
+    getAdminPage("appearance").oldPath,
     help(
       "Site Appearance & Content",
       "Site Appearance & Content groups public-facing style, content, banner, media, and mountain-condition setup.",
@@ -45,7 +46,7 @@ export const adminAppearanceAndWebsiteHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/site-style",
+    getAdminPage("site-style").oldPath,
     help(
       "Site Style",
       "Site Style controls the public website theme, colours, fonts, logo, and page-level style rules.",
@@ -74,7 +75,7 @@ export const adminAppearanceAndWebsiteHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/page-content",
+    getAdminPage("page-content").oldPath,
     help(
       "Page Content",
       "Page Content creates and edits routable public website pages and their menu settings.",
@@ -106,7 +107,7 @@ export const adminAppearanceAndWebsiteHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/site-banners",
+    getAdminPage("site-banners").oldPath,
     help(
       "Site Banners",
       "Site Banners publishes plain-text public notices above the website and member headers for a date window.",
@@ -135,7 +136,7 @@ export const adminAppearanceAndWebsiteHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/site-content",
+    getAdminPage("site-content").oldPath,
     help(
       "Site Content",
       "Site Content edits shared public website chrome that is not a standalone page, such as footer columns.",
@@ -164,7 +165,7 @@ export const adminAppearanceAndWebsiteHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/mountain-conditions",
+    getAdminPage("mountain-conditions").oldPath,
     help(
       "Mountain Conditions",
       "Mountain Conditions manages public or operational condition information for ski field and lodge visitors.",
@@ -188,7 +189,7 @@ export const adminAppearanceAndWebsiteHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/image-manager",
+    getAdminPage("image-manager").oldPath,
     help(
       "Image Manager",
       "Image Manager uploads and organises filesystem-backed public images used by public website content.",

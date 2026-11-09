@@ -12,13 +12,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { adminHref } from "@/lib/admin-hubs";
+import { adminLink } from "@/lib/admin-hubs";
 
 export default function ClubIdentityAdminPage() {
   return (
     <div className="space-y-6">
       <div>
-        <BackLink href={adminHref("appearance")} label="Site Appearance & Content" />
+        <BackLink {...adminLink("appearance")} />
         <h1 className="mt-2 text-2xl font-bold text-foreground">
           Club Identity
         </h1>

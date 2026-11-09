@@ -10,8 +10,9 @@ import {
   isRewrite,
 } from "next/experimental/testing/server";
 import { prepareDestination } from "next/dist/shared/lib/router/utils/prepare-destination";
+import { getPathMatch } from "next/dist/shared/lib/router/utils/path-match";
 import { ASSET_NOT_FOUND_PATH, ASSET_NOT_FOUND_REWRITES } from "@/lib/asset-url-404";
-import { ADMIN_PAGES, ADMIN_RETIRED_PAGES } from "@/lib/admin-hubs";
+import { ADMIN_PAGES, ADMIN_RETIRED_PAGES, isInexactAdminPagePath } from "@/lib/admin-hubs";
 
 // ---------------------------------------------------------------------------
 // `next.config.ts` and the admin hub URLs (epic #4468, C3 #4800).
@@ -136,6 +137,38 @@ describe("next.config.ts today: the Website hub has moved", () => {
       });
     },
   );
+
+  it("off: the server matches a moved page's rewrite in any letter case, which is why the proxy refuses those spellings", async () => {
+    // The server compiles each `beforeFiles` rewrite with `getPathMatch` and no
+    // `sensitive` option (`buildCustomRoute('before_files_rewrite', item)` in
+    // `next/dist/server/lib/router-utils/filesystem.js`), which path-to-regexp
+    // reads as case-insensitive. (The testing util above matches its regex
+    // without that flag, so it cannot show this.) The same call, on the real
+    // rules: a respelled old URL reaches the moved file while the proxy and the
+    // guards read the path as written. `admin-page-exact-path-proxy.test.ts`
+    // proves the proxy answers it with a 404 first; here, the premise.
+    const rules = ((await (await loadConfig()).rewrites()) as {
+      beforeFiles: { source: string; destination: string }[];
+    }).beforeFiles;
+    const serverMatch = (url: string) =>
+      rules.find(({ source }) =>
+        getPathMatch(source, { strict: true, removeUnnamedParams: true })(url),
+      )?.destination;
+    for (const [url, destination] of [
+      ["/admin/Site-Style", "/admin/website/site-style"],
+      ["/ADMIN/PAGE-CONTENT", "/admin/website/page-content"],
+      ["/admin/Appearance/Identity", "/admin/website/appearance/identity"],
+    ] as const) {
+      expect(serverMatch(url), url).toBe(destination);
+      expect(isInexactAdminPagePath(url), url).toBe(true);
+    }
+    expect(serverMatch("/admin/site-style")).toBe("/admin/website/site-style");
+    expect(isInexactAdminPagePath("/admin/site-style")).toBe(false);
+    // An escaped spelling matches no rule (they match the raw path), but the
+    // server finds a page file by its decoded path too, so it is refused as well.
+    expect(serverMatch("/admin/site%2Dstyle")).toBeUndefined();
+    expect(isInexactAdminPagePath("/admin/site%2Dstyle")).toBe(true);
+  });
 
   it("off: leaves the old URL's own children and lookalikes to the filesystem", async () => {
     // Each rule matches its whole path, so a child the registry does not move
