@@ -299,7 +299,6 @@ export function getNetCollectedCashParts(
   // (`readRefundsAndCreditsOwed`).
   const tasks = openTaskOwedCents(
     booking.manualRefundTasks.filter((task) => !isGroupOrganiserHandBackTask(task)),
-    booking,
   );
   const handBackOwedCents = takeOff(tasks.handBackCents);
   const cardRefundOwedCents = takeOff(

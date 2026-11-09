@@ -1,4 +1,10 @@
+import { deletedBookingModificationRefundReason } from "@/lib/late-capture-reason-sentences";
 import { editRefundHandBackOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
+
+/** #4848: a hand-back's reason, which says nothing about a late capture. */
+const HAND_BACK_REASON = "Cancellation refund owed by hand (fixture)";
+/** #4848: the confirm route's REAL #2700 sentence, which names a legacy NULL-kind late capture. */
+const LEGACY_LATE_CAPTURE_REASON = deletedBookingModificationRefundReason("pi_fixture_legacy_late");
 
 /**
  * #3372, owner decision A: ONE fixture for the one Net Collected booking scope,
@@ -75,6 +81,8 @@ type FixtureRow = {
      * organiser's hand-back's (`INV-PAY-124`), which it leaves out.
      */
     occurrenceKey: string | null;
+    /** #4848: a NULL-kind row is a late capture only with a late-capture sentence (`isLateCaptureHandBackTask`). */
+    reason: string;
   }>;
 };
 
@@ -166,6 +174,7 @@ export const NET_COLLECTED_SCOPE_FIXTURE = {
         amountCents: 7_500,
         partPaymentReviewPaymentId: null,
         occurrenceKey: null,
+        reason: HAND_BACK_REASON,
       },
     ],
   },
@@ -198,6 +207,7 @@ export const NET_COLLECTED_SCOPE_FIXTURE = {
         amountCents: 5_000,
         partPaymentReviewPaymentId: null,
         occurrenceKey: editRefundHandBackOccurrenceKey("mod-live-edit-refund"),
+        reason: HAND_BACK_REASON,
       },
     ],
   },
@@ -239,13 +249,13 @@ export const NET_COLLECTED_SCOPE_PAYMENTS: ReadonlyArray<FixtureRow> = [
  */
 export const REFUNDS_AND_CREDITS_OWED_FIXTURE = {
   openTasks: [
-    { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: 7_500, partPaymentReviewPaymentId: null, occurrenceKey: null, refundOwed: true },
-    { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: 5_000, partPaymentReviewPaymentId: null, occurrenceKey: null, refundOwed: true },
-    { status: "OPEN", kind: null, amountCents: 1_000, partPaymentReviewPaymentId: null, occurrenceKey: null, refundOwed: true },
-    { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: null, partPaymentReviewPaymentId: "pay-review", occurrenceKey: null, refundOwed: false },
-    { status: "OPEN", kind: "EDIT_FINANCIAL_REVIEW", amountCents: null, partPaymentReviewPaymentId: null, occurrenceKey: null, refundOwed: false },
-    { status: "OPEN", kind: "EDIT_FINANCIAL_REVIEW", amountCents: 4_000, partPaymentReviewPaymentId: null, occurrenceKey: null, refundOwed: false },
-    { status: "OPEN", kind: "DELETED_BOOKING_LATE_CAPTURE", amountCents: 3_000, partPaymentReviewPaymentId: null, occurrenceKey: null, refundOwed: true },
+    { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: 7_500, partPaymentReviewPaymentId: null, occurrenceKey: null, reason: HAND_BACK_REASON, refundOwed: true },
+    { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: 5_000, partPaymentReviewPaymentId: null, occurrenceKey: null, reason: HAND_BACK_REASON, refundOwed: true },
+    { status: "OPEN", kind: null, amountCents: 1_000, partPaymentReviewPaymentId: null, occurrenceKey: null, reason: HAND_BACK_REASON, refundOwed: true },
+    { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: null, partPaymentReviewPaymentId: "pay-review", occurrenceKey: null, reason: HAND_BACK_REASON, refundOwed: false },
+    { status: "OPEN", kind: "EDIT_FINANCIAL_REVIEW", amountCents: null, partPaymentReviewPaymentId: null, occurrenceKey: null, reason: HAND_BACK_REASON, refundOwed: false },
+    { status: "OPEN", kind: "EDIT_FINANCIAL_REVIEW", amountCents: 4_000, partPaymentReviewPaymentId: null, occurrenceKey: null, reason: HAND_BACK_REASON, refundOwed: false },
+    { status: "OPEN", kind: "DELETED_BOOKING_LATE_CAPTURE", amountCents: 3_000, partPaymentReviewPaymentId: null, occurrenceKey: null, reason: HAND_BACK_REASON, refundOwed: true },
   ],
   creditEntries: [
     { memberId: "m-part-used", amountCents: 10_000 },
@@ -261,21 +271,23 @@ export const REFUNDS_AND_CREDITS_OWED_FIXTURE = {
 
 /**
  * The open tasks as `manualRefundTask.findMany` returns them (no test marker),
- * each with its booking's `deletedAt`.
+ * each with its booking (no payment).
  */
 export function refundsOwedTaskRows(): Array<{
   status: string;
   kind: string | null;
   amountCents: number | null;
   partPaymentReviewPaymentId: string | null;
-  booking: { deletedAt: Date | null };
+  reason: string;
+  booking: Record<string, never>;
 }> {
   return REFUNDS_AND_CREDITS_OWED_FIXTURE.openTasks.map((task) => ({
     status: task.status,
     kind: task.kind,
     amountCents: task.amountCents,
     partPaymentReviewPaymentId: task.partPaymentReviewPaymentId,
-    booking: { deletedAt: null },
+    reason: task.reason,
+    booking: {},
   }));
 }
 
@@ -450,7 +462,7 @@ export const OWED_RECONCILIATION_PAYMENTS: ReadonlyArray<ReconciliationRow> = [
     creditsApplied: [],
     creditsFromCancellation: [],
     manualRefundTasks: [
-      { status: "OPEN", kind: "DELETED_BOOKING_LATE_CAPTURE", amountCents: 4_000, partPaymentReviewPaymentId: null, occurrenceKey: null },
+      { status: "OPEN", kind: "DELETED_BOOKING_LATE_CAPTURE", amountCents: 4_000, partPaymentReviewPaymentId: null, occurrenceKey: null, reason: HAND_BACK_REASON },
     ],
     recoveryOperations: [],
     refunds: [],
@@ -486,7 +498,8 @@ export const OWED_RECONCILIATION_PAYMENTS: ReadonlyArray<ReconciliationRow> = [
     creditsApplied: [],
     creditsFromCancellation: [],
     manualRefundTasks: [
-      { status: "OPEN", kind: null, amountCents: 2_500, partPaymentReviewPaymentId: null, occurrenceKey: null },
+      // A #2700 row raised before `kind` existed: its sentence, not its deleted booking, makes it a late capture (#4848).
+      { status: "OPEN", kind: null, amountCents: 2_500, partPaymentReviewPaymentId: null, occurrenceKey: null, reason: LEGACY_LATE_CAPTURE_REASON },
     ],
     recoveryOperations: [],
     refunds: [],
@@ -548,7 +561,7 @@ export function owedReconciliationPaymentRow(row: ReconciliationRow) {
 
 /**
  * The open tasks over those bookings, as the "Refunds owed" read loads them:
- * each with its booking's `deletedAt` and its payment (`netCollectedPaymentSelect`).
+ * each with its booking's payment (`netCollectedPaymentSelect`).
  */
 export function owedReconciliationTaskRows() {
   return OWED_RECONCILIATION_PAYMENTS.flatMap((row) =>
@@ -556,7 +569,7 @@ export function owedReconciliationTaskRows() {
       .filter((task) => task.status === "OPEN")
       .map((task) => ({
         ...task,
-        booking: { deletedAt: row.deletedAt, payment: { id: `pay-${row.bookingId}`, ...owedReconciliationPaymentRow(row) } },
+        booking: { payment: { id: `pay-${row.bookingId}`, ...owedReconciliationPaymentRow(row) } },
       })),
   );
 }
