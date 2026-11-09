@@ -1666,7 +1666,9 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // before it reads whether the plan's share is written). #4516 (M4c review F2):
   // and by a late capture's approval or keep (`prepareLateCaptureDecision`, no
   // lock(1)) before its task's claim, the order a "Paid another way" close takes
-  // the Payment row and that task's row in.
+  // the Payment row and that task's row in; #4824: an approval's plan
+  // (`planLateCaptureApprovalRefund`) takes it first, before it reads what the
+  // capture holds.
   // Order: lock(1) -> lodge -> member credit -> Payment -> refund, recovery and
   // transaction rows. See docs/CONCURRENCY_AND_LOCKING.md -> the #3640
   // paragraph and its #4217 sequel.

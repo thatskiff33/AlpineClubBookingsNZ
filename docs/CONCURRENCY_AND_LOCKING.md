@@ -5993,8 +5993,12 @@ writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
   against it. No other cycle is known: a journal line names its debtor by id,
   with no foreign key, so the R06 takes no lock on the Member row. A
   treasurer-approved late capture takes the
-  Payment row before its task's claim (review F2), and reads the owner without
-  the booking row (its `lock(1)` arrives in M4d).
+  Payment row before it reads what the capture still holds and plans its
+  refund (#4824), so before its task's claim (review F2), and reads the owner
+  without the booking row (its `lock(1)` arrives in M4d). Read first, a
+  `charge.refunded` sync, a "Paid another way" close, or an automatic refund or its recovery replay
+  committing before the claim was planned again; proven against real
+  PostgreSQL by `late-capture-approval-refund-race.realdb.test.ts`.
 - **A kept late capture** (the approval task dismissed) takes the same Payment
   row before its claim and reverses an unpaid, unreserved capture-return R05 an
   automatic refund posted (review M5).

@@ -4799,6 +4799,27 @@ describe("#3639 - approving a held late-capture refund", () => {
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
   });
 
+  // #4824 (MUTATION: read the capture before the lock again): a `charge.refunded` sync holds the Payment row while
+  // the approval waits for it, and commits a refund of the capture as it lets go. The plan reads what the capture
+  // holds only once it has the row, so it sees that refund and refuses; a plan read first would refund it again.
+  it("reads what the capture holds under the Payment row, so a refund committed while it waited is refused (#4824)", async () => {
+    armHeldLateCapture();
+    mocks.lockPaymentForRefundedTotal.mockImplementationOnce(async () => {
+      mocks.paymentTransactionFindUnique.mockResolvedValue({
+        id: "txn-late", paymentId: "payment-1", kind: "ADDITIONAL", source: PaymentSource.STRIPE,
+        status: "PARTIALLY_REFUNDED", amountCents: 2500, refundedAmountCents: 1000,
+      });
+    });
+
+    await expect(approve()).rejects.toMatchObject({ status: 409, message: expect.stringContaining("already been refunded") });
+
+    expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(tx, "payment-1");
+    expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.paymentTransactionFindUnique.mock.invocationCallOrder[0]!);
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.enqueueLateCaptureApprovalRefundRecovery).not.toHaveBeenCalled();
+    expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+  });
+
   it("leaves a failed refund to the recovery cron: no close, no refund record", async () => {
     armHeldLateCapture();
     mocks.refundPaymentTransactions.mockRejectedValue(new Error("stripe down"));

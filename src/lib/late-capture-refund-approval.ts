@@ -66,6 +66,13 @@ export const LATE_CAPTURE_APPROVAL_ALREADY_REFUNDED_MESSAGE =
  * amount, never amended at completion) and it must still fit in what the capture
  * has left: a refund an officer already made in the Stripe dashboard is synced
  * onto the transaction by `charge.refunded`, and this is where it stops a second.
+ *
+ * #4824: the booking's Payment row FIRST, then the capture. Every writer of what
+ * the capture still holds takes that row before it writes - the `charge.refunded`
+ * sync, a "Paid another way" close, an automatic refund or its recovery replay - so the held figure read
+ * under it cannot move before the claim; read before it, a refund committing in
+ * between was planned again. The completion's `prepareLateCaptureDecision`
+ * re-takes the row it already holds.
  */
 export async function planLateCaptureApprovalRefund({
   task,
@@ -77,6 +84,7 @@ export async function planLateCaptureApprovalRefund({
   store: Prisma.TransactionClient;
 }): Promise<LateCaptureRefundRoute> {
   const paymentIntentId = task.lateCaptureApprovalIntentId;
+  if (paymentIntentId && task.paymentId) await lockPaymentForRefundedTotal(store, task.paymentId);
   const transaction =
     paymentIntentId && task.paymentId
       ? await store.paymentTransaction.findUnique({
@@ -205,9 +213,10 @@ export async function persistLateCaptureApprovalRefundDebt({
  * #4516 review F2 and M5: BEFORE a late capture's approval task is claimed, approved or kept. The booking's Payment
  * row first, the order a "Paid another way" close takes them in (`lock(1)`, the Payment row, then this task): a
  * claim that took the task first and the Payment row after would wait on a close holding the row while that close
- * waits on the task. A keep (a dismissal) then closes the capture's refund debt, if an automatic refund of it
- * posted one that nothing paid or holds (`closeKeptCaptureReturn`): a kept capture owes nothing back. A lost claim
- * throws after this and rolls it back with the transaction.
+ * waits on the task. An approval's plan took the row already (#4824), so there this re-takes it. A keep (a
+ * dismissal) then closes the capture's refund debt, if an automatic refund of it posted one that nothing paid or
+ * holds (`closeKeptCaptureReturn`): a kept capture owes nothing back. A lost claim throws after this and rolls it
+ * back with the transaction.
  */
 export async function prepareLateCaptureDecision(store: Prisma.TransactionClient, journal: BookingJournalContext, input: {
   task: { bookingId: string; paymentId: string | null; lateCaptureApprovalIntentId: string | null };

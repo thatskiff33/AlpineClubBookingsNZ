@@ -927,7 +927,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `cancelled_booking_late_capture` write or a `CANCEL_PAYMENT_INTENT` recovery
   for the intent. Each writes `booking.payment.late_notice_acknowledged`, unless
   a late-capture refund lost its record (by Stripe's metadata): the replay or
-  self-heal writes it instead (#4149).
+  self-heal writes it (#4149).
   The paid-path `CANCELLED` event commits inside the claim.
 - **A genuine late capture follows the club's setting** (owner decision 26 Sep
   2026, [#3639](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3639#issuecomment-5845224249)),
@@ -938,14 +938,15 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   holds (#4131, `lateCaptureOwnChargeSlice`); a task of any status owns its capture, and the
   repair tool offers no refund behind it. A #2700 hand-back is refused once its
   capture was refunded.
-  Kept money is recorded in Xero (`INV-PAY-110`).
+  Kept money in Xero: `INV-PAY-110`.
 - **The repair tool's cancelled-open-invoice arm** asks "was money captured?"
   of every source and skips a payment already carrying a refund or
   account-credit note, or such an operation queued or failed.
 - Pinned by `cancellation-settled-money.test.ts`, `stripe-webhook-alerts.test.ts`,
   `payment-recovery.test.ts`, `manual-refund-task.test.ts`,
-  `xero-booking-repair.test.ts`, `late-capture-own-charge-refund.realdb.test.ts`
-  and `late-capture-record-recovery.realdb.test.ts`.
+  `xero-booking-repair.test.ts`, `late-capture-own-charge-refund.realdb.test.ts`,
+  `late-capture-record-recovery.realdb.test.ts` and
+  `late-capture-approval-refund-race.realdb.test.ts`.
 
 ## INV-PAY-110
 
