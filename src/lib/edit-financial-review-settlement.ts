@@ -10,6 +10,7 @@ import {
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { handsBackByHand } from "@/lib/manual-refund-hand-back-route";
+import { isLateCaptureHandBackTask } from "@/lib/late-capture-hand-back-task";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { editReviewRefundGoesBackOnCard, editReviewRefundSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
 import { readBookingHasEnded } from "@/lib/booking-ended";
@@ -321,7 +322,8 @@ export async function chooseEditReviewSettlementRoute({
       return planLateCaptureApprovalRefund({ task, amountCents, store });
     }
     // #3639: and a #2700 hand-back is refused once its capture was refunded.
-    if (task.kind === ManualRefundTaskKind.DELETED_BOOKING_LATE_CAPTURE) {
+    // #4843: and a legacy row raised before `kind` existed, which only its reason sentence identifies.
+    if (isLateCaptureHandBackTask(task)) {
       await assertLateCaptureHandBackStillOwed({ task, amountCents, store });
     }
     // #3949 (`INV-PAY-137`): an edit's or appeal's hand-back on a joiner the organiser paid for by bank transfer.

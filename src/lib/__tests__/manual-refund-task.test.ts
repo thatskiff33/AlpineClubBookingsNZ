@@ -4956,16 +4956,20 @@ describe("#3639 - a #2700 hand-back asks what already happened to its capture", 
   // a wrong writer.
   const REASON_FOR = deletedBookingModificationRefundReason;
 
-  function armHandBack(capture: { refundedAmountCents: number } | null) {
+  // #4843: `kind` null is a row raised before the column existed; `reason` overrides the #2700 sentence.
+  function armHandBack(
+    capture: { refundedAmountCents: number } | null,
+    row: { kind?: "DELETED_BOOKING_LATE_CAPTURE" | null; reason?: string } = {},
+  ) {
     mocks.manualRefundTaskFindUnique.mockResolvedValue({
       id: "task-2700",
       bookingId: "booking-1",
       paymentId: "payment-1",
       amountCents: 2500,
       raisedAmountCents: 2500,
-      kind: "DELETED_BOOKING_LATE_CAPTURE",
+      kind: row.kind === undefined ? "DELETED_BOOKING_LATE_CAPTURE" : row.kind,
       lateCaptureApprovalIntentId: null,
-      reason: REASON_FOR("pi_mod"),
+      reason: row.reason ?? REASON_FOR("pi_mod"),
       status: ManualRefundTaskStatus.OPEN,
       booking: { memberId: "member-1", lodgeId: "lodge-1", status: "CANCELLED", payment: null },
     });
@@ -5041,6 +5045,39 @@ describe("#3639 - a #2700 hand-back asks what already happened to its capture", 
 
     await expect(complete()).rejects.toMatchObject({ status: 409 });
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+  });
+
+  // #4843 (MUTATION: gate on the kind alone again): `kind` was added with no backfill, so a #2700 row raised
+  // before it carries NULL and only its reason sentence says what it is. It gets the same check, under the row.
+  describe("a legacy #2700 row with no kind (#4843)", () => {
+    it("is refused, before the claim, once Stripe refunded its capture - read under the Payment row", async () => {
+      armHandBack({ refundedAmountCents: 2500 }, { kind: null });
+
+      await expect(complete()).rejects.toMatchObject({ status: 409, message: expect.stringContaining("already been refunded") });
+
+      expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(tx, "payment-1");
+      expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.paymentTransactionFindMany.mock.invocationCallOrder[0]!);
+      expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    });
+
+    it("still records the hand-back while Stripe holds the whole capture", async () => {
+      armHandBack({ refundedAmountCents: 0 }, { kind: null });
+
+      await complete();
+
+      expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.paymentTransactionFindMany.mock.invocationCallOrder[0]!);
+      expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({ paymentId: "payment-1", amountCents: 2500, store: tx });
+    });
+
+    it("leaves a NULL-kind row with any other reason alone: a cancellation's own hand-back asks nothing of a capture", async () => {
+      armHandBack(null, { kind: null, reason: "Cash refund owed after the cancellation." });
+
+      await complete();
+
+      expect(mocks.paymentTransactionFindMany).not.toHaveBeenCalled();
+      expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({ paymentId: "payment-1", amountCents: 2500, store: tx });
+    });
   });
 
   it("still lets it be dismissed, which moves nothing", async () => {

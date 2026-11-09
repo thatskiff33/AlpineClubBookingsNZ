@@ -661,7 +661,7 @@ export function openHandBackOwedCents(
  *   `INV-ADDPAY-036`). Both kinds of row ask the same question.
  * - An OPEN task with no kind on a DELETED booking: a #2700 row raised before
  *   the kind column existed. The only task raised on a deleted booking is a
- *   late capture.
+ *   late capture (#4848 moves this onto `isLateCaptureHandBackTask`).
  *
  * The capture is recorded on the payment before the task is raised, so its
  * money is inside `amountCents` and Net Collected takes it off while it waits
