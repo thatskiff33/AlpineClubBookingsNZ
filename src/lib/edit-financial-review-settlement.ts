@@ -316,6 +316,7 @@ export async function chooseEditReviewSettlementRoute({
     }
     // #3639: an approved late-capture refund goes back to the card through Stripe - never a hand-back
     // ledger mirror, which would count one refund twice once `charge.refunded` synced a dashboard refund.
+    // #4824: planned under the booking's Payment row, which the plan takes before it reads what the capture holds.
     if (task.lateCaptureApprovalIntentId) {
       return planLateCaptureApprovalRefund({ task, amountCents, store });
     }
