@@ -3,7 +3,8 @@
  * The fast tree-wide censuses, run against whatever tree is checked out (#3513).
  *
  * `pnpm run ci:fast-censuses`                 run them all
- * `pnpm run ci:fast-censuses --base <ref>`    judge both tree-wide script checks against <ref>
+ * `pnpm run ci:fast-censuses --base <ref>`    judge the doc-index check against <ref>
+ *                                             (the file-size ratchet stays on origin/main)
  * `pnpm run ci:fast-censuses --summary <f>`   also write {ok, failed[]} as JSON to <f>
  *
  * WHAT THIS IS FOR. A census pins how many call sites of some shape exist
@@ -56,6 +57,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_BASE_REF as BUDGET_BASE_REF } from "../lib/budget-base-ref.mjs";
 import { isMainModule } from "../lib/is-main-module.mjs";
 
 const require = createRequire(import.meta.url);
@@ -137,7 +139,9 @@ export const FAST_CENSUS_COMMANDS = [
   },
   {
     name: "quality:budget",
-    acceptsBase: true,
+    // Always `origin/main`, never the epic SHA `--base` names (#4831): see the
+    // note above `main`.
+    fixedBase: BUDGET_BASE_REF,
     why: "the file-size ratchet and size-allowances.d/ ceilings",
   },
 ];
@@ -220,6 +224,19 @@ export function failedSuites(report, suitePaths, repoRoot = REPO_ROOT) {
   return suitePaths.filter((suitePath) => statusByPath.get(suitePath) !== "passed");
 }
 
+/**
+ * WHY THE FILE-SIZE RATCHET IGNORES `--base` (#4831). The sync passes the exact
+ * pre-sync epic SHA, which is the right baseline for `docs:indexcheck` but not
+ * for a size budget. Measured against the epic SHA, everything `main` landed
+ * since the epic last synced is "this change", fragments in `size-allowances.d/`
+ * included, so a `main` allowance for a file the epic left longer read as "not
+ * needed" and refused the sync; and no edit could fix it, because PR CI measures
+ * the same tree against `origin/main`, where that fragment is already spent.
+ * Against `origin/main`, only what the epic side adds is judged, and the sync
+ * census and PR CI read one tree one way. The ref is passed explicitly rather
+ * than left to the script's default, and an unresolvable ref fails the check
+ * (`resolveBaseRef`): a census that cannot read its base has not passed.
+ */
 export function main(argv = process.argv.slice(2), inheritedEnv = process.env) {
   const options = parseArgs(argv);
   const env = { ...INERT_TEST_ENV, ...inheritedEnv };
@@ -258,7 +275,7 @@ export function main(argv = process.argv.slice(2), inheritedEnv = process.env) {
 
   for (const command of FAST_CENSUS_COMMANDS) {
     const args = commandArgs(command.name);
-    if (command.acceptsBase && options.base) args.push("--base", options.base);
+    if (command.fixedBase) args.push("--base", command.fixedBase);
     const commandEnv = { ...env };
     if (command.name === "docs:indexcheck" && options.base) {
       // A diagnostic of a locally composed tree has its own exact baseline,

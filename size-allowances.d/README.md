@@ -113,9 +113,13 @@ from a checkout based on refreshed `origin/main`, and commit the reported
 deletions with the release. Nothing in the file-size gate depends on spent
 fragments.
 
-One consequence worth knowing: after merging `main` into a long-lived branch,
-an allowance that came in with `main` may report as unused if your branch also
-shrank the file it named. Deleting it is the right fix and is safe.
+One consequence worth knowing: an allowance that came in with `main` is spent
+there, so it is inert on your branch too. Judge your branch against
+`origin/main` (the default), and never delete or edit a fragment `main` landed.
+The epic sync does the same: `pnpm run ci:fast-censuses` measures the file-size
+ratchet against `origin/main` whatever `--base` it is given (#4831), so a
+`main`-side allowance for a file the epic left longer cannot refuse a sync.
+Only an allowance the epic itself introduced is judged there.
 
 **"After merge" means merged into the ratchet's BASE REF, which is always
 `origin/main` — never merely into an epic branch.** A child of an epic measures

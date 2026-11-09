@@ -200,7 +200,12 @@ What the branch costs, each handled by whoever runs it:
   merged at once when `pnpm run ci:fast-censuses --base <exact-epic-sha>` passes
   on the locally composed tree and GitHub reports `CLEAN` (#3513, owner decision
   "Cheap narrow check", 6 Oct 2026). Other states wait for the next run or a
-  human. The result is a correctness signal from the tree's own censuses, not a
+  human. `--base` is the baseline for `docs:indexcheck` only: the file-size
+  ratchet inside it always judges the composed tree against `origin/main`, the
+  ref PR CI uses, so an allowance `main` already landed is spent and is never
+  read as the epic's (#4831). A hand sync therefore never edits a `main`-side
+  `size-allowances.d/` fragment; only an allowance the epic itself introduced
+  can fail there, and the fix is the one the ratchet names. The result is a correctness signal from the tree's own censuses, not a
   security verdict, and deliberately not the full nine checks. **A red sync pull
   request is the branch telling you `main` and the epic no longer compose**:
   read it, resolve by hand on a merge branch, never force-push a shared branch

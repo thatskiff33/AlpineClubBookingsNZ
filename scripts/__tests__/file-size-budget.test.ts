@@ -998,6 +998,136 @@ describe("the deliberate escape: a declared allowance", () => {
   });
 });
 
+describe("the epic sync: main's allowances are spent, the epic's are judged (#4831)", () => {
+  /**
+   * The sync census composes `main` into an epic branch locally and judges that
+   * tree. #4829 showed it contradicting PR CI: `main`'s `4825-admin-page-merges`
+   * fragment declares `admin-permissions.ts` at 949 lines, the epic never touched
+   * that file (1027 at the merge base), so against the EPIC SHA the composed tree
+   * shrinks it, the whole fragment reads as "this change", and the entry for the
+   * shrunk file is an allowance nothing needed. Against `origin/main`, where PR
+   * CI measures, the fragment is already spent and nothing is wrong. No edit
+   * satisfied both, and the sync was refused every six hours.
+   *
+   * The sync therefore judges the composed tree against `main`. These cases
+   * drive `run` with the ref the sync passes (`main` here stands for
+   * `origin/main`) over the real composed commit, so the fragments really are
+   * in or out of the diff.
+   */
+  const REASON =
+    "the sparse-night branch is four lines of policy inside an existing " +
+    "decision tree, and lifting that tree out is a refactor of its own.";
+
+  function composedTree() {
+    const repo = newRepo();
+    repo.write("src/lib/perm.ts", 1027);
+    repo.write("src/lib/family.ts", 800);
+    repo.write("src/lib/other.ts", 1200);
+    repo.write("src/lib/keep.ts", 10);
+    repo.commit("merge base");
+    git(repo.root, "checkout", "--quiet", "-b", "epic");
+
+    git(repo.root, "checkout", "--quiet", "main");
+    repo.write("src/lib/perm.ts", 940);
+    repo.commit("main: an earlier change shrinks perm.ts");
+    repo.write("src/lib/perm.ts", 949);
+    repo.write("src/lib/family.ts", 850);
+    repo.allow(
+      "4825-admin-page-merges.md",
+      `file: src/lib/perm.ts\nlines: 949\nreason: ${REASON}\n\n` +
+        `file: src/lib/family.ts\nlines: 850\nreason: ${REASON}\n`,
+    );
+    repo.commit("main: #4825 grows two over-budget files, with an allowance");
+
+    git(repo.root, "checkout", "--quiet", "epic");
+    repo.write("src/lib/keep.ts", 11);
+    const epicSha = repo.commit("epic: an unrelated change");
+    return { repo, epicSha };
+  }
+
+  function compose(repo: ReturnType<typeof newRepo>) {
+    git(repo.root, "merge", "--quiet", "--no-edit", "main");
+  }
+
+  it("passes when main's allowance covers a file the epic left longer, fragment untouched", () => {
+    const { repo } = composedTree();
+    compose(repo);
+
+    const result = captureRun(repo.root, ["--base", "main"]);
+    expect(result.stderr).toBe("");
+    expect(result.code).toBe(0);
+    // Main's growth was judged on main. It is not this change's to declare.
+    expect(result.stdout).not.toContain("ALLOWED GROWTH");
+    expect(result.stdout).not.toContain("4825-admin-page-merges");
+  });
+
+  it("is what the epic SHA as base got wrong: the same tree is refused against it", () => {
+    // Pins the contradiction so the cause is on record, and so the sync's base
+    // cannot be flipped back to the epic SHA without this reading as the
+    // regression it is. The fragment is main's and the file shrank, so it is
+    // reported as an allowance this change did not need.
+    const { repo, epicSha } = composedTree();
+    compose(repo);
+
+    const result = captureRun(repo.root, ["--base", epicSha]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("declares an allowance the check did not need");
+    expect(result.stderr).toContain("src/lib/perm.ts");
+  });
+
+  it("still fails an allowance the EPIC introduced that nothing needed", () => {
+    const { repo } = composedTree();
+    repo.allow("4999-epic-spare.md", `file: src/lib/other.ts\nlines: 1200\nreason: ${REASON}\n`);
+    repo.commit("epic: a spare allowance for a file it did not grow");
+    compose(repo);
+
+    const result = captureRun(repo.root, ["--base", "main"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("declares an allowance the check did not need");
+    expect(result.stderr).toContain(`delete the entry from ${ALLOWANCE_DIR}/4999-epic-spare.md`);
+    // Only the epic's own fragment is blamed, never the one main already landed.
+    expect(result.stderr).not.toContain("4825-admin-page-merges");
+  });
+
+  it("still fails epic growth that has no allowance", () => {
+    const { repo } = composedTree();
+    repo.write("src/lib/other.ts", 1210);
+    repo.commit("epic: grows an over-budget file with no allowance");
+    compose(repo);
+
+    const result = captureRun(repo.root, ["--base", "main"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("an already-oversized file grew");
+    expect(result.stderr).toContain("+10 beyond its ceiling");
+    expect(result.stderr).toContain("src/lib/other.ts");
+  });
+
+  it("lets epic growth through on the epic's own allowance, and names only that one", () => {
+    const { repo } = composedTree();
+    repo.write("src/lib/other.ts", 1210);
+    repo.allow("4999-epic-growth.md", `file: src/lib/other.ts\nlines: 1210\nreason: ${REASON}\n`);
+    repo.commit("epic: grows an over-budget file, with an allowance");
+    compose(repo);
+
+    const result = captureRun(repo.root, ["--base", "main"]);
+    expect(result.stderr).toBe("");
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("src/lib/other.ts  ->  1210 LOC");
+    expect(result.stdout).toContain(`${ALLOWANCE_DIR}/4999-epic-growth.md`);
+    expect(result.stdout).not.toContain("4825-admin-page-merges");
+  });
+
+  it("fails closed when main cannot be resolved, rather than judging against the epic", () => {
+    const { repo } = composedTree();
+    compose(repo);
+
+    const result = captureRun(repo.root, ["--base", "origin/main"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("UNUSABLE");
+    expect(result.stderr).toContain("Could not resolve the base ref `origin/main`");
+  });
+});
+
 describe("this repository", () => {
   it("produces a trustworthy comparison against its own HEAD", () => {
     // Deliberately asserts the absence of `unusable` rather than a clean exit:
