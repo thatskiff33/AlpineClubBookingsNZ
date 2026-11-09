@@ -1,6 +1,4 @@
-import { revalidatePath } from "next/cache";
-import { revalidateAdminPage } from "@/lib/admin-hubs/revalidate";
-import { ADMIN_MEMBER_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
+import { revalidateAdminPage } from "@/lib/admin-page-revalidation";
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { z } from "zod";
@@ -103,7 +101,7 @@ export async function POST(
           },
     );
     revalidateAdminPage("subscriptions");
-    revalidatePath(ADMIN_MEMBER_DETAIL_ROUTE_PATTERN, "page");
+    revalidateAdminPage("member-detail");
     return NextResponse.json({
       success: true,
       subscription: result,

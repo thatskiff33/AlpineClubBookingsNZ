@@ -194,13 +194,9 @@ describe("revalidateAdminPage", () => {
 });
 
 describe("literal /admin revalidatePath calls", () => {
-  // The card-refund routes still name their paths literally. Another lane owns
-  // those files; this branch does not edit them. A new call anywhere else has
-  // to go through revalidateAdminPage.
-  const LEFT_LITERAL = [
-    "src/app/api/admin/payments/card-refunds/[id]/paid-another-way/route.ts",
-    "src/app/api/admin/payments/card-refunds/[id]/paid-twice-resolved/route.ts",
-  ];
+  // #4822 moved the card-refund routes onto revalidateAdminPage before this
+  // branch merged. A new literal admin path anywhere in src/ has to go through
+  // revalidateAdminPage.
   const CALL = /revalidatePath\(\s*["']\/admin\/[^"']*["']/;
 
   function sourceFiles(dir: string): string[] {
@@ -213,11 +209,11 @@ describe("literal /admin revalidatePath calls", () => {
     });
   }
 
-  it("survive only in the card-refund routes this branch does not edit", () => {
+  it("are gone: every admin page refresh goes through revalidateAdminPage", () => {
     const found = sourceFiles("src")
       .filter((file) => CALL.test(stripComments(readFileSync(file, "utf8"))))
       .map((file) => file.split(path.sep).join("/"))
       .sort();
-    expect(found).toEqual([...LEFT_LITERAL].sort());
+    expect(found).toEqual([]);
   });
 });

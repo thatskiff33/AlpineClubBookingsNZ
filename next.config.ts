@@ -166,6 +166,29 @@ const nextConfig: NextConfig = {
       fallback: [],
     };
   },
+  /**
+   * The admin hub URLs (epic #4468, C3 #4800), generated from the hub registry
+   * for the pages that have MOVED under a hub (`buildAdminUrlRules` says what
+   * each state yields). While `ADMIN_HUBS_LIVE` is off, a moved page's hub URL
+   * redirects (307) to its old URL, and the `beforeFiles` rewrite above serves
+   * the old URL from the moved file, so the proxy, the module gate and the
+   * layout guard still see the old path. Once on, the old URL redirects to the
+   * hub URL and there are no rewrites. No page has moved yet, so both lists are
+   * empty and this config routes exactly as before
+   * (`next-config-admin-hub-urls.test.ts` proves both, through Next's own
+   * pipeline).
+   *
+   * The rewrite is `beforeFiles`, as the epic plan fixes it: it is a moved
+   * page's only route at its old path, so it is applied before Next consults the
+   * filesystem or any dynamic route, and an old URL can neither fall through to
+   * the `(website)/[...slug]` catch-all nor be shadowed by a file left behind.
+   * These are the config's only redirects and only `beforeFiles` rewrites
+   * (`withSentryConfig` adds a rewrite only for a `tunnelRoute`, which is not
+   * set), so no existing rule's order or behaviour changes.
+   *
+   * Relative imports for the same reason as the line above: the registry uses
+   * relative imports only, and nothing in it reaches a `server-only` module.
+   */
 };
 
 // Warn at build time if Sentry is partially configured

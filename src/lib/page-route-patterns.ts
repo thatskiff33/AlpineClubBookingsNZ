@@ -10,4 +10,6 @@
  */
 export const BOOKING_DETAIL_ROUTE_PATTERN = "/(authenticated)/bookings/[id]";
 
-export const ADMIN_MEMBER_DETAIL_ROUTE_PATTERN = "/(admin)/admin/members/[id]";
+// An ADMIN page is never named here: `revalidateAdminPage(id)`
+// (`admin-page-revalidation.ts`, C3 #4800) builds its pattern from the hub
+// registry, so the pattern follows the page when it moves under its hub.

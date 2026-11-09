@@ -1,6 +1,4 @@
-import { revalidatePath } from "next/cache";
-import { revalidateAdminPage } from "@/lib/admin-hubs/revalidate";
-import { ADMIN_MEMBER_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
+import { revalidateAdminPage } from "@/lib/admin-page-revalidation";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createAuditLog } from "@/lib/audit";
@@ -81,7 +79,7 @@ const mutationSchema = z.discriminatedUnion("action", [
 function invalidate() {
   revalidateAdminPage("subscriptions");
   revalidateAdminPage("stuck-states");
-  revalidatePath(ADMIN_MEMBER_DETAIL_ROUTE_PATTERN, "page");
+  revalidateAdminPage("member-detail");
 }
 
 // Build the panel payload (preview + durable charge queue + persisted-only
