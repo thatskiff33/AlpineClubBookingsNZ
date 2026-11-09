@@ -6080,7 +6080,11 @@ writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
   group-mirror and card-shortfall routes return before locking for this kind.
   Read first, a `charge.refunded` sync committing before the claim let the
   mirror land on another charge's headroom as well; proven by
-  `late-capture-hand-back-race.realdb.test.ts`.
+  `late-capture-hand-back-race.realdb.test.ts`. So does a legacy #2700 row
+  raised before `kind` existed (NULL kind), which only its reason sentence
+  identifies (`isLateCaptureHandBackTask`, #4843): the same order, and the
+  same two routes return before locking for a NULL kind; the suite runs every
+  case on one.
 - **An appeal's `release_claim`** takes global → the request's row → its
   hand-back task → Payment, releases the approval's open reservations under its
   own keys with their funding and reverses its R05 in the same transaction. A
