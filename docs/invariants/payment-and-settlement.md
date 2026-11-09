@@ -927,7 +927,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `cancelled_booking_late_capture` write or a `CANCEL_PAYMENT_INTENT` recovery
   for the intent. Each writes `booking.payment.late_notice_acknowledged`, unless
   a late-capture refund lost its record (by Stripe's metadata): the replay or
-  self-heal writes it instead (#4149).
+  self-heal writes it (#4149).
   The paid-path `CANCELLED` event commits inside the claim.
 - **A genuine late capture follows the club's setting** (owner decision 26 Sep
   2026, [#3639](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3639#issuecomment-5845224249)),
