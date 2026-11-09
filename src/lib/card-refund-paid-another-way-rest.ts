@@ -3,8 +3,11 @@ import "server-only";
 import { PaymentRecoveryOperationStatus, PaymentRecoveryOperationType, type Prisma } from "@prisma/client";
 
 import type { PaidBackChoice, PaidBackRestChoice } from "@/lib/card-refund-paid-back";
+import { postPaidAnotherWayClose, resolveCardRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
+import { parseRefundAllocationPlan } from "@/lib/open-card-refund-owed";
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
-import { buildCardRefundStillOwedRecoveryKey } from "@/lib/payment-recovery-keys";
+import { buildCardRefundStillOwedRecoveryKey, refundSliceStripeIdempotencyKey } from "@/lib/payment-recovery-keys";
+import { cardRefundOperationStripeKeyPrefix } from "@/lib/card-refund-stripe-key-prefix";
 import type { RefundAllocationSlice } from "@/lib/payment-transactions";
 
 /**
@@ -19,6 +22,16 @@ import type { RefundAllocationSlice } from "@/lib/payment-transactions";
  *   Collected and the dead card refund list count it as every dead row is counted; a later close pays it, in full
  *   or in part again. The journal leaves the refund obligation open for the rest.
  */
+
+/**
+ * The full-or-part rule (owner, 8 Oct 2026), against what is still owed: "full" is exactly that; "partial" is more
+ * than nothing and less than that. A refusal is a 400: the request does not say a consistent thing.
+ */
+export function paidBackChoiceRefusal(paidBack: PaidBackChoice, amountCents: number, owedCents: number): string | null {
+  if (paidBack === "full" && amountCents !== owedCents) return "Paid back in full must be exactly what is still owed. Refresh and check the amount.";
+  if (paidBack === "partial" && !(amountCents > 0 && amountCents < owedCents)) return "Paid back part of it must be more than nothing and less than what is still owed.";
+  return null;
+}
 
 /** A refusal with the status the route answers: the request does not say a consistent thing. */
 export function paidBackRestRefusal(paidBack: PaidBackChoice, rest: PaidBackRestChoice | null | undefined): string | null {
@@ -77,4 +90,34 @@ export async function carryStillOwedRest(tx: Prisma.TransactionClient, input: {
     select: { id: true },
   });
   return row.id;
+}
+
+/** What the close's record and audit say happened, with the treasurer's choice for the rest. */
+export function paidAnotherWayOutcome(paidBack: PaidBackChoice, rest: PaidBackRestChoice | null): string {
+  if (paidBack === "full") return "paid back in full another way";
+  return rest === "still-owed" ? "paid back in part another way; the rest is still owed to the member" : "paid back in part another way; the club keeps the rest";
+}
+
+/**
+ * In the close's transaction, after its record and line: a still-owed rest's own row (`carryStillOwedRest`), then
+ * R14 for the bank cash, its reservations closed without a refund and a kept rest's close-out
+ * (`postPaidAnotherWayClose`, #4516), under the `lock(1)` and Payment row the close holds.
+ */
+export async function closePaidAnotherWayRest(tx: Prisma.TransactionClient, journal: BookingJournalContext, input: {
+  operation: { id: string; type: string; idempotencyKey: string; bookingId: string; paymentId: string; paymentIntentId: string; amountCents: number;
+    stripeKeyPrefix: string | null; allocationPlan: unknown };
+  recordId: string; amountCents: number; owedCents: number; paidBack: PaidBackChoice; rest: PaidBackRestChoice | null;
+  unsent: ReadonlyArray<{ paymentTransactionId: string; amountCents: number }>; unsentTransactionIds: readonly string[]; closedAt: Date; actingMemberId: string;
+}): Promise<{ restCents: number; stillOwedOperationId: string | null }> {
+  const { operation } = input;
+  const restCents = input.owedCents - input.amountCents;
+  const stillOwedOperationId = input.rest === "still-owed" && restCents > 0
+    ? await carryStillOwedRest(tx, { operation, recordId: input.recordId, restCents, slices: stillOwedRestSlices(input.unsent, input.amountCents, restCents), closedAt: input.closedAt })
+    : null;
+  const prefix = cardRefundOperationStripeKeyPrefix(operation);
+  await postPaidAnotherWayClose(tx, journal, { bookingId: operation.bookingId, obligation: await resolveCardRefundObligation(tx, operation), recordId: input.recordId,
+    amountCents: input.amountCents, restCents, rest: input.paidBack === "full" ? null : input.rest,
+    attemptKeys: [operation.idempotencyKey, ...(parseRefundAllocationPlan(operation.allocationPlan) ?? []).map((slice) => refundSliceStripeIdempotencyKey(prefix, slice))],
+    transactionIds: input.unsentTransactionIds, closedAt: input.closedAt, actorMemberId: input.actingMemberId });
+  return { restCents, stillOwedOperationId };
 }

@@ -2855,29 +2855,28 @@ _Legacy: settles tasks raised before #4317._
   (finance:edit) takes `lock(1)`, then the payment row, refuses (409) unless
   what is owed is the figure the treasurer saw, and claims a dead row to
   `SUCCEEDED` with a status guard. It records the amount with
-  `applyLocalRefundAllocation` on the unsent slices' charges, writes a
-  COMPLETED hand-back task under `card-refund-paid-another-way:<row>` and its
-  `BANK_REFUND` line (`INV-MONEY-035`), and audits under `payment`. No Stripe call.
+  `applyLocalRefundAllocation` on the unsent slices' charges, writes a COMPLETED
+  hand-back task under `card-refund-paid-another-way:<row>`, its `BANK_REFUND`
+  line (`INV-MONEY-035`) and R14, and audits under `payment`. No Stripe call.
   - **Full or part, chosen** (8 Oct): "full" is exactly what is owed,
-    "partial" strictly between nil and it, never $0; else 400. The rest is owed
-    nowhere; a review's netting counts the refund at its full raised amount.
+    "partial" strictly between nil and it, never $0; else 400.
+  - **A part close's rest, chosen exactly** (#4516; owner, 2 Nov 2026), with
+    no default; else 400. "The club keeps it": owed nowhere, a review's netting
+    counts the refund at its full raised amount, and the journal retains it as
+    a booking charge. "Still owed": the task records only what was paid, and
+    the rest moves to a dead row (`card_refund_still_owed_<task>`) that
+    "Refunds owed" keeps until a later close.
   - **Xero** (8 Oct): every kind queues a bank-transfer note keyed on the
-    task, sized by it less its own notes, dated the close's day, where there is
-    an invoice to credit; else none (`:no-xero-note`). No card note fills that
-    cash.
+    task, sized by it less its own notes, dated the close's day, where an
+    invoice exists to credit; else none (`:no-xero-note`).
   - **A late capture: receipt, then credit** (8 Oct). The note names the
-    capture's receipt by its invoice, never by intent. With none in Xero, the
-    close queues it (`INV-PAY-110`), requeuing a failed one that cannot have
-    reached Xero, or awaits one on its way; the link, then the note at most
-    once, are written under the approval task's row, which the close takes
-    before reading the receipt (`:note-after-receipt`). Cash evidence counts a
-    close only once noted.
+    capture's receipt by its invoice. With none in Xero, the close queues it
+    (`INV-PAY-110`), requeuing a failed one, under the approval task's row
+    (`:note-after-receipt`). Cash evidence counts a close only once noted.
   - A superseded intent's row closes whole, only while its charge holds exactly
     what it owes. An organiser child's is refused.
-  - A refund Stripe made inside a closed row's window (its clock) but recorded
-    later is listed as paid twice. The treasurer marks it Resolved with a note
-    against the card figure seen, kept on the task and audited; no money moves
-    (9 Oct).
+  - A refund Stripe made before a close but recorded after is listed as paid
+    twice; the treasurer resolves it with an audited note (9 Oct).
 
 ## INV-PAY-070
 

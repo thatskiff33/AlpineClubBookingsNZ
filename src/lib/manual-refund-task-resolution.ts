@@ -544,10 +544,7 @@ export async function resolveManualRefundTask(
         store: tx, journal,
       });
     }
-    // #4516 (M4c): R05 for the review's card refund, after its closure's R21 and any credit the re-price wrote
-    // (member key before the Payment row, `INV-LOCK-002`), under the booking row taken above.
-    if (settlement && settlementRoute?.kind === "stripe-refund" && settlementRoute.refundCents > 0) await postRefundObligation(tx, journal, { bookingId: task.bookingId,
-      scope: "review", id: task.id, amountCents: settlementRoute.refundCents, origin: "OFFICER", actorMemberId: actingMemberId, debtorRead: "booking-row" });
+    if (settlement && settlementRoute?.kind === "stripe-refund" && settlementRoute.refundCents > 0) await postRefundObligation(tx, journal, { bookingId: task.bookingId, scope: "review", id: task.id, amountCents: settlementRoute.refundCents, origin: "OFFICER", actorMemberId: actingMemberId, debtorRead: "booking-row" }); // #4516 R05: after R21 and any credit write (member key, then Payment row, INV-LOCK-002)
     const chargeInvoice = settlement ? await queueEditReviewChargeInvoiceInTransaction({ bookingId: task.bookingId, route: settlementRoute, hasIssuedXeroInvoice, createdByMemberId: actingMemberId, store: tx }) : null; // #3947: the invoice route's invoice, queued LAST - its anchor key after every other lock
     await recordManualRefundTaskClosureAudit({
       task,

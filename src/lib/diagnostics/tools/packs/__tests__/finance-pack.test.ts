@@ -1177,7 +1177,6 @@ describe("AID-6C finance pack: the recovery scenario catalogue (#4076)", () => {
     CARD_REFUND_FAILED_LATER_REASON: "Stripe refund metadata",
     CARD_REFUND_STILL_OWED_REASON: "Stripe refund metadata (#4516)",
     cardRefundStillOwedCloseRecordId: "parser of a mapped key",
-    cardRefundOperationStripeKeyPrefix: "Stripe idempotency key prefix (#4516)",
     SUPERSEDED_PAYMENT_REFUND_METADATA_REASON: "Stripe refund metadata",
     cardRefundOperationRefundMetadata: "Stripe metadata",
     cardRefundFailedLaterRefundId: "parser of a mapped key",

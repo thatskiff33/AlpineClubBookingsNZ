@@ -5911,7 +5911,7 @@ and a release, from both passing the caps. A price edit still changes the live
 charge under `lock(1)` without this row, so the charge cap (C2) can be over or
 under; that is the accepted limit, and the population check does not fail it.
 M4a left the application and reservation commands inert. M4b activates receipt
-applications; refund reservations remain inert until M4c. Proved
+applications, and M4c refund reservations (below). Proved
 against real PostgreSQL by `member-money-applications.realdb.test.ts`.
 
 Reconciled against #4668, #4671, #4667, #4666, #4664, #4659, #4658, #4654, #4653
@@ -5968,6 +5968,56 @@ recovery claims, exact markers and outbox/provider behaviour remain unchanged.
 Open #4779–#4784 and #4496 have no competing receipt writer; the owner's serial
 waiver covers them. `member-money-capture-writer-census.test.ts` inventories all
 transaction mutations, generic capture callers and each new receipt hook.
+
+M4c (#4516) activates refund obligations, reservations and card refund cash.
+No new advisory key; one participant, the booking's Payment row, joins more
+writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
+
+- **R05 at a door**, in the door's transaction after its legacy debt, under the
+  door's own tiers plus the Payment row the engine takes (a no-op where held).
+  A paid card cancel keeps global → lodge → member → Payment, then the booking
+  row its R04 already took. An approved appeal takes global → Payment → booking
+  row, W1's edge. The edit reductions take global → lodge → booking row (R02's
+  debtor read) → Payment: a new explicit Payment site, on the edit doors'
+  existing booking → Payment edge. An edit review's card refund posts after its
+  re-price, so any member credit key comes before the Payment row. A duplicate
+  or capacity-race capture posts in W1's body after its R06. A treasurer-approved
+  late capture takes only the Payment row (its `lock(1)` arrives in M4d) and
+  reads the owner without the booking row.
+- **An appeal's `release_claim`** takes global, then the Payment row, releases
+  the approval's open reservations with their funding and reverses its R05 in
+  the same transaction. A journal refusal there is thrown, never caught.
+- **The reservation step** runs in its own short transaction on the root client,
+  before each keyed slice is sent, taking only the Payment row. It releases a
+  superseded reservation with its funding, posts a deferred R05 (a superseded
+  intent's or an automatic late capture's return) and the lazy refund
+  successor, takes back the slice receipt's own collection for a shortfall,
+  funds and reserves. A refusal commits nothing; the door that committed
+  earlier stands, and the recovery runner stops the row dead without a retry.
+- **R12, an answer and R13** run inside `recordStripeRefundsAgainstTransaction`,
+  after its aggregate, under the Payment row it took first, before a failed-later
+  debt is kept. Every card refund row of the payment is read there, so a run
+  that missed one is caught up by the next.
+- **"Paid another way"** posts R14, its CLOSED_WITHOUT_REFUND releases and a
+  kept rest's close-out under global → Payment (→ the late capture's approval
+  task row), after its record and line.
+- **Merge** is unchanged and takes no Payment row. A refund family's successor
+  is posted by the first refund writer that finds the owner moved, under the
+  Payment row, sized from the tip's remaining refund-payable balance, as M4b
+  posts CHARGE successors. A reservation made before a merge is answered on the
+  survivor's successor; the family caps count both.
+
+New edges, and why they cannot deadlock: Payment → booking row only under
+`lock(1)` (the appeal, as W1); booking row → Payment only under `lock(1)` (edit
+doors and the review, as before); task row → Payment in a late-capture approval,
+whose counterpart (a close that takes Payment → that task row) can exist only
+after the approval committed. Payment-row-only writers never take a booking row.
+
+Counterpart reconciliation at M4c's base (`0d678da`): #4791 (M4b receipts),
+#4749, #4727, #4714, #4706, #4698, #4700, #4694, #4689 and #4684. Their recovery
+claims, exact `madeRefundId` and key-generation markers, preflight and outbox
+behaviour are unchanged; the Stripe request each sender makes is byte-identical
+(`card-refund-obligation-census.test.ts`, `member-money-refunds.realdb.test.ts`).
 
 ## A credit note spent outside the app: global, then the member's credit ledger (#4219)
 

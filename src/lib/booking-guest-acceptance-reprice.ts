@@ -502,8 +502,7 @@ export async function repriceBookingAfterGuestAcceptance(
     lodgeId,
     bookingModification,
     sides,
-    site: "guest-acceptance",
-    cardRefundCents: adjusted.organiserChildRefund ? 0 : paymentImpact.pendingRefundAmountCents, // #4516: its R05
+    site: "guest-acceptance", cardRefundCents: adjusted.organiserChildRefund ? 0 : paymentImpact.pendingRefundAmountCents, // #4516: its R05
   });
   // #4019: a whole-lodge PAID at $0 bypasses the settle; post as the other edit doors do.
   if (lifecycle.zeroDollarAutoPaid && isUnpaidConfirmedWholeLodge(booking)) {

@@ -4568,6 +4568,9 @@ PROCESSING -> attempt throws
   CREATE_ADDITIONAL_PAYMENT_INTENT whose ask write found its intent recorded
   for another edit            -> FAILED terminal at once: nextRetryAt null, attempts set
                                  to the ceiling, the cause on lastError + one officer alert
+  card refund whose slice's reservation the journal refused (#4516, M4c)
+                              -> FAILED terminal at once, the same way; Stripe was not
+                                 asked for that slice; settled by "Paid another way"
 ```
 
 Every terminal row sits at the attempt ceiling, so the claim, the health check
@@ -4723,8 +4726,17 @@ DEAD -> SUCCEEDED     ("Paid another way": finance:edit, lock(1), then the
                        of it, as the treasurer chooses - is recorded
                        on the payment with applyLocalRefundAllocation; a
                        COMPLETED hand-back task and its BANK_REFUND line record
-                       it; audited under `payment`)
+                       it; audited under `payment`; #4516: R14 posts and the
+                       row's reservations close without a refund)
+(none) -> DEAD        (#4516, owner 2 Nov 2026: a part close the treasurer says
+                       is "still owed" carries the rest to a row of its own,
+                       card_refund_still_owed_<task>, born dead; a later close
+                       settles it. "The club keeps it" raises none)
 ```
+
+Before a keyed slice is sent, the journal reserves its debt (`refundPaymentTransactions`,
+#4516). A refused reservation sends nothing and stops the row as above; a
+reservation the re-plan's next key supersedes is released with its funding.
 
 Before an ordinary charge-backed recovery sends any unmarked slice, its
 preflight reads Stripe once per involved intent, outside every transaction

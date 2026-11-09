@@ -96,7 +96,7 @@ const DOORS: Record<string, string> = {
   "src/app/api/admin/refund-requests/[id]/route.ts": "R05 (with its concession) for an approved appeal; withdrawn with release_claim",
   "src/lib/manual-refund-task-resolution.ts": "R05 for an edit review's card refund",
   "src/lib/late-capture-refund-approval.ts": "R05 for a treasurer-approved late capture's return",
-  "src/lib/card-refund-paid-another-way.ts": "R14 for a paid-another-way close, its reservations closed, a kept rest's close-out",
+  "src/lib/card-refund-paid-another-way-rest.ts": "R14 for a paid-another-way close, its reservations closed, a kept rest's close-out",
   "scripts/member-money-refund-reservations.ts": "dry-run-first refund census; exact reconciliation and OPERATOR release of reservations",
 
   "src/lib/booking-ledger-confirmation-sync.ts": "R01: a confirmation's lines, beside the legacy write",
@@ -142,6 +142,8 @@ const CONTEXT_RESOLVERS: readonly string[] = [
   // #4738: the zero-price confirm doors post their confirmation's R01 likewise.
   "src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts",
   "src/app/api/admin/bookings/[id]/force-confirm/route.ts",
+  // #4516 (M4c): a paid-another-way close resolves the context its R14 posts with, before its transaction.
+  "src/lib/card-refund-paid-another-way.ts",
   "src/app/api/bookings/[id]/confirm-draft/route.ts",
   "src/app/api/bookings/[id]/waitlist-confirm/route.ts",
 ];
