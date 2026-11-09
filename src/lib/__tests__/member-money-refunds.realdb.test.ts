@@ -22,7 +22,11 @@ import {
 import { readMemberMoneyApplicationState } from "@/lib/member-money/internal/application-read";
 import { memberMoneyApplicationTotals, memberMoneyConservationProblems } from "@/lib/member-money/internal/application-state";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
-import { recordStripeRefundsAgainstTransaction } from "@/lib/payment-transactions";
+import { PartialRefundError, recordStripeRefundsAgainstTransaction, refundPaymentTransactions, syncRefundsFromStripeCharge } from "@/lib/payment-transactions";
+import { buildBookingCancellationRefundMetadata } from "@/lib/payment-recovery-keys";
+import { refundRequestStripeMetadata } from "@/lib/refund-slice-evidence";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
 import { cleanHistories, createHistoryBooking, historyNames, seedHistoryFixtures } from "./support/booking-ledger-history";
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
@@ -386,6 +390,83 @@ async function cancelledPaidBooking() {
     expect(outcomes.map((o) => o.outcome)).toEqual(["reserved", "reserved"]);
     expect(outcomes.filter((o) => o.outcome === "reserved" && o.replayed)).toHaveLength(1);
     expect(await family(R05("cancellation", id), id)).toMatchObject({ funded: 8_000, reserved: 8_000 });
+  });
+
+  describe("the real sender, end to end: reservation, Stripe's request, the one cash writer (#4361 keys and markers kept)", () => {
+    type Sent = Parameters<NonNullable<typeof stripeRaceHooks.refund>>[0];
+    const sent: Sent[] = [];
+    let answer: (args: Sent) => string = () => "succeeded";
+    const stripeAnswers = (args: Sent) => {
+      sent.push(args);
+      return { id: `re_${args.idempotencyKey ?? "unkeyed"}`.slice(0, 200), object: "refund", amount: args.amountCents, currency: "nzd", status: answer(args),
+        created: 1_782_864_000, payment_intent: args.paymentIntentId, charge: `ch_${args.paymentIntentId}`, metadata: refundRequestStripeMetadata(args), reason: args.reason };
+    };
+    const send = (id: string, row: { id: string }, cents: number, options: { obligation?: CardRefundObligationRef; stripeKeySuffix?: string } = {}) =>
+      refundPaymentTransactions({ format: CLUB_FORMAT_TEST, paymentId: `${id}-payment`, amountCents: cents,
+        allocation: [{ paymentTransactionId: row.id, amountCents: cents, ...(options.stripeKeySuffix ? { stripeKeySuffix: options.stripeKeySuffix } : {}) }],
+        metadata: buildBookingCancellationRefundMetadata(id), idempotencyKeyPrefix: `booking_cancel_refund_${id}`, obligation: options.obligation });
+    const beforeEachSend = () => {
+      sent.length = 0;
+      answer = () => "succeeded";
+      resetStripeRaceHooks();
+      stripeRaceHooks.refund = async (args) => stripeAnswers(args);
+    };
+
+    it("MUTATION (probe 18): the inline sender reserves, sends exactly today's request, and R12 answers it; charge.refunded adds nothing", async () => {
+      beforeEachSend();
+      const { id, row, key } = await cancelledPaidBooking();
+      const result = await send(id, row, 8_000, { obligation: { scope: "cancellation", id } });
+      // The wire body: the cancel's own metadata plus its slice key as evidence (`INV-PAY-147`), as before M4c.
+      expect(sent).toEqual([{ paymentIntentId: row.stripePaymentIntentId, amountCents: 8_000, reason: "requested_by_customer",
+        metadata: { ...buildBookingCancellationRefundMetadata(id), refundSliceKey: key }, idempotencyKey: key, stampRefundSliceKey: true }]);
+      expect((await reservationOf(key))?.release?.reason).toBe("ANSWERED");
+      expect(await family(R05("cancellation", id), id)).toMatchObject({ paid: 8_000, reserved: 0 });
+      await syncRefundsFromStripeCharge({ paymentIntentId: row.stripePaymentIntentId!, stripeChargeId: `ch_${row.stripePaymentIntentId}`, refundedAmountCents: 8_000,
+        refunds: [stripeAnswers({ paymentIntentId: row.stripePaymentIntentId!, amountCents: 8_000, reason: "requested_by_customer", metadata: buildBookingCancellationRefundMetadata(id), idempotencyKey: key, stampRefundSliceKey: true }) as never] });
+      expect(await db.memberMoneyEvent.count({ where: { eventKey: memberMoneyEventKeys.refund(result.refunds[0]!.refundId) } })).toBe(1);
+      await capsHold(id);
+      expect(await refundCensus(id)).toEqual([]);
+
+      // The same request for a booking outside the journal, byte for byte but its own ids: no journal touches Stripe.
+      const outside = `${PREFIX}${++sequence}`;
+      await createHistoryBooking(db, names, outside, { payment: { amountCents: 8_000, source: "STRIPE" } });
+      const bare = await db.paymentTransaction.create({ data: { paymentId: `${outside}-payment`, source: "STRIPE", kind: "PRIMARY", status: "SUCCEEDED", amountCents: 8_000, stripePaymentIntentId: `${outside}-capture` } });
+      sent.length = 0;
+      await send(outside, bare, 8_000, { obligation: { scope: "cancellation", id: outside } });
+      const outsideKey = `booking_cancel_refund_${outside}_${bare.id}_8000`;
+      expect(sent).toEqual([{ paymentIntentId: bare.stripePaymentIntentId, amountCents: 8_000, reason: "requested_by_customer",
+        metadata: { ...buildBookingCancellationRefundMetadata(outside), refundSliceKey: outsideKey }, idempotencyKey: outsideKey, stampRefundSliceKey: true }]);
+      expect(await db.memberMoneyRefundReservation.count({ where: { attemptKey: { startsWith: `booking_cancel_refund_${outside}_` } } })).toBe(0);
+    });
+
+    it("#4361 keys kept: a refusal releases its reservation, and the re-plan's next key (`_refused1`) reserves and is answered", async () => {
+      beforeEachSend();
+      const { id, row, key } = await cancelledPaidBooking();
+      answer = () => "failed";
+      const refused = await send(id, row, 8_000, { obligation: { scope: "cancellation", id } });
+      expect(refused.refunds[0]!.status).toBe("failed");
+      expect((await reservationOf(key))?.release?.reason).toBe("REFUSED");
+      answer = () => "succeeded";
+      await send(id, row, 8_000, { obligation: { scope: "cancellation", id }, stripeKeySuffix: "refused1" });
+      expect(sent.map((args) => args.idempotencyKey)).toEqual([key, `${key}_refused1`]);
+      expect((await reservationOf(`${key}_refused1`))?.release?.reason).toBe("ANSWERED");
+      expect(await family(R05("cancellation", id), id)).toMatchObject({ funded: 8_000, paid: 8_000, reserved: 0 });
+      await capsHold(id);
+    });
+
+    it("a refused reservation asks Stripe for nothing: the sender throws before the slice, as the refusal", async () => {
+      beforeEachSend();
+      const { id, row, key } = await cancelledPaidBooking();
+      await reserve(id, row, { scope: "cancellation", id }, key, 8_000);
+      await r05(id, "refund-request", `${id}-appeal`, 5_000, true);
+      const failure = await refundPaymentTransactions({ format: CLUB_FORMAT_TEST, paymentId: `${id}-payment`, amountCents: 5_000,
+        allocation: [{ paymentTransactionId: row.id, amountCents: 5_000 }], metadata: { bookingId: id, reason: "refund_appeal_approved" },
+        idempotencyKeyPrefix: `refund_request_${id}-appeal`, obligation: { scope: "refund-request", id: `${id}-appeal` } }).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(PartialRefundError);
+      expect((failure as PartialRefundError).cause).toBeInstanceOf(MemberMoneyReservationRefused);
+      expect(sent).toEqual([]);
+      expect(await db.auditLog.count({ where: { targetId: id, action: "booking-payment.card-refund.reservation-refused" } })).toBe(1);
+    });
   });
 
   it("a journal refusal inside a door rolls the door back with it (INV-MONEY-044)", async () => {
