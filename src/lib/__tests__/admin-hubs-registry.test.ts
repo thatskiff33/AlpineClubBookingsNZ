@@ -908,6 +908,42 @@ describe("buildAdminUrlRules", () => {
     expect(buildAdminUrlRules(false, [moved]).redirects).toEqual([]);
   });
 
+  it.each([false, true])(
+    "refuses moving a dynamic page without the static sibling its pattern captures, either way round (live=%s)",
+    (live) => {
+      const moveOnly = (ids: readonly string[]) =>
+        ADMIN_PAGES.map((page) => ({ ...page, moved: ids.includes(page.id) }));
+      // `/admin/notices/:id` matches `/admin/notices/new`.
+      expect(() => buildAdminUrlRules(live, moveOnly(["notice-detail"]))).toThrow(
+        /notice-detail \(\/admin\/notices\/\[id\]\) would capture notice-new/,
+      );
+      expect(() => buildAdminUrlRules(live, moveOnly(["notice-new"]))).toThrow(
+        /would capture notice-new/,
+      );
+      // Together, or with the list page above them, is fine.
+      expect(() =>
+        buildAdminUrlRules(live, moveOnly(["notices", "notice-detail", "notice-new"])),
+      ).not.toThrow();
+      expect(() => buildAdminUrlRules(live, moveOnly(["notices"]))).not.toThrow();
+      // A synthetic pair the registry does not have, so the rule is not about notices.
+      const pair = [
+        { ...synthetic, id: "x-detail", oldPath: "/admin/synthetic/[id]", moved: true },
+        {
+          ...synthetic,
+          id: "x-new",
+          oldPath: "/admin/synthetic/new",
+          hubPath: "/admin/synthetic-hub/synthetic/new",
+          kind: "page" as const,
+          moved: false,
+        },
+      ];
+      expect(() => buildAdminUrlRules(live, pair)).toThrow(/x-detail .* would capture x-new/);
+      expect(() =>
+        buildAdminUrlRules(live, pair.map((page) => ({ ...page, moved: true }))),
+      ).not.toThrow();
+    },
+  );
+
   it("refuses a catch-all segment rather than guessing its pattern", () => {
     expect(() =>
       buildAdminUrlRules(true, [{ ...synthetic, oldPath: "/admin/synthetic/[...rest]" }]),
@@ -962,6 +998,14 @@ describe("the registry is inert", () => {
     "next.config.ts": "C3: the redirects and beforeFiles rewrites are generated",
     "src/components/admin-sidebar.tsx": "C3: the active link is the registry's activeAdminHref",
     "src/lib/admin-page-revalidation.ts": "C3: revalidateAdminPage revalidates a page's file path",
+    "src/components/help-widget/help-widget-admin.tsx":
+      "C3: admin help reads the pathname through canonicalAdminPathname",
+    "src/components/nav-bar.tsx": "C3: the profile return-to uses servedAdminPathname",
+    "src/app/(admin)/admin/xero/page.tsx": "C3: currentXeroPath uses servedAdminPathname",
+    "src/app/(admin)/admin/xero/_components/operations-panel.tsx":
+      "C3: router.replace targets use servedAdminPathname",
+    "src/app/(admin)/admin/xero/_components/inbound-events-panel.tsx":
+      "C3: router.replace targets use servedAdminPathname",
     "src/lib/__tests__/admin-hubs-active-link.test.ts": "C3: activeAdminHref and its census",
     "src/components/__tests__/admin-sidebar-active-link.test.tsx":
       "C3: the real sidebar over a moved Finance hub",

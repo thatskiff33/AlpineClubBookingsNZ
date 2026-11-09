@@ -155,29 +155,102 @@ describe("no production code revalidates an admin page by path", () => {
     });
   }
 
-  const CALL = /\brevalidatePath\(\s*([^,)]*)/g;
+  const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-  function scan() {
-    const literalAdmin: string[] = [];
-    const unreviewed: string[] = [];
-    let calls = 0;
-    for (const file of productionFiles("src")) {
-      if (file === OWNER) continue;
-      const source = stripComments(fs.readFileSync(path.join(ROOT, file), "utf8"));
-      for (const match of source.matchAll(CALL)) {
-        calls += 1;
+  /**
+   * Every callee that IS `revalidatePath` in a file: the name its named import
+   * binds (`revalidatePath`, or the alias in `revalidatePath as rp`) and
+   * `<ns>.revalidatePath` for a namespace import. A dynamic import, a `require`
+   * or a re-export of `next/cache` is reported instead: the census cannot follow
+   * it, so it must not exist unreviewed.
+   */
+  function revalidatePathCallees(source: string): { callees: string[]; untraceable: string[] } {
+    const callees: string[] = [];
+    const untraceable: string[] = [];
+    for (const match of source.matchAll(/import\s*(?:type\s+)?\{([^}]*)\}\s*from\s*["']next\/cache["']/g)) {
+      for (const specifier of match[1]!.split(",")) {
+        const binding = /^\s*(?:type\s+)?revalidatePath(?:\s+as\s+(\w+))?\s*$/.exec(specifier);
+        if (binding) callees.push(binding[1] ?? "revalidatePath");
+      }
+    }
+    for (const match of source.matchAll(/import\s*\*\s*as\s+(\w+)\s+from\s*["']next\/cache["']/g)) {
+      callees.push(`${match[1]}.revalidatePath`);
+    }
+    if (/\bimport\(\s*["'`]next\/cache["'`]\s*\)|\brequire\(\s*["'`]next\/cache["'`]\s*\)/.test(source)) {
+      untraceable.push("a dynamic import or require of next/cache");
+    }
+    if (/\bexport\s*(?:\*|\{[^}]*\})\s*from\s*["']next\/cache["']/.test(source)) {
+      untraceable.push("a re-export of next/cache");
+    }
+    return { callees, untraceable };
+  }
+
+  type Findings = { literalAdmin: string[]; unreviewed: string[]; calls: number };
+
+  /** One file's `revalidatePath` calls, classified into `findings`. */
+  function scanSource(file: string, raw: string, findings: Findings): void {
+    const source = stripComments(raw);
+    const { callees, untraceable } = revalidatePathCallees(source);
+    for (const reason of untraceable) findings.unreviewed.push(`${file}: ${reason}`);
+    // The bare name too, whatever it was imported from: a local wrapper that
+    // re-exports it under the same name is still policed.
+    for (const callee of new Set(["revalidatePath", ...callees])) {
+      // The first argument: a whole string or template literal (a `)` inside
+      // `"/(admin)/…"` must not end it), else everything up to `,` or `)`.
+      const call = new RegExp(
+        `(?<![\\w.])${escape(callee)}\\(\\s*("(?:[^"\\\\]|\\\\.)*"|'(?:[^'\\\\]|\\\\.)*'|\`(?:[^\`\\\\]|\\\\.)*\`|[^,)]*)`,
+        "g",
+      );
+      for (const match of source.matchAll(call)) {
+        findings.calls += 1;
         const argument = match[1]!.trim();
-        if (/^["'`]/.test(argument)) {
+        const shown = `${file}: ${callee}(${argument}`;
+        if (/^`/.test(argument) && argument.includes("${")) {
+          // An interpolated template can spell any path: it is never a literal.
+          findings.unreviewed.push(shown);
+        } else if (/^["'`]/.test(argument)) {
           if (/^["'`]\/(?:\(admin\)\/)?admin(?:[/"'`]|$)/.test(argument)) {
-            literalAdmin.push(`${file}: revalidatePath(${argument}`);
+            findings.literalAdmin.push(shown);
           }
         } else if (!(argument in REVIEWED_ARGUMENTS)) {
-          unreviewed.push(`${file}: revalidatePath(${argument}`);
+          findings.unreviewed.push(shown);
         }
       }
     }
-    return { literalAdmin, unreviewed, calls };
   }
+
+  function scan(): Findings {
+    const findings: Findings = { literalAdmin: [], unreviewed: [], calls: 0 };
+    for (const file of productionFiles("src")) {
+      if (file === OWNER) continue;
+      scanSource(file, fs.readFileSync(path.join(ROOT, file), "utf8"), findings);
+    }
+    return findings;
+  }
+
+  it.each([
+    ["an aliased import", 'import { revalidatePath as rp } from "next/cache";\nrp("/admin/payments");', "literalAdmin"],
+    ["a namespace import", 'import * as cache from "next/cache";\ncache.revalidatePath(P);', "unreviewed"],
+    ["an interpolated template", 'import { revalidatePath } from "next/cache";\nrevalidatePath(`${base}/admin/x`);', "unreviewed"],
+    ["a non-admin interpolated template", 'import { revalidatePath } from "next/cache";\nrevalidatePath(`/finance/${id}`);', "unreviewed"],
+    ["a dynamic import", 'const { revalidatePath: r } = await import("next/cache");', "unreviewed"],
+    ["a re-export", 'export { revalidatePath } from "next/cache";', "unreviewed"],
+    ["a route-group literal", 'import { revalidatePath } from "next/cache";\nrevalidatePath("/(admin)/admin/members/[id]", "page");', "literalAdmin"],
+  ] as const)("catches %s", (_label, source, bucket) => {
+    const findings: Findings = { literalAdmin: [], unreviewed: [], calls: 0 };
+    scanSource("synthetic.ts", source, findings);
+    expect(findings[bucket].length).toBeGreaterThan(0);
+  });
+
+  it("passes the reviewed shapes", () => {
+    const findings: Findings = { literalAdmin: [], unreviewed: [], calls: 0 };
+    scanSource(
+      "synthetic.ts",
+      'import { revalidatePath } from "next/cache";\nrevalidatePath("/", "layout");\nrevalidatePath("/(admin)", "layout");\nrevalidatePath(`/finance`);\nrevalidatePath(BOOKING_DETAIL_ROUTE_PATTERN, "page");',
+      findings,
+    );
+    expect(findings).toEqual({ literalAdmin: [], unreviewed: [], calls: 4 });
+  });
 
   it("finds the calls it polices", () => {
     // Not vacuous: the tree still revalidates the root layout and the finance portal.
