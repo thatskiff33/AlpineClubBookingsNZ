@@ -188,9 +188,7 @@ export async function GET(
             creditAppliedCents: cancelTieredAppliedCreditCents(booking.payment, await deriveBookingAppliedCreditCents(booking.id)),
           },
       // #3827 (`INV-PAY-117`): cash an earlier edit already promised back by hand.
-      // #4866: and a live superseded capture's, which its own refund returns - as the cancel counts it.
-      openNonCancellationHandBackCents:
-        sumOpenNonCancellationHandBackCents(booking.payment.manualRefundTasks) + (await readSupersededCaptureHeldBack(prisma, booking.payment.id)).totalCents,
+      openNonCancellationHandBackCents: sumOpenNonCancellationHandBackCents(booking.payment.manualRefundTasks) + (await readSupersededCaptureHeldBack(prisma, booking.payment.id)).totalCents, // #4866: a live superseded capture's, as the cancel counts it
       finalPriceCents: booking.finalPriceCents,
       checkIn: booking.checkIn,
       policyRules: policy,

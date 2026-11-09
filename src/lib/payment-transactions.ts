@@ -1405,8 +1405,7 @@ export async function planStripeRefundAllocation({
   paymentId: string;
   amountCents: number;
   store?: PaymentStore;
-  /** #4866: a cancellation's, the live superseded captures it leaves alone (`readSupersededCaptureHeldBack`). */
-  heldBackByTransaction?: ReadonlyMap<string, number>;
+  heldBackByTransaction?: ReadonlyMap<string, number>; // #4866: a cancellation's (`readSupersededCaptureHeldBack`)
 }): Promise<{
   slices: RefundAllocationSlice[];
   plannedAmountCents: number;
@@ -1430,8 +1429,7 @@ export async function planStripeRefundAllocation({
 export function planCardRefundFromLedger(
   transactions: readonly RefundableStripeTransaction[],
   amountCents: number,
-  /** #4866: what a cancellation leaves to a live superseded capture's refund, by transaction id. */
-  heldBackByTransaction?: ReadonlyMap<string, number>
+  heldBackByTransaction?: ReadonlyMap<string, number> // #4866: `buildRefundAllocationSlices`
 ) {
   const { slices, totalRefundableCents } = buildRefundAllocationSlices(
     transactions,

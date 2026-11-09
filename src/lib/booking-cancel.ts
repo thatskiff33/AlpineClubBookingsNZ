@@ -1680,8 +1680,7 @@ async function performBookingCancellation(
     // #3836: a mirror the inbound repair clamped to the card amount reads the ledger.
     const organiserExtraState = organiserByHand ? await readOrganiserExtraState(tx, bookingId) : null;
     const tieredPayment = { ...payment, ...(organiserExtraState ? { changeFeeCents: effectiveOrganiserPaidChangeFeeCents(payment.changeFeeCents, organiserExtraState) } : {}), creditAppliedCents: cancelTieredAppliedCreditCents(payment, appliedCreditCents) };
-    // #4866 (`INV-PAY-145`): a live superseded capture is its own refund's to return, never this booking's money:
-    // counted as paid by no tier, and taken by no slice of the card plan below. Under the Payment row, after the fold.
+    // #4866 (`INV-PAY-150`): a live superseded capture is its own refund's to return - no tier counts it as paid, no card slice takes it.
     const supersededHeldBack = await readSupersededCaptureHeldBack(tx, payment.id);
     const money = paidCancellationMoney({
       payment: organiserCard
@@ -1689,8 +1688,7 @@ async function performBookingCancellation(
         : tieredPayment,
       // #3827 (`INV-PAY-117`): read under lock(1), which every edit that raises
       // such a task also holds, so none can appear before this cancel commits.
-      // #4866: with the live superseded captures, money already on its way back.
-      openNonCancellationHandBackCents: (await openNonCancellationHandBackCents(tx, payment.id)) + supersededHeldBack.totalCents,
+      openNonCancellationHandBackCents: (await openNonCancellationHandBackCents(tx, payment.id)) + supersededHeldBack.totalCents, // #4866
       finalPriceCents: fresh.finalPriceCents,
       appliedCreditCents,
       restoresToMemberLedger: restoreMemberId !== null,
