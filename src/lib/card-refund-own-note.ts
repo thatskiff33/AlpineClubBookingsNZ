@@ -99,9 +99,9 @@ export async function queueCardRefundOwnNotes(params: {
 /**
  * The invoice a refunded capture's note credits: its own receipt (#3953), or
  * the invoice the credit-release sweep recorded when it has none (#4493).
- * The per-delta note uses the same order (`queueRecordedCardRefundNotes`).
+ * The own note and the canonical delta both ask here (`INV-SSOT-001`).
  */
-async function invoiceACardRefundCredits(paymentIntentId: string): Promise<string | null> {
+export async function invoiceACardRefundCredits(paymentIntentId: string): Promise<string | null> {
   return (await findAdditionalCaptureReceiptInvoiceId(paymentIntentId)) ?? (await readCreditReleaseReceiptInvoiceId(paymentIntentId));
 }
 

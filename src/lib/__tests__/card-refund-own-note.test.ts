@@ -264,6 +264,23 @@ describe("one rule for a re-send's own note: the replay and charge.refunded agre
     }
   });
 
+  it("#4493: an own note names the capture's own receipt ahead of the sweep's invoice", async () => {
+    vi.mocked(findAdditionalCaptureReceiptInvoiceId).mockResolvedValue("invoice-capture");
+    mockReleaseInvoice.mockResolvedValue("invoice-booking");
+    vi.mocked(enqueueXeroRefundCreditNoteOperation).mockReset().mockResolvedValue({ queueOperationId: "op" } as never);
+    try {
+      await queueCardRefundOwnNotes({ paymentId: "payment-1", stripeRefundIds: ["re_rel"] });
+      expect(vi.mocked(enqueueXeroRefundCreditNoteOperation)).toHaveBeenCalledWith(
+        "payment-1",
+        4_000,
+        expect.objectContaining({ cardRefundId: "re_rel", creditsInvoiceId: "invoice-capture" }),
+      );
+    } finally {
+      vi.mocked(findAdditionalCaptureReceiptInvoiceId).mockResolvedValue(null);
+      mockReleaseInvoice.mockResolvedValue(null);
+    }
+  });
+
   it("#4493: an own note names the sweep's invoice when the capture has no other receipt", async () => {
     mockReleaseInvoice.mockResolvedValue("invoice-booking");
     vi.mocked(enqueueXeroRefundCreditNoteOperation).mockReset().mockResolvedValue({ queueOperationId: "op" } as never);
