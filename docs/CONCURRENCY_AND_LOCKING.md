@@ -1214,12 +1214,14 @@ lifecycle or source-Booking lock is added; the hold order is lodge → sorted li
 Member rows, and the standing order is its existing prefix → subject Member → queue
 participants → coverage-owner.
 
-Member merge owns the blocking counterpart. After its bounded relation moves it
-plans the survivor's attendance plus the captured loser-owned bookings, then takes
-master, loser and every ancillary queue owner `FOR UPDATE`, all at once. It re-plans
-under those rows; a new guest, booking, owner or lodge that changes the participant
-fingerprint returns the merge's existing safe 409 rather than acquiring another row
-late.
+Member merge owns the blocking counterpart. Its relation moves, collision
+resolvers and hosting plan run in the same savepoint as the participant lock
+(#4876). That lock takes master, loser and every ancillary queue owner `FOR
+UPDATE`, all at once. If one row is busy the savepoint rolls back, releasing
+every row the attempt wrote, and merge waits for that one row holding none of
+them. It re-plans under the rows once it holds them; a new guest, booking,
+owner or lodge that changes the participant fingerprint returns the merge's
+existing safe 409 rather than acquiring another row late.
 
 **Merge waits for those rows, but only for `MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS`
 (10s)** (#2623 T6). It waits rather than failing at once because merge is
@@ -1231,15 +1233,17 @@ owners blocked every FK write naming them, so an uninvolved booking-create or
 guest-add waited behind the tail of a merge, for as long as the merge transaction's
 own `timeout: 120_000` allowed.
 
-**Since #4855 merge never waits for one of these rows while holding another**
+**Since #4855 merge never waits for one of these rows while holding another, and
+since #4876 it never waits for one while holding any row that attempt wrote**
 ("Merge never holds a Member row while waiting for another (#4855)" below). Each
-attempt is one sorted `SELECT 1 … FOR UPDATE SKIP LOCKED` inside a savepoint,
-counted rather than read (`INV-OPS-001`). When it locks every id, merge holds them
-all, so the uncontended path is one statement. Otherwise a row-by-row
-`SKIP LOCKED` probe finds the first row it skipped, the savepoint is rolled back,
-releasing what it did lock, and merge waits for that row alone (`FOR UPDATE`, in
-a second savepoint, under `set_config('lock_timeout', <what is left of the 10s>,
-true)`), rolls that back too and tries again. The deadline is read from a monotonic clock before each
+attempt opens a savepoint, runs the moves and the plan, then one sorted
+`SELECT 1 … FOR UPDATE SKIP LOCKED`, counted rather than read (`INV-OPS-001`).
+When it locks every id, the savepoint is released and merge holds the rows and
+the writes. Otherwise a row-by-row `SKIP LOCKED` probe finds the first row it
+skipped, the savepoint is rolled back — releasing the Member rows and every row
+the moves wrote — and merge waits for that row alone (`FOR UPDATE`, in a second
+savepoint, under `set_config('lock_timeout', <what is left of the 10s>, true)`),
+rolls that back too and tries again. The deadline is read from a monotonic clock before each
 attempt, so the loop either takes every row or spends the budget; it cannot spin.
 Rolling back to a savepoint restores the `lock_timeout` in force before it, so the
 rest of the merge transaction's locks (sorted coverage-owner keys, the loser
@@ -2637,10 +2641,11 @@ fan-out read, then one exact, sorted `Member FOR KEY SHARE NOWAIT` statement per
 high-level enqueue seam containing every planned source owner plus the non-null
 actor. The booking-request hold takes the matching lodge → exact sorted linked
 `Member FOR KEY SHARE` path and re-reads active/archive state before its versioned
-claim. Merge takes the blocking counterpart only after its relation moves:
-`Member FOR UPDATE` over master, loser and every ancillary owner in the bounded
-survivor-attendance/captured-booking plan, all at once, waiting for at most one
-of them at a time and holding none while it waits (#4855). It then re-plans under
+claim. Merge takes the blocking counterpart in the same savepoint as its
+relation moves (#4876): `Member FOR UPDATE` over master, loser and every
+ancillary owner in the bounded survivor-attendance/captured-booking plan, all at
+once, waiting for at most one of them at a time and holding none of those rows,
+and none of the moves, while it waits (#4855, #4876). It then re-plans under
 those rows, refuses any row still naming the duplicate (#4855), takes sorted
 coverage-owner keys, runs the late owner and actor queue
 sweeps, emits actorless merge work under the exact participant proof, and deletes
@@ -2655,8 +2660,9 @@ later conflict rolls back earlier calls instead of forming a hold-and-wait cycle
 The composed merge order is **hosting policy-set → every affected lodge key in
 sorted order, and no global cohort key (#2595) → sorted member-lifecycle →
 sorted member-partner-link (#2595) →
-relation moves → master/loser/ancillary Member FOR UPDATE, all at once, never
-holding one while waiting for another (#4855) → under-lock re-plan →
+[savepoint: relation moves, then master/loser/ancillary Member FOR UPDATE, all
+at once; on contention the savepoint rolls back and merge waits for one Member
+row holding no row it wrote (#4855, #4876)] → under-lock re-plan →
 residual-reference refusal (#4855) → sorted coverage-owner → unresolved Xero contact-create proof re-check →
 late owner+actor sweeps → Payment attribution, sorted `NOWAIT` (#4823) →
 unbacked shared-double reconciliation (#2595) →
@@ -3596,7 +3602,7 @@ credit-adjustment review, the edit doors run by an officer) do not know their
 whole member set in advance. A per-writer fence (refusing an officer write while
 its actor is merging) would need a census of every writer. So the rule is merge's
 own: **merge never waits for a Member row while it holds another**
-(`lockMemberMergeHostingCoverageParticipants`). Each attempt is one sorted
+(`withMemberMergeParticipantRows`). Each attempt is one sorted
 `FOR UPDATE SKIP LOCKED` in a savepoint; a partial result is rolled back, merge
 waits for the first skipped row alone under what is left of the #2623 T6 budget,
 releases it, and tries again (the #2623 T6 paragraph, "Member merge owns the
@@ -3604,6 +3610,15 @@ blocking counterpart", under "Same-owner coverage takes a per-owner key (#2576)"
 has the mechanics). A lock merge waits for while holding no
 other Member row cannot close a cycle through Member rows. The writer commits and
 merge then takes its rows.
+
+#4876 extends that one level outward. The nulls, resolvers, moves and plan run
+inside the same savepoint, so a busy Member row rolls them back before the wait.
+A writer that already holds a participant's key share and then updates a row
+merge moved — a completing hut-leader sign-off, a locked-period allocation
+rewrite — used to wait on that row while merge waited on the key share. Merge
+now holds none of those rows while it waits, so the writer commits and merge
+retries. The class is open-ended, so the fence stays in merge rather than in a
+census of writers. Proved by `member-merge-moved-row-races.realdb.test.ts`.
 
 That leaves the second half of #4855: what the writer committed. Merge re-points
 the duplicate's relations before its Member rows, and an UPDATE sees only
