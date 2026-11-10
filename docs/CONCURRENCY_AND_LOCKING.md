@@ -3999,8 +3999,8 @@ intent id and its supersede's durable rows only while it still holds that
 claim (`holdAdditionalIntentRecoveryClaim`, one transaction that re-stamps
 `processingStartedAt`), so whichever commits first wins. A re-issued ask's
 recovery is written in the edit's transaction; the door's own mint completes it
-fenced the same way (`writeReissuedAskUnderRecovery`). An increase folding a
-waiting re-issue in closes it with the same fence. #4052: when the door's write
+fenced the same way (`writeAskUnderDoorRecovery`). An increase folding a
+waiting re-issue, or a waiting increase retry, in closes it with the same fence. #4052: when the door's write
 loses that fence and the recovery ended SUCCEEDED without the door's intent (a
 net-off, a fold, or the runner writing another intent under an amount-suffixed
 key), or is still PROCESSING but already repointed by the runner's locked write
@@ -4010,7 +4010,7 @@ key, or one that wrote the same intent, leaves it alone. No lock or key changes.
 #4631: the runner's side. When its claim hold matches nothing it wrote nothing,
 and its transaction has ended; the runner then re-reads the recovery under no
 lock, and only one closed SUCCEEDED by a net-off or fold note
-(`reissueClosedUnminted`) with no row or recovery naming the intent has that
+(`askClosedUnminted`) with no row or recovery naming the intent has that
 intent cancelled at Stripe, by #4052's own proof and cancel
 (`settleLostRecoveryClaimHold`) - unless the runner adopted that intent by
 matching (#4036) rather than minting it under its own key, which is never
@@ -5151,10 +5151,10 @@ the pre-#4217 code). Now:
   review). A reduction that gives credit back has written the `Payment` row
   before its retire closes the recovery; the runner's claim hold
   (`holdAdditionalIntentRecoveryClaim`) and the re-issue door
-  (`writeReissuedAskUnderRecovery`) used to take the recovery row and then the
+  (`writeAskUnderDoorRecovery`) used to take the recovery row and then the
   `Payment` row, a deadlock. Both now lock the `Payment` row first, the retire
   locks it before its recovery close, and an increase's fold-close
-  (`foldWaitingReissuedAsks`) before the recoveries it folds. That is also the
+  (`foldWaitingAsks`) before the recoveries it folds. That is also the
   #4104 order (`Payment` row, then the `PaymentRecoveryOperation`).
 - The manual-payment reversal (`reverseManualBookingPayment`) takes it straight
   after `lock(1)` and the lodge key, before its guards read the payment and

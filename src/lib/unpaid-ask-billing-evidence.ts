@@ -108,13 +108,20 @@ export function classifyUnpaidAskBilling({
     const parkedAnchors = retired.parkedOps.flatMap((op) =>
       op.intentId !== null && op.intentId === row.stripePaymentIntentId && op.anchorId ? [op.anchorId] : [],
     );
-    // #4744: only this row's own edit covers its own money. A folded increase's
-    // invoice parked on this intent is that earlier edit's, not this one's.
+    // #4744: a row that names its edit is covered only by that edit's parked
+    // invoice. A folded increase's invoice waiting on this same intent is the
+    // earlier edit's, so it does not cover this row's own money. A row that
+    // names no edit keeps the older rule: any parked invoice that is not a
+    // re-issue's covers it.
     const ownEditId =
       (row.stripePaymentIntentId ? intentMinters.get(row.stripePaymentIntentId)?.modificationId : undefined) ??
       row.bookingModificationId ??
       undefined;
-    if (ownCents > 0 && !(ownEditId !== undefined && parkedAnchors.includes(ownEditId))) {
+    const coveredByOwnParkedInvoice =
+      ownEditId !== undefined
+        ? parkedAnchors.includes(ownEditId)
+        : parkedAnchors.some((anchorId) => !isReduction(anchorId));
+    if (ownCents > 0 && !coveredByOwnParkedInvoice) {
       const minter = row.stripePaymentIntentId ? intentMinters.get(row.stripePaymentIntentId) : undefined;
       const hadIssuedXeroInvoice = minter ? minter.hadIssuedXeroInvoice : row.hadIssuedXeroInvoice;
       if (hadIssuedXeroInvoice === null) established = false;

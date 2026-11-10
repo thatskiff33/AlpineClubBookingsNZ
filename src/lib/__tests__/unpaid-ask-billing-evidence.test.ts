@@ -109,6 +109,34 @@ describe("classifyUnpaidAskBilling", () => {
     ).toBe(false);
   });
 
+  it("a folded increase's parked invoice does not cover the later edit's own money", () => {
+    const later = {
+      ...increase,
+      id: "mod_later",
+      priceDiffCents: 1_000,
+      newData: {
+        foldedReissuedAskCents: 5_000,
+        foldedIncreaseAsks: [
+          {
+            modificationId: "mod_increase",
+            askCents: 5_000,
+            invoiceCents: 5_000,
+            invoiceUnsure: false,
+            hadIssuedXeroInvoice: true,
+          },
+        ],
+      },
+    };
+    expect(
+      classifyUnpaidAskBilling({
+        rows: [row({ amountCents: 6_000, carriedAskCents: 5_000, bookingModificationId: "mod_later" })],
+        retired: { invoicedCents: 5_000, parkedOps: [{ intentId: "pi_ask", anchorId: "mod_increase" }], invoiceEvidenceUnknown: false },
+        modifications: [increase, later],
+        intentMinters: NO_MINTERS,
+      }),
+    ).toEqual({ supplementaryInvoicedCents: 6_000, established: true });
+  });
+
   it("a parked invoice covers its row: counted once, by the retire", () => {
     expect(
       classifyUnpaidAskBilling({
