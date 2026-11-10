@@ -256,8 +256,8 @@ export const adminMembersHelpEntries: HelpEntry[] = [
   entry(
     getAdminPage("notices").oldPath,
     help(
-      "Member Notices",
-      "Member Notices posts committee news to targeted member audiences and tracks who has read each notice.",
+      getAdminPage("notices").label,
+      `${getAdminPage("notices").label} posts committee news to targeted member audiences and tracks who has read each notice.`,
       [
         "Target a notice to everyone or to specific members, membership types, lodges, or committee roles.",
         "Publish when ready; optionally email the notice to the audience once on publish.",

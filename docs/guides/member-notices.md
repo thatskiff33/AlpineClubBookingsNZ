@@ -1,4 +1,4 @@
-# Member Notices
+# Member notices
 
 Audience: Operator
 
@@ -7,10 +7,10 @@ Audience: Operator
 A committee news board: write a notice, target it to the right members, and
 publish it. Targeted members see it on their dashboard "Recent News" card at
 login and on the **Recent News** page (`/notices`), and you can see who has read
-each notice. Find the admin surface at **Admin → Members → Member Notices**
+each notice. Find the admin surface at **Admin → Members → Member notices**
 (`/admin/notices`).
 
-Member Notices is gated by the **Member notices** module (Admin → Modules),
+The admin page is gated by the **Member notices** module (Admin → Modules),
 which is **on by default** — if the sidebar entry is missing, that module is
 off. Creating, publishing, editing, and deleting notices are **membership**-area
 edit actions: a view-only membership admin sees the pages and the read reports
@@ -97,7 +97,7 @@ are never emailed twice.
 
 ### Post a notice
 
-1. Open **Member Notices** and click **New notice**.
+1. Open **Member notices** and click **New notice**.
 2. Enter a **Title** (up to 200 characters) and write the **body** in the
    editor.
 3. Choose the **audience** — Everyone, or Targeted (then pick membership types,
