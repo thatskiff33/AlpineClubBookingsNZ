@@ -467,7 +467,7 @@ are the literal `1`.
 | Lock | Key | Helper / where | Tier | Serialises |
 | --- | --- | --- | --- | --- |
 | **Global booking / money** | `1` (literal) | inline `tx.$executeRaw` | 2 | Booking-status + money side effects that must exclude across the whole booking regardless of lodge: cancel, capture/settle, hold-release, group-settlement reaper/settle/refund/organiser-cancel, refunds, credit restore; plus bed-allocation inventory/placement/move/range/auto/approval/removal writers that must serialize with lifecycle prune; and, since #2698, the hut-leader ACCEPT path only — a custodian bed hold the officer has explicitly accepted narrowing an existing whole-lodge hold, which must exclude that hold's release (`INV-CAP-038`). Gated on the acceptance AND on a bed being involved, so a bedless write cannot take the club-wide key by asserting a flag. The hut-leader routes are otherwise not in this cohort: the detect-and-refuse path writes nothing and takes the per-lodge key alone. Member merge is the one bed-allocation writer that deliberately does NOT take this key — see "Merge joins the bed-allocation cohort" (#2595). |
-| **Per-lodge capacity** | `hashtextextended(<lodgeId>, 0)` | `acquireLodgeCapacityLock(tx, lodgeId)` (`lodge-capacity-lock.ts`, re-exported by `capacity.ts`) | 1 | Capacity claims/checks and bed-allocation mutations for one lodge; booking admission versus lodge deactivation; hut-leader overlap, optional bed-hold writes and assignment DELETE (#2698: removing a custodian hold widens every overlapping whole-lodge hold's represented set); roster eligibility snapshots; and direct or config-transfer chore-template changes, which serialize active-template validation for that lodge. |
+| **Per-lodge capacity** | `hashtextextended(<lodgeId>, 0)` | `acquireLodgeCapacityLock(tx, lodgeId)` and, fail-fast, `tryAcquireLodgeCapacityLock` (`lodge-capacity-lock.ts`; the blocking form is re-exported by `capacity.ts`) | 1 | Capacity claims/checks and bed-allocation mutations for one lodge; booking admission versus lodge deactivation; hut-leader overlap, optional bed-hold writes and assignment DELETE (#2698: removing a custodian hold widens every overlapping whole-lodge hold's represented set); roster eligibility snapshots; and direct or config-transfer chore-template changes, which serialize active-template validation for that lodge. |
 | **Per-member night footprint** | `hashtext("booking-member-night"), hashtext(<memberId>)` | `lockBookingMemberNights(tx, guests)` (`booking-member-night-conflicts.ts`) | cross-lodge | Serialises the person-night guard ACROSS lodges (see below). |
 | **Per-trip hosting coverage** | `hashtext("hosting-coverage-group"), hashtext(<GroupBooking.id>)` | `lockHostingCoverageGroup` / `lockHostingCoverageGroups`, with `tryLockHostingCoverageGroup(s)` tried first (`adult-member-hosting-coverage-lock.ts`) | cross-account | Serialises `SAME_GROUP_TRIP` coverage (#3039, epic #2943). The owner key cannot do this job: it is `Booking.memberId`, the DEPENDENT's own account, while every Group Trip source belongs to somebody else — so two writers changing two bookings in one trip hold two DIFFERENT owner keys and are not serialised at all. Not the lodge key either: one lodge holds many unrelated trips. Taken immediately BEFORE the sorted owner keys, because the trip's membership is what decides which owners the reconciliation fan-out will name. Several trips are taken in sorted order, and EVERY acquisition is tried with `pg_try_advisory_xact_lock` before the blocking form — one transaction can discover two trip keys (a booking in one trip whose same-owner dependent sits in another), so sorting within a call cannot order keys discovered in two, and a conflict rolls the whole outer transaction back with the stable `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409 rather than waiting inside a booking transaction. Taken only where the lodge has `SAME_GROUP_TRIP` enabled AND the booking is in a trip. |
 | **Per-owner hosting coverage** | `hashtext("hosting-coverage-owner"), hashtext(<Booking.memberId>)` | `lockHostingCoverageOwner` / `lockHostingCoverageOwners` (`adult-member-hosting-coverage-lock.ts`) | cross-booking | Serialises `SAME_BOOKING_OWNER` coverage (#2576 §9): one booking's compliance depends on another booking of the SAME owner, so the key remains authoritative even though #2600 made allocation-participating confirmation and cancellation compose global → lodge. Taken LAST among the application lock families a caller composes, EXCEPT that since #3039 the per-TRIP hosting coverage key above sits immediately before it — so it is the second of the last two rather than the last. Roster-aware modification paths take global → lodge → roster-date → any applicable member keys → sorted queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-group → coverage-owner; queued incident reconciliation takes hosting policy-set → sorted claimed member-lifecycle keys → sorted claimed `Member FOR KEY SHARE` rows → coverage-group (only where the reconciled booking is in a Group Trip at a lodge with `SAME_GROUP_TRIP` on; the evaluator takes it fail-fast before it reads a sibling as cover) → coverage-owner. Paths that do not use roster or member keys omit those tiers. Ordinary producers try sorted owner keys before re-entering the blocking helper, while merge takes its sorted owner keys only after it holds its participant rows `FOR UPDATE` (taken all at once, never holding one while waiting for another, #4855). The key is taken only when the lodge actually has the scope enabled. |
@@ -1221,7 +1221,10 @@ UPDATE`, all at once. If one row is busy the savepoint rolls back, releasing
 every row the attempt wrote, and merge waits for that one row holding none of
 them. It re-plans under the rows once it holds them; a new guest, booking,
 owner or lodge that changes the participant fingerprint returns the merge's
-existing safe 409 rather than acquiring another row late.
+existing safe 409 rather than acquiring another row late. A lodge the
+guest-row derivation newly sees at the start of an attempt is try-locked
+before the moves (`lockPartnerShareLodgesAppearedSincePrefix`); one that
+appears after that re-derivation is still `partner_share_lodge_drift`.
 
 **Merge waits for those rows, but only for `MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS`
 (10s)** (#2623 T6). It waits rather than failing at once because merge is
@@ -2893,7 +2896,11 @@ lockAdultMemberHostingPolicySet(tx)                              policy config
   → MemberParentPartnerExclusion:<each prospective pair>, C order pair rows
         (#3271 — no-op UPSERT locks existing and absent canonical pairs;
         complete this layer before the authoritative topology re-read)
-  → steps 1-3: null self-cycles, resolve collisions, applyMoves
+  → steps 1-3, inside the attempt savepoint, before the moves:
+        re-derive the lodge set and try-lock any lodge the prefix missed
+        (#4876 — a booking that committed after the opening prefix, including
+        while the previous attempt was rolled back; a miss 409s and does not wait)
+        then null self-cycles, resolve collisions, applyMoves
   → master/loser/ancillary `Member … FOR UPDATE`, all at once:     member rows
         sorted SKIP LOCKED attempts in a savepoint, waiting for one
         skipped row at a time while holding none (#4855, 10s, T6)
@@ -3156,8 +3163,13 @@ and no reverse edge exists anywhere in the tree:
   live policy CRUD takes only that key, queued incident reconciliation takes it
   first, and the queue drain uses the fail-fast `tryLock` while holding nothing.
 - `lodge → member-lifecycle` is the order every partner-share caller and the
-  reviewed bed-allocation move already use. No transaction takes a
-  member-lifecycle key and then a lodge key, or the global key.
+  reviewed bed-allocation move already use. No transaction waits for a lodge
+  key while it holds a member-lifecycle key, or the global key. The one later
+  acquisition is inside each merge attempt: `tryAcquireLodgeCapacityLock` on a
+  lodge the opening prefix missed, inside the attempt savepoint, before the
+  moves. A
+  miss does not wait — it is `partner_share_lodge_drift` — so the reverse is
+  never a wait. The operator's retry takes the wider set at the top, in order.
 - `member-lifecycle → member-partner-link` is the reviewed bed-allocation move's
   own order (`bed-allocation-move.ts`), so merge adds a second HOLDER of an
   existing edge rather than a new edge. The reverse cannot exist: the
@@ -3497,8 +3509,11 @@ merge commits, unless its approving officer was the merged duplicate: its
 write then fails on the FK and rolls back. If the writer wins, merge
 waits at the booking row and moves the writer's attribution afterwards. When the
 writer was a booking-request approval that linked a merge party as a guest at a
-lodge outside merge's prefix, merge then refuses with
-`partner_share_lodge_drift` (#2672), a clean 409 the operator re-runs.
+lodge outside merge's prefix, that link commits while this attempt is waiting
+on the booking row, after the attempt has derived its lodge set, so merge then
+refuses with `partner_share_lodge_drift` (#2672), a clean 409 the operator
+re-runs. A link that commits while merge is between attempts, holding no
+booking row, is re-locked by the next attempt instead.
 
 One cycle was left for the locked-period approval, and it was not new. When the
 officer is a merge party that loses, and the booking is outside merge's lodge
@@ -3617,8 +3632,14 @@ A writer that already holds a participant's key share and then updates a row
 merge moved — a completing hut-leader sign-off, a locked-period allocation
 rewrite — used to wait on that row while merge waited on the key share. Merge
 now holds none of those rows while it waits, so the writer commits and merge
-retries. The class is open-ended, so the fence stays in merge rather than in a
-census of writers. Proved by `member-merge-moved-row-races.realdb.test.ts`.
+retries. The retry re-derives the partner-share lodge set before it moves anything
+and try-locks a lodge the opening prefix did not cover, so that committed booking
+is what the new attempt plans against. A lodge that appears after that
+re-derivation — while this attempt waits on a booking row, for example — is still
+`partner_share_lodge_drift`: the proof under the Member rows compares against the
+set this attempt locked. The class is open-ended, so the fence stays in merge
+rather than in a census of writers. Proved by
+`member-merge-moved-row-races.realdb.test.ts`.
 
 That leaves the second half of #4855: what the writer committed. Merge re-points
 the duplicate's relations before its Member rows, and an UPDATE sees only

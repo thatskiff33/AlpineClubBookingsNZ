@@ -452,6 +452,11 @@ describe("the per-owner coverage lock (#2576 §9)", () => {
       // #4876: the moves and the plan are inside the attempt that then takes
       // the Member rows. The attempt's result is the only one kept.
       "await withMemberMergeParticipantRows(tx,",
+      // Inside the attempt, before the moves: a lodge a booking committed
+      // while the previous attempt was rolled back is try-locked here. After
+      // the moves, the same call would cover a lodge that appeared during
+      // this attempt and the #4857 approval-first refusal would not fire.
+      "await lockPartnerShareLodgesAppearedSincePrefix(",
       "const moves = await applyMoves(",
       "const plan = await buildMemberMergeHostingCoveragePlan(",
       "lockedHostingParticipants = prepared.lockedMemberIds",

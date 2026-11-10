@@ -1176,7 +1176,12 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // with no booking/money/capacity/lifecycle key (calendar rows only).
   "src/lib/calendar-service.ts": 1,
   "src/lib/config-transfer-lock.ts": 1,
-  "src/lib/lodge-capacity-lock.ts": 1,
+  // TWO: the blocking `acquireLodgeCapacityLock`, and `tryAcquireLodgeCapacityLock`
+  // (#4876). The try form is the same per-lodge key and never waits. Member merge
+  // calls it for a lodge that appeared while a participant attempt was rolled
+  // back, after member-lifecycle keys are already held; a miss is the existing
+  // partner-share lodge 409, not a wait, so it adds no lodge-after-member edge.
+  "src/lib/lodge-capacity-lock.ts": 2,
   "src/lib/member-credit.ts": 1,
   "src/lib/member-lifecycle-actions.ts": 2,
   // #2593: one canonical helper mints member-lifecycle:{memberId}; it

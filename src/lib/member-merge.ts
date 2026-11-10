@@ -38,6 +38,7 @@ import {
 } from "@/lib/adult-member-hosting-queue-participants";
 import {
   acquireMemberMergePartnerSharedLodgeLocks,
+  lockPartnerShareLodgesAppearedSincePrefix,
   describePartnerSharedSweepReason,
   partnerShareSweepCounterpartNames,
   partnerShareSweepNights,
@@ -1556,6 +1557,16 @@ async function refuseMergeOrRethrow(
   throw error;
 }
 
+/** The #2672 refusal: a lodge this merge does not hold the capacity key for. */
+function partnerShareLodgeDrift(lodgeIds: readonly string[]): MemberMergeError {
+  return new MemberMergeError(
+    "A lodge booking for one of these members changed while the merge was running. Nothing was merged — please try again.",
+    409,
+    "partner_share_lodge_drift",
+    { lodgeIds: [...lodgeIds] },
+  );
+}
+
 export async function executeMemberMerge(params: {
   masterId: string;
   loserId: string;
@@ -1665,19 +1676,22 @@ export async function executeMemberMerge(params: {
     // guest row stop being a guest row at that lodge.
     //
     // The one thing the derivation alone cannot promise is that its set does
-    // not GROW, so step 3b re-derives it under the `Member … FOR UPDATE` taken
-    // below — the point after which no INSERT or re-point of a `BookingGuest`
-    // naming these members can commit, because that FK write needs
-    // `FOR KEY SHARE` on the member row — and 409s if a lodge appeared. That
-    // pair is what turns the argument into a fence rather than an observation.
+    // not GROW. A participant attempt that rolls back can see a booking commit
+    // in the gap, so the next attempt re-derives and try-locks those lodges
+    // before it moves anything (`lockPartnerShareLodgesAppearedSincePrefix`).
+    // Step 3b then re-derives again under the `Member … FOR UPDATE` that
+    // attempt holds — the point after which no INSERT or re-point of a
+    // `BookingGuest` naming these members can commit, because that FK write
+    // needs `FOR KEY SHARE` on the member row — and 409s if a lodge appeared
+    // after the attempt's re-derivation. That pair is the fence.
     //
     // Deriving the lodge set here also needs BOTH identities: the helper reads
     // the two members' own future allocations and guest-nights, so it must run
     // while the loser's guest rows still name the loser.
     //
-    // The returned set is carried to step 3b, which REFUSES the whole merge
-    // rather than judge a bed-night in a lodge this prefix did not cover.
-    const partnerShareLodgeIds = await acquireMemberMergePartnerSharedLodgeLocks(
+    // Step 3b is handed the set the successful attempt holds, and refuses
+    // rather than judge a bed-night in a lodge that set does not cover.
+    let coveredPartnerShareLodgeIds = await acquireMemberMergePartnerSharedLodgeLocks(
       tx,
       [masterId, loserId],
       clubTodayForMerge,
@@ -1866,6 +1880,25 @@ export async function executeMemberMerge(params: {
     let hostingParticipantProof: HostingCoverageQueueParticipantProof;
     try {
       const prepared = await withMemberMergeParticipantRows(tx, async () => {
+        // Before any move. A guest link that committed after the opening
+        // prefix — including while the previous attempt was rolled back — is
+        // part of this attempt's plan; a lodge that appears after this line
+        // is still drift. A busy new lodge refuses rather than waiting,
+        // because member-lifecycle keys are already held.
+        let lodgeIdsThisAttempt: string[];
+        try {
+          lodgeIdsThisAttempt = await lockPartnerShareLodgesAppearedSincePrefix(
+            tx,
+            [masterId, loserId],
+            clubTodayForMerge,
+            coveredPartnerShareLodgeIds,
+          );
+        } catch (error) {
+          if (error instanceof UnlockedPartnerShareLodgeError) {
+            throw partnerShareLodgeDrift(error.lodgeIds);
+          }
+          throw error;
+        }
         const nulled = await nullSelfRelationCycles(tx, masterFull, loserId);
         const resolved = await resolveAllCollisions(tx, masterId, loserId);
         const moves = await applyMoves(
@@ -1898,9 +1931,10 @@ export async function executeMemberMerge(params: {
             loserId,
             ...plan.sources.map((source) => source.ownerMemberId),
           ],
-          result: { nulled, resolved, moves, plan },
+          result: { nulled, resolved, moves, plan, lodgeIds: lodgeIdsThisAttempt },
         };
       });
+      coveredPartnerShareLodgeIds = prepared.result.lodgeIds;
       selfRelationNulls = prepared.result.nulled;
       resolveResults = prepared.result.resolved;
       relationMoves = prepared.result.moves;
@@ -2038,7 +2072,7 @@ export async function executeMemberMerge(params: {
     try {
       sweptShares = await sweepUnbackedFutureSharedDoublesWithLocksHeld({
         memberIds: [masterId, loserId],
-        lockedLodgeIds: partnerShareLodgeIds,
+        lockedLodgeIds: coveredPartnerShareLodgeIds,
         reason: "members_merged",
         db: tx,
         // The same day the lodge prefix above was derived from, so the set
@@ -2047,12 +2081,7 @@ export async function executeMemberMerge(params: {
       });
     } catch (sweepError) {
       if (sweepError instanceof UnlockedPartnerShareLodgeError) {
-        throw new MemberMergeError(
-          "A lodge booking for one of these members changed while the merge was running. Nothing was merged — please try again.",
-          409,
-          "partner_share_lodge_drift",
-          { lodgeIds: sweepError.lodgeIds },
-        );
+        throw partnerShareLodgeDrift(sweepError.lodgeIds);
       }
       throw sweepError;
     }
