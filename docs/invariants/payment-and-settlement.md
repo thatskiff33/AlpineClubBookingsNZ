@@ -1720,8 +1720,8 @@ refunded total it corrects).
 **Related: `INV-PAY-136`** (gap invoice), **`INV-PAY-104`** (late-success
 release).
 
-- **A change's card capture that nothing else records is recorded against the
-  Xero invoice that bills it, by one recorder** (#3953; owner, 21 Oct 2026).
+- **A change's otherwise unrecorded card capture gets one recorder, on its
+  billing Xero invoice** (#3953).
 - **One recorder.** The primary's create stores the captures its cash covers;
   every other gets an `ADDITIONAL_CAPTURE_RECEIPT` row, at link save or
   late-success release. The gap invoice pays only from unclaimed cash, never
@@ -1738,8 +1738,9 @@ release).
   it or the change's own, else the primary less unallocated credit: the
   capture net of other writers, capped at the room; the rest to an officer.
 - **Never twice.** One receipt plans per booking at a time, never during a
-  live create; it stores its decision under the change's lock before calling
-  Xero; a retry finds its payment by reference, sends it or refuses.
+  live create. Store decisions under the change's lock before Xero.
+  Match reference, receipt cents, and no active `CREDIT_RELEASE_PAYMENT`
+  link on that payment id (#4435); else the same per-invoice key or refuse.
 - **Refused, never guessed.** Xero unreadable, nothing due, an uncertain
   recorder or changed figures: FAILED `ADDITIONAL_CAPTURE_RECEIPT_REFUSED`,
   an officer told.
@@ -1749,7 +1750,8 @@ release).
 - Pinned by `additional-capture-xero-receipt.test.ts`,
   `additional-capture-recorder.test.ts`,
   `additional-capture-receipt.realdb.test.ts`,
-  `additional-capture-receipt-unattributed.realdb.test.ts` and
+  `additional-capture-receipt-unattributed.realdb.test.ts`,
+  `additional-capture-receipt-sweep-retry.realdb.test.ts` and
   `xero-booking-repair.test.ts`.
 
 ## INV-PAY-140
