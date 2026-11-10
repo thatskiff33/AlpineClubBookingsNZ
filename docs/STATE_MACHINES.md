@@ -902,11 +902,15 @@ after commit, the minter
        when withdrawn, or FAILED with a queued Stripe cancellation, the
        supersede stamp, or Stripe reporting the intent cancelled or gone; a
        declined card (FAILED alone, still open at Stripe) is payable (#4052)
-later increase while a re-issue still waits -> folds it in: one ask for both,
-  the re-issue's recovery closed under the same fence, the fold recorded on the
-  increase's history (its replay asks again; the re-issue's invoice waits on
-  the increase's intent once minted); a stalled runner's unwritten intent is
-  cancelled as a net-off's is (#4631)
+later increase while a re-issue or increase retry still waits -> folds it in:
+  one ask for both, the waiting recovery closed under the same fence, the fold
+  recorded on history (its replay asks again; each folded invoice waits on the
+  increase's intent once minted). The folding ask is durable from commit (#4744).
+  A claim under two minutes returns 409 even after its row is written; an older
+  claim whose row exists keeps its invoice completion and its row is carried.
+  A stalled runner's unwritten intent is cancelled as a net-off's is (#4631).
+  Nested invoice totals are split by billing edit before a reduction counts
+  parked invoices, so a partially queued fold neither loses nor repeats money.
 chase -> reads the mirror: a cancelled ask stops, a re-issued one is chased at its new amount
 ```
 
