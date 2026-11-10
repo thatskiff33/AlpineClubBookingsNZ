@@ -1109,6 +1109,7 @@ describe("member-credit helpers", () => {
       vi.mocked(prisma.$transaction).mockImplementationOnce(async (callback: (tx: any) => Promise<unknown>) => {
         const stagedRequestIds: string[] = [];
         const tx = {
+          $executeRaw: vi.fn().mockResolvedValue(undefined),
           adminCreditAdjustmentRequest: {
             create: vi.fn(async ({ data }: any) => {
               stagedRequestIds.push("req-audit-fail");
@@ -1245,10 +1246,10 @@ describe("member-credit helpers", () => {
       });
       expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
       const approveAudit = vi.mocked(prisma.auditLog.create).mock.calls[0][0] as {
-        data: { details: string; memberDisclosure: { text: string } };
+        data: { details: string; metadata: { memberFacingText: string } };
       };
       expect(approveAudit.data.details).toContain("Account: Goodwill.");
-      expect(approveAudit.data.memberDisclosure.text).toBe(
+      expect(approveAudit.data.metadata.memberFacingText).toBe(
         "Credit of $25.00 added to your account. Reason: Service recovery",
       );
       expect(mockStartXeroSyncOperation).toHaveBeenCalledWith(
@@ -1256,6 +1257,9 @@ describe("member-credit helpers", () => {
           localModel: "MemberCredit",
           localId: "credit-1",
           status: "PENDING",
+          store: prisma,
+          idempotencyKey: "member-credit:credit-1:admin-grant-credit-note:2500:goodwillWriteOffs:v1",
+          correlationKey: "member-credit:credit-1:admin-grant-credit-note:2500:goodwillWriteOffs:v1",
           requestPayload: expect.objectContaining({
             queueType: "ADMIN_GRANT_CREDIT_NOTE",
             amountCents: 2500,
@@ -1379,6 +1383,7 @@ describe("member-credit helpers", () => {
       expect(state.credits).toHaveLength(0);
       expect(state.request.status).toBe("PENDING");
       expect((state.request as any).reviewedById).toBeUndefined();
+      expect(mockKickQueuedXeroOutbox).not.toHaveBeenCalled();
     });
 
     it("rolls back rejection when the audit write fails", async () => {
@@ -1621,6 +1626,7 @@ describe("admin grant credit note (#4431)", () => {
     expect(mockStartXeroSyncOperation).toHaveBeenCalledTimes(1);
     expect(mockStartXeroSyncOperation).toHaveBeenCalledWith(
       expect.objectContaining({
+        idempotencyKey: "member-credit:credit-own:admin-grant-credit-note:2500:hutFeeRefunds:v1",
         requestPayload: expect.objectContaining({ mappingKey: "hutFeeRefunds", memberCreditId: "credit-own" }),
       }),
     );
@@ -1708,6 +1714,31 @@ describe("admin grant credit note (#4431)", () => {
     await expect(
       createAdminAdjustmentRequest("member-1", -2000, "Correction", "admin-1", "9a13b0af-7ffc-451b-a50b-81f6fb8630f4", "GOODWILL"),
     ).rejects.toThrow("A deduction does not choose a Xero account.");
+  });
+
+  it.each([
+    ["a note", { xeroCreditNoteId: "cn-1" }, []],
+    ["a queued grant note", { xeroCreditNoteId: null }, [{ id: "op-grant", status: "PENDING" }]],
+  ])("refuses to request a deduction while free credit has %s", async (_label, lot, operations) => {
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.adminCreditAdjustmentRequest.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.memberCredit.findMany).mockResolvedValue([
+      { id: "lot-1", memberId: "member-1", amountCents: 2000, type: "ADMIN_ADJUSTMENT", ...lot },
+    ] as any);
+    vi.mocked(prisma.xeroSyncOperation.findMany).mockResolvedValue(operations as any);
+
+    const { createAdminAdjustmentRequest } = await import("@/lib/member-credit");
+    await expect(
+      createAdminAdjustmentRequest(
+        "member-1",
+        -500,
+        "Correction",
+        "admin-1",
+        "9a13b0af-7ffc-451b-a50b-81f6fb8630f4",
+        null,
+      ),
+    ).rejects.toThrow("already has a Xero credit note");
+    expect(prisma.adminCreditAdjustmentRequest.create).not.toHaveBeenCalled();
   });
 
   it("treats the same key with a different account as a conflict", async () => {
