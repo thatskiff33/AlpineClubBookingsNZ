@@ -303,8 +303,9 @@ export async function recordFinishedStayFeeOwed(
 
 /**
  * The fees edits added to this booking's amount owed: a finished-stay
- * correction's (#3750), or an ordinary edit's on a booking still to be paid
- * (#4661, `changeFeeGoesOnAmountOwed`).
+ * correction's (#3750), or a late-notice fee an ordinary edit already stored
+ * on an unpaid booking under #4661. A new ordinary edit does not add one
+ * (owner decision, 10 Nov 2026).
  */
 export async function loadFeesAddedToAmountOwed(
   db: PrismaTransactionClient,

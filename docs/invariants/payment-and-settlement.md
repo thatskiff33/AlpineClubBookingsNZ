@@ -3902,10 +3902,10 @@ _Split from `INV-PAY-057` (#3220)._
 - A booking worth $0 has nothing to charge: the cron and confirm-pending-guests
   confirm it, writing its $0 payment in the claim's transaction
   (`writeZeroWorthConfirmPayment`); charge-saved-method refuses it (#4399).
-- A fee charged with nothing captured (a finished-stay correction or unpaid
-  edit, #4661: `changeFeeGoesOnAmountOwed`) is recorded once on the payment
-  (opened if missing, #4735) and posts its `CHANGE_FEE` line
-  under its modification's key at the settle, as income once captured.
+- A finished-stay retention with nothing captured is recorded once on the
+  payment (opened if missing) and posts its `CHANGE_FEE` line under its
+  modification's key at the settle. An unpaid edit records no late-notice fee
+  (owner decision, 10 Nov 2026).
 - **The primary invoice bills worth as the create read it**; an edit racing
   its create is refused or measured (`INV-PAY-136`). The link's transaction
   stores what was billed and Stripe cash (capped so ledger credit fits); a

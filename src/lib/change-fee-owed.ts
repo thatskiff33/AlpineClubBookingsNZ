@@ -1,75 +1,27 @@
 /**
- * #4661 (`INV-MOD-042`, `INV-PAY-119`): an edit's change fee on a booking whose
- * pay step is still ahead goes on the booking's amount owed.
+ * A fee recorded for a booking that has no payment row yet, and the history
+ * marker an ordinary edit used to write when it added a late-notice fee to
+ * the amount owed.
  *
- * Every edit charges the change fee its policy sets (owner decision D8). A
- * booking with money captured collects it through the edit's own settlement
- * (`applyPaymentAdjustments`' settled arm). One still waiting to be paid - an
- * internet-banking booking whose invoice is out, or an open card attempt -
- * has no such arm, so the fee is recorded on its payment like a finished-stay
- * correction's ("Add fee to amount owed", #3750): every pay step collects it
- * through `bookingAmountOwedCents`, the primary invoice built later bills it
- * (`recordedChangeFeeCents`), an already-issued one is joined by the edit's own
- * supplementary invoice or credit note, and the settle posts its `CHANGE_FEE`
- * line under the edit's own key (`loadFeesAddedToAmountOwed`).
+ * `recordFeeOnNewPayment` is the finished-stay correction's writer (#3750).
+ * A stay that never reached its pay step has no row, and the retention is
+ * recorded on one carrying only the fee until the pay step fills the rest.
+ * An ordinary edit of a booking that has not been paid records no late-notice
+ * fee (owner decision, 10 Nov 2026) and does not open a row.
  *
- * #4735: a card booking has no payment row until its pay step mints an intent,
- * so an edit before then opens one carrying only the fee
- * (`recordFeeOnNewPayment`), the shape a finished-stay correction already
- * writes. No pay step overwrites that row's fee, and each charges what
- * `bookingAmountOwedCents` reads, so the fee is collected once.
+ * `CHANGE_FEE_ADDED_TO_AMOUNT_OWED_PATH` and
+ * `changeFeeAddedToAmountOwedHistory` remain for rows already written under
+ * #4661. A new ordinary edit passes 0, so it writes no marker. Paying a
+ * booking that already has the marker still posts that `CHANGE_FEE` line
+ * (`loadFeesAddedToAmountOwed`).
  */
-import { BookingStatus } from "@prisma/client";
-
-import { hasCapturedPayment, type BookingPaymentState } from "@/lib/booking-payment-state";
-import { PAYMENT_OWED_BOOKING_STATUSES } from "@/lib/booking-status";
 import type { PrismaTransactionClient } from "@/lib/db-transaction";
-import { hasStrandedWaitlistConfirmShape } from "@/lib/waitlist-return-contract";
-
-/** The statuses whose pay step is still ahead: held, awaiting payment, or invoiced and unpaid. */
-const AWAITING_PAYMENT_STATUSES: ReadonlySet<string> = new Set<string>([
-  BookingStatus.PENDING,
-  ...PAYMENT_OWED_BOOKING_STATUSES,
-]);
-
-/**
- * #4735: the statuses of a card booking whose pay step is still ahead - held
- * for its saved card, or awaiting payment. With no payment row, these are the
- * bookings a fee-only row is opened for. An unpaid CONFIRMED booking with no
- * row (a whole-lodge approval, #4019) is not: it is recognised as unpaid by
- * having no row (`isUnpaidConfirmedWholeLodge`), which a fee-only row would hide.
- */
-const CARD_PAY_STEP_AHEAD_STATUSES: ReadonlySet<string> = new Set<string>([
-  BookingStatus.PENDING,
-  BookingStatus.PAYMENT_PENDING,
-]);
-
-/**
- * Whether an edit's change fee on this booking goes on its amount owed. Never
- * a joiner the group organiser settles, whose increases are billed to the
- * organiser instead. With no payment row, only a card booking still at its pay
- * step (#4735), which the fee opens a row for - and never a free one awaiting
- * payment: that is a stranded or mid-flight free waitlist confirm, where a row
- * means "the confirm finished" (`hasStrandedWaitlistConfirmShape`).
- */
-export function changeFeeGoesOnAmountOwed(booking: {
-  status: string;
-  finalPriceCents: number;
-  organiserSettled: boolean;
-  payment: BookingPaymentState | null | undefined;
-}): boolean {
-  if (booking.organiserSettled) return false;
-  if (booking.payment == null) {
-    return CARD_PAY_STEP_AHEAD_STATUSES.has(booking.status) && !hasStrandedWaitlistConfirmShape(booking);
-  }
-  return AWAITING_PAYMENT_STATUSES.has(booking.status) && !hasCapturedPayment(booking.payment);
-}
 
 /**
  * Records a fee owed by a booking that has no payment row yet, on a new row
- * carrying only the fee until its pay step fills in the rest (#3750, #4735).
- * An upsert, so a row a pay step opened without the edit's locks (the saved
- * card's setup intent) takes the fee rather than failing the edit.
+ * carrying only the fee until its pay step fills in the rest (#3750). An
+ * upsert, so a row a pay step opened without the edit's locks takes the fee
+ * rather than failing the edit.
  */
 export async function recordFeeOnNewPayment(
   tx: PrismaTransactionClient,
