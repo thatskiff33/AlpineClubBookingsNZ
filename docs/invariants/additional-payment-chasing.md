@@ -1785,6 +1785,9 @@ _Legacy: settles tasks raised before #4317._
   overlap, still naming its captures unless provably never sent.
 - **No new advisory key.** Home: `credit-release-xero-payment.ts`,
   `credit-release-ask-close.ts`.
+- **A recorded capture's refund raises one credit note** (#4493), for the
+  refunded cents against that invoice. A replay raises none. A late capture on
+  a cancelled booking stays #4380.
 
 ### INV-ADDPAY-047
 
