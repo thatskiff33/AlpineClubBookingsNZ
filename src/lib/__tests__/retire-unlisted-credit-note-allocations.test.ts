@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE } from "@/lib/xero-clearing-allocations";
 
 const mocks = vi.hoisted(() => ({
+  createMany: vi.fn(),
   findMany: vi.fn(),
   findUnique: vi.fn(),
   lock: vi.fn(),
@@ -26,7 +27,7 @@ vi.mock("@/lib/xero-sync", () => ({
   upsertXeroObjectLink: mocks.upsert,
 }));
 
-import { retireUnlistedCreditNoteAllocations } from "@/lib/xero-inbound/retire-unlisted-credit-note-allocations";
+import { retireUnlistedCreditNoteAllocations, writeCurrentCreditNoteAllocation } from "@/lib/xero-inbound/retire-unlisted-credit-note-allocations";
 import { xeroCreditNoteSnapshotMetadata } from "@/lib/xero-refund-note-status";
 
 const NOTE = "cn-removed-allocation";
@@ -159,5 +160,53 @@ describe("retireUnlistedCreditNoteAllocations (#4447)", () => {
       expect.objectContaining({ xeroObjectId: removed.xeroObjectId, active: false, mergeMetadata: true }),
       expect.objectContaining({ store: expect.anything() }),
     );
+  });
+
+  it("an equal stamp still turns the removed invoice off", async () => {
+    mocks.findUnique.mockResolvedValue({ active: true, metadata: { ...removed.metadata, providerUpdatedAt: LATE } });
+    await expect(retire({ ...liveReading(LATE), links: [removed], listed: [] })).resolves.toBe(1);
+    expect(mocks.upsert).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("writeCurrentCreditNoteAllocation (#4447)", () => {
+  const removed = allocation("inv-2", 4_000, NOTE_ALLOCATION_ROLE);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.createMany.mockResolvedValue({ count: 0 });
+    mocks.upsert.mockResolvedValue({});
+    mocks.transaction.mockImplementation(async (fn: (tx: unknown) => Promise<boolean>) =>
+      fn({
+        $executeRaw: mocks.lock,
+        xeroObjectLink: { findUnique: mocks.findUnique, createMany: mocks.createMany },
+      }),
+    );
+  });
+
+  it("does not turn a removed allocation back on when this reading is older", async () => {
+    mocks.findUnique.mockResolvedValue({
+      active: false,
+      metadata: { ...removed.metadata, providerUpdatedAt: LATE },
+    });
+    await expect(
+      writeCurrentCreditNoteAllocation({
+        ...removed,
+        metadata: { ...removed.metadata, providerUpdatedAt: EARLY },
+      }),
+    ).resolves.toBe(false);
+    expect(mocks.createMany).toHaveBeenCalledTimes(1);
+    expect(mocks.lock).toHaveBeenCalledTimes(1);
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
+  it("records the allocation again when this reading is the newer one", async () => {
+    mocks.findUnique.mockResolvedValue({
+      active: false,
+      metadata: { ...removed.metadata, providerUpdatedAt: EARLY },
+    });
+    const link = { ...removed, metadata: { ...removed.metadata, providerUpdatedAt: LATE } };
+    await expect(writeCurrentCreditNoteAllocation(link)).resolves.toBe(true);
+    expect(mocks.upsert).toHaveBeenCalledWith(link, { store: expect.anything() });
   });
 });

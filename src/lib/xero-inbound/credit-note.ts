@@ -7,7 +7,7 @@ import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { type XeroObjectLinkInput, upsertXeroObjectLink } from "@/lib/xero-sync";
 import { buildCreditNoteAllocationTargets, buildSyntheticAllocationLinkId, buildXeroPaymentDisplayNumber, getCreditNoteAmountCents } from "./amounts";
-import { creditNoteAllocationSnapshotStamp, readStoredCreditNoteSnapshots, retireUnlistedCreditNoteAllocations } from "./retire-unlisted-credit-note-allocations";
+import { creditNoteAllocationSnapshotStamp, readStoredCreditNoteSnapshots, retireUnlistedCreditNoteAllocations, writeCurrentCreditNoteAllocation } from "./retire-unlisted-credit-note-allocations";
 import { dedupeResolvedXeroObjectLinks, dedupeXeroObjectLinks, findActiveXeroObjectLinks, findPaymentIdsWithCancelledRefundNoteMirror, getDerivedInboundAllocationRole, isDeletedXeroPaymentStatus, recoverBookingScopedLinksFromOutboundOperations } from "./object-links";
 import { creditNotePaymentsForAbsence, retireDeletedPaymentLinksAbsentFromPayload } from "./deleted-payment-links";
 import { writeXeroInboundAuditLogs } from "./audit";
@@ -343,11 +343,13 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     })
   );
 
+  // #4447: a newer stamp already on the row wins, so an older reading cannot
+  // turn a removed allocation back on by listing its invoice again.
   for (const link of allocationLinks) {
-    await upsertXeroObjectLink(link);
+    await writeCurrentCreditNoteAllocation(link);
   }
   // #4447: the invoices this reading no longer lists, in the same pass as the
-  // upserts above and before the recount. A stored snapshot that refuses the
+  // writes above and before the recount. A stored snapshot that refuses the
   // reading turns nothing off.
   await retireUnlistedCreditNoteAllocations({
     creditNoteId: creditNote.creditNoteID!,

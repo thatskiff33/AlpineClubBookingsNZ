@@ -7802,19 +7802,24 @@ A's Payment row before it takes the link). Each run asserts which statement is t
 allocations and refund payments are skipped only where the row, in either
 refund-note role, is VOIDED/DELETED when they are written.
 
-**An allocation Xero no longer lists (#4447).** After those allocation
-upserts, and before the recount, a live reading turns off this note's active
-`MODIFICATION_CREDIT_NOTE_ALLOCATION` and `CREDIT_NOTE_ALLOCATION` links whose
-invoice is not among `buildCreditNoteAllocationTargets`
-(`retireUnlistedCreditNoteAllocations`). Each one is the link funnel
-(`upsertXeroObjectLink`, `active: false`, metadata merged) inside the
-transaction that first locks that allocation row. It writes no money column
-and takes no advisory key, so `INV-LOCK-001`, `INV-LOCK-002` and
-`INV-LOCK-003` are unchanged: the only lock is that one row, and nothing else
-is taken while it is held. A same-invoice link at an older amount stays
-active; the recount keeps the newest. A voided reading, or a live reading a
-stored void or a newer snapshot refuses, turns nothing off. A link whose own
-stamp is newer than the reading is left as that newer write recorded it.
+**An allocation Xero no longer lists (#4447).** After the credit-note link
+writes, and before the recount, a live reading records this note's allocation
+links for the invoices `buildCreditNoteAllocationTargets` still lists, and
+turns off its active `MODIFICATION_CREDIT_NOTE_ALLOCATION` and
+`CREDIT_NOTE_ALLOCATION` links for every other invoice
+(`writeCurrentCreditNoteAllocation`, `retireUnlistedCreditNoteAllocations`).
+Each of those is the link funnel inside the transaction that locks that one
+allocation row and re-reads its stamp. A still-listed invoice first reserves a
+missing row (`createMany`, `skipDuplicates`, inactive) so two first writers
+serialise on it; a removal does not, because that row is already there. A
+stored stamp newer than the reading leaves the row as that newer write
+recorded it, so an older reading cannot turn a removed allocation back on or
+switch a newer one off. It writes no money column and takes no advisory key,
+so `INV-LOCK-001`, `INV-LOCK-002` and `INV-LOCK-003` are unchanged: the only
+lock is that one row, and nothing else is taken while it is held. A
+same-invoice link at an older amount stays active; the recount keeps the
+newest. A voided reading, or a live reading a stored void or a newer snapshot
+refuses, turns nothing off.
 
 **Mixed releases.** The own-row-first order is consistent within this release;
 the old canonical writer takes siblings before its own row. Running both on
