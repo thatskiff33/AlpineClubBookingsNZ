@@ -212,6 +212,23 @@ describe("queueFoldedAskInvoices (#3954 round 6, #4744)", () => {
     expect(h.enqueue).not.toHaveBeenCalled();
   });
 
+  it("queues every nested invoice beyond 64 folds and terminates on a cycle", async () => {
+    h.byId = {};
+    for (let index = 0; index < 66; index++) {
+      h.byId[`mod_${index}`] = {
+        newData: { foldedIncreaseAsks: [{
+          modificationId: `mod_${(index + 1) % 66}`, askCents: 100, invoiceCents: 100,
+          invoiceUnsure: false, hadIssuedXeroInvoice: true,
+        }] },
+        priceDiffCents: 100, changeFeeCents: 0,
+        booking: { payment: { status: "SUCCEEDED" } },
+      };
+    }
+    await queueFoldedAskInvoices({ bookingId: "booking_1", increaseModificationId: "mod_0", paymentIntentId: "pi_later" });
+    expect(h.complete).toHaveBeenCalledTimes(66);
+    expect(h.complete).toHaveBeenCalledWith(expect.objectContaining({ bookingModificationId: "mod_0" }));
+  });
+
   it("MUTATION (#4744): moves a folded increase's deferred invoice onto the folding card request", async () => {
     h.byId = {
       mod_later: unpaidAskOffsetHistory({

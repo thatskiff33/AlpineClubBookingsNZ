@@ -188,7 +188,7 @@ async function queueFoldedAsksFrom({
   paymentIntentId: string;
   seen: Set<string>;
 }): Promise<void> {
-  if (seen.has(increaseModificationId) || seen.size > 64) return;
+  if (seen.has(increaseModificationId)) return;
   seen.add(increaseModificationId);
   let newData: unknown;
   try {

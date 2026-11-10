@@ -150,7 +150,8 @@ export const NO_FOLDED_REISSUED_ASKS: FoldedReissuedAsks = { cents: 0, modificat
 /**
  * One waiting increase retry an edit folded in. `askCents` is what its replay
  * would add beyond the `Payment`'s live ask (its own net plus everything it
- * had already folded). `invoiceCents` is what its deferred invoice bills.
+ * had already folded). `invoiceCents` includes its own deferred invoice and
+ * every nested folded invoice; `foldedAskInvoiceParts` splits actual anchors.
  */
 export type FoldedIncreaseAsk = {
   readonly modificationId: string;

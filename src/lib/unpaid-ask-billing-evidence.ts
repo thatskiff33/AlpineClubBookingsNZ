@@ -44,6 +44,7 @@
 import type { Prisma } from "@prisma/client";
 import { PaymentRecoveryOperationType } from "@prisma/client";
 
+import { foldedAskInvoiceParts } from "@/lib/folded-ask-invoice-parts";
 import type { RetiredUnpaidAsk, UnpaidPriceAskRow } from "@/lib/additional-ask-reduction";
 import {
   bookingModificationIdForAdditionalIntentRecoveryKey,
@@ -52,8 +53,6 @@ import {
 } from "@/lib/payment-recovery-keys";
 import {
   recordedFoldedAskCents,
-  recordedFoldedIncreaseAsks,
-  recordedFoldedReissuedAskModificationIds,
   recordedReissuedAskInvoiceCents,
   recordedReissuedAskInvoiceUnsureCents,
 } from "@/lib/unpaid-ask-offset-marker";
@@ -135,7 +134,6 @@ export function classifyUnpaidAskBilling({
       }
       if (carried.unsure) established = false;
       for (const part of carried.parts) {
-        if (part.unsure) established = false;
         if (parkedAnchors.includes(part.modificationId)) continue;
         supplementaryInvoicedCents += part.invoiceCents;
       }
@@ -148,7 +146,7 @@ export function classifyUnpaidAskBilling({
     row: UnpaidPriceAskRow,
     previous: UnpaidPriceAskRow | null,
     carriedInCents: number,
-  ): { parts: { modificationId: string; invoiceCents: number; unsure: boolean }[]; unsure: boolean } | null {
+  ): { parts: { modificationId: string; invoiceCents: number }[]; unsure: boolean } | null {
     const minter =
       (row.stripePaymentIntentId ? intentMinters.get(row.stripePaymentIntentId)?.modificationId : undefined) ??
       row.bookingModificationId ??
@@ -160,10 +158,9 @@ export function classifyUnpaidAskBilling({
           {
             modificationId: minter,
             invoiceCents: recordedReissuedAskInvoiceCents(modification(minter)?.newData),
-            unsure: recordedReissuedAskInvoiceUnsureCents(modification(minter)?.newData) > 0,
           },
         ],
-        unsure: false,
+        unsure: recordedReissuedAskInvoiceUnsureCents(modification(minter)?.newData) > 0,
       };
     }
     const increase = minter
@@ -178,22 +175,7 @@ export function classifyUnpaidAskBilling({
           return candidates.length === 1 ? candidates[0]! : null;
         })();
     if (!increase || recordedFoldedAskCents(increase.newData) !== carriedInCents) return null;
-    const nested = recordedFoldedIncreaseAsks(increase.newData);
-    return {
-      unsure: nested.unsure,
-      parts: [
-        ...recordedFoldedReissuedAskModificationIds(increase.newData).map((reductionId) => ({
-          modificationId: reductionId,
-          invoiceCents: recordedReissuedAskInvoiceCents(modification(reductionId)?.newData),
-          unsure: recordedReissuedAskInvoiceUnsureCents(modification(reductionId)?.newData) > 0,
-        })),
-        ...nested.entries.map((entry) => ({
-          modificationId: entry.modificationId,
-          invoiceCents: entry.invoiceCents,
-          unsure: entry.invoiceUnsure,
-        })),
-      ],
-    };
+    return foldedAskInvoiceParts(increase.newData, modifications);
   }
 }
 
