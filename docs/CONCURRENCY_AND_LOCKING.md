@@ -6695,7 +6695,9 @@ close waits for the row is read by the close, which then refuses an amount the
 refund already covered. Under the row the close also compares what is owed with
 the figure the treasurer chose against (`expectedOwedCents`, #3924 round 7,
 C7) and refuses a moved one with a 409, so a full or part answer is never
-applied to a figure nobody saw; the page refreshes and they choose again. The
+applied to a figure nobody saw; the page refreshes and they choose again. Under
+that same Payment row a close `paidAnotherWayRefusal` rejects is also a 409
+with no hand-back (#4492): no new lock and no change to this order (`INV-LOCK-001`). The
 order is `lock(1)`, then the Payment row, then the allocation, which takes the
 row it already holds. The claim is a status-guarded
 `updateMany` before any money moves; a lost claim writes nothing. The close's
@@ -6805,8 +6807,8 @@ the locks (review F4). The
 failed-later writer raises its rows under the Payment row, so that check and
 the raise are ordered. STATED LIMIT: a refund another door made for the same
 money that the owed figure does not match to this row, failing later while the row is still open,
-is owed again beside the live row: the #4104 failed-later family's open
-question (#4492), which a re-arm does not answer. One made on a plan-less
+is owed again beside the live row. A re-arm does not answer it; the dead
+row's bank close is refused instead (#4492). One made on a plan-less
 superseded row's charge after the re-arm commits, which the owed figure then
 counts as the row's progress, no longer reaches a send: the runner holds the
 row first, by this same rule (#4858, below). Proven by `card-refund-dead-row-actions.realdb.test.ts`: a re-arm and a
@@ -6946,8 +6948,9 @@ recorded refunds, outside any transaction, and no key, lock or site
 refund the size counted is checked. A refund recorded between the two reads is
 checked without being counted and holds the row conservatively. One that fails
 between them was counted but is not checked: the row asks for less and is not
-held. That is the case of a refund failing before the runner holds on it,
-which this hold does not cover - the #4492 open question (both pinned in
+held. That is the case of a refund failing before the runner holds on it.
+The held row's bank close is then refused while the failed-later row has not
+gone back to the card (#4492); this hold adds no key (both pinned in
 `payment-recovery.test.ts`, "#4858"). A refund recorded after both reads neither sizes the send nor
 holds it: as #4699 states, Stripe refuses a request beyond what the charge
 still holds, and the next attempt reads that refund.
@@ -7030,8 +7033,9 @@ and the debt's writes come last, on `PaymentRecoveryOperation`:
   counted the refund exists, a failure that committed first re-planned it, and
   the close against the figure it read is refused (409). Where the dead row
   that sent the refund does not count it, a failure first raises a live row
-  and the close still goes through: the gap #4492 tracks. A read only - no new
-  key, no new order.
+  and the runner sends it; that row's bank close is then refused (#4492). A
+  close that commits first is still seen, and the new row is raised held. A
+  read only - no new key, no new order.
 
 **The cancel card refund shortfall's completion** (`cardShortfallSettlement`,
 #4097) reads these rows under the same Payment row lock beside the cancel's

@@ -4728,8 +4728,12 @@ PENDING|FAILED -> same (an open, claimed row that counted the refund is
                        recording the failure in failedRefundIds; compare-and-set
                        on the plan, status, attempts and nextRetryAt read)
 DEAD -> SUCCEEDED     ("Paid another way": finance:edit, lock(1), then the
-                       Payment row, refused (409) unless what is owed is the
-                       figure the treasurer saw, then a status-guarded claim on
+                       Payment row; refused (409) when the owed figure moved,
+                       or (#4492) a failed-later row is on the payment, a
+                       plan-less superseded row's sizing refund has not gone
+                       back to the card, or that row's charge was already
+                       returned by a superseded card-send with less left than
+                       it still owes; then a status-guarded claim on
                        PENDING|FAILED with attempts >= MAX; lastError is the
                        paid-another-way marker, nextRetryAt null, succeededAt
                        now; the amount - all of what is still owed, or part

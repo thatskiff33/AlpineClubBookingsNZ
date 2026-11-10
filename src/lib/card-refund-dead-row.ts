@@ -209,9 +209,10 @@ function raisedForAPerson(idempotencyKey: string): boolean {
  *   slices must add up to exactly the row's own unsent figure. A row with no
  *   stored plan cannot be checked, except a superseded intent's refund, whose
  *   runner sizes one request on its charge's ledger (review S1).
- * Where "Paid another way" cannot close the row either (a superseded intent's
- * refund whose charge does not hold exactly what it owes), the refusal points
- * to a developer instead (review S1).
+ * Where "Paid another way" cannot close the row either, the refusal says so
+ * (`deadRowSettleHint`): the three #4492 refusals do not ask a developer; a
+ * superseded charge that does not hold exactly what the row owes still does
+ * (review S1).
  * - #4492: ANY refund Stripe failed later (`card_refund_failed_later_<refund>`)
  *   on the same payment, open or closed: it may be the same money as this row
  *   (a refund this row's door made whose answer was lost, then failed), and
@@ -264,6 +265,11 @@ export interface DeadCardRefundCharge {
   refundedAmountCents: number;
 }
 
+/** Runner success (`succeededPaymentRecoveryData`). A bank close leaves a marker in `lastError`. */
+function paidBackToTheCard(row: { status: string; lastError: string | null }): boolean {
+  return row.status === "SUCCEEDED" && row.lastError === null;
+}
+
 /** #4492: one bank-close refusal for the list and the locked close. No money or provider calls. */
 export function paidAnotherWayRefusal(
   payment: Pick<DeadCardRefundPayment, "recoveryOperations">,
@@ -283,7 +289,7 @@ export function paidAnotherWayRefusal(
     if (operation.status !== "FAILED") return null;
     for (const slice of owed.unsent) {
       if (!siblings.some((other) => other.type === "REFUND_SUPERSEDED_PAYMENT" &&
-        other.status === "SUCCEEDED" && other.lastError === null &&
+        paidBackToTheCard(other) &&
         onCharge(other, slice.paymentTransactionId, operation.paymentIntentId))) continue;
       const charge = charges.find(({ id }) => id === slice.paymentTransactionId);
       if (!charge || charge.amountCents - charge.refundedAmountCents < slice.amountCents) {
@@ -294,7 +300,7 @@ export function paidAnotherWayRefusal(
   }
   if (isSizedOnLedger(operation)) {
     return failedLater.some((other) => onCharge(other, operation.paymentTransactionId, operation.paymentIntentId) &&
-      !(other.status === "SUCCEEDED" && other.lastError === null))
+      !paidBackToTheCard(other))
       ? "Another refund on this charge failed later and has not gone back to the card yet, so this row cannot be closed as paid another way."
       : null;
   }
@@ -350,9 +356,9 @@ export function supersededCloseFillsItsCharge(
 }
 
 /**
- * Review S1, R1: where "Paid another way" cannot close this row either - a
- * superseded intent's refund whose charge does not hold exactly what it owes
- * (`supersededCloseFillsItsCharge`) - a refusal points to a developer instead.
+ * Review S1, R1: where "Paid another way" cannot close this row either, say so.
+ * The three #4492 refusals stop there. A superseded charge that does not hold
+ * exactly what the row owes (`supersededCloseFillsItsCharge`) still asks a developer.
  */
 export function deadRowSettleHint(
   operation: Pick<ReArmedRow, "type" | "paymentId" | "paymentTransaction">,

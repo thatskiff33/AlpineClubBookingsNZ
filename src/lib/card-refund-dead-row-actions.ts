@@ -21,6 +21,7 @@ import logger from "@/lib/logger";
 import { parseRefundAllocationPlan } from "@/lib/open-card-refund-owed";
 import { prisma } from "@/lib/prisma";
 import { rearmedPaymentRecoveryOperationData } from "@/lib/payment-recovery-constants";
+import { cardRefundFailedLaterRefundId } from "@/lib/payment-recovery-keys";
 import { listRefundsOnCardCharge } from "@/lib/card-refund-stripe-refunds";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 
@@ -203,7 +204,16 @@ export async function tryDeadCardRefundAgain(input: TryCardAgainInput): Promise<
           })
         : null;
     const rowWithCharge = { ...operation, paymentTransaction: charge };
-    const refusal = tryCardAgainRefusal(payment, rowWithCharge, owed, paidAnotherWayRefusal(payment, operation, owed, []));
+    // Case 3 reads the charge. The other two refusals do not, so an ordinary re-arm takes no extra read.
+    const charges =
+      cardRefundFailedLaterRefundId(operation.idempotencyKey) === null
+        ? []
+        : await tx.paymentTransaction.findMany({
+            where: { paymentId: payment.id },
+            select: { id: true, amountCents: true, refundedAmountCents: true },
+          });
+    const bankCloseRefusal = paidAnotherWayRefusal(payment, operation, owed, charges);
+    const refusal = tryCardAgainRefusal(payment, rowWithCharge, owed, bankCloseRefusal);
     if (refusal) throw new DeadCardRefundActionError(refusal, 409);
     // Review F4: Stripe was read for the charges of the plan read then; a plan moved since is not the one checked.
     if (read !== null && JSON.stringify(read.allocationPlan ?? null) !== JSON.stringify(operation.allocationPlan ?? null)) {
@@ -214,7 +224,7 @@ export async function tryDeadCardRefundAgain(input: TryCardAgainInput): Promise<
     const foreign = foreignRefundsSizingSupersededRow(payment, operation, read?.listed ?? []);
     if (foreign.length > 0) {
       throw new DeadCardRefundActionError(
-        `This refund's card charge was part refunded by another refund (${foreign.join(", ")}), and if that refund failed later the app would owe it twice, so the card cannot be tried again. ${deadRowSettleHint(rowWithCharge, owed)}`,
+        `This refund's card charge was part refunded by another refund (${foreign.join(", ")}), and if that refund failed later the app would owe it twice, so the card cannot be tried again. ${deadRowSettleHint(rowWithCharge, owed, bankCloseRefusal)}`,
         409,
       );
     }

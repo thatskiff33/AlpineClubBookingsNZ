@@ -69,6 +69,7 @@ vi.mock("@/lib/prisma", () => {
         calls.push("read-charge");
         return mocks.findCharge(...args);
       },
+      findMany: () => [],
     },
   };
   return {
@@ -551,12 +552,35 @@ describe("tryCardAgainRefusal: when a re-arm could pay the member more than is o
       expect(tryCardAgainRefusal(others(), { ...own, allocationPlan: null }, owed)).toMatch(/keeps no record.*Settle it with Paid another way/);
     });
 
-    it("MUTATION: a superseded row's other refusals point to Paid another way only while it can close the row", () => {
-      const failedLater = others({ id: "op-y", idempotencyKey: "card_refund_failed_later_re_x", status: "FAILED" });
-      // Its charge holds exactly what it owes: Paid another way closes it.
-      expect(tryCardAgainRefusal(failedLater, superseded({ amountCents: 15_000, refundedAmountCents: 0 }), owed)).toMatch(/Settle it with Paid another way/);
-      // Part refunded before: Paid another way refuses it, so the refusal says to ask a developer.
-      expect(tryCardAgainRefusal(failedLater, superseded({ amountCents: 15_000, refundedAmountCents: 4_000 }), owed)).toMatch(/ask a developer/);
+    it("MUTATION: an unpaid failed-later refund on its charge is not settled with Paid another way, even while the charge still holds the full amount", () => {
+      const row = { ...superseded({ amountCents: 15_000, refundedAmountCents: 0 }), paymentTransactionId: "txn-1", paymentIntentId: "pi_old" };
+      const unpaid = {
+        id: "op-y",
+        type: "REFUND_BOOKING_MODIFICATION",
+        status: "PENDING",
+        lastError: "stripe failed",
+        idempotencyKey: "card_refund_failed_later_re_x",
+        paymentTransactionId: null,
+        paymentIntentId: "pi_old",
+        allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 2_000 }],
+      };
+      const stillOwed = { ownCents: 15_000, owedCents: 15_000, unsentTransactionIds: ["txn-1"], unsent: [{ paymentTransactionId: "txn-1", amountCents: 15_000 }] };
+      const refusal = paidAnotherWayRefusal({ recoveryOperations: [unpaid] } as never, row as never, stillOwed, [
+        { id: "txn-1", amountCents: 15_000, refundedAmountCents: 0 },
+      ]);
+      expect(refusal).toMatch(/has not gone back to the card/);
+      const hint = tryCardAgainRefusal({ recoveryOperations: [unpaid] }, row, owed, refusal);
+      expect(hint).toMatch(/Paid another way cannot close it either/);
+      expect(hint).not.toMatch(/Settle it with|ask a developer/);
+      // Once that refund has gone back to the card, a charge that no longer holds exactly what the row owes still asks a developer.
+      const paid = { ...unpaid, status: "SUCCEEDED", lastError: null };
+      const part = superseded({ amountCents: 15_000, refundedAmountCents: 4_000 });
+      expect(
+        paidAnotherWayRefusal({ recoveryOperations: [paid] } as never, { ...part, paymentTransactionId: "txn-1", paymentIntentId: "pi_old" } as never, stillOwed, [
+          { id: "txn-1", amountCents: 15_000, refundedAmountCents: 4_000 },
+        ]),
+      ).toBeNull();
+      expect(tryCardAgainRefusal({ recoveryOperations: [paid] }, part, owed)).toMatch(/ask a developer/);
     });
 
     it("MUTATION (review R2): another payment's charge is never the row's - for its size or for Paid another way", () => {
@@ -684,6 +708,8 @@ describe("#4492: Paid another way must not pay overlapping card refunds twice", 
     const superseded = deadOperation({ type: "REFUND_SUPERSEDED_PAYMENT", allocationPlan: null, paymentTransactionId: "txn-1" });
     expect(refuse(superseded, [later({ status, lastError: "held" })])).toMatch(/has not gone back to the card/);
     expect(refuse(superseded, [later({ status: "SUCCEEDED", lastError: null })])).toBeNull();
+    expect(refuse(superseded, [later({ status: "SUCCEEDED", lastError: "Closed by the treasurer: paid another way (#3372)" })])).toMatch(/has not gone back to the card/);
+    expect(refuse(superseded, [later({ status: "SUCCEEDED", lastError: "Closed by the treasurer: nothing left owed, a later Stripe refund covers it (#4368)" })])).toMatch(/has not gone back to the card/);
     expect(refuse(superseded, [later({ allocationPlan: [{ paymentTransactionId: "different", amountCents: 15_000 }], paymentIntentId: "different" })])).toBeNull();
     expect(refuse(superseded, [later({ allocationPlan: null, paymentIntentId: superseded.paymentIntentId })])).not.toBeNull();
   });

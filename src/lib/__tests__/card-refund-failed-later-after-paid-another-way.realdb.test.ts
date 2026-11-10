@@ -395,6 +395,7 @@ const B: Charge = { id: TXN_B, intent: INTENT_B, charge: CHARGE_B, cents: CHARGE
         expect(raised).toEqual([heldRow(late.id, CHARGE_A_CENTS)]);
         expect(alerts()).toEqual([expect.stringMatching(HELD)]);
         await expectNeverResent(raised[0]!.id);
+        expect(await prisma.manualRefundTask.count({ where: { bookingId: BOOKING_ID } })).toBe(1);
         expect(await owedNow()).toBe(0);
       });
 

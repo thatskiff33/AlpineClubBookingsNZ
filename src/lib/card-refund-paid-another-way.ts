@@ -227,10 +227,14 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
       paymentTransaction: { select: { paymentId: true, amountCents: true, refundedAmountCents: true } },
     },
   });
-  const charges = await prisma.paymentTransaction.findMany({
-    where: { paymentId: { in: [...new Set(operations.map((operation) => operation.paymentId))] } },
-    select: { id: true, paymentId: true, amountCents: true, refundedAmountCents: true },
-  });
+  const paymentIds = [...new Set(operations.map((operation) => operation.paymentId))];
+  const charges =
+    paymentIds.length === 0
+      ? []
+      : await prisma.paymentTransaction.findMany({
+          where: { paymentId: { in: paymentIds } },
+          select: { id: true, paymentId: true, amountCents: true, refundedAmountCents: true },
+        });
   const listed = operations
     .filter(
       (operation) => isOwedCardRefundOperation(operation) && !isOrganiserChildRefundKey(operation.idempotencyKey),
