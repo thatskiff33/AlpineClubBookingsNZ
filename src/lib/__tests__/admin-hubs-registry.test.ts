@@ -1871,7 +1871,7 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/dashboard/page.tsx":
       "C5: the payments and refunds links, and the payments permission check, are adminHref; " +
       "C6: the seasons and promo-code links",
-    "src/app/(admin)/admin/finance/internet-banking/page.tsx": "C5: its back link is adminHref",
+    "src/app/(admin)/admin/finance/internet-banking/page.tsx": "C5: its back link is adminLink",
     "src/app/(admin)/admin/finance/xero/_components/health-diagnostics-panel.tsx":
       "C5: the member-grouping link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/webhook-amber-badge.tsx":
