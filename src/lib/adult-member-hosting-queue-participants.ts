@@ -466,48 +466,109 @@ async function firstSkippedParticipantRow(
   return undefined;
 }
 
+async function rollBackAttempt(db: MemberMergeParticipantDb): Promise<void> {
+  await db.$executeRaw(ATTEMPT_SAVEPOINT.rollBack);
+  await db.$executeRaw(ATTEMPT_SAVEPOINT.release);
+}
+
 /**
- * Lock master, loser and every ancillary owner `FOR UPDATE`, all at once, and
- * never wait for one of those rows while holding another (#4855), within one
- * bounded budget (#2623 T6).
+ * Run `moveAndPlan`, then lock every participant row it names, and never wait
+ * for a Member row while holding any row that attempt wrote (#4876, extending
+ * #4855), within one bounded budget (#2623 T6).
  *
- * WHY NOT ONE BLOCKING STATEMENT, which is what this was. `SELECT … ORDER BY
- * "id" FOR UPDATE` locks the rows in id order and holds the earlier ones while
- * it waits for a later one. Any FK write naming a member takes a key share on
- * that row, and one transaction can name several members in any order — a
- * single INSERT checks its foreign keys in schema order, not id order. So a
- * writer that held a later row and then named an earlier one closed a cycle
- * with merge, and PostgreSQL aborted one side (`40P01`): an officer who was the
- * duplicate, approving a change request that credits the survivor, or a held
- * booking request that links the survivor as a guest and then names the
- * officer as its maker. No writer-side ordering can rule that out, so merge
- * never holds part of the set while it waits.
+ * WHY THE MOVES ARE INSIDE THE ATTEMPT. Merge re-points the duplicate's rows
+ * before it takes these Member rows. An UPDATE locks its target, so those
+ * writes are row locks merge still holds when it reaches this statement. A
+ * writer that already holds a key share on one of these members — an induction
+ * sign-off naming the signer, then the induction row — and then needs one of
+ * those moved rows waits on merge, and merge waits on the key share. PostgreSQL
+ * aborts one side (`40P01`). No census of writers can close that: the class is
+ * every row merge updates. So an attempt that cannot take every Member row
+ * rolls the savepoint back, which releases every row the attempt wrote, and
+ * only then waits for the busy Member row alone.
  *
- * EACH ATTEMPT, inside a savepoint: one `FOR UPDATE SKIP LOCKED` over the
- * sorted set. If it locks every id, merge holds them all — on the fast path
- * this is the same single statement as before. Otherwise merge finds the first
- * row it skipped (`firstSkippedParticipantRow`), rolls the savepoint back,
- * releasing what it did lock, waits for that row ALONE
- * (`waitForOneParticipantRow`), releases that too and tries again. A row that
- * is gone is a changed participant set, not contention. Every statement selects
- * a constant and is counted, never read (`INV-OPS-001`, #2289); the typed read
- * below is the identity proof.
+ * `moveAndPlan` must have no effect that outlives this transaction. A failed
+ * attempt discards its return value and runs it again; a throw (a drift 409,
+ * a constraint failure) rolls the savepoint back and propagates, so the merge
+ * does not retry a refusal. The participant ids come from the attempt itself,
+ * because the hosting plan that names the ancillary owners is part of it.
  *
- * STILL A WAIT, AND STILL BOUNDED (#2623 T6). Merge is irreversible admin work,
- * so a short overlap with an ordinary writer must still succeed: it waits, in
- * PostgreSQL's own lock queue, for up to `MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS`
- * in all, and every single-row wait is bounded by what is left of that budget.
- * The loop cannot spin: an attempt either takes every row, or waits on a row
- * until it frees or the budget is gone, and the budget is read from a monotonic
- * clock before each attempt. Running out lands on the existing
- * `HostingCoverageParticipantRetryError`, which merge converts into its clean
- * "participants changed, nothing was saved, re-run the preview" 409. While it
- * waits merge holds none of these rows, so it no longer blocks the FK writes of
- * up to `HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT` third-party owners as it waits.
+ * EACH ATTEMPT, inside a savepoint: `moveAndPlan`, then one `FOR UPDATE SKIP
+ * LOCKED` over the sorted ids. If it locks every id, the savepoint is released
+ * and merge holds the rows and the writes. Otherwise the first skipped row is
+ * found (`firstSkippedParticipantRow`), the savepoint rolls back, and merge
+ * waits for that row alone (`waitForOneParticipantRow`) before trying again.
+ * A missing row is a changed set, not contention. Lock statements select a
+ * constant and are counted, never read (`INV-OPS-001`, #2289); the typed read
+ * is the identity proof.
  *
- * The lock bound only ever exists inside the single-row wait's savepoint, and
- * its rollback restores whatever was in force before — so merge's later locks
- * (coverage-owner keys, the loser delete) keep their ordinary failure semantics.
+ * STILL A WAIT, AND STILL BOUNDED (#2623 T6). The whole loop, moves included,
+ * shares `MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS`. Every single-row wait is
+ * bounded by what is left after the attempt. The loop cannot spin: an attempt
+ * either takes every row, or waits until the row frees or the budget is gone.
+ * Running out lands on `HostingCoverageParticipantRetryError`. While it waits
+ * merge holds none of these rows and none of the attempt's writes. The lock
+ * bound only exists inside the wait's savepoint, so later locks keep their
+ * ordinary failure semantics. Advisory keys taken before this call stay held,
+ * as they did before.
+ */
+export async function withMemberMergeParticipantRows<T>(
+  db: MemberMergeParticipantDb,
+  moveAndPlan: () => Promise<{ participantIds: readonly string[]; result: T }>,
+): Promise<{ lockedMemberIds: readonly string[]; result: T }> {
+  const deadline = performance.now() + MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS;
+  const remainingBudget = () => Math.ceil(deadline - performance.now());
+  for (;;) {
+    if (remainingBudget() <= 0) throw new HostingCoverageParticipantRetryError();
+    await db.$executeRaw(ATTEMPT_SAVEPOINT.open);
+    let planned: { participantIds: readonly string[]; result: T };
+    try {
+      planned = await moveAndPlan();
+    } catch (error) {
+      await rollBackAttempt(db);
+      throw error;
+    }
+    const ids = sortedUnique(planned.participantIds);
+    if (ids.length === 0) {
+      await rollBackAttempt(db);
+      throw new HostingCoverageParticipantRetryError();
+    }
+    const locked = await db.$executeRaw(Prisma.sql`
+      SELECT 1
+      FROM "Member"
+      WHERE "id" IN (${Prisma.join(ids)})
+      ORDER BY "id"
+      FOR UPDATE SKIP LOCKED
+    `);
+    const busy = locked === ids.length ? undefined : await firstSkippedParticipantRow(db, ids);
+    if (busy === undefined) {
+      await db.$executeRaw(ATTEMPT_SAVEPOINT.release);
+      const lockedMembers = await db.member.findMany({
+        where: { id: { in: [...ids] } },
+        orderBy: { id: "asc" },
+        select: { id: true },
+      });
+      if (
+        lockedMembers.length !== ids.length ||
+        lockedMembers.some((member, index) => member.id !== ids[index])
+      ) {
+        throw new HostingCoverageParticipantRetryError();
+      }
+      return { lockedMemberIds: Object.freeze(ids), result: planned.result };
+    }
+    await rollBackAttempt(db);
+    // Read after the attempt and its probe, so the wait ends inside the 10s total.
+    const remaining = remainingBudget();
+    if (remaining <= 0) throw new HostingCoverageParticipantRetryError();
+    const waited = await waitForOneParticipantRow(db, busy, remaining);
+    if (waited !== "free") throw new HostingCoverageParticipantRetryError();
+  }
+}
+
+/**
+ * Lock master, loser and every ancillary owner, with no writes of its own.
+ * Merge itself goes through {@link withMemberMergeParticipantRows}, so the
+ * rows it re-points are inside the same attempt (#4876).
  */
 export async function lockMemberMergeHostingCoverageParticipants(
   db: MemberMergeParticipantDb,
@@ -522,44 +583,11 @@ export async function lockMemberMergeHostingCoverageParticipants(
     params.loserId,
     ...params.ownerMemberIds,
   ]);
-  const deadline = performance.now() + MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS;
-  // What is left of the one budget, read again before each step that can wait.
-  const remainingBudget = () => Math.ceil(deadline - performance.now());
-  for (;;) {
-    if (remainingBudget() <= 0) throw new HostingCoverageParticipantRetryError();
-    await db.$executeRaw(ATTEMPT_SAVEPOINT.open);
-    const locked = await db.$executeRaw(Prisma.sql`
-      SELECT 1
-      FROM "Member"
-      WHERE "id" IN (${Prisma.join(ids)})
-      ORDER BY "id"
-      FOR UPDATE SKIP LOCKED
-    `);
-    const busy = locked === ids.length ? undefined : await firstSkippedParticipantRow(db, ids);
-    if (busy === undefined) {
-      await db.$executeRaw(ATTEMPT_SAVEPOINT.release);
-      break;
-    }
-    await db.$executeRaw(ATTEMPT_SAVEPOINT.rollBack);
-    await db.$executeRaw(ATTEMPT_SAVEPOINT.release);
-    // Read after the attempt and its probe, so the wait ends inside the 10s total.
-    const remaining = remainingBudget();
-    if (remaining <= 0) throw new HostingCoverageParticipantRetryError();
-    const waited = await waitForOneParticipantRow(db, busy, remaining);
-    if (waited !== "free") throw new HostingCoverageParticipantRetryError();
-  }
-  const lockedMembers = await db.member.findMany({
-    where: { id: { in: ids } },
-    orderBy: { id: "asc" },
-    select: { id: true },
-  });
-  if (
-    lockedMembers.length !== ids.length ||
-    lockedMembers.some((member, index) => member.id !== ids[index])
-  ) {
-    throw new HostingCoverageParticipantRetryError();
-  }
-  return Object.freeze(ids);
+  const locked = await withMemberMergeParticipantRows(db, async () => ({
+    participantIds: ids,
+    result: ids,
+  }));
+  return locked.lockedMemberIds;
 }
 
 /** Issue the merge bypass only after an exact under-lock plan comparison. */
