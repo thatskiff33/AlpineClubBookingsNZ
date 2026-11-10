@@ -60,6 +60,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let runPaymentRecoveryOperationNow: (typeof import("@/lib/payment-recovery"))["runPaymentRecoveryOperationNow"];
 let recordStripeRefundsAgainstTransaction: (typeof import("@/lib/payment-transactions"))["recordStripeRefundsAgainstTransaction"];
 let listDeadCardRefunds: (typeof import("@/lib/card-refund-paid-another-way"))["listDeadCardRefunds"];
+let closeCardRefundPaidAnotherWay: (typeof import("@/lib/card-refund-paid-another-way"))["closeCardRefundPaidAnotherWay"];
 let keys: typeof import("@/lib/payment-recovery-keys");
 let recoveryAlert: typeof import("@/lib/payment-recovery-alert");
 let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixture"))["CLUB_FORMAT_TEST"];
@@ -230,7 +231,7 @@ let raisedSeconds = 0;
       harnessRole = declareEnvironmentRoleForSuite("non-production");
       ({ runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery"));
       ({ recordStripeRefundsAgainstTransaction } = await import("@/lib/payment-transactions"));
-      ({ listDeadCardRefunds } = await import("@/lib/card-refund-paid-another-way"));
+      ({ listDeadCardRefunds, closeCardRefundPaidAnotherWay } = await import("@/lib/card-refund-paid-another-way"));
       keys = await import("@/lib/payment-recovery-keys");
       recoveryAlert = await import("@/lib/payment-recovery-alert");
       ({ MAX_PAYMENT_RECOVERY_ATTEMPTS } = await import("@/lib/payment-recovery-constants"));
@@ -337,19 +338,57 @@ let raisedSeconds = 0;
         where: { idempotencyKey: keys.buildCardRefundFailedLaterRecoveryKey(OTHER_DOOR_REFUND) },
       });
       expect(failedLater).toMatchObject({ amountCents: OTHER_DOOR_CENTS, status: "PENDING" });
-      // Review F1, the state an officer sees now, as it stands (the #4492 question is not decided here): the held
-      // row owes its whole charge again beside the failed-later row, and "Try the card again" is refused for it.
-      // The hold's message tells the officer not to close it with "Paid another way" but to ask a developer.
+      // #4492: the held row cannot also be paid by bank while its sizing refund awaits the card.
       const panel = (await listDeadCardRefunds()).find((row) => row.operationId === operationId);
       expect(panel).toMatchObject({ owedCents: SUPERSEDED_CENTS });
       expect(panel?.tryCardAgainRefusal).toMatch(/failed later is on this payment/);
-      expect((await rowNow(operationId)).lastError).toMatch(/has since failed .* ask a developer \(#4492\)/);
+      expect(panel?.paidAnotherWayRefusal).toMatch(/has not gone back to the card/);
+      expect(panel?.tryCardAgainRefusal).not.toMatch(/Settle it with|ask a developer/);
+      expect((await rowNow(operationId)).lastError).toContain("until the failed refund has gone back to the card");
+      await expect(bankClose(operationId, SUPERSEDED_CENTS)).rejects.toMatchObject({ status: 409, message: expect.stringContaining("has not gone back to the card") });
+      await expectNoBankClose();
 
       // The held row is never claimed again; the failed-later row re-sends the other door's refund, once.
       expect(await runPaymentRecoveryOperationNow(operationId, CLUB_FORMAT_TEST)).toBe("not-claimed");
       expect(await runPaymentRecoveryOperationNow(failedLater.id, CLUB_FORMAT_TEST)).toBe("succeeded");
       expect(asked).toEqual([expect.objectContaining({ amountCents: OTHER_DOOR_CENTS })]);
       expect(await rowNow(operationId)).toMatchObject({ status: "FAILED", attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS });
+      const after = (await listDeadCardRefunds()).find((row) => row.operationId === operationId);
+      expect(after?.paidAnotherWayRefusal).toBeNull();
+      await expect(bankClose(operationId, after!.owedCents)).rejects.toMatchObject({ status: 409, message: expect.stringContaining("no longer matches") });
+      await expectNoBankClose();
+    });
+
+    const bankClose = (id: string, cents: number) => closeCardRefundPaidAnotherWay({
+      operationId: id, amountCents: cents, expectedOwedCents: cents, paidBack: "full",
+      note: "Bank transfer", actingMemberId: MEMBER_ID,
+    });
+    async function expectNoBankClose() {
+      expect(await prisma.manualRefundTask.count({ where: { bookingId: BOOKING_ID } })).toBe(0);
+      expect(await prisma.bookingLedgerLine.count({ where: { bookingId: BOOKING_ID, type: "BANK_REFUND" } })).toBe(0);
+      expect(await prisma.auditLog.count({ where: { targetId: BOOKING_ID, action: "booking-payment.card-refund.paid-another-way" } })).toBe(0);
+      expect(await prisma.xeroSyncOperation.count({ where: { localId: { in: [BOOKING_ID, PAYMENT_ID] }, operationKey: { contains: "paid-another-way" } } })).toBe(0);
+    }
+
+    it("#4492: a failed-later send killed by the superseded card send cannot also be paid by bank", async () => {
+      const madeSeconds = raisedSeconds + 60;
+      await record(otherDoorRefund("succeeded", madeSeconds));
+      await record(otherDoorRefund("failed", madeSeconds));
+      const later = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { idempotencyKey: keys.buildCardRefundFailedLaterRecoveryKey(OTHER_DOOR_REFUND) } });
+      stripeRaceHooks.listRefunds = async () => [otherDoorRefund("failed", madeSeconds)];
+      expect(await runPaymentRecoveryOperationNow(operationId, CLUB_FORMAT_TEST)).toBe("succeeded");
+      expect(asked).toEqual([expect.objectContaining({ amountCents: SUPERSEDED_CENTS })]);
+      stripeRaceHooks.refund = async () => { throw new Error("Refund amount is greater than the unrefunded amount"); };
+      await prisma.paymentRecoveryOperation.update({ where: { id: later.id }, data: { attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS - 1 } });
+      expect(await runPaymentRecoveryOperationNow(later.id, CLUB_FORMAT_TEST)).toBe("failed");
+      expect(await rowNow(later.id)).toMatchObject({ status: "FAILED", attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS });
+      const panel = (await listDeadCardRefunds()).find((row) => row.operationId === later.id);
+      expect(panel).toMatchObject({ owedCents: OTHER_DOOR_CENTS });
+      expect(panel?.paidAnotherWayRefusal).toMatch(/superseded charge was already sent back/);
+      await expect(bankClose(later.id, OTHER_DOOR_CENTS)).rejects.toMatchObject({ status: 409, message: expect.stringContaining("would pay the member again") });
+      await expectNoBankClose();
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } })).refundedAmountCents).toBe(SUPERSEDED_CENTS);
+      expect(asked).toHaveLength(1);
     });
 
     it("another door's refund made before the row was raised is only taken off the ask (#4699): the rest is sent", async () => {

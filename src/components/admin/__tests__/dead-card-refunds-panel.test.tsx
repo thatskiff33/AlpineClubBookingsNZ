@@ -50,6 +50,7 @@ function row(overrides: Partial<DeadCardRefundPanelRow> = {}): DeadCardRefundPan
     stripeMayHaveRefunded: false,
     laterStripeRefunds: [],
     tryCardAgainRefusal: null,
+    paidAnotherWayRefusal: null,
     ...overrides,
   };
 }
@@ -734,7 +735,7 @@ describe("#4368: Try the card again (decision 5)", () => {
   });
 
   it("MUTATION: where the re-arm would refuse, the row says why and offers no button", () => {
-    const refusal = "A refund Stripe failed later is still open on this payment, and it may be the same money as this one.";
+    const refusal = "Stripe may have made this refund after all; check the Stripe dashboard.";
     render(<DeadCardRefundsPanel rows={[row({ tryCardAgainRefusal: refusal })]} bankNoteWording={BANK_NOTE_WORDING} />);
     expect(screen.getByText(refusal)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Try the card again/ })).not.toBeInTheDocument();
@@ -804,4 +805,21 @@ describe("#4368: both new buttons are view-only without edit rights, as Paid ano
     fireEvent.click(nothingLeftButton());
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
+});
+
+
+it.each([
+  "A refund Stripe failed later is on this payment, and it may be the same money. The card is asked for it again, so this row cannot be closed as paid another way.",
+  "Another refund on this charge failed later and has not gone back to the card yet, so this row cannot be closed as paid another way.",
+  "The superseded charge was already sent back to the card, which is why this refund died. Closing it as paid another way would pay the member again, so it cannot be closed here.",
+])("#4492: hides a refused bank close and closes an open dialog on refresh: %s", (refusal) => {
+  const view = openDialog();
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  view.rerender(<DeadCardRefundsPanel rows={[row({ paidAnotherWayRefusal: refusal, tryCardAgainRefusal: "Paid another way cannot close it either." })]} bankNoteWording={BANK_NOTE_WORDING} />);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /as paid another way/ })).not.toBeInTheDocument();
+  expect(screen.getByText(refusal)).toBeInTheDocument();
+  expect(screen.getByText("Paid another way cannot close it either.")).toBeInTheDocument();
+  expect(screen.getByText("That card refund changed, so its dialog was closed. The list is up to date.")).toBeInTheDocument();
+  expect(mocks.fetch).not.toHaveBeenCalled();
 });

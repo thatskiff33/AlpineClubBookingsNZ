@@ -11,6 +11,7 @@ import {
   foreignRefundsSizingSupersededRow,
   laterStripeRefundsCovering,
   tryCardAgainRefusal,
+  paidAnotherWayRefusal,
   unadoptedOwnStripeRefunds,
   type LaterStripeRefund,
   type ListedStripeRefund,
@@ -202,7 +203,7 @@ export async function tryDeadCardRefundAgain(input: TryCardAgainInput): Promise<
           })
         : null;
     const rowWithCharge = { ...operation, paymentTransaction: charge };
-    const refusal = tryCardAgainRefusal(payment, rowWithCharge, owed);
+    const refusal = tryCardAgainRefusal(payment, rowWithCharge, owed, paidAnotherWayRefusal(payment, operation, owed, []));
     if (refusal) throw new DeadCardRefundActionError(refusal, 409);
     // Review F4: Stripe was read for the charges of the plan read then; a plan moved since is not the one checked.
     if (read !== null && JSON.stringify(read.allocationPlan ?? null) !== JSON.stringify(operation.allocationPlan ?? null)) {

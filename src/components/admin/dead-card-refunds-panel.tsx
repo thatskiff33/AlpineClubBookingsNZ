@@ -63,6 +63,7 @@ export interface DeadCardRefundPanelRow {
   laterStripeRefunds: LaterStripeRefundPanelRow[];
   /** #4368: why "Try the card again" is not offered, or null when it is. */
   tryCardAgainRefusal: string | null;
+  paidAnotherWayRefusal: string | null;
 }
 
 /** The warning a refund whose last failure may have reached Stripe carries, on its row and in its dialog. */
@@ -147,12 +148,12 @@ export function DeadCardRefundsPanel({
     setListNotice("That card refund changed, so its dialog was closed. The list is up to date.");
   }
 
-  const target = targetId === null ? null : (rows.find((row) => row.operationId === targetId) ?? null);
+  const target = targetId === null ? null : (rows.find((row) => row.operationId === targetId && !row.paidAnotherWayRefusal) ?? null);
   // The list moved under the open dialog (a 409's refresh, another treasurer):
   // adjusted while rendering, from the rows, as React's derived-state pattern does.
   if (targetId !== null && target === null && !busy) {
     setTargetId(null);
-    setListNotice("That card refund is no longer waiting to be closed, so its dialog was closed. The list is up to date.");
+    setListNotice("That card refund changed, so its dialog was closed. The list is up to date.");
   }
   if (target !== null && seenOwedCents !== null && target.owedCents !== seenOwedCents) {
     setSeenOwedCents(target.owedCents);
@@ -340,6 +341,9 @@ export function DeadCardRefundsPanel({
                   ) : (
                     <p className="max-w-sm text-xs text-muted-foreground">{row.tryCardAgainRefusal}</p>
                   )}
+                  {row.paidAnotherWayRefusal ? (
+                    <p className="max-w-sm text-xs text-muted-foreground">{row.paidAnotherWayRefusal}</p>
+                  ) : (
                   <ViewOnlyActionButton
                     canEdit={canEdit}
                     describeReason={false}
@@ -350,6 +354,7 @@ export function DeadCardRefundsPanel({
                   >
                     Paid another way
                   </ViewOnlyActionButton>
+                  )}
                 </div>
               )}
             </li>

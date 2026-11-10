@@ -163,6 +163,7 @@ vi.mock("@/lib/prisma", () => {
     },
     paymentTransaction: {
       findUnique: (...args: unknown[]) => mocks.findTransaction(...args),
+      findMany: async () => [],
       findFirst: (...args: unknown[]) => mocks.findCapture(...args),
     },
     manualRefundTask: {
@@ -181,7 +182,7 @@ vi.mock("@/lib/prisma", () => {
       $transaction: (fn: (client: typeof tx) => Promise<unknown>) => fn(tx),
       paymentRecoveryOperation: { findMany: mocks.listOperations },
       manualRefundTask: { findMany: mocks.listRecords, findUnique: (...args: unknown[]) => mocks.findApprovalTask(...args) },
-      paymentTransaction: { findFirst: (...args: unknown[]) => mocks.findCapture(...args) },
+      paymentTransaction: { findFirst: (...args: unknown[]) => mocks.findCapture(...args), findMany: async () => [] },
     },
   };
 });
