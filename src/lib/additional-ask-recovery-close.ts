@@ -3,7 +3,7 @@
  * caller's locks and fenced on exactly the state read - split from
  * `additional-ask-reduction.ts` (review round 6) to keep that module inside its
  * size budget. A reduction nets such an ask off (`retireUnpaidAskChain`); a
- * later increase folds a waiting re-issue in (`foldWaitingReissuedAsks`). The
+ * later increase folds a waiting re-issue or increase retry in (`foldWaitingAsks`). The
  * rule is `INV-PAY-120`.
  */
 import { PaymentRecoveryOperationStatus, type Prisma } from "@prisma/client";
@@ -34,7 +34,7 @@ export const RECENT_RECOVERY_CLAIM_MS = 2 * 60 * 1000;
  * Close asks still waiting on their failed mint's recovery, under the caller's
  * locks, so the retry cannot mint their old figure: the reduction that nets
  * them off (`retireUnpaidAskChain`) and the increase that folds a waiting
- * re-issue in (`foldWaitingReissuedAsks`). Throws
+ * re-issue or increase retry in (`foldWaitingAsks`). Throws
  * `AdditionalAskChangedDuringReductionError` (409) when one moved since it was
  * read, or was claimed moments ago and is minting now.
  */

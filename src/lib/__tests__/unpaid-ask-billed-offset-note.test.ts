@@ -23,11 +23,14 @@ const h = vi.hoisted(() => ({
   }),
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({ enqueueXeroModificationCreditNoteOperation: h.enqueue }));
-vi.mock("@/lib/additional-ask-reissue", () => ({ queueReissuedAskRecovery: h.reissue }));
+vi.mock("@/lib/additional-ask-reissue", () => ({
+  queueReissuedAskRecovery: h.reissue,
+  queueFoldingAskRecovery: vi.fn(async () => undefined),
+}));
 
-const { queueReductionAskFollowUps, queueUnpaidAskBilledOffsetNote } = await import("@/lib/unpaid-ask-billed-offset-note");
+const { queueEditAskFollowUps, queueUnpaidAskBilledOffsetNote } = await import("@/lib/unpaid-ask-billed-offset-note");
 const { UNPAID_ASK_BILLED_OFFSET_NOTE_SCOPE } = await import("@/lib/xero-review-task-key");
-const { NO_FOLDED_REISSUED_ASKS, NO_UNPAID_ASK_SETTLEMENT, recordedBilledOffsetOwnNoteExpected, unpaidAskOffsetHistory } = await import(
+const { NO_FOLDED_WAITING_ASKS, NO_UNPAID_ASK_SETTLEMENT, recordedBilledOffsetOwnNoteExpected, unpaidAskOffsetHistory } = await import(
   "@/lib/unpaid-ask-offset-marker"
 );
 
@@ -73,10 +76,10 @@ describe("queueUnpaidAskBilledOffsetNote", () => {
   });
 });
 
-describe("queueReductionAskFollowUps", () => {
+describe("queueEditAskFollowUps", () => {
   it("MUTATION: makes the re-issued ask's recovery and the billed offset's note durable together", async () => {
     const settled = { additionalAsk: NO_ASK, hasIssuedXeroInvoice: true, unpaidAskBilledOffsetCents: 2_000, xeroRefundAmountCents: 0, organiserChildRefund: null };
-    await queueReductionAskFollowUps(tx, { bookingId: "booking_1", paymentId: "payment_1", bookingModificationId: "mod_reduction", settled });
+    await queueEditAskFollowUps(tx, { bookingId: "booking_1", paymentId: "payment_1", bookingModificationId: "mod_reduction", settled });
 
     expect(h.reissue).toHaveBeenCalledWith(tx, { bookingId: "booking_1", paymentId: "payment_1", bookingModificationId: "mod_reduction", settled });
     expect(h.enqueue).toHaveBeenCalledWith(
@@ -92,13 +95,13 @@ describe("queueReductionAskFollowUps", () => {
     ["an organiser's card refund, whose note comes later", { hasIssuedXeroInvoice: true, xeroRefundAmountCents: 1_000, organiserChildRefund: { amountCents: 1_000 } }, false],
   ])("MUTATION (round 7): records whether the edit's own note is expected - %s", async (_label, figures, expected) => {
     const settled = { additionalAsk: NO_ASK, unpaidAskBilledOffsetCents: 2_000, ...figures };
-    await queueReductionAskFollowUps(tx, { bookingId: "booking_1", paymentId: "payment_1", bookingModificationId: "mod_reduction", settled });
+    await queueEditAskFollowUps(tx, { bookingId: "booking_1", paymentId: "payment_1", bookingModificationId: "mod_reduction", settled });
     expect(h.enqueue).toHaveBeenCalledWith(expect.objectContaining({ ownNoteExpected: expected }), { store: tx });
   });
 
   it("an edit with no billed offset makes only its re-issue durable", async () => {
     const settled = { additionalAsk: NO_ASK, hasIssuedXeroInvoice: true, unpaidAskBilledOffsetCents: 0, xeroRefundAmountCents: 0, organiserChildRefund: null };
-    await queueReductionAskFollowUps(tx, { bookingId: "booking_1", paymentId: "payment_1", bookingModificationId: "mod_reduction", settled });
+    await queueEditAskFollowUps(tx, { bookingId: "booking_1", paymentId: "payment_1", bookingModificationId: "mod_reduction", settled });
 
     expect(h.calls).toEqual(["reissue"]);
   });
@@ -113,7 +116,7 @@ describe("queueReductionAskFollowUps", () => {
  * organiser's card refund - record false.
  */
 describe("the edit's history records whether its own note is expected (#4049)", () => {
-  const offset = { ...NO_UNPAID_ASK_SETTLEMENT, unpaidAskOffsetCents: 2_000, unpaidAskBilledOffsetCents: 2_000, foldedReissuedAsks: NO_FOLDED_REISSUED_ASKS };
+  const offset = { ...NO_UNPAID_ASK_SETTLEMENT, unpaidAskOffsetCents: 2_000, unpaidAskBilledOffsetCents: 2_000, foldedWaitingAsks: NO_FOLDED_WAITING_ASKS };
 
   it.each([
     ["a refund left after the ask, against an issued invoice", { hasIssuedXeroInvoice: true, xeroRefundAmountCents: 1_000, organiserChildRefund: null }, true],
@@ -125,7 +128,7 @@ describe("the edit's history records whether its own note is expected (#4049)", 
     const history = unpaidAskOffsetHistory(settled);
     expect(recordedBilledOffsetOwnNoteExpected(history)).toBe(expected);
 
-    await queueReductionAskFollowUps(tx, { bookingId: "booking_1", paymentId: "payment_1", bookingModificationId: "mod_reduction", settled });
+    await queueEditAskFollowUps(tx, { bookingId: "booking_1", paymentId: "payment_1", bookingModificationId: "mod_reduction", settled });
     expect(h.enqueue).toHaveBeenCalledWith(expect.objectContaining({ ownNoteExpected: expected }), { store: tx });
   });
 

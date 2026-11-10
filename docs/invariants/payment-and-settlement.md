@@ -2817,9 +2817,10 @@ _Legacy: settles tasks raised before #4317._
 - **Asks awaiting a failed mint's retry** count, sized as the replay would
   (none if one's frozen). Only its own row settles one, bar a frozen one's
   replay (#4015). A claim under two minutes refuses the edit;
-  older ones close. A later increase folds a waiting re-issue in, recorded
-  for its replay to ask; both its minters send one request
-  (`planReissuedAskMint`).
+  older ones close. A later increase folds a waiting re-issue, and a waiting
+  increase retry, into its own ask (#4744), recorded for its replay to ask,
+  and that retry's deferred invoice follows the new ask (`INV-PAY-140`).
+  Both of a re-issue's minters send one request (`planReissuedAskMint`).
 - **Only the member's price asks.** An officer's review charge is never set
   against. Nor is a financial review's settled refund share: paid as the
   officer decided, the ledger census reporting the booking if the member

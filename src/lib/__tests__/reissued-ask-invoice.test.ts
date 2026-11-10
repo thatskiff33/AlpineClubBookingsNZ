@@ -16,20 +16,33 @@ const h = vi.hoisted(() => ({
   cancelOp: null as null | { id: string },
   stripe: { status: "requires_payment_method" } as { status: string } | Error,
   enqueue: vi.fn(async (...args: unknown[]) => { void args; return { queueOperationId: "op_1", outcome: "covers-total" }; }),
+  attach: vi.fn(async (...args: unknown[]) => { void args; }),
+  complete: vi.fn(async (...args: unknown[]) => { void args; return "queued"; }),
   error: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     paymentTransaction: { findUnique: vi.fn(async () => (h.txn ? { reason: null, ...h.txn } : null)) },
-    paymentRecoveryOperation: { findFirst: vi.fn(async () => h.cancelOp) },
+    paymentRecoveryOperation: {
+      findFirst: vi.fn(async () => h.cancelOp),
+      findUnique: vi.fn(async () => ({ id: "op_waiting" })),
+    },
     bookingModification: {
-      findUnique: vi.fn(async ({ where }: { where: { id: string } }) => ({
-        newData: h.byId ? h.byId[where.id] : h.newData,
-      })),
+      findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
+        const stored = h.byId ? h.byId[where.id] : { newData: h.newData };
+        if (stored && typeof stored === "object" && "newData" in stored) return stored;
+        return { newData: stored };
+      }),
     },
   },
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({ enqueueXeroSupplementaryInvoiceOperation: h.enqueue }));
+vi.mock("@/lib/xero-supplementary-invoice-late-capture", () => ({
+  attachRecoveredIntentToWaitingSupplementaryInvoice: (...args: unknown[]) => h.attach(...args),
+}));
+vi.mock("@/lib/xero-booking-edit-settlement", () => ({
+  completeDeferredXeroSupplementaryInvoice: (...args: unknown[]) => h.complete(...args),
+}));
 vi.mock("@/lib/stripe", () => ({
   getPaymentIntent: vi.fn(async () => {
     if (h.stripe instanceof Error) throw h.stripe;
@@ -38,8 +51,8 @@ vi.mock("@/lib/stripe", () => ({
 }));
 vi.mock("@/lib/logger", () => ({ default: { error: h.error, warn: vi.fn(), info: vi.fn() } }));
 
-const { queueFoldedReissuedAskInvoices, queueReissuedAskSupplementaryInvoice } = await import("@/lib/reissued-ask-invoice");
-const { NO_FOLDED_REISSUED_ASKS, NO_UNPAID_ASK_SETTLEMENT, unpaidAskOffsetHistory } = await import("@/lib/unpaid-ask-offset-marker");
+const { queueFoldedAskInvoices, queueReissuedAskSupplementaryInvoice } = await import("@/lib/reissued-ask-invoice");
+const { NO_FOLDED_WAITING_ASKS, NO_UNPAID_ASK_SETTLEMENT, unpaidAskOffsetHistory } = await import("@/lib/unpaid-ask-offset-marker");
 
 const CALL = { bookingId: "booking_1", bookingModificationId: "mod_reduction", paymentIntentId: "pi_reissued" };
 
@@ -61,7 +74,7 @@ describe("queueReissuedAskSupplementaryInvoice", () => {
       reissuedAskInvoiceUnsureCents: 0,
       unpaidAskBilledOffsetCents: 0,
       unpaidAskBilledOffsetUnsureCents: 0,
-      foldedReissuedAsks: NO_FOLDED_REISSUED_ASKS,
+      foldedWaitingAsks: NO_FOLDED_WAITING_ASKS,
     });
     expect(await queueReissuedAskSupplementaryInvoice(CALL)).toBe(true);
 
@@ -80,7 +93,7 @@ describe("queueReissuedAskSupplementaryInvoice", () => {
       reissuedAskInvoiceUnsureCents: 0,
       unpaidAskBilledOffsetCents: 0,
       unpaidAskBilledOffsetUnsureCents: 0,
-      foldedReissuedAsks: NO_FOLDED_REISSUED_ASKS,
+      foldedWaitingAsks: NO_FOLDED_WAITING_ASKS,
     });
     await queueReissuedAskSupplementaryInvoice(CALL);
     expect(h.enqueue).not.toHaveBeenCalled();
@@ -161,16 +174,23 @@ describe("queueReissuedAskSupplementaryInvoice", () => {
   });
 });
 
-describe("queueFoldedReissuedAskInvoices (#3954 round 6)", () => {
+describe("queueFoldedAskInvoices (#3954 round 6, #4744)", () => {
+  const foldedReissue = {
+    cents: 3_000,
+    invoiceCents: 1_000,
+    reissues: { cents: 3_000, modificationIds: ["mod_reduction"], invoiceCents: 1_000 },
+    increases: [],
+  };
+
   it("MUTATION: queues each folded reduction's own invoice, anchored on that reduction and waiting on the INCREASE's intent", async () => {
     h.byId = {
       mod_increase: unpaidAskOffsetHistory({
         ...NO_UNPAID_ASK_SETTLEMENT,
-        foldedReissuedAsks: { cents: 3_000, modificationIds: ["mod_reduction"], invoiceCents: 1_000 },
+        foldedWaitingAsks: foldedReissue,
       }),
       mod_reduction: { reissuedAskInvoiceCents: 1_000 },
     };
-    await queueFoldedReissuedAskInvoices({ bookingId: "booking_1", increaseModificationId: "mod_increase", paymentIntentId: "pi_increase" });
+    await queueFoldedAskInvoices({ bookingId: "booking_1", increaseModificationId: "mod_increase", paymentIntentId: "pi_increase" });
 
     expect(h.enqueue).toHaveBeenCalledTimes(1);
     expect(h.enqueue).toHaveBeenCalledWith(
@@ -182,13 +202,56 @@ describe("queueFoldedReissuedAskInvoices (#3954 round 6)", () => {
   it("MUTATION (round 7): an increase's intent a reduction retired meanwhile queues no folded invoice and offers no secret", async () => {
     h.byId = { mod_increase: { foldedReissuedAskModificationIds: ["mod_reduction"], foldedReissuedAskCents: 3_000 }, mod_reduction: { reissuedAskInvoiceCents: 1_000 } };
     h.txn = { status: "FAILED", withdrawnAt: new Date("2026-07-01T00:00:00.000Z") };
-    expect(await queueFoldedReissuedAskInvoices({ bookingId: "booking_1", increaseModificationId: "mod_increase", paymentIntentId: "pi_increase" })).toBe(false);
+    expect(await queueFoldedAskInvoices({ bookingId: "booking_1", increaseModificationId: "mod_increase", paymentIntentId: "pi_increase" })).toBe(false);
     expect(h.enqueue).not.toHaveBeenCalled();
   });
 
   it("queues nothing for an increase that folded nothing in", async () => {
     h.byId = { mod_increase: {} };
-    await queueFoldedReissuedAskInvoices({ bookingId: "booking_1", increaseModificationId: "mod_increase", paymentIntentId: "pi_increase" });
+    await queueFoldedAskInvoices({ bookingId: "booking_1", increaseModificationId: "mod_increase", paymentIntentId: "pi_increase" });
+    expect(h.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#4744): moves a folded increase's deferred invoice onto the folding card request", async () => {
+    h.byId = {
+      mod_later: unpaidAskOffsetHistory({
+        ...NO_UNPAID_ASK_SETTLEMENT,
+        foldedWaitingAsks: {
+          cents: 5_000,
+          invoiceCents: 5_000,
+          reissues: { cents: 0, modificationIds: [], invoiceCents: 0 },
+          increases: [{
+            modificationId: "mod_increase",
+            askCents: 5_000,
+            invoiceCents: 5_000,
+            invoiceUnsure: false,
+            hadIssuedXeroInvoice: true,
+          }],
+        },
+      }),
+      mod_increase: {
+        newData: {},
+        priceDiffCents: 5_000,
+        changeFeeCents: 0,
+        booking: { payment: { status: "SUCCEEDED" } },
+      },
+    };
+    await queueFoldedAskInvoices({ bookingId: "booking_1", increaseModificationId: "mod_later", paymentIntentId: "pi_later" });
+
+    expect(h.attach).toHaveBeenCalledWith({
+      bookingModificationId: "mod_increase",
+      paymentIntentId: "pi_later",
+      recoveryOperationId: "op_waiting",
+    });
+    expect(h.complete).toHaveBeenCalledWith({
+      bookingId: "booking_1",
+      bookingModificationId: "mod_increase",
+      paymentIntentId: "pi_later",
+      priceDiffCents: 5_000,
+      changeFeeCents: 0,
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+    });
     expect(h.enqueue).not.toHaveBeenCalled();
   });
 });

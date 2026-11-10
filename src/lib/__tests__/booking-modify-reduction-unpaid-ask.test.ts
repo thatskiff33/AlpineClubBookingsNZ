@@ -104,7 +104,7 @@ const queueReissueInvoice = vi.hoisted(() => vi.fn(async (params: Record<string,
 const queueFoldedInvoices = vi.hoisted(() => vi.fn(async (params: Record<string, unknown>) => { void params; return true; }));
 vi.mock("@/lib/reissued-ask-invoice", () => ({
   queueReissuedAskSupplementaryInvoice: queueReissueInvoice,
-  queueFoldedReissuedAskInvoices: queueFoldedInvoices,
+  queueFoldedAskInvoices: queueFoldedInvoices,
 }));
 
 vi.mock("@/lib/stripe", async (importOriginal) => ({
@@ -157,7 +157,7 @@ const {
 } = await import("@/lib/payment-recovery-keys");
 const { ApiError } = await import("@/lib/api-error");
 const { noReductionAgainstUnpaidAsk, readReductionAgainstUnpaidAsk, reductionLeftAfterAskCents } = await import("@/lib/additional-ask-reduction");
-const { WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE } = await import("@/lib/additional-ask-reissue");
+const { WAITING_INCREASE_FOLDED_BY_INCREASE_NOTE, WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE } = await import("@/lib/additional-ask-reissue");
 const { PENDING_ASK_NETTED_BY_REDUCTION_NOTE } = await import("@/lib/additional-ask-recovery-close");
 const { ADDITIONAL_ASK_BEING_RAISED_MESSAGE, AdditionalAskChangedDuringReductionError } = await import(
   "@/lib/additional-ask-reduction-error"
@@ -840,6 +840,68 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
     });
   });
 
+  it("MUTATION (#4744): an increase that folded a waiting retry mints under the recovery written at commit", async () => {
+    const { sizeAdditionalAsk } = await import("@/lib/additional-payment-ask");
+    const ask = sizeAdditionalAsk({
+      priceDiffCents: 1_000,
+      changeFeeCents: 0,
+      payment: { additionalAmountCents: 0, additionalPaymentStatus: null },
+      foldedWaitingAskCents: 5_000,
+    });
+    minterDb.reissueRecovery = {
+      id: "op_fold",
+      paymentId: "payment_1",
+      status: "PENDING",
+      attempts: 0,
+      processingStartedAt: null,
+      paymentIntentId: "mod_guest_remove_booking_3954_mod_later",
+      amountCents: ask.amountCents,
+      createdAt: new Date("2026-07-01T00:00:00.000Z"),
+      lastError: null,
+    };
+    mocks.createIntent.mockImplementation(async ({ amountCents }: { amountCents: number }) => ({
+      id: `pi_folded_${amountCents}`,
+      client_secret: "secret",
+    }));
+    const minted = await createModificationAdditionalPaymentIntent({
+      format: CLUB_FORMAT_TEST,
+      bookingId: "booking_3954",
+      result: {
+        ...NO_ADDITIONAL_ASK,
+        additionalAmountCents: ask.amountCents,
+        additionalAsk: ask,
+        retiredAdditionalAsks: [],
+        hasSucceededPayment: true,
+        hasIssuedXeroInvoice: true,
+        paymentId: "payment_1",
+        paymentCustomerId: "cus_1",
+        memberEmail: "member@example.invalid",
+        memberName: "Member One",
+        memberFirstName: "Member",
+        memberId: "member_1",
+        bookingModificationId: "mod_later",
+        priceLines: null,
+      } as never,
+      door: "guestRemoval",
+      failureMessage: "test",
+    });
+
+    expect(minted.additionalPaymentIntentId).toBe("pi_folded_6000");
+    expect(mocks.createIntent).toHaveBeenCalledWith(expect.objectContaining({
+      amountCents: 6_000,
+      idempotencyKey: "mod_guest_remove_booking_3954_mod_later",
+    }));
+    expect(minterDb.recoveryUpdateMany).toHaveBeenCalledWith({
+      where: { id: "op_fold", status: "PENDING", attempts: 0, processingStartedAt: null },
+      data: expect.objectContaining({ status: "SUCCEEDED", paymentIntentId: "pi_folded_6000" }),
+    });
+    expect(queueFoldedInvoices).toHaveBeenCalledWith({
+      bookingId: "booking_3954",
+      increaseModificationId: "mod_later",
+      paymentIntentId: "pi_folded_6000",
+    });
+  });
+
   // #4217 review (F1): Payment, then the recovery row - the order the runner's
   // claim hold and a reduction netting this re-issue off take them in.
   it("MUTATION (#4217): the door's write under its recovery locks the Payment row before it completes the recovery", async () => {
@@ -1288,7 +1350,17 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
 
   it("MUTATION (round 6): an increase's waiting mint that folded a re-issue in is owed for both, and their invoices are counted - the folded one's was never parked", async () => {
     state.modifications = [
-      { id: "mod_increase", priceDiffCents: 5_000, changeFeeCents: 0, newData: { foldedReissuedAskCents: 3_000, foldedReissuedAskInvoiceCents: 1_000 } },
+      { id: "mod_reduction", priceDiffCents: -2_000, changeFeeCents: 0, newData: { reissuedAskInvoiceCents: 1_000 } },
+      {
+        id: "mod_increase",
+        priceDiffCents: 5_000,
+        changeFeeCents: 0,
+        newData: {
+          foldedReissuedAskCents: 3_000,
+          foldedReissuedAskModificationIds: ["mod_reduction"],
+          foldedReissuedAskInvoiceCents: 1_000,
+        },
+      },
     ];
     state.recoveries = [recoveryRow({ amountCents: 8_000, hadIssuedXeroInvoice: true })];
     const result = await adjust(awaitingRetryBooking(), -2_000);
@@ -1420,7 +1492,12 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
       state.modifications = [{ id: "mod_reduction", priceDiffCents: -2_000, changeFeeCents: 0, newData: { reissuedAskInvoiceCents: 1_000 } }];
       const result = await adjust(awaitingRetryBooking(), 1_000);
 
-      expect(result.foldedReissuedAsks).toEqual({ cents: 3_000, modificationIds: ["mod_reduction"], invoiceCents: 1_000 });
+      expect(result.foldedWaitingAsks).toEqual({
+        cents: 3_000,
+        invoiceCents: 1_000,
+        reissues: { cents: 3_000, modificationIds: ["mod_reduction"], invoiceCents: 1_000 },
+        increases: [],
+      });
       expect(unpaidAskOffsetHistory(result)).toEqual({
         foldedReissuedAskCents: 3_000,
         foldedReissuedAskModificationIds: ["mod_reduction"],
@@ -1428,13 +1505,78 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
       });
     });
 
-    it("folds nothing for an increase's own failed mint - #3340's overtake rule is unchanged", async () => {
+    it("MUTATION (#4744): asks for its own $10 and a waiting increase's $50 on one fresh ask, and closes that retry", async () => {
       state.rows = [];
-      state.recoveries = [recoveryRow()];
+      state.modifications = [{ id: "mod_increase", priceDiffCents: 5_000, changeFeeCents: 0, newData: {} }];
+      state.recoveries = [recoveryRow({ hadIssuedXeroInvoice: true })];
       const result = await adjust(awaitingRetryBooking(), 1_000);
 
-      expect(result.additionalAsk.amountCents).toBe(1_000);
+      expect(result.additionalAsk.amountCents).toBe(6_000);
+      expect(result.additionalAsk.carriedCents).toBe(5_000);
+      expect(recoveryUpdateMany).toHaveBeenCalledWith({
+        where: { id: RECOVERY_ID, status: "FAILED", attempts: 1, processingStartedAt: null },
+        data: expect.objectContaining({ status: "SUCCEEDED", lastError: WAITING_INCREASE_FOLDED_BY_INCREASE_NOTE }),
+      });
+      expect(result.foldedWaitingAsks.increases).toEqual([{
+        modificationId: "mod_increase",
+        askCents: 5_000,
+        invoiceCents: 5_000,
+        invoiceUnsure: false,
+        hadIssuedXeroInvoice: true,
+      }]);
+      expect(unpaidAskOffsetHistory(result)).toMatchObject({
+        foldedReissuedAskCents: 5_000,
+        foldedReissuedAskInvoiceCents: 5_000,
+        foldedIncreaseAsks: [expect.objectContaining({ modificationId: "mod_increase", askCents: 5_000 })],
+      });
+    });
+
+    it("MUTATION (#4744): a waiting increase claimed moments ago refuses the later edit", async () => {
+      state.rows = [];
+      state.recoveries = [recoveryRow({ status: "PROCESSING", attempts: 1, processingStartedAt: new Date("2026-06-30T23:59:30.000Z") })];
+      await expect(adjust(awaitingRetryBooking(), 1_000)).rejects.toBeInstanceOf(AdditionalAskChangedDuringReductionError);
       expect(recoveryUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("does not fold an officer's review charge, or an increase whose own row is already the Payment's ask", async () => {
+      state.rows = [];
+      state.recoveries = [recoveryRow({ idempotencyKey: buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod_increase") })];
+      const review = await adjust(awaitingRetryBooking(), 1_000);
+      expect(review.additionalAsk.amountCents).toBe(1_000);
+      expect(recoveryUpdateMany).not.toHaveBeenCalled();
+
+      state.rows = [askRow({ bookingModificationId: "mod_increase", amountCents: 5_000, createdAt: new Date("2026-06-22T00:00:00.000Z") })];
+      state.recoveries = [recoveryRow({ paymentIntentId: ASK_INTENT })];
+      const owned = await adjust(grownBooking(), 1_000);
+      expect(owned.additionalAsk.amountCents).toBe(6_000);
+      expect(owned.additionalAsk.carriedCents).toBe(5_000);
+      expect(recoveryUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION (#4744): a reduction against a waiting increase counts an increase that increase had already folded in", async () => {
+      state.rows = [];
+      state.modifications = [{
+        id: "mod_increase",
+        priceDiffCents: 1_000,
+        changeFeeCents: 0,
+        newData: {
+          foldedReissuedAskCents: 5_000,
+          foldedReissuedAskInvoiceCents: 5_000,
+          foldedIncreaseAsks: [{
+            modificationId: "mod_first",
+            askCents: 5_000,
+            invoiceCents: 5_000,
+            invoiceUnsure: false,
+            hadIssuedXeroInvoice: true,
+          }],
+        },
+      }];
+      state.recoveries = [recoveryRow({ amountCents: 6_000, hadIssuedXeroInvoice: true })];
+      const result = await adjust(awaitingRetryBooking(), -2_000);
+
+      expect(result.unpaidAskOffsetCents).toBe(2_000);
+      expect(result.refundAmountCents).toBe(0);
+      expect(result.additionalAsk.amountCents).toBe(4_000);
     });
 
     it("MUTATION: a re-issue claimed moments ago refuses the increase for a moment rather than mint beside it", async () => {
@@ -1626,7 +1768,7 @@ describe("#3954: one sizing for a failed mint's replay and the reduction that ma
   });
 });
 
-const { queueReissuedAskRecovery, REISSUED_ASK_INLINE_MINT_GRACE_MS } = await import("@/lib/additional-ask-reissue");
+const { queueFoldingAskRecovery, queueReissuedAskRecovery, REISSUED_ASK_INLINE_MINT_GRACE_MS } = await import("@/lib/additional-ask-reissue");
 
 describe("#3954 round 4: a re-issued ask is durable from the edit's commit", () => {
   const upsert = vi.fn(async (args: unknown) => { void args; return { id: "op_reissue" }; });
@@ -1665,6 +1807,62 @@ describe("#3954 round 4: a re-issued ask is durable from the edit's commit", () 
       paymentId: "payment_1",
       bookingModificationId: "mod_reduction",
       settled: { additionalAsk, hasIssuedXeroInvoice: true },
+      now: NOW,
+    });
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#4744): a folding increase writes its own recovery in the edit's transaction, under the door's Stripe key", async () => {
+    const { sizeAdditionalAsk } = await import("@/lib/additional-payment-ask");
+    const { NO_FOLDED_REISSUED_ASKS } = await import("@/lib/unpaid-ask-offset-marker");
+    upsert.mockClear();
+    const ask = sizeAdditionalAsk({ priceDiffCents: 1_000, changeFeeCents: 0, payment: null, foldedWaitingAskCents: 5_000 });
+    await queueFoldingAskRecovery(store, {
+      bookingId: "booking_3954",
+      paymentId: "payment_1",
+      bookingModificationId: "mod_later",
+      door: "guestAdd",
+      settled: {
+        additionalAsk: ask,
+        hasIssuedXeroInvoice: true,
+        foldedWaitingAsks: {
+          cents: 5_000,
+          invoiceCents: 5_000,
+          reissues: NO_FOLDED_REISSUED_ASKS,
+          increases: [{
+            modificationId: "mod_increase",
+            askCents: 5_000,
+            invoiceCents: 5_000,
+            invoiceUnsure: false,
+            hadIssuedXeroInvoice: true,
+          }],
+        },
+      },
+      now: NOW,
+    });
+    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(upsert.mock.calls[0]?.[0]).toMatchObject({
+      create: {
+        status: "PENDING",
+        amountCents: 6_000,
+        paymentIntentId: "mod_guest_booking_3954_mod_later",
+        nextRetryAt: new Date(NOW.getTime() + REISSUED_ASK_INLINE_MINT_GRACE_MS),
+      },
+    });
+  });
+
+  it("writes no folding recovery for an increase that folded nothing", async () => {
+    const { sizeAdditionalAsk } = await import("@/lib/additional-payment-ask");
+    upsert.mockClear();
+    await queueFoldingAskRecovery(store, {
+      bookingId: "booking_3954",
+      paymentId: "payment_1",
+      bookingModificationId: "mod_later",
+      door: "guestAdd",
+      settled: {
+        additionalAsk: sizeAdditionalAsk({ priceDiffCents: 1_000, changeFeeCents: 0, payment: null }),
+        hasIssuedXeroInvoice: true,
+      },
       now: NOW,
     });
     expect(upsert).not.toHaveBeenCalled();

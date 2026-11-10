@@ -360,6 +360,7 @@ function foldedIncreaseEntry(
   const hadIssuedXeroInvoice = operation.hadIssuedXeroInvoice ?? null;
   return {
     modificationId,
+    askCents,
     invoiceCents: (hadIssuedXeroInvoice === true ? Math.max(0, ownNet) : 0) + recordedFoldedAskInvoiceCents(history),
     invoiceUnsure: hadIssuedXeroInvoice === null || nested.unsure || nested.entries.some((entry) => entry.invoiceUnsure) || reissueUnsure,
     hadIssuedXeroInvoice,

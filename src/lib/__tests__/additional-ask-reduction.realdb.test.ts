@@ -1043,12 +1043,12 @@ let webhookClient: PrismaClient;
       const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
       expect(await runPaymentRecoveryOperationNow(reissue.id, CLUB_FORMAT_TEST)).toBe("not-claimed");
 
-      const [{ writeReissuedAskUnderRecovery, readReissuedAskRecovery }, { upsertPaymentIntentTransaction }] = await Promise.all([
+      const [{ writeAskUnderDoorRecovery, readReissuedAskRecovery }, { upsertPaymentIntentTransaction }] = await Promise.all([
         import("@/lib/additional-ask-reissue"),
         import("@/lib/payment-transactions"),
       ]);
       const read = (await readReissuedAskRecovery(result.bookingModificationId!))!;
-      const wrote = await writeReissuedAskUnderRecovery(read, "pi_race_3954_reissued", (store) =>
+      const wrote = await writeAskUnderDoorRecovery(read, "pi_race_3954_reissued", (store) =>
         upsertPaymentIntentTransaction({
           paymentId: PAYMENT_ID, kind: "ADDITIONAL", paymentIntentId: "pi_race_3954_reissued", amountCents: 3_000,
           carriedAskCents: 3_000, status: "PENDING", store,
@@ -1064,7 +1064,7 @@ let webhookClient: PrismaClient;
     it("ROUND 4 (item 4): a runner that claimed the re-issue first leaves the door's mint writing nothing", async () => {
       await grownBooking("card", 1_000);
       const result = await removeLeavingGuest();
-      const { writeReissuedAskUnderRecovery, readReissuedAskRecovery } = await import("@/lib/additional-ask-reissue");
+      const { writeAskUnderDoorRecovery, readReissuedAskRecovery } = await import("@/lib/additional-ask-reissue");
       const read = (await readReissuedAskRecovery(result.bookingModificationId!))!;
       // The grace passed and the runner claimed it (`claimPaymentRecoveryOperation`'s write).
       await webhookClient.paymentRecoveryOperation.update({
@@ -1072,7 +1072,7 @@ let webhookClient: PrismaClient;
         data: { status: "PROCESSING", attempts: { increment: 1 }, processingStartedAt: new Date() },
       });
       let wrote = false;
-      const outcome = await writeReissuedAskUnderRecovery(read, "pi_race_3954_reissued", async () => {
+      const outcome = await writeAskUnderDoorRecovery(read, "pi_race_3954_reissued", async () => {
         wrote = true;
       });
       expect(outcome).toBeNull();
@@ -1167,9 +1167,9 @@ let webhookClient: PrismaClient;
 
         // Replays: the door's follow-ups again, then the repair pass's enqueue
         // while it is pending, and again once it has landed in Xero.
-        const { queueReductionAskFollowUps } = await import("@/lib/unpaid-ask-billed-offset-note");
+        const { queueEditAskFollowUps } = await import("@/lib/unpaid-ask-billed-offset-note");
         await prisma.$transaction((tx) =>
-          queueReductionAskFollowUps(tx, {
+          queueEditAskFollowUps(tx, {
             bookingId: BOOKING_ID,
             paymentId: PAYMENT_ID,
             bookingModificationId: reductionId,
@@ -1385,14 +1385,14 @@ let webhookClient: PrismaClient;
     // (`closeWaitingAskRecoveries`, through its real writers) - a reduction
     // netting it off, or an increase folding it into its own ask.
     async function closeWaitingReissue(by: "netted" | "folded") {
-      const [{ readUnpaidPriceAsk, retireUnpaidAskChain }, { foldWaitingReissuedAsks }] = await Promise.all([
+      const [{ readUnpaidPriceAsk, retireUnpaidAskChain }, { foldWaitingAsks }] = await Promise.all([
         import("@/lib/additional-ask-reduction"),
         import("@/lib/additional-ask-reissue"),
       ]);
       await webhookClient.$transaction(async (tx) => {
         const booking = await tx.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, include: { payment: true } });
         if (by === "folded") {
-          expect((await foldWaitingReissuedAsks(tx as never, booking as never)).cents).toBe(3_000);
+          expect((await foldWaitingAsks(tx as never, booking as never)).cents).toBe(3_000);
           return;
         }
         const ask = await readUnpaidPriceAsk(tx as never, booking as never);
@@ -2274,7 +2274,7 @@ let webhookClient: PrismaClient;
         });
         fakeStripe();
         const FRESH = "pi_race_4015_fresh_reissue";
-        const { writeReissuedAskUnderRecovery } = await import("@/lib/additional-ask-reissue");
+        const { writeAskUnderDoorRecovery } = await import("@/lib/additional-ask-reissue");
 
         // #4015 review C3: started from a hook BEFORE the retry's hold. The webhook
         // connection holds the Payment row, so the hold takes the queue key and then
@@ -2304,7 +2304,7 @@ let webhookClient: PrismaClient;
             try {
               // The hold: past the queue key, waiting on the Payment row.
               await untilLockWaiters(1);
-              write = writeReissuedAskUnderRecovery(reissue, FRESH, async (store) => {
+              write = writeAskUnderDoorRecovery(reissue, FRESH, async (store) => {
                 await store.paymentTransaction.create({
                   data: { paymentId: PAYMENT_ID, kind: "ADDITIONAL", source: "STRIPE", stripePaymentIntentId: FRESH, status: "PENDING", amountCents: 3_000, reason: "guest_removal_reissued_ask" },
                 });
