@@ -1754,6 +1754,12 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // statement stays the one site in payment-transactions.ts; this file still
   // has only the SKIP LOCKED probe.
   "src/lib/xero-sync.ts": 1,
+  // #4447: turning off a credit note's allocation link Xero no longer lists
+  // locks that one XeroObjectLink row, then re-reads its stamp, then writes
+  // through the link funnel in the same transaction. No other lock and no
+  // advisory key. See docs/CONCURRENCY_AND_LOCKING.md, "An allocation Xero no
+  // longer lists (#4447)".
+  "src/lib/xero-inbound/retire-unlisted-credit-note-allocations.ts": 1,
 };
 
 const CAPACITY_LOCK_MINT = "src/lib/lodge-capacity-lock.ts";
