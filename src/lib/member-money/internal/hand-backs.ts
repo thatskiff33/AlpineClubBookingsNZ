@@ -4,14 +4,16 @@ import { lockMemberMoneyPayment, readMemberMoneyApplicationState } from "./appli
 import { memberMoneyApplicationTotals } from "./application-state";
 import { keptCaptureIdentity } from "./booking-charges";
 import { eventPosted, readBookingLiveChargeCents } from "./booking-journal-read";
-import { bookingReceiptEventKey, lineDebtor, ownedBy } from "./booking-receipts";
+import { bookingReceiptEventKey, chargeObligation, lineDebtor, ownedBy } from "./booking-receipts";
 import { isBookingJournalInactive, type BookingJournalContext } from "./journal-activity";
-import { memberMoneyApplicationKeys, memberMoneyEventKeys, walkMemberMoneyChain, type MemberMoneyEventKey } from "./keys";
-import type { MemberMoneyApplicationPlan, MemberMoneyDebtor } from "./plan";
+import { memberMoneyApplicationKeys, memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
+import { MemberMoneyPlanError, type MemberMoneyApplicationPlan } from "./plan";
 import { reverseMemberMoneyJournal } from "./post";
 import {
   cardReceiptLine,
   fundRefundFromReceipt,
+  memberMoneyChainTip,
+  receiptCreditLine,
   refundFamilyOpenCents,
   refundFamilyTip,
   refundObligationChain,
@@ -36,7 +38,6 @@ import { postRefundObligation, refundDebtor } from "./refund-obligations";
 
 type Db = Prisma.TransactionClient;
 type Account = "BANK" | "CASH";
-export type HandBackPaymentAccount = Account;
 
 const HAND_BACK_OWED = "Refund owed, to be paid by bank or in cash";
 
@@ -75,15 +76,7 @@ async function receiptOfTransaction(tx: Db, transactionId: string) {
   if (!row.settlementLineId) return null;
   const settlement = await tx.bookingLedgerLine.findUnique({ where: { id: row.settlementLineId }, select: { id: true, kind: true } });
   if (!settlement) return null;
-  const event = await tx.memberMoneyEvent.findUnique({
-    where: { eventKey: bookingReceiptEventKey(row, settlement) },
-    select: { journal: { select: { reversedBy: { select: { id: true } }, lines: {
-      where: { account: "MEMBER_RECEIVABLE", side: "CREDIT" },
-      select: { id: true, debtorKind: true, memberId: true, organisationId: true },
-    } } } },
-  });
-  if (!event?.journal || event.journal.reversedBy) return null;
-  const line = event.journal.lines[0];
+  const line = await receiptCreditLine(tx, bookingReceiptEventKey(row, settlement));
   return line ? { transactionId, line } : null;
 }
 
@@ -103,10 +96,7 @@ export async function postHandBackPayment(tx: Db, context: BookingJournalContext
   if (isBookingJournalInactive(context) || input.cents <= 0) return 0;
   if (!(await eventPosted(tx, memberMoneyEventKeys.bookingCharge(input.bookingId)))) return 0;
   await lockMemberMoneyPayment(tx, input.bookingId);
-  const base = memberMoneyEventKeys.handBackPaid(input.taskId);
-  const eventKey = await walkMemberMoneyChain(base, async (key) => tx.memberMoneyEvent.findUnique({
-    where: { eventKey: key }, select: { reversedBy: { select: { id: true } } },
-  }));
+  const eventKey = await memberMoneyChainTip(tx, memberMoneyEventKeys.handBackPaid(input.taskId));
   if (await eventPosted(tx, eventKey)) return 0;
 
   const { lodgeId } = await tx.booking.findUniqueOrThrow({ where: { id: input.bookingId }, select: { lodgeId: true } });
@@ -129,7 +119,9 @@ export async function postHandBackPayment(tx: Db, context: BookingJournalContext
   }
 
   const tip = await refundFamilyTip(tx, context, booking, live, owner);
-  if (!tip) return 0;
+  if (!tip) {
+    throw new MemberMoneyPlanError([`hand-back ${input.taskId} names a refund debt with no live tip, so its payment cannot post`]);
+  }
   const state = await readMemberMoneyApplicationState(tx, input.bookingId);
   const applied = Math.min(input.cents, Math.max(0, refundFamilyOpenCents(state, live)));
   const receipts = (await Promise.all(input.fundingTransactionIds.map(async (id) => {
@@ -170,16 +162,12 @@ export async function postHandBackPayment(tx: Db, context: BookingJournalContext
 
 /** The kept capture's chain tip, so a reversed keep can be posted again when the treasurer keeps it a second time. */
 async function keptCaptureKey(tx: Db, paymentIntentId: string): Promise<MemberMoneyEventKey> {
-  const base = memberMoneyEventKeys.keptCapture(paymentIntentId);
-  return walkMemberMoneyChain(base, async (key) => tx.memberMoneyEvent.findUnique({
-    where: { eventKey: key }, select: { reversedBy: { select: { id: true } } },
-  }));
+  return memberMoneyChainTip(tx, memberMoneyEventKeys.keptCapture(paymentIntentId));
 }
 
 /**
- * Record a late capture the treasurer keeps. `billedByExistingInvoice`: an invoice already bills the capture, so
- * the receipt collects the booking's charge and no new component is posted. Otherwise the capture is a retained
- * component of the booking. Returns whether a batch posted.
+ * Record a late capture the treasurer keeps. `billedCents` is what an invoice already bills, so that part collects
+ * the booking's charge and the rest is a retained component. Returns whether a batch posted.
  */
 export async function postKeptCapture(tx: Db, context: BookingJournalContext, input: {
   bookingId: string;
@@ -187,7 +175,7 @@ export async function postKeptCapture(tx: Db, context: BookingJournalContext, in
   amountCents: number;
   actorMemberId: string | null;
   debtorRead: "booking-row" | "plain";
-  billedByExistingInvoice: boolean;
+  billedCents: number;
 }): Promise<boolean> {
   if (isBookingJournalInactive(context) || input.amountCents <= 0) return false;
   if (!(await eventPosted(tx, memberMoneyEventKeys.bookingCharge(input.bookingId)))) return false;
@@ -207,42 +195,35 @@ export async function postKeptCapture(tx: Db, context: BookingJournalContext, in
   const totals = memberMoneyApplicationTotals(state);
   const room = receiptOwned ? Math.max(0, receiptOwned.amountCents - (totals.sources.get(receiptOwned.id) ?? 0)) : 0;
   const liveBefore = await readBookingLiveChargeCents(tx, input.bookingId);
+  const billedCents = Math.max(0, Math.min(input.amountCents, Number.isSafeInteger(input.billedCents) ? input.billedCents : 0));
+  const unbilledCents = input.amountCents - billedCents;
+  const liveCharge = liveBefore + unbilledCents;
   const evidence = { paymentIntentId: input.paymentIntentId };
   const source = { kind: "OFFICER_FACT" as const, id: input.paymentIntentId, version: eventKey };
+  const obligationKey = receiptOwned && room > 0
+    ? (await chargeObligation(tx, context, booking, owner, liveCharge))?.key ?? null
+    : null;
+  const collect = obligationKey === null ? 0 : Math.max(0, Math.min(input.amountCents, room, Math.max(0, liveCharge - totals.collected)));
+  const applications: MemberMoneyApplicationPlan[] = collect > 0 && receiptOwned && obligationKey
+    ? [{ key: memberMoneyApplicationKeys.application(eventKey, receiptOwned.id, obligationKey),
+      source: { lineId: receiptOwned.id }, obligationKey, amountCents: collect }]
+    : [];
 
-  if (input.billedByExistingInvoice) {
-    const obligationKey = chargeKey(state, owner);
-    const collect = obligationKey === null ? 0 : Math.max(0, Math.min(input.amountCents, room, Math.max(0, liveBefore - totals.collected)));
-    const applications: MemberMoneyApplicationPlan[] = collect > 0 && receiptOwned && obligationKey
-      ? [{ key: memberMoneyApplicationKeys.application(eventKey, receiptOwned.id, obligationKey),
-        source: { lineId: receiptOwned.id }, obligationKey, amountCents: collect }]
-      : [];
+  if (unbilledCents === 0) {
     await writeWithLiveCharge(tx, context, { kind: "ZERO", eventKey, origin: "OFFICER", actorMemberId: input.actorMemberId, source,
       reason: "Late capture kept: an invoice already bills it", applications }, { liveChargeCents: liveBefore });
     return true;
   }
 
   const identity = keptCaptureIdentity(input.bookingId, input.paymentIntentId);
-  const liveAfter = liveBefore + input.amountCents;
-  const collect = Math.max(0, Math.min(input.amountCents, room, liveAfter - totals.collected));
-  const obligationKey = chargeKey(state, owner);
-  const applications: MemberMoneyApplicationPlan[] = collect > 0 && receiptOwned && obligationKey
-    ? [{ key: memberMoneyApplicationKeys.application(eventKey, receiptOwned.id, obligationKey), source: { lineId: receiptOwned.id },
-      obligationKey, amountCents: collect }]
-    : [];
   await writeWithLiveCharge(tx, context, { kind: "ADJUSTMENT", eventKey, origin: "OFFICER", actorMemberId: input.actorMemberId, source,
     reason: "Late capture kept by the treasurer",
     legs: [
-      { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: input.amountCents, booking, debtor: owner, evidence },
-      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: input.amountCents, booking, chargeIdentity: identity, evidence },
+      { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: unbilledCents, booking, debtor: owner, evidence },
+      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: unbilledCents, booking, chargeIdentity: identity, evidence },
     ],
-    applications }, { liveChargeCents: liveAfter });
+    applications }, { liveChargeCents: liveCharge });
   return true;
-}
-
-function chargeKey(state: Awaited<ReturnType<typeof readMemberMoneyApplicationState>>, debtor: MemberMoneyDebtor): string | null {
-  const charge = state.obligations.find((o) => o.kind === "CHARGE" && ownedBy(o, debtor) && !state.obligations.some((c) => memberMoneyApplicationKeys.succeeds(c.key, o.key)));
-  return charge?.key ?? null;
 }
 
 /** Reverse the keep, exactly, before an approved reopening posts the capture's return. Nothing when no keep is live. */

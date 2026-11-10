@@ -92,7 +92,9 @@ const DOORS: Record<string, string> = {
   "src/lib/internet-banking-part-payment-at-cancel.ts": "R07 recognised part bank cash",
   "scripts/member-money-receipt-catch-up.ts": "R26 dry-run-first catch-up receipts unapplied",
   // #4516 (M4c): card refunds. R05 at the doors, the senders' reservations, R12/R13 in the cash writer, R14.
-  "src/lib/booking-cancel.ts": "R05 for a paid card cancellation's frozen plan",
+  "src/lib/booking-cancel.ts": "R05 for a paid card cancellation's frozen plan, and for its bank hand-back",
+  "src/lib/edit-refund-hand-back.ts": "R05 for an edit's bank hand-back and an appeal's bank part",
+  "src/lib/cancel-card-refund-shortfall.ts": "R05 for a card refund's bank or cheque shortfall",
   "src/app/api/admin/refund-requests/[id]/route.ts": "R05 (with its concession) for an approved appeal; withdrawn with release_claim",
   "src/lib/manual-refund-task-resolution.ts": "R05 for an edit review's card refund",
   "src/lib/late-capture-refund-approval.ts": "R05 for a treasurer-approved late capture's return",
@@ -147,6 +149,8 @@ const CONTEXT_RESOLVERS: readonly string[] = [
   "src/app/api/admin/bookings/[id]/force-confirm/route.ts",
   // #4516 (M4c): a paid-another-way close resolves the context its R14 posts with, before its transaction.
   "src/lib/card-refund-paid-another-way.ts",
+  // #4516 (M4d): the capacity-race shortfall passes the caller's journal into the shortfall door and posts nothing itself.
+  "src/lib/capacity-race-refund-shortfall.ts",
   "src/app/api/bookings/[id]/confirm-draft/route.ts",
   "src/app/api/bookings/[id]/waitlist-confirm/route.ts",
 ];
@@ -158,7 +162,7 @@ const WRITER = "src/lib/member-money/internal/store.ts";
 /** The command's entry points: nothing outside the boundary calls them; M3b's doors go through `./doors`. */
 const POSTING_COMMAND = /\b(postMemberMoneyEvent|reverseMemberMoneyJournal|writeMemberMoneyBatch)\b/;
 /** M3b's door entry points (#4627), and M3c's pending charge (#4628). */
-const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn)\b/;
+const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn|postHandBackObligation|postHandBackPayment|postKeptCapture|reverseKeptCapture)\b/;
 const DELEGATE_WRITE = /\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/;
 /**
  * Every name that reaches a journal row through Prisma: each relation's

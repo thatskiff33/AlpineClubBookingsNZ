@@ -148,6 +148,33 @@ export type KeptChangeCaptureEvidence = {
 export type KeptChangeCaptureRoute = "change-invoice" | "receipt" | "kept-invoice" | "change-unknown";
 
 /**
+ * #4516 (M4d): how many cents of a kept capture an invoice already bills, so the journal adds revenue only for the
+ * rest. A booking's own payment, or a change on a booking Xero never invoiced, is a new kept invoice: nothing is
+ * billed yet. A receipt or a change invoice that already answers the capture bills all of it. A kept invoice Xero
+ * will raise for only the unrecorded remainder bills what is already recorded. A change that cannot be read bills
+ * all of it only when another document already records the whole capture; otherwise the journal keeps the whole
+ * amount, because Xero queues nothing for that capture.
+ */
+export function keptCaptureBilledCentsFromReading(input: {
+  firstCut: "by-change-evidence" | "kept-invoice";
+  hasLiveKeptReceipt: boolean;
+  hasReceiptOperation: boolean;
+  changeRoute: KeptChangeCaptureRoute | null;
+  elsewhere: number | "all";
+  amountCents: number;
+}): number {
+  const amount = input.amountCents;
+  if (!Number.isSafeInteger(amount) || amount <= 0) return 0;
+  if (input.firstCut === "kept-invoice") return 0;
+  if (input.hasLiveKeptReceipt || input.hasReceiptOperation) return amount;
+  if (input.changeRoute === "receipt" || input.changeRoute === "change-invoice") return amount;
+  const recorded = input.elsewhere === "all" || input.elsewhere >= amount;
+  if (input.changeRoute === "change-unknown") return recorded ? amount : 0;
+  if (recorded) return amount;
+  return input.elsewhere > 0 ? input.elsewhere : 0;
+}
+
+/**
  * #4324 (owner decision 25 Oct 2026, Q1 "split on the evidence";
  * `INV-PAY-144`): WHICH DOCUMENT RECORDS A KEPT CHANGE CAPTURE on a cancelled
  * booking whose primary invoice exists. Pure; decided once, under the

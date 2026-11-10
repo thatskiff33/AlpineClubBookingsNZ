@@ -87,7 +87,7 @@ export function lineDebtor(line: { debtorKind: string | null; memberId: string |
  * A ZERO R01 has no obligation. A named debit and unnamed equal credit open its face without charging again.
  * `liveChargeCents` is the collection's one live-charge read, so the face it sizes is the charge it clamps to.
  */
-async function chargeObligation(tx: Db, context: MemberMoneyPostingContext, booking: { bookingId: string; lodgeId: string },
+export async function chargeObligation(tx: Db, context: MemberMoneyPostingContext, booking: { bookingId: string; lodgeId: string },
   debtor: MemberMoneyDebtor, liveChargeCents: number) {
   const rootKey = memberMoneyEventKeys.bookingCharge(booking.bookingId);
   const state = await readMemberMoneyApplicationState(tx, booking.bookingId);

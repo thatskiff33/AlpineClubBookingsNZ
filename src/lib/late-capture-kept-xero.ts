@@ -37,6 +37,7 @@ import {
   LIVE_KEPT_LATE_CAPTURE_INVOICE_WHERE,
   decideLateCapture,
   bookingHasPrimaryXeroInvoice,
+  keptCaptureBilledCentsFromReading,
   keptChangeCaptureRoute,
   keptLateCaptureRecordRoute,
   type KeptChangeCaptureEvidence,
@@ -354,46 +355,55 @@ export async function planKeptLateCaptureXeroRecord(params: {
 }
 
 /**
- * #4516 (M4d): whether an existing invoice already bills this kept capture, so the journal collects the receipt
- * and posts no new revenue. The same readings as the keep's Xero plan, and no write. The caller holds the
- * capture's anchor lock. A capture no invoice bills, or one whose change cannot be read, is not billed here:
- * the journal records a retained component so the keep is in the journal either way.
+ * #4516 (M4d): how many cents of this kept capture an invoice already bills, so the journal adds revenue only for
+ * the rest. The same readings as the keep's Xero plan, and no write. The caller holds the capture's anchor lock.
+ * Zero means nothing already bills it: the journal records the whole capture as a retained component.
  */
-export async function keptCaptureAlreadyBilled(store: Prisma.TransactionClient, input: {
+export async function keptCaptureBilledCents(store: Prisma.TransactionClient, input: {
   bookingId: string;
   paymentIntentId: string;
   manualRefundTaskId: string;
   amountCents: number;
-}): Promise<boolean> {
+}): Promise<number> {
   const transaction = await store.paymentTransaction.findUnique({
     where: { stripePaymentIntentId: input.paymentIntentId },
     select: { kind: true, paymentId: true, bookingModificationId: true, reason: true },
   });
-  if (!transaction) return false;
+  if (!transaction) return 0;
   const payment = await store.payment.findUnique({ where: { id: transaction.paymentId }, select: { xeroInvoiceId: true } });
   const paymentLinks = await store.xeroObjectLink.findMany({
     where: { localModel: "Payment", localId: transaction.paymentId, xeroObjectType: "INVOICE", role: "PRIMARY_INVOICE", active: true },
     select: { role: true, xeroObjectType: true, active: true, xeroObjectId: true },
   });
-  if (keptLateCaptureRecordRoute({ captureKind: transaction.kind, bookingHasPrimaryInvoice: bookingHasPrimaryXeroInvoice({
+  const firstCut = keptLateCaptureRecordRoute({ captureKind: transaction.kind, bookingHasPrimaryInvoice: bookingHasPrimaryXeroInvoice({
     paymentXeroInvoiceId: payment?.xeroInvoiceId, paymentLinks,
-  }) }) === "kept-invoice") return false;
-  if (await findLiveKeptReceiptRow(store, input.manualRefundTaskId)) return true;
-  const receiptRow = await store.xeroSyncOperation.findFirst({
+  }) });
+  if (firstCut === "kept-invoice") {
+    return keptCaptureBilledCentsFromReading({ firstCut, hasLiveKeptReceipt: false, hasReceiptOperation: false, changeRoute: null, elsewhere: 0, amountCents: input.amountCents });
+  }
+  const hasLiveKeptReceipt = (await findLiveKeptReceiptRow(store, input.manualRefundTaskId)) !== null;
+  const receiptRow = hasLiveKeptReceipt ? null : await store.xeroSyncOperation.findFirst({
     where: { correlationKey: additionalCaptureReceiptKey(input.paymentIntentId), status: { not: "CANCELLED" } },
     select: { id: true },
   });
-  if (receiptRow) return true;
-  const primaryInvoiceId = payment?.xeroInvoiceId ?? paymentLinks[0]?.xeroObjectId ?? null;
-  const changeId = captureChangeId(transaction);
-  const route = keptChangeCaptureRoute(await readKeptChangeCaptureEvidence(store, {
-    paymentIntentId: input.paymentIntentId, changeId, bookingId: input.bookingId, primaryInvoiceId,
-  }));
-  if (route === "receipt" || route === "change-invoice") return true;
-  const elsewhere = await readKeptCaptureRecordedElsewhere(store, {
-    bookingId: input.bookingId, primaryInvoiceId, paymentIntentId: input.paymentIntentId, changeId,
+  const hasReceiptOperation = receiptRow !== null;
+  let changeRoute: ReturnType<typeof keptChangeCaptureRoute> | null = null;
+  let elsewhere: number | "all" = 0;
+  if (!hasLiveKeptReceipt && !hasReceiptOperation) {
+    const primaryInvoiceId = payment?.xeroInvoiceId ?? paymentLinks[0]?.xeroObjectId ?? null;
+    const changeId = captureChangeId(transaction);
+    changeRoute = keptChangeCaptureRoute(await readKeptChangeCaptureEvidence(store, {
+      paymentIntentId: input.paymentIntentId, changeId, bookingId: input.bookingId, primaryInvoiceId,
+    }));
+    if (changeRoute !== "receipt" && changeRoute !== "change-invoice") {
+      elsewhere = await readKeptCaptureRecordedElsewhere(store, {
+        bookingId: input.bookingId, primaryInvoiceId, paymentIntentId: input.paymentIntentId, changeId,
+      });
+    }
+  }
+  return keptCaptureBilledCentsFromReading({
+    firstCut, hasLiveKeptReceipt, hasReceiptOperation, changeRoute, elsewhere, amountCents: input.amountCents,
   });
-  return elsewhere === "all" || elsewhere >= input.amountCents;
 }
 
 /**

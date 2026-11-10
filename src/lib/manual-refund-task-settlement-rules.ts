@@ -380,15 +380,17 @@ export function isOrganiserExtraRacedHandBackTask(task: {
 
 /**
  * #4516 (M4d): a hand-back the member-money journal records as a refund debt (R05, scope `hand-back`). Exactly the
- * tasks a raise posts and a set-aside leaves open: a cancellation's cash hand-back, a card shortfall's bank or
+ * tasks a raise posts and a dismissal withdraws: a cancellation's cash hand-back, a card shortfall's bank or
  * cheque part, an edit hand-back, a refund request's bank part, and an organisation's late cash. Not a
- * part-payment review, a group organiser's hand-back, a paid-another-way close, a bank-refund void follow-up, or
- * organiser-extra raced cash. A legacy row with no kind is a cancellation's hand-back.
+ * part-payment review, a group organiser's hand-back, a paid-another-way close, a bank-refund void follow-up,
+ * organiser-extra raced cash, or a late capture's own question (including a legacy row whose only mark is its
+ * reason). A legacy row with no kind and any other reason is a cancellation's hand-back.
  */
 export function isJournalHandBackTask(task: {
   kind: ManualRefundTaskKind | string | null;
   occurrenceKey: string | null;
   partPaymentReviewPaymentId: string | null;
+  reason: string | null;
 }): boolean {
   if (task.kind !== "CANCELLED_BOOKING_HAND_BACK" && task.kind !== null) return false;
   if (isPartPaymentReviewTask(task)) return false;
@@ -396,6 +398,7 @@ export function isJournalHandBackTask(task: {
   if (isCardRefundPaidAnotherWayTask(task)) return false;
   if (isBankRefundVoidFollowUpTask(task)) return false;
   if (isOrganiserExtraRacedHandBackTask(task)) return false;
+  if (isLateCaptureHandBackTask({ kind: task.kind, reason: task.reason ?? "" })) return false;
   return true;
 }
 

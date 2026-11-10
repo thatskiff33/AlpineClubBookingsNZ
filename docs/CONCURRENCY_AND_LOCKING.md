@@ -6400,16 +6400,17 @@ writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
   against a merge, which holds booking rows from its owner move on (#4823 made
   merge never wait for a Payment row). No other cycle is known: a journal line names its debtor by id,
   with no foreign key, so the R06 takes no lock on the Member row. A
-  treasurer-approved late capture takes the
-  Payment row before it reads what the capture still holds and plans its
-  refund (#4824), so before its task's claim (review F2), and reads the owner
-  without the booking row (its `lock(1)` arrives in M4d). Read first, a
+  treasurer-approved late capture takes
+  `lock(1)` and the booking row in `resolveManualRefundTask` before the Payment
+  row `prepareLateCaptureDecision` takes (#4824, #4516 M4d), and reads the owner
+  under that row. Read first, a
   `charge.refunded` sync, a "Paid another way" close, or an automatic refund or its recovery replay
   committing before the claim was planned again; proven against real
   PostgreSQL by `late-capture-approval-refund-race.realdb.test.ts`.
-- **A kept late capture** (the approval task dismissed) takes the same Payment
-  row before its claim and reverses an unpaid, unreserved capture-return R05 an
-  automatic refund posted (review M5).
+- **A kept late capture** (the approval task dismissed) takes the same
+  `lock(1)`, booking row and Payment row before its claim, reverses an unpaid,
+  unreserved capture-return R05 an automatic refund posted (review M5), then
+  posts the keep.
 - **A #2700 hand-back** of a late capture (no approval intent) takes the same
   Payment row before it reads what its capture still holds, then claims
   (#4838). Nothing between takes a lodge, member-credit or task-row lock: the
@@ -7102,9 +7103,11 @@ of a dismissed appeal task (`reopenManualRefundTask#1`, for that task only).
 takes (`INV-LOCK-002`; the paid cancel, "Paid another way", the organiser
 child refund recorder), and no holder of the Payment row takes `lock(1)` after
 it, so it closes no cycle. Under both, nothing that writes those figures can
-commit between the reads: this writer, every other refunded-total writer and a
-cancellation hand-back's completion hold the row; every other hand-back writer
-and the late-cash mint hold `lock(1)`. Re-taking the row later in the same
+commit between the reads: this writer and every other refunded-total writer
+hold the Payment row. A cancellation hand-back's completion holds `lock(1)`,
+then the booking row, then the Payment row (#4516 M4d), so its cash posts
+against the owner. Every other hand-back writer and the late-cash mint hold
+`lock(1)`. Re-taking the row later in the same
 transaction (the approval's allocation) waits on nothing. The member's request,
 the review screen and the booking page read the same figure unlocked, as advice. The provider calls - the
 webhook's own Stripe payload, and the cron's read-back

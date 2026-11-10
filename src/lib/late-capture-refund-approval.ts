@@ -9,7 +9,7 @@ import { finishApprovedLateCaptureRefund } from "@/lib/late-capture-refund-credi
 import logger from "@/lib/logger";
 import { closeKeptCaptureReturn, postKeptCapture, postRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
 import { lockKeptCaptureAnchor } from "@/lib/kept-late-capture-change-receipt";
-import { keptCaptureAlreadyBilled } from "@/lib/late-capture-kept-xero";
+import { keptCaptureBilledCents } from "@/lib/late-capture-kept-xero";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { enqueueLateCaptureApprovalRefundRecovery } from "@/lib/payment-recovery";
 import {
@@ -245,12 +245,12 @@ export async function prepareLateCaptureDecision(store: Prisma.TransactionClient
   });
   if (!capture || capture.amountCents <= 0) return;
   await lockKeptCaptureAnchor(store, { manualRefundTaskId: task.id, paymentIntentId: task.lateCaptureApprovalIntentId });
-  const billedByExistingInvoice = await keptCaptureAlreadyBilled(store, {
+  const billedCents = await keptCaptureBilledCents(store, {
     bookingId: task.bookingId, paymentIntentId: task.lateCaptureApprovalIntentId, manualRefundTaskId: task.id, amountCents: capture.amountCents,
   });
   await postKeptCapture(store, journal, {
     bookingId: task.bookingId, paymentIntentId: task.lateCaptureApprovalIntentId, amountCents: capture.amountCents,
-    actorMemberId: input.actingMemberId, debtorRead: "booking-row", billedByExistingInvoice,
+    actorMemberId: input.actingMemberId, debtorRead: "booking-row", billedCents,
   });
 }
 
