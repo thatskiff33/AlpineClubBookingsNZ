@@ -3638,9 +3638,12 @@ A writer that already holds a participant's key share and then updates a row
 merge moved — a completing hut-leader sign-off, a locked-period allocation
 rewrite — used to wait on that row while merge waited on the key share. Merge
 now holds none of those rows while it waits, so the writer commits and merge
-retries. The retry re-derives the partner-share lodge set before it moves anything
-and try-locks a lodge the opening prefix did not cover, so that committed booking
-is what the new attempt plans against. A lodge that appears after that
+retries. The retry moves only the ids captured before the wait, so a column
+that starts naming the duplicate during the wait stays put and the residual
+check below refuses it (#4855): the reviewer's and the closure's officer stay
+on the duplicate. The retry re-derives the partner-share lodge set before it
+moves anything and try-locks a lodge the opening prefix did not cover, so that
+committed booking is what the new attempt plans against. A lodge that appears after that
 re-derivation — while this attempt waits on a booking row, for example — is still
 `partner_share_lodge_drift`: the proof under the Member rows compares against the
 set this attempt locked. The class is open-ended, so the fence stays in merge

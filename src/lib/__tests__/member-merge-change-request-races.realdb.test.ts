@@ -28,8 +28,11 @@
  * `modifyBookingBatch`. The merge-first cases park merge at its
  * `Member … FOR UPDATE` behind another session's key share on the duplicate.
  * Since #4876 that wait holds none of the rows merge re-points, so the approval
- * does not queue: it commits, and merge's retry carries what it wrote onto the
- * survivor. The choreography is shared (`support/member-merge-race.ts`).
+ * does not queue: it commits. Cycle (b) only finishes rows the preview already
+ * counted, so the retry carries them. Cycle (a) names the duplicate as reviewer,
+ * which was not in that set, so the residual check refuses and the reviewer
+ * stays the duplicate (#4855). The choreography is shared
+ * (`support/member-merge-race.ts`).
  *
  * Ordinary Vitest runs skip the file; CI's real-PostgreSQL job runs it against
  * the guarded loopback race database.
@@ -181,6 +184,13 @@ async function guestCount() {
   return prisma.bookingGuest.count({ where: { bookingId: BOOKING_ID } });
 }
 
+/** The approval named the duplicate as reviewer. That column was not in the preview, so merge refuses and the duplicate stays. */
+function expectReviewerKept(merged: PromiseSettledResult<unknown>) {
+  expect(merged).toMatchObject({ status: "rejected", reason: { statusCode: 409, code: "merge_drift_in_transaction" } });
+  const details = (merged as PromiseRejectedResult).reason.details as { driftFields: string[] };
+  expect(details.driftFields).toContain("BookingChangeRequest.reviewedBy");
+}
+
 (RUN ? describe : describe.skip)("approving a locked-period change request racing a member merge (#4845)", { timeout: 180_000 }, () => {
   beforeAll(async () => {
     const url = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -278,7 +288,7 @@ async function guestCount() {
     return { loser, master };
   }
 
-  it("MUTATION: (a) a merge waiting for the officer's Member row holds no booking row, so that officer's approval commits and the merge carries the reviewer to the survivor", async () => {
+  it("MUTATION: (a) a merge waiting for the officer's Member row holds no booking row, so that officer's approval commits and the merge refuses, keeping the reviewer", async () => {
     const { loser, master } = await mergePair("a-merge-first", true);
     await seed(loser, false);
     const figures = await checkFigures(loser);
@@ -288,24 +298,25 @@ async function guestCount() {
     );
     expect(writerFirst, "the approval waited on the merge").toBe("settled");
     expect(approved).toMatchObject({ status: "fulfilled", value: { outcome: "executed" } });
-    expectFulfilled(merged);
-    expect(await requestState()).toEqual({ status: "APPROVED", requestedByMemberId: OWNER_ID, reviewedByMemberId: master });
-    expect(await bookingState()).toEqual({ memberId: OWNER_ID, createdById: master });
+    expectReviewerKept(merged);
+    expect(await requestState()).toEqual({ status: "APPROVED", requestedByMemberId: OWNER_ID, reviewedByMemberId: loser });
+    expect(await bookingState()).toEqual({ memberId: OWNER_ID, createdById: loser });
     expect(await guestCount()).toBe(2);
+    expect(await prisma.member.count({ where: { id: loser } })).toBe(1);
   });
 
-  it("MUTATION: (a) an approval by the duplicate holding its claim makes the merge wait at the booking row; both commit", async () => {
+  it("MUTATION: (a) an approval by the duplicate holding its claim commits, and the merge refuses, keeping the reviewer", async () => {
     const { loser, master } = await mergePair("a-approval-first", true);
     await seed(loser, false);
     const figures = await checkFigures(loser);
     const runMerge = await previewMerge(master, loser, OFFICER_ID);
     const { held: approved, arrived: merged } = await arrivingWhilePaused(prisma, "afterClaim", () => approveWith(loser, figures), runMerge);
     expect(approved).toMatchObject({ status: "fulfilled", value: { outcome: "executed" } });
-    expectFulfilled(merged);
-    // The merge carried the reviewer and the booking's maker to the survivor.
-    expect(await requestState()).toEqual({ status: "APPROVED", requestedByMemberId: OWNER_ID, reviewedByMemberId: master });
-    expect(await bookingState()).toEqual({ memberId: OWNER_ID, createdById: master });
+    expectReviewerKept(merged);
+    expect(await requestState()).toEqual({ status: "APPROVED", requestedByMemberId: OWNER_ID, reviewedByMemberId: loser });
+    expect(await bookingState()).toEqual({ memberId: OWNER_ID, createdById: loser });
     expect(await guestCount()).toBe(2);
+    expect(await prisma.member.count({ where: { id: loser } })).toBe(1);
   });
 
   it("(b) a merge waiting for the duplicate's Member row holds no booking or request row, so the approval commits and the merge carries both to the survivor", async () => {
