@@ -65,6 +65,7 @@ const mocks = vi.hoisted(() => ({
   createXeroSupplementaryInvoice: vi.fn(),
   createXeroKeptLateCaptureInvoice: vi.fn(),
   recordAdditionalCaptureReceipt: vi.fn(),
+  createAdminGrantCreditNote: vi.fn(),
   enqueueAdditionalCaptureReceiptOperation: vi.fn(),
   anchorCaptureHasReceipt: vi.fn(),
   bookingHasUnattributedCaptures: vi.fn(),

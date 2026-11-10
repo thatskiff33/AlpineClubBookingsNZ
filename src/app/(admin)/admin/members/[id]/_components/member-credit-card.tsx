@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { useSession } from "next-auth/react"
 import { formatStayDateOrNull } from "@/lib/club-time"
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action"
@@ -11,7 +12,14 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { MoneyInput } from "@/components/ui/money-input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import {
+  ADMIN_CREDIT_GRANT_ACCOUNTS,
+  adminCreditGrantAccountLabel,
+  GRANT_ACCOUNT_MISSING_MESSAGE,
+  type AdminCreditGrantAccount,
+} from "@/lib/admin-credit-grant-account"
 import { formatAdminName } from "@/lib/admin-member-detail-helpers"
+import { parseSignedDecimalDollarsToCents } from "@/lib/money-input"
 import { useClubTime } from "@/components/club-time-provider"
 import { formatPayloadInstantDate } from "../../../_lib/payload-instant"
 import { formatCents, formatSignedCents } from "@/lib/utils"
@@ -36,7 +44,7 @@ interface MemberCreditCardProps {
   onToggleAdjustmentForm: () => void
   onChangeAdjustmentAmount: (value: string) => void
   onChangeAdjustmentDescription: (value: string) => void
-  onSubmitAdjustment: () => void
+  onSubmitAdjustment: (grantAccount: AdminCreditGrantAccount | null) => void
   onReviewAdjustment: (requestId: string, decision: "APPROVE" | "REJECT") => void
   className?: string
 }
@@ -77,6 +85,12 @@ export function MemberCreditCard({
   // Credit adjustments write the finance-remapped members/[id]/credits route; a
   // view-only finance admin sees the balance but cannot request/approve (#1997).
   const canEditFinance = useAdminAreaEditAccess("finance")
+  const [grantAccount, setGrantAccount] = useState<AdminCreditGrantAccount | null>(null)
+  const adjustmentCents = parseSignedDecimalDollarsToCents(adjustmentAmount)
+  const asksForAccount = adjustmentCents !== null && adjustmentCents > 0
+  useEffect(() => {
+    if (!showAdjustmentForm || !asksForAccount) setGrantAccount(null)
+  }, [showAdjustmentForm, asksForAccount])
 
   return (
     <Card id="account-credit" className={className}>
@@ -132,10 +146,32 @@ export function MemberCreditCard({
                 />
               </div>
             </div>
+            {asksForAccount && (
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium">Xero account</legend>
+                {ADMIN_CREDIT_GRANT_ACCOUNTS.map((account) => (
+                  <label key={account} className="flex items-start gap-2 text-sm">
+                    <input
+                      type="radio"
+                      name="adj-grant-account"
+                      className="mt-1"
+                      checked={grantAccount === account}
+                      onChange={() => setGrantAccount(account)}
+                    />
+                    <span>{adminCreditGrantAccountLabel(account)}</span>
+                  </label>
+                ))}
+              </fieldset>
+            )}
             <p className="text-xs text-muted-foreground">
               A different admin must approve this request before the member&apos;s credit balance changes.
             </p>
-            <ViewOnlyActionButton canEdit={canEditFinance} size="sm" onClick={onSubmitAdjustment} disabled={adjustmentSaving}>
+            <ViewOnlyActionButton
+              canEdit={canEditFinance}
+              size="sm"
+              onClick={() => onSubmitAdjustment(asksForAccount ? grantAccount : null)}
+              disabled={adjustmentSaving || (asksForAccount && grantAccount === null)}
+            >
               {adjustmentSaving ? "Saving..." : "Submit for Approval"}
             </ViewOnlyActionButton>
           </div>
@@ -160,6 +196,7 @@ export function MemberCreditCard({
                       <TableHead>Requested</TableHead>
                       <TableHead>Amount</TableHead>
                       <TableHead>Description</TableHead>
+                      <TableHead>Account</TableHead>
                       <TableHead>Requested By</TableHead>
                       <TableHead className="text-right">Action</TableHead>
                     </TableRow>
@@ -168,6 +205,7 @@ export function MemberCreditCard({
                     {pendingAdjustmentRequests.map((item) => {
                       const isOwnRequest = currentAdminId === item.requestedBy.id
                       const isReviewing = reviewingAdjustmentId === item.id
+                      const accountMissing = item.amountCents > 0 && !item.grantAccount
                       return (
                         <TableRow key={item.id}>
                           <TableCell className="text-sm">{formatPayloadInstantDate(clubTime, item.createdAt)}</TableCell>
@@ -177,21 +215,30 @@ export function MemberCreditCard({
                             }`}
                           >{formatSignedCents(item.amountCents, format)}</TableCell>
                           <TableCell className="text-sm text-muted-foreground max-w-[260px] truncate">{item.description}</TableCell>
+                          <TableCell className="text-sm max-w-[220px]">
+                            {item.amountCents > 0
+                              ? item.grantAccount
+                                ? adminCreditGrantAccountLabel(item.grantAccount)
+                                : GRANT_ACCOUNT_MISSING_MESSAGE
+                              : "—"}
+                          </TableCell>
                           <TableCell className="text-sm">{formatAdminName(item.requestedBy)}</TableCell>
                           <TableCell className="text-right">
                             {isOwnRequest ? (
                               <span className="text-xs text-warning-11">Needs another admin</span>
                             ) : (
                               <div className="flex items-center justify-end gap-2">
-                                <ViewOnlyActionButton
-                                  canEdit={canEditFinance}
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={isReviewing}
-                                  onClick={() => onReviewAdjustment(item.id, "APPROVE")}
-                                >
-                                  {isReviewing ? "Working..." : "Approve"}
-                                </ViewOnlyActionButton>
+                                {!accountMissing && (
+                                  <ViewOnlyActionButton
+                                    canEdit={canEditFinance}
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={isReviewing}
+                                    onClick={() => onReviewAdjustment(item.id, "APPROVE")}
+                                  >
+                                    {isReviewing ? "Working..." : "Approve"}
+                                  </ViewOnlyActionButton>
+                                )}
                                 <ViewOnlyActionButton
                                   canEdit={canEditFinance}
                                   size="sm"
