@@ -271,11 +271,11 @@ describe("frozen headlines and dismissed shortenings", () => {
     const money = { discountCents: 0, promoAdjustmentCents: 0, finalPriceCents: 60_000 };
     const both = { id: "booking-1", ...money, totalPriceCents: 60_000, guests };
     const alexGone = { ...both, totalPriceCents: 60_000, guests: [{ id: "sam", priceCents: 30_000 }] };
-    const dismissed = [{ id: "task-1", bookingId: "booking-1", status: "DISMISSED" }];
+    const dismissed = [{ bookingId: "booking-1", status: "DISMISSED" }];
     expect(isFrozenEditReviewHeadline(alexGone, dismissed)).toBe(true);
     expect(isFrozenEditReviewHeadline(both, dismissed)).toBe(false);
     expect(isFrozenEditReviewHeadline(alexGone, [])).toBe(false);
-    expect(isFrozenEditReviewHeadline(alexGone, [{ id: "task-1", bookingId: "booking-1", status: "OPEN" }])).toBe(false);
+    expect(isFrozenEditReviewHeadline(alexGone, [{ bookingId: "booking-1", status: "OPEN" }])).toBe(false);
     expect(isFrozenEditReviewHeadline({ ...alexGone, guests: [] }, dismissed)).toBe(false);
   });
 
