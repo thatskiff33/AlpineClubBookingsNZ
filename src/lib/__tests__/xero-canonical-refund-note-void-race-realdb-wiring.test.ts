@@ -29,7 +29,7 @@ describe("the canonical refund-note void race's real-database proof stays wired 
     ));
     expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
     expect(suite).toContain("a retry that read the canonical note as live, then waited on the inbound void, keeps the void: inactive, status kept, pointer released (race)");
-    expect(suite).toContain("a retry that wrote the pointer back before the void committed has it released by its own link write (race)");
+    expect(suite).toContain("a retry queued on the void's Payment row keeps the void and leaves the pointer clear (race)");
     expect(suite).toContain("pg_blocking_pids");
     expect(suite).toContain("a retry with no mirror waits for an inbound %s first insertion and keeps it inactive (race)");
     expect(suite).toContain('assertSafeRaceDbUrl(RACE_DB_URL, "Canonical refund-note void")');

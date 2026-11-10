@@ -207,8 +207,9 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       });
     });
 
-    it("a retry that wrote the pointer back before the void committed has it released by its own link write (race)", async () => {
-      // The pointer is null: the note is the payment's one note by its link alone.
+    it("a retry queued on the void's Payment row keeps the void and leaves the pointer clear (race)", async () => {
+      // The pointer is null. The void holds the Payment row before its link
+      // (#4200), so the retry cannot publish the pointer until the void commits.
       await seed(null);
       const inbound = await holdInboundVoid();
       const retry = retryRefundNote();
@@ -217,8 +218,8 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       await inbound.committed;
       expect(await retry).toBe(NOTE);
 
-      // The retry wrote the pointer at the note before its link write waited;
-      // the link write that keeps the void releases it, as the inbound write does.
+      // The retry's link write keeps the void and releases a pointer it put
+      // back after the void committed, as the inbound write leaves it clear.
       expect(await state()).toEqual({
         active: false,
         metadata: { amountCents: 20_000, watermarkCents: 20_000, status: "VOIDED", total: 200 },
@@ -229,29 +230,30 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
     it("a stale retry keeps the void without waiting on a Payment-first real enqueue of that same note (race)", async () => {
       const { enqueueXeroRefundCreditNoteOperation } = await import("@/lib/xero-operation-outbox");
       const { lockPaymentForRefundedTotal } = await import("@/lib/payment-transactions");
-      // V holds only the link: its snapshot sees no pointer to release.
+      // V holds the Payment row and the link (#4200). Its snapshot sees no
+      // pointer to release, and K cannot publish one while V holds the row.
       await seed(null);
       const inbound = await holdInboundVoid();
       const pending: Promise<unknown>[] = [inbound.committed];
       try {
-        // K is the real covered retry: it reads the old live note, commits the
-        // pointer at it, then queues its link write behind V's uncommitted void.
+        // K is the real covered retry: it reads the old live note, then waits
+        // on V's Payment row before it can commit the pointer.
         const retry = retryRefundNote();
         void retry.catch(() => undefined);
         pending.push(retry);
         await waitForBlockedBy(inbound.pid);
-        expect((await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } })).xeroRefundCreditNoteId).toBe(NOTE);
+        expect((await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } })).xeroRefundCreditNoteId).toBeNull();
 
         let paymentLocked!: (pid: number) => void;
         const paymentPid = new Promise<number>((resolve) => (paymentLocked = resolve));
         // F takes the same Payment lock as a group cancel's refund writer.
-        // Its actual enqueue sees old live N1 and pointer N1, so it skips the
-        // pointer update and queues behind K/V for exactly the same link.
+        // It reports its backend before that lock, so the wait below is F
+        // queued on V's Payment row rather than F already holding it.
         const enqueue = prisma.$transaction(async (tx) => {
           await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-          await lockPaymentForRefundedTotal(tx, PAYMENT_ID);
           const [{ pid }] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS "pid"`;
           paymentLocked(pid);
+          await lockPaymentForRefundedTotal(tx, PAYMENT_ID);
           return enqueueXeroRefundCreditNoteOperation(PAYMENT_ID, 20_000, { refundMethod: "internet-banking", store: tx });
         }, { timeout: 30_000 });
         void enqueue.catch(() => undefined);
