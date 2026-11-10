@@ -608,7 +608,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-config` | Resolves the operational connection **from the encrypted DB store** (#2079): client id/secret and webhook key via `IntegrationCredential`, and the redirect URI from `NEXTAUTH_URL` (the wrapped token-encryption key it used to generate was retired by #3806). No `XERO_*` credential env vars are read; legacy vars are detected and flagged. |
 | `xero-oauth` | Consent URL, OAuth callback (`handleXeroCallback`), client construction, disconnect (revoke + clear tokens). |
 | `xero-oauth-state` | CSRF state cookie for the OAuth round-trip. |
-| `xero-token-store` | Token persistence: the only copy in the encrypted credential store (`xero-oauth` / `token-set`, #3454); the `XeroConnection` row (#3806) and, for the previous release, the `XeroToken` row; connection status; and the **refresh lease** (`claimXeroTokenRefreshLease`, on both rows) so concurrent instances — and an older deployed colour — don't double-refresh; losers wait for the lease deadline and re-read. |
+| `xero-token-store` | Token persistence: the only copy in the encrypted credential store (`xero-oauth` / `token-set`, #3454); the `XeroConnection` row and its **refresh lease** (`claimXeroTokenRefreshLease`) so concurrent instances don't double-refresh; losers wait for the lease deadline and re-read. |
 | `xero-connection` | `readXeroConnection`: the one reader of the connection's non-secret facts — tenant and token expiry — for every surface that asks "is Xero connected" (#3806). |
 | `xero-api-client` | `getAuthenticatedXeroClient` (refreshes under lease), `callXeroApi` (meters every call into `XeroApiUsageDaily`/`XeroApiUsageEvent`, observes the daily budget and process-local rate-limit cool-downs), `withXeroRetry` (in-process retry for 429/5xx/408), `XeroDailyLimitError`, `XeroTransientOutageError`. |
 | `xero-api-usage` | Daily budget constant and usage recording/summary. |
@@ -742,8 +742,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 
 | Table | Role |
 | --- | --- |
-| `XeroConnection` | Single row (id `default`): the connected tenant, the access token's expiry and the refresh lease. No secret. Kept in step with `XeroToken` by a trigger while that table exists (#3806, see "OAuth and token lifecycle"). |
-| `XeroToken` | RETIRING (#3806). Kept only for the previous release: present while connected, with `tenantId`, `expiresAt` and its `refreshInProgressUntil` lease current; its ciphertext columns are no longer written or read. Dropped in R3. |
+| `XeroConnection` | Single row (id `default`): the connected tenant, the access token's expiry and the only refresh lease. No secret. |
 | `XeroSyncOperation` | The ledger. `direction` INBOUND/OUTBOUND, `entityType`, `operationType`, optional `localModel`/`localId`, `idempotencyKey`, `correlationKey`, `replayable`, error fields, redacted request/response payloads, resulting Xero object identity, manual-resolution override fields, and `queueType` (a denormalized, indexed copy of `requestPayload.queueType` set at enqueue — canonical value still lives in the payload; #1271). **Status machine:** `PENDING → RUNNING → SUCCEEDED | FAILED`, plus `WAITING_PAYMENT → PENDING` for supplementary invoices held until their Stripe payment settles. Claims are optimistic `updateMany` transitions, so concurrent workers cannot double-run a row. |
 | `XeroObjectLink` | Local record ⇄ Xero object links with a `role` (e.g. `PRIMARY_INVOICE`, `REFUND_CREDIT_NOTE`, `CONTACT`, `ENTRANCE_FEE_INVOICE`) and `active` flag; unique on (local, xero, role). Canonical single-active scopes are enforced on upsert. |
 | `XeroInboundEvent` | Stored webhook/admin events. **Status machine:** `RECEIVED → PROCESSING → PROCESSED | FAILED` (FAILED retried after a backoff; stale PROCESSING is operator-replayable). Unique `correlationKey` makes webhook delivery idempotent. |
@@ -3479,67 +3478,37 @@ key, schema change, historical operation or ledger reader cutover is introduced
 
 **The tokens** are one row of the encrypted integration-credential store,
 provider `xero-oauth`, key `token-set`: a JSON token set encrypted under the
-store's own key derivation. Every write therefore names its actor, commits its
-`integration.credential.*` audit row in the same transaction, and declares what
-it expected to find (`INV-PRIV-020`). Since #3806 R2 it is the only copy read:
-a connection whose store copy is missing, unreadable or malformed, or names a
-different organisation from the connection, reads as "reconnect required",
-never as connected. The last case is a copy a release from before #3454 left
-behind when it reconnected to another organisation: it writes only
-`XeroToken`, so the trigger moves the connection and the store keeps the old
-grant.
+store's own key derivation. Every connect, refresh, disconnect and verify-reset
+names its actor, commits its `integration.credential.*` audit row in the same
+transaction, and declares what it expected to find (`INV-PRIV-020`). The store
+value does not record a `mirror`. A row an earlier release wrote still loads
+when `mirror` is a string; a `mirror` that is present and not a string is
+rejected. A connection whose store copy is missing, unreadable or malformed, or
+names a different organisation from the connection, reads as "reconnect
+required", never as connected.
 
-**The connection and the refresh lease** are the one `XeroConnection` row: no
-row means not connected. It holds the tenant id, the access token's expiry and
-`refreshInProgressUntil`, and no token, ciphertext or key. Every reader that
-needs only the tenant or expiry (`isXeroConnected`, the health check, the setup
-provider test, setup readiness, the stored financial-year resolution, config
-transfer's tenant stamp, the admin cache key) asks `readXeroConnection`
-(`src/lib/xero-connection.ts`), so they all read the same row. Whether the
-tokens behind it are usable is the token store's `getXeroTokenReadability`.
+**The connection and the only refresh lease** are the one `XeroConnection` row
+(id `default`): no row means not connected. It holds the tenant id, the access
+token's expiry and `refreshInProgressUntil`, and no token, ciphertext or key.
+Every reader that needs only the tenant or expiry (`isXeroConnected`, the health
+check, the setup provider test, setup readiness, the stored financial-year
+resolution, config transfer's tenant stamp, the admin cache key) asks
+`readXeroConnection` (`src/lib/xero-connection.ts`), so they all read the same
+row. Whether the tokens behind it are usable is the token store's
+`getXeroTokenReadability`. There is no advisory lock. Inside one transaction
+the order is that row, then the credential-store write
+(CONCURRENCY_AND_LOCKING.md).
 
-**The old `XeroToken` row is kept for the previous release (#3454), until R3.**
-A blue-green deploy runs the previous release beside this one, and after a
-rollback it runs alone. It reads, refreshes, connects and disconnects only
-through `XeroToken`, treats no row as not connected, and reads the store copy
-only while the store's `mirror` fingerprint matches a hash of the row's id and
-ciphertext. Xero refresh tokens rotate — each is spendable once — so if the
-two releases disagreed about the current tokens, one side would end up on a
-spent refresh token and the club would have to reconnect. Four rules prevent
-that:
-
-- **The row stays present while connected**, with `tenantId` and `expiresAt`
-  current, written in the same transaction as every connect and refresh.
-- **Two leases, claimed together.** A refresh claims
-  `XeroToken.refreshInProgressUntil` first — the lease the previous release
-  claims, so the two releases compete for one refresh token — and then
-  `XeroConnection.refreshInProgressUntil`, the lease that stays when
-  `XeroToken` goes. Losing either rolls the other back. The claim takes the
-  leases FIRST and reads the store copy after, under those rows' locks, so the
-  version a refresh compares-and-sets on belongs to the tokens it hands over. A
-  refresh's save is fenced three times: both lease-guarded updates, and the
-  compare-and-set. Before calling Xero, the refresh checks that its save can
-  succeed (the auth-secret capture gate) and refuses without spending the token
-  if not.
-- **No ciphertext is written or read.** The schema `@ignore`s
-  `XeroToken.accessToken` and `refreshToken`, so the client cannot name them.
-  A connect replaces the row with a fresh one whose ciphertext the database
-  fills with `''`, and records the fingerprint of exactly that; a refresh leaves
-  the row's ciphertext alone and carries the fingerprint it read under the
-  lease. The previous release therefore keeps reading the store copy. Its own
-  writes rewrite both copies together (the #3454 dual-write), so they match too.
-- **A trigger keeps `XeroConnection` in step with `XeroToken`.** After every
-  insert, update, delete or truncate of `XeroToken`, a statement trigger copies
-  the most recently written row's tenant and expiry (`updatedAt`, then `id`,
-  descending — `XERO_TOKEN_ROW_ORDER`) into `XeroConnection`, or deletes it when
-  no row is left. It never touches the lease, and writes nothing when neither
-  value changed. It is one statement reading one snapshot, so a write that
-  commits while it waits for its lock is never written back stale. So the
-  previous release's connect, refresh, reconnect and disconnect reach this
-  release too. Every writer touches `XeroToken` before `XeroConnection`, the
-  order the trigger fixes (CONCURRENCY_AND_LOCKING.md). Two connects at the same
-  moment can leave two `XeroToken` rows; every reader takes the newest, and the
-  next connect or disconnect deletes both.
+**This release is the drop of `XeroToken`, one window, after R2.** R2 moved the
+connection and the lease onto `XeroConnection` and stopped reading and writing
+the token columns. It still wrote the `XeroToken` row and kept a trigger so a
+#3454 colour staying up during a deploy could not split the rotating refresh
+token. This release assumes that colour and the R2 colour are both stopped
+before migrate, then drops the trigger, both functions and the table together.
+The only copy of the tokens is the credential store. Two connects at the same
+moment can still commit the connection row from one grant and the store copy
+from the other, because the store write uses `expect: "any"`;
+`tokenSetForConnection` reads that disagreement as reconnect-required.
 
 If the auth secret no longer passes the capture gate, the refresh refuses before
 spending the token, alerts as "Token Store Unavailable", and the status page
@@ -3550,26 +3519,16 @@ cache holds a provider's rows for up to 45 seconds; a refresh token another
 container rotated a moment ago would be dead in it. The token store reads the
 row through the database on its own (or the lease transaction's) client.
 
-**The wrapped token key is retired.** It encrypted only the `XeroToken`
+**The wrapped token key is retired.** It encrypted only the old `XeroToken`
 ciphertext. This release never generates or reads it, and its next connect,
-disconnect or verify-reset deletes a leftover `xero` / `token_key` row. The
-previous release, while it still runs, generates a new one when it writes the
-tokens and finds none, audited as `xero-token-key-generation`.
+disconnect or verify-reset deletes a leftover `xero` / `token_key` row.
 
-**Upgrading to R2.** A connection a #3454 release has refreshed since any
-older release last ran carries a current store copy and keeps working. A
-connection on a release without #3454 (every tagged release so far) has no
-store copy, and one an older release refreshed after #3454 had stored a copy
-holds a spent refresh token there; either needs a reconnect, or a refresh on a
-#3454 build first. [UPGRADING.md](../UPGRADING.md) has the paths and the pre-deploy check.
-Until R3, `XeroToken` may still hold the last ciphertext the previous release
-wrote; after the first refresh here that refresh token has been spent. A
-rollback past #3454, once R2 has connected, refreshed or disconnected, needs a
-reconnect there.
-
-**Retiring `XeroToken` (R3, #3806)** comes after R2 has fully deployed: first a
-release that stops writing `XeroToken` and drops the trigger, then the
-`phase=contract` drop of the table.
+**Upgrading.** Deploying this release needs the maintenance window in
+[UPGRADING.md](../UPGRADING.md). A club already on R2 with a current store copy
+sees no change in what a Xero administrator does. Rolling this release back is
+stop the new colour, run the migration's `rollback.sql`, and start R2. A
+rollback past R2 needs an administrator reconnect; the pre-migrate backup is
+the only recovery of the old ciphertext columns.
 
 ## Guided setup wizard (#2080)
 
