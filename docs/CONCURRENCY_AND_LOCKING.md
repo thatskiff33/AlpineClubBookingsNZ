@@ -1241,7 +1241,11 @@ own `timeout: 120_000` allowed.
 
 **Since #4855 merge never waits for one of these rows while holding another, and
 since #4876 it never waits for one while holding any row that attempt wrote**
-("Merge never holds a Member row while waiting for another (#4855)" below). Each
+("Merge never holds a Member row while waiting for another (#4855)" below).
+Since #4860 the attempt is no longer Member-only: a wait for one of the
+duplicate's bookings spends this same 10s budget
+("Merge never holds one of the duplicate's bookings while waiting for another
+(#4860)" below). Each
 attempt opens a savepoint, runs the moves and the plan, then one sorted
 `SELECT 1 … FOR UPDATE SKIP LOCKED`, counted rather than read (`INV-OPS-001`).
 When it locks every id, the savepoint is released and merge holds the rows and
@@ -2906,6 +2910,10 @@ lockAdultMemberHostingPolicySet(tx)                              policy config
         rolled back; a miss 409s and does not wait. A lodge the opening
         prefix never locked is still #2672 drift on the first attempt)
         then null self-cycles, resolve collisions, applyMoves
+             (at the Booking.member arm, the captured loser bookings are
+              one sorted `FOR UPDATE SKIP LOCKED` inside this attempt;
+              a shortfall rolls the attempt back and waits for that one
+              booking while holding no rows, #4860)
   → master/loser/ancillary `Member … FOR UPDATE`, all at once:     member rows
         sorted SKIP LOCKED attempts in a savepoint, waiting for one
         skipped row at a time while holding none (#4855, 10s, T6)
@@ -3681,6 +3689,67 @@ approvals, and removing the refusal clears the reviewer (both probed). The
 statements are pinned in `adult-member-hosting-queue-participants.test.ts`, the
 position in `adult-member-hosting-coverage-lock.test.ts`, and the row-lock count
 in `advisory-lock-guard.test.ts`.
+
+#### Merge never holds one of the duplicate's bookings while waiting for another (#4860)
+
+`applyMoves` re-points the duplicate's bookings with one `updateMany` of the
+ids captured before any mutation (`Booking.member`). `Booking` is indexed on
+`memberId`, and for one member that index is insertion order, not id order.
+Measured on PostgreSQL 16: an approval that already holds the later-inserted
+half of a split pair (`lockBookingRowForOwnerRead`, `FOR NO KEY UPDATE`) and
+then updates the earlier half deadlocks with that update (`40P01`). Merge
+holds the earlier row and waits for the later one; the approval holds the
+later row and waits for the earlier one. Sorting the approval's locks does not
+close it. Booking ids are cuids, monotonic only within one process, so id
+order and insertion order disagree, and the same crossing still deadlocks.
+
+The sibling is the split parent or child (`hostingSiblingWhere` in
+`adult-member-hosting-review.ts`: the other live booking of the same member).
+The policy-exception approval, the change-request approval, cancel, date edits
+and the other callers of `reconcileAdultMemberHostingReviewWithSiblings` all
+have this shape. They are unchanged. #4876's attempt rolls the moves back only
+when a Member row is busy. This deadlock is inside the `Booking.member` update,
+and PostgreSQL aborts the transaction (`40P01`) rather than returning to the
+savepoint.
+
+So the rule is the Member-row rule, on the captured set. Inside the attempt, at
+the `Booking.member` arm and not before it, merge try-locks those ids with one
+sorted `SELECT 1 … ORDER BY "id" FOR UPDATE SKIP LOCKED`, counted rather than
+read (`INV-OPS-001`). The id sort only makes "first skipped" stable. It does
+not have to match any writer. An empty captured set issues no statement.
+Uncontended, the count equals the captured length, this transaction holds every
+row, and the existing `updateMany` re-points `memberId` without waiting. A
+short count probes the sorted ids until one returns 0, and throws. The attempt
+savepoint rolls back — that releases every booking the try-lock took and every
+row this attempt already wrote — and only then does merge wait for that one
+booking, under its own savepoint (`member_merge_booking_wait`),
+`set_config('lock_timeout', <what is left of the 10s>, true)`, then
+`SELECT 1 FROM "Booking" WHERE "id" = … FOR UPDATE`, then roll that savepoint
+back so the row and the timeout are both gone before the retry. The deadline
+is the same monotonic clock as the Member waits
+(`MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS`). There is not a second 10 seconds.
+Advisory keys taken before the attempt stay held during the wait.
+
+On the successful attempt the booking locks are held through the Member
+`FOR UPDATE` and on to commit, which keeps #4840 (booking rows before the
+Member rows). The single-booking wait releases its row before the retry, so it
+does not invert that order. Merge never blocks on a booking while it holds
+another. A row that is gone, or a wait that runs out (`55P03`), refuses with
+the existing booking-ownership 409 (`merge_drift_in_transaction`,
+`driftFields: ["Booking.member"]`). A row that still exists but no longer names
+the loser is locked by id, and the existing count check 409s the same way.
+
+The other `Booking` column sweeps stay a blocking `updateMany`. They re-point
+a different set. The split sibling is same-member, so both of its rows are in
+the captured owned set: once that set is held entirely, or not held at all,
+those writers cannot close this cycle. A cycle through a booking the duplicate
+does not own is a different issue. No new advisory key (`INV-LOCK-001`);
+advisory order is unchanged (`INV-LOCK-002`); the site is the existing merge
+transaction (`INV-LOCK-003`). Proved against real PostgreSQL by
+`member-merge-booking-row-races.realdb.test.ts`. The cost is the one #4855
+accepted for Member rows: a contended merge redoes its moves inside the same
+10 seconds, so a heavy merge against a busy booking refuses sooner, and the
+operator re-runs the preview.
 
 ## The disciplines, by writer class
 

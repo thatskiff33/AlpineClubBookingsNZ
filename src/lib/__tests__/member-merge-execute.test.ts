@@ -189,8 +189,10 @@ function memberFindManyForTest(args: unknown) {
 }
 
 /**
- * #4855: merge's participant lock counts the rows its `SKIP LOCKED` attempt
- * took; uncontended, that is every id it named. Every other statement: 0.
+ * #4855 / #4860: merge's `SKIP LOCKED` attempts count the rows they took.
+ * Uncontended, that is every id the statement named — Member ids, or the
+ * captured booking ids. An empty captured booking set must not issue one.
+ * Every other statement: 0.
  */
 function uncontendedRawCount(sql: unknown): number {
   if (!rawStatement(sql).includes("SKIP LOCKED")) return 0;
@@ -859,13 +861,18 @@ describe("executeMemberMerge", () => {
     const bookingGuest = {
       ...defaultDelegate(),
       count: vi.fn().mockResolvedValue(0),
-      findMany: vi.fn(() => {
+      findMany: vi.fn((args: { select?: Record<string, unknown> }) => {
+        // The lodge derivation selects `booking.lodgeId`. It runs before the
+        // sweep, including again at the start of the attempt (#4876), so it
+        // must not see a guest that commits after the sweep, and it must not
+        // be handed a row with no booking. Those reads are not counted below.
+        if (args.select && "booking" in args.select) return Promise.resolve([]);
         guestRead += 1;
-        // Sample reads, then the move-id capture, all before the wait. The
+        // The id sample, then the move-id capture, both before the wait. The
         // residual read after the Member FOR UPDATE is the one that sees the
         // late row. Earlier reads stay empty so the capture cannot absorb it.
         return Promise.resolve(
-          guestRead <= 4
+          guestRead <= 2
             ? []
             : [{ id: "late-guest", bookingId: "already-planned-booking" }],
         );

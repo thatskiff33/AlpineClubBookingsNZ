@@ -1287,6 +1287,18 @@ jobs:
         env:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-merge-moved-row-races.realdb.test.ts
+      # #4860: member merge try-locks the duplicate's captured bookings inside
+      # the attempt and, on a shortfall, rolls that attempt back before waiting
+      # for the one busy booking. Only this suite shows PostgreSQL forms no
+      # wait-for cycle with a writer that holds one of those bookings and then
+      # updates the other, and that the old crossed order still deadlocks once
+      # merge is taken out of it. It self-skips without the env vars (same
+      # #1881 harness and database), so `review-findings-contracts.test.ts`
+      # fails if this step goes missing.
+      - name: Test member-merge booking-row races against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-merge-booking-row-races.realdb.test.ts
 
       # #3583: the booking ledger's cut-over gate, run the way the owner runs it
       # (docs/MAINTENANCE.md) over a seeded history: booking histories made by

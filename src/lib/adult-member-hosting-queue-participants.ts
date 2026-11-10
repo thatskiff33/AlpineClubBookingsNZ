@@ -411,6 +411,39 @@ const WAIT_SAVEPOINT = {
   rollBack: Prisma.sql`ROLLBACK TO SAVEPOINT member_merge_participant_wait`,
   release: Prisma.sql`RELEASE SAVEPOINT member_merge_participant_wait`,
 } as const;
+/** Apart from the attempt and from the Member wait, so neither can release the other (#4860). */
+const BOOKING_WAIT_SAVEPOINT = {
+  open: Prisma.sql`SAVEPOINT member_merge_booking_wait`,
+  rollBack: Prisma.sql`ROLLBACK TO SAVEPOINT member_merge_booking_wait`,
+  release: Prisma.sql`RELEASE SAVEPOINT member_merge_booking_wait`,
+} as const;
+
+/**
+ * The captured booking another transaction holds. Thrown from inside the
+ * attempt; the wrapper rolls the attempt back before it waits (#4860).
+ */
+export class MemberMergeBookingRowBusyError extends Error {
+  readonly bookingId: string;
+
+  constructor(bookingId: string) {
+    super("A booking this merge must re-point is locked by another writer.");
+    this.name = "MemberMergeBookingRowBusyError";
+    this.bookingId = bookingId;
+  }
+}
+
+/**
+ * The single-booking wait found the row gone, or the shared budget ran out.
+ * Merge converts this into the existing booking-ownership 409. Not a retry.
+ */
+export class MemberMergeBookingOwnershipDriftError extends Error {
+  constructor() {
+    super(
+      "Booking ownership changed while the merge was running. Nothing was saved. Re-run the preview and try again.",
+    );
+    this.name = "MemberMergeBookingOwnershipDriftError";
+  }
+}
 
 /**
  * Wait for one busy participant row, holding none of the others (#4855), for at
@@ -443,6 +476,88 @@ async function waitForOneParticipantRow(
   await db.$executeRaw(WAIT_SAVEPOINT.rollBack);
   await db.$executeRaw(WAIT_SAVEPOINT.release);
   return outcome;
+}
+
+/**
+ * Wait for one busy booking, holding none of the others (#4860), for at most
+ * `milliseconds`. Same shape as {@link waitForOneParticipantRow}, on `"Booking"`,
+ * under its own savepoint. The rollback releases the row and the `lock_timeout`.
+ */
+async function waitForOneBookingRow(
+  db: Pick<PrismaClient, "$executeRaw">,
+  bookingId: string,
+  milliseconds: number,
+): Promise<"free" | "missing" | "timedOut"> {
+  await db.$executeRaw(BOOKING_WAIT_SAVEPOINT.open);
+  let outcome: "free" | "missing" | "timedOut";
+  try {
+    await setTransactionLockTimeout(db, milliseconds);
+    const locked = await db.$executeRaw(Prisma.sql`
+      SELECT 1
+      FROM "Booking"
+      WHERE "id" = ${bookingId}
+      FOR UPDATE
+    `);
+    outcome = locked === 1 ? "free" : "missing";
+  } catch (error) {
+    if (!isPostgresLockNotAvailable(error)) throw error;
+    outcome = "timedOut";
+  }
+  await db.$executeRaw(BOOKING_WAIT_SAVEPOINT.rollBack);
+  await db.$executeRaw(BOOKING_WAIT_SAVEPOINT.release);
+  return outcome;
+}
+
+/**
+ * The first captured booking this attempt could not lock. A row the attempt
+ * already holds counts 1; a row another transaction holds, or one that is gone,
+ * counts 0. The id sort only makes "first" stable. It does not have to match
+ * any other writer.
+ */
+async function firstSkippedBookingRow(
+  db: Pick<PrismaClient, "$executeRaw">,
+  ids: readonly string[],
+): Promise<string | undefined> {
+  for (const id of ids) {
+    const locked = await db.$executeRaw(Prisma.sql`
+      SELECT 1
+      FROM "Booking"
+      WHERE "id" = ${id}
+      FOR UPDATE SKIP LOCKED
+    `);
+    if (locked !== 1) return id;
+  }
+  return undefined;
+}
+
+/**
+ * Take every captured loser-owned booking, or none of them (#4860).
+ *
+ * Called at the `Booking.member` arm, before that `updateMany`, and only for
+ * the ids the preview captured. An empty set issues no statement (`IN ()` is
+ * invalid, and there is no row to wait for). Otherwise one counted
+ * `SELECT 1 … ORDER BY "id" FOR UPDATE SKIP LOCKED` (`INV-OPS-001`). Uncontended,
+ * the count equals the captured length and this transaction holds every row, so
+ * the `updateMany` re-points `memberId` without waiting. A short count throws
+ * {@link MemberMergeBookingRowBusyError} for the first skipped id and does not
+ * wait: the attempt wrapper rolls back, then waits for that one booking alone.
+ */
+export async function lockCapturedLoserOwnedBookings(
+  db: Pick<PrismaClient, "$executeRaw">,
+  capturedIds: readonly string[],
+): Promise<void> {
+  if (capturedIds.length === 0) return;
+  const ids = [...capturedIds].sort();
+  const locked = await db.$executeRaw(Prisma.sql`
+    SELECT 1
+    FROM "Booking"
+    WHERE "id" IN (${Prisma.join(ids)})
+    ORDER BY "id"
+    FOR UPDATE SKIP LOCKED
+  `);
+  if (locked === ids.length) return;
+  const busy = await firstSkippedBookingRow(db, ids);
+  if (busy !== undefined) throw new MemberMergeBookingRowBusyError(busy);
 }
 
 /**
@@ -490,8 +605,16 @@ async function rollBackAttempt(db: MemberMergeParticipantDb): Promise<void> {
  * `moveAndPlan` must have no effect that outlives this transaction. A failed
  * attempt discards its return value and runs it again; a throw (a drift 409,
  * a constraint failure) rolls the savepoint back and propagates, so the merge
- * does not retry a refusal. The participant ids come from the attempt itself,
- * because the hosting plan that names the ancillary owners is part of it.
+ * does not retry a refusal. One throw is a retry, not a refusal (#4860):
+ * {@link MemberMergeBookingRowBusyError}, from the captured-booking try-lock
+ * inside the `Booking.member` move. The savepoint rolls back first — that
+ * releases every booking the try-lock took and every row this attempt wrote —
+ * then merge waits for that one booking alone (`waitForOneBookingRow`) under
+ * what is left of the same budget, and tries the whole attempt again. A row
+ * that is gone, or a wait that runs out, is
+ * {@link MemberMergeBookingOwnershipDriftError}, which propagates. The
+ * participant ids come from the attempt itself, because the hosting plan that
+ * names the ancillary owners is part of it.
  *
  * EACH ATTEMPT, inside a savepoint: `moveAndPlan`, then one `FOR UPDATE SKIP
  * LOCKED` over the sorted ids. If it locks every id, the savepoint is released
@@ -503,12 +626,14 @@ async function rollBackAttempt(db: MemberMergeParticipantDb): Promise<void> {
  * is the identity proof.
  *
  * STILL A WAIT, AND STILL BOUNDED (#2623 T6). The whole loop, moves included,
- * shares `MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS`. Every single-row wait is
- * bounded by what is left after the attempt. The loop cannot spin: an attempt
+ * shares `MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS`. Every single-row wait,
+ * Member or booking, is bounded by what is left after the attempt. There is
+ * not a second 10 seconds for bookings. The loop cannot spin: an attempt
  * either takes every row, or waits until the row frees or the budget is gone.
- * Running out lands on `HostingCoverageParticipantRetryError`. While it waits
- * merge holds none of these rows and none of the attempt's writes. The lock
- * bound only exists inside the wait's savepoint, so later locks keep their
+ * A Member wait that runs out lands on `HostingCoverageParticipantRetryError`.
+ * A booking wait that runs out lands on `MemberMergeBookingOwnershipDriftError`.
+ * While it waits merge holds none of these rows and none of the attempt's
+ * writes. The lock bound only exists inside the wait's savepoint, so later locks keep their
  * ordinary failure semantics. Advisory keys taken before this call stay held,
  * as they did before.
  */
@@ -526,6 +651,14 @@ export async function withMemberMergeParticipantRows<T>(
       planned = await moveAndPlan();
     } catch (error) {
       await rollBackAttempt(db);
+      if (error instanceof MemberMergeBookingRowBusyError) {
+        // Read after the attempt, so the wait ends inside the 10s total.
+        const remaining = remainingBudget();
+        if (remaining <= 0) throw new MemberMergeBookingOwnershipDriftError();
+        const waited = await waitForOneBookingRow(db, error.bookingId, remaining);
+        if (waited !== "free") throw new MemberMergeBookingOwnershipDriftError();
+        continue;
+      }
       throw error;
     }
     const ids = sortedUnique(planned.participantIds);

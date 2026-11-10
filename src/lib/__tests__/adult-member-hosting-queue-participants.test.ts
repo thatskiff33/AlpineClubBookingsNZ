@@ -28,7 +28,9 @@ import {
   isHostingCoverageParticipantRetry,
   lockActiveBookingRequestLinkedMembers,
   lockHostingCoverageMemberLifecycleTarget,
+  lockCapturedLoserOwnedBookings,
   lockMemberMergeHostingCoverageParticipants,
+  MemberMergeBookingOwnershipDriftError,
   MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS,
   withMemberMergeParticipantRows,
   type HostingCoverageQueueParticipantProof,
@@ -603,6 +605,119 @@ describe("hosting coverage queue participant fence (#2597)", () => {
     } finally {
       clock.mockRestore();
     }
+  });
+
+  const CAPTURED_BOOKINGS = ["mrg-book-z", "mrg-book-a"];
+  const SORTED_BOOKINGS = ["mrg-book-a", "mrg-book-z"];
+  const BOOKING_SET =
+    'SELECT 1 FROM "Booking" WHERE "id" IN (?,?) ORDER BY "id" FOR UPDATE SKIP LOCKED';
+  const BOOKING_PROBE = 'SELECT 1 FROM "Booking" WHERE "id" = ? FOR UPDATE SKIP LOCKED';
+  const BOOKING_WAIT = 'SELECT 1 FROM "Booking" WHERE "id" = ? FOR UPDATE';
+
+  it("takes the captured bookings in one SKIP LOCKED statement and releases the attempt only after the Member rows, with no lock bound (#4860)", async () => {
+    const { db, statements } = mergeParticipantDb([2, 3]);
+    await expect(
+      withMemberMergeParticipantRows(db as never, async () => {
+        await lockCapturedLoserOwnedBookings(db as never, CAPTURED_BOOKINGS);
+        return { participantIds: ALL, result: "held" };
+      }),
+    ).resolves.toMatchObject({ result: "held", lockedMemberIds: ALL });
+    expect(statements().map((statement) => statement.text)).toEqual([
+      "SAVEPOINT member_merge_participants_attempt",
+      BOOKING_SET,
+      ATTEMPT,
+      "RELEASE SAVEPOINT member_merge_participants_attempt",
+    ]);
+    expect(statements()[1].values).toEqual(SORTED_BOOKINGS);
+    expect(statements().some((statement) => statement.text.includes("lock_timeout"))).toBe(false);
+  });
+
+  it("rolls the attempt back before waiting for the one skipped booking, under what is left of the budget (#4860)", async () => {
+    let now = 1_000;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      const { db, statements } = mergeParticipantDb([1, 0, 1, 2, 3]);
+      const answer = db.$executeRaw.getMockImplementation()!;
+      db.$executeRaw.mockImplementation((sql) => {
+        const text = (sql.strings ?? []).join("?");
+        if (text.includes('"Booking"') && text.includes("IN (")) now += 4_000;
+        return answer(sql);
+      });
+      await expect(
+        withMemberMergeParticipantRows(db as never, async () => {
+          await lockCapturedLoserOwnedBookings(db as never, CAPTURED_BOOKINGS);
+          return { participantIds: ALL, result: "held" };
+        }),
+      ).resolves.toMatchObject({ result: "held" });
+      const texts = statements().map((statement) => statement.text);
+      expect(texts).toEqual([
+        "SAVEPOINT member_merge_participants_attempt",
+        BOOKING_SET,
+        BOOKING_PROBE,
+        "ROLLBACK TO SAVEPOINT member_merge_participants_attempt",
+        "RELEASE SAVEPOINT member_merge_participants_attempt",
+        "SAVEPOINT member_merge_booking_wait",
+        "SELECT set_config('lock_timeout', ?, true)",
+        BOOKING_WAIT,
+        "ROLLBACK TO SAVEPOINT member_merge_booking_wait",
+        "RELEASE SAVEPOINT member_merge_booking_wait",
+        "SAVEPOINT member_merge_participants_attempt",
+        BOOKING_SET,
+        ATTEMPT,
+        "RELEASE SAVEPOINT member_merge_participants_attempt",
+      ]);
+      const rollback = texts.indexOf("ROLLBACK TO SAVEPOINT member_merge_participants_attempt");
+      const wait = texts.indexOf(BOOKING_WAIT);
+      expect(rollback).toBeGreaterThan(-1);
+      expect(wait).toBeGreaterThan(rollback);
+      expect(statements()[2].values).toEqual(["mrg-book-a"]);
+      expect(statements()[7].values).toEqual(["mrg-book-a"]);
+      expect(Number(statements()[6].values[0])).toBe(MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS - 4_000);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("issues no booking statement when the captured set is empty (#4860)", async () => {
+    const { db, statements } = mergeParticipantDb([3]);
+    await withMemberMergeParticipantRows(db as never, async () => {
+      await lockCapturedLoserOwnedBookings(db as never, []);
+      return { participantIds: ALL, result: "none" };
+    });
+    expect(statements().some((statement) => statement.text.includes('"Booking"'))).toBe(false);
+    expect(statements().map((statement) => statement.text)).toEqual([
+      "SAVEPOINT member_merge_participants_attempt",
+      ATTEMPT,
+      "RELEASE SAVEPOINT member_merge_participants_attempt",
+    ]);
+  });
+
+  it("refuses, without a second attempt, when the booking wait finds the row gone or the budget runs out (#4860)", async () => {
+    const gone = mergeParticipantDb([1, 0, 0]);
+    let goneAttempts = 0;
+    await expect(
+      withMemberMergeParticipantRows(gone.db as never, async () => {
+        goneAttempts += 1;
+        await lockCapturedLoserOwnedBookings(gone.db as never, CAPTURED_BOOKINGS);
+        return { participantIds: ALL, result: goneAttempts };
+      }),
+    ).rejects.toBeInstanceOf(MemberMergeBookingOwnershipDriftError);
+    expect(goneAttempts).toBe(1);
+
+    const timedOut = mergeParticipantDb([
+      1, 0,
+      { reject: { driverAdapterError: { cause: { originalCode: "55P03" } } } },
+    ]);
+    await expect(
+      withMemberMergeParticipantRows(timedOut.db as never, async () => {
+        await lockCapturedLoserOwnedBookings(timedOut.db as never, CAPTURED_BOOKINGS);
+        return { participantIds: ALL, result: "held" };
+      }),
+    ).rejects.toBeInstanceOf(MemberMergeBookingOwnershipDriftError);
+    expect(timedOut.statements().slice(-2).map((statement) => statement.text)).toEqual([
+      "ROLLBACK TO SAVEPOINT member_merge_booking_wait",
+      "RELEASE SAVEPOINT member_merge_booking_wait",
+    ]);
   });
 
   it("refuses source owner or lodge drift after the participant lock", async () => {

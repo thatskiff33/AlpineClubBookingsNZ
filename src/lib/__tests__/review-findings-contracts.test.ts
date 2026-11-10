@@ -1252,6 +1252,18 @@ describe("review finding source/schema contracts", () => {
         "MUTATION: rolling back the Member locks but not the moved induction still deadlocks the sign-off",
       ],
     },
+    {
+      issue: "#4860",
+      suite: "member-merge booking row",
+      stepName: "Test member-merge booking-row races against dedicated PostgreSQL",
+      file: "src/lib/__tests__/member-merge-booking-row-races.realdb.test.ts",
+      cases: [
+        "MUTATION: a writer holding the later-inserted booking and then updating the earlier one never deadlocks with the merge: the writer commits and the merge re-points both",
+        "MUTATION: while that writer holds only the later-inserted booking, the merge waits on it and does not hold the earlier one",
+        "a writer holding the earlier-inserted booking and then updating the later one never deadlocks with the merge: both commit",
+        "MUTATION: two sessions locking those two bookings in crossed order still deadlock",
+      ],
+    },
   ])("runs the $suite race suite against the same dedicated PostgreSQL ($issue)", ({ issue, stepName, file, cases }) => {
     const workflow = readRepoFile(".github/workflows/ci.yml");
     const migrateStep = workflow.indexOf(
