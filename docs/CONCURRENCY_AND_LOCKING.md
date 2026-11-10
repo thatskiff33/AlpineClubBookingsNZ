@@ -7439,9 +7439,12 @@ Counterparts:
   that transaction opens, so no provider call runs under either lock. After
   the commit, and outside any lock, the hand-made note is read again
   (`reconcileHandMadeNoteAfterCompletion`, through the inbound
-  `reconcileXeroCreditNote`), so a later void is caught. A void that commits
+  `reconcileXeroCreditNote`), so a later void is caught.   A void that commits
   before the completion's link write is kept under the link's row lock and the
-  answer is refused with a 409, rolling the completion back (#4288). Under the
+  answer is refused with a 409, rolling the completion back (#4288). An
+  explicit void holds the Payment row (#4200), so that commit is visible to
+  the answer's record read: this payment's own voided mirror is not "already
+  recorded", and the 409 is the voided-while-recording refusal. Under the
   same locks the answer also reads, plainly, the credit-note creates naming the
   note, and refuses it when any is resolved by hand or not yet SUCCEEDED
   (#4321). A resolve of a row that already names its note takes none of these
