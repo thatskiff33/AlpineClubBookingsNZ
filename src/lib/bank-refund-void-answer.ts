@@ -41,7 +41,10 @@ import logger from "@/lib/logger";
  * by hand or not yet SUCCEEDED records it (#4321).
  * A mismatch is refused with a plain-English reason and nothing moves. A void
  * that commits before the link write is refused under the link's row lock
- * (#4288); after the commit it is read once more
+ * (#4288). An explicit void holds the Payment row first (#4200), so that
+ * commit is visible to the record read below: this payment's own voided
+ * mirror is not "already recorded", and the refusal is the
+ * voided-while-recording 409. After the commit it is read once more
  * (`reconcileHandMadeNoteAfterCompletion`), so a later void is caught.
  *
  * On success the completion (`resolveManualRefundTask`, under its locks) puts
@@ -297,6 +300,11 @@ export async function prepareBankRefundVoidAnswer(input: {
  * The one exception (review, money 6): the note is tracked only by this
  * payment's own inactive, non-voided refund-note link - a duplicate the
  * single-note rule turned off - which is reactivated for the follow-up.
+ * This payment's own voided mirror is not "already recorded" either (#4200):
+ * an explicit void locks the Payment row before the link, so it can commit
+ * before this read, while the completion is still waiting on that row. The
+ * link write below keeps the void and refuses with the voided-while-recording
+ * 409, and the completion rolls back having moved nothing.
  */
 export async function recordHandMadeRefundNoteLink(
   tx: Prisma.TransactionClient,
@@ -309,12 +317,14 @@ export async function recordHandMadeRefundNoteLink(
     where: { xeroObjectType: "CREDIT_NOTE", xeroObjectId: input.note.creditNoteId },
     select: { localModel: true, localId: true, role: true, active: true, metadata: true },
   });
+  const ownMirror = (link: (typeof tracked)[number]) =>
+    link.localModel === "Payment" && link.localId === input.paymentId && link.role === "REFUND_CREDIT_NOTE";
   const ownInactive = (link: (typeof tracked)[number]) =>
-    link.localModel === "Payment" &&
-    link.localId === input.paymentId &&
-    link.role === "REFUND_CREDIT_NOTE" &&
-    !link.active &&
-    !isRefundCreditNoteLinkCancelledInXero(link.metadata);
+    ownMirror(link) && !link.active && !isRefundCreditNoteLinkCancelledInXero(link.metadata);
+  // #4200: visible because the void committed while this transaction waited on
+  // the Payment row. The write below keeps that void and refuses it.
+  const ownVoided = (link: (typeof tracked)[number]) =>
+    ownMirror(link) && isRefundCreditNoteLinkCancelledInXero(link.metadata);
   // #4321 (#4265, `INV-INT-025`): nor a note a credit-note create row records
   // that is resolved by hand in Xero - with no live link, that row counts the
   // note as its own refund's coverage - or that is not SUCCEEDED, so an
@@ -334,7 +344,7 @@ export async function recordHandMadeRefundNoteLink(
     },
     select: { id: true },
   });
-  if (noteRow || !tracked.every(ownInactive)) {
+  if (noteRow || !tracked.every((link) => ownInactive(link) || ownVoided(link))) {
     throw new ManualBookingPaymentError(handMadeNoteAlreadyRecordedMessage(input.note.creditNoteNumber), 409);
   }
   await writeHandMadeRefundNoteLink(tx, {
