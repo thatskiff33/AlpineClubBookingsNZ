@@ -172,14 +172,17 @@ async function bookingState(id: string) {
     return { loser, master };
   }
 
-  it("MUTATION: (a) a merge holding the booking and waiting for the officer's Member row makes that officer's approval wait at the booking row; the merge commits and the approval refuses cleanly", async () => {
+  it("MUTATION: (a) a merge waiting for the officer's Member row holds no booking row, so that officer's approval commits and the merge carries the reviewer to the survivor", async () => {
     const { loser, master } = await mergePair("a-merge-first", true);
     const { id, requestId } = await seed("a-merge-first", loser, false);
     const runMerge = await previewMerge(master, loser, OFFICER_ID);
-    const { merged, written: approved } = await writerArrivingWhileMergeIsParked(prisma, keyShareOnMember(loser), runMerge, () => approve(requestId, id, loser));
+    const { merged, written: approved, writerFirst } = await writerArrivingWhileMergeIsParked(
+      prisma, keyShareOnMember(loser), runMerge, () => approve(requestId, id, loser), { writer: "queuesOrFinishes" },
+    );
+    expect(writerFirst, "the approval waited on the merge").toBe("settled");
+    expect(approved).toMatchObject({ status: "fulfilled", value: { outcome: "executed" } });
     expectFulfilled(merged);
-    expect(approved).toMatchObject({ status: "fulfilled", value: { outcome: "notAuthorized" } });
-    expect(await requestState(requestId)).toEqual({ status: "REQUESTED", requestedByMemberId: names.memberId, reviewedByMemberId: null });
+    expect(await requestState(requestId)).toEqual({ status: "APPROVED", requestedByMemberId: names.memberId, reviewedByMemberId: master });
     expect(await bookingState(id)).toEqual({ memberId: names.memberId, createdById: master });
   });
 
@@ -195,11 +198,14 @@ async function bookingState(id: string) {
     expect(await bookingState(id)).toEqual({ memberId: names.memberId, createdById: master });
   });
 
-  it("(b) a merge holding the duplicate's booking and request makes the approval wait at the booking row; both commit", async () => {
+  it("(b) a merge waiting for the duplicate's Member row holds no booking or request row, so the approval commits and the merge carries both to the survivor", async () => {
     const { loser, master } = await mergePair("b-merge-first", false);
     const { id, requestId } = await seed("b-merge-first", loser, true);
     const runMerge = await previewMerge(master, loser, OFFICER_ID);
-    const { merged, written: approved } = await writerArrivingWhileMergeIsParked(prisma, keyShareOnMember(loser), runMerge, () => approve(requestId, id, OFFICER_ID));
+    const { merged, written: approved, writerFirst } = await writerArrivingWhileMergeIsParked(
+      prisma, keyShareOnMember(loser), runMerge, () => approve(requestId, id, OFFICER_ID), { writer: "queuesOrFinishes" },
+    );
+    expect(writerFirst, "the approval waited on the merge").toBe("settled");
     expectFulfilled(merged);
     expectFulfilled(approved);
     expect(approved).toMatchObject({ status: "fulfilled", value: { outcome: "executed" } });

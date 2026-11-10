@@ -26,10 +26,10 @@
  *
  * The approval-first cases pause the approval after its claim, at the canonical
  * `modifyBookingBatch`. The merge-first cases park merge at its
- * `Member … FOR UPDATE` behind another session's key share on the duplicate, so
- * merge holds the booking (and, in (b), has re-pointed the request) while it
- * waits. The choreography and its waits, each matched to the backend it waits
- * on, are shared with the other merge race suites (`support/member-merge-race.ts`).
+ * `Member … FOR UPDATE` behind another session's key share on the duplicate.
+ * Since #4876 that wait holds none of the rows merge re-points, so the approval
+ * does not queue: it commits, and merge's retry carries what it wrote onto the
+ * survivor. The choreography is shared (`support/member-merge-race.ts`).
  *
  * Ordinary Vitest runs skip the file; CI's real-PostgreSQL job runs it against
  * the guarded loopback race database.
@@ -278,18 +278,20 @@ async function guestCount() {
     return { loser, master };
   }
 
-  it("MUTATION: (a) a merge holding the booking and waiting for the officer's Member row makes that officer's approval wait at the booking row; the merge commits and the approval refuses cleanly", async () => {
+  it("MUTATION: (a) a merge waiting for the officer's Member row holds no booking row, so that officer's approval commits and the merge carries the reviewer to the survivor", async () => {
     const { loser, master } = await mergePair("a-merge-first", true);
     await seed(loser, false);
     const figures = await checkFigures(loser);
     const runMerge = await previewMerge(master, loser, OFFICER_ID);
-    const { merged, written: approved } = await writerArrivingWhileMergeIsParked(prisma, keyShareOnMember(loser), runMerge, () => approveWith(loser, figures));
+    const { merged, written: approved, writerFirst } = await writerArrivingWhileMergeIsParked(
+      prisma, keyShareOnMember(loser), runMerge, () => approveWith(loser, figures), { writer: "queuesOrFinishes" },
+    );
+    expect(writerFirst, "the approval waited on the merge").toBe("settled");
+    expect(approved).toMatchObject({ status: "fulfilled", value: { outcome: "executed" } });
     expectFulfilled(merged);
-    // The officer it would have named is gone: the approval's fresh role check refuses, writing nothing.
-    expect(approved).toMatchObject({ status: "fulfilled", value: { outcome: "notAuthorized" } });
-    expect(await requestState()).toEqual({ status: "REQUESTED", requestedByMemberId: OWNER_ID, reviewedByMemberId: null });
+    expect(await requestState()).toEqual({ status: "APPROVED", requestedByMemberId: OWNER_ID, reviewedByMemberId: master });
     expect(await bookingState()).toEqual({ memberId: OWNER_ID, createdById: master });
-    expect(await guestCount()).toBe(1);
+    expect(await guestCount()).toBe(2);
   });
 
   it("MUTATION: (a) an approval by the duplicate holding its claim makes the merge wait at the booking row; both commit", async () => {
@@ -306,12 +308,15 @@ async function guestCount() {
     expect(await guestCount()).toBe(2);
   });
 
-  it("(b) a merge holding the duplicate's booking and request makes the approval wait at the booking row; both commit", async () => {
+  it("(b) a merge waiting for the duplicate's Member row holds no booking or request row, so the approval commits and the merge carries both to the survivor", async () => {
     const { loser, master } = await mergePair("b-merge-first", false);
     await seed(loser, true);
     const figures = await checkFigures(OFFICER_ID);
     const runMerge = await previewMerge(master, loser, OFFICER_ID);
-    const { merged, written: approved } = await writerArrivingWhileMergeIsParked(prisma, keyShareOnMember(loser), runMerge, () => approveWith(OFFICER_ID, figures));
+    const { merged, written: approved, writerFirst } = await writerArrivingWhileMergeIsParked(
+      prisma, keyShareOnMember(loser), runMerge, () => approveWith(OFFICER_ID, figures), { writer: "queuesOrFinishes" },
+    );
+    expect(writerFirst, "the approval waited on the merge").toBe("settled");
     expectFulfilled(merged);
     expect(approved).toMatchObject({ status: "fulfilled", value: { outcome: "executed" } });
     expect(await requestState()).toEqual({ status: "APPROVED", requestedByMemberId: master, reviewedByMemberId: OFFICER_ID });

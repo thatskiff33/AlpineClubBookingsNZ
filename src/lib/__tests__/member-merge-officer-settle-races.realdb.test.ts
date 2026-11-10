@@ -22,11 +22,11 @@
  * another officer and carries an open edit review.
  *
  * The merge-first cases park merge at its `Member … FOR UPDATE` with a third
- * session holding `FOR KEY SHARE` on the duplicate's row (any FK write naming
- * the duplicate does this), so merge holds the booking row while it waits. That
- * is the moment the writer has to arrive in to deadlock. The choreography and
- * its waits, each matched to the backend it waits on, are shared with the other
- * merge race suites (`support/member-merge-race.ts`).
+ * session holding `FOR KEY SHARE` on the duplicate's row. Since #4876 that wait
+ * holds none of the rows merge re-points, so the writer does not queue behind
+ * a booking row: it commits, and merge's retry carries what it wrote onto the
+ * survivor. The choreography and its waits are shared
+ * (`support/member-merge-race.ts`).
  *
  * Ordinary Vitest runs skip the file; CI's real-PostgreSQL job runs it against
  * the guarded loopback race database.
@@ -38,7 +38,7 @@ import { cleanHistories, createHistoryBooking, historyNames, parkHistoryStrand, 
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import {
-  arrivingWhilePaused, clearPauses, createRaceMember, expectFulfilled, expectRefusedByTheDeletedOfficer, keyShareOnMember, previewMerge,
+  arrivingWhilePaused, clearPauses, createRaceMember, expectFulfilled, keyShareOnMember, previewMerge,
   writerArrivingWhileMergeIsParked,
 } from "./support/member-merge-race";
 
@@ -158,17 +158,17 @@ async function taskState(taskId: string) {
     await prisma.member.deleteMany({ where: { id: members } });
   }
 
-  it("MUTATION: a merge holding the booking row and waiting for the duplicate's Member row makes the settle wait at the booking row, never a deadlock", async () => {
+  it("MUTATION: a merge waiting for the duplicate's Member row holds no booking row, so the settle commits and the merge carries it to the survivor", async () => {
     const { id, paymentId, loser, master } = await bookingMadeByDuplicate("merge-first");
     const execute = await previewMerge(master, loser, ADMIN);
-    // The duplicate, still signed in as an officer, records the cash now.
-    const { merged, written } = await writerArrivingWhileMergeIsParked(prisma, keyShareOnMember(loser), execute, () => markPaid(id, loser));
+    // The duplicate, still signed in as an officer, records the cash while merge waits holding nothing it needs.
+    const { merged, written, writerFirst } = await writerArrivingWhileMergeIsParked(
+      prisma, keyShareOnMember(loser), execute, () => markPaid(id, loser), { writer: "queuesOrFinishes" },
+    );
+    // Holding the booking through that wait would make the settle queue here, the cycle #4840 closed and #4876 must not reopen.
+    expect(writerFirst, "the settle waited on the merge").toBe("settled");
+    expectFulfilled(written);
     expectFulfilled(merged);
-    expectRefusedByTheDeletedOfficer(written);
-    expect(await state(id, paymentId)).toEqual({ status: "PAYMENT_PENDING", createdById: master, paymentStatus: "PENDING", markedPaidBy: null });
-
-    // The officer records it again from the surviving record.
-    await markPaid(id, master);
     expect(await state(id, paymentId)).toEqual({ status: "PAID", createdById: master, paymentStatus: "SUCCEEDED", markedPaidBy: master });
   });
 
@@ -182,18 +182,17 @@ async function taskState(taskId: string) {
     expect(await state(id, paymentId)).toEqual({ status: "PAID", createdById: master, paymentStatus: "SUCCEEDED", markedPaidBy: master });
   });
 
-  it("MUTATION: a merge holding the booking row and waiting for the duplicate's Member row makes an edit review's closure wait at the booking row, never a deadlock", async () => {
+  it("MUTATION: a merge waiting for the duplicate's Member row holds no booking row, so the review closure commits and the merge carries it to the survivor", async () => {
     const { id, taskId, loser, master } = await reviewOnBookingMadeByDuplicate("merge-before-closure");
     const execute = await previewMerge(master, loser, ADMIN);
-    const { merged, written } = await writerArrivingWhileMergeIsParked(prisma, keyShareOnMember(loser), execute, () => dismissReview(taskId, loser));
+    const { merged, written, writerFirst } = await writerArrivingWhileMergeIsParked(
+      prisma, keyShareOnMember(loser), execute, () => dismissReview(taskId, loser), { writer: "queuesOrFinishes" },
+    );
+    expect(writerFirst, "the closure waited on the merge").toBe("settled");
+    expectFulfilled(written);
     expectFulfilled(merged);
-    expectRefusedByTheDeletedOfficer(written);
-    expect(await taskState(taskId)).toEqual({ status: "OPEN", completedByMemberId: null });
-    expect((await prisma.booking.findUniqueOrThrow({ where: { id }, select: { createdById: true } })).createdById).toBe(master);
-
-    // The officer closes it again from the surviving record.
-    await dismissReview(taskId, master);
     expect(await taskState(taskId)).toEqual({ status: "DISMISSED", completedByMemberId: master });
+    expect((await prisma.booking.findUniqueOrThrow({ where: { id }, select: { createdById: true } })).createdById).toBe(master);
   });
 
   it("an edit review's closure holding the booking row and the officer's key share makes the merge wait; both commit", async () => {
