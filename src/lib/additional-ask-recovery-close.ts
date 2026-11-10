@@ -30,9 +30,16 @@ export const PENDING_ASK_NETTED_BY_REDUCTION_NOTE =
  */
 export const RECENT_RECOVERY_CLAIM_MS = 2 * 60 * 1000;
 
+/**
+ * The state a close must match: the row, and the status, attempts and claim
+ * time just read. Invoice figures are not part of the fence, so a close list
+ * does not invent them.
+ */
+export type WaitingAskCloseFence = Pick<PendingAskRecovery, "id" | "status" | "attempts" | "processingStartedAt">;
+
 /** A live worker retains the ask through its row write and invoice completion. */
 export function assertAskRecoveryNotBeingRaised(
-  recovery: Pick<PendingAskRecovery, "status" | "processingStartedAt">,
+  recovery: Pick<WaitingAskCloseFence, "status" | "processingStartedAt">,
   now: Date,
 ): void {
   if (
@@ -54,7 +61,7 @@ export function assertAskRecoveryNotBeingRaised(
  */
 export async function closeWaitingAskRecoveries(
   tx: Pick<Prisma.TransactionClient, "paymentRecoveryOperation">,
-  recoveries: readonly PendingAskRecovery[],
+  recoveries: readonly WaitingAskCloseFence[],
   now: Date,
   note: string = PENDING_ASK_NETTED_BY_REDUCTION_NOTE,
 ): Promise<void> {

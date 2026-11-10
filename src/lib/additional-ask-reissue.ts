@@ -18,12 +18,16 @@
 import { PaymentRecoveryOperationStatus, PaymentTransactionKind, type Prisma } from "@prisma/client";
 
 import { ADDITIONAL_ASK_QUEUE_TRANSACTION_OPTIONS, lockAdditionalAskQueue } from "@/lib/additional-ask-queue-transaction";
-import { assertAskRecoveryNotBeingRaised, closeWaitingAskRecoveries, PENDING_ASK_NETTED_BY_REDUCTION_NOTE } from "@/lib/additional-ask-recovery-close";
+import {
+  assertAskRecoveryNotBeingRaised,
+  closeWaitingAskRecoveries,
+  PENDING_ASK_NETTED_BY_REDUCTION_NOTE,
+  type WaitingAskCloseFence,
+} from "@/lib/additional-ask-recovery-close";
 import {
   inFlightAskRecoveries,
   reductionLeftAfterAskCents,
   retireUnpaidAskChain,
-  type PendingAskRecovery,
   type ReductionAgainstUnpaidAsk,
   type RetiredAdditionalAsk,
   type UnpaidAskBooking,
@@ -285,8 +289,8 @@ export async function foldWaitingAsks(
       select: { id: true, priceDiffCents: true, changeFeeCents: true, newData: true },
     }),
   ]);
-  const reissueWaiting: PendingAskRecovery[] = [];
-  const increaseWaiting: PendingAskRecovery[] = [];
+  const reissueWaiting: FoldedAskClose[] = [];
+  const increaseWaiting: FoldedAskClose[] = [];
   const increases: FoldedIncreaseAsk[] = [];
   for (const operation of operations) {
     if (isEditFinancialReviewAdditionalIntentRecoveryKey(operation.idempotencyKey)) continue;
@@ -306,20 +310,15 @@ export async function foldWaitingAsks(
       assertAskRecoveryNotBeingRaised(operation, now);
       continue;
     }
-    const pending = {
+    // The close matches only the fence. The cents stay here, for this fold's own sum.
+    const pending: FoldedAskClose = {
       id: operation.id,
       bookingModificationId,
-      kind: replay.kind,
       status: operation.status,
       attempts: operation.attempts,
       processingStartedAt: operation.processingStartedAt ?? null,
       askCents: 0,
-      invoiceCents: 0,
-      foldedInvoiceCents: 0,
-      foldedInvoices: [],
-      invoiceUnknown: false,
-      foldedInvoiceUnknown: false,
-    } satisfies PendingAskRecovery;
+    };
     if (replay.kind === "reissue") {
       reissueWaiting.push({ ...pending, askCents: replay.frozenCents });
       continue;
@@ -349,6 +348,12 @@ export async function foldWaitingAsks(
     increases,
   };
 }
+
+/** A waiting ask this fold will close: the fence, plus the cents this fold records. */
+type FoldedAskClose = WaitingAskCloseFence & {
+  bookingModificationId: string;
+  askCents: number;
+};
 
 /** What one folded increase retry records: its money beyond the Payment, and the invoice answer frozen on its recovery. */
 function foldedIncreaseEntry(
