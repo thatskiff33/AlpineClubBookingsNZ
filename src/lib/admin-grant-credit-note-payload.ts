@@ -20,7 +20,7 @@ export interface AdminGrantCreditNotePayload {
 }
 
 export function isAdminGrantNoteMappingKey(value: unknown): value is AdminGrantNoteMappingKey {
-  return value === "hutFeeRefunds" || value === "goodwillWriteOffs";
+  return typeof value === "string" && MAPPING_KEYS.some((key) => key === value);
 }
 
 /** A positive integer amount, a credit id, and one of the two mapping keys. */

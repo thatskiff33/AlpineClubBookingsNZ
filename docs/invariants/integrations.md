@@ -358,7 +358,7 @@ legitimately depend on being offered an out-of-service lodge.
   `src/lib/xero-account-mapping-keys.ts`, the one registry the picker, API
   allowlist, resolver and seed derive from; `accountsForMappingKey` is a
   picker's only filter.
-- **NOT structural: the stored code, and this rule says so.** Judging it needs
+- **NOT structural: the stored code.** Judging it needs
   the org's chart, so config transfer and the API are TRUSTED for the value.
   `mappingWriteViolation` refuses only what the registry sees: unknown key,
   account code on an item-only key, item code on a key reading none, blank code.
@@ -372,10 +372,10 @@ legitimately depend on being offered an out-of-service lodge.
 - **The prompt is in TWO places**, the mapping row and the `xero-mappings` setup
   step: the mappings section is collapsed by default.
 - **`goodwillWriteOffs` is the first instance**: whole EXPENSE class, falling
-  back to `hutFeeRefunds`, reclassifying nothing. Only the mint of a noteless
-  legacy `ADMIN_ADJUSTMENT`, and a Goodwill grant whose mapping falls back while
-  unset, routes to it. A member's own money stays on `hutFeeRefunds`
-  (`INV-PAY-023`). Pinned by `xero-account-mapping-registry.test.ts`,
+  back to `hutFeeRefunds`, reclassifying nothing. Only a noteless legacy
+  `ADMIN_ADJUSTMENT` mint, or a Goodwill grant while unset, routes to it.
+  Member's own money stays on `hutFeeRefunds` (`INV-PAY-023`). Pinned by
+  `xero-account-mapping-registry.test.ts`,
   `goodwill-write-off-account.test.ts`.
 
 ## Bulk person-contact seeding (#2939)
