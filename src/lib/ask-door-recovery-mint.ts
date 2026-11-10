@@ -13,6 +13,7 @@ import type { AdditionalAsk } from "@/lib/additional-payment-ask";
 import {
   cancelSupersededAdditionalIntentsNow,
   queueSupersededAdditionalIntentCancellationRows,
+  type QueuedSupersededIntentCancellation,
 } from "@/lib/booking-payment-cleanup";
 import type { ClubFormat } from "@/lib/club-format";
 import { retireAskOnEndedBooking } from "@/lib/ended-booking-ask-guard";
@@ -74,6 +75,58 @@ export async function mintAskUnderItsDoorRecovery({
   });
 }
 
+/**
+ * Lost-fence settlement, the supersede, and retire-before-invoice are one
+ * sequence. The row write and the invoice queue stay with the caller: a
+ * re-issue and a folding increase send different requests.
+ */
+async function finishMintUnderDoorRecovery({
+  format,
+  bookingId,
+  paymentId,
+  bookingModificationId,
+  recovery,
+  intent,
+  superseded,
+  lostFenceMessage,
+  queueInvoices,
+}: {
+  format: ClubFormat;
+  bookingId: string;
+  paymentId: string;
+  bookingModificationId: string;
+  recovery: ReissuedAskRecovery;
+  intent: { id: string; client_secret: string | null };
+  superseded: readonly QueuedSupersededIntentCancellation[] | null;
+  lostFenceMessage: string;
+  queueInvoices: () => Promise<boolean>;
+}): Promise<DoorRecoveryMintResult> {
+  if (superseded === null) {
+    logger.warn({ bookingId, bookingModificationId, paymentIntentId: intent.id }, lostFenceMessage);
+    return {
+      outcome: "left",
+      recovery: await settleLostReissuedAskFence({
+        bookingId,
+        bookingModificationId,
+        paymentIntentId: intent.id,
+        stripeKey: recovery.paymentIntentId,
+      }),
+    };
+  }
+  await cancelSupersededAdditionalIntentsNow({
+    format,
+    bookingId,
+    paymentId,
+    queued: superseded,
+    newPaymentIntentId: intent.id,
+  });
+  if (await retireAskOnEndedBooking({ format, bookingId, paymentId, paymentIntentId: intent.id })) {
+    return { outcome: "retired" };
+  }
+  const live = await queueInvoices();
+  return { outcome: "minted", intentId: intent.id, clientSecret: intent.client_secret, live };
+}
+
 async function mintReissue({
   format,
   bookingId,
@@ -118,25 +171,18 @@ async function mintReissue({
       store,
     });
   });
-  if (superseded === null) {
-    logger.warn(
-      { bookingId, bookingModificationId, paymentIntentId: pi.id },
+  return finishMintUnderDoorRecovery({
+    format,
+    bookingId,
+    paymentId,
+    bookingModificationId,
+    recovery,
+    intent: pi,
+    superseded,
+    lostFenceMessage:
       "A re-issued additional ask's recovery moved while the door minted it (#3954); nothing written - the recovery's owner asks the member",
-    );
-    return {
-      outcome: "left",
-      recovery: await settleLostReissuedAskFence({
-        bookingId,
-        bookingModificationId,
-        paymentIntentId: pi.id,
-        stripeKey: recovery.paymentIntentId,
-      }),
-    };
-  }
-  await cancelSupersededAdditionalIntentsNow({ format, bookingId, paymentId, queued: superseded, newPaymentIntentId: pi.id });
-  if (await retireAskOnEndedBooking({ format, bookingId, paymentId, paymentIntentId: pi.id })) return { outcome: "retired" };
-  const live = await queueReissuedAskSupplementaryInvoice({ bookingId, bookingModificationId, paymentIntentId: pi.id });
-  return { outcome: "minted", intentId: pi.id, clientSecret: pi.client_secret, live };
+    queueInvoices: () => queueReissuedAskSupplementaryInvoice({ bookingId, bookingModificationId, paymentIntentId: pi.id }),
+  });
 }
 
 async function mintFoldedIncrease({
@@ -190,23 +236,17 @@ async function mintFoldedIncrease({
       store,
     });
   });
-  if (superseded === null) {
-    logger.warn(
-      { bookingId, bookingModificationId, paymentIntentId: pi.id },
+  return finishMintUnderDoorRecovery({
+    format,
+    bookingId,
+    paymentId,
+    bookingModificationId,
+    recovery,
+    intent: pi,
+    superseded,
+    lostFenceMessage:
       "A folding increase's recovery moved while the door minted it (#4744); nothing written - the recovery's owner asks the member",
-    );
-    return {
-      outcome: "left",
-      recovery: await settleLostReissuedAskFence({
-        bookingId,
-        bookingModificationId,
-        paymentIntentId: pi.id,
-        stripeKey: recovery.paymentIntentId,
-      }),
-    };
-  }
-  await cancelSupersededAdditionalIntentsNow({ format, bookingId, paymentId, queued: superseded, newPaymentIntentId: pi.id });
-  if (await retireAskOnEndedBooking({ format, bookingId, paymentId, paymentIntentId: pi.id })) return { outcome: "retired" };
-  const live = await queueFoldedAskInvoices({ bookingId, increaseModificationId: bookingModificationId, paymentIntentId: pi.id });
-  return { outcome: "minted", intentId: pi.id, clientSecret: pi.client_secret, live };
+    queueInvoices: () =>
+      queueFoldedAskInvoices({ bookingId, increaseModificationId: bookingModificationId, paymentIntentId: pi.id }),
+  });
 }
