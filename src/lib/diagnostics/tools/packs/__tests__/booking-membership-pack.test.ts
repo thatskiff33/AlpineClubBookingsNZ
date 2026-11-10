@@ -2942,6 +2942,7 @@ const FORBIDDEN_RELATIONS = [
   "TwoFactorEmailCode",
   "TwoFactorRecoveryCode",
   "TwoFactorSessionChallenge",
+  "SessionReauthChallenge",
   "NominationToken",
   "PartnerInviteToken",
   "GuestChoreToken",

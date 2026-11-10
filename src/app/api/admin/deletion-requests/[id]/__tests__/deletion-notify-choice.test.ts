@@ -53,6 +53,9 @@ const h = vi.hoisted(() => {
     twoFactorSessionChallenge: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    sessionReauthChallenge: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
     // CT-4 (#2870): the "future stay" cut-off comes from the club's PERSISTED
     // timezone. Without this delegate `loadPersistedClubTimeSettings()` returns
     // null -- fail-soft by design -- and the route silently falls back to the

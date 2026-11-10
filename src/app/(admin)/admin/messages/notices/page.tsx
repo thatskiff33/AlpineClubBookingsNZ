@@ -20,7 +20,7 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useClubTime } from "@/components/club-time-provider";
 import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import type { AdminNoticeData } from "@/components/admin/notice-editor";
-import { adminHref } from "@/lib/admin-hubs";
+import { adminHref, getAdminPage } from "@/lib/admin-hubs";
 
 type NoticeGroups = {
   published: AdminNoticeData[];
@@ -205,7 +205,9 @@ export default function AdminNoticesPage() {
       <div className="space-y-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Member notices</h1>
+            <h1 className="text-2xl font-bold text-foreground">
+              {getAdminPage("notices").label}
+            </h1>
             <p className="text-sm text-muted-foreground">
               Publish notices to members, target them to groups, and track who
               has read them.
