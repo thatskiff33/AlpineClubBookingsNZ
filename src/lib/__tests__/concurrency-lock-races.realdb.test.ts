@@ -391,6 +391,7 @@ import "./primary-invoice-edit-race.realdb.test";
 // queueing behind the change's supplementary-invoice anchor lock. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3953-` fixtures.
 import "./additional-capture-receipt.realdb.test";
+import "./additional-capture-receipt-sweep-retry.realdb.test";
 // #3953 round 7: a change capture whose ledger row carries no change stamp - a
 // review charge (read to its change by its reason) or an older member ask (the
 // booking's lock, taken before the anchor's) - still has one recorder. Skipped
