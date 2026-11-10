@@ -541,7 +541,7 @@ describe("sync lens F1: a refund appeal approved after the organiser cancel leav
         booking: { ...row.booking, status: "CANCELLED" },
         payment: { ...row.payment!, status: "PARTIALLY_REFUNDED", refundedAmountCents: 2_250 },
         groupSettlement: { ...row.groupSettlement!, refundPlan: { [B]: 2_250 } },
-        tasks: [{ id: "t1", ...task(status, appeal, 1_000), settlementDirection: null, lateCaptureApprovalIntentId: null }],
+        tasks: [{ id: "t1", ...task(status, appeal, 1_000), settlementDirection: null, lateCaptureApprovalIntentId: null, reason: "" }],
         groupChild: { pricing: PRICING, siblings, cancelledWithoutSnapshot: true, snapshotKept: null },
         lines: [],
       };

@@ -107,6 +107,7 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   spec("TwoFactorEmailCode", "member", "memberId", "cascade"),
   spec("TwoFactorRecoveryCode", "member", "memberId", "cascade"),
   spec("TwoFactorSessionChallenge", "member", "memberId", "cascade"),
+  spec("SessionReauthChallenge", "member", "memberId", "cascade"),
   spec("PartnerInviteToken", "createdBy", "createdById", "cascade", {
     note: "single-use invite token created by loser; low-value ephemeral, dies with loser",
   }),

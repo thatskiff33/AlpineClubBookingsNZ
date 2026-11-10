@@ -781,6 +781,7 @@ describe("spec bucket integrity", () => {
         "TwoFactorEmailCode",
         "TwoFactorRecoveryCode",
         "TwoFactorSessionChallenge",
+        "SessionReauthChallenge",
         "PartnerInviteToken",
         "SchoolMemberClassification",
       ]),
