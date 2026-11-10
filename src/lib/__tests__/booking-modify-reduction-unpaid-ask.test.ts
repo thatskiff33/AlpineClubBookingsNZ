@@ -1553,6 +1553,40 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
       expect(recoveryUpdateMany).not.toHaveBeenCalled();
     });
 
+    it.each(["mod_a", "mod_b"])("retires a nested waiting invoice anchored on %s and counts its money once", async (anchor) => {
+      const entry = (modificationId: string, cents: number) => ({
+        modificationId, askCents: cents, invoiceCents: cents,
+        invoiceUnsure: false, hadIssuedXeroInvoice: true,
+      });
+      state.rows = [];
+      state.modifications = [
+        { id: "mod_a", priceDiffCents: 3_000, changeFeeCents: 0, newData: {} },
+        { id: "mod_b", priceDiffCents: 2_000, changeFeeCents: 0, newData: {
+          foldedReissuedAskCents: 3_000, foldedReissuedAskInvoiceCents: 3_000,
+          foldedIncreaseAsks: [entry("mod_a", 3_000)],
+        } },
+        { id: "mod_increase", priceDiffCents: 1_000, changeFeeCents: 0, newData: {
+          foldedReissuedAskCents: 5_000, foldedReissuedAskInvoiceCents: 5_000,
+          foldedIncreaseAsks: [entry("mod_b", 5_000)],
+        } },
+      ];
+      state.recoveries = [recoveryRow({ amountCents: 6_000, hadIssuedXeroInvoice: true })];
+      state.parkedInvoices = [{
+        localModel: "BookingModification", localId: anchor,
+        requestPayload: { priceDiffCents: anchor === "mod_a" ? 3_000 : 2_000, changeFeeCents: 0 },
+      }];
+      const result = await adjust(awaitingRetryBooking(), -4_000);
+      expect(result.additionalAsk.amountCents).toBe(2_000);
+      expect(result.reissuedAskInvoiceCents).toBe(2_000);
+      expect(result.unpaidAskBilledOffsetCents).toBe(0);
+      expect(xeroUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ OR: expect.arrayContaining([
+          expect.objectContaining({ requestPayload: { path: ["bookingModificationId"], equals: "mod_a" } }),
+          expect.objectContaining({ requestPayload: { path: ["bookingModificationId"], equals: "mod_b" } }),
+        ]) }),
+      }));
+    });
+
     it("MUTATION (#4744): a reduction against a waiting increase counts an increase that increase had already folded in", async () => {
       state.rows = [];
       state.modifications = [{

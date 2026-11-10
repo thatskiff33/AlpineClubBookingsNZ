@@ -19,13 +19,12 @@ import {
   sizeRecoveryReplayAsk,
 } from "@/lib/additional-ask-recovery-replay";
 import logger from "@/lib/logger";
+import { foldedAskInvoiceParts } from "@/lib/folded-ask-invoice-parts";
 import {
   bookingModificationIdForAdditionalIntentRecoveryKey,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
 } from "@/lib/payment-recovery-keys";
 import {
-  recordedFoldedIncreaseAsks,
-  recordedFoldedReissuedAskModificationIds,
   recordedReissuedAskInvoiceCents,
   recordedReissuedAskInvoiceUnsureCents,
 } from "@/lib/unpaid-ask-offset-marker";
@@ -93,17 +92,10 @@ export function pendingAskRecoveries(
     const claimed = operation.status === PaymentRecoveryOperationStatus.PROCESSING;
     const settled = isRecoveryReplaySettled(replay, operation, transactions);
     if (settled && !claimed) continue;
-    const nested = recordedFoldedIncreaseAsks(modification?.newData);
-    const foldedInvoices =
-      settled || replay.kind !== "increase"
-        ? []
-        : [
-            ...recordedFoldedReissuedAskModificationIds(modification?.newData).map((id) => ({
-              modificationId: id,
-              invoiceCents: recordedReissuedAskInvoiceCents(modifications.find((row) => row.id === id)?.newData),
-            })),
-            ...nested.entries.map((entry) => ({ modificationId: entry.modificationId, invoiceCents: entry.invoiceCents })),
-          ];
+    const folded = !settled && replay.kind === "increase"
+      ? foldedAskInvoiceParts(modification?.newData, modifications)
+      : { parts: [], unsure: false };
+    const foldedInvoices = folded.parts;
     pending.push({
       id: operation.id,
       bookingModificationId,
@@ -129,15 +121,7 @@ export function pendingAskRecoveries(
         (replay.kind === "increase"
           ? operation.hadIssuedXeroInvoice === null
           : recordedReissuedAskInvoiceUnsureCents(modification?.newData) > 0),
-      foldedInvoiceUnknown:
-        !settled &&
-        replay.kind === "increase" &&
-        (nested.unsure ||
-          nested.entries.some((entry) => entry.invoiceUnsure) ||
-          recordedFoldedReissuedAskModificationIds(modification?.newData).some(
-            (reductionId) =>
-              recordedReissuedAskInvoiceUnsureCents(modifications.find((row) => row.id === reductionId)?.newData) > 0,
-          )),
+      foldedInvoiceUnknown: folded.unsure,
     });
   }
   return pending;

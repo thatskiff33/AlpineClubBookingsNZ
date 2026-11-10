@@ -6,6 +6,8 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { foldedAskInvoiceParts } from "@/lib/folded-ask-invoice-parts";
+
 import {
   foldedIncreaseInvoiceRepair,
   NO_FOLDED_WAITING_ASKS,
@@ -58,5 +60,16 @@ describe("a folded waiting increase (#4744)", () => {
     expect(foldedIncreaseInvoiceRepair("mod_increase", modifications, new Set(["mod_later"]))).toBe("accounted");
     expect(foldedIncreaseInvoiceRepair("mod_increase", modifications, new Set())).toBe("missing");
     expect(foldedIncreaseInvoiceRepair("mod_later", modifications, new Set())).toBe("none");
+  });
+});
+
+describe("folded invoice evidence", () => {
+  it("keeps missing, malformed, or cyclic fold history uncertain", () => {
+    const history = unpaidAskOffsetHistory({ ...NO_UNPAID_ASK_SETTLEMENT, foldedWaitingAsks: folded });
+    expect(foldedAskInvoiceParts(history, []).unsure).toBe(true);
+    expect(foldedAskInvoiceParts({ foldedIncreaseAsks: [{}] }, []).unsure).toBe(true);
+    expect(foldedAskInvoiceParts(history, [{ id: "mod_increase", newData: history }])).toEqual({
+      parts: [{ modificationId: "mod_increase", invoiceCents: 0 }], unsure: true,
+    });
   });
 });
