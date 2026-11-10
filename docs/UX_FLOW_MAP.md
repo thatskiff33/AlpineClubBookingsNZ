@@ -44,7 +44,7 @@ rules belong in the linked references. See the [budget register](invariants/WORD
 
 Screen: `/`, `/login`.
 
-Journey: Browse club information, sign in, or follow account recovery. After sign-in, complete any required security or profile steps before opening the dashboard.
+Journey: Browse club information, sign in, or follow account recovery. After sign-in, complete any required security or profile steps before opening the dashboard. When a passkey is saved, the second step can be that passkey beside the app or email code.
 
 [Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -108,7 +108,7 @@ Journey: Join the waitlist for full nights, open an offer, and accept before its
 
 Screen: `/profile`.
 
-Journey: Use the section rail to open personal details, sign-in security, notification preferences or privacy controls. Stage and save the relevant section.
+Journey: Use the section rail to open personal details, sign-in security, notification preferences or privacy controls. Stage and save the relevant section. Sign-in security lists saved passkeys and can add or remove one without changing the authenticator-app or email enrolment.
 
 [Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

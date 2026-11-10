@@ -182,6 +182,7 @@ describe("auth session refresh", () => {
         sessionsRevokedAt: true,
         twoFactorEnabled: true,
         twoFactorMethod: true,
+        webAuthnCredentials: { select: { id: true }, take: 1 },
         postLoginLanding: true,
         // #4612: with role and the rows, the record's classification, which
         // decides the lodge kiosk account's longer idle window.
@@ -481,6 +482,41 @@ describe("auth session refresh", () => {
     );
   });
 
+  it("keeps a passkey-only member verified after the challenge", async () => {
+    mockLoadEffectiveModuleFlags.mockResolvedValue({ twoFactor: true });
+    mockFindUnique.mockResolvedValue({
+      role: "MEMBER",
+      accessRoles: [{ role: "USER" }],
+      forcePasswordChange: false,
+      emailVerified: true,
+      passwordChangedAt: null,
+      twoFactorEnabled: false,
+      twoFactorMethod: null,
+      webAuthnCredentials: [{ id: "passkey-1" }],
+    });
+
+    const refreshedToken = await authConfig.callbacks.jwt?.({
+      token: {
+        id: "member-1",
+        role: "MEMBER",
+        forcePasswordChange: false,
+        isEmailVerified: true,
+        sessionIssuedAt: Date.now(),
+        twoFactorVerified: true,
+        twoFactorVerifiedByChallenge: true,
+      },
+    } as never);
+
+    expect(refreshedToken).toEqual(
+      expect.objectContaining({
+        hasPasskey: true,
+        twoFactorEnrolled: true,
+        twoFactorVerified: true,
+        twoFactorVerifiedByChallenge: true,
+      }),
+    );
+  });
+
   it("projects the refreshed token role into the session", async () => {
     const session = await authConfig.callbacks.session?.({
       session: {
@@ -521,6 +557,7 @@ describe("auth session refresh", () => {
       twoFactorRequired: false,
       twoFactorVerified: false,
       twoFactorEnrolled: false,
+      hasPasskey: false,
       twoFactorMethod: null,
       postLoginLanding: null,
     });

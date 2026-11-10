@@ -1035,3 +1035,4 @@ headings the index keeps verbatim.
 | `INV-AUTH-006` | Chosen passwords screened by prefix-only breach lookup; fails open |
 | `INV-AUTH-007` | Sessions end a fixed time after sign-in; missing stamp is expired |
 | `INV-AUTH-008` | Recent proof is five minutes; the client cannot stamp it |
+| `INV-AUTH-009` | A passkey enrols; its challenge lasts two minutes |
