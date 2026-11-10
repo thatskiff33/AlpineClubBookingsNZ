@@ -1901,6 +1901,42 @@ afterwards, first reset the rewritten rows from their audit rows (each
 `booking-payment.stored-night-price.rate-derived` strand entry carries
 `fromPriceCents` and `fromSource` per night), then route back.
 
+### Settle open edit reviews and re-base frozen headlines (#4343)
+
+`pnpm run bookings:edit-review-cleanup` is the owner's one-off for edit reviews
+left from before every edit was priced automatically. It does nothing until it
+is run. Census (the default) and `--dry-run` keep nothing. `--apply` needs
+`--actor <memberId>` and is the only mode that writes.
+
+Census reports open edit reviews, frozen headlines (a booking that has a review,
+none of them still open, and a total that is not the sum of its guests),
+dismissed shortenings whose money stayed inside the guest's stored total, and
+the existing ledger night-line census. Dry-run prints the decision for each
+open review and, for each frozen headline, the four money columns before and
+after. That preview runs inside a transaction it rolls back.
+
+Apply settles each open review through the ordinary refund, credit or charge
+path, and charges the change fee when the edit moved check-in and had not
+already charged one. A review it cannot price, and one whose guest was removed
+after the review was raised, is closed with a note and no money moved. A
+resolver refusal stays open and is listed. The headline pass then re-bases each
+frozen booking through the same writer a review closure uses. It moves no cash,
+card charge, account credit or Xero document. A second apply changes nothing.
+
+Run it only from the image that contains this change, after that colour is the
+only one serving, and never during a mixed-colour window. Point `DATABASE_URL`
+at a non-production copy for the dry-run. Name the database yourself:
+
+```bash
+DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup
+DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup -- --dry-run
+DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup -- --apply --actor <memberId>
+```
+
+The before-values are on the booking's `PRICE_REBASE` history row and the audit
+entry, which is how a headline can be put back by hand. Do not roll production
+back below `5bab5c49`.
+
 ### Census the booking money verdicts, night-price provenance and edit reviews (#3278, #3531)
 
 `pnpm run booking-money:census` is a READ-ONLY, repeatable-read census. It

@@ -1031,7 +1031,14 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "reopenManualRefundTask#1",
     tier: "GLOBAL",
     reason:
-      "DISMISSED -> OPEN re-arms assertNoPendingEditFinancialReview RETROACTIVELY, against money-affecting edits already in flight - unlike the closure it mirrors, which only relaxes that fence. Unlocked, an edit that read the fence while the task was dismissed can settle a credit under its own modification while the reopen commits, leaving an OPEN task whose context still points at the earlier anchor and whose completion credits the member twice. It makes no provider call, so the bounded exception that keeps resolveManualRefundTask lock-free does not apply. #4124: an approved appeal's task is measured by the appeal's ceiling, which nets the payment's open card refund debts, so for that task it takes the Payment row (lockPaymentForRefundedTotal) after this key and before the ceiling's reads, as the approval does.",
+      "DISMISSED -> OPEN re-arms assertNoPendingEditFinancialReview RETROACTIVELY, against money-affecting edits already in flight - unlike the closure it mirrors, which only relaxes that fence. Unlocked, an edit that read the fence while the task was dismissed can settle a credit under its own modification while the reopen commits, leaving an OPEN task whose context still points at the earlier anchor and whose completion credits the member twice. It makes no provider call, so the bounded exception that keeps resolveManualRefundTask lock-free does not apply. #4124: an approved appeal's task is measured by the appeal's ceiling, which nets the payment's open card refund debts, so for that task it takes the Payment row (lockPaymentForRefundedTotal) after this key and before the ceiling's reads, as the approval does. #4343: an EDIT_FINANCIAL_REVIEW is refused before the claim, so that kind cannot re-arm the fence; every other dismissed kind still can.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "editReviewHeadlineRebase#1",
+    tier: "GLOBAL",
+    reason:
+      "#4343 (D5): the one-off headline re-base rewrites the booking's four money columns, which the cancellation cap and the bank-amount check read, so it takes the global settlement key first, re-reads the booking, and compare-and-sets through the closure's re-base. No provider call, no lodge key, no second advisory key. A miss rolls that booking back.",
     invariant: "INV-LOCK-001",
   },
   {

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { BookingStatus, ManualRefundTaskStatus } from "@prisma/client";
+import { BookingStatus, ManualRefundTaskKind, ManualRefundTaskStatus } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import {
@@ -144,6 +144,14 @@ export const REOPEN_EDIT_REFUND_EXCEEDS_CASH_MESSAGE =
 export const REOPEN_RACED_MESSAGE =
   "This item changed while you were putting it back — refresh and try again.";
 
+/**
+ * #4343: edit reviews are retired. Reopening one would put it back on the
+ * queue and fence every later edit of that booking. Officer-dismissed and
+ * machine-dismissed rows are both refused, before the status claim.
+ */
+export const REOPEN_EDIT_REVIEW_RETIRED_MESSAGE =
+  "Officer edit reviews were retired; an edit review cannot be put back on the queue.";
+
 /*
   THE BOUNDS ARE NOT HERE. A card has to SAY the window it is showing, and this
   module is `server-only`, so both bounds live in
@@ -212,6 +220,9 @@ export async function reopenManualRefundTask({
     });
     if (!task) {
       throw new ManualBookingPaymentError("Refund task not found.", 404);
+    }
+    if (task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
+      throw new ManualBookingPaymentError(REOPEN_EDIT_REVIEW_RETIRED_MESSAGE, 409);
     }
     if (task.status === ManualRefundTaskStatus.OPEN) {
       throw new ManualBookingPaymentError(REOPEN_ALREADY_OPEN_MESSAGE, 409);

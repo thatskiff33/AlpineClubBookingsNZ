@@ -2571,7 +2571,12 @@ DISMISSED -> OPEN   (#3498, owner decision D2: an officer with finance:edit puts
                      clears all three off the row, so that entry is the only
                      place they survive. Everything the OPEN status governs
                      re-arms with it: the pending-review fence, and the
-                     member-facing banner. See `INV-PAY-099`.)
+                     member-facing banner. See `INV-PAY-099`. Since #4343 an
+                     `EDIT_FINANCIAL_REVIEW` is refused on this arm, before the
+                     claim, and nothing is written: officer edit reviews are
+                     retired. Remaining OPEN rows of that kind are settled or
+                     closed by `bookings:edit-review-cleanup`. Every other kind
+                     still uses this arm. A completion stays terminal.)
 OPEN -> DISMISSED   (#3643, owner decision 28 Sep 2026: the ONLY close of a
                      part-payment review - a `CANCELLED_BOOKING_HAND_BACK`
                      marked by `partPaymentReviewPaymentId`, raised with no

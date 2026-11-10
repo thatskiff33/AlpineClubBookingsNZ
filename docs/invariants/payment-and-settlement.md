@@ -2608,7 +2608,10 @@ _Legacy: settles tasks raised before #4317._
   dismissed the row, when, and what they said — the claim clears all three from
   the row, so that entry is the only place they survive. Reopening re-arms
   everything the OPEN status governs, including the pending-review fence
-  ([INV-PAY-066]) and the member-facing banner. Home:
+  ([INV-PAY-066]) and the member-facing banner. An `EDIT_FINANCIAL_REVIEW` is
+  the exception (#4343): refused before the claim, whether an officer or the
+  machine dismissed it, and the finance queue does not offer it. Still-OPEN
+  rows of that kind are closed by `bookings:edit-review-cleanup`. Home:
   `src/lib/manual-refund-task-reopen.ts`; pinned by
   `manual-refund-task-reopen.test.ts`.
 

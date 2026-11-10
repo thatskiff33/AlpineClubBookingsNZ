@@ -1,6 +1,6 @@
 import "server-only";
 
-import { Prisma } from "@prisma/client";
+import { ManualRefundTaskKind, Prisma } from "@prisma/client";
 
 import logger from "@/lib/logger";
 import {
@@ -68,6 +68,10 @@ export function readOrDegrade<T>(
  * **Put back on the queue** button would invite a second refund of money that
  * has already gone back. The reopen door refuses those too; a list that never
  * offers them is the courtesy, not the control.
+ *
+ * An `EDIT_FINANCIAL_REVIEW` is excluded for a different reason (#4343): that
+ * kind is retired, and the queue must not offer to put one back. The reopen
+ * door refuses it as well; this query is what keeps the button off the card.
  */
 export function readDismissedManualRefundTasks(
   store: Pick<Prisma.TransactionClient, "manualRefundTask">,
@@ -76,6 +80,7 @@ export function readDismissedManualRefundTasks(
   return store.manualRefundTask.findMany({
     where: {
       status: "DISMISSED",
+      kind: { not: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW },
       completedByMemberId: { not: null },
       completedAt: {
         gte: new Date(

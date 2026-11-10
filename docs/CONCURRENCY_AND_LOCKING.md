@@ -4855,8 +4855,10 @@ have been visible already.
 
 **#3498 ADDS THE ONE TRANSITION ON THIS TABLE THAT DOES TAKE
 `pg_advisory_xact_lock(1)`, AND THE REASON IS THE DIRECTION IT MOVES THE FENCE.**
-An officer may now put a DISMISSED `EDIT_FINANCIAL_REVIEW` task back on the queue
-(`reopenManualRefundTask`, owner decision D2). Every paragraph above argues that a
+An officer may put a DISMISSED money task back on the queue
+(`reopenManualRefundTask`, owner decision D2), except an `EDIT_FINANCIAL_REVIEW`:
+since #4343 that kind is refused before the claim, so a retired review cannot
+re-arm the fence. Every other kind still can. Every paragraph above argues that a
 closure needs no advisory key; the reopen is not its mirror image and inherits
 none of that argument.
 
@@ -4884,6 +4886,11 @@ status-fenced `updateMany` and one audit row, all local. Single-lock holder,
 composing with no narrower tier, so `INV-LOCK-002`'s global -> lodge -> member
 order is satisfied trivially and no cycle is reachable. Registered as
 `reopenManualRefundTask#1` in `advisory-lock-guard.test.ts`.
+
+**#4343's headline re-base** (`editReviewHeadlineRebase#1`) takes the same global
+key first, re-reads the booking, and compare-and-sets the four money columns
+through the closure's re-base. It calls no provider and takes no lodge key. A
+booking that moved under the lock loses the compare-and-set and is listed.
 
 The status-fenced `updateMany` stays and still carries the two-officers case: the
 key serialises them, and the fence is what tells the loser the row moved instead

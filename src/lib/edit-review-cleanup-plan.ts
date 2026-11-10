@@ -105,11 +105,21 @@ export type OpenEditReviewInput = {
   prospectiveChangeFeeCents: number;
   /** The new check-in could not be read, so the fee cannot be priced. */
   changeFeeUnreadable?: boolean;
+  /** The booking's status. An unpaid, unconfirmed booking carries no change fee. */
+  bookingStatus: string;
+  /** A captured payment exists. With an unconfirmed status, the change fee is zero. */
+  paymentCaptured: boolean;
 };
 
 export function addedNightPriceKey(bookingGuestId: string, date: CalendarDate): string {
   return `${bookingGuestId}|${date}`;
 }
+
+/**
+ * Statuses that have been confirmed. Anything else is unconfirmed: with no
+ * captured payment it carries no change fee (owner, 10 Nov 2026).
+ */
+const CONFIRMED_BOOKING_STATUSES = new Set(["CONFIRMED", "PAID", "COMPLETED", "CANCELLED"]);
 
 /**
  * The change fee wave B adds (D8). Zero when check-in did not move, and zero
@@ -122,6 +132,18 @@ export function changeFeeToAdd(input: {
 }): number {
   if (!input.checkInChanged || input.changeFeeAlreadyChargedCents > 0) return 0;
   return input.prospectiveChangeFeeCents;
+}
+
+/** D8, plus the unpaid-unconfirmed rule. The decision function is the only caller. */
+export function cleanupChangeFeeCents(input: {
+  checkInChanged: boolean;
+  changeFeeAlreadyChargedCents: number;
+  prospectiveChangeFeeCents: number;
+  bookingStatus: string;
+  paymentCaptured: boolean;
+}): number {
+  if (!CONFIRMED_BOOKING_STATUSES.has(input.bookingStatus) && !input.paymentCaptured) return 0;
+  return changeFeeToAdd(input);
 }
 
 function dismiss(
@@ -205,7 +227,12 @@ export function decideOpenEditReview(input: OpenEditReviewInput): OpenEditReview
   if (removed.length > 0) {
     const removedIds = new Set(removed.map((guest) => guest.bookingGuestId));
     const remainingStrandGuestIds = strands
-      .filter((strand) => editFinancialReviewStrandMovesNights(strand) && !removedIds.has(strand.bookingGuestId))
+      .filter(
+        (strand) =>
+          editFinancialReviewStrandMovesNights(strand) &&
+          !removedIds.has(strand.bookingGuestId) &&
+          input.currentGuestIds.has(strand.bookingGuestId),
+      )
       .map((strand) => strand.bookingGuestId);
     return dismiss(input, "consent-removed", {
       removedGuestIds: removed.map((guest) => guest.bookingGuestId),
@@ -245,10 +272,12 @@ export function decideOpenEditReview(input: OpenEditReviewInput): OpenEditReview
     charges += addedGuests.totalPriceCents;
   }
 
-  const feeCents = changeFeeToAdd({
+  const feeCents = cleanupChangeFeeCents({
     checkInChanged: input.checkInChanged,
     changeFeeAlreadyChargedCents: input.changeFeeAlreadyChargedCents,
     prospectiveChangeFeeCents: input.prospectiveChangeFeeCents,
+    bookingStatus: input.bookingStatus,
+    paymentCaptured: input.paymentCaptured,
   });
   if (!isNonNegativeIntegerCents(feeCents)) {
     return dismiss(input, "unreadable", {
@@ -399,15 +428,20 @@ export function listDismissedShortenings(
   return rows;
 }
 
-/** Check-in dates on a modification's before/after snapshots, when both are calendar days. */
+/**
+ * Check-in dates on a modification's before/after snapshots.
+ * `unreadable` when either snapshot has no calendar check-in, so the fee is
+ * not guessed as zero.
+ */
 export function modificationCheckInChange(previousData: unknown, newData: unknown): {
   changed: boolean;
   newCheckIn: CalendarDate | null;
+  unreadable: boolean;
 } {
   const previous = readCheckIn(previousData);
   const next = readCheckIn(newData);
-  if (previous === null || next === null) return { changed: false, newCheckIn: next };
-  return { changed: previous !== next, newCheckIn: next };
+  if (previous === null || next === null) return { changed: false, newCheckIn: next, unreadable: true };
+  return { changed: previous !== next, newCheckIn: next, unreadable: false };
 }
 
 function readCheckIn(data: unknown): CalendarDate | null {

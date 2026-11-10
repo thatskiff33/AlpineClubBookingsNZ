@@ -283,7 +283,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-062` | One booking edit raises one charge request, derived from settled shares |
 | `INV-PAY-098` | A replacement ask carries the unpaid balance it retires, and records it |
 | `INV-PAY-112` | One edit's charge request is raised by one run at a time |
-| `INV-PAY-099` | A dismissed money task can be reopened; a completed one cannot |
+| `INV-PAY-099` | A dismissed money task can be reopened, except a retired edit review |
 | `INV-PAY-100` | Work-item grain follows the moved strands; the lead absorbs the settlement |
 | `INV-PAY-101` | Refund documents name the method from the settlement decision, never the source |
 | `INV-PAY-116` | Invoice-correction and officer-chosen cash notes have their own wordings |

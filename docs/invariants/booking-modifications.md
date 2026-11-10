@@ -1325,8 +1325,8 @@ An even split puts leftover cents one each on the earliest nights
 held night at its value (`src/lib/edit-night-valuation.ts`): a kept night keeps
 it, a returned one is credited at it, a bought one is priced at current rates,
 and a removed guest is credited its stored total. The headline moves only by
-that change (`editedBookingTotalCents`), so a gap a parked edit froze stays for
-its review; carrying it below zero refuses the edit. A promotion re-decided over a split strand's nights can move a
+that change (`editedBookingTotalCents`), so a gap a parked edit froze stays until
+`bookings:edit-review-cleanup` re-bases it (#4343); carrying it below zero refuses the edit. A promotion re-decided over a split strand's nights can move a
 guest the edit did not touch. Quote equals save.
 
 ## INV-MOD-036
@@ -1450,8 +1450,10 @@ actually taken.
 `INV-MOD-044` price every edit from stored data; a door added later prices the
 same way, or this heading changes. A booking with no stored night rows no
 longer parks: its nights are valued from the stay envelope and its stored total.
-One parked before #4317 prices the same way, and its frozen headline's gap is
-carried through the edit, never settled by it (`editedBookingTotalCents`).
+One parked before #4317 prices the same way. `bookings:edit-review-cleanup`
+closes any still-OPEN review and re-bases a frozen headline once (#4343); until
+that run, `editedBookingTotalCents` carries the gap. The fence stays until the
+OPEN count is 0. No path raises or reopens a review.
 
 **Legacy: the fence stays until every review raised before #4317 is settled**
 (waves B and C). `assertNoPendingEditFinancialReview` sits ahead of every
@@ -1794,7 +1796,9 @@ sentence the officer was already shown at the moment of decision, said once
 
 **Since #4317 the re-price values every strand's nights** (`INV-MOD-028`, owner
 decisions D1 and D5) and re-bases the total to the sum of the guests' stored
-totals, so a closure no longer leaves a frozen headline for the next edit. It
+totals, so a closure no longer leaves a frozen headline. A headline an earlier
+close never re-set is re-based once by `bookings:edit-review-cleanup` (#4343),
+through this same writer, and that run moves no money. It
 declines only for a negative stored guest total, which the database forbids.
 
 **The trigger is a parked review CLOSING, not a strand being repaired** (owner
@@ -1805,14 +1809,11 @@ whose structural half commits and takes a strand away while the frozen headline
 still counts it:
 
 - **the departing strand is the unreadable one and every remaining strand is
-  exact.** The park raises its review over the departing guest, and the same
-  transaction deletes that guest and its night rows. The task names a strand
-  that no longer exists, so no boxes are offered and no repair happens — and
-  every surviving strand reconciles, so this one now RE-PRICES;
-- **a remaining strand holds no night rows at all** while carrying money. Its
-  review is raised, but boxes appear only for a strand with genuine BLANK nights
-  among readable ones, so this one closes with none — and since #4317 it
-  re-bases from its stored total.
+  exact.** The guest is deleted in that same transaction, so no boxes are
+  offered, and the survivors reconcile, so this one re-prices;
+- **a remaining strand holds no night rows at all** while carrying money. Boxes
+  appear only for genuine blank nights, so this one closes with none and, since
+  #4317, re-bases from its stored total.
 
 Both used to leave the headline counting a strand the booking no longer has. The
 condition is now the task's KIND: every `EDIT_FINANCIAL_REVIEW` closure re-prices,
@@ -1820,11 +1821,9 @@ and the night-price repair is the optional half of it. One consequence is
 load-bearing:
 
 - **a closure that recomputes the figures already stored writes no
-  `PRICE_REBASE` history row.** That is now the ordinary outcome — most parked
-  reviews close on a booking whose park never left it out of step — and a "Price
-  Recalculated" entry recording no change would be noise on a page a member and
-  an operator both read. The audit entry records the closure either way, and
-  says which of the two happened.
+  `PRICE_REBASE` history row.** That is the ordinary outcome, and a history row
+  recording no change would be noise. The audit entry records the closure
+  either way, and says which of the two happened.
 
 ## INV-MOD-056
 
