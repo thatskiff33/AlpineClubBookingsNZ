@@ -5,6 +5,18 @@ packages = ["postgresql", "gh"]
 
 [setup]
 run = '''
+git config --global user.name "thatskiff33-agents" &&
+git config --global user.email "318094810+thatskiff33-agents@users.noreply.github.com" &&
+git config --global pull.rebase true &&
+git config --local user.name "thatskiff33-agents" &&
+git config --local user.email "318094810+thatskiff33-agents@users.noreply.github.com" &&
+git config --local pull.rebase true &&
+mkdir -p "$HOME/.cursor" &&
+node -e 'const f=process.env.HOME+"/.cursor/cli-config.json";const fs=require("fs");let d={};try{d=JSON.parse(fs.readFileSync(f,"utf8"))}catch{};d.attribution={...(d.attribution||{}),attributeCommitsToAgent:false,attributePRsToAgent:false};fs.writeFileSync(f,JSON.stringify(d,null,2)+"\n")' &&
+{ [ -z "${CURSOR_CONFIG_DIR:-}" ] || {
+  mkdir -p "$CURSOR_CONFIG_DIR" &&
+  node -e 'const f=process.env.CURSOR_CONFIG_DIR+"/cli-config.json";const fs=require("fs");let d={};try{d=JSON.parse(fs.readFileSync(f,"utf8"))}catch{};d.attribution={...(d.attribution||{}),attributeCommitsToAgent:false,attributePRsToAgent:false};fs.writeFileSync(f,JSON.stringify(d,null,2)+"\n")'
+}; } &&
 node_version=$(cat .nvmrc) &&
 node_major=${node_version%%.*} &&
 { node -v | grep -q "^v${node_major}\." || {
