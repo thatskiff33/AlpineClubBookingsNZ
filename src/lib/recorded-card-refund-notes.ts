@@ -2,6 +2,7 @@
 import type { Payment } from "@prisma/client";
 import { findAdditionalCaptureReceiptInvoiceId } from "@/lib/additional-capture-receipt-link";
 import { queueWebhookCardRefundNotes } from "@/lib/card-refund-own-note";
+import { readCreditReleaseReceiptInvoiceId } from "@/lib/credit-release-xero-payment";
 import { queueLateCaptureRefundCreditNote } from "@/lib/late-capture-refund-credit-note";
 import { readUnrecordedLateCaptureRefund } from "@/lib/late-capture-unrecorded-refunds";
 import { findLateCapturePaymentIntents } from "@/lib/late-capture-xero-receipt";
@@ -32,7 +33,10 @@ export async function queueRecordedCardRefundNotes(params: {
     refunds: params.refunds,
   })) !== "none") return { queueOperationId: null };
   try {
-    const creditsInvoiceId = await findAdditionalCaptureReceiptInvoiceId(params.paymentIntentId);
+    // #4493: a capture the sweep recorded, and nothing else, names that invoice on this same note.
+    const creditsInvoiceId =
+      (await findAdditionalCaptureReceiptInvoiceId(params.paymentIntentId)) ??
+      (await readCreditReleaseReceiptInvoiceId(params.paymentIntentId));
     return await queueWebhookCardRefundNotes({
       payment: params.payment,
       deltaCents: params.deltaCents,

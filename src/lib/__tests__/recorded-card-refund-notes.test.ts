@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Payment } from "@prisma/client";
 
-const { late, unrecorded, receipt, ordinaryNote, lateNote } = vi.hoisted(() => ({
-  late: vi.fn(), unrecorded: vi.fn(), receipt: vi.fn(), ordinaryNote: vi.fn(), lateNote: vi.fn(),
+const { late, unrecorded, receipt, releaseInvoice, ordinaryNote, lateNote } = vi.hoisted(() => ({
+  late: vi.fn(), unrecorded: vi.fn(), receipt: vi.fn(), releaseInvoice: vi.fn(), ordinaryNote: vi.fn(), lateNote: vi.fn(),
 }));
 vi.mock("@/lib/late-capture-xero-receipt", () => ({ findLateCapturePaymentIntents: late }));
 vi.mock("@/lib/late-capture-unrecorded-refunds", () => ({ readUnrecordedLateCaptureRefund: unrecorded }));
 vi.mock("@/lib/additional-capture-receipt-link", () => ({ findAdditionalCaptureReceiptInvoiceId: receipt }));
+vi.mock("@/lib/credit-release-xero-payment", () => ({ readCreditReleaseReceiptInvoiceId: releaseInvoice }));
 vi.mock("@/lib/card-refund-own-note", () => ({ queueWebhookCardRefundNotes: ordinaryNote }));
 vi.mock("@/lib/late-capture-refund-credit-note", () => ({ queueLateCaptureRefundCreditNote: lateNote }));
 import { queueRecordedCardRefundNotes, RecordedCardRefundNoteEnqueueError } from "@/lib/recorded-card-refund-notes";
@@ -16,6 +17,7 @@ beforeEach(() => {
   late.mockReset().mockResolvedValue(new Set());
   unrecorded.mockReset().mockResolvedValue("none");
   receipt.mockReset().mockResolvedValue(null);
+  releaseInvoice.mockReset().mockResolvedValue(null);
   ordinaryNote.mockReset().mockResolvedValue({ queueOperationId: "note-test" });
   lateNote.mockReset().mockResolvedValue(undefined);
 });
@@ -26,8 +28,15 @@ describe("recorded card refund accounting", () => {
   });
   it("keeps a change capture's invoice identity", async () => {
     receipt.mockResolvedValue("invoice-test");
+    releaseInvoice.mockResolvedValue("invoice-release");
     await queueRecordedCardRefundNotes(input);
-    expect(ordinaryNote).toHaveBeenCalledWith(expect.objectContaining({ creditsInvoiceId: "invoice-test" }));
+    expect(ordinaryNote).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ creditsInvoiceId: "invoice-test" }));
+  });
+  it("names the credit-release invoice when the capture has no other receipt (#4493)", async () => {
+    releaseInvoice.mockResolvedValue("invoice-release");
+    await queueRecordedCardRefundNotes(input);
+    expect(ordinaryNote).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ creditsInvoiceId: "invoice-release" }));
+    expect(releaseInvoice).toHaveBeenCalledWith("pi_test");
   });
   it("routes late captures to their own receipt correction", async () => {
     late.mockResolvedValue(new Set(["pi_test"]));
