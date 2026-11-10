@@ -15,6 +15,7 @@
  * imports this file so CI reaches it; it owns and cleans its own `race-4223-`
  * fixtures.
  */
+import type { Prisma } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
@@ -238,7 +239,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       const stored = { amountCents: 20_000, watermarkCents: 20_000, status: "VOIDED", total: 200 };
       await prisma.xeroObjectLink.updateMany({ where: { localId: PAYMENT_ID }, data: { active: false, metadata: stored } });
 
-      const lockNote = (tx: { $executeRaw: typeof prisma.$executeRaw }) => tx.$executeRaw`
+      const lockNote = (tx: Prisma.TransactionClient) => tx.$executeRaw`
         SELECT 1 FROM "XeroObjectLink"
         WHERE "localModel" = 'Payment' AND "localId" = ${PAYMENT_ID} AND "xeroObjectType" = 'CREDIT_NOTE'
           AND "xeroObjectId" = ${NOTE} AND "role" = 'REFUND_CREDIT_NOTE'
