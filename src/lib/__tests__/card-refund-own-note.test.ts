@@ -32,7 +32,7 @@ vi.mock("@/lib/card-refund-resend-answer", () => ({ readFailedRefundsAnsweredBy:
 vi.mock("@/lib/card-refund-own-note-share", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/card-refund-own-note-share")),
   cardRefundNoteCutoverSeconds: async () => null,
-  readCardRefundNoteShare: (...args: unknown[]) => mockShare(...args),
+  readCardRefundNoteShare: mockShare,
 }));
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
