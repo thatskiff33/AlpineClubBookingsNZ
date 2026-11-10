@@ -1,13 +1,13 @@
 import { BackLink } from "@/components/admin/back-link";
 import { Card, CardContent } from "@/components/ui/card";
 import { InternetBankingSettingsPanel } from "@/components/admin/internet-banking/internet-banking-settings-panel";
-import { adminHref } from "@/lib/admin-hubs";
+import { adminLink } from "@/lib/admin-hubs";
 
 export default function InternetBankingAdminPage() {
   return (
     <div className="space-y-8">
       <div>
-        <BackLink href={adminHref("xero-setup")} label="Finance Setup" />
+        <BackLink {...adminLink("xero-setup")} />
         <h1 className="mt-2 text-2xl font-bold text-foreground">
           Internet Banking
         </h1>

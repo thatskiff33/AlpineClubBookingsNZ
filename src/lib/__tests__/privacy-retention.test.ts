@@ -39,7 +39,7 @@ function store() {
     member: [], emailLog: [], memberApplication: [], familyGroupMember: [], booking: [], memberSubscription: [],
     membershipSubscriptionCharge: [], refundRequest: [], xeroObjectLink: [], bookingGuest: [], xeroContactCache: [],
     magicLinkToken: [], passwordResetToken: [], emailVerificationToken: [], emailChangeToken: [],
-    twoFactorEmailCode: [], twoFactorRecoveryCode: [], twoFactorSessionChallenge: [],
+    twoFactorEmailCode: [], twoFactorRecoveryCode: [], twoFactorSessionChallenge: [], sessionReauthChallenge: [],
   };
   const hooks: { beforeApplicationDelete?: () => void; beforeMemberUpdate?: () => void } = {};
   const delegates = Object.fromEntries(Object.keys(data).map(name => {

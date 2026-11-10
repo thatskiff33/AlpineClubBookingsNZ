@@ -1831,7 +1831,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/setup/setup-page-client.tsx":
       "S1: the cards for the merged setup pages link with adminHref; C8: and the Notifications & Email card",
     "src/app/(admin)/admin/messages/notifications/page.tsx":
-      "S1: the cancellation settings card links the Settings tab; C8: its other cards link with adminHref",
+      "S1: the cancellation settings card links the Settings tab; C8: its other cards link with adminHref; " +
+      "#4878: the Delivery Rules and Recipients titles are the registry labels",
     "src/components/admin/membership-cancellation-blocker-notice.tsx":
       "S1: the settings link is the queue's Settings tab",
     "src/lib/setup-readiness.ts":
@@ -1839,6 +1840,10 @@ describe("the registry is inert", () => {
       "C6: the booking policies, age tier and seasons steps; C7: the System Health steps",
     "src/lib/__tests__/admin-feature-search-index.test.ts":
       "S2: the palette census and its fail-closed property over every grid and seeded role",
+    "src/lib/__tests__/contextual-help.test.ts":
+      "#4878: the Member notices help title is the page's registry label",
+    "src/app/(admin)/admin/messages/notifications/__tests__/hub-card-labels.test.tsx":
+      "#4878: the Delivery Rules and Recipients cards show the registry labels",
     "src/lib/__tests__/admin-palette-lodge-scoped-pages.test.tsx":
       "S2: the lodge-scoped pages open from their palette href",
     "src/lib/__tests__/next-config-admin-hub-urls.test.ts":
@@ -1871,7 +1876,7 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/dashboard/page.tsx":
       "C5: the payments and refunds links, and the payments permission check, are adminHref; " +
       "C6: the seasons and promo-code links",
-    "src/app/(admin)/admin/finance/internet-banking/page.tsx": "C5: its back link is adminHref",
+    "src/app/(admin)/admin/finance/internet-banking/page.tsx": "C5: its back link is adminLink",
     "src/app/(admin)/admin/finance/xero/_components/health-diagnostics-panel.tsx":
       "C5: the member-grouping link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/webhook-amber-badge.tsx":
@@ -1995,8 +2000,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/messages/booking-messages/page.tsx": "C8: its back link is adminLink",
     "src/app/(admin)/admin/messages/notices/page.tsx":
       "C8: the notice and new-notice links are adminHref",
-    "src/app/(admin)/admin/messages/notices/[id]/page.tsx": "C8: its back link is adminHref",
-    "src/app/(admin)/admin/messages/notices/new/page.tsx": "C8: its back link is adminHref",
+    "src/app/(admin)/admin/messages/notices/[id]/page.tsx": "C8: its back link is adminLink",
+    "src/app/(admin)/admin/messages/notices/new/page.tsx": "C8: its back link is adminLink",
     "src/components/admin/notice-editor.tsx":
       "C8: saving and cancelling return to Member Notices at its adminHref",
     "src/components/admin/club-posts/club-posts-admin.tsx":

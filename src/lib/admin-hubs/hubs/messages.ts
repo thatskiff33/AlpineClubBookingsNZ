@@ -24,7 +24,7 @@ export const MESSAGES_HUB = defineHub({
     },
     {
       id: "notices",
-      label: "Member Notices",
+      label: "Member notices",
       oldPath: "/admin/notices",
       area: "membership",
       flags: ["memberNotices"],
@@ -79,16 +79,20 @@ export const MESSAGES_HUB = defineHub({
     },
     {
       id: "notification-rules",
-      label: "Notification Rules",
+      label: "Delivery Rules",
       oldPath: "/admin/notification-rules",
       area: "support",
+      // The previous registry name, so the command palette still finds the page (#4878).
+      keywords: ["notification rules"],
       moved: true,
     },
     {
       id: "notification-recipients",
-      label: "Notification Recipients",
+      label: "Recipients",
       oldPath: "/admin/notification-recipients",
       area: "support",
+      // The previous registry name, so the command palette still finds the page (#4878).
+      keywords: ["notification recipients"],
       moved: true,
     },
   ],

@@ -6,19 +6,19 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Bell, Mail, MessageSquareText, Send, UserX } from "lucide-react";
-import { adminHref, adminTabHref } from "@/lib/admin-hubs";
+import { adminHref, adminTabHref, getAdminPage } from "@/lib/admin-hubs";
 
 const sections = [
   {
     href: adminHref("notification-rules"),
-    title: "Delivery Rules",
+    title: getAdminPage("notification-rules").label,
     description:
       "Control which admin and system emails are sent when jobs or alerts run.",
     icon: Send,
   },
   {
     href: adminHref("notification-recipients"),
-    title: "Recipients",
+    title: getAdminPage("notification-recipients").label,
     description:
       "Choose which system alerts each admin user receives, within the areas their role can edit.",
     icon: Bell,

@@ -334,7 +334,7 @@ Journey: Read club posts and use the moderation actions allowed by the current r
 
 [Guide](guides/message-board.md) · [History](UX_FLOW_HISTORY.md#club-message-board-2994-epic-2992)
 
-### Member Notices — notices
+### Member notices — notices
 
 Screen: `/admin/notices`.
 

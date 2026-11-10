@@ -45,6 +45,7 @@ import {
   isKioskSessionMember,
   resolveRequestSessionIdleSeconds,
 } from "./session-idle-expiry";
+import { consumeSessionReauthChallenge } from "./session-reauth";
 import { consumeTwoFactorSessionChallenge } from "./two-factor";
 import { hashActionToken, isActionTokenFormat } from "./action-tokens";
 import {
@@ -117,6 +118,13 @@ declare module "next-auth" {
        * issuance claim.
        */
       sessionIssuedAt?: number;
+      /**
+       * Epoch ms the person last proved who they are (#4616). Set only when
+       * sign-in completes or a reauthentication challenge is consumed. Absent
+       * on a token that has never been stamped, which fails a recent-auth
+       * check closed.
+       */
+      lastAuthenticatedAt?: number;
       twoFactorRequired: boolean;
       twoFactorVerified: boolean;
       twoFactorEnrolled: boolean;
@@ -546,6 +554,7 @@ export const authConfig = {
         token.forcePasswordChange = user.forcePasswordChange;
         token.isEmailVerified = user.isEmailVerified;
         token.sessionIssuedAt = Date.now();
+        token.lastAuthenticatedAt = Date.now();
         token.sessionInvalidated = false;
         token.twoFactorVerified = false;
         token.twoFactorVerifiedByChallenge = false;
@@ -576,6 +585,31 @@ export const authConfig = {
         if (challengeVerified) {
           token.twoFactorVerified = true;
           token.twoFactorVerifiedByChallenge = true;
+          // Sign-in finishes when the second factor is consumed.
+          token.lastAuthenticatedAt = Date.now();
+        }
+      }
+
+      // #4616 (INV-AUTH-008): lastAuthenticatedAt is never copied off the
+      // client payload. Only a consumed server-minted challenge, or the
+      // sign-in branch above, writes it.
+      if (
+        trigger === "update" &&
+        typeof token.id === "string" &&
+        typeof session === "object" &&
+        session !== null &&
+        "user" in session &&
+        typeof session.user === "object" &&
+        session.user !== null &&
+        "reauthChallengeToken" in session.user &&
+        typeof session.user.reauthChallengeToken === "string"
+      ) {
+        const reauthConsumed = await consumeSessionReauthChallenge(
+          token.id,
+          session.user.reauthChallengeToken,
+        );
+        if (reauthConsumed) {
+          token.lastAuthenticatedAt = Date.now();
         }
       }
 
@@ -720,6 +754,12 @@ export const authConfig = {
       session.user.sessionInvalidated = Boolean(token.sessionInvalidated);
       if (typeof token.sessionIssuedAt === "number") {
         session.user.sessionIssuedAt = token.sessionIssuedAt;
+      }
+      if (
+        typeof token.lastAuthenticatedAt === "number" &&
+        Number.isFinite(token.lastAuthenticatedAt)
+      ) {
+        session.user.lastAuthenticatedAt = token.lastAuthenticatedAt;
       }
       session.user.twoFactorRequired = Boolean(token.twoFactorRequired);
       session.user.twoFactorVerified = Boolean(token.twoFactorVerified);
