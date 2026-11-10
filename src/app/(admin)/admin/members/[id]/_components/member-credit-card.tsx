@@ -11,6 +11,7 @@ import { FieldHint, useFieldHint } from "@/components/ui/field-hint"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { MoneyInput } from "@/components/ui/money-input"
+import { Radio } from "@/components/ui/radio"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   ADMIN_CREDIT_GRANT_ACCOUNTS,
@@ -150,11 +151,16 @@ export function MemberCreditCard({
               <fieldset className="space-y-2">
                 <legend className="text-sm font-medium">Xero account</legend>
                 {ADMIN_CREDIT_GRANT_ACCOUNTS.map((account) => (
-                  <label key={account} className="flex items-start gap-2 text-sm">
-                    <input
-                      type="radio"
+                  <label
+                    key={account}
+                    htmlFor={`adj-grant-account-${account}`}
+                    className="flex items-start gap-2 text-sm"
+                  >
+                    <Radio
+                      id={`adj-grant-account-${account}`}
                       name="adj-grant-account"
-                      className="mt-1"
+                      className="mt-0.5"
+                      value={account}
                       checked={grantAccount === account}
                       onChange={() => setGrantAccount(account)}
                     />

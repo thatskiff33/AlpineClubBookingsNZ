@@ -18,9 +18,9 @@ import { cn } from "@/lib/utils";
   The card carries both cues itself, so a caller cannot leave one out:
   - `aria-pressed` on a native `<button>`. Each card is a toggle button that
     reports whether it is on, and a native button takes Enter and Space and the
-    tab order from the browser with no key handler here. The repo has no radio
-    primitive, and the existing payment specs find these cards by the button
-    role.
+    tab order from the browser with no key handler here. These stay buttons:
+    the payment specs find the cards by the button role, and a card is not the
+    radio dot (`Radio`).
   - a visible "Selected" label with a check icon on the chosen card, so the
     choice is never carried by the tint alone.
 
