@@ -1,73 +1,118 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+/**
+ * #4616 (INV-AUTH-008): `requireRecentAuth`, the one recent-authentication
+ * check, and `markSessionReauthenticated`, the step-up route's only way to
+ * move the stamp. The session they read is mocked here; that the stamp is
+ * written only by sign-in and a consumed challenge is proved end to end in
+ * `auth-recent-auth-claim.test.ts`.
+ */
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { frozenTestNow } from "@/lib/__tests__/helpers/clock";
-import {
-  isWithinRecentAuthWindow,
-  RECENT_AUTH_WINDOW_MS,
-  recentAuthRefusalBody,
-} from "@/lib/recent-auth";
-
-const mockAuth = vi.hoisted(() => vi.fn());
-
-vi.mock("@/lib/auth", () => ({
-  auth: mockAuth,
+const mocks = vi.hoisted(() => ({
+  auth: vi.fn(),
+  updateSession: vi.fn(),
+  createSessionReauthChallenge: vi.fn(),
 }));
 
-import { requireRecentAuth } from "@/lib/require-recent-auth";
+vi.mock("@/lib/auth", () => ({
+  auth: mocks.auth,
+  updateSession: mocks.updateSession,
+}));
 
-describe("recent authentication window (#4616)", () => {
-  afterEach(() => {
-    vi.setSystemTime(frozenTestNow());
-    mockAuth.mockReset();
+vi.mock("@/lib/prisma", () => ({ prisma: { member: { findUnique: vi.fn() } } }));
+
+vi.mock("@/lib/session-reauth-challenge", () => ({
+  createSessionReauthChallenge: mocks.createSessionReauthChallenge,
+}));
+
+import { markSessionReauthenticated, requireRecentAuth } from "@/lib/recent-auth";
+import {
+  RECENT_AUTH_REQUIRED_CODE,
+  RECENT_AUTH_WINDOW_MS,
+  isRecentAuthRefusal,
+} from "@/lib/recent-auth-policy";
+
+const SECOND_MS = 1000;
+
+function sessionAuthenticatedAt(lastAuthenticatedAt: number | undefined) {
+  return {
+    user: {
+      id: "officer-1",
+      ...(lastAuthenticatedAt === undefined ? {} : { lastAuthenticatedAt }),
+    },
+  };
+}
+
+describe("requireRecentAuth (#4616)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
-  it("uses the frozen clock, and five minutes still passes", () => {
-    const signedInAt = Date.now();
-    expect(signedInAt).toBe(frozenTestNow().getTime());
-    expect(isWithinRecentAuthWindow(signedInAt, signedInAt)).toBe(true);
-    expect(
-      isWithinRecentAuthWindow(signedInAt, signedInAt + RECENT_AUTH_WINDOW_MS),
-    ).toBe(true);
-    expect(
-      isWithinRecentAuthWindow(
-        signedInAt,
-        signedInAt + RECENT_AUTH_WINDOW_MS + 1000,
-      ),
-    ).toBe(false);
-    expect(isWithinRecentAuthWindow(undefined, signedInAt)).toBe(false);
-    expect(isWithinRecentAuthWindow("1000", signedInAt)).toBe(false);
-    expect(isWithinRecentAuthWindow(Number.NaN, signedInAt)).toBe(false);
+  it("admits a session that proved itself just now, and at exactly five minutes", async () => {
+    mocks.auth.mockResolvedValue(sessionAuthenticatedAt(Date.now()));
+    expect(await requireRecentAuth()).toEqual({ ok: true });
+
+    mocks.auth.mockResolvedValue(sessionAuthenticatedAt(Date.now() - RECENT_AUTH_WINDOW_MS));
+    expect(await requireRecentAuth()).toEqual({ ok: true });
   });
 
-  it("passes a fresh sign-in and refuses five minutes and one second later", async () => {
-    const signedInAt = Date.now();
-    mockAuth.mockResolvedValue({
-      user: { id: "member-1", lastAuthenticatedAt: signedInAt },
+  it("refuses a proof five minutes and one second old with the typed refusal the dialog recognises", async () => {
+    mocks.auth.mockResolvedValue(
+      sessionAuthenticatedAt(Date.now() - RECENT_AUTH_WINDOW_MS - SECOND_MS),
+    );
+    const result = await requireRecentAuth();
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.response.status).toBe(403);
+    expect(await isRecentAuthRefusal(result.response)).toBe(true);
+    expect(await result.response.json()).toMatchObject({ code: RECENT_AUTH_REQUIRED_CODE });
+  });
+
+  it("refuses a session that carries no stamp at all (a token from before #4616)", async () => {
+    mocks.auth.mockResolvedValue(sessionAuthenticatedAt(undefined));
+    const result = await requireRecentAuth();
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(await isRecentAuthRefusal(result.response)).toBe(true);
+  });
+
+  it("answers 401, not the step-up refusal, when there is no session", async () => {
+    mocks.auth.mockResolvedValue(null);
+    const result = await requireRecentAuth();
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.response.status).toBe(401);
+    expect(await isRecentAuthRefusal(result.response)).toBe(false);
+  });
+});
+
+describe("markSessionReauthenticated (#4616)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.createSessionReauthChallenge.mockResolvedValue("minted-reauth-token");
+  });
+
+  it("mints a challenge and passes only its token through the session update", async () => {
+    mocks.updateSession.mockResolvedValue(sessionAuthenticatedAt(Date.now()));
+
+    expect(await markSessionReauthenticated("officer-1")).toBe(true);
+    expect(mocks.createSessionReauthChallenge).toHaveBeenCalledWith("officer-1");
+    // No stamp of its own: the jwt callback decides, on consuming the token.
+    expect(mocks.updateSession).toHaveBeenCalledWith({
+      user: { reauthChallengeToken: "minted-reauth-token" },
     });
-
-    expect((await requireRecentAuth()).ok).toBe(true);
-
-    vi.setSystemTime(signedInAt + RECENT_AUTH_WINDOW_MS);
-    expect((await requireRecentAuth()).ok).toBe(true);
-
-    vi.setSystemTime(signedInAt + RECENT_AUTH_WINDOW_MS + 1000);
-    const refused = await requireRecentAuth();
-    expect(refused.ok).toBe(false);
-    if (!refused.ok) {
-      expect(refused.response.status).toBe(403);
-      await expect(refused.response.json()).resolves.toEqual(recentAuthRefusalBody());
-    }
   });
 
-  it("refuses a session with no stamp, and an unknown caller", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "member-1" } });
-    const stale = await requireRecentAuth();
-    expect(stale.ok).toBe(false);
-    if (!stale.ok) expect(stale.response.status).toBe(403);
-
-    mockAuth.mockResolvedValue(null);
-    const anonymous = await requireRecentAuth();
-    expect(anonymous.ok).toBe(false);
-    if (!anonymous.ok) expect(anonymous.response.status).toBe(401);
+  it.each([
+    ["no session came back", null],
+    ["the stamp did not move", sessionAuthenticatedAt(Date.now() - RECENT_AUTH_WINDOW_MS - 1)],
+    ["it carries no stamp", sessionAuthenticatedAt(undefined)],
+    ["it is another member's", { user: { id: "officer-2", lastAuthenticatedAt: Date.now() } }],
+    [
+      "it was invalidated",
+      { user: { id: "officer-1", lastAuthenticatedAt: Date.now(), sessionInvalidated: true } },
+    ],
+  ])("reports failure when %s", async (_label, returned) => {
+    mocks.updateSession.mockResolvedValue(returned);
+    expect(await markSessionReauthenticated("officer-1")).toBe(false);
   });
 });

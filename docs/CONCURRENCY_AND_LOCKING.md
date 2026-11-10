@@ -109,6 +109,24 @@ established the status), but it makes the "no clobber" guarantee **structural**
 rather than purely lock-dependent: a writer that somehow slipped the lock still
 cannot flip a booking a concurrent writer already moved.
 
+### The step-up challenge is a guarded single-row delete (#4616)
+
+`consumeSessionReauthChallenge` (`src/lib/session-reauth-challenge.ts`,
+`INV-AUTH-008`) claims a step-up challenge with one `deleteMany` guarded on the
+token's hash, the member and `expiresAt > now`, and succeeds only on a count
+of exactly one. The DELETE is the claim: of two consumers of one token,
+PostgreSQL lets one delete the row and makes the other wait on it, then
+re-check it and find it gone (count 0). It composes no booking, capacity,
+membership or money mutation, so it takes **no advisory lock** (`INV-LOCK-001`)
+and adds no key or site (`INV-LOCK-002`, `INV-LOCK-003`), as the two-factor
+session challenge it follows does. The only other writers are the mint's
+housekeeping delete, which takes this member's expired rows only and so never
+a live one, and the member's erasure, merge or delete, which remove the rows
+with the member. The step-up's failure counts reuse the two-factor counter
+and the `LoginThrottle` claim below unchanged.
+`session-reauth-challenge.realdb.test.ts` forces two consumers onto one held
+row and proves exactly one succeeds.
+
 ### Email retry authority uses a guarded row claim, not an advisory lock (#2362)
 
 `cron-email-retry.ts` composes no booking, capacity, membership-lifecycle, or

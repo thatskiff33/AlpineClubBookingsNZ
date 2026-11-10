@@ -47,6 +47,8 @@ import {
 } from "./session-idle-expiry";
 import { consumeSessionReauthChallenge } from "./session-reauth";
 import { consumeTwoFactorSessionChallenge } from "./two-factor";
+import { consumeSessionReauthChallenge } from "./session-reauth-challenge";
+import { readLastAuthenticatedAtMs } from "./recent-auth-policy";
 import { hashActionToken, isActionTokenFormat } from "./action-tokens";
 import {
   linkGoogleAccount,
@@ -119,10 +121,9 @@ declare module "next-auth" {
        */
       sessionIssuedAt?: number;
       /**
-       * Epoch ms the person last proved who they are (#4616). Set only when
-       * sign-in completes or a reauthentication challenge is consumed. Absent
-       * on a token that has never been stamped, which fails a recent-auth
-       * check closed.
+       * Epoch ms the person last proved who they are (#4616, INV-AUTH-008):
+       * set when sign-in completes, refreshed only by a consumed step-up
+       * challenge. `requireRecentAuth` reads it; absent means never.
        */
       lastAuthenticatedAt?: number;
       twoFactorRequired: boolean;
@@ -548,13 +549,17 @@ export const authConfig = {
     },
     async jwt({ token, user, trigger, session }) {
       if (user) {
+        const signedInAt = Date.now();
         token.role = user.role;
         token.accessRoles = [];
         token.id = user.id as string;
         token.forcePasswordChange = user.forcePasswordChange;
         token.isEmailVerified = user.isEmailVerified;
-        token.sessionIssuedAt = Date.now();
-        token.lastAuthenticatedAt = Date.now();
+        token.sessionIssuedAt = signedInAt;
+        // #4616 (INV-AUTH-008): sign-in completing is one of the two writers
+        // of the recent-authentication stamp; the step-up consume below is
+        // the other. Nothing back-fills it.
+        token.lastAuthenticatedAt = signedInAt;
         token.sessionInvalidated = false;
         token.twoFactorVerified = false;
         token.twoFactorVerifiedByChallenge = false;
@@ -609,6 +614,33 @@ export const authConfig = {
           session.user.reauthChallengeToken,
         );
         if (reauthConsumed) {
+          token.lastAuthenticatedAt = Date.now();
+        }
+      }
+
+      if (
+        trigger === "update" &&
+        typeof token.id === "string" &&
+        typeof session === "object" &&
+        session !== null &&
+        "user" in session &&
+        typeof session.user === "object" &&
+        session.user !== null &&
+        "reauthChallengeToken" in session.user &&
+        typeof session.user.reauthChallengeToken === "string"
+      ) {
+        // #4616 (INV-AUTH-008): the step-up route's proof. Like the two-factor
+        // challenge above, the update payload is client-reachable, so a
+        // `lastAuthenticatedAt` in it is never read: the stamp moves only when
+        // this single-use, server-minted token is consumed for this member.
+        // The two-factor challenge deliberately does not move it — that path
+        // also accepts emailed and recovery codes, which never prove an
+        // officer again (#4454 owner decision 2).
+        const reauthenticated = await consumeSessionReauthChallenge(
+          token.id,
+          session.user.reauthChallengeToken,
+        );
+        if (reauthenticated) {
           token.lastAuthenticatedAt = Date.now();
         }
       }
@@ -755,11 +787,9 @@ export const authConfig = {
       if (typeof token.sessionIssuedAt === "number") {
         session.user.sessionIssuedAt = token.sessionIssuedAt;
       }
-      if (
-        typeof token.lastAuthenticatedAt === "number" &&
-        Number.isFinite(token.lastAuthenticatedAt)
-      ) {
-        session.user.lastAuthenticatedAt = token.lastAuthenticatedAt;
+      const lastAuthenticatedAt = readLastAuthenticatedAtMs(token);
+      if (lastAuthenticatedAt !== null) {
+        session.user.lastAuthenticatedAt = lastAuthenticatedAt;
       }
       session.user.twoFactorRequired = Boolean(token.twoFactorRequired);
       session.user.twoFactorVerified = Boolean(token.twoFactorVerified);
