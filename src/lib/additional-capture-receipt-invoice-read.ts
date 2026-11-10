@@ -12,18 +12,6 @@ import { isLiveXeroPaymentStatus } from "@/lib/xero-payment-status";
 /** The invoice as the worker read it from Xero. */
 export type InvoiceRead = { status: string; amountDueCents: number; invoice: Invoice };
 
-/** An earlier run's payment of this capture on the invoice, found by its reference. */
-export function findRecordedPayment(read: InvoiceRead | null, reference: string) {
-  return (
-    (read?.invoice.payments ?? []).find(
-      (payment) =>
-        Boolean(payment.paymentID) &&
-        payment.reference === reference &&
-        isLiveXeroPaymentStatus(payment.status),
-    ) ?? null
-  );
-}
-
 /**
  * #4434: a payment already on the invoice is THIS leg's own only when its
  * reference matches, its amount is this leg's amount, and its id is not linked
