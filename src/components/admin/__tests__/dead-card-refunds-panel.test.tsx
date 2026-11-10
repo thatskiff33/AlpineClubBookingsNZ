@@ -28,6 +28,7 @@ import {
   type DeadCardRefundPanelRow,
 } from "@/components/admin/dead-card-refunds-panel";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
+import { LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL } from "@/lib/card-refund-group-copy";
 import { describeRefundMethod } from "@/lib/xero-refund-method";
 
 /**
@@ -803,5 +804,74 @@ describe("#4368: both new buttons are view-only without edit rights, as Paid ano
     expect(nothingLeftButton()).toBeDisabled();
     fireEvent.click(nothingLeftButton());
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("#4851: a dead refund out of the group organiser's card", () => {
+  const paidAnotherWay = () => screen.getByRole("button", { name: "Close the card refund for booking BK-0001 as paid another way" });
+
+  it("a per-joiner row offers both buttons and says the money is the organiser's", () => {
+    render(
+      <DeadCardRefundsPanel
+        rows={[row({ settleKind: "organiser-child", wholeAmountOnly: true, xeroRefundNote: "none" })]}
+        bankNoteWording={BANK_NOTE_WORDING}
+      />,
+    );
+    expect(screen.getByText("This money is the group organiser's, for the whole amount.")).toBeInTheDocument();
+    expect(tryAgainButton()).toBeEnabled();
+    expect(paidAnotherWay()).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /nothing left owed/i })).not.toBeInTheDocument();
+    fireEvent.click(paidAnotherWay());
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("If Stripe already has the refund, this records it and pays nobody again.");
+    expect(dialog).toHaveTextContent("This refund is the organiser's and closes for the whole amount.");
+    expect(within(dialog).getByRole("radio", { name: "Paid back part of it" })).toBeDisabled();
+  });
+
+  it("Try the card again says the ask goes to the organiser's card, and a deferred retry says when", async () => {
+    render(
+      <DeadCardRefundsPanel
+        rows={[row({ settleKind: "organiser-child", wholeAmountOnly: true, xeroRefundNote: "none" })]}
+        bankNoteWording={BANK_NOTE_WORDING}
+      />,
+    );
+    fireEvent.click(tryAgainButton());
+    expect(screen.getByRole("dialog")).toHaveTextContent("The ask goes to the group organiser's card");
+    respond(200, { success: true, nextRetryAt: "2026-07-02T01:00:00.000Z" });
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Try the card again" }));
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
+    expect(String(mocks.toastSuccess.mock.calls[0]?.[0])).toMatch(/waits until/);
+  });
+
+  it("the old whole-group row offers Paid another way only, even when nothing is unsent", () => {
+    render(
+      <DeadCardRefundsPanel
+        rows={[row({ settleKind: "legacy-group", owedCents: 0, wholeAmountOnly: true, xeroRefundNote: "none", tryCardAgainRefusal: LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL })]}
+        bankNoteWording={BANK_NOTE_WORDING}
+      />,
+    );
+    expect(screen.getByText(LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL)).toBeInTheDocument();
+    expect(paidAnotherWay()).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /Try the card again/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /nothing left owed/i })).not.toBeInTheDocument();
+  });
+
+  it("finance view-only leaves the organiser's buttons disabled", () => {
+    mocks.canEdit = false;
+    render(
+      <DeadCardRefundsPanel
+        rows={[row({ settleKind: "organiser-child", wholeAmountOnly: true, xeroRefundNote: "none" })]}
+        bankNoteWording={BANK_NOTE_WORDING}
+      />,
+    );
+    expect(tryAgainButton()).toBeDisabled();
+    expect(paidAnotherWay()).toBeDisabled();
+  });
+
+  it("a charge-backed row keeps today's buttons and does not use the organiser wording", () => {
+    render(<DeadCardRefundsPanel rows={[row()]} bankNoteWording={BANK_NOTE_WORDING} />);
+    expect(tryAgainButton()).toBeEnabled();
+    expect(paidAnotherWay()).toBeEnabled();
+    expect(screen.queryByText(/group organiser/)).not.toBeInTheDocument();
   });
 });

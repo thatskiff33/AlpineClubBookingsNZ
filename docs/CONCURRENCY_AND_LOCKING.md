@@ -6777,7 +6777,11 @@ PENDING with its attempts reset, so of any two settlements of one row the
 second matches nothing and writes nothing; a write under the Payment row alone
 that lands between an action's read and its claim fails the claim too. The
 audit row is written in the same transaction; no journal posting or provider
-call of these two runs under the keys. Registered as `lockDeadCardRefundRow#1`.
+call of these two runs under the keys. #4851: `closeGroupCardRefundPaidAnotherWay`
+and `tryOrganiserChildCardRefundAgain` take this same helper and this same
+claim (`accept` `either-group` and `organiser-child`). The order is unchanged
+and no advisory key is added. Stripe is read before the transaction. Registered
+as `lockDeadCardRefundRow#1`.
 
 The re-arm sends nothing itself. The runner claims the row as any other, and
 its preflight (`INV-PAY-145`, below) reads Stripe outside every transaction

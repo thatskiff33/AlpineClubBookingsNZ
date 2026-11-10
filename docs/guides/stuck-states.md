@@ -67,9 +67,13 @@ button is disabled, and the banner above the list says why.
 
 **Settle each one on this list here, never with a new refund in the Stripe
 dashboard** (owner decision 7 on #4361, 25 Oct 2026). A new dashboard refund
-on a booking paid by bank transfer is credited in Xero twice (#4327). An old
-group organiser's refund, or a stale group payment's, is not on this list:
-ask a developer to settle it. Each row offers:
+on a booking paid by bank transfer is credited in Xero twice (#4327). A dead
+refund out of the group organiser's card is on this list too: pay the
+organiser. A newer per-joiner refund offers **Try the card again**; the old
+whole-group refund does not. **Paid another way** on either records a refund
+Stripe already holds and pays nobody again, or records the bank payment and
+emails officers to credit the group's invoice in Xero by hand. Never a new
+dashboard refund. A charge-backed row offers:
 
 - **Paid another way** - you paid the member back yourself, for example by
   bank transfer (below).
@@ -130,10 +134,11 @@ cancelled booking that Stripe refuses is held on the payments board for a
 treasurer to approve, whatever the club's setting, and approving it asks
 Stripe again as a fresh request. A late-charge refund from the booking repair
 tool that Stripe refuses fails, and running the repair again asks Stripe
-afresh. An old group organiser's refund, or the refund of a stale group
-payment, fails and is retried automatically as a fresh request; if the
-officers' alert says it failed for good, ask a developer to settle it: it is
-not on the list below.
+afresh. An old group organiser's refund, and the refund of a stale group payment,
+are retried automatically and then listed below. The newer per-joiner refund
+can be tried on the organiser's card again; the old whole-group refund
+cannot, and is settled with **Paid another way**. A bank close credits the
+group's invoice in Xero by hand. Never a new dashboard refund.
 
 **A refund Stripe accepted and failed later** (#4104). Stripe can accept a card
 refund as pending and report it failed days later, for example when the card
@@ -337,18 +342,6 @@ for the same refund, the row comes back with the new amount. If that happens
 while the dialog is open, the dialog says so; if it happens just as you mark it
 resolved, the app refuses and the list refreshes, so you only ever resolve the
 amount you saw.
-
-This action does not cover two kinds of refund:
-
-- A group organiser's refund for a member of their group comes out of the
-  organiser's combined card payment, so it is not listed here.
-- An old group cancellation refund (from before #3653) belongs to the group as
-  a whole, not to one booking, so it is not listed either. What it still has to
-  send counts in Refunds owed as one club-wide amount (owner decision on #3372,
-  8 Oct 2026).
-
-Those two still show in the **Exhausted recovery operations** count. Ask a
-developer to reconcile them.
 
 ### Try the card again
 
