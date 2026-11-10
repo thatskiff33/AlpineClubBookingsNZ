@@ -596,7 +596,13 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     await expect(recorder.readCaptureRecorder({
       bookingId: BOOKING_ID, primaryInvoiceId: INVOICE_ID,
       paymentIntentId: CHANGE_INTENT, bookingModificationId: MODIFICATION_ID,
-    })).resolves.toMatchObject({ kind: "receipt", target: { kind: "CHANGE_INVOICE", operation: { id: invoice.queueOperationId } } });
+    })).resolves.toMatchObject({
+      kind: "receipt",
+      targets: [
+        { kind: "CHANGE_INVOICE", operation: { id: invoice.queueOperationId } },
+        { kind: "PRIMARY_INVOICE" },
+      ],
+    });
     expect(await prisma.xeroSyncOperation.count({ where: { localId: TASK_ID, queueType: "KEPT_LATE_CAPTURE_INVOICE" } })).toBe(0);
   });
 

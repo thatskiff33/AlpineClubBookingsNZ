@@ -39,7 +39,8 @@
  *    release takes the invoice back paid (F2); A and B both paid and kept,
  *    both orders - each captured dollar recorded once, the double payment
  *    alerted once (F3); a carrier whose receipt is still queued gets A's
- *    invoice unpaid, so its receipt records it rather than standing down (F6);
+ *    invoice unpaid, so its receipt records it rather than standing down, and
+ *    records the rest on the primary when that invoice has room (F6, #4434);
  *  - #4422: a declined A's stale-tab capture racing its cancel after B was paid
  *    and released, the webhook first and the runner first - handed to the
  *    superseded refund once, both invoices still on B summing to its capture,
@@ -1079,7 +1080,14 @@ function deferred() {
           expect(receiptRun).toMatchObject({ status: "rejected" });
           const { readCaptureRecorder } = await import("@/lib/additional-capture-recorder");
           const recorder = await readCaptureRecorder({ bookingId: BOOKING_ID, primaryInvoiceId: "inv_race_3403_primary", paymentIntentId: b, bookingModificationId: MOD_B });
-          expect(recorder).toMatchObject({ kind: "receipt", target: { kind: "CHANGE_INVOICE", operation: { id: (await invoiceFor(MOD_A)).id } } });
+          // The next run pays A's invoice first, then the primary (#4434).
+          expect(recorder).toMatchObject({
+            kind: "receipt",
+            targets: [
+              { kind: "CHANGE_INVOICE", operation: { id: (await invoiceFor(MOD_A)).id } },
+              { kind: "PRIMARY_INVOICE" },
+            ],
+          });
           expect(await recordersOf(b)).toEqual({ invoicedCents: 0, receipts: 1 });
         });
       });
@@ -1258,7 +1266,13 @@ function deferred() {
     });
 
     describe("review 2 (9a0c129d4), F6", () => {
-      it("a carrier with no invoice of its own whose receipt is still queued: the move writes A's invoice unpaid, so B's receipt records B instead of standing down", async () => {
+      /**
+       * B has no invoice of its own. A's cancel moves A's invoice onto B unpaid
+       * before B's receipt is picked up. The receipt records A's invoice up to
+       * its room, then whatever of B's capture is left on the primary when the
+       * primary has room (#4434). `primaryAmountDue` is Xero's AmountDue in dollars.
+       */
+      async function carrierReceipt(primaryAmountDue: number) {
         await seedPaidBooking();
         const a = await priceIncrease(MOD_A, A_CENTS);
         stripe.failCancels = 1;
@@ -1274,7 +1288,13 @@ function deferred() {
         // Unpaid, it is never B's recorder: B's receipt does not stand down to it.
         const { readCaptureRecorder } = await import("@/lib/additional-capture-recorder");
         const recorder = await readCaptureRecorder({ bookingId: BOOKING_ID, primaryInvoiceId: "inv_race_3403_primary", paymentIntentId: b, bookingModificationId: MOD_B });
-        expect(recorder).toMatchObject({ kind: "receipt", target: { kind: "CHANGE_INVOICE", operation: { id: invoiceA.id } } });
+        expect(recorder).toMatchObject({
+          kind: "receipt",
+          targets: [
+            { kind: "CHANGE_INVOICE", operation: { id: invoiceA.id } },
+            { kind: "PRIMARY_INVOICE" },
+          ],
+        });
 
         // A's invoice reaches Xero (the outbox's create, a seeded fact here), then the receipt
         // runs through the outbox's claim and the real worker; Xero is a fake.
@@ -1297,25 +1317,55 @@ function deferred() {
               body: {
                 invoices: meta.context.includes("inv_race_3403_mod_a")
                   ? [{ invoiceID: "inv_race_3403_mod_a", status: "AUTHORISED", amountDue: A_CENTS / 100, payments: [] }]
-                  : [{ invoiceID: "inv_race_3403_primary", status: "AUTHORISED", amountDue: 1_000, payments: [] }],
+                  : [{ invoiceID: "inv_race_3403_primary", status: "AUTHORISED", amountDue: primaryAmountDue, payments: [] }],
               },
             })) as never,
             createXeroPaymentForInvoice: async (input: { invoiceId: string; amountCents: number }) => {
               sent.push({ invoiceId: input.invoiceId, amountCents: input.amountCents });
-              return "pay_race_3403_receipt_b";
+              return `pay_race_3403_receipt_b_${sent.length}`;
             },
             readStripeCaptureDocumentDate: async () => null,
           } as never,
         );
 
-        // B's capture is recorded once, by its own receipt, against the invoice that bills A's part
-        // of it; no invoice records it. What A's invoice has no room for - B's own change, which
-        // has no invoice - is not guessed onto another document: the receipt tells an officer.
         expect(await captured(b)).toBe(A_CENTS + B_CENTS);
-        expect(sent).toEqual([{ invoiceId: "inv_race_3403_mod_a", amountCents: A_CENTS }]);
         expect(await recordersOf(b)).toEqual({ invoicedCents: 0, receipts: 1 });
         const done = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: receipt!.id }, select: { status: true, responsePayload: true } });
-        expect(done).toMatchObject({ status: "SUCCEEDED", responsePayload: { unrecordedCents: B_CENTS } });
+        return { sent, done };
+      }
+
+      function unrecordedAlerts(alert: { mock: { calls: unknown[][] } }) {
+        return alert.mock.calls.filter((call) => (call[0] as { errorType: string }).errorType === "ADDITIONAL_CAPTURE_NOT_RECORDED");
+      }
+
+      it("a carrier with no invoice of its own whose receipt is still queued: the primary has room, so the receipt records the whole capture", async () => {
+        const email = await import("@/lib/email");
+        const alert = vi.spyOn(email, "sendAdminXeroSyncErrorAlert").mockResolvedValue({ deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0 } as never);
+        try {
+          // B's capture is recorded once, by its own receipt: A's invoice for A's part, the primary for B's own change.
+          const { sent, done } = await carrierReceipt(1_000);
+          expect(sent).toEqual([
+            { invoiceId: "inv_race_3403_mod_a", amountCents: A_CENTS },
+            { invoiceId: "inv_race_3403_primary", amountCents: B_CENTS },
+          ]);
+          expect(done).toMatchObject({ status: "SUCCEEDED", responsePayload: { unrecordedCents: 0 } });
+          expect(unrecordedAlerts(alert)).toEqual([]);
+        } finally {
+          alert.mockRestore();
+        }
+      });
+
+      it("the same carrier when the primary has no room: A's invoice is recorded and the rest is left for an officer", async () => {
+        const email = await import("@/lib/email");
+        const alert = vi.spyOn(email, "sendAdminXeroSyncErrorAlert").mockResolvedValue({ deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0 } as never);
+        try {
+          const { sent, done } = await carrierReceipt(0);
+          expect(sent).toEqual([{ invoiceId: "inv_race_3403_mod_a", amountCents: A_CENTS }]);
+          expect(done).toMatchObject({ status: "SUCCEEDED", responsePayload: { unrecordedCents: B_CENTS } });
+          expect(unrecordedAlerts(alert)).toHaveLength(1);
+        } finally {
+          alert.mockRestore();
+        }
       });
     });
 
