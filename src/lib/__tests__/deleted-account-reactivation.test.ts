@@ -289,6 +289,7 @@ async function captureAnonymisationPayload(
     twoFactorEmailCode: vi.fn().mockResolvedValue({ count: 0 }),
     twoFactorRecoveryCode: vi.fn().mockResolvedValue({ count: 0 }),
     twoFactorSessionChallenge: vi.fn().mockResolvedValue({ count: 0 }),
+    sessionReauthChallenge: vi.fn().mockResolvedValue({ count: 0 }),
   };
   mockedPrisma.$transaction.mockImplementation((async (
     fn: (client: unknown) => unknown,
@@ -323,6 +324,9 @@ async function captureAnonymisationPayload(
       },
       twoFactorSessionChallenge: {
         deleteMany: revokedTokens.twoFactorSessionChallenge,
+      },
+      sessionReauthChallenge: {
+        deleteMany: revokedTokens.sessionReauthChallenge,
       },
       // The APPROVAL_IN_PROGRESS -> APPROVED finalisation is claimed inside the
       // transaction, guarded on still owning it.

@@ -81,6 +81,9 @@ vi.mock("@/lib/prisma", () => ({
     twoFactorSessionChallenge: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    sessionReauthChallenge: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
     // #1756: deletion approval sweeps future shared-double placements inside
     // the anonymise transaction; empty by default so it is a no-op here.
     bedAllocation: {
