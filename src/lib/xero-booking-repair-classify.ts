@@ -68,8 +68,10 @@ import { recordedCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
 import {
   ADDITIONAL_ASK_RETIRED_BY_REDUCTION_XERO_ERROR_CODE,
   ASK_RETIRED_BY_REDUCTION_SUMMARY,
+  foldedIncreaseInvoiceRepair,
+  FOLDED_INCREASE_INVOICE_MISSING_SUMMARY,
   isAskRetiredByReductionOperation,
-  isFoldedReissueAccountedFor,
+  isFoldedAskAccountedFor,
   isReissueRetiredByLaterReduction,
   recordedReissuedAskInvoiceCents,
   recordedUnpaidAskOffsetCents,
@@ -685,6 +687,12 @@ export function classifyBookingContext(
             actionKeys: [manualAction.key],
           });
         } else if (!blockingOperation) {
+          // #4744: a later edit folded this increase into its own card request.
+          const foldedRepair = foldedIncreaseInvoiceRepair(modification.id, booking.modifications, context.openAdditionalIntentRecoveryModificationIds);
+          if (foldedRepair === "missing") {
+            const manualAction = addAction(actionMap, buildManualReviewAction(booking.id, FOLDED_INCREASE_INVOICE_MISSING_SUMMARY));
+            addFinding(findings, { code: "MISSING_SUPPLEMENTARY_INVOICE", severity: "manual_review", summary: FOLDED_INCREASE_INVOICE_MISSING_SUMMARY, safeToAutoApply: false, details: { modificationId: modification.id, netAmountCents }, actionKeys: [manualAction.key] });
+          } else if (foldedRepair !== "accounted") {
           // #3187: a review-priced ask must not be queued as if the member had
           // already paid it. `planEditReviewChargeInvoicePayment` states why in
           // full; the short version is that the enqueue's `recordPayment`
@@ -722,23 +730,7 @@ export function classifyBookingContext(
               editReviewPaymentPlan.reason === "capture-short-of-ask"
                 ? "A completed financial review priced this booking edit above what the member's card actually took, and no supplementary Xero invoice exists - the difference is owed outside any invoice, so raise it by hand."
                 : "A completed financial review priced this booking edit as money owed, but its card request has not been raised yet and its recovery is still owed - no supplementary Xero invoice can be raised until that replay runs.";
-            /**
-             * TWO PARKED EDITS ON ONE BOOKING, hitting the same reason, COLLAPSE
-             * to one action, and that is a deliberate choice rather than an
-             * oversight (#3187 fix round, nit).
-             *
-             * `buildManualReviewAction` keys on the booking and the reason text,
-             * and these two summaries carry no modification id - so a booking
-             * with two parked edits both short of their ask produces one action
-             * for both. Nothing is LOST: each edit still raises its own finding
-             * carrying its own `modificationId`, and `MARK_MANUAL_REVIEW` does
-             * nothing when applied, so the only cost is that the action COUNT
-             * under-reports while the finding count does not. Left as it is
-             * because it is the convention every other manual-review arm in this
-             * file already follows, including the amount-mismatch arm below;
-             * making this one arm's key unique would be a second convention for
-             * a counter, which is a worse trade than the counter.
-             */
+            // Two parked edits share one manual-review action: the key is the booking and the reason, and each edit still has its own finding (#3187).
             const manualAction = addAction(
               actionMap,
               buildManualReviewAction(booking.id, summary)
@@ -815,6 +807,7 @@ export function classifyBookingContext(
               },
               actionKeys: [action.key],
             });
+          }
           }
         } else if (blockingOperation.kind === "resolved") {
           // #3635 (`INV-INT-025`): done by hand in Xero - never retried or
@@ -919,7 +912,7 @@ export function classifyBookingContext(
       ) &&
       !context.openAdditionalIntentRecoveryModificationIds.has(modification.id) &&
       !retiringReductionFor(modification.id, booking.modifications) &&
-      !isFoldedReissueAccountedFor(modification.id, booking.modifications, context.openAdditionalIntentRecoveryModificationIds)
+      !isFoldedAskAccountedFor(modification.id, booking.modifications, context.openAdditionalIntentRecoveryModificationIds)
     ) {
       const manualAction = addAction(actionMap, buildManualReviewAction(booking.id, REISSUED_ASK_INVOICE_MISSING_SUMMARY));
       addFinding(findings, {

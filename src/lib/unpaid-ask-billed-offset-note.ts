@@ -17,7 +17,7 @@
  *   transaction from what it retired, so a retired invoice's money is never
  *   credited as well (the two paths never double up).
  * - DURABLE: queued in the edit's own transaction, beside the re-issued ask's
- *   recovery (`queueReductionAskFollowUps`), so a process dying after commit
+ *   recovery (`queueEditAskFollowUps`), so a process dying after commit
  *   loses nothing; the outbox worker raises it.
  * - IDEMPOTENT: one note per reducing edit, scoped
  *   (`UNPAID_ASK_BILLED_OFFSET_NOTE_SCOPE`) on the existing per-share key slot,
@@ -32,8 +32,10 @@
  */
 import type { Prisma } from "@prisma/client";
 
-import { queueReissuedAskRecovery } from "@/lib/additional-ask-reissue";
+import { queueFoldingAskRecovery, queueReissuedAskRecovery } from "@/lib/additional-ask-reissue";
 import type { AdditionalAsk } from "@/lib/additional-payment-ask";
+import type { OrdinaryAskDoor } from "@/lib/ordinary-ask-request";
+import type { FoldedWaitingAsks } from "@/lib/unpaid-ask-offset-marker";
 import { ownNoteExpected } from "@/lib/unpaid-ask-billed-offset-order";
 import { enqueueXeroModificationCreditNoteOperation } from "@/lib/xero-operation-outbox";
 import { UNPAID_ASK_BILLED_OFFSET_NOTE_SCOPE } from "@/lib/xero-review-task-key";
@@ -77,17 +79,21 @@ export async function queueUnpaidAskBilledOffsetNote(
  * offset the primary invoice had billed. Every edit door that records an
  * offset calls this exactly once (the `INV-PAY-120` census).
  */
-export async function queueReductionAskFollowUps(
+export async function queueEditAskFollowUps(
   tx: Prisma.TransactionClient,
   {
     bookingId,
     paymentId,
     bookingModificationId,
+    door = null,
     settled,
+    now,
   }: {
     bookingId: string;
     paymentId: string | null;
     bookingModificationId: string;
+    /** The door's Stripe key, so a folding increase's recovery replays the door's own request. */
+    door?: OrdinaryAskDoor | null;
     settled: {
       additionalAsk: AdditionalAsk;
       hasIssuedXeroInvoice: boolean;
@@ -96,14 +102,17 @@ export async function queueReductionAskFollowUps(
       xeroRefundAmountCents: number;
       /** An organiser's card refund raises its note later, not the edit's Xero leg. */
       organiserChildRefund: unknown;
+      foldedWaitingAsks?: FoldedWaitingAsks;
     };
+    now?: Date;
   },
 ): Promise<void> {
-  await queueReissuedAskRecovery(tx, { bookingId, paymentId, bookingModificationId, settled });
+  await queueReissuedAskRecovery(tx, { bookingId, paymentId, bookingModificationId, settled, ...(now ? { now } : {}) });
   await queueUnpaidAskBilledOffsetNote(tx, {
     bookingId,
     bookingModificationId,
     unpaidAskBilledOffsetCents: settled.unpaidAskBilledOffsetCents,
     ownNoteExpected: ownNoteExpected(settled),
   });
+  await queueFoldingAskRecovery(tx, { bookingId, paymentId, bookingModificationId, door, settled, ...(now ? { now } : {}) });
 }

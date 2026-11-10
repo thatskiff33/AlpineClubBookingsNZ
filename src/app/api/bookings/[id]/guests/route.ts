@@ -72,8 +72,9 @@ import {
   sizeAdditionalAsk,
   type AdditionalAsk,
 } from "@/lib/additional-payment-ask";
-import { foldWaitingReissuedAsks } from "@/lib/additional-ask-reissue";
-import { NO_FOLDED_REISSUED_ASKS, NO_UNPAID_ASK_SETTLEMENT, unpaidAskOffsetHistory, type FoldedReissuedAsks } from "@/lib/unpaid-ask-offset-marker";
+import { foldWaitingAsks } from "@/lib/additional-ask-reissue";
+import { queueEditAskFollowUps } from "@/lib/unpaid-ask-billed-offset-note";
+import { NO_FOLDED_WAITING_ASKS, NO_UNPAID_ASK_SETTLEMENT, unpaidAskOffsetHistory, type FoldedWaitingAsks } from "@/lib/unpaid-ask-offset-marker";
 import { resolveOrganiserBillingForNet } from "@/lib/organiser-billing";
 import { primaryInvoiceSettlementHistory, writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
@@ -939,7 +940,7 @@ export async function POST(
       // minting it will absorb. Zero here never mints, so the Xero-only and
       // nothing-owed endings below are safe without remembering to say so.
       let additionalAsk: AdditionalAsk = NO_ADDITIONAL_ASK;
-      let foldedReissuedAsks: FoldedReissuedAsks = NO_FOLDED_REISSUED_ASKS;
+      let foldedWaitingAsks: FoldedWaitingAsks = NO_FOLDED_WAITING_ASKS;
       /**
        * #3200: "has the main Xero invoice already been raised?" is asked at four
        * edit doors and DEFINED in one — `hasIssuedPrimaryXeroInvoice`
@@ -977,50 +978,22 @@ export async function POST(
       // #4299 (`INV-PAY-148`): an organiser-paid bank place's add is invoiced to the organiser, never asked of the joiner.
       const billedToOrganiserCents = organiserBilling && priceDiffCents > 0 ? priceDiffCents : 0;
 
-      /**
-       * #3340: THE FIFTH ASK-SIZING DOOR, and the one the first round missed.
-       *
-       * The other four reach `sizeAdditionalAsk` through
-       * `applyPaymentAdjustments`; this door settles for itself, so it calls the
-       * one home directly rather than restating a bare delta (`INV-SSOT-001`).
-       * It is fully wired into the same machinery -
-       * `createModificationAdditionalPaymentIntent` below mints through
-       * `queueSupersededAdditionalIntentCancellationRows`, which RETIRES every other
-       * outstanding ADDITIONAL intent on this payment - so a delta-sized ask here
-       * deletes the unpaid balance of the ask it replaces. A $130 booking paid,
-       * edited +$70 unpaid, then a guest added at +$70 asked for $70 and left $70
-       * owed by nobody: byte-for-byte the #3340 leak, at a door the fix had not
-       * reached. `isBookingFullyPaidForGuestNameEdits` returns false while an ask
-       * is outstanding, so nothing upstream refuses the sequence.
-       *
-       * The two arms stay separate, exactly as `applyPaymentAdjustments` keeps
-       * them. The STRIPE ask folds the superseded balance in because minting
-       * retires it; the Xero arm sizes a SUPPLEMENTARY INVOICE for THIS edit,
-       * which supersedes nothing and is collected alongside whatever came before
-       * it - folding a Stripe balance into that figure would invoice the same
-       * money twice. Stripe wins where both are true, which is the order
-       * `applyPaymentAdjustments` already uses.
-       *
-       * The payment read here is the post-lock re-read (`pg_advisory_xact_lock(1)`
-       * plus the per-lodge key, above), so the ask being superseded is read under
-       * the same locks that serialise every counterpart writer in this route.
-       */
+      // #3340: this door sizes through sizeAdditionalAsk, like the other four. The Stripe
+      // arm carries the ask minting retires; the Xero arm below bills only this edit.
       if (hasSucceededPayment && priceDiffCents > 0 && paidByOrganiserCard(booking)) {
         // #3653: the organiser paid for this booking out of one combined card
         // payment; an ask here would charge the joiner. Refused before commit,
         // exactly as `applyPaymentAdjustments` refuses the other doors' asks.
         throw new ApiError(ORGANISER_CHILD_CHARGE_REFUSAL, 409);
       } else if (hasSucceededPayment && priceDiffCents > 0) {
-        // #3954: a waiting re-issue joins this ask, its recovery closed and the
-        // fold recorded on this edit's history so its replay asks again.
-        foldedReissuedAsks = await foldWaitingReissuedAsks(tx, booking);
+        // #3954, #4744: a waiting re-issue or increase retry joins this ask.
+        foldedWaitingAsks = await foldWaitingAsks(tx, booking);
         additionalAsk = sizeAdditionalAsk({
           priceDiffCents,
-          // A guest add never charges one; the route passes 0 to the Xero
-          // settlement and to the member's email for the same reason.
+          // A guest add never charges a change fee.
           changeFeeCents: 0,
           payment: booking.payment,
-          waitingReissuedAskCents: foldedReissuedAsks.cents,
+          foldedWaitingAskCents: foldedWaitingAsks.cents,
         });
         additionalAmountCents = additionalAsk.amountCents;
       } else if (hasIssuedXeroInvoice && priceDiffCents > 0) {
@@ -1173,13 +1146,29 @@ export async function POST(
             // #2390: the same sentence the member was shown, kept on the
             // booking's own history so the split has an answer later.
             ...(promoCoverage ? { promoCoverageNote: promoCoverage.message } : {}),
-            // #3954 round 6: the waiting re-issues this add folded into its ask.
-            ...unpaidAskOffsetHistory({ ...NO_UNPAID_ASK_SETTLEMENT, foldedReissuedAsks }),
+            // #3954, #4744: the waiting asks this add folded into its own.
+            ...unpaidAskOffsetHistory({ ...NO_UNPAID_ASK_SETTLEMENT, foldedWaitingAsks }),
             ...primaryInvoiceSettlementHistory({ settledAgainstPrimaryInvoice }), // #3980: the gap's anchor
           },
           priceDiffCents,
           changeFeeCents: 0,
           ...(priceLines ? { priceLines } : {}),
+        },
+      });
+
+      // #4744: a folded increase's ask is durable from this commit, under the door's key.
+      await queueEditAskFollowUps(tx, {
+        bookingId,
+        paymentId: booking.payment?.id ?? null,
+        bookingModificationId: bookingModification.id,
+        door: "guestAdd",
+        settled: {
+          additionalAsk,
+          hasIssuedXeroInvoice,
+          unpaidAskBilledOffsetCents: 0,
+          xeroRefundAmountCents: 0,
+          organiserChildRefund: null,
+          foldedWaitingAsks,
         },
       });
 
