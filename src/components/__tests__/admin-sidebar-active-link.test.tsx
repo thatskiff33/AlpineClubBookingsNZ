@@ -113,12 +113,12 @@ describe("the sidebar's active link over a moved hub", () => {
     // C7 (#4804): System Health, and Backup Setup, which has no menu entry of its own.
     ["System Health's hub URL", "/admin/system/health", ["System Health"]],
     ["Backup Setup's hub URL", "/admin/system/backups/setup", ["Database Backups"]],
-    // C8 (#4805): Member Notices, and a notice's own page beneath it, which has
+    // C8 (#4805): Member notices, and a notice's own page beneath it, which has
     // no menu entry of its own; and Delivery Rules, reached from Notifications &
     // Email's card, which is not beneath it.
-    ["Member Notices' hub URL", "/admin/messages/notices", ["Member Notices"]],
-    ["a notice's hub URL", "/admin/messages/notices/n-1", ["Member Notices"]],
-    ["a notice's old URL", "/admin/notices/n-1", ["Member Notices"]],
+    ["Member notices' hub URL", "/admin/messages/notices", ["Member notices"]],
+    ["a notice's hub URL", "/admin/messages/notices/n-1", ["Member notices"]],
+    ["a notice's old URL", "/admin/notices/n-1", ["Member notices"]],
     ["Notifications & Email's hub URL", "/admin/messages/notifications", ["Notifications & Email"]],
     ["Delivery Rules' hub URL", "/admin/messages/notification-rules", []],
     ["a policy page's hub URL", "/admin/rules/booking-policies/cancellation", ["Booking Policies"]],

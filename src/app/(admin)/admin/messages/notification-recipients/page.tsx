@@ -1,5 +1,5 @@
 import { BackLink } from "@/components/admin/back-link";
-import { adminLink } from "@/lib/admin-hubs";
+import { adminLink, getAdminPage } from "@/lib/admin-hubs";
 import { Card, CardContent } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -94,7 +94,9 @@ export default async function NotificationRecipientsPage() {
     <div className="space-y-8">
       <div>
         <BackLink {...adminLink("notifications")} />
-        <h1 className="mt-2 text-2xl font-bold text-foreground">Recipients</h1>
+        <h1 className="mt-2 text-2xl font-bold text-foreground">
+          {getAdminPage("notification-recipients").label}
+        </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Choose which system alerts each admin user receives. Every admin user
           is listed — Full Admins and scoped officers alike. An admin can only
