@@ -60,7 +60,7 @@ import {
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { MEMBER_MERGE_RELATION_SPECS, mergeDelegate } from "@/lib/member-merge-relations";
 import { MEMBER_MERGE_PAYMENT_ATTRIBUTION_SPEC, moveMergedPaymentAttributionLast } from "@/lib/member-merge-payment-attribution";
-import { findMemberMergeResidualReferences } from "@/lib/member-merge-residual-references";
+import { captureMemberMergeMoveRowIds, findMemberMergeResidualReferences } from "@/lib/member-merge-residual-references";
 import {
   diffFieldMergePatches,
   mergeMemberFields,
@@ -1856,6 +1856,10 @@ export async function executeMemberMerge(params: {
 
     // Collect a bounded moved-id sample BEFORE mutating.
     const movedIdSample = await collectMovedIdSample(tx, masterId, loserId);
+    // Before the attempt loop. A retry re-runs the moves; only these ids may
+    // be re-pointed. A row that starts naming the duplicate during the wait
+    // stays, and the residual check refuses the merge (#4855, #4876).
+    const capturedMoveRowIds = await captureMemberMergeMoveRowIds(tx, loserId);
     const loserOwnedBookingIds = (await tx.booking.findMany({
       where: { memberId: loserId },
       select: { id: true },
@@ -1908,6 +1912,7 @@ export async function executeMemberMerge(params: {
           loserId,
           relationPreview.selfRelationRefs,
           loserOwnedBookingIds,
+          capturedMoveRowIds,
         );
         const bookingOwnerMove = moves.find((move) => move.model === "Booking.member");
         if ((bookingOwnerMove?.count ?? 0) !== loserOwnedBookingIds.length) {
@@ -2652,6 +2657,7 @@ async function applyMoves(
   loserId: string,
   selfRelationRefs: Record<string, readonly string[]>,
   loserOwnedBookingIds: readonly string[],
+  capturedMoveRowIds: ReadonlyMap<string, readonly string[]>,
 ): Promise<{ model: string; count: number }[]> {
   const moves: { model: string; count: number }[] = [];
   for (const s of MEMBER_MERGE_RELATION_SPECS) {
@@ -2690,7 +2696,7 @@ async function applyMoves(
           }
         : s.key === "Booking.member"
           ? { [s.column]: loserId, id: { in: [...loserOwnedBookingIds] } }
-          : { [s.column]: loserId },
+          : { [s.column]: loserId, id: { in: [...(capturedMoveRowIds.get(s.key) ?? [])] } },
       data: { [s.column]: masterId },
     });
     if (res.count > 0) moves.push({ model: s.key, count: res.count });

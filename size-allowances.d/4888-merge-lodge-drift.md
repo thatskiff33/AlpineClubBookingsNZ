@@ -1,7 +1,7 @@
 # File-size allowances for #4888
 
 file: src/lib/member-merge.ts
-lines: 3140
+lines: 3146
 reason: The participant-attempt savepoint and the partner-share lodge prefix
   have to stay in this function. The first attempt try-locks a new lodge and
   still hands step 3b the opening prefix, and splitting that call out would
