@@ -45,6 +45,7 @@ import {
   isKioskSessionMember,
   resolveRequestSessionIdleSeconds,
 } from "./session-idle-expiry";
+import { isSecondFactorEnrolled } from "./second-factor-enrolment";
 import { consumeSessionReauthChallenge } from "./session-reauth";
 import { consumeTwoFactorSessionChallenge } from "./two-factor";
 import { hashActionToken, isActionTokenFormat } from "./action-tokens";
@@ -128,6 +129,8 @@ declare module "next-auth" {
       twoFactorRequired: boolean;
       twoFactorVerified: boolean;
       twoFactorEnrolled: boolean;
+      /** A passkey is stored. The public key is not. Absent means none. */
+      hasPasskey?: boolean;
       twoFactorMethod: "TOTP" | "EMAIL" | null;
       /**
        * Post-login landing preference (#2090). null = follow the role default
@@ -142,6 +145,7 @@ declare module "next-auth" {
     isEmailVerified: boolean;
     twoFactorEnabled: boolean;
     twoFactorMethod: "TOTP" | "EMAIL" | null;
+    hasPasskey?: boolean;
   }
 }
 
@@ -558,7 +562,12 @@ export const authConfig = {
         token.sessionInvalidated = false;
         token.twoFactorVerified = false;
         token.twoFactorVerifiedByChallenge = false;
-        token.twoFactorEnrolled = user.twoFactorEnabled;
+        token.hasPasskey = user.hasPasskey === true;
+        token.twoFactorEnrolled = isSecondFactorEnrolled({
+          twoFactorEnabled: user.twoFactorEnabled === true,
+          hasPasskey: user.hasPasskey === true,
+          sessionEnrolled: false,
+        });
         token.twoFactorMethod = user.twoFactorMethod;
       }
 
@@ -686,11 +695,17 @@ export const authConfig = {
             isRevokedMemberSession(member, sessionIssuedAt, token.id) ||
             pastMaxAge;
           token.twoFactorRequired = twoFactorRequired;
-          token.twoFactorEnrolled = member.twoFactorEnabled;
+          const enrolled = isSecondFactorEnrolled({
+            twoFactorEnabled: member.twoFactorEnabled,
+            hasPasskey: member.hasPasskey,
+            sessionEnrolled: false,
+          });
+          token.hasPasskey = member.hasPasskey === true;
+          token.twoFactorEnrolled = enrolled;
           token.twoFactorMethod = member.twoFactorMethod ?? null;
           if (!twoFactorRequired) {
             token.twoFactorVerified = true;
-          } else if (!member.twoFactorEnabled) {
+          } else if (!enrolled) {
             token.twoFactorVerified = false;
             token.twoFactorVerifiedByChallenge = false;
           } else if (user) {
@@ -764,6 +779,7 @@ export const authConfig = {
       session.user.twoFactorRequired = Boolean(token.twoFactorRequired);
       session.user.twoFactorVerified = Boolean(token.twoFactorVerified);
       session.user.twoFactorEnrolled = Boolean(token.twoFactorEnrolled);
+      session.user.hasPasskey = token.hasPasskey === true;
       session.user.twoFactorMethod =
         token.twoFactorMethod === "TOTP" || token.twoFactorMethod === "EMAIL"
           ? token.twoFactorMethod
