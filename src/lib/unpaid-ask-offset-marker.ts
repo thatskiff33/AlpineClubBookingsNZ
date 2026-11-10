@@ -386,6 +386,27 @@ export function foldingIncreaseFor<M extends { id: string; newData: unknown }>(
 }
 
 /**
+ * The increases that folded this edit in, nearest first. A repeated id stops
+ * the walk, so a cycle is followed once.
+ */
+function foldFolders<M extends { id: string; newData: unknown }>(
+  modificationId: string,
+  modifications: readonly M[],
+): M[] {
+  const folders: M[] = [];
+  const seen = new Set<string>();
+  let current = modificationId;
+  while (!seen.has(current) && seen.size <= modifications.length) {
+    seen.add(current);
+    const folder = foldingIncreaseFor(current, modifications);
+    if (!folder) break;
+    folders.push(folder);
+    current = folder.id;
+  }
+  return folders;
+}
+
+/**
  * Whether a folded ask's invoice is still someone else's to raise: walk the
  * fold chain to the outermost increase, and stop when that increase's recovery
  * is still open or a later reduction retired it. A minted folder with no such
@@ -396,16 +417,9 @@ export function isFoldedAskAccountedFor<M extends { id: string; newData: unknown
   modifications: readonly M[],
   openRecoveryModificationIds: ReadonlySet<string>,
 ): boolean {
-  const seen = new Set<string>();
-  let current = modificationId;
-  while (!seen.has(current) && seen.size <= modifications.length) {
-    seen.add(current);
-    const folder = foldingIncreaseFor(current, modifications);
-    if (!folder) return false;
-    if (openRecoveryModificationIds.has(folder.id) || retiringReductionFor(folder.id, modifications)) return true;
-    current = folder.id;
-  }
-  return false;
+  return foldFolders(modificationId, modifications).some(
+    (folder) => openRecoveryModificationIds.has(folder.id) || retiringReductionFor(folder.id, modifications) !== null,
+  );
 }
 
 /**
@@ -450,14 +464,6 @@ export function isReissueRetiredByLaterReduction<M extends { id: string; newData
   reductionId: string,
   modifications: readonly M[],
 ): boolean {
-  const seen = new Set<string>();
-  let current = reductionId;
-  while (!seen.has(current) && seen.size <= modifications.length) {
-    seen.add(current);
-    if (retiringReductionFor(current, modifications)) return true;
-    const folder = foldingIncreaseFor(current, modifications);
-    if (!folder) return false;
-    current = folder.id;
-  }
-  return false;
+  if (retiringReductionFor(reductionId, modifications)) return true;
+  return foldFolders(reductionId, modifications).some((folder) => retiringReductionFor(folder.id, modifications) !== null);
 }
