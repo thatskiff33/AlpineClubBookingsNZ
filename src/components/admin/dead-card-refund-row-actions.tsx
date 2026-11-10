@@ -30,6 +30,8 @@ export interface DeadCardRefundActionRow {
   bookingReference: string;
   owedCents: number;
   laterStripeRefunds: LaterStripeRefundPanelRow[];
+  /** #4851: absent means the charge-backed row. */
+  settleKind?: "charge" | "organiser-child" | "legacy-group";
 }
 
 interface DialogProps {
@@ -53,7 +55,7 @@ function useConfirmedAction(failure: string) {
   const [error, setError] = useState("");
   const [attention, setAttention] = useState(0);
   const [done, setDone] = useState(false);
-  async function post(url: string, body: object): Promise<boolean> {
+  async function post(url: string, body: object): Promise<Record<string, unknown> | null> {
     setBusy(true);
     setError("");
     try {
@@ -67,15 +69,15 @@ function useConfirmedAction(failure: string) {
         setError(typeof data.error === "string" ? data.error : failure);
         setAttention((count) => count + 1);
         if (res.status === 409) router.refresh();
-        return false;
+        return null;
       }
       setDone(true);
       router.refresh();
-      return true;
+      return data && typeof data === "object" ? (data as Record<string, unknown>) : {};
     } catch {
       setError(failure);
       setAttention((count) => count + 1);
-      return false;
+      return null;
     } finally {
       setBusy(false);
     }
@@ -96,6 +98,7 @@ function useConfirmedAction(failure: string) {
  */
 export function TryCardAgainDialog({ row, onClose, onDone, focusNotice }: DialogProps) {
   const format = useClubFormat();
+  const clubTime = useClubTime();
   const errorId = useId();
   const action = useConfirmedAction("Could not try the card again.");
   // The figure the dialog showed, kept from when it opened.
@@ -110,9 +113,19 @@ export function TryCardAgainDialog({ row, onClose, onDone, focusNotice }: Dialog
 
   async function submit() {
     if (!row) return;
-    const ok = await action.post(`/api/admin/payments/card-refunds/${row.operationId}/try-card-again`, { expectedOwedCents: owedCents });
-    if (!ok) return;
-    toast.success(`The card will be asked for ${formatCents(owedCents, format)} again shortly.`);
+    const result = await action.post(`/api/admin/payments/card-refunds/${row.operationId}/try-card-again`, { expectedOwedCents: owedCents });
+    if (!result) return;
+    if (row.settleKind === "organiser-child") {
+      const nextRetryAt = typeof result.nextRetryAt === "string" ? result.nextRetryAt : null;
+      const waits = nextRetryAt !== null && new Date(nextRetryAt).getTime() - Date.now() > 5_000;
+      toast.success(
+        waits
+          ? `The ask waits until ${clubTime.instantDateTime(new Date(nextRetryAt))}, because Stripe would otherwise repeat the refusal.`
+          : `The organiser's card will be asked for ${formatCents(owedCents, format)} shortly.`,
+      );
+    } else {
+      toast.success(`The card will be asked for ${formatCents(owedCents, format)} again shortly.`);
+    }
     onDone(`The card refund for booking ${row.bookingReference} will be tried on the card again.`);
     onClose();
   }
@@ -129,16 +142,15 @@ export function TryCardAgainDialog({ row, onClose, onDone, focusNotice }: Dialog
         <DialogHeader>
           <DialogTitle>Try the card again?</DialogTitle>
           <DialogDescription>
-            The app will ask Stripe to refund up to {formatCents(owedCents, format)} to the member&apos;s card again. Before
-            anything is sent it reads the refunds Stripe already holds on the charge: one it can match to this refund
-            is counted instead of sent again, and one made in the Stripe dashboard, or one it cannot match, stops it
-            for you to check.
+            {row?.settleKind === "organiser-child"
+              ? `The ask goes to the group organiser's card, for ${formatCents(owedCents, format)}. Stripe is read first, and a refund it already holds is not sent again.`
+              : `The app will ask Stripe to refund up to ${formatCents(owedCents, format)} to the member's card again. Before anything is sent it reads the refunds Stripe already holds on the charge: one it can match to this refund is counted instead of sent again, and one made in the Stripe dashboard, or one it cannot match, stops it for you to check.`}
           </DialogDescription>
         </DialogHeader>
         <p className="text-sm text-muted-foreground">
-          Only do this if you have not paid the member back another way. If the card fails again, the refund comes
-          back to this list: then pay the member another way and close it with Paid another way, not with a new refund
-          in the Stripe dashboard.
+          {row?.settleKind === "organiser-child"
+            ? "Only do this if the organiser has not already been paid back. If Stripe already has this refund, use Paid another way: that records it and pays nobody again."
+            : "Only do this if you have not paid the member back another way. If the card fails again, the refund comes back to this list: then pay the member another way and close it with Paid another way, not with a new refund in the Stripe dashboard."}
         </p>
         <FocusedActionError id={errorId} error={action.error} attentionKey={action.attention} />
         <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">

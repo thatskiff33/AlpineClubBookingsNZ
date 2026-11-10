@@ -6,10 +6,13 @@ import { requireAdmin } from "@/lib/session-guards";
 import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import { PAID_BACK_CHOICES, PAID_BACK_REST_CHOICES } from "@/lib/card-refund-paid-back";
+import { closeGroupCardRefundPaidAnotherWay } from "@/lib/card-refund-group-paid-another-way";
 import {
   CardRefundPaidAnotherWayError,
   closeCardRefundPaidAnotherWay,
 } from "@/lib/card-refund-paid-another-way";
+import { isGroupSettlementRefundRecoveryKey, isOrganiserChildRefundKey } from "@/lib/payment-recovery-keys";
+import { prisma } from "@/lib/prisma";
 
 /**
  * Explicit confirmation, as the hand-back completion asks, so closing a money
@@ -70,15 +73,24 @@ export async function POST(
   }
 
   try {
-    const result = await closeCardRefundPaidAnotherWay({
+    const keyRow = await prisma.paymentRecoveryOperation.findUnique({
+      where: { id },
+      select: { idempotencyKey: true },
+    });
+    const group =
+      keyRow !== null &&
+      (isOrganiserChildRefundKey(keyRow.idempotencyKey) || isGroupSettlementRefundRecoveryKey(keyRow.idempotencyKey));
+    const shared = {
       operationId: id,
       amountCents: parsed.data.amountCents,
       paidBack: parsed.data.paidBack,
-      rest: parsed.data.rest ?? null,
       expectedOwedCents: parsed.data.expectedOwedCents,
       note: parsed.data.note,
       actingMemberId: guard.session.user.id,
-    });
+    };
+    const result = group
+      ? await closeGroupCardRefundPaidAnotherWay(shared)
+      : await closeCardRefundPaidAnotherWay({ ...shared, rest: parsed.data.rest ?? null });
     revalidateAdminPage("stuck-states");
     revalidateAdminPage("payments");
     revalidateAdminPage("dashboard");

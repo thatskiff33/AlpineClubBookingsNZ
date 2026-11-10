@@ -4,7 +4,11 @@ import { z } from "zod";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
+import { LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL } from "@/lib/card-refund-group-copy";
+import { tryOrganiserChildCardRefundAgain } from "@/lib/card-refund-group-try-again";
 import { DeadCardRefundActionError, tryDeadCardRefundAgain } from "@/lib/card-refund-dead-row-actions";
+import { isGroupSettlementRefundRecoveryKey, isOrganiserChildRefundKey } from "@/lib/payment-recovery-keys";
+import { prisma } from "@/lib/prisma";
 
 /** The confirm dialog's yes, and the owed figure it showed (a moved one is a 409). */
 const bodySchema = z
@@ -50,11 +54,24 @@ export async function POST(
   }
 
   try {
-    const result = await tryDeadCardRefundAgain({
-      operationId: id,
-      expectedOwedCents: parsed.data.expectedOwedCents,
-      actingMemberId: guard.session.user.id,
+    const keyRow = await prisma.paymentRecoveryOperation.findUnique({
+      where: { id },
+      select: { idempotencyKey: true },
     });
+    if (keyRow && isGroupSettlementRefundRecoveryKey(keyRow.idempotencyKey)) {
+      return NextResponse.json({ error: LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL }, { status: 409 });
+    }
+    const result = keyRow && isOrganiserChildRefundKey(keyRow.idempotencyKey)
+      ? await tryOrganiserChildCardRefundAgain({
+          operationId: id,
+          expectedOwedCents: parsed.data.expectedOwedCents,
+          actingMemberId: guard.session.user.id,
+        })
+      : await tryDeadCardRefundAgain({
+          operationId: id,
+          expectedOwedCents: parsed.data.expectedOwedCents,
+          actingMemberId: guard.session.user.id,
+        });
     revalidateAdminPage("stuck-states");
     revalidateAdminPage("payments");
     revalidateAdminPage("dashboard");

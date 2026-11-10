@@ -44,7 +44,13 @@ import {
 import { deadRowClaimWhere, lockDeadCardRefundRow } from "@/lib/card-refund-dead-row-lock";
 import { isOwedCardRefundOperation } from "@/lib/open-card-refund-owed";
 import { prisma } from "@/lib/prisma";
-import { isOrganiserChildRefundKey } from "@/lib/payment-recovery-keys";
+import { LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL } from "@/lib/card-refund-group-copy";
+import { legacyGroupSettlementRefundUnsentCents } from "@/lib/group-settlement-refund-plan";
+import {
+  groupSettlementIdForRefundRecoveryKey,
+  isGroupSettlementRefundRecoveryKey,
+  isOrganiserChildRefundKey,
+} from "@/lib/payment-recovery-keys";
 import {
   applyLocalRefundAllocation,
   RefundAllocationExceedsCapturedError,
@@ -122,10 +128,10 @@ import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-
  *   cancellation already cleared (#3635). The key says the note waits
  *   (`after-receipt`), and until the receipt is in Xero nothing may size a note
  *   for the money (`readPaidAnotherWayCash`).
- * - NOT HERE: an organiser child's refund (#3653) comes out of the organiser's
- *   combined card payment, which the child's payment has no ledger rows for; a
- *   group organiser-cancel settlement's refund is not owed on the payment it
- *   hangs on (`isOwedCardRefundOperation`). Both are refused.
+ * - NOT HERE: an organiser child's refund (#3653) and a pre-#3653 whole-group
+ *   refund. This close still refuses both (`lockDeadCardRefundRow`'s
+ *   charge-backed accept). They settle through `closeGroupCardRefundPaidAnotherWay`,
+ *   which does not book the organiser's money on the child's own charges.
  *
  * LOCKS (`INV-LOCK-001`; `lockDeadCardRefundRow`, shared with the other two
  * settlements of a dead row since #4368): the global key first - it moves a payment's refunded
@@ -200,19 +206,29 @@ export interface DeadCardRefundRow {
   laterStripeRefunds: LaterStripeRefund[];
   /** #4368 (decision 5): why "Try the card again" may not re-arm it, or null when it may (`tryCardAgainRefusal`). */
   tryCardAgainRefusal: string | null;
+  /**
+   * #4851: whose card the row is. `charge` is today's charge-backed refund.
+   * `organiser-child` is one joiner's refund out of the organiser's combined
+   * card. `legacy-group` is the old whole-group refund. The two group kinds
+   * skip `deadCardRefundStillOwed` and `paidAnotherWayXeroPlan`.
+   */
+  settleKind: "charge" | "organiser-child" | "legacy-group";
 }
 
 /**
  * The dead card refunds the treasurer can settle, oldest first, with what each
- * still owes. Organiser child refunds and group settlement refunds are left
- * out, as every action on the list refuses them. #4368 (owner decision, 25 Oct
- * 2026; review C): one that owes nothing stays on the list while Stripe
- * refunds the attribution gives it cover all of its own slices, naming them,
- * for its "Nothing left owed" close - "Paid
- * another way" never records $0 (#3924 round 7, M6), and no Xero plan is read
- * for it. One that owes nothing with no such refund is left out, as before: it
- * still counts among the payment recovery operations the stuck-states page
- * says need reconciling, for a developer.
+ * still owes. #4851: a per-joiner refund out of the organiser's card and a
+ * pre-#3653 whole-group refund are on this list too. Their owed figure is the
+ * row's own amount, or what the frozen plan has not sent; neither reads
+ * `deadCardRefundStillOwed` or `paidAnotherWayXeroPlan`. A legacy row stays
+ * when that figure is 0, so a mirror-only finish is reachable. #4368 (owner
+ * decision, 25 Oct 2026; review C): a charge-backed row that owes nothing stays
+ * while Stripe refunds the attribution gives it cover its own slices, naming
+ * them, for its "Nothing left owed" close - "Paid another way" never records
+ * $0 (#3924 round 7, M6), and no Xero plan is read for it. One that owes
+ * nothing with no such refund is left out: it still counts among the payment
+ * recovery operations the stuck-states page says need reconciling, for a
+ * developer.
  */
 export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
   const operations = await prisma.paymentRecoveryOperation.findMany({
@@ -225,18 +241,59 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
       paymentTransaction: { select: { paymentId: true, amountCents: true, refundedAmountCents: true } },
     },
   });
-  const listed = operations
-    .filter(
-      (operation) => isOwedCardRefundOperation(operation) && !isOrganiserChildRefundKey(operation.idempotencyKey),
-    )
-    .map((operation) => ({ operation, owed: deadCardRefundStillOwed(operation.payment, operation.id) }))
-    .map((row) => ({ ...row, later: row.owed.owedCents === 0 ? laterStripeRefundsCovering(row.operation.payment, row.operation.id) : [] }))
-    // #4368 review C: with nothing owed and no Stripe refund the attribution gives this row - a $0 off the payment's
-    // cap alone, or a slice handed to a failed-later row - there is nothing to settle here (`INV-PAY-142`'s stated limit).
-    .filter(({ owed, later }) => owed.owedCents > 0 || later.length > 0);
+  const legacyIds = operations.flatMap((operation) =>
+    isGroupSettlementRefundRecoveryKey(operation.idempotencyKey)
+      ? [groupSettlementIdForRefundRecoveryKey(operation.idempotencyKey)]
+      : [],
+  );
+  const settlements = legacyIds.length === 0
+    ? []
+    : await prisma.groupBookingSettlement.findMany({
+        where: { id: { in: legacyIds } },
+        select: { id: true, status: true, stripePaymentIntentId: true, refundPlan: true },
+      });
+  const settlementById = new Map(settlements.map((settlement) => [settlement.id, settlement]));
+
+  const listed = operations.flatMap((operation) => {
+    if (isOrganiserChildRefundKey(operation.idempotencyKey)) {
+      return [{ operation, kind: "organiser-child" as const, owedCents: operation.amountCents, later: [] as ReturnType<typeof laterStripeRefundsCovering>, owed: null }];
+    }
+    if (isGroupSettlementRefundRecoveryKey(operation.idempotencyKey)) {
+      const settlement = settlementById.get(groupSettlementIdForRefundRecoveryKey(operation.idempotencyKey));
+      return [{
+        operation,
+        kind: "legacy-group" as const,
+        owedCents: settlement ? legacyGroupSettlementRefundUnsentCents(settlement) : 0,
+        later: [] as ReturnType<typeof laterStripeRefundsCovering>,
+        owed: null,
+      }];
+    }
+    if (!isOwedCardRefundOperation(operation)) return [];
+    const owed = deadCardRefundStillOwed(operation.payment, operation.id);
+    const later = owed.owedCents === 0 ? laterStripeRefundsCovering(operation.payment, operation.id) : [];
+    // #4368 review C: with nothing owed and no Stripe refund the attribution gives this row, there is nothing to settle here.
+    if (owed.owedCents <= 0 && later.length === 0) return [];
+    return [{ operation, kind: "charge" as const, owedCents: owed.owedCents, later, owed }];
+  });
   return Promise.all(
-    listed.map(async ({ operation, owed, later }) => {
-      const xeroPlan = owed.owedCents > 0
+    listed.map(async ({ operation, kind, owedCents, later, owed }) => {
+      if (kind !== "charge") {
+        return {
+          operationId: operation.id,
+          bookingId: operation.bookingId,
+          bookingReference: formatBookingReference(operation.bookingId),
+          raisedAt: operation.createdAt.toISOString(),
+          owedCents,
+          wholeAmountOnly: true,
+          xeroRefundNote: "none" as const,
+          cardNoteCoversCents: 0,
+          stripeMayHaveRefunded: lastErrorSuggestsStripeMayHaveRefunded(operation.lastError),
+          laterStripeRefunds: [],
+          tryCardAgainRefusal: kind === "legacy-group" ? LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL : null,
+          settleKind: kind,
+        };
+      }
+      const xeroPlan = owedCents > 0
         ? await paidAnotherWayXeroPlan(prisma, operation, operation.payment, { lockApprovalTask: false })
         : null;
       return {
@@ -244,13 +301,14 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
         bookingId: operation.bookingId,
         bookingReference: formatBookingReference(operation.bookingId),
         raisedAt: operation.createdAt.toISOString(),
-        owedCents: owed.owedCents,
+        owedCents,
         wholeAmountOnly: operation.type === "REFUND_SUPERSEDED_PAYMENT",
         xeroRefundNote: xeroPlan ? paidAnotherWayXeroPromise(xeroPlan) : "none",
         cardNoteCoversCents: xeroPlan?.xeroRefundNote === "now" ? (xeroPlan.cardNoteCoversCents ?? 0) : 0,
         stripeMayHaveRefunded: lastErrorSuggestsStripeMayHaveRefunded(operation.lastError),
         laterStripeRefunds: later,
-        tryCardAgainRefusal: tryCardAgainRefusal(operation.payment, operation, owed),
+        tryCardAgainRefusal: owed ? tryCardAgainRefusal(operation.payment, operation, owed) : null,
+        settleKind: "charge" as const,
       };
     }),
   );
@@ -327,7 +385,7 @@ async function assertSupersededCloseFillsItsTransaction(
  * standing and the gap for the census to report; written unwrapped, as
  * `postHandBackLedgerLine` writes. Keyed on the record, so a replay posts nothing.
  */
-async function postPaidAnotherWayLine(
+export async function postPaidAnotherWayLine(
   tx: Prisma.TransactionClient,
   input: { bookingId: string; lodgeId: string; taskId: string; amountCents: number; officerMemberId: string },
 ): Promise<void> {
