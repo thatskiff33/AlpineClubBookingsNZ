@@ -40,6 +40,8 @@ const EXCLUDED: Record<string, RegExp> = {
   "TwoFactorEmailCode.member": /cascade/,
   "TwoFactorRecoveryCode.member": /cascade/,
   "TwoFactorSessionChallenge.member": /cascade/,
+  // The duplicate's step-up challenges, dropped with it (#4616).
+  "SessionReauthChallenge.member": /cascade/,
   "PartnerInviteToken.createdBy": /cascade/,
   "SchoolMemberClassification.member": /cascade/,
 };
