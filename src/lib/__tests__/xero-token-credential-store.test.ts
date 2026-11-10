@@ -283,6 +283,18 @@ const ADMIN: CredentialActor = { kind: "admin", memberId: "admin-7" };
 const REFRESH_JOB: CredentialActor = { kind: "system", actor: "xero-token-refresh" };
 const REQUEST = { id: "req-1", ipAddress: "10.0.0.1", userAgent: "test-agent" };
 
+/**
+ * The fence takes the generated transaction client (`xeroConnection` and
+ * `integrationCredential` only, now the token table is gone). This double
+ * implements the calls the store makes. It is not a `XeroConnectionDelegate`:
+ * that type also requires `findUniqueOrThrow`, `findFirst`, `findMany`,
+ * `fields`, and the rest. The assertion is this boundary. `XeroTokenDb` stays
+ * the generated pick.
+ */
+function asXeroTokenDb(raw: typeof h.raw): Parameters<typeof fenceXeroTokenSetRewrite>[0] {
+  return raw as unknown as Parameters<typeof fenceXeroTokenSetRewrite>[0];
+}
+
 /** Distinctive enough that a substring search cannot match it by accident. */
 const SENTINEL = "xero_SENTINEL_7d41c0a9e2b54f3e8a6PLAINTEXT";
 
@@ -671,15 +683,15 @@ describe("a refresh claims the one lease and is fenced by it and by the store's 
 
   it("the re-encrypt fence loses while a lease is set, including one that has already expired", async () => {
     await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
-    expect(await fenceXeroTokenSetRewrite(h.raw)).toBe(true);
+    expect(await fenceXeroTokenSetRewrite(asXeroTokenDb(h.raw))).toBe(true);
 
     const claim = await claimXeroTokenRefreshLease({ now: new Date(Date.now() - 10 * 60_000) });
     if (!claim.claimed) throw new Error("expected the lease");
     expect(claim.leaseUntil.getTime()).toBeLessThan(Date.now());
-    expect(await fenceXeroTokenSetRewrite(h.raw)).toBe(false);
+    expect(await fenceXeroTokenSetRewrite(asXeroTokenDb(h.raw))).toBe(false);
 
     h.state.xeroConnection = [];
-    expect(await fenceXeroTokenSetRewrite(h.raw)).toBe(true);
+    expect(await fenceXeroTokenSetRewrite(asXeroTokenDb(h.raw))).toBe(true);
   });
 });
 
