@@ -17,6 +17,17 @@ node -e 'const f=process.env.HOME+"/.cursor/cli-config.json";const fs=require("f
   mkdir -p "$CURSOR_CONFIG_DIR" &&
   node -e 'const f=process.env.CURSOR_CONFIG_DIR+"/cli-config.json";const fs=require("fs");let d={};try{d=JSON.parse(fs.readFileSync(f,"utf8"))}catch{};d.attribution={...(d.attribution||{}),attributeCommitsToAgent:false,attributePRsToAgent:false};fs.writeFileSync(f,JSON.stringify(d,null,2)+"\n")'
 }; } &&
+hooks_dir=$(git rev-parse --git-path hooks) &&
+mkdir -p "$hooks_dir" &&
+cat > "$hooks_dir/commit-msg" << 'EOF' &&
+#!/bin/sh
+# Drop Cursor's Co-authored-by trailer. It is already on the message
+# when this hook runs; attribution flags written at setup are not.
+tmp="${1}.strip"
+grep -viE '^Co-authored-by:[[:space:]].*@cursor\.com>?[[:space:]]*$' "$1" > "$tmp" || true
+mv "$tmp" "$1"
+EOF
+chmod +x "$hooks_dir/commit-msg" &&
 node_version=$(cat .nvmrc) &&
 node_major=${node_version%%.*} &&
 { node -v | grep -q "^v${node_major}\." || {
