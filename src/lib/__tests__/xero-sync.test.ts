@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } from "@/lib/payment-transactions";
 import { CreditNoteSpentOutsideAppError } from "@/lib/xero-credit-note-spent-outside-app";
 import type { Prisma } from "@prisma/client";
 import {
@@ -725,6 +726,7 @@ describe("upsertXeroObjectLink", () => {
       expect(paymentLockAt).toBeLessThan(linkLockAt);
       expect(linkLockAt).toBeLessThan(mocks.txPaymentUpdateMany.mock.invocationCallOrder[0]!);
       expect(sqlOf(lockCalls()[0]!)).not.toContain("SKIP LOCKED");
+      expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function), PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS);
       expect(mocks.txPaymentUpdateMany).toHaveBeenCalledWith({ where: { id: "payment_1", xeroRefundCreditNoteId: "cn_voided" }, data: { xeroRefundCreditNoteId: null } });
     });
 

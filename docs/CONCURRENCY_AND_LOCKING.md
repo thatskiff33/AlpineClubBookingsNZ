@@ -7725,11 +7725,14 @@ Counterparts:
   existing-note branch, see "Refund-note link heal (#4161)" above) take the
   Payment row, then the link write, the same order as an explicit void. A kept
   void must never wait back on their
-  Payment row. Once an explicit void has committed, a statusless retry can
-  hold the link while a Payment-first enqueue holds the Payment row and waits
-  for that link. If the retry then waited on the Payment row, the two would
-  deadlock (40P01). The retry's `SKIP LOCKED` removes that
-  wait, preserving the inactive mirror even when pointer cleanup is deferred.
+  Payment row. A statusless retry holds the link while it keeps a stored void.
+  A writer that already holds the Payment row and then takes that link waits
+  for it. If the retry then waited on the Payment row, the two would deadlock
+  (40P01). The retry's `SKIP LOCKED` removes that wait, so the inactive mirror
+  commits even when pointer cleanup is deferred. An explicit void is not the
+  waiter in that overlap: it holds the Payment row until its own link change
+  commits, and an enqueue that starts only then does not take the existing-note
+  branch on the voided note.
 
 Two real-PostgreSQL proofs hold the void open on another connection and show
 the waiting write queued behind it, then find the link inactive with its
@@ -7738,14 +7741,14 @@ request's note, and `xero-canonical-refund-note-void-race.realdb.test.ts`
 for the canonical note through the real `createXeroCreditNote` retry, with the
 pointer released. The canonical suite also forces an inbound first insertion
 of a missing mirror, for VOIDED and DELETED, and proves the caller's rollback
-leaves neither the mirror nor its reservation. Its three-writer proof uses
-the real retry, the shared Payment-row lock, and the actual
-`enqueueXeroRefundCreditNoteOperation` existing-note branch: both statusless
-writes finish, the note remains inactive and VOIDED, and the final pointer is
-null. This schedule does not force which waiter acquires the link first after
-the inbound commit. A separate busy-Payment case forces the nonblocking branch
-and proves fresh metadata commits while the pointer stays put; the existing
-nightly heal then selects that inactive shape and releases it.
+leaves neither the mirror nor its reservation. A further case seeds that void
+already committed, with the pointer still naming the note, and queues a
+statusless retry ahead of a writer that holds the Payment row and then waits
+for the same link. The retry finishes while that row is held, the mirror stays
+inactive and VOIDED, and the pointer stays until the Payment row is free. A
+separate busy-Payment case forces the same nonblocking branch and proves fresh
+metadata commits while the pointer stays put; the existing nightly heal then
+selects that inactive shape and releases it.
 `xero-refund-note-stale-live-status.realdb.test.ts` (#4288) holds a live
 reading at a gate while the void commits, then releases it: for the
 bank-transfer canonical note through the real inbound reconcile, a Stripe

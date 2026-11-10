@@ -626,13 +626,16 @@ async function normalizePaymentRefundLinkWithClient(
   }
 
   if (REFUND_NOTE_LINK_ROLES.some((role) => isRefundNoteLinkOf(link, role))) {
-    link = await keepStoredRefundNoteVoid(client, link); // #4195, #4223: own row first; keeps a void it waited on
+    // #4195, #4223: own row first. An explicit void already locked the Payment row (#4200).
+    // Keeps a void this write waited on.
+    link = await keepStoredRefundNoteVoid(client, link);
     // A note the write (or that stored void) records VOIDED/DELETED in Xero credits nothing, so its mirror
     // is written inactive on every payment: a Stripe or per-refund note (#2901), a bank-transfer payment's
     // one canonical note (#4091) and a refund request's own note (#4195, `INV-PAY-118`). Else an inbound
     // re-reconcile re-arms phantom coverage (upsert forces `active` from this return). It retires no sibling.
     if (isRefundCreditNoteLinkCancelledInXero(link.metadata)) {
-      // The pointer moves after this link row is written: link, then payment, the repair apply's order.
+      // The pointer moves after this link row is written. An explicit void already
+      // holds the Payment row (#4200); a kept void tries it afterwards without waiting.
       return { ...link, active: false };
     }
     if (link.role === REFUND_REQUEST_CREDIT_NOTE_ROLE) return link; // never the one note below
