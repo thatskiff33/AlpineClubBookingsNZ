@@ -1221,10 +1221,13 @@ UPDATE`, all at once. If one row is busy the savepoint rolls back, releasing
 every row the attempt wrote, and merge waits for that one row holding none of
 them. It re-plans under the rows once it holds them; a new guest, booking,
 owner or lodge that changes the participant fingerprint returns the merge's
-existing safe 409 rather than acquiring another row late. A lodge the
-guest-row derivation newly sees at the start of an attempt is try-locked
-before the moves (`lockPartnerShareLodgesAppearedSincePrefix`); one that
-appears after that re-derivation is still `partner_share_lodge_drift`.
+existing safe 409 rather than acquiring another row late. The first attempt
+keeps the opening lodge prefix, so a guest row that landed in a lodge that
+prefix never locked is still `partner_share_lodge_drift` (#2672). After an
+attempt rolls back, the next one try-locks a lodge the guest-row derivation
+newly sees (`lockPartnerShareLodgesAppearedSincePrefix`) before the moves; a
+miss does not wait. A lodge that appears after that re-derivation is still
+`partner_share_lodge_drift`.
 
 **Merge waits for those rows, but only for `MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS`
 (10s)** (#2623 T6). It waits rather than failing at once because merge is
@@ -2897,9 +2900,11 @@ lockAdultMemberHostingPolicySet(tx)                              policy config
         (#3271 — no-op UPSERT locks existing and absent canonical pairs;
         complete this layer before the authoritative topology re-read)
   → steps 1-3, inside the attempt savepoint, before the moves:
-        re-derive the lodge set and try-lock any lodge the prefix missed
-        (#4876 — a booking that committed after the opening prefix, including
-        while the previous attempt was rolled back; a miss 409s and does not wait)
+        on a retry only, re-derive the lodge set and try-lock any lodge the
+        opening prefix missed
+        (#4876 — a booking that committed while the previous attempt was
+        rolled back; a miss 409s and does not wait. The first attempt does
+        not widen the prefix: a lodge that appeared after it is #2672 drift)
         then null self-cycles, resolve collisions, applyMoves
   → master/loser/ancillary `Member … FOR UPDATE`, all at once:     member rows
         sorted SKIP LOCKED attempts in a savepoint, waiting for one
@@ -3165,9 +3170,10 @@ and no reverse edge exists anywhere in the tree:
 - `lodge → member-lifecycle` is the order every partner-share caller and the
   reviewed bed-allocation move already use. No transaction waits for a lodge
   key while it holds a member-lifecycle key, or the global key. The one later
-  acquisition is inside each merge attempt: `tryAcquireLodgeCapacityLock` on a
-  lodge the opening prefix missed, inside the attempt savepoint, before the
-  moves. A
+  acquisition is inside a retry, after an attempt rolled back:
+  `tryAcquireLodgeCapacityLock` on a lodge the opening prefix missed, inside
+  the attempt savepoint, before the moves. The first attempt does not take a
+  lodge key after the member-lifecycle pair. A
   miss does not wait — it is `partner_share_lodge_drift` — so the reverse is
   never a wait. The operator's retry takes the wider set at the top, in order.
 - `member-lifecycle → member-partner-link` is the reviewed bed-allocation move's

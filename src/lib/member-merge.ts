@@ -1679,11 +1679,17 @@ export async function executeMemberMerge(params: {
     // not GROW. A participant attempt that rolls back can see a booking commit
     // in the gap, so the next attempt re-derives and try-locks those lodges
     // before it moves anything (`lockPartnerShareLodgesAppearedSincePrefix`).
-    // Step 3b then re-derives again under the `Member … FOR UPDATE` that
-    // attempt holds — the point after which no INSERT or re-point of a
-    // `BookingGuest` naming these members can commit, because that FK write
-    // needs `FOR KEY SHARE` on the member row — and 409s if a lodge appeared
-    // after the attempt's re-derivation. That pair is the fence.
+    // The first attempt does not widen this prefix. A guest row that commits
+    // while the member-lifecycle keys are still being taken is in a lodge this
+    // transaction never locked, and step 3b must still refuse it (#2672).
+    // Try-locking that lodge on the first attempt would put it in the set the
+    // proof is handed, and the merge would commit. Step 3b then re-derives
+    // again under the `Member … FOR UPDATE` that attempt holds — the point
+    // after which no INSERT or re-point of a `BookingGuest` naming these
+    // members can commit, because that FK write needs `FOR KEY SHARE` on the
+    // member row — and 409s if a lodge appeared after the attempt's
+    // re-derivation (the opening prefix, on the first attempt). That pair is
+    // the fence.
     //
     // Deriving the lodge set here also needs BOTH identities: the helper reads
     // the two members' own future allocations and guest-nights, so it must run
@@ -1879,25 +1885,32 @@ export async function executeMemberMerge(params: {
     let refreshedHostingPlan: Awaited<ReturnType<typeof buildMemberMergeHostingCoveragePlan>>;
     let hostingParticipantProof: HostingCoverageQueueParticipantProof;
     try {
+      let participantAttempt = 0;
       const prepared = await withMemberMergeParticipantRows(tx, async () => {
-        // Before any move. A guest link that committed after the opening
-        // prefix — including while the previous attempt was rolled back — is
-        // part of this attempt's plan; a lodge that appears after this line
-        // is still drift. A busy new lodge refuses rather than waiting,
-        // because member-lifecycle keys are already held.
-        let lodgeIdsThisAttempt: string[];
-        try {
-          lodgeIdsThisAttempt = await lockPartnerShareLodgesAppearedSincePrefix(
-            tx,
-            [masterId, loserId],
-            clubTodayForMerge,
-            coveredPartnerShareLodgeIds,
-          );
-        } catch (error) {
-          if (error instanceof UnlockedPartnerShareLodgeError) {
-            throw partnerShareLodgeDrift(error.lodgeIds);
+        participantAttempt += 1;
+        // The opening prefix stays the coverage set on the first attempt. A
+        // guest that committed after it — the #2672 case, while this
+        // transaction was waiting on a member-lifecycle key — is still drift
+        // at step 3b. Only a retry, after the previous attempt rolled back and
+        // released its writes, try-locks a lodge that appeared in that gap
+        // (#4876). A miss refuses rather than waiting, because the
+        // member-lifecycle keys are already held. A lodge that appears after
+        // this line is still drift.
+        let lodgeIdsThisAttempt = coveredPartnerShareLodgeIds;
+        if (participantAttempt > 1) {
+          try {
+            lodgeIdsThisAttempt = await lockPartnerShareLodgesAppearedSincePrefix(
+              tx,
+              [masterId, loserId],
+              clubTodayForMerge,
+              coveredPartnerShareLodgeIds,
+            );
+          } catch (error) {
+            if (error instanceof UnlockedPartnerShareLodgeError) {
+              throw partnerShareLodgeDrift(error.lodgeIds);
+            }
+            throw error;
           }
-          throw error;
         }
         const nulled = await nullSelfRelationCycles(tx, masterFull, loserId);
         const resolved = await resolveAllCollisions(tx, masterId, loserId);

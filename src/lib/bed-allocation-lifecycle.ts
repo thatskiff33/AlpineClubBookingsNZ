@@ -1879,8 +1879,11 @@ async function partnerShareGuestRowLodgeIds(
     where: { memberId: { in: uniqueMemberIds } },
     select: { booking: { select: { lodgeId: true } } },
   });
+  // A guest whose booking relation is absent names no lodge. Reading
+  // `lodgeId` off that missing booking threw before the residual-reference
+  // refusal could run.
   return guestRows
-    .map((guest) => guest.booking.lodgeId)
+    .map((guest) => guest.booking?.lodgeId)
     .filter((lodgeId): lodgeId is string => Boolean(lodgeId));
 }
 
