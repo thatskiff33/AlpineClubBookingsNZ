@@ -1,11 +1,11 @@
 # File-size allowances for #4888
 
 file: src/lib/member-merge.ts
-lines: 3152
+lines: 3140
 reason: The participant-attempt savepoint and the partner-share lodge prefix
-  have to stay in this function. The coverage proof is pinned to the call that
-  try-locks a lodge only after a rolled-back attempt, and splitting that call
-  out would hide the order the lock tests read from this file.
+  have to stay in this function. The first attempt try-locks a new lodge and
+  still hands step 3b the opening prefix, and splitting that call out would
+  hide the order the lock tests read from this file.
 
 file: src/lib/bed-allocation-lifecycle.ts
 lines: 2593

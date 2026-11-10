@@ -1676,20 +1676,13 @@ export async function executeMemberMerge(params: {
     // guest row stop being a guest row at that lodge.
     //
     // The one thing the derivation alone cannot promise is that its set does
-    // not GROW. A participant attempt that rolls back can see a booking commit
-    // in the gap, so the next attempt re-derives and try-locks those lodges
-    // before it moves anything (`lockPartnerShareLodgesAppearedSincePrefix`).
-    // The first attempt does not widen this prefix. A guest row that commits
-    // while the member-lifecycle keys are still being taken is in a lodge this
-    // transaction never locked, and step 3b must still refuse it (#2672).
-    // Try-locking that lodge on the first attempt would put it in the set the
-    // proof is handed, and the merge would commit. Step 3b then re-derives
-    // again under the `Member … FOR UPDATE` that attempt holds — the point
-    // after which no INSERT or re-point of a `BookingGuest` naming these
-    // members can commit, because that FK write needs `FOR KEY SHARE` on the
-    // member row — and 409s if a lodge appeared after the attempt's
-    // re-derivation (the opening prefix, on the first attempt). That pair is
-    // the fence.
+    // not GROW. Every attempt try-locks lodges that appeared after the opening
+    // prefix before it moves anything. A miss 409s and does not wait. The
+    // first attempt does not adopt those ids, so a guest that committed while
+    // the member-lifecycle keys were being taken stays
+    // partner_share_lodge_drift (#2672). A retry after a rolled-back attempt
+    // does adopt them (#4876). Step 3b re-derives under the Member rows and
+    // 409s if a lodge appeared after the set that attempt hands it.
     //
     // Deriving the lodge set here also needs BOTH identities: the helper reads
     // the two members' own future allocations and guest-nights, so it must run
@@ -1888,29 +1881,24 @@ export async function executeMemberMerge(params: {
       let participantAttempt = 0;
       const prepared = await withMemberMergeParticipantRows(tx, async () => {
         participantAttempt += 1;
-        // The opening prefix stays the coverage set on the first attempt. A
-        // guest that committed after it — the #2672 case, while this
-        // transaction was waiting on a member-lifecycle key — is still drift
-        // at step 3b. Only a retry, after the previous attempt rolled back and
-        // released its writes, try-locks a lodge that appeared in that gap
-        // (#4876). A miss refuses rather than waiting, because the
-        // member-lifecycle keys are already held. A lodge that appears after
-        // this line is still drift.
+        // Try-lock on every attempt: the officer-race cases need that read
+        // on the first one. Only a retry adopts the new ids. The first
+        // attempt keeps the opening prefix, so a guest committed while the
+        // lifecycle keys were taken is still drift at step 3b (#2672).
         let lodgeIdsThisAttempt = coveredPartnerShareLodgeIds;
-        if (participantAttempt > 1) {
-          try {
-            lodgeIdsThisAttempt = await lockPartnerShareLodgesAppearedSincePrefix(
-              tx,
-              [masterId, loserId],
-              clubTodayForMerge,
-              coveredPartnerShareLodgeIds,
-            );
-          } catch (error) {
-            if (error instanceof UnlockedPartnerShareLodgeError) {
-              throw partnerShareLodgeDrift(error.lodgeIds);
-            }
-            throw error;
+        try {
+          const widened = await lockPartnerShareLodgesAppearedSincePrefix(
+            tx,
+            [masterId, loserId],
+            clubTodayForMerge,
+            coveredPartnerShareLodgeIds,
+          );
+          if (participantAttempt > 1) lodgeIdsThisAttempt = widened;
+        } catch (error) {
+          if (error instanceof UnlockedPartnerShareLodgeError) {
+            throw partnerShareLodgeDrift(error.lodgeIds);
           }
+          throw error;
         }
         const nulled = await nullSelfRelationCycles(tx, masterFull, loserId);
         const resolved = await resolveAllCollisions(tx, masterId, loserId);
