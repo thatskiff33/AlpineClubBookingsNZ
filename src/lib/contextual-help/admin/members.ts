@@ -219,8 +219,9 @@ export const adminMembersHelpEntries: HelpEntry[] = [
       ],
     ),
   ),
+  // Keyed by its registry old path: see the note on `admin/finance.ts` (C8 #4805).
   entry(
-    "/admin/communications",
+    getAdminPage("communications").oldPath,
     help(
       "Communications",
       "Communications sends and reviews member email or notification messages.",
@@ -251,8 +252,9 @@ export const adminMembersHelpEntries: HelpEntry[] = [
       ],
     ),
   ),
+  // Keyed by its registry old path: see the note on `admin/finance.ts` (C8 #4805).
   entry(
-    "/admin/notices",
+    getAdminPage("notices").oldPath,
     help(
       "Member Notices",
       "Member Notices posts committee news to targeted member audiences and tracks who has read each notice.",

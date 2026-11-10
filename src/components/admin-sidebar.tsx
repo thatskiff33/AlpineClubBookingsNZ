@@ -302,21 +302,9 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         icon: UserX,
       },
       { href: "/admin/induction", label: "Induction", icon: ClipboardCheck },
-      {
-        href: "/admin/communications",
-        label: "Communications",
-        icon: Mail,
-      },
-      {
-        href: "/admin/message-board",
-        label: "Message Board",
-        icon: MessageSquare,
-      },
-      {
-        href: "/admin/notices",
-        label: "Member Notices",
-        icon: Newspaper,
-      },
+      { ...adminLink("communications"), icon: Mail },
+      { ...adminLink("message-board"), icon: MessageSquare },
+      { ...adminLink("notices"), icon: Newspaper },
       // Lockers is lodge-scoped (#130, ADR-005) — reached via the lodge hub's
       // "Lockers" card, not a standalone sidebar entry. The command palette
       // offers it (S2 #4797); the page picks a lodge itself.
@@ -437,11 +425,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         label: "Integrations",
         icon: Plug,
       },
-      {
-        href: "/admin/notifications",
-        label: "Notifications & Email",
-        icon: Bell,
-      },
+      { ...adminLink("notifications"), icon: Bell },
       // Chores is lodge-scoped (#130, ADR-005) — reached via the lodge hub's
       // "Chores" card, not a standalone sidebar entry. The command palette
       // offers it (S2 #4797); the page picks a lodge itself.

@@ -805,3 +805,108 @@ describe("the generated tables are frozen", () => {
     }
   });
 });
+
+/**
+ * C8 (#4805): the Messages & email hub mixes two permission areas (membership
+ * and support) and three module gates, so its pages are named here one by one
+ * rather than only reached through the loops above. Each answers at its hub
+ * path exactly as at its old path; a grid holding only the hub's OTHER area is
+ * refused at both; and the hub's root, which holds pages of both areas, has no
+ * rule of its own, so no page beneath it inherits another page's area. The
+ * `/api/admin` routes the pages call are not under the hub and answer as before.
+ */
+describe("the Messages & email hub keeps each page's own admission (C8 #4805)", () => {
+  type Row = readonly [
+    id: string,
+    oldPath: string,
+    hubPath: string,
+    area: "membership" | "support",
+    flags: readonly FeatureFlagKey[],
+  ];
+  const MESSAGES: readonly Row[] = [
+    ["notifications", "/admin/notifications", "/admin/messages/notifications", "support", []],
+    ["communications", "/admin/communications", "/admin/messages/communications", "membership", ["communications"]],
+    ["notices", "/admin/notices", "/admin/messages/notices", "membership", ["memberNotices"]],
+    ["notice-detail", "/admin/notices/[id]", "/admin/messages/notices/[id]", "membership", ["memberNotices"]],
+    ["notice-new", "/admin/notices/new", "/admin/messages/notices/new", "membership", ["memberNotices"]],
+    ["message-board", "/admin/message-board", "/admin/messages/message-board", "membership", ["commsPortal"]],
+    ["email-messages", "/admin/email-messages", "/admin/messages/email-messages", "support", []],
+    ["booking-messages", "/admin/booking-messages", "/admin/messages/booking-messages", "support", []],
+    ["notification-rules", "/admin/notification-rules", "/admin/messages/notification-rules", "support", []],
+    [
+      "notification-recipients",
+      "/admin/notification-recipients",
+      "/admin/messages/notification-recipients",
+      "support",
+      [],
+    ],
+  ];
+
+  const only = (area: AdminPermissionArea, level: "view" | "edit"): AdminPermissionInput => ({
+    canLogin: true,
+    accessRoles: [],
+    adminPermissionMatrix: {
+      ...(Object.fromEntries(
+        ADMIN_PERMISSION_AREAS.map((entry) => [entry.key, "none"]),
+      ) as AdminPermissionMatrix),
+      [area]: level,
+    },
+  });
+
+  it("names every page of the hub, each moved, on its own area's ordinary admission", () => {
+    expect(
+      ADMIN_PAGES.filter((page) => page.hub === "messages").map((page) => [
+        page.id,
+        page.oldPath,
+        page.hubPath,
+        page.area,
+        page.flags,
+      ]),
+    ).toEqual(MESSAGES);
+    for (const page of ADMIN_PAGES.filter((candidate) => candidate.hub === "messages")) {
+      expect(page.moved, page.id).toBe(true);
+      expect(page.admission, page.id).toBe("area");
+    }
+  });
+
+  it.each(MESSAGES)("%s answers at %s and at %s as main did at the old path", (id, oldPath, hubPath, area, flags) => {
+    for (const pathname of [oldPath, hubPath].map(concrete)) {
+      expect(getAdminRouteRequirement(pathname, "GET"), pathname).toEqual({ area, level: "view" });
+      expect(getAdminRouteRequirement(pathname, "POST"), pathname).toEqual({ area, level: "edit" });
+      expect(getRequiredFeaturesForPath(pathname), pathname).toEqual([...flags]);
+      expect(differences(id, actualAnswer(pathname), oracleAnswer(concrete(oldPath)))).toEqual([]);
+      // Its own area admits, view-only included; the hub's other area does not.
+      const other = area === "membership" ? "support" : "membership";
+      expect(canOpenAdminPath(only(area, "view"), pathname), pathname).toBe(true);
+      expect(canOpenAdminPath(only(other, "edit"), pathname), pathname).toBe(false);
+      expect(canOpenAdminPath(only("overview", "edit"), pathname), pathname).toBe(false);
+    }
+  });
+
+  it("gives the hub's root no rule, so each hub path resolves through its own page's", () => {
+    expect(ADMIN_ROUTE_MAP.map(({ prefix }) => prefix)).not.toContain("/admin/messages");
+    expect(firstMatch("/admin/messages")?.prefix).toBe("/admin");
+    expect(getRequiredFeaturesForPath("/admin/messages")).toEqual([]);
+    for (const [id, oldPath, hubPath, area] of MESSAGES) {
+      const entry = firstMatch(concrete(hubPath));
+      expect(entry && nestsUnder(entry.prefix, "/admin/messages") && entry.prefix !== "/admin/messages", id).toBe(true);
+      expect(entry?.area, id).toBe(area);
+      expect(entry?.prefix, id).toBe(firstMatch(concrete(oldPath))!.prefix.replace(/^\/admin/, "/admin/messages"));
+    }
+  });
+
+  it.each([
+    ["/api/admin/notifications", "support", []],
+    ["/api/admin/notification-delivery-policies", "support", []],
+    ["/api/admin/email-settings", "support", []],
+    ["/api/admin/email-templates", "support", []],
+    ["/api/admin/booking-messages", "support", []],
+    ["/api/admin/communications/send", "membership", ["communications"]],
+    ["/api/admin/notices/x123/reads", "membership", ["memberNotices"]],
+    ["/api/admin/club-posts/x123", "membership", ["commsPortal"]],
+  ] as const)("leaves the API %s on %s", (pathname, area, flags) => {
+    expect(getAdminRouteRequirement(pathname, "GET")).toEqual({ area, level: "view" });
+    expect(getAdminRouteRequirement(pathname, "POST")).toEqual({ area, level: "edit" });
+    expect(getRequiredFeaturesForPath(pathname)).toEqual([...flags]);
+  });
+});

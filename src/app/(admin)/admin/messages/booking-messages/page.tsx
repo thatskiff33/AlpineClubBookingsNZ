@@ -1,4 +1,5 @@
 import { BackLink } from "@/components/admin/back-link";
+import { adminLink } from "@/lib/admin-hubs";
 import { Card, CardContent } from "@/components/ui/card";
 import { BookingMessagesPanel } from "@/components/admin/booking-messages/booking-messages-panel";
 
@@ -6,7 +7,7 @@ export default function BookingMessagesPage() {
   return (
     <div className="space-y-8">
       <div>
-        <BackLink href="/admin/notifications" label="Notifications & Email" />
+        <BackLink {...adminLink("notifications")} />
         <h1 className="mt-2 text-2xl font-bold text-foreground">
           Booking Messages
         </h1>

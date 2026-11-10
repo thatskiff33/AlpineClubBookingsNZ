@@ -20,6 +20,7 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useClubTime } from "@/components/club-time-provider";
 import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import type { AdminNoticeData } from "@/components/admin/notice-editor";
+import { adminHref } from "@/lib/admin-hubs";
 
 type NoticeGroups = {
   published: AdminNoticeData[];
@@ -78,7 +79,7 @@ function NoticeRow({ notice }: { notice: AdminNoticeData }) {
             />
           ) : null}
           <Link
-            href={`/admin/notices/${notice.id}`}
+            href={adminHref("notice-detail", { id: notice.id })}
             className="font-medium text-foreground underline-offset-4 hover:underline"
           >
             {notice.title}
@@ -107,7 +108,7 @@ function NoticeRow({ notice }: { notice: AdminNoticeData }) {
       </div>
       <div className="flex shrink-0 flex-col items-start gap-1 text-sm sm:items-end">
         <Link
-          href={`/admin/notices/${notice.id}`}
+          href={adminHref("notice-detail", { id: notice.id })}
           className="text-muted-foreground underline-offset-4 hover:underline"
         >
           read {notice.readCount} / {notice.audienceCount}
@@ -214,7 +215,7 @@ export default function AdminNoticesPage() {
             canEdit={canEdit}
             describeReason={false}
             type="button"
-            onClick={() => router.push("/admin/notices/new")}
+            onClick={() => router.push(adminHref("notice-new"))}
           >
             <Plus className="mr-2 h-4 w-4" />
             New notice

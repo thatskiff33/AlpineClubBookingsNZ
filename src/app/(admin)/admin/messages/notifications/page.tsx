@@ -6,32 +6,32 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Bell, Mail, MessageSquareText, Send, UserX } from "lucide-react";
-import { adminTabHref } from "@/lib/admin-hubs";
+import { adminHref, adminTabHref } from "@/lib/admin-hubs";
 
 const sections = [
   {
-    href: "/admin/notification-rules",
+    href: adminHref("notification-rules"),
     title: "Delivery Rules",
     description:
       "Control which admin and system emails are sent when jobs or alerts run.",
     icon: Send,
   },
   {
-    href: "/admin/notification-recipients",
+    href: adminHref("notification-recipients"),
     title: "Recipients",
     description:
       "Choose which system alerts each admin user receives, within the areas their role can edit.",
     icon: Bell,
   },
   {
-    href: "/admin/email-messages",
+    href: adminHref("email-messages"),
     title: "Email Messages",
     description:
       "Edit shared email variables and message wording for audited templates.",
     icon: Mail,
   },
   {
-    href: "/admin/booking-messages",
+    href: adminHref("booking-messages"),
     title: "Booking Messages",
     description:
       "Edit member-facing booking, payment, cancellation, and group booking copy.",

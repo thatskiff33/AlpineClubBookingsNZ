@@ -88,7 +88,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/communications/page.tsx": {
+  "src/app/(admin)/admin/messages/communications/page.tsx": {
     "design-system/no-raw-table": {
       "count": 1
     }

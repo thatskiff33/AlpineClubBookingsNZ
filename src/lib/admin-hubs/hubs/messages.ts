@@ -11,7 +11,7 @@ export const MESSAGES_HUB = defineHub({
       label: "Notifications & Email",
       oldPath: "/admin/notifications",
       area: "support",
-      moved: false,
+      moved: true,
     },
     {
       id: "communications",
@@ -20,7 +20,7 @@ export const MESSAGES_HUB = defineHub({
       area: "membership",
       flags: ["communications"],
       keywords: ["email", "newsletter", "bulk message", "broadcast"],
-      moved: false,
+      moved: true,
     },
     {
       id: "notices",
@@ -29,7 +29,7 @@ export const MESSAGES_HUB = defineHub({
       area: "membership",
       flags: ["memberNotices"],
       keywords: ["news", "recent news", "notice", "announcement", "committee"],
-      moved: false,
+      moved: true,
     },
     {
       id: "notice-detail",
@@ -38,7 +38,7 @@ export const MESSAGES_HUB = defineHub({
       area: "membership",
       flags: ["memberNotices"],
       kind: "detail",
-      moved: false,
+      moved: true,
     },
     {
       id: "notice-new",
@@ -46,7 +46,7 @@ export const MESSAGES_HUB = defineHub({
       oldPath: "/admin/notices/new",
       area: "membership",
       flags: ["memberNotices"],
-      moved: false,
+      moved: true,
     },
     {
       // #2998: moderation sits with notices, because the people who curate what
@@ -61,35 +61,35 @@ export const MESSAGES_HUB = defineHub({
         "message board", "posts", "member posts", "moderation", "hide post",
         "remove post",
       ],
-      moved: false,
+      moved: true,
     },
     {
       id: "email-messages",
       label: "Email Messages",
       oldPath: "/admin/email-messages",
       area: "support",
-      moved: false,
+      moved: true,
     },
     {
       id: "booking-messages",
       label: "Booking Messages",
       oldPath: "/admin/booking-messages",
       area: "support",
-      moved: false,
+      moved: true,
     },
     {
       id: "notification-rules",
       label: "Notification Rules",
       oldPath: "/admin/notification-rules",
       area: "support",
-      moved: false,
+      moved: true,
     },
     {
       id: "notification-recipients",
       label: "Notification Recipients",
       oldPath: "/admin/notification-recipients",
       area: "support",
-      moved: false,
+      moved: true,
     },
   ],
 });

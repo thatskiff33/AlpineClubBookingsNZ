@@ -83,11 +83,11 @@ describe("the sidebar's active link over a moved hub", () => {
     stubPendingCounts();
   });
 
-  it("PREMISE: the Finance, Website, Rules and Help & system hubs have moved, and nothing else has", () => {
+  it("PREMISE: the Finance, Website, Rules, Help & system and Messages & email hubs have moved, and nothing else has", () => {
     const moved = ADMIN_PAGES.filter((page) => page.moved);
     expect(moved.length).toBeGreaterThan(0);
     expect(new Set(moved.map((page) => page.hub))).toEqual(
-      new Set(["finance", "website", "rules", "system"]),
+      new Set(["finance", "website", "rules", "system", "messages"]),
     );
     expect(moved.find((page) => page.id === "payments")?.hubPath).toBe(
       "/admin/finance/payments",
@@ -113,6 +113,14 @@ describe("the sidebar's active link over a moved hub", () => {
     // C7 (#4804): System Health, and Backup Setup, which has no menu entry of its own.
     ["System Health's hub URL", "/admin/system/health", ["System Health"]],
     ["Backup Setup's hub URL", "/admin/system/backups/setup", ["Database Backups"]],
+    // C8 (#4805): Member Notices, and a notice's own page beneath it, which has
+    // no menu entry of its own; and Delivery Rules, reached from Notifications &
+    // Email's card, which is not beneath it.
+    ["Member Notices' hub URL", "/admin/messages/notices", ["Member Notices"]],
+    ["a notice's hub URL", "/admin/messages/notices/n-1", ["Member Notices"]],
+    ["a notice's old URL", "/admin/notices/n-1", ["Member Notices"]],
+    ["Notifications & Email's hub URL", "/admin/messages/notifications", ["Notifications & Email"]],
+    ["Delivery Rules' hub URL", "/admin/messages/notification-rules", []],
     ["a policy page's hub URL", "/admin/rules/booking-policies/cancellation", ["Booking Policies"]],
   ])("highlights the same link at %s (%s)", async (_label, pathname, expected) => {
     await expect(activeLabels(pathname)).resolves.toEqual([...expected].sort());

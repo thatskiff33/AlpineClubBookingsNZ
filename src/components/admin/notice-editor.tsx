@@ -32,6 +32,7 @@ import {
 } from "@/components/admin/view-only-action";
 import { useClubTime } from "@/components/club-time-provider";
 import { parseCalendarDate } from "@/lib/club-time";
+import { adminHref } from "@/lib/admin-hubs";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   NOTICE_BODY_MAX_LENGTH,
@@ -260,7 +261,7 @@ export function NoticeEditor({ mode, notice }: NoticeEditorProps) {
         setError(data?.error ?? "Failed to save the notice. Please try again.");
         return;
       }
-      router.push("/admin/notices");
+      router.push(adminHref("notices"));
       router.refresh();
     } catch {
       setError("Failed to save the notice. Please try again.");
@@ -401,7 +402,7 @@ export function NoticeEditor({ mode, notice }: NoticeEditorProps) {
               <Button
                 type="button"
                 variant="ghost"
-                onClick={() => router.push("/admin/notices")}
+                onClick={() => router.push(adminHref("notices"))}
                 disabled={saving}
               >
                 Cancel

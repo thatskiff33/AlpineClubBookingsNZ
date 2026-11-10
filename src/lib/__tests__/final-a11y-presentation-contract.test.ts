@@ -164,7 +164,7 @@ describe("#1819 final accessibility presentation contract", () => {
       "src/components/admin-booking-calendar.tsx",
       "src/app/(lodge)/lodge/kiosk/page.tsx",
       "src/components/edit-booking/existing-guest-row.tsx",
-      "src/app/(admin)/admin/notifications/notifications-settings.tsx",
+      "src/app/(admin)/admin/messages/notifications/notifications-settings.tsx",
       "src/components/book/member-guest-find-panel.tsx",
       "src/components/admin/page-content-panel.tsx",
       "src/components/group-booking/organiser-group-booking-card.tsx",

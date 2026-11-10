@@ -40,7 +40,7 @@ vi.mock("next-auth/react", () => ({
 }));
 
 import { toast } from "sonner";
-import { AdminNotificationSettings } from "@/app/(admin)/admin/notifications/notifications-settings";
+import { AdminNotificationSettings } from "@/app/(admin)/admin/messages/notifications/notifications-settings";
 import {
   ADMIN_NOTIFICATION_PREFERENCE_KEYS,
   adminNotificationKeysForMember,

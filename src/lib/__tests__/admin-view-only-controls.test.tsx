@@ -113,7 +113,7 @@ import { RoomsBedsManager } from "@/components/admin/rooms-beds-manager";
 import { InternetBankingSettingsPanel } from "@/components/admin/internet-banking/internet-banking-settings-panel";
 import { NotificationDeliveryPolicySettings } from "@/components/admin/email-settings/notification-delivery-policy-settings";
 // #1940 pass 3 panels (support / finance / bookings settings editors).
-import { AdminNotificationSettings } from "@/app/(admin)/admin/notifications/notifications-settings";
+import { AdminNotificationSettings } from "@/app/(admin)/admin/messages/notifications/notifications-settings";
 import AdminModulesPage from "@/app/(admin)/admin/modules/page";
 import { MODULE_KEYS } from "@/config/modules";
 import { XeroRecordActivityPanel } from "@/components/admin/xero-record-activity-panel";
@@ -154,7 +154,7 @@ import MemberApplicationsPage from "@/app/(admin)/admin/member-applications/page
 import MembershipCancellationsPage from "@/app/(admin)/admin/membership-cancellations/page";
 // #1997 admin action-button surfaces (support / communications lane).
 import AdminIssueReportsPage from "@/app/(admin)/admin/system/issue-reports/page";
-import CommunicationsPage from "@/app/(admin)/admin/communications/page";
+import CommunicationsPage from "@/app/(admin)/admin/messages/communications/page";
 import { FamilySuggestionsPanel } from "@/components/admin/family-groups/family-suggestions-panel";
 // #1997 member-detail action cards (membership / finance lane).
 import { MemberDeletionCard } from "@/app/(admin)/admin/members/[id]/_components/member-deletion-card";

@@ -25,6 +25,7 @@ import {
 } from "@/components/admin/notice-editor";
 import { useClubTime } from "@/components/club-time-provider";
 import { parseInstant, type BoundClubTime } from "@/lib/club-time";
+import { adminHref } from "@/lib/admin-hubs";
 
 const READS_PAGE_SIZE = 25;
 
@@ -227,7 +228,7 @@ export default function EditNoticePage() {
 
   return (
     <div className="space-y-4">
-      <BackLink href="/admin/notices" label="Member notices" />
+      <BackLink href={adminHref("notices")} label="Member notices" />
 
       {notice === undefined ? (
         <p className="text-sm text-muted-foreground">Loading notice...</p>

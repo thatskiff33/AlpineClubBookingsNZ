@@ -161,9 +161,9 @@ const nextConfig: NextConfig = {
    * any other way with a 404 (`isInexactAdminPagePath`): admin page URLs are
    * served only at their exact spelling. Once on, the old URL redirects to the
    * hub URL and there are no rewrites. C4 (#4801) has moved the Website pages,
-   * C5 (#4802) the Finance pages, C6 (#4803) the Fees & booking rules pages and
-   * C7 (#4804) the Help & system pages, so those rules are live while the
-   * switch stays off.
+   * C5 (#4802) the Finance pages, C6 (#4803) the Fees & booking rules pages,
+   * C7 (#4804) the Help & system pages and C8 (#4805) the Messages & email
+   * pages, so those rules are live while the switch stays off.
    *
    * The pages S1 (#4796) merged into others (`src/lib/admin-hubs/retired.ts`)
    * each have a redirect in both states, FIRST in the list so no moved page's

@@ -792,7 +792,7 @@ function entityDrilldownLink(
     case "Communication":
       return {
         label: "Open communications",
-        href: "/admin/communications",
+        href: adminHref("communications"),
         kind: "admin",
         primary: true,
       };
@@ -860,7 +860,7 @@ function actionFallbackDrilldownLink(
   if (normalized.includes("communication") || normalized.includes("email")) {
     return {
       label: "Open communications",
-      href: "/admin/communications",
+      href: adminHref("communications"),
       kind: "admin",
       primary: true,
     };
