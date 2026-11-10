@@ -301,10 +301,10 @@ export interface ClearingAllocation<L extends ClearingAllocationLink = ClearingA
  * note applied to one invoice in two parts counts only one part: the audit
  * then reports an under-clear that is not there, and the recount a refunded
  * total too low, which leaves more refund headroom, until the mirror's next
- * write. And a note whose allocation is removed in Xero keeps counting while
- * its link stays active: the audit then misses an under-clear, and the
- * recount holds a refunded total too high. With `creditNoteId`, only that
- * note's. Read only.
+ * write. A note whose allocation was removed in Xero counts until the inbound
+ * sync turns that link off (#4447); while the link stays active the audit
+ * misses an under-clear and the recount holds a refunded total too high.
+ * With `creditNoteId`, only that note's. Read only.
  */
 export function distinctClearingAllocations<L extends DatedClearingAllocationLink>(
   links: readonly L[],
