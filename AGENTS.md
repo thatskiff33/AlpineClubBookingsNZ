@@ -112,7 +112,7 @@ Add a row for a doc an agent must reach; cite ids, never line numbers
   `docs/COVERAGE_MATRIX.md` row.
 - An artifact every lane adds an entry to is a directory of per-lane fragments,
   never one shared file (#2452, #3111): `changelog.d/<pr-number>-<slug>.md`,
-  `size-allowances.d/<issue>-<slug>.md`.
+  `size-allowances.d/<pr-number>-<slug>.md`.
 
 ## Context, usage and failure control
 
