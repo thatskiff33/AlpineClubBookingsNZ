@@ -18,7 +18,7 @@
 import { PaymentRecoveryOperationStatus, PaymentTransactionKind, type Prisma } from "@prisma/client";
 
 import { ADDITIONAL_ASK_QUEUE_TRANSACTION_OPTIONS, lockAdditionalAskQueue } from "@/lib/additional-ask-queue-transaction";
-import { closeWaitingAskRecoveries, PENDING_ASK_NETTED_BY_REDUCTION_NOTE } from "@/lib/additional-ask-recovery-close";
+import { assertAskRecoveryNotBeingRaised, closeWaitingAskRecoveries, PENDING_ASK_NETTED_BY_REDUCTION_NOTE } from "@/lib/additional-ask-recovery-close";
 import {
   inFlightAskRecoveries,
   reductionLeftAfterAskCents,
@@ -298,7 +298,14 @@ export async function foldWaitingAsks(
       modification,
       payment,
     });
-    if (replay.kind === "frozen" || isRecoveryReplaySettled(replay, operation, transactions)) continue;
+    if (replay.kind === "frozen") continue;
+    if (isRecoveryReplaySettled(replay, operation, transactions)) {
+      // A worker may have written its row and still be completing its invoice.
+      // Refuse a recent claim even then. An older settled worker keeps its
+      // completion: its money is already on the Payment, so nothing is folded.
+      assertAskRecoveryNotBeingRaised(operation, now);
+      continue;
+    }
     const pending = {
       id: operation.id,
       bookingModificationId,
