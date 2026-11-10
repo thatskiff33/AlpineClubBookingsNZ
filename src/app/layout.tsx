@@ -1,3 +1,4 @@
+import { ConfirmItsYouHost } from "@/components/confirm-its-you";
 import { SentryReplayPolicy } from "@/components/sentry-replay-policy";
 import type { Metadata } from "next";
 import { SAFE_DEFAULT_CONFIG } from "@/config/club";
@@ -60,6 +61,7 @@ export default async function RootLayout({
         suppressHydrationWarning
       >
         <SentryReplayPolicy />
+        <ConfirmItsYouHost />
         {children}
       </body>
     </html>

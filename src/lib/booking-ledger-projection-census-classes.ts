@@ -13,8 +13,7 @@
  * (`booking-ledger-projection-census.test.ts` proves both for every class).
  *
  * Pure: no reads, no writes, no Prisma client. The rows arrive from
- * `booking-ledger-projection-census-store.ts`; the identities that ask these
- * questions live in `booking-ledger-projection-census.ts`.
+ * `booking-ledger-projection-census-store.ts`; the identities live in `booking-ledger-projection-census.ts`.
  */
 import type { LedgerLineKind, ManualRefundTaskStatus } from "@prisma/client";
 import { CAPTURE_KINDS } from "@/lib/booking-ledger-capture-kinds";
@@ -32,6 +31,7 @@ import { cancellationCreditDescription } from "@/lib/cancellation-settled-money"
 import { internetBankingSettlementEvidence, type InternetBankingSettlementEvidence } from "@/lib/internet-banking-settlement-evidence";
 import { isCreditAppliedToBooking, isCreditIssuedFromBooking } from "@/lib/member-credit-booking-rows";
 import { isGroupOrganiserHandBackTask } from "@/lib/group-organiser-hand-back-rules";
+import { isLateCaptureHandBackTask } from "@/lib/late-capture-hand-back-task";
 import { isCancelCardShortfallTask, isRefundRequestHandBackTask } from "@/lib/manual-refund-task-settlement-rules";
 import { cardRefundOperationUnmadeCents } from "@/lib/open-card-refund-owed";
 import { isPaymentRecoveryOperationInFlight } from "@/lib/payment-recovery-constants";
@@ -364,14 +364,14 @@ function handBackCents(row: BookingLedgerCensusRow): number {
     .reduce((sum, line) => sum + line.amountCents, 0);
 }
 
-/** V3: a legacy late-capture hand-back on a card payment for a deleted booking, which posts no `BANK_REFUND`. */
+/** V3: a completed late-capture hand-back (`isLateCaptureHandBackTask`) on a deleted booking's card payment, which posts no `BANK_REFUND`. */
 function v3Cents(row: BookingLedgerCensusRow): number {
   const payment = row.payment;
   if (!payment || payment.source !== "STRIPE" || row.booking.deletedAt === null) return 0;
   return row.tasks
     .filter(
       (task) =>
-        task.kind === "DELETED_BOOKING_LATE_CAPTURE" &&
+        isLateCaptureHandBackTask(task) &&
         task.status === "COMPLETED" &&
         task.lateCaptureApprovalIntentId === null &&
         task.paymentId === payment.id,
