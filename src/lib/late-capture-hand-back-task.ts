@@ -43,9 +43,10 @@ export function isAutomaticCancelledBookingRefundTaskReason(reason: string): boo
  * one of the automatic late-capture sentences. A NULL-kind row with any other
  * reason is a cancellation's own hand-back (`openHandBackOwedCents`) and is not
  * one. The still-owed check of a hand-back (`assertLateCaptureHandBackStillOwed`)
- * is gated on this, so a legacy row is checked under the Payment row too, and
- * (#4848) so is the owed figures' late-capture part
- * (`isLateCaptureAwaitingDecisionTask`).
+ * is gated on this, so a legacy row is checked under the Payment row too.
+ * (#4848) so are the owed figures' late-capture part
+ * (`isLateCaptureAwaitingDecisionTask`) and the census class
+ * `V3_LEGACY_HAND_BACK`.
  */
 export function isLateCaptureHandBackTask(task: { kind: ManualRefundTaskKind | string | null; reason: string }): boolean {
   if (task.kind === LATE_CAPTURE_KIND) return true;

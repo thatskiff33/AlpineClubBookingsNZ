@@ -55,6 +55,7 @@ see [backups](guides/backups.md), the
 | `TwoFactorEmailCode` | Member authentication and recovery challenges | Until used / expired; existing token cleanup rules apply | Delete through existing token cleanup; otherwise keep until lifecycle cleanup |
 | `TwoFactorRecoveryCode` | Member recovery credentials | While enrolled; used codes retained until recovery-code replacement / account cleanup | Delete on replacement / account cleanup |
 | `TwoFactorSessionChallenge` | Member authentication and recovery challenges | Until used / expired; existing token cleanup rules apply | Delete through existing token cleanup; otherwise keep until lifecycle cleanup |
+| `SessionReauthChallenge` | Proof a signed-in member just confirmed who they are | Until used or expired (two minutes); deleted with the member | Delete on use, expiry housekeeping, or member erasure |
 | `MemberApplication` | Application, family and nominator information | Rejected: default 1 year after reviewedAt, configurable, only when enabled; other statuses kept for application / membership administration | Delete eligible rejected applications; keep other applications |
 | `NominationToken` | Applicant nomination and nominator identity | Application administration; removed with deleted application | Delete with application |
 | `PartnerInviteToken` | Invitation recipient, inviter and family link | Until expired / confirmed under existing invitation cleanup | Delete through existing invitation cleanup |

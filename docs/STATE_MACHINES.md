@@ -5076,6 +5076,37 @@ Rendered panel tests cover accepted, pending, rejected and network-failed reques
 direct browser journeys require protected content after Continue and verification,
 without a later helper navigation (#4060).
 
+## Recent authentication (#4616)
+
+A session carries `lastAuthenticatedAt`, separate from `sessionIssuedAt`.
+`requireRecentAuth` (`INV-AUTH-008`) is the one check. No route calls it yet
+(#4619).
+
+```text
+sign-in completes -> lastAuthenticatedAt = now
+  password or Google, no second factor left -> the jwt sign-in branch
+  second factor required -> consuming the two-factor session challenge
+session.update carrying lastAuthenticatedAt -> ignored
+step-up proof accepted -> server mints SessionReauthChallenge (keyed hash, two minutes, one member)
+  authenticator-app code when they have an app
+  passkey when one exists (#4617); until then that proof never succeeds
+  password only when they have neither
+  emailed code or recovery code -> refused, and the failure counts
+session update carrying that challenge -> jwt callback claims the row (consumedAt was null) -> lastAuthenticatedAt = now
+replay, expiry, another member, or a forged token -> claim matches nothing, stamp unchanged
+five wrong authenticator proofs -> the existing two-factor lockout
+wrong password proofs -> the existing per-account password throttle
+requireRecentAuth -> pass while the stamp is at most 5 minutes old; otherwise 403 REAUTH_REQUIRED
+the dialog replays the refused request once, body unchanged; a second refusal is not replayed
+```
+
+To verify: `recent-auth.test.ts` (the window on the frozen clock, and the typed
+refusal), `auth-session-refresh.test.ts` (a client-supplied stamp is ignored; a
+consumed challenge refreshes it), `session-reauth.test.ts` (an emailed code is
+refused and a failed proof counts), `session-reauth.realdb.test.ts` (two
+concurrent consumes, one success), and `confirm-its-you-dialog.test.tsx` (the
+replay is once, body unchanged).
+
 ## Password Sign-In Throttle (#4609)
 
 A per-account count in front of the password check (`INV-AUTH`). It keeps no

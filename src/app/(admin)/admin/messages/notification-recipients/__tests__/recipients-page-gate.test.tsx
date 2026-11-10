@@ -86,6 +86,7 @@ describe("Recipients page roster gate (#2548)", () => {
     await renderPage();
 
     expect(mockedFindMany).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "Recipients" })).toBeInTheDocument();
     expect(
       screen.getByText(/needs Membership view access or Support/i),
     ).toBeInTheDocument();
