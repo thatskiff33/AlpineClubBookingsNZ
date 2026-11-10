@@ -678,6 +678,35 @@ describe("hosting coverage queue participant fence (#2597)", () => {
     }
   });
 
+  it("keeps the booking-ownership refusal when wait cleanup exhausts the budget (#4860)", async () => {
+    let now = 1_000;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      const { db, statements } = mergeParticipantDb([1, 0, 1]);
+      const answer = db.$executeRaw.getMockImplementation()!;
+      db.$executeRaw.mockImplementation((sql) => {
+        const text = (sql.strings ?? []).join("?");
+        if (text === "RELEASE SAVEPOINT member_merge_booking_wait") {
+          now += MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS;
+        }
+        return answer(sql);
+      });
+      await expect(
+        withMemberMergeParticipantRows(db as never, async () => {
+          await lockCapturedLoserOwnedBookings(db as never, CAPTURED_BOOKINGS);
+          return { participantIds: ALL, result: "held" };
+        }),
+      ).rejects.toBeInstanceOf(MemberMergeBookingOwnershipDriftError);
+      expect(statements().filter((statement) => statement.text === BOOKING_SET)).toHaveLength(1);
+      expect(statements().slice(-2).map((statement) => statement.text)).toEqual([
+        "ROLLBACK TO SAVEPOINT member_merge_booking_wait",
+        "RELEASE SAVEPOINT member_merge_booking_wait",
+      ]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it("issues no booking statement when the captured set is empty (#4860)", async () => {
     const { db, statements } = mergeParticipantDb([3]);
     await withMemberMergeParticipantRows(db as never, async () => {

@@ -656,7 +656,11 @@ export async function withMemberMergeParticipantRows<T>(
         const remaining = remainingBudget();
         if (remaining <= 0) throw new MemberMergeBookingOwnershipDriftError();
         const waited = await waitForOneBookingRow(db, error.bookingId, remaining);
-        if (waited !== "free") throw new MemberMergeBookingOwnershipDriftError();
+        // Releasing the wait savepoint also spends the shared budget. Preserve
+        // the booking refusal if that cleanup leaves no time for another attempt.
+        if (waited !== "free" || remainingBudget() <= 0) {
+          throw new MemberMergeBookingOwnershipDriftError();
+        }
         continue;
       }
       throw error;
