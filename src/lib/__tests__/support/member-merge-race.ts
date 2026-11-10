@@ -11,7 +11,8 @@
  * - `writerArrivingWhileMergeIsParked`: park the merge behind a row lock a
  *   session of the case holds (a key share on the duplicate's Member row, any
  *   FK write does this), start the writer, and wait until it queues behind the
- *   merge.
+ *   merge — or, with `writer: "queuesOrFinishes"`, until it either queues or
+ *   settles, for a writer that holds nothing the parked merge holds (#4855).
  *
  * Every wait is matched to the backend it waits on (`pg_blocking_pids`, through
  * `race-lock-waits.ts`), never counted across the database, because
@@ -162,13 +163,19 @@ export function keyShareOnMember(memberId: string) {
  * Park `merge` behind `park`, a row lock a session of the case holds, start
  * `writer` once the merge waits on it, and wait until the writer queues behind
  * the merge; then let everything go. Returns both outcomes.
+ *
+ * `writer: "queuesOrFinishes"` waits instead until the writer either settles or
+ * comes to wait on the merge, and says which (`writerFirst`): since #4855 merge
+ * holds none of its Member rows while it waits for one, so a writer that needs
+ * only Member rows runs past a parked merge. The default is unchanged.
  */
 export async function writerArrivingWhileMergeIsParked(
   prisma: PrismaClient,
   park: (tx: Prisma.TransactionClient) => Promise<unknown>,
   merge: () => Promise<unknown>,
   writer: () => Promise<unknown>,
-): Promise<{ merged: Settled; written: Settled }> {
+  options: { writer: "queues" | "queuesOrFinishes" } = { writer: "queues" },
+): Promise<{ merged: Settled; written: Settled; writerFirst?: "settled" | "waiting" }> {
   const held = gate();
   const release = gate();
   let blockerPid = 0;
@@ -181,18 +188,23 @@ export async function writerArrivingWhileMergeIsParked(
   await held.opened;
   let merging: Promise<unknown> = Promise.resolve();
   let writing: Promise<unknown> = Promise.resolve();
+  let writerFirst: "settled" | "waiting" | undefined;
   try {
     merging = merge();
-    await untilBlockedChain(prisma, blockerPid, 1);
+    const [mergePid] = await untilBlockedChain(prisma, blockerPid, 1);
     writing = writer();
-    // The writer queues behind the merge, which is still waiting on the parked lock.
-    await untilBlockedChain(prisma, blockerPid, 2);
+    if (options.writer === "queues") {
+      // The writer queues behind the merge, which is still waiting on the parked lock.
+      await untilBlockedChain(prisma, blockerPid, 2);
+    } else {
+      writerFirst = await settledOrBlockedBy(prisma, writing, mergePid, "the writer");
+    }
   } finally {
     release.open();
   }
   await parking;
   const [merged, written] = await Promise.allSettled([merging, writing]);
-  return { merged, written };
+  return writerFirst === undefined ? { merged, written } : { merged, written, writerFirst };
 }
 
 /** A member row for a race fixture; `extra` overrides any field. */

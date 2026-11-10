@@ -1,11 +1,32 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // #4627 (D4): the transfer's journal half runs on PostgreSQL
 // (`booking-ledger-journal.realdb.test.ts`); here, that the merge calls it.
 const journalDoors = vi.hoisted(() => ({ postMemberMergeTransfer: vi.fn(async () => null) }));
+/**
+ * #4855: these doubles do not model the relation moves, so they cannot say
+ * what is left naming the duplicate afterwards. The residual check answers
+ * "nothing" unless a case asks for the real one over delegates that model the
+ * late row (`residualCheck.real`, reset before every case);
+ * `member-merge-residual-references.test.ts` and the real-PostgreSQL suites
+ * cover the check itself.
+ */
+const residualCheck = vi.hoisted(() => ({ real: false }));
+vi.mock("@/lib/member-merge-residual-references", async (importOriginal) => {
+  const real = (await importOriginal()) as typeof import("@/lib/member-merge-residual-references");
+  return {
+    ...real,
+    findMemberMergeResidualReferences: (...args: Parameters<typeof real.findMemberMergeResidualReferences>) =>
+      residualCheck.real ? real.findMemberMergeResidualReferences(...args) : Promise.resolve({ driftFields: [], residualRowIds: {} }),
+  };
+});
+beforeEach(() => {
+  residualCheck.real = false;
+});
+
 vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postMemberMergeTransfer: journalDoors.postMemberMergeTransfer,
@@ -167,6 +188,15 @@ function memberFindManyForTest(args: unknown) {
     .map((id) => ({ id }));
 }
 
+/**
+ * #4855: merge's participant lock counts the rows its `SKIP LOCKED` attempt
+ * took; uncontended, that is every id it named. Every other statement: 0.
+ */
+function uncontendedRawCount(sql: unknown): number {
+  if (!rawStatement(sql).includes("SKIP LOCKED")) return 0;
+  return ((sql as { values?: readonly unknown[] }).values ?? []).filter((value) => typeof value === "string").length;
+}
+
 function makeClient(overrides: Record<string, unknown> = {}) {
   const memberDelegate = {
     ...defaultDelegate(),
@@ -207,7 +237,11 @@ function makeClient(overrides: Record<string, unknown> = {}) {
 
   // One stable spy lets tests distinguish advisory-lock statements from the
   // id-ordered Member `FOR UPDATE` statement (#2243, #2597).
-  const executeRaw = vi.fn().mockResolvedValue(0);
+  // Typed as the real raw call (a template, then its values) so tests can read either.
+  const executeRaw = vi.fn((sql: unknown, ...values: unknown[]): Promise<number> => {
+    void values;
+    return Promise.resolve(uncontendedRawCount(sql));
+  });
 
   const tx = new Proxy(
     {},
@@ -837,6 +871,7 @@ describe("executeMemberMerge", () => {
       }),
     };
     const { client, member, auditLog } = makeClient({ bookingGuest });
+    residualCheck.real = true;
 
     await expect(
       executeMemberMerge({
@@ -852,8 +887,7 @@ describe("executeMemberMerge", () => {
       code: "merge_drift_in_transaction",
       details: {
         driftFields: ["BookingGuest.member"],
-        bookingGuestIds: ["late-guest"],
-        bookingIds: ["already-planned-booking"],
+        residualRowIds: { "BookingGuest.member": ["late-guest"] },
       },
     });
 
@@ -882,6 +916,7 @@ describe("executeMemberMerge", () => {
       }),
     };
     const { client, member, auditLog } = makeClient({ booking });
+    residualCheck.real = true;
 
     await expect(
       executeMemberMerge({
@@ -897,7 +932,7 @@ describe("executeMemberMerge", () => {
       code: "merge_drift_in_transaction",
       details: {
         driftFields: ["Booking.member"],
-        bookingIds: ["late-booking"],
+        residualRowIds: { "Booking.member": ["late-booking"] },
       },
     });
 
@@ -2159,7 +2194,7 @@ describe("member-photo reconciliation at execute time (MP1, #189)", () => {
         mergeHasPolicyLock.resolve();
         await letMergeContinue.promise;
       }
-      return 0;
+      return uncontendedRawCount(strings);
     });
 
     const core: MemberMergePreviewCore = {
@@ -3431,7 +3466,7 @@ describe("executeMemberMerge — Payment attribution moves last, never waiting (
       if (composed(call).sql.includes('FROM "Payment"')) {
         throw Object.assign(new Error("could not obtain lock on row in relation \"Payment\""), { code: "55P03" });
       }
-      return 0;
+      return uncontendedRawCount(call[0]);
     });
 
     const refused = await execute(client).catch((error: unknown) => error);
@@ -3448,7 +3483,7 @@ describe("executeMemberMerge — Payment attribution moves last, never waiting (
     const broken = Object.assign(new Error("connection reset"), { code: "08006" });
     executeRaw.mockImplementation(async (...call: unknown[]) => {
       if (composed(call).sql.includes('FROM "Payment"')) throw broken;
-      return 0;
+      return uncontendedRawCount(call[0]);
     });
 
     await expect(execute(client)).rejects.toBe(broken);

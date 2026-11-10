@@ -4,7 +4,8 @@
  *
  * Split verbatim out of `member-merge.ts` (#3128), which was 3,814 lines and the
  * largest file in the repository. This is the declarative half: a table and the
- * one factory that builds its rows. It reads no database, holds no lock and
+ * one factory that builds its rows, plus the one resolver of a spec's Prisma
+ * delegate by name (`mergeDelegate`). It reads no database, holds no lock and
  * imports nothing from the merge engine, which is what made it separable --
  * `member-merge.ts` imports this module, never the other way round.
  */
@@ -55,6 +56,14 @@ export type MemberMergeRelationSpec = {
    * row. Exactly one relation may carry it; that module refuses to load otherwise.
    */
   readonly movedLast?: true;
+  /**
+   * For `move` relations only (#4855): moved by the generic pass AND swept again
+   * by `applyLateHostingCoverageMoves` under merge's Member rows, so a row
+   * committed between the two is carried forward rather than refused. The late
+   * sweep moves exactly the flagged relations, and the residual-reference check
+   * (`member-merge-residual-references.ts`) skips exactly them.
+   */
+  readonly sweptLate?: true;
   readonly note?: string;
 };
 
@@ -63,7 +72,7 @@ function spec(
   field: string,
   column: string,
   bucket: MemberMergeBucket,
-  extra: { selfRelation?: boolean; movedLast?: true; note?: string } = {},
+  extra: { selfRelation?: boolean; movedLast?: true; sweptLate?: true; note?: string } = {},
 ): MemberMergeRelationSpec {
   const delegate = model.charAt(0).toLowerCase() + model.slice(1);
   return { key: `${model}.${field}`, model, field, delegate, column, bucket, ...extra };
@@ -175,7 +184,10 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   // the master in the same merge, so work left pointing at the loser would find
   // no bookings and a genuinely uncovered stay would never be noticed. There is
   // no member-scoped unique constraint, so a move can never collide.
-  spec("HostingCoverageReevaluation", "member", "memberId", "move"),
+  spec("HostingCoverageReevaluation", "member", "memberId", "move", {
+    sweptLate: true,
+    note: "#2597: swept again under merge's Member rows, with its FK-less actor twin",
+  }),
   spec("GroupBooking", "organiserMember", "organiserMemberId", "move"),
   spec("GroupBookingJoin", "joinerMember", "joinerMemberId", "resolve", {
     note: "@@unique(groupBookingId,joinerMemberId)",
@@ -373,3 +385,22 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
     note: "@id memberId; a fact about the loser's own row, dropped with it (#3369)",
   }),
 ];
+
+/**
+ * The ONE place a Prisma delegate is resolved from a merge spec's `delegate`
+ * NAME (#2800, `INV-SSOT`). Every step of the merge drives the client
+ * dynamically off `MEMBER_MERGE_RELATION_SPECS`, so a name that does not
+ * resolve means a spec has drifted from the schema — and a merge that quietly
+ * skipped that model would leave the duplicate's rows pointing at a member the
+ * merge is about to archive. There is no safe way to continue past it, so it
+ * refuses (INV-LIFE).
+ */
+export function mergeDelegate<Delegate>(db: unknown, delegate: string): Delegate {
+  const resolved = (db as Record<string, Delegate | undefined>)[delegate];
+  if (resolved === undefined) {
+    throw new Error(
+      `Member merge cannot resolve the Prisma delegate "${delegate}"; the merge spec no longer matches the schema.`,
+    );
+  }
+  return resolved;
+}

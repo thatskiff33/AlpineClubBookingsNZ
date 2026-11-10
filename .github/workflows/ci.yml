@@ -1266,6 +1266,17 @@ jobs:
         env:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-merge-booking-request-races.realdb.test.ts
+      # #4855: member merge never waits for a Member row while holding another,
+      # and refuses with a 409 when a row still names the duplicate under its
+      # Member rows. Only this suite shows an officer who is the duplicate,
+      # racing the merge with no booking row between them, forms no wait-for
+      # cycle and keeps what it recorded. It self-skips without the env vars
+      # (same #1881 harness and database), so `review-findings-contracts.test.ts`
+      # fails if this step goes missing.
+      - name: Test member-merge loser-officer races against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-merge-loser-officer-races.realdb.test.ts
 
       # #3583: the booking ledger's cut-over gate, run the way the owner runs it
       # (docs/MAINTENANCE.md) over a seeded history: booking histories made by

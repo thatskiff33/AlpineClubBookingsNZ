@@ -140,9 +140,10 @@ an ordinary producer locks its exact owner/actor Member participants with sorted
 linked members `FOR KEY SHARE`, then re-reads every row as active and unarchived
 before its versioned claim or any guest creation. Hold-first makes the standing
 mutation retry; standing-first makes the hold wait and then refuse the now-inactive
-member in every hosting consequence mode. Member merge takes one sorted blocking
-`FOR UPDATE` set, re-plans, and sweeps late owner and actor rows before deleting the
-loser. If either side cannot prove the exact attribution, the complete mutation
+member in every hosting consequence mode. Member merge takes its participant set
+`FOR UPDATE`, all at once and never holding one row while waiting for another
+(#4855), re-plans, refuses if any row still names the loser, and sweeps late owner
+and actor rows before deleting the loser. If either side cannot prove the exact attribution, the complete mutation
 returns the safe retry outcome and none of the booking, member, queue or incident
 states advance. Merge-generated work is actorless; the critical `MEMBER_MERGED`
 audit remains its human attribution.

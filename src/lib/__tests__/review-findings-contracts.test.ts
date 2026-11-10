@@ -1226,6 +1226,19 @@ describe("review finding source/schema contracts", () => {
         "MUTATION: a Payment-first writer holding a payment the officer recorded makes the delete refuse at once, never wait; the writer then commits",
       ],
     },
+    {
+      issue: "#4855",
+      suite: "member-merge loser-officer",
+      stepName: "Test member-merge loser-officer races against dedicated PostgreSQL",
+      file: "src/lib/__tests__/member-merge-loser-officer-races.realdb.test.ts",
+      cases: [
+        "MUTATION: (a) a change-request approval by the duplicate, crediting the survivor, never deadlocks with the merge: the approval commits and the merge refuses, keeping the reviewer",
+        "MUTATION: (b) a held booking-request approval by the duplicate, linking a guest to the survivor, never deadlocks with the merge: the approval commits and the merge refuses",
+        "MUTATION: (c) a change-request approval by the duplicate that merge waits on keeps its reviewer: the approval commits and the merge refuses",
+        "MUTATION: refuses a merge, rather than dropping it, when a Cascade row naming the duplicate commits under it",
+        "MUTATION: refuses a merge with its clean 409, not an FK error, when a Restrict row naming the duplicate commits under it",
+      ],
+    },
   ])("runs the $suite race suite against the same dedicated PostgreSQL ($issue)", ({ issue, stepName, file, cases }) => {
     const workflow = readRepoFile(".github/workflows/ci.yml");
     const migrateStep = workflow.indexOf(

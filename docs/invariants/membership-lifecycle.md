@@ -1772,7 +1772,10 @@ advisory-lock participants, no DB CHECK constraint).
   The whole merge runs in one transaction under the dual `member-lifecycle`
   advisory lock (see CONCURRENCY_AND_LOCKING.md), re-runs the guards, and
   never waits for a Payment row it re-attributes (#4823): if another writer holds
-  one, it refuses and the operator retries. It also
+  one, it refuses and the operator retries. It never waits for one of its Member
+  rows while holding another, and once it holds them any row still naming the
+  loser refuses it with a 409, so a write that raced it keeps what it recorded
+  (#4855). It also
   re-verifies an HMAC preview token (over both ids, both `updatedAt`, and an
   outcome digest) so a drifted preview 409s. The admin must type
   `MERGE <loser full name>` (whitespace-normalised) to confirm, and one critical
@@ -1790,7 +1793,7 @@ advisory-lock participants, no DB CHECK constraint).
   missing member, `merge_blocked`, wrong confirmation phrase, `preview_drift`,
   the #2595 `partner_share_lodge_drift` arm, the #4823
   `merge_payment_row_busy` arm, and the
-  `merge_drift_in_transaction` field/family-link arms — throws from
+  `merge_drift_in_transaction` field/family-link/residual-reference arms — throws from
   inside the transaction and rolls it (and the `MEMBER_MERGED` audit) back. A
   single boundary in `executeMemberMerge` then writes one best-effort
   `MEMBER_MERGE_REFUSED` audit (category `admin`, outcome `blocked`) on the base

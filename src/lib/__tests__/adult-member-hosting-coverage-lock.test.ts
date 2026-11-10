@@ -455,8 +455,11 @@ describe("the per-owner coverage lock (#2576 §9)", () => {
       "refreshedHostingPlan = await buildMemberMergeHostingCoveragePlan(",
       "memberMergeHostingCoveragePlanFingerprint(hostingPlan)",
       "hostingParticipantProof = proveMemberMergeHostingCoverageParticipants(",
-      "const residualLoserOwnedBookings = await tx.booking.findMany(",
-      "const residualLoserGuestRows = await tx.bookingGuest.findMany(",
+      // #4855: one refusal for every relation still naming the duplicate under
+      // the Member rows (it replaced the Booking.member and BookingGuest.member
+      // checks), before the D4 transfer and every later step.
+      "const residualReferences = await findMemberMergeResidualReferences(tx, loserId);",
+      "await postMemberMergeTransfer(tx, journal,",
       "await lockHostingCoverageOwners(",
       "await applyLateHostingCoverageMoves(",
       // #4823: the Payment attribution is the LAST relation move. Merge takes no
@@ -522,7 +525,7 @@ describe("the per-owner coverage lock (#2576 §9)", () => {
 
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
     expect(body).toMatch(
-      /const residualLoserGuestRows = await tx\.bookingGuest\.findMany\([\s\S]*?where: \{ memberId: loserId \}[\s\S]*?driftFields: \["BookingGuest\.member"\]/,
+      /const residualReferences = await findMemberMergeResidualReferences\(tx, loserId\);\s+if \(residualReferences\.driftFields\.length > 0\) \{\s+throw new MemberMergeError\([\s\S]*?"merge_drift_in_transaction",\s+residualReferences,/,
     );
 
     // #2672 — and the fence is only real on merge's OWN connection. The sweep's
