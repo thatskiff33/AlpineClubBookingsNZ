@@ -45,7 +45,6 @@ import {
   isKioskSessionMember,
   resolveRequestSessionIdleSeconds,
 } from "./session-idle-expiry";
-import { consumeSessionReauthChallenge } from "./session-reauth";
 import { consumeTwoFactorSessionChallenge } from "./two-factor";
 import { consumeSessionReauthChallenge } from "./session-reauth-challenge";
 import { readLastAuthenticatedAtMs } from "./recent-auth-policy";
@@ -589,31 +588,6 @@ export const authConfig = {
         if (challengeVerified) {
           token.twoFactorVerified = true;
           token.twoFactorVerifiedByChallenge = true;
-          // Sign-in finishes when the second factor is consumed.
-          token.lastAuthenticatedAt = Date.now();
-        }
-      }
-
-      // #4616 (INV-AUTH-008): lastAuthenticatedAt is never copied off the
-      // client payload. Only a consumed server-minted challenge, or the
-      // sign-in branch above, writes it.
-      if (
-        trigger === "update" &&
-        typeof token.id === "string" &&
-        typeof session === "object" &&
-        session !== null &&
-        "user" in session &&
-        typeof session.user === "object" &&
-        session.user !== null &&
-        "reauthChallengeToken" in session.user &&
-        typeof session.user.reauthChallengeToken === "string"
-      ) {
-        const reauthConsumed = await consumeSessionReauthChallenge(
-          token.id,
-          session.user.reauthChallengeToken,
-        );
-        if (reauthConsumed) {
-          token.lastAuthenticatedAt = Date.now();
         }
       }
 

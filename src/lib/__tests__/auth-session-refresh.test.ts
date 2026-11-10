@@ -90,7 +90,7 @@ vi.mock("@/lib/two-factor", () => ({
   consumeTwoFactorSessionChallenge: mockConsumeTwoFactorSessionChallenge,
 }));
 
-vi.mock("@/lib/session-reauth", () => ({
+vi.mock("@/lib/session-reauth-challenge", () => ({
   consumeSessionReauthChallenge: mockConsumeSessionReauthChallenge,
 }));
 

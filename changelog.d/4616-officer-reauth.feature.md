@@ -1,1 +1,0 @@
-- A signed-in session now records when the person last proved who they are. They can confirm again with an authenticator code, or with their password if they have no app and no passkey, and an emailed code is never accepted. Nothing asks for that confirmation yet.
