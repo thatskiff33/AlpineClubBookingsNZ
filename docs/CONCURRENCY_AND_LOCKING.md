@@ -1128,7 +1128,7 @@ amount of retrying can clear.
 That guarantee is scoped to the acquire seam, and deliberately so: the module's second
 proof-minting export, `proveMemberMergeHostingCoverageParticipants`, takes no lock of
 its own. It exists because member merge acquires its participants separately, through
-`lockMemberMergeHostingCoverageParticipants`, and then attests to that acquisition. Both
+`withMemberMergeParticipantRows`, and then attests to that acquisition. Both
 sides pass plain `readonly string[]`, so **nothing at the type level ties the attested
 ids to the ids actually locked** — on that half the invariant is a convention its one
 caller (`member-merge.ts`) currently keeps, not a structural guarantee. A second
@@ -3132,7 +3132,7 @@ derivation at the top of the merge and the sweep. Step 3b closes that positively
 rather than by argument: it **re-derives the same guest-row lodge set** and 409s
 if the prefix does not cover it — and it does so *after* merge holds its
 `Member … FOR UPDATE` rows
-(`lockMemberMergeHostingCoverageParticipants`). `BookingGuest.memberId` is a real
+(`withMemberMergeParticipantRows`). `BookingGuest.memberId` is a real
 foreign key to `Member`, so PostgreSQL takes `FOR KEY SHARE` on the referenced
 member row for every INSERT naming it and every UPDATE re-pointing onto it, and
 `FOR KEY SHARE` conflicts with `FOR UPDATE`. Once merge holds both member rows
