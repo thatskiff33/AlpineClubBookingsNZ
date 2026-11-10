@@ -75,6 +75,35 @@ describe("requireRecentAuth (#4616)", () => {
     expect(await isRecentAuthRefusal(result.response)).toBe(true);
   });
 
+  it("answers the two-factor refusal, never the step-up one, while a required two-factor step is not done", async () => {
+    // A fresh stamp from the password step does not make an unverified
+    // session recent: this check does not lean on the caller's guard.
+    mocks.auth.mockResolvedValue({
+      user: {
+        id: "officer-1",
+        lastAuthenticatedAt: Date.now(),
+        twoFactorRequired: true,
+        twoFactorVerified: false,
+      },
+    });
+    const result = await requireRecentAuth();
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.response.status).toBe(403);
+    expect(await isRecentAuthRefusal(result.response)).toBe(false);
+    expect(await result.response.json()).toEqual({ error: "Two-factor verification required" });
+
+    mocks.auth.mockResolvedValue({
+      user: {
+        id: "officer-1",
+        lastAuthenticatedAt: Date.now(),
+        twoFactorRequired: true,
+        twoFactorVerified: true,
+      },
+    });
+    expect(await requireRecentAuth()).toEqual({ ok: true });
+  });
+
   it("answers 401, not the step-up refusal, when there is no session", async () => {
     mocks.auth.mockResolvedValue(null);
     const result = await requireRecentAuth();
@@ -105,6 +134,8 @@ describe("markSessionReauthenticated (#4616)", () => {
   it.each([
     ["no session came back", null],
     ["the stamp did not move", sessionAuthenticatedAt(Date.now() - RECENT_AUTH_WINDOW_MS - 1)],
+    // Still recent, but from an earlier proof: this challenge was not consumed.
+    ["the stamp is recent but older than this mint", sessionAuthenticatedAt(Date.now() - 1)],
     ["it carries no stamp", sessionAuthenticatedAt(undefined)],
     ["it is another member's", { user: { id: "officer-2", lastAuthenticatedAt: Date.now() } }],
     [

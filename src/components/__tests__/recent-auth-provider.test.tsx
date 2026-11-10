@@ -15,7 +15,7 @@ import {
   useRecentAuthFetch,
   type ReplayableRequestInit,
 } from "@/components/recent-auth/recent-auth-provider";
-import { recentAuthRequiredBody } from "@/lib/recent-auth-policy";
+import { RECENT_AUTH_REQUIRED_CODE } from "@/lib/recent-auth-policy";
 
 const ACTION_URL = "/api/admin/backups/restore";
 const REAUTH_URL = "/api/auth/reauth";
@@ -27,7 +27,12 @@ const ACTION_INIT: ReplayableRequestInit = {
 
 type Reply = () => Response;
 
-const refusal: Reply = () => Response.json(recentAuthRequiredBody(), { status: 403 });
+// What `requireRecentAuth` sends; its builder is private to `recent-auth.ts`.
+const refusal: Reply = () =>
+  Response.json(
+    { error: "Please confirm it's you to continue.", code: RECENT_AUTH_REQUIRED_CODE },
+    { status: 403 },
+  );
 const restored: Reply = () => Response.json({ restored: true }, { status: 200 });
 
 /**
@@ -38,16 +43,18 @@ function stubServer({
   actionReplies,
   methods = ["TOTP"],
   acceptedSecret = "123456",
+  methodsReply,
 }: {
   actionReplies: Reply[];
   methods?: string[];
   acceptedSecret?: string;
+  methodsReply?: Reply;
 }) {
   const replies = [...actionReplies];
   const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === REAUTH_URL && (init?.method ?? "GET") === "GET") {
-      return Response.json({ methods });
+      return methodsReply ? methodsReply() : Response.json({ methods });
     }
     if (url === REAUTH_URL) {
       const proof = JSON.parse(String(init?.body)) as { code?: string; password?: string };
@@ -222,6 +229,38 @@ describe("the confirm-it's-you dialog (#4616)", () => {
     expect(actionCalls(fetchMock)).toHaveLength(2);
   });
 
+  it("says why when the person has no usable method, offers no field, and Cancel returns the refusal", async () => {
+    const fetchMock = stubServer({
+      actionReplies: [refusal],
+      methodsReply: () =>
+        Response.json(
+          { error: "Your authenticator app setup can't be checked.", code: "STEP_UP_UNAVAILABLE", methods: [] },
+          { status: 409 },
+        ),
+    });
+    const onResult = vi.fn();
+    render(
+      <RecentAuthProvider>
+        <RestoreButton onResult={onResult} />
+      </RecentAuthProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your authenticator app setup can't be checked.",
+    );
+    expect(screen.queryByLabelText("Authenticator code")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(onResult).toHaveBeenCalledTimes(1));
+    expect((onResult.mock.calls[0]?.[0] as Response).status).toBe(403);
+    expect(actionCalls(fetchMock)).toHaveLength(1);
+    expect(reauthCalls(fetchMock, "POST")).toHaveLength(0);
+  });
+
   it("sends a request that is not refused once, with no dialog", async () => {
     const fetchMock = stubServer({ actionReplies: [restored] });
     const onResult = vi.fn();
@@ -265,6 +304,24 @@ describe("the confirm-it's-you dialog (#4616)", () => {
     expect(actionCalls(fetchMock)).toHaveLength(4);
     expect(reauthCalls(fetchMock, "GET")).toHaveLength(1);
     expect(reauthCalls(fetchMock, "POST")).toHaveLength(1);
+  });
+
+  it("answers a question left open when the provider goes away as cancelled", async () => {
+    const fetchMock = stubServer({ actionReplies: [refusal] });
+    const onResult = vi.fn();
+    const { unmount } = render(
+      <RecentAuthProvider>
+        <RestoreButton onResult={onResult} />
+      </RecentAuthProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await screen.findByLabelText("Authenticator code");
+    unmount();
+
+    await waitFor(() => expect(onResult).toHaveBeenCalledTimes(1));
+    expect((onResult.mock.calls[0]?.[0] as Response).status).toBe(403);
+    expect(actionCalls(fetchMock)).toHaveLength(1);
   });
 
   it("refuses to run outside a provider", () => {

@@ -179,26 +179,27 @@ This file holds only the rules.
 - **A session's `lastAuthenticatedAt` has two writers only:** the `jwt`
   callback's sign-in branch in [`auth.ts`](../../src/lib/auth.ts), and that
   callback consuming a step-up challenge
-  (`consumeSessionReauthChallenge` in
-  [`session-reauth-challenge.ts`](../../src/lib/session-reauth-challenge.ts)).
-  A `session.update()` payload carrying the field is never read. A refresh, a
-  role change and a two-factor verification never move it, and a token
-  without it is never back-filled from `sessionIssuedAt` or `iat`.
-- **The challenge is single-use, server-minted and bound to one member:** a
-  256-bit token stored only as the keyed two-factor code hash, live for two
-  minutes, consumed by one guarded single-row delete (hash, member, unexpired;
-  a count of exactly one). It takes no advisory key.
+  ([`session-reauth-challenge.ts`](../../src/lib/session-reauth-challenge.ts)).
+  A `session.update()` payload carrying the field is never read; a refresh, a
+  role change or a two-factor verification never moves it; nothing
+  back-fills it.
+- **The challenge is single-use, server-minted and member-bound:** a 256-bit
+  token stored only as the keyed two-factor code hash, live two minutes,
+  consumed by one guarded single-row delete (count exactly one). No advisory
+  key.
 - **`requireRecentAuth` in [`recent-auth.ts`](../../src/lib/recent-auth.ts) is
-  the one check** (`INV-SSOT`). A proof at most five minutes old passes; an
-  older, missing or future one fails with HTTP 403 and
-  `RECENT_AUTH_REQUIRED`. The window is a security floor, not a club setting.
-- **Step-up takes the app code when the person has an authenticator app, and
-  the password only when they have neither an app nor a passkey**
-  (`resolveStepUpMethods`). An emailed code or a recovery code is never
-  accepted, and the password is refused, unchecked, while an app is enrolled.
-- **A failed step-up counts.** A wrong app code counts towards the two-factor
-  lockout sign-in uses, and a locked member is refused before the code is
-  read; a password is claimed against the shared password budget before it is
-  compared (`INV-AUTH-003`, `INV-AUTH-004`).
-- **The dialog replays a refused request at most once, its body unchanged**
+  the one check and the only sender of `RECENT_AUTH_REQUIRED`** (`INV-SSOT`).
+  **It runs before any side effect or body read; a refusal means nothing
+  happened**, which is what makes the replay safe. A proof at most five
+  minutes old passes; an older, missing or future one gets that HTTP 403. A
+  session with required two-factor unverified gets the two-factor refusal
+  instead. The window is a security floor, not a club setting.
+- **Step-up takes the app code when the person is enrolled with an
+  authenticator app, and the password only when they have neither an app nor
+  a passkey** (`resolveStepUpMethods`). An app enrolment without its secret
+  offers no method. Emailed and recovery codes are never accepted.
+- **A failed step-up counts:** a wrong app code towards the two-factor
+  lockout sign-in uses, refused unread while locked; a password against the
+  shared password budget, claimed before the compare (`INV-AUTH-004`).
+- **The dialog replays a refused request at most once, body unchanged**
   (`fetchWithRecentAuth`); a second refusal is returned, not asked again.

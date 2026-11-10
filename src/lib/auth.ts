@@ -556,9 +556,8 @@ export const authConfig = {
         token.forcePasswordChange = user.forcePasswordChange;
         token.isEmailVerified = user.isEmailVerified;
         token.sessionIssuedAt = signedInAt;
-        // #4616 (INV-AUTH-008): sign-in completing is one of the two writers
-        // of the recent-authentication stamp; the step-up consume below is
-        // the other. Nothing back-fills it.
+        // #4616 (INV-AUTH-008): one of the stamp's two writers; the step-up
+        // consume below is the other, and nothing back-fills it.
         token.lastAuthenticatedAt = signedInAt;
         token.sessionInvalidated = false;
         token.twoFactorVerified = false;
@@ -629,13 +628,10 @@ export const authConfig = {
         "reauthChallengeToken" in session.user &&
         typeof session.user.reauthChallengeToken === "string"
       ) {
-        // #4616 (INV-AUTH-008): the step-up route's proof. Like the two-factor
-        // challenge above, the update payload is client-reachable, so a
-        // `lastAuthenticatedAt` in it is never read: the stamp moves only when
-        // this single-use, server-minted token is consumed for this member.
-        // The two-factor challenge deliberately does not move it — that path
-        // also accepts emailed and recovery codes, which never prove an
-        // officer again (#4454 owner decision 2).
+        // #4616 (INV-AUTH-008): the payload is client-reachable, so its
+        // `lastAuthenticatedAt` is never read; only consuming this member's
+        // server-minted step-up token moves the stamp. The two-factor
+        // challenge above never does: it also takes emailed and recovery codes.
         const reauthenticated = await consumeSessionReauthChallenge(
           token.id,
           session.user.reauthChallengeToken,

@@ -163,6 +163,7 @@ describe("POST /api/auth/reauth (#4616)", () => {
 
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({
+      error: "Use your authenticator app to confirm it's you.",
       code: "STEP_UP_METHOD_NOT_ALLOWED",
       methods: ["TOTP"],
     });
@@ -177,12 +178,35 @@ describe("POST /api/auth/reauth (#4616)", () => {
 
     const asCode = await POST(post({ method: "TOTP", code: "123456" }));
     expect(asCode.status).toBe(409);
-    expect(await asCode.json()).toMatchObject({ methods: ["PASSWORD"] });
+    expect(await asCode.json()).toMatchObject({
+      error: "Use your password to confirm it's you.",
+      methods: ["PASSWORD"],
+    });
     expect(mocks.verifyStoredTotpCode).not.toHaveBeenCalled();
 
     mocks.compare.mockResolvedValue(true);
     const asPassword = await POST(post({ method: "PASSWORD", password: "right-password" }));
     expect(asPassword.status).toBe(200);
+  });
+
+  it("refuses step-up outright for an app enrolment missing its secret, never falling back to the password", async () => {
+    mocks.member = { ...memberRow("app"), totpSecret: null };
+    mocks.compare.mockResolvedValue(true);
+    mocks.verifyStoredTotpCode.mockResolvedValue(true);
+
+    for (const body of [
+      { method: "PASSWORD", password: "right-password" },
+      { method: "TOTP", code: "123456" },
+    ]) {
+      const response = await POST(post(body));
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ code: "STEP_UP_UNAVAILABLE", methods: [] });
+    }
+    expect(mocks.claimPasswordAttempt).not.toHaveBeenCalled();
+    expect(mocks.compare).not.toHaveBeenCalled();
+    expect(mocks.verifyStoredTotpCode).not.toHaveBeenCalled();
+    expect(mocks.member?.twoFactorFailedAttempts).toBe(0);
+    expectNothingMinted();
   });
 
   it("counts every wrong app code towards the two-factor lockout, then refuses before checking", async () => {
@@ -309,5 +333,13 @@ describe("GET /api/auth/reauth (#4616)", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(await response.json()).toEqual({ methods });
+  });
+
+  it("offers no method, and says why, for an app enrolment missing its secret", async () => {
+    mocks.member = { ...memberRow("app"), totpSecret: null };
+    const response = await GET();
+    expect(response.status).toBe(409);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(await response.json()).toMatchObject({ code: "STEP_UP_UNAVAILABLE", methods: [] });
   });
 });

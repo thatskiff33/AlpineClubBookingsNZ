@@ -568,15 +568,25 @@ check. It reads the stamp from the signed session and admits a proof at most
 **five minutes** old. Anything older, missing or later than now is refused
 with HTTP 403 and `code: "RECENT_AUTH_REQUIRED"`, the refusal the dialog
 recognises. The five minutes are a security floor, not a club setting (owner
-decision on #4454). It runs after a route's own guard and adds only recency.
+decision on #4454). It runs straight after a route's own guard and **before
+any side effect or body read, so a refusal means nothing happened** — the
+dialog replays a refused request, and that is only safe because of this. It is
+the only sender of that code: the body is built privately beside it, and
+`recent-auth-refusal-census.test.ts` fails a second production file that names
+the code. It does not lean on the route's guard for the sign-in either: a
+session whose required two-factor step is not done gets the two-factor
+refusal, never the step-up one, however fresh its stamp.
 
 **Proving it again.** `GET /api/auth/reauth` tells the dialog which method
 this person uses; `POST /api/auth/reauth` checks it. Both need a fully
 signed-in session (active, login on, no pending password change, two-factor
 verified).
 
-- **An authenticator app, when the person has one:** its current code. The
-  password is refused, unchecked and uncounted, while an app is enrolled.
+- **An authenticator app, when the person is enrolled with one:** its current
+  code. The password is refused, unchecked and uncounted, while an app is
+  enrolled. The enrolment decides, not whether a secret is stored: an app
+  enrolment whose secret is missing offers **no** method (HTTP 409,
+  `STEP_UP_UNAVAILABLE`) rather than falling back to the password.
 - **The password, only when the person has neither an app nor (from #4617) a
   passkey.**
 - **Never an emailed code** (owner decision 2 on #4454: an emailed code does
@@ -598,7 +608,9 @@ bound to the member and live for two minutes. The route hands the raw token to
 `updateSession()` in the same request; the `jwt` callback consumes it with one
 guarded single-row delete for the token's own member and only then stamps now.
 The token never leaves the server, and a replayed, expired, other-member or
-made-up one moves nothing. Consumption takes no advisory key
+made-up one moves nothing. The route reports success only when the session
+that comes back is stamped no earlier than the moment it minted the challenge,
+so an earlier proof that is merely still recent never passes for this one. Consumption takes no advisory key
 ([`CONCURRENCY_AND_LOCKING.md`](CONCURRENCY_AND_LOCKING.md#the-step-up-challenge-is-a-guarded-single-row-delete-4616)).
 
 **The dialog.** `RecentAuthProvider` and `useRecentAuthFetch()`

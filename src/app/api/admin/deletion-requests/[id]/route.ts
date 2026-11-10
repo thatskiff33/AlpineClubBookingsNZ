@@ -979,12 +979,8 @@ export async function POST(
         tx.emailChangeToken.deleteMany({ where: { memberId: member.id } }),
         tx.twoFactorEmailCode.deleteMany({ where: { memberId: member.id } }),
         tx.twoFactorRecoveryCode.deleteMany({ where: { memberId: member.id } }),
-        tx.twoFactorSessionChallenge.deleteMany({
-          where: { memberId: member.id },
-        }),
-        tx.sessionReauthChallenge.deleteMany({
-          where: { memberId: member.id },
-        }),
+        tx.twoFactorSessionChallenge.deleteMany({ where: { memberId: member.id } }),
+        tx.sessionReauthChallenge.deleteMany({ where: { memberId: member.id } }),
       ]);
 
       // #2859: the cached copy of the member's date of birth goes too. Since

@@ -1,7 +1,7 @@
 /**
  * Recent authentication (#4616, `INV-AUTH-008`): the pure rules, shared by the
  * server guard, the step-up route and the "confirm it's you" dialog. Prisma-
- * and server-free, so the client imports the refusal code from here.
+ * and server-free, so the client recognises the refusal from here.
  *
  * A session carries `lastAuthenticatedAt`, the epoch milliseconds at which the
  * person last proved who they are: stamped by the `jwt` callback in `auth.ts`
@@ -17,7 +17,13 @@ import { apiErrorCodeFromBody, readApiErrorBody } from "@/lib/api-error-message"
  */
 export const RECENT_AUTH_WINDOW_MS = 5 * 60 * 1000;
 
-/** The `code` of the refusal `requireRecentAuth` answers, which the dialog recognises. */
+/**
+ * The `code` of the refusal `requireRecentAuth` answers, which the dialog
+ * recognises and REPLAYS. Only `requireRecentAuth` may emit it, because only it
+ * promises that a refusal means nothing happened; outside this module and
+ * `recent-auth.ts` no production file may name it
+ * (`recent-auth-refusal-census.test.ts`).
+ */
 export const RECENT_AUTH_REQUIRED_CODE = "RECENT_AUTH_REQUIRED";
 
 /** The HTTP status of that refusal. */
@@ -42,26 +48,31 @@ export type StepUpFactorFacts = {
 };
 
 /**
- * Whether the member has an authenticator app enrolled: two-factor on, by
- * app, with a stored secret. An emailed-code enrolment is not one. The one
- * home of that fact; `twoFactorEnabled` alone keeps its existing meaning.
+ * Whether the member is enrolled with an authenticator app: two-factor on, by
+ * app. Decided by the enrolment, never by whether a secret is stored, so a
+ * broken enrolment is still an app enrolment. An emailed-code enrolment is
+ * not one. The one home of that fact; `twoFactorEnabled` alone keeps its
+ * existing meaning.
  */
 export function hasAuthenticatorApp(member: StepUpFactorFacts): boolean {
-  return (
-    member.twoFactorEnabled &&
-    member.twoFactorMethod === "TOTP" &&
-    typeof member.totpSecret === "string" &&
-    member.totpSecret !== ""
-  );
+  return member.twoFactorEnabled && member.twoFactorMethod === "TOTP";
 }
 
 /**
  * The step-up methods this person may use, in the order the dialog offers
- * them: the app code when they have an authenticator app, and the password
- * only when they have neither an app nor (from #4617) a passkey.
+ * them: the app code when they are enrolled with an authenticator app, and the
+ * password only when they have neither an app nor (from #4617) a passkey.
+ *
+ * Fails closed: an app enrolment whose secret is missing offers NO method, so
+ * step-up is refused rather than falling back to the password the app
+ * enrolment was meant to stand beside.
  */
 export function resolveStepUpMethods(member: StepUpFactorFacts): StepUpMethod[] {
-  if (hasAuthenticatorApp(member)) return ["TOTP"];
+  if (hasAuthenticatorApp(member)) {
+    return typeof member.totpSecret === "string" && member.totpSecret !== ""
+      ? ["TOTP"]
+      : [];
+  }
   return ["PASSWORD"];
 }
 
@@ -89,14 +100,6 @@ export function isRecentlyAuthenticated(
   if (stamp === null) return false;
   const elapsedMs = nowMs - stamp;
   return elapsedMs >= 0 && elapsedMs <= RECENT_AUTH_WINDOW_MS;
-}
-
-/** The body of the refusal; `requireRecentAuth` sends it with `RECENT_AUTH_REQUIRED_STATUS`. */
-export function recentAuthRequiredBody() {
-  return {
-    error: "Please confirm it's you to continue.",
-    code: RECENT_AUTH_REQUIRED_CODE,
-  } as const;
 }
 
 /**

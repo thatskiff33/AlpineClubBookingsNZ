@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useRef,
   useState,
   type ReactNode,
@@ -80,6 +81,16 @@ export function RecentAuthProvider({ children }: { children: ReactNode }) {
     setRequestId(null);
     current?.resolve(confirmed);
   }, []);
+
+  // A provider that goes away mid-question answers "cancelled", so no request
+  // waits on a dialog that can no longer be answered.
+  useEffect(
+    () => () => {
+      pending.current?.resolve(false);
+      pending.current = null;
+    },
+    [],
+  );
 
   return (
     <RecentAuthContext.Provider value={confirmIdentity}>
