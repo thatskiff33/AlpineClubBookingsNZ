@@ -39,6 +39,10 @@ const TWO_FACTOR_WRITE_SITES: Record<string, string> = {
     "twoFactorRecoveryCode.deleteMany — the erasure's revocation of every second-factor artefact, same transaction as the clear's row",
   "src/lib/privacy-retention-anonymise.ts::anonymiseFormerMember.claim#0":
     "member.updateMany{totpSecret,twoFactorEnabled,twoFactorMethod} — retention anonymisation of a former member (#4457); `security.two_factor.cleared` via `recordTwoFactorClear`, actor the named system job `former-member-anonymisation`, in the same transaction once the claim succeeds",
+  "src/lib/two-factor-rekey.ts::rewrapTwoFactorSecret.claimed#0":
+    "member.updateMany{totpSecret} guarded on the value read — the data-key re-encrypt re-wrapping the SAME secret under the current key (#4456 PR 2); `security.two_factor.secret_rewrapped`, actor the named system job `data-key-reencrypt`, in the same transaction once the claim succeeds",
+  "src/lib/two-factor-rekey.ts::retireLegacyRecoveryCodes.claimed#0":
+    "twoFactorRecoveryCode.updateMany{codeHash} guarded on the hash read and `usedAt: null` — the re-encrypt retiring an unused legacy code (#4456 PR 2, owner decision of 1 Nov 2026); `security.two_factor.recovery_codes_retired` with the count, actor `data-key-reencrypt`, in the same transaction",
   "src/lib/privacy-retention-anonymise.ts::anonymiseFormerMember#0":
     "twoFactorRecoveryCode.deleteMany — the anonymisation's revocation of every second-factor artefact, same transaction as the clear's row",
 };

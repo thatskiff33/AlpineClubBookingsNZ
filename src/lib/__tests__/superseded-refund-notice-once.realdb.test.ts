@@ -363,13 +363,18 @@ let harnessRole: { restore: () => void } | undefined;
       #4699: another door's refund Stripe lists but the ledger has not recorded yet. The resend
       preflight records it, and the refund is sized on the ledger after that: Stripe is asked only
       for what the charge still holds (this double refuses more, as Stripe does), or for nothing.
+      Made before the row was raised: one made since that leaves something to ask holds the row
+      instead (#4858, `superseded-refund-another-door-hold.realdb.test.ts`).
     */
     it.each([
       ["part of the capture: Stripe is asked only for the rest, and that is announced", 2_500, 1, ONCE_EACH],
       ["the whole capture: nothing is asked for, and the row closes with no notice", SUPERSEDED_CENTS, 0, NONE],
     ])("#4699: another door's refund Stripe lists but the ledger has not recorded, for %s", async (_label, cancelledCents, asks, notices) => {
       const operationId = await seedCapturedSupersededAsk();
-      madeAtStripe.set("cancellation", stripeRefund("re_race_4699_cancellation", cancelledCents, { bookingId: BOOKING_ID, reason: "cancellation" }));
+      madeAtStripe.set("cancellation", {
+        ...stripeRefund("re_race_4699_cancellation", cancelledCents, { bookingId: BOOKING_ID, reason: "cancellation" }),
+        created: Math.floor(Date.UTC(2026, 5, 1) / 1000),
+      });
       stripeMakesRefunds();
       const makeRefund = stripeRaceHooks.refund!;
       stripeRaceHooks.refund = async (args) => {

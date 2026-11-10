@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  537
+row-producing sites:  541
 uncategorised:        0
-category values: admin 115, booking 109, xero 51, family 35, payment 67,
+category values: admin 115, booking 109, xero 51, family 35, payment 71,
                  lodge 68, account 19, security 25, privacy 22,
                  communication 21, system 4
 ```
@@ -896,6 +896,13 @@ one (`admin` 111 -> 112, 533 -> 534, MEASURED with `pnpm run audit:census`):
 `LODGE_CENTRAL_LINK_UPDATED` from the setup page's Link your lodges dialog
 (`/api/admin/alpine-server/lodge-links`), the Central lodge card's twin and filed
 `admin` like it; the readership of that event does not change.
+
+#4516 (Ledger M4c) then added two (`payment` 67 -> 69, 534 -> 536, MEASURED with
+`pnpm run audit:census`): `booking-payment.card-refund.reservation-refused`, the row a card
+refund writes when the journal refused to reserve its slice and Stripe was not asked, and
+`booking-payment.card-refund.reservation-released-by-operator`, an owner's release of a
+reservation nothing could answer. Both filed `payment` beside the other card refund rows;
+nobody's readership changes.
 
 #4680 then added one (`xero` 49 -> 50, 531 -> 532, MEASURED with
 `pnpm run audit:census`): `xero.organiser_adjustment_note.run_stood_down`, the row an

@@ -1491,8 +1491,12 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // lost-claim part-success's row, unpinned `xero`.
     // 406 -> 407 unpinned (triyder/AlpineClubBookingsNZ#97): the link dialog's `admin`
     // row, on a finance-gated route, so outside the lodge-gated keep: unpinned.
-    // RE-MEASURED with `pnpm run audit:census` on the merged tree.
-    ).toEqual({ pinned: 130, unpinned: 407 });
+    // 404 -> 406 unpinned (#4516): the refused card refund reservation and its OPERATOR release, `payment`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    // 406 -> 408 unpinned (#4368): a dead card refund's "Nothing left owed" and "Try the card again", `payment`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    // RE-MEASURED with `pnpm run audit:census` on the merged tree (fourth main-sync, 11 Nov 2026).
+    ).toEqual({ pinned: 130, unpinned: 411 }); // RE-MEASURED with `pnpm run audit:census` on the merged tree (fourth main-sync, 11 Nov 2026).
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

@@ -81,9 +81,9 @@ vi.mock("@/components/admin/induction-template-manager", () => ({
   InductionTemplateManager: () => null,
 }));
 
-import BookingPeriodsPage from "@/app/(admin)/admin/booking-policies/periods/page";
+import BookingPeriodsPage from "@/app/(admin)/admin/rules/booking-policies/periods/page";
 import AdminMembershipTypesPage from "@/app/(admin)/admin/membership-types/page";
-import SiteContentAdminPage from "@/app/(admin)/admin/site-content/page";
+import SiteContentAdminPage from "@/app/(admin)/admin/website/site-content/page";
 // #2046: the five Lobby Display leaves and the converted [id]-aware drill-downs.
 import DisplayDevicesPage from "@/app/(admin)/admin/display/devices/page";
 import DisplayLayoutsPage from "@/app/(admin)/admin/display/layouts/page";
@@ -97,7 +97,7 @@ import DisplayBuilderPage from "@/app/(admin)/admin/display/builder/page";
 import DisplaySetupPage from "@/app/(admin)/admin/display/setup/page";
 import LodgeDisplaySettingsPage from "@/app/(admin)/admin/lodges/[id]/display/page";
 import LodgeRosterSettingsPage from "@/app/(admin)/admin/lodges/[id]/roster/page";
-import XeroRecordActivityPage from "@/app/(admin)/admin/xero/records/[localModel]/[localId]/page";
+import XeroRecordActivityPage from "@/app/(admin)/admin/finance/xero/records/[localModel]/[localId]/page";
 import AdminInductionSettingsPage from "@/app/(admin)/admin/induction/settings/page";
 import { MemberDetailHeader } from "@/app/(admin)/admin/members/[id]/_components/member-detail-header";
 

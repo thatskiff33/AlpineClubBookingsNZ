@@ -1,11 +1,11 @@
-import { revalidatePath } from "next/cache";
+import { revalidateAdminPage } from "@/lib/admin-page-revalidation";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
-import { PAID_BACK_CHOICES } from "@/lib/card-refund-paid-back";
+import { PAID_BACK_CHOICES, PAID_BACK_REST_CHOICES } from "@/lib/card-refund-paid-back";
 import {
   CardRefundPaidAnotherWayError,
   closeCardRefundPaidAnotherWay,
@@ -24,6 +24,8 @@ const bodySchema = z
   .object({
     amountCents: nonNegativeCentsSchema,
     paidBack: z.enum(PAID_BACK_CHOICES),
+    // #4516 (owner, 2 Nov 2026): a part close says what happens to the rest; no default (the close refuses without it).
+    rest: z.enum(PAID_BACK_REST_CHOICES).optional(),
     // #3924 round 7 (C7): what the dialog showed still owed; a mismatch is a 409.
     expectedOwedCents: nonNegativeCentsSchema,
     note: z.string().max(MANUAL_PAYMENT_NOTE_MAX),
@@ -72,13 +74,14 @@ export async function POST(
       operationId: id,
       amountCents: parsed.data.amountCents,
       paidBack: parsed.data.paidBack,
+      rest: parsed.data.rest ?? null,
       expectedOwedCents: parsed.data.expectedOwedCents,
       note: parsed.data.note,
       actingMemberId: guard.session.user.id,
     });
-    revalidatePath("/admin/stuck-states");
-    revalidatePath("/admin/payments");
-    revalidatePath("/admin/dashboard");
+    revalidateAdminPage("stuck-states");
+    revalidateAdminPage("payments");
+    revalidateAdminPage("dashboard");
     return NextResponse.json({ success: true, ...result });
   } catch (error) {
     if (error instanceof CardRefundPaidAnotherWayError) {

@@ -26,6 +26,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
+import { adminHref } from "@/lib/admin-hubs";
 
 const MONTH_NAMES = [
   "January",
@@ -445,7 +446,7 @@ export function SubscriptionLockoutSettingsPanel({
                 but Xero is not connected, so the system cannot read anyone&rsquo;s
                 paid status. While Xero is disconnected the lockout has no effect
                 and all members can book at member rates.{" "}
-                <Link href="/admin/xero/setup" className="font-medium underline">
+                <Link href={adminHref("xero-setup")} className="font-medium underline">
                   Connect Xero
                 </Link>{" "}
                 to enforce it.
@@ -552,7 +553,7 @@ export function SubscriptionLockoutSettingsPanel({
 
           {!xeroConnected && (
             <p className="text-sm text-muted-foreground">
-              <Link href="/admin/xero/setup" className="font-medium underline">
+              <Link href={adminHref("xero-setup")} className="font-medium underline">
                 Connect Xero
               </Link>{" "}
               to choose account and item codes from your chart of accounts.
@@ -657,7 +658,7 @@ export function SubscriptionLockoutSettingsPanel({
               With look-through on, an invoice also counts when a line uses any
               item code from your{" "}
               <Link
-                href="/admin/fee-configuration"
+                href={adminHref("fees")}
                 className="font-medium underline"
               >
                 fee configuration
@@ -693,7 +694,7 @@ export function SubscriptionLockoutSettingsPanel({
                   the fallback item code and account code above are matched. Add
                   item codes on the{" "}
                   <Link
-                    href="/admin/fee-configuration"
+                    href={adminHref("fees")}
                     className="font-medium underline"
                   >
                     fee configuration
@@ -771,7 +772,7 @@ export function SubscriptionLockoutSettingsPanel({
             </div>
           )}
           <Button asChild variant="outline" size="sm">
-            <Link href="/admin/age-tier-settings">Edit age tier settings</Link>
+            <Link href={adminHref("age-tier-settings")}>Edit age tier settings</Link>
           </Button>
         </CardContent>
       </Card>

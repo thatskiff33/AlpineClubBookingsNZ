@@ -90,6 +90,9 @@ const CENSUS_SELECT = {
       paymentId: true,
       lateCaptureApprovalIntentId: true,
       occurrenceKey: true,
+      raisedAmountCents: true,
+      // #4848: a NULL kind is a late capture only with a frozen sentence (`isLateCaptureHandBackTask`).
+      reason: true,
     },
   },
   modifications: {

@@ -2,6 +2,7 @@
 
 import type { Dispatch, SetStateAction } from "react";
 import Link from "next/link";
+import { adminHref } from "@/lib/admin-hubs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -53,7 +54,7 @@ export function OtherLodgeSeasonRates({
               <p>
                 Filled when you save, and kept up to date after that, from the Non-Member rates and the seasons
                 on{" "}
-                <Link href="/admin/fees" target="_blank" rel="noopener noreferrer" className="underline">
+                <Link href={adminHref("fees")} target="_blank" rel="noopener noreferrer" className="underline">
                   Fees<span className="sr-only"> (opens in a new tab)</span>
                 </Link>
                 . Each age group takes your age tier of that built-in name (Infant, Child, Youth or Adult), whatever

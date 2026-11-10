@@ -2,7 +2,8 @@ import type { Prisma } from "@prisma/client";
 import { paidAnotherWayCloseNoteRowsWhere } from "@/lib/card-refund-paid-another-way-cash";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { KEPT_LATE_CAPTURE_INVOICE_ROLE, KEPT_LATE_CAPTURE_PAYMENT_ROLE } from "@/lib/late-capture-kept-xero-rules";
-import { findLateCaptureRefundPaidAnotherWay } from "@/lib/late-capture-paid-another-way";
+import { paidAnotherWayCloseXeroNote } from "@/lib/manual-refund-task-settlement-rules";
+import { findLateCaptureRefundPaidAnotherWayCloses } from "@/lib/late-capture-paid-another-way";
 import { readPaidAnotherWayLateCaptureXeroReceipt, type LateCaptureXeroReceipt } from "@/lib/late-capture-xero-receipt";
 import { prisma } from "@/lib/prisma";
 import { lockKeptLateCaptureTask } from "@/lib/xero-kept-late-capture-invoice";
@@ -26,26 +27,20 @@ import { lockKeptLateCaptureTask } from "@/lib/xero-kept-late-capture-invoice";
  * (`readPaidAnotherWayLateCaptureXeroReceipt`, the invoice the close's plan would name) and
  * queues the waiting close's note against it (`notePaidAnotherWayCloseOnReceipt`,
  * at most once). Nothing without an approval task, or a receipt not yet in
- * Xero. Returns the note row's id, or null. Throws on a failure; the caller
- * decides whether that fails its row.
+ * Xero. #4516 (round-2 review A): every waiting close of the capture, each its
+ * own note. Returns how many notes it queued NOW (round 10; #4516 round-3
+ * review 2): a close whose note row was already asked for is answered with that
+ * row and never counted, so the repair tool reports a run that queued nothing
+ * new as skipped - counted close by close as each answers (`WaitingCloseNote`,
+ * round-4 review 3), never by subtracting a count read another way. Throws on a
+ * failure; the caller decides whether that fails its row.
  */
-export async function queueWaitingPaidAnotherWayNote(paymentIntentId: string): Promise<string | null> {
-  return (await runWaitingNoteStep(paymentIntentId)).noteOperationId;
-}
-
-/**
- * The step itself, saying too whether it queued the note NOW (round 10): read
- * under the same row lock, a close whose note row was already asked for is
- * answered with that row, never counted as newly queued.
- */
-async function runWaitingNoteStep(
-  paymentIntentId: string,
-): Promise<{ noteOperationId: string | null; queuedNow: boolean }> {
+export async function queueWaitingPaidAnotherWayNote(paymentIntentId: string): Promise<number> {
   const task = await prisma.manualRefundTask.findUnique({
     where: { lateCaptureApprovalIntentId: paymentIntentId },
     select: { id: true },
   });
-  if (!task) return { noteOperationId: null, queuedNow: false };
+  if (!task) return 0;
   const clubZone = await readClubTimeZoneOutsideRequest();
   // Imported here, not at the top: that module reaches the outbox, which
   // dispatches to the receipt's worker.
@@ -53,17 +48,15 @@ async function runWaitingNoteStep(
   return prisma.$transaction(async (tx) => {
     await lockKeptLateCaptureTask(tx, task.id);
     const receipt = await readPaidAnotherWayLateCaptureXeroReceipt(paymentIntentId, tx);
-    if (receipt.kind !== "recorded" || receipt.invoiceId === null) return { noteOperationId: null, queuedNow: false };
-    const close = await findLateCaptureRefundPaidAnotherWay(paymentIntentId, tx);
-    const askedBefore =
-      close !== null && close.paymentId !== null ? await closeNoteAsked(tx, close.paymentId, close.id) : false;
-    const noteOperationId = await notePaidAnotherWayCloseOnReceipt({
+    if (receipt.kind !== "recorded" || receipt.invoiceId === null) return 0;
+    const notes = await notePaidAnotherWayCloseOnReceipt({
       paymentIntentId,
       receiptInvoiceId: receipt.invoiceId,
       clubZone,
       store: tx,
     });
-    return { noteOperationId, queuedNow: noteOperationId !== null && !askedBefore };
+    // Each waiting close answers with its note row, asked before or now; only those queued now are new.
+    return notes.filter((note) => note.queuedNow).length;
   });
 }
 
@@ -85,7 +78,7 @@ export async function queueWaitingPaidAnotherWayNotesForPayment(paymentId: strin
   });
   let queued = 0;
   for (const { lateCaptureApprovalIntentId } of tasks) {
-    if (lateCaptureApprovalIntentId && (await runWaitingNoteStep(lateCaptureApprovalIntentId)).queuedNow) queued += 1;
+    if (lateCaptureApprovalIntentId) queued += await queueWaitingPaidAnotherWayNote(lateCaptureApprovalIntentId);
   }
   return queued;
 }
@@ -110,8 +103,13 @@ export async function queueWaitingPaidAnotherWayNotesForPayment(paymentId: strin
  */
 export interface PaidAnotherWayReceiptState {
   receipt: LateCaptureXeroReceipt;
-  /** The close itself - its record and what it paid back (#3924 round 9). */
+  /**
+   * The close itself - its record and what it paid back (#3924 round 9). #4516 (round-2 review A): a capture's
+   * refund closed more than once (a part close, then its still-owed rest) is named by its first record, with what
+   * every close paid back.
+   */
   close: { id: string; amountCents: number } | null;
+  /** Every waiting close's note was asked for; with none waiting, any close's (a single close's, as before). */
   noteAsked: boolean;
   invoiceLinked: boolean;
   paymentLinked: boolean;
@@ -121,9 +119,12 @@ export interface PaidAnotherWayReceiptState {
 
 export async function readPaidAnotherWayReceiptState(paymentIntentId: string): Promise<PaidAnotherWayReceiptState> {
   const receipt = await readPaidAnotherWayLateCaptureXeroReceipt(paymentIntentId);
-  const close = await findLateCaptureRefundPaidAnotherWay(paymentIntentId);
-  const noteAsked =
-    close !== null && close.paymentId !== null ? await closeNoteAsked(prisma, close.paymentId, close.id) : false;
+  const closes = await findLateCaptureRefundPaidAnotherWayCloses(paymentIntentId);
+  const waiting = closes.filter((close) => paidAnotherWayCloseXeroNote(close) === "after-receipt");
+  const asked = await Promise.all((waiting.length > 0 ? waiting : closes)
+    .map((close) => (close.paymentId !== null ? closeNoteAsked(prisma, close.paymentId, close.id) : Promise.resolve(false))));
+  const noteAsked = asked.length > 0 && (waiting.length > 0 ? asked.every(Boolean) : asked.some(Boolean));
+  const paidBackCents = closes.reduce((sum, close) => sum + Math.max(0, close.amountCents ?? 0), 0);
   const task = await prisma.manualRefundTask.findUnique({
     where: { lateCaptureApprovalIntentId: paymentIntentId },
     select: { id: true, paymentId: true },
@@ -147,11 +148,11 @@ export async function readPaidAnotherWayReceiptState(paymentIntentId: string): P
     : { byHandCents: 0, mayBeInXeroCents: 0 };
   return {
     receipt,
-    close: close ? { id: close.id, amountCents: Math.max(0, close.amountCents ?? 0) } : null,
+    close: closes[0] ? { id: closes[0].id, amountCents: paidBackCents } : null,
     noteAsked,
     invoiceLinked: roles.includes(KEPT_LATE_CAPTURE_INVOICE_ROLE),
     paymentLinked: roles.includes(KEPT_LATE_CAPTURE_PAYMENT_ROLE),
-    recordByHandCents: card.byHandCents + (byHand ? Math.max(0, close?.amountCents ?? 0) : 0),
+    recordByHandCents: card.byHandCents + (byHand ? paidBackCents : 0),
     cardNoteMayBeInXeroCents: card.mayBeInXeroCents,
   };
 }

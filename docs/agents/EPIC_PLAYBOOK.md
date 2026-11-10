@@ -200,8 +200,10 @@ What the branch costs, each handled by whoever runs it:
   merged at once when `pnpm run ci:fast-censuses --base <exact-epic-sha>` passes
   on the locally composed tree and GitHub reports `CLEAN` (#3513, owner decision
   "Cheap narrow check", 6 Oct 2026). Other states wait for the next run or a
-  human. The result is a correctness signal from the tree's own censuses, not a
-  security verdict, and deliberately not the full nine checks. **A red sync pull
+  human. The file-size ratchet ignores `--base` and judges against
+  `origin/main`, as PR CI does: a hand sync never edits an allowance `main`
+  landed, only the epic's own (#4831). The result is a correctness signal from
+  the tree's own censuses, not a security verdict, and deliberately not the full nine checks. **A red sync pull
   request is the branch telling you `main` and the epic no longer compose**:
   read it, resolve by hand on a merge branch, never force-push a shared branch
   and never let a merge tool pick a side unread. Its description carries a

@@ -1,6 +1,7 @@
+import { postBookingReceipts, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import "server-only";
 
-import { PaymentSource, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { PaymentSource, PaymentStatus, PaymentTransactionKind, type Prisma } from "@prisma/client";
 
 import { ASK_CAUSE_ROWS, isPureCreditReleaseChain } from "@/lib/additional-ask-cause";
 import { bookingLedgerResidualCents } from "@/lib/additional-payment-ask";
@@ -59,6 +60,15 @@ export type CreditReleaseCloseDeps = {
   readInvoiceBalance: XeroInvoiceBalanceReader;
   cancelIntent: typeof cancelPaymentIntentIfCancellableWithResult;
 };
+
+/**
+ * #4516 (M4b): the W8 cash rows on a payment. Read before and after this close records its own, under `lock(1)`
+ * that every W8 writer holds, so the difference is exactly the row this close wrote: the one receipt it collects.
+ */
+async function creditReleaseReceiptRowIds(tx: Prisma.TransactionClient, paymentId: string): Promise<Set<string>> {
+  const rows = await tx.paymentTransaction.findMany({ where: { paymentId, reason: CREDIT_RELEASE_PAID_IN_XERO_REASON }, select: { id: true } });
+  return new Set(rows.map((row) => row.id));
+}
 
 export async function closeCreditReleaseAsksPaidInXero(
   options: { limit?: number; deps?: Partial<CreditReleaseCloseDeps>; now?: Date } = {},
@@ -147,6 +157,7 @@ export async function closeCreditReleaseAsksPaidInXero(
       }
     }
 
+    const journal = await resolveBookingMoneyPostingContext();
     const closed = await prisma.$transaction(
       async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -181,6 +192,7 @@ export async function closeCreditReleaseAsksPaidInXero(
           data: { status: PaymentStatus.FAILED, withdrawnAt: options.now ?? new Date() },
         });
         if (stamped.count !== 1) return false;
+        const earlier = await creditReleaseReceiptRowIds(tx, ask.paymentId);
         await recordInternetBankingPaymentTransaction({
           paymentId: ask.paymentId,
           kind: PaymentTransactionKind.ADDITIONAL,
@@ -192,6 +204,8 @@ export async function closeCreditReleaseAsksPaidInXero(
           reason: CREDIT_RELEASE_PAID_IN_XERO_REASON,
           store: tx,
         });
+        await postBookingReceipts(tx, journal, { paymentId: ask.paymentId, decision: {
+          transactionIds: [...await creditReleaseReceiptRowIds(tx, ask.paymentId)].filter((id) => !earlier.has(id)), collect: true } });
         await createAuditLog(
           {
             action: "payment.credit_release_ask.closed_paid_in_xero",
@@ -249,6 +263,7 @@ export async function recordReleasePaidInXeroCash({
   releasedCents: number;
   balance: { invoiceId: string; invoiceNumber: string | null };
 }): Promise<number> {
+  const journal = await resolveBookingMoneyPostingContext();
   return prisma.$transaction(
     async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -284,6 +299,7 @@ export async function recordReleasePaidInXeroCash({
       });
       const cents = Math.min(releasedCents, unasked);
       if (cents <= 0) return 0;
+      const earlier = await creditReleaseReceiptRowIds(tx, paymentId);
       await recordInternetBankingPaymentTransaction({
         paymentId,
         kind: PaymentTransactionKind.ADDITIONAL,
@@ -295,6 +311,8 @@ export async function recordReleasePaidInXeroCash({
         reason: CREDIT_RELEASE_PAID_IN_XERO_REASON,
         store: tx,
       });
+      await postBookingReceipts(tx, journal, { paymentId, decision: {
+        transactionIds: [...await creditReleaseReceiptRowIds(tx, paymentId)].filter((id) => !earlier.has(id)), collect: true } });
       await createAuditLog(
         {
           action: "payment.credit_release_ask.closed_paid_in_xero",

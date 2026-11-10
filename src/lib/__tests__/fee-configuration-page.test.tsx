@@ -45,7 +45,7 @@ vi.mock("@/hooks/use-scroll-to-feedback", () => ({
 // The finance fee sections moved to the consolidated /admin/fees console (#1933,
 // E7); /admin/fee-configuration now redirects there. Behaviour is unchanged, so
 // this suite exercises the moved component directly.
-let FeeConfigurationPage: typeof import("@/app/(admin)/admin/fees/_components/finance-fees-sections").FinanceFeesSections;
+let FeeConfigurationPage: typeof import("@/app/(admin)/admin/rules/fees/_components/finance-fees-sections").FinanceFeesSections;
 
 const editableData = {
   canEdit: true,
@@ -216,7 +216,7 @@ beforeAll(async () => {
   // the dynamic import to control it — and in the product that meant a tab left
   // open across midnight kept yesterday's date. It is read per render now, from
   // the club's persisted zone, so the frozen test clock is enough.
-  FeeConfigurationPage = (await import("@/app/(admin)/admin/fees/_components/finance-fees-sections")).FinanceFeesSections;
+  FeeConfigurationPage = (await import("@/app/(admin)/admin/rules/fees/_components/finance-fees-sections")).FinanceFeesSections;
 });
 
 afterEach(() => {
@@ -764,7 +764,7 @@ describe("fee configuration page", () => {
     process.env.NEXT_PUBLIC_CURRENCY = "AUD";
     vi.resetModules();
     try {
-      const { FinanceFeesSections } = await import("@/app/(admin)/admin/fees/_components/finance-fees-sections");
+      const { FinanceFeesSections } = await import("@/app/(admin)/admin/rules/fees/_components/finance-fees-sections");
       // The fresh module tree has its own context objects, so the render
       // helper's (static) providers would not be seen; wrap with the freshly
       // imported ones.

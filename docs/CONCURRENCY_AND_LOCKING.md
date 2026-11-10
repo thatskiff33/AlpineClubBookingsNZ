@@ -388,8 +388,9 @@ no process holds half a lease. Release and save clear both. While no
 **Lock order: `XeroToken`, then `XeroConnection`.** A statement trigger on
 `XeroToken` syncs `XeroConnection` at the end of each `XeroToken` statement, so
 every writer of either release that touches both tables touches `XeroToken`
-first. The token store's claim, save, release, connect and delete keep that
-order, so no cycle forms with the previous release's writers. The sync is ONE
+first. The token store's claim, save, release, connect and delete, and the
+data-key re-encrypt's fence (#4456, below), keep that order, so no cycle forms
+with the previous release's writers. The sync is ONE
 statement, reading one snapshot taken once its `XeroConnection` lock is
 granted, so a refresh, connect or disconnect committing while it waits is
 never half-seen and written back stale. It row-locks the connection only to
@@ -403,7 +404,8 @@ deletes both (`saveXeroTokens`).
 **The claim takes the leases first and reads the tokens second, in the same
 transaction.** The winning `updateMany`s hold both rows' locks until the claim
 commits, and every writer of the token set (a connect, a refresh save, a
-disconnect, a verify-reset, of either release) takes one of those rows first. So
+disconnect, a verify-reset, of either release, and the data-key re-encrypt
+through `fenceXeroTokenSetRewrite`) takes one of those rows first. So
 the store copy the claim then reads is the one that belongs to its lease.
 Reading first and claiming second let a reconnect commit between the reads, and
 the refresh then overwrote it (#3454 review).
@@ -422,6 +424,40 @@ fences against real row locks, including against the previous release's own
 claim statement, and forces both of the trigger's interleavings with a queued
 table lock.
 
+### The data-key re-encrypt joins the row claims and takes no advisory key (#4456)
+
+`pnpm run data-keys:reencrypt` (`data-encryption-reencrypt.ts`) rewrites stored
+secrets under the current data key while the app runs. It composes no booking,
+capacity, membership or money mutation, so it takes **no advisory lock**
+(`INV-LOCK-001`: neither tier applies) and adds no key (`INV-LOCK-002`,
+`INV-LOCK-003`: nothing to order or register). Each row is one short
+transaction with no provider call, joined to the claim its existing writers
+already use:
+
+| Row | Its other writers | How the re-encrypt claims it |
+| --- | --- | --- |
+| `IntegrationCredential` | admin saves and deletes, verify-resets, the Xero connect, refresh and disconnect | `withCredentialTransaction`, the row read on that transaction, then `expect: version`: the `(ciphertext, iv, authTag)` compare-and-set. A writer that commits first makes it lose (`StaleCredentialWriteError`) |
+| the Xero token set (`xero-oauth`/`token-set`) | as above, plus the refresh lease | first `fenceXeroTokenSetRewrite`: the lease rows in the order above, `XeroToken` then `XeroConnection`, each guarded on `refreshInProgressUntil` being NULL. Any lease, held or expired, makes it lose; holding both row locks, it makes a new claim queue and then read the moved row |
+| `Member.totpSecret` | enrolment, the erasure and retention clears | `updateMany` guarded on the exact value read |
+| `TwoFactorRecoveryCode` (retiring a legacy code) | sign-in's use of a code (itself guarded on the hash it matched and `usedAt: null`), replacement, enrolment, erasure | `updateMany` guarded on the hash read and `usedAt: null`. A lost claim means the code was used or replaced meanwhile, so there is nothing left to retire and no retry |
+
+A loser writes nothing and records no audit row. A credential or an
+authenticator secret that lost is retried on the next pass (three passes, two
+seconds apart); a recovery code that lost is not, for the reason in the table. **Why the Xero fence is needed:** a
+refresh reads the version its save compares on, spends the refresh token at
+Xero, then saves. A re-encrypt committing in between would make that save
+lose with the new token already issued and the old one spent, so the
+re-encrypt must not move the row while the lease is held. **Nor while it has
+expired** (#4456 review): unlike a claim, which takes an expired lease over by
+its own clock, the fence never does, because a refresh stalled past its lease,
+or judged by a skewed clock, may still be about to save, and its save matches
+only its own lease value. An expired lease is cleared by that refresh's save or
+release, or by the next claim; until then the row stays where it is and the
+report says to run again. `data-encryption-key-ring.realdb.test.ts` proves it:
+with the lease held, and with it expired but its refresh still in flight, the
+re-encrypt loses and the refresh saves; queued behind a held `XeroToken` row
+lock in each order, the refresh's save wins and no refresh token is lost.
+
 ## The lock families
 
 All keys below are the argument(s) to `pg_advisory_xact_lock`. Two-argument keys
@@ -431,10 +467,10 @@ are the literal `1`.
 | Lock | Key | Helper / where | Tier | Serialises |
 | --- | --- | --- | --- | --- |
 | **Global booking / money** | `1` (literal) | inline `tx.$executeRaw` | 2 | Booking-status + money side effects that must exclude across the whole booking regardless of lodge: cancel, capture/settle, hold-release, group-settlement reaper/settle/refund/organiser-cancel, refunds, credit restore; plus bed-allocation inventory/placement/move/range/auto/approval/removal writers that must serialize with lifecycle prune; and, since #2698, the hut-leader ACCEPT path only — a custodian bed hold the officer has explicitly accepted narrowing an existing whole-lodge hold, which must exclude that hold's release (`INV-CAP-038`). Gated on the acceptance AND on a bed being involved, so a bedless write cannot take the club-wide key by asserting a flag. The hut-leader routes are otherwise not in this cohort: the detect-and-refuse path writes nothing and takes the per-lodge key alone. Member merge is the one bed-allocation writer that deliberately does NOT take this key — see "Merge joins the bed-allocation cohort" (#2595). |
-| **Per-lodge capacity** | `hashtextextended(<lodgeId>, 0)` | `acquireLodgeCapacityLock(tx, lodgeId)` (`lodge-capacity-lock.ts`, re-exported by `capacity.ts`) | 1 | Capacity claims/checks and bed-allocation mutations for one lodge; booking admission versus lodge deactivation; hut-leader overlap, optional bed-hold writes and assignment DELETE (#2698: removing a custodian hold widens every overlapping whole-lodge hold's represented set); roster eligibility snapshots; and direct or config-transfer chore-template changes, which serialize active-template validation for that lodge. |
+| **Per-lodge capacity** | `hashtextextended(<lodgeId>, 0)` | `acquireLodgeCapacityLock(tx, lodgeId)` and, fail-fast, `tryAcquireLodgeCapacityLock` (`lodge-capacity-lock.ts`; the blocking form is re-exported by `capacity.ts`) | 1 | Capacity claims/checks and bed-allocation mutations for one lodge; booking admission versus lodge deactivation; hut-leader overlap, optional bed-hold writes and assignment DELETE (#2698: removing a custodian hold widens every overlapping whole-lodge hold's represented set); roster eligibility snapshots; and direct or config-transfer chore-template changes, which serialize active-template validation for that lodge. |
 | **Per-member night footprint** | `hashtext("booking-member-night"), hashtext(<memberId>)` | `lockBookingMemberNights(tx, guests)` (`booking-member-night-conflicts.ts`) | cross-lodge | Serialises the person-night guard ACROSS lodges (see below). |
 | **Per-trip hosting coverage** | `hashtext("hosting-coverage-group"), hashtext(<GroupBooking.id>)` | `lockHostingCoverageGroup` / `lockHostingCoverageGroups`, with `tryLockHostingCoverageGroup(s)` tried first (`adult-member-hosting-coverage-lock.ts`) | cross-account | Serialises `SAME_GROUP_TRIP` coverage (#3039, epic #2943). The owner key cannot do this job: it is `Booking.memberId`, the DEPENDENT's own account, while every Group Trip source belongs to somebody else — so two writers changing two bookings in one trip hold two DIFFERENT owner keys and are not serialised at all. Not the lodge key either: one lodge holds many unrelated trips. Taken immediately BEFORE the sorted owner keys, because the trip's membership is what decides which owners the reconciliation fan-out will name. Several trips are taken in sorted order, and EVERY acquisition is tried with `pg_try_advisory_xact_lock` before the blocking form — one transaction can discover two trip keys (a booking in one trip whose same-owner dependent sits in another), so sorting within a call cannot order keys discovered in two, and a conflict rolls the whole outer transaction back with the stable `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409 rather than waiting inside a booking transaction. Taken only where the lodge has `SAME_GROUP_TRIP` enabled AND the booking is in a trip. |
-| **Per-owner hosting coverage** | `hashtext("hosting-coverage-owner"), hashtext(<Booking.memberId>)` | `lockHostingCoverageOwner` / `lockHostingCoverageOwners` (`adult-member-hosting-coverage-lock.ts`) | cross-booking | Serialises `SAME_BOOKING_OWNER` coverage (#2576 §9): one booking's compliance depends on another booking of the SAME owner, so the key remains authoritative even though #2600 made allocation-participating confirmation and cancellation compose global → lodge. Taken LAST among the application lock families a caller composes, EXCEPT that since #3039 the per-TRIP hosting coverage key above sits immediately before it — so it is the second of the last two rather than the last. Roster-aware modification paths take global → lodge → roster-date → any applicable member keys → sorted queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-group → coverage-owner; queued incident reconciliation takes hosting policy-set → sorted claimed member-lifecycle keys → sorted claimed `Member FOR KEY SHARE` rows → coverage-group (only where the reconciled booking is in a Group Trip at a lodge with `SAME_GROUP_TRIP` on; the evaluator takes it fail-fast before it reads a sibling as cover) → coverage-owner. Paths that do not use roster or member keys omit those tiers. Ordinary producers try sorted owner keys before re-entering the blocking helper, while merge takes its sorted owner keys only after its one sorted participant `FOR UPDATE` statement. The key is taken only when the lodge actually has the scope enabled. |
+| **Per-owner hosting coverage** | `hashtext("hosting-coverage-owner"), hashtext(<Booking.memberId>)` | `lockHostingCoverageOwner` / `lockHostingCoverageOwners` (`adult-member-hosting-coverage-lock.ts`) | cross-booking | Serialises `SAME_BOOKING_OWNER` coverage (#2576 §9): one booking's compliance depends on another booking of the SAME owner, so the key remains authoritative even though #2600 made allocation-participating confirmation and cancellation compose global → lodge. Taken LAST among the application lock families a caller composes, EXCEPT that since #3039 the per-TRIP hosting coverage key above sits immediately before it — so it is the second of the last two rather than the last. Roster-aware modification paths take global → lodge → roster-date → any applicable member keys → sorted queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-group → coverage-owner; queued incident reconciliation takes hosting policy-set → sorted claimed member-lifecycle keys → sorted claimed `Member FOR KEY SHARE` rows → coverage-group (only where the reconciled booking is in a Group Trip at a lodge with `SAME_GROUP_TRIP` on; the evaluator takes it fail-fast before it reads a sibling as cover) → coverage-owner. Paths that do not use roster or member keys omit those tiers. Ordinary producers try sorted owner keys before re-entering the blocking helper, while merge takes its sorted owner keys only after it holds its participant rows `FOR UPDATE` (taken all at once, never holding one while waiting for another, #4855). The key is taken only when the lodge actually has the scope enabled. |
 | **Per-member credit ledger** | `hashtext("member-credit-ledger"), hashtext(<memberId>)` | `lockMemberCreditLedger(memberId, tx)` (`member-credit.ts`) | — | A member's credit-ledger balance operations (spend, negative-adjustment validation, orphan-restore repair, every applied-credit restore (`restoreCreditFromBooking`, taken inside the caller's transaction after its `lock(1)` and lodge locks, #3792), the Xero inbound applied-credit repair, and the F20 pre-payment-reduction applied-credit clamp `clampAppliedCreditToBookingPrice`, taken inside the modification transaction only when the booking carries applied credit, through its give-back `giveBackAppliedCredit`, which a credit-paid booking's review share also goes through (#3791), taken inside an `EDIT_FINANCIAL_REVIEW` completion after its `lock(1)`, its claim and its re-price, only on the account-credit route with no captured payment, and by a paid booking's price reduction (#3809, `giveBackPaidReductionCredit`), taken inside the batch, date-change and guest-removal transactions (the consent decline and expiry included) in `applyPaymentAdjustments`, after `lock(1)`, the lodge key and any roster-date keys and before any `Payment` row write, only on a PAID or COMPLETED booking with credit applied and a reduction the captured money's basis cannot return, and the #2265 stored-election consumption `consumeStoredCreditElection`, taken inside the `create-payment-intent` pay transaction and the Internet Banking switch transaction only when the booking carries an outstanding election)., and the member whole-lodge approval's credit application (`approveMemberWholeLodgeRequest`, #4019: `applyCreditToBooking` under this lock inside the approval transaction after its `lock(1)` and lodge key and BEFORE the adult-member-hosting reconcile that may take Member rows and the coverage keys). |
 | **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`, `app/api/admin/deletion-requests/[id]/route.ts`, `nomination.ts` approval mapping, `admin-family-group-requests-service.ts`, `member-merge.ts`, `adult-member-hosting-coverage-drain.ts`) | — | Archive/delete of one member; account-deletion approval (the #1756 partner-share prefix — global cohort `lock(1)` + every affected lodge, sorted — and only then member lifecycle → shared standing-subject `Member FOR UPDATE NOWAIT` → exact queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-owner before deactivation and guest unlink); overwrite of one member by application-approval mapping (E10, #1936); linking/removing one member into/from a family group on admin request review; **member merge** (dual-lock on master + loser, E11 #1937, see below — merge takes the merge-only partner-share prefix, so every affected lodge key is held BEFORE this tier while the global cohort key is deliberately NOT taken at all, and the two `member-partner-link:` keys immediately AFTER it, #2595); and the queue-drain handshake that prevents a claimed hosting item from using identities while merge re-points them. |
 | **Membership application** | `hashtext(<application key>)` | `membershipApplicationLockKey` (`nomination.ts`) | — | State transitions of one membership application. |
@@ -1178,45 +1214,65 @@ lifecycle or source-Booking lock is added; the hold order is lodge → sorted li
 Member rows, and the standing order is its existing prefix → subject Member → queue
 participants → coverage-owner.
 
-Member merge owns the blocking counterpart. After its bounded relation moves it
-plans the survivor's attendance plus the captured loser-owned bookings, then takes
-one sorted `Member FOR UPDATE` statement over master, loser and every ancillary
-queue owner. It re-plans under those rows; a new guest, booking, owner or lodge that
-changes the participant fingerprint returns the merge's existing safe 409 rather
-than acquiring another row late.
+Member merge owns the blocking counterpart. Its relation moves, collision
+resolvers and hosting plan run in the same savepoint as the participant lock
+(#4876). That lock takes master, loser and every ancillary queue owner `FOR
+UPDATE`, all at once. If one row is busy the savepoint rolls back, releasing
+every row the attempt wrote, and merge waits for that one row holding none of
+them. It re-plans under the rows once it holds them; a new guest, booking,
+owner or lodge that changes the participant fingerprint returns the merge's
+existing safe 409 rather than acquiring another row late. Every attempt
+try-locks a lodge the guest-row derivation newly sees
+(`lockPartnerShareLodgesAppearedSincePrefix`) before the moves; a miss does
+not wait. The first attempt does not adopt those ids, so a guest row that
+landed in a lodge the opening prefix never locked is still
+`partner_share_lodge_drift` (#2672). A retry adopts them (#4876). A lodge
+that appears after that re-derivation is still drift.
 
-**That statement waits, but only for `MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS`
-(10s)** (#2623 T6). It stays BLOCKING rather than `NOWAIT` because merge is
+**Merge waits for those rows, but only for `MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS`
+(10s)** (#2623 T6). It waits rather than failing at once because merge is
 irreversible admin work and a short overlap with an ordinary writer should still
 succeed. What was wrong was the wait being unbounded *while holding*: the merge
 transaction still holds the adult-member hosting policy-set advisory key here, and
-its own `FOR UPDATE` on up to `HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT` (50)
-THIRD-PARTY owners blocks every FK write naming them — so an uninvolved
-booking-create or guest-add waited behind the tail of a merge, for as long as the
-merge transaction's own `timeout: 120_000` allowed. The bound is applied with
-`set_config('lock_timeout', …, true)` immediately before the statement and restored
-with `SET LOCAL lock_timeout TO DEFAULT` immediately after a successful acquisition,
-so the rest of the merge
-transaction's locks — sorted coverage-owner keys, the loser delete — keep their own
-unmapped failure semantics. **`DEFAULT`, not a hardcoded `0`**: `0` means "wait
-forever" rather than "whatever it was", so on a deployment that sets `lock_timeout`
-at the database or role level, restoring `0` would delete the operator's bound for
-the rest of the merge. `SET LOCAL` rather than `RESET` because `RESET` is
-session-scoped and survives the commit on a pooled connection, silently clearing a
-session-level setting the caller had made. **On the connections this code runs
-on, `DEFAULT` still resolves to `0`**, so restoring it is byte-for-byte the old
-behaviour and remains hardening against a deployment that adds a bound rather
-than a live bug. Since #3377 one connection in this deployment DOES carry a
-`lock_timeout` — the `migrate` service's, described under
-["The migration lock timeout"](#the-migration-lock-timeout-3377) below — but
-that service runs `prisma migrate deploy` and no application code, so it never
-reaches this helper. PostgreSQL raises a `lock_timeout` cancellation as
-SQLSTATE `55P03`, the same code `NOWAIT` raises, so it lands on
-`HostingCoverageParticipantRetryError` and merge converts it into its existing
-"participants changed, nothing was saved, re-run the preview" 409. There is no
-restore on the failure path because the cancelled statement leaves the transaction
-aborted. Both halves — that it stops, and that it still waits — are proven against
-real PostgreSQL in `adult-member-hosting-queue-merge.realdb.test.ts`. Only then does it take the sorted coverage-owner
+its `FOR UPDATE` on up to `HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT` (50) THIRD-PARTY
+owners blocked every FK write naming them, so an uninvolved booking-create or
+guest-add waited behind the tail of a merge, for as long as the merge transaction's
+own `timeout: 120_000` allowed.
+
+**Since #4855 merge never waits for one of these rows while holding another, and
+since #4876 it never waits for one while holding any row that attempt wrote**
+("Merge never holds a Member row while waiting for another (#4855)" below). Each
+attempt opens a savepoint, runs the moves and the plan, then one sorted
+`SELECT 1 … FOR UPDATE SKIP LOCKED`, counted rather than read (`INV-OPS-001`).
+When it locks every id, the savepoint is released and merge holds the rows and
+the writes. Otherwise a row-by-row `SKIP LOCKED` probe finds the first row it
+skipped, the savepoint is rolled back — releasing the Member rows and every row
+the moves wrote — and merge waits for that row alone (`FOR UPDATE`, in a second
+savepoint, under `set_config('lock_timeout', <what is left of the 10s>, true)`),
+rolls that back too and tries again. The deadline is read from a monotonic clock before each
+attempt, so the loop either takes every row or spends the budget; it cannot spin.
+Rolling back to a savepoint restores the `lock_timeout` in force before it, so the
+rest of the merge transaction's locks (sorted coverage-owner keys, the loser
+delete) keep their own unmapped failure semantics, including a `lock_timeout` an
+operator sets at the database or role level (#2623 F4 measured why neither `0`
+nor `RESET` is a safe undo). A row that has disappeared, or a wait that runs out
+of budget (`55P03`, the code `NOWAIT` raises), lands on
+`HostingCoverageParticipantRetryError`, which merge converts into its existing
+"participants changed, nothing was saved, re-run the preview" 409. While it waits
+merge holds none of the rows, so it no longer blocks the FK writes of the
+third-party owners in the meantime. **The cost, accepted:** a key share does not
+queue behind a waiting `FOR UPDATE`, and now merge must find every row free at
+the same instant. So steady key-share traffic on several participant rows at
+once (an active survivor and busy owners) can make merge return its 409 after
+10s where the old blocking statement, which kept each row once it had it, might
+have finished. The operator re-runs the merge; never holding one row while
+waiting for another is what removes the deadlock. Since #3377 one connection in this deployment
+does carry a `lock_timeout` — the `migrate` service's, described under
+["The migration lock timeout"](#the-migration-lock-timeout-3377) below — but that
+service runs `prisma migrate deploy` and no application code, so it never reaches
+this helper. Both halves — that it stops, and that it still waits — are proven against
+real PostgreSQL in `adult-member-hosting-queue-merge.realdb.test.ts`. Only then does it refuse
+any row still naming the duplicate (#4855), take the sorted coverage-owner
 keys, sweep both live queue pointers (`memberId` and the FK-less `actorMemberId`),
 fold those late counts into the existing relation totals, enqueue actorless
 merge-generated `SYSTEM_CHANGE` work under the private exact proof, and delete the
@@ -2591,10 +2647,13 @@ fan-out read, then one exact, sorted `Member FOR KEY SHARE NOWAIT` statement per
 high-level enqueue seam containing every planned source owner plus the non-null
 actor. The booking-request hold takes the matching lodge → exact sorted linked
 `Member FOR KEY SHARE` path and re-reads active/archive state before its versioned
-claim. Merge takes the blocking counterpart only after its relation moves: one
-sorted `Member FOR UPDATE` statement over master, loser and every ancillary owner
-in the bounded survivor-attendance/captured-booking plan. It then re-plans under
-those rows, takes sorted coverage-owner keys, runs the late owner and actor queue
+claim. Merge takes the blocking counterpart in the same savepoint as its
+relation moves (#4876): `Member FOR UPDATE` over master, loser and every
+ancillary owner in the bounded survivor-attendance/captured-booking plan, all at
+once, waiting for at most one of them at a time and holding none of those rows,
+and none of the moves, while it waits (#4855, #4876). It then re-plans under
+those rows, refuses any row still naming the duplicate (#4855), takes sorted
+coverage-owner keys, runs the late owner and actor queue
 sweeps, emits actorless merge work under the exact participant proof, and deletes
 the loser. A plan mismatch returns 409; it never acquires a participant late.
 
@@ -2607,9 +2666,12 @@ later conflict rolls back earlier calls instead of forming a hold-and-wait cycle
 The composed merge order is **hosting policy-set → every affected lodge key in
 sorted order, and no global cohort key (#2595) → sorted member-lifecycle →
 sorted member-partner-link (#2595) →
-relation moves → one sorted master/loser/ancillary Member FOR UPDATE → under-lock
-re-plan → sorted coverage-owner → unresolved Xero contact-create proof re-check →
-late owner+actor sweeps → unbacked shared-double reconciliation (#2595) →
+[savepoint: relation moves, then master/loser/ancillary Member FOR UPDATE, all
+at once; on contention the savepoint rolls back and merge waits for one Member
+row holding no row it wrote (#4855, #4876)] → under-lock re-plan →
+residual-reference refusal (#4855) → sorted coverage-owner → unresolved Xero contact-create proof re-check →
+late owner+actor sweeps → Payment attribution, sorted `NOWAIT` (#4823) →
+unbacked shared-double reconciliation (#2595) →
 actorless enqueue → loser delete**. #2595 adds two tiers: the lodge prefix at the
 TOP, before the member-lifecycle pair (see "Merge joins the bed-allocation
 cohort" below for why it cannot sit at its point of use), and the partner-link
@@ -2837,10 +2899,24 @@ lockAdultMemberHostingPolicySet(tx)                              policy config
   → MemberParentPartnerExclusion:<each prospective pair>, C order pair rows
         (#3271 — no-op UPSERT locks existing and absent canonical pairs;
         complete this layer before the authoritative topology re-read)
-  → steps 1-3: null self-cycles, resolve collisions, applyMoves
-  → one sorted master/loser/ancillary `Member … FOR UPDATE`        member rows
-  → under-lock hosting re-plan + sorted hosting-coverage-owner     last
+  → steps 1-3, inside the attempt savepoint, before the moves:
+        try-lock any lodge the opening prefix missed. The first attempt
+        does not adopt the returned ids; a retry does
+        (#4876 — a booking that committed while a previous attempt was
+        rolled back; a miss 409s and does not wait. A lodge the opening
+        prefix never locked is still #2672 drift on the first attempt)
+        then null self-cycles, resolve collisions, applyMoves
+  → master/loser/ancillary `Member … FOR UPDATE`, all at once:     member rows
+        sorted SKIP LOCKED attempts in a savepoint, waiting for one
+        skipped row at a time while holding none (#4855, 10s, T6)
+  → under-lock hosting re-plan
+  → residual-reference refusal: any row still naming the loser 409s
+        (#4855, member-merge-residual-references.ts)
+  → sorted hosting-coverage-owner                                  last
   → contact-create proof re-check + late owner/actor queue sweeps
+  → Payment rows naming the loser, sorted, FOR NO KEY UPDATE NOWAIT
+        (#4823 — then the attribution move; a held row refuses
+        the merge. See "Member merge never waits for a Payment row")
   → step 3b: sweepUnbackedFutureSharedDoublesWithLocksHeld
              (handed the locked lodge set. MUST stay below the
               `Member … FOR UPDATE` line above: it first re-derives
@@ -3046,16 +3122,15 @@ filter fixes what the set contains at derivation time; it says nothing about a
 guest row *inserted* at a lodge these members had never booked, between the
 derivation at the top of the merge and the sweep. Step 3b closes that positively
 rather than by argument: it **re-derives the same guest-row lodge set** and 409s
-if the prefix does not cover it — and it does so *after* merge's sorted
-`Member … FOR UPDATE`
+if the prefix does not cover it — and it does so *after* merge holds its
+`Member … FOR UPDATE` rows
 (`lockMemberMergeHostingCoverageParticipants`). `BookingGuest.memberId` is a real
 foreign key to `Member`, so PostgreSQL takes `FOR KEY SHARE` on the referenced
 member row for every INSERT naming it and every UPDATE re-pointing onto it, and
 `FOR KEY SHARE` conflicts with `FOR UPDATE`. Once merge holds both member rows
-`FOR UPDATE`, no such write can commit until merge does — the same property
-`adult-member-hosting-queue-participants.ts` already documents from the other
-side ("blocks every FK write naming those members, so an uninvolved
-booking-create or guest-add can wait behind the tail of a merge"). So the
+`FOR UPDATE`, no such write can commit until merge does: once merge holds its
+participant rows, every FK write naming one of those members waits behind the
+tail of the merge (`adult-member-hosting-queue-participants.ts`). So the
 re-derived set is **frozen for the remainder of the transaction**, and passing
 the subset check is a statement about the future rather than about that instant.
 
@@ -3093,8 +3168,14 @@ and no reverse edge exists anywhere in the tree:
   live policy CRUD takes only that key, queued incident reconciliation takes it
   first, and the queue drain uses the fail-fast `tryLock` while holding nothing.
 - `lodge → member-lifecycle` is the order every partner-share caller and the
-  reviewed bed-allocation move already use. No transaction takes a
-  member-lifecycle key and then a lodge key, or the global key.
+  reviewed bed-allocation move already use. No transaction waits for a lodge
+  key while it holds a member-lifecycle key, or the global key. The one later
+  acquisition is inside each merge attempt: `tryAcquireLodgeCapacityLock` on a
+  lodge the opening prefix missed, inside the attempt savepoint, before the
+  moves. A miss does not wait — it is `partner_share_lodge_drift` — so the
+  reverse is never a wait. The first attempt does not add those ids to the
+  coverage set (#2672); a retry does. The operator's retry of the whole merge
+  takes the wider set at the top, in order.
 - `member-lifecycle → member-partner-link` is the reviewed bed-allocation move's
   own order (`bed-allocation-move.ts`), so merge adds a second HOLDER of an
   existing edge rather than a new edge. The reverse cannot exist: the
@@ -3252,6 +3333,354 @@ Two consequences worth stating plainly, because neither is obvious from the code
   `mergeMemberFields` is a closed enumeration that can emit no other column),
   which is why judging the bed-nights at step 3b gives the same answer as judging
   them after the field merge.
+
+#### Member merge never waits for a Payment row (#4823)
+
+Merge moves one Payment column: `Payment.manuallyMarkedPaidByMemberId`, the
+officer who recorded a cash settlement. Before #4823 the generic pass moved it
+after the booking moves and waited for each row. Merge takes no `lock(1)`, so
+that order could deadlock: merge held a booking row and waited for its Payment
+row, while a `lock(1)` writer that takes the Payment row first held it and
+waited for the booking row.
+
+The `lock(1)` writers take a booking's two rows in both orders:
+
+| Order | Writers |
+| --- | --- |
+| Payment → booking | a card settle (W1: its PAID claim and R01's owner read), the back-post. A manual settle takes the booking row first since #4840 |
+| booking → Payment | the edit doors (after their lodge key), an edit review, an approved appeal |
+
+Two `lock(1)` holders never interleave, so neither order is a defect between
+them. Merge is not a `lock(1)` holder, so neither fixed place for the Payment
+rows is safe for merge. Moving them before the booking moves, the settle's
+order, would only change which writer deadlocks. Merge would hold the Payment
+row and wait for the booking row an edit door holds, while the door waited for
+that Payment row. Merge's lodge prefix fences the settle and the doors only
+where the booking's lodge is in it. A booking merge holds through an actor
+column (the duplicate made it, or overrode its capacity) can be at a lodge
+neither member has a guest row in. An approved appeal never meets merge on one
+of these rows: it refuses a cash-settled payment before its transaction opens.
+Taking `lock(1)` is ruled out by "Why merge takes no global cohort key" above.
+
+So merge never waits for a Payment row
+(`src/lib/member-merge-payment-attribution.ts`):
+
+- The spec table marks the relation `movedLast`, and the generic move pass
+  skips it on that field. The module reads its key and column from that one
+  spec and refuses to load if another relation, or another model, carries the
+  flag. Merge moves it last, after the sorted `Member … FOR UPDATE` set and the
+  late queue sweeps.
+- One statement locks every Payment row naming the duplicate:
+  `SELECT 1 … ORDER BY "id" FOR NO KEY UPDATE NOWAIT`. If any row is held, the
+  merge refuses with a 409 (`merge_payment_row_busy`), writes nothing, and the
+  refusal is audited. The operator retries. A lock nobody waits for cannot be
+  part of a wait-for cycle, so the order of the two families no longer matters.
+- Under the Member rows the set cannot grow. Naming the duplicate on a Payment
+  row is an FK write, which needs `FOR KEY SHARE` on the duplicate's Member row.
+  So the lock covers every row the update changes, and the duplicate's
+  `onDelete: SetNull` finds no Payment row to update at the delete.
+- Being last, merge holds the Payment rows across the fewest later waits.
+
+No advisory key is added, and no writer's own order changes. Nothing else in
+merge locks a Payment row: its other moves update no Payment column, and D4's
+`postMemberMergeTransfer` posts no successor. Proved against real
+PostgreSQL by `member-merge-payment-row-races.realdb.test.ts`: a card settle
+holding its Payment row makes the merge refuse at once, and the settle then
+commits. A merge holding the row makes the settle wait, and both commit. The
+edit doors' order, through their own lock helpers, holding the booking row
+before its Payment row makes the merge wait, and both commit; a merge holding
+both makes it wait. The settle-first race deadlocks under the old placement,
+and the door-first race under the Payment-before-booking placement (both
+probed). The suite is a required step of the `migration-drift` job, pinned by
+`review-findings-contracts.test.ts`, as the #2672 merge races are. Pinned by
+position in `adult-member-hosting-coverage-lock.test.ts` and by shape in
+`member-merge-execute.test.ts`.
+
+Reconciled against the merged PRs that last changed member merge or these
+writers: #4820 (M4c refunds: the appeal's booking-row-first order, W1's
+capture-return read), #4791 (M4b receipts), #4776 (the engine's Payment lock),
+#4729 and #4636 (member merge, D4's transfer), #4792, #4761, #4754, #4749 and
+#4750.
+
+#### A booking writer takes the booking row before a Member key share (#4840)
+
+Any write that names a member through a foreign key takes `FOR KEY SHARE` on
+that Member row. Merge holds booking rows from its relation moves on, then takes
+its sorted `Member … FOR UPDATE`. So a writer that takes a Member key share
+first and a booking row after can wait on merge while merge waits on it. The
+order every booking writer and merge share is **booking row, then Member key
+share**. The edit doors take their booking row right after their lodge key,
+and the journal adapter takes it before it reads the owner.
+
+Two writers did not, and #4840 changed both. The manual settle wrote the officer onto the Payment row
+(`manuallyMarkedPaidByMemberId`) before its PAID claim took the booking row. When
+the officer was the duplicate or the survivor of a running merge, and the
+booking named the duplicate at a lodge outside merge's lodge prefix, PostgreSQL
+broke the cycle by aborting one side (`40P01`). Since #4840 the settle takes the
+booking row (`lockBookingRowForOwnerRead`) right after its lodge key, so its
+order is `lock(1)` → lodge → booking row → member-credit → Payment → Member key
+share → PAID claim. The Stripe path writes no Member FK before its claim and is
+unchanged. The reversal updates the booking before it writes its audit row.
+
+An edit review's closure took its booking row straight after its claim
+(#4627), to stay ahead of its credit writes. But the claim itself writes
+`completedByMemberId`, the officer, so the officer's key share came first. The
+closure takes `lock(1)` and no lodge key, so merge's lodge prefix never fenced
+it. It now takes the booking row (`lockBookingRowForOwnerRead`) right after
+`lock(1)`, keyed from its first read of the task's kind and booking id (both
+written once), and before the full re-read. So the booking owner that names the
+credit recipient is read under the lock, and the claim and every credit write
+come after it. The
+other task kinds take no booking row after their claim: their routes touch the
+Payment row, a group child's Payment row, ledger lines (an FK `KEY SHARE` on the
+booking, which merge's `NO KEY UPDATE` does not conflict with) and plain debtor
+reads.
+
+A locked-period change-request approval (#4845,
+`approveAndExecuteLockedPeriodChangeRequest`) took `lock(1)` and the lodge key,
+then claimed the request before the canonical `modifyBookingBatch` updated the
+booking. The claim names the officer (`reviewedByMemberId`, a Member key share)
+and holds the request row, which merge re-points (`requestedBy`) after its
+booking moves and before its `Member … FOR UPDATE`. With the booking outside
+merge's lodge prefix that left two cycles: the officer is the duplicate, or the
+duplicate owns the booking and made the request. No merge guard refuses a
+pending change request (`countPendingLifecycleOrFamily` counts lifecycle,
+family-join and deletion requests), so the second is reachable without any
+officer being merged. The approval now takes the booking row
+(`lockBookingRowForOwnerRead`, imported from `src/lib/booking-row-lock.ts`, which
+the journal's doors re-export, so its approval names no journal module) right after its
+lodge key, keyed from its pre-lock read of the request's booking id (written
+once), before its role check and claim. The queue's acknowledge-only decision
+(`PUT /api/admin/booking-change-requests/[id]`) is one autocommit `updateMany`
+that touches no booking row, so it never holds the request row while waiting.
+A policy-exception approval on an existing booking (#4853,
+`approveAndExecutePolicyExceptionRequest` with the modification store) had the
+same shape and takes the same fix: its store's pre-read returns the request's
+booking id and the engine locks that row right after the lodge key. A
+new-booking request has no booking row until the approval creates it, so its
+order is unchanged.
+
+An officer's approval of a held booking request (#4857,
+`approveBookingRequest`) took `lock(1)` and the hold's lodge key, then claimed
+the request and swapped the held party in place before it updated the held
+booking. The swap writes each guest's member link, so a guest newly linked to a
+member takes a key share on that Member row. The hold names the officer who
+quoted it (`createdById`), so merge holds its row when that officer is the
+duplicate, and merge's `Member … FOR UPDATE` then waited on the linked guest's key
+share while the approval waited on the booking. That needs the booking outside
+merge's lodge prefix and a guest newly linked to a merge party. The claim alone
+names no Member row: `BookingRequest.reviewedByMemberId` is not a foreign key,
+and merge re-points `requestedByMemberId` only on member whole-lodge requests,
+which `approveMemberWholeLodgeRequest` approves without a hold. The approval now
+takes the held booking's row (`lockBookingRowForOwnerRead`) right after its
+lodge key, keyed from the pre-transaction read its lodge key came from, before
+its locked re-read, claim and guest swap. A booking id never changes, and the
+request's held pointer is re-checked under the locks, so a hold swapped since
+refuses with a 409 before the claim. A fresh conversion creates its booking and
+takes no row. Decline claims in a transaction of its own and releases the hold
+afterwards through `cancelBooking`, so it never holds the request row while
+waiting on a booking. The school approval claims its held booking straight
+after the request, before any guest write, and the requester's quote cancel
+writes no Member key share before its booking update, so neither changes.
+The approval still takes several Member key shares in no fixed order: the
+guest links, then the approving officer through `createdById`. When the
+approving officer is the duplicate and the hold is not merge's, that met merge's
+sorted `Member … FOR UPDATE` with no booking row involved. That was #4855's
+class, not this fix: since #4855 merge never holds a Member row while waiting for
+another, so the approval commits and merge refuses with a 409 (see "Merge never
+holds a Member row while waiting for another (#4855)" below).
+
+Why not the other fixes:
+
+- **Merge takes its Member rows `FOR UPDATE` before its booking moves.** That
+  inverts the shared order. An edit door run by an officer who is the
+  survivor would hold the booking row and wait for the Member row, while merge
+  held the Member row and waited for the booking row. It would also split
+  #2597's one participant set: the ancillary owners are known only
+  after the moves, and #2672's coverage re-derivation is a fence only below that
+  statement.
+- **Merge takes its Member rows `NOWAIT`.** #2623 T6 kept that wait, bounded at
+  10s, because ordinary writers hold key shares on these rows all the time. Since
+  #4855 merge still waits within that bound, but for one row at a time while
+  holding none of the others, which is what #4855 needed and T6 allows.
+- **Merge takes `lock(1)`.** Ruled out by "Why merge takes no global cohort key".
+
+If merge wins, the settle or closure waits at the booking row. It then names an
+officer the merge deleted, so its FK refuses (`P2003`), nothing is recorded, and
+the officer acts again from the surviving record. An approval waiting there
+instead finds its officer gone at its fresh role check and writes nothing; one
+by an officer who is not a merge party claims the request, now the survivor's,
+and executes. A booking-request approval waiting there converts the hold once
+merge commits, unless its approving officer was the merged duplicate: its
+write then fails on the FK and rolls back. If the writer wins, merge
+waits at the booking row and moves the writer's attribution afterwards. When the
+writer was a booking-request approval that linked a merge party as a guest at a
+lodge outside merge's prefix, that link commits while this attempt is waiting
+on the booking row, after the attempt has derived its lodge set, so merge then
+refuses with `partner_share_lodge_drift` (#2672), a clean 409 the operator
+re-runs. A link that commits while merge is between attempts, holding no
+booking row, is re-locked by the next attempt instead.
+
+One cycle was left for the locked-period approval, and it was not new. When the
+officer is a merge party that loses, and the booking is outside merge's lodge
+prefix and owned by neither merge party, merge never waits at the booking row.
+The approval's claim takes the officer's Member key share, and its later Member
+key shares (a guest member the change adds, a credit to the booking's owner)
+waited on merge's id-ordered `Member … FOR UPDATE`, which in turn waited on the
+officer's row, and PostgreSQL aborted one side (`40P01`). #4845 closed only the
+cycles that run through the booking row; #4855 closed this one in merge itself
+(the next section).
+
+**Member hard-delete follows the same order (#4850).** Deleting a member
+(`member-lifecycle-actions.ts`) locked that Member row `FOR UPDATE` first, as its
+Xero fence, and only then let `ON DELETE SET NULL` update the booking rows that
+name the member as an actor (`createdById`, `adminReviewedById`, `deletedById`,
+`capacityOverriddenByMemberId` and the rest). That was Member, then booking, so
+hard-deleting an officer mid-settle or mid-closure on a booking that officer made
+or reviewed could deadlock; #4844 first accepted it as the rarer case.
+
+The delete now reads the bookings naming the member as an actor (every Booking
+relation `MEMBER_MERGE_RELATION_SPECS` lists but the owner, whose FK is Restrict
+and whom eligibility refuses), locks them in id order, in chunks below
+PostgreSQL's bind-parameter cap (`member-delete-booking-rows.ts`), and only then
+takes its fence. That set can
+grow until the fence holds, because naming the member on another booking needs
+the Member row's key share, which the fence then blocks. So it is read again
+under the fence, and a booking that joined it refuses the delete with a 409 and
+nothing written, rather than being locked late, Member first. The fence still
+comes before eligibility, the review claim and every write, so what it guards is
+unchanged: a Xero contact reservation takes the Member row's key share in a short
+transaction of its own, and the inbound and backfill writers take the Member row
+`FOR UPDATE`. None of them takes a booking row, so the booking rows ahead of the
+fence add no edge against them.
+
+If the delete wins, the writer waits at the booking row, then names an officer
+the delete removed, and its FK refuses (`P2003`), nothing recorded. If the writer
+wins, the delete waits at the booking row, then re-checks eligibility under its
+fence: a settle leaves the officer deletable and the delete clears both names; a
+closure records a booking modification in the officer's name, so the delete is
+refused.
+
+Holding booking rows from the start meets the Payment-first writers (a card
+settle, the back-post: Payment row, then booking row) through the delete's
+`SET NULL` on `Payment.manuallyMarkedPaidByMemberId`. So, as merge does
+(#4823), the delete locks the Payment rows naming the member in one sorted
+`FOR NO KEY UPDATE NOWAIT` statement once its fence holds (the set cannot grow
+then), and a held row refuses it with a 409 and nothing written. The delete
+writes no audit row for a refusal, as before. Its other `SET NULL` actions keep
+running inside the delete: no writer is known to take one of those rows
+(`ManualRefundTask.completedByMemberId` and the rest) before a booking row it
+then waits for.
+
+The three approvals that name their officer in a claim take the booking row
+before that claim: the change-request approval (#4845), the policy-exception
+approval (#4853) and the held booking-request approval (#4857), all above. So
+against the delete's order, as against merge, none waits on a Member row while
+holding what the delete needs; the delete's own race suite does not run them,
+and this rests on that shared order.
+
+Proved against real PostgreSQL by
+`member-merge-officer-settle-races.realdb.test.ts`; for the approvals,
+`member-merge-change-request-races.realdb.test.ts`,
+`member-merge-policy-exception-races.realdb.test.ts` and
+`member-merge-booking-request-races.realdb.test.ts`; and for the delete
+`member-delete-officer-races.realdb.test.ts`: required steps of the
+`migration-drift` job pinned by `review-findings-contracts.test.ts`. Both
+orders are covered for each writer and each cycle, and each old order that
+formed a cycle deadlocks (probed); the delete's suite also shows a
+Payment-first writer making it refuse at once. The positions are pinned in
+`manual-booking-payment.test.ts`, `manual-refund-task.test.ts`,
+`booking-change-request-execution.test.ts`,
+`booking-exception-execution.test.ts`, `booking-request.test.ts` and
+`member-lifecycle-actions.test.ts`. This is not a census of every `lock(1)`
+writer: the settle body, its reversal, the Stripe path, the refund-task
+closure, the three approvals and the member hard-delete were checked, and the
+rule above is what a new writer follows.
+
+#### Merge never holds a Member row while waiting for another (#4855)
+
+The #4840 rule orders the booking row against a writer's first Member key share.
+It does not order several Member key shares against each other, and it does not
+fence a write merge never reaches through a booking row. Merge's participant
+statement was one blocking `SELECT … ORDER BY "id" FOR UPDATE`, which locks rows
+in id order and holds the earlier ones while it waits for a later one. A writer
+that held a later row and then named an earlier one closed a cycle. Reproduced on
+real PostgreSQL, both with the officer as the duplicate L and the booking at a
+lodge outside merge's prefix:
+
+- a locked-period change-request approval: its claim takes L's key share, merge
+  locks the survivor M (sorting first) and waits on L, and `modifyBookingBatch`'s
+  credit to the owner M then waited on merge; merge died with `40P01`;
+- a held booking-request approval by L, who did not quote the hold: its guest
+  swap takes M's key share (a key share does not queue behind a waiting
+  `FOR UPDATE`), merge locks L (sorting first) and waits on M, and the booking
+  update naming L (`createdById`) then waited on merge; the approval died.
+
+No writer-side order can rule this out. Key shares are taken implicitly, in
+statement order, and one INSERT checks its foreign keys in schema order, not id
+order; the writers (the three approvals, the refund-task closure, the admin
+credit-adjustment review, the edit doors run by an officer) do not know their
+whole member set in advance. A per-writer fence (refusing an officer write while
+its actor is merging) would need a census of every writer. So the rule is merge's
+own: **merge never waits for a Member row while it holds another**
+(`withMemberMergeParticipantRows`). Each attempt is one sorted
+`FOR UPDATE SKIP LOCKED` in a savepoint; a partial result is rolled back, merge
+waits for the first skipped row alone under what is left of the #2623 T6 budget,
+releases it, and tries again (the #2623 T6 paragraph, "Member merge owns the
+blocking counterpart", under "Same-owner coverage takes a per-owner key (#2576)",
+has the mechanics). A lock merge waits for while holding no
+other Member row cannot close a cycle through Member rows. The writer commits and
+merge then takes its rows.
+
+#4876 extends that one level outward. The nulls, resolvers, moves and plan run
+inside the same savepoint, so a busy Member row rolls them back before the wait.
+A writer that already holds a participant's key share and then updates a row
+merge moved — a completing hut-leader sign-off, a locked-period allocation
+rewrite — used to wait on that row while merge waited on the key share. Merge
+now holds none of those rows while it waits, so the writer commits and merge
+retries. The retry moves only the ids captured before the wait, so a column
+that starts naming the duplicate during the wait stays put and the residual
+check below refuses it (#4855): the reviewer's and the closure's officer stay
+on the duplicate. The retry re-derives the partner-share lodge set before it
+moves anything and try-locks a lodge the opening prefix did not cover, so that
+committed booking is what the new attempt plans against. A lodge that appears after that
+re-derivation — while this attempt waits on a booking row, for example — is still
+`partner_share_lodge_drift`: the proof under the Member rows compares against the
+set this attempt locked. The class is open-ended, so the fence stays in merge
+rather than in a census of writers. Proved by
+`member-merge-moved-row-races.realdb.test.ts`.
+
+That leaves the second half of #4855: what the writer committed. Merge re-points
+the duplicate's relations before its Member rows, and an UPDATE sees only
+committed rows, so a write naming L that was in flight then commits past the move
+(the approval's `reviewedByMemberId`, the hold's `createdById`). The loser delete's
+`onDelete` then cleared it (`SetNull`: the reviewer silently gone, reproduced),
+dropped it (`Cascade`) or failed the merge with an unmapped FK error
+(`Restrict`). So, once merge holds its Member rows, **any row still naming the
+duplicate refuses the merge** with `merge_drift_in_transaction` and the relations
+in `driftFields` (`member-merge-residual-references.ts`). Under the Member rows the
+set cannot grow: naming L is an FK write, which needs L's key share. The relations
+come from `MEMBER_MERGE_RELATION_SPECS`; `cascade` relations, the `movedLast`
+Payment attribution (#4823), the Member self-relations (#2437's step-5 re-check)
+and the late-swept `HostingCoverageReevaluation.member` (#2597) are excluded, each
+with its reason, pinned by `member-merge-residual-references.test.ts`. It replaces
+the two checks merge had for `Booking.member` and `BookingGuest.member`, at the
+first one's place, before the D4 transfer. It refuses rather than moving: a late
+move would lock those rows after the Member rows, the order #4840 forbids, and
+would absorb rows the preview never showed (#2437). Reads take no row locks.
+
+So in every such race the writer commits what it recorded, against a duplicate
+who still exists, and merge returns its 409; the operator re-runs the preview.
+No advisory key is added and no writer changes. Merge's order is in "Member
+merge — dual member-lifecycle lock". Proved against real PostgreSQL by
+`member-merge-loser-officer-races.realdb.test.ts` (a required step of the
+`migration-drift` job pinned by `review-findings-contracts.test.ts`): the two
+approvals above and the reviewer case, plus a `Cascade` and a `Restrict` row
+written in the window; restoring the single blocking statement deadlocks both
+approvals, and removing the refusal clears the reviewer (both probed). The
+statements are pinned in `adult-member-hosting-queue-participants.test.ts`, the
+position in `adult-member-hosting-coverage-lock.test.ts`, and the row-lock count
+in `advisory-lock-guard.test.ts`.
 
 ## The disciplines, by writer class
 
@@ -3615,8 +4044,8 @@ intent id and its supersede's durable rows only while it still holds that
 claim (`holdAdditionalIntentRecoveryClaim`, one transaction that re-stamps
 `processingStartedAt`), so whichever commits first wins. A re-issued ask's
 recovery is written in the edit's transaction; the door's own mint completes it
-fenced the same way (`writeReissuedAskUnderRecovery`). An increase folding a
-waiting re-issue in closes it with the same fence. #4052: when the door's write
+fenced the same way (`writeAskUnderDoorRecovery`). An increase folding a
+waiting re-issue, or a waiting increase retry, in closes it with the same fence. #4052: when the door's write
 loses that fence and the recovery ended SUCCEEDED without the door's intent (a
 net-off, a fold, or the runner writing another intent under an amount-suffixed
 key), or is still PROCESSING but already repointed by the runner's locked write
@@ -3626,7 +4055,7 @@ key, or one that wrote the same intent, leaves it alone. No lock or key changes.
 #4631: the runner's side. When its claim hold matches nothing it wrote nothing,
 and its transaction has ended; the runner then re-reads the recovery under no
 lock, and only one closed SUCCEEDED by a net-off or fold note
-(`reissueClosedUnminted`) with no row or recovery naming the intent has that
+(`askClosedUnminted`) with no row or recovery naming the intent has that
 intent cancelled at Stripe, by #4052's own proof and cancel
 (`settleLostRecoveryClaimHold`) - unless the runner adopted that intent by
 matching (#4036) rather than minting it under its own key, which is never
@@ -3745,6 +4174,9 @@ Stripe request, outside any transaction. A read, not a writer: no advisory lock
 (`INV-LOCK-001`), no key (`INV-LOCK-002`), no site (`INV-LOCK-003`). A refund
 another door makes between that read and the request is the race `INV-PAY-145`
 states: Stripe refuses the excess and the row retries, moving no money twice.
+#4858: a row with no stored plan then reads its payment, a third plain read,
+and holds if another door's refund since it was raised sizes it (see
+"Charge-backed refund recovery preflight" below).
 Round 6: the retire closes waiting recoveries before it stamps the rows - the
 runner's own order (its claim hold writes the recovery, then its row; since
 #4217 both take the `Payment` row before either) - and a
@@ -4764,10 +5196,10 @@ the pre-#4217 code). Now:
   review). A reduction that gives credit back has written the `Payment` row
   before its retire closes the recovery; the runner's claim hold
   (`holdAdditionalIntentRecoveryClaim`) and the re-issue door
-  (`writeReissuedAskUnderRecovery`) used to take the recovery row and then the
+  (`writeAskUnderDoorRecovery`) used to take the recovery row and then the
   `Payment` row, a deadlock. Both now lock the `Payment` row first, the retire
   locks it before its recovery close, and an increase's fold-close
-  (`foldWaitingReissuedAsks`) before the recoveries it folds. That is also the
+  (`foldWaitingAsks`) before the recoveries it folds. That is also the
   #4104 order (`Payment` row, then the `PaymentRecoveryOperation`).
 - The manual-payment reversal (`reverseManualBookingPayment`) takes it straight
   after `lock(1)` and the lodge key, before its guards read the payment and
@@ -4895,8 +5327,10 @@ on the per-member `member-credit` key, **not** on `lock(1)`, so the path compose
 a third tier — `lock(1)` → `acquireLodgeCapacityLock(lodgeId)` →
 `lockMemberCreditLedger(memberId)` — taking them in exactly that order and
 deriving `effectiveAmountCents = finalPriceCents - appliedCredit` only once all
-three are held. This is the same composition (and the same order)
-`switch-to-internet-banking` uses, which likewise refuses to rely on other
+three are held. Since #4840 it also takes the booking row right after the lodge
+key, before it names its officer on the Payment row (see "A booking writer takes
+the booking row before a Member key share"). It takes the same advisory tiers,
+in the same order, as `switch-to-internet-banking`, which likewise refuses to rely on other
 writers happening to hold `lock(1)`. The reversal takes the first two tiers only:
 it writes no amount and reads no credit ledger, but it does restore booking
 status and can release capacity.
@@ -5072,8 +5506,9 @@ switch-to-internet-banking hold, the officer's held-request conversion
 composition.
 
 Officer approval of a held generic request pre-reads only the held booking's immutable concrete
-`lodgeId`, then takes global -> that lodge and fully re-reads both request and
-hold. It rejects an explicit request/hold lodge mismatch and carries the same
+`lodgeId`, then takes global -> that lodge -> the held booking's row (#4857,
+"A booking writer takes the booking row before a Member key share") and fully
+re-reads both request and hold. It rejects an explicit request/hold lodge mismatch and carries the same
 concrete lodge into policy and email context. A null request lodge is never
 re-resolved through a default that may have changed after hold creation.
 
@@ -5661,11 +6096,12 @@ wiring, checked against the contract above:
   mark-approved-then-call-service gap.
 - **Atomic approve-and-execute + terminal release**
   (`src/lib/booking-exception-execution.ts`): the approval pre-reads the immutable
-  frozen `lodgeId`, then takes global `lock(1)` (one shared
-  `acquireGlobalBookingLock` helper, so the advisory-lock inventory sees one site)
-  and `acquireLodgeCapacityLock` — the canonical service re-enters the lodge lock
-  and takes the member-night / member-credit keys after that, preserving
-  global → lodge → member order. It reauthorizes from fresh DB roles, re-reads the
+  frozen snapshot, then takes global `lock(1)` (one shared
+  `acquireGlobalBookingLock` helper, so the advisory-lock inventory sees one site),
+  `acquireLodgeCapacityLock` and, for a modification, the row of the booking the
+  snapshot names (#4853), before its claim names the officer — the canonical
+  service re-enters the lodge lock and takes the member-night / member-credit keys
+  after that, preserving global → lodge → booking row → member order. It reauthorizes from fresh DB roles, re-reads the
   request under the locks, runs the proposal-hash tamper gate and the
   `classifyPolicyExceptionDrift` gate, rechecks capacity for a NO_HOLD aggregate,
   claims `REQUESTED → APPROVED` with the integer `version` CAS, releases the
@@ -5690,10 +6126,15 @@ Approving a `LOCKED_PERIOD` change request on a finished stay
 adds one registered global site, `approveAndExecuteLockedPeriodChangeRequest#1`
 (`INV-LOCK-002`, `INV-LOCK-003`). Order, in one transaction:
 
-1. Pre-read only the booking's immutable `lodgeId`; take global `lock(1)`
-   inline, then `acquireLodgeCapacityLock`. The canonical `modifyBookingBatch`
-   re-enters both (no-ops) and takes the member-night / member-credit keys after
-   them, so the order stays global → lodge → member.
+1. Pre-read only the booking's immutable `lodgeId` and `bookingId` (both
+   written once); take global `lock(1)` inline, then `acquireLodgeCapacityLock`,
+   then the booking row (`lockBookingRowForOwnerRead`, #4845), before the role
+   check and the claim. The claim names the officer (a Member key share) and holds
+   the request row a member merge re-points, so the booking row comes first, as
+   merge orders them ("A booking writer takes the booking row before a Member
+   key share"). The canonical `modifyBookingBatch` re-enters all three (no-ops)
+   and takes the member-night / member-credit keys after them, so the order
+   stays global → lodge → booking row → member.
 2. Reauthorise the officer from fresh roles (`reauthorizeBookingOfficerFromDb`).
 3. Re-read the request under the locks: `REQUESTED`, `LOCKED_PERIOD`, the
    expected `version`. Check drift (the booking's dates and guest set against the
@@ -5774,7 +6215,9 @@ their event key's unique index makes a duplicate post collapse to one, and
 `ON CONFLICT DO NOTHING` makes a concurrent poster of the same key wait and then
 replay. A refused check looks the key up once more,
 because a same-key poster may have committed in between. Proved against real
-PostgreSQL by `member-money-posting.realdb.test.ts`.
+PostgreSQL by `member-money-posting.realdb.test.ts`. A batch that applies money,
+and a refund reservation or its release, also take the booking's Payment row
+(#4691, below). A charge or a reversal that applies nothing does not.
 
 ## The M3b booking doors and member merge's journal transfer (#4627)
 
@@ -5801,7 +6244,10 @@ Ledger M3b adds no advisory key and no new lock site. Its participants:
   `Member … FOR UPDATE`). The same inversion was already reachable through the
   closure's credit give-back and local refund allocation, which insert
   `MemberCredit` rows. So `resolveManualRefundTask` takes an edit review's
-  booking row straight after its status claim, before any of those writes.
+  booking row before any of those writes. Since #4840 it takes it before the
+  claim too, right after `lock(1)` and before the task re-read, because the
+  claim's `completedByMemberId` is itself a Member key share (see "A booking
+  writer takes the booking row before a Member key share").
 - **Member merge** takes no `lock(1)` (see "Merge joins the bed-allocation
   cohort"). Its transfer posts no revenue, so the engine needs no key, and it
   runs after the booking-owner move and the sorted `Member … FOR UPDATE` set. The
@@ -5850,6 +6296,183 @@ order. Its participants:
 Reconciled against #4636 (M3b: the doors, the booking row lock, the inactive
 journal), #4630 (M3a) and #4634 (the finished-stay fee owed, which the planned
 confirmation includes), the last merges touching these writers.
+
+## Member-money applications and refund reservations: the booking's Payment row (#4691)
+
+Ledger M4a adds no advisory key (`INV-LOCK-001`, `INV-LOCK-002`). One participant
+joins an existing row lock (`INV-LOCK-003`): `lockMemberMoneyPayment`
+(`src/lib/member-money/internal/application-read.ts`) takes the booking's
+`Payment` row `FOR NO KEY UPDATE`, the same statement and strength as
+`lockPaymentForRefundedTotal`. It runs before the first write, inside the
+caller's transaction, for three writes only:
+
+- a batch that records applications, including a reversal that copies them;
+- a refund reservation;
+- a release of one.
+
+A charge, an adjustment, or a reversal that applies nothing does not take it, so
+the M3 doors keep the lock order they have. Within a transaction that already
+holds the row, PostgreSQL treats the second take as already held. The engine
+never takes the booking row, and it does not acquire `lock(1)` for an
+application: the Payment row is what keeps two applications, or a reservation
+and a release, from both passing the caps. A price edit still changes the live
+charge under `lock(1)` without this row, so the charge cap (C2) can be over or
+under; that is the accepted limit, and the population check does not fail it.
+M4a left the application and reservation commands inert. M4b activates receipt
+applications, and M4c refund reservations (below). Proved
+against real PostgreSQL by `member-money-applications.realdb.test.ts`.
+
+Reconciled against #4668, #4671, #4667, #4666, #4664, #4659, #4658, #4654, #4653
+and #4662, the merges the M4 plan checked against these writers, and against
+the open credit-release work that shares this Payment row. No new edge: the
+store does not take a booking row, and merge never waits for a Payment row
+(#4823: see "Member merge never waits for a Payment row").
+
+M4b (#4516) activates receipt applications through `postBookingReceipts`. Its
+cash, application and exact-reversal writes run under the same Payment row as
+the legacy write (`INV-LOCK-001`–`003`). W1 retains global → lodge → member →
+Payment ordering. Saved-card capture, additional capture, superseded capture and
+cancelled-primary capture take only Payment. The cancelled-primary upsert and
+the formerly unlocked superseded-success write now enclose their legacy write
+and receipt in one Payment-row transaction. No new advisory key or provider call
+is introduced. Settings and timezone resolve before transactions.
+
+Each decision the hook acts on is read under the Payment row, never before it:
+
+- **The owner, once per call.** The receipt reads the booking's owner without
+  locking Booking, once, and every receipt it posts names that debtor. Every
+  collection lands on that owner's live obligation, the tip of the charge chain,
+  so a merge committing mid-call never drops a collection and never strands one
+  on a superseded obligation. A receipt deferred before a merge is applied
+  through the credit the merge chain carried to the owner: an exact residue
+  move, or a zero-net stand-in when the merge's snapshot netted it. D4 moves
+  merged-debtor residue hop by hop, only ever onward along the merge chain to
+  the owner; an intermediate hop may be a member that has itself merged away.
+- **Charge successors.** Merge reads no application state under a Payment row, so it posts no CHARGE
+  successor: application state it read could miss a collection committing
+  beside it. The first collection by the new owner posts the successor under
+  the Payment row, sized from the live charge less everything collected.
+- **Additional capture.** `markPaymentIntentTransactionSucceeded` decides
+  collect from the booking's status and `deletedAt` read under the Payment row
+  a cancel also takes; a route's or webhook's earlier read is not used.
+- **Superseded capture.** The flip is a status-guarded `updateMany` under the
+  Payment row. A row captured or refunded since the caller's read is left
+  alone, and a lost claim posts no receipt.
+- **C2.** The hook clamps a collection to one live-charge read and the engine
+  checks C2 against that same read. A price edit under `lock(1)` alone can
+  commit between them; the collection is then ordered before it (the accepted
+  over-collection the census reports), never a refusal that rolls back the
+  legacy capture write.
+- **Nothing to do.** With nothing selected, every receipt and reversal bridged
+  and no merged-debtor balance, the hook returns after those reads, adding no
+  per-line work under its caller's locks.
+
+The Xero receipt posts after the delivery's body completes, never from a
+`finally`, so a body that fails in SQL surfaces its own error. It collects only
+the PRIMARY rows that delivery moved to captured, and only on the paid arm.
+
+Counterpart reconciliation at M4b's base: #4776 (engine caps and Payment lock),
+#4749, #4727, #4714, #4706, #4698, #4700, #4694, #4689 and #4684. Their capture,
+recovery claims, exact markers and outbox/provider behaviour remain unchanged.
+Open #4779–#4784 and #4496 have no competing receipt writer; the owner's serial
+waiver covers them. `member-money-capture-writer-census.test.ts` inventories all
+transaction mutations, generic capture callers and each new receipt hook.
+
+M4c (#4516) activates refund obligations, reservations and card refund cash.
+No new advisory key; one participant, the booking's Payment row, joins more
+writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
+
+- **R05 at a door**, in the door's transaction after its legacy debt, under the
+  door's own tiers plus the Payment row the engine takes (a no-op where held).
+  A paid card cancel keeps global → lodge → member → Payment, then the booking
+  row its R04 already took. An approved appeal takes global → booking row →
+  Payment → its request's claim (review F1): the booking row right after
+  `lock(1)`, as the edit doors order it, because a member merge moves the
+  booking's owner and then the request's member, and an appeal that claimed the
+  request first would wait on the merge's booking row while the merge waited on
+  its request. The edit reductions take global → lodge → booking row (R02's
+  debtor read) → Payment: a new explicit Payment site, on the edit doors'
+  existing booking → Payment edge. An edit review's card refund posts after its
+  re-price, so any member credit key comes before the Payment row. A duplicate
+  or capacity-race capture posts in W1's body after its held R06 and reads the
+  owner without the booking row (review F1), defensively: W1 holds the Payment
+  row there, so the booking row taken then would add a Payment → booking edge
+  against a merge, which holds booking rows from its owner move on (#4823 made
+  merge never wait for a Payment row). No other cycle is known: a journal line names its debtor by id,
+  with no foreign key, so the R06 takes no lock on the Member row. A
+  treasurer-approved late capture takes the
+  Payment row before it reads what the capture still holds and plans its
+  refund (#4824), so before its task's claim (review F2), and reads the owner
+  without the booking row (its `lock(1)` arrives in M4d). Read first, a
+  `charge.refunded` sync, a "Paid another way" close, or an automatic refund or its recovery replay
+  committing before the claim was planned again; proven against real
+  PostgreSQL by `late-capture-approval-refund-race.realdb.test.ts`.
+- **A kept late capture** (the approval task dismissed) takes the same Payment
+  row before its claim and reverses an unpaid, unreserved capture-return R05 an
+  automatic refund posted (review M5).
+- **A #2700 hand-back** of a late capture (no approval intent) takes the same
+  Payment row before it reads what its capture still holds, then claims
+  (#4838). Nothing between takes a lodge, member-credit or task-row lock: the
+  group-mirror and card-shortfall routes return before locking for this kind.
+  Read first, a `charge.refunded` sync committing before the claim let the
+  mirror land on another charge's headroom as well; proven by
+  `late-capture-hand-back-race.realdb.test.ts`. So does a legacy #2700 row
+  raised before `kind` existed (NULL kind), which only its reason sentence
+  identifies (`isLateCaptureHandBackTask`, #4843): the same order, and the
+  same two routes return before locking for a NULL kind; the suite runs every
+  case on one.
+- **An appeal's `release_claim`** takes global → the request's row → its
+  hand-back task → Payment, releases the approval's open reservations under its
+  own keys with their funding and reverses its R05 in the same transaction. A
+  reservation another sender holds, or a journal refusal, is thrown, never
+  caught.
+- **The reservation step** runs in its own short transaction on the root client,
+  before each keyed slice is sent, taking only the Payment row. It releases the
+  same sender's superseded reservations with their funding (review F3: never
+  another sender's), posts a deferred R05 (a superseded intent's or an
+  automatic late capture's return) and the lazy refund successor, takes back
+  the slice receipt's own collection for a shortfall, funds and reserves, under
+  the key's next generation where an earlier one was released without a refund
+  (review F4). A refusal commits nothing; the door that committed earlier
+  stands, and the recovery runner stops the row dead without a retry.
+- **R12, an answer and R13** run inside `recordStripeRefundsAgainstTransaction`,
+  after its aggregate, under the Payment row it took first, before a failed-later
+  debt is kept. Every card refund row of the payment is read there, so a run
+  that missed one is caught up by the next.
+- **"Paid another way"** posts R14, its CLOSED_WITHOUT_REFUND releases and a
+  kept rest's close-out under global → Payment (→ the late capture's approval
+  task row), after its record and line.
+- **Merge** takes no `lock(1)`. It updates one Payment column,
+  `manuallyMarkedPaidByMemberId` (the officer who marked it paid), last and
+  `NOWAIT` (review F5, fixed by #4823: "Member merge never waits for a Payment
+  row"). A refund
+  family's successor is posted by the first refund writer that finds the owner
+  moved, under the Payment row, sized from the tip's remaining refund-payable
+  balance, as M4b posts CHARGE successors. A reservation made before a merge is
+  answered on the survivor's successor; the family caps count both.
+- **The owner's command** (`member-money:refund-reservations`): `--reconcile`
+  runs the cash writer for one payment per transaction under its Payment row;
+  an OPERATOR release takes only the Payment row and audits in the same
+  transaction. The census is a read-only repeatable-read snapshot.
+
+New edges, and why they cannot deadlock: booking row → Payment only under
+`lock(1)` (the edit doors, the review and now the appeal), and Payment → booking
+row only under `lock(1)` (W1's R01, the back-post); two `lock(1)` holders never
+interleave. Against a merge, which takes no `lock(1)`, a door that reads the
+owner under the booking row takes that row before anything the merge takes
+after its owner move (the request's row, a Member row's `FOR UPDATE`), proved
+in both orders by `member-money-refund-appeal-merge.realdb.test.ts`. Merge takes
+its Payment rows `NOWAIT`, so it is in neither direction's cycle (#4823).
+Payment → the approval task row in a "Paid another way" close, and Payment →
+that task's claim in a late-capture approval or keep, in the same order; a
+#2700 hand-back's claim the same (#4838), and its dismissal takes no Payment row.
+Payment-row-only writers never take a booking row.
+
+Counterpart reconciliation at M4c's base (`0d678da`): #4791 (M4b receipts),
+#4749, #4727, #4714, #4706, #4698, #4700, #4694, #4689 and #4684. Their recovery
+claims, exact `madeRefundId` and key-generation markers, preflight and outbox
+behaviour are unchanged; the Stripe request each sender makes is byte-identical
+(`card-refund-obligation-census.test.ts`, `member-money-refunds.realdb.test.ts`).
 
 ## A credit note spent outside the app: global, then the member's credit ledger (#4219)
 
@@ -6154,7 +6777,8 @@ sized by the close's record less its own notes (`readPaidAnotherWayCloseShare`,
 round 8). A double click queues on the key and the second reads the row
 closed; a refund recorded mid-close gives a 409
 (`card-refund-paid-another-way.realdb.test.ts`). Registered as
-`closeCardRefundPaidAnotherWay#1`.
+`lockDeadCardRefundRow#1` (the lock all three settlements of a dead row share
+since #4368).
 
 A refund Stripe made before the close - the request whose answer was lost - can
 still be recorded after it, by the `charge.refunded` sync. No lock can stop
@@ -6175,6 +6799,67 @@ column of a close's record. A Stripe refund recorded after the dialog opened is
 not stopped by any lock either, so the request carries the card figure the
 dialog showed (`expectedRefundedByCardCents`, round 8) and a different figure
 is a 409: a refund the treasurer never saw is never marked resolved.
+
+## Settling a dead card refund without money: "Nothing left owed" and "Try the card again" (#4368)
+
+`closeCardRefundNothingLeftOwed` and `tryDeadCardRefundAgain`
+(`src/lib/card-refund-dead-row-actions.ts`, `INV-PAY-149`) are the other two
+settlements of the row "Paid another way" closes. Neither moves money, but each
+changes whether a refund debt is open, owed or in flight, which every edit,
+acceptance, paid cancel and refund appeal reads to size a refund, and each must
+exclude "Paid another way" on the same row. So all three take one helper,
+`lockDeadCardRefundRow` (`src/lib/card-refund-dead-row-lock.ts`, #4368 review
+D), each with its own refusals: `lock(1)` first (`INV-LOCK-001`), the row
+re-read and refused unless dead, then the Payment row
+(`lockPaymentForRefundedTotal`) BEFORE the payment is read. Every
+refunded-total writer without `lock(1)` - every Stripe refund recorder, and the
+failed-later writer inside it - takes that row first, so the owed figure, the
+recorded refunds and the payment's other card refund rows cannot move between
+the read and the claim. Then one status-guarded `updateMany`
+(`deadRowClaimWhere`): dead (`deadCardRefundOperationWhere`) and on the plan
+read (`onPlanWhere`). A close moves the row to SUCCEEDED and the re-arm to
+PENDING with its attempts reset, so of any two settlements of one row the
+second matches nothing and writes nothing; a write under the Payment row alone
+that lands between an action's read and its claim fails the claim too. The
+audit row is written in the same transaction; no journal posting or provider
+call of these two runs under the keys. Registered as `lockDeadCardRefundRow#1`.
+
+The re-arm sends nothing itself. The runner claims the row as any other, and
+its preflight (`INV-PAY-145`, below) reads Stripe outside every transaction
+before a slice is sent - but it adopts a refund only by its slice key
+(`INV-PAY-147`), and a re-arm runs outside Stripe's 24-hour key window, so a
+re-armed row is NOT as safe as one on its original retries. Where the app
+cannot show a new request would not pay twice, the re-arm refuses (#4368
+review A, B): while ANY refund Stripe failed later is on the payment, open or
+paid (#4492: once it is re-sent and paid the given-up row reads owed again);
+where the row's last failure says Stripe may have refunded; where what the
+runner would send - every plan slice not marked `madeRefundId`, whole - is not
+exactly the row's own unsent figure the treasurer confirms, or the row keeps no
+plan (review F1: a slice a recorded refund filled but nobody marked would be
+sent again) - except a superseded intent's refund with no plan, whose runner
+sizes one request on its charge's ledger, read under the Payment row, and so
+never sends more than the row owes (review S1) - trusted only while every
+refund the owed figure gives the row is one its own request made, by Stripe's
+listing: another door's, once failed later, would be owed on a row of its own
+while the ledger handed its headroom back (review R1); and where Stripe lists a counted refund this booking's same kind
+of refund made with no slice key that no slice is marked with
+(`unadoptedOwnStripeRefunds`). That list is read before the transaction
+through the preflight's own bounded read (`listRefundsOnCardCharge`); one it
+cannot read refuses, and a plan that moved since it was read is refused under
+the locks (review F4). The
+failed-later writer raises its rows under the Payment row, so that check and
+the raise are ordered. STATED LIMIT: a refund another door made for the same
+money that the owed figure does not match to this row, failing later while the row is still open,
+is owed again beside the live row: the #4104 failed-later family's open
+question (#4492), which a re-arm does not answer. One made on a plan-less
+superseded row's charge after the re-arm commits, which the owed figure then
+counts as the row's progress, no longer reaches a send: the runner holds the
+row first, by this same rule (#4858, below). Proven by `card-refund-dead-row-actions.realdb.test.ts`: a re-arm and a
+"Paid another way" close queued behind a held `lock(1)` in both orders, a plan
+or status moved under the Payment row, "Nothing left owed" against a refund
+arriving and against it failing later, a paid failed-later row and an
+unmatched own refund refusing the re-arm, and the runner's preflight after a
+re-arm.
 
 ## A refused card refund's re-plan: fenced writes, no advisory key (#4083, #4096, #4103, #4144)
 
@@ -6262,7 +6947,8 @@ refund carry no plan: each reads Stripe's refunds on the intent before it asks
 refusals there.
 
 The "Paid another way" close above claims only `PENDING|FAILED` rows with
-their attempts spent, so it never meets the runner's re-plan.
+their attempts spent, so it never meets the runner's re-plan; nor do
+"Nothing left owed" and "Try the card again" (#4368), which claim the same.
 
 **Deploy window.** An older release still draining knows no refusal: its
 worker closes a refused row as paid, and drops a slice's key generation, so it
@@ -6293,6 +6979,30 @@ unchanged.
 Once recorded evidence requires a hold, the check stops immediately. A read or
 recording failure on a later charge cannot replace that hold with normal retry
 backoff; the conclusive charge's refund ids remain in the hold audit.
+
+#4858: a superseded intent's refund with no stored plan, sized on its charge's
+ledger after the preflight (#4699), holds the same way before it sends while
+the owed figure credits it with a refund its own request did not make
+(`holdSupersededRowSizedOnAnotherRefund`, the rule "Try the card again" reads,
+`foreignRefundsSizingSupersededRow`, against the preflight's own Stripe
+listing). It adds one plain read of the payment's card refund rows and
+recorded refunds, outside any transaction, and no key, lock or site
+(`INV-LOCK-001`, `INV-LOCK-002`, `INV-LOCK-003`). It reads AFTER the sizing read of the charge, so every
+refund the size counted is checked. A refund recorded between the two reads is
+checked without being counted and holds the row conservatively. One that fails
+between them was counted but is not checked: the row asks for less and is not
+held. That is the case of a refund failing before the runner holds on it,
+which this hold does not cover - the #4492 open question (both pinned in
+`payment-recovery.test.ts`, "#4858"). A refund recorded after both reads neither sizes the send nor
+holds it: as #4699 states, Stripe refuses a request beyond what the charge
+still holds, and the next attempt reads that refund.
+Proven on real Postgres by `superseded-refund-another-door-hold.realdb.test.ts`:
+the other door's ledger write holds the Payment row while the runner's
+preflight queues behind it; the runner then holds, sends nothing, and that
+refund failing later is owed once, on a row of its own. Counterparts
+reconciled: the ten latest merged PRs on this runner and preflight, #4849,
+#4820, #4791, #4749, #4727, #4714, #4698, #4700, #4694 and #4689; none takes a
+lock this read could invert.
 
 The read cannot exclude a Stripe dashboard action made after it returns. Stripe
 has no lock shared with the database, so holding a database transaction during
@@ -6640,9 +7350,13 @@ credit-note operation that could still mint (the #2901 repair's refusal,
 `findBlockingRefundCreditNoteOperationId`), so a create's later record never
 finds the mirror half-healed. The writers' order is kept rather than
 reordered: the create's one-transaction record is `INV-PAY-111`'s, and the
-enqueue joins its caller's transaction. An inbound void racing a create's
-record on one payment can take the same two rows in the opposite order; that
-predates #4161 and is not changed here.
+enqueue joins its caller's transaction. An explicit void
+(`upsertXeroObjectLink`, when the caller names the refund credit note VOIDED
+or DELETED) takes that same order (#4200): the Payment row
+(`lockPaymentForRefundedTotal`), then the voided note's link. Its own
+transaction uses the Payment row's budget. The heal still takes the link and
+then the Payment row `NOWAIT`, so a void that already holds the Payment row
+defers the heal instead of waiting on it.
 
 ## Retiring a deleted Xero payment's link (#4531)
 
@@ -6741,8 +7455,10 @@ Each voided note is its own short transaction, in this order (`INV-LOCK-002`):
    holds), the reversal line, the rebuild (re-taking it again), the audit row.
 
 A spare note writes only a marker on its link. The link row is taken last,
-after the `Payment` row, with `FOR UPDATE NOWAIT`: the inbound sync's link
-write and #4161's heal take the link before the `Payment` row, so the follow-up
+after the `Payment` row, with `FOR UPDATE NOWAIT`: a live or statusless inbound
+link write, and #4161's heal, take the link before the `Payment` row. An
+explicit void takes the `Payment` row first (#4200), the same order as this
+follow-up. The follow-up
 never waits on a link while holding the `Payment` row - a busy link raises
 55P03, the transaction rolls back having written nothing, and the note is
 tried again the next night. No new cycle against the #4217 order (`lock(1)`,
@@ -6768,9 +7484,12 @@ Counterparts:
   that transaction opens, so no provider call runs under either lock. After
   the commit, and outside any lock, the hand-made note is read again
   (`reconcileHandMadeNoteAfterCompletion`, through the inbound
-  `reconcileXeroCreditNote`), so a later void is caught. A void that commits
+  `reconcileXeroCreditNote`), so a later void is caught.   A void that commits
   before the completion's link write is kept under the link's row lock and the
-  answer is refused with a 409, rolling the completion back (#4288). Under the
+  answer is refused with a 409, rolling the completion back (#4288). An
+  explicit void holds the Payment row (#4200), so that commit is visible to
+  the answer's record read: this payment's own voided mirror is not "already
+  recorded", and the 409 is the voided-while-recording refusal. Under the
   same locks the answer also reads, plainly, the credit-note creates naming the
   note, and refuses it when any is resolved by hand or not yet SUCCEEDED
   (#4321). A resolve of a row that already names its note takes none of these
@@ -6868,9 +7587,10 @@ The order is the #4162 follow-up's, all in one short transaction:
    writes nothing and the route answers as for any lost resolve;
 10. the link row last, through the link funnel (`writeHandMadeRefundNoteLink`),
    which keeps a void or newer reading that committed first under the link's
-   row lock (#4288) and then refuses, rolling the claim back. The inbound link
-   write and #4161's heal take only the link row (the heal's Payment row
-   `NOWAIT`), so taking it after the Payment row adds no cycle.
+   row lock (#4288) and then refuses, rolling the claim back. An explicit void
+   takes the Payment row before the link (#4200). A live inbound link write
+   takes the link first, and #4161's heal takes the link then the Payment row
+   `NOWAIT`, so taking the link after the Payment row adds no cycle.
 
 Of a resolve and an answer offering the same note, whichever takes `lock(1)`
 second reads the first's commit and refuses; a second resolve offering it
@@ -7013,14 +7733,19 @@ the advisory-lock guard's row-lock inventory. Where a caller holds an advisory
 key (an enqueue inside a group cancel), the row lock comes after it, as the
 protocol requires.
 
-**Lock order.** Inside the link write, always: the link's own row, then any
-active sibling note the single-canonical rule retires. A write keeping a stored
-void (status-less, or an older live reading, #4288) then tries its Payment row with
+**Lock order.** Inside the link write, for every write except an explicit
+void: the link's own row, then any active sibling note the single-canonical
+rule retires. An explicit void of a payment's refund credit note (the caller
+names VOIDED or DELETED) takes the Payment row first, then its own link
+(#4200, `INV-LOCK-002`), the order the create's record and the enqueue's
+existing-note branch already use. It never waits on Payment while it holds
+the link. No new advisory key (`INV-LOCK-001`); the Payment statement is the
+existing helper, so `INV-LOCK-003`'s registry is unchanged. A write keeping a stored
+void (status-less, or an older live reading, #4288) still takes its own link first, then tries its Payment row with
 `FOR NO KEY UPDATE SKIP LOCKED` before conditionally releasing the pointer;
 it never waits on Payment. A Payment row the caller already holds is returned
-and its pointer can be released in that transaction. Explicit-status inbound
-voids retain their existing link-then-Payment order (#4200). Before #4223
-the canonical branch retired siblings before it wrote its own row; the own-row lock now comes first on
+and its pointer can be released in that transaction. Before #4223
+the canonical branch retired siblings before it wrote its own row; the own-row lock now comes before any sibling on
 every write, status or not, so two writers of one note always take the pair in
 the same order. (A mixed order, the retry's own row first and an inbound live
 write's siblings first, could deadlock two writers of one note that both
@@ -7032,23 +7757,30 @@ predates #4223, and is not changed here.
 
 Counterparts:
 
-- **The inbound void** holds its link row, then the Payment row when the
-  pointer names that note. A waiting write re-reads after it commits.
+- **The inbound explicit void** takes the Payment row, then its link. A
+  create's record that already holds the Payment row makes the void wait
+  there; the create then takes the link, which the void does not hold yet.
+  Proved against real PostgreSQL by
+  `xero-refund-note-void-lock-order.realdb.test.ts`: the create holds the
+  Payment row, the void waits on that row and holds no link lock, the create
+  then locks the voided note's link, and both commit with the mirror inactive
+  and the pointer clear.
 - **The nightly heal (#4161)** takes the link row and the Payment row
   `NOWAIT`, then calls the same write, whose own-row lock it already holds. It
-  never waits, so it is never one side of a cycle.
+  never waits, so it is never one side of a cycle. A void that already holds
+  the Payment row defers it.
 - **The Payment-first writers** (the create's record and the enqueue's
   existing-note branch, see "Refund-note link heal (#4161)" above) take the
-  Payment row, then the link write. A kept void must never wait back on their
-  Payment row. Three writers can otherwise cycle on one note: an inbound void
-  holds the link with a null pointer, a real covered retry commits the pointer
-  back and queues on the link, then a Payment-first enqueue reads the old live
-  note and queues behind the retry. Once the inbound void commits, a blocking
-  retry would hold the link and wait for the enqueue's Payment while that
-  enqueue waits for its link (40P01). The retry's `SKIP LOCKED` removes that
-  wait, preserving the inactive mirror even when pointer cleanup is deferred.
-  The explicit inbound void's pre-existing inversion is tracked separately
-  in #4200.
+  Payment row, then the link write, the same order as an explicit void. A kept
+  void must never wait back on their
+  Payment row. A statusless retry holds the link while it keeps a stored void.
+  A writer that already holds the Payment row and then takes that link waits
+  for it. If the retry then waited on the Payment row, the two would deadlock
+  (40P01). The retry's `SKIP LOCKED` removes that wait, so the inactive mirror
+  commits even when pointer cleanup is deferred. An explicit void is not the
+  waiter in that overlap: it holds the Payment row until its own link change
+  commits, and an enqueue that starts only then does not take the existing-note
+  branch on the voided note.
 
 Two real-PostgreSQL proofs hold the void open on another connection and show
 the waiting write queued behind it, then find the link inactive with its
@@ -7057,14 +7789,14 @@ request's note, and `xero-canonical-refund-note-void-race.realdb.test.ts`
 for the canonical note through the real `createXeroCreditNote` retry, with the
 pointer released. The canonical suite also forces an inbound first insertion
 of a missing mirror, for VOIDED and DELETED, and proves the caller's rollback
-leaves neither the mirror nor its reservation. Its three-writer proof uses
-the real retry, the shared Payment-row lock, and the actual
-`enqueueXeroRefundCreditNoteOperation` existing-note branch: both statusless
-writes finish, the note remains inactive and VOIDED, and the final pointer is
-null. This schedule does not force which waiter acquires the link first after
-the inbound commit. A separate busy-Payment case forces the nonblocking branch
-and proves fresh metadata commits while the pointer stays put; the existing
-nightly heal then selects that inactive shape and releases it.
+leaves neither the mirror nor its reservation. A further case seeds that void
+already committed, with the pointer still naming the note, and queues a
+statusless retry ahead of a writer that holds the Payment row and then waits
+for the same link. The retry finishes while that row is held, the mirror stays
+inactive and VOIDED, and the pointer stays until the Payment row is free. A
+separate busy-Payment case forces the same nonblocking branch and proves fresh
+metadata commits while the pointer stays put; the existing nightly heal then
+selects that inactive shape and releases it.
 `xero-refund-note-stale-live-status.realdb.test.ts` (#4288) holds a live
 reading at a gate while the void commits, then releases it: for the
 bank-transfer canonical note through the real inbound reconcile, a Stripe
@@ -7089,30 +7821,50 @@ is retried after its backoff, #4095). An
 unchanged verdict also checks the payment as read under the lock. No provider
 call runs in it, and it takes no other lock. Its budget is the Payment row's,
 `PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS` (`{ maxWait: 10_000, timeout: 30_000 }`,
-shared since #4656 with the refund-note create's record), because the nightly
+shared since #4656 with the refund-note create's record, and since #4200
+with an explicit void's own link write), because the nightly
 bank-void follow-up holds the Payment row for up to 30s.
 
 Lock order. The recount ran outside any transaction before #4288 and takes only
-this row. The link writer holds the link row and tries the Payment pointer with
-`SKIP LOCKED`, or waits for it on an explicit void (#4200). So when the pointer
-names the note, the void's own link write waits on A's Payment lock while
-holding the link row. The hand-made answer takes its Payment row, then the link.
+this row. A write that keeps a stored void holds the link row and tries the
+Payment pointer with `SKIP LOCKED`, so it never waits on the recount. An
+explicit void takes the Payment row before its link (#4200), so it waits on
+the recount's Payment lock without holding the link. The hand-made answer takes its Payment row, then the link.
 This transaction takes the Payment row and only reads the link, never waiting
-on a link row lock, so neither case is a cycle (`INV-LOCK-001`, `INV-LOCK-002`).
+on a link row lock, so none of these is a cycle (`INV-LOCK-001`, `INV-LOCK-002`).
 It takes no advisory key, so `INV-LOCK-003`'s registry gains no entry.
 
 Every outcome is some serial order of A and the void. A void committing after
 A's locked re-read is "A, then the void, then B". B's recount queues on A's
 lock, or, with a pointer naming the note, the void's link write itself queues
-there; either way B sees A's write. On a bank transfer B lowers the total back. On a card the
+there, on the Payment row and not yet holding the link; either way B sees A's write. On a bank transfer B lowers the total back. On a card the
 ledger is raise-only (`INV-ADDPAY-021`, #1353): A's raise stands, and B raises the
 refund-ledger-divergence alert. The inbound void runs its own recount; the
 Stripe status recorder runs none. The suite pins the void before A's locked
 re-read (A writes nothing, bank and card), a row deactivated there, and the void
-after it: per-refund (B's recount waits) and pointer-named canonical and card
-(the void's link write waits). Each run asserts which statement is the waiter. A stale reading's
+after it: per-refund, pointer-named canonical and card (the void waits on
+A's Payment row before it takes the link). Each run asserts which statement is the waiter. A stale reading's
 allocations and refund payments are skipped only where the row, in either
 refund-note role, is VOIDED/DELETED when they are written.
+
+**An allocation Xero no longer lists (#4447).** After the credit-note link
+writes, and before the recount, a live reading records this note's allocation
+links for the invoices `buildCreditNoteAllocationTargets` still lists, and
+turns off its active `MODIFICATION_CREDIT_NOTE_ALLOCATION` and
+`CREDIT_NOTE_ALLOCATION` links for every other invoice
+(`writeCurrentCreditNoteAllocation`, `retireUnlistedCreditNoteAllocations`).
+Each of those is the link funnel inside the transaction that locks that one
+allocation row and re-reads its stamp. A still-listed invoice first reserves a
+missing row (`createMany`, `skipDuplicates`, inactive) so two first writers
+serialise on it; a removal does not, because that row is already there. A
+stored stamp newer than the reading leaves the row as that newer write
+recorded it, so an older reading cannot turn a removed allocation back on or
+switch a newer one off. It writes no money column and takes no advisory key,
+so `INV-LOCK-001`, `INV-LOCK-002` and `INV-LOCK-003` are unchanged: the only
+lock is that one row, and nothing else is taken while it is held. A
+same-invoice link at an older amount stays active; the recount keeps the
+newest. A voided reading, or a live reading a stored void or a newer snapshot
+refuses, turns nothing off.
 
 **Mixed releases.** The own-row-first order is consistent within this release;
 the old canonical writer takes siblings before its own row. Running both on
@@ -7572,3 +8324,20 @@ writes compatible. Counterparts reconciled: #4539 (alert retry before inbound),
 and #4501 (lane coordination only). No open Xero PR appeared in the pre-edit
 public GitHub query. Scoped sync invokes the inbound handlers directly, without
 advancing the club cursors or taking a whole-cycle claim.
+
+## Reauthentication challenge (#4616)
+
+Consuming a `SessionReauthChallenge` is one `updateMany` whose `where` requires
+`consumedAt` null, that member, the keyed token hash and an unexpired row
+(`consumeSessionReauthChallenge` in `src/lib/session-reauth.ts`). Two
+concurrent consumers of one token: PostgreSQL updates one row and the other
+matches nothing. No advisory lock and no `FOR UPDATE`, so the lock inventory
+is unchanged (`INV-LOCK-001`, `INV-LOCK-003`). Order is a single row claim,
+not the global → lodge → member tiers (`INV-LOCK-002`).
+
+The password proof reuses `claimPasswordAttempt` (`INV-AUTH-003`) and takes no
+new lock. The authenticator proof reuses the existing two-factor failure
+counter. Counterparts reconciled: the two-factor session challenge (a
+delete-and-count claim, also no advisory lock) and the per-account password
+throttle (#4609). `session-reauth.realdb.test.ts` proves one of two concurrent
+consumes succeeds.

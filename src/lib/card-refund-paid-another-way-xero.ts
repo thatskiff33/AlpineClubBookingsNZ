@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Prisma } from "@prisma/client";
+import { cardRefundStillOwedOrigin } from "@/lib/card-refund-still-owed-origin";
 
 import type { ClubTimeZone } from "@/lib/club-time";
 import { decideLateCapture } from "@/lib/late-capture-kept-xero-rules";
@@ -219,6 +220,20 @@ async function paidAnotherWayXeroRoute(
 /** What `failedLaterCardNoteCoverCents` reads of the row being closed. */
 type CardNoteCoverOperation = { idempotencyKey: string; amountCents: number; allocationPlan?: Prisma.JsonValue };
 
+/** The cents a row owes for refunds Stripe failed later: all of a failed-later row, or the slices recording one. */
+function failedRefundCentsOf(operation: CardNoteCoverOperation): number {
+  return cardRefundFailedLaterRefundId(operation.idempotencyKey) !== null
+    ? operation.amountCents
+    : (parseRefundAllocationPlan(operation.allocationPlan ?? null) ?? [])
+        // Every slice that recorded one, made again since or not - unlike
+        // what a row still owes (`cardRefundSliceOwesFailedLaterRefund`): the
+        // question here is which notes in Xero answer failed refunds, and a
+        // re-made slice's failed refund keeps its note too. The answer is
+        // bounded by the notes' excess, and by what the close paid back.
+        .filter((slice) => cardRefundSliceFailedRefundIds(operation, slice).length > 0)
+        .reduce((sum, slice) => sum + slice.amountCents, 0);
+}
+
 /**
  * #4104 (money 2; delta review MH, MM1, MM2, ML1): HOW MUCH OF WHAT THIS ROW
  * OWES A CARD REFUND NOTE ALREADY IN XERO ANSWERS. A refund Stripe failed later
@@ -248,17 +263,12 @@ export async function failedLaterCardNoteCoverCents(
   operation: CardNoteCoverOperation,
   paymentId: string,
 ): Promise<number> {
-  const failedCents =
-    cardRefundFailedLaterRefundId(operation.idempotencyKey) !== null
-      ? operation.amountCents
-      : (parseRefundAllocationPlan(operation.allocationPlan ?? null) ?? [])
-          // Every slice that recorded one, made again since or not - unlike
-          // what a row still owes (`cardRefundSliceOwesFailedLaterRefund`): the
-          // question here is which notes in Xero answer failed refunds, and a
-          // re-made slice's failed refund keeps its note too. The answer is
-          // bounded by the notes' excess, and by what the close paid back.
-          .filter((slice) => cardRefundSliceFailedRefundIds(operation, slice).length > 0)
-          .reduce((sum, slice) => sum + slice.amountCents, 0);
+  // #4516 review M4: a still-owed rest is the rest of the row it was first owed
+  // on, so the failed refunds that row owed are this rest's to answer too, up
+  // to the rest. Read on its own, its fresh plan records none, and a bank note
+  // would be queued for money a card note already credits.
+  const origin = await cardRefundStillOwedOrigin(db, operation.idempotencyKey);
+  const failedCents = Math.min(operation.amountCents, failedRefundCentsOf(origin ?? operation));
   if (failedCents <= 0) return 0;
   const payment = await db.payment.findUnique({ where: { id: paymentId }, select: { id: true, bookingId: true, refundedAmountCents: true } });
   if (!payment) return 0;

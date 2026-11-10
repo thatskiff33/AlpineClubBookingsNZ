@@ -12,7 +12,9 @@ vi.mock("@/lib/logger", () => ({ default: log }));
 const journalPost = vi.hoisted(() => vi.fn(async () => null));
 // #4628: and a pending bank-transfer charge's re-statement, for a booking not confirmed on the ledger.
 const pendingPost = vi.hoisted(() => vi.fn(async () => null));
-vi.mock("@/lib/member-money/doors", () => ({ postBookingLedgerJournal: journalPost, postPendingBookingJournal: pendingPost }));
+// #4516 (M4c): an edit's card refund, its R05 beside R02, in the same transaction.
+const refundPost = vi.hoisted(() => vi.fn(async () => null));
+vi.mock("@/lib/member-money/doors", () => ({ postBookingLedgerJournal: journalPost, postPendingBookingJournal: pendingPost, postRefundObligation: refundPost }));
 
 import { bookingLedgerBalance } from "@/lib/booking-ledger-balance";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
@@ -195,6 +197,22 @@ describe("postModificationLedgerLines (#3582)", () => {
       bookingId: "b1", lodgeId: "l1", event: { kind: "modification", modificationId: "m1" },
       postingKeys: s.written.map((row) => row.postingKey),
     });
+  });
+
+  it("MUTATION (#4516, M4c probe 10): an edit's card refund posts its R05 after the edit's lines, and none without one", async () => {
+    const s = store(confirmedLedger());
+    journalPost.mockClear();
+    refundPost.mockClear();
+    await postModificationLedgerLines({ ...base, store: s.store, sides: SIDES_REMOVE_G2, cardRefundCents: 7_500 });
+    expect(refundPost).toHaveBeenCalledTimes(1);
+    expect(refundPost).toHaveBeenCalledWith(s.store, base.journal, { bookingId: "b1", scope: "modification", id: "m1", amountCents: 7_500,
+      origin: "APP", debtorRead: "booking-row" });
+    expect(journalPost.mock.invocationCallOrder[0]).toBeLessThan(refundPost.mock.invocationCallOrder[0]!);
+    for (const cardRefundCents of [undefined, 0]) {
+      refundPost.mockClear();
+      await postModificationLedgerLines({ ...base, store: store(confirmedLedger()).store, sides: SIDES_REMOVE_G2, cardRefundCents });
+      expect(refundPost).not.toHaveBeenCalled();
+    }
   });
 
   it("posts nothing on a booking not yet confirmed on the ledger — the confirmation will read the booking as it then is", async () => {

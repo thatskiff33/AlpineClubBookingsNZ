@@ -22,6 +22,12 @@ Every admin area in the [coverage matrix](COVERAGE_MATRIX.md) has a screen
 section below, including redirects and the developer-only testing area.
 Within an area, find a route with your editor’s search. The sidebar can group
 these screens differently; the route and linked guide identify the destination.
+
+The admin [command palette](guides/dashboard.md#find-any-page-fast-command-palette)
+(Ctrl or Cmd + K) offers every screen below that is a page in its own right,
+grouped by hub, to the admins who may open it. Detail, print, redirect,
+testing and template-preview screens are reached from their list instead. A
+lodge-scoped screen opened from it starts on the club’s first lodge.
 Admin areas require their configured view permission; editing requires the
 corresponding edit permission, and some actions require Full Admin. Hidden
 modules and lodge scope can further limit what appears.
@@ -248,9 +254,11 @@ Journey: Filter the list, open a booking, and inspect its dates, guests and stat
 
 Screen: `/admin/bookings-setup`.
 
-Shows: Cards linking to the booking configuration screens.
+Merged in (#4796): `/admin/setup/booking-rules` redirects here.
 
-Journey: Open the relevant setup card for policies, seasons, fees or allocation settings.
+Shows: Cards linking to the booking configuration screens, each shown only to an admin who can open it, and the Member guests settings card.
+
+Journey: Open the relevant setup card for policies, seasons, age groups, promo codes, rooms and beds, or booking copy.
 
 [Guide](guides/bookings-setup.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -326,7 +334,7 @@ Journey: Read club posts and use the moderation actions allowed by the current r
 
 [Guide](guides/message-board.md) · [History](UX_FLOW_HISTORY.md#club-message-board-2994-epic-2992)
 
-### Member Notices — notices
+### Member notices — notices
 
 Screen: `/admin/notices`.
 
@@ -350,21 +358,13 @@ Journey: Inspect a request and its member record before resolving it.
 
 Screen: `/admin/family-groups`.
 
-Shows: Family memberships and billing relationships.
+Merged in (#4796): a Groups tab and a Suggestions tab (`?tab=suggestions`); `/admin/family-suggestions` redirects to the Suggestions tab.
 
-Journey: Find a family, open its members, and review billing and relationship changes.
+Shows: Family memberships and billing relationships; on the Suggestions tab, suggested member relationships awaiting review.
 
-[Guide](guides/family-groups.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+Journey: Find a family, open its members, and review billing and relationship changes; or open Suggestions, inspect suggested relationships and decide whether to link them.
 
-### Family Suggestions — family-suggestions
-
-Screen: `/admin/family-suggestions`.
-
-Shows: Suggested member relationships awaiting review.
-
-Journey: Inspect suggested relationships and decide whether to link them.
-
-[Guide](guides/family-suggestions.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+[Guide](guides/family-groups.md) · [Suggestions guide](guides/family-suggestions.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Induction — induction
 
@@ -416,23 +416,15 @@ Journey: Search or filter members, open a profile, and use its permitted members
 
 [Guide](guides/members.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
-### Cancellation Requests — membership-cancellation
-
-Screen: `/admin/membership-cancellation`.
-
-Shows: Cancellation notification and handling settings.
-
-Journey: Review the cancellation notification settings linked from Notifications & Email.
-
-[Guide](guides/membership-cancellations.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
-
 ### Cancellation Requests — membership-cancellations
 
 Screen: `/admin/membership-cancellations`.
 
-Shows: The membership cancellation review queue.
+Merged in (#4796): a Requests tab and a Settings tab (`?tab=settings`); `/admin/membership-cancellation` and `/admin/setup/cancellation` redirect to the Settings tab.
 
-Journey: Open a cancellation request and review its consequences before deciding it.
+Shows: The membership cancellation review queue; on the Settings tab, the cancellation copy and Xero handling.
+
+Journey: Open a cancellation request and review its consequences before deciding it; or open Settings, from here or from Notifications & Email, to change the cancellation wording.
 
 [Guide](guides/membership-cancellations.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -908,7 +900,9 @@ Journey: Choose a message template, inspect its tokens, and stage wording change
 
 Screen: `/admin/health`.
 
-Shows: Component health and diagnostic results.
+Merged in (#4796): `/admin/setup/integrations` redirects to its Integration readiness section.
+
+Shows: The provider setup pages (Xero, modules, email deliverability) as readiness cards, then component health and diagnostic results.
 
 Journey: Inspect health checks and follow the documented recovery for a failing component.
 
@@ -1001,6 +995,11 @@ Screen: `/admin/stuck-states`.
 Shows: Operational incidents and guided repair actions.
 
 Journey: Inspect flagged records and use the documented recovery for the selected state.
+A card refund Stripe gave up on is settled on its row, never with a new Stripe
+dashboard refund (#4368): **Paid another way**, or **Try the card again** after a
+confirm dialog; a row a later Stripe refund covers reads "nothing left owed" and
+offers only **Nothing left owed**, whose dialog names that refund. Each is
+view-only without Finance edit.
 
 [Guide](guides/stuck-states.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

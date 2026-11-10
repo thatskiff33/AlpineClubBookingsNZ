@@ -450,7 +450,7 @@ describe("mappingWriteViolation (#2717)", () => {
 describe("the picker's credit-item rows stay anchored to the registry (#2717)", () => {
   it("lists only writable keys that really carry an item code", async () => {
     const { CREDIT_ITEM_MAPPING_KEYS } = await import(
-      "@/app/(admin)/admin/xero/_components/shared"
+      "@/app/(admin)/admin/finance/xero/_components/shared"
     );
     for (const key of CREDIT_ITEM_MAPPING_KEYS) {
       expect(XERO_MAPPING_WRITABLE_KEYS).toContain(key);

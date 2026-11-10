@@ -35,14 +35,14 @@ import { describe, expect, it } from "vitest";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 const SECTION_EDIT_ADOPTERS = [
-  "src/app/(admin)/admin/backups/backups-client.tsx",
-  "src/app/(admin)/admin/backups/local-backup-card.tsx",
+  "src/app/(admin)/admin/finance/xero/_components/webhook-health-panel.tsx",
   "src/app/(admin)/admin/lodges/[id]/_components/lodge-central-lodge-card.tsx",
   "src/app/(admin)/admin/lodges/[id]/_components/lodge-roster-settings-card.tsx",
   "src/app/(admin)/admin/member-fields/page.tsx",
   "src/app/(admin)/admin/privacy-retention/privacy-retention-client.tsx",
+  "src/app/(admin)/admin/system/backups/backups-client.tsx",
+  "src/app/(admin)/admin/system/backups/local-backup-card.tsx",
   "src/app/(admin)/admin/video-meetings/setup/video-meetings-setup.tsx",
-  "src/app/(admin)/admin/xero/_components/webhook-health-panel.tsx",
   "src/components/admin/allocation-preferences-section.tsx",
   "src/components/admin/analytics-integration-card.tsx",
   "src/components/admin/booking-policies/adult-member-hosting-section.tsx",

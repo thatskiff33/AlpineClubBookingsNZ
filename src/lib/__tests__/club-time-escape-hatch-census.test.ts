@@ -784,7 +784,7 @@ describe("the classes CT-6 closed are at zero, and stay there", () => {
       offenders.map((entry) => entry.file).sort(),
       offenders.map((entry) => entry.file + ": " + entry.count).join("\n"),
     ).toEqual([
-      "src/app/(admin)/admin/reports/_components/host-local-day.ts",
+      "src/app/(admin)/admin/finance/reports/_components/host-local-day.ts",
       "src/lib/admin-dataset-reset-state.ts",
     ]);
     expect(

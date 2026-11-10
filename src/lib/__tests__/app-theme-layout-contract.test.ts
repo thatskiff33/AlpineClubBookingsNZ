@@ -716,7 +716,7 @@ describe("database theme app-shell contract", () => {
   // evaluates the feature.
   it("feeds the derived muted tones into the site-style wizard preview", () => {
     const wizard = readRepoFile(
-      "src/app/(admin)/admin/site-style/site-style-wizard.tsx",
+      "src/app/(admin)/admin/website/site-style/site-style-wizard.tsx",
     );
     const preview = wizard.slice(
       wizard.indexOf("function previewStyle("),
@@ -764,17 +764,17 @@ describe("database theme app-shell contract", () => {
 
   it("uses semantic app text roles across admin navigation and setup surfaces", () => {
     const semanticTextFiles = [
-      "src/app/(admin)/admin/booking-policies/page.tsx",
-      "src/app/(admin)/admin/notifications/page.tsx",
+      "src/app/(admin)/admin/rules/booking-policies/page.tsx",
+      "src/app/(admin)/admin/messages/notifications/page.tsx",
       "src/app/(admin)/admin/roster/[date]/print/page.tsx",
       "src/app/(admin)/admin/setup/finance/page.tsx",
       "src/app/(admin)/admin/setup/setup-page-client.tsx",
-      "src/app/(admin)/admin/site-style/page.tsx",
-      "src/app/(admin)/admin/xero/page.tsx",
+      "src/app/(admin)/admin/website/site-style/page.tsx",
+      "src/app/(admin)/admin/finance/xero/page.tsx",
       // The Xero setup surface's markup moved to the client body when its page
       // became a thin server wrapper for the guided wizard (#2080); the semantic
       // text-role contract follows the markup.
-      "src/app/(admin)/admin/xero/_components/xero-setup-page-client.tsx",
+      "src/app/(admin)/admin/finance/xero/_components/xero-setup-page-client.tsx",
       "src/components/admin-hub-page.tsx",
       "src/components/admin/back-link.tsx",
     ];
@@ -787,7 +787,7 @@ describe("database theme app-shell contract", () => {
     }
 
     const wizard = readRepoFile(
-      "src/app/(admin)/admin/site-style/site-style-wizard.tsx",
+      "src/app/(admin)/admin/website/site-style/site-style-wizard.tsx",
     );
     expect(wizard).toContain(
       '"border-brand-gold bg-brand-gold text-brand-charcoal"',
@@ -861,7 +861,7 @@ describe("database theme app-shell contract", () => {
     const button = readRepoFile("src/components/ui/button.tsx");
     const globals = readRepoFile("src/app/globals.css");
     const wizard = readRepoFile(
-      "src/app/(admin)/admin/site-style/site-style-wizard.tsx",
+      "src/app/(admin)/admin/website/site-style/site-style-wizard.tsx",
     );
     const themeSwitcher = readRepoFile("src/components/theme-switcher.tsx");
     expect(button).not.toContain("hover:bg-primary/90");
@@ -879,9 +879,9 @@ describe("database theme app-shell contract", () => {
   });
 
   it("keeps Site Style app chrome semantic while fixed code previews stay isolated", () => {
-    const page = readRepoFile("src/app/(admin)/admin/site-style/page.tsx");
+    const page = readRepoFile("src/app/(admin)/admin/website/site-style/page.tsx");
     const wizard = readRepoFile(
-      "src/app/(admin)/admin/site-style/site-style-wizard.tsx",
+      "src/app/(admin)/admin/website/site-style/site-style-wizard.tsx",
     );
 
     expect(page).not.toMatch(/text-slate-(?:500|900)/);

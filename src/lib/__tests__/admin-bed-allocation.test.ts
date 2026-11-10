@@ -78,6 +78,7 @@ import {
 import { getLodgePartnerSharedCapacityStatus } from "@/lib/lodge-capacity";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { parseDateOnly } from "@/lib/date-only";
+import { getRequiredFeaturesForPath } from "@/config/feature-routes";
 import { requireCalendarDate } from "@/lib/club-time";
 import { prisma } from "@/lib/prisma";
 
@@ -377,15 +378,18 @@ describe("admin bed allocation", () => {
     const featureRoutes = readRepoFile("src/config/feature-routes.ts");
     const sidebar = readRepoFile("src/components/admin-sidebar.tsx");
     const bookingsSetupHub = readRepoFile(
-      "src/app/(admin)/admin/bookings-setup/page.tsx"
+      "src/app/(admin)/admin/rules/bookings-setup/page.tsx"
     );
 
     expect(featureRoutes).toContain('flag: "bedAllocation"');
-    expect(featureRoutes).toContain('"/admin/bed-allocation"');
-    expect(featureRoutes).toContain('"/admin/rooms-beds"');
+    // The admin PAGE gates are generated from the hub registry since #4799, so
+    // they are asserted as behaviour rather than as literals in the rule.
+    expect(getRequiredFeaturesForPath("/admin/bed-allocation")).toContain("bedAllocation");
+    expect(getRequiredFeaturesForPath("/admin/rooms-beds")).toContain("bedAllocation");
     expect(featureRoutes).toContain('"/api/admin/bed-allocation"');
     expect(sidebar).toContain('href: "/admin/bed-allocation"');
-    expect(bookingsSetupHub).toContain('href: "/admin/rooms-beds"');
+    // Linked through the hub registry since S1 (#4796).
+    expect(bookingsSetupHub).toContain('href: adminHref("rooms-beds")');
   });
 
   it("blocks deactivating a bed with current or future allocations, naming the occupant", async () => {

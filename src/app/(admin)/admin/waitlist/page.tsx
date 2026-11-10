@@ -45,6 +45,7 @@ import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 import { useClubFormat } from "@/components/club-format-provider";
 import { buildBookingDetailPath } from "@/lib/booking-email-contract";
+import { adminHref } from "@/lib/admin-hubs";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
@@ -244,7 +245,7 @@ function buildForceConfirmAuditPath(report: ForceConfirmReport) {
     q: report.bookingId,
   });
 
-  return buildPathWithSearch("/admin/audit-log", params);
+  return buildPathWithSearch(adminHref("audit-log"), params);
 }
 
 export default function AdminWaitlistPage() {
@@ -946,7 +947,7 @@ export default function AdminWaitlistPage() {
                             </Link>
                           ) : (
                             <Link
-                              href="/admin/email-deliverability"
+                              href={adminHref("email-deliverability")}
                               className="block text-xs text-primary hover:underline"
                             >
                               Review email recovery

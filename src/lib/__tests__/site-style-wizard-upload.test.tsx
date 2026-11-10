@@ -2,7 +2,7 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SiteStyleWizard } from "@/app/(admin)/admin/site-style/site-style-wizard";
+import { SiteStyleWizard } from "@/app/(admin)/admin/website/site-style/site-style-wizard";
 import {
   DEFAULT_CLUB_THEME_VALUES,
   type ClubThemeValues,

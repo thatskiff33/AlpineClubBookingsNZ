@@ -2047,19 +2047,23 @@ Production operator steps are the owner's.
 4. **Tell members about recovery codes.** Recovery codes issued before this step
    stop working now (owner decision on #4456). Members holding them see a
    notice on the sign-in challenge and their profile telling them to generate a
-   new set; an admin should regenerate their own straight away. They are
-   refused, not yet deleted: until the second part of #4456 retires them in the
-   database, they **work again on any instance without the ring** (the previous
-   colour during this redeploy, or anywhere the variable is unset). Tell members
-   to discard them once they have a new set.
-5. **Move what is still on `AUTH_SECRET`.** Admin → Setup → "Data Encryption
-   Key" counts the provider credentials and authenticator secrets still
-   encrypted under it. Re-entering a credential in Admin → Integrations writes
-   it under the data key; a member re-enrolling their authenticator moves
-   theirs. (A command that re-encrypts every row in place is the second part of
-   #4456.)
-6. When the step is **green**, nothing stored depends on `AUTH_SECRET`; rotating
-   it now only signs everyone out and invalidates links signed with it.
+   new set; an admin should regenerate their own straight away. Until step 5
+   retires them in the database they are only refused, so they **work again on
+   any instance without the ring** (the previous colour during this redeploy,
+   or anywhere the variable is unset).
+5. **Move what is still on `AUTH_SECRET`, and retire the old recovery codes**,
+   once no container runs without the ring. Copy the fingerprint Admin → Setup
+   → "Data Encryption Key" shows for the current key, run
+   `pnpm run data-keys:reencrypt --dry-run`, then
+   `pnpm run data-keys:reencrypt --expect-fingerprint <that fingerprint> --retire-legacy-recovery-codes`
+   ([Moving stored data to the current key](#moving-stored-data-to-the-current-key-4456)).
+   It refuses unless its own key has that fingerprint. Run it again until it
+   reports `remaining on old keys: 0` for both tables.
+6. When Admin → Setup → "Data Encryption Key" is **green**, nothing stored
+   depends on `AUTH_SECRET`; rotating it now only signs everyone out and
+   invalidates links signed with it. To stop the app reading anything under it
+   at all, set `DATA_ENCRYPTION_LEGACY_KEY=retired`
+   ([Retiring the legacy key](#retiring-the-legacy-key-4456)).
 
 **Once rows are written under the ring, there is no going back without it.**
 Data written under a data key can only be read by a container that holds that
@@ -2076,10 +2080,11 @@ key. So:
   ring-keyed credential, authenticator secret and recovery code (the setup
   step goes red and says so, and credential capture, two-factor enrolment and
   recovery-code regeneration refuse rather than quietly saving under
-  `AUTH_SECRET`; short-lived email codes are still issued). The same instance accepts the recovery codes issued
-  before the ring again, until the second part of #4456 retires them in the
-  database. If the old key is lost for good, set a new one and re-enter the
-  credentials and re-enrol the authenticators it held.
+  `AUTH_SECRET`; short-lived email codes are still issued). The same instance
+  accepts the recovery codes issued before the ring again, unless the
+  re-encrypt has retired them in the database (step 5). If the old key is lost
+  for good, set a new one and re-enter the credentials and re-enrol the
+  authenticators it held.
 
 **The safe sequence if that deploy fails:** once the engine has recreated the
 cron leader with the ring (it does so before the step-16 warm-up gate), keep
@@ -2098,8 +2103,120 @@ first cut-over's overlap: during that redeploy the previous colour (ring
 2. Once no container runs without `k2027`, promote it:
    `DATA_ENCRYPTION_KEYS=k2027:<new>,k2026:<old>`, and redeploy. New writes use
    `k2027`; the previous colour already holds it, so it reads them.
-3. Move the rows still on the old key, and only then remove the old entry.
-   Removing a key any earlier strands every row that names it.
+3. Once that redeploy has finished, move the rows still on the old key with
+   `pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint from Admin → Setup>`,
+   taking the fingerprint Admin → Setup now shows for `k2027`. A command still holding
+   the step-1 ring (`k2026` first) refuses, rather than moving the app's
+   `k2027` rows back to `k2026`.
+4. Remove the old entry only once Admin → Setup → "Data Encryption Key" shows
+   **no provider credential or authenticator secret under it**; until then the
+   step stays amber and names them. Removing a key any earlier strands every
+   such row. Unused recovery codes under it are listed but do not hold the step
+   amber: they cannot be moved, and removing the key retires them (their
+   members are told to generate a new set).
+
+#### Moving stored data to the current key (#4456)
+
+`pnpm run data-keys:reencrypt` re-encrypts every stored provider credential and
+authenticator-app secret that is not under the **first** key of
+`DATA_ENCRYPTION_KEYS` (whether under `AUTH_SECRET` or an older ring key) under
+that key, unchanged. Run it from a checkout of the deployed release with the
+running release's `DATABASE_URL`, `AUTH_SECRET` and `DATA_ENCRYPTION_KEYS`:
+without the auth secret it cannot read what is still under it. Production runs
+are the owner's.
+
+**Where its settings come from.** The command loads `.env` from the directory
+it is run in, for every variable not already exported in the shell; an
+exported value always wins. A stale `.env` in that directory can hand it a ring
+that is not the app's: the right id with the wrong bytes, which would
+re-encrypt everything under a key the app does not hold, or an old ring whose
+first key is the app's previous one, which would move the app's newer rows
+back. Two checks stop that:
+
+- **A run that writes needs `--expect-fingerprint`**, copied from Admin →
+  Setup → "Data Encryption Key" **in the browser**, which shows the running
+  app's current key's fingerprint (a one-way hash, never the key). Never take
+  it from `pnpm run setup:check` or from this command's own output: both read
+  this shell's environment and `.env`, the very ring being checked, and
+  `setup:check` labels its key "this shell's key" and prints no fingerprint for
+  that reason. The command refuses before reading anything unless the key it
+  would write under has the fingerprint given, and refuses a value that is not
+  fingerprint-shaped without repeating it. A `--dry-run` needs none: it prints
+  its own key's fingerprint on a line of its own, to compare with Setup's and
+  never to copy into the command.
+- **It also decrypts a row already stored under that key id**, and refuses if
+  it cannot ("Refused before writing anything …": the environment's ring is
+  not the app's, or that row is damaged). On the first cut-over nothing is
+  stored under the key yet, and the report says only the fingerprint vouched
+  for it.
+
+```bash
+pnpm run data-keys:reencrypt --dry-run                                  # count only, writes nothing
+pnpm run data-keys:reencrypt --expect-fingerprint <fp>                  # move
+pnpm run data-keys:reencrypt --expect-fingerprint <fp> --retire-legacy-recovery-codes
+```
+
+- **Safe beside live traffic.** It moves one row per short transaction through
+  the same compare-and-set writers the app uses, and calls no provider. A row
+  that changes while it is being moved (a Xero token refresh, an admin saving
+  a credential, a member re-enrolling) wins; the re-encrypt changes nothing for
+  that row and retries it on its next pass. A Xero token set is never moved
+  while any refresh lease is set, even an expired one, so a refresh that has
+  already spent its refresh token always gets to save the new one. A lease left
+  by a refresh that died is cleared by the next refresh; if the report still
+  shows the token set on an old key, run the command again later. An administrator with a
+  credential form open while it runs may be told the value changed and asked
+  to reload the form; the value itself is the same.
+- **Run it only once no container runs without the ring.** A colour started
+  without it cannot read what this writes.
+- **The report** gives, per table, how many rows moved, lost their claim or were
+  unreadable, and `remaining on old keys: N`, then the unused recovery codes
+  still under `AUTH_SECRET` and under older ring keys. It never prints a key or
+  a stored value. Exit status 0 means nothing is left on an old key, 2 that
+  something is (run it again), 1 that it refused or failed.
+- **Unreadable rows** are under a key this environment does not hold (a removed
+  ring key, a changed `AUTH_SECRET`, or `DATA_ENCRYPTION_LEGACY_KEY=retired`).
+  Restore the key and run again, or re-enter those credentials and ask those
+  members to re-enrol.
+- **`--retire-legacy-recovery-codes`** rewrites each unused recovery code
+  issued before the ring so that no release, with or without the ring, accepts
+  it again (owner decision on #4456: they are invalidated at cut-over). The rows
+  stay, unused, so their members keep seeing the notice to generate a new set
+  until they do. There is no undo, and none is needed: those codes already
+  stopped working under the ring.
+- **What it records.** Each credential moved gets an
+  `integration.credential.set` audit entry naming the `data-key-reencrypt` job
+  (`cause: data-key-reencrypt`); each authenticator secret moved and each
+  member whose codes were retired gets a `security.two_factor.secret_rewrapped`
+  or `security.two_factor.recovery_codes_retired` entry
+  ([audit-log guide](docs/guides/audit-log.md#xero-connection-and-two-factor-entries-3454)).
+- It refuses to run when `DATA_ENCRYPTION_KEYS` is unset or invalid, or when
+  `DATA_ENCRYPTION_LEGACY_KEY` is set without it.
+
+#### Retiring the legacy key (#4456)
+
+Even once nothing is stored under `AUTH_SECRET`, the app still **reads** a row
+that names it, so a row planted in the database under a leaked auth secret
+would still be accepted. `DATA_ENCRYPTION_LEGACY_KEY=retired` stops that: no
+credential or authenticator secret is read under the auth secret any more, and
+`AUTH_SECRET` signs sessions and links only.
+
+1. Run `pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint>` until it reports `remaining on old keys: 0`
+   for both tables, and Admin → Setup → "Data Encryption Key" is green.
+2. Set `DATA_ENCRYPTION_LEGACY_KEY=retired` and redeploy. The two colours may
+   differ during the redeploy: they disagree only about rows under
+   `AUTH_SECRET`, and there are none.
+3. The setup step now says nothing is read under `AUTH_SECRET`. If something
+   was written under it after all, the step goes red and names it: those rows
+   read as "needs re-entry" until you roll back.
+
+**Rollback:** unset `DATA_ENCRYPTION_LEGACY_KEY` and redeploy; anything still
+under `AUTH_SECRET` reads again, provided the auth secret has not changed since
+it was written. **Refused configurations:** any value other than `retired`, or
+the switch set while `DATA_ENCRYPTION_KEYS` is unset, fails
+`/api/health/ready` (so blue/green never switches to that colour), refuses
+every write, and turns the setup step red; no write ever falls back to
+`AUTH_SECRET`.
 
 ### Auth-secret rotation runbook
 

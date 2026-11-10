@@ -2823,8 +2823,7 @@ let deletionApprovalWasReleased: (typeof import("@/lib/deletion-request-decision
         code: "merge_drift_in_transaction",
         details: {
           driftFields: ["BookingGuest.member"],
-          bookingGuestIds: [IDS.mergeGuestBeforeLock],
-          bookingIds: [IDS.mergeBooking],
+          residualRowIds: { "BookingGuest.member": [IDS.mergeGuestBeforeLock] },
         },
       });
 

@@ -452,6 +452,20 @@ const DECLARED_FILES: Record<string, string> = {
     "the posting plan's debtor is a member or an organisation, and the builder maps it onto a leg's or obligation's organisationId column; it reads no row and decides nothing about a school",
   "src/lib/member-money/internal/store.ts":
     "writes the debtor columns the plan built and checks a leg names its earlier obligation's debtor; it decides nothing about a school",
+  "src/lib/member-money/internal/application-state.ts":
+    "matches a source's currency and member or organisation debtor to its obligation's before applying money",
+  // #4516 (Ledger M4b): receipts name the booking's owner as debtor, as the doors do.
+  "src/lib/member-money/internal/booking-journal-read.ts":
+    "bookingOwnerDebtor maps the booking's owner, member or organisation, through bookingOwnerProviderMetadata onto the receivable's debtor; one helper for the doors and the receipts",
+  "src/lib/member-money/internal/booking-receipts.ts":
+    "a receipt's debtor is the booking's owner (read once, without the booking row lock), and a collection applies to the obligation of the debtor its receivable line names, member or organisation",
+  // #4516 (Ledger M4c): a refund debt, its cash and its successor name the booking's owner as debtor, as receipts do.
+  "src/lib/member-money/internal/refund-obligations.ts":
+    "a refund debt's debtor is the booking's owner, member or organisation, read under the door's lock tier (booking row, or plainly for a Payment-row-only writer)",
+  "src/lib/member-money/internal/refund-cash.ts":
+    "an unapplied card refund names the booking's owner as debtor; an answered one names its refund debt's debtor, member or organisation",
+  "src/lib/member-money/internal/refund-family.ts":
+    "a refund family's live tip is the owner's: a successor carries the tip's remaining payable from its debtor to the owner, member or organisation",
 
   // #4457: the privacy-retention census classifies every Prisma model by name.
   "src/lib/privacy-retention-classification.ts":

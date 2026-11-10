@@ -59,6 +59,8 @@ const SCANNED_DIRS = ["src", "scripts", "prisma"];
  * an opt-out below.
  */
 const RAW_READ_INVENTORY: Record<string, number> = {
+  // M4a: the database function returns an exact family/source projection; decoded before caps.
+  "src/lib/member-money/internal/application-read.ts": 1,
   // The #3531 rate-derived backfill's refusal to run before its enum value
   // exists: one `EXISTS` over `pg_enum`, which no Prisma model exposes, and its
   // one boolean is schema-decoded through `decodeRawRows` before it decides.
@@ -84,6 +86,10 @@ const RAW_READ_INVENTORY: Record<string, number> = {
   // returned by `pg_try_advisory_xact_lock`; the row is schema-decoded before
   // the worker decides whether it may proceed.
   "src/lib/adult-member-hosting-policy-set.ts": 1,
+  // The per-lodge capacity try-lock reads the one boolean `pg_try_advisory_xact_lock`
+  // returns. Member merge uses it where waiting would invert lodge → member
+  // (#4876). The row is schema-decoded before the merge decides to refuse.
+  "src/lib/lodge-capacity-lock.ts": 1,
   // #4162: the voided bank-transfer refund note scan's candidate ids - a status
   // read the way the link reader reads it (trimmed, any case) joined to the
   // payment's source, which no Prisma JSON filter expresses. Its rows are

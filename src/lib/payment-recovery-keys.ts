@@ -8,6 +8,7 @@
 // and its test fails when an export here is neither mapped to a scenario nor
 // declared not-a-recovery-key, so a new recovery key cannot land unlabelled.
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
+import { CARD_REFUND_STILL_OWED_RECOVERY_PREFIX as STILL_OWED_PREFIX, CARD_REFUND_STILL_OWED_REASON as STILL_OWED_REASON } from "@/lib/card-refund-still-owed-keys";
 export const BOOKING_CANCELLATION_REFUND_RECOVERY_PREFIX = "booking_cancel_refund_recovery_";
 export const CAPACITY_CLAIM_FAILED_REFUND_RECOVERY_PREFIX = "capacity_claim_failed_refund_recovery_";
 export const DUPLICATE_CAPTURE_REFUND_RECOVERY_PREFIX = "duplicate_capture_";
@@ -47,6 +48,7 @@ export function cardRefundFailedLaterRefundId(key: string): string | null {
 }
 /** The Stripe `reason` metadata of that retry; a failed refund carrying it was itself a retry. */
 export const CARD_REFUND_FAILED_LATER_REASON = "card_refund_failed_later";
+export { CARD_REFUND_STILL_OWED_RECOVERY_PREFIX, CARD_REFUND_STILL_OWED_REASON, buildCardRefundStillOwedRecoveryKey, cardRefundStillOwedCloseRecordId } from "@/lib/card-refund-still-owed-keys"; // #4516: a part close's still-owed rest
 
 export function buildBookingCancellationRefundIdempotencyKey(bookingId: string) {
   return `${BOOKING_CANCELLATION_REFUND_RECOVERY_PREFIX}${bookingId}`;
@@ -195,21 +197,20 @@ export function buildLegacyModificationRefundStripeKeyPrefix(operationId: string
 // evidence before replay even after expiry (`INV-PAY-147`).
 const REFUSED_REFUND_KEY_SUFFIX = /^refused([1-9][0-9]{0,5})$/;
 
-export function isRefusedRefundKeySuffix(value: unknown): value is string {
-  return typeof value === "string" && REFUSED_REFUND_KEY_SUFFIX.test(value);
-}
+export const isRefusedRefundKeySuffix = (value: unknown): value is string => typeof value === "string" && REFUSED_REFUND_KEY_SUFFIX.test(value);
 
 export function nextRefusedRefundKeySuffix(current: string | undefined): string {
   const generation = current ? REFUSED_REFUND_KEY_SUFFIX.exec(current)?.[1] : undefined;
   return `refused${generation ? Number(generation) + 1 : 1}`;
 }
 
-export function refundSliceStripeIdempotencyKey(
-  prefix: string,
-  slice: { paymentTransactionId: string; amountCents: number; stripeKeySuffix?: string },
-): string {
+export function refundSliceStripeIdempotencyKey(prefix: string, slice: { paymentTransactionId: string; amountCents: number; stripeKeySuffix?: string }): string {
   const key = `${prefix}_${slice.paymentTransactionId}_${slice.amountCents}`;
   return slice.stripeKeySuffix ? `${key}_${slice.stripeKeySuffix}` : key;
+}
+/** #4516 (`INV-SSOT`): a Stripe key the sender with this prefix built: its one keyed request, or any slice's (above). */
+export function isStripeKeyOfSenderPrefix(key: string, prefix: string): boolean {
+  return key === prefix || key.startsWith(`${prefix}_`);
 }
 
 export function buildEditFinancialReviewRefundStripeKeyPrefix(taskId: string) {
@@ -608,6 +609,7 @@ export function bookingModificationRefundReasonForKeyPrefix(
   if (keyPrefix?.startsWith(CARD_REFUND_FAILED_LATER_RECOVERY_PREFIX)) {
     return CARD_REFUND_FAILED_LATER_REASON;
   }
+  if (keyPrefix?.startsWith(STILL_OWED_PREFIX)) return STILL_OWED_REASON; // #4516: a part close's still-owed rest, never another row's request
   return "booking_modification_refund_recovery";
 }
 

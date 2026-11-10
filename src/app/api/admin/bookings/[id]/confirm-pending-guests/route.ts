@@ -1,3 +1,4 @@
+import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { NextRequest, NextResponse } from "next/server";
 import { handOffSupersededCaptureAfterRefusal } from "@/lib/superseded-paid-intent";
 import { SUPERSEDED_CHARGE_NOT_SETTLED_BODY } from "@/lib/payment-recovery-contract";
@@ -614,6 +615,7 @@ export async function POST(
     // (the transaction-wrapper population in
     // `lock-bound-club-zone-outside-transaction.test.ts` is derived from
     // callback parameters).
+    const receiptJournal = await resolveBookingMoneyPostingContext();
     const releaseChargeClaim = async (answer?: {
       attemptRowId: string;
       paymentIntent: SavedCardChargeAnswer;
@@ -622,7 +624,7 @@ export async function POST(
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
         await acquireLodgeCapacityLock(tx, booking.lodgeId);
         if (answer) {
-          await settleSavedCardChargeAttempt({
+          await settleSavedCardChargeAttempt({ journal: receiptJournal,
             ...answer,
             paymentId: claim.paymentId,
             store: tx,
@@ -781,7 +783,7 @@ export async function POST(
     // tells the settle it is new money, not a replay.
     let recordedByCaller = false;
     try {
-      ({ newlyCaptured: recordedByCaller } = await settleSavedCardChargeAttempt({
+      ({ newlyCaptured: recordedByCaller } = await settleSavedCardChargeAttempt({ journal: receiptJournal,
         attemptRowId: claim.attempt.attemptRowId,
         paymentId: claim.paymentId,
         paymentIntent,
@@ -797,6 +799,7 @@ export async function POST(
     let reconciliation;
     try {
       reconciliation = await markBookingPaymentSucceeded({
+      capturedAt: receiptCaptureTime(paymentIntent),
         format,
         bookingId, recordedByCaller,
         paymentIntentId: paymentIntent.id,

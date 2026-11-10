@@ -107,7 +107,7 @@ function booking(codes: string[] = [], extra: Record<string, unknown> = {}) {
 function primeRequest(requestedChanges: unknown) {
   mocks.requestFindUnique.mockReset();
   mocks.requestFindUnique
-    .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", booking: { lodgeId: "lodge-1" } })
+    .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", bookingId: "booking-1", booking: { lodgeId: "lodge-1" } })
     .mockResolvedValueOnce({
       id: "cr-1",
       kind: "LOCKED_PERIOD",

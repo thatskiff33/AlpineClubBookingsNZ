@@ -334,6 +334,8 @@ function createDependencies(state: {
   // #3924 round 8: where that close's receipt and note stand.
   paidAnotherWayReceipt?: { kind: "none" } | { kind: "resolved-by-hand" } | { kind: "recorded"; invoiceId: string | null };
   paidAnotherWayNoteAsked?: boolean;
+  /** #4516 round-3 review 2: how many notes the one note step queued NOW (one, unless a test says otherwise). */
+  paidAnotherWayNotesQueuedNow?: number;
   paidAnotherWayReceiptLinks?: Array<"invoice" | "payment">;
   /** #3924 round 9: the close's record, as the receipt state names it. */
   paidAnotherWayCloseRecord?: { id: string; amountCents: number } | null;
@@ -802,7 +804,7 @@ function createDependencies(state: {
       recordByHandCents: state.paidAnotherWayRecordByHandCents ?? 6000,
       cardNoteMayBeInXeroCents: state.paidAnotherWayCardNoteMayBeInXeroCents ?? 0,
     })),
-    queueWaitingPaidAnotherWayNote: vi.fn().mockResolvedValue("op_note"),
+    queueWaitingPaidAnotherWayNote: vi.fn().mockResolvedValue(state.paidAnotherWayNotesQueuedNow ?? 1),
     // #3953: a change capture's receipt, queued once.
     enqueueAdditionalCaptureReceiptOperation: vi.fn().mockResolvedValue({ outcome: "queued", queueOperationId: "op_receipt" }),
     // #4324: the keep's own decision, for a kept change capture.
@@ -1802,6 +1804,46 @@ describe("runBookingXeroRepair", () => {
       );
     });
 
+    // #4767: the generic retry of the note's own attempts linked every planned
+    // invoice without the note's role. The note is whole, as its retry reads
+    // it (`linkAllocatesClearingTarget`), so neither its retry nor a fresh
+    // allocation is offered: the retry would send the same key to Xero again.
+    it("MUTATION: offers nothing once role-less links of the note's own attempts cover every planned invoice (#4767)", async () => {
+      const retried = (id: string, invoiceId: string, amountCents: number) =>
+        allocationRow(id, invoiceId, amountCents, {
+          status: "SUCCEEDED",
+          xeroObjectId: `alloc_${invoiceId}`,
+          createdAt: new Date("2026-05-04T00:00:00Z"),
+        });
+      const bookingReport = await classifyClearing(
+        [allocationLink("inv_primary", 6000, "CREDIT_NOTE_ALLOCATION"), allocationLink("inv_supp", 4000, "CREDIT_NOTE_ALLOCATION")],
+        [
+          allocationRow("operation_own_primary", "inv_primary", 6000),
+          retried("operation_own_primary_retried", "inv_primary", 6000),
+          allocationRow("operation_own_supp", "inv_supp", 4000),
+          retried("operation_own_supp_retried", "inv_supp", 4000),
+        ]
+      );
+
+      expect(actionsOf(bookingReport)).toEqual([]);
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_CREDIT_NOTE_ALLOCATION");
+    });
+
+    it.each([
+      ["another credit note", { creditNoteId: "cn_other" }],
+      ["another amount", { amountCents: 4001 }],
+      ["no recorded amount", { amountCents: undefined }],
+    ])("MUTATION: still retries the note's row when the role-less link for its last invoice names %s (#4767)", async (_label, metadata) => {
+      const rolelessSupp = clearingLink({
+        id: "l_inv_supp_roleless",
+        xeroObjectType: "ALLOCATION",
+        xeroObjectId: "alloc_inv_supp",
+        role: "CREDIT_NOTE_ALLOCATION",
+        metadata: { creditNoteId: "cn_clear", invoiceId: "inv_supp", amountCents: 4000, ...metadata },
+      });
+      expectNoteRetried(await classifyClearing([allocationLink("inv_primary", 6000), rolelessSupp], []));
+    });
+
     it("MUTATION: retries an evidence-sized allocation row, not the note's row, while nothing is allocated", async () => {
       expectOtherRowRetried(await classifyClearing([], [allocationRow("operation_other_allocation", "inv_primary", 10000)]));
     });
@@ -1903,6 +1945,10 @@ describe("runBookingXeroRepair", () => {
       ["nothing linked", [], [PRIMARY_LEFT, SUPP_LEFT]],
       ["the primary invoice linked", [allocationLink("inv_primary", 6000)], [SUPP_LEFT]],
       ["the supplementary invoice linked", [allocationLink("inv_supp", 4000)], [PRIMARY_LEFT]],
+      // #4767: read as the note's retry reads it - a role-less link counts for
+      // the same note, invoice and amount only.
+      ["the primary invoice linked without the note's role", [allocationLink("inv_primary", 6000, "CREDIT_NOTE_ALLOCATION")], [SUPP_LEFT]],
+      ["a role-less link at another amount", [allocationLink("inv_primary", 5999, "CREDIT_NOTE_ALLOCATION")], [PRIMARY_LEFT, SUPP_LEFT]],
     ])(
       "MUTATION: reports an unretryable partial clearing note blocked and queues nothing, with %s (#4762)",
       async (_label, links, unallocatedInvoices) => {
@@ -6408,6 +6454,7 @@ describe("runBookingXeroRepair", () => {
           Parameters<typeof createDependencies>[0],
           | "paidAnotherWayReceipt"
           | "paidAnotherWayNoteAsked"
+          | "paidAnotherWayNotesQueuedNow"
           | "paidAnotherWayReceiptLinks"
           | "paidAnotherWayCloseRecord"
           | "paidAnotherWayRecordByHandCents"
@@ -6502,8 +6549,20 @@ describe("runBookingXeroRepair", () => {
             payload: { paymentIntentId: "pi_kept" },
           });
           expect(bookingReport.deps.queueWaitingPaidAnotherWayNote).toHaveBeenCalledWith("pi_kept");
+          expect(bookingReport.actions.find((a) => a.type === "QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE")).toMatchObject({ status: "queued" });
           // Never a second receipt beside the one in Xero.
           expect(bookingReport.actions.find((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_INVOICE")).toBeUndefined();
+        });
+
+        // #4516 round-3 review 2: two waiting closes, one note asked for before and the other's enqueue queuing
+        // nothing - the step queued no note now, so the action is skipped, never "queued".
+        it("MUTATION: an apply whose note step queued nothing new reports skipped", async () => {
+          const bookingReport = await runClosed("after-receipt", [], keptBooking(), { paidAnotherWayReceipt: inXero, paidAnotherWayNotesQueuedNow: 0 }, true);
+          expect(bookingReport.deps.queueWaitingPaidAnotherWayNote).toHaveBeenCalledWith("pi_kept");
+          expect(bookingReport.actions.find((a) => a.type === "QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE")).toMatchObject({
+            status: "skipped",
+            resultMessage: expect.stringMatching(/^Nothing queued: .*already asked for/),
+          });
         });
 
         it("nothing once the note was asked for", async () => {
@@ -7266,7 +7325,12 @@ describe("runBookingXeroRepair", () => {
         reason: "cancelled_booking_late_capture_repair",
       },
       idempotencyKeyPrefix: "late_cancel_refund_repair_booking_1",
+      // #4516 (M4c): each slice returns its own capture; its R05 posts as it is reserved.
+      obligation: expect.any(Function),
     });
+    const { obligation } = deps.refundPaymentTransactions.mock.calls[0]![0] as { obligation: (slice: { paymentTransactionId: string; paymentIntentId: string; amountCents: number }) => unknown };
+    expect(obligation({ paymentTransactionId: "txn_additional", paymentIntentId: "pi_additional", amountCents: 3000 }))
+      .toEqual({ scope: "capture-return", id: "pi_additional", ensureFaceCents: 3000 });
     expect(booking.payment.status).toBe("REFUNDED");
     expect(report.summary.bookingsWithFindings).toBe(0);
   });
@@ -9628,7 +9692,11 @@ describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
     );
   });
 
-  it("a resolved PARTIAL clearing note does not hide a separate live allocation failure (#3635, Xero F8)", async () => {
+  it.each([
+    { allocationNoteId: "cn_clear", reportsAllocation: true },
+    { allocationNoteId: "cn_other", reportsAllocation: false },
+    { allocationNoteId: undefined, reportsAllocation: false },
+  ])("a resolved clearing note reports an allocation naming $allocationNoteId only when it names this note (#4774)", async ({ allocationNoteId, reportsAllocation }) => {
     const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: createDependencies({
         bookings: [cancelledUnpaid()],
@@ -9662,7 +9730,7 @@ describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
             xeroObjectId: null,
             requestPayload: {
               queueType: "CREDIT_NOTE_ALLOCATION",
-              creditNoteId: "cn_clear",
+              creditNoteId: allocationNoteId,
               invoiceId: "inv_primary",
               amountCents: 10000,
               role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
@@ -9685,15 +9753,18 @@ describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
         details: expect.objectContaining({ creditNoteId: "cn_clear", operationId: "operation_resolved_partial_note" }),
       })
     );
-    // Seen, but report-only: the officer allocated by hand, so no retry.
-    expect(bookingReport.findings).toContainEqual(
+    // Only this note's allocation is report-only beside its resolved row.
+    // Other notes' rows (or rows naming no note) belong to their own arms.
+    const allocationFindings = bookingReport.findings.filter(
+      (finding) => finding.details?.operationId === "operation_live_allocation"
+    );
+    expect(allocationFindings).toEqual(reportsAllocation ? [
       expect.objectContaining({
         code: "BLOCKED_BY_XERO_OPERATION",
         safeToAutoApply: false,
         actions: [],
-        details: expect.objectContaining({ operationId: "operation_live_allocation" }),
-      })
-    );
+      }),
+    ] : []);
     const types = bookingReport.actions.map((action) => action.type);
     expect(types).not.toContain("REQUEUE_XERO_OPERATION");
     expect(types).not.toContain("QUEUE_CREDIT_NOTE_ALLOCATION");

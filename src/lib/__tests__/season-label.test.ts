@@ -1,7 +1,7 @@
 /**
  * The membership-season label follows the club's year-end, not a literal April.
  *
- * `src/app/(admin)/admin/subscriptions/page.tsx` rendered
+ * `src/app/(admin)/admin/finance/subscriptions/page.tsx` rendered
  * `{y} - {y + 1} (Apr-Mar)` with both halves written out as text. CT-4 group F1
  * (#2870) moved the season YEAR on that page onto the shared derivation and left
  * this label as an acknowledged deferral; `src/lib/season-label.ts` closes it.

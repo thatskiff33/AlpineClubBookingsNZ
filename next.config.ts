@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs/config";
 import { ASSET_NOT_FOUND_REWRITES } from "./src/lib/asset-url-404";
+import { buildAdminUrlRules } from "./src/lib/admin-hubs";
+import { ADMIN_HUBS_LIVE } from "./src/lib/admin-hubs/release";
 import { PUBLIC_WEBSITE_NONCE_SEED_ENV_VAR } from "./src/lib/release-nonce-seed";
 
 /**
@@ -143,10 +145,49 @@ const nextConfig: NextConfig = {
    */
   async rewrites() {
     return {
-      beforeFiles: [],
+      beforeFiles: [...buildAdminUrlRules(ADMIN_HUBS_LIVE).rewrites.beforeFiles],
       afterFiles: [...ASSET_NOT_FOUND_REWRITES],
       fallback: [],
     };
+  },
+  /**
+   * The admin hub URLs (epic #4468, C3 #4800), generated from the hub registry
+   * for the pages that have MOVED under a hub (`buildAdminUrlRules` says what
+   * each state yields). While `ADMIN_HUBS_LIVE` is off, a moved page's hub URL
+   * redirects (307) to its old URL, and the `beforeFiles` rewrite above serves
+   * the old URL from the moved file, so the proxy, the module gate and the
+   * layout guard still see the old path. Next matches these rules whatever the
+   * letter case, and the guards do not, so the proxy answers a page path spelled
+   * any other way with a 404 (`isInexactAdminPagePath`): admin page URLs are
+   * served only at their exact spelling. Once on, the old URL redirects to the
+   * hub URL and there are no rewrites. C4 (#4801) has moved the Website pages,
+   * C5 (#4802) the Finance pages, C6 (#4803) the Fees & booking rules pages,
+   * C7 (#4804) the Help & system pages and C8 (#4805) the Messages & email
+   * pages, so those rules are live while the switch stays off.
+   *
+   * The pages S1 (#4796) merged into others (`src/lib/admin-hubs/retired.ts`)
+   * each have a redirect in both states, FIRST in the list so no moved page's
+   * pattern can claim a retired URL: from the retired URL straight to where the
+   * page it was merged into is served, at its tab or section, query kept. They
+   * are 307s for their first release, so a rollback leaves no cached redirect
+   * to a tab the old code lacks, and become 308s one release later. Next runs
+   * these redirects before the proxy, so nothing is served at a retired URL.
+   * `next-config-admin-hub-urls.test.ts` proves both, through Next's own
+   * pipeline.
+   *
+   * The rewrite is `beforeFiles`, as the epic plan fixes it: it is a moved
+   * page's only route at its old path, so it is applied before Next consults the
+   * filesystem or any dynamic route, and an old URL can neither fall through to
+   * the `(website)/[...slug]` catch-all nor be shadowed by a file left behind.
+   * These are the config's only redirects and only `beforeFiles` rewrites
+   * (`withSentryConfig` adds a rewrite only for a `tunnelRoute`, which is not
+   * set), so no existing rule's order or behaviour changes.
+   *
+   * Relative imports for the same reason as the line above: the registry uses
+   * relative imports only, and nothing in it reaches a `server-only` module.
+   */
+  async redirects() {
+    return [...buildAdminUrlRules(ADMIN_HUBS_LIVE).redirects];
   },
 };
 

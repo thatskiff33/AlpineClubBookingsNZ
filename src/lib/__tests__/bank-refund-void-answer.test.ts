@@ -147,10 +147,16 @@ describe("recordHandMadeRefundNoteLink under the link's own row lock (#4288)", (
   const note = { creditNoteId: "cn-hand", creditNoteNumber: "CN-0123", amountCents: 20_000, status: "AUTHORISED", total: 200, updatedDateUTC: "2026-06-30T21:15:04.123Z" };
   /**
    * A transaction client for the real link funnel. `tracked` is what the
-   * unlocked check reads; `stored` is the row as the funnel reads it under its
-   * lock - a void that committed in between shows only there.
+   * record read sees before the link lock; `stored` is the row as the funnel
+   * reads it under that lock. A void that commits only under the lock shows
+   * in `stored` alone. An explicit void holds the Payment row (#4200), so it
+   * can commit before the record read and show in `tracked` as well.
    */
-  function fakeTx(stored: { metadata: unknown; active: boolean } | null, resolvedRow: { id: string } | null = null) {
+  function fakeTx(
+    stored: { metadata: unknown; active: boolean } | null,
+    resolvedRow: { id: string } | null = null,
+    tracked: Array<{ localModel: string; localId: string; role: string; active: boolean; metadata: unknown }> = [],
+  ) {
     // The link row as the funnel leaves it: the upsert's columns, then (#4445)
     // its one-statement metadata merge, applied by the shared double.
     let row: { id: string; active: boolean; metadata: unknown } | null = null;
@@ -169,7 +175,7 @@ describe("recordHandMadeRefundNoteLink under the link's own row lock (#4288)", (
       xeroSyncOperation: { findFirst: findResolvedRow },
       payment: { findUnique: vi.fn(async () => ({ source: "INTERNET_BANKING", xeroRefundCreditNoteId: null })), updateMany: vi.fn() },
       xeroObjectLink: {
-        findMany: vi.fn(async () => []),
+        findMany: vi.fn(async () => tracked),
         createMany: vi.fn(async () => ({ count: 0 })),
         findUnique: vi.fn(async () => stored),
         findUniqueOrThrow: vi.fn(async () => ({ ...row! })),
@@ -208,6 +214,27 @@ describe("recordHandMadeRefundNoteLink under the link's own row lock (#4288)", (
       active: true,
       metadata: expect.objectContaining({ status: "AUTHORISED", providerUpdatedAt: "2026-06-30T21:15:04.123Z", perDelta: true, handBackTaskId: "task-1" }),
     }));
+  });
+
+  it("MUTATION (#4200): this payment's own voided mirror, already visible to the record read, is still the voided-while-recording refusal", async () => {
+    const metadata = { status: "VOIDED", total: 200, providerUpdatedAt: "2026-06-30T22:00:00.000Z" };
+    const { tx } = fakeTx(
+      { metadata, active: false },
+      null,
+      [{ localModel: "Payment", localId: "pay-1", role: "REFUND_CREDIT_NOTE", active: false, metadata }],
+    );
+    await expect(record(tx)).rejects.toMatchObject({ status: 409, message: expect.stringContaining("CN-0123 was voided in Xero while this answer was being recorded") });
+  });
+
+  it("a voided mirror on another payment is still already recorded, and nothing is written", async () => {
+    const metadata = { status: "VOIDED", total: 200 };
+    const { tx, upsert } = fakeTx(
+      null,
+      null,
+      [{ localModel: "Payment", localId: "pay-other", role: "REFUND_CREDIT_NOTE", active: false, metadata }],
+    );
+    await expect(record(tx)).rejects.toMatchObject({ status: 409, message: expect.stringContaining("CN-0123 is already recorded against another refund") });
+    expect(upsert).not.toHaveBeenCalled();
   });
 
   it("MUTATION (re-check): a void that committed after the check is refused under the lock, so the completion rolls back", async () => {

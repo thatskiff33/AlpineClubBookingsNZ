@@ -11,6 +11,7 @@ import type {
 } from "@/lib/finance-dashboard-page/model";
 import type { ClubDateFormat } from "@/lib/club-time";
 
+import { adminHref } from "@/lib/admin-hubs";
 const SYNC_HEALTH_BADGE_TONES: Record<FinanceSyncHealthTone, BadgeVariant> = {
   green: "success",
   amber: "warning",
@@ -85,7 +86,7 @@ export async function buildSyncHealthDashboard(
         label: "Fixing issues",
         description:
           "Failed or pending operations are retried from the Xero admin console; category mapping gaps are fixed in the setup mappings panel.",
-        href: "/admin/xero",
+        href: adminHref("xero"),
         linkLabel: "Open Xero admin",
       },
     ],

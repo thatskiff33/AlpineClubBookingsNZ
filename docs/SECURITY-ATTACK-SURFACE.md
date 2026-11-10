@@ -212,8 +212,9 @@ These family rules are enforced by automated tests (issue #1132):
   runs the real guards (#2975). The three above check that a route reaches a
   guard, and that the map assigns the area somebody reviewed; every per-route
   suite mocks `@/lib/session-guards` and therefore says nothing about
-  `requireAdmin` itself. This suite discovers every admin page and `/api/admin`
-  route from disk and puts each one to the real `requireAdmin` and the real
+  `requireAdmin` itself. This suite discovers every `/api/admin` route from
+  disk, takes every admin page from the hub registry at both its old path and
+  its hub path (#4799), and puts each one to the real `requireAdmin` and the real
   `guardAdminLayout`, through the `x-pathname` / `x-request-method` headers
   `src/proxy.ts` stamps, for sixteen access-role grids — fourteen single-area
   holders (each of the seven areas at `view`, and again at `edit`), a Full Admin
@@ -242,6 +243,27 @@ These family rules are enforced by automated tests (issue #1132):
   route's ADR-002 admission, the joining-fee preview, which is gated on
   `finance:view` in its own source, and the read of the club's currency and
   locale (#3596), whose write stays Full Admin).
+- `src/lib/__tests__/admin-hub-route-parity.test.ts` guards the admin PAGE half
+  of the map, which since #4799 is generated from the hub registry
+  (`src/lib/admin-hubs/security-map.ts`) for every page's old path and hub path:
+  the route-map prefixes, the fee console, Rooms & Beds and any-admin admission
+  paths, and the admin page module gates. It measures them against a frozen
+  copy of the hand-written tables they replaced. Every page's old and hub path,
+  a child below it, its trailing slash and every directory above it must give
+  the same admission and sidebar answer for the sixteen grids above and every
+  seeded role, the same requirement for GET and POST, and the same module
+  gates. It also fails a registered page that falls through to the `overview`
+  catch-all, and a route-map entry placed ahead of a longer entry of another
+  area beneath it, because the resolver takes the first match, not the longest.
+  Three route-map prefixes, those of the pages S1 (#4796) merged into others
+  that had one (`/admin/setup/booking-rules`, `/admin/membership-cancellation`,
+  `/admin/family-suggestions`), are left out of the comparison by name, and
+  only those (`ORACLE_RETIRED_PREFIXES`); the other two retired pages sat under
+  `/admin/setup`'s own prefix. A retired page has no entry, because its redirect
+  in `next.config.ts` (a 307 for its first release, permanent one release
+  later) runs before the proxy and nothing is served at its URL. `admin-route-area-matrix.test.ts` keeps each one's former area and
+  checks its destination admits on the same area, bar the one reviewed change
+  (`/admin/setup/cancellation`, `support`, now a `membership` tab: narrower).
 
 ### Public or Provider-Signed Exceptions
 
@@ -499,6 +521,11 @@ this page already learnt about once, from the rotation runbook two sections up.
   an administrator behind them and name that person instead.
 - `e2e-stripe-seed` — the E2E staging stack seeding Stripe test-mode keys.
   Never a real deployment.
+- `data-key-reencrypt` — an operator ran `pnpm run data-keys:reencrypt`
+  (#4456), which re-encrypted the credential, unchanged, under the current
+  data-encryption key, claimed on the version it read
+  (`cause: data-key-reencrypt`). No member is signed in to the run, so no
+  member id is recorded; the operator's own records say who ran it.
 
 **A verify-RESET is not on this list, deliberately.** Dropping a verified marker
 because a credential changed is part of the administrator's write, so those

@@ -832,15 +832,17 @@ jobs:
 
       # #4463: every PR says whether it deviates materially from its issue's
       # plan (`## Plan Deviation`: `None`, or items linking the owner's answer).
-      # WARNING ONLY until `PLAN_DEVIATION_ENFORCED` in the script is flipped
-      # (owner decision, 1 Nov 2026: warn for seven days, then fail); a warning
-      # is a `::warning::` annotation and the step exits 0.
+      # Enforced after the warning week (#4633): missing, empty or unlinked
+      # answers fail. Only dependency manifests and the lockfile are exempt;
+      # an unknown diff cannot grant the exemption.
       - name: Validate PR plan deviation
         if: github.event_name == 'pull_request'
         env:
           PR_BODY_FILE: ${{ runner.temp }}/pr-body.md
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node scripts/ci/check-pr-plan-deviation.mjs
 
       # #4463: a PR over 800 changed lines (`linguist-generated` files in
@@ -1203,6 +1205,89 @@ jobs:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-merge-shared-double-races.realdb.test.ts
 
+      # #4823: member merge takes its Payment rows last and NOWAIT, because
+      # lock(1) writers take a booking's Payment and booking rows in both orders.
+      # Whether that leaves a wait-for cycle is a claim about PostgreSQL itself:
+      # a mock pins the statement, only this suite shows a card settle and the
+      # edit-door order racing a merge, in both orders, with no deadlock. It
+      # self-skips without the env vars (same #1881 harness and database), so
+      # `review-findings-contracts.test.ts` fails if this step goes missing.
+      - name: Test member-merge Payment row races against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-merge-payment-row-races.realdb.test.ts
+
+      # #4840: a manual settle and an edit review's closure take the booking row
+      # before they name their officer (on the Payment row, in the task's claim),
+      # because member merge holds booking rows and then takes Member FOR UPDATE. Whether that leaves a wait-for cycle is a claim
+      # about PostgreSQL itself, which only this suite shows, in both orders. It
+      # self-skips without the env vars (same #1881 harness and database), so
+      # `review-findings-contracts.test.ts` fails if this step goes missing.
+      - name: Test member-merge officer settle races against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-merge-officer-settle-races.realdb.test.ts
+
+      # #4853: a policy-exception approval on an existing booking takes the
+      # booking row before its claim, as the change-request approval does (#4845).
+      # Self-skips without the env vars; `review-findings-contracts.test.ts` pins it.
+      - name: Test member-merge policy-exception races against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-merge-policy-exception-races.realdb.test.ts
+
+      # #4845: a locked-period change-request approval takes the booking row
+      # before its claim names the officer and holds the request row member merge
+      # re-points. Only this suite shows PostgreSQL forms no wait-for cycle, for
+      # both cycles in both orders. It self-skips without the env vars (same
+      # #1881 harness and database), so `review-findings-contracts.test.ts` fails
+      # if this step goes missing.
+      - name: Test member-merge change-request races against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-merge-change-request-races.realdb.test.ts
+
+      # #4850: member hard-delete locks the booking rows naming the member before
+      # its Member-row fence, the order the settle and the review closure take.
+      # Only this suite shows PostgreSQL forms no wait-for cycle, in both orders.
+      # It self-skips without the env vars (same #1881 harness and database), so
+      # `review-findings-contracts.test.ts` fails if this step goes missing.
+      - name: Test member hard-delete officer races against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-delete-officer-races.realdb.test.ts
+      # #4857: a held booking-request approval takes the held booking's row
+      # before its claim and guest swap, whose member links take Member key
+      # shares that member merge locks FOR UPDATE after holding booking rows.
+      # Only this suite shows PostgreSQL forms no wait-for cycle, in both orders.
+      # It self-skips without the env vars (same #1881 harness and database), so
+      # `review-findings-contracts.test.ts` fails if this step goes missing.
+      - name: Test member-merge booking-request races against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-merge-booking-request-races.realdb.test.ts
+      # #4855: member merge never waits for a Member row while holding another,
+      # and refuses with a 409 when a row still names the duplicate under its
+      # Member rows. Only this suite shows an officer who is the duplicate,
+      # racing the merge with no booking row between them, forms no wait-for
+      # cycle and keeps what it recorded. It self-skips without the env vars
+      # (same #1881 harness and database), so `review-findings-contracts.test.ts`
+      # fails if this step goes missing.
+      - name: Test member-merge loser-officer races against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-merge-loser-officer-races.realdb.test.ts
+      # #4876: member merge rolls back every row it has re-pointed before it
+      # waits for a Member row, so a writer that already holds a participant's
+      # key share and then needs one of those rows cannot deadlock it. Only
+      # this suite shows that on PostgreSQL. It self-skips without the env vars
+      # (same #1881 harness and database), so `review-findings-contracts.test.ts`
+      # fails if this step goes missing.
+      - name: Test member-merge moved-row races against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-merge-moved-row-races.realdb.test.ts
+
       # #3583: the booking ledger's cut-over gate, run the way the owner runs it
       # (docs/MAINTENANCE.md) over a seeded history: booking histories made by
       # the REAL writers with their lines stripped, in a database of their own on
@@ -1288,6 +1373,17 @@ jobs:
         env:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-money-posting.realdb.test.ts
+
+      # #4691 (Ledger M4a): applications, caps and refund reservations against
+      # real PostgreSQL, as the INSERT/SELECT-only application role. The caps,
+      # the Payment-row queue and the database backstops are PostgreSQL
+      # behaviour. Same shape as the step above. It describe.skip's itself
+      # without the env vars, so this step MUST stay wired —
+      # `review-findings-contracts.test.ts` fails if it goes missing.
+      - name: Prove the member-money application engine against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-money-applications.realdb.test.ts
 
       # E8 (#1934): real-Postgres behavior of the member-grouping cutover
       # migration (legacy-rule deactivation, shape-dedupe, backfill, mode seed,
@@ -1493,10 +1589,11 @@ jobs:
   realdb-all:
     name: Real-PostgreSQL suites (all, advisory)
     runs-on: ubuntu-latest
-    # PR CI measured this job at 9m02s (#4476): 20 minutes leaves room for a
-    # slower runner and growing suites, where 45 would let a hung run hold a
-    # runner for most of an hour.
-    timeout-minutes: 20
+    # PR CI measured this job at 9m02s (#4476). By 8 Nov 2026 it took 16-18
+    # minutes on `main` and was cancelled at the old 20-minute limit in 4 of 7
+    # runs, so a cancelled run proved nothing (#4793). 35 is about twice the
+    # current run time and still frees a hung runner well inside the hour.
+    timeout-minutes: 35
     permissions:
       contents: read
     services:

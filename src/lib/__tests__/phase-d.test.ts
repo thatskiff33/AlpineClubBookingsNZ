@@ -383,7 +383,7 @@ describe("#34: Reports page PDF button", () => {
     // We can't fully render React components in unit tests, but we can verify
     // the module exports correctly. Importing this client page pulls in a large
     // UI dependency graph, so give the module load a realistic timeout budget.
-    const mod = await import("@/app/(admin)/admin/reports/page");
+    const mod = await import("@/app/(admin)/admin/finance/reports/page");
     expect(mod.default).toBeDefined();
     expect(typeof mod.default).toBe("function");
   }, 20_000);

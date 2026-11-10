@@ -140,9 +140,10 @@ an ordinary producer locks its exact owner/actor Member participants with sorted
 linked members `FOR KEY SHARE`, then re-reads every row as active and unarchived
 before its versioned claim or any guest creation. Hold-first makes the standing
 mutation retry; standing-first makes the hold wait and then refuse the now-inactive
-member in every hosting consequence mode. Member merge takes one sorted blocking
-`FOR UPDATE` set, re-plans, and sweeps late owner and actor rows before deleting the
-loser. If either side cannot prove the exact attribution, the complete mutation
+member in every hosting consequence mode. Member merge takes its participant set
+`FOR UPDATE`, all at once and never holding one row while waiting for another
+(#4855), re-plans, refuses if any row still names the loser, and sweeps late owner
+and actor rows before deleting the loser. If either side cannot prove the exact attribution, the complete mutation
 returns the safe retry outcome and none of the booking, member, queue or incident
 states advance. Merge-generated work is actorless; the critical `MEMBER_MERGED`
 audit remains its human attribution.
@@ -901,11 +902,15 @@ after commit, the minter
        when withdrawn, or FAILED with a queued Stripe cancellation, the
        supersede stamp, or Stripe reporting the intent cancelled or gone; a
        declined card (FAILED alone, still open at Stripe) is payable (#4052)
-later increase while a re-issue still waits -> folds it in: one ask for both,
-  the re-issue's recovery closed under the same fence, the fold recorded on the
-  increase's history (its replay asks again; the re-issue's invoice waits on
-  the increase's intent once minted); a stalled runner's unwritten intent is
-  cancelled as a net-off's is (#4631)
+later increase while a re-issue or increase retry still waits -> folds it in:
+  one ask for both, the waiting recovery closed under the same fence, the fold
+  recorded on history (its replay asks again; each folded invoice waits on the
+  increase's intent once minted). The folding ask is durable from commit (#4744).
+  A claim under two minutes returns 409 even after its row is written; an older
+  claim whose row exists keeps its invoice completion and its row is carried.
+  A stalled runner's unwritten intent is cancelled as a net-off's is (#4631).
+  Nested invoice totals are split by billing edit before a reduction counts
+  parked invoices, so a partially queued fold neither loses nor repeats money.
 chase -> reads the mirror: a cancelled ask stops, a re-issued one is chased at its new amount
 ```
 
@@ -4568,6 +4573,9 @@ PROCESSING -> attempt throws
   CREATE_ADDITIONAL_PAYMENT_INTENT whose ask write found its intent recorded
   for another edit            -> FAILED terminal at once: nextRetryAt null, attempts set
                                  to the ceiling, the cause on lastError + one officer alert
+  card refund whose slice's reservation the journal refused (#4516, M4c)
+                              -> FAILED terminal at once, the same way; Stripe was not
+                                 asked for that slice; settled by "Paid another way"
 ```
 
 Every terminal row sits at the attempt ceiling, so the claim, the health check
@@ -4605,7 +4613,12 @@ Another door's refund listed but not yet recorded comes off the ask, so an
 attempt without a stored plan never asks Stripe for more than the charge still
 holds (a stored plan's slices are sent as written, #4103); one that leaves
 nothing, or the row's own refund an earlier attempt made, takes the
-nothing-outstanding branch below on that same attempt.
+nothing-outstanding branch below on that same attempt. #4858: one that leaves
+something to ask, made by another door since the row was raised, holds the row
+instead (the `INV-PAY-145` hold: dead, alerted and
+audited, nothing sent). Sized on it, the row would ask for the rest; were that
+refund to fail later while the row was open, its own failed-later row and this
+row, re-sized, would both pay it.
 
 ```text
 attempt makes and records the refund -> report (once per row) -> close
@@ -4700,6 +4713,10 @@ PROCESSING -> FAILED  (Stripe answered a slice failed/canceled: re-planned on th
 PROCESSING -> FAILED  (charge-backed preflight finds a counted outside-app refund
                        on a planned charge since this debt arose: DEAD immediately,
                        no retry, audited and alerted; no slice sent; INV-PAY-145)
+PROCESSING -> FAILED  (#4858: a superseded refund with no stored plan, still owing,
+                       that the owed figure credits with a refund its own request
+                       did not make - another door's since it was raised: the
+                       same hold, nothing sent; INV-PAY-145)
 PROCESSING -> FAILED  (attempts spent: DEAD, alerted once; still owed)
 (none) -> PENDING     (a refund Stripe accepted, then failed: a new row per
                        Stripe refund, card_refund_failed_later_<refund>, under
@@ -4723,8 +4740,41 @@ DEAD -> SUCCEEDED     ("Paid another way": finance:edit, lock(1), then the
                        of it, as the treasurer chooses - is recorded
                        on the payment with applyLocalRefundAllocation; a
                        COMPLETED hand-back task and its BANK_REFUND line record
-                       it; audited under `payment`)
+                       it; audited under `payment`; #4516: R14 posts and the
+                       row's reservations close without a refund)
+(none) -> DEAD        (#4516, owner 2 Nov 2026: a part close the treasurer says
+                       is "still owed" carries the rest to a row of its own,
+                       card_refund_still_owed_<task>, born dead (PENDING, attempts spent); a later close
+                       settles it. "The club keeps it" raises none)
+DEAD -> SUCCEEDED     (#4368 "Nothing left owed": finance:edit, lock(1), then the
+                       Payment row; refused (409) unless what is owed reads $0,
+                       nothing of its own is unsent, and the Stripe refunds the
+                       attribution gives it are the ones the treasurer saw; the same status-guarded claim, on the plan
+                       read; lastError is the nothing-left-owed marker; no
+                       money, journal, Stripe or Xero change; audited under
+                       `payment`; INV-PAY-149)
+DEAD -> PENDING       (#4368 "Try the card again": finance:edit, lock(1), then the
+                       Payment row; refused (409) where the app cannot show a
+                       re-send would not pay twice (tryCardAgainRefusal: any
+                       failed-later row on the payment, a may-have-refunded
+                       failure, unmarked slices not adding up to what is
+                       owed; or an unmatched refund of the same kind Stripe
+                       lists) or the owed figure or plan moved; the same status-guarded claim, on the plan read;
+                       rearmedPaymentRecoveryOperationData - attempts 0, due
+                       now; the runner's INV-PAY-145 preflight runs before any
+                       send; audited under `payment`; INV-PAY-149)
 ```
+
+The three settlements of a dead row - "Paid another way", "Nothing left
+owed" and "Try the card again" - claim it on one guard (dead, on the plan
+read) under the same `lock(1)` and Payment row, and each moves it off that
+guard, so whichever commits first wins and the others write nothing: a closed
+row is never re-armed, and a re-armed row is offered no close until its
+retries are spent again (#4368, #4492).
+
+Before a keyed slice is sent, the journal reserves its debt (`refundPaymentTransactions`,
+#4516). A refused reservation sends nothing and stops the row as above; a
+reservation the re-plan's next key supersedes is released with its funding.
 
 Before an ordinary charge-backed recovery sends any unmarked slice, its
 preflight reads Stripe once per involved intent, outside every transaction
@@ -4941,7 +4991,8 @@ organiser-cancel settlement's refund (`isOwedCardRefundOperation`); a
 superseded intent's refund closes whole, never at nil, and only while its
 charge still holds exactly what it owes. The rules are
 `INV-PAY-121` and `INV-PAY-122`; the lock is registered as
-`closeCardRefundPaidAnotherWay#1`. To verify:
+`lockDeadCardRefundRow#1`, shared with "Nothing left owed" and "Try the card
+again" (#4368). To verify:
 `card-refund-paid-another-way.test.ts`, `open-card-refund-owed.test.ts`,
 `xero-kept-late-capture-ledger.test.ts` (round 6: the Xero books of a late
 charge's close, whatever order the outbox runs in) and
@@ -5028,6 +5079,37 @@ Enrollment waits for explicit **Continue** so the member can save recovery codes
 Rendered panel tests cover accepted, pending, rejected and network-failed requests;
 direct browser journeys require protected content after Continue and verification,
 without a later helper navigation (#4060).
+
+## Recent authentication (#4616)
+
+A session carries `lastAuthenticatedAt`, separate from `sessionIssuedAt`.
+`requireRecentAuth` (`INV-AUTH-008`) is the one check. No route calls it yet
+(#4619).
+
+```text
+sign-in completes -> lastAuthenticatedAt = now
+  password or Google, no second factor left -> the jwt sign-in branch
+  second factor required -> consuming the two-factor session challenge
+session.update carrying lastAuthenticatedAt -> ignored
+step-up proof accepted -> server mints SessionReauthChallenge (keyed hash, two minutes, one member)
+  authenticator-app code when they have an app
+  passkey when one exists (#4617); until then that proof never succeeds
+  password only when they have neither
+  emailed code or recovery code -> refused, and the failure counts
+session update carrying that challenge -> jwt callback claims the row (consumedAt was null) -> lastAuthenticatedAt = now
+replay, expiry, another member, or a forged token -> claim matches nothing, stamp unchanged
+five wrong authenticator proofs -> the existing two-factor lockout
+wrong password proofs -> the existing per-account password throttle
+requireRecentAuth -> pass while the stamp is at most 5 minutes old; otherwise 403 REAUTH_REQUIRED
+the dialog replays the refused request once, body unchanged; a second refusal is not replayed
+```
+
+To verify: `recent-auth.test.ts` (the window on the frozen clock, and the typed
+refusal), `auth-session-refresh.test.ts` (a client-supplied stamp is ignored; a
+consumed challenge refreshes it), `session-reauth.test.ts` (an emailed code is
+refused and a failed proof counts), `session-reauth.realdb.test.ts` (two
+concurrent consumes, one success), and `confirm-its-you-dialog.test.tsx` (the
+replay is once, body unchanged).
 
 ## Password Sign-In Throttle (#4609)
 

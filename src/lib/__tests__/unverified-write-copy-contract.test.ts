@@ -534,7 +534,7 @@ describe("unverified-write copy contract (#2668)", () => {
         mustContain: "const UNVERIFIED_COPY",
       },
       {
-        file: "src/app/(admin)/admin/notifications/notifications-settings.tsx",
+        file: "src/app/(admin)/admin/messages/notifications/notifications-settings.tsx",
         outcome: "these notification preferences were saved",
         // "Not saved" survives for a batch the SERVER refused outright; what
         // must not come back is saying it when an outcome was never read.

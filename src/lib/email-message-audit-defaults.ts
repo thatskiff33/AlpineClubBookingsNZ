@@ -2,6 +2,7 @@
 // render path. Keep template keys and wording aligned when the registry changes.
 import { BOOKING_URL_TEMPLATE_NAMES } from "@/lib/booking-email-template-contract";
 
+import { adminHref } from "@/lib/admin-hubs";
 const EMAIL_AUDIT_DEFAULTS_BASE = {
   "password-reset": {
     "defaultSubject": "Reset your {{CLUB_NAME}} password",
@@ -273,7 +274,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "admin-payment-failure": {
     "defaultSubject": "Payment Failed — {{CLUB_BOOKINGS_NAME}}",
-    "defaultBody": "Payment Failed\n\nA payment has failed and may require manual attention.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nAmount: {{amount}}\nError: {{errorMessage}}\nReference: {{paymentIntentId}}\n\nView Payments: {{BASE_URL}}/admin/payments"
+    "defaultBody": "Payment Failed\n\nA payment has failed and may require manual attention.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nAmount: {{amount}}\nError: {{errorMessage}}\nReference: {{paymentIntentId}}\n\nView Payments: {{BASE_URL}}" + adminHref("payments")
   },
   "admin-duplicate-capture-refund": {
     "defaultSubject": "Duplicate capture auto-refunded: {{memberName}}",
@@ -403,11 +404,11 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "admin-xero-sync-error": {
     "defaultSubject": "Xero Sync Error — {{CLUB_BOOKINGS_NAME}}",
-    "defaultBody": "Xero Sync Error\n\nA Xero integration error occurred and may require attention.\n\nError Type: {{errorType}}\nOperation: {{operation}}\nError Message: {{errorMessage}}\nTimestamp: {{timestamp}}\n\nView Xero Status: {{BASE_URL}}/admin/xero"
+    "defaultBody": "Xero Sync Error\n\nA Xero integration error occurred and may require attention.\n\nError Type: {{errorType}}\nOperation: {{operation}}\nError Message: {{errorMessage}}\nTimestamp: {{timestamp}}\n\nView Xero Status: {{BASE_URL}}" + adminHref("xero")
   },
   "admin-xero-repeated-failure": {
     "defaultSubject": "Repeated Xero Failure: {{correlationKey}}",
-    "defaultBody": "Repeated Xero Failures\n\nThe same Xero sync correlation key has failed repeatedly and now needs operator attention.\n\nCorrelation Key: {{correlationKey}}\nFailures in Window: {{failureCount}} in the last {{windowHours}} hour(s)\nEntity: {{entityType}}\nOperation: {{operationType}}\n{{localRecordNote}}{{latestErrorNote}}Timestamp: {{timestamp}}\n\n{{xeroLinksNote}}Open Xero Admin: {{BASE_URL}}/admin/xero"
+    "defaultBody": "Repeated Xero Failures\n\nThe same Xero sync correlation key has failed repeatedly and now needs operator attention.\n\nCorrelation Key: {{correlationKey}}\nFailures in Window: {{failureCount}} in the last {{windowHours}} hour(s)\nEntity: {{entityType}}\nOperation: {{operationType}}\n{{localRecordNote}}{{latestErrorNote}}Timestamp: {{timestamp}}\n\n{{xeroLinksNote}}Open Xero Admin: {{BASE_URL}}" + adminHref("xero")
   },
   "admin-xero-reconciliation-report": {
     "defaultSubject": "Xero Reconciliation Report - {{issueTotalCount}} item{{s}}",
@@ -419,7 +420,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "admin-refund-request": {
     "defaultSubject": "Refund Appeal: {{memberName}}",
-    "defaultBody": "Refund Appeal Submitted\n\n{{memberName}} has submitted a refund appeal.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nPaid: {{paidAmount}}\nAlready Refunded: {{refundedAmount}}\nRemaining: {{remainingAmount}}\n{{requestedAmountNote}}\n{{reason}}\n\nReview Appeal: {{BASE_URL}}/admin/refund-requests"
+    "defaultBody": "Refund Appeal Submitted\n\n{{memberName}} has submitted a refund appeal.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nPaid: {{paidAmount}}\nAlready Refunded: {{refundedAmount}}\nRemaining: {{remainingAmount}}\n{{requestedAmountNote}}\n{{reason}}\n\nReview Appeal: {{BASE_URL}}" + adminHref("refund-requests")
   },
   "admin-booking-change-request": {
     "defaultSubject": "Booking Change Request: {{memberName}}",

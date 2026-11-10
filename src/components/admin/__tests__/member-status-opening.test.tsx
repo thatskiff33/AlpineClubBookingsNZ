@@ -56,7 +56,7 @@ describe("finance-only E2E boundary", () => {
 
   it("keeps both Xero sync actions on finance edit with a same-tick guard", () => {
     const source = readFileSync(
-      resolve(process.cwd(), "src/app/(admin)/admin/subscriptions/page.tsx"),
+      resolve(process.cwd(), "src/app/(admin)/admin/finance/subscriptions/page.tsx"),
       "utf8",
     );
     const headerActions = source.match(

@@ -54,6 +54,13 @@ const mocks = vi.hoisted(() => ({
 
 // #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
 const cancellationLedger = vi.hoisted(() => ({ postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}) }));
+// #4516 (M4c): R05 posts on PostgreSQL (`member-money-refunds.realdb.test.ts`), not on this fake store.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  postRefundObligation: vi.fn(async () => null),
+  withdrawRefundObligation: vi.fn(async () => false),
+}));
+
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
 
 const appliedCredit = vi.hoisted(() => ({
@@ -148,6 +155,11 @@ vi.mock("@/lib/logger", () => ({
     info: vi.fn(),
     debug: vi.fn(),
   },
+}));
+
+// #4866: no live superseded capture on these payments (`superseded-capture-hold-back.test.ts`, its realdb proof).
+vi.mock("@/lib/superseded-capture-hold-back", () => ({
+  readSupersededCaptureHeldBack: vi.fn(async () => ({ byTransaction: new Map(), totalCents: 0 })),
 }));
 
 vi.mock("@/lib/payment-transactions", () => ({

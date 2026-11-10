@@ -17,16 +17,25 @@ import { PaymentStatus } from "@prisma/client";
  * folds onto the row inserted first; `apply` returns what the row actually
  * took, and the rest moves on to the next row.
  */
-export async function foldMirrorRefundIntoLedger<R extends { refundedAmountCents: number }>(
+export async function foldMirrorRefundIntoLedger<R extends { id: string; amountCents: number; refundedAmountCents: number }>(
   payment: { status: PaymentStatus | string; refundedAmountCents: number },
   readCapturedRowsOldestFirst: () => Promise<readonly R[]> | readonly R[],
   apply: (row: R, cents: number) => Promise<number> | number,
+  /**
+   * #4866 (`INV-PAY-150`): a cancellation's live superseded captures
+   * (`readSupersededCaptureHeldBack`): the fold never lands in those cents, so
+   * their own refund still finds them. None by default, and an empty map
+   * folds exactly as none.
+   */
+  heldBackByTransaction?: ReadonlyMap<string, number>,
 ): Promise<void> {
   if (payment.status !== PaymentStatus.PARTIALLY_REFUNDED) return;
   const rows = await readCapturedRowsOldestFirst();
   let foldedCents = payment.refundedAmountCents - rows.reduce((sum, row) => sum + row.refundedAmountCents, 0);
   for (const row of rows) {
     if (foldedCents <= 0) break;
-    foldedCents -= await apply(row, foldedCents);
+    const heldCents = heldBackByTransaction?.get(row.id);
+    const askCents = heldCents === undefined ? foldedCents : Math.min(foldedCents, Math.max(0, row.amountCents - row.refundedAmountCents - heldCents));
+    if (askCents > 0) foldedCents -= await apply(row, askCents);
   }
 }

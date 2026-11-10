@@ -149,7 +149,7 @@ describe("the shortfall task is a cancellation's own hand-back (#4097)", () => {
   });
 
   it("counts as owed while OPEN, and not once closed", () => {
-    const row = { ...task, amountCents: 4_000, partPaymentReviewPaymentId: null };
+    const row = { ...task, amountCents: 4_000, partPaymentReviewPaymentId: null, reason: "Card refund shortfall (fixture)" };
     expect(openHandBackOwedCents([{ ...row, status: "OPEN" }])).toBe(4_000);
     expect(openHandBackOwedCents([{ ...row, status: "COMPLETED" }, { ...row, status: "DISMISSED" }])).toBe(0);
   });

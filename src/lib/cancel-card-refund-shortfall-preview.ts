@@ -9,6 +9,8 @@ import { foldMirrorRefundIntoLedger } from "@/lib/mirror-refund-fold";
 import { paidCancellationBranch } from "@/lib/paid-cancellation-event";
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { withReadOnlySnapshot } from "@/lib/read-only-snapshot";
+import { supersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
+import { readSupersededCaptureOwnership } from "@/lib/superseded-intent-ownership";
 import {
   legacyBackfillRows,
   loadPaymentWithTransactions,
@@ -27,7 +29,10 @@ import {
  *    in the claim's row order (`LEDGER_ROWS_OLDEST_FIRST`, through the loader);
  * 2. a pre-ledger payment's charges are read as its backfill would write them
  *    (`legacyBackfillRows`) - a GET must not write them, racing the cancel's own;
- * 3. the card plan is the claim's own planner (`planCardRefundFromLedger`);
+ * 3. the card plan is the claim's own planner (`planCardRefundFromLedger`),
+ *    leaving the live superseded captures alone as the claim does
+ *    (`supersededCaptureHeldBack`, #4866, read before step 1, whose fold
+ *    leaves them alone too);
  * 4. the rest is split by the non-card charges' headroom (`nonCardChargeHeadroom`,
  *    `sizeCancelCardShortfall`).
  *
@@ -42,11 +47,13 @@ export async function previewCancelCardRefundSplit(
   if (!payment) throw new Error("Payment not found");
   const rows = payment.transactions.map((row) => ({ ...row }));
   const captured = () => rows.filter((row) => isCapturedTransactionStatus(row.status));
+  // #4866: the live superseded captures, read before the fold as the claim reads them, which neither it nor the plan takes.
+  const heldBack = supersededCaptureHeldBack(await readSupersededCaptureOwnership(db, params.paymentId), rows);
   await foldMirrorRefundIntoLedger(payment, captured, (row, cents) => {
     const taken = refundHeadroomIncrementCents(row, cents);
     row.refundedAmountCents += taken;
     return taken;
-  });
+  }, heldBack.byTransaction);
   // A backfilled row is the newest (inserted after every stored row, #4132); only the planned total is read here,
   // and it does not depend on the order.
   const lastSeq = rows.reduce((max, row) => Math.max(max, row.insertionSeq), 0);
@@ -59,7 +66,7 @@ export async function previewCancelCardRefundSplit(
       insertionSeq: lastSeq + 1 + index,
     })),
   ];
-  const { plannedAmountCents: plannedCardRefundCents } = planCardRefundFromLedger(ledger, params.refundAmountCents);
+  const { plannedAmountCents: plannedCardRefundCents } = planCardRefundFromLedger(ledger, params.refundAmountCents, heldBack.byTransaction);
   return sizeCancelCardShortfall(
     { refundAmountCents: params.refundAmountCents, plannedCardRefundCents },
     () => sumHeadroomCents(nonCardChargeHeadroom(ledger.filter((row) => isCapturedTransactionStatus(row.status)))),

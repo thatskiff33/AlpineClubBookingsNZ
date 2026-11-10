@@ -110,6 +110,14 @@ const mocks = vi.hoisted(() => ({
 // #3582: an edit's and a review closure's ledger lines are posted by one sync,
 // proved in its own suites and against Postgres; this suite tests what it
 // always tested.
+// #4516 (M4c): R05 posts on PostgreSQL (`member-money-refunds.realdb.test.ts`), not on this fake store.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  postRefundObligation: vi.fn(async () => null),
+  withdrawRefundObligation: vi.fn(async () => false),
+  closeKeptCaptureReturn: vi.fn(async () => false),
+}));
+
 vi.mock("@/lib/booking-ledger-modification-sync", () => ({
   postModificationLedgerLines: vi.fn().mockResolvedValue(undefined),
   postReviewClosureLedgerLines: vi.fn().mockResolvedValue(undefined),
@@ -279,6 +287,7 @@ vi.mock("@/lib/member-credit", () => {
 });
 
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
+import { closeKeptCaptureReturn, postRefundObligation } from "@/lib/member-money/doors";
 import { EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE } from "@/lib/manual-refund-task-settlement-rules";
 import { editRefundHandBackDismissAfterCancelMessage } from "@/lib/manual-refund-task-copy";
 import { GROUP_MIRROR_HAND_BACK_EXCEEDS_CASH_MESSAGE } from "@/lib/edit-financial-review-refund-refusals";
@@ -886,6 +895,37 @@ describe("#3030 - pricing an unknown amount at completion", () => {
     });
     expect(result.amountCents).toBe(9000);
     expect(result.amountAmended).toBe(false);
+  });
+
+  it("#4840: takes the booking row after lock(1) and before the task re-read that reads the owner, so before the claim names the officer", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Priced from the June invoice: two nights at $45.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 9000,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST);
+
+    // The claim's `completedByMemberId` takes KEY SHARE on the officer's Member row, and member merge
+    // holds booking rows before its Member FOR UPDATE: so the booking row has to come first.
+    const statements = mocks.executeRaw.mock.calls.map(([strings]) => (strings as TemplateStringsArray).join("?"));
+    const bookingRow = statements.findIndex((sql) => sql.includes('FROM "Booking"') && sql.includes("FOR NO KEY UPDATE"));
+    expect(statements[0]).toContain("pg_advisory_xact_lock(1)");
+    expect(bookingRow).toBeGreaterThan(0);
+    expect(statements.filter((sql) => sql.includes('FROM "Booking"'))).toHaveLength(1);
+    const bookingRowAt = mocks.executeRaw.mock.invocationCallOrder[bookingRow]!;
+    // Keyed from the head read (kind and booking id, both written once), and taken before the full
+    // re-read, whose booking owner then decides the credit recipient under the lock (#4844 review F3).
+    expect(mocks.manualRefundTaskFindUnique.mock.calls[0]![0]).toMatchObject({ select: { kind: true, bookingId: true } });
+    expect(bookingRowAt).toBeGreaterThan(mocks.manualRefundTaskFindUnique.mock.invocationCallOrder[0]!);
+    expect(bookingRowAt).toBeLessThan(mocks.manualRefundTaskFindUnique.mock.invocationCallOrder[1]!);
+    expect(mocks.manualRefundTaskFindUnique.mock.calls[1]![0]).toMatchObject({ select: { booking: expect.anything() } });
+    expect(bookingRowAt).toBeLessThan(mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!);
+    expect(bookingRowAt).toBeLessThan(mocks.applyLocalRefundAllocation.mock.invocationCallOrder[0]!);
   });
 
   it("refuses to complete an unpriced task when the caller claims it already has its final amount - the unknown is NOT zero", async () => {
@@ -2688,6 +2728,8 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
           OR: [
             bookingCancelCardRefundRecoveryWhere("booking-1"),
             { paymentId: "payment-1", idempotencyKey: { startsWith: "card_refund_failed_later_" } },
+            // #4516 review M4: and a rest of either still owed after a part "Paid another way" close.
+            { paymentId: "payment-1", idempotencyKey: { startsWith: "card_refund_still_owed_" } },
           ],
         },
         orderBy: { createdAt: "asc" },
@@ -3330,9 +3372,12 @@ describe("recording per-night amounts while settling (#3191)", () => {
     expect(mocks.executeRaw).toHaveBeenCalledTimes(2);
     expect((mocks.executeRaw.mock.calls[1]![0] as unknown as string[]).join("?")).toMatch(/FROM "Booking" WHERE "id" = \? FOR NO KEY UPDATE/);
     expect(mocks.manualRefundTaskFindUnique.mock.calls[0]![0]).toMatchObject({ select: { kind: true } });
+    // #4840 (#4844 review F3): and its booking id, which keys the booking-row lock taken before the
+    // full re-read. Written once at creation like the kind (no writer updates it), so unlocked is safe.
     expect(Object.keys((mocks.manualRefundTaskFindUnique.mock.calls[0]![0] as { select: object }).select)).toEqual([
       "kind",
       "occurrenceKey",
+      "bookingId",
     ]);
     expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.manualRefundTaskFindUnique.mock.invocationCallOrder[1]!,
@@ -4715,7 +4760,16 @@ describe("#3639 - approving a held late-capture refund", () => {
       allocation: slice,
       metadata: { bookingId: "booking-1", reason: "cancelled_booking_late_capture" },
       idempotencyKeyPrefix: "late_cancel_refund_booking-1_pi_late",
+      obligation: { scope: "capture-return", id: "pi_late" }, // #4516: the R05 the completion posted
     });
+    // MUTATION (#4516, M4c probe 10): that R05, posted in the claim beside the debt, its owner read without the
+    // booking row (this claim holds no `lock(1)` until M4d), before Stripe is asked.
+    expect(vi.mocked(postRefundObligation)).toHaveBeenCalledWith(tx, expect.anything(), { bookingId: "booking-1", scope: "capture-return",
+      id: "pi_late", amountCents: 2500, origin: "OFFICER", actorMemberId: "treasurer-1", debtorRead: "plain" });
+    expect(vi.mocked(postRefundObligation).mock.invocationCallOrder[0]).toBeLessThan(mocks.refundPaymentTransactions.mock.invocationCallOrder[0]!);
+    // #4516 review F2: the Payment row before the approval's claim; an approval closes no debt.
+    expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!);
+    expect(vi.mocked(closeKeptCaptureReturn)).not.toHaveBeenCalled();
     // The debt is durable BEFORE Stripe is asked, and the claim came first.
     expect(
       mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0],
@@ -4779,6 +4833,27 @@ describe("#3639 - approving a held late-capture refund", () => {
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
   });
 
+  // #4824 (MUTATION: read the capture before the lock again): a `charge.refunded` sync holds the Payment row while
+  // the approval waits for it, and commits a refund of the capture as it lets go. The plan reads what the capture
+  // holds only once it has the row, so it sees that refund and refuses; a plan read first would refund it again.
+  it("reads what the capture holds under the Payment row, so a refund committed while it waited is refused (#4824)", async () => {
+    armHeldLateCapture();
+    mocks.lockPaymentForRefundedTotal.mockImplementationOnce(async () => {
+      mocks.paymentTransactionFindUnique.mockResolvedValue({
+        id: "txn-late", paymentId: "payment-1", kind: "ADDITIONAL", source: PaymentSource.STRIPE,
+        status: "PARTIALLY_REFUNDED", amountCents: 2500, refundedAmountCents: 1000,
+      });
+    });
+
+    await expect(approve()).rejects.toMatchObject({ status: 409, message: expect.stringContaining("already been refunded") });
+
+    expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(tx, "payment-1");
+    expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.paymentTransactionFindUnique.mock.invocationCallOrder[0]!);
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.enqueueLateCaptureApprovalRefundRecovery).not.toHaveBeenCalled();
+    expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+  });
+
   it("leaves a failed refund to the recovery cron: no close, no refund record", async () => {
     armHeldLateCapture();
     mocks.refundPaymentTransactions.mockRejectedValue(new Error("stripe down"));
@@ -4815,6 +4890,11 @@ describe("#3639 - approving a held late-capture refund", () => {
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
     expect(mocks.enqueueLateCaptureApprovalRefundRecovery).not.toHaveBeenCalled();
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    // MUTATION (#4516 review F2, M5): the Payment row before the claim, as a "Paid another way" close orders them;
+    // then the kept capture's refund debt, if an automatic refund posted one, is closed in the same transaction.
+    expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(tx, "payment-1");
+    expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!);
+    expect(vi.mocked(closeKeptCaptureReturn)).toHaveBeenCalledWith(tx, expect.anything(), { bookingId: "booking-1", paymentIntentId: "pi_late", actorMemberId: "treasurer-1" });
   });
 
   function keep() {
@@ -4910,16 +4990,20 @@ describe("#3639 - a #2700 hand-back asks what already happened to its capture", 
   // a wrong writer.
   const REASON_FOR = deletedBookingModificationRefundReason;
 
-  function armHandBack(capture: { refundedAmountCents: number } | null) {
+  // #4843: `kind` null is a row raised before the column existed; `reason` overrides the #2700 sentence.
+  function armHandBack(
+    capture: { refundedAmountCents: number } | null,
+    row: { kind?: "DELETED_BOOKING_LATE_CAPTURE" | null; reason?: string } = {},
+  ) {
     mocks.manualRefundTaskFindUnique.mockResolvedValue({
       id: "task-2700",
       bookingId: "booking-1",
       paymentId: "payment-1",
       amountCents: 2500,
       raisedAmountCents: 2500,
-      kind: "DELETED_BOOKING_LATE_CAPTURE",
+      kind: row.kind === undefined ? "DELETED_BOOKING_LATE_CAPTURE" : row.kind,
       lateCaptureApprovalIntentId: null,
-      reason: REASON_FOR("pi_mod"),
+      reason: row.reason ?? REASON_FOR("pi_mod"),
       status: ManualRefundTaskStatus.OPEN,
       booking: { memberId: "member-1", lodgeId: "lodge-1", status: "CANCELLED", payment: null },
     });
@@ -4953,6 +5037,9 @@ describe("#3639 - a #2700 hand-back asks what already happened to its capture", 
       amountCents: 2500,
       store: tx,
     });
+    // #4838: the Payment row before the capture is read, and so before the claim.
+    expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.paymentTransactionFindMany.mock.invocationCallOrder[0]!);
+    expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!);
   });
 
   it("refuses, before the claim, a capture Stripe already refunded - the task stays OPEN", async () => {
@@ -4966,11 +5053,65 @@ describe("#3639 - a #2700 hand-back asks what already happened to its capture", 
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
   });
 
+  // #4838 (MUTATION: read the capture before the lock again): a `charge.refunded` sync holds the Payment row while
+  // the hand-back waits for it, and commits a dashboard refund of the capture as it lets go. The hand-back reads its
+  // capture only once it has the row, so it sees that refund and refuses; read first, the mirror would land on the
+  // primary's headroom and count one refund twice.
+  it("reads its capture under the Payment row, so a refund committed while it waited is refused (#4838)", async () => {
+    armHandBack({ refundedAmountCents: 0 });
+    mocks.lockPaymentForRefundedTotal.mockImplementationOnce(async () => {
+      mocks.paymentTransactionFindMany.mockResolvedValue([
+        { stripePaymentIntentId: "pi_primary", amountCents: 12000, refundedAmountCents: 0 },
+        { stripePaymentIntentId: "pi_mod", amountCents: 2500, refundedAmountCents: 2500 },
+      ]);
+    });
+
+    await expect(complete()).rejects.toMatchObject({ status: 409, message: expect.stringContaining("already been refunded") });
+
+    expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(tx, "payment-1");
+    expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.paymentTransactionFindMany.mock.invocationCallOrder[0]!);
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+  });
+
   it("refuses when the task's capture cannot be found, rather than guessing", async () => {
     armHandBack(null);
 
     await expect(complete()).rejects.toMatchObject({ status: 409 });
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+  });
+
+  // #4843 (MUTATION: gate on the kind alone again): `kind` was added with no backfill, so a #2700 row raised
+  // before it carries NULL and only its reason sentence says what it is. It gets the same check, under the row.
+  describe("a legacy #2700 row with no kind (#4843)", () => {
+    it("is refused, before the claim, once Stripe refunded its capture - read under the Payment row", async () => {
+      armHandBack({ refundedAmountCents: 2500 }, { kind: null });
+
+      await expect(complete()).rejects.toMatchObject({ status: 409, message: expect.stringContaining("already been refunded") });
+
+      expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(tx, "payment-1");
+      expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.paymentTransactionFindMany.mock.invocationCallOrder[0]!);
+      expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    });
+
+    it("still records the hand-back while Stripe holds the whole capture", async () => {
+      armHandBack({ refundedAmountCents: 0 }, { kind: null });
+
+      await complete();
+
+      expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.paymentTransactionFindMany.mock.invocationCallOrder[0]!);
+      expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({ paymentId: "payment-1", amountCents: 2500, store: tx });
+    });
+
+    it("leaves a NULL-kind row with any other reason alone: a cancellation's own hand-back asks nothing of a capture", async () => {
+      armHandBack(null, { kind: null, reason: "Cash refund owed after the cancellation." });
+
+      await complete();
+
+      expect(mocks.paymentTransactionFindMany).not.toHaveBeenCalled();
+      expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({ paymentId: "payment-1", amountCents: 2500, store: tx });
+    });
   });
 
   it("still lets it be dismissed, which moves nothing", async () => {

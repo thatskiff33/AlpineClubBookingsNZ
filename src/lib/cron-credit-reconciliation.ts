@@ -3,6 +3,7 @@ import { prisma } from "./prisma";
 import { readMemberCreditBalances, sumOutstandingCreditCents } from "@/lib/member-credit-balances";
 import { isXeroConnected } from "./xero";
 import logger from "@/lib/logger";
+import { adminHref } from "@/lib/admin-hubs";
 import { reportCronError } from "@/lib/observability-bridge";
 import {
   REFUND_CREDIT_NOTE_GRACE_HOURS,
@@ -171,7 +172,7 @@ export async function reconcileCreditBalances(): Promise<{
           uncoveredCents: payment.uncoveredCents,
           refundedAt: payment.refundedAt,
         })),
-        href: "/admin/xero",
+        href: adminHref("xero"),
       },
     });
   }

@@ -96,9 +96,9 @@ import { SiteContentPanel } from "@/components/admin/site-content-panel";
 import { PageContentPanel } from "@/components/admin/page-content-panel";
 import { SiteBannersPanel } from "@/components/admin/site-banners-panel";
 import { LodgeInstructionsPanel } from "@/components/admin/lodge-instructions-panel";
-import { MountainConditionsPanel } from "@/app/(admin)/admin/mountain-conditions/_components/mountain-conditions-panel";
-import { ImageManagerClient } from "@/app/(admin)/admin/image-manager/image-manager-client";
-import { SiteStyleWizard } from "@/app/(admin)/admin/site-style/site-style-wizard";
+import { MountainConditionsPanel } from "@/app/(admin)/admin/website/mountain-conditions/_components/mountain-conditions-panel";
+import { ImageManagerClient } from "@/app/(admin)/admin/website/image-manager/image-manager-client";
+import { SiteStyleWizard } from "@/app/(admin)/admin/website/site-style/site-style-wizard";
 import { DEFAULT_CLUB_THEME_VALUES } from "@/lib/club-theme-schema";
 // #1940 panels newly brought under the view-only pattern.
 import { InductionSettingsPanel } from "@/components/admin/induction-settings-panel";
@@ -113,13 +113,13 @@ import { RoomsBedsManager } from "@/components/admin/rooms-beds-manager";
 import { InternetBankingSettingsPanel } from "@/components/admin/internet-banking/internet-banking-settings-panel";
 import { NotificationDeliveryPolicySettings } from "@/components/admin/email-settings/notification-delivery-policy-settings";
 // #1940 pass 3 panels (support / finance / bookings settings editors).
-import { AdminNotificationSettings } from "@/app/(admin)/admin/notifications/notifications-settings";
+import { AdminNotificationSettings } from "@/app/(admin)/admin/messages/notifications/notifications-settings";
 import AdminModulesPage from "@/app/(admin)/admin/modules/page";
 import { MODULE_KEYS } from "@/config/modules";
 import { XeroRecordActivityPanel } from "@/components/admin/xero-record-activity-panel";
 import type { XeroRecordActivityData } from "@/lib/xero-record-types";
-import AgeTierSettingsPage from "@/app/(admin)/admin/age-tier-settings/page";
-import { PromoCodesPageClient } from "@/app/(admin)/admin/promo-codes/promo-codes-page-client";
+import AgeTierSettingsPage from "@/app/(admin)/admin/rules/age-tier-settings/page";
+import { PromoCodesPageClient } from "@/app/(admin)/admin/rules/promo-codes/promo-codes-page-client";
 // #1940 pass 3 delegated lanes (membership / lodge settings editors).
 import AdminMemberFieldsPage from "@/app/(admin)/admin/member-fields/page";
 import AdminMembershipTypesPage from "@/app/(admin)/admin/membership-types/page";
@@ -153,9 +153,9 @@ import DeletionRequestsClient from "@/app/(admin)/admin/deletion-requests/deleti
 import MemberApplicationsPage from "@/app/(admin)/admin/member-applications/page";
 import MembershipCancellationsPage from "@/app/(admin)/admin/membership-cancellations/page";
 // #1997 admin action-button surfaces (support / communications lane).
-import AdminIssueReportsPage from "@/app/(admin)/admin/issue-reports/page";
-import CommunicationsPage from "@/app/(admin)/admin/communications/page";
-import FamilySuggestionsPage from "@/app/(admin)/admin/family-suggestions/page";
+import AdminIssueReportsPage from "@/app/(admin)/admin/system/issue-reports/page";
+import CommunicationsPage from "@/app/(admin)/admin/messages/communications/page";
+import { FamilySuggestionsPanel } from "@/components/admin/family-groups/family-suggestions-panel";
 // #1997 member-detail action cards (membership / finance lane).
 import { MemberDeletionCard } from "@/app/(admin)/admin/members/[id]/_components/member-deletion-card";
 import { MemberCreditCard } from "@/app/(admin)/admin/members/[id]/_components/member-credit-card";
@@ -3572,7 +3572,8 @@ describe("MemberDetailHeader view-only gating (#1997, membership + finance)", ()
   });
 });
 
-describe("FamilySuggestionsPage view-only gating (#1997, membership)", () => {
+// The Suggestions tab of Family Groups since S1 (#4796).
+describe("FamilySuggestionsPanel view-only gating (#1997, membership)", () => {
   beforeEach(() => {
     sessionMatrix = null;
     stubFetchRoutes({
@@ -3591,7 +3592,7 @@ describe("FamilySuggestionsPage view-only gating (#1997, membership)", () => {
 
   it("shows the notice and disables Reset hidden for a membership:view admin", async () => {
     sessionMatrix = matrix("view", { membership: "view" });
-    render(<FamilySuggestionsPage />);
+    render(<FamilySuggestionsPanel />);
     expect(
       await screen.findByText(
         /can view family group suggestions but cannot create, hide, or reset/i,
@@ -3604,7 +3605,7 @@ describe("FamilySuggestionsPage view-only gating (#1997, membership)", () => {
 
   it("hides the notice and enables Reset hidden for a membership:edit admin", async () => {
     sessionMatrix = matrix("view", { membership: "edit" });
-    render(<FamilySuggestionsPage />);
+    render(<FamilySuggestionsPanel />);
     expect(
       await screen.findByRole("button", { name: /Reset hidden/i }),
     ).toBeEnabled();

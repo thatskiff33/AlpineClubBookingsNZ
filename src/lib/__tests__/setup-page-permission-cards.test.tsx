@@ -42,6 +42,18 @@ const setupBody = {
             href: "/admin/setup/foundations",
             progress: "open",
           },
+          {
+            // S1 (#4796): a support page's check whose page is membership.
+            id: "membership-cancellation",
+            title: "Membership Cancellation",
+            description: "Warning text, rejoin process text, and Xero cancellation handling.",
+            status: "warning",
+            required: false,
+            message: "Membership cancellation settings were not checked.",
+            details: [],
+            href: "/admin/membership-cancellations?tab=settings",
+            progress: "open",
+          },
         ],
       },
     ],
@@ -153,5 +165,47 @@ describe("SetupPageClient — permission-aware cross-area cards (#1548)", () => 
     expect(html.indexOf("Setup hubs")).toBeLessThan(
       html.indexOf("Readiness checks"),
     );
+  });
+});
+
+describe("SetupPageClient — links offered only where they open (S1 #4796)", () => {
+  beforeEach(() => {
+    stubSetupFetch();
+  });
+
+  it("shows each hub card exactly when its page would open", async () => {
+    const { container } = renderSetup({ support: "view" });
+    await waitFor(() => {
+      expect(screen.getByText("Setup hubs")).toBeTruthy();
+    });
+    expect(container.querySelector('a[href="/admin/health#integration-readiness"]')).toBeTruthy();
+    expect(container.querySelector('a[href="/admin/bookings-setup"]')).toBeNull();
+    expect(
+      container.querySelector('a[href="/admin/membership-cancellations?tab=settings"]'),
+    ).toBeNull();
+  });
+
+  it("keeps a readiness check but drops its Open link when the admin cannot open the page", async () => {
+    renderSetup({ support: "view" });
+    await waitFor(() => {
+      expect(screen.getByText("Membership Cancellation")).toBeTruthy();
+    });
+    const openLinks = screen
+      .getAllByRole("link", { name: /Open/ })
+      .map((link) => link.getAttribute("href"));
+    expect(openLinks).toContain("/admin/setup/foundations");
+    expect(openLinks).not.toContain("/admin/membership-cancellations?tab=settings");
+  });
+
+  it("offers the Open link and the card to an admin who can open the page", async () => {
+    const { container } = renderSetup({ support: "view", membership: "view", bookings: "view" });
+    await waitFor(() => {
+      expect(screen.getByText("Membership Cancellation")).toBeTruthy();
+    });
+    const openLinks = screen
+      .getAllByRole("link", { name: /Open/ })
+      .map((link) => link.getAttribute("href"));
+    expect(openLinks).toContain("/admin/membership-cancellations?tab=settings");
+    expect(container.querySelector('a[href="/admin/bookings-setup"]')).toBeTruthy();
   });
 });

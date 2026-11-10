@@ -118,6 +118,35 @@ function componentRendersBanner(source: string, name: string): boolean {
 }
 
 /**
+ * Whether every render site of `<name` in `source` is the `content` of a tab
+ * handed to `<AdminPageTabs>` (S1 #4796). Only the open tab is mounted, so a
+ * component rendered there sits under no banner of the file's other tabs.
+ */
+function rendersOnlyAsTabContent(source: string, name: string): boolean {
+  if (!source.includes("<AdminPageTabs")) return false;
+  const sites = [...source.matchAll(new RegExp(`<${name}\\b`, "g"))];
+  return (
+    sites.length > 0 &&
+    sites.every((site) => /content:\s*$/.test(source.slice(Math.max(0, site.index - 20), site.index)))
+  );
+}
+
+/**
+ * Whether every `<AdminViewOnlySectionBanner` in `source` is inside a
+ * `function` component that itself renders only as a tab's content, so the
+ * banner covers that tab and nothing in a sibling tab. A banner anywhere else
+ * (the page shell, an arrow component, module scope) answers false.
+ */
+function bannersOnlyInTabs(source: string): boolean {
+  const decls = [...source.matchAll(/^(?:export\s+(?:default\s+)?)?function\s+([A-Z]\w*)\b/gm)];
+  const banners = [...source.matchAll(/<AdminViewOnlySectionBanner\b/g)];
+  return banners.every((banner) => {
+    const owner = decls.filter((decl) => decl.index <= banner.index).at(-1);
+    return owner !== undefined && rendersOnlyAsTabContent(source, owner[1]!);
+  });
+}
+
+/**
  * The opening tag of EVERY `<Name` element in `source`, e.g.
  * `<AssignmentForm ... />`. Attribute values routinely contain `>` (arrow
  * functions: `onChanged={() => …}`), so a tag can not be matched with a
@@ -395,7 +424,7 @@ const FIGURES = {
    * 377 -> 378 (#4162): the stuck-states page's "Record the answer" on a voided
    * bank refund note. MEASURED by re-running this census.
    */
-  callSites: 391, // 378/373 -> 381 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #58's one are disjoint from upstream's. 381 -> 386 (subscription-category-decoupling rework): the new Subscription Categories admin page's ViewOnlyActionButton call sites. 386 -> 391 (main-sync, 2 Nov 2026, #4457's privacy retention Edit/Save plus other main growth, disjoint from the category rework): MEASURED by re-running this census on the merged tree.
+  callSites: 393, // RE-MEASURED with this census on the merged tree (fourth main-sync, 11 Nov 2026): HEAD had 391, origin/main had 388 (386 -> 388 via #4368); the merged tree is 393.
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -452,7 +481,7 @@ const FIGURES = {
    */
   // 315 -> 317 (#62): the Central lodge card's two, static opt-outs (below).
   // 317 -> 318 (#58): the Other lodges panel's Hide, a vouched opt-out.
-  optOuts: 336, // 323/318 -> 326 (central-server lane, 20 Oct 2026). 326 -> 331 (subscription-category-decoupling rework): the new Subscription Categories admin page's call sites, above. 331 -> 336 (main-sync, 2 Nov 2026, #4457's two section-banner opt-outs plus other main growth, disjoint from the category rework): MEASURED by re-running this census on the merged tree.
+  optOuts: 338, // RE-MEASURED with this census on the merged tree (fourth main-sync, 11 Nov 2026): HEAD had 336, origin/main had 333 (331 -> 333 via #4368); the merged tree is 338.
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -543,7 +572,7 @@ const FIGURES = {
    * 286 -> 287 (#4162): "Record the answer" sits beside the voided bank refund
    * notes panel's own banner. MEASURED by re-running this census.
    */
-  staticOptOuts: 298, // 287/283 -> 289 (central-server lane, 20 Oct 2026): the Central lodge card's two. 289 -> 294 (subscription-category-decoupling rework): the new Subscription Categories admin page's call sites, above. 294 -> 293 (#4467): the committee role form's Save Role moved to its own file and is render-site vouched by the committee page. 293 -> 298 (main-sync, 2 Nov 2026, #4457's two local-banner opt-outs plus other main growth, disjoint from the category rework and #4467): MEASURED by re-running this census on the merged tree.
+  staticOptOuts: 300, // RE-MEASURED with this census on the merged tree (fourth main-sync, 11 Nov 2026): HEAD had 298, origin/main had 295 (293 -> 295 via #4368); the merged tree is 300.
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -638,7 +667,7 @@ const FIGURES = {
    * 99 -> 100 (#4162): the stuck-states page's voided bank refund notes panel,
    * finance-gated inside a support page for the same reason.
    */
-  bannerComponents: 105, // 100/99 -> 101 (central-server lane, 20 Oct 2026): the Central lodge card. 101 -> 102 (subscription-category-decoupling rework): the new Subscription Categories admin page. 102 -> 105 (main-sync, 2 Nov 2026, #4457's retention banner alongside #4555's Xero banners plus other main growth, disjoint from the category rework): MEASURED by re-running this census on the merged tree.
+  bannerComponents: 106, // RE-MEASURED with this census on the merged tree (fourth main-sync, 11 Nov 2026): both sides read 105 independently (HEAD via the category rework path, origin/main via #4368's file split), but that coincidence did not survive the merge — the merged tree is 106.
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older
@@ -1825,7 +1854,7 @@ describe("view-only section banner coverage (#2160)", () => {
     // accessibility container that a banner in the page body does not reach.
     const SEPARATE_A11Y_CONTAINER = [
       "app/(admin)/admin/bookings/page.tsx",
-      "app/(admin)/admin/issue-reports/page.tsx",
+      "app/(admin)/admin/system/issue-reports/page.tsx",
       "app/(admin)/admin/member-applications/_components/approval-mapping-panel.tsx",
       "app/(admin)/admin/membership-types/page.tsx",
       "components/admin/bed-allocation-move-dialog.tsx",
@@ -2907,6 +2936,11 @@ describe("view-only section banner coverage (#2160)", () => {
       is checked, not just the first, so a second copy added below a compliant
       one can not ride on it.
 
+      Two tabs of one `<AdminPageTabs>` are not nested: only the open tab is
+      mounted. A child rendered only as a tab's `content`, in a file whose
+      every banner sits in a component that is itself only a tab's `content`,
+      is therefore not an offender (S1 #4796, Family Groups' Suggestions tab).
+
       The scan is static, and its reach is exactly the house style it polices:
       a named import (`import { Child } from "…"`) rendered as `<Child …>`. It
       does NOT see a component reached by an aliased import
@@ -2946,6 +2980,12 @@ describe("view-only section banner coverage (#2160)", () => {
             (tag) => !tag.includes("renderViewOnlyBanner={false}"),
           );
           if (uncovered.length === 0) continue;
+          // Sibling tabs (S1 #4796): the child is a tab of its own, and every
+          // banner in this file covers a different tab, so the two are never
+          // on screen together.
+          if (rendersOnlyAsTabContent(parent.source, spec) && bannersOnlyInTabs(parent.source)) {
+            continue;
+          }
           // The file has a banner somewhere; only THIS export matters.
           const childSource = stripComments(readFileSync(target, "utf8"));
           if (!componentRendersBanner(childSource, spec)) continue;

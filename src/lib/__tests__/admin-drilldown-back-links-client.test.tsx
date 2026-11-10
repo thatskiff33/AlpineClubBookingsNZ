@@ -182,7 +182,7 @@ describe("admin drill-down BackLink conversions (client-gated)", () => {
       })),
     );
     const NewNoticePage = (
-      await import("@/app/(admin)/admin/notices/new/page")
+      await import("@/app/(admin)/admin/messages/notices/new/page")
     ).default;
 
     await act(async () => {
@@ -228,7 +228,7 @@ describe("admin drill-down BackLink conversions (client-gated)", () => {
       })),
     );
     const NoticeEditPage = (
-      await import("@/app/(admin)/admin/notices/[id]/page")
+      await import("@/app/(admin)/admin/messages/notices/[id]/page")
     ).default;
 
     await act(async () => {

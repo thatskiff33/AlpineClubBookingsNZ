@@ -15,6 +15,7 @@ import { sendAdminManualRefundTaskAlert, sendBookingCancelledEmail } from "./ema
 import { logAudit } from "./audit";
 import { closeRefundRowRecordingEvent, recordBookingEvent } from "./booking-events";
 import { cancelCardRefundEventReason } from "@/lib/cancel-card-refund-event-reason";
+import { bookingCancelRefundStripeKeyPrefix } from "@/lib/card-refund-stripe-key-prefix";
 import {
   paidCancellationBranch,
   writePaidCancellationEvent,
@@ -44,11 +45,12 @@ import { BOOKING_OWNER_NAME_SELECT, bookingOwnerName } from "@/lib/booking-owner
 import logger from "@/lib/logger";
 import { cancellationKeptCents, paidCancellationMoney } from "@/lib/paid-cancellation-money";
 import { openNonCancellationHandBackCents } from "@/lib/edit-refund-hand-back";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
 import { cancelTieredAppliedCreditCents } from "@/lib/booking-payment-state";
 import { refundedPaymentCreditRestore } from "@/lib/cancel-refunded-payment-credit";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
-import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
+import { postRefundObligation, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import {
   applyLocalRefundAllocation,
   foldIntoTransactionRefundedAmount,
@@ -1596,6 +1598,7 @@ async function performBookingCancellation(
         lockedPayment.id,
         partPayment,
         sessionUserId,
+        journal,
       );
       lockedPayment = recognised.payment;
       clearingOperationId = recognised.clearingOperationId;
@@ -1645,6 +1648,8 @@ async function performBookingCancellation(
     // compare-and-set (#3640): the charge.refunded webhook takes no lock, so a
     // card refund it commits between this read and the write survives. #4119:
     // the walk is shared with the cancel preview, which folds in memory.
+    // #4866 (`INV-PAY-150`): live superseded captures, read before the fold; no fold, tier, card slice or credit takes them.
+    const supersededHeldBack = await readSupersededCaptureHeldBack(tx, payment.id);
     await foldMirrorRefundIntoLedger(
       payment,
       () => tx.paymentTransaction.findMany({
@@ -1652,7 +1657,7 @@ async function performBookingCancellation(
         orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
         select: { id: true, amountCents: true, refundedAmountCents: true },
       }),
-      (row, amountCents) => foldIntoTransactionRefundedAmount({ paymentTransactionId: row.id, amountCents, store: tx }),
+      (row, amountCents) => foldIntoTransactionRefundedAmount({ paymentTransactionId: row.id, amountCents, store: tx }), supersededHeldBack.byTransaction,
     );
 
     // Freeze the refund plan from the LOCKED read. Change fees (from prior
@@ -1683,7 +1688,7 @@ async function performBookingCancellation(
         : tieredPayment,
       // #3827 (`INV-PAY-117`): read under lock(1), which every edit that raises
       // such a task also holds, so none can appear before this cancel commits.
-      openNonCancellationHandBackCents: await openNonCancellationHandBackCents(tx, payment.id),
+      openNonCancellationHandBackCents: (await openNonCancellationHandBackCents(tx, payment.id)) + supersededHeldBack.totalCents, // #4866
       finalPriceCents: fresh.finalPriceCents,
       appliedCreditCents,
       restoresToMemberLedger: restoreMemberId !== null,
@@ -1902,11 +1907,7 @@ async function performBookingCancellation(
       manualRefundTaskId = task.id;
       if (organiserExtraState && organiserExtraState.invoices.length > 0) await bindOrganiserExtraRefundToHandBack(tx, { bookingId, handBackTaskId: task.id, scopeId: `cancel:${bookingId}` });
     } else if (branch === "credit") {
-      await applyLocalRefundAllocation({
-        paymentId: payment.id,
-        amountCents: refundAmountCents,
-        store: tx,
-      });
+      await applyLocalRefundAllocation({ paymentId: payment.id, amountCents: refundAmountCents, store: tx, heldBackByTransaction: supersededHeldBack.byTransaction }); // #4866
       // #3369: a refund AS CREDIT credits a member's account, and an
       // organisation has none. The officer refunds a school by the money path
       // instead; this branch is unreachable for one, and saying so beats
@@ -1942,6 +1943,7 @@ async function performBookingCancellation(
         paymentId: payment.id,
         amountCents: refundAmountCents,
         store: tx,
+        heldBackByTransaction: supersededHeldBack.byTransaction, // #4866
       });
       cardRefundPlan = slices;
       plannedCardRefundCents = plannedAmountCents;
@@ -1972,6 +1974,12 @@ async function performBookingCancellation(
       policyKeptCents: money.policyKeptCents,
       site: "booking-cancel:paid",
     });
+    // #4516 (M4c): R05, the card refund the frozen plan above owes, moved to its own obligation beside R04, under
+    // the Payment row this claim holds; its sender reserves each slice against it before Stripe is asked.
+    if (cardRefundPlan && plannedCardRefundCents > 0) {
+      await postRefundObligation(tx, journal, { bookingId, scope: "cancellation", id: bookingId, amountCents: plannedCardRefundCents,
+        origin: "APP", actorMemberId: sessionUserId, debtorRead: "booking-row" });
+    }
 
     // #2576 §6. Cancellation is the first change class the owner names, and it
     // is the one that removes attendance outright: cancelling the booking a
@@ -2382,7 +2390,8 @@ async function performBookingCancellation(
           // idempotency_error. refundPercentage still drives the audit/event/
           // email narrative below; it just no longer rides in the Stripe body.
           metadata: buildBookingCancellationRefundMetadata(bookingId),
-          idempotencyKeyPrefix: `booking_cancel_refund_${bookingId}`,
+          idempotencyKeyPrefix: bookingCancelRefundStripeKeyPrefix(bookingId),
+          obligation: { scope: "cancellation", id: bookingId }, // #4516: the R05 the claim posted
         });
         stripeRefundId = refundResult.refunds[0]?.refundId;
         refundMade = ownCardRefundMade(refundResult.refunds);

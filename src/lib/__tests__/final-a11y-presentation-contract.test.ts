@@ -8,14 +8,14 @@ function source(path: string) {
 }
 
 const migratedAdminChrome = [
-  "src/app/(admin)/admin/age-tier-settings/page.tsx",
+  "src/app/(admin)/admin/rules/age-tier-settings/page.tsx",
   "src/app/(admin)/admin/lockers/page.tsx",
   "src/app/(admin)/admin/committee/page.tsx",
   "src/app/(admin)/admin/hut-leaders/page.tsx",
   "src/app/(admin)/admin/hut-leaders/_components/assignment-form.tsx",
   "src/app/(admin)/admin/work-parties/page.tsx",
-  "src/app/(admin)/admin/family-suggestions/page.tsx",
-  "src/app/(admin)/admin/stuck-states/page.tsx",
+  "src/components/admin/family-groups/family-suggestions-panel.tsx",
+  "src/app/(admin)/admin/system/stuck-states/page.tsx",
   "src/app/(admin)/admin/waitlist/page.tsx",
 ];
 
@@ -164,7 +164,7 @@ describe("#1819 final accessibility presentation contract", () => {
       "src/components/admin-booking-calendar.tsx",
       "src/app/(lodge)/lodge/kiosk/page.tsx",
       "src/components/edit-booking/existing-guest-row.tsx",
-      "src/app/(admin)/admin/notifications/notifications-settings.tsx",
+      "src/app/(admin)/admin/messages/notifications/notifications-settings.tsx",
       "src/components/book/member-guest-find-panel.tsx",
       "src/components/admin/page-content-panel.tsx",
       "src/components/group-booking/organiser-group-booking-card.tsx",
@@ -290,7 +290,7 @@ describe("#1819 final accessibility presentation contract", () => {
     // payments table's inline signals; ToneChip backs every non-domain Xero
     // status. Both must keep the icon-plus-label shape and the shared tone map.
     const miniChip = source("src/components/ui/mini-chip.tsx");
-    const xero = source("src/app/(admin)/admin/xero/_components/shared.tsx");
+    const xero = source("src/app/(admin)/admin/finance/xero/_components/shared.tsx");
     for (const text of [miniChip, xero]) {
       expect(text).toContain("inline-flex items-center gap-1");
       expect(text).toContain("<Icon");
@@ -300,7 +300,7 @@ describe("#1819 final accessibility presentation contract", () => {
 
     // The payment and Xero surfaces still USE those chips, so an endpoint status
     // keeps its icon-plus-label chip rather than reverting to a colour-only badge.
-    const payments = source("src/app/(admin)/admin/payments/page.tsx");
+    const payments = source("src/app/(admin)/admin/finance/payments/page.tsx");
     expect(payments).toContain("<MiniChip");
     expect(payments).toContain('kind="payment"');
     expect(xero).toContain("<ToneChip");

@@ -83,16 +83,16 @@ vi.mock("@/components/confirm-dialog", () => ({
   useConfirm: () => ({ confirm: vi.fn(async () => false), confirmDialog: null }),
 }))
 
-import SeasonsPage from "@/app/(admin)/admin/seasons/page"
+import SeasonsPage from "@/app/(admin)/admin/rules/seasons/page"
 import ChoresPage from "@/app/(admin)/admin/chores/page"
 import LockersPage from "@/app/(admin)/admin/lockers/page"
-import { HutFeesSection } from "@/app/(admin)/admin/fees/_components/hut-fees-section"
+import { HutFeesSection } from "@/app/(admin)/admin/rules/fees/_components/hut-fees-section"
 import RosterPage from "@/app/(admin)/admin/roster/page"
 import HutLeadersPage from "@/app/(admin)/admin/hut-leaders/page"
 import { RoomsBedsManager } from "@/components/admin/rooms-beds-manager"
 import { LodgeCapacityCard } from "@/components/admin/lodge-capacity-card"
 import AdminWorkPartiesPage from "@/app/(admin)/admin/work-parties/page"
-import { PromoCodesPageClient } from "@/app/(admin)/admin/promo-codes/promo-codes-page-client"
+import { PromoCodesPageClient } from "@/app/(admin)/admin/rules/promo-codes/promo-codes-page-client"
 import { ClubIdentityProvider } from "@/components/club-identity-provider"
 import { clubIdentity } from "@/config/club-identity"
 

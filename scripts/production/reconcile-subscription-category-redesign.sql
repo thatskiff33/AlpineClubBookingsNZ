@@ -62,8 +62,8 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM "_prisma_migrations"
     WHERE migration_name IN (
-      '20261128010000_add_subscription_category_and_widen_charge_type_shape',
-      '20261128020000_route_category_charges_and_enforce_axis_exclusivity'
+      '20261210100000_add_subscription_category_and_widen_charge_type_shape',
+      '20261210110000_route_category_charges_and_enforce_axis_exclusivity'
     )
   ) THEN
     RAISE EXCEPTION 'redesigned_subscription_category_migrations_already_applied'

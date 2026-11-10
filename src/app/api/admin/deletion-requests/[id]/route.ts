@@ -982,6 +982,9 @@ export async function POST(
         tx.twoFactorSessionChallenge.deleteMany({
           where: { memberId: member.id },
         }),
+        tx.sessionReauthChallenge.deleteMany({
+          where: { memberId: member.id },
+        }),
       ]);
 
       // #2859: the cached copy of the member's date of birth goes too. Since

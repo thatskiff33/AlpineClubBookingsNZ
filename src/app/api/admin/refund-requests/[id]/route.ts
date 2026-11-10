@@ -27,6 +27,7 @@ import {
 import { inlineRefundAfterAttempt } from "@/lib/refused-card-refund-retry";
 import { NO_CARD_REFUND_OWED, queueUnmadeRefundRequestCardRefund, refundRequestCardRefundAnswer } from "@/lib/refund-request-card-refund";
 import { buildRefundRequestRefundMetadata, buildRefundRequestRefundStripeKeyPrefix } from "@/lib/payment-recovery-keys";
+import { lockBookingRowForOwnerRead, postRefundObligation, resolveBookingMoneyPostingContext, withdrawRefundObligation } from "@/lib/member-money/doors";
 import { notesEachCardRefund, queueRefundRequestCardNotes } from "@/lib/card-refund-own-note";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { formatStayDate } from "@/lib/club-time";
@@ -152,8 +153,13 @@ export async function PUT(
     // money the member holds or is being sent (paid 200, an edit to 150 leaves
     // a 50 task OPEN), and (#4124) of card refunds still owed. Read under
     // `lock(1)` and the Payment row; claimed in the same transaction.
+    const journal = await resolveBookingMoneyPostingContext(); // #4516 (`INV-LOCK-004`): before the transaction
     const capped = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      // #4516 review F1: the booking row next, before the Payment row and the request's claim, as the edit doors
+      // order them. Its R05 reads the owner under this row; taken after the claim instead, a member merge (owner
+      // move, then the request's member) would hold the row this waits on while waiting on the request it holds.
+      await lockBookingRowForOwnerRead(tx, booking.id);
       // #3956 review: a request another approval or decline settled while this
       // one waited for the lock is "already reviewed", never a cap refusal read
       // from money that approval has since spoken for. The claim below stays the
@@ -277,6 +283,9 @@ export async function PUT(
         // claim back with it.
         if (raised === 0) throw new RefundRequestHandBackNotRaisedError();
       }
+      // #4516 (M4c): the card part's concession and its R05, under the lock(1) and Payment row held above.
+      await postRefundObligation(tx, journal, { bookingId: booking.id, scope: "refund-request", id, amountCents: plan.plannedAmountCents,
+        origin: "OFFICER", actorMemberId: session.user.id, debtorRead: "booking-row", concession: true });
       return {
         kind: "claimed" as const,
         refundPlan: plan.slices,
@@ -396,6 +405,7 @@ export async function PUT(
           // of rejecting the reused idempotency key with idempotency_error.
           metadata: buildRefundRequestRefundMetadata(booking.id, id),
           idempotencyKeyPrefix: buildRefundRequestRefundStripeKeyPrefix(id),
+          obligation: { scope: "refund-request", id }, // #4516: the R05 the claim posted
         });
       } catch (err) {
         // The approval stands: complete the refund through the durable payment
@@ -454,13 +464,18 @@ export async function PUT(
                   status: "OPEN",
                 },
               });
+              // #4516 (M4c): the approval's R05 goes with it, its open reservations released, under the Payment row.
+              await withdrawRefundObligation(tx, journal, { bookingId: booking.id, scope: "refund-request", id, actorMemberId: session.user.id,
+                reason: "Refund appeal approval released: its card refund was never sent", senderKeyPrefix: buildRefundRequestRefundStripeKeyPrefix(id) });
             }
           })
-          .catch((revertErr) => {
+          .catch((revertErr: unknown) => {
             logger.error(
               { err: revertErr, refundRequestId: id },
               "Failed to revert refund request claim after Stripe refund failure"
             );
+            // #4516: never swallowed - a journal refusal rolled the release back, and the caller must see it.
+            throw revertErr;
           });
         return NextResponse.json(
           { error: "Failed to process Stripe refund" },

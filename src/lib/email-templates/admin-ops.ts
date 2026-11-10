@@ -27,6 +27,7 @@ import { describeServerVersionPause } from "@/lib/servernz-api-version";
 // ---- N-13: Admin Daily Digest ----
 
 /** The six alert counts and their total, as `cron-admin-digest.ts` builds them. */
+import { adminHref } from "@/lib/admin-hubs";
 export interface AdminDigestCounts {
   newBookings: number;
   paymentFailures: number;
@@ -93,11 +94,11 @@ export function adminDailyDigestTemplate(
   const rows: Array<{ label: string; value: string; link: string }> = [];
 
   if (sections.newBookings > 0) rows.push({ label: "New Bookings", value: String(sections.newBookings), link: "/admin/bookings" });
-  if (sections.paymentFailures > 0) rows.push({ label: "Payment Failures", value: String(sections.paymentFailures), link: "/admin/payments" });
+  if (sections.paymentFailures > 0) rows.push({ label: "Payment Failures", value: String(sections.paymentFailures), link: adminHref("payments") });
   if (sections.capacityWarnings > 0) rows.push({ label: "Capacity Warnings", value: String(sections.capacityWarnings), link: "/admin/bookings" });
   if (sections.bookingsBumped > 0) rows.push({ label: "Bookings Bumped", value: String(sections.bookingsBumped), link: "/admin/bookings" });
   if (sections.pendingDeadlines > 0) rows.push({ label: "Pending Deadlines", value: String(sections.pendingDeadlines), link: "/admin/bookings" });
-  if (sections.xeroErrors > 0) rows.push({ label: "Xero Errors", value: String(sections.xeroErrors), link: "/admin/xero" });
+  if (sections.xeroErrors > 0) rows.push({ label: "Xero Errors", value: String(sections.xeroErrors), link: adminHref("xero") });
 
   const tableRowsHtml = rows
     .map(

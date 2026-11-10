@@ -7,6 +7,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import { automaticCancelledBookingRefundTaskReasons } from "@/lib/deleted-booking-modification-payment";
 import { finishApprovedLateCaptureRefund } from "@/lib/late-capture-refund-credit-note";
 import logger from "@/lib/logger";
+import { closeKeptCaptureReturn, postRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { enqueueLateCaptureApprovalRefundRecovery } from "@/lib/payment-recovery";
 import {
@@ -16,6 +17,7 @@ import {
 } from "@/lib/payment-recovery-keys";
 import {
   isCapturedTransactionStatus,
+  lockPaymentForRefundedTotal,
   refundPaymentTransactions,
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
@@ -64,6 +66,13 @@ export const LATE_CAPTURE_APPROVAL_ALREADY_REFUNDED_MESSAGE =
  * amount, never amended at completion) and it must still fit in what the capture
  * has left: a refund an officer already made in the Stripe dashboard is synced
  * onto the transaction by `charge.refunded`, and this is where it stops a second.
+ *
+ * #4824: the booking's Payment row FIRST, then the capture. Every writer of what
+ * the capture still holds takes that row before it writes - the `charge.refunded`
+ * sync, a "Paid another way" close, an automatic refund or its recovery replay - so the held figure read
+ * under it cannot move before the claim; read before it, a refund committing in
+ * between was planned again. The completion's `prepareLateCaptureDecision`
+ * re-takes the row it already holds.
  */
 export async function planLateCaptureApprovalRefund({
   task,
@@ -75,6 +84,7 @@ export async function planLateCaptureApprovalRefund({
   store: Prisma.TransactionClient;
 }): Promise<LateCaptureRefundRoute> {
   const paymentIntentId = task.lateCaptureApprovalIntentId;
+  if (paymentIntentId && task.paymentId) await lockPaymentForRefundedTotal(store, task.paymentId);
   const transaction =
     paymentIntentId && task.paymentId
       ? await store.paymentTransaction.findUnique({
@@ -132,6 +142,13 @@ export async function planLateCaptureApprovalRefund({
  * so it is refused before the claim and the task stays OPEN to be dismissed.
  * The capture is the one whose frozen reason sentence this task carries
  * (`automaticCancelledBookingRefundTaskReasons` is that key), which is exact.
+ *
+ * #4838: read under the booking's Payment row, as the approval's plan is
+ * (#4824). The hand-back's allocation caps at the whole payment, not this
+ * capture, so a `charge.refunded` sync committing between an unlocked read and
+ * the claim let the mirror land on another charge's headroom - one refund
+ * counted twice. Payment row, then the claim; nothing on this kind's route
+ * takes a lodge, member-credit or task-row lock in between.
  */
 export async function assertLateCaptureHandBackStillOwed({
   task,
@@ -142,6 +159,7 @@ export async function assertLateCaptureHandBackStillOwed({
   amountCents: number;
   store: Prisma.TransactionClient;
 }): Promise<void> {
+  if (task.paymentId) await lockPaymentForRefundedTotal(store, task.paymentId);
   const captures = task.paymentId
     ? await store.paymentTransaction.findMany({
         where: { paymentId: task.paymentId, stripePaymentIntentId: { not: null } },
@@ -174,11 +192,16 @@ export async function persistLateCaptureApprovalRefundDebt({
   route,
   amountCents,
   store,
+  journal,
+  actingMemberId,
 }: {
   bookingId: string;
   route: LateCaptureRefundRoute;
   amountCents: number;
   store: Prisma.TransactionClient;
+  /** #4516 (M4c): the completion's journal context, resolved before its transaction. */
+  journal: BookingJournalContext;
+  actingMemberId: string;
 }) {
   await enqueueLateCaptureApprovalRefundRecovery({
     bookingId,
@@ -188,6 +211,32 @@ export async function persistLateCaptureApprovalRefundDebt({
     allocationPlan: route.allocation,
     store,
   });
+  // #4516 (M4c): R05 for the capture's return, beside its debt. This claim holds no `lock(1)` until M4d, so the
+  // debtor is read without the booking row (a Payment-row writer never takes one, `INV-LOCK-002`).
+  await postRefundObligation(store, journal, { bookingId, scope: "capture-return", id: route.paymentIntentId, amountCents,
+    origin: "OFFICER", actorMemberId: actingMemberId, debtorRead: "plain" });
+}
+
+/**
+ * #4516 review F2 and M5: BEFORE a late capture's approval task is claimed, approved or kept. The booking's Payment
+ * row first, the order a "Paid another way" close takes them in (`lock(1)`, the Payment row, then this task): a
+ * claim that took the task first and the Payment row after would wait on a close holding the row while that close
+ * waits on the task. An approval's plan took the row already (#4824), so there this re-takes it. A keep (a
+ * dismissal) then closes the capture's refund debt, if an automatic refund of it posted one that nothing paid or
+ * holds (`closeKeptCaptureReturn`): a kept capture owes nothing back. A lost claim throws after this and rolls it
+ * back with the transaction.
+ */
+export async function prepareLateCaptureDecision(store: Prisma.TransactionClient, journal: BookingJournalContext, input: {
+  task: { bookingId: string; paymentId: string | null; lateCaptureApprovalIntentId: string | null };
+  resolution: "completed" | "dismissed";
+  actingMemberId: string;
+}): Promise<void> {
+  const { task } = input;
+  if (!task.lateCaptureApprovalIntentId || !task.paymentId) return;
+  await lockPaymentForRefundedTotal(store, task.paymentId);
+  if (input.resolution === "dismissed") {
+    await closeKeptCaptureReturn(store, journal, { bookingId: task.bookingId, paymentIntentId: task.lateCaptureApprovalIntentId, actorMemberId: input.actingMemberId });
+  }
 }
 
 /**
@@ -245,6 +294,7 @@ export async function executeLateCaptureApprovalRefund({
         bookingId,
         route.paymentIntentId,
       ),
+      obligation: { scope: "capture-return", id: route.paymentIntentId }, // #4516: the R05 the completion posted
     });
     // #4103 (`INV-PAY-130`): a refusal (failed/canceled) is not a refund: the
     // row stays open, re-planned on fresh keys, and nothing is recorded or noted.

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CornerDownLeft } from "lucide-react";
+import { defaultFilter } from "cmdk";
 import {
   CommandDialog,
   CommandEmpty,
@@ -13,7 +14,7 @@ import {
   CommandShortcut,
 } from "@/components/ui/command";
 import {
-  ADMIN_NAV_SECTION_ORDER,
+  ADMIN_FEATURE_SEARCH_GROUP_ORDER,
   getAdminFeatureSearchIndex,
   type AdminFeatureSearchEntry,
 } from "@/components/admin-sidebar";
@@ -22,25 +23,15 @@ import type { FeatureFlags } from "@/config/schema";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import { ADMIN_COMMAND_PALETTE_OPEN_EVENT } from "@/lib/admin-command-palette-events";
 
-/** Fallback heading for entries whose sidebar section has no label. */
-const UNGROUPED_SECTION = "General";
-
-/** Group headings in canonical sidebar-section order (label-less -> General). */
-const CANONICAL_GROUP_ORDER: string[] = ADMIN_NAV_SECTION_ORDER.map(
-  (label) => label ?? UNGROUPED_SECTION,
-);
-
 function groupBySection(
   entries: AdminFeatureSearchEntry[],
 ): Array<{ section: string; entries: AdminFeatureSearchEntry[] }> {
-  // Bucket entries by heading first. We deliberately do NOT let bucket-creation
-  // order decide group order: getAdminFeatureSearchIndex de-duplicates by href
-  // and a page first seen under "Needs Attention" keeps that early insertion
-  // slot even after its natural-section label overwrites the value, which would
-  // otherwise pull its natural group to the wrong position.
+  // Bucket entries by hub first. We deliberately do NOT let bucket-creation
+  // order decide group order: the index lists the queue views after every page,
+  // so a hub first seen there would otherwise land in the wrong position.
   const bucketBySection = new Map<string, AdminFeatureSearchEntry[]>();
   for (const entry of entries) {
-    const section = entry.section ?? UNGROUPED_SECTION;
+    const section = entry.section;
     const bucket = bucketBySection.get(section);
     if (bucket) {
       bucket.push(entry);
@@ -49,13 +40,12 @@ function groupBySection(
     }
   }
 
-  // Emit groups in canonical sidebar order (Needs Attention lands in its own
-  // natural slot). Any heading not in the canonical list is appended in
-  // first-encounter order as a defensive fallback.
+  // Emit groups in hub (menu) order. Any heading not in that list is appended
+  // in first-encounter order as a defensive fallback.
   const groups: Array<{ section: string; entries: AdminFeatureSearchEntry[] }> =
     [];
   const emitted = new Set<string>();
-  for (const section of CANONICAL_GROUP_ORDER) {
+  for (const section of ADMIN_FEATURE_SEARCH_GROUP_ORDER) {
     const bucket = bucketBySection.get(section);
     if (bucket && !emitted.has(section)) {
       groups.push({ section, entries: bucket });
@@ -72,8 +62,48 @@ function groupBySection(
   return groups;
 }
 
+type PaletteGroup = { section: string; entries: AdminFeatureSearchEntry[] };
+
 /**
- * The string cmdk fuzzy-matches against for an entry. Deliberately built from
+ * The groups that match `query`, best first (S2 #4797). The palette filters
+ * and orders its own items (`shouldFilter={false}`) because cmdk 1.1.1 does
+ * not re-sort GROUPS: its sort looks each group up by an attribute value that
+ * never matches, so groups kept hub order and Enter opened the first match in
+ * hub order — typing "Chores" selected Age Groups (score 0.03, through its
+ * "child pricing … Rates & Policies" text) above Chores (0.99).
+ *
+ * Each entry is scored with cmdk's own `defaultFilter` against `searchValue`;
+ * a zero score drops it. Items sort by score within their group, groups by
+ * their best item, ties keeping hub and index order. No query: hub order,
+ * unchanged.
+ */
+function rankGroups(groups: PaletteGroup[], query: string): PaletteGroup[] {
+  const search = query.trim();
+  if (!search) return groups;
+  return groups
+    .map((group, order) => {
+      const scored = group.entries
+        .map((entry, position) => ({
+          entry,
+          position,
+          score: defaultFilter(searchValue(entry), search),
+        }))
+        .filter(({ score }) => score > 0)
+        .sort((a, b) => b.score - a.score || a.position - b.position);
+      return {
+        section: group.section,
+        entries: scored.map(({ entry }) => entry),
+        best: scored[0]?.score ?? 0,
+        order,
+      };
+    })
+    .filter((group) => group.entries.length > 0)
+    .sort((a, b) => b.best - a.best || a.order - b.order)
+    .map(({ section, entries }) => ({ section, entries }));
+}
+
+/**
+ * The string the palette fuzzy-matches against for an entry. Deliberately built from
  * human-readable fields (label, section, keywords) and NOT the href: several
  * hrefs are deep links carrying query strings (e.g. the unpaid-stays views
  * whose href contains `PAYMENT_PENDING`), and scoring against that raw href
@@ -99,6 +129,7 @@ export function AdminCommandPalette({
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const openRef = useRef(false);
   // The control that had focus when the palette opened, so we can restore focus
   // there on close (a11y). Radix cannot do this itself without a DialogTrigger,
@@ -109,18 +140,18 @@ export function AdminCommandPalette({
     openRef.current = open;
   }, [open]);
 
-  // The index is derived from getVisibleAdminNavSections (via
-  // getAdminFeatureSearchIndex), so every href here is one this admin is
-  // permitted to open, on any interaction path. It is a deliberate superset of
-  // what the sidebar renders right now — the queue-driven "Needs Attention"
-  // deep links are always searchable even when their queue is empty — never a
-  // permission superset.
+  // getAdminFeatureSearchIndex builds the index from the hub registry and keeps
+  // only the pages this admin may open (the layout guard's own admission rule,
+  // module visibility and Full Admin), so every href here opens, on any
+  // interaction path. It offers more than the sidebar renders — every admin
+  // page, and the queue views even when their queue is empty — never a page
+  // the admin may not open (S2 #4797).
   /*
     The SAME authority the sidebar uses, for the same reason (#3123). One entry
     in this index — the unpaid-finished-stays queue — is a deep link whose
     `checkOutTo` bound is the club's own day, and the sidebar renders that link
     beside its badge count. Both surfaces now derive it from
-    `buildAdminNavSections`, one definition, fed the club's day from THIS
+    `buildAdminQueueViews`, one definition, fed the club's day from THIS
     provider; before #3123 the day came from a module-level constant evaluated
     once per bundle load, so the palette and the sidebar could only ever agree by
     both being stale together. `admin-sidebar-club-time.test.tsx` pins the two
@@ -140,11 +171,13 @@ export function AdminCommandPalette({
     [clubToday, features, permissionMatrix, isFullAdmin, hutLeaderLabel],
   );
 
-  const groups = useMemo(() => groupBySection(index), [index]);
+  const hubGroups = useMemo(() => groupBySection(index), [index]);
+  const groups = useMemo(() => rankGroups(hubGroups, query), [hubGroups, query]);
 
   const openPalette = useCallback(() => {
     restoreFocusRef.current =
       (document.activeElement as HTMLElement | null) ?? null;
+    setQuery("");
     setOpen(true);
   }, []);
 
@@ -186,6 +219,7 @@ export function AdminCommandPalette({
     <CommandDialog
       open={open}
       onOpenChange={setOpen}
+      shouldFilter={false}
       title="Search admin features"
       description="Search the admin panel and jump straight to any page you can access."
       onCloseAutoFocus={(event) => {
@@ -196,15 +230,22 @@ export function AdminCommandPalette({
         }
       }}
     >
-      <CommandInput placeholder="Search admin features…" />
+      <CommandInput
+        placeholder="Search admin features…"
+        value={query}
+        onValueChange={setQuery}
+      />
       <CommandList>
         <CommandEmpty>No matching admin pages.</CommandEmpty>
         {groups.map(({ section, entries }) => (
           <CommandGroup key={section} heading={section}>
             {entries.map((entry) => (
               <CommandItem
-                key={entry.href}
-                value={searchValue(entry)}
+                // A retired page's entry can share its href with another
+                // (two old names, one tab), never its label too.
+                key={`${entry.href} ${entry.label}`}
+                // Identity only: the palette does its own matching.
+                value={`${entry.href} ${entry.label}`}
                 onSelect={() => handleSelect(entry.href)}
                 className="group"
               >

@@ -16,7 +16,7 @@ import {
 import { bookingPromoCodeLabel } from "@/lib/booking-promo-redemptions";
 import { bookingOwner } from "@/lib/booking-owner";
 import { readReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
-import { queueReductionAskFollowUps } from "@/lib/unpaid-ask-billed-offset-note";
+import { queueEditAskFollowUps } from "@/lib/unpaid-ask-billed-offset-note";
 import { logAudit } from "@/lib/audit";
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
@@ -2052,6 +2052,7 @@ export async function modifyBookingBatch({
       bookingModification,
       sides: pricingSides,
       site: "batch-modify",
+      cardRefundCents: payments.organiserChildRefund ? 0 : payments.pendingRefundAmountCents, // #4516: its R05
     });
     // #4019: this new whole-lodge PAID path bypasses the ordinary settle.
     // Post after guest/night writes and the edit, at the final price only.
@@ -2068,12 +2069,12 @@ export async function modifyBookingBatch({
       adjusted: payments,
       editLabel: "booking change", booking, // #3949: booking names the payee (a group organiser who paid by bank transfer)
     });
-    // #3954: a smaller re-issued ask, and the note for an offset Xero had
-    // already billed, are durable from this commit, not from after it.
-    await queueReductionAskFollowUps(tx, {
+    // #3954, #4744: the re-issue, a folded increase's ask, and a billed-offset note are durable from this commit.
+    await queueEditAskFollowUps(tx, {
       bookingId,
       paymentId: booking.payment?.id ?? null,
       bookingModificationId: bookingModification.id,
+      door: "batchModify",
       settled: payments,
     });
 

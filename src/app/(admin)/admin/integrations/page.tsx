@@ -16,10 +16,11 @@ import { canViewAdminHrefWithMatrix } from "@/lib/admin-permissions";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { getIntegrationsNeedingReentry } from "@/lib/integration-credentials";
 import { loadAdminSetupPermissionMatrix } from "@/app/(admin)/admin/setup/permission-matrix";
+import { adminHref } from "@/lib/admin-hubs";
 
 const sections: AdminHubSection[] = [
   {
-    href: "/admin/xero/setup",
+    href: adminHref("xero-setup"),
     title: "Xero Setup",
     description:
       "Connect Xero and configure the accounting settings used by finance workflows.",
@@ -40,14 +41,14 @@ const sections: AdminHubSection[] = [
     icon: KeyRound,
   },
   {
-    href: "/admin/backups/setup",
+    href: adminHref("backups-setup"),
     title: "Database Backups",
     description:
       "Set up durable S3 backups step by step — credentials, destination, nightly schedule, and a real verification run.",
     icon: DatabaseBackup,
   },
   {
-    href: "/admin/ai-assistant",
+    href: adminHref("ai-assistant"),
     title: "AI help assistant",
     description:
       "Enter your Anthropic API key, set a monthly spend cap, and review AI usage. Hidden until the AI assistant module is enabled.",

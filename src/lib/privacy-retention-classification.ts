@@ -17,6 +17,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   TwoFactorEmailCode: "personal",
   TwoFactorRecoveryCode: "personal",
   TwoFactorSessionChallenge: "personal",
+  SessionReauthChallenge: "personal",
   MemberApplication: "personal",
   NominationToken: "personal",
   PartnerInviteToken: "personal",
@@ -227,4 +228,6 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MemberMoneyObligation: "personal",
   MemberMoneyApplication: "personal",
   MemberMoneySourcePosting: "personal",
+  MemberMoneyRefundReservation: "personal",
+  MemberMoneyRefundReservationRelease: "personal",
 } as const;

@@ -1,3 +1,4 @@
+import { ADMIN_PAGES, activeAdminHref } from "@/lib/admin-hubs"
 import {
   shouldDefaultPostalSameAsPhysical,
   type MemberAddressValues,
@@ -97,16 +98,27 @@ export function isCollapsibleMemberSection(
   return collapsibleMemberSections.includes(value as CollapsibleMemberSection)
 }
 
+/**
+ * The parents a member link names on its way back: Bookings and the Finance
+ * pages. A dynamic page (a Xero record) is left out, so a path beneath it falls
+ * to its static parent.
+ */
+const MEMBER_BACK_PARENTS = ADMIN_PAGES.filter(
+  (page) => (page.id === "bookings" || page.hub === "finance") && !page.oldPath.includes("[")
+)
+
 // The label names the parent surface the back-link returns to; the shared
 // BackLink prepends the ← affordance, so the label stays a bare parent name
-// (no "Back to " prefix, which would duplicate the arrow — #2046).
+// (no "Back to " prefix, which would duplicate the arrow — #2046). It is that
+// page's registry label (C5 #4802), and `activeAdminHref` reads a moved page's
+// hub path as its old path, so either form names the same parent.
 export function getMemberDetailBackLabel(returnTo: string) {
-  if (returnTo.startsWith("/admin/bookings")) return "Bookings"
-  if (returnTo.startsWith("/admin/payments")) return "Payments"
-  if (returnTo.startsWith("/admin/subscriptions")) return "Subscriptions"
-  if (returnTo.startsWith("/admin/refund-requests")) return "Refund Requests"
-  if (returnTo.startsWith("/admin/xero")) return "Xero"
-  return "Members"
+  const path = returnTo.split(/[?#]/, 1)[0] ?? returnTo
+  const owner = activeAdminHref(
+    path,
+    MEMBER_BACK_PARENTS.map((page) => page.oldPath)
+  )
+  return MEMBER_BACK_PARENTS.find((page) => page.oldPath === owner)?.label ?? "Members"
 }
 
 export function formatAdminName(admin: AdminActor | null | undefined) {

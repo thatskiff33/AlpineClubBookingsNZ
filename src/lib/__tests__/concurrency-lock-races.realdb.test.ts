@@ -357,6 +357,14 @@ import "./card-refund-reversal-bank-cash-floor.realdb.test";
 // row unchanged, and the close and the failure racing in both orders. Skipped
 // unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4210-` fixtures.
 import "./card-refund-failed-later-after-paid-another-way.realdb.test";
+// #4368 reuses it to prove a dead card refund's "Try the card again" and
+// "Nothing left owed": a re-arm and a "Paid another way" close of one row
+// queued in both orders (one wins, the other writes nothing), a write under the
+// Payment row failing their claims, the close against a refund arriving and
+// against it failing later through the real writer, and the real runner's
+// Stripe check running before any send after a re-arm. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4368-` fixtures.
+import "./card-refund-dead-row-actions.realdb.test";
 // #4147 reuses it to prove the booking-ledger census reads a capacity race's
 // cancel by its own refund rows: through the REAL capacity race, back-post and
 // recovery runner, a refund still being sent is IN_FLIGHT_REFUND (the back-post
@@ -432,6 +440,13 @@ import "./xero-refund-request-note-void.realdb.test";
 // the void's row and re-reads it. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
 // it owns and cleans its own `race-4223-` fixtures.
 import "./xero-canonical-refund-note-void-race.realdb.test";
+// #4200 reuses it to prove an inbound void of a refund credit note and a
+// refund-note create on the same payment lock the Payment row and then the
+// note's link, in that order. The create holds the Payment row; the void
+// waits there and does not hold the link, so the create can take the link
+// and both commit. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
+// cleans its own `race-4200-` fixtures.
+import "./xero-refund-note-void-lock-order.realdb.test";
 // #4288 reuses it to prove an older live Xero reading of a refund note - the
 // inbound reconcile's, the Stripe status recorder's, or a reconcile's write for
 // a per-refund or request note - never revives a mirror a later write recorded
@@ -495,6 +510,19 @@ import "./late-capture-own-charge-refund.realdb.test";
 // longer counts its refund. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns
 // and cleans its own `race-4149-` fixtures.
 import "./late-capture-record-recovery.realdb.test";
+// #4824 reuses it to prove a treasurer's approval of a held late capture reads
+// what the capture still holds under the Payment row: a `charge.refunded` sync
+// recording a refund of it while the approval waits for that row is read, and
+// the approval refuses - no second refund owed. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4824-` fixtures.
+import "./late-capture-approval-refund-race.realdb.test";
+// #4838 reuses it to prove a #2700 hand-back of a late capture reads what the
+// capture still holds under the Payment row: a `charge.refunded` sync recording
+// a dashboard refund of it, before the hand-back or while it waits for that row,
+// is read and the hand-back refused - never mirrored onto the kept fee as well.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4838-` fixtures.
+import "./late-capture-hand-back-race.realdb.test";
 // #4132 reuses it to prove a payment's ledger rows written in one transaction
 // keep insertion order (`createdAt`, then `insertionSeq`) after CLUSTER
 // deliberately changes heap order, through the loader, mirror, reduction's ask and
@@ -726,6 +754,11 @@ import "./xero-late-failure-after-retry.realdb.test";
 // the ensure and the lock is re-ensured. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4609-` rows.
 import "./login-throttle.realdb.test";
+// #4616 reuses it to prove two concurrent consumes of one reauthentication
+// challenge yield one success, and a replay, an expiry or another member's
+// claim does not. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
+// cleans its own `race-4616-` member.
+import "./session-reauth.realdb.test";
 // #4445 reuses it to prove two writers merging metadata onto one Xero link
 // (an existing row, or a missing one both create) both keep their keys, and
 // that the one-statement merge writes what the old spread wrote. Skipped
@@ -741,6 +774,19 @@ import "./xero-erased-contact-status-metadata.realdb.test";
 // made. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
 // `race-4690-` fixtures.
 import "./superseded-refund-notice-once.realdb.test";
+// #4858 reuses it to prove a superseded intent's refund with no stored plan
+// holds, rather than sends, while another door's refund since it was raised
+// sizes it: that door's ledger write racing the runner's preflight on the
+// Payment row, and that refund then failing later, owed once on a row of its
+// own. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4858-` fixtures.
+import "./superseded-refund-another-door-hold.realdb.test";
+// #4866 reuses it to prove a cancellation leaves a live superseded capture to
+// its own refund: neither counted as paid for the booking nor planned on by the
+// cancellation's card refund, including when the cancel's claim queues behind
+// the hand-off flipping that charge captured on the Payment row. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4866-` fixtures.
+import "./superseded-refund-cancel-hold-back.realdb.test";
 // #4685 reuses it to prove an account-credit Xero note stamps the one credit it
 // was raised for, by id, and that a row queued without the id still stamps.
 // Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own

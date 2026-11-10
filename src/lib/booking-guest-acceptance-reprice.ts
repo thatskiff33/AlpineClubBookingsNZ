@@ -1,6 +1,6 @@
 import { Role, type Prisma } from "@prisma/client";
 
-import { queueReductionAskFollowUps } from "@/lib/unpaid-ask-billed-offset-note";
+import { queueEditAskFollowUps } from "@/lib/unpaid-ask-billed-offset-note";
 import { readReductionAgainstUnpaidAsk, type RetiredAdditionalAsk } from "@/lib/additional-ask-reduction";
 import { NO_ADDITIONAL_ASK, type AdditionalAsk } from "@/lib/additional-payment-ask";
 import { logAudit } from "@/lib/audit";
@@ -502,7 +502,7 @@ export async function repriceBookingAfterGuestAcceptance(
     lodgeId,
     bookingModification,
     sides,
-    site: "guest-acceptance",
+    site: "guest-acceptance", cardRefundCents: adjusted.organiserChildRefund ? 0 : paymentImpact.pendingRefundAmountCents, // #4516: its R05
   });
   // #4019: a whole-lodge PAID at $0 bypasses the settle; post as the other edit doors do.
   if (lifecycle.zeroDollarAutoPaid && isUnpaidConfirmedWholeLodge(booking)) {
@@ -518,7 +518,7 @@ export async function repriceBookingAfterGuestAcceptance(
     editLabel: "guest's acceptance re-price", booking, // #3949: booking names the payee (a group organiser who paid by bank transfer)
   });
   // #3954: a smaller re-issued ask, and a billed offset's note, are durable from this commit.
-  await queueReductionAskFollowUps(tx, { bookingId, paymentId: booking.payment?.id ?? null, bookingModificationId: bookingModification.id, settled: paymentImpact });
+  await queueEditAskFollowUps(tx, { bookingId, paymentId: booking.payment?.id ?? null, bookingModificationId: bookingModification.id, door: "guestAcceptanceReprice", settled: paymentImpact });
   // #3653 (composed by #3829): an organiser-settled child's refund debt, before
   // this re-price commits, as every edit door reserves it.
   await reserveOrganiserChildModificationRefund(tx, {

@@ -652,7 +652,7 @@ export const CENTS_DISPLAY_EXEMPTIONS = [
 // this arm.
 //
 // Still deliberately NOT here: the Xero ADMIN SCREENS under
-// `src/app/(admin)/admin/xero/`, which render API-budget percentages with the
+// `src/app/(admin)/admin/finance/xero/`, which render API-budget percentages with the
 // same `usagePercent * 100` shape, and are correct.
 const MONEY_DOMAIN_MODULES = [
   "src/lib/xero.ts",
@@ -1132,7 +1132,7 @@ const DATE_FNS_RESTRICTIONS = [...NO_DATE_FNS];
  */
 const DATE_FNS_ADAPTER_FILES = [
   "src/app/(admin)/admin/members/_components/xero-groups-refresh-hint.tsx",
-  "src/app/(admin)/admin/reports/_components/report-charts.tsx",
+  "src/app/(admin)/admin/finance/reports/_components/report-charts.tsx",
   "src/components/admin/member-password-action-button.tsx",
   "src/lib/admin-dataset-reset-state.ts",
   "src/lib/admin-reports.ts",
@@ -1152,7 +1152,7 @@ export const DATE_FNS_ADAPTERS = [
       "The same relative-duration hint on a password action, zone-independent for the same reason.",
   },
   {
-    file: "src/app/(admin)/admin/reports/_components/report-charts.tsx",
+    file: "src/app/(admin)/admin/finance/reports/_components/report-charts.tsx",
     uses: "format",
     reason:
       "Chart tick labels for the same surface and the same residual; they must agree with the series that feeds them, so the two move together or not at all.",
@@ -3046,11 +3046,11 @@ const eslintConfig = defineConfig([
     // one restriction is lifted — both date restrictions still apply here.
     files: [
       // Character counter: "12,345 / 50,000 characters" on the raw-CSS box.
-      "src/app/(admin)/admin/site-style/site-style-wizard.tsx",
+      "src/app/(admin)/admin/website/site-style/site-style-wizard.tsx",
       // Validation message quoting the notice body's character limit.
       "src/components/admin/notice-editor.tsx",
       // Redemption/export row counts in the promo-code panel.
-      "src/app/(admin)/admin/promo-codes/promo-redemptions-panel.tsx",
+      "src/app/(admin)/admin/rules/promo-codes/promo-redemptions-panel.tsx",
     ],
     rules: {
       "no-restricted-syntax": srcRestrictedSyntax(

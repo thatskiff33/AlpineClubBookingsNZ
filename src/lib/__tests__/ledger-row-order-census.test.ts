@@ -71,7 +71,20 @@ const RELATION_READ_KEYS = new Set(["select", "include", "where", "orderBy", "ta
  * they decide.
  */
 const UNORDERED_ROW_SETS: Record<string, string> = {
-  "src/lib/additional-ask-reissue.ts > foldWaitingReissuedAsks":
+  // #4516 (Ledger M4b): receipt selections are sets of row ids, and the hook walks settlement lines, not rows.
+  "src/lib/credit-release-ask-close.ts > creditReleaseReceiptRowIds":
+    "a set of W8 row ids, read before and after the close's own write; the difference is what it collects, whatever the order.",
+  "src/lib/internet-banking-part-payment-at-cancel.ts > recordPartPaymentInClaim":
+    "the ids of the captured bank rows (by the claim's precondition, only the row it just wrote) handed to the receipt hook as a set (`includes`).",
+  "src/lib/member-money/internal/booking-receipts.ts > postBookingReceipts":
+    "the payment's rows are looked up by id (`find` on a settlement line's anchor); the hook walks the settlement lines in their own posted order.",
+  "src/lib/member-money/internal/receipt-census.ts > readBookingReceiptCensus":
+    "each captured row is judged on its own (its line, its event, its amount); the findings are a set, not a sequence.",
+  "src/lib/payment-reconciliation.ts > settleBookingPaymentInTransaction":
+    "the ids of the rows the officer settle is about to write, a set the receipt hook selects by membership (`includes`).",
+  "src/lib/xero-inbound/invoice-paid-effects.ts > syncInternetBankingPaymentsForPaidInvoice":
+    "the ids of the PRIMARY bank rows this delivery moves to captured, a set the receipt hook selects by membership (`includes`).",
+  "src/lib/additional-ask-reissue.ts > foldWaitingAsks":
     "hands the ADDITIONAL rows to isRecoveryReplaySettled, which asks only whether SOME row carries an " +
     "intent or was written after the recovery (`.some`), never which row comes first.",
   "src/lib/additional-ledger-gap.ts > netCollectedPaymentSelect":
@@ -106,6 +119,9 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
     "reads only which candidate intents are already recorded (a Set of intent ids).",
   "src/lib/orphaned-applied-credit-backfill.ts > CANDIDATE_BOOKING_SELECT":
     "reads only each row's status to ask whether ANY row was captured (`.some`).",
+  "src/lib/superseded-capture-hold-back.ts > readSupersededCaptureHeldBack":
+    "#4866: each live superseded row looks its own charge up by id (`find` on its paymentTransactionId); the " +
+    "per-charge cents are a map and their total a sum, neither depending on the order.",
   "src/lib/refund-allocation-unwind.ts > unwindableHandBackCents":
     "#4162: sums each row's refunded total less its card refunds; a sum does not depend on the order " +
     "(the unwind itself orders its rows, oldest first).",

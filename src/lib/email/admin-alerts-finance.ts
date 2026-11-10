@@ -49,6 +49,7 @@ import {
 import type { ClubFormat } from "@/lib/club-format";
 
 // N-04: Admin alert - payment failure
+import { adminHref } from "@/lib/admin-hubs";
 export async function sendAdminPaymentFailureAlert(data: {
   memberName: string;
   /**
@@ -128,7 +129,7 @@ export async function sendAdminLateCaptureAutoRefundAlert(data: {
   format: ClubFormat,
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/payments`;
+  const reviewUrl = `${baseUrl}${adminHref("payments")}`;
   const bookingStateLabel = lateCaptureAutoRefundBookingStateLabel(
     data.bookingDeleted,
   );
@@ -200,7 +201,7 @@ export async function sendAdminLateCaptureHandBackConflictAlert(data: {
   format: ClubFormat,
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/payments`;
+  const reviewUrl = `${baseUrl}${adminHref("payments")}`;
   const handBackConflictLabel = lateCaptureHandBackConflictSubjectLabel(
     data.refundSent,
   );
@@ -307,7 +308,7 @@ export async function sendAdminDuplicateCaptureRefundAlert(data: {
   format: ClubFormat,
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/payments`;
+  const reviewUrl = `${baseUrl}${adminHref("payments")}`;
 
   await sendToAdmins({
     subject: data.refundFailed
@@ -376,7 +377,7 @@ export async function sendAdminManualSettlementConflictAlert(data: {
   format: ClubFormat,
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/payments`;
+  const reviewUrl = `${baseUrl}${adminHref("payments")}`;
   const xeroInvoiceUrl = await stampXeroOrganisation(data.xeroInvoiceUrl);
 
   await sendToAdmins({
@@ -426,7 +427,7 @@ export async function sendAdminManualRefundTaskAlert(data: {
   format: ClubFormat,
 ): Promise<AdminAlertSendOutcome> {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/payments`;
+  const reviewUrl = `${baseUrl}${adminHref("payments")}`;
   const situation = data.situation ?? "cash-cancellation";
 
   // #4042: the outcome, so the group alert is recorded as sent only when it was.

@@ -70,13 +70,27 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { isFeatureHrefVisible } from "@/config/feature-routes";
+import {
+  ADMIN_HUBS,
+  ADMIN_MENU_DESTINATIONS,
+  ADMIN_RETIRED_PAGES,
+  activeAdminHref,
+  adminHref,
+  adminLink,
+  canonicalAdminPathname,
+  getAdminPage,
+  retiredAdminPageHref,
+  type AdminPageId,
+} from "@/lib/admin-hubs";
+import { isAdminMenuDestination, type AdminHubPage } from "@/lib/admin-hubs/define";
 import type { FeatureFlags } from "@/config/schema";
 import {
   canAccessConsolidatedFeesPage,
+  canOpenAdminPathWithMatrix,
   canViewAdminHrefWithMatrix,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
-import { requireCalendarDate, type CalendarDate } from "@/lib/club-time";
+import type { CalendarDate } from "@/lib/club-time";
 import { useClubTime } from "@/components/club-time-provider";
 import {
   buildUnpaidFinishedStaysHref,
@@ -98,13 +112,6 @@ interface NavSection {
      * (bookings OR finance) and cannot be expressed by canViewAdminHrefWithMatrix.
      */
     orAccess?: (matrix: AdminPermissionMatrix) => boolean;
-    /**
-     * Extra search terms (synonyms, acronyms, sibling concepts) that should
-     * surface this page in the admin feature palette (#2092) even when they
-     * don't appear in the label. Purely additive — never affects sidebar
-     * rendering or visibility, only the fuzzy match in the command palette.
-     */
-    keywords?: string[];
   }>;
 }
 
@@ -123,21 +130,6 @@ const NEEDS_ATTENTION_LABEL = "Needs Attention";
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "admin-sidebar:expanded-sections";
 
 /**
- * A day, any day, for {@link ADMIN_NAV_SECTION_ORDER} below.
- *
- * `buildAdminNavSections` takes the club's today because exactly ONE item's
- * href is a dated deep link — never because a section LABEL depends on it, and
- * the labels are all that list reads. The order is therefore day-independent by
- * construction, and naming a fixed probe day says so out loud rather than
- * reaching for a clock in a module that must not read one.
- *
- * NOT A SOURCE OF "TODAY". Nothing but the section ORDER may read it, and
- * `admin-sidebar-club-time.test.tsx` pins the independence so the claim above
- * cannot rot into a lie.
- */
-const NAV_SECTION_ORDER_PROBE_DAY = requireCalendarDate("1970-01-01");
-
-/**
  * Deep link for the unsettled-additions queue (#1723 path 2, widened by #2350):
  * every booking whose upward modification delta was never collected, whether the
  * stay has finished or is still ahead. Unlike the queue above this needs no date
@@ -148,13 +140,39 @@ const NAV_SECTION_ORDER_PROBE_DAY = requireCalendarDate("1970-01-01");
 const UNSETTLED_ADDITIONS_HREF = buildUnsettledAdditionalStaysHref();
 
 /**
+ * The pre-filtered queue views: Bookings deep links that are not pages of their
+ * own, so the hub registry cannot list them. The sidebar shows them under
+ * "Needs Attention" while their queue has something in it; the command palette
+ * always offers them, under the hub of `page` (S2 #4797). One list, so the two
+ * surfaces cannot carry different dated hrefs (#3123).
+ */
+const buildAdminQueueViews = (clubToday: CalendarDate) =>
+  [
+    {
+      href: buildUnpaidFinishedStaysHref(clubToday),
+      label: "Unpaid Finished Stays",
+      icon: DollarSign,
+      page: "bookings",
+    },
+    {
+      href: UNSETTLED_ADDITIONS_HREF,
+      label: "Unpaid Stay Additions",
+      icon: DollarSign,
+      page: "bookings",
+    },
+  ] as const satisfies ReadonlyArray<
+    NavSection["items"][number] & { page: AdminPageId }
+  >;
+
+/**
  * Every admin nav section, for a given club day.
  *
  * A FUNCTION, not a constant, and both halves of that matter (#3123).
  *
  * The unpaid-finished-stays entry is a deep link whose `checkOutTo` bound is the
  * club's own day, and it is simultaneously a nav href, the key of the badge map
- * in `SidebarLinks`, and what the command palette navigates to. It used to be a
+ * in `SidebarLinks`, and (through `buildAdminQueueViews`) what the command
+ * palette navigates to. It used to be a
  * module-level `const` built from the environment timezone — which was wrong
  * twice over. It answered from the CONTAINER's day rather than the club's
  * persisted one (`INV-CONFIG-002`), and a module body is evaluated ONCE per
@@ -182,33 +200,24 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
     // something pending (see the filtering in SidebarLinks).
     label: NEEDS_ATTENTION_LABEL,
     items: [
-      { href: "/admin/xero", label: "Silent Xero Webhook", icon: Bell },
+      { href: adminHref("xero"), label: "Silent Xero Webhook", icon: Bell },
       {
         href: "/admin/booking-requests",
         label: "Booking Requests",
         icon: ClipboardList,
       },
-      {
-        href: buildUnpaidFinishedStaysHref(clubToday),
-        label: "Unpaid Finished Stays",
-        icon: DollarSign,
-      },
-      {
-        href: UNSETTLED_ADDITIONS_HREF,
-        label: "Unpaid Stay Additions",
-        icon: DollarSign,
-      },
+      ...buildAdminQueueViews(clubToday).map(({ href, label, icon }) => ({
+        href,
+        label,
+        icon,
+      })),
       {
         href: "/admin/member-applications",
         label: "Applications",
         icon: ClipboardList,
       },
       { href: "/admin/family-groups", label: "Family Groups", icon: Users },
-      {
-        href: "/admin/refund-requests",
-        label: "Refunds & Credits",
-        icon: RotateCcw,
-      },
+      { ...adminLink("refund-requests"), icon: RotateCcw },
       {
         href: "/admin/membership-cancellations",
         label: "Cancellation Requests",
@@ -219,7 +228,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         label: "Deletion Requests",
         icon: Trash2,
       },
-      { href: "/admin/issue-reports", label: "Issue Reports", icon: Bug },
+      { ...adminLink("issue-reports"), icon: Bug },
       { href: "/admin/hut-leaders", label: "Hut Leaders", icon: Bell },
     ],
   },
@@ -237,7 +246,6 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         href: "/admin/bed-allocation",
         label: "Bed Allocation",
         icon: BedDouble,
-        keywords: ["rooms", "beds", "assign", "bunks"],
       },
       { href: "/admin/waitlist", label: "Waitlist", icon: Clock },
     ],
@@ -249,23 +257,10 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
       // see the Finance group "Fees" entry); /admin/seasons is reduced to season
       // windows and stays lodge-scoped (#130, ADR-005) — reached from Fees → Hut
       // Fees and the lodge hub's "Seasons & Rates" card, not a standalone entry.
-      {
-        href: "/admin/age-tier-settings",
-        label: "Age Groups",
-        icon: Sliders,
-        keywords: ["age tiers", "child pricing", "youth", "senior"],
-      },
-      {
-        href: "/admin/promo-codes",
-        label: "Promo Codes",
-        icon: Tag,
-        keywords: ["discount", "coupon", "voucher"],
-      },
-      {
-        href: "/admin/booking-policies",
-        label: "Booking Policies",
-        icon: XCircle,
-      },
+      // The command palette offers it (S2 #4797); the page picks a lodge itself.
+      { ...adminLink("age-tier-settings"), icon: Sliders },
+      { ...adminLink("promo-codes"), icon: Tag },
+      { ...adminLink("booking-policies"), icon: XCircle },
     ],
   },
   {
@@ -275,51 +270,16 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
       // Annual Fees (finance). Shown to anyone with view on either area via the
       // OR predicate, since its prefix resolves to bookings only.
       {
-        href: "/admin/fees",
-        label: "Fees",
+        ...adminLink("fees"),
         icon: DollarSign,
         orAccess: canAccessConsolidatedFeesPage,
-        keywords: [
-          "hut fees",
-          "joining fees",
-          "annual fees",
-          "rates",
-          "pricing",
-        ],
       },
-      {
-        href: "/admin/payments",
-        label: "Payments",
-        icon: CreditCard,
-        keywords: ["stripe", "transactions", "receipts"],
-      },
-      {
-        href: "/admin/internet-banking",
-        label: "Internet Banking",
-        icon: Landmark,
-      },
-      {
-        href: "/admin/refund-requests",
-        label: "Refunds & Credits",
-        icon: RotateCcw,
-      },
-      {
-        href: "/admin/reports",
-        label: "Reports",
-        icon: BarChart2,
-        keywords: ["statements", "export", "analytics", "revenue"],
-      },
-      {
-        href: "/admin/xero",
-        label: "Xero Sync",
-        icon: RefreshCw,
-        keywords: ["accounting", "invoices", "reconcile"],
-      },
-      {
-        href: "/admin/xero/member-grouping",
-        label: "Xero Member Grouping",
-        icon: Users,
-      },
+      { ...adminLink("payments"), icon: CreditCard },
+      { ...adminLink("internet-banking"), icon: Landmark },
+      { ...adminLink("refund-requests"), icon: RotateCcw },
+      { ...adminLink("reports"), icon: BarChart2 },
+      { ...adminLink("xero"), icon: RefreshCw },
+      { ...adminLink("xero-member-grouping"), icon: Users },
     ],
   },
   {
@@ -329,9 +289,8 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         href: "/admin/members",
         label: "Members",
         icon: Users,
-        keywords: ["users", "people", "contacts", "membership"],
       },
-      { href: "/admin/subscriptions", label: "Subscriptions", icon: FileText },
+      { ...adminLink("subscriptions"), icon: FileText },
       {
         href: "/admin/member-applications",
         label: "Applications",
@@ -343,37 +302,15 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         icon: UserX,
       },
       { href: "/admin/induction", label: "Induction", icon: ClipboardCheck },
-      {
-        href: "/admin/communications",
-        label: "Communications",
-        icon: Mail,
-        keywords: ["email", "newsletter", "bulk message", "broadcast"],
-      },
-      {
-        href: "/admin/message-board",
-        label: "Message Board",
-        icon: MessageSquare,
-        keywords: [
-          "message board",
-          "posts",
-          "member posts",
-          "moderation",
-          "hide post",
-          "remove post",
-        ],
-      },
-      {
-        href: "/admin/notices",
-        label: "Member Notices",
-        icon: Newspaper,
-        keywords: ["news", "recent news", "notice", "announcement", "committee"],
-      },
+      { ...adminLink("communications"), icon: Mail },
+      { ...adminLink("message-board"), icon: MessageSquare },
+      { ...adminLink("notices"), icon: Newspaper },
       // Lockers is lodge-scoped (#130, ADR-005) — reached via the lodge hub's
-      // "Lockers" card, not a standalone sidebar entry.
-      { href: "/admin/family-groups", label: "Family Groups", icon: Users },
+      // "Lockers" card, not a standalone sidebar entry. The command palette
+      // offers it (S2 #4797); the page picks a lodge itself.
       {
-        href: "/admin/family-suggestions",
-        label: "Family Suggestions",
+        href: "/admin/family-groups",
+        label: "Family Groups",
         icon: Users,
       },
     ],
@@ -387,13 +324,11 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         href: "/admin/lodge",
         label: "Lodge Kiosk",
         icon: Tablet,
-        keywords: ["check-in", "kiosk", "arrivals"],
       },
       {
         href: "/admin/calendar",
         label: "Calendar",
         icon: CalendarDays,
-        keywords: ["events", "meetings", "committee", "schedule"],
       },
       { href: "/admin/work-parties", label: "Work Parties", icon: Hammer },
       {
@@ -406,12 +341,10 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         // `isFeatureHrefVisible` derives visibility from the href against
         // FEATURE_ROUTE_RULES, and "/admin/maintenance-reports" is registered
         // under the `maintenanceReports` rule — so with the module off this entry
-        // disappears from the sidebar and the command palette, matching the 404
-        // the route returns.
+        // disappears from the sidebar, matching the 404 the route returns.
         href: "/admin/maintenance-reports",
         label: "Lodge Maintenance",
         icon: Wrench,
-        keywords: ["maintenance", "fault", "repair", "broken", "qr", "fix"],
       },
       // Lobby Display (fork issue #109): one Lodge Operations entry opens the
       // hub landing page (/admin/display), which lays out cards for Devices,
@@ -422,49 +355,24 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         href: "/admin/display",
         label: "Lobby Display",
         icon: Tv,
-        keywords: ["signage", "screen", "tv", "devices"],
       },
     ],
   },
   {
     label: "Monitoring & Support",
     items: [
-      { href: "/admin/issue-reports", label: "Issue Reports", icon: Bug },
-      {
-        href: "/admin/stuck-states",
-        label: "Stuck States",
-        icon: AlertTriangle,
-      },
-      {
-        href: "/admin/health",
-        label: "System Health",
-        icon: Activity,
-        keywords: ["status", "diagnostics", "uptime", "monitoring"],
-      },
-      {
-        href: "/admin/email-deliverability",
-        label: "Email Deliverability",
-        icon: Mail,
-      },
-      { href: "/admin/background-jobs", label: "Background Jobs", icon: Clock },
+      { ...adminLink("issue-reports"), icon: Bug },
+      { ...adminLink("stuck-states"), icon: AlertTriangle },
+      { ...adminLink("health"), icon: Activity },
+      { ...adminLink("email-deliverability"), icon: Mail },
+      { ...adminLink("background-jobs"), icon: Clock },
       {
         href: "/admin/privacy-retention",
         label: "Privacy & Retention",
         icon: Shield,
-        keywords: ["privacy", "retention", "anonymise", "replay", "pruning"],
       },
-      {
-        href: "/admin/backups",
-        label: "Database Backups",
-        icon: DatabaseBackup,
-        keywords: ["backup", "s3", "restore", "disaster recovery", "pg_dump"],
-      },
-      {
-        href: "/admin/ai-assistant",
-        label: "AI help assistant",
-        icon: Bot,
-        keywords: ["ai", "assistant", "anthropic", "llm", "help", "spend cap"],
-      },
+      { ...adminLink("backups"), icon: DatabaseBackup },
+      { ...adminLink("ai-assistant"), icon: Bot },
       {
         // AI Diagnostics (AID-7, #2378) — a separate read-only investigation
         // product, not the help assistant above. Listed here because "why is this
@@ -472,11 +380,10 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         // comes looking.
         //
         // No explicit flag is needed: `isFeatureHrefVisible` derives visibility
-        // from the href against FEATURE_ROUTE_RULES, and this PR registered
-        // "/admin/ai-diagnostics" under the `aiDiagnostics` rule — so with the
-        // module off the entry disappears from the sidebar AND the command palette
-        // (which builds its index from this same function), matching the 404 the
-        // route itself now returns.
+        // from the href against FEATURE_ROUTE_RULES, whose `aiDiagnostics` rule
+        // has been generated from this page's registry entry since #4799, at its
+        // old and its hub path — so with the module off the entry disappears from
+        // the sidebar, matching the 404 the route itself returns.
         //
         // ADMISSION, NOT AN AREA (ADR-002 §1, owner-ratified #2370): any admitted
         // administrator may open the shell, and the link follows that rule with
@@ -484,25 +391,10 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         // `ANY_ADMIN_ADMISSION_PATHS` entry as `canOpenAdminPath` does (#3596).
         // The href's `overview` map area stopped meaning "any admin" when #2984
         // made portal standing any one of the seven areas.
-        href: "/admin/ai-diagnostics",
-        label: "AI Diagnostics",
+        ...adminLink("ai-diagnostics"),
         icon: Stethoscope,
-        keywords: [
-          "diagnose",
-          "investigate",
-          "why",
-          "blocked",
-          "evidence",
-          "troubleshoot",
-          "explain",
-        ],
       },
-      {
-        href: "/admin/audit-log",
-        label: "Audit Log",
-        icon: Shield,
-        keywords: ["history", "activity", "changes", "trail"],
-      },
+      { ...adminLink("audit-log"), icon: Shield },
       {
         href: "/admin/deletion-requests",
         label: "Deletion Requests",
@@ -519,7 +411,6 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         href: "/admin/security",
         label: "Login & Security",
         icon: LockKeyhole,
-        keywords: ["password", "2fa", "two-factor", "sign-in", "magic link"],
       },
       { href: "/admin/lodges", label: "Lodges", icon: Building2 },
       {
@@ -527,145 +418,59 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         label: "Membership & Members",
         icon: BadgeCheck,
       },
-      {
-        href: "/admin/appearance",
-        label: "Site Appearance & Content",
-        icon: Palette,
-      },
-      {
-        href: "/admin/bookings-setup",
-        label: "Bookings Setup",
-        icon: BedDouble,
-      },
+      { ...adminLink("appearance"), icon: Palette },
+      { ...adminLink("bookings-setup"), icon: BedDouble },
       {
         href: "/admin/integrations",
         label: "Integrations",
         icon: Plug,
-        // "google analytics", "analytics" and "ga4" ride on the HUB href because
-        // the Google Analytics configuration has no href of its own — #2573 put it
-        // in a dialog on this hub, and the search index is built from the hrefs the
-        // sidebar would show (`getAdminFeatureSearchIndex`), so a card inside a page
-        // can only be found through the page that carries it. Without them the
-        // palette answered "analytics" with Financial Reports, whose own keywords
-        // already claim the word, and "google analytics" and "ga4" with nothing at
-        // all — for the screen that controls whether the club's public website
-        // tracks visitors. Same reason Backups carries "s3"/"pg_dump" and the AI
-        // help assistant carries "anthropic"/"spend cap".
-        keywords: [
-          "api",
-          "connections",
-          "third-party",
-          "webhooks",
-          "google analytics",
-          "analytics",
-          "ga4",
-        ],
       },
-      {
-        href: "/admin/notifications",
-        label: "Notifications & Email",
-        icon: Bell,
-      },
+      { ...adminLink("notifications"), icon: Bell },
       // Chores is lodge-scoped (#130, ADR-005) — reached via the lodge hub's
-      // "Chores" card, not a standalone sidebar entry.
+      // "Chores" card, not a standalone sidebar entry. The command palette
+      // offers it (S2 #4797); the page picks a lodge itself.
       {
         href: "/admin/access-roles",
         label: "Access Roles",
         icon: Shield,
         fullAdminOnly: true,
-        keywords: ["permissions", "rbac", "staff roles", "admin roles"],
       },
       {
         href: "/admin/config-transfer",
         label: "Export & Import",
         icon: ArrowRightLeft,
         fullAdminOnly: true,
-        keywords: ["backup", "migration", "config transfer", "restore"],
       },
       {
         // The one persisted IANA club timezone (CT-1 #2989, epic #2988). Full
         // Admin like Access Roles and Export & Import beside it, and the route
-        // enforces that itself. The keywords carry the words an operator would
-        // actually type — "timezone" as one word and two, plus the daylight-saving
-        // vocabulary and "IANA" — because the label alone matches none of them and
-        // the palette index is built from these entries.
+        // enforces that itself.
         href: "/admin/club-time",
         label: "Club Time Zone",
         icon: Globe,
         fullAdminOnly: true,
-        keywords: [
-          "timezone",
-          "time zone",
-          "clock",
-          "daylight saving",
-          "dst",
-          "iana",
-          "utc offset",
-          "nzst",
-          "nzdt",
-        ],
       },
       {
         // The one persisted currency and locale (#3563). UNLIKE its Full-Admin
         // neighbours, any admin sees it (#3596): all may VIEW, only a Full Admin
         // may change. It is an `ANY_ADMIN_ADMISSION_PATHS` entry, so the matrix
-        // check admits every admin, not just its `support` map area. The
-        // keywords are the words an operator would type; the label matches none.
+        // check admits every admin, not just its `support` map area.
         href: "/admin/club-format",
         label: "Club Currency & Locale",
         icon: Coins,
-        keywords: [
-          "currency",
-          "dollars",
-          "nzd",
-          "money format",
-          "locale",
-          "language tag",
-          "number format",
-          "date format",
-        ],
       },
       {
         // Is this the club's live site or a copy (ENV-SAFETY 1 #3034, epic
         // #2986)? Full Admin like Access Roles, Export & Import and Club Time
-        // Zone beside it, and the route enforces that itself. The keywords carry
-        // the words an operator would actually type — "staging", "test site",
-        // "copy", "live" — because the label matches none of them and the command
-        // palette index is built from these entries.
+        // Zone beside it, and the route enforces that itself.
         href: "/admin/environment",
         label: "Environment Safety",
         icon: ServerCog,
         fullAdminOnly: true,
-        keywords: [
-          "production",
-          "non-production",
-          "staging",
-          "test site",
-          "copy",
-          "live site",
-          "environment",
-          "safe mode",
-        ],
       },
       { href: "/admin/committee", label: "Committee", icon: UsersRound },
     ],
   },
-];
-
-/**
- * Distinct sidebar section labels in canonical `buildAdminNavSections` order (#2092). The
- * command palette orders its groups by this list so that a page first
- * encountered under "Needs Attention" during href de-duplication doesn't drag
- * its natural group to the wrong position. `undefined` marks the label-less
- * Admin Dashboard section whose palette entry falls under the "General"
- * heading.
- */
-export const ADMIN_NAV_SECTION_ORDER: ReadonlyArray<string | undefined> = [
-  ...new Set(
-    buildAdminNavSections(NAV_SECTION_ORDER_PROBE_DAY).map(
-      (section) => section.label,
-    ),
-  ),
 ];
 
 /**
@@ -697,56 +502,104 @@ export function getVisibleAdminNavSections(
                 ? item.orAccess(permissionMatrix)
                 : canViewAdminHrefWithMatrix(permissionMatrix, item.href))),
         )
-        .map((item) =>
-          item.href === "/admin/hut-leaders"
-            ? { ...item, label: pluralHutLeaderLabel(hutLeaderLabel) }
-            : item,
-        ),
+        .map((item) => {
+          const id = PAGE_ID_BY_OLD_PATH.get(canonicalAdminPathname(item.href));
+          return id
+            ? { ...item, label: adminPageLabel({ id, label: item.label }, { hutLeaderLabel }) }
+            : item;
+        }),
     }))
     .filter((section) => section.items.length > 0);
 }
 
-/** A single searchable page in the admin feature palette (#2092). */
+/**
+ * The label an admin page is shown under, for the sidebar and the palette
+ * alike, keyed by its registry id: the club's plural hut-leader term on Hut
+ * Leaders (#3976), the given label everywhere else.
+ */
+export function adminPageLabel(
+  page: { readonly id: string; readonly label: string },
+  { hutLeaderLabel }: { readonly hutLeaderLabel: string },
+): string {
+  return page.id === "hut-leaders" ? pluralHutLeaderLabel(hutLeaderLabel) : page.label;
+}
+
+/** A page's old path -> its registry id, so a sidebar link finds `adminPageLabel`. */
+const PAGE_ID_BY_OLD_PATH: ReadonlyMap<string, string> = new Map(
+  ADMIN_MENU_DESTINATIONS.map(({ page }) => [page.oldPath, page.id]),
+);
+
+/** A single searchable entry in the admin feature palette (#2092). */
 export interface AdminFeatureSearchEntry {
   /** Destination the palette navigates to on selection. */
   href: string;
-  /** Visible label, already relabelled (e.g. hut-leader term) by the source. */
+  /** Visible label, already relabelled (e.g. hut-leader term). */
   label: string;
-  /** Owning sidebar section label, if any (top-level entries have none). */
-  section?: string;
-  /** Optional extra match terms carried from the nav entry. */
-  keywords?: string[];
+  /** The label of the hub the page belongs to: the palette's group heading. */
+  section: string;
+  /** Extra match terms: the page's registry keywords and its old sidebar section. */
+  keywords?: readonly string[];
+}
+
+/** The palette's group headings, in menu order: one per hub (S2 #4797). */
+export const ADMIN_FEATURE_SEARCH_GROUP_ORDER: readonly string[] = ADMIN_HUBS.map(
+  (hub) => hub.label,
+);
+
+const HUB_LABEL_BY_KEY: ReadonlyMap<string, string> = new Map(
+  ADMIN_HUBS.map((hub) => [hub.key, hub.label]),
+);
+
+/**
+ * Each sidebar href -> the label of the sidebar section it sits in, read from
+ * `buildAdminNavSections` itself. A page listed twice keeps its natural
+ * section, which comes after "Needs Attention"; the queue views, listed only
+ * there, keep "Needs Attention". The palette's groups are hubs now, so this is
+ * what still finds a page by the section name an officer learned (S2 #4797).
+ */
+function sidebarSectionByHref(clubToday: CalendarDate): ReadonlyMap<string, string> {
+  const byHref = new Map<string, string>();
+  for (const section of buildAdminNavSections(clubToday)) {
+    if (!section.label) continue;
+    for (const item of section.items) byHref.set(item.href, section.label);
+  }
+  return byHref;
+}
+
+/** `words` with any repeat (ignoring case) and any empty word dropped. */
+function distinctWords(words: ReadonlyArray<string | undefined>): string[] {
+  const seen = new Set<string>();
+  return words.filter((word): word is string => {
+    if (!word) return false;
+    const key = word.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /**
- * Flat, de-duplicated search index for the admin feature palette (#2092),
- * derived at runtime from {@link getVisibleAdminNavSections}. Reusing that
- * function — rather than re-reading `buildAdminNavSections` or re-implementing the
- * predicate — is deliberate and load-bearing: it guarantees the palette
- * applies EXACTLY the same four visibility conditions the sidebar does
- * (module-flag visibility, `fullAdminOnly`, `orAccess`, and the permission
- * matrix) plus the hut-leader relabel, so the palette can never reveal an href
- * an admin is not permitted to open.
+ * The admin feature palette's index (#2092), built from the hub registry (S2
+ * #4797), in three parts, each grouped under a hub:
+ * - every menu destination (`ADMIN_MENU_DESTINATIONS`, so never a detail,
+ *   print, stub, test or retired page), linked at its `adminHref`, matched on
+ *   its registry keywords and its old sidebar section name;
+ * - every retired page (`ADMIN_RETIRED_PAGES`), under its old name, linked at
+ *   the tab or section of the page that now holds it (`retiredAdminPageHref`,
+ *   its redirect's own target) and offered exactly when that page is;
+ * - the sidebar's pre-filtered queue views (`buildAdminQueueViews`), under the
+ *   hub of the page they filter.
+ * The sidebar links only some pages; the palette offers every page this admin
+ * may open.
  *
- * Superset, not "exactly what the sidebar shows": the index lists every page
- * the sidebar COULD show this admin, which is deliberately more than the
- * sidebar renders at any given moment. The two queue-driven "Needs Attention"
- * deep links (Unpaid Finished Stays / Unpaid Stay Additions) appear here
- * unconditionally — they are useful, always-accessible, pre-filtered views —
- * whereas the sidebar reveals them only while their queue is non-empty. This is
- * never a superset in permission terms: an href the admin may not open is never
- * indexed.
- *
- * Fail-closed: unlike {@link getVisibleAdminNavSections} (whose fail-OPEN
- * missing-matrix contract predates this and is shared with other callers), a
- * missing `permissionMatrix` yields an EMPTY index here, so the search surface
- * denies by default rather than exposing every page — defence in depth (#2092).
- *
- * De-duplication: a handful of hrefs appear twice in `buildAdminNavSections` — once in
- * the queue-driven "Needs Attention" section and once in their natural home
- * section. We key by href and let later (natural) sections overwrite the
- * earlier "Needs Attention" copy, so every page appears exactly once, labelled
- * by its natural section where it has one.
+ * Every entry passes all of these, so the palette fails CLOSED:
+ * - a permission matrix was supplied (none yields an EMPTY index; the sidebar's
+ *   `getVisibleAdminNavSections` keeps its older fail-open contract);
+ * - `isFeatureHrefVisible`: no disabled module gates its path;
+ * - a `fullAdminOnly` page only for a Full Admin;
+ * - `canOpenAdminPathWithMatrix`: the layout guard's own admission rule, so an
+ *   OR admission (the fee console, Rooms & Beds) and an any-admin page answer
+ *   exactly as the page will.
  */
 export function getAdminFeatureSearchIndex(
   clubToday: CalendarDate,
@@ -755,29 +608,54 @@ export function getAdminFeatureSearchIndex(
   isFullAdmin?: boolean,
   hutLeaderLabel = "Hut Leader",
 ): AdminFeatureSearchEntry[] {
-  // Palette-scoped defence in depth: deny (empty index) when no matrix is
-  // supplied, rather than inheriting getVisibleAdminNavSections' fail-open.
   if (!permissionMatrix) {
     return [];
   }
-  const byHref = new Map<string, AdminFeatureSearchEntry>();
-  for (const section of getVisibleAdminNavSections(
-    clubToday,
-    features,
-    permissionMatrix,
-    isFullAdmin,
-    hutLeaderLabel,
-  )) {
-    for (const item of section.items) {
-      byHref.set(item.href, {
-        href: item.href,
-        label: item.label,
-        section: section.label,
-        keywords: item.keywords,
-      });
-    }
-  }
-  return [...byHref.values()];
+  const offers = (href: string, page: AdminHubPage) =>
+    isFeatureHrefVisible(href, features) &&
+    (!page.fullAdminOnly || isFullAdmin === true) &&
+    canOpenAdminPathWithMatrix(permissionMatrix, href);
+  const hubLabel = (page: AdminHubPage) => HUB_LABEL_BY_KEY.get(page.hub) ?? page.hub;
+  const sidebarSections = sidebarSectionByHref(clubToday);
+  const sidebarSection = (href: string) =>
+    sidebarSections.get(href) ?? sidebarSections.get(canonicalAdminPathname(href));
+
+  const pages = ADMIN_MENU_DESTINATIONS.filter(({ page, href }) =>
+    offers(href, page),
+  ).map(({ page, href }) => ({
+    href,
+    label: adminPageLabel(page, { hutLeaderLabel }),
+    section: hubLabel(page),
+    keywords: distinctWords([...page.keywords, sidebarSection(href)]),
+  }));
+  const retired = ADMIN_RETIRED_PAGES.flatMap((retiredPage) => {
+    const page = getAdminPage(retiredPage.mergedInto);
+    const href = retiredAdminPageHref(retiredPage);
+    return isAdminMenuDestination(page) && offers(href, page)
+      ? [
+          {
+            href,
+            label: retiredPage.label,
+            section: hubLabel(page),
+            keywords: distinctWords([page.label, sidebarSection(page.oldPath)]),
+          },
+        ]
+      : [];
+  });
+  const queueViews = buildAdminQueueViews(clubToday).flatMap((view) => {
+    const page = getAdminPage(view.page);
+    return offers(view.href, page)
+      ? [
+          {
+            href: view.href,
+            label: view.label,
+            section: hubLabel(page),
+            keywords: distinctWords([sidebarSection(view.href)]),
+          },
+        ]
+      : [];
+  });
+  return [...pages, ...retired, ...queueViews];
 }
 
 type AdminNavBadgeMap = Record<string, number>;
@@ -959,13 +837,13 @@ function SidebarLinks({
     badges[UNSETTLED_ADDITIONS_HREF] = unsettledAdditionsCount;
   }
   if (counts.refundAppeals + counts.creditApprovals > 0) {
-    badges["/admin/refund-requests"] =
+    badges[adminHref("refund-requests")] =
       counts.refundAppeals + counts.creditApprovals;
   }
   // B5 (#2262): open cash hand-back tasks live on the payments board, which is
   // where an admin closes them once the money has actually been paid back.
   if (counts.manualRefundTasks > 0) {
-    badges["/admin/payments"] = counts.manualRefundTasks;
+    badges[adminHref("payments")] = counts.manualRefundTasks;
   }
   if (counts.membershipCancellations + counts.archiveRequests > 0) {
     badges["/admin/membership-cancellations"] =
@@ -980,14 +858,14 @@ function SidebarLinks({
       counts.deletionRequests + counts.memberDeleteRequests;
   }
   if (counts.issueReports > 0) {
-    badges["/admin/issue-reports"] = counts.issueReports;
+    badges[adminHref("issue-reports")] = counts.issueReports;
   }
   if (counts.unassignedHutLeaderDates > 0) {
     badges["/admin/hut-leaders"] = counts.unassignedHutLeaderDates;
   }
 
   if ((counts.xeroSilentWebhook ?? 0) > 0) {
-    badges["/admin/xero"] = counts.xeroSilentWebhook!;
+    badges[adminHref("xero")] = counts.xeroSilentWebhook!;
   }
 
   const renderedNavSections = getRenderedAdminNavSections(
@@ -1006,13 +884,11 @@ function SidebarLinks({
     hutLeaderLabel,
   );
 
-  // Highlight the most specific nav item whose href is a prefix of the current
-  // path, so nested routes (e.g. /admin/xero/setup) activate the deepest match
-  // rather than every ancestor (e.g. both "Xero Sync" and "Xero Setup").
-  const activeHref = visibleNavSections
-    .flatMap((section) => section.items.map((item) => item.href))
-    .filter((href) => pathname === href || pathname.startsWith(`${href}/`))
-    .reduce((best, href) => (href.length > best.length ? href : best), "");
+  const navHrefs = visibleNavSections.flatMap((s) => s.items.map((i) => i.href));
+  // The deepest nav item the path is at or under (/admin/xero/setup lights Xero
+  // Setup, not Xero Sync too), by the registry (C3 #4800), which reads a moved
+  // page's old and hub URL as one page. Never compare `pathname` with an href.
+  const activeHref = activeAdminHref(pathname, navHrefs);
 
   return (
     <nav aria-label="Admin sections" className="flex flex-col gap-0.5">
@@ -1061,7 +937,7 @@ function SidebarLinks({
                 const active = href === activeHref;
                 const badgeCount = badges[href];
                 const badgeClasses =
-                  href === "/admin/refund-requests"
+                  href === adminHref("refund-requests")
                     ? "bg-danger text-danger-foreground"
                     : "bg-warning text-warning-foreground";
 

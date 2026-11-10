@@ -23,6 +23,7 @@ import { stampXeroOrganisation } from "./admin-alert-xero-links";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * #3638 (`INV-PAY-102`): a card payment settled the booking and Xero then
@@ -59,7 +60,7 @@ export async function sendAdminSecondInstrumentSettlementConflictAlert(data: {
   format: ClubFormat,
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/payments`;
+  const reviewUrl = `${baseUrl}${adminHref("payments")}`;
   const bookingUrl = `${baseUrl}/bookings/${data.bookingId}`;
   const xeroInvoiceUrl = await stampXeroOrganisation(data.xeroInvoiceUrl);
 
@@ -124,7 +125,7 @@ export async function sendAdminBankTransferSettlementFigureAlert(data: {
   format: ClubFormat,
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/payments`;
+  const reviewUrl = `${baseUrl}${adminHref("payments")}`;
   const bookingUrl = `${baseUrl}/bookings/${data.bookingId}`;
   const xeroInvoiceUrl = await stampXeroOrganisation(data.xeroInvoiceUrl);
 
@@ -184,7 +185,7 @@ export async function sendAdminDuplicateCaptureKeptAlert(data: {
   format: ClubFormat,
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/payments`;
+  const reviewUrl = `${baseUrl}${adminHref("payments")}`;
   const bookingUrl = `${baseUrl}/bookings/${data.bookingId}`;
 
   await sendUnmuteableAdminAlert({
@@ -236,7 +237,7 @@ export async function sendAdminSupersededCaptureRefusedAlert(data: {
   format: ClubFormat,
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/payments`;
+  const reviewUrl = `${baseUrl}${adminHref("payments")}`;
   const bookingUrl = `${baseUrl}/bookings/${data.bookingId}`;
 
   await sendUnmuteableAdminAlert({

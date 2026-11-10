@@ -1,11 +1,32 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // #4627 (D4): the transfer's journal half runs on PostgreSQL
 // (`booking-ledger-journal.realdb.test.ts`); here, that the merge calls it.
 const journalDoors = vi.hoisted(() => ({ postMemberMergeTransfer: vi.fn(async () => null) }));
+/**
+ * #4855: these doubles do not model the relation moves, so they cannot say
+ * what is left naming the duplicate afterwards. The residual check answers
+ * "nothing" unless a case asks for the real one over delegates that model the
+ * late row (`residualCheck.real`, reset before every case);
+ * `member-merge-residual-references.test.ts` and the real-PostgreSQL suites
+ * cover the check itself.
+ */
+const residualCheck = vi.hoisted(() => ({ real: false }));
+vi.mock("@/lib/member-merge-residual-references", async (importOriginal) => {
+  const real = (await importOriginal()) as typeof import("@/lib/member-merge-residual-references");
+  return {
+    ...real,
+    findMemberMergeResidualReferences: (...args: Parameters<typeof real.findMemberMergeResidualReferences>) =>
+      residualCheck.real ? real.findMemberMergeResidualReferences(...args) : Promise.resolve({ driftFields: [], residualRowIds: {} }),
+  };
+});
+beforeEach(() => {
+  residualCheck.real = false;
+});
+
 vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postMemberMergeTransfer: journalDoors.postMemberMergeTransfer,
@@ -19,7 +40,8 @@ import {
 } from "@/lib/member-merge";
 import { mergeMemberFields } from "@/lib/member-merge-field-rules";
 import { MEMBER_MERGE_RELATION_SPECS } from "@/lib/member-merge-relations";
-import { BookingRequestStatus, type MemberGuestConsentStatus } from "@prisma/client";
+import { MEMBER_MERGE_PAYMENT_ATTRIBUTION_SPEC } from "@/lib/member-merge-payment-attribution";
+import { BookingRequestStatus, Prisma, type MemberGuestConsentStatus } from "@prisma/client";
 import { claimAlreadyConvertedBookingRequest } from "@/lib/booking-request-shared";
 import { classifyMemberGuestConsent } from "@/lib/member-guest-consent";
 import {
@@ -166,6 +188,15 @@ function memberFindManyForTest(args: unknown) {
     .map((id) => ({ id }));
 }
 
+/**
+ * #4855: merge's participant lock counts the rows its `SKIP LOCKED` attempt
+ * took; uncontended, that is every id it named. Every other statement: 0.
+ */
+function uncontendedRawCount(sql: unknown): number {
+  if (!rawStatement(sql).includes("SKIP LOCKED")) return 0;
+  return ((sql as { values?: readonly unknown[] }).values ?? []).filter((value) => typeof value === "string").length;
+}
+
 function makeClient(overrides: Record<string, unknown> = {}) {
   const memberDelegate = {
     ...defaultDelegate(),
@@ -206,7 +237,11 @@ function makeClient(overrides: Record<string, unknown> = {}) {
 
   // One stable spy lets tests distinguish advisory-lock statements from the
   // id-ordered Member `FOR UPDATE` statement (#2243, #2597).
-  const executeRaw = vi.fn().mockResolvedValue(0);
+  // Typed as the real raw call (a template, then its values) so tests can read either.
+  const executeRaw = vi.fn((sql: unknown, ...values: unknown[]): Promise<number> => {
+    void values;
+    return Promise.resolve(uncontendedRawCount(sql));
+  });
 
   const tx = new Proxy(
     {},
@@ -826,16 +861,18 @@ describe("executeMemberMerge", () => {
       count: vi.fn().mockResolvedValue(0),
       findMany: vi.fn(() => {
         guestRead += 1;
-        // collectMovedIdSample reads first. The residual read after the one
-        // sorted Member FOR UPDATE statement sees the late committed row.
+        // Sample reads, then the move-id capture, all before the wait. The
+        // residual read after the Member FOR UPDATE is the one that sees the
+        // late row. Earlier reads stay empty so the capture cannot absorb it.
         return Promise.resolve(
-          guestRead === 1
+          guestRead <= 4
             ? []
             : [{ id: "late-guest", bookingId: "already-planned-booking" }],
         );
       }),
     };
     const { client, member, auditLog } = makeClient({ bookingGuest });
+    residualCheck.real = true;
 
     await expect(
       executeMemberMerge({
@@ -851,13 +888,12 @@ describe("executeMemberMerge", () => {
       code: "merge_drift_in_transaction",
       details: {
         driftFields: ["BookingGuest.member"],
-        bookingGuestIds: ["late-guest"],
-        bookingIds: ["already-planned-booking"],
+        residualRowIds: { "BookingGuest.member": ["late-guest"] },
       },
     });
 
     expect(bookingGuest.updateMany).toHaveBeenCalledWith({
-      where: { memberId: LOSER_ID },
+      where: { memberId: LOSER_ID, id: { in: [] } },
       data: { memberId: MASTER_ID },
     });
     expect((member as { delete: ReturnType<typeof vi.fn> }).delete).not.toHaveBeenCalled();
@@ -881,6 +917,7 @@ describe("executeMemberMerge", () => {
       }),
     };
     const { client, member, auditLog } = makeClient({ booking });
+    residualCheck.real = true;
 
     await expect(
       executeMemberMerge({
@@ -896,7 +933,7 @@ describe("executeMemberMerge", () => {
       code: "merge_drift_in_transaction",
       details: {
         driftFields: ["Booking.member"],
-        bookingIds: ["late-booking"],
+        residualRowIds: { "Booking.member": ["late-booking"] },
       },
     });
 
@@ -2158,7 +2195,7 @@ describe("member-photo reconciliation at execute time (MP1, #189)", () => {
         mergeHasPolicyLock.resolve();
         await letMergeContinue.promise;
       }
-      return 0;
+      return uncontendedRawCount(strings);
     });
 
     const core: MemberMergePreviewCore = {
@@ -2988,10 +3025,11 @@ describe("a merge and the consent columns it carries with it (#2307)", () => {
     expect(onBooking).toHaveLength(2);
     expect(onBooking.map((row) => row.memberId)).toEqual([MASTER_ID, MASTER_ID]);
 
-    // A single unconditional updateMany, and no collision handling of any kind.
+    // One move, bounded to the loser row captured before the wait, and no
+    // collision handling of any kind.
     expect(bookingGuest.updateMany).toHaveBeenCalledTimes(1);
     expect(bookingGuest.updateMany).toHaveBeenCalledWith({
-      where: { memberId: LOSER_ID },
+      where: { memberId: LOSER_ID, id: { in: ["g-loser"] } },
       data: { memberId: MASTER_ID },
     });
     expect(result.relationMoves).toContainEqual({ model: "BookingGuest.member", count: 1 });
@@ -3314,7 +3352,7 @@ describe("promo adjustment rows follow their allocation through a merge (#3276, 
     expect(rowsDeletedAt).toBeLessThan(allocationDroppedAt);
     // The surviving rows (R2) then move with their allocation, after the drop.
     expect(bookingGuestNightAdjustment.updateMany).toHaveBeenCalledWith({
-      where: { beneficiaryMemberId: LOSER_ID },
+      where: { beneficiaryMemberId: LOSER_ID, id: { in: [] } },
       data: { beneficiaryMemberId: MASTER_ID },
     });
     expect(bookingGuestNightAdjustment.updateMany.mock.invocationCallOrder[0]).toBeGreaterThan(
@@ -3348,8 +3386,109 @@ describe("promo adjustment rows follow their allocation through a merge (#3276, 
     expect(bookingGuestNightAdjustment.deleteMany).not.toHaveBeenCalled();
     expect(promoRedemptionAllocation.deleteMany).not.toHaveBeenCalled();
     expect(bookingGuestNightAdjustment.updateMany).toHaveBeenCalledWith({
-      where: { beneficiaryMemberId: LOSER_ID },
+      where: { beneficiaryMemberId: LOSER_ID, id: { in: [] } },
       data: { beneficiaryMemberId: MASTER_ID },
     });
+  });
+});
+
+/**
+ * #4823: merge takes no `lock(1)`, and `lock(1)` writers take a booking's Payment
+ * and booking rows in both orders (a card settle Payment first, the edit doors
+ * their booking row first), so merge must never WAIT for a Payment row.
+ * The real-PostgreSQL proof is `member-merge-payment-row-races.realdb.test.ts`;
+ * these pin the shape: the attribution leaves the generic pass, moves after the
+ * sorted Member `FOR UPDATE`, under one sorted `NOWAIT` statement, and a held
+ * row refuses the merge with nothing moved.
+ */
+describe("executeMemberMerge — Payment attribution moves last, never waiting (#4823)", () => {
+  function paymentDelegate(moved: number) {
+    return { ...defaultDelegate(), updateMany: vi.fn().mockResolvedValue({ count: moved }) };
+  }
+
+  /** A tagged `$executeRaw` call composed the way Prisma composes it, identifier fragments included. */
+  function composed(call: unknown[]): { sql: string; values: unknown[] } {
+    const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
+    if (!Array.isArray(strings)) return { sql: rawStatement(strings), values };
+    const statement = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+    return { sql: statement.sql, values: statement.values };
+  }
+
+  function execute(client: unknown) {
+    return executeMemberMerge({
+      masterId: MASTER_ID,
+      loserId: LOSER_ID,
+      actorMemberId: ACTOR_ID,
+      previewToken: validToken(),
+      confirmationText: "MERGE Dup Person",
+      db: client as never,
+    });
+  }
+
+  it("takes its relation from the one spec the table marks movedLast", () => {
+    const flagged = MEMBER_MERGE_RELATION_SPECS.filter((spec) => spec.movedLast);
+    expect(flagged).toEqual([MEMBER_MERGE_PAYMENT_ATTRIBUTION_SPEC]);
+    expect(MEMBER_MERGE_PAYMENT_ATTRIBUTION_SPEC).toMatchObject({
+      key: "Payment.manuallyMarkedPaidBy", model: "Payment", delegate: "payment", column: "manuallyMarkedPaidByMemberId", bucket: "move",
+    });
+  });
+
+  it("re-points the attribution once, after the Member FOR UPDATE, under a sorted NOWAIT lock", async () => {
+    const payment = paymentDelegate(2);
+    const { client, executeRaw } = makeClient({ payment });
+
+    const result = await execute(client);
+
+    const statements = executeRaw.mock.calls.map((call) => composed(call));
+    const memberLock = statements.findIndex(({ sql }) => sql.includes('FROM "Member"') && sql.includes("FOR UPDATE"));
+    const paymentLock = statements.findIndex(({ sql }) => sql.includes('FROM "Payment"'));
+    expect(memberLock).toBeGreaterThanOrEqual(0);
+    expect(paymentLock).toBeGreaterThan(memberLock);
+    expect(statements[paymentLock]).toEqual({
+      sql: 'SELECT 1 FROM "Payment" WHERE "manuallyMarkedPaidByMemberId" = ? ORDER BY "id" FOR NO KEY UPDATE NOWAIT',
+      values: [LOSER_ID],
+    });
+
+    // Once, not also in the generic pass, and only after its own lock.
+    expect(payment.updateMany).toHaveBeenCalledTimes(1);
+    expect(payment.updateMany).toHaveBeenCalledWith({
+      where: { manuallyMarkedPaidByMemberId: LOSER_ID },
+      data: { manuallyMarkedPaidByMemberId: MASTER_ID },
+    });
+    expect(payment.updateMany.mock.invocationCallOrder[0]).toBeGreaterThan(
+      executeRaw.mock.invocationCallOrder[paymentLock],
+    );
+    expect(result.relationMoves).toContainEqual({ model: "Payment.manuallyMarkedPaidBy", count: 2 });
+  });
+
+  it("refuses the merge with a 409, moving nothing, when another writer holds a Payment row", async () => {
+    const payment = paymentDelegate(1);
+    const { client, executeRaw, auditLog } = makeClient({ payment });
+    executeRaw.mockImplementation(async (...call: unknown[]) => {
+      if (composed(call).sql.includes('FROM "Payment"')) {
+        throw Object.assign(new Error("could not obtain lock on row in relation \"Payment\""), { code: "55P03" });
+      }
+      return uncontendedRawCount(call[0]);
+    });
+
+    const refused = await execute(client).catch((error: unknown) => error);
+
+    expect(refused).toBeInstanceOf(MemberMergeError);
+    expect(refused).toMatchObject({ statusCode: 409, code: "merge_payment_row_busy" });
+    expect(payment.updateMany).not.toHaveBeenCalled();
+    expectRefusedAudit((auditLog as { create: AuditCreateSpy }).create, "merge_payment_row_busy");
+  });
+
+  it("rethrows any other failure of the Payment lock unchanged", async () => {
+    const payment = paymentDelegate(1);
+    const { client, executeRaw } = makeClient({ payment });
+    const broken = Object.assign(new Error("connection reset"), { code: "08006" });
+    executeRaw.mockImplementation(async (...call: unknown[]) => {
+      if (composed(call).sql.includes('FROM "Payment"')) throw broken;
+      return uncontendedRawCount(call[0]);
+    });
+
+    await expect(execute(client)).rejects.toBe(broken);
+    expect(payment.updateMany).not.toHaveBeenCalled();
   });
 });

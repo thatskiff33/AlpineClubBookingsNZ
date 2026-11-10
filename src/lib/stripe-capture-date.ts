@@ -23,12 +23,27 @@ import type { ClubTimeZone } from "@/lib/club-time";
 /** A bounded read: a Stripe brown-out must not stall the outbox behind it. */
 const STRIPE_CAPTURE_READ_TIMEOUT_MS = 10_000;
 
+type CaptureTimeFields = Partial<Pick<Stripe.PaymentIntent, "created" | "latest_charge">>;
+
+function captureSeconds(intent: CaptureTimeFields): number | undefined {
+  const charge = intent.latest_charge;
+  return charge && typeof charge === "object" ? charge.created : intent.created;
+}
+
 /** When Stripe took the money: the latest charge's time, else the intent's. */
 export function providerCaptureTime(intent: Stripe.PaymentIntent): Date {
-  const charge = intent.latest_charge;
-  const seconds =
-    charge && typeof charge === "object" ? charge.created : intent.created;
-  return new Date(seconds * 1000);
+  return new Date(captureSeconds(intent)! * 1000);
+}
+
+/**
+ * #4516 (M4b): the instant a receipt is dated by, by the same rule, or undefined
+ * when the intent in hand carries neither time (a partial answer). The receipt
+ * then takes the app's recorded instant, labelled `app-record`, rather than an
+ * invalid date that would refuse the capture's own write.
+ */
+export function receiptCaptureTime(intent: CaptureTimeFields): Date | undefined {
+  const seconds = captureSeconds(intent);
+  return typeof seconds === "number" && Number.isFinite(seconds) ? new Date(seconds * 1000) : undefined;
 }
 
 /** The club day of the capture, or null when Stripe cannot say. */

@@ -1466,10 +1466,16 @@ reported if it cannot be, or reported as done if resolved in Xero and it
 names the same credit note (one resolved for another note is left to that
 note's own report). The report reads the edit's own operations, or for an
 invoice-clearing note the whole booking's. The note's own failed attempts
-are covered by its retry. Invoices you allocated by hand through one of the
-note's own attempts are not listed: if none is left, the note is reported as
-done; otherwise the report asks you to allocate the planned invoices it
-lists as left by hand, and offers nothing.
+are covered by its retry. Since #4767 that retry, and the report, also
+count an allocation an older version of this tool retried on its own
+(linked as `CREDIT_NOTE_ALLOCATION`) as done when it names the same credit
+note, invoice and amount, so the retry never sends it to Xero again; a
+note whose planned invoices are all covered that way is no longer reported.
+Its operation stays partial on the Xero operations screen until one retry
+closes it, which makes no Xero call. Invoices you allocated by hand through
+one of the note's own attempts are not listed: if none is left, the note is
+reported as done; otherwise the report asks you to allocate the planned
+invoices it lists as left by hand, and offers nothing.
 Since #4763, a note whose own operation was marked resolved in Xero is
 listed as an information-only "resolved in Xero by an officer" finding
 naming the note, with nothing offered. Any other allocation operation still
@@ -1932,6 +1938,76 @@ the effect of the parking gate's grain (#3531 3a) and the rate-derived backfill
 ```bash
 DATABASE_URL=<non-prod copy or, read-only, production> pnpm run booking-money:census
 ```
+
+### Catch up and census member-money receipts (M4b)
+
+Before enabling card-refund journal posting (M4c), account for every receipt on
+a booking whose R01 charge is already in the journal. This fills the gap between
+M3 and M4b without guessing which charge historical cash paid.
+
+```bash
+pnpm run member-money:receipt-catch-up --dry-run
+pnpm run member-money:receipt-catch-up --execute
+pnpm run member-money:receipt-catch-up --dry-run
+```
+
+Only the owner runs `--execute`, using the application database role. It posts
+missing receipts and their exact reversals, one Payment-row transaction at a
+time. It never calls a provider or creates collection applications. A repeated
+run posts nothing. It includes archived bookings with R01; older bookings and
+organiser-share mirrors stay outside this population. Catch-up dates are the
+legacy settlement line's recorded instant and are labelled `app-record`.
+
+The default and `--dry-run` perform read-only checks. JSON findings distinguish
+`RECEIPT_WITHOUT_EVENT`, `UNBRIDGED_SETTLEMENT_LINE`, `RECEIPT_AMOUNT_DRIFT`,
+`OVER_COLLECTED`, `UNAPPLIED_RECEIPT_ON_OPEN_CHARGE`, `MERGED_DEBTOR_BALANCE` and
+`COLLECTION_ON_REVERSED_RECEIPT` (a reversed receipt whose collection still applies cash).
+Missing receipts give exit status 2 and hold M4c's deployment. Unapplied cash is
+expected after catch-up; it remains available without inferring collection, and
+no later receipt hook collects a receipt the catch-up posted.
+`OVER_COLLECTED` is also expected until M4c records refunds. A booking whose
+price fell after it was paid, or that was cancelled and not yet refunded, still
+holds its full collection against the lower charge.
+A drift finding needs investigation; the command never rewrites an existing
+journal or silently resizes cash. Failure rolls back the current payment's
+transaction; earlier committed payments remain safe to replay.
+
+### Reconcile and census card refund reservations (M4c)
+
+Before a card refund slice is sent, the journal reserves its debt (#4516). A
+rollback across M4c, or a sender that died between its reservation and Stripe's
+answer, can leave a reservation open. The census lists each one, and the owner
+reconciles them on redeploy:
+
+```bash
+pnpm run member-money:refund-reservations --dry-run
+pnpm run member-money:refund-reservations --reconcile
+pnpm run member-money:refund-reservations --release <reservationId> --note "<why>"
+```
+
+The default and `--dry-run` only read. `ANSWERABLE_RESERVATION` is one a
+recovery row's plan marks made (`madeRefundId`) by a refund on record;
+`--reconcile` answers it, or releases it as REFUSED when that refund failed,
+through the one cash writer, one Payment-row transaction per payment.
+`STRANDED_RESERVATION` is one nothing names: in flight while its sender runs,
+otherwise stranded. Only the owner releases one, with `--release` and a note;
+the release is audited and reverses its funding, and a refund Stripe later
+records against it posts unapplied. `UNAPPLIED_CARD_REFUND` and
+`RESERVATION_SKIPPED_NO_RECEIPT` are refunds answered to no debt (a dashboard
+refund, a capture with no receipt, a merged debtor); `CARD_REFUND_WITHOUT_EVENT`
+is a counted refund the next cash-writer run on its payment posts.
+`PAID_ANOTHER_WAY_WITHOUT_EVENT` is a "Paid another way" close with no R14: one
+made before M4c (M9 back-posts history) or while the journal was inactive.
+`KEPT_REST_WITHOUT_CLOSE_OUT` is a part close whose record says the club kept
+the rest, whose R14 paid its debt in the journal, and whose rest has no
+close-out. A close whose debt was never in the journal posts its bank cash
+unapplied and has no debt to close out, so it is not listed. Open reservations give exit status 2.
+No provider call; nothing is matched by amount or time.
+
+Expected until the milestone that answers unapplied refunds: a refund that
+posted unapplied (a debt raised before M4c, a Stripe dashboard refund, a merged
+debtor's) pays no refund obligation, so the receipt census keeps listing its
+booking as `OVER_COLLECTED`. Both censuses list it; nothing to repair by hand.
 
 ### Census the booking ledger against its money columns (#3583)
 
@@ -2399,15 +2475,21 @@ somebody who would rather query a replica by hand.
 
 An ordinary charge-backed recovery stops automatic retries when Stripe already
 holds a counted dashboard refund on its charge made since the debt arose
-(`INV-PAY-145`). The officer alert and the payment audit entry explain that the
-member may already have been paid. The row is exhausted in the existing recovery
-queue, with no new refund sent; it is not automatically closed or matched to the
-dashboard refund. Its owed figure keeps the existing attribution rule.
+(`INV-PAY-145`). A superseded payment's refund with no stored plan also stops
+when another door's refund on its charge since the row was raised would size
+what it sends (#4858): were that refund to fail later, the member could be paid
+twice. The officer alert and the payment audit entry say which, and why the
+member may be paid twice. The row is exhausted in the existing recovery queue,
+with no new refund sent; it is not automatically closed or matched to that
+refund. Its owed figure keeps the existing attribution rule.
 
 Check the booking, the recorded refunds and Stripe before moving more money.
 If money remains owed, settle it with **Paid another way** in
 [Stuck States](guides/stuck-states.md), rather than another Stripe dashboard
-refund. If nothing remains owed, ask a developer to reconcile the held row.
+refund. If nothing remains owed, ask a developer to reconcile the held row. A
+row held under #4858 whose named refund has since failed (it then has a
+failed-later row of its own) is a developer's too, never a **Paid another way**
+close: that row asks for the same money again (#4492).
 A preflight read or recording failure uses normal backoff and sends nothing;
 an intent with more than 100 refunds requires investigation because the single
 page cannot establish complete evidence. No production repair runs automatically.
@@ -2645,7 +2727,11 @@ reading applied credit from the same allocation ledger the release reads), and
 lists each booking whose notes ALLOCATED less than that: booking id, invoice
 ref, the notes raised, expected clearing, what was allocated, and the open
 delta. It reads only local rows (no Xero calls). Only allocations count — the
-allocation links the builder and the inbound reconcile write — so a FAILED
+allocation links the builder and the inbound reconcile write, with the note's
+own role or `CREDIT_NOTE_ALLOCATION` (since #4786 a link with any other role
+counts nothing), one per note and invoice: the newest with the note's role and
+an amount, else the newest role-less one, since the inbound reconcile's link
+carries the note's applications to that invoice summed — so a FAILED
 clearing operation (nothing created), a PARTIAL one, and a pre-#3535 refund note
 (never allocated by the system) all show as not clearing. A refund note someone
 allocated by hand in Xero counts as far as it was allocated; every clearing

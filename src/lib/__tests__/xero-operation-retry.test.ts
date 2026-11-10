@@ -158,6 +158,11 @@ vi.mock("@/lib/xero-applied-credit-deallocation", () => ({
 vi.mock("@/lib/late-capture-paid-another-way", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/late-capture-paid-another-way")),
   findLateCaptureRefundPaidAnotherWay: mocks.findLateCaptureRefundPaidAnotherWay,
+  // #4516 (round-2 review A): every close of the capture's refund; one here.
+  findLateCaptureRefundPaidAnotherWayCloses: async (...a: unknown[]) => {
+    const found = (await mocks.findLateCaptureRefundPaidAnotherWay(...(a as []))) as unknown;
+    return found ? [found] : [];
+  },
 }));
 vi.mock("@/lib/late-capture-refund-credit-note", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/late-capture-refund-credit-note")),
@@ -2803,9 +2808,9 @@ describe("retryXeroSyncOperation", () => {
   // invoice replays exactly that plan, skipping the target already allocated.
   it("repairs a partial clearing note across its recorded invoices, skipping one already allocated", async () => {
     mocks.findManyXeroObjectLink.mockResolvedValueOnce([
-      { metadata: { creditNoteId: "cn_clear", invoiceId: "inv_primary", amountCents: 30000 } },
+      { role: "MODIFICATION_CREDIT_NOTE_ALLOCATION", metadata: { creditNoteId: "cn_clear", invoiceId: "inv_primary", amountCents: 30000 } },
       // A different note's allocation to the same invoice does not count.
-      { metadata: { creditNoteId: "cn_other", invoiceId: "inv_supp", amountCents: 11000 } },
+      { role: "MODIFICATION_CREDIT_NOTE_ALLOCATION", metadata: { creditNoteId: "cn_other", invoiceId: "inv_supp", amountCents: 11000 } },
     ]);
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({
@@ -4205,7 +4210,10 @@ describe("PARTIAL repairs claim the original before they write or call Xero (#42
   // #4259: the modification note repair claims its row like the others, and
   // closes it, where it used to leave the repaired row PARTIAL for ever.
   describe("the PARTIAL modification credit-note repair (#4259)", () => {
-    const allocationLink = { metadata: { creditNoteId: "cn_mod", invoiceId: "inv_123", amountCents: 2500 } };
+    const allocationLink = {
+      role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+      metadata: { creditNoteId: "cn_mod", invoiceId: "inv_123", amountCents: 2500 },
+    };
 
     it("MUTATION: allocates the plan, then closes its row SUCCEEDED onto its own claim, clearing the allocation fault", async () => {
       mocks.findUniqueOperation.mockResolvedValue(partialModificationNote());
@@ -4249,8 +4257,16 @@ describe("PARTIAL repairs claim the original before they write or call Xero (#42
 
       const linkReads = mocks.findManyXeroObjectLink.mock.calls
         .map((call, index) => ({ where: call[0]?.where, order: mocks.findManyXeroObjectLink.mock.invocationCallOrder[index] }))
-        .filter((read) => read.where?.role === "MODIFICATION_CREDIT_NOTE_ALLOCATION");
+        .filter((read) => read.where?.xeroObjectType === "ALLOCATION");
       expect(linkReads).toHaveLength(1);
+      // #4767: the note's own role and the role-less one the generic ALLOCATE retry writes.
+      expect(linkReads[0].where).toEqual({
+        localModel: "BookingModification",
+        localId: "mod_123",
+        xeroObjectType: "ALLOCATION",
+        role: { in: ["MODIFICATION_CREDIT_NOTE_ALLOCATION", "CREDIT_NOTE_ALLOCATION"] },
+        active: true,
+      });
       expect(mocks.updateManyOperation.mock.invocationCallOrder[0]).toBeLessThan(linkReads[0].order);
     });
 
@@ -4348,6 +4364,73 @@ describe("PARTIAL repairs claim the original before they write or call Xero (#42
       expect(allocate1).toBeLessThan(check2);
       expect(check2).toBeLessThan(allocate2);
       expect(mocks.completeXeroSyncOperation).toHaveBeenCalledTimes(1);
+    });
+
+    // #4767: before #4757 the repair tool could offer the generic ALLOCATE retry
+    // of the note's own failed attempt, which links the allocation as
+    // CREDIT_NOTE_ALLOCATION, without the note's role. The note's retry reads
+    // that link as done for the same note, invoice AND amount (Xero's key), so
+    // it never sends that allocation again; any other link is not it.
+    const rolelessLink = (metadata: Record<string, unknown>) => ({
+      role: "CREDIT_NOTE_ALLOCATION",
+      metadata: { creditNoteId: "cn_mod", invoiceId: "inv_primary", amountCents: 30000, ...metadata },
+    });
+
+    it("MUTATION: allocates only the invoice left after a role-less link landed for the first, and never re-sends the linked one", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(twoTargetNote());
+      mocks.findManyXeroObjectLink.mockResolvedValue([rolelessLink({})]);
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: "Repaired Xero modification credit note allocation.",
+      });
+      expect(mocks.allocateCreditNoteToInvoice.mock.calls.map((call) => call.slice(0, 3))).toEqual([["cn_mod", "inv_supp", 11000]]);
+      expect(mocks.completeXeroSyncOperation.mock.calls[0][1]).toMatchObject({
+        status: "SUCCEEDED",
+        responsePayload: { allocationError: null, repairedAllocations: [{ invoiceId: "inv_supp", amountCents: 11000 }] },
+      });
+    });
+
+    it("MUTATION: closes with no Xero call once role-less links cover every planned invoice", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(twoTargetNote());
+      mocks.findManyXeroObjectLink.mockResolvedValue([
+        rolelessLink({}),
+        rolelessLink({ invoiceId: "inv_supp", amountCents: 11000 }),
+      ]);
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: "Repaired Xero modification credit note allocation.",
+      });
+      expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
+      expect(mocks.completeXeroSyncOperation.mock.calls[0][1]).toMatchObject({
+        status: "SUCCEEDED",
+        responsePayload: { repairedAllocations: [] },
+      });
+    });
+
+    it.each([
+      ["another credit note", { creditNoteId: "cn_other" }],
+      ["another invoice", { invoiceId: "inv_elsewhere" }],
+      ["another amount", { amountCents: 29999 }],
+      ["no recorded amount", { amountCents: undefined }],
+    ])("MUTATION: a role-less link for %s does not stand for the planned allocation, which is sent", async (_label, metadata) => {
+      mocks.findUniqueOperation.mockResolvedValue(twoTargetNote());
+      mocks.findManyXeroObjectLink.mockResolvedValue([rolelessLink(metadata)]);
+
+      await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+
+      expect(mocks.allocateCreditNoteToInvoice.mock.calls.map((call) => call.slice(0, 3))).toEqual([
+        ["cn_mod", "inv_primary", 30000],
+        ["cn_mod", "inv_supp", 11000],
+      ]);
+    });
+
+    it("MUTATION: a link with another role naming the same note, invoice and amount does not stand for it", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(twoTargetNote());
+      mocks.findManyXeroObjectLink.mockResolvedValue([{ ...rolelessLink({}), role: "APPLIED_CREDIT_ALLOCATION" }]);
+
+      await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+
+      expect(mocks.allocateCreditNoteToInvoice.mock.calls.map((call) => call[1])).toEqual(["inv_primary", "inv_supp"]);
     });
   });
 });

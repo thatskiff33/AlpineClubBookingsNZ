@@ -11,6 +11,7 @@ import {
   getStuckStateDashboard,
   type StuckStateDashboardDependencies,
 } from "@/lib/stuck-state-dashboard";
+import { adminAnchorHref } from "@/lib/admin-hubs";
 
 const modulesOn: FeatureFlags = {
   kiosk: true,
@@ -1008,7 +1009,7 @@ describe("voided bank refund notes to answer (#4162)", () => {
       domain: "xero",
       owner: "Finance",
       count: 2,
-      href: "/admin/stuck-states#bank-refund-voids",
+      href: adminAnchorHref("stuck-states", "bank-refund-voids"),
       summary: expect.stringContaining("2 bank refunds had their Xero credit note voided"),
     });
     const support = await getStuckStateDashboard({ deps, now: new Date("2026-06-22T00:00:00.000Z") });

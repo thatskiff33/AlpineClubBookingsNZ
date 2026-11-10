@@ -357,10 +357,12 @@ Prefix `INV-PAY`.
 | `INV-PAY-142` | A refund failing after a Paid another way close is held |
 | `INV-PAY-143` | An unminted approved whole-lodge booking reprices as unpaid |
 | `INV-PAY-144` | A kept change capture is recorded by the document its evidence names |
-| `INV-PAY-145` | Charge-backed refund recovery checks Stripe and holds unexpected dashboard refunds |
+| `INV-PAY-145` | Recovery holds on outside-app refunds, and plan-less superseded on another door's |
 | `INV-PAY-146` | Edit card refunds freeze allocation before Stripe and preserve replay keys |
 | `INV-PAY-147` | Refund slice evidence prevents replay after Stripe forgets idempotency keys |
 | `INV-PAY-148` | Organiser bank-transfer edit invoices, unpaid-first netting and historical repair |
+| `INV-PAY-149` | A dead card refund closes with nothing owed or retries its card |
+| `INV-PAY-150` | A cancellation leaves a live superseded capture to its own refund |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -1020,8 +1022,8 @@ ten pre-split domain headings the index keeps verbatim.
 ## Authentication
 
 How the app decides whether a sign-in attempt may proceed, without telling
-anyone which accounts exist, which passwords it lets a person choose, and how
-long a signed-in session lasts.
+anyone which accounts exist, which passwords it lets a person choose, how
+long a signed-in session lasts, and how recently they proved who they are.
 File: [`invariants/authentication.md`](invariants/authentication.md).
 Prefix `INV-AUTH`. Added by #4609; it is not one of the ten pre-split domain
 headings the index keeps verbatim.
@@ -1035,3 +1037,4 @@ headings the index keeps verbatim.
 | `INV-AUTH-005` | Reset and sign-in-link requests limited per account, answered as accepted |
 | `INV-AUTH-006` | Chosen passwords screened by prefix-only breach lookup; fails open |
 | `INV-AUTH-007` | Sessions end a fixed time after sign-in; missing stamp is expired |
+| `INV-AUTH-008` | Recent proof is five minutes; the client cannot stamp it |

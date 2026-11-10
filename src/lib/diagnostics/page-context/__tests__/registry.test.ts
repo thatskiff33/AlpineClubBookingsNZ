@@ -13,6 +13,7 @@ import path from "node:path";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 
+import { ADMIN_PAGES, adminPageRoutePath } from "@/lib/admin-hubs";
 import {
   ADMIN_PERMISSION_AREAS,
   getAdminRouteRequirement,
@@ -244,9 +245,13 @@ describe("every registry pathname is a page an operator can stand on (#2812)", (
   it("maps every row to a rendering page.tsx, never a redirect-only shim", () => {
     const appAdminRoot = path.join(process.cwd(), "src/app/(admin)");
     for (const row of DIAGNOSTICS_PAGE_CONTEXT_ROUTES) {
+      // The row's pathname stays the old URL. A moved page's file is at its
+      // hub path (C5 #4802); the old URL is still what the row matches.
+      const registered = ADMIN_PAGES.find((page) => page.oldPath === row.pathname);
+      const routePath = registered ? adminPageRoutePath(registered) : row.pathname;
       const pagePath = path.join(
         appAdminRoot,
-        ...row.pathname.split("/").filter(Boolean),
+        ...routePath.split("/").filter(Boolean),
         "page.tsx",
       );
       expect(

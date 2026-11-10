@@ -25,6 +25,7 @@ import { formatDateOnly } from "@/lib/date-only";
 import type { StrandNightPriceOffer } from "@/lib/stored-night-price-repair";
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * One warning line: what is wrong, and the one link that leads to fixing it.
@@ -354,7 +355,7 @@ export function AdminBookingToolsCard({
             </Link>
             <Link
               className="text-muted-foreground underline hover:text-accent-foreground"
-              href={`/admin/audit-log?q=${encodeURIComponent(bookingId)}`}
+              href={`${adminHref("audit-log")}?q=${encodeURIComponent(bookingId)}`}
             >
               Audit log
             </Link>

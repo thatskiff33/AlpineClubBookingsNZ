@@ -36,9 +36,9 @@ export const ADMIN_ROUTE_AREA_ANCHORS: Record<AdminPermissionArea, string[]> = {
     "/admin/bookings",
     "/admin/waitlist",
     "/admin/booking-requests",
-    // #4581: the Booking Rules hub is bookings work, not the support-area
-    // /admin/setup wizard it sits under.
-    "/admin/setup/booking-rules",
+    // #4581: the Booking Rules hub was bookings work, not the support-area
+    // /admin/setup wizard it sat under; S1 (#4796) merged it into this page.
+    "/admin/bookings-setup",
     "/api/admin/bookings",
     "/api/admin/waitlist",
   ],

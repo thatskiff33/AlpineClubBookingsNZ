@@ -393,15 +393,15 @@ describe("the per-owner coverage lock (#2576 §9)", () => {
     const mergeLifecycleLock = merge.indexOf(
       "await acquireMemberLifecycleLocks(tx, [masterId, loserId])",
     );
-    const relationMoves = merge.indexOf("const relationMoves = await applyMoves(");
-    const mergeMemberRows = merge.indexOf(
-      "lockMemberMergeHostingCoverageParticipants(tx,",
-      relationMoves,
-    );
+    const relationMoves = merge.indexOf("const moves = await applyMoves(");
+    const participantAttempt = merge.indexOf("await withMemberMergeParticipantRows(tx,");
+    const rowsHeld = merge.indexOf("lockedHostingParticipants = prepared.lockedMemberIds");
     expect(mergePolicyLock).toBeGreaterThan(-1);
     expect(mergeLifecycleLock).toBeGreaterThan(mergePolicyLock);
-    expect(relationMoves).toBeGreaterThan(mergeLifecycleLock);
-    expect(mergeMemberRows).toBeGreaterThan(relationMoves);
+    expect(participantAttempt).toBeGreaterThan(mergeLifecycleLock);
+    // The moves run inside the attempt, and the rows are held only once it returns.
+    expect(relationMoves).toBeGreaterThan(participantAttempt);
+    expect(rowsHeld).toBeGreaterThan(relationMoves);
     expect(
       readRepoFile("src/lib/adult-member-hosting-queue-participants.ts"),
     ).toMatch(/ORDER BY "id"\s+FOR UPDATE/);
@@ -449,16 +449,32 @@ describe("the per-owner coverage lock (#2576 §9)", () => {
       "exclusivityTopologyBeforeLocks.participantIds,",
       "const exclusivityTopologyUnderLocks =",
       "exclusivityTopologyUnderLocks.conflictingPairCount > 0",
-      "const relationMoves = await applyMoves(",
-      "const hostingPlan = await buildMemberMergeHostingCoveragePlan(",
-      "await lockMemberMergeHostingCoverageParticipants(tx,",
+      // #4876: the moves and the plan are inside the attempt that then takes
+      // the Member rows. The attempt's result is the only one kept.
+      "await withMemberMergeParticipantRows(tx,",
+      // Inside the attempt, before the moves: a lodge a booking committed
+      // while the previous attempt was rolled back is try-locked here. After
+      // the moves, the same call would cover a lodge that appeared during
+      // this attempt and the #4857 approval-first refusal would not fire.
+      "await lockPartnerShareLodgesAppearedSincePrefix(",
+      "const moves = await applyMoves(",
+      "const plan = await buildMemberMergeHostingCoveragePlan(",
+      "lockedHostingParticipants = prepared.lockedMemberIds",
       "refreshedHostingPlan = await buildMemberMergeHostingCoveragePlan(",
       "memberMergeHostingCoveragePlanFingerprint(hostingPlan)",
       "hostingParticipantProof = proveMemberMergeHostingCoverageParticipants(",
-      "const residualLoserOwnedBookings = await tx.booking.findMany(",
-      "const residualLoserGuestRows = await tx.bookingGuest.findMany(",
+      // #4855: one refusal for every relation still naming the duplicate under
+      // the Member rows (it replaced the Booking.member and BookingGuest.member
+      // checks), before the D4 transfer and every later step.
+      "const residualReferences = await findMemberMergeResidualReferences(tx, loserId);",
+      "await postMemberMergeTransfer(tx, journal,",
       "await lockHostingCoverageOwners(",
       "await applyLateHostingCoverageMoves(",
+      // #4823: the Payment attribution is the LAST relation move. Merge takes no
+      // lock(1) and holds booking rows from `applyMoves` on, while lock(1)
+      // writers take a booking's Payment and booking rows in both orders, so it
+      // must sit below the Member rows (its set is then complete) and never wait.
+      "await moveMergedPaymentAttributionLast(tx,",
       // #2595 step 3b: after the moves and every drift refusal, before the Xero
       // teardown, and its alert strictly after the transaction commits.
       //
@@ -492,22 +508,34 @@ describe("the per-owner coverage lock (#2576 §9)", () => {
     // which a future editor moving step 3b up to sit beside the
     // member-lifecycle pair would satisfy by reordering the array. This fires
     // before it and says why the pair exists.
-    const participantLockMarker = "await lockMemberMergeHostingCoverageParticipants(tx,";
+    const participantLockMarker = "lockedHostingParticipants = prepared.lockedMemberIds";
     const sweepMarker = "sweptShares = await sweepUnbackedFutureSharedDoublesWithLocksHeld({";
     expect(
       body.indexOf(sweepMarker),
-      "The partner-share sweep must stay BELOW lockMemberMergeHostingCoverageParticipants. " +
-        "It opens with assertPartnerShareLodgeCoverageWithLocksHeld, which re-derives the " +
+      "The partner-share sweep must stay BELOW the participant rows being held " +
+        "(`lockedHostingParticipants = prepared.lockedMemberIds`, the successful " +
+        "withMemberMergeParticipantRows attempt). It opens with " +
+        "assertPartnerShareLodgeCoverageWithLocksHeld, which re-derives the " +
         "members' guest-row lodge set; BookingGuest.memberId is an FK to Member, so a guest-row " +
         "INSERT or re-point needs FOR KEY SHARE on the member row and cannot commit against the " +
-        "sorted `Member … FOR UPDATE` that participant lock takes. Below it the set is FROZEN for " +
+        "sorted `Member … FOR UPDATE` that attempt takes. Below it the set is FROZEN for " +
         "the rest of the transaction and the check is a fence. Above it, it is only a visibility " +
         "check about that instant and #2672 is reopened.",
     ).toBeGreaterThan(body.indexOf(participantLockMarker));
 
+    // #4823 — restated on its own so the failure says why.
+    expect(
+      body.indexOf("await moveMergedPaymentAttributionLast(tx,"),
+      "The Payment attribution must move BELOW the participant rows being held " +
+        "(and so below applyMoves' booking moves). Merge holds booking rows without lock(1); " +
+        "lock(1) writers take a Payment row before its booking row (a card settle) and after " +
+        "it (the edit doors), so merge may only take Payment rows NOWAIT, and only once the Member " +
+        "rows are locked, when no writer can make another Payment row name the duplicate.",
+    ).toBeGreaterThan(body.indexOf(participantLockMarker));
+
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
     expect(body).toMatch(
-      /const residualLoserGuestRows = await tx\.bookingGuest\.findMany\([\s\S]*?where: \{ memberId: loserId \}[\s\S]*?driftFields: \["BookingGuest\.member"\]/,
+      /const residualReferences = await findMemberMergeResidualReferences\(tx, loserId\);\s+if \(residualReferences\.driftFields\.length > 0\) \{\s+throw new MemberMergeError\([\s\S]*?"merge_drift_in_transaction",\s+residualReferences,/,
     );
 
     // #2672 — and the fence is only real on merge's OWN connection. The sweep's

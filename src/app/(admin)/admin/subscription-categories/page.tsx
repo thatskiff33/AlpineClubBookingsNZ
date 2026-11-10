@@ -13,6 +13,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { BackLink } from "@/components/admin/back-link";
+import { adminHref } from "@/lib/admin-hubs";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -343,7 +344,7 @@ export default function AdminSubscriptionCategoriesPage() {
               their membership type. A member&apos;s membership type still
               governs their booking rights and rate; set the amount each
               category bills on the{" "}
-              <Link className="underline" href="/admin/fees">
+              <Link className="underline" href={adminHref("fees")}>
                 Fees
               </Link>{" "}
               page.

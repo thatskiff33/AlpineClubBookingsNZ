@@ -206,23 +206,168 @@ export function readBookingClearingNoteRetryInput(operation: {
   return { amountCents, wording: readModificationNoteWording(payload) };
 }
 
+/** The role a note's own allocation links carry: the builder's, its PARTIAL retry's and the inbound mirror's. */
+export const NOTE_ALLOCATION_ROLE = "MODIFICATION_CREDIT_NOTE_ALLOCATION";
+
 /**
- * Pure: the planned targets that have no allocation link from this note yet.
- * The one predicate the PARTIAL repair and the repair tool's PARTIAL check
- * share, so a repaired note stops being reported the moment it is whole.
+ * #4767: the role `allocateCreditNoteToInvoice` gives a link when its caller
+ * names none. Before #4757 the repair tool could offer a note's own failed
+ * allocation row its generic ALLOCATE retry, which links with this role.
+ */
+export const ROLELESS_ALLOCATION_ROLE = "CREDIT_NOTE_ALLOCATION";
+
+/** The link roles that can show a note's planned target allocated (`linkAllocatesClearingTarget`). */
+export const CLEARING_TARGET_LINK_ROLES: readonly string[] = [NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE];
+
+/** An allocation link as the clearing readers see it. */
+export interface ClearingAllocationLink {
+  role: string | null;
+  metadata: unknown;
+}
+
+/** An allocation link with when it was last written, which the money readers order by (#4786). */
+export interface DatedClearingAllocationLink extends ClearingAllocationLink {
+  updatedAt: Date;
+}
+
+/**
+ * Pure (#4767, `INV-SSOT`): does this link show `target` allocated from
+ * `creditNoteId`? The one rule the PARTIAL retry, the repair tool's PARTIAL
+ * check and its own-row dispatcher share, so the retry and the report never
+ * disagree. Either:
+ *
+ * - a link with the note's own role naming this note and the target's
+ *   invoice - the rule since #4259; only the note's own writers give it that
+ *   role, for a planned target; or
+ * - a role-less `CREDIT_NOTE_ALLOCATION` link naming this note, the target's
+ *   invoice AND its amount - Xero's allocation key (note, invoice, amount),
+ *   which the note's retry would send again. Every writer of that role records
+ *   the amount, so a link without one has no known writer and is not read as
+ *   this allocation: the retry then sends it, and Xero refusing a duplicate
+ *   leaves the row PARTIAL, visible, where reading it as done could close a
+ *   note with an invoice still open.
+ *
+ * Read only: the role-less link is never re-roled. The role is part of the
+ * link's unique key, so the inbound mirror of the note writes its own
+ * role-carrying link for the same allocation beside it; the money readers
+ * count the two as one (`distinctClearingAllocations`, #4786).
+ */
+export function linkAllocatesClearingTarget(
+  link: ClearingAllocationLink,
+  target: ClearingAllocationTarget,
+  creditNoteId: string
+): boolean {
+  const metadata = asRecord(link.metadata);
+  if (readString(metadata?.creditNoteId) !== creditNoteId || readString(metadata?.invoiceId) !== target.invoiceId) {
+    return false;
+  }
+  if (link.role === NOTE_ALLOCATION_ROLE) return true;
+  return link.role === ROLELESS_ALLOCATION_ROLE && readNumber(metadata?.amountCents) === target.amountCents;
+}
+
+/** A credit note's application to one invoice, as a link records it. */
+export interface ClearingAllocation<L extends ClearingAllocationLink = ClearingAllocationLink> {
+  creditNoteId: string;
+  invoiceId: string;
+  /** Null only for a link with the note's own role that recorded no amount. */
+  amountCents: number | null;
+  /** The link it was read from: the newest one for that note and invoice. */
+  link: L;
+}
+
+/**
+ * Pure (#4786, `INV-SSOT`): what these links record a credit note applied to
+ * each invoice, one entry per note and invoice - the money readers' one rule
+ * (the hold under-clear audit, the kept settle's correction count and the
+ * refunded-total recount). A link counts when it carries the note's own role,
+ * or is a role-less `CREDIT_NOTE_ALLOCATION` link that recorded its amount
+ * (`clearingAllocationOf`); any other role, or a role-less link with no
+ * amount, counts nothing. With `requireAmount`, neither does a link without a
+ * positive amount, so it never stands in for an older one that has one: the
+ * readers that sum amounts ask for it; the kept settle, which asks only
+ * whether the note is linked to the invoice, does not.
+ *
+ * Of the links left for one note and invoice, one counts: the newest with the
+ * note's own role (`updatedAt`; among equals the last given), else the newest
+ * role-less one. The inbound mirror writes one own-role link per note and
+ * invoice carrying the note's applied amounts SUMMED, beside the builder's
+ * per-allocation link and any role-less one, and a re-sync at a new total
+ * leaves the older link active (its id carries the amount): adding them would
+ * count an allocation twice. A clearing or edit note's role-less link is
+ * written only by a generic allocation retry, which can replay an older single
+ * allocation after the mirror's sum, so it never displaces an own-role link.
+ *
+ * What a reader counts can still differ from Xero. Before the mirror writes, a
+ * note applied to one invoice in two parts counts only one part: the audit
+ * then reports an under-clear that is not there, and the recount a refunded
+ * total too low, which leaves more refund headroom, until the mirror's next
+ * write. A note whose allocation was removed in Xero counts until the inbound
+ * sync turns that link off (#4447); while the link stays active the audit
+ * misses an under-clear and the recount holds a refunded total too high.
+ * With `creditNoteId`, only that note's. Read only.
+ */
+export function distinctClearingAllocations<L extends DatedClearingAllocationLink>(
+  links: readonly L[],
+  options: { creditNoteId?: string; requireAmount?: boolean } = {}
+): ClearingAllocation<L>[] {
+  const rank = (link: L) => [link.role === NOTE_ALLOCATION_ROLE ? 1 : 0, link.updatedAt.getTime()] as const;
+  const byKey = new Map<string, ClearingAllocation<L>>();
+  for (const link of links) {
+    const allocation = clearingAllocationOf(link);
+    if (!allocation || (options.creditNoteId !== undefined && allocation.creditNoteId !== options.creditNoteId)) continue;
+    if (options.requireAmount && !(allocation.amountCents !== null && allocation.amountCents > 0)) continue;
+    const key = JSON.stringify([allocation.creditNoteId, allocation.invoiceId]);
+    const kept = byKey.get(key);
+    const [ownRole, writtenAt] = rank(link);
+    const [keptOwnRole, keptWrittenAt] = kept ? rank(kept.link) : [-1, 0];
+    if (ownRole > keptOwnRole || (ownRole === keptOwnRole && writtenAt >= keptWrittenAt)) byKey.set(key, allocation);
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * Pure (#4786): the money readers' role-and-anchor filter for allocation
+ * links found by their invoice: the note's own role, or the role-less one on
+ * the note's own anchor. A payment's role-less links mirror its refund and
+ * account notes, which its direct refund total counts, so they are never read
+ * as a clearing or edit note's allocation.
+ */
+export const CLEARING_ALLOCATION_LINK_WHERE = {
+  OR: [{ role: NOTE_ALLOCATION_ROLE }, { role: ROLELESS_ALLOCATION_ROLE, localModel: { not: "Payment" } }],
+};
+
+/**
+ * Pure (#4786): the one allocation a link records, or null when it records
+ * none by `distinctClearingAllocations`'s rule - no note or invoice named, a
+ * role other than the two, or a role-less link with no amount.
+ */
+export function clearingAllocationOf<L extends ClearingAllocationLink>(link: L): ClearingAllocation<L> | null {
+  const metadata = asRecord(link.metadata);
+  const creditNoteId = readString(metadata?.creditNoteId);
+  const invoiceId = readString(metadata?.invoiceId);
+  if (!creditNoteId || !invoiceId) return null;
+  const amountCents = readNumber(metadata?.amountCents);
+  // The link's own allocation as the target: the note's role needs only the
+  // note and invoice; a role-less link's missing amount (NaN) never matches.
+  return linkAllocatesClearingTarget(link, { invoiceId, amountCents: amountCents ?? Number.NaN }, creditNoteId)
+    ? { creditNoteId, invoiceId, amountCents, link }
+    : null;
+}
+
+/**
+ * Pure: the planned targets no allocation link shows allocated from this note
+ * yet (`linkAllocatesClearingTarget`). The one predicate the PARTIAL repair and
+ * the repair tool's PARTIAL check share, so a repaired note stops being
+ * reported the moment it is whole.
  */
 export function targetsWithoutAllocation(
   targets: ClearingAllocationTarget[],
   creditNoteId: string,
-  allocationLinks: Array<{ metadata: unknown }>
+  allocationLinks: ClearingAllocationLink[]
 ): ClearingAllocationTarget[] {
-  const allocated = new Set(
-    allocationLinks
-      .map((link) => asRecord(link.metadata))
-      .filter((metadata) => readString(metadata?.creditNoteId) === creditNoteId)
-      .map((metadata) => readString(metadata?.invoiceId))
+  return targets.filter(
+    (target) => !allocationLinks.some((link) => linkAllocatesClearingTarget(link, target, creditNoteId))
   );
-  return targets.filter((target) => !allocated.has(target.invoiceId));
 }
 
 /**
@@ -253,7 +398,7 @@ export function recordedClearingTargets(
 export function partialClearingNoteIsIncomplete(
   requestPayload: unknown,
   creditNoteId: string,
-  allocationLinks: Array<{ metadata: unknown }>
+  allocationLinks: ClearingAllocationLink[]
 ): boolean {
   try {
     const targets = recordedClearingTargets(requestPayload);
@@ -266,12 +411,12 @@ export function partialClearingNoteIsIncomplete(
 /**
  * The planned targets a PARTIAL note has not yet allocated: one whose
  * allocation link already exists is skipped, since re-allocating it would
- * exceed what that invoice now owes.
+ * exceed what that invoice now owes. Reads the note's own role and the
+ * role-less one (#4767), and `linkAllocatesClearingTarget` decides.
  */
 export async function unallocatedClearingTargets(input: {
   creditNoteId: string;
   targets: ClearingAllocationTarget[];
-  allocationRole: string;
   localModel: string;
   localId: string;
 }): Promise<ClearingAllocationTarget[]> {
@@ -280,10 +425,10 @@ export async function unallocatedClearingTargets(input: {
       localModel: input.localModel,
       localId: input.localId,
       xeroObjectType: "ALLOCATION",
-      role: input.allocationRole,
+      role: { in: [...CLEARING_TARGET_LINK_ROLES] },
       active: true,
     },
-    select: { metadata: true },
+    select: { role: true, metadata: true },
   });
   return targetsWithoutAllocation(input.targets, input.creditNoteId, links);
 }

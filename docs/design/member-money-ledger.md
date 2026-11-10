@@ -272,7 +272,10 @@ looks up a replay first, then completes corrections, then writes in the order
 the foreign keys need. `reverseMemberMoneyJournal` posts the exact whole-batch
 reversal under the journal's own key, so a retry replays. Outside the store a
 journal delegate is only ever read (`member-money-journal-inert-census.test.ts`).
-Applications are not yet in the plan: M4 adds them with receipts.
+M4a (#4691) added applications, exact reversals and conservation checks. M4b
+(#4516) uses them for receipts through `postBookingReceipts`, and M4c for card
+refunds: R05 at the doors, a reservation before each slice, R12/R13 in the one
+cash writer and a "Paid another way" close's R14 (section 10).
 
 M3b ([#4627](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4627))
 wired the booking doors, through the boundary's server-only `./doors` entry; the
@@ -395,7 +398,7 @@ modules identify today's doors; their future writes converge on section 3's API.
 | R11 | Approved manual account credit/debit; `AdminCreditAdjustmentRequest` approval | Credit grant: Dr Goodwill, Cr Credit once at approval, with requester, approver and reason. Debit reverses identified grant legs or posts the approved write-down against its documented counterpart. No unapproved balancing adjustment or automatic debt write-off. Spending uses R10 and the same funding note; it never grants again. |
 | R12 | Successful/accepted recorded card refund, from app or Stripe dashboard; `PaymentRefund` | Dr RP, Cr Stripe clearing for the exact recorded provider refund, linked to its obligation/application and attempt. A refund initiated but not yet recorded by Stripe is only a reservation. Retain today's provider-status predicate for counted refunds and reverse it if Stripe later fails it. A dashboard refund is recorded regardless of whether its answer is known; an unmatched amount is an unapplied member refund, never guessed onto a debt. |
 | R13 | Card refund refused or failed later; recovery and Stripe events | Before a counted refund exists: release the reservation, no cash posting. After R12: reverse the actual cash batch once. An attributed refund reverses Dr Stripe clearing, Cr RP; an unmatched refund reverses Dr Stripe clearing, Cr unapplied AR. Reverse any intervening attribution/reclassification as well, so only an actually answered obligation reopens. Follow #4361's hold and exact-answer rules; no automatic re-send after a paid-another-way close. A Xero event cannot restore Stripe-refunded truth. |
-| R14 | Bank hand-back, cash hand-back, refund request completion, paid-another-way full/part close; task resolution | Dr RP, Cr Bank/Cash for only the completed/evidenced transfer, with exact task, refund obligation and close-share identity. An unpaid credit note or task creation does not post this. A part close leaves the remainder payable; a later close settles only that remainder. |
+| R14 | Bank hand-back, cash hand-back, refund request completion, paid-another-way full/part close; task resolution | Dr RP, Cr Bank/Cash for only the completed/evidenced transfer, with exact task, refund obligation and close-share identity. An unpaid credit note or task creation does not post this. A part close says what happens to the rest, as the officer chooses with no default (owner, 2 Nov 2026): the club keeps it, and a close-out clears it into a retained booking charge once; or it is still owed, and the obligation stays open for a later refund or close, which settles only that rest. |
 | R15 | Group organiser settlement/refund; `group-settlement`, organiser child refund executor | R06/R07 records one organiser receipt. Exact frozen child shares apply it to each child's R01 obligation; transfers between internal debtor accounts have equal Dr/Cr AR legs. Child edit/cancel refunds create and settle child RP obligations from the one original instrument. Sum of shares/refunds cannot exceed the source receipt/entitlement. Never repeat the full receipt per child or credit a separate invoice for an organiser-paid child. |
 | R16 | Stripe processing/refund fee and fee reversal; provider balance transaction | Dr Stripe fees, Cr Stripe clearing for actual fee evidence, keyed to balance-transaction component; reverse on actual provider reversal. Fee tax, if any, follows evidenced/configured tax treatment, not the booking tax assumption. Pending fee discovery does not delay the gross receipt. |
 | R17 | Stripe payout/return of payout affecting member clearing | Dr Bank, Cr Stripe clearing for the evidenced transfer, opposite on return. Not revenue or another member payment. Post only the transfer needed to reconcile this clearing subledger; general bank reconciliation remains in Xero. |
@@ -791,6 +794,128 @@ member carries and moves each, booking by booking, to the survivor. A door
 holding one of that member's bookings makes the owner move wait, so its charge
 is in the balances read; a door after it reads the survivor. The transfer posts
 no revenue, so it needs no `lock(1)`, which merge deliberately does not take.
+
+M4b gives the survivor CHARGE successors, but not inside merge: merge holds no
+Payment row, so it could size a successor from application state that misses
+a collection committing beside it. The survivor's first collection posts them
+instead, under the Payment row: one successor for the chain's live tip, a
+zero-net receivable pair on the survivor sized as the paragraph below says. Posted
+debtors remain immutable. Receipt writers take only the Payment row and read
+the owner once per call without locking Booking; the next receipt posting moves
+any merged-debtor residue explicitly, keyed to its source event, one merge hop
+at a time. No Payment lock is added to merge.
+
+A successor is only ever posted for the current owner, from the chain's one
+live tip, with the face the chain still has to collect: the live charge less
+everything collected. Every collection lands on the owner's live obligation.
+Faces are not a running balance: a price increase opens no obligation, so a
+collection is capped by the live charge, not by its obligation's face. A receipt
+a merged-away member's writer deferred is applied there through the credit the
+merge chain carried to the owner: the residue move's exact line, or, when a
+merge's snapshot netted the receipt into the survivor's balance, a zero-net
+`merge-follow` pair on the owner that stands in for it. The receipt census treats
+a receipt's own credit and the credits its collection applied as one source cap,
+and counts nothing for a reversed receipt.
+
+### M4b receipt posting and catch-up
+
+`postBookingReceipts` records R06/R07/R08 beside each legacy cash writer, only
+for bookings with R01. Cash posts in full. Collection is a separate, exact
+application to the selected transaction, capped by source room and live charge;
+held, duplicate and superseded captures stay unapplied. A ZERO R01 gets its
+CHARGE obligation lazily when collection needs one, without another charge.
+An officer reversal first reverses the receipt's collection exactly, through
+whichever credit it applied (its own line, a residue move's or a stand-in's),
+then the receipt itself.
+Organiser-share mirrors remain M6's. No legacy decision reader changes.
+
+A writer selects only the instruments it wrote or decided in its own
+transaction: the Stripe intent it settled, the bank rows a Xero delivery moved
+to captured, the W8 row a close wrote, or the rows an officer settle wrote.
+Each receipt's evidence records how it was posted (`postedAs`). A later call
+may collect only a `deferred` one, which a saved-card answer posts for its own
+settlement to decide. A receipt a catch-up posted, or one its writer chose not
+to collect, is never collected from a later hook's state. Who collects:
+
+| Writer | Collects when |
+| --- | --- |
+| Booking settle (card or officer) | The settle paid the booking |
+| Additional capture | The booking, read under the Payment row, is neither cancelled nor deleted |
+| Xero receipt | The delivery took the paid arm |
+| W7 part payment, W8 close | Always, for the row it wrote |
+| Saved-card answer | Never; deferred to the settle |
+| Superseded or cancelled-primary capture | Never |
+
+Each hook catches up the payment's other receipts unapplied. The owner command
+`pnpm run member-money:receipt-catch-up` defaults to a read-only census;
+`--execute` runs one Payment-row transaction per population payment. Catch-up
+uses the settlement line's `postedAt`, marked `datedBy: app-record`, without
+provider reads. Missing receipts must reach zero before M4c deploys. See
+[maintenance](../MAINTENANCE.md#catch-up-and-census-member-money-receipts-m4b).
+
+### M4c card refunds
+
+Each card-refund door posts R05 beside its legacy debt, in its transaction, for
+a booking whose R01 is in the journal: one obligation per debt record, keyed
+`refund-obligation|<scope>|<id>` (the chain rule). A paid card cancel's face is
+its frozen plan; an edit's is the card refund it owes; an approved appeal posts
+its concession against approved goodwill first (#4075 keeps the kept fee as
+charged); an edit review's, a duplicate or capacity-race capture's and an
+approved late capture's are their own debts. A superseded intent's and an
+automatic late capture's door defers its R05 to the sender.
+
+Before each keyed slice, `refundPaymentTransactions` reserves it under Stripe's
+own key, in a short root-client transaction holding only the Payment row. It
+funds the slice from that capture's own receipt, first taking back exactly the
+shortfall of that receipt's collection, under its own `refund-uncollect` event
+so a released reservation reverses its funding alone. A reservation the same
+sender's plan no longer carries is released (SUPERSEDED_KEY); another sender's
+open reservation on the same debt is its attempt in flight, left for C3 and C4
+to judge. A key whose reservations were all released without a refund (an
+appeal re-approved after `release_claim`, a refused key sent again) reserves the
+key's next generation, `<key>#<n>`, while Stripe is sent the key unchanged
+(within Stripe's 24-hour idempotency window a refund made under it is replayed;
+beyond it, the preflight adopts the key's evidence first, `INV-PAY-147`). A
+replayed refusal releases nothing again, so that generation stays open until the
+same sender's next key supersedes it, or the census lists it for the OPERATOR
+release. A key a refund answered reserves nothing. A retry replays its claim
+only for the same slice; a superseded row's one request, found unused at
+Stripe, is reserved again at its new amount. With no receipt, no R05 in the
+journal, or a receipt on a member a merge moved away from, nothing is reserved
+and the refund later posts unapplied. A broken cap refuses the slice before
+Stripe is asked: the committed door stands, the sender throws, the recovery
+runner stops the row dead without a retry for the treasurer's "Paid another
+way", and a webhook sender holds the capture rather than ask for redelivery.
+
+The cash writer posts R12 once per counted refund, applied only through the
+reservation its own key names (the sender's, or Stripe's `refundSliceKey`
+evidence), else unapplied. A key arriving later answers an unapplied R12 while
+it still counts. R13 reverses the answer, the cash and the answered
+reservation's funding once, so the re-send funds again. A failed refund whose
+key's reservation is still open releases it (REFUSED) when the failure is first
+seen. A "Paid another way" close posts R14 from the close record, funded from the
+allocation's receipts and trimmed to what is open, and closes the row's unmade
+slices' reservations (CLOSED_WITHOUT_REFUND); a close whose debt the journal
+does not hold posts its bank cash unapplied (Dr AR, Cr BANK). A kept rest posts
+one close-out per close record (`refund-close-out:<record>`), a retained
+component the census reads against the record's kept figure. A late capture the
+treasurer keeps reverses an unpaid, unreserved capture-return R05. A refund
+family's D4 successor is posted lazily, under the Payment row, by the first
+refund writer that finds the owner moved.
+
+**Expected after M4c, until the milestone that answers unapplied refunds.** A
+refund that posts unapplied (a debt raised before M4c, a Stripe dashboard
+refund, a refund on a member a merge moved away from) pays no refund obligation,
+so the receipt census's `OVER_COLLECTED` stays listed for its booking: the
+capture's receipt still counts as collected against a charge the refund has in
+fact given back. The refund census lists the refund itself
+(`UNAPPLIED_CARD_REFUND` or `RESERVATION_SKIPPED_NO_RECEIPT`). M4c builds no
+general fix.
+
+A rollback across M4c can strand a reservation. `pnpm run
+member-money:refund-reservations` lists them, answers those a recovery row marks
+made by an exact refund, and releases any other only on the owner's explicit
+OPERATOR command ([maintenance](../MAINTENANCE.md#reconcile-and-census-card-refund-reservations-m4c)).
 
 ## 11. Proposed children, in shipping order
 

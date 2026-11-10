@@ -377,8 +377,11 @@ export const MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS = 10_000;
  * raw statement in this module does: nothing reads the returned row, only that
  * the statement succeeded.
  *
- * See `clearTransactionLockTimeout` for why the UNDO is not this function with a
- * zero.
+ * Only ever called inside a savepoint that is then rolled back, which restores
+ * the value in force before it exactly — a database- or role-level bound
+ * included (#2623 F4). So there is no undo to get wrong: not `0`, which means
+ * "wait forever", and not `RESET`, which is session-scoped and survives the
+ * commit on a pooled connection (both measured on real PostgreSQL in #2623).
  */
 async function setTransactionLockTimeout(
   db: Pick<PrismaClient, "$executeRaw">,
@@ -389,93 +392,186 @@ async function setTransactionLockTimeout(
   );
 }
 
+type MemberMergeParticipantDb = Pick<PrismaClient, "$executeRaw" | "member">;
+
 /**
- * Undo the bound above, restoring whatever `lock_timeout` this deployment
- * actually configures (#2623 F4).
- *
- * NOT `set_config('lock_timeout', '0', true)`, which is what this did first. `0`
- * is not "the previous value", it is "wait forever" — so on a deployment that
- * sets `lock_timeout` at the database or role level, restoring `0` REMOVED that
- * operator's bound for the rest of the merge transaction: the sorted
- * coverage-owner keys and the loser `member.delete` with its FK checks. That is
- * the exact opposite of the intent stated below, which is to hand the remaining
- * statements back their ordinary failure semantics.
- *
- * Measured on real PostgreSQL against a database carrying
- * `ALTER DATABASE … SET lock_timeout = '3s'`:
- *
- *   set_config('lock_timeout','0',true)   -> 0    (operator's bound destroyed)
- *   RESET lock_timeout                    -> 3s   (restored, but see below)
- *   SET LOCAL lock_timeout TO DEFAULT     -> 3s   (restored)
- *
- * `SET LOCAL` rather than `RESET` because `RESET` is SESSION-scoped: it survives
- * the commit on a pooled connection. Measured on the same database, a session
- * holding `SET lock_timeout = '7s'` came out of a transaction containing `RESET`
- * at `3s` — the caller's own session setting silently destroyed for every later
- * statement that connection serves. `SET LOCAL` left it at `7s`.
- *
- * No parameter is interpolated, so the reason `set_config` was needed above —
- * `SET` takes no placeholders — does not apply here.
- *
- * On the connections THIS code runs on, nothing sets `lock_timeout` at any
- * level, so `DEFAULT` resolves to `0` and this is byte-for-byte the old
- * behaviour. It is hardening against a deployment that adds one, not a live bug.
- *
- * Since #3377 the deployment does set one — `lock_timeout` on the `migrate`
- * service's connection, so a blocked schema migration fails fast instead of
- * taking a hot table's readers down with it. That service runs
- * `prisma migrate deploy` and imports no application code, so it never reaches
- * this helper, and the paragraph above is still true here. It is no longer true
- * of the deployment as a whole: see `docs/CONCURRENCY_AND_LOCKING.md` ->
- * "The migration lock timeout".
+ * The two savepoints, as fixed statements: one around each acquisition attempt,
+ * one around a single-row wait. Named apart so neither can release the other.
+ * A savepoint in an interactive transaction is the `member-partner-link.ts`
+ * precedent; PostgreSQL releases the row locks and the `SET LOCAL` taken after
+ * a savepoint when it is rolled back to.
  */
-async function clearTransactionLockTimeout(
-  db: Pick<PrismaClient, "$executeRaw">,
-): Promise<void> {
-  await db.$executeRaw(Prisma.sql`SET LOCAL lock_timeout TO DEFAULT`);
+const ATTEMPT_SAVEPOINT = {
+  open: Prisma.sql`SAVEPOINT member_merge_participants_attempt`,
+  rollBack: Prisma.sql`ROLLBACK TO SAVEPOINT member_merge_participants_attempt`,
+  release: Prisma.sql`RELEASE SAVEPOINT member_merge_participants_attempt`,
+} as const;
+const WAIT_SAVEPOINT = {
+  open: Prisma.sql`SAVEPOINT member_merge_participant_wait`,
+  rollBack: Prisma.sql`ROLLBACK TO SAVEPOINT member_merge_participant_wait`,
+  release: Prisma.sql`RELEASE SAVEPOINT member_merge_participant_wait`,
+} as const;
+
+/**
+ * Wait for one busy participant row, holding none of the others (#4855), for at
+ * most `milliseconds`. The row is taken `FOR UPDATE` — the strength merge needs,
+ * so the wait outlasts every key share on it — and released straight away by
+ * the savepoint's rollback, which also drops the `lock_timeout` set inside it.
+ * A lock selects a constant (`INV-OPS-001`), so the row count says whether the
+ * row still exists; a cancelled wait (`55P03`) means the bound ran out.
+ */
+async function waitForOneParticipantRow(
+  db: MemberMergeParticipantDb,
+  memberId: string,
+  milliseconds: number,
+): Promise<"free" | "missing" | "timedOut"> {
+  await db.$executeRaw(WAIT_SAVEPOINT.open);
+  let outcome: "free" | "missing" | "timedOut";
+  try {
+    await setTransactionLockTimeout(db, milliseconds);
+    const locked = await db.$executeRaw(Prisma.sql`
+      SELECT 1
+      FROM "Member"
+      WHERE "id" = ${memberId}
+      FOR UPDATE
+    `);
+    outcome = locked === 1 ? "free" : "missing";
+  } catch (error) {
+    if (!isPostgresLockNotAvailable(error)) throw error;
+    outcome = "timedOut";
+  }
+  await db.$executeRaw(WAIT_SAVEPOINT.rollBack);
+  await db.$executeRaw(WAIT_SAVEPOINT.release);
+  return outcome;
 }
 
 /**
- * One blocking, sorted master/loser/ancillary-owner row-lock statement, with a
- * bounded wait (#2623 T6).
+ * The first participant row this attempt could not lock, read row by row with
+ * `SKIP LOCKED` inside the attempt's savepoint: a row the attempt already holds
+ * counts 1, a row another transaction holds (or one that is gone) counts 0.
+ */
+async function firstSkippedParticipantRow(
+  db: MemberMergeParticipantDb,
+  ids: readonly string[],
+): Promise<string | undefined> {
+  for (const id of ids) {
+    const locked = await db.$executeRaw(Prisma.sql`
+      SELECT 1
+      FROM "Member"
+      WHERE "id" = ${id}
+      FOR UPDATE SKIP LOCKED
+    `);
+    if (locked !== 1) return id;
+  }
+  return undefined;
+}
+
+async function rollBackAttempt(db: MemberMergeParticipantDb): Promise<void> {
+  await db.$executeRaw(ATTEMPT_SAVEPOINT.rollBack);
+  await db.$executeRaw(ATTEMPT_SAVEPOINT.release);
+}
+
+/**
+ * Run `moveAndPlan`, then lock every participant row it names, and never wait
+ * for a Member row while holding any row that attempt wrote (#4876, extending
+ * #4855), within one bounded budget (#2623 T6).
  *
- * BLOCKING ON PURPOSE, and that half is unchanged. `member-merge.ts` documents
- * the wait as deliberate: merge is an irreversible admin operation, and a
- * `NOWAIT` here would fail it far more often than the hazard justifies. Its two
- * fail-fast siblings in this module (`lockHostingCoverageMemberLifecycleTarget`,
- * `acquireHostingCoverageQueueParticipantProof`) are request-path writers, where
- * failing instantly and asking for a reload is the right answer.
+ * WHY THE MOVES ARE INSIDE THE ATTEMPT. Merge re-points the duplicate's rows
+ * before it takes these Member rows. An UPDATE locks its target, so those
+ * writes are row locks merge still holds when it reaches this statement. A
+ * writer that already holds a key share on one of these members — an induction
+ * sign-off naming the signer, then the induction row — and then needs one of
+ * those moved rows waits on merge, and merge waits on the key share. PostgreSQL
+ * aborts one side (`40P01`). No census of writers can close that: the class is
+ * every row merge updates. So an attempt that cannot take every Member row
+ * rolls the savepoint back, which releases every row the attempt wrote, and
+ * only then waits for the busy Member row alone.
  *
- * WHAT WAS WRONG WAS THE WAIT BEING UNBOUNDED WHILE HOLDING. This statement runs
- * inside the merge transaction, which is still holding the adult-member hosting
- * policy-set advisory key, so a wait here is a wait-while-holding. The alarming
- * reading of that — an unbounded fan-out of third parties — is not true: owners
- * come from a capped plan (`HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT`), so the set is
- * at most that plus master and loser, and merge's own 120s transaction deadline
- * eventually aborts and releases. What remains real is that `FOR UPDATE` on up to
- * that many THIRD-PARTY owners also blocks every FK write naming those members, so
- * an uninvolved booking-create or guest-add can wait behind the tail of a merge,
- * for as long as merge's deadline allows.
+ * `moveAndPlan` must have no effect that outlives this transaction. A failed
+ * attempt discards its return value and runs it again; a throw (a drift 409,
+ * a constraint failure) rolls the savepoint back and propagates, so the merge
+ * does not retry a refusal. The participant ids come from the attempt itself,
+ * because the hosting plan that names the ancillary owners is part of it.
  *
- * So the wait is bounded to `MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS` and
- * released. PostgreSQL raises `lock_timeout` cancellation as SQLSTATE `55P03`,
- * the same code `NOWAIT` raises, so it lands on the existing
- * `HostingCoverageParticipantRetryError` that merge already converts into its
- * clean "participants changed, nothing was saved, re-run the preview" 409.
+ * EACH ATTEMPT, inside a savepoint: `moveAndPlan`, then one `FOR UPDATE SKIP
+ * LOCKED` over the sorted ids. If it locks every id, the savepoint is released
+ * and merge holds the rows and the writes. Otherwise the first skipped row is
+ * found (`firstSkippedParticipantRow`), the savepoint rolls back, and merge
+ * waits for that row alone (`waitForOneParticipantRow`) before trying again.
+ * A missing row is a changed set, not contention. Lock statements select a
+ * constant and are counted, never read (`INV-OPS-001`, #2289); the typed read
+ * is the identity proof.
  *
- * The timeout is restored to this deployment's own DEFAULT after a successful
- * acquisition rather than left in force: the rest of the merge transaction takes
- * further locks — sorted coverage-owner keys, the loser delete — whose failures
- * are NOT mapped onto that retry, and turning them into unmapped `55P03`s would
- * trade a bounded wait for an opaque error. Restoring the DEFAULT rather than a
- * hardcoded `0` is what keeps that true on a deployment whose operator sets
- * `lock_timeout` at the database or role level — see
- * `clearTransactionLockTimeout`. There is no restore on the failure path because a cancelled
- * statement leaves the transaction aborted, so a second statement there could only
- * replace the retry error with `25P02`.
+ * STILL A WAIT, AND STILL BOUNDED (#2623 T6). The whole loop, moves included,
+ * shares `MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS`. Every single-row wait is
+ * bounded by what is left after the attempt. The loop cannot spin: an attempt
+ * either takes every row, or waits until the row frees or the budget is gone.
+ * Running out lands on `HostingCoverageParticipantRetryError`. While it waits
+ * merge holds none of these rows and none of the attempt's writes. The lock
+ * bound only exists inside the wait's savepoint, so later locks keep their
+ * ordinary failure semantics. Advisory keys taken before this call stay held,
+ * as they did before.
+ */
+export async function withMemberMergeParticipantRows<T>(
+  db: MemberMergeParticipantDb,
+  moveAndPlan: () => Promise<{ participantIds: readonly string[]; result: T }>,
+): Promise<{ lockedMemberIds: readonly string[]; result: T }> {
+  const deadline = performance.now() + MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS;
+  const remainingBudget = () => Math.ceil(deadline - performance.now());
+  for (;;) {
+    if (remainingBudget() <= 0) throw new HostingCoverageParticipantRetryError();
+    await db.$executeRaw(ATTEMPT_SAVEPOINT.open);
+    let planned: { participantIds: readonly string[]; result: T };
+    try {
+      planned = await moveAndPlan();
+    } catch (error) {
+      await rollBackAttempt(db);
+      throw error;
+    }
+    const ids = sortedUnique(planned.participantIds);
+    if (ids.length === 0) {
+      await rollBackAttempt(db);
+      throw new HostingCoverageParticipantRetryError();
+    }
+    const locked = await db.$executeRaw(Prisma.sql`
+      SELECT 1
+      FROM "Member"
+      WHERE "id" IN (${Prisma.join(ids)})
+      ORDER BY "id"
+      FOR UPDATE SKIP LOCKED
+    `);
+    const busy = locked === ids.length ? undefined : await firstSkippedParticipantRow(db, ids);
+    if (busy === undefined) {
+      await db.$executeRaw(ATTEMPT_SAVEPOINT.release);
+      const lockedMembers = await db.member.findMany({
+        where: { id: { in: [...ids] } },
+        orderBy: { id: "asc" },
+        select: { id: true },
+      });
+      if (
+        lockedMembers.length !== ids.length ||
+        lockedMembers.some((member, index) => member.id !== ids[index])
+      ) {
+        throw new HostingCoverageParticipantRetryError();
+      }
+      return { lockedMemberIds: Object.freeze(ids), result: planned.result };
+    }
+    await rollBackAttempt(db);
+    // Read after the attempt and its probe, so the wait ends inside the 10s total.
+    const remaining = remainingBudget();
+    if (remaining <= 0) throw new HostingCoverageParticipantRetryError();
+    const waited = await waitForOneParticipantRow(db, busy, remaining);
+    if (waited !== "free") throw new HostingCoverageParticipantRetryError();
+  }
+}
+
+/**
+ * Lock master, loser and every ancillary owner, with no writes of its own.
+ * Merge itself goes through {@link withMemberMergeParticipantRows}, so the
+ * rows it re-points are inside the same attempt (#4876).
  */
 export async function lockMemberMergeHostingCoverageParticipants(
-  db: Pick<PrismaClient, "$executeRaw" | "member">,
+  db: MemberMergeParticipantDb,
   params: {
     masterId: string;
     loserId: string;
@@ -487,34 +583,11 @@ export async function lockMemberMergeHostingCoverageParticipants(
     params.loserId,
     ...params.ownerMemberIds,
   ]);
-  await setTransactionLockTimeout(db, MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS);
-  try {
-    await db.$executeRaw(Prisma.sql`
-      SELECT 1
-      FROM "Member"
-      WHERE "id" IN (${Prisma.join(ids)})
-      ORDER BY "id"
-      FOR UPDATE
-    `);
-  } catch (error) {
-    if (isPostgresLockNotAvailable(error)) {
-      throw new HostingCoverageParticipantRetryError();
-    }
-    throw error;
-  }
-  await clearTransactionLockTimeout(db);
-  const locked = await db.member.findMany({
-    where: { id: { in: ids } },
-    orderBy: { id: "asc" },
-    select: { id: true },
-  });
-  if (
-    locked.length !== ids.length ||
-    locked.some((member, index) => member.id !== ids[index])
-  ) {
-    throw new HostingCoverageParticipantRetryError();
-  }
-  return Object.freeze(ids);
+  const locked = await withMemberMergeParticipantRows(db, async () => ({
+    participantIds: ids,
+    result: ids,
+  }));
+  return locked.lockedMemberIds;
 }
 
 /** Issue the merge bypass only after an exact under-lock plan comparison. */

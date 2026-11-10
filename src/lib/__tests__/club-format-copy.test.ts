@@ -109,7 +109,7 @@ describe("Club Currency & Locale copy has one home (#3566)", () => {
  */
 describe("the Xero base-currency warning has one home (#3633)", () => {
   const WARNING_SURFACES = [
-    "src/app/(admin)/admin/xero/setup/xero-wizard-steps.tsx",
+    "src/app/(admin)/admin/finance/xero/setup/xero-wizard-steps.tsx",
     "src/components/admin/club-format-panel.tsx",
     "src/lib/setup-readiness.ts",
   ];

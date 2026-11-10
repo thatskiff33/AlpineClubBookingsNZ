@@ -210,7 +210,7 @@ const THEMED_NEUTRAL_ALLOWLIST = new Set<string>(
     // slate strings are REQUIRED by `app-theme-layout-contract.test.ts`
     // ("keeps Site Style app chrome semantic while fixed code previews stay
     // isolated").
-    "src/app/(admin)/admin/site-style/site-style-wizard.tsx",
+    "src/app/(admin)/admin/website/site-style/site-style-wizard.tsx",
     // Print pages: self-consistent hard-light paper surfaces. `bg-white`,
     // `border-gray-400` rules and grey ink are correct for paper output and
     // must not follow the club theme.
@@ -219,7 +219,7 @@ const THEMED_NEUTRAL_ALLOWLIST = new Set<string>(
     // Reports: the six `print:border-slate-300` PRINT-ONLY variants (the
     // file's screen classes are fully tokenised). Print output is paper, not
     // theme.
-    "src/app/(admin)/admin/reports/page.tsx",
+    "src/app/(admin)/admin/finance/reports/page.tsx",
     // Signage: `bg-black` letterboxes simulating a display screen.
     "src/app/(admin)/admin/display/builder/display-builder.tsx",
     "src/app/(admin)/admin/display/preview/page.tsx",

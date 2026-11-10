@@ -1144,6 +1144,142 @@ describe("review finding source/schema contracts", () => {
     }
   });
 
+  // The member-merge and member-delete race suites that followed #2672, one row
+  // each (#4861). Every row is the #2672 rule: a unit test pins the writer's lock
+  // order against a mock, and only the realdb suite shows PostgreSQL forms no
+  // wait-for cycle. The suite `describe.skip`s itself without the harness env
+  // vars, so its CI step runs after the migrate step with RUN_CONCURRENCY_RACE_TESTS
+  // set and the race URL inherited, and the cases the fix stands on keep their
+  // names: each MUTATION case is one a mutation reddens.
+  it.each([
+    {
+      issue: "#4823",
+      suite: "member-merge Payment row",
+      stepName: "Test member-merge Payment row races against dedicated PostgreSQL",
+      file: "src/lib/__tests__/member-merge-payment-row-races.realdb.test.ts",
+      cases: [
+        "MUTATION: a card settle holding the Payment row makes the merge refuse at once, never wait; the settle commits and a re-run merges",
+        "a merge holding the Payment row makes the card settle wait; both commit",
+        "MUTATION: an edit door holding the booking row, before its Payment row, makes the merge wait; both commit",
+        "a merge holding both rows makes the edit door wait at the booking row; both commit",
+      ],
+    },
+    {
+      issue: "#4840",
+      suite: "member-merge officer settle",
+      stepName: "Test member-merge officer settle races against dedicated PostgreSQL",
+      file: "src/lib/__tests__/member-merge-officer-settle-races.realdb.test.ts",
+      cases: [
+        "MUTATION: a merge waiting for the duplicate's Member row holds no booking row, so the settle commits and the merge carries it to the survivor",
+        "a settle holding the booking row and the officer's key share makes the merge wait; both commit",
+        "MUTATION: a merge waiting for the duplicate's Member row holds no booking row, so the review closure commits and the merge refuses, keeping the officer",
+        "an edit review's closure holding the booking row and the officer's key share commits, and the merge refuses, keeping the officer",
+      ],
+    },
+    {
+      issue: "#4853",
+      suite: "member-merge policy-exception",
+      stepName: "Test member-merge policy-exception races against dedicated PostgreSQL",
+      file: "src/lib/__tests__/member-merge-policy-exception-races.realdb.test.ts",
+      cases: [
+        "MUTATION: (a) a merge waiting for the officer's Member row holds no booking row, so that officer's approval commits and the merge refuses, keeping the reviewer",
+        "MUTATION: (a) an approval by the duplicate holding its claim commits, and the merge refuses, keeping the reviewer",
+        "(b) a merge waiting for the duplicate's Member row holds no booking or request row, so the approval commits and the merge carries both to the survivor",
+        "MUTATION: (b) an approval holding its claim on the duplicate's request makes the merge wait at the booking row; both commit",
+        "MUTATION: (b) an approval paused at its booking-row lock holds nothing the merge needs: the merge commits, then the approval executes on the survivor's request",
+      ],
+    },
+    {
+      issue: "#4845",
+      suite: "member-merge change-request",
+      stepName: "Test member-merge change-request races against dedicated PostgreSQL",
+      file: "src/lib/__tests__/member-merge-change-request-races.realdb.test.ts",
+      cases: [
+        "MUTATION: (a) a merge waiting for the officer's Member row holds no booking row, so that officer's approval commits and the merge refuses, keeping the reviewer",
+        "MUTATION: (a) an approval by the duplicate holding its claim commits, and the merge refuses, keeping the reviewer",
+        "(b) a merge waiting for the duplicate's Member row holds no booking or request row, so the approval commits and the merge carries both to the survivor",
+        "MUTATION: (b) an approval holding its claim on the duplicate's request makes the merge wait at the booking row; both commit",
+        "MUTATION: (b) an approval paused at its booking-row lock holds nothing the merge needs: the merge commits, then the approval executes on the survivor's request",
+      ],
+    },
+    {
+      issue: "#4857",
+      suite: "member-merge booking-request",
+      stepName: "Test member-merge booking-request races against dedicated PostgreSQL",
+      file: "src/lib/__tests__/member-merge-booking-request-races.realdb.test.ts",
+      cases: [
+        "MUTATION: a merge waiting for the Member rows holds no booking row, so the approval commits without waiting on one",
+        "MUTATION: an approval holding its claim makes the merge wait at the held booking's row; the approval commits and the merge refuses cleanly",
+        "MUTATION: an approval paused at its booking-row lock holds nothing the merge needs: the merge commits, then the approval converts the hold",
+      ],
+    },
+    {
+      issue: "#4850",
+      suite: "member hard-delete officer",
+      stepName: "Test member hard-delete officer races against dedicated PostgreSQL",
+      file: "src/lib/__tests__/member-delete-officer-races.realdb.test.ts",
+      cases: [
+        "MUTATION: a delete holding the officer's Member row makes that officer's settle wait at the booking row, never a deadlock",
+        "a settle holding the booking row and the officer's key share makes the delete wait; both commit",
+        "MUTATION: a delete holding the officer's Member row makes that officer's review closure wait at the booking row, never a deadlock",
+        "a review closure holding the booking row and the officer's key share makes the delete wait; neither deadlocks",
+        "MUTATION: a Payment-first writer holding a payment the officer recorded makes the delete refuse at once, never wait; the writer then commits",
+      ],
+    },
+    {
+      issue: "#4855",
+      suite: "member-merge loser-officer",
+      stepName: "Test member-merge loser-officer races against dedicated PostgreSQL",
+      file: "src/lib/__tests__/member-merge-loser-officer-races.realdb.test.ts",
+      cases: [
+        "MUTATION: (a) a change-request approval by the duplicate, crediting the survivor, never deadlocks with the merge: the approval commits and the merge refuses, keeping the reviewer",
+        "MUTATION: (b) a held booking-request approval by the duplicate, linking a guest to the survivor, never deadlocks with the merge: the approval commits and the merge refuses",
+        "MUTATION: (c) a change-request approval by the duplicate that merge waits on keeps its reviewer: the approval commits and the merge refuses",
+        "MUTATION: refuses a merge, rather than dropping it, when a Cascade row naming the duplicate commits under it",
+        "MUTATION: refuses a merge with its clean 409, not an FK error, when a Restrict row naming the duplicate commits under it",
+      ],
+    },
+    {
+      issue: "#4876",
+      suite: "member-merge moved row",
+      stepName: "Test member-merge moved-row races against dedicated PostgreSQL",
+      file: "src/lib/__tests__/member-merge-moved-row-races.realdb.test.ts",
+      cases: [
+        "(a) a completing hut-leader sign-off holding the signer's key share commits, and the merge commits or refuses cleanly",
+        "(b) a completing hut-leader sign-off started while the merge waits on the signer commits, and the merge commits or refuses cleanly",
+        "an allocation rewrite that already holds the approver's key share commits, and the merge commits or refuses cleanly",
+        "MUTATION: waiting for a Member row while still holding the moved induction deadlocks the sign-off",
+        "MUTATION: rolling back the Member locks but not the moved induction still deadlocks the sign-off",
+      ],
+    },
+  ])("runs the $suite race suite against the same dedicated PostgreSQL ($issue)", ({ issue, stepName, file, cases }) => {
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    const migrateStep = workflow.indexOf(
+      "name: Migrate dedicated advisory-lock race database"
+    );
+    const raceStep = workflow.indexOf(`name: ${stepName}`);
+    expect(migrateStep).toBeGreaterThan(-1);
+    expect(
+      raceStep,
+      `ci.yml no longer runs ${file.split("/").pop()} after the migrate step. ` +
+        "That suite self-skips without RUN_CONCURRENCY_RACE_TESTS, so removing " +
+        `the step silently un-tests the ${issue} lock order.`
+    ).toBeGreaterThan(migrateStep);
+    const stepBlock = workflow.slice(
+      raceStep,
+      workflow.indexOf("      - name:", raceStep + 1)
+    );
+    expect(stepBlock).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
+    expect(stepBlock).not.toContain("CONCURRENCY_RACE_DATABASE_URL:");
+    expect(stepBlock).toContain(`pnpm exec vitest run ${file}`);
+
+    const suite = readRepoFile(file);
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    for (const caseName of cases) {
+      expect(suite, `${issue} case missing: ${caseName}`).toContain(caseName);
+    }
+  });
+
   it("runs the page-content delete race against a real PostgreSQL in CI (#3852)", () => {
     // The suite describe.skip's itself without the harness env vars, so an
     // unwired step would turn the only proof that PostgreSQL gives the loser of
@@ -1284,6 +1420,7 @@ describe("review finding source/schema contracts", () => {
     const fixture = readRepoFile("src/lib/__tests__/support/member-money-fixtures.ts");
     expect(fixture).toContain("assertSafeRaceDbUrl(url, label)");
     expect(fixture).toContain("prisma/migrations/20261127010000_member_money_journal/migration.sql");
+    expect(fixture).toContain("prisma/migrations/20261210080000_member_money_applications/migration.sql");
     expect(fixture).toContain("buildDatabaseRolesSql");
   });
 
@@ -1309,6 +1446,22 @@ describe("review finding source/schema contracts", () => {
     expect(suite).toContain("createMemberMoneyScratchDatabase");
     expect(suite).toContain("verifyMemberMoneyJournal");
     expect(suite).toContain("postMemberMoneyEvent");
+  });
+
+  it("proves the member-money application engine against a real PostgreSQL in a required job (#4691)", () => {
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    const proofStep = workflow.indexOf("name: Prove the member-money application engine against dedicated PostgreSQL");
+    expect(proofStep).toBeGreaterThan(workflow.indexOf("name: Prove the member-money posting command against dedicated PostgreSQL"));
+    expect(proofStep).toBeLessThan(workflow.indexOf("\n  data-migration-verification:\n"));
+    const step = workflow.slice(proofStep, workflow.indexOf("\n      - name:", proofStep + 1));
+    expect(step).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
+    expect(step).toContain("pnpm exec vitest run src/lib/__tests__/member-money-applications.realdb.test.ts");
+    expect(step).not.toContain("continue-on-error");
+    expect(step).not.toMatch(/\n\s+if:/);
+    const suite = readRepoFile("src/lib/__tests__/member-money-applications.realdb.test.ts");
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    expect(suite).toContain("reserveMemberMoneyRefund");
+    expect(suite).toContain("open_reservation_without_funding");
   });
 
   it("executes the email-override annotation strip against a real PostgreSQL in CI (#2269, #2418)", () => {

@@ -8,7 +8,7 @@ The settings for **Xero-invoiced Internet Banking payments** (bank transfers):
 whether beds are held while a payment is pending, how long that hold lasts, and
 the minimum lead time required before check-in. Find it at **Admin → Finance →
 Internet Banking** (`/admin/internet-banking`); the page's back-link goes to
-**Finance Setup** (`/admin/xero/setup`).
+**Xero Setup** (`/admin/xero/setup`).
 
 Internet Banking is a **finance** permission area: finance view to read, finance
 **edit** to save. It depends on the Xero integration and the Internet Banking

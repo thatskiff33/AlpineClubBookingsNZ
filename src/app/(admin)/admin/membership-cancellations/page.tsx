@@ -38,6 +38,8 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { MembershipCancellationBlockerNotice } from "@/components/admin/membership-cancellation-blocker-notice";
+import { MembershipCancellationSettingsTab } from "@/components/admin/membership-cancellation-settings-tab";
+import { AdminPageTabs } from "@/components/admin/admin-page-tabs";
 import {
   MembershipCancellationInvoiceCheckSkippedLine,
   MembershipCancellationInvoiceCheckSkippedNotice,
@@ -333,7 +335,22 @@ function approvalUnavailableReason(
   return null;
 }
 
+/** The queue, and the cancellation settings as a Settings tab since S1 (#4796). */
 export default function MembershipCancellationsPage() {
+  return (
+    <AdminPageTabs
+      page="membership-cancellations"
+      title="Membership Cancellations"
+      description="Review member cancellation and archive requests, and set the cancellation copy and Xero handling they use."
+      tabs={[
+        { value: "requests", label: "Requests", content: <MembershipCancellationRequests /> },
+        { value: "settings", label: "Settings", content: <MembershipCancellationSettingsTab /> },
+      ]}
+    />
+  );
+}
+
+function MembershipCancellationRequests() {
   const clubTime = useClubTime();
   const { data: session } = useSession();
   const currentAdminId = session?.user?.id;
@@ -628,9 +645,9 @@ export default function MembershipCancellationsPage() {
       <div className="space-y-6">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">
-            Membership Cancellations
-          </h1>
+          <h2 className="text-lg font-semibold text-foreground">
+            Requests
+          </h2>
           <p className="mt-1 text-sm text-muted-foreground">{pendingSummary}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -907,9 +924,9 @@ export default function MembershipCancellationsPage() {
                   <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
                     <div className="space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="text-base font-semibold text-foreground">
+                        <h3 className="text-base font-semibold text-foreground">
                           Request {request.id.slice(-8)}
-                        </h2>
+                        </h3>
                         {statusBadge(request.status)}
                       </div>
                       <p className="text-sm text-muted-foreground">

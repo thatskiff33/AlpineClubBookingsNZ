@@ -73,12 +73,25 @@ const { state, mockPrisma } = vi.hoisted(() => {
       },
     },
   );
+  // The guard's recovery-code question, evaluated literally: `contains`,
+  // `startsWith`, `NOT` and `AND`, with `exactPrefix`'s LIKE escapes dropped.
+  type CodeWhere = {
+    codeHash?: { contains?: string; startsWith?: string };
+    NOT?: CodeWhere;
+    AND?: CodeWhere[];
+  };
+  const literal = (text: string) => text.replace(/\\(.)/g, "$1");
+  const matches = (hash: string, where: CodeWhere): boolean =>
+    (where.codeHash?.contains === undefined || hash.includes(literal(where.codeHash.contains))) &&
+    (where.codeHash?.startsWith === undefined || hash.startsWith(literal(where.codeHash.startsWith))) &&
+    (where.NOT === undefined || !matches(hash, where.NOT)) &&
+    (where.AND ?? []).every((part) => matches(hash, part));
   const twoFactorRecoveryCode = {
     findMany: async () => state.recoveryHashes,
-    count: async (args?: { where?: { codeHash?: { contains?: string } } }) => {
-      const part = args?.where?.codeHash?.contains;
-      return part === undefined ? 0 : state.recoveryHashes.filter((row) => row.codeHash.includes(part)).length;
-    },
+    count: async (args?: { where?: CodeWhere }) =>
+      args?.where === undefined
+        ? 0
+        : state.recoveryHashes.filter((row) => matches(row.codeHash, args.where!)).length,
   };
   const mockPrisma = new Proxy(
     {},
@@ -160,6 +173,26 @@ describe("getSetupDatabaseSnapshot — stored data per data key (#4456 review)",
     expect(check.status).toBe("blocked");
     expect(check.message).toMatch(/DATA_ENCRYPTION_KEYS is not set, so it cannot be read/);
     expect(check.details).toContain('1 unused recovery code under the data key "k1".');
+  });
+
+  it("finds no ring data in recovery codes the re-encrypt retired: they depend on no key (#4456 PR 2)", async () => {
+    state.recoveryHashes = [{ codeHash: "retired.legacy-auth-secret:abc123" }, { codeHash: "bare-legacy-hash" }];
+
+    const snapshot = await getSetupDatabaseSnapshot();
+
+    expect(snapshot.dataKeyUsage?.ringKeyedDataPresent).toBe(false);
+    expect(snapshot.dataKeyUsage?.recoveryCodesByKeyId).toEqual({
+      "retired.legacy-auth-secret": 1,
+      "legacy-auth-secret": 1,
+    });
+    const unset = buildDataEncryptionKeyCheck(undefined, snapshot.dataKeyUsage);
+    expect(unset.status).toBe("warning");
+    expect(unset.details.join(" ")).not.toMatch(/retired\.legacy-auth-secret/);
+    const ring = buildDataEncryptionKeyCheck(`k1:${RING_KEY}`, snapshot.dataKeyUsage);
+    expect(ring.status).toBe("complete");
+    expect(ring.details).toContain(
+      "2 unused recovery codes no longer work under this key ring; their members are told to generate a new set.",
+    );
   });
 
   it("finds no ring data in legacy rows and unknown formats, so never names a missing ring (#4456 review)", async () => {

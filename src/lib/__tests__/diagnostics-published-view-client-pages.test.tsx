@@ -23,7 +23,7 @@ import {
   HelpWidgetProvider,
   useDiagnosticsViewState,
 } from "@/components/help-widget/help-widget-context";
-import { APPLIED_PAYMENTS_SEARCH_MAX_CHARS } from "@/app/(admin)/admin/payments/_applied-query-vocabulary";
+import { APPLIED_PAYMENTS_SEARCH_MAX_CHARS } from "@/app/(admin)/admin/finance/payments/_applied-query-vocabulary";
 import { getPaymentsDatasetDefaults } from "@/lib/admin-dataset-reset-state";
 import { CLUB_TIME_TEST_ZONE } from "@/lib/__tests__/support/club-time-render";
 import { ClubTimeProvider } from "@/components/club-time-provider";
@@ -246,7 +246,7 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
     // address would report no filtering at all on a list that is filtered to
     // the last three club-timezone months.
     const { default: PaymentsPage } = await import(
-      "@/app/(admin)/admin/payments/page"
+      "@/app/(admin)/admin/finance/payments/page"
     );
     const clubToday = clubTodayForRender();
     const defaults = getPaymentsDatasetDefaults(clubToday);
@@ -289,7 +289,7 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
     routerMocks.search =
       "status=SUCCEEDED&source=STRIPE&search=%20ngata%20&xeroState=linked&sortBy=amount&page=4";
     const { default: PaymentsPage } = await import(
-      "@/app/(admin)/admin/payments/page"
+      "@/app/(admin)/admin/finance/payments/page"
     );
     const clubToday = clubTodayForRender();
     const defaults = getPaymentsDatasetDefaults(clubToday);
@@ -330,7 +330,7 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
     routerMocks.search = "status=succeeded&lastUpdatedFrom=13-45-2026";
     respondWith({ error: "Invalid query parameters" }, { ok: false, status: 400 });
     const { default: PaymentsPage } = await import(
-      "@/app/(admin)/admin/payments/page"
+      "@/app/(admin)/admin/finance/payments/page"
     );
     const clubToday = clubTodayForRender();
 
@@ -361,7 +361,7 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
     const tooLong = "n".repeat(APPLIED_PAYMENTS_SEARCH_MAX_CHARS + 1);
     routerMocks.search = `search=${tooLong}`;
     const { default: PaymentsPage } = await import(
-      "@/app/(admin)/admin/payments/page"
+      "@/app/(admin)/admin/finance/payments/page"
     );
     const clubToday = clubTodayForRender();
     const defaults = getPaymentsDatasetDefaults(clubToday);
@@ -389,7 +389,7 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
     const exact = "n".repeat(APPLIED_PAYMENTS_SEARCH_MAX_CHARS);
     routerMocks.search = `search=${exact}`;
     const { default: PaymentsPage } = await import(
-      "@/app/(admin)/admin/payments/page"
+      "@/app/(admin)/admin/finance/payments/page"
     );
 
     render(
@@ -406,7 +406,7 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
     respondWith({ error: "boom" }, { ok: false, status: 500 });
     routerMocks.search = "status=SUCCEEDED&search=ngata";
     const { default: PaymentsPage } = await import(
-      "@/app/(admin)/admin/payments/page"
+      "@/app/(admin)/admin/finance/payments/page"
     );
 
     render(
@@ -450,7 +450,7 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
     const environmentToday = dayIn(ENVIRONMENT_CLUB_ZONE);
 
     const { default: PaymentsPage } = await import(
-      "@/app/(admin)/admin/payments/page"
+      "@/app/(admin)/admin/finance/payments/page"
     );
     const defaults = getPaymentsDatasetDefaults(chosen.today);
 
@@ -503,7 +503,7 @@ describe("/admin/payments titles its revenue tile as net (#3372)", () => {
       summary: { netCollectedCents: 6_500, refundedCents: 6_500, count: 1 },
     });
     const { default: PaymentsPage } = await import(
-      "@/app/(admin)/admin/payments/page"
+      "@/app/(admin)/admin/finance/payments/page"
     );
 
     render(
@@ -548,7 +548,7 @@ describe("/admin/payments titles its revenue tile as net (#3372)", () => {
       summary: { totalRevenueCents: 13_000, refundedCents: 6_500, count: 1 },
     });
     const { default: PaymentsPage } = await import(
-      "@/app/(admin)/admin/payments/page"
+      "@/app/(admin)/admin/finance/payments/page"
     );
 
     render(
@@ -583,7 +583,7 @@ describe("/admin/payments titles its revenue tile as net (#3372)", () => {
       },
     });
     const { default: PaymentsPage } = await import(
-      "@/app/(admin)/admin/payments/page"
+      "@/app/(admin)/admin/finance/payments/page"
     );
 
     render(
@@ -612,7 +612,7 @@ describe("/admin/payments titles its revenue tile as net (#3372)", () => {
       },
     });
     const { default: PaymentsPage } = await import(
-      "@/app/(admin)/admin/payments/page"
+      "@/app/(admin)/admin/finance/payments/page"
     );
 
     render(
@@ -643,7 +643,7 @@ describe("/admin/payments titles its revenue tile as net (#3372)", () => {
       },
     });
     const { default: PaymentsPage } = await import(
-      "@/app/(admin)/admin/payments/page"
+      "@/app/(admin)/admin/finance/payments/page"
     );
 
     render(

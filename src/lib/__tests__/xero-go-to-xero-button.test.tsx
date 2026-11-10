@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   GoToXeroButton,
   xeroLinkState,
-} from "@/app/(admin)/admin/xero/_components/go-to-xero-button";
+} from "@/app/(admin)/admin/finance/xero/_components/go-to-xero-button";
 
 // #2261: an admin who spots a problem on the Xero Sync page (or its Health
 // Snapshot) can jump straight into Xero. The link must be live in EVERY

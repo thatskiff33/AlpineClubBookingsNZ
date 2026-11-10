@@ -208,6 +208,8 @@ const RESOLVERS = {
  * shortcut shut.
  */
 const PURE_CALLEES = [
+  // M4b: the superseded-success callee takes a context; only the named root entry points resolve it.
+  "src/lib/payment-recovery.ts",
   "src/lib/bed-allocation-lifecycle.ts",
   "src/lib/adult-member-hosting-review.ts",
   "src/lib/booking-guest-removal-service.ts",
@@ -384,6 +386,9 @@ const LOCK_BOUND_INDIRECT_RESOLVERS = [
 const PRE_TRANSACTION_RESOLVER_HOMES: Readonly<
   Record<string, readonly string[]>
 > = {
+  "src/lib/payment-recovery.ts": ["handoffSucceededSupersededIntentToRefund", "processRefundSupersededPaymentOperation"],
+  // #4516 (M4c): the card refund writers' journal context, read before their transaction and only on the root client.
+  "src/lib/payment-transactions.ts": ["resolveCardRefundJournalBeforeTransaction"],
   "src/lib/booking-batch-modification-service.ts": [
     "prepareBookingBatchModification",
     // The STANDALONE path's own pre-transaction resolver (#3232 fix round). It is
@@ -500,7 +505,7 @@ const TRANSACTION_OPENERS = [
   "withXeroVerifyReset(",
   // #3954 round 4: the door's re-issue mint and the recovery runner's claim
   // hold each write their caller's rows inside their fenced transaction.
-  "writeReissuedAskUnderRecovery(",
+  "writeAskUnderDoorRecovery(",
   "holdAdditionalIntentRecoveryClaim(",
   // #4442: the inline minters' queue writes their caller's rows inside the
   // transaction that re-reads the carried balance under the global key.

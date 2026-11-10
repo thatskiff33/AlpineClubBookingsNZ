@@ -30,6 +30,7 @@ import type { FeatureFlags } from "@/config/schema";
 import { isPublicWebsitePath } from "@/lib/setup-gate";
 import * as assetNotFoundRoute from "@/app/asset-not-found/route";
 import nextConfig from "../../../next.config";
+import { ADMIN_PAGES } from "@/lib/admin-hubs";
 import { config, getFeatureFlagBlockResponse } from "../../proxy";
 
 /**
@@ -378,18 +379,50 @@ describe("the shipped next.config.ts, through Next's own pipeline", () => {
     },
   );
 
-  it("ships the rules in afterFiles, and only there", async () => {
+  it("ships the asset rules in afterFiles, and the moved-page rewrites in beforeFiles", async () => {
     // The stage cannot be read back from `unstable_getResponseFromNextConfig` —
     // it flattens beforeFiles/afterFiles/fallback into one list — so it is
-    // asserted against the config's own return value. This is the assertion that
-    // fails if the rules are moved to `beforeFiles`, which would put them AHEAD
-    // of the filesystem check and 404 every real image and chunk in the app.
+    // asserted against the config's own return value. Asset rules in
+    // `beforeFiles` would run ahead of the filesystem check and 404 every real
+    // image and chunk. The Website move's rewrites belong in `beforeFiles`:
+    // they serve each old URL from the file now under its hub.
     const rewrites = await nextConfig.rewrites!();
+    const nextPattern = (path: string) =>
+      path
+        .split("/")
+        .map((segment) => {
+          const simple = /^\[([A-Za-z][A-Za-z0-9]*)\]$/.exec(segment);
+          return simple ? `:${simple[1]}` : segment;
+        })
+        .join("/");
+    const dynamicCount = (path: string) =>
+      path.split("/").filter((segment) => segment.startsWith("[")).length;
+    const movedRewrites = ADMIN_PAGES.filter((page) => page.moved && page.hubPath !== page.oldPath)
+      .sort(
+        (a, b) =>
+          dynamicCount(a.oldPath) - dynamicCount(b.oldPath) ||
+          a.oldPath.localeCompare(b.oldPath),
+      )
+      .map((page) => ({
+        source: nextPattern(page.oldPath),
+        destination: nextPattern(page.hubPath),
+      }));
 
     expect(Array.isArray(rewrites), "must be the staged form, not a bare array")
       .toBe(false);
+    expect(movedRewrites.map((rule) => rule.destination)).toEqual(
+      expect.arrayContaining([
+        "/admin/website/appearance",
+        "/admin/finance/payments",
+        "/admin/rules/fees",
+        "/admin/system/health",
+        "/admin/messages/notices",
+        "/admin/messages/notices/:id",
+        "/admin/finance/xero/records/:localModel/:localId",
+      ]),
+    );
     expect(rewrites).toEqual({
-      beforeFiles: [],
+      beforeFiles: movedRewrites,
       afterFiles: [...ASSET_NOT_FOUND_REWRITES],
       fallback: [],
     });

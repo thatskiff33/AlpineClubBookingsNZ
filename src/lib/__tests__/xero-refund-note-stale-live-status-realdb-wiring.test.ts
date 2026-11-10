@@ -38,7 +38,7 @@ describe("the stale live refund-note status proof stays wired into CI (#4288)", 
     expect(suite).toContain("MUTATION (round 6): on a card payment A writes nothing when the void commits before its locked re-read");
     expect(suite).toContain("MUTATION (round 6): a void committing after A's locked re-read is A, then the void, then B - on a bank transfer B lowers it back");
     expect(suite).toContain("MUTATION (round 5, F4): a live row deactivated between A's read and its claim recounts too - judged by the rule that counted it");
-    expect(suite).toContain("MUTATION (round 7, F4): the pointer-named canonical note - the void's own link write waits on A's lock, holding the link A only reads");
+    expect(suite).toContain("MUTATION (round 7, F4): the pointer-named canonical note - the void waits on A's Payment lock before it takes the link");
     expect(suite).toContain("round 6 stated limit: on a card the same order leaves A's raise standing, raise-only, and alerts");
     expect(suite).toContain("pg_blocking_pids");
     expect(suite).toContain('assertSafeRaceDbUrl(RACE_DB_URL, "Stale live refund-note status")');

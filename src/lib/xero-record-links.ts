@@ -1,3 +1,4 @@
+import { adminHref } from "@/lib/admin-hubs";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 
 /**
@@ -36,7 +37,7 @@ export function buildXeroRecordActivityUrl(
   localId: string,
   returnTo?: string | null
 ): string {
-  const href = `/admin/xero/records/${encodeURIComponent(localModel)}/${encodeURIComponent(localId)}`;
+  const href = adminHref("xero-record", { localModel, localId });
   return returnTo ? buildHrefWithReturnTo(href, returnTo) : href;
 }
 

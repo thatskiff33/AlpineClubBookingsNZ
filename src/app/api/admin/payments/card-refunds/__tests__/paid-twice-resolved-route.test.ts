@@ -86,7 +86,7 @@ describe("what the mark needs", () => {
       expectedRefundedByCardCents: 9_000,
       actingMemberId: "treasurer-1",
     });
-    expect(revalidatePath).toHaveBeenCalledWith("/admin/stuck-states");
+    expect(revalidatePath).toHaveBeenCalledWith("/admin/system/stuck-states");
   });
 
   it("answers a refusal with its own status and sentence", async () => {

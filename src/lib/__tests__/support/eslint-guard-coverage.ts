@@ -73,7 +73,7 @@ export const PRODUCTION_GUARD_ROSTER: readonly GuardRosterEntry[] = [
   { file: "src/app/(finance)/finance/x/page.tsx", why: "a finance screen" },
   { file: "src/app/(public)/x/page.tsx", why: "a public screen" },
   {
-    file: "src/app/(admin)/admin/xero/_components/x.tsx",
+    file: "src/app/(admin)/admin/finance/xero/_components/x.tsx",
     why: "the Xero admin screens, deliberately NOT money modules: they render API-budget percentages",
   },
   // --- outside src/, where the money-adjacent backfills live -----------------
@@ -82,7 +82,7 @@ export const PRODUCTION_GUARD_ROSTER: readonly GuardRosterEntry[] = [
   // --- the narrowed blocks: an exemption from one guard must not lift another -
   { file: "src/lib/date-only.ts", why: "the date-only helper — exempt from the DATE rules only" },
   {
-    file: "src/app/(admin)/admin/site-style/site-style-wizard.tsx",
+    file: "src/app/(admin)/admin/website/site-style/site-style-wizard.tsx",
     why: "number formatting — drops only toLocaleString",
   },
   {
@@ -90,7 +90,7 @@ export const PRODUCTION_GUARD_ROSTER: readonly GuardRosterEntry[] = [
     why: "number formatting — drops only toLocaleString",
   },
   {
-    file: "src/app/(admin)/admin/promo-codes/promo-redemptions-panel.tsx",
+    file: "src/app/(admin)/admin/rules/promo-codes/promo-redemptions-panel.tsx",
     why: "number formatting — drops only toLocaleString",
   },
   {

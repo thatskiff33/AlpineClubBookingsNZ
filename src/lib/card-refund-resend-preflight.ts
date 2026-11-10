@@ -1,6 +1,9 @@
 /** Stripe evidence before a charge-backed recovery sends again (INV-PAY-145). */
 import { Prisma, type PaymentRecoveryOperation, type PaymentTransaction } from "@prisma/client";
-import { listRefundsForPaymentIntent } from "@/lib/stripe";
+import type Stripe from "stripe";
+import { netCollectedCardRefundSelect } from "@/lib/additional-ledger-gap";
+import { foreignRefundsSizingSupersededRow, isSizedOnLedger } from "@/lib/card-refund-dead-row";
+import { listRefundsOnCardCharge } from "@/lib/card-refund-stripe-refunds";
 import { recordStripeRefundsAgainstTransaction, type RefundAllocationSlice } from "@/lib/payment-transactions";
 import { isRecordedRefundStatus } from "@/lib/payment-transaction-status";
 import logger from "@/lib/logger";
@@ -12,11 +15,28 @@ import { onPlanWhere } from "@/lib/refused-card-refund-retry";
 import { parseRefundAllocationPlan } from "@/lib/open-card-refund-owed";
 import { refundSliceStripeIdempotencyKey } from "@/lib/payment-recovery-keys";
 import { REFUND_SLICE_KEY_METADATA } from "@/lib/refund-slice-evidence";
-import { stripeReferenceId } from "@/lib/stripe-references";
 
+/**
+ * A hold: the row goes to the guarded terminal failure, audited and alerted
+ * (`failPaymentRecoveryOperation`), and nothing is sent. Every hold is this
+ * class, so each takes the same path; its message is what officers read.
+ */
 export class UnattributedCardRefundBeforeResendError extends Error {
-  constructor(readonly stripeRefundIds: string[]) {
-    super("A refund made outside the app may already have paid this debt (INV-PAY-145). The app sent nothing and stopped automatic retries. Check the Stripe refunds and the booking before paying anything else. If money is still owed, use Paid another way in Stuck States; do not make a new Stripe dashboard refund. If nothing is owed, ask a developer to reconcile the row.");
+  constructor(
+    readonly stripeRefundIds: string[],
+    message = "A refund made outside the app may already have paid this debt (INV-PAY-145). The app sent nothing and stopped automatic retries. Check the Stripe refunds and the booking before paying anything else. If money is still owed, use Paid another way in Stuck States; do not make a new Stripe dashboard refund. If that refund leaves nothing owed, close it with Nothing left owed in Stuck States.",
+  ) {
+    super(message);
+  }
+}
+
+/** #4858: the hold for another refund on a plan-less superseded row's charge (`holdSupersededRowSizedOnAnotherRefund`). */
+export class AnotherRefundSizesSupersededRowError extends UnattributedCardRefundBeforeResendError {
+  constructor(stripeRefundIds: string[]) {
+    super(
+      stripeRefundIds,
+      "Another refund on this card charge, which this refund did not make, counts toward what this refund owes (INV-PAY-145, #4858). If that refund failed later, the member could be paid twice, so the app sent nothing and stopped automatic retries. Check the Stripe refunds and the booking before paying anything else. If the refund named here has since failed (it then shows as a refund of its own that Stripe failed later), do not close this one with Paid another way: ask a developer (#4492). Otherwise, if money is still owed, use Paid another way in Stuck States; do not make a new Stripe dashboard refund.",
+    );
   }
 }
 
@@ -27,22 +47,30 @@ export class UnattributedCardRefundBeforeResendError extends Error {
  */
 type Charge = Pick<PaymentTransaction, "id" | "stripePaymentIntentId">;
 
+type PreflightInput = {
+  operation: Pick<PaymentRecoveryOperation, "id" | "paymentId" | "bookingId" | "createdAt" | "allocationPlan" | "processingStartedAt">;
+  plan: readonly RefundAllocationSlice[];
+  transactions: readonly Charge[];
+  stripeKeyPrefix: string;
+};
+
 /**
  * No caller transaction: the provider read finishes before the canonical writer
  * opens its own Payment-row-locked transaction. All slices are checked before
  * any is sent, including on a row's first runner attempt after an inline call.
  */
-export async function checkCardRefundResend({
+export async function checkCardRefundResend(input: PreflightInput): Promise<RefundAllocationSlice[]> {
+  return (await preflightCardRefundResend(input)).plan;
+}
+
+/** `checkCardRefundResend`, with what Stripe listed on each charge it read, by transaction id (#4858). */
+export async function preflightCardRefundResend({
   operation,
   plan,
   transactions,
   stripeKeyPrefix,
-}: {
-  operation: Pick<PaymentRecoveryOperation, "id" | "paymentId" | "bookingId" | "createdAt" | "allocationPlan" | "processingStartedAt">;
-  plan: readonly RefundAllocationSlice[];
-  transactions: readonly Charge[];
-  stripeKeyPrefix: string;
-}): Promise<RefundAllocationSlice[]> {
+}: PreflightInput): Promise<{ plan: RefundAllocationSlice[]; listedByTransaction: ReadonlyMap<string, readonly Stripe.Refund[]> }> {
+  const listedByTransaction = new Map<string, readonly Stripe.Refund[]>();
   let updatedPlan = [...plan];
   // What the row holds now: the stored plan as read, then each plan written here.
   let storedPlan: Parameters<typeof onPlanWhere>[0] = operation.allocationPlan;
@@ -51,11 +79,9 @@ export async function checkCardRefundResend({
   if (charges.length !== unmadeIds.size) throw new Error("Refund preflight could not find every planned charge (INV-PAY-145)");
   for (const charge of charges) {
     if (!charge.stripePaymentIntentId) throw new Error("Refund preflight charge has no Stripe intent (INV-PAY-145)");
-    const refunds = await listRefundsForPaymentIntent(charge.stripePaymentIntentId, { timeoutMs: 10_000, singlePage: true });
-    // The list is by intent already; a refund naming another intent is not this charge's.
-    const onCharge = refunds.filter((refund) =>
-      !refund.payment_intent || stripeReferenceId(refund.payment_intent) === charge.stripePaymentIntentId,
-    );
+    // One bounded page, the refunds on this charge only (`listRefundsOnCardCharge`, #4368 review F3).
+    const onCharge = await listRefundsOnCardCharge(charge.stripePaymentIntentId);
+    listedByTransaction.set(charge.id, onCharge);
     if (onCharge.length === 0) continue;
     // The writer deduplicates unseen refunds and refreshes known statuses. Its
     // refusal result prevents a stale Stripe listing reviving a known failure.
@@ -138,5 +164,37 @@ export async function checkCardRefundResend({
     if (unexpected.length > 0) throw new UnattributedCardRefundBeforeResendError(unexpected);
     if (markError) throw markError;
   }
-  return updatedPlan;
+  return { plan: updatedPlan, listedByTransaction };
+}
+
+/**
+ * #4858 (`INV-PAY-145`): a superseded intent's refund with no stored plan is
+ * sized on its charge's ledger, so a refund another door made on that charge
+ * since the row was raised is counted as its progress. Should that refund fail
+ * later, the failed-later writer owes it on a row of its own while this row,
+ * still open, re-sizes with its headroom back: paid twice. So, before sending,
+ * the runner holds the row - the outside-app hold above, under its own message -
+ * while the owed figure's attribution gives it any refund its own request did
+ * not make, by Stripe's listing of the charge (`foreignRefundsSizingSupersededRow`,
+ * the rule "Try the card again" refuses a re-arm by). A no-op for a row with a
+ * stored plan, and for one whose attributed refunds are all its own.
+ *
+ * The caller reads the payment AFTER its sizing read of the charge, so every
+ * refund the size counted is checked; one recorded in between is checked
+ * without being counted, and holds the row conservatively. A plain read
+ * outside every transaction, after the preflight's provider read: no lock.
+ */
+export async function holdSupersededRowSizedOnAnotherRefund({
+  operation,
+  listed,
+}: {
+  operation: Pick<PaymentRecoveryOperation, "id" | "type" | "paymentId" | "bookingId" | "idempotencyKey" | "stripeKeyPrefix" | "allocationPlan">;
+  /** What the preflight listed on the row's charge. */
+  listed: readonly Stripe.Refund[];
+}): Promise<void> {
+  if (!isSizedOnLedger(operation)) return;
+  const payment = await prisma.payment.findUnique({ where: { id: operation.paymentId }, select: netCollectedCardRefundSelect });
+  if (!payment) throw new Error("Refund preflight could not read the payment (INV-PAY-145)");
+  const foreign = foreignRefundsSizingSupersededRow(payment, operation, listed);
+  if (foreign.length > 0) throw new AnotherRefundSizesSupersededRowError(foreign);
 }

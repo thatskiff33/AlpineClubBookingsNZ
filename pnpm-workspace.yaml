@@ -24,7 +24,7 @@ minimumReleaseAgeExclude:
 # overrides below point here too, so each range is written exactly once; bump
 # it here.
 catalog:
-  nodemailer: ^10.1.4
+  nodemailer: ^10.3.1
   sharp: ^0.35.5
 
 # The former npm `overrides` block, translated one entry for one entry, less

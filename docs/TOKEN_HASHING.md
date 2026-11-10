@@ -19,10 +19,12 @@ nomination bearer tokens use hash-at-rest storage.
 
 ## Keyed code hashes and the data-encryption key ring (#4456)
 
-Two-factor recovery codes, emailed two-factor codes and the single-use
-session-challenge token are not plain SHA-256: they are HMAC-SHA256 under a
-secret key, because a six-digit code has too little entropy to survive an
-unkeyed hash. The key comes from the data-encryption key ring
+Two-factor recovery codes, emailed two-factor codes, the single-use
+session-challenge token and the reauthentication challenge (#4616) are not
+plain SHA-256: they are HMAC-SHA256 under a secret key. The six-digit codes
+have too little entropy to survive an unkeyed hash, and the two challenges
+use the same keyed hash so a ring rotation still matches a challenge that has
+not expired. The key comes from the data-encryption key ring
 (`src/lib/data-encryption-keys.ts`; the variable is described in
 [`CONFIGURATION.md`](../CONFIGURATION.md#data-encryption-keys-4456)):
 
@@ -36,7 +38,15 @@ unkeyed hash. The key comes from the data-encryption key ring
   hash cannot be re-keyed, so recovery codes issued under the auth secret stop
   working at cut-over (owner decision on #4456), and `memberHoldsRetiredRecoveryCodes`
   drives the notice telling the member to generate a new set. Emailed codes
-  last ten minutes and session challenges two, so theirs simply expire.
+  last ten minutes and session challenges, including the reauthentication
+  challenge, two, so theirs simply expire.
+- **Retired in the database:** `pnpm run data-keys:reencrypt
+  --retire-legacy-recovery-codes` rewrites each unused auth-secret hash as
+  `retired.legacy-auth-secret:<hex>`. No release computes a candidate with that
+  prefix (the `.` is outside every ring id's alphabet), so the code is refused
+  even where no ring is set. The row stays unused, so the notice still shows,
+  and it counts as no key's data: it never makes the app think a ring was set
+  (`data-encryption-legacy-write-guard.ts`).
 
 The bearer tokens in the first section (password reset, email verification,
 chore and nomination links) carry enough entropy for an unkeyed SHA-256 and do

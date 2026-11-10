@@ -5,6 +5,7 @@ import {
   getContextualHelp,
   getContextualHelpPaths,
 } from "@/lib/contextual-help";
+import { getAdminPage } from "@/lib/admin-hubs";
 import type { HelpEntry } from "@/lib/contextual-help/types";
 
 function findQualifiedRegistrationDrift(
@@ -129,9 +130,6 @@ describe("contextual help registry", () => {
       "/admin/setup",
       "/admin/setup/foundations",
       "/admin/setup/finance",
-      "/admin/setup/booking-rules",
-      "/admin/setup/integrations",
-      "/admin/setup/cancellation",
       "/admin/membership-setup",
       "/admin/appearance",
       "/admin/bookings-setup",
@@ -212,7 +210,6 @@ describe("contextual help registry", () => {
         "/admin/members",
         "/admin/membership-setup",
         "/admin/setup/finance",
-        "/admin/setup/booking-rules",
         "/admin/appearance",
         "/admin/bookings-setup",
         "/admin/integrations",
@@ -269,6 +266,13 @@ describe("contextual help registry", () => {
     expect(help.fields?.map((field) => field.name)).toContain("Delivery mode");
     // And the draft's own summary must not be what resolves.
     expect(help.summary).not.toContain("delivery policies");
+  });
+
+  it("titles Member notices help with the page's registry label (#4878)", () => {
+    const help = getContextualHelp("/admin/notices", "admin");
+    expect(help.title).toBe(getAdminPage("notices").label);
+    expect(help.title).toBe("Member notices");
+    expect(help.summary.startsWith("Member notices")).toBe(true);
   });
 
   /**

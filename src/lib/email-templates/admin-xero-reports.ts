@@ -23,6 +23,7 @@ import { emailPalette } from "@/lib/email-theme";
 import { emailClubDateTime } from "@/lib/email-templates-club-time";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
+import { adminHref } from "@/lib/admin-hubs";
 
 type XeroReconciliationIssueSeverityEmail = "critical" | "warning" | "info";
 
@@ -322,7 +323,7 @@ export function adminXeroReconciliationReportTemplate(report: XeroReconciliation
         ? `${paragraph("Diagnostic totals")}${infoTable(categoryRows)}`
         : ""
     }
-    ${button("Open Xero Admin", BASE_URL + "/admin/xero")}
+    ${button("Open Xero Admin", BASE_URL + adminHref("xero"))}
   `);
 }
 
@@ -435,6 +436,6 @@ export function adminCreditSyncDriftTemplate(report: CreditSyncDriftReportEmail,
       </tr>
       ${driftRows}
     </table>
-    ${button("Open Xero Admin", BASE_URL + "/admin/xero")}
+    ${button("Open Xero Admin", BASE_URL + adminHref("xero"))}
   `);
 }

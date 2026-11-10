@@ -13,6 +13,7 @@ import {
 } from "./audit-structured-detail";
 import { formatCents } from "./utils";
 import type { ClubFormat } from "@/lib/club-format";
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * The Admin Audit Log's category filter, DERIVED from the canonical taxonomy
@@ -749,14 +750,14 @@ function entityDrilldownLink(
     case "MemberSubscription":
       return {
         label: `${titleCaseAction(entityType)} activity`,
-        href: `/admin/xero/records/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`,
+        href: adminHref("xero-record", { localModel: entityType, localId: entityId }),
         kind: entityType === "Payment" ? "payment" : "xero",
         primary: true,
       };
     case "RefundRequest":
       return {
         label: "Open refunds",
-        href: "/admin/refund-requests",
+        href: adminHref("refund-requests"),
         kind: "admin",
         primary: true,
       };
@@ -777,7 +778,7 @@ function entityDrilldownLink(
     case "MemberLifecycleActionRequest":
       return {
         label: "Open lifecycle audit",
-        href: `/admin/audit-log?entityType=MemberLifecycleActionRequest&q=${encodeURIComponent(entityId)}`,
+        href: `${adminHref("audit-log")}?entityType=MemberLifecycleActionRequest&q=${encodeURIComponent(entityId)}`,
         kind: "admin",
         primary: true,
       };
@@ -791,7 +792,7 @@ function entityDrilldownLink(
     case "Communication":
       return {
         label: "Open communications",
-        href: "/admin/communications",
+        href: adminHref("communications"),
         kind: "admin",
         primary: true,
       };
@@ -835,7 +836,7 @@ function actionFallbackDrilldownLink(
   if (normalized.includes("refund")) {
     return {
       label: "Open refunds",
-      href: "/admin/refund-requests",
+      href: adminHref("refund-requests"),
       kind: "admin",
       primary: true,
     };
@@ -859,7 +860,7 @@ function actionFallbackDrilldownLink(
   if (normalized.includes("communication") || normalized.includes("email")) {
     return {
       label: "Open communications",
-      href: "/admin/communications",
+      href: adminHref("communications"),
       kind: "admin",
       primary: true,
     };
@@ -867,7 +868,7 @@ function actionFallbackDrilldownLink(
   if (normalized.includes("xero")) {
     return {
       label: "Open Xero",
-      href: "/admin/xero",
+      href: adminHref("xero"),
       kind: "xero",
       primary: true,
     };
@@ -875,7 +876,7 @@ function actionFallbackDrilldownLink(
   if (normalized.includes("policy")) {
     return {
       label: "Open booking policies",
-      href: "/admin/booking-policies",
+      href: adminHref("booking-policies"),
       kind: "admin",
       primary: true,
     };
@@ -883,7 +884,7 @@ function actionFallbackDrilldownLink(
   if (normalized.includes("promo")) {
     return {
       label: "Open promo codes",
-      href: "/admin/promo-codes",
+      href: adminHref("promo-codes"),
       kind: "admin",
       primary: true,
     };
@@ -891,7 +892,7 @@ function actionFallbackDrilldownLink(
   if (normalized.includes("season")) {
     return {
       label: "Open seasons",
-      href: "/admin/seasons",
+      href: adminHref("seasons"),
       kind: "admin",
       primary: true,
     };
@@ -966,7 +967,7 @@ export function buildAuditDrilldownLinks(params: {
   if (paymentId) {
     addDrilldownLink(links, {
       label: "Payment activity",
-      href: `/admin/xero/records/Payment/${encodeURIComponent(paymentId)}`,
+      href: adminHref("xero-record", { localModel: "Payment", localId: paymentId }),
       kind: "payment",
       primary: links.length === 0,
     });

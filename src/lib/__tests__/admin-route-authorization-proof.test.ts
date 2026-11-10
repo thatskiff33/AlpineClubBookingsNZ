@@ -55,10 +55,13 @@
  *
  * ## How it is arranged, and why each part cannot be satisfied vacuously
  *
- *   1. ENUMERATION. Every admin page and every `/api/admin` route is discovered
- *      from disk (`helpers/admin-route-enumeration.ts`), never listed here, with
- *      a floor assertion so a broken walk cannot make the sweeps pass by
- *      covering nothing.
+ *   1. ENUMERATION. Every `/api/admin` route is discovered from disk
+ *      (`helpers/admin-route-enumeration.ts`), and every admin page comes from
+ *      the hub registry at BOTH its old path and its hub path (#4799), never
+ *      listed here, with floor assertions so a broken walk cannot make the
+ *      sweeps pass by covering nothing. The registry's own suite ties each
+ *      entry to its `page.tsx`, and since C2 of epic #4468 the page half of the
+ *      map is generated from it, so a hub path must meet the same gate.
  *
  *   2. THE GATES. Every handler's explicit `permission` is read from source, and
  *      a shape the reader cannot resolve is a HARD FAILURE rather than a silent
@@ -145,17 +148,22 @@ import {
 } from "@/lib/admin-permissions";
 import { guardAdminLayout } from "@/lib/admin-layout-guard";
 import { requireAdmin } from "@/lib/session-guards";
+import type { AccessRoleGridLevel } from "@/lib/__tests__/helpers/access-role-definition-grid";
 import {
-  accessRoleDefinitionGrid,
-  type AccessRoleDefinitionGrid,
-  type AccessRoleGridLevel,
-} from "@/lib/__tests__/helpers/access-role-definition-grid";
+  AREA_GRIDS,
+  FULL_ADMIN,
+  PLAIN_MEMBER,
+  SWEEP_GRIDS,
+  customGrid,
+  type Grid,
+} from "@/lib/__tests__/helpers/admin-sweep-grids";
 import { ADMIN_ROUTE_AREA_ANCHOR_ENTRIES } from "@/lib/__tests__/helpers/admin-route-area-anchors";
 import {
   adminApiPaths,
   adminPagePaths,
   allAdminPaths,
 } from "@/lib/__tests__/helpers/admin-route-enumeration";
+import { ADMIN_PAGES, adminPageRoutePath } from "@/lib/admin-hubs";
 import {
   adminApiRouteGates,
   handlersWithMultipleGuards,
@@ -165,111 +173,13 @@ import {
 } from "@/lib/__tests__/helpers/admin-route-explicit-permissions";
 
 // ---------------------------------------------------------------------------
-// GRIDS. Built from explicit per-area levels rather than from the shipped
-// bundles, so an edit to a bundle cannot quietly change what this file proves.
+// GRIDS. The sixteen live in `helpers/admin-sweep-grids.ts` (#4799), because
+// the hub-route parity census must sweep exactly the same sixteen.
 // ---------------------------------------------------------------------------
-
-type Grid = {
-  label: string;
-  /** The shape both guards read off the mocked `member` row. */
-  member: {
-    id: string;
-    role: "ADMIN" | "USER";
-    active: boolean;
-    canLogin: boolean;
-    forcePasswordChange: boolean;
-    twoFactorEnabled: boolean;
-    accessRoles: Array<{
-      role: string | null;
-      roleDefinitionId: string | null;
-      roleDefinition: AccessRoleDefinitionGrid | null;
-    }>;
-  };
-};
-
-function customGrid(
-  label: string,
-  levels: Partial<Record<`${AdminPermissionArea}Level`, AccessRoleGridLevel>>,
-): Grid {
-  return {
-    label,
-    member: {
-      id: "member-1",
-      role: "USER",
-      active: true,
-      canLogin: true,
-      forcePasswordChange: false,
-      twoFactorEnabled: false,
-      accessRoles: [
-        {
-          role: null,
-          roleDefinitionId: "ardef_grid",
-          roleDefinition: accessRoleDefinitionGrid(levels),
-        },
-      ],
-    },
-  };
-}
-
-const FULL_ADMIN: Grid = {
-  label: "Full Admin",
-  member: {
-    id: "member-1",
-    role: "ADMIN",
-    active: true,
-    canLogin: true,
-    forcePasswordChange: false,
-    twoFactorEnabled: false,
-    accessRoles: [
-      { role: "ADMIN", roleDefinitionId: null, roleDefinition: null },
-    ],
-  },
-};
-
-const PLAIN_MEMBER: Grid = {
-  label: "plain member",
-  member: {
-    id: "member-1",
-    role: "USER",
-    active: true,
-    canLogin: true,
-    forcePasswordChange: false,
-    twoFactorEnabled: false,
-    accessRoles: [
-      { role: "USER", roleDefinitionId: null, roleDefinition: null },
-    ],
-  },
-};
 
 const AREAS: AdminPermissionArea[] = ADMIN_PERMISSION_AREAS.map(
   (area) => area.key,
 );
-
-/** One grid per area at `view`, and one per area at `edit`. */
-const AREA_GRIDS: Array<{
-  area: AdminPermissionArea;
-  level: "view" | "edit";
-  grid: Grid;
-}> = AREAS.flatMap((area) =>
-  (["view", "edit"] as const).map((level) => ({
-    area,
-    level,
-    grid: customGrid(`${area}:${level} only`, {
-      [`${area}Level`]: level === "view" ? "VIEW" : "EDIT",
-    }),
-  })),
-);
-
-/**
- * The sixteen grids every sweep runs: fourteen single-area holders (seven areas
- * at `view`, seven at `edit`), a Full Admin and a plain member. A deactivated
- * Full Admin is built inside the one test that needs it and is a seventeenth.
- */
-const SWEEP_GRIDS: Grid[] = [
-  FULL_ADMIN,
-  PLAIN_MEMBER,
-  ...AREA_GRIDS.map((entry) => entry.grid),
-];
 
 /**
  * The same admins with login switched off (#3603): the enum Full Admin row, and
@@ -302,6 +212,45 @@ function viewGridFor(area: AdminPermissionArea): Grid {
 }
 
 const FINANCE_ONLY = viewGridFor("finance");
+
+/**
+ * Every admin page the page sweeps attempt: each registry page at its old path
+ * and at its hub path (#4799), dynamic segments as the shared enumeration fills
+ * them. A hub path has no `page.tsx` until its hub moves, but the guard decides
+ * from the path alone, so the sweep proves the gate it will meet.
+ */
+const registryPagePaths: string[] = [
+  ...new Set(
+    ADMIN_PAGES.flatMap((page) => [page.oldPath, page.hubPath]).map((path) =>
+      path.replace(/\[[^\]/]+\]/g, "x123"),
+    ),
+  ),
+].sort();
+
+/** The on-disk path the resolvers see: `[id]` filled the same way as the enumeration. */
+function concretePageFile(registryPath: string): string {
+  return registryPath.replace(/\[[^\]/]+\]/g, "x123");
+}
+
+/**
+ * The anchors name a screen's old URL. A moved Website page's file is at its
+ * hub path, and the old URL is still the route the layout guard sees.
+ */
+function pageForOldPath(pathname: string) {
+  return ADMIN_PAGES.find((page) => page.oldPath === pathname);
+}
+
+function anchorRouteExists(pathname: string): boolean {
+  if (allAdminPaths.has(pathname)) return true;
+  const page = pageForOldPath(pathname);
+  return page !== undefined && allAdminPaths.has(concretePageFile(adminPageRoutePath(page)));
+}
+
+function isAdminScreen(pathname: string): boolean {
+  if (adminPagePaths.includes(pathname)) return true;
+  const page = pageForOldPath(pathname);
+  return page !== undefined && adminPagePaths.includes(concretePageFile(adminPageRoutePath(page)));
+}
 
 // ---------------------------------------------------------------------------
 // 2. THE GATE EACH REQUEST ACTUALLY MEETS.
@@ -466,10 +415,13 @@ describe("the admin route tree this proof runs over", () => {
     // makes every sweep below pass by asserting nothing.
     expect(adminPagePaths.length).toBeGreaterThan(80);
     expect(adminApiPaths.length).toBeGreaterThan(200);
+    // Every page on disk is a registry path, and every page has a hub twin.
+    expect(adminPagePaths.filter((pathname) => !registryPagePaths.includes(pathname))).toEqual([]);
+    expect(registryPagePaths.length).toBeGreaterThan(2 * adminPagePaths.length - 5);
   });
 
   it("resolves every discovered path through the real route map", () => {
-    const unresolved = [...allAdminPaths].filter(
+    const unresolved = [...allAdminPaths, ...registryPagePaths].filter(
       (pathname) => getAdminRouteRequirement(pathname, "GET") === null,
     );
     expect(unresolved).toEqual([]);
@@ -717,6 +669,48 @@ const SIDE_EFFECTING_GETS: Array<{
   },
 ];
 
+// ---------------------------------------------------------------------------
+// A page path spelled another way (C4 #4801). Next serves a moved page's old URL
+// in any letter case (escaped spellings are refused too, as a precaution); the
+// route map reads such a spelling as the `/admin` catch-all. The proxy answers
+// it with a 404 (`admin-page-exact-path-proxy.test.ts`); the layout guard
+// refuses it too.
+// ---------------------------------------------------------------------------
+
+describe("a page path spelled another way is refused by the layout guard", () => {
+  /** Every static segment below `/admin` capitalised, dynamic ones filled. */
+  const capitalised = (registryPath: string) =>
+    registryPath
+      .replace(/\[[^\]/]+\]/g, "x123")
+      .split("/")
+      .map((segment, index) =>
+        index < 2 || segment === "x123" ? segment : segment.charAt(0).toUpperCase() + segment.slice(1),
+      )
+      .join("/");
+
+  it("PREMISE: the route map reads a respelled moved page as the overview catch-all", () => {
+    expect(getAdminRouteRequirement("/admin/Site-Style", "GET")?.area).toBe("overview");
+    expect(getAdminRouteRequirement("/admin/site%2Dstyle", "GET")?.area).toBe("overview");
+  });
+
+  it("refuses every page, at its old and hub path respelled, even to a Full Admin and an overview viewer", async () => {
+    const admitted: string[] = [];
+    for (const page of ADMIN_PAGES) {
+      for (const url of [capitalised(page.oldPath), capitalised(page.hubPath)]) {
+        for (const grid of [FULL_ADMIN, viewGridFor("overview")]) {
+          if ((await pageAdmits(grid, `${url}?tab=x`)).ok) admitted.push(`${grid.label} ${url}`);
+        }
+      }
+    }
+    for (const url of ["/admin/site%2Dstyle", "/ADMIN/SITE-STYLE", "/admin/Website/site-style"]) {
+      if ((await pageAdmits(FULL_ADMIN, url)).ok) admitted.push(url);
+    }
+    expect(admitted).toEqual([]);
+    // The same Full Admin is admitted at the exact spelling.
+    expect((await pageAdmits(FULL_ADMIN, "/admin/site-style")).ok).toBe(true);
+  }, 120_000);
+});
+
 describe("side-effecting GETs are named rather than implied away (#2975)", () => {
   it("lists only routes that exist, and says which are gated at edit", () => {
     for (const entry of SIDE_EFFECTING_GETS) {
@@ -867,7 +861,7 @@ describe("the real requireAdmin enforces each route's real gate on every /api/ad
 describe("the real guardAdminLayout enforces the real route map on every admin page", () => {
   it("admits exactly the grids the map admits", async () => {
     const violations: string[] = [];
-    for (const pathname of adminPagePaths) {
+    for (const pathname of registryPagePaths) {
       for (const grid of SWEEP_GRIDS) {
         const expected = pageAdmitsExpected(grid, pathname);
         const actual = await pageAdmits(grid, pathname);
@@ -889,12 +883,12 @@ describe("the real guardAdminLayout enforces the real route map on every admin p
     "redirects a $label away from every single admin page",
     async (grid) => {
       const admitted: string[] = [];
-      for (const pathname of adminPagePaths) {
+      for (const pathname of registryPagePaths) {
         const result = await pageAdmits(grid, pathname);
         if (result.ok) admitted.push(pathname);
       }
       expect(admitted).toEqual([]);
-      expect(adminPagePaths.length).toBeGreaterThan(80);
+      expect(registryPagePaths.length).toBeGreaterThan(160);
     },
     120_000,
   );
@@ -904,7 +898,7 @@ describe("the real guardAdminLayout enforces the real route map on every admin p
     // redirect loop in a browser, and portal standing without `overview`
     // (#2984) is exactly the shape that produces one.
     const violations: string[] = [];
-    for (const pathname of adminPagePaths) {
+    for (const pathname of registryPagePaths) {
       for (const { grid } of AREA_GRIDS) {
         const result = await pageAdmits(grid, pathname);
         if (result.ok || result.destination === null) continue;
@@ -981,7 +975,7 @@ describe("the reviewed route-to-area anchors, enforced through the real guards",
 
   it("names only routes that exist, so the table cannot rot", () => {
     const missing = anchorEntries
-      .filter(({ pathname }) => !allAdminPaths.has(pathname))
+      .filter(({ pathname }) => !anchorRouteExists(pathname))
       .map(({ pathname }) => pathname);
     expect(missing).toEqual([]);
     expect(anchorEntries.length).toBeGreaterThan(25);
@@ -990,7 +984,7 @@ describe("the reviewed route-to-area anchors, enforced through the real guards",
   it("admits the area's own holder and refuses every other area's", async () => {
     const violations: string[] = [];
     for (const { area, pathname } of anchorEntries) {
-      const isPage = adminPagePaths.includes(pathname);
+      const isPage = isAdminScreen(pathname);
       for (const other of AREAS) {
         const grid = viewGridFor(other);
         const result = isPage
@@ -1012,7 +1006,7 @@ describe("the reviewed route-to-area anchors, enforced through the real guards",
   it("admits a Full Admin to every anchor", async () => {
     const refused: string[] = [];
     for (const { pathname } of anchorEntries) {
-      const isPage = adminPagePaths.includes(pathname);
+      const isPage = isAdminScreen(pathname);
       const result = isPage
         ? await pageAdmits(FULL_ADMIN, pathname)
         : await apiAdmits(FULL_ADMIN, pathname, "GET");
@@ -1082,7 +1076,7 @@ describe("#2984: finance-only standing grants Finance and nothing else", () => {
   });
 
   it("enters every finance admin page", async () => {
-    const financePages = financePathsOf(adminPagePaths);
+    const financePages = financePathsOf(registryPagePaths);
     expect(financePages.length).toBeGreaterThan(8);
     const refused: string[] = [];
     for (const pathname of financePages) {
@@ -1093,8 +1087,8 @@ describe("#2984: finance-only standing grants Finance and nothing else", () => {
   }, 120_000);
 
   it("is refused EVERY admin page outside finance, by attempt", async () => {
-    const financePages = new Set(financePathsOf(adminPagePaths));
-    const others = adminPagePaths.filter(
+    const financePages = new Set(financePathsOf(registryPagePaths));
+    const others = registryPagePaths.filter(
       (pathname) => !financePages.has(pathname),
     );
     expect(others.length).toBeGreaterThan(70);
@@ -1155,8 +1149,11 @@ describe("#2984: finance-only standing grants Finance and nothing else", () => {
   }, 120_000);
 
   it("reaches the consolidated fee console, which admits on bookings OR finance (#1933)", async () => {
-    expect(allAdminPaths.has("/admin/fees")).toBe(true);
+    // The console's file is under the Rules hub (C6 #4803); its old URL is still
+    // the route the layout guard sees, and the hub URL answers the same.
+    expect(anchorRouteExists("/admin/fees")).toBe(true);
     expect((await pageAdmits(FINANCE_ONLY, "/admin/fees")).ok).toBe(true);
+    expect((await pageAdmits(FINANCE_ONLY, "/admin/rules/fees")).ok).toBe(true);
     expect((await pageAdmits(viewGridFor("bookings"), "/admin/fees")).ok).toBe(
       true,
     );
@@ -1188,7 +1185,7 @@ describe("#2984: finance-only standing grants Finance and nothing else", () => {
 describe("Full Admin behaviour is unchanged", () => {
   it("is admitted to every admin page and every admin API route, read and write", async () => {
     const refused: string[] = [];
-    for (const pathname of adminPagePaths) {
+    for (const pathname of registryPagePaths) {
       if (!(await pageAdmits(FULL_ADMIN, pathname)).ok) {
         refused.push(`page ${pathname}`);
       }

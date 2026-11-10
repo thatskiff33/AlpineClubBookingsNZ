@@ -5,7 +5,7 @@ import { XERO_ACTIVE_OPERATION_STATUSES, XERO_RERUNNABLE_OPERATION_STATUSES } fr
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import { isResolvedInXero } from "@/lib/xero-operation-resolution";
-import { partialClearingNoteIsIncomplete } from "@/lib/xero-clearing-allocations";
+import { CLEARING_TARGET_LINK_ROLES, partialClearingNoteIsIncomplete } from "@/lib/xero-clearing-allocations";
 import {
   isAdmissibleRepairOperation,
   isSuccessfulXeroOperation,
@@ -179,10 +179,14 @@ export type OwnNoteRowState =
   | { kind: "retry"; operation: XeroOperationRecord; retry: RetryableOperationMatch }
   | { kind: "unretryable"; operation: XeroOperationRecord; reason: string | null };
 
-/** The allocation links a note's PARTIAL retry reads as done (`unallocatedClearingTargets`'s role). */
+/**
+ * The allocation links a note's PARTIAL retry reads (`unallocatedClearingTargets`'s
+ * roles): the note's own and, since #4767, the role-less one, which
+ * `linkAllocatesClearingTarget` counts only for the same note, invoice and amount.
+ */
 export function noteAllocationLinks(links: XeroObjectLinkRecord[]): XeroObjectLinkRecord[] {
   return links.filter(
-    (link) => link.xeroObjectType === "ALLOCATION" && link.role === "MODIFICATION_CREDIT_NOTE_ALLOCATION"
+    (link) => link.xeroObjectType === "ALLOCATION" && CLEARING_TARGET_LINK_ROLES.includes(link.role)
   );
 }
 

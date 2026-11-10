@@ -389,8 +389,11 @@ export function judgedRefundNoteReading(reading: unknown, written: { metadata: u
  * (`REFUND_CREDIT_NOTE`, its one canonical note among them) and a refund
  * request's (`REFUND_REQUEST_CREDIT_NOTE`). Every such write first ensures an
  * inactive identity row, then locks it in the write's transaction, so the link
- * funnel takes that row before any sibling note's row or the Payment row, on
- * every write. It then re-reads the row under that lock and applies
+ * funnel takes that row before any sibling note's row. It takes that row
+ * before the Payment row on every write except an explicit void of the
+ * payment's own refund credit note (#4200): that void locks the Payment row
+ * before this function runs, and never waits on Payment while it holds the
+ * link. It then re-reads the row under that lock and applies
  * `judgeRefundNoteWrite`: a void that committed while it waited is kept,
  * whether the write names no status (a retry's, a completion's, a repair's) or
  * an older live one (an inbound reconcile, the status recorder, a hand-made

@@ -341,6 +341,7 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
     amountCents,
     partPaymentReviewPaymentId: null,
     occurrenceKey: null as string | null,
+    reason: "Cancellation refund owed by hand", // #4848: says nothing about a late capture
   });
 
   it("adds nil for a booking cancelled before anything was paid", () => {

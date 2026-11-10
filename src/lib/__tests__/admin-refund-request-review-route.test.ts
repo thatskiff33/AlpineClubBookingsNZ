@@ -42,6 +42,13 @@ const mocks = vi.hoisted(() => ({
   alertPaymentRecoveryOfficers: vi.fn(),
 }));
 
+// #4516 (M4c): R05 posts on PostgreSQL (`member-money-refunds.realdb.test.ts`), not on this fake store.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  postRefundObligation: vi.fn(async () => null),
+  withdrawRefundObligation: vi.fn(async () => false),
+}));
+
 vi.mock("@/lib/auth", () => ({
   auth: mocks.auth,
 }));
@@ -131,6 +138,7 @@ vi.mock("@/lib/payment-recovery-alert", () => ({
 
 import { PUT } from "@/app/api/admin/refund-requests/[id]/route";
 import { PartialRefundError } from "@/lib/payment-transactions";
+import { withdrawRefundObligation } from "@/lib/member-money/doors";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("PUT /api/admin/refund-requests/[id]", () => {
@@ -272,7 +280,13 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       },
       idempotencyKeyPrefix: "refund_request_refund_1",
       format: CLUB_FORMAT_TEST,
+      obligation: { scope: "refund-request", id: "refund_1" }, // #4516: the debt its slices reserve against
     });
+    // #4516 (M4c): the claim posted the card part's concession and R05, under the booking row, before Stripe.
+    const { postRefundObligation } = await import("@/lib/member-money/doors");
+    expect(vi.mocked(postRefundObligation)).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({
+      bookingId: "booking_1", scope: "refund-request", id: "refund_1", amountCents: 2500, origin: "OFFICER", debtorRead: "booking-row", concession: true }));
+    expect(vi.mocked(postRefundObligation).mock.invocationCallOrder[0]).toBeLessThan(mocks.refundPaymentTransactions.mock.invocationCallOrder[0]!);
     expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
       "payment_1",
       2500,
@@ -441,6 +455,14 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(expect.anything(), "payment_1");
       const paymentRowAt = mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]!;
       expect(lockedAt).toBeLessThan(paymentRowAt);
+      // MUTATION (#4516 review F1): the booking row next, before the Payment row and the claim, as the edit doors
+      // order them, so the R05's owner read never waits on a member merge holding it while that merge waits on
+      // the request this approval claimed.
+      const bookingSql = (mocks.executeRaw.mock.calls[1]?.[0] as TemplateStringsArray).join("?");
+      expect(bookingSql).toContain('FROM "Booking"');
+      expect(bookingSql).toContain("FOR NO KEY UPDATE");
+      expect(mocks.executeRaw.mock.calls[1]?.[1]).toBe("booking_1");
+      expect(mocks.executeRaw.mock.invocationCallOrder[1]).toBeLessThan(paymentRowAt);
       const reads = [
         ...mocks.manualRefundTaskAggregate.mock.invocationCallOrder,
         ...mocks.memberCreditAggregate.mock.invocationCallOrder,
@@ -633,14 +655,20 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       expect(mocks.manualRefundTaskDeleteMany).toHaveBeenCalledWith({
         where: { occurrenceKey: "refund-request-hand-back:refund_1", status: "OPEN" },
       });
-      const releaseLock = mocks.executeRaw.mock.invocationCallOrder[1];
-      expect((mocks.executeRaw.mock.calls[1]?.[0] as TemplateStringsArray).join("?")).toContain(
+      // The approval's lock(1) and booking row (#4516 review F1), then the release's own lock(1).
+      const releaseLock = mocks.executeRaw.mock.invocationCallOrder[2];
+      expect((mocks.executeRaw.mock.calls[2]?.[0] as TemplateStringsArray).join("?")).toContain(
         "pg_advisory_xact_lock(1)",
       );
       expect(releaseLock).toBeLessThan(mocks.refundRequestUpdateMany.mock.invocationCallOrder[1]);
       expect(mocks.refundRequestUpdateMany.mock.invocationCallOrder[1]).toBeLessThan(
         mocks.manualRefundTaskDeleteMany.mock.invocationCallOrder[0],
       );
+      // MUTATION (#4516, M4c probe 10): the approval's R05 is withdrawn in that same transaction, after the release.
+      expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({
+        scope: "refund-request", id: "refund_1", actorMemberId: "admin_1" }));
+      expect(mocks.manualRefundTaskDeleteMany.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(withdrawRefundObligation).mock.invocationCallOrder[0]!);
     });
 
     it("a release that lost the request to someone else deletes nothing", async () => {
@@ -656,6 +684,7 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       await PUT(approveFor(2500), { params: Promise.resolve({ id: "refund_1" }) });
 
       expect(mocks.manualRefundTaskDeleteMany).not.toHaveBeenCalled();
+      expect(vi.mocked(withdrawRefundObligation)).not.toHaveBeenCalled();
     });
 
     // L3: a CARD payment whose ledger plans short of the approved amount is
@@ -1324,6 +1353,7 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       },
       idempotencyKeyPrefix: "refund_request_refund_1",
       format: CLUB_FORMAT_TEST,
+      obligation: { scope: "refund-request", id: "refund_1" }, // #4516
     };
 
     function auditMetadata(action: string) {

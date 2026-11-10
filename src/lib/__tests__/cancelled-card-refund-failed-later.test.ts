@@ -15,11 +15,12 @@ import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants"
  * made again; drop the add-back and a paid-another-way close's made figure
  * loses the failed part twice.
  */
-const db = vi.hoisted(() => ({ findMany: vi.fn(), findClose: vi.fn(), payments: vi.fn() }));
+const db = vi.hoisted(() => ({ findMany: vi.fn(), findClose: vi.fn(), payments: vi.fn(), findOp: vi.fn(), findRecord: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    paymentRecoveryOperation: { findMany: db.findMany },
-    manualRefundTask: { findFirst: db.findClose },
+    // #4516: `findUnique`s follow a still-owed rest back to the row it was first owed on.
+    paymentRecoveryOperation: { findMany: db.findMany, findUnique: db.findOp },
+    manualRefundTask: { findFirst: db.findClose, findUnique: db.findRecord },
     payment: { findMany: db.payments },
   },
 }));
@@ -128,6 +129,72 @@ describe("readCancelledCardRefund reads the cancel's refunds that failed later (
     );
 
     expect((await readCancelledCardRefund(BOOKING)).cardRefundFailedLater).toEqual([{ amountCents: 9_000, ...expected }]);
+  });
+
+  // #4516 (round-3 review 1): its row closed in part with the rest still owed on a row of its own
+  // (`card_refund_still_owed_<record>`): that rest is a part of its own, said where it stands, and once a later close
+  // pays it, what that close paid back is the part's too.
+  it("MUTATION: its row closed in part, the rest still owed, says the rest as a part of its own", async () => {
+    const closedRow = failedLaterRow("re_cancel", { status: PaymentRecoveryOperationStatus.SUCCEEDED, succeededAt: RETRIED, nextRetryAt: null });
+    const restRow = (status: PaymentRecoveryOperationStatus) => asRow({
+      id: "op-rest", idempotencyKey: "card_refund_still_owed_close-fl", status, amountCents: 5_000, allocationPlan: null,
+      createdAt: RETRIED, succeededAt: null, attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS, nextRetryAt: null,
+    });
+    db.findClose.mockImplementation(async ({ where }: { where: { occurrenceKey: { in: string[] } } }) => {
+      const closed = (id: string) => where.occurrenceKey.in.some((key) => key.split(":")[1] === id);
+      return closed("op-fl-re_cancel") ? { amountCents: 4_000, raisedAmountCents: 4_000 } : closed("op-rest") ? { amountCents: 5_000, raisedAmountCents: 5_000 } : null;
+    });
+    db.findRecord.mockResolvedValue({ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "card-refund-paid-another-way:op-fl-re_cancel" });
+    db.findOp.mockImplementation(async ({ where }: { where: { id: string } }) => (where.id === closedRow.id ? asRow(closedRow) : null));
+
+    rows([cancelRow()], [closedRow], [refund("re_cancel", "failed")]);
+    db.findMany.mockResolvedValueOnce([restRow(PaymentRecoveryOperationStatus.PENDING)]);
+    expect((await readCancelledCardRefund(BOOKING)).cardRefundFailedLater).toEqual([
+      { amountCents: 4_000, state: "paid-another-way", paidBackCents: 4_000, unpaidCents: 0 },
+      { amountCents: 5_000, state: "stalled" },
+    ]);
+
+    rows([cancelRow()], [closedRow], [refund("re_cancel", "failed")]);
+    db.findMany.mockResolvedValueOnce([restRow(PaymentRecoveryOperationStatus.SUCCEEDED)]);
+    expect((await readCancelledCardRefund(BOOKING)).cardRefundFailedLater).toEqual([
+      { amountCents: 9_000, state: "paid-another-way", paidBackCents: 9_000, unpaidCents: 0 },
+    ]);
+  });
+
+  // #4516 round-4 review 1: a rest closed with no close record is never owed - it is a made part, by what its
+  // slices took from the refunds recorded on the payment; round-4 review 2: a figureless record paid back its row whole.
+  it("MUTATION: its row closed in part, the rest closed with no record, says the rest as made by its slices; a figureless record as the whole", async () => {
+    const closedRow = failedLaterRow("re_cancel", { status: PaymentRecoveryOperationStatus.SUCCEEDED, succeededAt: RETRIED, nextRetryAt: null });
+    const restOp: Op = {
+      id: "op-rest", idempotencyKey: "card_refund_still_owed_close-fl", status: PaymentRecoveryOperationStatus.SUCCEEDED, amountCents: 5_000,
+      allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 5_000, madeRefundId: "re_rest" }], createdAt: RETRIED, succeededAt: new Date("2026-06-28T00:00:00.000Z"),
+    };
+    db.findClose.mockImplementation(async ({ where }: { where: { occurrenceKey: { in: string[] } } }) =>
+      where.occurrenceKey.in.some((key) => key.split(":")[1] === "op-fl-re_cancel") ? { amountCents: 4_000, raisedAmountCents: 4_000 } : null);
+    db.findRecord.mockResolvedValue({ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "card-refund-paid-another-way:op-fl-re_cancel" });
+    db.findOp.mockImplementation(async ({ where }: { where: { id: string } }) => (where.id === closedRow.id ? asRow(closedRow) : null));
+
+    rows([cancelRow()], [closedRow], [refund("re_cancel", "failed"), refund("re_rest", "succeeded", new Date("2026-06-27T00:00:00.000Z"), 5_000)], [restOp]);
+    db.findMany.mockResolvedValueOnce([asRow(restOp)]);
+    expect((await readCancelledCardRefund(BOOKING)).cardRefundFailedLater).toEqual([
+      { amountCents: 4_000, state: "paid-another-way", paidBackCents: 4_000, unpaidCents: 0 },
+      { amountCents: 5_000, state: "settled" },
+    ]);
+
+    // Nothing recorded on the rest's slices: the rest is told as neither owed nor made.
+    rows([cancelRow()], [closedRow], [refund("re_cancel", "failed")], [restOp]);
+    db.findMany.mockResolvedValueOnce([asRow(restOp)]);
+    expect((await readCancelledCardRefund(BOOKING)).cardRefundFailedLater).toEqual([
+      { amountCents: 9_000, state: "paid-another-way", paidBackCents: 4_000, unpaidCents: 0 },
+    ]);
+
+    // A record with no figure on the row: the whole of it paid back.
+    db.findClose.mockImplementation(async ({ where }: { where: { occurrenceKey: { in: string[] } } }) =>
+      where.occurrenceKey.in.some((key) => key.split(":")[1] === "op-fl-re_cancel") ? { amountCents: null, raisedAmountCents: null } : null);
+    rows([cancelRow()], [closedRow], [refund("re_cancel", "failed")]);
+    expect((await readCancelledCardRefund(BOOKING)).cardRefundFailedLater).toEqual([
+      { amountCents: 9_000, state: "paid-another-way", paidBackCents: 9_000, unpaidCents: 0 },
+    ]);
   });
 
   it("MUTATION: another door's refund on the booking that failed later (an edit's) is not the cancel's", async () => {

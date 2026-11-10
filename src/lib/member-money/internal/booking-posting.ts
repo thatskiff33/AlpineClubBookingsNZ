@@ -1,5 +1,4 @@
 import type { Prisma } from "@prisma/client";
-import { bookingOwnerProviderMetadata } from "../../booking-owner";
 import { calendarDateOfDateOnlyInstant } from "../../club-time";
 import logger from "../../logger";
 import {
@@ -11,14 +10,16 @@ import {
   type BookingChargeEvent,
   type LegacyChargeLine,
 } from "./booking-charges";
-import { readBookingLiveComponents } from "./booking-journal-read";
+import { lockBookingRowForOwnerRead } from "../../booking-row-lock";
+import { memberMergeSnapshotSources } from "./booking-receipts";
+import { bookingOwnerDebtor, eventPosted, readBookingLiveComponents, receivableBalances } from "./booking-journal-read";
 import {
   planPendingBookingCharge,
   standingComponentTargets,
   type PendingChargeEvent,
   type StandingChargeLine,
 } from "./booking-pending-charges";
-import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
+import { memberMoneyEventKeys } from "./keys";
 import { isBookingJournalInactive, type BookingJournalContext } from "./journal-activity";
 import { MemberMoneyPlanError, type MemberMoneyDebtor, type MemberMoneyPostingContext } from "./plan";
 import { postMemberMoneyEvent } from "./post";
@@ -56,20 +57,14 @@ type Db = Prisma.TransactionClient;
 
 /**
  * The booking's owner, read under its row lock: the receivable's debtor
- * (`bookingOwnerProviderMetadata`, exactly one). Lock raw, read typed (#2289): the lock
+ * (`bookingOwnerDebtor`, exactly one). Lock raw, read typed (#2289): the lock
  * selects a constant, the owner comes back through the Prisma model.
  */
-async function lockedBookingDebtor(tx: Db, bookingId: string): Promise<MemberMoneyDebtor> {
-  await tx.$executeRaw`SELECT 1 FROM "Booking" WHERE "id" = ${bookingId} FOR NO KEY UPDATE`;
+export async function lockedBookingDebtor(tx: Db, bookingId: string): Promise<MemberMoneyDebtor> {
+  await lockBookingRowForOwnerRead(tx, bookingId);
   const booking = await tx.booking.findUnique({ where: { id: bookingId }, select: { memberId: true, organisationId: true } });
   if (!booking) throw new MemberMoneyPlanError([`booking ${bookingId} does not exist`]);
-  // `INV-SSOT-005`: who owns a booking is `booking-owner.ts`'s answer, never re-derived here.
-  const owner = bookingOwnerProviderMetadata(booking);
-  return "memberId" in owner ? { kind: "MEMBER", memberId: owner.memberId } : { kind: "ORGANISATION", organisationId: owner.organisationId };
-}
-
-async function eventPosted(tx: Db, eventKey: MemberMoneyEventKey): Promise<boolean> {
-  return (await tx.memberMoneyEvent.findUnique({ where: { eventKey }, select: { id: true } })) !== null;
+  return bookingOwnerDebtor(booking);
 }
 
 /**
@@ -285,19 +280,19 @@ export async function postMemberMergeTransfer(
   // transfer could never be recovered); reaching here inactive is a caller bug.
   if (isBookingJournalInactive(context)) throw new Error("A member merge cannot post its D4 transfer while the journal is inactive (#4627).");
   if (await eventPosted(tx, memberMoneyEventKeys.merge(input.fromMemberId, input.toMemberId))) return null;
-  const sums = await tx.memberMoneyLine.groupBy({
-    by: ["bookingId", "lodgeId", "side"],
+  const economicRows = await tx.memberMoneyLine.findMany({
     where: { account: "MEMBER_RECEIVABLE", debtorKind: "MEMBER", memberId: input.fromMemberId },
-    orderBy: [{ bookingId: "asc" }, { lodgeId: "asc" }, { side: "asc" }],
-    _sum: { amountCents: true },
+    select: { bookingId: true, lodgeId: true, side: true, amountCents: true, journal: { select: { eventId: true } } },
   });
-  const balances = new Map<string, { bookingId: string | null; lodgeId: string | null; cents: number }>();
-  for (const row of sums) {
-    const key = `${row.bookingId ?? ""}\u0000${row.lodgeId ?? ""}`;
-    const entry = balances.get(key) ?? { bookingId: row.bookingId, lodgeId: row.lodgeId, cents: 0 };
-    entry.cents += (row.side === "DEBIT" ? 1 : -1) * (row._sum.amountCents ?? 0);
-    balances.set(key, entry);
-  }
-  const plan = planMemberMergeTransfer({ ...input, balances: [...balances.values()] });
-  return plan ? postMemberMoneyEvent(tx, context, plan) : null;
+  const places = new Map(economicRows.map((row) => [`${row.bookingId ?? ""}\u0000${row.lodgeId ?? ""}`, { bookingId: row.bookingId, lodgeId: row.lodgeId }]));
+  const balances = receivableBalances(economicRows, (row) => `${row.bookingId ?? ""}\u0000${row.lodgeId ?? ""}`);
+  const plan = planMemberMergeTransfer({ ...input, balances: [...balances].map(([key, cents]) => ({ ...places.get(key)!, cents })) });
+  const eventKey = memberMoneyEventKeys.merge(input.fromMemberId, input.toMemberId);
+  // M4b: no CHARGE successor here. Merge holds no Payment row here (#4823 takes some later), so application state read here could miss a
+  // collection committing beside it; the first collection after the owner move posts the successor under that row.
+  return postMemberMoneyEvent(tx, context, {
+    ...(plan ?? { kind: "ZERO", eventKey, origin: "OFFICER", actorMemberId: input.actorMemberId,
+      source: { kind: "OFFICER_FACT", id: input.fromMemberId, version: `merge:${input.toMemberId}` }, reason: "Member merge: no open receivable" }),
+    additionalSources: memberMergeSnapshotSources(eventKey, economicRows.map((row) => row.journal.eventId)),
+  });
 }

@@ -89,7 +89,7 @@ import {
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { postBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
-import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
+import { lockBookingRowForOwnerRead, postBookingReceipts, postRefundObligation, resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import type { ClubFormat } from "@/lib/club-format";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
@@ -186,6 +186,7 @@ async function alertRefundFailure({
  */
 type StripeSettlementSource = {
   kind: "stripe";
+  capturedAt?: Date;
   paymentIntentId: string;
   amountCents: number;
   paymentMethodId: string | null;
@@ -724,6 +725,10 @@ async function settleBookingPaymentInTransaction(
 
     const bookingLodgeId = lockTarget.lodgeId ?? (await getDefaultLodgeId(tx));
     await acquireLodgeCapacityLock(tx, bookingLodgeId);
+    // #4840: a manual settle names its officer on the Payment row below (the FK takes KEY SHARE on that Member row)
+    // before its PAID claim, so it takes the booking row first: booking row, then Member, the order member merge and
+    // every booking writer share. Taken after, it deadlocks a merge of that officer holding this row outside its prefix.
+    if (settlement.kind === "manual") await lockBookingRowForOwnerRead(tx, bookingId);
 
     // Re-read the full booking under the lock; the status/amount checks, the
     // capacity check and the PAID/CANCELLED claim below consume ONLY this
@@ -816,6 +821,8 @@ async function settleBookingPaymentInTransaction(
     // never change what the primary row says was received.
     const manualPrimaryTransactionAmountCents =
       settlementAmountCents - manualAdditionalSettlementCents;
+    // #4516 (M4b): the rows this officer settle writes, which alone its receipts may collect.
+    const manualReceiptRowIds: string[] = [];
 
     const payment = await tx.payment.upsert({
       where: { bookingId },
@@ -883,19 +890,21 @@ async function settleBookingPaymentInTransaction(
       // reversal's FAILED row and mint nothing, leaving a PAID payment with no
       // settled transaction. Refund history on the payment is left untouched
       // (#1765 / #1357 raise-only spirit).
-      const mintedUpdate = await tx.paymentTransaction.updateMany({
-        where: {
-          paymentId: payment.id,
-          source: PaymentSource.INTERNET_BANKING,
-          kind: PaymentTransactionKind.PRIMARY,
-          status: {
-            notIn: [
-              PaymentStatus.REFUNDED,
-              PaymentStatus.PARTIALLY_REFUNDED,
-              PaymentStatus.FAILED,
-            ],
-          },
+      const mintablePrimary = {
+        paymentId: payment.id,
+        source: PaymentSource.INTERNET_BANKING,
+        kind: PaymentTransactionKind.PRIMARY,
+        status: {
+          notIn: [
+            PaymentStatus.REFUNDED,
+            PaymentStatus.PARTIALLY_REFUNDED,
+            PaymentStatus.FAILED,
+          ],
         },
+      };
+      manualReceiptRowIds.push(...(await tx.paymentTransaction.findMany({ where: mintablePrimary, select: { id: true } })).map((row) => row.id));
+      const mintedUpdate = await tx.paymentTransaction.updateMany({
+        where: mintablePrimary,
         data: {
           status: PaymentStatus.SUCCEEDED,
           amountCents: manualPrimaryTransactionAmountCents,
@@ -904,7 +913,7 @@ async function settleBookingPaymentInTransaction(
       });
 
       if (mintedUpdate.count === 0) {
-        await tx.paymentTransaction.create({
+        const minted = await tx.paymentTransaction.create({
           data: {
             paymentId: payment.id,
             kind: PaymentTransactionKind.PRIMARY,
@@ -915,6 +924,7 @@ async function settleBookingPaymentInTransaction(
             reason: "manual_mark_paid",
           },
         });
+        manualReceiptRowIds.push(minted.id);
       }
 
       // #2397 — the ADDITIONAL half, minted the same way and only when the
@@ -934,19 +944,21 @@ async function settleBookingPaymentInTransaction(
       // reconcile and the member would start being chased again for cash the
       // club already holds.
       if (manualAdditionalSettlementCents > 0) {
-        const mintedAdditional = await tx.paymentTransaction.updateMany({
-          where: {
-            paymentId: payment.id,
-            source: PaymentSource.INTERNET_BANKING,
-            kind: PaymentTransactionKind.ADDITIONAL,
-            status: {
-              notIn: [
-                PaymentStatus.REFUNDED,
-                PaymentStatus.PARTIALLY_REFUNDED,
-                PaymentStatus.FAILED,
-              ],
-            },
+        const mintableAdditional = {
+          paymentId: payment.id,
+          source: PaymentSource.INTERNET_BANKING,
+          kind: PaymentTransactionKind.ADDITIONAL,
+          status: {
+            notIn: [
+              PaymentStatus.REFUNDED,
+              PaymentStatus.PARTIALLY_REFUNDED,
+              PaymentStatus.FAILED,
+            ],
           },
+        };
+        manualReceiptRowIds.push(...(await tx.paymentTransaction.findMany({ where: mintableAdditional, select: { id: true } })).map((row) => row.id));
+        const mintedAdditional = await tx.paymentTransaction.updateMany({
+          where: mintableAdditional,
           data: {
             status: PaymentStatus.SUCCEEDED,
             amountCents: manualAdditionalSettlementCents,
@@ -955,7 +967,7 @@ async function settleBookingPaymentInTransaction(
         });
 
         if (mintedAdditional.count === 0) {
-          await tx.paymentTransaction.create({
+          const minted = await tx.paymentTransaction.create({
             data: {
               paymentId: payment.id,
               kind: PaymentTransactionKind.ADDITIONAL,
@@ -966,6 +978,7 @@ async function settleBookingPaymentInTransaction(
               reason: MANUAL_MARK_PAID_ADDITIONAL_REASON,
             },
           });
+          manualReceiptRowIds.push(minted.id);
         }
       }
     }
@@ -1603,6 +1616,7 @@ async function settleBookingPaymentInTransaction(
         settledAdditionalAmountCents: manualAdditionalSettlementCents,
         uncollectedAdditionalCents: manualUncollectedAdditionalCents,
         sparedAdditionalPaymentIntentId: sparedIntentId,
+        receiptTransactionIds: manualReceiptRowIds,
       };
     }
 
@@ -1617,6 +1631,33 @@ async function settleBookingPaymentInTransaction(
     };
 }
 
+/**
+ * #4516 (M4b): the settlement body, then R06/R07 for its payment in the same transaction. The decision is the
+ * outcome's: only a settle that paid the booking collects, and only the instrument it settled (the Stripe intent,
+ * or the rows this officer settle wrote), never other receipts on the payment.
+ */
+async function settleAndPostBookingReceipts(tx: Prisma.TransactionClient, bookingId: string, settlement: BookingSettlementSource, journal: BookingJournalContext) {
+  const result = await settleBookingPaymentInTransaction(tx, bookingId, settlement, journal);
+  const paymentId = "paymentId" in result ? result.paymentId : null;
+  if (paymentId) await postBookingReceipts(tx, journal, { paymentId, decision: {
+    collect: result.outcome === "paid" || result.outcome === "manual_paid",
+    ...(settlement.kind === "stripe" ? { paymentIntentId: settlement.paymentIntentId, effectiveAt: settlement.capturedAt }
+      : result.outcome === "manual_paid" ? { transactionIds: result.receiptTransactionIds, effectiveAt: result.settledAt } : {}),
+  } });
+  // #4516 (M4c): a capture this settle returns (a duplicate, or one the capacity race cancelled) owes its R05,
+  // after its held R06, sized by the frozen plan its recovery row carries; its sender reserves against it. Review F1
+  // (corrected in round 2): the owner is read without the booking row, defensively. W1 holds the Payment row here,
+  // so the booking row taken now would add one more Payment -> booking edge against a member merge, which takes no
+  // lock(1) and holds booking rows from its owner move on (#4823 made merge never wait for a Payment row, its own
+  // edge). No other cycle is known (journal lines name their debtor by id, with no foreign key). A merge in
+  // between leaves the debt on the merged-away member, where the family's lazy successor finds it (`refundFamilyTip`).
+  if ((result.outcome === "duplicate_capture" || result.outcome === "capacity_failed") && settlement.kind === "stripe" && result.plannedRefundCents > 0) {
+    await postRefundObligation(tx, journal, { bookingId, scope: "capture-return", id: settlement.paymentIntentId, amountCents: result.plannedRefundCents,
+      origin: "APP", debtorRead: "plain" });
+  }
+  return result;
+}
+
 export async function markBookingPaymentSucceeded({
   bookingId,
   paymentIntentId,
@@ -1624,6 +1665,7 @@ export async function markBookingPaymentSucceeded({
   paymentMethodId,
   format,
   recordedByCaller = false,
+  capturedAt,
 }: {
   bookingId: string;
   paymentIntentId: string;
@@ -1633,16 +1675,17 @@ export async function markBookingPaymentSucceeded({
   format: ClubFormat;
   /** #4285 review: the caller just wrote this capture SUCCEEDED itself (`SettledSavedCardChargeAttempt.newlyCaptured`). */
   recordedByCaller?: boolean;
+  capturedAt?: Date;
 }): Promise<MarkBookingPaymentSucceededResult> {
   const journal = await resolveBookingMoneyPostingContext();
   const reconciliation = await prisma.$transaction((tx) =>
-    settleBookingPaymentInTransaction(tx, bookingId, {
+    settleAndPostBookingReceipts(tx, bookingId, {
       kind: "stripe",
       paymentIntentId,
       amountCents,
       paymentMethodId,
       format,
-      recordedByCaller,
+      recordedByCaller, capturedAt,
     }, journal)
   );
 
@@ -1777,6 +1820,7 @@ export async function markBookingPaymentSucceeded({
           bookingId,
           paymentIntentId
         ),
+        obligation: { scope: "capture-return", id: paymentIntentId }, // #4516: the R05 the settle posted
       });
       // #4103 (`INV-PAY-130`): a refusal stays owed, re-planned; the failure branch alerts once.
       const refused = await keepRefusalOwed(refundResult);
@@ -1948,6 +1992,7 @@ export async function markBookingPaymentSucceeded({
           bookingId,
           paymentIntentId
         ),
+        obligation: { scope: "capture-return", id: paymentIntentId }, // #4516: the R05 the settle posted
       });
       // #4103 (`INV-PAY-130`): a refusal stays owed, re-planned, no REFUNDED event; the failure branch alerts once.
       const refused = await keepRefusalOwed(refundResult);
@@ -2186,7 +2231,7 @@ export async function markBookingPaymentManuallySettled({
 }): Promise<ManualBookingSettlementResult> {
   const journal = await resolveBookingMoneyPostingContext();
   const reconciliation = await prisma.$transaction((tx) =>
-    settleBookingPaymentInTransaction(tx, bookingId, {
+    settleAndPostBookingReceipts(tx, bookingId, {
       kind: "manual",
       actingAdminMemberId,
       note,
@@ -2375,6 +2420,7 @@ export async function reverseManualBookingPayment({
   actingAdminMemberId: string;
   note: string | null;
 }): Promise<ManualBookingReversalResult> {
+  const journal = await resolveBookingMoneyPostingContext();
   const reversal = await prisma.$transaction(async (tx) => {
     // Same two-tier ordering as the settlement body: global lock(1) first (this
     // moves booking status and money), then the per-lodge capacity lock,
@@ -2671,6 +2717,7 @@ export async function reverseManualBookingPayment({
     // posts their reversals — new lines, the originals untouched, each keyed by
     // the line it reverses so a replay posts nothing (`INV-MONEY-033`).
     await syncBookingLedgerSettlements({ paymentId: payment.id, store: tx });
+    await postBookingReceipts(tx, journal, { paymentId: payment.id });
 
     // Releases the claimed beds only when the restore lands on
     // PAYMENT_PENDING; a restored CONFIRMED booking deliberately keeps holding

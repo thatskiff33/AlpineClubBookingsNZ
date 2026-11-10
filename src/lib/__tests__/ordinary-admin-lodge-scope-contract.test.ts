@@ -4,10 +4,10 @@ import { describe, expect, it, vi } from "vitest"
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
 
 const LODGE_EDITORS = [
-  "src/app/(admin)/admin/seasons/page.tsx",
+  "src/app/(admin)/admin/rules/seasons/page.tsx",
   "src/app/(admin)/admin/chores/page.tsx",
   "src/app/(admin)/admin/lockers/page.tsx",
-  "src/app/(admin)/admin/fees/_components/hut-fees-section.tsx",
+  "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx",
   "src/app/(admin)/admin/roster/page.tsx",
   "src/app/(admin)/admin/hut-leaders/page.tsx",
   "src/components/admin/rooms-beds-manager.tsx",
@@ -16,7 +16,7 @@ const LODGE_EDITORS = [
 
 const ALL_LODGES_EDITORS = [
   "src/app/(admin)/admin/work-parties/page.tsx",
-  "src/app/(admin)/admin/promo-codes/promo-codes-page-client.tsx",
+  "src/app/(admin)/admin/rules/promo-codes/promo-codes-page-client.tsx",
 ] as const
 
 const ALL_EDITORS = [...LODGE_EDITORS, ...ALL_LODGES_EDITORS]

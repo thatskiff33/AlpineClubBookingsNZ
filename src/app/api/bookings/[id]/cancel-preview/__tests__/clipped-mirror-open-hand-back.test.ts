@@ -17,10 +17,23 @@ const OPEN_HAND_BACK_CENTS = 2_000;
 const mocks = vi.hoisted(() => ({
   bookingFindUnique: vi.fn(),
   policy: [] as unknown[],
+  /** #4866: what a live superseded capture's refund still owns on this payment. */
+  supersededHeldBackCents: 0,
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: async () => ({ user: { id: "member-1" } }) }));
 vi.mock("@/lib/session-guards", () => ({ requireActiveSessionUser: async () => null }));
+// #4866: a live superseded capture's refund, none unless a case sets one (`superseded-capture-hold-back.test.ts`).
+vi.mock("@/lib/superseded-capture-hold-back", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/superseded-capture-hold-back")),
+  readSupersededCaptureHeldBack: vi.fn(async () => ({ byTransaction: new Map(), totalCents: mocks.supersededHeldBackCents })),
+}));
+
+vi.mock("@/lib/superseded-intent-ownership", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/superseded-intent-ownership")),
+  readSupersededCaptureOwnership: vi.fn(async () => ({ owning: [], owedAgainByIntent: new Map() })),
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUnique: mocks.bookingFindUnique },
@@ -72,6 +85,7 @@ const FULL_REFUND = [{ daysBeforeStay: 0, refundPercentage: 100, fixedFeeCents: 
 const PAYMENT = { amountCents: 5_000, refundedAmountCents: 0, changeFeeCents: 0, creditAppliedCents: 5_000 };
 
 beforeEach(() => {
+  mocks.supersededHeldBackCents = 0;
   mocks.bookingFindUnique.mockResolvedValue({
     id: "booking-1",
     memberId: "member-1",
@@ -128,5 +142,14 @@ describe("the cancel preview of a clipped mirror with an open edit hand-back (#3
       creditRestoredCents,
       totalPaidCents: 3_000,
     });
+  });
+
+  it("#4866: nets a live superseded capture's refund out as the cancel does, beside the hand-back", async () => {
+    mocks.policy = FULL_REFUND;
+    mocks.supersededHeldBackCents = 1_000;
+    const quoted = await preview();
+    // $50 paid, $20 promised back by hand, $10 a superseded capture's own refund still returns: $20 is the booking's.
+    expect(quoted.totalPaidCents).toBe(2_000);
+    expect(quoted.creditRefundAmountCents).toBe(2_000);
   });
 });

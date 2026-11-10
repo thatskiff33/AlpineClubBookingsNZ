@@ -54,6 +54,8 @@ const mocks = vi.hoisted(() => ({
   closeRecord: null as { amountCents: number | null; raisedAmountCents: number | null } | null,
   /** #4285 review 9: close records by recovery row id, where only some rows were closed. */
   closeRecordFor: null as Record<string, { amountCents: number | null; raisedAmountCents: number | null }> | null,
+  /** #4516: a close record by its id - the row it closed - for a still-owed rest keyed by it. */
+  recordsById: {} as Record<string, string>,
   /** A card refund shortfall's hand-back tasks (`cancel-card-shortfall:`). */
   shortfallTasks: [] as Array<{ kind: string; occurrenceKey: string; status: string }>,
   /** The group's combined card settlement, for an organiser-settled child. */
@@ -149,9 +151,9 @@ vi.mock("@/lib/prisma", () => {
             operation.paymentId === where.paymentId && (where.type?.in ?? []).includes(operation.type) && matchesInFlight(operation, where as { OR?: InFlightArm[] }),
         );
       },
-      findUnique: async ({ where }: { where: { idempotencyKey: string } }) => {
+      findUnique: async ({ where }: { where: { idempotencyKey?: string; id?: string } }) => {
         mocks.recoveryReads(where);
-        return mocks.recoveryRows.find((row) => row.idempotencyKey === where.idempotencyKey) ?? null;
+        return mocks.recoveryRows.find((row) => row.idempotencyKey === where.idempotencyKey || row.id === where.id) ?? null;
       },
     },
     manualRefundTask: {
@@ -163,6 +165,11 @@ vi.mock("@/lib/prisma", () => {
       },
       findMany: async ({ where }: { where: { occurrenceKey: { startsWith: string } } }) =>
         mocks.shortfallTasks.filter((task) => task.occurrenceKey.startsWith(where.occurrenceKey.startsWith)),
+      // #4516: a still-owed rest's close record, naming the row it closed.
+      findUnique: async ({ where }: { where: { id: string } }) => {
+        const closed = mocks.recordsById[where.id];
+        return closed ? { kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: `card-refund-paid-another-way:${closed}` } : null;
+      },
     },
     payment: { findMany: async () => [] },
     groupBookingSettlement: { findFirst: async () => mocks.settlement },
@@ -266,6 +273,7 @@ beforeEach(() => {
   mocks.recoveryRows = [];
   mocks.closeRecord = null;
   mocks.closeRecordFor = null;
+  mocks.recordsById = {};
   mocks.shortfallTasks = [];
   mocks.settlement = null;
 });
@@ -470,6 +478,23 @@ describe("the owed new-capture alert's drain (#4285 review)", () => {
     expect(mocks.alert).toHaveBeenCalledWith(
       expect.objectContaining({ cancellationRefund: cardNote({ amount: money(10000), standing: "paid-another-way", unpaid: money(4000) }) }),
     );
+  });
+
+  // #4516 (round-3 review 1): a close that paid back part and left the rest still owed on a row of its own - the
+  // alert says the card refund is not sent while that rest is owed, and paid another way once a later close pays it.
+  it.each([
+    ["while the rest is still owed", { status: "PENDING", attempts: 5, nextRetryAt: null, succeededAt: null }, "not-sent"],
+    ["once a later close paid the rest", {}, "paid-another-way"],
+  ] as const)("#4516: a cancel's card refund paid back in part, the rest still owed, is said as the rest stands (%s)", async (_when, restState, standing) => {
+    prime({ status: "CANCELLED" });
+    mocks.recoveryRows = [recoveryRow(), recoveryRow({ id: "op-rest", idempotencyKey: "card_refund_still_owed_close-1", amountCents: 6000, ...restState })];
+    mocks.closeRecordFor = { "op-cancel": { amountCents: 4000, raisedAmountCents: 4000 }, "op-rest": { amountCents: 6000, raisedAmountCents: 6000 } };
+    mocks.recordsById = { "close-1": "op-cancel" };
+    mocks.bookingEvents = [CARD_DECISION];
+
+    await drainOwedNewCaptureAlerts(NOW);
+
+    expect(mocks.alert).toHaveBeenCalledWith(expect.objectContaining({ cancellationRefund: cardNote({ amount: money(10000), standing }) }));
   });
 
   it("#4285 review 9 F2: a refund made, of which a part failed later and was closed as paid another way, names that part (and what it left unpaid), not the whole", async () => {
