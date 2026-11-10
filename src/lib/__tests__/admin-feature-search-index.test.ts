@@ -256,6 +256,19 @@ describe("getAdminFeatureSearchIndex — every admin page, from disk", () => {
       label: "Payments",
       section: "Finance",
     });
+    // #4878: the palette shows the page heading, not a second registry name.
+    expect(index.find((entry) => entry.href === adminHref("notices"))).toMatchObject({
+      label: "Member notices",
+      section: "Messages & email",
+    });
+    expect(index.find((entry) => entry.href === adminHref("notification-rules"))).toMatchObject({
+      label: "Delivery Rules",
+      section: "Messages & email",
+    });
+    expect(index.find((entry) => entry.href === adminHref("notification-recipients"))).toMatchObject({
+      label: "Recipients",
+      section: "Messages & email",
+    });
     expect(index.find((entry) => entry.href === adminHref("chores"))).toMatchObject({
       label: "Chores",
       section: "Lodge",
@@ -296,6 +309,9 @@ describe("getAdminFeatureSearchIndex — keywords", () => {
 
   it("carries the registry keywords the sidebar used to hold", () => {
     expect(keywordsOf(adminHref("xero"))).toContain("accounting");
+    // #4878: the palette label is the page heading; the old name still matches.
+    expect(keywordsOf(adminHref("notification-rules"))).toContain("notification rules");
+    expect(keywordsOf(adminHref("notification-recipients"))).toContain("notification recipients");
     expect(keywordsOf(adminHref("club-time"))).toEqual(
       expect.arrayContaining(["timezone", "daylight saving", "iana"]),
     );

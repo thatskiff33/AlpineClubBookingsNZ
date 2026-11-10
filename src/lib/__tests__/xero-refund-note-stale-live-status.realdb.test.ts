@@ -485,12 +485,10 @@ function reading(status: string, updatedAt: string, payments: Array<Record<strin
     /**
      * Round 6: A's recount paused INSIDE its locked transaction - after it
      * re-read the note as live, before it commits its claim - while the void
-     * runs. Its link write commits (it takes no Payment row) and its own
-     * recount B queues on A's Payment row lock; or, when the payment's pointer
-     * names the note, its link write itself waits on that lock to release the
-     * pointer, holding the link row A only reads. The serial order is "A, then
-     * the void, then B". `waiterQuery` is the statement that must be the one
-     * waiting.
+     * runs. An explicit void of the payment's own note waits on A's Payment
+     * row before it takes the link (#4200), so it does not hold the link A
+     * only reads. The serial order is "A, then the void, then B".
+     * `waiterQuery` is the statement that must be the one waiting.
      */
     async function voidAfterLockedReRead(kase: Case, paymentId: string, waiterQuery = "%FOR NO KEY UPDATE%") {
       await seed(kase);
@@ -546,8 +544,8 @@ function reading(status: string, updatedAt: string, payments: Array<Record<strin
       expect(await refunded(BT)).toEqual({ refundedAmountCents: 5_000, status: "PARTIALLY_REFUNDED" });
     });
 
-    it("MUTATION (round 7, F4): the pointer-named canonical note - the void's own link write waits on A's lock, holding the link A only reads", async () => {
-      const { a, b } = await voidAfterLockedReRead("bank-transfer canonical", BT, '%UPDATE%"xeroRefundCreditNoteId"%');
+    it("MUTATION (round 7, F4): the pointer-named canonical note - the void waits on A's Payment lock before it takes the link", async () => {
+      const { a, b } = await voidAfterLockedReRead("bank-transfer canonical", BT, '%SELECT 1 FROM "Payment"%FOR NO KEY UPDATE%');
       expect(a.updatedRefundedPayments).toBe(1);
       expect(b.updatedRefundedPayments).toBe(1);
       expect(await refunded(BT)).toEqual({ refundedAmountCents: 5_000, status: "PARTIALLY_REFUNDED" });
@@ -556,8 +554,8 @@ function reading(status: string, updatedAt: string, payments: Array<Record<strin
 
     it("round 6 stated limit: on a card the same order leaves A's raise standing, raise-only, and alerts", async () => {
       // A's own reconcile pointed the card payment at the note (the inbound
-      // gate), so here too the void's link write is what waits on A's lock.
-      const { a, alerted } = await voidAfterLockedReRead("Stripe per-delta", CARD, '%UPDATE%"xeroRefundCreditNoteId"%');
+      // gate). The void waits on A's Payment row before it takes the link.
+      const { a, alerted } = await voidAfterLockedReRead("Stripe per-delta", CARD, '%SELECT 1 FROM "Payment"%FOR NO KEY UPDATE%');
       expect(a.updatedRefundedPayments).toBe(1);
       // `INV-ADDPAY-021`, F5 #1353: B never lowers a card ledger; it raises the divergence alert.
       expect(await refunded(CARD)).toEqual({ refundedAmountCents: 15_000, status: "PARTIALLY_REFUNDED" });

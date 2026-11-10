@@ -53,6 +53,9 @@
  * the operation row (the claim), then the link - the order the resolve's claim
  * takes the same rows (`claimResolveRecordingRefundNote`: `lock(1)`, Payment,
  * the row, the link), so the two never wait on each other in a cycle.
+ * #4200: an inbound void that names the note VOIDED or DELETED takes that same
+ * Payment row before the voided note's link, so this record and the void
+ * cannot lock the pair in opposite orders.
  */
 import type { Prisma, XeroSyncOperation } from "@prisma/client";
 

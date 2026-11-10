@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } from "@/lib/payment-transactions";
 import { CreditNoteSpentOutsideAppError } from "@/lib/xero-credit-note-spent-outside-app";
 import type { Prisma } from "@prisma/client";
 import {
@@ -710,13 +711,22 @@ describe("upsertXeroObjectLink", () => {
       expect(mocks.txPaymentUpdateMany).not.toHaveBeenCalled();
     });
 
-    it("a caller that itself names VOIDED keeps its waiting order (#4200): no SKIP LOCKED", async () => {
+    it("a caller that itself names VOIDED takes the Payment row before the link and does not use SKIP LOCKED (#4200)", async () => {
       mocks.txLinkFindUnique.mockResolvedValue({ metadata: { status: "AUTHORISED" }, active: true });
       mocks.txPaymentFindUnique.mockResolvedValue({ source: "INTERNET_BANKING", xeroRefundCreditNoteId: "cn_voided" });
 
       await write("REFUND_CREDIT_NOTE", { metadata: { ...STORED_VOID } });
 
-      expect(lockCalls()).toHaveLength(1);
+      const PAYMENT_LOCK = 'SELECT 1 FROM "Payment" WHERE "id" = ? FOR NO KEY UPDATE';
+      const LINK_LOCK =
+        'SELECT 1 FROM "XeroObjectLink" WHERE "localModel" = ? AND "localId" = ? AND "xeroObjectType" = ? AND "xeroObjectId" = ? AND "role" = ? FOR UPDATE';
+      expect(lockCalls().map(sqlOf)).toEqual([PAYMENT_LOCK, LINK_LOCK]);
+      const paymentLockAt = mocks.txExecuteRaw.mock.invocationCallOrder[0]!;
+      const linkLockAt = mocks.txExecuteRaw.mock.invocationCallOrder[1]!;
+      expect(paymentLockAt).toBeLessThan(linkLockAt);
+      expect(linkLockAt).toBeLessThan(mocks.txPaymentUpdateMany.mock.invocationCallOrder[0]!);
+      expect(sqlOf(lockCalls()[0]!)).not.toContain("SKIP LOCKED");
+      expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function), PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS);
       expect(mocks.txPaymentUpdateMany).toHaveBeenCalledWith({ where: { id: "payment_1", xeroRefundCreditNoteId: "cn_voided" }, data: { xeroRefundCreditNoteId: null } });
     });
 

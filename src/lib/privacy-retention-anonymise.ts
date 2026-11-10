@@ -70,6 +70,7 @@ export async function anonymiseFormerMember(
     tx.twoFactorEmailCode.deleteMany({ where: { memberId: id } }),
     tx.twoFactorRecoveryCode.deleteMany({ where: { memberId: id } }),
     tx.twoFactorSessionChallenge.deleteMany({ where: { memberId: id } }),
+    tx.sessionReauthChallenge.deleteMany({ where: { memberId: id } }),
     tx.bookingGuest.updateMany({ where: { memberId: id }, data: { firstName: "Deleted", lastName: "Member", ...DIETARY_ERASURE_PATCH } }),
     ...(member.xeroContactId ? [tx.xeroContactCache.deleteMany({ where: { contactId: member.xeroContactId } })] : []),
   ]);

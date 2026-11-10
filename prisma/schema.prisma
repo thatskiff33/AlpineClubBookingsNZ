@@ -687,6 +687,7 @@ model Member {
   twoFactorEmailCodes                        TwoFactorEmailCode[]
   twoFactorRecoveryCodes                     TwoFactorRecoveryCode[]
   twoFactorSessionChallenges                 TwoFactorSessionChallenge[]
+  sessionReauthChallenges                    SessionReauthChallenge[]
   subscriptions                              MemberSubscription[]
   memberSubscriptionsManuallyPaid            MemberSubscription[]                    @relation("MemberSubscriptionManualPaidBy")
   membershipChargesReceived                  MembershipSubscriptionCharge[]          @relation("MembershipChargeRecipient")
@@ -965,6 +966,24 @@ model TwoFactorSessionChallenge {
   tokenHash String   @unique
   expiresAt DateTime
   createdAt DateTime @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+  @@index([expiresAt])
+}
+
+// Single-use proof that a signed-in member just confirmed who they are (#4616).
+// Minted server-side after a step-up check, consumed by one status-guarded
+// claim in the Auth.js jwt callback. A client session update cannot set
+// lastAuthenticatedAt. An emailed code is never a way to mint one.
+model SessionReauthChallenge {
+  id         String    @id @default(cuid())
+  memberId   String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
 
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 

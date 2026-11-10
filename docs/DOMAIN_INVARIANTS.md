@@ -1019,8 +1019,8 @@ ten pre-split domain headings the index keeps verbatim.
 ## Authentication
 
 How the app decides whether a sign-in attempt may proceed, without telling
-anyone which accounts exist, which passwords it lets a person choose, and how
-long a signed-in session lasts.
+anyone which accounts exist, which passwords it lets a person choose, how
+long a signed-in session lasts, and how recently they proved who they are.
 File: [`invariants/authentication.md`](invariants/authentication.md).
 Prefix `INV-AUTH`. Added by #4609; it is not one of the ten pre-split domain
 headings the index keeps verbatim.
@@ -1034,3 +1034,4 @@ headings the index keeps verbatim.
 | `INV-AUTH-005` | Reset and sign-in-link requests limited per account, answered as accepted |
 | `INV-AUTH-006` | Chosen passwords screened by prefix-only breach lookup; fails open |
 | `INV-AUTH-007` | Sessions end a fixed time after sign-in; missing stamp is expired |
+| `INV-AUTH-008` | Recent proof is five minutes; the client cannot stamp it |
