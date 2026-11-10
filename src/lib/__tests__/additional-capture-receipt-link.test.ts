@@ -4,7 +4,9 @@ import {
   bookingHasPaidUnnamedSupplementary,
   bookingHasUnattributedCaptures,
   captureChangeId,
+  findAdditionalCaptureReceiptInvoiceId,
   keptInvoiceBillsChangeCapture,
+  readAdditionalCaptureReceiptLinkedInvoiceId,
 } from "@/lib/additional-capture-receipt-link";
 import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-keys";
 
@@ -234,5 +236,35 @@ describe("anchorCaptureHasReceipt", () => {
     await expect(
       anchorCaptureHasReceipt(store({ captures, receipts: [{ status: "PENDING", requestPayload: { plan: { invoiceId: "inv_1" } } }] }) as never, input),
     ).resolves.toBe(true);
+  });
+});
+
+describe("findAdditionalCaptureReceiptInvoiceId", () => {
+  it("names the oldest payment link, which is the first leg", async () => {
+    const findFirst = vi.fn(async (args: { orderBy: unknown }) => {
+      expect(args.orderBy).toEqual({ createdAt: "asc" });
+      return { metadata: { invoiceId: "inv_first" } };
+    });
+    await expect(
+      readAdditionalCaptureReceiptLinkedInvoiceId("ptx_1", { xeroObjectLink: { findFirst } } as never),
+    ).resolves.toBe("inv_first");
+  });
+
+  it("names the plan's first leg when the payment is not linked yet", async () => {
+    const store = {
+      paymentTransaction: { findUnique: vi.fn(async () => ({ id: "ptx_1" })) },
+      xeroObjectLink: { findFirst: vi.fn(async () => null) },
+      xeroSyncOperation: {
+        findFirst: vi.fn(async () => ({
+          requestPayload: {
+            plan: {
+              invoiceId: "inv_top",
+              legs: [{ invoiceId: "inv_leg0" }, { invoiceId: "inv_leg1" }],
+            },
+          },
+        })),
+      },
+    };
+    await expect(findAdditionalCaptureReceiptInvoiceId("pi_change", store as never)).resolves.toBe("inv_leg0");
   });
 });

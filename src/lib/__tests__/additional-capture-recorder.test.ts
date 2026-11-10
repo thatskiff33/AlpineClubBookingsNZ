@@ -182,13 +182,16 @@ describe("attributeGapCash (A)", () => {
 
 describe("readCaptureRecorder (B, C)", () => {
   /** What each of the recorder's three supplementary-invoice reads finds, answered by the query's shape. */
-  let found: { naming: unknown; covering: unknown; own: unknown; kept?: unknown };
+  let found: { naming: unknown; namingRows?: unknown[]; covering: unknown; own: unknown; kept?: unknown };
   const store = {
     xeroSyncOperation: {
       findFirst: vi.fn(async ({ where }: { where: { queueType?: string; localModel?: string; requestPayload?: { path: string[] } } }) =>
         where.queueType === "KEPT_LATE_CAPTURE_INVOICE"
           ? (found.kept ?? null)
           : where.localModel ? found.own : where.requestPayload?.path[0] === "paymentIntentId" ? found.naming : found.covering,
+      ),
+      findMany: vi.fn(async ({ where }: { where: { requestPayload?: { path: string[] } } }) =>
+        where.requestPayload?.path[0] === "paymentIntentId" ? (found.namingRows ?? (found.naming ? [found.naming] : [])) : [],
       ),
     },
     xeroObjectLink: { findFirst: vi.fn() },
@@ -215,7 +218,13 @@ describe("readCaptureRecorder (B, C)", () => {
   });
 
   it("is the receipt where nothing else records the capture", async () => {
-    await expect(read()).resolves.toEqual({ kind: "receipt", figures, gap: null, target: null, alreadyRecordedCents: 0 });
+    await expect(read()).resolves.toEqual({
+      kind: "receipt",
+      figures,
+      gap: null,
+      targets: [{ kind: "PRIMARY_INVOICE", operation: null, link: null }],
+      alreadyRecordedCents: 0,
+    });
   });
 
   describe("a capture that collected credit-release money (#4253)", () => {
@@ -261,17 +270,16 @@ describe("readCaptureRecorder (B, C)", () => {
   it("MUTATION round 4 (item 4): is the supplementary invoice naming the intent, read first and on its own, whatever a gap covers", async () => {
     found = { naming: { id: "op_named" }, covering: gapCovering(3_000), own: null };
     await expect(read()).resolves.toEqual({ kind: "supplementary-invoice", operationId: "op_named" });
-    const [first] = store.xeroSyncOperation.findFirst.mock.calls.map((call) => call[0]);
-    expect(first).toEqual({
+    expect(store.xeroSyncOperation.findMany).toHaveBeenCalledWith({
       where: {
         queueType: "SUPPLEMENTARY_INVOICE",
         status: { not: "CANCELLED" },
         requestPayload: { path: ["paymentIntentId"], equals: "pi_change" },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: "asc" },
       select: { id: true, status: true, requestPayload: true, responsePayload: true, manuallyResolvedAt: true, localModel: true, localId: true },
     });
-    expect(store.xeroSyncOperation.findFirst).toHaveBeenCalledTimes(1);
+    expect(store.xeroSyncOperation.findFirst).not.toHaveBeenCalled();
   });
 
   it("MUTATION round 5 (item 1): an UNPAID invoice naming the intent is the receipt's target, never its recorder", async () => {
@@ -299,7 +307,10 @@ describe("readCaptureRecorder (B, C)", () => {
       kind: "receipt",
       figures,
       gap: null,
-      target: { kind: "CHANGE_INVOICE", operation, link: repairLink },
+      targets: [
+        { kind: "CHANGE_INVOICE", operation, link: repairLink },
+        { kind: "PRIMARY_INVOICE", operation: null, link: null },
+      ],
       alreadyRecordedCents: 0,
     });
     expect(store.xeroObjectLink.findFirst).toHaveBeenCalledWith(
@@ -359,7 +370,13 @@ describe("readCaptureRecorder (B, C)", () => {
     // A superseded ask's stale-tab capture: the change's invoice was moved onto, and paid by, the carrier.
     found.own = { id: "op_change_invoice", status: "SUCCEEDED", requestPayload: { recordPayment: true, paymentIntentId: "pi_carrier" } };
     store.xeroObjectLink.findFirst.mockResolvedValue({ id: "link_change", xeroObjectId: "inv_change", active: true });
-    await expect(read()).resolves.toEqual({ kind: "receipt", figures, gap: null, target: null, alreadyRecordedCents: 0 });
+    await expect(read()).resolves.toEqual({
+      kind: "receipt",
+      figures,
+      gap: null,
+      targets: [{ kind: "PRIMARY_INVOICE", operation: null, link: null }],
+      alreadyRecordedCents: 0,
+    });
     // Naming this capture, it still records it.
     found.own = { id: "op_change_invoice", status: "SUCCEEDED", requestPayload: { recordPayment: true, paymentIntentId: "pi_change" } };
     await expect(read()).resolves.toEqual({ kind: "supplementary-invoice", operationId: "op_change_invoice" });
@@ -372,7 +389,10 @@ describe("readCaptureRecorder (B, C)", () => {
       kind: "receipt",
       figures,
       gap,
-      target: { kind: "GAP_INVOICE", operation: gap.operation, link: gap.link },
+      targets: [
+        { kind: "GAP_INVOICE", operation: gap.operation, link: gap.link },
+        { kind: "PRIMARY_INVOICE", operation: null, link: null },
+      ],
       alreadyRecordedCents: 0,
     });
   });
@@ -386,7 +406,10 @@ describe("readCaptureRecorder (B, C)", () => {
       kind: "receipt",
       figures,
       gap: null,
-      target: { kind: "CHANGE_INVOICE", operation: own, link: ownLink },
+      targets: [
+        { kind: "CHANGE_INVOICE", operation: own, link: ownLink },
+        { kind: "PRIMARY_INVOICE", operation: null, link: null },
+      ],
       alreadyRecordedCents: 0,
     });
   });
@@ -426,7 +449,59 @@ describe("readCaptureRecorder (B, C)", () => {
   it("is the receipt, against the primary, where the gap bills another change (C)", async () => {
     const gap = { operation: { id: "op_gap" }, link: { xeroObjectId: "inv_gap", active: true }, anchorIds: ["mod_racing"] };
     mocks.findPrimaryInvoiceGapInvoice.mockResolvedValue(gap);
-    await expect(read()).resolves.toEqual({ kind: "receipt", figures, gap, target: null, alreadyRecordedCents: 0 });
+    await expect(read()).resolves.toEqual({
+      kind: "receipt",
+      figures,
+      gap,
+      targets: [{ kind: "PRIMARY_INVOICE", operation: null, link: null }],
+      alreadyRecordedCents: 0,
+    });
+  });
+
+  const billed = (cents: number, recordPayment: boolean, id: string) => ({
+    id,
+    status: "SUCCEEDED",
+    requestPayload: {
+      queueType: "SUPPLEMENTARY_INVOICE",
+      bookingId: "booking_1",
+      priceDiffCents: cents,
+      changeFeeCents: 0,
+      paymentIntentId: "pi_change",
+      recordPayment,
+    },
+    responsePayload: null,
+    manuallyResolvedAt: null,
+    localModel: "BookingModification",
+    localId: id,
+  });
+
+  it("lists every unpaid invoice that names the capture, oldest first, then the primary", async () => {
+    found.namingRows = [billed(0, false, "op_older"), billed(0, false, "op_newer")];
+    const recorder = await read();
+    expect(recorder).toMatchObject({
+      kind: "receipt",
+      targets: [
+        { kind: "CHANGE_INVOICE", operation: { id: "op_older" } },
+        { kind: "CHANGE_INVOICE", operation: { id: "op_newer" } },
+        { kind: "PRIMARY_INVOICE" },
+      ],
+    });
+  });
+
+  it("counts what a paying invoice that also names the capture bills, and refuses to guess when that cannot be read", async () => {
+    found.namingRows = [billed(0, false, "op_unpaid"), billed(5_000, true, "op_paying")];
+    await expect(read()).resolves.toMatchObject({ kind: "receipt", alreadyRecordedCents: 5_000 });
+
+    found.namingRows = [
+      billed(0, false, "op_unpaid"),
+      { ...billed(5_000, true, "op_paying"), requestPayload: { paymentIntentId: "pi_change", recordPayment: true } },
+    ];
+    await expect(read()).resolves.toMatchObject({ kind: "receipt", namingUnreadable: true, alreadyRecordedCents: 0 });
+  });
+
+  it("stands down where the paying invoices that name the capture bill all of it", async () => {
+    found.namingRows = [billed(0, false, "op_unpaid"), billed(8_000, true, "op_paying")];
+    await expect(read()).resolves.toEqual({ kind: "supplementary-invoice", operationId: "op_paying" });
   });
 });
 

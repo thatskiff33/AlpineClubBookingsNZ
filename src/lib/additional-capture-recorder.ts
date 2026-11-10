@@ -41,7 +41,7 @@ import { isRerunnableOperation } from "@/lib/xero-active-operation-statuses";
 import type { PrimaryInvoiceFeeAtLink } from "@/lib/xero-primary-invoice-fee-at-link";
 import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
-import { XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
+import { supplementaryInvoiceBilledCents, XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import {
   GAP_COVERED_CENTS_KEY,
   GAP_COVERED_INTENTS_KEY,
@@ -76,6 +76,16 @@ export type ReceiptTarget = {
   link: { id: string; xeroObjectId: string; active: boolean } | null;
 };
 
+/**
+ * One invoice a receipt may pay, in order. `PRIMARY_INVOICE` is the booking's
+ * own invoice. The others are supplementary invoices.
+ */
+export type ReceiptChainTarget =
+  | ReceiptTarget
+  | { kind: "PRIMARY_INVOICE"; operation: null; link: null };
+
+const PRIMARY_RECEIPT_TARGET: ReceiptChainTarget = { kind: "PRIMARY_INVOICE", operation: null, link: null };
+
 export type CaptureRecorder =
   /** The primary invoice's create recorded it in its own payment. */
   | { kind: "primary-invoice" }
@@ -87,21 +97,27 @@ export type CaptureRecorder =
   | { kind: "kept-late-capture-invoice"; operationId: string }
   /**
    * Nothing else records all of it, so the capture's own receipt records the
-   * rest: against `target` where there is one, otherwise the primary.
+   * rest, one invoice at a time, in `targets` order (#4434).
    */
   | {
       kind: "receipt";
       figures: Awaited<ReturnType<typeof readPrimaryInvoiceFeeAtLink>>;
       /** The primary's gap invoice, whichever change it is anchored on, or null. */
       gap: NonNullable<Awaited<ReturnType<typeof findPrimaryInvoiceGapInvoice>>> | null;
-      target: ReceiptTarget | null;
+      /** Oldest unpaid invoice naming the capture, then the gap, the change's own unpaid invoice, then the primary. No repeats. */
+      targets: ReceiptChainTarget[];
       /**
        * Cents of this capture another writer already recorded: the part the
-       * primary's payment reached (`partiallyRecordedCaptureAtLink`), and
-       * (review round 3, F2) the part the gap invoice's payment took
-       * (`coveredCaptureCents`). The receipt records only the rest.
+       * primary's payment reached (`partiallyRecordedCaptureAtLink`), the part
+       * the gap invoice's payment took (`coveredCaptureCents`), and (#4434)
+       * what a paying invoice that also names the capture bills.
        */
       alreadyRecordedCents: number;
+      /**
+       * A paying invoice names this capture and what it bills cannot be read.
+       * The receipt refuses; nothing is guessed.
+       */
+      namingUnreadable?: boolean;
     };
 
 const SUPPLEMENTARY_SELECT = {
@@ -161,6 +177,9 @@ export async function readCaptureRecorder(
 ): Promise<CaptureRecorder> {
   const base = await readBaseCaptureRecorder(input, store);
   if (base.kind !== "receipt") return base;
+  // What a paying invoice bills could not be read: do not stand the receipt
+  // down on a figure that was guessed.
+  if (base.namingUnreadable) return base;
   const share = await readCreditReleaseCaptureShare(input.paymentIntentId, store);
   if (share.held) return { kind: "credit-release-sweep" };
   if (share.ownCents <= 0) return base;
@@ -173,6 +192,37 @@ export async function readCaptureRecorder(
   return { ...base, alreadyRecordedCents };
 }
 
+type NamingInvoice = SupplementaryOperation & { localModel: string | null; localId: string | null };
+
+/** What a paying invoice bills, or that the figure cannot be read. */
+function billedCentsOf(payload: Prisma.JsonValue | null): number | null {
+  const billed = supplementaryInvoiceBilledCents(payload);
+  return billed === null || !Number.isInteger(billed) || billed < 0 ? null : billed;
+}
+
+function pushTarget(targets: ReceiptChainTarget[], seen: Set<string>, target: ReceiptChainTarget): void {
+  if (target.kind === "PRIMARY_INVOICE") {
+    if (!targets.some((existing) => existing.kind === "PRIMARY_INVOICE")) targets.push(target);
+    return;
+  }
+  const operationId = target.operation?.id;
+  if (operationId && seen.has(operationId)) return;
+  if (operationId) seen.add(operationId);
+  targets.push(target);
+}
+
+async function supplementaryInvoiceLink(
+  store: RecorderStore,
+  localModel: string | null,
+  localId: string | null,
+): Promise<ReceiptTarget["link"]> {
+  if (!localModel || !localId) return null;
+  return store.xeroObjectLink.findFirst({
+    where: { localModel, localId, xeroObjectType: "INVOICE", role: "SUPPLEMENTARY_INVOICE", active: true },
+    select: { id: true, xeroObjectId: true, active: true },
+  });
+}
+
 async function readBaseCaptureRecorder(
   input: {
     bookingId: string;
@@ -182,20 +232,25 @@ async function readBaseCaptureRecorder(
   },
   store: RecorderStore = prisma,
 ): Promise<CaptureRecorder> {
-  // Round 4 (item 4): a supplementary invoice naming the intent first. Round 5
-  // (item 1): it records the capture only where it records a payment; one
-  // raised UNPAID naming the intent (the repair tool's invoice for a priced
-  // edit, say) bills the capture's money and is the receipt's target instead.
-  const naming = await store.xeroSyncOperation.findFirst({
-    where: {
-      queueType: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
-      status: { not: "CANCELLED" },
-      requestPayload: { path: ["paymentIntentId"], equals: input.paymentIntentId },
-    },
-    orderBy: { createdAt: "desc" },
-    select: { ...SUPPLEMENTARY_SELECT, localModel: true, localId: true },
-  });
-  if (naming && recordsPayment(naming.requestPayload)) return { kind: "supplementary-invoice", operationId: naming.id };
+  // #4434: every live supplementary invoice naming the intent, oldest first.
+  // A gap invoice is not one of these; its cents are read with the primary's.
+  const namingRows = (
+    await store.xeroSyncOperation.findMany({
+      where: {
+        queueType: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
+        status: { not: "CANCELLED" },
+        requestPayload: { path: ["paymentIntentId"], equals: input.paymentIntentId },
+      },
+      orderBy: { createdAt: "asc" },
+      select: { ...SUPPLEMENTARY_SELECT, localModel: true, localId: true },
+    })
+  ).filter((row) => asRecord(row.requestPayload)?.primaryInvoiceGap !== true) as NamingInvoice[];
+  const payingNaming = namingRows.filter((row) => recordsPayment(row.requestPayload));
+  const unpaidNaming = namingRows.filter((row) => !recordsPayment(row.requestPayload));
+  // A paying invoice and no unpaid one still records the capture, as before.
+  if (unpaidNaming.length === 0 && payingNaming.length > 0) {
+    return { kind: "supplementary-invoice", operationId: payingNaming[payingNaming.length - 1]!.id };
+  }
   // #4324: the kept-capture invoice queued for it - its payload names the intent.
   const kept = await store.xeroSyncOperation.findFirst({
     where: {
@@ -210,40 +265,38 @@ async function readBaseCaptureRecorder(
   const recorded = await readRecordedByPrimaryOrGap(input.paymentIntentId, figures?.atLink, store);
   if (recorded.kind === "primary-invoice") return { kind: "primary-invoice" };
   if (recorded.kind === "gap-invoice") return { kind: "supplementary-invoice", operationId: recorded.operationId };
-  const alreadyRecordedCents = recorded.cents;
-  if (naming) {
-    const { localModel, localId, ...operation } = naming;
-    const link =
-      localModel && localId
-        ? await store.xeroObjectLink.findFirst({
-            where: { localModel, localId, xeroObjectType: "INVOICE", role: "SUPPLEMENTARY_INVOICE", active: true },
-            select: { id: true, xeroObjectId: true, active: true },
-          })
-        : null;
-    return {
-      kind: "receipt",
-      figures,
-      gap: figures ? await findPrimaryInvoiceGapInvoice(input.bookingId, figures, store) : null,
-      target: { kind: "CHANGE_INVOICE", operation, link },
-      alreadyRecordedCents,
-    };
-  }
+
+  // #4434 (H2): an unpaid invoice and a paying one both name the capture. The
+  // paying one's billed cents are already recorded. Unreadable billed cents
+  // are not guessed.
+  let namingRecordedCents = 0;
+  let namingUnreadable = false;
+  const countedPaying = new Set<string>();
+  const countPaying = (row: { id: string; requestPayload: Prisma.JsonValue | null }) => {
+    if (countedPaying.has(row.id)) return;
+    countedPaying.add(row.id);
+    const billed = billedCentsOf(row.requestPayload);
+    if (billed === null) namingUnreadable = true;
+    else namingRecordedCents += billed;
+  };
+  if (unpaidNaming.length > 0) for (const row of payingNaming) countPaying(row);
+
   const gap = figures ? await findPrimaryInvoiceGapInvoice(input.bookingId, figures, store) : null;
   const modificationId = input.bookingModificationId;
+  const seen = new Set<string>();
+  const targets: ReceiptChainTarget[] = [];
+  for (const row of unpaidNaming) {
+    const { localModel, localId, ...operation } = row;
+    pushTarget(targets, seen, {
+      kind: "CHANGE_INVOICE",
+      operation,
+      link: await supplementaryInvoiceLink(store, localModel, localId),
+    });
+  }
   if (gap && modificationId && gap.anchorIds.includes(modificationId)) {
-    return {
-      kind: "receipt",
-      figures,
-      gap,
-      target: { kind: "GAP_INVOICE", operation: gap.operation, link: gap.link },
-      alreadyRecordedCents,
-    };
+    pushTarget(targets, seen, { kind: "GAP_INVOICE", operation: gap.operation, link: gap.link });
   }
   if (modificationId) {
-    // A change the gap does not bill for raised its own invoice, if any. One
-    // that records a payment (or a link with no row to say) is the capture's
-    // recorder; one raised UNPAID bills the change and the receipt records the
-    // capture against it (round 3, F1), never a second document.
     const [own, ownLink] = await Promise.all([
       store.xeroSyncOperation.findFirst({
         where: {
@@ -255,32 +308,37 @@ async function readBaseCaptureRecorder(
         orderBy: { createdAt: "desc" },
         select: SUPPLEMENTARY_SELECT,
       }),
-      store.xeroObjectLink.findFirst({
-        where: {
-          localModel: "BookingModification",
-          localId: modificationId,
-          xeroObjectType: "INVOICE",
-          role: "SUPPLEMENTARY_INVOICE",
-          active: true,
-        },
-        select: { id: true, xeroObjectId: true, active: true },
-      }),
+      supplementaryInvoiceLink(store, "BookingModification", modificationId),
     ]);
     if (own && !recordsPayment(own.requestPayload)) {
-      return {
-        kind: "receipt",
-        figures,
-        gap,
-        target: { kind: "CHANGE_INVOICE", operation: own, link: ownLink },
-        alreadyRecordedCents,
-      };
-    }
-    // Review 2 (F3): a paid one naming another capture records that one; its link is that invoice's.
-    if (own ? changeInvoiceRecordsCapture(own.requestPayload, input.paymentIntentId) : ownLink) {
-      return { kind: "supplementary-invoice", operationId: own?.id ?? null };
+      pushTarget(targets, seen, { kind: "CHANGE_INVOICE", operation: own, link: ownLink });
+    } else if (own && recordsPayment(own.requestPayload) && changeInvoiceRecordsCapture(own.requestPayload, input.paymentIntentId)) {
+      // No unpaid invoice names the capture: this paying invoice records it.
+      if (unpaidNaming.length === 0) return { kind: "supplementary-invoice", operationId: own.id };
+      countPaying(own);
+    } else if (unpaidNaming.length === 0 && !own && ownLink) {
+      return { kind: "supplementary-invoice", operationId: null };
     }
   }
-  return { kind: "receipt", figures, gap, target: null, alreadyRecordedCents };
+  pushTarget(targets, seen, PRIMARY_RECEIPT_TARGET);
+  const capture = namingRecordedCents > 0 || namingUnreadable
+    ? await store.paymentTransaction.findUnique({
+        where: { stripePaymentIntentId: input.paymentIntentId },
+        select: { amountCents: true },
+      })
+    : null;
+  const alreadyRecordedCents = recorded.cents + namingRecordedCents;
+  if (!namingUnreadable && namingRecordedCents > 0 && alreadyRecordedCents >= (capture?.amountCents ?? 0)) {
+    return { kind: "supplementary-invoice", operationId: [...countedPaying].at(-1) ?? null };
+  }
+  return {
+    kind: "receipt",
+    figures,
+    gap,
+    targets,
+    alreadyRecordedCents,
+    ...(namingUnreadable ? { namingUnreadable: true } : {}),
+  };
 }
 
 /**

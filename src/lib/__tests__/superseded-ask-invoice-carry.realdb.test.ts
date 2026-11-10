@@ -1064,6 +1064,8 @@ function deferred() {
         it("the receipt decides first: it records B, and A's invoice moved onto B goes out unpaid", async () => {
           const { a, b, plan } = await race("receipt");
           expect(plan).toMatchObject({ target: "PRIMARY_INVOICE", invoiceId: "inv_race_3403_primary", capturedCents: await captured(b) });
+          const legs = ((plan ?? {}) as { legs?: Array<{ amountCents: number }> }).legs ?? [];
+          expect(legs.reduce((sum, leg) => sum + leg.amountCents, 0)).toBeLessThanOrEqual(await captured(b));
           expect(await invoiceFor(MOD_A)).toMatchObject({ status: "PENDING", waitsOn: b, parkedFrom: a, recordPayment: false });
           // Exactly one recorder of B's capture: its receipt.
           expect(await recordersOf(b)).toEqual({ invoicedCents: 0, receipts: 1 });

@@ -4,7 +4,8 @@
  * worker (`additional-capture-xero-receipt.ts`, which makes the metered read)
  * when #4324 grew it past its size budget.
  */
-import type { Invoice } from "xero-node";
+import type { Invoice, Payment } from "xero-node";
+import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { readXeroInvoiceOperationOutcome } from "@/lib/xero-booking-invoice-outcome";
 import { isLiveXeroPaymentStatus } from "@/lib/xero-payment-status";
 
@@ -19,6 +20,30 @@ export function findRecordedPayment(read: InvoiceRead | null, reference: string)
         Boolean(payment.paymentID) &&
         payment.reference === reference &&
         isLiveXeroPaymentStatus(payment.status),
+    ) ?? null
+  );
+}
+
+/**
+ * #4434: a payment already on the invoice is THIS leg's own only when its
+ * reference matches, its amount is this leg's amount, and its id is not linked
+ * under another role (the credit-release sweep uses the same reference on the
+ * primary). Anything else is someone else's payment.
+ */
+export function legOwnsPayment(
+  read: InvoiceRead | null,
+  reference: string,
+  amountCents: number,
+  paymentIdsUnderAnotherRole: ReadonlySet<string>,
+): Payment | null {
+  return (
+    (read?.invoice.payments ?? []).find(
+      (payment) =>
+        Boolean(payment.paymentID) &&
+        payment.reference === reference &&
+        isLiveXeroPaymentStatus(payment.status) &&
+        providerAmountToCents(payment.amount) === amountCents &&
+        !paymentIdsUnderAnotherRole.has(payment.paymentID ?? ""),
     ) ?? null
   );
 }

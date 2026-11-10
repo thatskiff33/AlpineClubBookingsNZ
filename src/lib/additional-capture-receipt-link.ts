@@ -26,7 +26,8 @@ type ReceiptLinkStore = Pick<Prisma.TransactionClient, "paymentTransaction" | "x
  * #3953: the Xero invoice a capture's receipt's payment link names, on the
  * capture's `PaymentTransaction` (null while none is linked). The one read of
  * that link: the refund paths and (#4324) the late-capture receipt verdict
- * build on it.
+ * build on it. The oldest link is the first leg, the invoice that bills the
+ * capture (#4434).
  */
 export async function readAdditionalCaptureReceiptLinkedInvoiceId(
   paymentTransactionId: string,
@@ -40,7 +41,7 @@ export async function readAdditionalCaptureReceiptLinkedInvoiceId(
       role: ADDITIONAL_CAPTURE_PAYMENT_ROLE,
       active: true,
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: { createdAt: "asc" },
     select: { metadata: true },
   });
   const linked = asRecord(link?.metadata)?.invoiceId;
@@ -52,7 +53,7 @@ export async function readAdditionalCaptureReceiptLinkedInvoiceId(
  * payment link, or - review round 1 (L) - the invoice its receipt row has
  * already decided on and is sending to (the plan stored before the Xero call).
  * Null otherwise. The refund paths read it, so a refund of that capture names
- * the invoice the capture paid.
+ * the first invoice the capture paid (#4434).
  */
 export async function findAdditionalCaptureReceiptInvoiceId(
   paymentIntentId: string,
@@ -75,7 +76,9 @@ export async function findAdditionalCaptureReceiptInvoiceId(
     orderBy: { createdAt: "desc" },
     select: { requestPayload: true },
   });
-  const planned = asRecord(asRecord(pending?.requestPayload)?.plan)?.invoiceId;
+  const plan = asRecord(asRecord(pending?.requestPayload)?.plan);
+  const firstLeg = asRecord(Array.isArray(plan?.legs) ? plan.legs[0] : null)?.invoiceId;
+  const planned = typeof firstLeg === "string" && firstLeg.length > 0 ? firstLeg : plan?.invoiceId;
   return typeof planned === "string" && planned.length > 0 ? planned : null;
 }
 

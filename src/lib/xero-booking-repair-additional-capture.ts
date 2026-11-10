@@ -18,7 +18,11 @@
  * (an invoice raised before them) it is offered for an officer to apply: the
  * capture may be in the invoice's own payment already.
  */
-import { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-capture-receipt-payload";
+import {
+  readAdditionalCaptureReceiptPayload,
+  splitReceiptLegsSummary,
+  XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
+} from "@/lib/additional-capture-receipt-payload";
 import { ADDITIONAL_CAPTURE_PAYMENT_ROLE, captureChangeId } from "@/lib/additional-capture-receipt-link";
 import { ADDITIONAL_CAPTURE_RECEIPT_REFUSED_CODE } from "@/lib/additional-capture-xero-receipt";
 import { readPrimaryInvoiceFeeAtLink } from "@/lib/xero-primary-invoice-gap-anchors";
@@ -51,6 +55,8 @@ export type AdditionalCaptureReceiptEvidence = {
   operationsByTransactionId: Map<string, XeroOperationRecord[]>;
   /** Captures whose receipt's Xero payment is linked. */
   recordedTransactionIds: ReadonlySet<string>;
+  /** How many receipt payment links each capture has. A crash between legs leaves fewer than the plan. */
+  linkedCountByTransactionId: ReadonlyMap<string, number>;
   /**
    * Review round 1 (B): captures another writer records (`readCaptureRecorder`):
    * the primary's own payment, or a supplementary invoice for the change or
@@ -132,6 +138,10 @@ export async function loadAdditionalCaptureReceiptEvidence(
       ]);
     }
     const recordedTransactionIds = new Set(links.map((link) => link.localId));
+    const linkedCountByTransactionId = new Map<string, number>();
+    for (const link of links) {
+      linkedCountByTransactionId.set(link.localId, (linkedCountByTransactionId.get(link.localId) ?? 0) + 1);
+    }
     const recordedElsewhereIntentIds = new Set<string>();
     const receiptModificationIds = new Set<string>();
     for (const capture of captures) {
@@ -163,6 +173,7 @@ export async function loadAdditionalCaptureReceiptEvidence(
     evidence.set(booking.id, {
       operationsByTransactionId,
       recordedTransactionIds,
+      linkedCountByTransactionId,
       recordedElsewhereIntentIds,
       primaryCoverageKnown: figures?.atLink.paymentIntentIdsRecordedAtLink !== undefined,
       receiptModificationIds,
@@ -198,10 +209,30 @@ export function addUnrecordedAdditionalCaptureFindings({
   for (const capture of captures) {
     const paymentIntentId = capture.stripePaymentIntentId;
     if (capture.kind !== "ADDITIONAL" || !paymentIntentId || !capture.id) continue;
-    if (evidence.recordedTransactionIds.has(capture.id)) continue;
     if (evidence.recordedElsewhereIntentIds.has(paymentIntentId)) continue;
     const details = { paymentId, paymentIntentId, paymentTransactionId: capture.id, capturedCents: capture.amountCents };
+    const linkedCount = evidence.linkedCountByTransactionId.get(capture.id) ?? 0;
     const operations = evidence.operationsByTransactionId.get(capture.id) ?? [];
+    const split =
+      linkedCount > 0
+        ? operations
+            .map((operation) =>
+              splitReceiptLegsSummary(readAdditionalCaptureReceiptPayload(operation.requestPayload)?.plan ?? null, linkedCount),
+            )
+            .find((summary): summary is string => summary != null)
+        : undefined;
+    if (split) {
+      const action = addAction(actionMap, buildManualReviewAction(booking.id, split));
+      addFinding(findings, {
+        code: "ADDITIONAL_CAPTURE_NOT_RECORDED_IN_XERO",
+        severity: "manual_review",
+        summary: split,
+        safeToAutoApply: false,
+        details,
+        actionKeys: [action.key],
+      });
+    }
+    if (evidence.recordedTransactionIds.has(capture.id)) continue;
     if (operations.length > 0) {
       const blocking = getBlockingOperation(operations, "PAYMENT", "CREATE", {
         payloadQueueType: XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
