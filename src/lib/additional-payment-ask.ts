@@ -236,24 +236,22 @@ export function sizeAdditionalAsk({
   priceDiffCents,
   changeFeeCents,
   payment,
-  waitingReissuedAskCents = 0,
+  foldedWaitingAskCents = 0,
 }: {
   priceDiffCents: number;
   changeFeeCents: number;
   payment: AdditionalAskPayment | null | undefined;
   /**
-   * #3954 review round 4: a reduction's smaller re-issued ask still waiting on
-   * its mint, which this increase folds in and closes
-   * (`foldWaitingReissuedAsks`) - carried like the `Payment`'s live ask, since
-   * this mint is what asks for it now. The edit doors pass what they folded;
-   * an increase's recovery replay passes what its edit's history recorded it
-   * folded (`sizeRecoveryReplayAsk`, round 6), since its fold closed them.
+   * #3954, #4744: waiting re-issues and increase retries this edit folds in
+   * (`foldWaitingAsks`) — carried like the `Payment`'s live ask, since this
+   * mint asks for them now. Doors pass what they folded; a replay passes what
+   * its history recorded (`sizeRecoveryReplayAsk`), the fold having closed them.
    */
-  waitingReissuedAskCents?: number;
+  foldedWaitingAskCents?: number;
 }): AdditionalAsk {
   return buildAdditionalAsk({
     ownCents: priceDiffCents + changeFeeCents,
-    carriedCents: outstandingAdditionalAskCents(payment) + Math.max(0, waitingReissuedAskCents),
+    carriedCents: outstandingAdditionalAskCents(payment) + Math.max(0, foldedWaitingAskCents),
     sizedOn: payment ?? null,
   });
 }

@@ -24,11 +24,11 @@
  *   dated the row's write against the primary invoice's link instead, which a
  *   recovery minting hours later, or a link backfilled later, gets wrong.)
  * - money a row carried from outside the chain is a re-issue's, or the
- *   re-issues an increase folded in: billed by their recorded invoices
- *   (`recordedReissuedAskInvoiceCents`), the rest by the primary invoice. The
- *   re-issue is found through the recovery that minted the row, or the
- *   increase through the fold its history records - or, for a row minted
- *   since round 8, through the edit its mint stamped on it;
+ *   asks an increase folded in (re-issues and increase retries): billed by
+ *   their recorded invoices, the rest by the primary invoice. An unsure part
+ *   is reported, not guessed. The re-issue is found through the recovery that
+ *   minted the row, or the increase through the fold its history records -
+ *   or, for a row minted since round 8, through the edit its mint stamped on it;
  * - a waiting recovery's figures were recorded at its edit's save
  *   (`hadIssuedXeroInvoice`), and `retireUnpaidAskChain` has counted them.
  *
@@ -51,7 +51,8 @@ import {
   REISSUED_ASK_REASON,
 } from "@/lib/payment-recovery-keys";
 import {
-  recordedFoldedReissuedAskCents,
+  recordedFoldedAskCents,
+  recordedFoldedIncreaseAsks,
   recordedFoldedReissuedAskModificationIds,
   recordedReissuedAskInvoiceCents,
   recordedReissuedAskInvoiceUnsureCents,
@@ -107,59 +108,85 @@ export function classifyUnpaidAskBilling({
     const parkedAnchors = retired.parkedOps.flatMap((op) =>
       op.intentId !== null && op.intentId === row.stripePaymentIntentId && op.anchorId ? [op.anchorId] : [],
     );
-    if (ownCents > 0 && !parkedAnchors.some((anchorId) => !isReduction(anchorId))) {
-      // Round 7: the asking edit's own answer - its recovery's, for a row a
-      // recovery minted, else the one its door stamped on the row.
+    // #4744: only this row's own edit covers its own money. A folded increase's
+    // invoice parked on this intent is that earlier edit's, not this one's.
+    const ownEditId =
+      (row.stripePaymentIntentId ? intentMinters.get(row.stripePaymentIntentId)?.modificationId : undefined) ??
+      row.bookingModificationId ??
+      undefined;
+    if (ownCents > 0 && !(ownEditId !== undefined && parkedAnchors.includes(ownEditId))) {
       const minter = row.stripePaymentIntentId ? intentMinters.get(row.stripePaymentIntentId) : undefined;
       const hadIssuedXeroInvoice = minter ? minter.hadIssuedXeroInvoice : row.hadIssuedXeroInvoice;
       if (hadIssuedXeroInvoice === null) established = false;
       else if (hadIssuedXeroInvoice) supplementaryInvoicedCents += ownCents;
     }
     if (carriedInCents > 0) {
-      const reductions = carriedReissues(row, previous, carriedInCents);
-      if (!reductions) {
+      const carried = carriedFoldParts(row, previous, carriedInCents);
+      if (!carried) {
         established = false;
         return;
       }
-      for (const reductionId of reductions) {
-        // Round 8: a re-issue whose own reduction could not establish what its
-        // invoice owes (`reissuedAskInvoiceUnsureCents`) is no more certain
-        // now: its recorded figure is only the part that reduction was sure of.
-        if (recordedReissuedAskInvoiceUnsureCents(modification(reductionId)?.newData) > 0) established = false;
-        if (parkedAnchors.includes(reductionId)) continue;
-        supplementaryInvoicedCents += recordedReissuedAskInvoiceCents(modification(reductionId)?.newData);
+      if (carried.unsure) established = false;
+      for (const part of carried.parts) {
+        if (part.unsure) established = false;
+        if (parkedAnchors.includes(part.modificationId)) continue;
+        supplementaryInvoicedCents += part.invoiceCents;
       }
     }
   });
   return { supplementaryInvoicedCents, established };
 
-  /** The reductions whose re-issued money a row carried in, or null where nothing names them. */
-  function carriedReissues(
+  /** The folded asks a row carried in, or null where nothing names that money. */
+  function carriedFoldParts(
     row: UnpaidPriceAskRow,
     previous: UnpaidPriceAskRow | null,
     carriedInCents: number,
-  ): string[] | null {
-    // Round 8: the recovery that minted the row, else the edit its mint stamped on it.
+  ): { parts: { modificationId: string; invoiceCents: number; unsure: boolean }[]; unsure: boolean } | null {
     const minter =
       (row.stripePaymentIntentId ? intentMinters.get(row.stripePaymentIntentId)?.modificationId : undefined) ??
       row.bookingModificationId ??
       undefined;
     if (row.reason === REISSUED_ASK_REASON) {
-      return minter && isReduction(minter) ? [minter] : null;
+      if (!minter || !isReduction(minter)) return null;
+      return {
+        parts: [
+          {
+            modificationId: minter,
+            invoiceCents: recordedReissuedAskInvoiceCents(modification(minter)?.newData),
+            unsure: recordedReissuedAskInvoiceUnsureCents(modification(minter)?.newData) > 0,
+          },
+        ],
+        unsure: false,
+      };
     }
     const increase = minter
       ? modification(minter)
       : (() => {
           const candidates = modifications.filter(
             (candidate) =>
-              recordedFoldedReissuedAskCents(candidate.newData) === carriedInCents &&
+              recordedFoldedAskCents(candidate.newData) === carriedInCents &&
               candidate.createdAt <= row.createdAt &&
               (!previous || candidate.createdAt > previous.createdAt),
           );
           return candidates.length === 1 ? candidates[0]! : null;
         })();
-    if (!increase || recordedFoldedReissuedAskCents(increase.newData) !== carriedInCents) return null;
-    return recordedFoldedReissuedAskModificationIds(increase.newData);
+    if (!increase || recordedFoldedAskCents(increase.newData) !== carriedInCents) return null;
+    const nested = recordedFoldedIncreaseAsks(increase.newData);
+    return {
+      unsure: nested.unsure,
+      parts: [
+        ...recordedFoldedReissuedAskModificationIds(increase.newData).map((reductionId) => ({
+          modificationId: reductionId,
+          invoiceCents: recordedReissuedAskInvoiceCents(modification(reductionId)?.newData),
+          unsure: recordedReissuedAskInvoiceUnsureCents(modification(reductionId)?.newData) > 0,
+        })),
+        ...nested.entries.map((entry) => ({
+          modificationId: entry.modificationId,
+          invoiceCents: entry.invoiceCents,
+          unsure: entry.invoiceUnsure,
+        })),
+      ],
+    };
   }
 }
 
