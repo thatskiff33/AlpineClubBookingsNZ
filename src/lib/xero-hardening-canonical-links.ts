@@ -126,11 +126,10 @@ type HealOutcome = "healed" | "skipped" | "deferred";
  * cancelled mirror its own payment's pointer still names (#4192, left by the
  * old cleanup's direct flip).
  *
- * Order: the link row, then the Payment row - the #2901 repair apply's order
- * and the funnel's own pointer release (#4046). Two writers take them the other
- * way round inside their own transactions: the refund-note create's record and
- * the outbox enqueue's existing-note branch (a group cancel or an edit review).
- * So the Payment row is taken `NOWAIT`, and so is the link row, so a heal never
+ * Order: the link row, then the Payment row `NOWAIT` - the #2901 repair
+ * apply's order. The refund-note create, the enqueue's existing-note branch
+ * (a group cancel or an edit review), and an explicit void (#4200) take the
+ * Payment row first. Both of this heal's locks are `NOWAIT`, so a heal never
  * waits out its transaction timeout behind a long writer: a busy row defers the heal with no
  * write instead of waiting while it holds the link, and the heal can never be
  * one side of a deadlock. Under both locks it re-reads the link (and, for

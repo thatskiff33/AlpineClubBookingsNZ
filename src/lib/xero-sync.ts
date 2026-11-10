@@ -625,13 +625,16 @@ async function normalizePaymentRefundLinkWithClient(
   }
 
   if (REFUND_NOTE_LINK_ROLES.some((role) => isRefundNoteLinkOf(link, role))) {
-    link = await keepStoredRefundNoteVoid(client, link); // #4195, #4223: own row first; keeps a void it waited on
+    // #4195, #4223: own row first. An explicit void already locked the Payment row (#4200).
+    // Keeps a void this write waited on.
+    link = await keepStoredRefundNoteVoid(client, link);
     // A note the write (or that stored void) records VOIDED/DELETED in Xero credits nothing, so its mirror
     // is written inactive on every payment: a Stripe or per-refund note (#2901), a bank-transfer payment's
     // one canonical note (#4091) and a refund request's own note (#4195, `INV-PAY-118`). Else an inbound
     // re-reconcile re-arms phantom coverage (upsert forces `active` from this return). It retires no sibling.
     if (isRefundCreditNoteLinkCancelledInXero(link.metadata)) {
-      // The pointer moves after this link row is written: link, then payment, the repair apply's order.
+      // The pointer moves after this link row is written. An explicit void already
+      // holds the Payment row (#4200); a kept void tries it afterwards without waiting.
       return { ...link, active: false };
     }
     if (link.role === REFUND_REQUEST_CREDIT_NOTE_ROLE) return link; // never the one note below
@@ -773,10 +776,31 @@ async function deactivateOtherCanonicalLinksWithClient(
   });
 }
 
+/**
+ * #4200: the caller names this payment's refund credit note VOIDED or DELETED.
+ * That write releases the payment's pointer after it locks the link, so it
+ * must take the Payment row first — the order `recordCreatedRefundNote` uses —
+ * or the two deadlock. A write that only keeps a stored void does not name
+ * the status, and still tries the row later without waiting.
+ */
+function explicitRefundCreditNoteVoid(link: XeroObjectLinkInput): boolean {
+  return isRefundNoteLinkOf(link) && isRefundCreditNoteLinkCancelledInXero(link.metadata);
+}
+
 async function upsertXeroObjectLinkWithClient(
   client: Prisma.TransactionClient,
   link: XeroObjectLinkInput
 ) {
+  // INV-LOCK-002: Payment, then the link. No new advisory key (INV-LOCK-001);
+  // the statement is `lockPaymentForRefundedTotal`'s one site (INV-LOCK-003).
+  // A caller that already holds the row (the create's record, the heal's
+  // NOWAIT) takes it again here as a no-op. A kept void is not this branch.
+  if (explicitRefundCreditNoteVoid(link)) {
+    // This accounting module reaches xero-sync through cash coverage. Load it
+    // only when needed so coverage readers cannot initialize through a cycle.
+    const { lockPaymentForRefundedTotal } = await import("@/lib/payment-transactions");
+    await lockPaymentForRefundedTotal(client, link.localId);
+  }
   const normalizedLink = await normalizePaymentRefundLinkWithClient(client, link);
   await deactivateOtherCanonicalLinksWithClient(client, normalizedLink);
   // #2314: what this column HOLDS is organisation-agnostic, always. A short
@@ -860,8 +884,10 @@ async function upsertXeroObjectLinkWithClient(
       // Payment-first enqueue waits for it: never wait back on that Payment.
       // SKIP LOCKED still returns a row this transaction holds. When busy, the
       // inactive mirror commits and the #4161 heal can release its pointer. A
-      // caller naming VOIDED/DELETED itself keeps its waiting order (#4200).
-      if (!isRefundCreditNoteLinkCancelledInXero(link.metadata)) {
+      // caller that named VOIDED/DELETED already holds this Payment row
+      // (#4200), taken before the link, so the update below does not wait
+      // while the link is held.
+      if (!explicitRefundCreditNoteVoid(link)) {
         const available = await client.$executeRaw`
           SELECT 1 FROM "Payment" WHERE "id" = ${normalizedLink.localId}
           FOR NO KEY UPDATE SKIP LOCKED`;
@@ -882,6 +908,12 @@ export async function upsertXeroObjectLink(
 ) {
   if (options?.store) {
     return upsertXeroObjectLinkWithClient(options.store, link);
+  }
+  // An explicit void waits on the Payment row, which the bank-void follow-up
+  // can hold for 30s. The same budget as the create's record and the recount.
+  if (explicitRefundCreditNoteVoid(link)) {
+    const { PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } = await import("@/lib/payment-transactions");
+    return prisma.$transaction((tx) => upsertXeroObjectLinkWithClient(tx, link), PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS);
   }
   return prisma.$transaction((tx) => upsertXeroObjectLinkWithClient(tx, link));
 }
