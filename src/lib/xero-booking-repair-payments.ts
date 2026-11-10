@@ -7,8 +7,13 @@ import {
   PaymentTransactionKind,
 } from "@prisma/client";
 import type { BookingPaymentRecord } from "./xero-booking-repair-types";
-import { isEditReviewChargeRequestRow } from "@/lib/edit-financial-review-charge-shape";
+import { captureChangeId } from "@/lib/additional-capture-receipt-link";
+import {
+  editReviewChargeRequestCriteria,
+  isEditReviewChargeRequestRow,
+} from "@/lib/edit-financial-review-charge-shape";
 import { compareLedgerRowsNewestFirst } from "@/lib/payment-ledger-order";
+import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-keys";
 import { isCapturedTransactionStatus } from "@/lib/payment-transactions";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 
@@ -257,7 +262,12 @@ export function getOutstandingCapturedRefundAmountCents(
  * So the plan is derived the way the live settlement derives it
  * (`xero-booking-edit-settlement.ts` -> `recordPayment: requiresAdditionalStripePayment
  * ? Boolean(waitForPaymentIntentId) : false`), from the ONE ledger row that is
- * this edit's combined charge request:
+ * this edit's charge request. A review-priced edit's row is its review charge
+ * (`isEditReviewChargeRequestRow`). An ordinary price increase's row is the
+ * newest Stripe ADDITIONAL request `captureChangeId` attributes to the edit
+ * (#4413). The booking's aggregate paid status, the legacy additional-payment
+ * mirror, and a capture that names no edit are not evidence this invoice was
+ * paid: an old unattributed capture keeps the receipt path (`INV-PAY-139`).
  *
  *   * NO request row and NO open intent-mint recovery - the internet-banking
  *     route, where the invoice IS the ask. Raise it UNPAID.
@@ -345,7 +355,7 @@ export function getOutstandingCapturedRefundAmountCents(
  * fix round).
  *
  * It is asked TWICE and the two must never diverge: once by
- * `planEditReviewChargeInvoicePayment` from the sweep's loaded snapshot, and
+ * `planSupplementaryInvoicePayment` from the sweep's loaded snapshot, and
  * once by `xero-booking-repair-passes.ts` from a fresh read taken AFTER the
  * invoice has been queued, to catch a member who paid mid-sweep. Two spellings
  * of "the card covered this ask" - one deciding whether to record a payment, one
@@ -398,18 +408,100 @@ export type EditReviewChargeInvoicePaymentPlan =
       withdrawnAt: Date;
     };
 
-export function planEditReviewChargeInvoicePayment({
+/** Which request a repaired supplementary invoice reads. A review-priced edit keeps its review charge; an ordinary edit reads the Stripe request attributed to it. */
+export type SupplementaryInvoiceChargeKind = "review" | "ordinary";
+
+/**
+ * The ledger row a repaired supplementary invoice may treat as its card ask.
+ * Review matching stays `isEditReviewChargeRequestRow`. An ordinary edit is a
+ * Stripe ADDITIONAL request `captureChangeId` attributes to this edit — the
+ * stamp, or a review charge whose reason names the edit and carries no stamp.
+ */
+function isSupplementaryInvoiceChargeRequestRow(
+  row: {
+    kind: PaymentTransactionKind;
+    source: PaymentSource;
+    reason: string | null;
+    bookingModificationId: string | null;
+  },
+  bookingModificationId: string,
+  chargeKind: SupplementaryInvoiceChargeKind,
+): boolean {
+  if (chargeKind === "review") return isEditReviewChargeRequestRow(row, bookingModificationId);
+  return (
+    row.kind === PaymentTransactionKind.ADDITIONAL &&
+    row.source === PaymentSource.STRIPE &&
+    captureChangeId(row) === bookingModificationId
+  );
+}
+
+/**
+ * The same row, as a query. The ordinary arm is `captureChangeId`: the stamp
+ * wins, and a null stamp falls through to the review-charge reason. The two
+ * spellings decide the same request — one at classify time, one on the fresh
+ * read after enqueue (`INV-SSOT`).
+ */
+export function supplementaryInvoiceChargeRequestWhere(
+  bookingModificationId: string,
+  chargeKind: SupplementaryInvoiceChargeKind,
+) {
+  if (chargeKind === "review") return editReviewChargeRequestCriteria(bookingModificationId);
+  return {
+    kind: PaymentTransactionKind.ADDITIONAL,
+    source: PaymentSource.STRIPE,
+    OR: [
+      { bookingModificationId },
+      {
+        bookingModificationId: null,
+        reason: buildEditFinancialReviewChargeReason(bookingModificationId),
+      },
+    ],
+  } as const;
+}
+
+export function missingSupplementaryInvoiceManualReviewSummary(
+  reason: "capture-short-of-ask" | "intent-mint-awaiting-recovery",
+  chargeKind: SupplementaryInvoiceChargeKind,
+): string {
+  if (chargeKind === "review") {
+    return reason === "capture-short-of-ask"
+      ? "A completed financial review priced this booking edit above what the member's card actually took, and no supplementary Xero invoice exists - the difference is owed outside any invoice, so raise it by hand."
+      : "A completed financial review priced this booking edit as money owed, but its card request has not been raised yet and its recovery is still owed - no supplementary Xero invoice can be raised until that replay runs.";
+  }
+  return reason === "capture-short-of-ask"
+    ? "This booking edit's card took less than the supplementary invoice would record, and no supplementary Xero invoice exists. The difference is owed outside any invoice, so raise it by hand."
+    : "This booking edit is money owed, but its card request has not been raised yet and its recovery is still owed. No supplementary Xero invoice can be raised until that replay runs.";
+}
+
+type SupplementaryInvoiceChargePayment = {
+  transactions: ReadonlyArray<{
+    kind: PaymentTransactionKind;
+    source: PaymentSource;
+    reason: string | null;
+    bookingModificationId: string | null;
+    stripePaymentIntentId: string | null;
+    amountCents: number;
+    status: PaymentStatus;
+    withdrawnAt: Date | null;
+    createdAt: Date;
+    insertionSeq: number;
+  }>;
+};
+
+export function planSupplementaryInvoicePayment({
   payment,
   bookingModificationId,
   expectedNetAmountCents,
   hasOpenIntentMintRecovery,
+  chargeKind,
 }: {
-  payment: BookingPaymentRecord | null | undefined;
+  payment: SupplementaryInvoiceChargePayment | null | undefined;
   bookingModificationId: string;
   /** What the repaired invoice would bill - and therefore book as received. */
   expectedNetAmountCents: number;
   /** An open edit-scoped `CREATE_ADDITIONAL_PAYMENT_INTENT` recovery row. */
   hasOpenIntentMintRecovery: boolean;
+  chargeKind: SupplementaryInvoiceChargeKind;
 }): EditReviewChargeInvoicePaymentPlan {
   // Newest first, and on a tie the row inserted last, matching
   // `findEditReviewChargeRequest`'s own `LEDGER_ROWS_NEWEST_FIRST` rather than
@@ -417,7 +509,7 @@ export function planEditReviewChargeInvoicePayment({
   const request =
     (payment?.transactions ?? [])
       .filter((transaction) =>
-        isEditReviewChargeRequestRow(transaction, bookingModificationId)
+        isSupplementaryInvoiceChargeRequestRow(transaction, bookingModificationId, chargeKind)
       )
       .sort(compareLedgerRowsNewestFirst)[0] ??
     null;

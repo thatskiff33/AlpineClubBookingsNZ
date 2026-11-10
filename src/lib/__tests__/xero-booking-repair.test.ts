@@ -10,7 +10,8 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND } from "@/lib/manual-settlement-reversal-event";
 import { unsettledRefundNoteRows } from "@/lib/xero-refund-note-unsettled";
 import { modificationNoteWording, readModificationNoteWording } from "@/lib/xero-refund-method";
-import { buildEditFinancialReviewChargeReason, buildLateCaptureApprovalRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
+import { buildAdditionalIntentRecoveryIdempotencyKey, buildEditFinancialReviewChargeReason, buildLateCaptureApprovalRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
+import { compareLedgerRowsNewestFirst } from "@/lib/payment-ledger-order";
 import { cardRefundPaidAnotherWayOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
 import {
   addKeptChangeCaptureFinding,
@@ -655,21 +656,21 @@ function createDependencies(state: {
           const booking = state.bookings.find(
             (item) => item.id === where?.payment?.bookingId
           );
+          const rowWhere = { ...(where ?? {}) };
+          delete rowWhere.payment;
           const [row] = (booking?.payment?.transactions ?? [])
-            .filter(
-              (transaction: any) =>
-                transaction.kind === where.kind &&
-                transaction.source === where.source &&
-                transaction.reason === where.reason &&
-                (where.stripePaymentIntentId === undefined ||
-                  transaction.stripePaymentIntentId ===
-                    where.stripePaymentIntentId)
+            .filter((transaction: any) =>
+              matchesWhere(
+                {
+                  ...transaction,
+                  reason: transaction.reason ?? null,
+                  bookingModificationId: transaction.bookingModificationId ?? null,
+                  insertionSeq: transaction.insertionSeq ?? 0,
+                },
+                rowWhere,
+              ),
             )
-            .sort(
-              (left: any, right: any) =>
-                new Date(right.createdAt).getTime() -
-                new Date(left.createdAt).getTime()
-            );
+            .sort(compareLedgerRowsNewestFirst);
           return row
             ? { status: row.status, amountCents: row.amountCents }
             : null;
@@ -2884,98 +2885,275 @@ describe("runBookingXeroRepair", () => {
     );
   });
 
-  it("classifies missing supplementary invoices for positive booking modifications", async () => {
-    const booking = makeBooking({
-      modifications: [
+  describe("ordinary price-increase payment plan (#4413)", () => {
+    /** A price increase the primary invoice, raised on 1 May, does not bill. */
+    function ordinaryModification(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "mod_1",
+        bookingId: "booking_1",
+        modificationType: "DATE_CHANGE",
+        priceDiffCents: 2500,
+        changeFeeCents: 500,
+        createdAt: new Date("2026-05-02T00:00:00Z"),
+        ...overrides,
+      };
+    }
+
+    /** This edit's own Stripe additional request. Amount defaults to the $30 net. */
+    function ordinaryRequest(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "txn_ordinary",
+        paymentId: "payment_1",
+        kind: "ADDITIONAL",
+        source: "STRIPE",
+        stripePaymentIntentId: "pi_ordinary",
+        amountCents: 3000,
+        refundedAmountCents: 0,
+        status: "PENDING",
+        paymentMethodId: "pm_123",
+        reason: "guest_add",
+        withdrawnAt: null,
+        bookingModificationId: "mod_1",
+        createdAt: new Date("2026-05-02T01:00:00Z"),
+        insertionSeq: 2,
+        updatedAt: new Date("2026-05-02T01:00:00Z"),
+        ...overrides,
+      };
+    }
+
+    function bookingWith(transactions: unknown[], modification: Record<string, unknown> = ordinaryModification()) {
+      return makeBooking({
+        modifications: [modification],
+        payment: { ...makeBooking().payment, transactions },
+      });
+    }
+
+    async function repair(booking: ReturnType<typeof makeBooking>, extra: Record<string, unknown> = {}, apply = false) {
+      const deps = createDependencies({
+        bookings: [booking],
+        operations: [makePrimaryInvoiceCreateOperation()],
+        ...extra,
+      });
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        apply,
+        dependencies: deps,
+        scope: { all: true },
+      });
+      return { report, deps, bookingReport: report.passes[0].bookings[0] };
+    }
+
+    function queueAction(bookingReport: { actions: Array<{ type: string; payload: Record<string, unknown>; status?: string; resultMessage?: string }> }) {
+      return bookingReport.actions.find((action) => action.type === "QUEUE_SUPPLEMENTARY_INVOICE");
+    }
+
+    it("parks an unpaid live card ask on its intent and does not record a Stripe payment yet", async () => {
+      const { bookingReport, deps } = await repair(bookingWith([ordinaryRequest()]), {}, true);
+
+      expect(bookingReport.findings.map((finding) => finding.code)).toContain("MISSING_SUPPLEMENTARY_INVOICE");
+      expect(queueAction(bookingReport)?.payload).toMatchObject({
+        bookingModificationId: "mod_1",
+        priceDiffCents: 2500,
+        changeFeeCents: 500,
+        recordPayment: true,
+        waitForConfirmedAdditionalPayment: true,
+        paymentIntentId: "pi_ordinary",
+        chargeKind: "ordinary",
+      });
+      expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingModificationId: "mod_1", priceDiffCents: 2500, changeFeeCents: 500 }),
         {
-          id: "mod_1",
-          bookingId: "booking_1",
-          modificationType: "DATE_CHANGE",
-          priceDiffCents: 2500,
-          changeFeeCents: 500,
-          createdAt: new Date("2026-05-02T00:00:00Z"),
+          recordPayment: true,
+          waitForConfirmedAdditionalPayment: true,
+          paymentIntentId: "pi_ordinary",
         },
-      ],
-    });
-    const deps = createDependencies({
-      bookings: [booking],
-      // #3199: the primary invoice went out on 1 May, the edit landed on 2 May.
-      // Invoice first, so this edit's difference is genuinely unbilled.
-      operations: [makePrimaryInvoiceCreateOperation()],
+      );
+      expect(deps.releaseXeroSupplementaryInvoiceOperationsForPaymentIntent).not.toHaveBeenCalled();
     });
 
-    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
-      dependencies: deps,
-      scope: { all: true },
-    });
+    it("records payment when the edit's own capture covers the invoice", async () => {
+      const { deps } = await repair(bookingWith([ordinaryRequest({ status: "SUCCEEDED" })]), {}, true);
 
-    const bookingReport = report.passes[0].bookings[0];
-    expect(bookingReport.findings.map((finding) => finding.code)).toContain(
-      "MISSING_SUPPLEMENTARY_INVOICE"
-    );
-    expect(bookingReport.actions.map((action) => action.type)).toContain(
-      "QUEUE_SUPPLEMENTARY_INVOICE"
-    );
-
-    /**
-     * #3187 CONTROL, and the boundary that change turns on.
-     *
-     * A modification with no financial review contributes NO payment plan, so
-     * the queued payload must carry none of the payment keys and the enqueue
-     * keeps its own `recordPayment: true` default - correct here, because this
-     * arm was built for a price increase whose card was captured BEFORE the
-     * invoice was queued. Read by eye that boundary held; nothing guarded it,
-     * and deleting the `editReviewChargeCents > 0` gate in the classifier left
-     * all 46 tests passing while turning this booking's invoice UNPAID - a late
-     * change fee sitting outstanding in Xero against money already banked.
-     */
-    const queueAction = bookingReport.actions.find(
-      (action) => action.type === "QUEUE_SUPPLEMENTARY_INVOICE"
-    );
-    expect(queueAction?.payload).not.toHaveProperty("recordPayment");
-    expect(queueAction?.payload).not.toHaveProperty(
-      "waitForConfirmedAdditionalPayment"
-    );
-    expect(queueAction?.payload).not.toHaveProperty("paymentIntentId");
-  });
-
-  it("CONTROL: applying an ordinary price increase passes the enqueue no payment overrides (#3187)", async () => {
-    const booking = makeBooking({
-      modifications: [
+      expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+        expect.anything(),
         {
-          id: "mod_1",
-          bookingId: "booking_1",
-          modificationType: "DATE_CHANGE",
-          priceDiffCents: 2500,
-          changeFeeCents: 500,
-          createdAt: new Date("2026-05-02T00:00:00Z"),
+          recordPayment: true,
+          waitForConfirmedAdditionalPayment: false,
+          paymentIntentId: "pi_ordinary",
         },
-      ],
-    });
-    const deps = createDependencies({
-      bookings: [booking],
-      // #3199: invoice first, edit second - the arm this control guards.
-      operations: [makePrimaryInvoiceCreateOperation()],
+      );
+      expect(deps.releaseXeroSupplementaryInvoiceOperationsForPaymentIntent).not.toHaveBeenCalled();
     });
 
-    await runBookingXeroRepair(CLUB_FORMAT_TEST, {
-      apply: true,
-      dependencies: deps,
-      scope: { all: true },
+    it("raises the invoice unpaid when nothing attributable was captured", async () => {
+      const unpaid = async (booking: ReturnType<typeof makeBooking>) => {
+        const { deps } = await repair(booking, {}, true);
+        expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+          expect.anything(),
+          { recordPayment: false, waitForConfirmedAdditionalPayment: false, paymentIntentId: undefined },
+        );
+      };
+      // No request at all.
+      await unpaid(bookingWith([]));
+      // The booking is paid, and an old capture names no edit. That cash is not this invoice's.
+      await unpaid(bookingWith([
+        ordinaryRequest({ bookingModificationId: null, reason: null, status: "SUCCEEDED", stripePaymentIntentId: "pi_old" }),
+      ]));
+      // The legacy additional-payment mirror says succeeded. It is not a ledger attribution.
+      await unpaid(makeBooking({
+        modifications: [ordinaryModification()],
+        payment: {
+          ...makeBooking().payment,
+          additionalPaymentIntentId: "pi_legacy",
+          additionalAmountCents: 3000,
+          additionalPaymentStatus: "SUCCEEDED",
+          transactions: [],
+        },
+      }));
     });
 
-    // Every override undefined, so `enqueueXeroSupplementaryInvoiceOperation`
-    // falls through to the defaults it has always applied here. The payload
-    // assertion above proves the classifier put nothing there; this proves the
-    // apply path does not invent anything either.
-    expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
-      expect.objectContaining({ bookingModificationId: "mod_1" }),
-      {
-        recordPayment: undefined,
-        waitForConfirmedAdditionalPayment: undefined,
-        paymentIntentId: undefined,
-      }
-    );
+    it("raises a bank-transfer ask unpaid", async () => {
+      const { deps } = await repair(bookingWith([
+        ordinaryRequest({ source: "INTERNET_BANKING", stripePaymentIntentId: null, status: "SUCCEEDED" }),
+      ]), {}, true);
+
+      expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+        expect.anything(),
+        { recordPayment: false, waitForConfirmedAdditionalPayment: false, paymentIntentId: undefined },
+      );
+    });
+
+    it("queues nothing for a withdrawn request", async () => {
+      const { bookingReport, deps } = await repair(bookingWith([
+        ordinaryRequest({ status: "FAILED", withdrawnAt: new Date("2026-05-04T00:00:00Z") }),
+      ]));
+
+      expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_SUPPLEMENTARY_INVOICE");
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_SUPPLEMENTARY_INVOICE");
+      expect(deps.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+    });
+
+    it("defers while the ordinary intent mint is still owed, and a review recovery does not", async () => {
+      const open = (idempotencyKey: string) => ({ bookingId: "booking_1", idempotencyKey, status: "PENDING" });
+      const deferred = await repair(bookingWith([]), {
+        editReviewChargeIntentRecoveries: [open(buildAdditionalIntentRecoveryIdempotencyKey("mod_1"))],
+      });
+      const finding = deferred.bookingReport.findings.find((candidate) => candidate.code === "MISSING_SUPPLEMENTARY_INVOICE");
+      expect(finding?.severity).toBe("manual_review");
+      expect(finding?.safeToAutoApply).toBe(false);
+      expect(finding?.summary).not.toContain("financial review");
+      expect(finding?.details).toMatchObject({ editReviewPaymentReason: "intent-mint-awaiting-recovery" });
+      expect(deferred.deps.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+
+      const { deps } = await repair(bookingWith([]), {
+        editReviewChargeIntentRecoveries: [open(`edit_financial_review_additional_intent_recovery_mod_1`)],
+      }, true);
+      expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ recordPayment: false, waitForConfirmedAdditionalPayment: false }),
+      );
+    });
+
+    it("sends a capture short of the invoice to manual review", async () => {
+      const { bookingReport, deps } = await repair(bookingWith([
+        ordinaryRequest({ status: "SUCCEEDED", amountCents: 1000 }),
+      ]));
+      const finding = bookingReport.findings.find((candidate) => candidate.code === "MISSING_SUPPLEMENTARY_INVOICE");
+      expect(finding?.severity).toBe("manual_review");
+      expect(finding?.summary).not.toContain("financial review");
+      expect(finding?.details).toMatchObject({
+        editReviewPaymentReason: "capture-short-of-ask",
+        capturedAmountCents: 1000,
+        netAmountCents: 3000,
+      });
+      expect(deps.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+    });
+
+    it("follows the newest request for this edit, not an older capture or another edit's", async () => {
+      const sameInstant = new Date("2026-05-02T01:00:00Z");
+      const { deps } = await repair(bookingWith([
+        ordinaryRequest({
+          id: "txn_old",
+          status: "SUCCEEDED",
+          stripePaymentIntentId: "pi_old",
+          createdAt: sameInstant,
+          insertionSeq: 1,
+        }),
+        ordinaryRequest({
+          id: "txn_new",
+          status: "PENDING",
+          stripePaymentIntentId: "pi_new",
+          createdAt: sameInstant,
+          insertionSeq: 5,
+        }),
+        ordinaryRequest({
+          id: "txn_other",
+          bookingModificationId: "mod_other",
+          status: "SUCCEEDED",
+          stripePaymentIntentId: "pi_other",
+          createdAt: new Date("2026-05-03T00:00:00Z"),
+          insertionSeq: 9,
+        }),
+      ]), {}, true);
+
+      expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          waitForConfirmedAdditionalPayment: true,
+          paymentIntentId: "pi_new",
+        }),
+      );
+    });
+
+    it("keeps the signed invoice components on a card ask", async () => {
+      const { bookingReport } = await repair(bookingWith(
+        [ordinaryRequest({ amountCents: 500, bookingModificationId: "mod_mixed" })],
+        ordinaryModification({ id: "mod_mixed", priceDiffCents: -500, changeFeeCents: 1000 }),
+      ));
+      expect(queueAction(bookingReport)?.payload).toMatchObject({
+        bookingModificationId: "mod_mixed",
+        priceDiffCents: -500,
+        changeFeeCents: 1000,
+        recordPayment: true,
+        waitForConfirmedAdditionalPayment: true,
+        paymentIntentId: "pi_ordinary",
+      });
+    });
+
+    it("is idempotent: a second run does not queue the invoice again", async () => {
+      const booking = bookingWith([ordinaryRequest()]);
+      const deps = createDependencies({
+        bookings: [booking],
+        operations: [makePrimaryInvoiceCreateOperation()],
+      });
+      const run = () => runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+      await run();
+      await run();
+      expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledTimes(1);
+    });
+
+    it("releases exactly once when the card is captured during the sweep, and not when it is still unpaid or short", async () => {
+      const captured = ordinaryRequest();
+      const capturedRepair = await repair(bookingWith([captured]), {
+        onSupplementaryInvoiceEnqueue: () => {
+          captured.status = "SUCCEEDED";
+        },
+      }, true);
+      expect(capturedRepair.deps.releaseXeroSupplementaryInvoiceOperationsForPaymentIntent).toHaveBeenCalledTimes(1);
+      expect(capturedRepair.deps.releaseXeroSupplementaryInvoiceOperationsForPaymentIntent).toHaveBeenCalledWith("pi_ordinary");
+      expect(queueAction(capturedRepair.bookingReport)?.resultMessage).toContain("released for sending");
+
+      const pending = await repair(bookingWith([ordinaryRequest()]), {}, true);
+      expect(pending.deps.releaseXeroSupplementaryInvoiceOperationsForPaymentIntent).not.toHaveBeenCalled();
+
+      const short = ordinaryRequest({ amountCents: 1000 });
+      const shortRepair = await repair(bookingWith([short]), {
+        onSupplementaryInvoiceEnqueue: () => {
+          short.status = "SUCCEEDED";
+        },
+      }, true);
+      expect(shortRepair.deps.releaseXeroSupplementaryInvoiceOperationsForPaymentIntent).not.toHaveBeenCalled();
+      expect(queueAction(shortRepair.bookingReport)?.status).toBe("manual_review");
+    });
   });
 
   // #1356: a supplementary invoice legitimately parked in WAITING_PAYMENT is
@@ -8173,6 +8351,38 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
     );
   });
 
+  it("follows the review charge, not a newer Stripe request merely stamped with the edit", async () => {
+    const base = bookingWithReviewCharge({ status: "PENDING", insertionSeq: 1 });
+    base.payment.transactions.push({
+      id: "txn_ordinary",
+      paymentId: "payment_1",
+      kind: "ADDITIONAL",
+      source: "STRIPE",
+      stripePaymentIntentId: "pi_ordinary",
+      amountCents: 4000,
+      refundedAmountCents: 0,
+      status: "PENDING",
+      paymentMethodId: "pm_123",
+      reason: "guest_add",
+      withdrawnAt: null,
+      bookingModificationId: "mod_parked",
+      createdAt: new Date("2026-05-03T00:00:00Z"),
+      insertionSeq: 9,
+      updatedAt: new Date("2026-05-03T00:00:00Z"),
+    } as never);
+    const deps = createDependencies({
+      bookings: [base],
+      editReviewChargeShares: [settledShare()],
+    });
+
+    await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+
+    expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ paymentIntentId: "pi_review", waitForConfirmedAdditionalPayment: true }),
+    );
+  });
+
   it("reports a sent supplementary invoice that is SHORT of the settled total, and does not auto-apply it", async () => {
     const booking = makeBooking({ modifications: [parkedModification()] });
     const deps = createDependencies({
@@ -11046,9 +11256,14 @@ describe("runBookingXeroRepair - a change's card capture no Xero invoice records
         bookingReport.actions.find((action) => action.type === "QUEUE_SUPPLEMENTARY_INVOICE");
       const withReceipt = (await withChange("linked")).bookingReport;
       expect(queueAction(withReceipt)?.payload).toMatchObject({ bookingModificationId: "mod_change", recordPayment: false });
-      // Control: with no receipt, the enqueue's own default stands.
+      // No receipt: the capture covers the invoice, so the repair records that payment explicitly.
       const without = (await withChange("none")).bookingReport;
-      expect(queueAction(without)?.payload).not.toHaveProperty("recordPayment");
+      expect(queueAction(without)?.payload).toMatchObject({
+        bookingModificationId: "mod_change",
+        recordPayment: true,
+        waitForConfirmedAdditionalPayment: false,
+        paymentIntentId: "pi_change",
+      });
     });
 
     it("MUTATION round 7: raises it unpaid where an officer's review charge for the change - no stamp, its reason naming the change - has a receipt", async () => {
@@ -11065,7 +11280,11 @@ describe("runBookingXeroRepair - a change's card capture no Xero invoice records
       const queueAction = (bookingReport: { actions: Array<{ type: string; payload: Record<string, unknown> }> }) =>
         bookingReport.actions.find((action) => action.type === "QUEUE_SUPPLEMENTARY_INVOICE");
       const queued = (await withChange("queued")).bookingReport;
-      expect(queueAction(queued)?.payload).not.toHaveProperty("recordPayment");
+      expect(queueAction(queued)?.payload).toMatchObject({
+        bookingModificationId: "mod_change",
+        recordPayment: true,
+        paymentIntentId: "pi_change",
+      });
     });
 
     it.each(["running", "planned"] as const)(

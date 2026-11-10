@@ -1887,6 +1887,23 @@ sequenceDiagram
     REP-->>CLI: pass reports + human summary
 ```
 
+**A repaired price-increase invoice follows the edit's own request (#4413).**
+Repair does not inherit the outbox default that records a Stripe payment.
+`planSupplementaryInvoicePayment` (`xero-booking-repair-payments.ts`) uses the
+same unpaid-versus-card decision a live edit uses
+(`xero-booking-edit-settlement.ts`). An outstanding card ask parks the invoice
+`WAITING_PAYMENT` on that request's PaymentIntent. A captured request that
+covers the invoice records the payment. A bank transfer, or an edit with no
+card request attributed to it, is raised unpaid (`recordPayment: false`). An
+open intent-mint recovery, or a capture short of the invoice, is left for a
+person. The request is the edit's own: a review charge for a review-priced
+edit, and for an ordinary edit the newest Stripe additional request
+`captureChangeId` attributes to it. The booking's paid status, the legacy
+additional-payment mirror, and a capture that names no edit are not evidence
+this invoice was paid. A capture its own receipt records is still raised
+unpaid (`INV-PAY-139`). After enqueue, a card captured during the sweep is
+released by the live release, once, and only when that capture covers the ask.
+
 **An operation resolved in Xero is done (#3635, `INV-INT-025`).** The
 operations panel's **Resolve** records that an officer fixed a failed or
 partial operation by hand in Xero. It leaves the row `FAILED`/`PARTIAL` and
