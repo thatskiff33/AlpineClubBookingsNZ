@@ -444,7 +444,14 @@ async function mintModificationAdditionalAsk(
   // #3954, #4744: a re-issue, or an increase that folded a waiting retry, wrote
   // its recovery in the edit's transaction. This mint runs under that row's
   // Stripe key and completes it — unless a later edit or the runner moved it.
-  const doorRecovery = params.reviewCharge ? null : await readReissuedAskRecovery(result.bookingModificationId);
+  // An ordinary increase wrote no such row; looking one up would ask the store
+  // for a recovery that does not exist and is not this mint's to complete.
+  const wroteDoorRecovery =
+    result.additionalAsk.reissuesUnpaidAsk || result.additionalAsk.completesFoldedRecovery;
+  const doorRecovery =
+    params.reviewCharge || !wroteDoorRecovery
+      ? null
+      : await readReissuedAskRecovery(result.bookingModificationId);
   if (doorRecovery && doorRecovery.status !== PaymentRecoveryOperationStatus.PENDING) {
     logger.info(
       { bookingId, bookingModificationId: result.bookingModificationId, operationId: doorRecovery.id, status: doorRecovery.status },

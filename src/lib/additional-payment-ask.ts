@@ -171,18 +171,19 @@ class AdditionalAskValue {
   readonly #paymentBalanceCents: number | null;
 
   /**
-   * #3954: this ask RE-ISSUES, smaller, an unpaid ask a price reduction retired
-   * (`reissueUnpaidAdditionalAsk`). The member's card was already asked for it,
-   * so the minter may mint it on a credit-paid ($0) booking whose reduction
-   * captured nothing - the one place the minter reads this.
+   * #3954: a smaller re-issue of a retired unpaid ask. The minter may mint it
+   * on a credit-paid booking. #4744: this increase folded a waiting retry, so
+   * the edit wrote that recovery and the door's mint completes it.
    */
   readonly #reissuesUnpaidAsk: boolean;
+  readonly #completesFoldedRecovery: boolean;
 
-  constructor(params: { ownCents: number; carriedCents: number; reissuesUnpaidAsk?: boolean; sizedOn?: AdditionalAskPayment | null }) {
+  constructor(params: { ownCents: number; carriedCents: number; reissuesUnpaidAsk?: boolean; completesFoldedRecovery?: boolean; sizedOn?: AdditionalAskPayment | null }) {
     this.amountCents = params.ownCents + params.carriedCents;
     this.#paymentBalanceCents = askSizedOnBalanceCents(params.sizedOn);
     this.#carriedCents = params.carriedCents;
     this.#reissuesUnpaidAsk = params.reissuesUnpaidAsk ?? false;
+    this.#completesFoldedRecovery = params.completesFoldedRecovery ?? false;
   }
 
   get carriedCents(): number {
@@ -192,9 +193,8 @@ class AdditionalAskValue {
   get paymentBalanceCents(): number | null { return this.#paymentBalanceCents; }
 
   /** Private for the reason `#carriedCents` is: a spread cannot carry it. */
-  get reissuesUnpaidAsk(): boolean {
-    return this.#reissuesUnpaidAsk;
-  }
+  get reissuesUnpaidAsk(): boolean { return this.#reissuesUnpaidAsk; }
+  get completesFoldedRecovery(): boolean { return this.#completesFoldedRecovery; }
 }
 
 /**
@@ -252,6 +252,7 @@ export function sizeAdditionalAsk({
   return buildAdditionalAsk({
     ownCents: priceDiffCents + changeFeeCents,
     carriedCents: outstandingAdditionalAskCents(payment) + Math.max(0, foldedWaitingAskCents),
+    completesFoldedRecovery: foldedWaitingAskCents > 0,
     sizedOn: payment ?? null,
   });
 }
