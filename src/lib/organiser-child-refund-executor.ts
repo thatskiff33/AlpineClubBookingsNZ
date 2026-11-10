@@ -10,6 +10,7 @@ import {
   PaymentRecoveryOperationStatus,
   PaymentStatus,
   type PaymentRecoveryOperation,
+  type Prisma,
 } from "@prisma/client";
 import type Stripe from "stripe";
 
@@ -55,11 +56,13 @@ import {
 } from "@/lib/xero-operation-outbox";
 
 /**
- * A refund Stripe already made under this key - read only on a replay. One that
- * Stripe later reported failed or cancelled is not it: the debt was reopened
- * for exactly that refund (`reconcilePendingOrganiserChildRefunds`), so a
- * replay past Stripe's 24-hour key window asks again rather than re-reading the
- * failure for ever.
+ * A refund Stripe already made under this key. Read on every attempt, including
+ * the first (#4851): a re-arm sets attempts back to 0, the runner's claim makes
+ * the next run attempt 1, and skipping the lookup then would send a second
+ * refund once Stripe's key window has closed. One that Stripe later reported
+ * failed or cancelled is not it: the debt was reopened for exactly that refund
+ * (`reconcilePendingOrganiserChildRefunds`), so a replay past Stripe's 24-hour
+ * key window asks again rather than re-reading the failure for ever.
  */
 async function findProviderRefundForKey(
   stripe: { listRefundsForPaymentIntent: typeof listRefundsForPaymentIntent },
@@ -92,6 +95,106 @@ export function reopenedRetryAt(refund: Pick<Stripe.Refund, "created">, now: Dat
 function settlementStatusForRefunds(refundedCents: number, capturedCents: number): PaymentStatus {
   if (refundedCents <= 0) return PaymentStatus.SUCCEEDED;
   return refundedCents >= capturedCents ? PaymentStatus.REFUNDED : PaymentStatus.PARTIALLY_REFUNDED;
+}
+
+/**
+ * The record half of an organiser child's refund, inside the caller's
+ * transaction. The caller already holds `lock(1)` and the child payment row;
+ * this writes the `PaymentRefund`, the mirror, the settlement status, the card
+ * note and the `SUCCEEDED` claim, and opens no transaction of its own. A lost
+ * claim (`claimed === 0`) has still written those rows in this transaction:
+ * the caller throws to roll them back, or, as the executor does, leaves a
+ * repeated Stripe id as the unique refund row's no-op.
+ */
+export async function recordOrganiserChildRefundInTransaction(
+  tx: Prisma.TransactionClient,
+  input: {
+    operation: { id: string; paymentIntentId: string };
+    paymentId: string;
+    settlement: { id: string; amountCents: number };
+    refund: Stripe.Refund;
+    /** Defaults to the executor's claim: not yet SUCCEEDED. A close passes `deadRowClaimWhere`. */
+    claimWhere?: Prisma.PaymentRecoveryOperationWhereInput;
+  },
+): Promise<{ created: boolean; queuedCreditNoteId: string | null; claimed: number }> {
+  const { operation, paymentId, settlement, refund } = input;
+  const entry = await recordStripeRefundLedgerEntry({
+    paymentId,
+    paymentTransactionId: null,
+    refund,
+    fallbackPaymentIntentId: operation.paymentIntentId,
+    store: tx,
+  });
+  if (!entry.created) {
+    // Stripe answers a repeated key with its ORIGINAL response for 24 hours,
+    // so a replay of a refund Stripe has since failed reads back `pending`.
+    // The row knows better; the debt stays owed rather than closing on it.
+    const known = await tx.paymentRefund.findUnique({
+      where: { stripeRefundId: refund.id },
+      select: { status: true },
+    });
+    if (known && isRefusedRefundStatus(known.status)) {
+      throw new Error(`Organiser child refund ${refund.id} is recorded as ${known.status}; the refund is still owed`);
+    }
+  }
+  let queuedCreditNoteId: string | null = null;
+  if (entry.created) {
+    const current = await tx.payment.findUniqueOrThrow({
+      where: { id: paymentId },
+      select: { id: true, status: true, amountCents: true, refundedAmountCents: true },
+    });
+    // What had gone back BEFORE this refund (`organiserChildRefundedCents`,
+    // which reads its refund rows - this one now among them - so a mirror a
+    // reconcile zeroed cannot shrink the total), plus this refund.
+    const before = Math.max(
+      current.refundedAmountCents,
+      (await organiserChildRefundedCents(tx, current)) - refund.amount,
+    );
+    const next = Math.min(current.amountCents, before + refund.amount);
+    await tx.payment.update({
+      where: { id: paymentId },
+      data: {
+        refundedAmountCents: next,
+        status: getNextRefundedPaymentStatus(current.status, current.amountCents, next) ?? current.status,
+      },
+    });
+    // After the refund row, so the note's cash evidence already holds it.
+    const queued = await enqueueXeroRefundCreditNoteOperation(paymentId, refund.amount, {
+      store: tx,
+      refundMethod: "card",
+    });
+    queuedCreditNoteId = queued.queueOperationId;
+  }
+  // #3854: the child's ledger converges from its refund rows here, as every
+  // other card refund's does at `reconcilePaymentAggregates` - which this
+  // recorder never reaches, since the child has no transaction row to derive
+  // a mirror from. Keyed by the refund row, so a replay posts nothing more.
+  await syncBookingLedgerSettlements({ paymentId, store: tx });
+  const combined = await tx.paymentRefund.aggregate({
+    where: { stripePaymentIntentId: operation.paymentIntentId, status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES } },
+    _sum: { amountCents: true },
+  });
+  const combinedRefundedCents = combined._sum.amountCents ?? 0;
+  if (combinedRefundedCents > settlement.amountCents) {
+    throw new Error(
+      `Refunds recorded on the combined payment of settlement ${settlement.id} exceed what it captured`,
+    );
+  }
+  await tx.groupBookingSettlement.updateMany({
+    where: { id: settlement.id, status: { in: [...ORGANISER_PAID_SETTLEMENT_STATUSES] } },
+    data: { status: settlementStatusForRefunds(combinedRefundedCents, settlement.amountCents) },
+  });
+  const claimed = await tx.paymentRecoveryOperation.updateMany({
+    where: input.claimWhere ?? { id: operation.id, status: { not: PaymentRecoveryOperationStatus.SUCCEEDED } },
+    data: {
+      status: PaymentRecoveryOperationStatus.SUCCEEDED,
+      nextRetryAt: null,
+      lastError: null,
+      processingStartedAt: null,
+      succeededAt: new Date(),
+    },
+  });
+  return { created: entry.created, queuedCreditNoteId, claimed: claimed.count };
 }
 
 /**
@@ -133,8 +236,10 @@ export async function processOrganiserChildRefundOperation(
     organiserChildRefundKey: key,
     reason: organiserChildRefundReasonForKey(key),
   };
+  // Every attempt, including the first. A refused match is ignored, and the
+  // send follows; a live match is recorded and not sent again.
   const refund: Stripe.Refund =
-    (operation.attempts > 1 ? await findProviderRefundForKey(stripe, operation.paymentIntentId, key) : null) ??
+    (await findProviderRefundForKey(stripe, operation.paymentIntentId, key)) ??
     (await stripe.processRefund({
       paymentIntentId: operation.paymentIntentId,
       amountCents: operation.amountCents,
@@ -148,143 +253,95 @@ export async function processOrganiserChildRefundOperation(
   const recorded = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     await lockPaymentForRefundedTotal(tx, payment.id);
-    const entry = await recordStripeRefundLedgerEntry({
+    return recordOrganiserChildRefundInTransaction(tx, {
+      operation,
       paymentId: payment.id,
-      paymentTransactionId: null,
+      settlement,
       refund,
-      fallbackPaymentIntentId: operation.paymentIntentId,
-      store: tx,
     });
-    if (!entry.created) {
-      // Stripe answers a repeated key with its ORIGINAL response for 24 hours,
-      // so a replay of a refund Stripe has since failed reads back `pending`.
-      // The row knows better; the debt stays owed rather than closing on it.
-      const known = await tx.paymentRefund.findUnique({
-        where: { stripeRefundId: refund.id },
-        select: { status: true },
-      });
-      if (known && isRefusedRefundStatus(known.status)) {
-        throw new Error(`Organiser child refund ${refund.id} is recorded as ${known.status}; the refund is still owed`);
-      }
-    }
-    let queuedCreditNoteId: string | null = null;
-    if (entry.created) {
-      const current = await tx.payment.findUniqueOrThrow({
-        where: { id: payment.id },
-        select: { id: true, status: true, amountCents: true, refundedAmountCents: true },
-      });
-      // What had gone back BEFORE this refund (`organiserChildRefundedCents`,
-      // which reads its refund rows - this one now among them - so a mirror a
-      // reconcile zeroed cannot shrink the total), plus this refund.
-      const before = Math.max(
-        current.refundedAmountCents,
-        (await organiserChildRefundedCents(tx, current)) - refund.amount,
-      );
-      const next = Math.min(current.amountCents, before + refund.amount);
-      await tx.payment.update({
-        where: { id: payment.id },
-        data: {
-          refundedAmountCents: next,
-          status: getNextRefundedPaymentStatus(current.status, current.amountCents, next) ?? current.status,
-        },
-      });
-      // After the refund row, so the note's cash evidence already holds it.
-      const queued = await enqueueXeroRefundCreditNoteOperation(payment.id, refund.amount, {
-        store: tx,
-        refundMethod: "card",
-      });
-      queuedCreditNoteId = queued.queueOperationId;
-    }
-    // #3854: the child's ledger converges from its refund rows here, as every
-    // other card refund's does at `reconcilePaymentAggregates` - which this
-    // recorder never reaches, since the child has no transaction row to derive
-    // a mirror from. Keyed by the refund row, so a replay posts nothing more.
-    await syncBookingLedgerSettlements({ paymentId: payment.id, store: tx });
-    const combined = await tx.paymentRefund.aggregate({
-      where: { stripePaymentIntentId: operation.paymentIntentId, status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES } },
-      _sum: { amountCents: true },
-    });
-    const combinedRefundedCents = combined._sum.amountCents ?? 0;
-    if (combinedRefundedCents > settlement.amountCents) {
-      throw new Error(
-        `Refunds recorded on the combined payment of settlement ${settlement.id} exceed what it captured`,
-      );
-    }
-    await tx.groupBookingSettlement.updateMany({
-      where: { id: settlement.id, status: { in: [...ORGANISER_PAID_SETTLEMENT_STATUSES] } },
-      data: { status: settlementStatusForRefunds(combinedRefundedCents, settlement.amountCents) },
-    });
-    await tx.paymentRecoveryOperation.updateMany({
-      where: { id: operation.id, status: { not: PaymentRecoveryOperationStatus.SUCCEEDED } },
-      data: {
-        status: PaymentRecoveryOperationStatus.SUCCEEDED,
-        nextRetryAt: null,
-        lastError: null,
-        processingStartedAt: null,
-        succeededAt: new Date(),
-      },
-    });
-    return { created: entry.created, queuedCreditNoteId };
   });
 
+  await finishRecordedOrganiserChildRefund({
+    operation,
+    payment,
+    settlementId: settlement.id,
+    refund,
+    recorded,
+    format,
+  });
+  return refund.id;
+}
+
+/**
+ * After the record transaction commits: kick the card note, write the booking
+ * event (never for an appeal, `INV-PAY-123`) and, when an earlier attempt
+ * failed, the recovery audit. The bank close does not call this. The close
+ * that records a refund Stripe already holds does.
+ */
+export async function finishRecordedOrganiserChildRefund(input: {
+  operation: Pick<PaymentRecoveryOperation, "id" | "bookingId" | "idempotencyKey" | "attempts" | "allocationPlan">;
+  payment: { id: string; booking: { memberId: string | null } };
+  settlementId: string;
+  refund: Pick<Stripe.Refund, "id" | "amount">;
+  recorded: { created: boolean; queuedCreditNoteId: string | null };
+  format: ClubFormat;
+}): Promise<void> {
+  const { operation, payment, settlementId, refund, recorded, format } = input;
   if (recorded.queuedCreditNoteId) {
     void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((err) =>
       logger.error({ err, operationId: operation.id }, "Failed to kick the Xero refund note for an organiser child refund"),
     );
   }
-  if (recorded.created) {
-    const amount = formatCents(refund.amount, format);
-    // The booking's own history carries the record; Stripe's refund id is logged.
-    logger.info(
-      { operationId: operation.id, settlementId: settlement.id, stripeRefundId: refund.id, refundCents: refund.amount },
-      "Organiser child refund recorded against the combined payment (#3653)",
+  if (!recorded.created) return;
+  const amount = formatCents(refund.amount, format);
+  logger.info(
+    { operationId: operation.id, settlementId, stripeRefundId: refund.id, refundCents: refund.amount },
+    "Organiser child refund recorded against the combined payment (#3653)",
+  );
+  // #3956: an approved appeal's refund writes no booking event, as no Stripe
+  // appeal refund does - the booking is already cancelled, and the narrative
+  // reads a REFUNDED event after the cancel as the cancellation's settlement.
+  // The appeal's own approval and its audit row carry the record.
+  if (!isOrganiserChildAppealRefundKey(operation.idempotencyKey)) {
+    await recordBookingEvent({
+      bookingId: operation.bookingId,
+      type: BookingEventType.REFUNDED,
+      actorMemberId: null,
+      amountCents: refund.amount,
+      reason: `${amount} was refunded to the group organiser's card, who paid for this booking.`,
+    }).catch((err) =>
+      logger.error({ err, bookingId: operation.bookingId }, "Failed to record the organiser child refund event"),
     );
-    // #3956: an approved appeal's refund writes no booking event, as no Stripe
-    // appeal refund does - the booking is already cancelled, and the narrative
-    // reads a REFUNDED event after the cancel as the cancellation's settlement.
-    // The appeal's own approval and its audit row carry the record.
-    if (!isOrganiserChildAppealRefundKey(key)) {
-      await recordBookingEvent({
-        bookingId: operation.bookingId,
-        type: BookingEventType.REFUNDED,
-        actorMemberId: null,
-        amountCents: refund.amount,
-        reason: `${amount} was refunded to the group organiser's card, who paid for this booking.`,
-      }).catch((err) =>
-        logger.error({ err, bookingId: operation.bookingId }, "Failed to record the organiser child refund event"),
-      );
-    }
-    // A refund an earlier attempt failed to make (the first claim is attempt
-    // 1), or one Stripe failed after it was recorded (the debt was reopened,
-    // with its attempts restarted at 0 - so the reopen's durable marker, not
-    // the count, says so): the door that decided it wrote its audit row before
-    // the money moved - a group cancel says it released the spot with the
-    // refund still owed - so the recovery says, in the same trail, that the
-    // money has now gone back.
-    if (operation.attempts > 1 || organiserChildRefundWasReopened(operation.allocationPlan)) {
-      logAudit({
-        action: "booking.payment.refund_recovered",
-        targetId: operation.bookingId,
-        subjectMemberId: bookingOwner(payment.booking).memberId,
-        entityType: "Booking",
-        entityId: operation.bookingId,
-        category: "booking",
-        severity: "critical",
-        outcome: "success",
-        summary: "Organiser child refund recovered",
-        details: `Recovered the refund of ${amount} to the group organiser's card for this joiner's booking, after an earlier attempt failed.`,
-        metadata: {
-          settlementId: settlement.id,
-          paymentId: payment.id,
-          refundCents: refund.amount,
-          stripeRefundId: refund.id,
-          attempts: operation.attempts,
-          reopened: organiserChildRefundWasReopened(operation.allocationPlan),
-        },
-      });
-    }
   }
-  return refund.id;
+  // A refund an earlier attempt failed to make (the first claim is attempt
+  // 1), or one Stripe failed after it was recorded (the debt was reopened,
+  // with its attempts restarted at 0 - so the reopen's durable marker, not
+  // the count, says so): the door that decided it wrote its audit row before
+  // the money moved - a group cancel says it released the spot with the
+  // refund still owed - so the recovery says, in the same trail, that the
+  // money has now gone back.
+  if (operation.attempts > 1 || organiserChildRefundWasReopened(operation.allocationPlan)) {
+    logAudit({
+      action: "booking.payment.refund_recovered",
+      targetId: operation.bookingId,
+      subjectMemberId: bookingOwner(payment.booking).memberId,
+      entityType: "Booking",
+      entityId: operation.bookingId,
+      category: "booking",
+      severity: "critical",
+      outcome: "success",
+      summary: "Organiser child refund recovered",
+      details: `Recovered the refund of ${amount} to the group organiser's card for this joiner's booking, after an earlier attempt failed.`,
+      metadata: {
+        settlementId,
+        paymentId: payment.id,
+        refundCents: refund.amount,
+        stripeRefundId: refund.id,
+        attempts: operation.attempts,
+        reopened: organiserChildRefundWasReopened(operation.allocationPlan),
+      },
+    });
+  }
 }
 
 /**

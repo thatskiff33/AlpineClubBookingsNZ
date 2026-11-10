@@ -68,6 +68,7 @@ import {
   BookingStatus,
   GroupBookingPaymentMode,
   GroupBookingStatus,
+  PaymentSource,
   PaymentStatus,
   Prisma,
 } from "@prisma/client";
@@ -902,6 +903,115 @@ export type GroupSettlementRefundReplayResult = {
  * Throws on Stripe failure so the recovery machinery applies backoff and
  * alerts only when retries exhaust (owner decision, 2026-07-06).
  */
+
+/**
+ * One child's mirror of a frozen pre-#3653 plan, inside the caller's
+ * transaction. The replay and the Stuck States bank close share this body.
+ * `enqueueCreditNote` is true only when the money went back to the card: the
+ * bank close credits the group's invoice by hand and must not enqueue a note
+ * worded as a card refund.
+ */
+export async function applyLegacyGroupChildRefundMirror(
+  tx: Prisma.TransactionClient,
+  input: {
+    bookingId: string;
+    paymentId: string;
+    lodgeId: string;
+    refundForChild: number;
+    settlement: { id: string; source: PaymentSource };
+    enqueueCreditNote: boolean;
+  },
+): Promise<{ applied: boolean; raised: boolean; refundedCents: number; queuedOperationId: string | null }> {
+  const { bookingId, paymentId, lodgeId, refundForChild, settlement, enqueueCreditNote } = input;
+  const payment = await readGroupChildMirrorForPlanReplay(tx, { bookingId, paymentId });
+  if (!payment.claimedByGroupCancel) {
+    return { applied: false, raised: false, refundedCents: 0, queuedOperationId: null };
+  }
+  if (payment.planShareWritten) {
+    await postGroupSettlementRefundLedgerLine({
+      store: tx,
+      settlement,
+      bookingId,
+      lodgeId,
+      refundCents: refundForChild,
+    });
+    return { applied: false, raised: false, refundedCents: 0, queuedOperationId: null };
+  }
+  const nextRefunded = mirrorPlanRefundedCents(payment, refundForChild);
+  const applied = await tx.payment.updateMany({
+    where: { id: paymentId, refundedAmountCents: payment.refundedAmountCents },
+    data: {
+      refundedAmountCents: nextRefunded,
+      status: nextRefunded >= payment.amountCents ? PaymentStatus.REFUNDED : PaymentStatus.PARTIALLY_REFUNDED,
+    },
+  });
+  if (applied.count !== 1) {
+    return { applied: false, raised: false, refundedCents: 0, queuedOperationId: null };
+  }
+  const refundedCents = nextRefunded - payment.refundedAmountCents;
+  const queued = enqueueCreditNote
+    ? await enqueueXeroRefundCreditNoteOperation(paymentId, refundedCents, { store: tx })
+    : null;
+  await postGroupSettlementRefundLedgerLine({
+    store: tx,
+    settlement,
+    bookingId,
+    lodgeId,
+    refundCents: refundForChild,
+  });
+  return { applied: true, raised: true, refundedCents, queuedOperationId: queued?.queueOperationId ?? null };
+}
+
+/** The replay's follow-up once a child's mirror has committed: the note kick, the audit and the booking event. */
+export async function recordLegacyGroupChildRefundRecovered(input: {
+  child: { id: string; memberId: string | null };
+  settlementId: string;
+  groupBookingId: string;
+  paymentId: string;
+  refundedCents: number;
+  queuedOperationId: string | null;
+  format: ClubFormat;
+  outcome: string;
+}): Promise<void> {
+  const { child, settlementId, groupBookingId, paymentId, refundedCents, queuedOperationId, format, outcome } = input;
+  if (queuedOperationId && (await isXeroConnected())) {
+    void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((xeroErr) =>
+      logger.error(
+        { err: xeroErr, bookingId: child.id },
+        "Failed to kick Xero refund credit note worker after settlement refund replay",
+      ),
+    );
+  }
+  logAudit({
+    action: "booking.payment.refund_recovered",
+    targetId: child.id,
+    subjectMemberId: bookingOwner(child).memberId,
+    entityType: "Booking",
+    entityId: child.id,
+    category: "booking",
+    severity: "critical",
+    outcome: "success",
+    summary: "Group settlement refund recovered",
+    details: `Recovered the organiser's settlement refund for this cancelled group joiner: ${formatCents(refundedCents, format)} (frozen plan replay).`,
+    metadata: {
+      settlementId,
+      groupBookingId,
+      refundForChild: refundedCents,
+      paymentId,
+      replayOutcome: outcome,
+    },
+  });
+  await recordBookingEvent({
+    bookingId: child.id,
+    type: BookingEventType.REFUNDED,
+    actorMemberId: null,
+    amountCents: refundedCents,
+    reason: "The organiser's settlement refund for this cancelled group booking was recovered and refunded to the organiser.",
+  }).catch((eventErr) =>
+    logger.error({ err: eventErr, bookingId: child.id }, "Failed to record booking event during settlement refund replay"),
+  );
+}
+
 export async function executeGroupSettlementRefundPlan(
   settlementId: string,
   format: ClubFormat,
@@ -987,79 +1097,28 @@ export async function executeGroupSettlementRefundPlan(
     // #3949 (`INV-PAY-137`): written or not is asked under the Payment row, net of paid-back hand-backs.
     // Mirror and durable Xero outbox insertion are one atomic unit (an enqueue
     // failure rolls the mirror back, so the replay never skips a stranded note).
-    const mirrorResult = await prisma.$transaction(async (tx) => {
-      const payment = await readGroupChildMirrorForPlanReplay(tx, { bookingId: child.id, paymentId: child.payment!.id });
-      // #3949 review round 3: a child its member cancelled was never the plan's to refund - nothing is written.
-      if (!payment.claimedByGroupCancel) return { applied: false, refundedCents: 0, queuedOperationId: null };
-      // #3854: mirrored already, its line by the plan regardless (keyed, so a no-op when posted).
-      if (payment.planShareWritten) {
-        await postGroupSettlementRefundLedgerLine({ store: tx, settlement, bookingId: child.id, lodgeId: child.lodgeId, refundCents: refundForChild });
-        return { applied: false, refundedCents: 0, queuedOperationId: null };
-      }
-      const nextRefunded = mirrorPlanRefundedCents(payment, refundForChild);
-      const applied = await tx.payment.updateMany({
-        // The prior figure, under the row lock: a guard against any other writer, not the "mirrored" test.
-        where: { id: child.payment!.id, refundedAmountCents: payment.refundedAmountCents },
-        data: {
-          refundedAmountCents: nextRefunded,
-          status: nextRefunded >= payment.amountCents ? PaymentStatus.REFUNDED : PaymentStatus.PARTIALLY_REFUNDED,
-        },
-      });
-      if (applied.count !== 1) {
-        return { applied: false, refundedCents: 0, queuedOperationId: null };
-      }
-      const refundedCents = nextRefunded - payment.refundedAmountCents;
-      const queued = await enqueueXeroRefundCreditNoteOperation(child.payment!.id, refundedCents, { store: tx });
-      // #3854: as the inline loop posts it, under the same key.
-      await postGroupSettlementRefundLedgerLine({ store: tx, settlement, bookingId: child.id, lodgeId: child.lodgeId, refundCents: refundForChild });
-      return { applied: true, refundedCents, queuedOperationId: queued.queueOperationId };
-    });
+    const mirrorResult = await prisma.$transaction(async (tx) =>
+      applyLegacyGroupChildRefundMirror(tx, {
+        bookingId: child.id,
+        paymentId: child.payment!.id,
+        lodgeId: child.lodgeId,
+        refundForChild,
+        settlement,
+        enqueueCreditNote: true,
+      }),
+    );
     if (!mirrorResult.applied) continue;
     mirroredChildren += 1;
-
-    if (mirrorResult.queuedOperationId && (await isXeroConnected())) {
-        void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch(
-          (xeroErr) =>
-            logger.error(
-              { err: xeroErr, bookingId: child.id },
-              "Failed to kick Xero refund credit note worker after settlement refund replay"
-            )
-        );
-    }
-
-    logAudit({
-      action: "booking.payment.refund_recovered",
-      targetId: child.id,
-      subjectMemberId: bookingOwner(child).memberId,
-      entityType: "Booking",
-      entityId: child.id,
-      category: "booking",
-      severity: "critical",
-      outcome: "success",
-      summary: "Group settlement refund recovered",
-      details: `Recovered the organiser's settlement refund for this cancelled group joiner: ${formatCents(mirrorResult.refundedCents, format)} (frozen plan replay).`,
-      metadata: {
-        settlementId,
-        groupBookingId: settlement.groupBookingId,
-        refundForChild: mirrorResult.refundedCents,
-        paymentId: child.payment.id,
-        replayOutcome: outcome,
-      },
+    await recordLegacyGroupChildRefundRecovered({
+      child,
+      settlementId,
+      groupBookingId: settlement.groupBookingId,
+      paymentId: child.payment.id,
+      refundedCents: mirrorResult.refundedCents,
+      queuedOperationId: mirrorResult.queuedOperationId,
+      format,
+      outcome,
     });
-
-    await recordBookingEvent({
-      bookingId: child.id,
-      type: BookingEventType.REFUNDED,
-      actorMemberId: null,
-      amountCents: mirrorResult.refundedCents,
-      reason:
-        "The organiser's settlement refund for this cancelled group booking was recovered and refunded to the organiser.",
-    }).catch((eventErr) =>
-      logger.error(
-        { err: eventErr, bookingId: child.id },
-        "Failed to record booking event during settlement refund replay"
-      )
-    );
   }
 
   logger.info(
