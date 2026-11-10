@@ -5,9 +5,11 @@
  * Bookings are made and confirmed by the real writers the back-post proof uses
  * (`booking-ledger-history.ts`: the card settle, the edit chokepoint), then
  * cancelled through the cancellation chokepoint under `lock(1)` as every cancel
- * path is. Member merge is the real `executeMemberMerge`. The judge is the
- * database's own deferred checks at each commit, and then the census's JOURNAL
- * comparison over what was posted.
+ * path is. Member merge is the real `executeMemberMerge`. A merge that arrives
+ * while a settle still holds the booking row waits on that settle's own backend
+ * (`arrivingWhilePaused`, #4869), not on a count of every lock waiter. The judge
+ * is the database's own deferred checks at each commit, and then the census's
+ * JOURNAL comparison over what was posted.
  *
  * Ordinary Vitest runs skip the file; CI's real-PostgreSQL job runs it against
  * the guarded loopback race database. It cleans its own namespaced rows,
@@ -29,6 +31,7 @@ import {
 } from "./support/booking-ledger-history";
 import { realElapsedMs } from "./helpers/clock";
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
+import { arrivingWhilePaused, clearPauses, expectFulfilled, pauseIn, previewMerge } from "./support/member-merge-race";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -66,18 +69,22 @@ async function newBooking(owner: { memberId?: string; organisationId?: string } 
   return id;
 }
 
+/**
+ * Where the merge-against-settle case stops the settle: the charge is posted and
+ * this transaction still holds the booking row. Unarmed, `pauseIn` does nothing,
+ * so the other settles in this file run straight through.
+ */
+const SETTLE_PAUSE = "ledger-settle";
+
 /** A settle as the settle body runs one: lock(1), the lodge key, a status-guarded PAID claim, then the confirmation poster. */
-async function settleDoor(bookingId: string, hold?: { posted: () => void; release: Promise<void> }): Promise<boolean> {
+async function settleDoor(bookingId: string): Promise<boolean> {
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     await lodgeLock.acquireLodgeCapacityLock(tx, names.lodgeId);
     const claimed = await tx.booking.updateMany({ where: { id: bookingId, status: "PAYMENT_PENDING" }, data: { status: "PAID" } });
     if (claimed.count === 0) return false;
     await confirmationSync.postStoredBookingConfirmationLedgerLines(tx, bookingId, JOURNAL);
-    if (hold) {
-      hold.posted();
-      await hold.release;
-    }
+    await pauseIn(SETTLE_PAUSE, tx);
     return true;
   }, { maxWait: 30_000, timeout: 60_000 });
 }
@@ -147,18 +154,6 @@ async function expectAgreed(bookingId: string) {
   expect(unbridged).toEqual([]);
 }
 
-/** Until another backend waits on a row or advisory lock this suite holds. */
-async function untilSomeoneWaits(): Promise<void> {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    const [{ waiting }] = await prisma.$queryRaw<Array<{ waiting: number }>>`
-      SELECT count(*)::int AS waiting FROM pg_catalog.pg_stat_activity
-      WHERE datname = current_database() AND wait_event_type = 'Lock'`;
-    if (waiting > 0) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error("no backend ever waited on the held booking row");
-}
-
 (RUN ? describe : describe.skip)("booking doors post into the member-money journal — real PostgreSQL (#4627)", { timeout: 180_000 }, () => {
   beforeAll(async () => {
     assertSafeRaceDbUrl(RACE_DB_URL, "Booking ledger journal");
@@ -199,6 +194,7 @@ async function untilSomeoneWaits(): Promise<void> {
   }
 
   afterAll(async () => {
+    clearPauses();
     if (prisma) await cleanup();
   }, 120_000);
 
@@ -340,27 +336,12 @@ async function untilSomeoneWaits(): Promise<void> {
 
   it("merge against a settle of a booking the merged-away member owns: the transfer waits for the settle and moves its charge", async () => {
     const id = await newBooking({ memberId: LOSER });
-    let posted!: () => void;
-    let release!: () => void;
-    const postedSignal = new Promise<void>((resolve) => { posted = resolve; });
-    const releaseSignal = new Promise<void>((resolve) => { release = resolve; });
-    const settling = settleDoor(id, { posted, release: releaseSignal });
-    await postedSignal;
-    let merging: Promise<unknown> = Promise.resolve();
-    try {
-      const preview = await merge.buildMemberMergePreview({ masterId: MASTER, loserId: LOSER, actorMemberId: ADMIN });
-      expect(preview.blockers).toEqual([]);
-      merging = merge.executeMemberMerge({
-        masterId: MASTER, loserId: LOSER, actorMemberId: ADMIN,
-        previewToken: preview.previewToken, confirmationText: preview.confirmationPhrase,
-      });
-      // The merge reaches the owner move and waits on the booking row the settle holds.
-      await untilSomeoneWaits();
-    } finally {
-      release();
-    }
-    expect(await settling).toBe(true);
-    await merging;
+    const execute = await previewMerge(MASTER, LOSER, ADMIN);
+    // The merge reaches the owner move and waits on the booking row the settle holds.
+    const { held: settled, arrived: merged } = await arrivingWhilePaused(prisma, SETTLE_PAUSE, () => settleDoor(id), execute);
+    expectFulfilled(settled);
+    expect(settled).toEqual({ status: "fulfilled", value: true });
+    expectFulfilled(merged);
 
     expect(await receivable(id)).toEqual({ [LOSER]: 0, [MASTER]: PRICE });
     const transfer = await prisma.memberMoneyEvent.findUniqueOrThrow({ where: { eventKey: `merge:${LOSER}:${MASTER}` }, select: { kind: true, actorMemberId: true } });
