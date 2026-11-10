@@ -2799,8 +2799,7 @@ _Legacy: settles tasks raised before #4317._
 ## INV-PAY-120
 
 - **A price reduction is first set against the member's unpaid card ask**
-  (#3954, owner decisions 8-10 Oct 2026), card-paid and credit-paid alike, at
-  every reduction door: cancelled when covered, else re-issued smaller; only
+  (#3954), at every card-paid or credit-paid reduction door: cancelled when covered, else re-issued smaller; only
   the rest is refunded, credited or given back by `INV-MOD-011`'s tier, and the
   offset is untiered. Each door reads the ask once
   (`readReductionAgainstUnpaidAsk`).
@@ -2810,25 +2809,24 @@ _Legacy: settles tasks raised before #4317._
   deadlock between rolls the edit back (409); one after commit is
   refunded in full, announced once (#4690). It writes the re-issue's recovery
   and billed-offset note.
-  An orphaned Stripe intent is cancelled, best-effort, once no row,
-  recovery or live claim may own it (#4052, #4631, #4652, #4676). The
+  An orphaned Stripe intent is cancelled best-effort once no row,
+  recovery or live claim owns it (#4052, #4631, #4652, #4676). The
   runner's close is claim-fenced (#4675). One uncancellable is logged.
 - **A declined card stays live** (#4052).
 - **Asks awaiting a failed mint's retry** count, sized as the replay would
   (none if one's frozen). Only its own row settles one, bar a frozen one's
   replay (#4015). A claim under two minutes refuses the edit;
   older ones close. A later increase folds a waiting re-issue, and a waiting
-  increase retry, into its own ask (#4744), recorded for its replay to ask,
+  increase retry, into its own ask (#4744), recorded for replay,
   and that retry's deferred invoice follows the new ask (`INV-PAY-140`).
-  Both of a re-issue's minters send one request (`planReissuedAskMint`).
+  Both re-issue minters send one request (`planReissuedAskMint`).
 - **Only the member's price asks.** An officer's review charge is never set
-  against. Nor is a financial review's settled refund share: paid as the
-  officer decided, the ledger census reporting the booking if the member
-  pays the ask.
+  against. Financial-review settled refunds stay as the officer decided; the
+  ledger census reports bookings whose member pays the ask.
 - **Xero** (`splitUnpaidAskOffsetForXero`). The smaller ask gets its own
   supplementary invoice for what the retired asks' invoices left after the
-  offset. The rest of the offset, where evidence shows the primary invoice
-  billed it (`unpaidAskBillingEvidence`), takes a scoped invoice-correction
+  offset. The remaining offset, where evidence establishes primary billing
+  (`unpaidAskBillingEvidence`), takes a scoped invoice-correction
   note, raised after the edit's own note; otherwise the repair pass reports it
   for a person.
 

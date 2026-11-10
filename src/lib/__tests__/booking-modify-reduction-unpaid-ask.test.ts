@@ -1538,6 +1538,31 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
       expect(recoveryUpdateMany).not.toHaveBeenCalled();
     });
 
+    it.each([new Date("2026-06-30T23:59:30.000Z"), null])(
+      "refuses an increase while a claimed retry finishes after writing its row (%s)",
+      async (processingStartedAt) => {
+        state.rows = [askRow({ bookingModificationId: "mod_increase", amountCents: 5_000 })];
+        state.recoveries = [recoveryRow({
+          status: "PROCESSING", attempts: 1, processingStartedAt, paymentIntentId: ASK_INTENT,
+        })];
+        await expect(adjust(grownBooking(), 1_000)).rejects.toBeInstanceOf(AdditionalAskChangedDuringReductionError);
+        expect(recoveryUpdateMany).not.toHaveBeenCalled();
+        expect(paymentUpdate).not.toHaveBeenCalled();
+      },
+    );
+
+    it("carries an older claimed retry's written row and leaves its invoice completion to the worker", async () => {
+      state.rows = [askRow({ bookingModificationId: "mod_increase", amountCents: 5_000 })];
+      state.recoveries = [recoveryRow({
+        status: "PROCESSING", attempts: 1,
+        processingStartedAt: new Date("2026-06-30T23:50:00.000Z"), paymentIntentId: ASK_INTENT,
+      })];
+      const result = await adjust(grownBooking(), 1_000);
+      expect(result.additionalAsk.amountCents).toBe(6_000);
+      expect(result.foldedWaitingAsks.cents).toBe(0);
+      expect(recoveryUpdateMany).not.toHaveBeenCalled();
+    });
+
     it("does not fold an officer's review charge, or an increase whose own row is already the Payment's ask", async () => {
       state.rows = [];
       state.recoveries = [recoveryRow({ idempotencyKey: buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod_increase") })];

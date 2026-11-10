@@ -30,6 +30,20 @@ export const PENDING_ASK_NETTED_BY_REDUCTION_NOTE =
  */
 export const RECENT_RECOVERY_CLAIM_MS = 2 * 60 * 1000;
 
+/** A live worker retains the ask through its row write and invoice completion. */
+export function assertAskRecoveryNotBeingRaised(
+  recovery: Pick<PendingAskRecovery, "status" | "processingStartedAt">,
+  now: Date,
+): void {
+  if (
+    recovery.status === PaymentRecoveryOperationStatus.PROCESSING &&
+    (recovery.processingStartedAt === null ||
+      now.getTime() - recovery.processingStartedAt.getTime() < RECENT_RECOVERY_CLAIM_MS)
+  ) {
+    throw new AdditionalAskChangedDuringReductionError(ADDITIONAL_ASK_BEING_RAISED_MESSAGE);
+  }
+}
+
 /**
  * Close asks still waiting on their failed mint's recovery, under the caller's
  * locks, so the retry cannot mint their old figure: the reduction that nets
@@ -52,13 +66,7 @@ export async function closeWaitingAskRecoveries(
     // for a moment: closing the row under it would leave its old figure live
     // beside the smaller ask. An older claim is a stalled or dead worker - it
     // is closed like any other, and the fence below is what stops it writing.
-    if (
-      recovery.status === PaymentRecoveryOperationStatus.PROCESSING &&
-      (recovery.processingStartedAt === null ||
-        now.getTime() - recovery.processingStartedAt.getTime() < RECENT_RECOVERY_CLAIM_MS)
-    ) {
-      throw new AdditionalAskChangedDuringReductionError(ADDITIONAL_ASK_BEING_RAISED_MESSAGE);
-    }
+    assertAskRecoveryNotBeingRaised(recovery, now);
     // THE FENCE: exactly the state read. A claim increments `attempts`, and a
     // terminal failure raises it to the ceiling as it sets FAILED and clears
     // `processingStartedAt` (#4081). A claimed runner re-stamps that in the
