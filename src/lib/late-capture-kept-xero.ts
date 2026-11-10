@@ -354,6 +354,49 @@ export async function planKeptLateCaptureXeroRecord(params: {
 }
 
 /**
+ * #4516 (M4d): whether an existing invoice already bills this kept capture, so the journal collects the receipt
+ * and posts no new revenue. The same readings as the keep's Xero plan, and no write. The caller holds the
+ * capture's anchor lock. A capture no invoice bills, or one whose change cannot be read, is not billed here:
+ * the journal records a retained component so the keep is in the journal either way.
+ */
+export async function keptCaptureAlreadyBilled(store: Prisma.TransactionClient, input: {
+  bookingId: string;
+  paymentIntentId: string;
+  manualRefundTaskId: string;
+  amountCents: number;
+}): Promise<boolean> {
+  const transaction = await store.paymentTransaction.findUnique({
+    where: { stripePaymentIntentId: input.paymentIntentId },
+    select: { kind: true, paymentId: true, bookingModificationId: true, reason: true },
+  });
+  if (!transaction) return false;
+  const payment = await store.payment.findUnique({ where: { id: transaction.paymentId }, select: { xeroInvoiceId: true } });
+  const paymentLinks = await store.xeroObjectLink.findMany({
+    where: { localModel: "Payment", localId: transaction.paymentId, xeroObjectType: "INVOICE", role: "PRIMARY_INVOICE", active: true },
+    select: { role: true, xeroObjectType: true, active: true, xeroObjectId: true },
+  });
+  if (keptLateCaptureRecordRoute({ captureKind: transaction.kind, bookingHasPrimaryInvoice: bookingHasPrimaryXeroInvoice({
+    paymentXeroInvoiceId: payment?.xeroInvoiceId, paymentLinks,
+  }) }) === "kept-invoice") return false;
+  if (await findLiveKeptReceiptRow(store, input.manualRefundTaskId)) return true;
+  const receiptRow = await store.xeroSyncOperation.findFirst({
+    where: { correlationKey: additionalCaptureReceiptKey(input.paymentIntentId), status: { not: "CANCELLED" } },
+    select: { id: true },
+  });
+  if (receiptRow) return true;
+  const primaryInvoiceId = payment?.xeroInvoiceId ?? paymentLinks[0]?.xeroObjectId ?? null;
+  const changeId = captureChangeId(transaction);
+  const route = keptChangeCaptureRoute(await readKeptChangeCaptureEvidence(store, {
+    paymentIntentId: input.paymentIntentId, changeId, bookingId: input.bookingId, primaryInvoiceId,
+  }));
+  if (route === "receipt" || route === "change-invoice") return true;
+  const elsewhere = await readKeptCaptureRecordedElsewhere(store, {
+    bookingId: input.bookingId, primaryInvoiceId, paymentIntentId: input.paymentIntentId, changeId,
+  });
+  return elsewhere === "all" || elsewhere >= input.amountCents;
+}
+
+/**
  * THE POST-COMMIT HALF. Never throws: the decision has committed, and a Xero
  * outage must not turn a recorded keep into a failed request. Whatever this
  * misses the reaper (a waiting change invoice whose capture is kept), the

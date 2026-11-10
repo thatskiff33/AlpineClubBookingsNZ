@@ -4,6 +4,7 @@ import { getRemainingRefundableCentsNetOf } from "@/lib/booking-payment-state";
 import { sumInternetBankingLateCashCreditCents } from "@/lib/internet-banking-late-cash-credit";
 import { openCardRefundOwedCents, type CardRefundOwedPaymentRow } from "@/lib/open-card-refund-owed";
 import { BANK_REFUND_VOID_FOLLOW_UP_KEY_PREFIX, isBankRefundVoidFollowUpTask } from "@/lib/bank-refund-void-follow-up-key";
+import { isGroupOrganiserHandBackTask } from "@/lib/group-organiser-hand-back-rules";
 import { isLateCaptureHandBackTask } from "@/lib/late-capture-hand-back-task";
 
 /**
@@ -363,6 +364,39 @@ export function isNonCancellationHandBackTask(task: {
   occurrenceKey: string | null;
 }): boolean {
   return isEditRefundHandBackTask(task) || isRefundRequestHandBackTask(task) || isCardRefundPaidAnotherWayTask(task) || isBankRefundVoidFollowUpTask(task);
+}
+
+/**
+ * #4516 (M4d): an edit hand-back raised for organiser-extra raced cash. It wears an edit hand-back's key, but the
+ * cash is an organiser share (M6), so it is not a member-money hand-back debt.
+ */
+const ORGANISER_EXTRA_HAND_BACK_PREFIX = "edit-refund-hand-back:organiser-extra-";
+export function isOrganiserExtraRacedHandBackTask(task: {
+  kind: ManualRefundTaskKind | string | null;
+  occurrenceKey: string | null;
+}): boolean {
+  return task.kind === "CANCELLED_BOOKING_HAND_BACK" && hasKeyPrefix(task.occurrenceKey, ORGANISER_EXTRA_HAND_BACK_PREFIX);
+}
+
+/**
+ * #4516 (M4d): a hand-back the member-money journal records as a refund debt (R05, scope `hand-back`). Exactly the
+ * tasks a raise posts and a set-aside leaves open: a cancellation's cash hand-back, a card shortfall's bank or
+ * cheque part, an edit hand-back, a refund request's bank part, and an organisation's late cash. Not a
+ * part-payment review, a group organiser's hand-back, a paid-another-way close, a bank-refund void follow-up, or
+ * organiser-extra raced cash. A legacy row with no kind is a cancellation's hand-back.
+ */
+export function isJournalHandBackTask(task: {
+  kind: ManualRefundTaskKind | string | null;
+  occurrenceKey: string | null;
+  partPaymentReviewPaymentId: string | null;
+}): boolean {
+  if (task.kind !== "CANCELLED_BOOKING_HAND_BACK" && task.kind !== null) return false;
+  if (isPartPaymentReviewTask(task)) return false;
+  if (isGroupOrganiserHandBackTask(task)) return false;
+  if (isCardRefundPaidAnotherWayTask(task)) return false;
+  if (isBankRefundVoidFollowUpTask(task)) return false;
+  if (isOrganiserExtraRacedHandBackTask(task)) return false;
+  return true;
 }
 
 /**

@@ -43,6 +43,7 @@ import logger from "@/lib/logger";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 import { alertPaymentRecoveryOfficers, NOBODY_ALERTED } from "@/lib/payment-recovery-alert";
 import { formatCents } from "@/lib/utils";
+import type { BookingJournalContext } from "@/lib/member-money/doors";
 
 /** The once-ever alert's key: one per booking, whatever the intent. */
 export function capacityRaceRefundShortfallAlertKey(bookingId: string): string {
@@ -93,7 +94,7 @@ export function capacityRaceShortfallTaskReason(figures: ShortfallFigures, forma
  */
 export async function raiseCapacityRaceRefundShortfallTask(
   tx: Prisma.TransactionClient,
-  input: ShortfallFigures & { bookingId: string; paymentId: string; paymentIntentId: string; format: ClubFormat },
+  input: ShortfallFigures & { bookingId: string; paymentId: string; paymentIntentId: string; format: ClubFormat; journal?: BookingJournalContext | null },
 ): Promise<boolean> {
   const cents = input.chargedCents - input.plannedRefundCents;
   if (cents <= 0) return false;
@@ -105,6 +106,7 @@ export async function raiseCapacityRaceRefundShortfallTask(
       bookingId: input.bookingId, paymentId: input.paymentId, part: "check", cents, format: input.format,
       reason: reason.slice(0, MANUAL_REFUND_TASK_REASON_MAX),
       occurrenceKey: capacityRaceShortfallOccurrenceKey(input.bookingId, input.paymentIntentId),
+      journal: input.journal,
     },
     "keep",
   );

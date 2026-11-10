@@ -1,4 +1,5 @@
 import { bindOrganiserExtraRefundToHandBack } from "@/lib/organiser-extra-netting";
+import { postHandBackObligation, type BookingJournalContext } from "@/lib/member-money/doors";
 import {
   ManualRefundTaskKind,
   type Prisma,
@@ -107,6 +108,9 @@ export async function raiseEditRefundHandBackIfOwed(
     editLabel: string;
     /** #3949: whether the group organiser paid for it, whom the reason names as the payee. */
     booking: Parameters<typeof bankTransferRefundPayee>[0];
+    /** #4516 (M4d): the edit's journal context. Present, the hand-back's refund debt posts with the task. */
+    journal?: BookingJournalContext | null;
+    actorMemberId?: string | null;
   },
 ): Promise<boolean> {
   const { bookingId, paymentId, bookingModificationId, adjusted, editLabel, booking } = params;
@@ -127,9 +131,14 @@ export async function raiseEditRefundHandBackIfOwed(
     ],
     skipDuplicates: true,
   });
+  const task = await tx.manualRefundTask.findUnique({ where: { occurrenceKey: editRefundHandBackOccurrenceKey(bookingModificationId) }, select: { id: true, amountCents: true } });
   if (payee === "organiser") {
-    const task = await tx.manualRefundTask.findUniqueOrThrow({ where: { occurrenceKey: editRefundHandBackOccurrenceKey(bookingModificationId) }, select: { id: true } });
+    if (!task) throw new Error(`The edit refund hand-back for modification ${bookingModificationId} was not written.`);
     await bindOrganiserExtraRefundToHandBack(tx, { bookingId, handBackTaskId: task.id });
+  }
+  // Replay posts nothing more: the obligation's key is already live.
+  if (params.journal && task?.amountCents) {
+    await postHandBackObligation(tx, params.journal, { bookingId, taskId: task.id, amountCents: task.amountCents, origin: "APP", actorMemberId: params.actorMemberId ?? null, debtorRead: "booking-row" });
   }
   return true;
 }
@@ -163,6 +172,9 @@ export async function raiseRefundRequestHandBack(
     amountCents: number;
     /** #3949: whether the group organiser paid for it, whom the reason names as the payee. */
     booking: Parameters<typeof bankTransferRefundPayee>[0];
+    /** #4516 (M4d): the approval's journal context. Present, the bank part's refund debt posts with the task. */
+    journal?: BookingJournalContext | null;
+    actorMemberId?: string | null;
   },
 ): Promise<number> {
   const { bookingId, paymentId, refundRequestId, amountCents, booking } = params;
@@ -183,6 +195,10 @@ export async function raiseRefundRequestHandBack(
     ],
     skipDuplicates: true,
   });
+  const task = await tx.manualRefundTask.findUnique({ where: { occurrenceKey: refundRequestHandBackOccurrenceKey(refundRequestId) }, select: { id: true, amountCents: true } });
+  if (params.journal && task?.amountCents) {
+    await postHandBackObligation(tx, params.journal, { bookingId, taskId: task.id, amountCents: task.amountCents, origin: "OFFICER", actorMemberId: params.actorMemberId ?? null, debtorRead: "booking-row" });
+  }
   return raised.count;
 }
 

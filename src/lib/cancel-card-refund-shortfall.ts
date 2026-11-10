@@ -11,6 +11,7 @@ import {
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 import type { PaidCancellationBranch } from "@/lib/paid-cancellation-event";
 import { formatCents } from "@/lib/utils";
+import { postHandBackObligation, type BookingJournalContext } from "@/lib/member-money/doors";
 
 /**
  * #4097 (`INV-PAY-129`): AN OWN-CARD CANCEL'S REFUND THAT ITS CARD REFUND PLAN
@@ -106,7 +107,7 @@ function shortfallReason(part: CancelCardShortfallPart, bookingId: string, figur
  */
 export async function raiseCardShortfallPart(
   tx: Prisma.TransactionClient,
-  params: { bookingId: string; paymentId: string; part: CancelCardShortfallPart; cents: number; reason: string; format: ClubFormat; occurrenceKey?: string },
+  params: { bookingId: string; paymentId: string; part: CancelCardShortfallPart; cents: number; reason: string; format: ClubFormat; occurrenceKey?: string; journal?: BookingJournalContext | null; actorMemberId?: string | null },
   onKeyHeld: "throw" | "keep" = "throw",
 ): Promise<{ taskId: string; cents: number } | null> {
   if (params.cents <= 0) return null;
@@ -138,6 +139,10 @@ export async function raiseCardShortfallPart(
     logger.error({ bookingId: params.bookingId, taskId: task.id, cents: params.cents }, message);
     return null;
   }
+  // #4516 (M4d): the shortfall's refund debt, including a replay that inserted nothing (the post is idempotent).
+  if (params.journal && task.amountCents) {
+    await postHandBackObligation(tx, params.journal, { bookingId: params.bookingId, taskId: task.id, amountCents: task.amountCents, origin: "APP", actorMemberId: params.actorMemberId ?? null, debtorRead: "booking-row" });
+  }
   return { taskId: task.id, cents: params.cents };
 }
 
@@ -151,6 +156,8 @@ export async function raiseCancelCardShortfallHandBack(
     /** What the frozen card refund plan carries. */
     plannedCardRefundCents: number;
     format: ClubFormat;
+    journal?: BookingJournalContext | null;
+    actorMemberId?: string | null;
   },
 ): Promise<CancelCardShortfall | null> {
   const { bookingId, paymentId, refundAmountCents, format } = params;
@@ -160,7 +167,7 @@ export async function raiseCancelCardShortfallHandBack(
   const sizes: Record<CancelCardShortfallPart, number> = { bank: split.bankCents, check: split.checkCents };
   const figures = (cents: number) => ({ card: formatCents(cardCents, format), due: formatCents(refundAmountCents, format), part: formatCents(cents, format) });
   const raise = (part: CancelCardShortfallPart) =>
-    raiseCardShortfallPart(tx, { bookingId, paymentId, part, cents: sizes[part], reason: shortfallReason(part, bookingId, figures(sizes[part])), format });
+    raiseCardShortfallPart(tx, { bookingId, paymentId, part, cents: sizes[part], reason: shortfallReason(part, bookingId, figures(sizes[part])), format, journal: params.journal, actorMemberId: params.actorMemberId });
   const shortfall: CancelCardShortfall = { cardCents, bank: await raise("bank"), check: await raise("check") };
   logger.warn(
     { bookingId, paymentId, refundAmountCents, cardCents, bankCents: sizes.bank, checkCents: sizes.check },

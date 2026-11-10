@@ -50,7 +50,7 @@ import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-b
 import { cancelTieredAppliedCreditCents } from "@/lib/booking-payment-state";
 import { refundedPaymentCreditRestore } from "@/lib/cancel-refunded-payment-credit";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
-import { postRefundObligation, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
+import { postHandBackObligation, postRefundObligation, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import {
   applyLocalRefundAllocation,
   foldIntoTransactionRefundedAmount,
@@ -1906,6 +1906,8 @@ async function performBookingCancellation(
       });
       manualRefundTaskId = task.id;
       if (organiserExtraState && organiserExtraState.invoices.length > 0) await bindOrganiserExtraRefundToHandBack(tx, { bookingId, handBackTaskId: task.id, scopeId: `cancel:${bookingId}` });
+      // #4516 (M4d): the hand-back's refund debt, beside the task, under this claim's lock(1).
+      await postHandBackObligation(tx, journal, { bookingId, taskId: task.id, amountCents: refundAmountCents, origin: "APP", actorMemberId: sessionUserId, debtorRead: "booking-row" });
     } else if (branch === "credit") {
       await applyLocalRefundAllocation({ paymentId: payment.id, amountCents: refundAmountCents, store: tx, heldBackByTransaction: supersededHeldBack.byTransaction }); // #4866
       // #3369: a refund AS CREDIT credits a member's account, and an
@@ -1958,7 +1960,7 @@ async function performBookingCancellation(
       }
       // #4097 (`INV-PAY-129`): what the plan cannot carry is recorded with the claim, card branch only.
       if (cancelRaisesCardShortfall({ branch, organiserCard: organiserCard !== null })) {
-        cardShortfall = await raiseCancelCardShortfallHandBack(tx, { bookingId, paymentId: payment.id, refundAmountCents, plannedCardRefundCents, format });
+        cardShortfall = await raiseCancelCardShortfallHandBack(tx, { bookingId, paymentId: payment.id, refundAmountCents, plannedCardRefundCents, format, journal, actorMemberId: sessionUserId });
       }
     }
 

@@ -103,6 +103,20 @@ export function refundCloseOutRecordOfIdentity(chargeIdentity: string): string |
   return match ? match[1]! : null;
 }
 
+/**
+ * #4516 (M4d): the retained component a late capture the treasurer keeps posts when no invoice already bills that
+ * capture (`kept-capture:<payment intent>`). It names its booking, as every component identity must, so the journal
+ * comparison can count it on the ledger side (`keptCapturePaymentIntentOfIdentity`).
+ */
+export function keptCaptureIdentity(bookingId: string, paymentIntentId: string): string {
+  return `booking:${bookingId}:kept-capture:${paymentIntentId}`;
+}
+/** The capture a kept-capture component names, or null for any other component. */
+export function keptCapturePaymentIntentOfIdentity(chargeIdentity: string): string | null {
+  const match = /^booking:[^:]+:kept-capture:([^:]+)$/.exec(chargeIdentity);
+  return match ? match[1]! : null;
+}
+
 /** A component's map key, the engine's own (`componentKey`). */
 export const bookingComponentKey = (component: BookingChargeComponent): string =>
   componentKey(component.account, component.chargeIdentity);

@@ -516,6 +516,7 @@ export async function repriceBookingAfterGuestAcceptance(
     bookingModificationId: bookingModification.id,
     adjusted: paymentImpact,
     editLabel: "guest's acceptance re-price", booking, // #3949: booking names the payee (a group organiser who paid by bank transfer)
+    journal,
   });
   // #3954: a smaller re-issued ask, and a billed offset's note, are durable from this commit.
   await queueEditAskFollowUps(tx, { bookingId, paymentId: booking.payment?.id ?? null, bookingModificationId: bookingModification.id, door: "guestAcceptanceReprice", settled: paymentImpact });

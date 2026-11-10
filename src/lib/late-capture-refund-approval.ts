@@ -7,7 +7,9 @@ import type { ClubFormat } from "@/lib/club-format";
 import { automaticCancelledBookingRefundTaskReasons } from "@/lib/deleted-booking-modification-payment";
 import { finishApprovedLateCaptureRefund } from "@/lib/late-capture-refund-credit-note";
 import logger from "@/lib/logger";
-import { closeKeptCaptureReturn, postRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
+import { closeKeptCaptureReturn, postKeptCapture, postRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
+import { lockKeptCaptureAnchor } from "@/lib/kept-late-capture-change-receipt";
+import { keptCaptureAlreadyBilled } from "@/lib/late-capture-kept-xero";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { enqueueLateCaptureApprovalRefundRecovery } from "@/lib/payment-recovery";
 import {
@@ -211,10 +213,9 @@ export async function persistLateCaptureApprovalRefundDebt({
     allocationPlan: route.allocation,
     store,
   });
-  // #4516 (M4c): R05 for the capture's return, beside its debt. This claim holds no `lock(1)` until M4d, so the
-  // debtor is read without the booking row (a Payment-row writer never takes one, `INV-LOCK-002`).
+  // #4516 (M4d): this claim holds lock(1) and the booking row, so the debtor is read under that row.
   await postRefundObligation(store, journal, { bookingId, scope: "capture-return", id: route.paymentIntentId, amountCents,
-    origin: "OFFICER", actorMemberId: actingMemberId, debtorRead: "plain" });
+    origin: "OFFICER", actorMemberId: actingMemberId, debtorRead: "booking-row" });
 }
 
 /**
@@ -227,16 +228,30 @@ export async function persistLateCaptureApprovalRefundDebt({
  * back with the transaction.
  */
 export async function prepareLateCaptureDecision(store: Prisma.TransactionClient, journal: BookingJournalContext, input: {
-  task: { bookingId: string; paymentId: string | null; lateCaptureApprovalIntentId: string | null };
+  task: { id: string; bookingId: string; paymentId: string | null; lateCaptureApprovalIntentId: string | null };
   resolution: "completed" | "dismissed";
   actingMemberId: string;
 }): Promise<void> {
   const { task } = input;
   if (!task.lateCaptureApprovalIntentId || !task.paymentId) return;
   await lockPaymentForRefundedTotal(store, task.paymentId);
-  if (input.resolution === "dismissed") {
-    await closeKeptCaptureReturn(store, journal, { bookingId: task.bookingId, paymentIntentId: task.lateCaptureApprovalIntentId, actorMemberId: input.actingMemberId });
-  }
+  if (input.resolution !== "dismissed") return;
+  await closeKeptCaptureReturn(store, journal, { bookingId: task.bookingId, paymentIntentId: task.lateCaptureApprovalIntentId, actorMemberId: input.actingMemberId });
+  // #4516 (M4d): the keep, after the capture-return debt is closed. The anchor lock is the keep's own, after the
+  // Payment row this function already holds and under the approval's lock(1).
+  const capture = await store.paymentTransaction.findUnique({
+    where: { stripePaymentIntentId: task.lateCaptureApprovalIntentId },
+    select: { amountCents: true },
+  });
+  if (!capture || capture.amountCents <= 0) return;
+  await lockKeptCaptureAnchor(store, { manualRefundTaskId: task.id, paymentIntentId: task.lateCaptureApprovalIntentId });
+  const billedByExistingInvoice = await keptCaptureAlreadyBilled(store, {
+    bookingId: task.bookingId, paymentIntentId: task.lateCaptureApprovalIntentId, manualRefundTaskId: task.id, amountCents: capture.amountCents,
+  });
+  await postKeptCapture(store, journal, {
+    bookingId: task.bookingId, paymentIntentId: task.lateCaptureApprovalIntentId, amountCents: capture.amountCents,
+    actorMemberId: input.actingMemberId, debtorRead: "booking-row", billedByExistingInvoice,
+  });
 }
 
 /**

@@ -24,6 +24,8 @@ export { postBookingReceipts, type BookingReceiptDecision } from "./internal/boo
 // #4516 (M4c): card refunds. R05 at the doors, the sender's reservation step, R12/R13 in the one cash writer,
 // a "Paid another way" close's R14, and which debt a recovery row pays.
 export { closeKeptCaptureReturn, postRefundObligation, withdrawRefundObligation, type RefundObligationDoor } from "./internal/refund-obligations";
+// #4516 (M4d): bank and cash hand-backs, and a late capture the treasurer keeps.
+export { postHandBackObligation, postHandBackPayment, postKeptCapture, reverseKeptCapture, type HandBackPaymentAccount } from "./internal/hand-backs";
 export { reserveCardRefundSlice, type CardRefundObligationRef, type CardRefundReservationOutcome, type CardRefundSliceReservation } from "./internal/refund-reservations";
 export { postCardRefundCash } from "./internal/refund-cash";
 export { postPaidAnotherWayClose, type PaidAnotherWayJournalClose, type PaidAnotherWayRest } from "./internal/refund-closes";

@@ -1818,8 +1818,8 @@ export async function applyLocalRefundAllocation({
   /** #4154: placed on these charges and no other; short of headroom there, it throws as any shortfall does. */ onlyTransactionIds?: readonly string[];
   heldBackByTransaction?: ReadonlyMap<string, number>; // #4866: a cancellation's (`readSupersededCaptureHeldBack`)
   store?: PaymentStore;
-}) {
-  await withStoreTransaction(store, async (db) => {
+}): Promise<ReadonlyArray<{ transactionId: string; cents: number }>> {
+  return withStoreTransaction(store, async (db) => {
     await lockPaymentForRefundedTotal(db, paymentId);
     const payment = await ensurePaymentTransactionsBackfilled(db, paymentId);
     if (!payment) throw new Error("Payment not found");
@@ -1842,18 +1842,24 @@ export async function applyLocalRefundAllocation({
     }
 
     let remainingAmountCents = amountCents;
+    const consumed: { transactionId: string; cents: number }[] = [];
     for (const transaction of capturedTransactions) {
       if (remainingAmountCents <= 0) {
         break;
       }
       // #4866: never into what a live superseded capture's own refund still has to send.
       const askCents = heldBackByTransaction?.has(transaction.id) ? Math.min(remainingAmountCents, placeableCents(transaction)) : remainingAmountCents;
-      if (askCents > 0) remainingAmountCents -= await addWithinHeadroom(db, transaction.id, askCents, { writeStatus: true });
+      if (askCents > 0) {
+        const placed = await addWithinHeadroom(db, transaction.id, askCents, { writeStatus: true });
+        if (placed > 0) consumed.push({ transactionId: transaction.id, cents: placed });
+        remainingAmountCents -= placed;
+      }
     }
     if (remainingAmountCents > 0) {
       throw new RefundAllocationRacedError();
     }
 
     await reconcilePaymentAggregates({ paymentId, store: db });
+    return consumed;
   });
 }
