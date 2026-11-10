@@ -32,8 +32,8 @@ import { lockHostingCoverageOwners } from "@/lib/adult-member-hosting-coverage-l
 import { buildMemberMergeHostingCoveragePlan, enqueueMemberMergeHostingCoveragePlan, memberMergeHostingCoveragePlanFingerprint } from "@/lib/adult-member-hosting-merge-coverage-plan";
 import {
   HostingCoverageParticipantRetryError,
-  lockMemberMergeHostingCoverageParticipants,
   proveMemberMergeHostingCoverageParticipants,
+  withMemberMergeParticipantRows,
   type HostingCoverageQueueParticipantProof,
 } from "@/lib/adult-member-hosting-queue-participants";
 import {
@@ -1848,65 +1848,64 @@ export async function executeMemberMerge(params: {
       select: { id: true },
     })).map((booking) => booking.id);
 
-    // 1) Null master self-relation cycles first — value-conditionally: a
-    // pointer that moved since the snapshot refuses here with the family-link
-    // drift 409 (#2437) instead of being overwritten. On success the master's
-    // row lock is held to commit.
-    const selfRelationNulls = await nullSelfRelationCycles(tx, masterFull, loserId);
-
-    // 2) Resolve collisions.
-    const resolveResults = await resolveAllCollisions(tx, masterId, loserId);
-
-    // 3) Moves — self-relation sweeps bounded to the ids captured by the token
-    // re-derivation above, so a family link that landed since then is never
-    // absorbed unvetted; it stays pointing at the duplicate and the step-5
-    // inbound re-check refuses the merge (#2437).
-    const relationMoves = await applyMoves(
-      tx,
-      masterId,
-      loserId,
-      relationPreview.selfRelationRefs,
-      loserOwnedBookingIds,
-    );
-    const bookingOwnerMove = relationMoves.find(
-      (move) => move.model === "Booking.member",
-    );
-    if ((bookingOwnerMove?.count ?? 0) !== loserOwnedBookingIds.length) {
-      throw new MemberMergeError(
-        "Booking ownership changed while the merge was running. Nothing was saved. Re-run the preview and try again.",
-        409,
-        "merge_drift_in_transaction",
-        { driftFields: ["Booking.member"] },
-      );
-    }
-
-    // #2597: relation moves make the survivor's exact attendance and captured
-    // loser-owned booking fan-out authoritative. Plan it now, then acquire ONE
-    // sorted Member FOR UPDATE set containing master, loser and every ancillary
-    // queue owner. A guest/booking/owner that lands while the statement waits is
-    // visible to the under-lock re-plan and produces a safe 409, never a late row
-    // acquisition or a queue write against an unprotected identity.
-    const hostingPlan = await buildMemberMergeHostingCoveragePlan(
-      {
-        masterId,
-        capturedLoserOwnedBookingIds: loserOwnedBookingIds,
-        today: clubTodayForMerge,
-      },
-      tx,
-    );
-    let refreshedHostingPlan: Awaited<
-      ReturnType<typeof buildMemberMergeHostingCoveragePlan>
-    >;
+    // #4876: nulls, collision resolvers, relation moves, the booking-owner
+    // check and the hosting plan run in the same savepoint as the participant
+    // lock (`withMemberMergeParticipantRows`). They only write through `tx`.
+    // If a Member row is busy the savepoint rolls back, so merge waits for that
+    // row holding none of the rows it just wrote, then tries the whole attempt
+    // again. Counts and the plan below are the successful attempt's only.
+    // 1) Null self-relation cycles value-conditionally (#2437). 2) Resolve
+    // collisions. 3) Moves, self-relations bounded to the token's ids (#2437)
+    // and never the master's own row (#2445). The plan's owners join the lock.
+    let selfRelationNulls: Awaited<ReturnType<typeof nullSelfRelationCycles>>;
+    let resolveResults: Awaited<ReturnType<typeof resolveAllCollisions>>;
+    let relationMoves: Awaited<ReturnType<typeof applyMoves>>;
+    let hostingPlan: Awaited<ReturnType<typeof buildMemberMergeHostingCoveragePlan>>;
+    let lockedHostingParticipants: readonly string[];
+    let refreshedHostingPlan: Awaited<ReturnType<typeof buildMemberMergeHostingCoveragePlan>>;
     let hostingParticipantProof: HostingCoverageQueueParticipantProof;
     try {
-      const lockedHostingParticipants =
-        await lockMemberMergeHostingCoverageParticipants(tx, {
+      const prepared = await withMemberMergeParticipantRows(tx, async () => {
+        const nulled = await nullSelfRelationCycles(tx, masterFull, loserId);
+        const resolved = await resolveAllCollisions(tx, masterId, loserId);
+        const moves = await applyMoves(
+          tx,
           masterId,
           loserId,
-          ownerMemberIds: hostingPlan.sources.map(
-            (source) => source.ownerMemberId,
-          ),
-        });
+          relationPreview.selfRelationRefs,
+          loserOwnedBookingIds,
+        );
+        const bookingOwnerMove = moves.find((move) => move.model === "Booking.member");
+        if ((bookingOwnerMove?.count ?? 0) !== loserOwnedBookingIds.length) {
+          throw new MemberMergeError(
+            "Booking ownership changed while the merge was running. Nothing was saved. Re-run the preview and try again.",
+            409,
+            "merge_drift_in_transaction",
+            { driftFields: ["Booking.member"] },
+          );
+        }
+        const plan = await buildMemberMergeHostingCoveragePlan(
+          {
+            masterId,
+            capturedLoserOwnedBookingIds: loserOwnedBookingIds,
+            today: clubTodayForMerge,
+          },
+          tx,
+        );
+        return {
+          participantIds: [
+            masterId,
+            loserId,
+            ...plan.sources.map((source) => source.ownerMemberId),
+          ],
+          result: { nulled, resolved, moves, plan },
+        };
+      });
+      selfRelationNulls = prepared.result.nulled;
+      resolveResults = prepared.result.resolved;
+      relationMoves = prepared.result.moves;
+      hostingPlan = prepared.result.plan;
+      lockedHostingParticipants = prepared.lockedMemberIds;
       refreshedHostingPlan = await buildMemberMergeHostingCoveragePlan(
         {
           masterId,

@@ -1887,7 +1887,7 @@ async function partnerShareGuestRowLodgeIds(
  * Turn merge's lodge derivation from an argument into a proof (#2672).
  *
  * Call this from inside the merge transaction AFTER merge's sorted
- * `Member … FOR UPDATE` statement (`lockMemberMergeHostingCoverageParticipants`)
+ * `Member … FOR UPDATE` statement (`withMemberMergeParticipantRows`)
  * and while the lodge prefix is still held. It re-runs
  * {@link partnerShareGuestRowLodgeIds} and refuses the whole merge if the set
  * has grown past the lodges the prefix actually locked.
