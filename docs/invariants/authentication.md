@@ -177,10 +177,11 @@ This file holds only the rules.
 - **A session records when the person last proved who they are.**
   `requireRecentAuth` in
   [`require-recent-auth.ts`](../../src/lib/require-recent-auth.ts) is the one
-  check (`INV-SSOT`). It passes only when `lastAuthenticatedAt` is a finite
-  epoch millisecond and is not older than five minutes. A missing stamp fails
-  closed. Listed routes call it (`INV-AUTH-009`). While the officer sign-in
-  switch is off, the check does not read the session.
+  check (`INV-SSOT`). Listed routes call it (`INV-AUTH-009`). While the
+  officer sign-in switch is off, the check does not read the session, and a
+  missing stamp still passes. While the switch is on, it passes only when
+  `lastAuthenticatedAt` is a finite epoch millisecond and is not older than
+  five minutes, and a missing stamp fails closed.
 - **The five minutes is a security floor, not a club setting.**
 - **A password proof writes the stamp only when no authenticator factor is
   still owed.** An email factor does not count as owed, so that password step
