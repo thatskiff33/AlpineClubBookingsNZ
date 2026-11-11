@@ -1,5 +1,7 @@
 import "server-only";
 import type { PrismaClient } from "@prisma/client";
+import logger from "@/lib/logger";
+import { FORMER_MEMBER_ANONYMISATION_JOB_NAME } from "@/lib/privacy-retention-shared";
 import { prisma } from "@/lib/prisma";
 import { getPrivacyRetentionSettings, PRIVACY_RETENTION_SETTINGS_ID } from "@/lib/privacy-retention-settings";
 import { privacyRetentionSelection, selectFormerMemberBatch, RETENTION_BATCH_SIZE } from "@/lib/privacy-retention-selection";
@@ -55,11 +57,17 @@ async function runClaimed(
         const batch = await selectFormerMemberBatch(db, selection.formerMembers, afterId);
         for (const row of batch) {
           if (row.reasons.length) { result.blocked++; continue; }
-          const done = await db.$transaction(async tx => {
-            if (!(await getPrivacyRetentionSettings(tx)).anonymiseMembersEnabled) return false;
-            return anonymiseFormerMember(tx, row.id, selection.formerMembers, now);
-          }, { isolationLevel: "Serializable", timeout: 15_000 });
-          if (done) result.anonymised++; else result.blocked++;
+          try {
+            // INV-LOCK-005: default READ COMMITTED sees commits made while awaiting locks.
+            const done = await db.$transaction(async tx => {
+              if (!(await getPrivacyRetentionSettings(tx)).anonymiseMembersEnabled) return false;
+              return anonymiseFormerMember(tx, row.id, selection.formerMembers, now);
+            }, { timeout: 15_000 });
+            if (done) result.anonymised++; else result.blocked++;
+          } catch (err) {
+            logger.error({ err, memberId: row.id, job: FORMER_MEMBER_ANONYMISATION_JOB_NAME }, "Former-member anonymisation failed; member blocked for this run");
+            result.blocked++;
+          }
         }
         const last = batch.at(-1);
         if (!last || batch.length < RETENTION_BATCH_SIZE) break;

@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { matchesWhere, type WhereInput } from "./support/prisma-where";
 
+vi.mock("@/lib/logger", () => ({ default: { error: vi.fn() } }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
@@ -16,6 +17,8 @@ vi.mock("@/lib/member-dietary", () => ({ DIETARY_ERASURE_PATCH: { dietaryRequire
 vi.mock("@/lib/member-photo", () => ({ deleteOwnedMemberPhotoBlobs: vi.fn() }));
 vi.mock("@/lib/member-email-inheritance", () => ({ retireInheritedEmailCopies: vi.fn(), reconcileEmailInheritanceForMemberChange: vi.fn() }));
 
+import logger from "@/lib/logger";
+import { FORMER_MEMBER_ANONYMISATION_JOB_NAME } from "@/lib/privacy-retention-shared";
 import { getPrivacyRetentionPreview } from "@/lib/privacy-retention";
 import { runFormerMemberAnonymisationJob, runPersonalDataPruneJob } from "@/lib/privacy-retention-jobs";
 import { DEFAULT_PRIVACY_RETENTION_SETTINGS } from "@/lib/privacy-retention-shared";
@@ -122,6 +125,20 @@ describe("privacy retention selection and execution", () => {
     expect(ids).toHaveLength(120);
     s.settings.anonymiseMembersEnabled = true;
     expect(await runFormerMemberAnonymisationJob({ db: s.db, now: NOW })).toMatchObject({ anonymised: 119, blocked: 1 });
+  });
+
+  it("logs a failed member, continues later members and releases the lease", async () => {
+    const s = store();
+    s.settings.anonymiseMembersEnabled = true;
+    s.data.member.push(member("a-fails"), member("b-succeeds"));
+    const failure = new Error("transaction failed");
+    vi.mocked(s.db.$transaction).mockRejectedValueOnce(failure);
+    expect(await runFormerMemberAnonymisationJob({ db: s.db, now: NOW })).toMatchObject({ anonymised: 1, blocked: 1 });
+    expect(s.data.member[0].deletedAt).toBeNull();
+    expect(s.data.member[1].deletedAt).toEqual(NOW);
+    expect(s.db.$transaction).toHaveBeenCalledTimes(2);
+    expect(logger.error).toHaveBeenCalledWith({ err: failure, memberId: "a-fails", job: FORMER_MEMBER_ANONYMISATION_JOB_NAME }, expect.any(String));
+    expect(s.settings.anonymiseStartedAt).toBeNull();
   });
 
   it("ships both jobs off and performs no transaction or destructive side effect", async () => {
