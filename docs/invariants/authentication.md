@@ -190,9 +190,9 @@ This file holds only the rules.
   server-side facts: the credentials provider, the member row after reload,
   and the kind prefixed into the hashed two-factor challenge. A
   reauthentication challenge still writes it. A `session.update()` payload
-  that carries the time, or a proof kind, is ignored. The challenge is
-  server-minted, stored as a keyed hash, bound to one member, and consumed
-  by one status-guarded claim.
+  that carries the time, or a proof kind, is ignored. Each challenge is
+  server-minted, stored as a keyed hash, and bound to one member. The
+  reauthentication challenge is consumed by one status-guarded claim.
 - **The confirm dialog accepts an authenticator-app code, a passkey once one
   exists, or the password only when the person has neither.** An emailed code
   and a recovery code are never accepted there. A failed proof counts toward
