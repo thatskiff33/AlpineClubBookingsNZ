@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import {
-  approveMemberApplication,
-  MembershipApplicationError,
-  rejectMemberApplication,
-} from "@/lib/nomination";
+import { approveMemberApplication, rejectMemberApplication } from "@/lib/nomination";
+import { MembershipApplicationError } from "@/lib/member-application-fields";
 import { personDecisionsSchema } from "@/lib/member-application-decisions";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";

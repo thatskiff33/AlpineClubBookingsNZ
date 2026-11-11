@@ -567,3 +567,31 @@ case-sensitive default. #4146, #4165, #4190.
 - **Scope the query as well where an indexed column allows.** An exact prefix
   still matches a longer id beginning with the same id and delimiter; the
   duplicate-capture lookup also scopes by `bookingId`.
+
+## INV-SSOT-007
+
+Production modules under `src/` form no static value-import cycle, nothing
+imports the retired `@/lib/xero` facade, and nothing under `src/components`
+imports from `src/app`. `src/lib/__tests__/module-graph-census.test.ts` holds
+all three. #4930.
+
+- **Why a loop is a defect.** Two modules that import each other load in the
+  order a page or cron job first reached them, so a module-level read across
+  the loop can fail on one entry point and not another. A loop also means
+  neither module is the owner of what they share.
+- **Break a loop by moving the shared piece down.** Put it in a leaf module
+  both sides import (`manual-booking-payment-error.ts`,
+  `booking-request-hold.ts`, `xero-supplementary-invoice-enqueue.ts`). A new
+  `await import()` added to dodge the census is not a fix; nor is a permanent
+  re-export left behind. A temporary one names its removal issue.
+- **What counts.** The census reads each file with the TypeScript parser.
+  Value imports, bare side-effect imports and `export … from` are edges.
+  `import type`, all-`type` specifier lists and `import()` load nothing at
+  module evaluation and are not. The facade and route-folder rules count every
+  kind, type imports included.
+- **The allowlist only shrinks.** `ALLOWED_CYCLES` is empty. An entry names
+  its issue and its exact sorted module set, and fails once the cycle is gone.
+- **Mutation probes** in the same file prove each rule fails when its defect
+  is added back, in every spelling listed above.
+- **Blind spots.** Files outside `src/`, test files and `src/test` are not
+  walked. A loop through a package, or through `require()`, is not seen.

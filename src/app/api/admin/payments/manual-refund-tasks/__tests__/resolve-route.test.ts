@@ -29,6 +29,8 @@ vi.mock("@/lib/logger", () => ({
 vi.mock("@/lib/manual-refund-task-resolution", () => ({
   resolveManualRefundTask: mocks.resolveManualRefundTask,
   MANUAL_PAYMENT_NOTE_MAX: 500,
+}));
+vi.mock("@/lib/manual-booking-payment-error", () => ({
   ManualBookingPaymentError: class ManualBookingPaymentError extends Error {
     status: number;
     constructor(message: string, status = 400) {
@@ -364,7 +366,7 @@ describe("the officer's cash-or-bank answer on a hand-settled refund (#3536)", (
 // is what the officer reads.
 describe("a group organiser's hand-back marked paid back without the total it was shown", () => {
   it("passes no amount through as null, and answers with the door's 409 and its sentence", async () => {
-    const { ManualBookingPaymentError } = await import("@/lib/manual-refund-task-resolution");
+    const { ManualBookingPaymentError } = await import("@/lib/manual-booking-payment-error");
     const refusal = "This repayment's total grows as each joiner's place is cancelled, so it is marked paid back at the total the screen shows. Refresh the page and try again.";
     mocks.resolveManualRefundTask.mockRejectedValueOnce(new ManualBookingPaymentError(refusal, 409));
 

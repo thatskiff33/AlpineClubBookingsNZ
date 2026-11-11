@@ -54,7 +54,7 @@ import type { MemberGuestCandidate } from "@/lib/member-guest-find";
 import {
   partyNeedsSupervisionJustification,
   predictMemberGuestConsent,
-} from "../_components/member-guest-preview";
+} from "@/components/book/member-guest-preview";
 import {
   readExceptionOffer,
   type ExceptionOffer,
@@ -75,7 +75,7 @@ import {
   type PriceQuote,
   type RoomOption,
   type WorkPartyEvent,
-} from "../_components/types";
+} from "@/components/book/booking-wizard-types";
 
 interface GuestProfileRequiredMember {
   memberId: string;

@@ -170,8 +170,8 @@ vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
 }));
 
 
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import {
-  ManualBookingPaymentError,
   markBookingPaymentManuallySettled,
   reverseManualBookingPayment,
 } from "@/lib/payment-reconciliation";

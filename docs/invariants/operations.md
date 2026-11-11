@@ -302,8 +302,8 @@ rules first written here. #2765 extended it with the measured-audience half.
 - **A `"use client"` module never reaches server-only code (#2686).**
   Everything a client module pulls in at runtime is compiled into the browser
   bundle, so reaching `@/lib/prisma`, `@/lib/auth`, `@/lib/audit`,
-  `@/lib/session`, `@/lib/email`, `@/lib/xero`, `@/lib/stripe`, `@/lib/env`,
-  `@/lib/club-time-zone-env`, `@/lib/environment-role-declaration`,
+  `@/lib/session`, `@/lib/email`, `@/lib/xero-api-client`, `@/lib/stripe`,
+  `@/lib/env`, `@/lib/club-time-zone-env`, `@/lib/environment-role-declaration`,
   `@/lib/environment-role`, `next/headers`, `server-only` or a Node built-in
   from a `"use client"` file ships database access, credential handling,
   filesystem code or an environment answer the browser cannot have to every

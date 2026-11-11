@@ -50,7 +50,7 @@ vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: doubles.audit }));
 vi.mock("@/lib/logger", () => ({ default: { warn: vi.fn(), error: vi.fn(), info: vi.fn() } }));
-vi.mock("@/lib/payment-reconciliation", () => ({
+vi.mock("@/lib/manual-booking-payment-error", () => ({
   ManualBookingPaymentError: class extends Error {
     constructor(message: string, readonly status = 400) {
       super(message);

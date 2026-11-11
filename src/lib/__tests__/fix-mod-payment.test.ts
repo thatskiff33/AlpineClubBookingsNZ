@@ -220,21 +220,31 @@ vi.mock("@/lib/email", () => ({
   sendBookingConfirmedEmail: vi.fn().mockResolvedValue(undefined),
   sendAdminPaymentFailureAlert: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-supplementary-invoices", () => ({
   createXeroSupplementaryInvoice: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/xero-modification-credit-notes", () => ({
   createXeroCreditNoteForModification: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
+}));
+vi.mock("@/lib/xero-booking-invoices", () => ({
   createXeroInvoiceForBooking: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/xero-credit-notes", () => ({
   createXeroCreditNote: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: mockEnqueueXeroBookingInvoiceOperation,
   enqueueXeroBookingInvoiceUpdateOperation: mockEnqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroRefundCreditNoteOperation: mockEnqueueXeroRefundCreditNoteOperation,
-  enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation: mockEnqueueXeroModificationCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected: mockKickQueuedXeroOutboxOperationsIfConnected,
   recordSkippedXeroBookingInvoiceUpdateOperation: mockRecordSkippedXeroBookingInvoiceUpdateOperation,
+}));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
+  enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
 }));
 vi.mock("@/lib/xero-supplementary-invoice-late-capture", () => ({
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent,

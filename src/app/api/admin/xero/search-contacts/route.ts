@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
-import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero";
+import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";

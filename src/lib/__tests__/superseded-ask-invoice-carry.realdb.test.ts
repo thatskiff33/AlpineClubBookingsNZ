@@ -461,7 +461,7 @@ function deferred() {
           async (tx) => {
             const rows = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
             pid = rows[0]?.pid ?? 0;
-            const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-operation-outbox");
+            const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-supplementary-invoice-enqueue");
             await lockSupplementaryInvoiceAnchor(tx, anchorId);
             held.resolve();
             await release;
@@ -1377,7 +1377,7 @@ function deferred() {
         stripe.failCancels = 1;
         const b = await priceIncrease(MOD_B, B_CENTS);
         const [{ enqueueXeroSupplementaryInvoiceOperation }, { planSupplementaryInvoicePayment }] = await Promise.all([
-          import("@/lib/xero-operation-outbox"),
+          import("@/lib/xero-supplementary-invoice-enqueue"),
           import("@/lib/xero-booking-repair-payments"),
         ]);
         // The repair's QUEUE_SUPPLEMENTARY_INVOICE for an ordinary edit: the

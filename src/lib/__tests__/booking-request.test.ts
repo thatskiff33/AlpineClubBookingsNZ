@@ -197,11 +197,11 @@ import {
   priceBookingRequest,
   purgeExpiredBookingRequests,
   resolvePublicRequestLodgeName,
-  resolveRequestBookingHoldUntil,
   splitPriceAcrossGuests,
   updateBookingRequestSettings,
   verifyBookingRequest,
 } from "@/lib/booking-request";
+import { resolveRequestBookingHoldUntil } from "@/lib/booking-request-hold";
 import { sendMemberGuestWithdrawnNotifications } from "@/lib/member-guest-consent-notifications";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import {

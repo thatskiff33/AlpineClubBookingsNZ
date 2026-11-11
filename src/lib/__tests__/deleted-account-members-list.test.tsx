@@ -51,7 +51,7 @@ vi.mock("@/lib/email", () => ({
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() },
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,
   getXeroContactIdsForGroup: vi.fn().mockResolvedValue([]),
 }));

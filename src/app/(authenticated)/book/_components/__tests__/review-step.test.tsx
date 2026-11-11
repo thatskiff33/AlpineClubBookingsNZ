@@ -5,7 +5,7 @@ import type { ComponentProps } from "react";
 import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
 import { ReviewStep } from "@/app/(authenticated)/book/_components/review-step";
-import type { PriceQuote } from "@/app/(authenticated)/book/_components/types";
+import type { PriceQuote } from "@/components/book/booking-wizard-types";
 import type { GuestData } from "@/components/guest-form";
 import { sumDeferredGuestPortionCents } from "@/lib/deferred-guest-portion";
 import { formatMissingPaidUpAdultRefusal } from "@/lib/policies/subscription-lockout-pricing";

@@ -21,10 +21,12 @@ const errors = vi.hoisted(() => {
   }
   return { XeroDailyLimitError, XeroMemberImportValidationError };
 });
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-member-import", () => ({
   importMembersFromXeroGroups: (...a: unknown[]) => mockImport(...a),
-  XeroDailyLimitError: errors.XeroDailyLimitError,
   XeroMemberImportValidationError: errors.XeroMemberImportValidationError,
+}));
+vi.mock("@/lib/xero-api-client", () => ({
+  XeroDailyLimitError: errors.XeroDailyLimitError,
 }));
 vi.mock("@/lib/audit", () => ({ getAuditRequestContext: () => ({}) }));
 vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));

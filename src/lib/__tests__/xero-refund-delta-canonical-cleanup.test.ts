@@ -386,7 +386,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: fakePrisma }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
-vi.mock("@/lib/xero", () => ({ isXeroConnected: vi.fn(async () => false) }));
+vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: vi.fn(async () => false) }));
 vi.mock("@/lib/orphaned-applied-credit-backfill", () => ({
   findOrphanedAppliedCredits: vi.fn(async () => ({ findings: [] })),
 }));

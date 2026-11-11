@@ -17,7 +17,7 @@ import {
   enqueueXeroSecondSupplementaryInvoiceOperation,
   restatePendingSupplementaryInvoiceAmount,
   type XeroSupplementaryInvoiceEnqueueOutcome,
-} from "@/lib/xero-operation-outbox";
+} from "@/lib/xero-supplementary-invoice-enqueue";
 import type { ClubFormat } from "@/lib/club-format";
 import type { UncollectedShareOverride } from "@/lib/edit-financial-review-charge-cancelled";
 import { LEDGER_ROWS_NEWEST_FIRST } from "@/lib/payment-ledger-order";

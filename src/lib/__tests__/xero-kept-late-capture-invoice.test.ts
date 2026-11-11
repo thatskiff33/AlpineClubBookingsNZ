@@ -59,7 +59,7 @@ const db = vi.hoisted(() => {
 });
 
 vi.mock("@/lib/prisma", () => ({ prisma: db }));
-vi.mock("@/lib/xero-operation-outbox", () => ({
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
   lockSupplementaryInvoiceAnchor: (...a: unknown[]) => mocks.lockAnchor(...a),
 }));
 vi.mock("@/lib/xero-sync", () => ({

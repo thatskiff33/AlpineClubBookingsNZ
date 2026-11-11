@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { BookingCalendar } from "@/components/booking-calendar";
 import { useLodgeCapacitySettingsHref } from "@/components/admin/lodge-capacity-settings-link";
 import { GuestForm, type GuestData } from "@/components/guest-form";
-import { partyNeedsSupervisionJustification } from "@/app/(authenticated)/book/_components/member-guest-preview";
+import { partyNeedsSupervisionJustification } from "@/components/book/member-guest-preview";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -39,7 +39,7 @@ import {
   type NonMemberOwner,
 } from "@/components/admin/non-member-contact-form";
 import { useClubTime } from "@/components/club-time-provider";
-import { AdminDependantIdentityResolution } from "./_components/dependant-identity-resolution";
+import { AdminDependantIdentityResolution } from "@/components/book/admin-dependant-identity-resolution";
 import { useAdminDependantIdentity } from "./_hooks/use-admin-dependant-identity";
 import {
   DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE,

@@ -109,6 +109,7 @@ import { nameField } from "@/lib/zod-helpers";
 import { storedSchoolTeacherListSchema } from "@/lib/school-teacher-schema";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
+import { resolveRequestBookingHoldUntil } from "@/lib/booking-request-hold";
 
 export const BOOKING_REQUEST_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
 /** Privacy Act 2020 retention: purge declined and never-verified requests. */
@@ -1643,22 +1644,6 @@ export function splitPriceAcrossGuests(totalCents: number, guestCount: number): 
   return Array.from({ length: guestCount }, (_, index) =>
     index === 0 ? base + remainder : base
   );
-}
-
-/**
- * Resolve when the booking's non-member hold expires. Member-priority
- * bumping applies until the requester pays. Late approvals still get at
- * least 48 hours to pay, but never beyond check-in.
- */
-export function resolveRequestBookingHoldUntil(
-  checkIn: Date,
-  holdDays: number,
-  now: Date = new Date()
-): Date {
-  const standardHold = new Date(checkIn.getTime() - holdDays * DAY_MS);
-  const minimumHold = new Date(now.getTime() + 2 * DAY_MS);
-  const hold = standardHold > minimumHold ? standardHold : minimumHold;
-  return hold > checkIn ? checkIn : hold;
 }
 
 /**

@@ -38,7 +38,7 @@ vi.mock("@/lib/credit-release-xero-payment", () => ({
   unpaidGapPayloadIfOverlapping: async (...a: unknown[]) => (await mocks.unpaidGapPayloadIfOverlapping(...a)) ?? null,
 }));
 
-vi.mock("@/lib/xero-operation-outbox", () => ({ lockSupplementaryInvoiceAnchor: mocks.lockAnchor }));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({ lockSupplementaryInvoiceAnchor: mocks.lockAnchor }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {

@@ -30,7 +30,7 @@ import {
   parseApplicationAddress,
   parseApplicationFamilyMembers,
   type ApplicationFamilyMember,
-} from "@/lib/nomination";
+} from "@/lib/member-application-fields";
 import {
   applicationDateOfBirthDay,
   dependentSubject,

@@ -7,7 +7,7 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { JoinApplyPageClient } from "@/app/(website)/join/apply/join-apply-page-client";
+import { JoinApplyPageClient } from "@/components/website/join-apply-page-client";
 import type { ClubIdentity } from "@/config/club-identity-types";
 
 // Address fields are not under test and pull in the autocomplete widget;

@@ -89,6 +89,8 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
     return mocks.enqueueXeroRefundCreditNoteOperation(...args);
   },
   kickQueuedXeroOutboxOperationsIfConnected: mocks.kick,
+}));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
   // #4324 (review C4): a change capture's anchor.
   lockSupplementaryInvoiceAnchor: (_tx: unknown, anchorId: string) => {
     calls.push(`lock-anchor:${anchorId}`);

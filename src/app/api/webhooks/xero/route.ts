@@ -6,7 +6,7 @@ import logger from "@/lib/logger";
 import { reportWebhookError } from "@/lib/observability-bridge";
 import { buildXeroIdempotencyKey, recordXeroInboundEvent } from "@/lib/xero-sync";
 import { runXeroInboundReconciliationCycle } from "@/lib/xero-inbound-reconciliation";
-import { isXeroConnected } from "@/lib/xero";
+import { isXeroConnected } from "@/lib/xero-token-store";
 import { getOperationalXeroWebhookKey } from "@/lib/xero-config";
 import { recordXeroWebhookValidation } from "@/lib/xero-webhook-validation";
 import {

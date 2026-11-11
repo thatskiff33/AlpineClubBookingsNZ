@@ -3,13 +3,12 @@ import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-host
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
+import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import {
-  callXeroApi,
   flushMemberSubscriptionHistory,
-  getAuthenticatedXeroClient,
-  refreshXeroContactCachesFromContact,
   syncMemberSubscriptionHistoryForLinkedContact,
-} from "@/lib/xero";
+} from "@/lib/xero-membership-sync";
+import { refreshXeroContactCachesFromContact } from "@/lib/xero-contact-cache";
 import { logAudit } from "@/lib/audit";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import logger from "@/lib/logger";

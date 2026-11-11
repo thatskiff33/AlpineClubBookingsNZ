@@ -93,7 +93,7 @@ vi.mock("@/lib/xero-primary-invoice-fee-gap", () => ({
       : Math.max(0, Math.min(input.netCapturedCents, input.amountDueCents - input.appliedCreditCents)),
   recheckPrimaryInvoiceWorthGap: mocks.recheckPrimaryInvoiceWorthGap,
 }));
-vi.mock("@/lib/xero-operation-outbox", () => ({
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
   lockSupplementaryInvoiceAnchor: mocks.lockSupplementaryInvoiceAnchor,
 }));
 

@@ -330,7 +330,6 @@ import {
   attachPaymentIntentToWaitingSupplementaryInvoiceOperations,
   findWaitingSupplementaryInvoiceOperationForPaymentIntent,
   enqueueXeroAccountCreditNoteOperation,
-  enqueueXeroSecondSupplementaryInvoiceOperation,
   enqueueXeroBookingInvoiceOperation,
   enqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroCreditNoteAllocationOperation,
@@ -340,11 +339,14 @@ import {
   enqueueXeroModificationAccountCreditNoteOperation,
   enqueueXeroModificationCreditNoteOperation,
   enqueueXeroRefundCreditNoteOperation,
-  enqueueXeroSupplementaryInvoiceOperation,
   processQueuedXeroOutboxOperations,
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
-  restatePendingSupplementaryInvoiceAmount,
 } from "@/lib/xero-operation-outbox";
+import {
+  enqueueXeroSecondSupplementaryInvoiceOperation,
+  enqueueXeroSupplementaryInvoiceOperation,
+  restatePendingSupplementaryInvoiceAmount,
+} from "@/lib/xero-supplementary-invoice-enqueue";
 import { enqueueXeroRefundRequestCreditNoteOperation } from "@/lib/xero-refund-request-credit-note-outbox";
 import { ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL } from "@/lib/organiser-billing";
 import {

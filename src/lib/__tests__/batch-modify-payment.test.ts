@@ -311,18 +311,22 @@ vi.mock("@/lib/chore-cleanup", () => ({
   }),
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-supplementary-invoices", () => ({
   createXeroSupplementaryInvoice: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/xero-modification-credit-notes", () => ({
   createXeroCreditNoteForModification: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: mockEnqueueXeroBookingInvoiceOperation,
   enqueueXeroBookingInvoiceUpdateOperation: mockEnqueueXeroBookingInvoiceUpdateOperation,
-  enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation: mockEnqueueXeroModificationCreditNoteOperation,
   enqueueXeroModificationAccountCreditNoteOperation: mockEnqueueXeroModificationAccountCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected: mockKickQueuedXeroOutboxOperationsIfConnected,
   recordSkippedXeroBookingInvoiceUpdateOperation: mockRecordSkippedXeroBookingInvoiceUpdateOperation,
+}));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
+  enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
 }));
 
 vi.mock("@/lib/logger", () => ({

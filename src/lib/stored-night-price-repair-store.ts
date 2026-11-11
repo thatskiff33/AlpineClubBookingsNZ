@@ -8,7 +8,7 @@ import { postReviewClosureLedgerLines } from "@/lib/booking-ledger-modification-
 import type { BookingJournalContext } from "@/lib/member-money/doors";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { editReviewSettlementIssuesXeroDocument } from "@/lib/edit-financial-review-xero-leg";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import type { ClubFormat } from "@/lib/club-format";
 import {
   type RecordedNightPrice,

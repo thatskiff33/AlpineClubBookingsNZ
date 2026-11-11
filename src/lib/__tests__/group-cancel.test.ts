@@ -142,7 +142,7 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroRefundCreditNoteOperation: mocks.enqueueXeroRefund,
   kickQueuedXeroOutboxOperationsIfConnected: mocks.kickXero,
 }));
-vi.mock("@/lib/xero", () => ({ isXeroConnected: mocks.isXeroConnected }));
+vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: mocks.isXeroConnected }));
 vi.mock("@/lib/payment-recovery", () => ({
   enqueueGroupSettlementRefundRecovery:
     mocks.enqueueGroupSettlementRefundRecovery,

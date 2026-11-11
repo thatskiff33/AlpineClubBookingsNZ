@@ -24,7 +24,7 @@ vi.mock("@/lib/stripe", () => ({
   cancelPaymentIntentIfCancellable: vi.fn(),
   cancelSetupIntentIfCancellable: vi.fn(),
 }));
-vi.mock("@/lib/xero", () => ({ isXeroConnected: vi.fn() }));
+vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: vi.fn() }));
 vi.mock("@/lib/cancellation", () => ({
   calculateAppliedCreditRestore: vi.fn(),
   calculateRefundAmount: vi.fn(),

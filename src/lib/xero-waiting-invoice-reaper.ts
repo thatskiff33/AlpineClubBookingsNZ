@@ -42,8 +42,8 @@ import { providerCaptureTime } from "@/lib/stripe-capture-date";
 import { sendAdminXeroSyncErrorAlert } from "@/lib/email";
 import { sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
 import { isCapturedTransactionStatus } from "@/lib/payment-transactions";
+import { STALE_WAITING_PAYMENT_ERROR_CODE } from "@/lib/xero-supplementary-invoice-capture-rules";
 import {
-  STALE_WAITING_PAYMENT_ERROR_CODE,
   lateCaptureRefundState,
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
 } from "@/lib/xero-supplementary-invoice-late-capture";

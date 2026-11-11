@@ -70,7 +70,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-vi.mock("@/lib/nomination", () => ({
+vi.mock("@/lib/member-application-fields", () => ({
   parseApplicationAddress: mocks.parseApplicationAddress,
   parseApplicationFamilyMembers: mocks.parseApplicationFamilyMembers,
 }));

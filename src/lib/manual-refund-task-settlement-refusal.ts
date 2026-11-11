@@ -1,7 +1,7 @@
 import "server-only";
 
 import { SchoolHasNoCreditAccountError } from "@/lib/member-credit";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { RefundAllocationRacedError } from "@/lib/payment-transactions";
 import { CARD_SHORTFALL_NOTHING_TO_ALLOCATE_MESSAGE } from "@/lib/cancel-card-refund-shortfall-settle";
 import {

@@ -507,7 +507,7 @@ export async function recordAdditionalCaptureReceipt(
     // records the capture again under it, so an invoice for the change and
     // this decision never both record it. Its own transaction, holding no
     // other key; no Xero call under it.
-    const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-operation-outbox");
+    const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-supplementary-invoice-enqueue");
     const stored = await prisma.$transaction(async (tx) => {
       const changeId = captureChangeId(transaction);
       await lockSupplementaryInvoiceAnchor(tx, keptCaptureAnchorId(transaction, bookingId));

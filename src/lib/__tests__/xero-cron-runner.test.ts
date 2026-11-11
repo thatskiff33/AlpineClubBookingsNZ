@@ -17,8 +17,10 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: vi.fn(),
+}));
+vi.mock("@/lib/xero-membership-sync", () => ({
   refreshAllMembershipStatuses: vi.fn(),
 }));
 

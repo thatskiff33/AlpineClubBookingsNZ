@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { SchoolBookingForm } from "@/app/(website-dynamic)/school-bookings/school-booking-form";
+import { SchoolBookingForm } from "@/components/website/school-booking-form";
 import { EmbeddedPageContentParts } from "@/components/website/embedded-page-content-parts";
 import {
   getCachedClubIdentity,

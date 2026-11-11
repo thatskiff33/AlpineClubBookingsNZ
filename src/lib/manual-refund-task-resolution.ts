@@ -20,7 +20,7 @@ import { releaseOrganiserExtraRefundNotes } from "@/lib/organiser-extra-netting"
 import { applyGroupSettlementMirrorRefund, isBankTransferHandBackRoute } from "@/lib/group-settlement-mirror-hand-back"; // #3949
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { requireMemberCreditRecipient } from "@/lib/member-credit";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { enqueueEditFinancialReviewRefundRecovery } from "@/lib/payment-recovery";
 import { applyLocalRefundAllocation } from "@/lib/payment-transactions";
 import { readCapacityRaceStripeRefundedForTask } from "@/lib/capacity-race-refunded-total-correction";
@@ -67,7 +67,6 @@ import { recordReviewClosurePricing } from "@/lib/stored-night-price-repair-stor
  * the note-length rule and the error type, both of which have their own homes.
  * `INV-PAY-051` is the invariant these rules belong to.
  */
-export { ManualBookingPaymentError };
 export { MANUAL_PAYMENT_NOTE_MAX };
 
 export type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";

@@ -15,7 +15,7 @@ import {
 import {
   getXeroContactGroupMemberships,
   getXeroContactIdsForGroup,
-} from "@/lib/xero";
+} from "@/lib/xero-contact-groups";
 import { sendMemberSetupInviteEmail } from "@/lib/email";
 import {
   clubToday,

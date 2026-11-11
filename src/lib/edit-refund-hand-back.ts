@@ -20,7 +20,7 @@ import { GROUP_MIRROR_HAND_BACK_EXCEEDS_CASH_MESSAGE, REVIEW_REFUND_EXCEEDS_UNPR
 import { netCollectedCardRefundSelect } from "@/lib/additional-ledger-gap";
 import { openCardRefundOwedCents } from "@/lib/open-card-refund-owed";
 import { sumInternetBankingMintedCentsForBookings } from "@/lib/internet-banking-late-cash-credit";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 import { bankTransferRefundPayee, type BankTransferRefundPayee } from "@/lib/group-organiser-paid";
 import { GroupCancelInProgressError, groupCancelInProgress } from "@/lib/group-cancel-in-progress";

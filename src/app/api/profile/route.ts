@@ -5,11 +5,9 @@ import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
-import {
-  isXeroConnected,
-  syncManagedXeroContactGroupForMember,
-  updateXeroContact,
-} from "@/lib/xero";
+import { isXeroConnected } from "@/lib/xero-token-store";
+import { syncManagedXeroContactGroupForMember } from "@/lib/xero-contact-groups";
+import { updateXeroContact } from "@/lib/xero-contacts";
 import {
   buildXeroContactUpdatePayload,
   hasMemberXeroContactChanges,

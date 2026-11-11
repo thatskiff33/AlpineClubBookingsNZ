@@ -15,7 +15,7 @@ import {
   selectLoadedBookingMoneyBuildUp,
   type BookingMoneyBuildUpSelection,
 } from "@/lib/booking-money-build-up";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { PrimaryInvoiceRaisedDuringEditError, writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
 import type { ClubFormat } from "@/lib/club-format";
 

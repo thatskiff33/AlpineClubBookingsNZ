@@ -16,7 +16,7 @@ import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { isBankRefundVoidFollowUpTask } from "@/lib/bank-refund-void-follow-up-key";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { prisma } from "@/lib/prisma";
 import { callXeroApi, getAuthenticatedXeroClient, XeroDailyLimitError } from "@/lib/xero-api-client";
 import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";

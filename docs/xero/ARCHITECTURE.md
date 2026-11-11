@@ -594,11 +594,14 @@ Two design rules shape everything below:
 
 ## Module map
 
-`src/lib/xero.ts` is a compatibility facade (re-exports only, no logic) for
-external callers. New code should import the focused module. The subsystem's
-own `src/lib/xero-*` modules must import the source domain module directly, not
-the facade — an `eslint.config.mjs` `no-restricted-imports` override enforces
-this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
+Every caller imports the focused module that owns the behaviour. The
+`src/lib/xero.ts` compatibility facade (re-exports only) was retired in #4930:
+it hid the subsystem's real dependency graph and closed one of the money-core
+import loops. `src/lib/__tests__/module-graph-census.test.ts` fails any import
+of it, of any kind, and any static import cycle (`INV-SSOT-007`); it replaced
+the `eslint.config.mjs` override #1208 added for the `xero-*` modules alone.
+The facade's `import "server-only"` marker moved to `xero-api-client`, the one
+module every provider call goes through (`INV-OPS-013`). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 `readNumber`) live in `xero-json`. The subsystem groups as:
 
 ### Infrastructure
@@ -634,6 +637,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | Module | Owns |
 | --- | --- |
 | `xero-operation-outbox` | `enqueueXero*Operation` (every queue type in `XERO_OUTBOX_QUEUE_TYPES`) and the worker `processQueuedXeroOutboxOperations` (scans the indexed `queueType` column via `XERO_OUTBOX_QUEUE_TYPES`); also WAITING_PAYMENT release/reap for supplementary invoices. |
+| `xero-supplementary-invoice-enqueue` | Queueing a booking change's supplementary invoice (`enqueueXeroSupplementaryInvoiceOperation`, the edit-review and organiser-extra in-transaction enqueues, pending-amount restatement) and the per-anchor advisory lock `lockSupplementaryInvoiceAnchor` (#3170). Moved out of the outbox unchanged by #4930 so the worker and its booking-invoice handlers no longer import each other. |
 | `xero-operation-outbox-payload` | The queue-type constants (17 since #3635, plus the `XERO_OUTBOX_QUEUE_TYPES` list the pending scan filters on), payload schemas, and payload→expected-operation mapping used to claim rows safely. |
 | `xero-operation-retry` | `retryXeroSyncOperation`: immediate replay of a failed operation (admin "Retry"), including contact-payload rebuild for member contact ops. |
 | `xero-operation-queue` | Background replay: a REQUEUE `XeroSyncOperation` wraps the original id; `processQueuedXeroOperationRetries` claims and executes them via `retryXeroSyncOperation`. |
@@ -4214,7 +4218,9 @@ These are candidates for future issues, not commitments.
    (#1208):_ no `src/lib/xero-*` module imports the `@/lib/xero` facade anymore
    — each imports the source domain module directly, and an `eslint.config.mjs`
    `no-restricted-imports` override forbids the facade path from `xero-*` files
-   to hold the boundary. The facade stays for external callers.
+   to hold the boundary. #4930 finished the job: every external caller moved
+   to the focused modules, the facade was deleted, and the module-graph census
+   replaced that override.
 8. **Minor:** _Partly done (#1208):_ the `messageForTask` nested-ternary chain
    in `xero-cron-runner` is now a `switch`. The webhook route's per-category
    `if` blocks were kept — they emit real observability log lines, so dropping

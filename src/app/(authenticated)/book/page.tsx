@@ -21,7 +21,7 @@ import { PayStep } from "./_components/pay-step";
 import {
   PROFILE_FAMILY_GROUP_RETURN_TO_BOOK,
   readSubscriptionLockoutView,
-} from "./_components/types";
+} from "@/components/book/booking-wizard-types";
 import { useBookingWizard } from "./_hooks/use-booking-wizard";
 
 const PROFILE_RETURN_TO_BOOK = buildProfilePathWithReturnTo("/book");

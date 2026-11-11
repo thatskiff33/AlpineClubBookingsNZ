@@ -12,17 +12,19 @@ vi.mock("@/lib/xero-api-usage", () => ({
 
 import {
   callXeroApi,
-  findSubscriptionInvoice,
-  determineSubscriptionStatus,
-  buildInvoiceLineItems,
   isRetryableXeroContactReferenceError,
-  retryXeroWriteWithContactRepair,
-  shouldBackfillMembershipStatus,
   withXeroRetry,
   XeroDailyLimitError,
   XeroTransientOutageError,
   resetXeroRateLimitStateForTests,
-} from "../xero"
+} from "@/lib/xero-api-client";
+import {
+  findSubscriptionInvoice,
+  determineSubscriptionStatus,
+  shouldBackfillMembershipStatus,
+} from "@/lib/xero-membership-sync";
+import { buildInvoiceLineItems } from "@/lib/xero-booking-invoices";
+import { retryXeroWriteWithContactRepair } from "@/lib/xero-contacts";
 import { Invoice } from "xero-node"
 import { requireCalendarDate } from "@/lib/club-time"
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone"

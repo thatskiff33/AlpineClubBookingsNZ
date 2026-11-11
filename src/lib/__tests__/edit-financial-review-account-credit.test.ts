@@ -30,7 +30,7 @@ vi.mock("@/lib/cancellation", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/cancellation")),
   loadCancellationPolicy: (...a: unknown[]) => h.loadCancellationPolicy(...a),
 }));
-vi.mock("@/lib/payment-reconciliation", () => ({
+vi.mock("@/lib/manual-booking-payment-error", () => ({
   ManualBookingPaymentError: class ManualBookingPaymentError extends Error {
     constructor(message: string, readonly status = 400) {
       super(message);

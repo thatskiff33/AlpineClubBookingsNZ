@@ -3,7 +3,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ContactPageClient } from "@/app/(website)/contact/contact-page-client";
+import { ContactPageClient } from "@/components/website/contact-page-client";
 import type { ClubIdentity } from "@/config/club-identity-types";
 
 // Controllable search params: mutate nav.search then (re)render to simulate a

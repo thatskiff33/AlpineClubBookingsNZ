@@ -64,7 +64,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.createAuditLog }));
-vi.mock("@/lib/xero", () => ({ isXeroConnected: mocks.isXeroConnected }));
+vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: mocks.isXeroConnected }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroRefundCreditNoteOperation: mocks.enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected: mocks.kickQueuedXeroOutboxOperationsIfConnected,

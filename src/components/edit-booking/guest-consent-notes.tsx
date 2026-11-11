@@ -1,6 +1,6 @@
 "use client";
 
-import { memberGuestConsentPreviewColumns } from "@/app/(authenticated)/book/_components/member-guest-preview";
+import { memberGuestConsentPreviewColumns } from "@/components/book/member-guest-preview";
 import { describeMemberGuestConsentBadge } from "@/lib/member-guest-consent-card";
 import type { Guest, NewGuest } from "@/components/edit-booking/types";
 

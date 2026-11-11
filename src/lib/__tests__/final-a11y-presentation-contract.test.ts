@@ -37,7 +37,7 @@ describe("#1819 final accessibility presentation contract", () => {
       "src/app/(authenticated)/book/_components/review-step.tsx",
     );
     const family = source(
-      "src/app/(authenticated)/profile/family-group-section.tsx",
+      "src/components/profile/family-group-section.tsx",
     );
     const memberHeader = source(
       "src/app/(admin)/admin/members/[id]/_components/member-detail-header.tsx",

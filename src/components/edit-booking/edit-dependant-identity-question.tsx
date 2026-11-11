@@ -1,7 +1,7 @@
 "use client";
 
-import { AdminDependantIdentityResolution } from "@/app/(admin)/admin/book/_components/dependant-identity-resolution";
-import { DependantIdentityResolution } from "@/app/(authenticated)/book/_components/dependant-identity-resolution";
+import { AdminDependantIdentityResolution } from "@/components/book/admin-dependant-identity-resolution";
+import { DependantIdentityResolution } from "@/components/book/dependant-identity-resolution";
 import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
 import type { FamilyMember } from "@/components/edit-booking/types";
 import type { useEditDependantIdentity } from "@/components/edit-booking/hooks/use-edit-dependant-identity";

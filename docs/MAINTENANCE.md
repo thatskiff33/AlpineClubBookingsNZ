@@ -1102,7 +1102,7 @@ spelling to copy unless a runbook explicitly gives you another one. (One does:
 command `./node_modules/.bin/tsx --conditions=react-server ...` in full. That is
 correct and supported — what is never correct is a bare `pnpm exec tsx`.) The reason
 is not tidiness.
-`@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero` and `@/lib/stripe`
+`@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero-api-client` and `@/lib/stripe`
 each carry `import "server-only"` (`INV-OPS-013`, #2850), which is what makes
 the production build refuse to ship any of them to a member's browser. Since
 #3204 the club-timezone seed and the two environment-role readers carry it too,

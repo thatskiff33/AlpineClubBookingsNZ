@@ -1,5 +1,5 @@
 import { ClubTimeProvider } from "@/components/club-time-provider";
-import { SchoolBookingForm } from "@/app/(website-dynamic)/school-bookings/school-booking-form";
+import { SchoolBookingForm } from "@/components/website/school-booking-form";
 import type { ClubIdentity } from "@/config/club-identity-types";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { clubTimeZone } from "@/lib/club-time/server";
@@ -8,7 +8,7 @@ import { clubTimeZone } from "@/lib/club-time/server";
  * The public school-booking form with the club's timezone in scope (CT-4 group
  * E, #2870; epic #2988; INV-CONFIG-002).
  *
- * The twin of `booking-requests/booking-request-form-embed.tsx`, for the same
+ * The twin of `booking-request-form-embed.tsx`, for the same
  * reason and with the same one sentence of substance: this form's earliest
  * selectable stay date is the CLUB'S today, it reads that zone from
  * `ClubTimeProvider`, and the root 404 renders `EmbeddedPageContentParts`

@@ -10,7 +10,7 @@ import { getAgeTierSettings } from "@/lib/age-tier";
 import {
   getXeroContactGroupMemberships,
   getXeroContactIdsForGroup,
-} from "@/lib/xero";
+} from "@/lib/xero-contact-groups";
 import {
   NON_MEMBER_ROLE_VALUES,
   OPERATIONAL_ROLE_VALUES,

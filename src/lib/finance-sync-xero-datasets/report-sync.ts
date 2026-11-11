@@ -3,7 +3,7 @@ import type {
   FinanceSyncDatasetContext,
   FinanceSyncSnapshotInput,
 } from "@/lib/finance-sync-service";
-import { callXeroApi } from "@/lib/xero";
+import { callXeroApi } from "@/lib/xero-api-client";
 import { getFinanceReportWindow } from "./date-format";
 import {
   buildFinanceReportSnapshot,

@@ -362,33 +362,10 @@ vi.mock("@/lib/xero-links", async (importOriginal) => {
   };
 });
 
-vi.mock("@/lib/xero", async (importOriginal) => {
-  const actual = (await importOriginal()) as typeof import("@/lib/xero");
-
-  return {
-    ...actual,
-    checkMembershipStatus: mocks.checkMembershipStatus,
-    getAccountMapping: mocks.getAccountMapping,
-    getAuthenticatedXeroClient: mocks.getAuthenticatedXeroClient,
-    refreshXeroContactCachesFromContact: mocks.refreshXeroContactCachesFromContact,
-    syncContactsFromXero: mocks.syncContactsFromXero,
-    refreshAllMembershipStatuses: mocks.refreshAllMembershipStatuses,
-    withXeroRetry: mocks.withXeroRetry,
-    findSubscriptionInvoice: (
-      invoices: Array<{ lineItems?: Array<{ accountCode?: string }>; reference?: string }>
-    ) =>
-      invoices.find(
-        (invoice) =>
-          invoice.lineItems?.some((lineItem) => lineItem.accountCode === "203") ||
-          (invoice.reference ?? "").toLowerCase().includes("annual member subscription")
-      ) ?? null,
-  };
-});
-
-// #1208: xero-inbound-reconciliation now imports these from the source domain
-// modules directly (not the @/lib/xero facade), so the doubles are attached to
-// those modules. The (now-inert) facade mock above is left as-is; real
-// callXeroApi / XeroDailyLimitError from xero-api-client are preserved.
+// #1208: xero-inbound-reconciliation imports these from the source domain
+// modules directly, so the doubles are attached to those modules (the
+// `@/lib/xero` facade is gone, #4930); real callXeroApi / XeroDailyLimitError
+// from xero-api-client are preserved.
 vi.mock("@/lib/xero-api-client", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/lib/xero-api-client");
 

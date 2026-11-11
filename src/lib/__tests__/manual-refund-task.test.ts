@@ -230,7 +230,7 @@ vi.mock("@/lib/audit", () => ({
 vi.mock("@/lib/booking-events", () => ({
   recordBookingEvent: (...a: unknown[]) => mocks.recordBookingEvent(...a),
 }));
-vi.mock("@/lib/payment-reconciliation", () => ({
+vi.mock("@/lib/manual-booking-payment-error", () => ({
   ManualBookingPaymentError: class ManualBookingPaymentError extends Error {
     status: number;
     constructor(message: string, status = 400) {

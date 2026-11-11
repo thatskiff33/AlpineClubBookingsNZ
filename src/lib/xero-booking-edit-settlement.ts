@@ -14,11 +14,13 @@ import {
   enqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroModificationAccountCreditNoteOperation,
   enqueueXeroModificationCreditNoteOperation,
-  enqueueXeroSupplementaryInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
   recordSkippedXeroBookingInvoiceUpdateOperation,
-  type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
+import {
+  enqueueXeroSupplementaryInvoiceOperation,
+  type XeroSupplementaryInvoiceEnqueueOutcome,
+} from "@/lib/xero-supplementary-invoice-enqueue";
 import { giveBackNoteScope } from "@/lib/xero-review-task-key";
 import {
   refundMethodForSettlementMethod,

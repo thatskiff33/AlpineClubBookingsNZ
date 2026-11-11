@@ -2609,7 +2609,7 @@ let webhookClient: PrismaClient;
       // invoice on it, which the reaper later retires as unpayable.
       const { isMintedAskStillLive } = await import("@/lib/reissued-ask-invoice");
       expect(await isMintedAskStillLive(ASK_INTENT)).toBe(false);
-      const { enqueueXeroSupplementaryInvoiceOperation } = await import("@/lib/xero-operation-outbox");
+      const { enqueueXeroSupplementaryInvoiceOperation } = await import("@/lib/xero-supplementary-invoice-enqueue");
       const parked = await enqueueXeroSupplementaryInvoiceOperation(
         { bookingId: BOOKING_ID, priceDiffCents: 5_000, changeFeeCents: 0, bookingModificationId: INCREASE_MOD_ID },
         { paymentIntentId: ASK_INTENT, waitForConfirmedAdditionalPayment: true, recordPayment: true },

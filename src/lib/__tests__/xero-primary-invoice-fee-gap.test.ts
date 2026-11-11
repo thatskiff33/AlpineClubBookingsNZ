@@ -26,7 +26,7 @@ vi.mock("@/lib/prisma", () => {
   // One interactive transaction: the same delegates, so a test sees what it wrote.
   return { prisma: { ...client, $transaction: vi.fn(async (run: (tx: typeof client) => unknown) => run(client)) } };
 });
-vi.mock("@/lib/xero-operation-outbox", () => ({ enqueueXeroSupplementaryInvoiceOperation: mocks.enqueue }));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({ enqueueXeroSupplementaryInvoiceOperation: mocks.enqueue }));
 // #3953: one recorder per capture. The booking's captured cash is the payment
 // fixture's, on one intent; no receipt row claims any unless a case says so.
 // #4494: none of it is the credit-release sweep's unless a case sets `sweptCents`.

@@ -639,7 +639,7 @@ export const CENTS_DISPLAY_EXEMPTIONS = [
 //
 // The families are matched by PREFIX so the guard follows the code through an
 // ordinary rename or a split into a directory — the earlier hand-written list
-// missed `src/lib/xero.ts` (the facade: `xero-*` does not match `xero`), had no
+// missed `src/lib/xero.ts` (the facade #4930 deleted: `xero-*` missed it), had no
 // `/**` form for `membership-cancellation-*` although the other two families
 // did, and matched `.ts` only, so moving one module to `.tsx` would have dropped
 // it silently (#2685 review).
@@ -655,7 +655,6 @@ export const CENTS_DISPLAY_EXEMPTIONS = [
 // `src/app/(admin)/admin/finance/xero/`, which render API-budget percentages with the
 // same `usagePercent * 100` shape, and are correct.
 const MONEY_DOMAIN_MODULES = [
-  "src/lib/xero.ts",
   "src/lib/xero-*.{ts,tsx}",
   "src/lib/xero-*/**/*.{ts,tsx}",
   "src/lib/finance-*.{ts,tsx}",
@@ -2811,42 +2810,6 @@ const eslintConfig = defineConfig([
     files: ["**/__tests__/**/*.{ts,tsx}", "**/*.test.{ts,tsx}"],
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
-    },
-  },
-  {
-    // The Xero subsystem's internal modules must depend on the focused domain
-    // module that owns each symbol, not on the `@/lib/xero` compatibility
-    // facade (which exists only for external callers). Importing the facade
-    // from within `src/lib/xero-*` hides the real dependency graph and invites
-    // import cycles (#1208). The exact-path match here does NOT fire on the
-    // `@/lib/xero-*` domain modules — only on the bare facade path. The glob
-    // also covers subsystem split directories such as `src/lib/xero-inbound/`
-    // (#1270) so the guard follows the code into its new home; `../xero` is the
-    // relative facade path seen from those nested modules.
-    files: ["src/lib/xero-*.ts", "src/lib/xero-*/**/*.ts"],
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          paths: [
-            {
-              name: "@/lib/xero",
-              message:
-                "xero-* modules must import the source domain module directly, not the @/lib/xero compatibility facade (#1208).",
-            },
-            {
-              name: "./xero",
-              message:
-                "xero-* modules must import the source domain module directly, not the @/lib/xero compatibility facade (#1208).",
-            },
-            {
-              name: "../xero",
-              message:
-                "xero-* modules must import the source domain module directly, not the @/lib/xero compatibility facade (#1208).",
-            },
-          ],
-        },
-      ],
     },
   },
   {

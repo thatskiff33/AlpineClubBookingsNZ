@@ -1,6 +1,6 @@
 import type { Invoice } from "xero-node";
 import type { FinanceSyncDatasetContext } from "@/lib/finance-sync-service";
-import { callXeroApi } from "@/lib/xero";
+import { callXeroApi } from "@/lib/xero-api-client";
 import { buildOpenInvoiceWhereClause } from "./invoice-helpers";
 import { withFinanceReportScopeError } from "./report-snapshot";
 import type { FinanceOpenInvoiceType } from "./types";

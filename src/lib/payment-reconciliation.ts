@@ -91,6 +91,7 @@ import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sy
 import { postBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { lockBookingRowForOwnerRead, postBookingReceipts, postRefundObligation, resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import type { ClubFormat } from "@/lib/club-format";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
   include: {
@@ -237,22 +238,6 @@ type ManualSettlementSource = {
 };
 
 type BookingSettlementSource = StripeSettlementSource | ManualSettlementSource;
-
-/**
- * B5 (#2262): a domain refusal from the manual booking-payment paths, carrying
- * the HTTP status the route should answer with. Lives here (rather than in
- * manual-booking-payment.ts) so the settlement core can throw it without a
- * circular import.
- */
-export class ManualBookingPaymentError extends Error {
-  status: number;
-
-  constructor(message: string, status = 400) {
-    super(message);
-    this.name = "ManualBookingPaymentError";
-    this.status = status;
-  }
-}
 
 const MANUAL_XERO_INVOICE_REFUSAL =
   "This booking has an outstanding Xero invoice — record the payment against the invoice in Xero instead.";

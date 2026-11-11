@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { isXeroConnected, updateXeroContact } from "@/lib/xero";
+import { isXeroConnected } from "@/lib/xero-token-store";
+import { updateXeroContact } from "@/lib/xero-contacts";
 import {
   createStructuredAuditLog,
   getAuditEmailDomain,

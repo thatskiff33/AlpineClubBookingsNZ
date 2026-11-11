@@ -99,7 +99,6 @@ export const PRODUCTION_GUARD_ROSTER: readonly GuardRosterEntry[] = [
   },
   // --- the money-domain modules --------------------------------------------
   { file: "src/lib/xero-x.ts", why: "a Xero domain module" },
-  { file: "src/lib/xero.ts", why: "the Xero facade, which `xero-*` does not match" },
   { file: "src/lib/xero-inbound/x.ts", why: "a Xero subsystem split directory" },
   { file: "src/lib/finance-x.ts", why: "a finance module" },
   {

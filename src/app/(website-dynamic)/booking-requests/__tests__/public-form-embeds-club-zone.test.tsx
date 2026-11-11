@@ -69,8 +69,8 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { BookingRequestFormEmbed } from "@/app/(website-dynamic)/booking-requests/booking-request-form-embed";
-import { SchoolBookingFormEmbed } from "@/app/(website-dynamic)/school-bookings/school-booking-form-embed";
+import { BookingRequestFormEmbed } from "@/components/website/booking-request-form-embed";
+import { SchoolBookingFormEmbed } from "@/components/website/school-booking-form-embed";
 import { bindClubTime, fixedClubClock, requireClubTimeZone } from "@/lib/club-time";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";

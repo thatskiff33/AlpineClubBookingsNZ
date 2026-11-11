@@ -13,7 +13,7 @@ import {
 import {
   memberGuestConsentPreviewColumns,
   pendingMemberGuestFirstNames,
-} from "./member-guest-preview";
+} from "@/components/book/member-guest-preview";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -59,7 +59,7 @@ import type {
   PriceQuote,
   RoomOption,
   WorkPartyEvent,
-} from "./types";
+} from "@/components/book/booking-wizard-types";
 
 export function ReviewStep({
   checkIn,

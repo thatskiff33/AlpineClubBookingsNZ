@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
 vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
-vi.mock("@/lib/xero-operation-outbox", () => ({
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
   enqueueXeroSecondSupplementaryInvoiceOperation: vi.fn(),
   restatePendingSupplementaryInvoiceAmount: vi.fn(),
 }));

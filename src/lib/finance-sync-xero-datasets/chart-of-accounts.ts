@@ -4,7 +4,7 @@ import type {
   FinanceSyncDatasetContext,
   FinanceSyncSnapshotInput,
 } from "@/lib/finance-sync-service";
-import { callXeroApi } from "@/lib/xero";
+import { callXeroApi } from "@/lib/xero-api-client";
 import { getFinanceReportWindow, toOptionalText } from "./date-format";
 import { compareNullableStrings } from "./invoice-helpers";
 

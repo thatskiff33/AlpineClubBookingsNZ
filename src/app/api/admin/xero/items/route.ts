@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
-import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero";
+import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import {
   type XeroItem,
   getCachedItems,

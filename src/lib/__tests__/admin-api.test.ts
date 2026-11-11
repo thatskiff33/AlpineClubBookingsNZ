@@ -61,7 +61,7 @@ vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: mockRequireActiveSessionUser,
   requireAdmin: mockRequireAdmin,
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,
   getXeroContactIdsForGroup: mockGetXeroContactIdsForGroup,
 }));

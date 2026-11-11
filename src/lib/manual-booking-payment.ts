@@ -9,8 +9,8 @@ import {
   MANUAL_PAYMENT_NOTE_MAX,
   normaliseManualPaymentNote,
 } from "@/lib/manual-subscription-payment";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import {
-  ManualBookingPaymentError,
   markBookingPaymentManuallySettled,
   reverseManualBookingPayment,
   type ManualAdditionalCoverage,
@@ -54,7 +54,6 @@ import { clubFormatValues } from "@/lib/club-format-server";
  *    booking's whole worth. A booking with no extra sends nothing and behaves
  *    identically to before this feature existed.
  */
-export { ManualBookingPaymentError };
 export { MANUAL_PAYMENT_NOTE_MAX };
 
 export type ManualBookingPaymentDirection = "paid" | "unpaid";

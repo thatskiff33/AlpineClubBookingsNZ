@@ -353,9 +353,6 @@ vi.mock("@/lib/card-refund-status-sync", () => ({
   recordRefusedCardRefund: (...args: unknown[]) => mockRecordRefusedCardRefund(...args),
 }));
 
-vi.mock("@/lib/xero", () => ({
-  isXeroConnected: (...args: unknown[]) => mockIsXeroConnected(...args),
-}));
 // #3639: the late-capture Xero correction reads the token store directly.
 vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: (...args: unknown[]) => mockIsXeroConnected(...args),
