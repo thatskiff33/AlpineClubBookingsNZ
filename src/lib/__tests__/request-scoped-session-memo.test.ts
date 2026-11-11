@@ -24,7 +24,7 @@ vi.mock("react", async (importOriginal) => {
     "@/lib/__tests__/helpers/request-cache-scope"
   );
   return {
-    ...(await importOriginal<typeof import("react")>()),
+    ...((await importOriginal()) as typeof import("react")),
     cache: requestScopedCache,
   };
 });

@@ -22,7 +22,7 @@
  *     const { requestScopedCache } = await import(
  *       "@/lib/__tests__/helpers/request-cache-scope"
  *     );
- *     return { ...(await importOriginal<typeof import("react")>()), cache: requestScopedCache };
+ *     return { ...((await importOriginal()) as typeof import("react")), cache: requestScopedCache };
  *   });
  */
 import { AsyncLocalStorage } from "node:async_hooks";

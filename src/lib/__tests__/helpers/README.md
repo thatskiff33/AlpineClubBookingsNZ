@@ -128,7 +128,7 @@ mock still decides which row comes back.
 ```ts
 vi.mock("react", async (importOriginal) => {
   const { requestScopedCache } = await import("@/lib/__tests__/helpers/request-cache-scope");
-  return { ...(await importOriginal<typeof import("react")>()), cache: requestScopedCache };
+  return { ...((await importOriginal()) as typeof import("react")), cache: requestScopedCache };
 });
 
 await inRequestScope(() => Promise.all([auth(), auth()])); // one refresh
