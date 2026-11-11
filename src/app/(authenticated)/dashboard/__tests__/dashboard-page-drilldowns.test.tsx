@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   loadEffectiveModuleFlags: vi.fn(),
   lockerFindMany: vi.fn(),
   memberFindUnique: vi.fn(),
+  memberInductionFindFirst: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -38,6 +39,7 @@ vi.mock("@/lib/prisma", () => ({
     member: {
       findUnique: mocks.memberFindUnique,
     },
+    memberInduction: { findFirst: mocks.memberInductionFindFirst },
     calendarEvent: {
       findMany: mocks.calendarEventFindMany,
     },
@@ -62,7 +64,8 @@ vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: mocks.loadEffectiveModuleFlags,
 }));
 
-vi.mock("@/lib/access-roles", () => ({
+vi.mock("@/lib/access-roles", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/access-roles")),
   hasAccessRole: mocks.hasAccessRole,
 }));
 
@@ -152,10 +155,8 @@ describe("DashboardPage summary card drill-downs", () => {
     ]);
     mocks.lockerFindMany.mockResolvedValue([]);
     mocks.calendarEventFindMany.mockResolvedValue([]);
-    mocks.memberFindUnique.mockResolvedValue({
-      requiresInduction: false,
-      inductions: [],
-    });
+    mocks.memberFindUnique.mockResolvedValue({ requiresInduction: false });
+    mocks.memberInductionFindFirst.mockResolvedValue(null);
     mocks.loadEffectiveModuleFlags.mockResolvedValue(moduleFlags());
     mocks.hasAccessRole.mockReturnValue(false);
     // Peak occupancy 22 across a 30-bed lodge: night one 20/30, night two
@@ -316,10 +317,8 @@ describe("DashboardPage draft bookings saved by the club (#2779)", () => {
     mocks.getAvailablePromoCodesForMember.mockResolvedValue([]);
     mocks.lockerFindMany.mockResolvedValue([]);
     mocks.calendarEventFindMany.mockResolvedValue([]);
-    mocks.memberFindUnique.mockResolvedValue({
-      requiresInduction: false,
-      inductions: [],
-    });
+    mocks.memberFindUnique.mockResolvedValue({ requiresInduction: false });
+    mocks.memberInductionFindFirst.mockResolvedValue(null);
     mocks.loadEffectiveModuleFlags.mockResolvedValue(moduleFlags());
     mocks.hasAccessRole.mockReturnValue(false);
   });

@@ -88,6 +88,7 @@ const mocks = vi.hoisted(() => ({
   loadEffectiveModuleFlags: vi.fn(),
   lockerFindMany: vi.fn(),
   memberFindUnique: vi.fn(),
+  memberInductionFindFirst: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -106,6 +107,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     locker: { findMany: mocks.lockerFindMany },
     member: { findUnique: mocks.memberFindUnique },
+    memberInduction: { findFirst: mocks.memberInductionFindFirst },
     calendarEvent: { findMany: mocks.calendarEventFindMany },
   },
 }));
@@ -260,10 +262,8 @@ describe("dashboard club-day boundaries (#2838)", () => {
     mocks.getAvailablePromoCodesForMember.mockResolvedValue([]);
     mocks.lockerFindMany.mockResolvedValue([]);
     mocks.calendarEventFindMany.mockResolvedValue([]);
-    mocks.memberFindUnique.mockResolvedValue({
-      requiresInduction: false,
-      inductions: [],
-    });
+    mocks.memberFindUnique.mockResolvedValue({ requiresInduction: false });
+    mocks.memberInductionFindFirst.mockResolvedValue(null);
     mocks.loadEffectiveModuleFlags.mockResolvedValue(moduleFlags());
     mocks.checkCapacity.mockResolvedValue({
       available: true,
