@@ -77,9 +77,11 @@ import { isXeroBankRefundVoidWritesEnabled } from "@/lib/xero-feature-flags";
  * refund, so each note's transaction takes global `lock(1)` first, then the
  * Payment row (`lockPaymentForRefundedTotal`) BEFORE anything about the
  * payment is read, then re-classifies under both. The spare marker's link row
- * is taken last and `NOWAIT`: the inbound sync's link write and #4161's heal
- * take the link before the Payment row, so a busy link defers the note to the
- * next run rather than waiting with the Payment row held. One note per
+ * is taken last and `NOWAIT`: a live or statusless inbound link write, and
+ * #4161's heal, take the link before the Payment row. An explicit void takes
+ * the Payment row first (#4200), the same order as this follow-up. A busy
+ * link still defers the note to the next run rather than waiting with the
+ * Payment row held. One note per
  * transaction, so a slow note never holds another payment's locks.
  */
 

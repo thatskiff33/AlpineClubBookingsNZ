@@ -1176,7 +1176,12 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // with no booking/money/capacity/lifecycle key (calendar rows only).
   "src/lib/calendar-service.ts": 1,
   "src/lib/config-transfer-lock.ts": 1,
-  "src/lib/lodge-capacity-lock.ts": 1,
+  // TWO: the blocking `acquireLodgeCapacityLock`, and `tryAcquireLodgeCapacityLock`
+  // (#4876). The try form is the same per-lodge key and never waits. Member merge
+  // calls it for a lodge that appeared while a participant attempt was rolled
+  // back, after member-lifecycle keys are already held; a miss is the existing
+  // partner-share lodge 409, not a wait, so it adds no lodge-after-member edge.
+  "src/lib/lodge-capacity-lock.ts": 2,
   "src/lib/member-credit.ts": 1,
   "src/lib/member-lifecycle-actions.ts": 2,
   // #2593: one canonical helper mints member-lifecycle:{memberId}; it
@@ -1734,9 +1739,11 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // insertion; two live readings are ordered by Xero's UpdatedDateUTC on the
   // row already locked, so #4288 adds no lock. Existing rows
   // are untouched by reservation; a new identity row rolls back with the write.
-  // Order, on every write: own link row, then any sibling note the canonical
-  // rule retires. A kept void tries Payment without waiting (the xero-sync
-  // entry below); explicit inbound voids retain their existing order (#4200).
+  // Order, on every write except an explicit refund-credit-note void: own
+  // link row, then any sibling note the canonical rule retires. That void
+  // takes the Payment row first, then its own link (#4200), through
+  // `lockPaymentForRefundedTotal` in the link funnel — the create's order.
+  // A kept void tries Payment without waiting (the xero-sync entry below).
   // Keyed on the link's immutable unique key; no advisory lock. See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Refund-note link writes racing a void (#4195, #4223)".
   "src/lib/xero-refund-note-status.ts": 1,
@@ -1746,7 +1753,19 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // or an older live reading) must never wait back on it.
   // A busy Payment defers only pointer cleanup to #4161; the mirror stays
   // inactive with its metadata. Own-held Payment rows remain eligible.
+  // #4200: an explicit void (the caller names VOIDED or DELETED on a
+  // REFUND_CREDIT_NOTE) takes that Payment row first, through
+  // `lockPaymentForRefundedTotal`, before this write locks the link. That
+  // statement stays the one site in payment-transactions.ts; this file still
+  // has only the SKIP LOCKED probe.
   "src/lib/xero-sync.ts": 1,
+  // #4447: recording an allocation the reading still lists, and turning off
+  // one it no longer lists, each lock that one XeroObjectLink row, re-read its
+  // stamp, then write through the link funnel in the same transaction. A
+  // still-listed invoice reserves a missing row first; a removal does not. No
+  // other lock and no advisory key. See docs/CONCURRENCY_AND_LOCKING.md, "An
+  // allocation Xero no longer lists (#4447)".
+  "src/lib/xero-inbound/retire-unlisted-credit-note-allocations.ts": 1,
 };
 
 const CAPACITY_LOCK_MINT = "src/lib/lodge-capacity-lock.ts";

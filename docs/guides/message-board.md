@@ -14,7 +14,7 @@ The board is gated by the **Message board** module (Admin → Modules), which is
 editing and removing are **membership**-area edit actions: a view-only
 membership admin reads the board but cannot change anything.
 
-Unlike [Member Notices](member-notices.md), which the committee writes and
+Unlike [Member notices](member-notices.md), which the committee writes and
 targets at chosen members, this is written by members and seen by all of them.
 Nobody targets a board post and nobody tracks who has read it.
 
@@ -176,6 +176,6 @@ on each such pull.
 
 ## Related links
 
-- [Member Notices](member-notices.md) — committee-written, targeted news.
+- [Member notices](member-notices.md) — committee-written, targeted news.
 - [Modules](modules.md) — turning the board on and off.
 - [The message board](../user-guide/the-message-board.md) — what members see.

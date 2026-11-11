@@ -4615,6 +4615,17 @@ once, by card, and Xero is told about the payment without a second invoice.
   in Xero before anyone is asked, closing with an audit where nothing is owed
   (`INV-ADDPAY-050`). Set the bank details first, enable the writer once the previous
   colour has drained, then the backlog.
+- **A refund of that card payment is credited on the same invoice** (#4493).
+  Once the sweep has recorded the payment, a later refund of it — a price
+  reduction, or a refund an officer makes — raises one credit note for the
+  refunded amount against the booking's invoice, and sending the refund again
+  does not raise a second. On a bank transfer that note is the refund's own
+  (`queueWebhookCardRefundNotes`, `INV-ADDPAY-047`); on a card payment the
+  existing per-delta note names the invoice the sweep recorded
+  (`readCreditReleaseReceiptInvoiceId`). A capture that also has an
+  additional-capture receipt keeps that receipt's invoice on the whole refund.
+  A late capture on a cancelled booking stays its own route (#4380). Refunds
+  the app already missed are not repaired.
 
 Rules: `INV-ADDPAY-045`, `INV-ADDPAY-046`, `INV-ADDPAY-048`, `INV-ADDPAY-049`, `INV-ADDPAY-050`, `INV-ADDPAY-051`.
 

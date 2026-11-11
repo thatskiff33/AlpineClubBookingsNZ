@@ -59,7 +59,7 @@ describe("the JOURNAL comparison (#4627)", () => {
 
   it("MUTATION (#4516 review M2): a part \"Paid another way\" close's kept rest counts as its record says, so the journal's close-out agrees", () => {
     const record = { id: "close-1", kind: "CANCELLED_BOOKING_HAND_BACK" as const, status: "COMPLETED" as const, amountCents: 5000, raisedAmountCents: 8000,
-      settlementDirection: null, paymentId: null, lateCaptureApprovalIntentId: null, occurrenceKey: "card-refund-paid-another-way:op-1" };
+      settlementDirection: null, paymentId: null, lateCaptureApprovalIntentId: null, occurrenceKey: "card-refund-paid-another-way:op-1", reason: "" };
     const charges = (closeOutCents: number) => ({
       charged: true,
       components: [

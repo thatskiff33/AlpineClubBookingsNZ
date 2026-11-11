@@ -260,6 +260,9 @@ function mockTransaction() {
       twoFactorSessionChallenge: {
         deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       },
+      sessionReauthChallenge: {
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
       bedAllocation: prisma.bedAllocation,
       deletionRequest: {
         update: prisma.deletionRequest.update,

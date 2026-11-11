@@ -541,6 +541,42 @@ member change- and reset-password routes do, so `isRevokedMemberSession` ends
 every kiosk session issued before the rotation at its next refresh, whatever
 window it holds. `admin-lodge-route.test.ts` feeds the written row to that rule.
 
+## Confirm it's you (#4616)
+
+Audience: Operator, Developer.
+
+**The threat.** A session left open on a shared lodge computer looks the same
+five minutes or five days after sign-in. Nothing could ask "is this still you?"
+before a destructive action.
+
+**What an officer sees.** Nothing yet: no route asks. When one does (#4619), a
+confirmation older than five minutes gets a small dialog. They enter the code
+from their authenticator app, or their password if they have no app and no
+passkey. A passkey will work once that sign-in exists (#4617). An emailed code
+is never accepted, and nor is a recovery code. The dialog then sends the
+original request once more, with the same body.
+
+**What is stored.** The session token carries `lastAuthenticatedAt`, written
+only when sign-in completes or when the server consumes a single-use
+`SessionReauthChallenge`. The challenge is a keyed hash bound to that member,
+with a two-minute life. A browser cannot set the time. The five minutes is a
+security floor, not a club setting (`INV-AUTH-008`).
+
+**Failed attempts.** A wrong authenticator code counts toward the existing
+two-factor lockout (five failures, then fifteen minutes). A wrong password
+counts toward the per-account password throttle, the same budget as sign-in.
+A proof the person is not allowed to use still counts, so the dialog is not a
+free guessing oracle.
+
+**Stated limits.**
+
+- **No route asks yet.** The check and the dialog exist; #4619 decides where
+  they apply.
+- **A passkey cannot confirm anyone yet.** The server has a seam for it and
+  rejects every passkey proof until #4617.
+- **During a blue/green cutover the old slot has no stamp and no check.** The
+  migration only adds the challenge table. Draining code never reads it.
+
 ## Data-encryption key ring (#4456)
 
 Audience: Operator, Developer.

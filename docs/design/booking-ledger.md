@@ -626,7 +626,10 @@ cent: `NOTHING_CAPTURED` (a booking not paid whose payment is not captured);
 `_CREDIT_ALLOCATION`, `_FAILED_REFUND` (only where the refund's own line was
 posted and reversed) and `_LEGACY_SEED` (only what no credit or hand-back
 row explains: an allocation onto a backfilled transaction is counted once),
-and `V3_LEGACY_HAND_BACK` — the last
+and `V3_LEGACY_HAND_BACK` (a completed late-capture hand-back on a deleted
+booking's card payment, `isLateCaptureHandBackTask`: the typed kind, or a row
+from before `kind` existed whose stored reason is one of the four frozen
+sentences) — the last
 two on the refunded column only, since on `owed(b)` they are money the ledger
 is missing; `CHANGE_FEE_REVERSED_BY_CANCELLATION`;
 `RETAINED_REVIEW_SHARE` (§5.3); and a cancelled booking's `IN_FLIGHT_HAND_BACK`,

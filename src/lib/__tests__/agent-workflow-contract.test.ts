@@ -309,6 +309,15 @@ describe("repository agent workflow contract", () => {
     expect(n).toContain("Each deployment serves one club");
     expect(agents).toContain("INV-CONFIG-001");
     expect(agents).toContain("changelog.d/<pr-number>-<slug>.md");
+    // #4846: both halves of that sentence name the fragment by pull-request
+    // number. AGENTS.md had drifted to the issue number while
+    // size-allowances.d/README.md, the file-size gate, and recent fragments
+    // kept the pull-request number.
+    expect(agents).toContain("size-allowances.d/<pr-number>-<slug>.md");
+    expect(agents).not.toContain("size-allowances.d/<issue>-<slug>.md");
+    expect(readRepoFile("size-allowances.d/README.md")).toContain(
+      "size-allowances.d/<pr-number>-<short-slug>.md",
+    );
     expect(n).toContain("physical, isolated `node_modules`");
     expect(n).toContain("pnpm run pr:check");
   });

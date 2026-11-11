@@ -902,11 +902,15 @@ after commit, the minter
        when withdrawn, or FAILED with a queued Stripe cancellation, the
        supersede stamp, or Stripe reporting the intent cancelled or gone; a
        declined card (FAILED alone, still open at Stripe) is payable (#4052)
-later increase while a re-issue still waits -> folds it in: one ask for both,
-  the re-issue's recovery closed under the same fence, the fold recorded on the
-  increase's history (its replay asks again; the re-issue's invoice waits on
-  the increase's intent once minted); a stalled runner's unwritten intent is
-  cancelled as a net-off's is (#4631)
+later increase while a re-issue or increase retry still waits -> folds it in:
+  one ask for both, the waiting recovery closed under the same fence, the fold
+  recorded on history (its replay asks again; each folded invoice waits on the
+  increase's intent once minted). The folding ask is durable from commit (#4744).
+  A claim under two minutes returns 409 even after its row is written; an older
+  claim whose row exists keeps its invoice completion and its row is carried.
+  A stalled runner's unwritten intent is cancelled as a net-off's is (#4631).
+  Nested invoice totals are split by billing edit before a reduction counts
+  parked invoices, so a partially queued fold neither loses nor repeats money.
 chase -> reads the mirror: a cancelled ask stops, a re-issued one is chased at its new amount
 ```
 
@@ -5075,6 +5079,37 @@ Enrollment waits for explicit **Continue** so the member can save recovery codes
 Rendered panel tests cover accepted, pending, rejected and network-failed requests;
 direct browser journeys require protected content after Continue and verification,
 without a later helper navigation (#4060).
+
+## Recent authentication (#4616)
+
+A session carries `lastAuthenticatedAt`, separate from `sessionIssuedAt`.
+`requireRecentAuth` (`INV-AUTH-008`) is the one check. No route calls it yet
+(#4619).
+
+```text
+sign-in completes -> lastAuthenticatedAt = now
+  password or Google, no second factor left -> the jwt sign-in branch
+  second factor required -> consuming the two-factor session challenge
+session.update carrying lastAuthenticatedAt -> ignored
+step-up proof accepted -> server mints SessionReauthChallenge (keyed hash, two minutes, one member)
+  authenticator-app code when they have an app
+  passkey when one exists (#4617); until then that proof never succeeds
+  password only when they have neither
+  emailed code or recovery code -> refused, and the failure counts
+session update carrying that challenge -> jwt callback claims the row (consumedAt was null) -> lastAuthenticatedAt = now
+replay, expiry, another member, or a forged token -> claim matches nothing, stamp unchanged
+five wrong authenticator proofs -> the existing two-factor lockout
+wrong password proofs -> the existing per-account password throttle
+requireRecentAuth -> pass while the stamp is at most 5 minutes old; otherwise 403 REAUTH_REQUIRED
+the dialog replays the refused request once, body unchanged; a second refusal is not replayed
+```
+
+To verify: `recent-auth.test.ts` (the window on the frozen clock, and the typed
+refusal), `auth-session-refresh.test.ts` (a client-supplied stamp is ignored; a
+consumed challenge refreshes it), `session-reauth.test.ts` (an emailed code is
+refused and a failed proof counts), `session-reauth.realdb.test.ts` (two
+concurrent consumes, one success), and `confirm-its-you-dialog.test.tsx` (the
+replay is once, body unchanged).
 
 ## Password Sign-In Throttle (#4609)
 
