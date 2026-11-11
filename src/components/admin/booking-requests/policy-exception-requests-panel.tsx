@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -370,7 +371,7 @@ export function PolicyExceptionRequestsPanel({
     setDecisionInFlight((current) => new Set(current).add(item.id));
     setError("");
     try {
-      const response = await fetch(
+      const response = await fetchWithRecentAuth(
         `/api/admin/booking-exception-requests/${item.id}`,
         {
           method: "PATCH",

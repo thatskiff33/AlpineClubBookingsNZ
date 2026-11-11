@@ -15,6 +15,7 @@ import {
 import { schoolChildCountsSchema, schoolTeacherSchema } from "@/lib/school-booking-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { nameField } from "@/lib/zod-helpers";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 /**
  * POST /api/admin/booking-requests/[id]/correct — #2936.
@@ -87,6 +88,8 @@ export async function POST(
 
   const { id } = await params;
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await req.json();
   } catch {

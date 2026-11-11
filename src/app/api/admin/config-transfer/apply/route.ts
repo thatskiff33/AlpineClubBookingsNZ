@@ -23,6 +23,7 @@ import {
   PUBLIC_LAYOUT_CACHE_TAGS,
 } from "@/lib/public-layout-cache";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 // POST /api/admin/config-transfer/apply — full-admin only.
 // Applies a previewed bundle: backup → one transaction { advisory lock →
@@ -34,6 +35,8 @@ export async function POST(request: Request) {
   const guard = await requireFullAdminForConfigTransfer();
   if (!guard.ok) return guard.response;
 
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   const uploaded = await readBundleUpload(request);
   if (!uploaded.ok) return uploaded.response;
   const { bytes, mode, selectedCategories, resolutions, expectedFingerprint } =

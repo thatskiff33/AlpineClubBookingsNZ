@@ -10,6 +10,7 @@ import {
   grantMembershipAdminDietaryAccess,
   isDietaryFieldEnabled,
 } from "@/lib/member-dietary";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 function unauthorizedResponse() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -81,6 +82,8 @@ export async function POST(req: NextRequest) {
   if (!guard.ok) return guard.response;
 
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await req.json();
   } catch {
