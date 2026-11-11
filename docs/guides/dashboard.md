@@ -40,22 +40,31 @@ isn't there.
 
 ### Find any page fast (command palette)
 
-The admin panel has around ninety pages across ten sidebar sections, so you
-don't have to remember which section hides a feature.
+The admin panel has around ninety pages, and the sidebar links only some of
+them, so you don't have to remember where a feature lives.
 
 - Press **Ctrl + K** (Windows/Linux) or **⌘ + K** (Mac) from any admin page, or
   click the **Search…** button at the top of the sidebar.
 - Start typing a page name — or a related word, such as "accounting" for Xero
   Sync or "permissions" for Access Roles — then use the **arrow keys** to move,
   **Enter** to open the highlighted page, and **Escape** to close.
-- The palette only ever lists pages **you** can open: it applies exactly the
-  same permission rules as the sidebar, so a page you aren't permitted to see
-  never appears here.
-- It lists every page the sidebar *could* show you, which is slightly more than
-  the sidebar shows at any one moment. The two attention shortcuts — **Unpaid
-  Finished Stays** and **Unpaid Stay Additions** — stay searchable as
-  pre-filtered views even when nothing is currently owing, whereas the sidebar
-  only surfaces them while their queue has something in it.
+- It lists **every** admin page you can open, grouped by area (Bookings,
+  Finance, Lodge and so on), including pages the sidebar has no link for, such
+  as Chores, Lockers, Seasons, Rooms & Beds, Email Messages and the setup
+  wizards. The old sidebar section names, such as "Lodge Operations", still
+  find their pages.
+- A page that was merged into another keeps its old name as its own result,
+  such as **Family Suggestions**, and opens the tab of the page that now holds
+  it.
+- It only ever lists pages **you** can open: the same permission check the page
+  itself makes, so a page you aren't permitted to see, a module that is turned
+  off, or a Full Admin page never appears for you.
+- A lodge page opened from here starts on the club's first lodge; choose
+  another lodge on the page.
+- The two attention shortcuts — **Unpaid Finished Stays** and **Unpaid Stay
+  Additions** — stay searchable as pre-filtered views even when nothing is
+  currently owing, whereas the sidebar only surfaces them while their queue has
+  something in it.
 
 ## Settings reference
 

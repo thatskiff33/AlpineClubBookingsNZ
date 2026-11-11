@@ -63,6 +63,7 @@ describe("the step-up challenge (#4616)", () => {
       where: {
         tokenHash: { in: [hashTwoFactorCode("raw-token")] },
         memberId: "officer-1",
+        consumedAt: null,
         expiresAt: { gt: new Date(Date.now()) },
       },
     });

@@ -1,4 +1,8 @@
 import type { FeatureFlags, FeatureFlagKey } from "./schema";
+import {
+  ADMIN_PAGE_MODULE_GATES,
+  withAdminHubTwins,
+} from "@/lib/admin-hubs/security-map";
 
 interface FeatureRouteRule {
   flag: FeatureFlagKey;
@@ -18,22 +22,27 @@ interface FeatureRouteRule {
    * future page below it. The exempted page must therefore be safe with the
    * module off, which means it may render only guidance and controls whose own
    * routes stay gated — every `/api/admin/display/*` call still 404s, and the
-   * page's admin permission area still applies through the admin layout.
+   * page's admin permission area still applies through the admin layout. An
+   * exempted admin page's hub path is exempted with it (#4799).
    */
   exemptPaths?: string[];
 }
 
-// test seam
-export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
+/**
+ * The hand-written rules: every API and member-facing prefix, and the one exact
+ * admin page exemption. The ADMIN PAGE prefixes are not here — since #4799 they
+ * are generated from the hub registry (`src/lib/admin-hubs/`), each page's old
+ * path and hub path, from the module flags its entry records, and merged into
+ * the rule for that module by `withAdminPageGates` below.
+ */
+const HAND_WRITTEN_FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   {
     flag: "kiosk",
-    prefixes: ["/admin/lodge", "/api/admin/lodge", "/lodge", "/api/lodge"],
+    prefixes: ["/api/admin/lodge", "/lodge", "/api/lodge"],
   },
   {
     flag: "chores",
     prefixes: [
-      "/admin/chores",
-      "/admin/roster",
       "/api/admin/chores",
       "/api/admin/roster",
       "/api/chores",
@@ -51,7 +60,7 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   },
   {
     flag: "waitlist",
-    prefixes: ["/admin/waitlist", "/api/admin/waitlist"],
+    prefixes: ["/api/admin/waitlist"],
     patterns: [
       /^\/api\/bookings\/[^/]+\/waitlist-confirm$/,
       /^\/api\/admin\/bookings\/[^/]+\/force-confirm$/,
@@ -69,8 +78,6 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     // to it — whenever Xero was off, hiding every other integration (#2216).
     flag: "xeroIntegration",
     prefixes: [
-      "/admin/xero",
-      "/admin/internet-banking",
       "/api/admin/xero",
       "/api/admin/internet-banking-settings",
       "/api/cron/xero",
@@ -83,15 +90,12 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   {
     flag: "bedAllocation",
     prefixes: [
-      "/admin/bed-allocation",
-      "/admin/rooms-beds",
       "/api/admin/bed-allocation",
     ],
   },
   {
     flag: "internetBankingPayments",
     prefixes: [
-      "/admin/internet-banking",
       "/api/admin/internet-banking-settings",
     ],
   },
@@ -105,12 +109,11 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   },
   {
     flag: "lockers",
-    prefixes: ["/admin/lockers", "/api/admin/lockers"],
+    prefixes: ["/api/admin/lockers"],
   },
   {
     flag: "induction",
     prefixes: [
-      "/admin/induction",
       "/induction",
       "/api/admin/inductions",
       "/api/admin/induction-templates",
@@ -120,7 +123,6 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   {
     flag: "workParties",
     prefixes: [
-      "/admin/work-parties",
       "/api/admin/work-parties",
       "/api/work-parties",
     ],
@@ -128,7 +130,6 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   {
     flag: "promoCodes",
     prefixes: [
-      "/admin/promo-codes",
       "/api/admin/promo-codes",
       "/api/promo-codes",
     ],
@@ -136,7 +137,6 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   {
     flag: "hutLeaders",
     prefixes: [
-      "/admin/hut-leaders",
       "/api/admin/hut-leaders",
       // #3819: a lodge's "Who can be hut leader for school bookings" is a
       // hut-leader setting that lives under the lodge's settings, so it is
@@ -146,14 +146,13 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   },
   {
     flag: "communications",
-    prefixes: ["/admin/communications", "/api/admin/communications"],
+    prefixes: ["/api/admin/communications"],
   },
   {
     flag: "memberNotices",
     prefixes: [
       "/notices",
       "/api/notices",
-      "/admin/notices",
       "/api/admin/notices",
     ],
   },
@@ -171,12 +170,11 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     // src/proxy.ts carries an explicit "/api/calendar/:path*" matcher entry
     // alongside this rule. Without it the rule would be dead for the API.
     flag: "eventsCalendar",
-    prefixes: ["/calendar", "/api/calendar", "/admin/calendar"],
+    prefixes: ["/calendar", "/api/calendar"],
   },
   {
     flag: "skifieldConditions",
     prefixes: [
-      "/admin/mountain-conditions",
       "/api/admin/mountain-conditions",
       "/api/skifield-whakapapa",
       "/api/skifield-conditions",
@@ -187,7 +185,7 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     // the kiosk flag, and the display module must work without the kiosk
     // (ADR-001 §1, docs/lobby-display/decisions/).
     flag: "lobbyDisplay",
-    prefixes: ["/display", "/api/display", "/admin/display", "/api/admin/display"],
+    prefixes: ["/display", "/api/display", "/api/admin/display"],
     // The guided setup wizard (#2249) opens with "turn the Lobby TV display
     // module on", so it has to be reachable while the module is OFF — otherwise
     // its first step is the one state it can never be seen in. It renders only
@@ -203,7 +201,7 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     // the module is off (so a curated help panel still renders), rather than the
     // 404 this feature-route gate produces.
     flag: "aiAssistant",
-    prefixes: ["/admin/ai-assistant", "/api/admin/ai-assistant"],
+    prefixes: ["/api/admin/ai-assistant"],
   },
   {
     // AI Diagnostics (AID-2, #2371) — a SEPARATE admin-only paid product from the
@@ -227,10 +225,11 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     //    once the club has opted into the product by enabling the module, and
     //    enabling it alone authorises no spend (fail-closed readiness gates every
     //    paid call).
-    // The PAGE prefix is listed as of AID-7 (#2378), which added
-    // /admin/ai-diagnostics. It was deliberately absent until then, because a
-    // prefix matching no file fails admin-route-map-drift.test.ts. (The comment
-    // here previously said "AID-8"; the UI is AID-7 / #2378.)
+    // The PAGE is gated as of AID-7 (#2378), which added /admin/ai-diagnostics;
+    // since #4799 its registry entry's `aiDiagnostics` flag generates the prefix.
+    // It was deliberately absent until AID-7, because a prefix matching no page
+    // fails admin-route-map-drift.test.ts. (The comment here previously said
+    // "AID-8"; the UI is AID-7 / #2378.)
     //
     // The page is gated by the module like the settings route, and unlike the
     // readiness endpoint: with diagnostics switched off there is no workspace to
@@ -238,7 +237,7 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     // up. Turning the module off therefore 404s the page rather than rendering a
     // shell that can do nothing.
     flag: "aiDiagnostics",
-    prefixes: ["/admin/ai-diagnostics", "/api/admin/ai-diagnostics"],
+    prefixes: ["/api/admin/ai-diagnostics"],
     exemptPaths: ["/api/admin/ai-diagnostics/readiness"],
   },
   {
@@ -257,7 +256,6 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     // its own prefix rather than by inspecting a shared one.
     flag: "maintenanceReports",
     prefixes: [
-      "/admin/maintenance-reports",
       "/api/admin/maintenance-reports",
       "/maintenance-report",
       "/api/maintenance-reports",
@@ -271,13 +269,12 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     // the API re-checks the flag itself as well so the gate does not live only
     // in middleware.
     //
-    // Only the member surfaces are listed here. The admin moderation screens
-    // arrive in a later child and add their own prefixes to this same rule.
+    // The admin moderation page, /admin/message-board, is gated through its hub
+    // registry entry's `commsPortal` flag (#4799), like every admin page.
     flag: "commsPortal",
     prefixes: [
       "/message-board",
       "/api/club-posts",
-      "/admin/message-board",
       "/api/admin/club-posts",
     ],
   },
@@ -320,7 +317,7 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     // with a secret, not a session — so `syncOtherClubsWithServer` re-checks the
     // flag itself and reports SKIPPED.
     flag: "alpineCentralServer",
-    prefixes: ["/admin/alpine-server", "/api/admin/alpine-server"],
+    prefixes: ["/api/admin/alpine-server"],
   },
   {
     // Google Analytics integration configuration (#2573). Admin -> Modules is the
@@ -370,6 +367,35 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     patterns: [/^\/api\/bookings\/[^/]+\/guests\/[^/]+\/consent$/],
   },
 ];
+
+/**
+ * Each rule, with the admin page prefixes its module gates added first, and the
+ * hub twin of each admin page it exempts. A module whose pages are registered
+ * but that has no hand-written rule still gets one, so a registry flag can never
+ * fail OPEN for want of a rule here.
+ */
+function withAdminPageGates(rules: readonly FeatureRouteRule[]): FeatureRouteRule[] {
+  const merged = rules.map((rule) => {
+    const prefixes = [...(ADMIN_PAGE_MODULE_GATES.get(rule.flag) ?? []), ...(rule.prefixes ?? [])];
+    return {
+      ...rule,
+      ...(prefixes.length > 0 ? { prefixes } : {}),
+      ...(rule.exemptPaths ? { exemptPaths: withAdminHubTwins(rule.exemptPaths) } : {}),
+    };
+  });
+  const unruled = [...ADMIN_PAGE_MODULE_GATES].filter(
+    ([flag]) => !rules.some((rule) => rule.flag === flag),
+  );
+  return [
+    ...merged,
+    ...unruled.map(([flag, prefixes]) => ({ flag, prefixes: [...prefixes] })),
+  ];
+}
+
+// test seam
+export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = withAdminPageGates(
+  HAND_WRITTEN_FEATURE_ROUTE_RULES,
+);
 
 function matchesPrefix(pathname: string, prefix: string): boolean {
   return pathname === prefix || pathname.startsWith(`${prefix}/`);

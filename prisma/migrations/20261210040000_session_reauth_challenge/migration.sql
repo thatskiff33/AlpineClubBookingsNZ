@@ -10,6 +10,7 @@ CREATE TABLE "SessionReauthChallenge" (
     "memberId" TEXT NOT NULL,
     "tokenHash" TEXT NOT NULL,
     "expiresAt" TIMESTAMP(3) NOT NULL,
+    "consumedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "SessionReauthChallenge_pkey" PRIMARY KEY ("id")

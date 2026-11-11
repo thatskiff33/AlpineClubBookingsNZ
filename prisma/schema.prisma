@@ -979,11 +979,14 @@ model TwoFactorSessionChallenge {
 // refreshes the session's lastAuthenticatedAt; a client-forged session update
 // cannot move it. Stored as a keyed hash, like the challenge above.
 model SessionReauthChallenge {
-  id        String   @id @default(cuid())
-  memberId  String
-  tokenHash String   @unique
-  expiresAt DateTime
-  createdAt DateTime @default(now())
+  id         String    @id @default(cuid())
+  memberId   String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  // Set when the claim consumes the row in place. The other claim deletes an
+  // unconsumed row instead. Either one is single-use.
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
 
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 

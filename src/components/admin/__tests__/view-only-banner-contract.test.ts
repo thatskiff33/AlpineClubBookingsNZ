@@ -118,6 +118,35 @@ function componentRendersBanner(source: string, name: string): boolean {
 }
 
 /**
+ * Whether every render site of `<name` in `source` is the `content` of a tab
+ * handed to `<AdminPageTabs>` (S1 #4796). Only the open tab is mounted, so a
+ * component rendered there sits under no banner of the file's other tabs.
+ */
+function rendersOnlyAsTabContent(source: string, name: string): boolean {
+  if (!source.includes("<AdminPageTabs")) return false;
+  const sites = [...source.matchAll(new RegExp(`<${name}\\b`, "g"))];
+  return (
+    sites.length > 0 &&
+    sites.every((site) => /content:\s*$/.test(source.slice(Math.max(0, site.index - 20), site.index)))
+  );
+}
+
+/**
+ * Whether every `<AdminViewOnlySectionBanner` in `source` is inside a
+ * `function` component that itself renders only as a tab's content, so the
+ * banner covers that tab and nothing in a sibling tab. A banner anywhere else
+ * (the page shell, an arrow component, module scope) answers false.
+ */
+function bannersOnlyInTabs(source: string): boolean {
+  const decls = [...source.matchAll(/^(?:export\s+(?:default\s+)?)?function\s+([A-Z]\w*)\b/gm)];
+  const banners = [...source.matchAll(/<AdminViewOnlySectionBanner\b/g)];
+  return banners.every((banner) => {
+    const owner = decls.filter((decl) => decl.index <= banner.index).at(-1);
+    return owner !== undefined && rendersOnlyAsTabContent(source, owner[1]!);
+  });
+}
+
+/**
  * The opening tag of EVERY `<Name` element in `source`, e.g.
  * `<AssignmentForm ... />`. Attribute values routinely contain `>` (arrow
  * functions: `onChanged={() => …}`), so a tag can not be matched with a
@@ -2907,6 +2936,11 @@ describe("view-only section banner coverage (#2160)", () => {
       is checked, not just the first, so a second copy added below a compliant
       one can not ride on it.
 
+      Two tabs of one `<AdminPageTabs>` are not nested: only the open tab is
+      mounted. A child rendered only as a tab's `content`, in a file whose
+      every banner sits in a component that is itself only a tab's `content`,
+      is therefore not an offender (S1 #4796, Family Groups' Suggestions tab).
+
       The scan is static, and its reach is exactly the house style it polices:
       a named import (`import { Child } from "…"`) rendered as `<Child …>`. It
       does NOT see a component reached by an aliased import
@@ -2946,6 +2980,12 @@ describe("view-only section banner coverage (#2160)", () => {
             (tag) => !tag.includes("renderViewOnlyBanner={false}"),
           );
           if (uncovered.length === 0) continue;
+          // Sibling tabs (S1 #4796): the child is a tab of its own, and every
+          // banner in this file covers a different tab, so the two are never
+          // on screen together.
+          if (rendersOnlyAsTabContent(parent.source, spec) && bannersOnlyInTabs(parent.source)) {
+            continue;
+          }
           // The file has a banner somewhere; only THIS export matters.
           const childSource = stripComments(readFileSync(target, "utf8"));
           if (!componentRendersBanner(childSource, spec)) continue;

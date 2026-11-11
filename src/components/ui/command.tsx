@@ -35,6 +35,8 @@ interface CommandDialogProps
   onCloseAutoFocus?: React.ComponentPropsWithoutRef<
     typeof DialogContent
   >["onCloseAutoFocus"]
+  /** `false` when the caller filters and orders the items itself. */
+  shouldFilter?: boolean
 }
 
 const CommandDialog = ({
@@ -42,6 +44,7 @@ const CommandDialog = ({
   description = "Search for a command to run…",
   children,
   onCloseAutoFocus,
+  shouldFilter,
   ...props
 }: CommandDialogProps) => (
   <Dialog {...props}>
@@ -54,7 +57,7 @@ const CommandDialog = ({
         <DialogTitle>{title}</DialogTitle>
         <DialogDescription>{description}</DialogDescription>
       </DialogHeader>
-      <Command className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group]]:px-2 [&_[cmdk-input-wrapper]_svg]:h-5 [&_[cmdk-input-wrapper]_svg]:w-5 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-3 [&_[cmdk-item]_svg]:h-5 [&_[cmdk-item]_svg]:w-5">
+      <Command shouldFilter={shouldFilter} className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group]]:px-2 [&_[cmdk-input-wrapper]_svg]:h-5 [&_[cmdk-input-wrapper]_svg]:w-5 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-3 [&_[cmdk-item]_svg]:h-5 [&_[cmdk-item]_svg]:w-5">
         {children}
       </Command>
     </DialogContent>

@@ -176,7 +176,7 @@ describe("AdminCommandPalette", () => {
     opener.remove();
   });
 
-  it("orders groups by canonical sidebar section order, not dedup insertion order", async () => {
+  it("groups by hub, in menu order (S2 #4797)", async () => {
     renderPalette();
     pressCtrlK();
     await screen.findByPlaceholderText("Search admin features…");
@@ -186,23 +186,95 @@ describe("AdminCommandPalette", () => {
       document.body.querySelectorAll("[cmdk-group-heading]"),
     ).map((el) => el.textContent);
 
-    // Matches the sidebar's buildAdminNavSections order. Regression guard:
-    // the de-dup keys "Bookings & Beds" pages first under "Needs Attention",
-    // which must not drag that group ahead of "Needs Attention".
+    // The hub registry's order. The queue views are listed after every page in
+    // the index; they must still land in Bookings, not in a group of their own.
     expect(headings).toEqual([
-      "General",
-      "Needs Attention",
-      "Bookings & Beds",
-      "Rates & Policies",
+      "Home",
+      "Bookings",
+      "Fees & booking rules",
       "Finance",
       "Members",
-      "Lodge Operations",
-      "Monitoring & Support",
-      "Setup & Configuration",
+      "Lodge",
+      "Website",
+      "Messages & email",
+      "Help & system",
+      "Club settings",
     ]);
   });
 
-  it("groups Lobby Display under Lodge Operations with no duplicate", async () => {
+  it("offers a page the sidebar does not link (S2 #4797)", async () => {
+    renderPalette();
+    pressCtrlK();
+
+    const input = await screen.findByPlaceholderText("Search admin features…");
+    fireEvent.change(input, { target: { value: "Chores" } });
+    await waitFor(() => expect(screen.getByRole("option", { name: /^Chores/ })).not.toBeNull());
+    // Enter, not a click: the best match must be the one selected, although
+    // Age Groups (an earlier hub) also fuzzy-matches "chores" weakly.
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(pushMock).toHaveBeenCalledTimes(1);
+    expect(pushMock).toHaveBeenCalledWith("/admin/chores");
+  });
+
+  it("opens a retired page's name on the tab that holds it (S2 #4797)", async () => {
+    renderPalette();
+    pressCtrlK();
+
+    const input = await screen.findByPlaceholderText("Search admin features…");
+    fireEvent.change(input, { target: { value: "Family Suggestions" } });
+    await waitFor(() =>
+      expect(screen.getByRole("option", { name: /^Family Suggestions/ })).not.toBeNull(),
+    );
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(pushMock).toHaveBeenCalledWith("/admin/family-groups?tab=suggestions");
+  });
+
+  it("ranks groups by their best match, and keeps hub order with no query", async () => {
+    renderPalette();
+    pressCtrlK();
+
+    const input = await screen.findByPlaceholderText("Search admin features…");
+    const headings = () =>
+      Array.from(document.body.querySelectorAll("[cmdk-group-heading]")).map(
+        (el) => el.textContent,
+      );
+    const hubOrder = headings();
+    expect(hubOrder[0]).toBe("Home");
+
+    fireEvent.change(input, { target: { value: "Chores" } });
+    await waitFor(() => expect(headings()[0]).toBe("Lodge"));
+    // The weak match is still listed, just after the strong one.
+    expect(headings()).toContain("Fees & booking rules");
+    expect(screen.getAllByRole("option")[0]?.textContent).toMatch(/^Chores/);
+    expect(screen.queryByRole("option", { name: /^Payments/ })).toBeNull();
+
+    fireEvent.change(input, { target: { value: "" } });
+    await waitFor(() => expect(headings()).toEqual(hubOrder));
+  });
+
+  it("shows the empty state when nothing matches", async () => {
+    renderPalette();
+    pressCtrlK();
+
+    const input = await screen.findByPlaceholderText("Search admin features…");
+    fireEvent.change(input, { target: { value: "zzzzqqqq" } });
+    await waitFor(() => expect(screen.getByText("No matching admin pages.")).not.toBeNull());
+    expect(screen.queryAllByRole("option")).toEqual([]);
+  });
+
+  it("still finds pages by their old sidebar section name", async () => {
+    renderPalette();
+    pressCtrlK();
+
+    const input = await screen.findByPlaceholderText("Search admin features…");
+    fireEvent.change(input, { target: { value: "Setup & Configuration" } });
+    await waitFor(() => expect(screen.getByRole("option", { name: /^Modules/ })).not.toBeNull());
+    expect(screen.getByRole("option", { name: /^Access Roles/ })).not.toBeNull();
+  });
+
+  it("groups Lobby Display under Lodge with no duplicate", async () => {
     renderPalette();
     pressCtrlK();
 
@@ -215,7 +287,7 @@ describe("AdminCommandPalette", () => {
       matches[0]
         .closest("[cmdk-group]")
         ?.querySelector("[cmdk-group-heading]")?.textContent,
-    ).toBe("Lodge Operations");
+    ).toBe("Lodge");
   });
 
   it("does not restore focus to the opener when a selection navigates away", async () => {
@@ -248,14 +320,14 @@ describe("AdminCommandPalette", () => {
   });
 
   it("never reveals an href the admin cannot access (interaction path)", async () => {
-    // Bookings-only, non-full-admin: same filter as getVisibleAdminNavSections.
+    // Bookings-only, non-full-admin.
     renderPalette(matrix({ bookings: "view" }), false);
     pressCtrlK();
 
     await screen.findByPlaceholderText("Search admin features…");
 
     // A bookings page is offered…
-    expect(screen.getByText("Bookings")).not.toBeNull();
+    expect(screen.getByRole("option", { name: /^Bookings$/ })).not.toBeNull();
     // …but membership and fullAdminOnly pages are absent from the palette DOM.
     expect(screen.queryByText("Members")).toBeNull();
     expect(screen.queryByText("Export & Import")).toBeNull();

@@ -1,7 +1,7 @@
 # File-size allowances for #4616
 
 file: src/lib/auth.ts
-lines: 868
+lines: 874
 reason: the recent-authentication stamp is written by the jwt callback's
   sign-in branch and by its session-update branch, beside the two-factor
   challenge consume it mirrors, and projected by the session callback; those

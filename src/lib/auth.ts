@@ -46,6 +46,7 @@ import {
   resolveRequestSessionIdleSeconds,
 } from "./session-idle-expiry";
 import { consumeTwoFactorSessionChallenge } from "./two-factor";
+import { consumeSessionReauthChallenge as consumeMarkedReauthChallenge } from "./session-reauth";
 import { consumeSessionReauthChallenge } from "./session-reauth-challenge";
 import { readLastAuthenticatedAtMs } from "./recent-auth-policy";
 import { hashActionToken, isActionTokenFormat } from "./action-tokens";
@@ -606,10 +607,15 @@ export const authConfig = {
         // `lastAuthenticatedAt` is never read; only consuming this member's
         // server-minted step-up token moves the stamp. The two-factor
         // challenge above never does: it also takes emailed and recovery codes.
-        const reauthenticated = await consumeSessionReauthChallenge(
-          token.id,
-          session.user.reauthChallengeToken,
-        );
+        const reauthenticated =
+          (await consumeMarkedReauthChallenge(
+            token.id,
+            session.user.reauthChallengeToken,
+          )) ||
+          (await consumeSessionReauthChallenge(
+            token.id,
+            session.user.reauthChallengeToken,
+          ));
         if (reauthenticated) {
           token.lastAuthenticatedAt = Date.now();
         }

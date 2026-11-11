@@ -60,6 +60,7 @@ export async function consumeSessionReauthChallenge(
     where: {
       tokenHash: { in: twoFactorCodeHashCandidates(token) },
       memberId,
+      consumedAt: null,
       expiresAt: { gt: new Date() },
     },
   });

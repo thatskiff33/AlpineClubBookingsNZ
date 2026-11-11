@@ -14,6 +14,8 @@ import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { AgeTierBadge } from "@/components/admin/family-groups/age-tier-badge";
 import { MemberAgeChip } from "@/components/admin/family-groups/member-age-display";
 import { FamilyGroupRequestReviewSection } from "@/components/admin/family-groups/request-review-section";
+import { FamilySuggestionsPanel } from "@/components/admin/family-groups/family-suggestions-panel";
+import { AdminPageTabs } from "@/components/admin/admin-page-tabs";
 import { AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import {
   ADMIN_VIEW_ONLY_ACTION_REASON,
@@ -38,7 +40,23 @@ type PartnerInvite = {
   createdBy: { id: string; name: string } | null;
 };
 
+/** Groups, and Suggestions as a tab since S1 (#4796); a tab change drops `?edit`. */
 export default function FamilyGroupsPage() {
+  return (
+    <AdminPageTabs
+      page="family-groups"
+      title="Family Groups"
+      description="Link primary members together so they appear in each other's booking quick-add lists"
+      clearOnChange={["edit"]}
+      tabs={[
+        { value: "groups", label: "Groups", content: <FamilyGroupsTab /> },
+        { value: "suggestions", label: "Suggestions", content: <FamilySuggestionsPanel /> },
+      ]}
+    />
+  );
+}
+
+function FamilyGroupsTab() {
   // A partner invite's `expiresAt` and a group's `createdAt` are real INSTANTS,
   // read in the club's PERSISTED zone (`INV-CONFIG-002`). The shared helper they
   // used to go through pinned `APP_TIME_ZONE`, so an expiry an admin abroad was
@@ -402,12 +420,7 @@ export default function FamilyGroupsPage() {
       {viewOnlyBanner}
       <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Family Groups</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Link primary members together so they appear in each other&apos;s booking quick-add lists
-          </p>
-        </div>
+        <h2 className="text-lg font-semibold text-foreground">Groups</h2>
         <ViewOnlyActionButton canEdit={canEditMembership} describeReason={false} onClick={openCreateForm}>
           <Plus className="h-4 w-4 mr-2" />
           New Group

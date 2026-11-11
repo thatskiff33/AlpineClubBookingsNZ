@@ -7708,3 +7708,20 @@ writes compatible. Counterparts reconciled: #4539 (alert retry before inbound),
 and #4501 (lane coordination only). No open Xero PR appeared in the pre-edit
 public GitHub query. Scoped sync invokes the inbound handlers directly, without
 advancing the club cursors or taking a whole-cycle claim.
+
+## Reauthentication challenge (#4616)
+
+Consuming a `SessionReauthChallenge` is one `updateMany` whose `where` requires
+`consumedAt` null, that member, the keyed token hash and an unexpired row
+(`consumeSessionReauthChallenge` in `src/lib/session-reauth.ts`). Two
+concurrent consumers of one token: PostgreSQL updates one row and the other
+matches nothing. No advisory lock and no `FOR UPDATE`, so the lock inventory
+is unchanged (`INV-LOCK-001`, `INV-LOCK-003`). Order is a single row claim,
+not the global → lodge → member tiers (`INV-LOCK-002`).
+
+The password proof reuses `claimPasswordAttempt` (`INV-AUTH-003`) and takes no
+new lock. The authenticator proof reuses the existing two-factor failure
+counter. Counterparts reconciled: the two-factor session challenge (a
+delete-and-count claim, also no advisory lock) and the per-account password
+throttle (#4609). `session-reauth.realdb.test.ts` proves one of two concurrent
+consumes succeeds.

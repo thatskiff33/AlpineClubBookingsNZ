@@ -43,11 +43,12 @@ export const adminMembersHelpEntries: HelpEntry[] = [
     "/admin/family-groups",
     help(
       "Family Groups",
-      "Family groups link adults and dependents so shared bookings, dependents, inherited emails, and family requests can be reviewed safely.",
+      "Family groups link adults and dependents so shared bookings, dependents, inherited emails, and family requests can be reviewed safely. The Suggestions tab surfaces likely family relationships among ungrouped members so admins can create or dismiss groups deliberately.",
       [
         "Review pending join, adult, child, and removal requests before changing relationships.",
         "Open a group to inspect adults, dependents, login holders, and inherited contact details.",
         "Use explicit approve, reject, link, or unlink actions rather than editing unrelated member fields.",
+        "On the Suggestions tab, review each suggestion against names, emails and ages, create the group only when the relationship is clear, and skip or hide the rest.",
       ],
       [
         {
@@ -65,6 +66,11 @@ export const adminMembersHelpEntries: HelpEntry[] = [
           description:
             "Shows whether a family change is waiting, approved, rejected, or completed.",
         },
+        {
+          name: "Suggested members",
+          description:
+            "On the Suggestions tab: ungrouped records that appear related through a shared email or last name.",
+        },
       ],
       [
         "Family changes can affect account access and member privacy. Check names and emails carefully before approving.",
@@ -75,11 +81,12 @@ export const adminMembersHelpEntries: HelpEntry[] = [
     "/admin/membership-cancellations",
     help(
       "Cancellations",
-      "This page handles membership cancellation, archive, and related lifecycle action requests.",
+      "This page handles membership cancellation, archive, and related lifecycle action requests. Its Settings tab holds the cancellation warning and rejoin-process text and the Xero cancellation handling.",
       [
         "Review requested cancellations and any participant confirmations.",
         "Check blockers such as future bookings, unpaid obligations, or family participant state.",
         "Approve, reject, withdraw, archive, or complete the request only after the blockers are clear.",
+        "Open the Settings tab before changing cancellation warning or rejoin-process text, and review pending requests first: they are affected by the change. Cancellation email wording is in Email Messages.",
       ],
       [
         {
@@ -96,6 +103,11 @@ export const adminMembersHelpEntries: HelpEntry[] = [
           name: "Lifecycle action",
           description:
             "The requested account change, such as cancellation, archive, delete, or rejoin follow-up.",
+        },
+        {
+          name: "Settings",
+          description:
+            "The tab for cancellation copy and Xero cancellation handling.",
         },
       ],
       [
@@ -266,30 +278,6 @@ export const adminMembersHelpEntries: HelpEntry[] = [
       ],
       [
         "Notices can carry private committee information. Check the audience before publishing.",
-      ],
-    ),
-  ),
-  entry(
-    "/admin/family-suggestions",
-    help(
-      "Family Suggestions",
-      "Family Suggestions surfaces likely family relationships based on member data so admins can create or dismiss groups deliberately.",
-      [
-        "Review each suggestion against names, emails, ages, and addresses.",
-        "Create the family group only when the relationship is clear.",
-        "Dismiss suggestions that are wrong or not useful.",
-      ],
-      [
-        {
-          name: "Suggested members",
-          description:
-            "Records that appear related based on shared details.",
-        },
-        {
-          name: "Confidence clues",
-          description:
-            "Shared email, address, surname, or dependent age information that explains the suggestion.",
-        },
       ],
     ),
   ),

@@ -11,7 +11,7 @@ import {
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
 import {
-  canViewAdminHrefWithMatrix,
+  canOpenAdminPathWithMatrix,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 
@@ -49,7 +49,7 @@ function getVisibleAdminHubSections(
     (section) =>
       isFeatureHrefVisible(section.href, features) &&
       (!permissionMatrix ||
-        canViewAdminHrefWithMatrix(permissionMatrix, section.href)),
+        canOpenAdminPathWithMatrix(permissionMatrix, section.href)),
   );
 }
 
@@ -100,12 +100,6 @@ export function AdminHubPage({
   backHref?: string;
   backLabel?: string;
 }) {
-  const visibleSections = getVisibleAdminHubSections(
-    sections,
-    features,
-    permissionMatrix,
-  );
-
   return (
     <div className="space-y-8">
       <div>
@@ -120,45 +114,77 @@ export function AdminHubPage({
 
       {lead}
 
-      {visibleSections.length > 0 || extraCards ? (
-        <div className="grid gap-4 sm:grid-cols-2">
-          {visibleSections.map(
-            ({ href, title, description, icon: Icon, hardNavigate }) => {
-              const card = (
-                <Card className="h-full transition-colors hover:border-brand-gold/70">
-                  <CardHeader>
-                    <div className="flex items-center gap-2">
-                      <Icon className="h-5 w-5 shrink-0 text-foreground" />
-                      <CardTitle>{title}</CardTitle>
-                    </div>
-                    <CardDescription>{description}</CardDescription>
-                  </CardHeader>
-                </Card>
-              );
+      <AdminHubSectionCards
+        sections={sections}
+        features={features}
+        permissionMatrix={permissionMatrix}
+        extraCards={extraCards}
+      />
+    </div>
+  );
+}
 
-              // A plain anchor is still a real link: same role, same keyboard
-              // activation, same middle-click/ctrl-click/"open in new tab"
-              // behaviour. The only difference is that the browser loads a new
-              // document, which is exactly what `hardNavigate` asks for (see the
-              // field's doc comment).
-              return hardNavigate ? (
-                <a key={href} href={href} className="group block">
-                  {card}
-                </a>
-              ) : (
-                <Link key={href} href={href} className="group block">
-                  {card}
-                </Link>
-              );
-            },
-          )}
-          {extraCards}
-        </div>
-      ) : (
-        <div className="rounded-md border bg-muted px-4 py-3 text-sm text-muted-foreground">
-          No setup pages are available for your current permissions.
-        </div>
+/**
+ * The destination cards of a hub, each shown only where its module is on and,
+ * given a matrix, to an admin who can OPEN its page (`canOpenAdminPathWithMatrix`,
+ * the admin layout's own rule, OR admissions included). `AdminHubPage` renders them
+ * under its heading; a page that is not a hub renders them as one of its
+ * sections (System Health's integration readiness, S1 #4796).
+ */
+export function AdminHubSectionCards({
+  sections,
+  features,
+  permissionMatrix,
+  extraCards,
+}: {
+  sections: AdminHubSection[];
+  features: FeatureFlags;
+  permissionMatrix?: AdminPermissionMatrix;
+  extraCards?: ReactNode;
+}) {
+  const visibleSections = getVisibleAdminHubSections(
+    sections,
+    features,
+    permissionMatrix,
+  );
+
+  return visibleSections.length > 0 || extraCards ? (
+    <div className="grid gap-4 sm:grid-cols-2">
+      {visibleSections.map(
+        ({ href, title, description, icon: Icon, hardNavigate }) => {
+          const card = (
+            <Card className="h-full transition-colors hover:border-brand-gold/70">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <Icon className="h-5 w-5 shrink-0 text-foreground" />
+                  <CardTitle>{title}</CardTitle>
+                </div>
+                <CardDescription>{description}</CardDescription>
+              </CardHeader>
+            </Card>
+          );
+
+          // A plain anchor is still a real link: same role, same keyboard
+          // activation, same middle-click/ctrl-click/"open in new tab"
+          // behaviour. The only difference is that the browser loads a new
+          // document, which is exactly what `hardNavigate` asks for (see the
+          // field's doc comment).
+          return hardNavigate ? (
+            <a key={href} href={href} className="group block">
+              {card}
+            </a>
+          ) : (
+            <Link key={href} href={href} className="group block">
+              {card}
+            </Link>
+          );
+        },
       )}
+      {extraCards}
+    </div>
+  ) : (
+    <div className="rounded-md border bg-muted px-4 py-3 text-sm text-muted-foreground">
+      No setup pages are available for your current permissions.
     </div>
   );
 }

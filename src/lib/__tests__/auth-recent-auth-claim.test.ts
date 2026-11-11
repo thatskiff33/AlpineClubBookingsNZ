@@ -113,6 +113,10 @@ vi.mock("@/lib/session-reauth-challenge", () => ({
   createSessionReauthChallenge: vi.fn(),
 }));
 
+vi.mock("@/lib/session-reauth", () => ({
+  consumeSessionReauthChallenge: vi.fn(async () => false),
+}));
+
 vi.mock("@/lib/google-config", () => ({
   getGoogleOAuthConfig: vi.fn().mockResolvedValue(null),
   recordGoogleVerified: vi.fn(),

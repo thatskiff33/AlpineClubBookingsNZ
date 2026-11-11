@@ -332,7 +332,7 @@ describe("GET /api/auth/reauth (#4616)", () => {
     const response = await GET();
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
-    expect(await response.json()).toEqual({ methods });
+    expect(await response.json()).toMatchObject({ methods });
   });
 
   it("offers no method, and says why, for an app enrolment missing its secret", async () => {
