@@ -1897,7 +1897,7 @@ and **`INV-PAY-147`** (slice evidence).
 **Related: `INV-PAY-110`** (kept late captures) **and `INV-PAY-139`**.
 
 - **A kept change capture on a cancelled, invoiced booking is recorded by the
-  document the evidence names** (#4324; owner, 25 Oct 2026, amending one case
+  document the evidence names** (#4324, amending one case
   of `INV-PAY-110`): a second invoice for a change the primary bills would
   count the income twice.
 - **One decision** (`keptChangeCaptureRoute`), taken once by the keep or
