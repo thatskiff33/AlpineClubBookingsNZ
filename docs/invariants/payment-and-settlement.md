@@ -1923,7 +1923,7 @@ and **`INV-PAY-147`** (slice evidence).
 - **Reopen.** Its worker re-reads the task under the anchor and, no longer
   kept, closes its row there; an approval takes the anchor
   first and withdraws an undecided receipt. A paid-another-way close plans
-  under those locks.
+  under the task row then the anchor.
 - **Repair.** `KEPT_LATE_CAPTURE_NOT_RECORDED_IN_XERO`, dry run listing the
   cents `--apply` records, then recorded automatically; without the primary
   invoice's id, "cannot tell yet".

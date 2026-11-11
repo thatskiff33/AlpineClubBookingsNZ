@@ -186,6 +186,81 @@ function byCurrentAsk(
 }
 
 /**
+ * Which retired rows a capture may still revive. `STALE_WAITING_PAYMENT_COVERED`
+ * is absent: that stamp is terminal. One list for the release and the keep
+ * (`INV-SSOT`); the keep passes its anchor, the release passes none.
+ */
+const RETIRED_INVOICE_CANDIDATE_CODES = [
+  STALE_WAITING_PAYMENT_ERROR_CODE,
+  CAPTURED_NOT_ISSUED_ERROR_CODE,
+] as const;
+
+const retiredInvoiceCandidateSelect = {
+  id: true,
+  localModel: true,
+  localId: true,
+  lastErrorCode: true,
+  requestPayload: true,
+  createdAt: true,
+} as const;
+
+function retiredInvoiceCandidateWhere(paymentIntentId: string, anchorId: string | null) {
+  return {
+    ...SUPPLEMENTARY_INVOICE_CREATE_WHERE,
+    status: "CANCELLED" as const,
+    // Every supplementary enqueue writes both; the lock needs the anchor.
+    localModel: { not: null },
+    localId: anchorId ?? { not: null },
+    lastErrorCode: { in: [...RETIRED_INVOICE_CANDIDATE_CODES] },
+    requestPayload: { path: ["paymentIntentId"], equals: paymentIntentId },
+  };
+}
+
+type RetiredInvoiceCandidate = {
+  id: string;
+  localModel: string | null;
+  localId: string | null;
+  lastErrorCode: string | null;
+  requestPayload: Prisma.JsonValue;
+  createdAt: Date;
+};
+
+/**
+ * The largest ask on one anchor, after `byCurrentAsk`. A captured refusal at
+ * the top has already been alerted. Older stale siblings are the ones a
+ * revival stamps covered.
+ */
+function pickRetiredInvoiceToRevive<T extends { id: string; lastErrorCode: string | null }>(
+  sorted: readonly T[],
+):
+  | { kind: "none" }
+  | { kind: "already-alerted" }
+  | { kind: "revive"; newest: T; supersededIds: string[] } {
+  const [newest, ...older] = sorted;
+  if (!newest) return { kind: "none" };
+  if (newest.lastErrorCode === CAPTURED_NOT_ISSUED_ERROR_CODE) return { kind: "already-alerted" };
+  return {
+    kind: "revive",
+    newest,
+    supersededIds: older
+      .filter((row) => row.lastErrorCode === STALE_WAITING_PAYMENT_ERROR_CODE)
+      .map((row) => row.id),
+  };
+}
+
+async function loadRetiredInvoiceCandidates(
+  db: Prisma.TransactionClient | typeof prisma,
+  paymentIntentId: string,
+  anchorId: string | null,
+): Promise<RetiredInvoiceCandidate[]> {
+  const rows = await db.xeroSyncOperation.findMany({
+    where: retiredInvoiceCandidateWhere(paymentIntentId, anchorId),
+    select: retiredInvoiceCandidateSelect,
+  });
+  return rows.sort(byCurrentAsk);
+}
+
+/**
  * IS IT SAFE TO ISSUE THIS INVOICE WITH THIS CAPTURE RECORDED AS ITS PAYMENT?
  * One rule for a still-waiting invoice and a retired one (#3641 review round):
  * the worker books the invoice's own net as the Stripe receipt, so an invoice
@@ -297,32 +372,7 @@ export async function releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
   // Review 2 (F3): an invoice taken back from this request by its change's own capture was paid twice.
   await alertTakenBackInvoicesPaidAgain(paymentIntentId);
 
-  const retiredOperations = (
-    await prisma.xeroSyncOperation.findMany({
-      where: {
-        ...SUPPLEMENTARY_INVOICE_CREATE_WHERE,
-        status: "CANCELLED",
-        // Every supplementary enqueue writes both; the lock needs the anchor.
-        localModel: { not: null },
-        localId: { not: null },
-        lastErrorCode: {
-          in: [STALE_WAITING_PAYMENT_ERROR_CODE, CAPTURED_NOT_ISSUED_ERROR_CODE],
-        },
-        requestPayload: {
-          path: ["paymentIntentId"],
-          equals: paymentIntentId,
-        },
-      },
-      select: {
-        id: true,
-        localModel: true,
-        localId: true,
-        lastErrorCode: true,
-        requestPayload: true,
-        createdAt: true,
-      },
-    })
-  ).sort(byCurrentAsk);
+  const retiredOperations = await loadRetiredInvoiceCandidates(prisma, paymentIntentId, null);
 
   const byAnchor = new Map<string, typeof retiredOperations>();
   for (const operation of retiredOperations) {
@@ -334,18 +384,17 @@ export async function releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
   let alerted = waiting.alerted;
   let alreadyAlerted = false;
   for (const [anchorId, operations] of byAnchor) {
-    const [newest, ...older] = operations;
-    if (!newest) continue;
-    if (newest.lastErrorCode === CAPTURED_NOT_ISSUED_ERROR_CODE) {
+    const picked = pickRetiredInvoiceToRevive(operations);
+    if (picked.kind === "none") continue;
+    if (picked.kind === "already-alerted") {
       alreadyAlerted = true;
       continue;
     }
+    const { newest } = picked;
     const verdict = await requeueRetiredSupplementaryInvoiceOperation({
       operation: { ...newest, localModel: newest.localModel as string },
       anchorId,
-      supersededIds: older
-        .filter((row) => row.lastErrorCode === STALE_WAITING_PAYMENT_ERROR_CODE)
-        .map((row) => row.id),
+      supersededIds: picked.supersededIds,
       paymentIntentId,
       transaction,
       bookingId: captured?.payment?.bookingId ?? null,
@@ -672,36 +721,15 @@ export async function reviveRetiredChangeInvoiceForKeptCapture(params: {
   bookingId: string;
   transaction: { status: PaymentStatus; amountCents: number };
 }): Promise<void> {
-  const retired = (
-    await params.store.xeroSyncOperation.findMany({
-      where: {
-        ...SUPPLEMENTARY_INVOICE_CREATE_WHERE,
-        status: "CANCELLED",
-        localModel: { not: null },
-        localId: params.anchorId,
-        lastErrorCode: {
-          in: [STALE_WAITING_PAYMENT_ERROR_CODE, CAPTURED_NOT_ISSUED_ERROR_CODE],
-        },
-        requestPayload: { path: ["paymentIntentId"], equals: params.paymentIntentId },
-      },
-      select: {
-        id: true,
-        localModel: true,
-        localId: true,
-        lastErrorCode: true,
-        requestPayload: true,
-        createdAt: true,
-      },
-    })
-  ).sort(byCurrentAsk);
-  const [newest, ...older] = retired;
-  if (!newest || newest.lastErrorCode !== STALE_WAITING_PAYMENT_ERROR_CODE) return;
+  const picked = pickRetiredInvoiceToRevive(
+    await loadRetiredInvoiceCandidates(params.store, params.paymentIntentId, params.anchorId),
+  );
+  if (picked.kind !== "revive") return;
+  const { newest } = picked;
   await reviveRetiredSupplementaryInvoice(params.store, {
     operation: { id: newest.id, localModel: newest.localModel as string, requestPayload: newest.requestPayload },
     anchorId: params.anchorId,
-    supersededIds: older
-      .filter((row) => row.lastErrorCode === STALE_WAITING_PAYMENT_ERROR_CODE)
-      .map((row) => row.id),
+    supersededIds: picked.supersededIds,
     paymentIntentId: params.paymentIntentId,
     transaction: params.transaction,
     bookingId: params.bookingId,
