@@ -22,7 +22,7 @@ export type StepUpClientGap = {
   detail: string;
 };
 
-export type StepUpFetchSite = {
+type StepUpFetchSite = {
   file: string;
   start: number;
   end: number;
@@ -43,11 +43,6 @@ const routes = STEP_UP_ROUTES.map((route) => ({
 export function findStepUpClientGaps(): StepUpClientGap[] {
   const { gaps } = scanClients();
   return gaps;
-}
-
-export function findStepUpFetchSites(): StepUpFetchSite[] {
-  const { sites } = scanClients();
-  return sites;
 }
 
 function scanClients(): { gaps: StepUpClientGap[]; sites: StepUpFetchSite[] } {
