@@ -475,7 +475,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/confirm-modification-payment/route.ts:72",
   "src/app/api/bookings/[id]/confirm-payment/route.ts:90",
   "src/app/api/bookings/[id]/exception-requests/route.ts:137",
-  "src/app/api/bookings/[id]/guests/route.ts:346",
+  "src/app/api/bookings/[id]/guests/route.ts:347",
   "src/app/api/bookings/[id]/modify-quote/route.ts:369",
   "src/app/api/bookings/[id]/notes/route.ts:48",
   "src/app/api/bookings/[id]/refund-request/route.ts:271",

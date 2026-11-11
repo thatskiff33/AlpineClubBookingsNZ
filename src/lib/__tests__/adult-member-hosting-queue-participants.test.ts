@@ -30,6 +30,7 @@ import {
   lockHostingCoverageMemberLifecycleTarget,
   lockMemberMergeHostingCoverageParticipants,
   MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS,
+  withMemberMergeParticipantRows,
   type HostingCoverageQueueParticipantProof,
 } from "@/lib/adult-member-hosting-queue-participants";
 
@@ -406,6 +407,57 @@ describe("hosting coverage queue participant fence (#2597)", () => {
     await expect(
       lockMemberMergeHostingCoverageParticipants(db as never, PARTICIPANTS),
     ).rejects.toBeInstanceOf(HostingCoverageParticipantRetryError);
+  });
+
+  it("runs the attempt's writes inside the savepoint and rolls them back before waiting for one Member row (#4876)", async () => {
+    // First attempt locks 2 of 3. The writes (the marker) sit inside that
+    // savepoint, the rollback comes before the single-row wait, and the value
+    // kept is the second attempt's.
+    const { db, statements } = mergeParticipantDb([2, 1, 0, 1, 3]);
+    let attempts = 0;
+    const locked = await withMemberMergeParticipantRows(db as never, async () => {
+      attempts += 1;
+      await db.$executeRaw({ strings: ["SELECT 1 /* moves */"], values: [] } as never);
+      return { participantIds: ALL, result: attempts };
+    });
+    expect(locked.result).toBe(2);
+    expect(locked.lockedMemberIds).toEqual(ALL);
+    expect(statements().map((statement) => statement.text)).toEqual([
+      "SAVEPOINT member_merge_participants_attempt",
+      "SELECT 1 /* moves */",
+      ATTEMPT,
+      PROBE,
+      PROBE,
+      "ROLLBACK TO SAVEPOINT member_merge_participants_attempt",
+      "RELEASE SAVEPOINT member_merge_participants_attempt",
+      "SAVEPOINT member_merge_participant_wait",
+      "SELECT set_config('lock_timeout', ?, true)",
+      WAIT,
+      "ROLLBACK TO SAVEPOINT member_merge_participant_wait",
+      "RELEASE SAVEPOINT member_merge_participant_wait",
+      "SAVEPOINT member_merge_participants_attempt",
+      "SELECT 1 /* moves */",
+      ATTEMPT,
+      "RELEASE SAVEPOINT member_merge_participants_attempt",
+    ]);
+  });
+
+  it("rolls the attempt back and does not retry when its writes refuse (#4876)", async () => {
+    const { db, statements } = mergeParticipantDb([]);
+    let attempts = 0;
+    await expect(
+      withMemberMergeParticipantRows(db as never, async () => {
+        attempts += 1;
+        throw new Error("booking ownership changed");
+      }),
+    ).rejects.toThrow("booking ownership changed");
+    expect(attempts).toBe(1);
+    expect(statements().map((statement) => statement.text)).toEqual([
+      "SAVEPOINT member_merge_participants_attempt",
+      "ROLLBACK TO SAVEPOINT member_merge_participants_attempt",
+      "RELEASE SAVEPOINT member_merge_participants_attempt",
+    ]);
+    expect(db.member.findMany).not.toHaveBeenCalled();
   });
 
   it("takes every participant row in one SKIP LOCKED statement inside a released savepoint, with no lock bound, when none is busy (#4855)", async () => {

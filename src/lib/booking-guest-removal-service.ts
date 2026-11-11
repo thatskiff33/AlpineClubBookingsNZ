@@ -36,7 +36,7 @@ import {
 } from "@/lib/booking-review";
 import { bookingOwner } from "@/lib/booking-owner";
 import type { AdditionalAsk } from "@/lib/additional-payment-ask";
-import { queueReductionAskFollowUps } from "@/lib/unpaid-ask-billed-offset-note";
+import { queueEditAskFollowUps } from "@/lib/unpaid-ask-billed-offset-note";
 import {
   readReductionAgainstUnpaidAsk,
   type RetiredAdditionalAsk,
@@ -1033,12 +1033,12 @@ export async function removeBookingGuestInTransaction({
     adjusted: paymentImpact,
     editLabel: "guest removal", booking, // #3949: booking names the payee (a group organiser who paid by bank transfer)
   });
-  // #3954: a smaller re-issued ask, and the note for an offset Xero had
-  // already billed, are durable from this commit, not from after it.
-  await queueReductionAskFollowUps(tx, {
+  // #3954, #4744: the re-issue, a folded increase's ask, and a billed-offset note are durable from this commit.
+  await queueEditAskFollowUps(tx, {
     bookingId,
     paymentId: booking.payment?.id ?? null,
     bookingModificationId: bookingModification.id,
+    door: "guestRemoval",
     settled: paymentImpact,
   });
 

@@ -23,7 +23,7 @@ import {
 } from "@/lib/payment-recovery-keys";
 import { isCapturedTransactionStatus, isOpenIntentTransactionStatus } from "@/lib/payment-transaction-status";
 import { staleIntentAction } from "@/lib/stale-intent-action";
-import { recordedFoldedReissuedAskCents } from "@/lib/unpaid-ask-offset-marker";
+import { recordedFoldedAskCents } from "@/lib/unpaid-ask-offset-marker";
 
 /** The `BookingModification` figures a failed mint's recovery re-derives from. */
 export interface RecoveryReplayModification {
@@ -31,7 +31,7 @@ export interface RecoveryReplayModification {
   changeFeeCents: number;
   /**
    * Its history row - REQUIRED, so no reader can forget it: an increase that
-   * folded waiting re-issues in records them there (`recordedFoldedReissuedAskCents`),
+   * folded waiting asks in records them there (`recordedFoldedAskCents`),
    * and its replay asks for them again (#3954 review round 6).
    */
   newData: unknown;
@@ -80,16 +80,16 @@ export function sizeRecoveryReplayAsk({
       frozenCents: frozenAmountCents,
     };
   }
-  // #3954 round 6: the waiting re-issues this increase folded in were closed
-  // by the fold, so its replay is the only thing still able to ask for them.
-  const foldedCents = recordedFoldedReissuedAskCents(modification.newData);
+  // #3954, #4744: the waiting asks this increase folded in were closed by the
+  // fold, so its replay is the only thing still able to ask for them.
+  const foldedCents = recordedFoldedAskCents(modification.newData);
   return {
     kind: "increase",
     ask: sizeAdditionalAsk({
       priceDiffCents: modification.priceDiffCents,
       changeFeeCents: modification.changeFeeCents,
       payment,
-      waitingReissuedAskCents: foldedCents,
+      foldedWaitingAskCents: foldedCents,
     }),
     foldedCents,
   };
@@ -235,7 +235,7 @@ export function findOwnRecoveryRow<R extends ReplayLedgerRow>(
  * ask is sized off the `Payment` (`sizeAdditionalAsk`), and a failed mint never
  * reached the `Payment`; nor did the waiting re-issues an increase folded in,
  * whose own recoveries the fold closed. Only an edit that folded THIS recovery
- * in asked for it (`foldWaitingReissuedAsks`), and that fold closed it, so its
+ * in asked for it (`foldWaitingAsks`), and that fold closed it, so its
  * replay never runs. #3340 read any later row as an overtake, and so lost the
  * earlier increase whenever two increases' mints overlapped a Stripe failure
  * (#4015 cases 1 and 2, and a folded increase's replay writing first). The

@@ -1176,7 +1176,12 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // with no booking/money/capacity/lifecycle key (calendar rows only).
   "src/lib/calendar-service.ts": 1,
   "src/lib/config-transfer-lock.ts": 1,
-  "src/lib/lodge-capacity-lock.ts": 1,
+  // TWO: the blocking `acquireLodgeCapacityLock`, and `tryAcquireLodgeCapacityLock`
+  // (#4876). The try form is the same per-lodge key and never waits. Member merge
+  // calls it for a lodge that appeared while a participant attempt was rolled
+  // back, after member-lifecycle keys are already held; a miss is the existing
+  // partner-share lodge 409, not a wait, so it adds no lodge-after-member edge.
+  "src/lib/lodge-capacity-lock.ts": 2,
   "src/lib/member-credit.ts": 1,
   "src/lib/member-lifecycle-actions.ts": 2,
   // #2593: one canonical helper mints member-lifecycle:{memberId}; it
@@ -1754,6 +1759,13 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // statement stays the one site in payment-transactions.ts; this file still
   // has only the SKIP LOCKED probe.
   "src/lib/xero-sync.ts": 1,
+  // #4447: recording an allocation the reading still lists, and turning off
+  // one it no longer lists, each lock that one XeroObjectLink row, re-read its
+  // stamp, then write through the link funnel in the same transaction. A
+  // still-listed invoice reserves a missing row first; a removal does not. No
+  // other lock and no advisory key. See docs/CONCURRENCY_AND_LOCKING.md, "An
+  // allocation Xero no longer lists (#4447)".
+  "src/lib/xero-inbound/retire-unlisted-credit-note-allocations.ts": 1,
 };
 
 const CAPACITY_LOCK_MINT = "src/lib/lodge-capacity-lock.ts";

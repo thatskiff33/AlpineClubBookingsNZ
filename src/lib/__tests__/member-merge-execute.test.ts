@@ -861,10 +861,11 @@ describe("executeMemberMerge", () => {
       count: vi.fn().mockResolvedValue(0),
       findMany: vi.fn(() => {
         guestRead += 1;
-        // collectMovedIdSample reads first. The residual read after the one
-        // sorted Member FOR UPDATE statement sees the late committed row.
+        // Sample reads, then the move-id capture, all before the wait. The
+        // residual read after the Member FOR UPDATE is the one that sees the
+        // late row. Earlier reads stay empty so the capture cannot absorb it.
         return Promise.resolve(
-          guestRead === 1
+          guestRead <= 4
             ? []
             : [{ id: "late-guest", bookingId: "already-planned-booking" }],
         );
@@ -892,7 +893,7 @@ describe("executeMemberMerge", () => {
     });
 
     expect(bookingGuest.updateMany).toHaveBeenCalledWith({
-      where: { memberId: LOSER_ID },
+      where: { memberId: LOSER_ID, id: { in: [] } },
       data: { memberId: MASTER_ID },
     });
     expect((member as { delete: ReturnType<typeof vi.fn> }).delete).not.toHaveBeenCalled();
@@ -3024,10 +3025,11 @@ describe("a merge and the consent columns it carries with it (#2307)", () => {
     expect(onBooking).toHaveLength(2);
     expect(onBooking.map((row) => row.memberId)).toEqual([MASTER_ID, MASTER_ID]);
 
-    // A single unconditional updateMany, and no collision handling of any kind.
+    // One move, bounded to the loser row captured before the wait, and no
+    // collision handling of any kind.
     expect(bookingGuest.updateMany).toHaveBeenCalledTimes(1);
     expect(bookingGuest.updateMany).toHaveBeenCalledWith({
-      where: { memberId: LOSER_ID },
+      where: { memberId: LOSER_ID, id: { in: ["g-loser"] } },
       data: { memberId: MASTER_ID },
     });
     expect(result.relationMoves).toContainEqual({ model: "BookingGuest.member", count: 1 });
@@ -3350,7 +3352,7 @@ describe("promo adjustment rows follow their allocation through a merge (#3276, 
     expect(rowsDeletedAt).toBeLessThan(allocationDroppedAt);
     // The surviving rows (R2) then move with their allocation, after the drop.
     expect(bookingGuestNightAdjustment.updateMany).toHaveBeenCalledWith({
-      where: { beneficiaryMemberId: LOSER_ID },
+      where: { beneficiaryMemberId: LOSER_ID, id: { in: [] } },
       data: { beneficiaryMemberId: MASTER_ID },
     });
     expect(bookingGuestNightAdjustment.updateMany.mock.invocationCallOrder[0]).toBeGreaterThan(
@@ -3384,7 +3386,7 @@ describe("promo adjustment rows follow their allocation through a merge (#3276, 
     expect(bookingGuestNightAdjustment.deleteMany).not.toHaveBeenCalled();
     expect(promoRedemptionAllocation.deleteMany).not.toHaveBeenCalled();
     expect(bookingGuestNightAdjustment.updateMany).toHaveBeenCalledWith({
-      where: { beneficiaryMemberId: LOSER_ID },
+      where: { beneficiaryMemberId: LOSER_ID, id: { in: [] } },
       data: { beneficiaryMemberId: MASTER_ID },
     });
   });

@@ -66,6 +66,7 @@ vi.mock("@/lib/prisma", () => {
     payment: { findUnique: (args: { select?: { additionalAmountCents?: boolean } }) => args.select?.additionalAmountCents
       ? Promise.resolve({ additionalAmountCents: 0, additionalPaymentStatus: null })
       : mocks.paymentRead(args), update: mocks.paymentUpdate },
+    paymentRecoveryOperation: { findUnique: async () => null },
     paymentTransaction: {
       findMany: mocks.supersedeRead,
       findFirst: mocks.transactionFindFirst,
