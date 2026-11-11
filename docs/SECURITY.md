@@ -556,12 +556,13 @@ Audience: Operator, Developer.
 five minutes or five days after sign-in. Nothing could ask "is this still you?"
 before a destructive action.
 
-**What an officer sees.** Nothing yet: no route asks. When one does (#4619), a
-confirmation older than five minutes gets a small dialog. They enter the code
-from their authenticator app, their passkey, or their password if they have
-neither an app nor a passkey. An emailed code is never accepted, and nor is a
-recovery code. The dialog then sends the original request once more, with the
-same body.
+**What an officer sees.** The listed routes call the check. Nothing changes
+for officers until #4620 turns it on: the dialog stays off, and the five
+minutes is still not a setting. When it is on, a confirmation older than five
+minutes gets a small dialog. They enter the code from their authenticator
+app, their passkey, or their password if they have neither an app nor a
+passkey. An emailed code is never accepted, and nor is a recovery code. The
+dialog then sends the original request once more, with the same body.
 
 **What is stored.** The session token carries `lastAuthenticatedAt`. A password
 sign-in writes it only when no authenticator factor is still owed (an email
