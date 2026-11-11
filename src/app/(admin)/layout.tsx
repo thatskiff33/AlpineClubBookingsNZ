@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { AppProviders } from "@/components/app-providers";
 import { guardAdminLayout } from "@/lib/admin-layout-guard";
@@ -14,6 +15,11 @@ import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { getAiAssistantAvailability } from "@/lib/ai-assistant-config";
 import { adminHref } from "@/lib/admin-hubs";
+import { ADMIN_HUBS_LIVE } from "@/lib/admin-hubs/release";
+import {
+  ADMIN_MENU_ROLE_COOKIE,
+  resolveAdminMenu,
+} from "@/lib/admin-menu-role";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { getWebsiteThemeRenderState } from "@/lib/club-theme";
 import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
@@ -50,6 +56,14 @@ export default async function AdminLayout({
     area: "content",
     level: "edit",
   });
+  // The cookie is a menu preference. It is not read while hubs are off, and
+  // it is never passed to the palette, the help widget or a guard.
+  const menu = ADMIN_HUBS_LIVE
+    ? resolveAdminMenu(
+        member,
+        (await cookies()).get(ADMIN_MENU_ROLE_COOKIE)?.value,
+      )
+    : null;
   const showOnboardingWizard = guard.showOnboardingWizard;
   const [effectiveModules, theme, lodgeCapacity, clubIdentity, clubFormat] =
     await Promise.all([
@@ -91,6 +105,9 @@ export default async function AdminLayout({
             isFullAdmin={actorIsFullAdmin}
             panels={adminNavPanels}
             hutLeaderLabel={liveClubIdentity.hutLeaderLabel}
+            menuHubKeys={menu?.hubKeys}
+            menuRoles={menu?.roles}
+            selectedMenuRole={menu?.selected}
           />
           <AdminCommandPalette
             features={effectiveModules}

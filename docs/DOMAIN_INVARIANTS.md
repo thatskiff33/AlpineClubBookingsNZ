@@ -943,6 +943,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-034` | An organiser note created after a reset: recorded, or alerted once |
 | `INV-INT-035` | An unrecorded refund note holds its payment's refund notes until recorded |
 | `INV-INT-036` | An account-credit note stamps the one member credit it was raised for |
+| `INV-INT-037` | A manual grant queues one Xero note at approval |
 
 ## Operations
 
@@ -1034,4 +1035,5 @@ headings the index keeps verbatim.
 | `INV-AUTH-005` | Reset and sign-in-link requests limited per account, answered as accepted |
 | `INV-AUTH-006` | Chosen passwords screened by prefix-only breach lookup; fails open |
 | `INV-AUTH-007` | Sessions end a fixed time after sign-in; missing stamp is expired |
-| `INV-AUTH-008` | Recent proof is five minutes; the client cannot stamp it |
+| `INV-AUTH-008` | Password or authenticator app, five minutes, client cannot stamp |
+| `INV-AUTH-009` | A passkey enrols; its challenge lasts two minutes |

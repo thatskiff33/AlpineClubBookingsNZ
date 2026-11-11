@@ -30,27 +30,32 @@ describe("markTwoFactorSessionVerified", () => {
     mocks.createTwoFactorSessionChallenge.mockResolvedValue("minted-token");
   });
 
-  it("mints a server-side challenge token and passes it through the session update", async () => {
-    mocks.auth.mockResolvedValue({ user: { id: "member-1" } });
+  it.each(["TOTP", "EMAIL", "RECOVERY"] as const)(
+    "mints a %s challenge and passes that proof through the session update",
+    async (proof) => {
+      mocks.auth.mockResolvedValue({ user: { id: "member-1" } });
+      mocks.createTwoFactorSessionChallenge.mockResolvedValue(`${proof}.minted`);
 
-    await markTwoFactorSessionVerified();
+      await markTwoFactorSessionVerified(proof);
 
-    expect(mocks.clearTwoFactorLockout).toHaveBeenCalledWith("member-1");
-    expect(mocks.createTwoFactorSessionChallenge).toHaveBeenCalledWith(
-      "member-1",
-    );
-    expect(mocks.updateSession).toHaveBeenCalledWith({
-      user: {
-        twoFactorVerified: true,
-        twoFactorChallengeToken: "minted-token",
-      },
-    });
-  });
+      expect(mocks.clearTwoFactorLockout).toHaveBeenCalledWith("member-1");
+      expect(mocks.createTwoFactorSessionChallenge).toHaveBeenCalledWith(
+        "member-1",
+        proof,
+      );
+      expect(mocks.updateSession).toHaveBeenCalledWith({
+        user: {
+          twoFactorVerified: true,
+          twoFactorChallengeToken: `${proof}.minted`,
+        },
+      });
+    },
+  );
 
   it("does not update the session when there is no authenticated member", async () => {
     mocks.auth.mockResolvedValue(null);
 
-    await markTwoFactorSessionVerified();
+    await markTwoFactorSessionVerified("TOTP");
 
     expect(mocks.clearTwoFactorLockout).not.toHaveBeenCalled();
     expect(mocks.createTwoFactorSessionChallenge).not.toHaveBeenCalled();

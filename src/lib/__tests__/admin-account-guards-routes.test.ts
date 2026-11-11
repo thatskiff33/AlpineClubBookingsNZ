@@ -209,6 +209,14 @@ function mockTransaction() {
       sessionReauthChallenge: {
         deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       },
+      // #4617: erasure reads the passkey count inside the same transaction.
+      webAuthnCredential: {
+        count: vi.fn().mockResolvedValue(0),
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+      webAuthnChallenge: {
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
       bedAllocation: (prisma as any).bedAllocation,
       deletionRequest: {
         update: prisma.deletionRequest.update,

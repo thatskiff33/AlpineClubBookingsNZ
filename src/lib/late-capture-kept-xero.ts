@@ -9,6 +9,7 @@ import {
 import {
   RETIRED_CODES_ANSWERING_CAPTURE,
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
+  reviveRetiredChangeInvoiceForKeptCapture,
 } from "@/lib/xero-supplementary-invoice-late-capture";
 import {
   enqueueXeroKeptLateCaptureInvoiceOperation,
@@ -60,11 +61,14 @@ import {
  * - A CHANGE payment on a booking Xero invoiced is split on the evidence
  *   (#4324, owner decision 25 Oct 2026, `INV-PAY-144`;
  *   `keptChangeCaptureRoute`): a change invoice that already answers the
- *   capture is released after commit (or its retired row re-queued), then any
- *   refund already taken is credited back; where the primary invoice bills the
- *   change, the capture's own receipt (`INV-PAY-139`) records it as a payment
- *   on that invoice, capped at what Xero shows due; where nothing bills it,
- *   the kept-capture invoice; and where no change can be read, nothing.
+ *   capture is released after commit, and one the reaper retired
+ *   (`STALE_WAITING_PAYMENT`) is re-queued on this transaction, on the anchor
+ *   already held. Finish still kicks the outbox, credits a refund taken
+ *   before the keep, and releases a waiting invoice. Where the primary
+ *   invoice bills the change, the capture's own receipt (`INV-PAY-139`)
+ *   records it as a payment on that invoice, capped at what Xero shows due;
+ *   where nothing bills it, the kept-capture invoice; and where no change
+ *   can be read, nothing.
  */
 
 /** What the post-commit half of a keep must do. */
@@ -230,8 +234,9 @@ export async function readKeptCaptureRecordedElsewhere(
  * the booking), the key its receipt and its supplementary invoice are queued
  * under. Under both the capture's existing record is found first (its receipt
  * row, its kept-capture invoice) and returned, never a second; then the
- * evidence is read and the route decided, once (`INV-PAY-139`). No new key, and
- * no provider call.
+ * evidence is read and the route decided, once (`INV-PAY-139`). A retired
+ * change invoice on that anchor is re-queued before the return, without
+ * taking the lock again (#4382). No new key, and no provider call.
  */
 export async function planKeptLateCaptureXeroRecord(params: {
   manualRefundTaskId: string;
@@ -300,7 +305,8 @@ export async function planKeptLateCaptureXeroRecord(params: {
 
   // #4324: a change payment on an invoiced booking, decided under its anchor.
   const changeId = captureChangeId(transaction);
-  await lockSupplementaryInvoiceAnchor(store, keptCaptureAnchorId(transaction, params.bookingId));
+  const anchorId = keptCaptureAnchorId(transaction, params.bookingId);
+  await lockSupplementaryInvoiceAnchor(store, anchorId);
   if (await findLiveKeptReceiptRow(store, params.manualRefundTaskId)) return queueKeptInvoice();
   const receiptRow = await store.xeroSyncOperation.findFirst({
     where: { correlationKey: additionalCaptureReceiptKey(params.paymentIntentId), status: { not: "CANCELLED" } },
@@ -316,7 +322,19 @@ export async function planKeptLateCaptureXeroRecord(params: {
     primaryInvoiceId,
   });
   const route = keptChangeCaptureRoute(evidence);
-  if (route === "change-invoice") return { kind: "change-payment", paymentIntentId: params.paymentIntentId };
+  if (route === "change-invoice") {
+    // #4382: a reaper-retired row on this anchor is re-queued here, the same
+    // guarded write as the late-success release. The lock is already held.
+    // A refusal writes nothing, so finish still stamps and alerts together.
+    await reviveRetiredChangeInvoiceForKeptCapture({
+      store,
+      paymentIntentId: params.paymentIntentId,
+      anchorId,
+      bookingId: params.bookingId,
+      transaction: { status: transaction.status, amountCents: transaction.amountCents },
+    });
+    return { kind: "change-payment", paymentIntentId: params.paymentIntentId };
+  }
   const logged = { paymentIntentId: params.paymentIntentId, manualRefundTaskId: params.manualRefundTaskId };
   if (route === "kept-invoice" || route === "change-unknown") {
     // Review M-F2: another writer's part of the capture, by the one reading.
@@ -354,10 +372,12 @@ export async function planKeptLateCaptureXeroRecord(params: {
 }
 
 /**
- * THE POST-COMMIT HALF. Never throws: the decision has committed, and a Xero
- * outage must not turn a recorded keep into a failed request. Whatever this
- * misses the reaper (a waiting change invoice whose capture is kept), the
- * outbox (a queued kept invoice) or the repair tool picks up.
+ * THE POST-COMMIT HALF. Never throws: the decision has committed. A retired
+ * change invoice was re-queued inside the keep, so the outbox sends it even
+ * when this step fails. This step still releases a waiting change invoice,
+ * credits a refund taken before the keep, and kicks the outbox. Where the
+ * capture does not cover a retired invoice, or another invoice is linked or
+ * queued, the release stamps that refusal and emails an officer, together.
  */
 export async function finishKeptLateCaptureXeroRecord(
   plan: KeptLateCaptureXeroPlan,
@@ -386,7 +406,7 @@ export async function finishKeptLateCaptureXeroRecord(
   } catch (err) {
     logger.error(
       { err, plan },
-      "Failed to finish recording a kept late capture in Xero; the reaper, the outbox or the repair tool picks it up",
+      "Failed to finish recording a kept late capture in Xero; a retired change invoice re-queued with the keep stays queued for the outbox, and a waiting one is released by the reaper",
     );
   }
 }
