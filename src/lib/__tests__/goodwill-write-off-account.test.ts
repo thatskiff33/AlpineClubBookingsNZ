@@ -74,6 +74,11 @@ const h = vi.hoisted(() => {
     xeroObjectLink: {
       findFirst: async () => null,
     },
+    // #4431: the mint waits while a grant's own note is still queued. These
+    // lots have no such operation, so the query is empty and #2717 is unchanged.
+    xeroSyncOperation: {
+      findMany: async () => [],
+    },
     $transaction: async <T>(cb: (tx: unknown) => Promise<T>): Promise<T> =>
       cb(prismaStub),
   };

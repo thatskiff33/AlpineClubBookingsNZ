@@ -235,6 +235,9 @@ vi.mock("@/lib/xero-credit-notes", () => ({
   refundRequestCreditNoteKey: (paymentId: string, refundRequestId: string) =>
     `payment:${paymentId}:refund-request-credit-note:${refundRequestId}:v1`,
 }));
+vi.mock("@/lib/xero-admin-grant-credit-note", () => ({
+  createAdminGrantCreditNote: mocks.createAdminGrantCreditNote,
+}));
 
 vi.mock("@/lib/xero-entrance-fee-invoices", () => ({
   createXeroEntranceFeeInvoice: mocks.createXeroEntranceFeeInvoice,
@@ -355,7 +358,8 @@ import {
 } from "@/lib/xero-booking-edit-settlement";
 import { XERO_OUTBOX_QUEUE_TYPES } from "@/lib/xero-operation-outbox-payload";
 import { XeroAppliedCreditOperationBusyError, XeroRefundCreditNoteInFlightError, XeroRefundCreditNoteUnrecordedError } from "@/lib/xero-applied-credit-operation-serialization";
-import { XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } from "@/lib/xero-operation-error-codes";
+import { ADMIN_GRANT_NOTE_AWAITING_RETRY_RECHECK_MS } from "@/lib/admin-grant-credit-note";
+import { ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE, XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } from "@/lib/xero-operation-error-codes";
 import { REFUND_NOTE_AWAITING_RESOLVE_RECHECK_MS } from "@/lib/xero-refund-note-in-flight";
 import { matchesWhere } from "./support/prisma-where";
 import { NOT_A_XERO_REPAIR_CLAIM } from "@/lib/xero-operation-outcome-guard";
@@ -2520,11 +2524,13 @@ describe("processQueuedXeroOutboxOperations", () => {
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
+        expect.objectContaining({ OR: expect.any(Array) }),
       ],
     });
-    // #4299: the eighteen pinned types and the organiser extra adjustment.
-    expect(args.where.queueType.in).toHaveLength(19);
+    // #4299 and #4431: the eighteen pinned types, the organiser extra adjustment, and the admin grant note.
+    expect(args.where.queueType.in).toHaveLength(20);
     expect(args.where.queueType.in).toContain("ORGANISER_EXTRA_ADJUSTMENT");
+    expect(args.where.queueType.in).toContain("ADMIN_GRANT_CREDIT_NOTE");
     // The legacy `requestPayload->>'queueType'` OR predicate is gone.
     expect(args.where.OR).toBeUndefined();
     expect(JSON.stringify(args.where)).not.toContain("requestPayload");
@@ -2677,6 +2683,14 @@ describe("processQueuedXeroOutboxOperations", () => {
           { lastErrorCode: null },
           { lastErrorCode: { not: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } },
           { updatedAt: { lte: new Date(Date.now() - REFUND_NOTE_AWAITING_RESOLVE_RECHECK_MS) } },
+        ],
+      },
+      // #4431: a grant note waiting to be retried is spaced the same way.
+      {
+        OR: [
+          { lastErrorCode: null },
+          { lastErrorCode: { not: ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE } },
+          { updatedAt: { lte: new Date(Date.now() - ADMIN_GRANT_NOTE_AWAITING_RETRY_RECHECK_MS) } },
         ],
       },
     ]);
@@ -3771,6 +3785,22 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
         },
       },
       handler: mocks.recordAdditionalCaptureReceipt,
+    },
+    // #4431: a manual credit grant's own note, raised when the second admin approves.
+    ADMIN_GRANT_CREDIT_NOTE: {
+      op: {
+        id: "op_admin_grant_credit_note_1",
+        localId: "credit_1",
+        localModel: "MemberCredit",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "ADMIN_GRANT_CREDIT_NOTE",
+          amountCents: 2500,
+          mappingKey: "hutFeeRefunds",
+          memberCreditId: "credit_1",
+        },
+      },
+      handler: mocks.createAdminGrantCreditNote,
     },
   };
 

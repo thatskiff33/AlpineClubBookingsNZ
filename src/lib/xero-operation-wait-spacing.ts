@@ -9,7 +9,9 @@ import type { Prisma } from "@prisma/client";
  * for each wait the outbox and the retry drain space out: a billed-offset note
  * waiting for its own note (`outboxScanLeavesAwaitingOwnNote`), a waiting
  * receipt (`outboxScanSpacesWaitingReceipts`) and a refund note held by an
- * unrecorded one (`scanSpacesRefundNotesAwaitingResolve`).
+ * unrecorded one (`scanSpacesRefundNotesAwaitingResolve`). The outbox scan
+ * also spaces an admin grant note waiting to be retried
+ * (`scanSpacesAdminGrantNotesAwaitingRetry`).
  */
 export function scanSpacesWaitCode(code: string, recheckMs: number, now: Date) {
   return {

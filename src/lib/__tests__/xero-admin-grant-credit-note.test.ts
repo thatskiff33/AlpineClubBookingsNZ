@@ -28,10 +28,22 @@ const state = vi.hoisted(() => ({
 
 const mocks = vi.hoisted(() => ({
   findOrCreateXeroContact: vi.fn(async () => "contact-current"),
-  createCreditNotes: vi.fn(async () => ({
+  createCreditNotes: vi.fn(async (
+    _tenantId: string,
+    _body: { creditNotes: Array<{ lineItems?: Array<{ accountCode?: string; itemCode?: string; taxType?: string }> }> },
+    _summarizeErrors?: boolean,
+    _unitdp?: number,
+    _idempotencyKey?: string,
+  ) => ({
     body: { creditNotes: [{ creditNoteID: "cn-new", creditNoteNumber: "CN-9" }] },
   })),
-  getResolvedAccountMappingWithFallback: vi.fn(async () => ({
+  getResolvedAccountMappingWithFallback: vi.fn(async (): Promise<{
+    code: string;
+    itemCode: string | null;
+    codeExplicitlyConfigured: boolean;
+    sourceKey: string;
+    usingFallback: boolean;
+  }> => ({
     code: "610",
     itemCode: null,
     codeExplicitlyConfigured: true,

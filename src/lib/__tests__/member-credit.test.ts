@@ -1607,6 +1607,17 @@ describe("member-credit helpers", () => {
 describe("admin grant credit note (#4431)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Cases earlier in this file replace `$transaction` and can leave a
+    // `mockResolvedValueOnce` queued on `findUnique`. This describe uses the
+    // shared client, so both go back to the module default before each case.
+    prismaMock.$transaction.mockImplementation(async (callback: (tx: typeof prismaMock) => unknown) =>
+      callback(prismaMock),
+    );
+    prismaMock.adminCreditAdjustmentRequest.findUnique.mockReset();
+    prismaMock.memberCredit.findMany.mockResolvedValue([]);
+    prismaMock.memberCredit.groupBy.mockResolvedValue([]);
+    prismaMock.memberCreditNoteAllocation.groupBy.mockResolvedValue([]);
+    prismaMock.xeroSyncOperation.findMany.mockResolvedValue([]);
     mockStartXeroSyncOperation.mockResolvedValue({ id: "op-grant" });
     mockKickQueuedXeroOutbox.mockResolvedValue(null);
   });

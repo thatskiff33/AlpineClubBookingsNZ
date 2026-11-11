@@ -24,6 +24,7 @@ import {
   requireCalendarDate,
 } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import type { AdminCreditGrantAccount } from "@/lib/admin-credit-grant-account";
 
 /**
  * Property-based tests (fast-check) for the refund, change-fee, and
@@ -380,6 +381,7 @@ describe("member credit policy properties", () => {
       amountCents: fc.integer({ min: -500, max: 500 }),
       description: fc.constantFrom("desc-a", "desc-b"),
       requestedById: fc.constantFrom("admin-1", "admin-2"),
+      grantAccount: fc.constantFrom<AdminCreditGrantAccount | null>("GOODWILL", "MEMBER_OWN_MONEY", null),
     });
     fc.assert(
       fc.property(requestArb, requestArb, (request, expected) => {
@@ -387,7 +389,8 @@ describe("member credit policy properties", () => {
           request.memberId === expected.memberId &&
           request.amountCents === expected.amountCents &&
           request.description === expected.description &&
-          request.requestedById === expected.requestedById;
+          request.requestedById === expected.requestedById &&
+          request.grantAccount === expected.grantAccount;
         const call = () =>
           assertMatchingIdempotentAdjustmentRequest(request, expected);
         if (identical) {
