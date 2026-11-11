@@ -5,7 +5,7 @@ import {
   isWithinRecentAuthWindow,
   RECENT_AUTH_WINDOW_MS,
   recentAuthRefusalBody,
-} from "@/lib/recent-auth";
+} from "@/lib/recent-auth-factors";
 
 const mockAuth = vi.hoisted(() => vi.fn());
 

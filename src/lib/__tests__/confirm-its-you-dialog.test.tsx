@@ -9,7 +9,7 @@ import {
   ConfirmItsYouHost,
   fetchWithRecentAuth,
 } from "@/components/confirm-its-you";
-import { recentAuthRefusalBody } from "@/lib/recent-auth";
+import { recentAuthRefusalBody } from "@/lib/recent-auth-factors";
 
 const RESTORE_BODY = JSON.stringify({ confirmation: "RESTORE" });
 

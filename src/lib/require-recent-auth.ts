@@ -4,7 +4,7 @@ import { auth } from "@/lib/auth";
 import {
   isWithinRecentAuthWindow,
   recentAuthRefusalBody,
-} from "@/lib/recent-auth";
+} from "@/lib/recent-auth-factors";
 
 /**
  * The one recent-authentication check (#4616, INV-AUTH-008, INV-SSOT).

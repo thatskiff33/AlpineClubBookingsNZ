@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 import {
   isReauthFactor,
   type ReauthFactor,
-} from "@/lib/recent-auth";
+} from "@/lib/recent-auth-factors";
 import { claimPasswordAttempt, clearPasswordAttempts } from "@/lib/login-throttle";
 import { LOGIN_THROTTLED_CODE } from "@/lib/login-throttle-policy";
 import {
