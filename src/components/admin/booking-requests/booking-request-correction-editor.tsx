@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 /**
  * CORRECT THIS REQUEST — the officer's form for #2936.
@@ -243,7 +244,7 @@ export function BookingRequestCorrectionEditor(props: {
         }));
       }
 
-      const response = await fetch(
+      const response = await fetchWithRecentAuth(
         `/api/admin/booking-requests/${request.id}/correct`,
         {
           method: "POST",

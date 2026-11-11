@@ -5083,8 +5083,9 @@ without a later helper navigation (#4060).
 ## Recent authentication (#4616)
 
 A session carries `lastAuthenticatedAt`, separate from `sessionIssuedAt`.
-`requireRecentAuth` (`INV-AUTH-008`) is the one check. No route calls it yet
-(#4619).
+`requireRecentAuth` (`INV-AUTH-008`) is the one check. Listed routes call it
+(`INV-AUTH-009`). Enforcement stays off until #4620 sets
+`OFFICER_SIGN_IN_ENFORCED`.
 
 ```text
 password sign-in, no authenticator factor still owed -> lastAuthenticatedAt = now

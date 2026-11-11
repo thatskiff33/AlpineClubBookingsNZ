@@ -4,6 +4,7 @@ import { z } from "zod";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 import { closeCardRefundNothingLeftOwed, DeadCardRefundActionError } from "@/lib/card-refund-dead-row-actions";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 /** Explicit confirmation, and the later Stripe refunds the dialog named (a different set is a 409). */
 const bodySchema = z
@@ -35,6 +36,8 @@ export async function POST(
   const { id } = await params;
 
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await request.json();
   } catch {

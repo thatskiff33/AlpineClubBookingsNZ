@@ -179,7 +179,8 @@ This file holds only the rules.
   [`require-recent-auth.ts`](../../src/lib/require-recent-auth.ts) is the one
   check (`INV-SSOT`). It passes only when `lastAuthenticatedAt` is a finite
   epoch millisecond and is not older than five minutes. A missing stamp fails
-  closed. No route calls it yet.
+  closed. Listed routes call it (`INV-AUTH-009`). While the officer sign-in
+  switch is off, the check does not read the session.
 - **The five minutes is a security floor, not a club setting.**
 - **A password proof writes the stamp only when no authenticator factor is
   still owed.** An email factor does not count as owed, so that password step
@@ -199,3 +200,16 @@ This file holds only the rules.
   the two-factor lockout, or the per-account password throttle when the proof
   is the password.
 - **The confirm dialog replays the refused request once, with the same body.**
+
+## INV-AUTH-009
+
+- **Listed admin routes require a fresh proof first.** The route list and the
+  operation list live in
+  [`step-up-routes.ts`](../../src/lib/step-up-routes.ts). A handler that
+  reaches a listed operation calls `requireRecentAuth` after its authorisation
+  guard and before it reads the body. An authorisation failure is never the
+  step-up refusal. `OFFICER_SIGN_IN_ENFORCED` defaults to false, and only
+  #4620 sets it true. While it is false the check does not read the session.
+  While it is true a missing stamp fails closed. Refreshing a Xero token
+  (`saveXeroTokens`) is not a listed operation. Typed confirmations stay.
+

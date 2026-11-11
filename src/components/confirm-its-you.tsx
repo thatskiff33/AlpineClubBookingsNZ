@@ -58,19 +58,34 @@ async function responseRequiresReauth(response: Response): Promise<boolean> {
  *
  * The body is the caller's body, unchanged, and it is sent at most twice:
  * the original attempt and one replay. A second refusal is returned as-is.
- * The body has to be reusable (a string); a stream would already be spent.
+ * A FormData body is copied for each attempt, so the replay carries the same
+ * fields as the first send. A one-shot stream cannot be sent twice.
  */
 export async function fetchWithRecentAuth(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
   const firstInput = input instanceof Request ? input.clone() : input;
-  const first = await fetch(firstInput, init);
+  const first = await fetch(firstInput, attemptInit(init));
   if (!(await responseRequiresReauth(first))) return first;
   const proved = await askToConfirmIdentity();
   if (!proved) return first;
   const secondInput = input instanceof Request ? input.clone() : input;
-  return fetch(secondInput, init);
+  return fetch(secondInput, attemptInit(init));
+}
+
+function attemptInit(init: RequestInit | undefined): RequestInit | undefined {
+  if (!init || init.body == null) return init;
+  if (typeof FormData !== "undefined" && init.body instanceof FormData) {
+    return { ...init, body: cloneFormData(init.body) };
+  }
+  return init;
+}
+
+function cloneFormData(body: FormData): FormData {
+  const copy = new FormData();
+  for (const [key, value] of body.entries()) copy.append(key, value);
+  return copy;
 }
 
 /**

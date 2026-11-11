@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import Link from "next/link";
 import { ArrowRight, Loader2, Save } from "lucide-react";
@@ -81,7 +82,7 @@ export function GoogleSecurityCard({
         throw new Error(TOGGLE_FAIL_MESSAGE);
       }
       const fresh = (await freshRes.json()) as { settings: ModuleSettingsValues };
-      const putRes = await fetch("/api/admin/modules", {
+      const putRes = await fetchWithRecentAuth("/api/admin/modules", {
         method: "PUT",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },

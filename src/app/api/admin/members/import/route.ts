@@ -55,6 +55,7 @@ import {
   normalizeImportedDietaryRequirements,
 } from "@/lib/member-dietary-field";
 import { grantMembershipAdminDietaryAccess } from "@/lib/member-dietary";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const nullableImportString = (max: number) =>
   z.string().max(max).optional().nullable();
@@ -239,6 +240,8 @@ export async function POST(req: NextRequest) {
   if (!guard.ok) return guard.response;
   const session = guard.session;
   // Rate limit: 5 imports per hour
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   const rateLimitResponse = await applyRateLimit(
     { id: "member-import", limit: 5, windowSeconds: 60 * 60 },
     req,
