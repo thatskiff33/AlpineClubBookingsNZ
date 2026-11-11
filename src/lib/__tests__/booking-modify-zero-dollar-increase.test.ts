@@ -1,3 +1,4 @@
+import { editDoorBooking } from "./support/edit-door-booking";
 import { PaymentSource, PaymentStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -73,7 +74,7 @@ function zeroDollarBooking(overrides: {
   organiserSettled?: boolean;
   parentBookingId?: string | null;
 } = {}) {
-  return {
+  return editDoorBooking({
     id: "booking_3502",
     status: overrides.status ?? "PAID",
     checkIn: new Date("2026-08-01T00:00:00.000Z"),
@@ -99,7 +100,7 @@ function zeroDollarBooking(overrides: {
       xeroInvoiceId: null,
       ...overrides.payment,
     },
-  } as unknown as LoadedBookingForModify;
+  });
 }
 
 const adjust = (booking: LoadedBookingForModify, priceDiffCents: number, changeFeeCents = 0) =>

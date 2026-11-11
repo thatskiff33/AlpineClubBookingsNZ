@@ -8,16 +8,12 @@ import {
   BookingStatus,
   type AgeTier,
   type Booking,
-  type BookingGuest,
-  type BookingGuestNightPriceSource,
-  type Member,
   type Payment,
-  type PaymentTransaction,
   type Prisma,
-  type PromoCode,
-  type PromoRedemption,
   type Role,
 } from "@prisma/client";
+
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { isAdditionalAmountUncollected } from "@/lib/additional-payment-chase";
@@ -213,49 +209,42 @@ export function resolveStayRangesOrApiError<Guest extends LiveGuestStayRow>(args
   }
 }
 
-export type LoadedPromoRedemption = PromoRedemption & {
-  promoCode: PromoCode & {
-    assignments: Array<{ memberId: string }>;
-    lodges?: Array<{ lodgeId: string }>;
-  };
-  guestTargets?: Array<{ bookingGuestId: string }>;
-};
-
-export type LoadedBookingForModify = Booking & {
-  // Guests carry their explicit night set (issue #713) so an edit preserves the
-  // gaps of guests that are not being changed and re-syncs only edited guests.
-  guests: Array<
-    BookingGuest & {
-      // #3170: `priceCents` distinguishes three things and every reader has to
-      // keep them apart. `undefined` means the SELECT did not ask for the price;
-      // `null` means the row says the price is NOT KNOWN (a night a parked edit
-      // committed without valuing); a number is the stored sold price, and 0 is
-      // a real one (a comped night). `?? 0` on this field is prohibited.
-      nights?: {
-        stayDate: Date;
-        priceCents?: number | null;
-        priceSource: BookingGuestNightPriceSource;
-      }[];
-    }
-  >;
-  payment: Payment | null;
-  member: Member;
-  // #3826: one redemption per promo code; read through booking-promo-redemptions.ts.
-  promoRedemptions: LoadedPromoRedemption[];
-};
-
-/**
- * #4019 review: the booking an edit door hands `applyLifecycleTransitions` -
- * its payment loaded WITH its transactions (oldest first,
- * `LEDGER_ROWS_OLDEST_FIRST`), because the clamp's `isUnpaidConfirmedWholeLodge`
- * reads them to tell an abandoned card attempt from a capture, and requires
- * them by type. Every door reaches this type through an `as unknown as` cast,
- * which no compiler checks, so `lifecycle-door-payment-transactions-census`
- * pins each door's include.
+/** The post-lock snapshot shared by all four edit doors (INV-SSOT-001).
+ * Guest ordering stays with each door: only batch edits impose an order.
+ * Night prices remain nullable: unknown and a sold price of zero are distinct.
  */
-export type LoadedBookingForLifecycle = Omit<LoadedBookingForModify, "payment"> & {
-  payment: (Payment & { transactions: PaymentTransaction[] }) | null;
+export const EDIT_DOOR_BOOKING_INCLUDE = {
+  guests: {
+    include: {
+      nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
+    },
+  },
+  payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
+  member: true,
+  organisation: { select: { name: true, email: true } },
+  promoRedemptions: {
+    include: {
+      guestTargets: { select: { bookingGuestId: true } },
+      promoCode: {
+        include: {
+          assignments: { select: { memberId: true } },
+          lodges: { select: { lodgeId: true } },
+        },
+      },
+    },
+  },
+} satisfies Prisma.BookingInclude;
+
+/** Compiler-checked edit snapshot, including ordered ledger rows (INV-PAY-143). */
+export type LoadedBookingForLifecycle = Prisma.BookingGetPayload<{
+  include: typeof EDIT_DOOR_BOOKING_INCLUDE;
+}>;
+
+// Quote callers need the same facts except for the payment's ledger rows.
+export type LoadedBookingForModify = Omit<LoadedBookingForLifecycle, "payment"> & {
+  payment: Payment | null;
 };
+export type LoadedPromoRedemption = LoadedBookingForLifecycle["promoRedemptions"][number];
 
 type BookingGuestNameEditPayment = Pick<
   Payment,

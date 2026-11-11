@@ -1,3 +1,4 @@
+import { editDoorBooking } from "./support/edit-door-booking";
 /**
  * CT-4 (#2870), group F4b, defect 3: THE PREVIEW AND THE APPLY PATH MUST
  * VALIDATE THE SAME WINDOW.
@@ -77,12 +78,12 @@ function makeBooking(
   checkIn: string,
   checkOut: string,
 ): LoadedBookingForModify {
-  return {
+  return editDoorBooking({
     status,
     checkIn: day(checkIn),
     checkOut: day(checkOut),
     guests: [{ id: "g1", stayStart: day(checkIn), stayEnd: day(checkOut) }],
-  } as unknown as LoadedBookingForModify;
+  });
 }
 
 /**

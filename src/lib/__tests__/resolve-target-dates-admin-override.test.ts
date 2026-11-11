@@ -1,3 +1,4 @@
+import { editDoorBooking } from "./support/edit-door-booking";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/api-error";
 import {
@@ -8,13 +9,13 @@ import {
 } from "@/lib/booking-modify-validation";
 
 // resolveTargetDates is a pure function; only booking.status/checkIn/checkOut and
-// the guest envelopes are read, so a minimal cast fixture is sufficient.
+// the guest envelopes are read; the builder supplies the remaining loaded fields.
 function makeBooking(
   status: string,
   checkIn: string,
   checkOut: string,
 ): LoadedBookingForModify {
-  return {
+  return editDoorBooking({
     status,
     checkIn: new Date(`${checkIn}T00:00:00.000Z`),
     checkOut: new Date(`${checkOut}T00:00:00.000Z`),
@@ -25,7 +26,7 @@ function makeBooking(
         stayEnd: new Date(`${checkOut}T00:00:00.000Z`),
       },
     ],
-  } as unknown as LoadedBookingForModify;
+  });
 }
 
 describe("resolveTargetDates admin override (issue #1668)", () => {

@@ -24,7 +24,6 @@ import {
   applyLifecycleTransitions,
   applyPaymentAdjustments,
   isQuotePricedBooking,
-  type LoadedBookingForLifecycle,
 } from "@/lib/booking-modify";
 import { bookingOwner } from "@/lib/booking-owner";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
@@ -57,7 +56,7 @@ import {
   clampAppliedCreditToBookingPrice,
 } from "@/lib/member-credit";
 import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
-import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
+import { EDIT_DOOR_BOOKING_INCLUDE } from "@/lib/booking-modify-validation";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
@@ -200,26 +199,7 @@ export async function repriceBookingAfterGuestAcceptance(
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
     include: {
-      guests: {
-        include: {
-          nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
-        },
-      },
-      // #4019 review: with its transactions, which `isUnpaidConfirmedWholeLodge` reads.
-      payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
-      member: true,
-      organisation: { select: { name: true, email: true } },
-      promoRedemptions: {
-        include: {
-          guestTargets: { select: { bookingGuestId: true } },
-          promoCode: {
-            include: {
-              assignments: { select: { memberId: true } },
-              lodges: { select: { lodgeId: true } },
-            },
-          },
-        },
-      },
+      ...EDIT_DOOR_BOOKING_INCLUDE,
     },
   });
   if (!booking) return { repriced: false, reason: "BOOKING_STATUS" };
@@ -269,7 +249,7 @@ export async function repriceBookingAfterGuestAcceptance(
     promoAdjustmentCents: newPromoAdjustmentCents,
   });
   const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
-  const loaded = booking as unknown as LoadedBookingForLifecycle;
+  const loaded = booking;
   // #3502: a credit-paid ($0) booking too - this path never mints a card ask.
   const priceSettled =
     hasCapturedPayment(booking.payment) ||

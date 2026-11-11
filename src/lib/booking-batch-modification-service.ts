@@ -3,7 +3,7 @@ import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
-import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
+import { EDIT_DOOR_BOOKING_INCLUDE } from "@/lib/booking-modify-validation";
 import {
   type Booking,
   type BookingGuest,
@@ -37,7 +37,6 @@ import {
   resolveTargetDates,
   type BatchModifyInput,
   type BookingModificationSettlementMethod,
-  type LoadedBookingForLifecycle,
   type LoadedBookingForModify,
   type ResolvedGuestNameUpdate,
   type PricingResult,
@@ -1045,34 +1044,17 @@ export async function modifyBookingBatch({
 
     // Re-read the full booking under the lock; everything below consumes ONLY
     // this post-lock snapshot.
-    const booking = (await tx.booking.findUnique({
+    const booking = await tx.booking.findUnique({
       where: { id: bookingId },
       include: {
-        // Per-night sets (issue #713): preserve unedited guests' gaps and
-        // re-sync edited guests' nights. Deterministic order (#2266 MED-4):
-        // pricing, promo targeting and the client's guest list must all agree
-        // on guest order, so never rely on the planner's unordered scan.
+        ...EDIT_DOOR_BOOKING_INCLUDE,
+        // Preserve the batch door's deterministic pricing/promo guest order.
         guests: {
-          include: { nights: { select: { stayDate: true, priceCents: true, priceSource: true } } },
+          ...EDIT_DOOR_BOOKING_INCLUDE.guests,
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         },
-        payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
-        member: true,
-        // #3369: the owner may be an Organisation; bookingOwner() reads both.
-        organisation: { select: { name: true, email: true } },
-        promoRedemptions: {
-          include: {
-            promoCode: {
-              include: {
-                assignments: { select: { memberId: true } },
-                lodges: { select: { lodgeId: true } },
-              },
-            },
-            guestTargets: { select: { bookingGuestId: true } },
-          },
-        },
       },
-    })) as LoadedBookingForLifecycle | null;
+    });
 
     assertBookingModifiable(booking, {
       role: actor.role,

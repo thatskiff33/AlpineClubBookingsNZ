@@ -2,7 +2,7 @@ import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queu
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
-import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
+import { EDIT_DOOR_BOOKING_INCLUDE } from "@/lib/booking-modify-validation";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { bookingAmountOwedCents, bookingWorthCents, recordedChangeFeeCents as feeOnPayment } from "@/lib/booking-payment-state";
 import {
@@ -89,7 +89,6 @@ import {
   calculateModificationSettlementOptions,
   rateSnapshotUpdateForRepricedGuest,
   type BookingModificationSettlementMethod,
-  type LoadedBookingForModify,
 } from "@/lib/booking-modify";
 import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
@@ -382,26 +381,7 @@ export async function modifyBookingDates({
     const booking = await tx.booking.findUnique({
       where: { id: bookingId },
       include: {
-        guests: {
-          include: {
-            nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
-          },
-        },
-        payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
-        member: true,
-        // #3369: the owner may be an Organisation; bookingOwner() reads both.
-        organisation: { select: { name: true, email: true } },
-        promoRedemptions: {
-          include: {
-            guestTargets: { select: { bookingGuestId: true } },
-            promoCode: {
-              include: {
-                assignments: { select: { memberId: true } },
-                lodges: { select: { lodgeId: true } },
-              },
-            },
-          },
-        },
+        ...EDIT_DOOR_BOOKING_INCLUDE,
       },
     });
 
@@ -814,7 +794,7 @@ export async function modifyBookingDates({
     // options and the save, so a capture between two reads cannot split them.
     const reduction = await readReductionAgainstUnpaidAsk(tx, booking, netChargeCents);
     const settlementOptions = await calculateModificationSettlementOptions({
-      booking: booking as unknown as LoadedBookingForModify,
+      booking: booking,
       netChargeCents,
       reduction,
       db: tx, // locked transaction; see `CancellationPolicyDb`
@@ -827,7 +807,7 @@ export async function modifyBookingDates({
       );
     }
     const payments = await applyPaymentAdjustments(tx, {
-      booking: booking as unknown as LoadedBookingForModify,
+      booking: booking,
       priceDiffCents,
       changeFeeCents,
       reduction,

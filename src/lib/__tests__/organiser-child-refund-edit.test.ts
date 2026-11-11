@@ -1,3 +1,4 @@
+import { editDoorBooking } from "./support/edit-door-booking";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -41,7 +42,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 const REPO_ROOT = resolve(__dirname, "../../..");
 
 function child(overrides: Record<string, unknown> = {}) {
-  return {
+  return editDoorBooking({
     id: "child_1",
     status: "PAID",
     checkIn: new Date("2026-08-01T00:00:00.000Z"),
@@ -61,7 +62,7 @@ function child(overrides: Record<string, unknown> = {}) {
       xeroInvoiceId: null,
     },
     ...overrides,
-  } as unknown as LoadedBookingForModify;
+  });
 }
 
 const ORGANISER_OPTIONS: BookingModificationSettlementOptions = {
@@ -182,10 +183,10 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
 
   function ibChild() {
     const booking = child();
-    return {
+    return editDoorBooking({
       ...booking,
       payment: { ...booking.payment!, source: PaymentSource.INTERNET_BANKING },
-    } as unknown as LoadedBookingForModify;
+    });
   }
 
   it.each([

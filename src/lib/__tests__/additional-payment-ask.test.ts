@@ -1,3 +1,4 @@
+import { editDoorBooking } from "./support/edit-door-booking";
 import { PaymentSource, PaymentStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 
@@ -466,7 +467,7 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
       xeroInvoiceId: string | null;
     }>,
   ) {
-    return {
+    return editDoorBooking({
       id: "booking_1",
       status: "PAID",
       checkIn: new Date("2026-08-01T00:00:00.000Z"),
@@ -484,7 +485,7 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
         xeroInvoiceId: null,
         ...payment,
       },
-    } as unknown as LoadedBookingForModify;
+    });
   }
 
   /** No reduction here, so the #3809 give-back never reads these. */

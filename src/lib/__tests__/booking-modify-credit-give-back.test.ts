@@ -1,3 +1,4 @@
+import { editDoorBooking } from "./support/edit-door-booking";
 import { PaymentSource, PaymentStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -68,7 +69,7 @@ const tx = { payment: { update: paymentUpdate }, ...NO_HAND_BACKS } as unknown a
 
 /** $200, paid entirely by account credit: nothing captured, PAID. */
 function creditPaidBooking(overrides: { status?: string; payment?: Record<string, unknown>; memberId?: string | null } = {}) {
-  return {
+  return editDoorBooking({
     id: "booking_3809",
     status: overrides.status ?? "PAID",
     checkIn: CHECK_IN,
@@ -88,7 +89,7 @@ function creditPaidBooking(overrides: { status?: string; payment?: Record<string
       xeroInvoiceId: "INV-3809",
       ...overrides.payment,
     },
-  } as unknown as LoadedBookingForModify;
+  });
 }
 
 const reduce = (booking: LoadedBookingForModify, priceDiffCents = -5_000) =>
