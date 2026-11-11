@@ -629,6 +629,25 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
     expect(mocks.amenityDeleteMany).not.toHaveBeenCalled();
   });
 
+  it("trims a season start before checking it is a real day (#4931)", async () => {
+    mocks.findUnique.mockResolvedValue(record());
+    mocks.update.mockResolvedValue(record());
+    const response = await PATCH(
+      jsonRequest("PATCH", { winterSeasonStart: " 2026-06-15 " }),
+      params("ol-1"),
+    );
+    expect(response.status).toBe(200);
+    const [{ data }] = mocks.update.mock.calls[0];
+    expect(data).toEqual({ winterSeasonStart: new Date("2026-06-15T00:00:00.000Z") });
+  });
+
+  it("returns 400 for a season start that is not a real day, and writes nothing (#4931)", async () => {
+    mocks.findUnique.mockResolvedValue(record());
+    const response = await PATCH(jsonRequest("PATCH", { winterSeasonStart: "2026-02-30" }), params("ol-1"));
+    expect(response.status).toBe(400);
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["the name", { name: "Ruapehu\u0000Ski Club" }],
     ["a text field", { cancellationPeriod: "7\u0000days" }],

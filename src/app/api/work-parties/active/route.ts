@@ -3,16 +3,13 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
-import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
+import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { findActiveWorkPartyEventsForRange } from "@/lib/work-party";
 
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-});
-
 const querySchema = z.object({
-  checkIn: dateOnlyString.transform(parseDateOnly),
-  checkOut: dateOnlyString.transform(parseDateOnly),
+  checkIn: parsedDateOnlySchema,
+  checkOut: parsedDateOnlySchema,
   // Lodge being booked (multi-lodge): events bound to another lodge are
   // filtered out; lodge-less events are club-wide and always listed.
   lodgeId: z.string().min(1).optional(),

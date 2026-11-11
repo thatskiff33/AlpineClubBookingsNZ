@@ -110,11 +110,11 @@ describe("findSeasonForDate", () => {
 
     There is no such caller, and the reason is worth stating precisely rather
     than sweepingly. The envelope fields are validated: `checkIn`/`checkOut` are
-    `dateOnlyString.transform(parseDateOnly)` in the create and quote routes, and
+    `parsedDateOnlySchema` in the create and quote routes, and
     a bare `parseDateOnly` plus a NaN guard in modify-quote. The per-guest
-    `nights` arrays are NOT all validated — only `bookings/route.ts` uses
-    `z.array(dateOnlyString)`; `bookings/quote`, `bookings/[id]/modify` and
-    `bookings/[id]/modify-quote` accept `z.array(z.string())`. What closes it is
+    `nights` arrays were NOT all validated when this was written — only
+    `bookings/route.ts` checked them; #4199 has since given every door
+    `guestNightListSchema`. What closes it is
     the CONVERTER rather than the schema: `parseDateOnly` returns UTC midnight or
     an Invalid Date, and `normalizeBookingDate` refuses both an Invalid Date and
     any value carrying a UTC time of day. So an instant cannot arrive here from

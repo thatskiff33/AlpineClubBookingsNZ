@@ -8,17 +8,14 @@ import {
   getFinanceBookingMetricsWindowDayCount,
   MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS,
 } from "@/lib/finance-booking-metrics";
-import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import { getWaitlistOfferEmailDeliveries } from "@/lib/waitlist-offer-email-visibility";
-
-const isoDateParam = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-});
 
 const querySchema = z
   .object({
-    from: isoDateParam.optional(),
-    to: isoDateParam.optional(),
+    from: dateOnlyStringSchema.optional(),
+    to: dateOnlyStringSchema.optional(),
     page: z.coerce.number().int().min(1).optional().default(1),
     pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
   })

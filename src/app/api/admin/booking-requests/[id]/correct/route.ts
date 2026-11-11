@@ -5,7 +5,7 @@ import { BookingRequestError, bookingRequestGuestSchema, serializeBookingRequest
 import { BookingRequestCorrectionCommittedError } from "@/lib/booking-request-correction-hold";
 import { correctBookingRequest } from "@/lib/booking-request-corrections";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
-import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { prisma } from "@/lib/prisma";
 import { getClientIp } from "@/lib/rate-limit";
 import {
@@ -29,10 +29,6 @@ import { nameField } from "@/lib/zod-helpers";
  * same gate price, hold, approve and decline sit behind.
  */
 
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-});
-
 const noCrlf = (value: string) => !/[\r\n]/.test(value);
 
 const schoolRecordAcknowledgementSchema = z.object({
@@ -49,8 +45,8 @@ const correctionSchema = z.object({
     .min(1, "Record why you are correcting this request")
     .max(500)
     .refine(noCrlf, "The reason cannot contain line breaks"),
-  checkIn: dateOnlyString.transform(parseDateOnly),
-  checkOut: dateOnlyString.transform(parseDateOnly),
+  checkIn: parsedDateOnlySchema,
+  checkOut: parsedDateOnlySchema,
   contactFirstName: nameField(),
   contactLastName: nameField(),
   contactEmail: z.string().email("Invalid email address").max(200),

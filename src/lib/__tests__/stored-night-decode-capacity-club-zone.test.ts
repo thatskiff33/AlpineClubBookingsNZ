@@ -629,7 +629,7 @@ describe("#3107 the create envelope is stored, and admitted, on the true calenda
   it("reads a night entry in every shape the TYPE admits, reachable or not", () => {
     // TWO OF THESE FOUR ARE DEFENSIVE, and the distinction is worth stating
     // rather than blurring. `GuestNightInput` is wider than any live producer:
-    // the route's schema is `z.array(dateOnlyString)` and `ProposalGuest.nights`
+    // the route's schema is `guestNightListSchema` and `ProposalGuest.nights`
     // is `string[]`, so what actually arrives is a canonical `yyyy-mm-dd`, and
     // the `@db.Date` row shape is what a stored `BookingGuestNight` looks like.
     // The SERIALISED row shape is not produced by anything here - it is the

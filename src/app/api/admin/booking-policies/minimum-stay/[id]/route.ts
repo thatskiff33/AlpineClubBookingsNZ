@@ -4,21 +4,18 @@ import { requireAdmin } from "@/lib/session-guards"
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
 import { logAudit } from "@/lib/audit"
-import { isDateOnlyString, parseDateOnly } from "@/lib/date-only"
+import { parseDateOnly } from "@/lib/date-only"
+import { dateOnlyStringSchema } from "@/lib/date-only-schema"
 import {
   DUPLICATE_MINIMUM_STAY_POLICY_NAME_MESSAGE,
   lockMinimumStayPolicySet,
 } from "@/lib/minimum-stay-policy-set"
 
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-})
-
 const updateSchema = z.object({
   version: z.number().int().positive(),
   name: z.string().min(1).max(200).optional(),
-  startDate: dateOnlyString.optional(),
-  endDate: dateOnlyString.optional(),
+  startDate: dateOnlyStringSchema.optional(),
+  endDate: dateOnlyStringSchema.optional(),
   triggerDays: z.array(z.number().int().min(0).max(6)).min(1).optional(),
   minimumNights: z.number().int().min(2).optional(),
   capacityMode: z.enum(["HOLD", "NO_HOLD"]).optional(),

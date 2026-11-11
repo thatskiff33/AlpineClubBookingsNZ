@@ -6,17 +6,13 @@ import {
   formatViolationsDetail,
 } from "@/lib/booking-policies"
 import { z } from "zod"
-import { isDateOnlyString, parseDateOnly } from "@/lib/date-only"
+import { parsedDateOnlySchema } from "@/lib/date-only-schema"
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges"
 import { prisma } from "@/lib/prisma"
 
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-})
-
 const bookingPolicyCheckQuerySchema = z.object({
-  checkIn: dateOnlyString.transform(parseDateOnly),
-  checkOut: dateOnlyString.transform(parseDateOnly),
+  checkIn: parsedDateOnlySchema,
+  checkOut: parsedDateOnlySchema,
   // Lodge being booked (multi-lodge phase 8): minimum-stay overrides resolve
   // per lodge. Omitted = the club's default lodge.
   lodgeId: z.string().min(1).nullish(),

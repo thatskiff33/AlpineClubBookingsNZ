@@ -12,9 +12,9 @@ import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import {
   addDaysDateOnly,
   eachDateOnlyInRange,
-  isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import { getIntegrationCredentialValue } from "@/lib/integration-credentials";
 import { OWNED_CENTRAL_LODGE_ID_MAX } from "@/lib/other-lodges";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
@@ -55,11 +55,10 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const dateOnly = z.string().refine(isDateOnlyString, "Use a real calendar date as YYYY-MM-DD");
 const querySchema = z.object({
   lodgeId: z.string().min(1).max(OWNED_CENTRAL_LODGE_ID_MAX),
-  from: dateOnly,
-  to: dateOnly,
+  from: dateOnlyStringSchema,
+  to: dateOnlyStringSchema,
 });
 
 const NOT_FOUND = { error: "Lodge not available" } as const;

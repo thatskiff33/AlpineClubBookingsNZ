@@ -4,7 +4,8 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
-import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { parseDateOnly } from "@/lib/date-only";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import {
@@ -19,16 +20,12 @@ import {
 import { PUBLIC_LAYOUT_CACHE_TAGS } from "@/lib/public-layout-cache";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
 
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-});
-
 const createSchema = z
   .object({
     message: z.string().trim().min(1).max(SITE_BANNER_MESSAGE_MAX_LENGTH),
     priority: z.enum(SITE_BANNER_PRIORITIES),
-    startDate: dateOnlyString,
-    endDate: dateOnlyString,
+    startDate: dateOnlyStringSchema,
+    endDate: dateOnlyStringSchema,
     active: z.boolean().optional().default(true),
   })
   .strict();

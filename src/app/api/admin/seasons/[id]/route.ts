@@ -5,7 +5,8 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
 import { logAudit } from "@/lib/audit"
-import { isDateOnlyString, parseDateOnly } from "@/lib/date-only"
+import { parseDateOnly } from "@/lib/date-only"
+import { dateOnlyStringSchema } from "@/lib/date-only-schema"
 import { lodgeNullTolerantScope } from "@/lib/lodges"
 import {
   membershipTypeSeasonRateInputSchema,
@@ -13,16 +14,12 @@ import {
   validateMembershipTypeSeasonRates,
 } from "@/lib/season-rate-editor"
 
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-})
-
 // Rates keyed by membership type (#1930, E4); legacy SeasonRate is gone (#2129).
 const updateSeasonSchema = z.object({
   name: z.string().min(1).optional(),
   type: z.enum(["WINTER", "SUMMER"]).optional(),
-  startDate: dateOnlyString.optional(),
-  endDate: dateOnlyString.optional(),
+  startDate: dateOnlyStringSchema.optional(),
+  endDate: dateOnlyStringSchema.optional(),
   active: z.boolean().optional(),
   membershipTypeRates: membershipTypeSeasonRateInputSchema.optional(),
   // Flat whole-lodge night rate in integer cents (#2338). Nullable so the Hut

@@ -6,15 +6,12 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { isMemberEligibleToBookLodge } from "@/lib/lodge-access";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { z } from "zod";
-import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
-
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-});
+import { formatDateOnly } from "@/lib/date-only";
+import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 
 const availabilityCheckQuerySchema = z.object({
-  checkIn: dateOnlyString.transform(parseDateOnly),
-  checkOut: dateOnlyString.transform(parseDateOnly),
+  checkIn: parsedDateOnlySchema,
+  checkOut: parsedDateOnlySchema,
   lodgeId: z.string().min(1).optional(),
 });
 
