@@ -38,8 +38,14 @@ export default async function AdminLayout({
   const guard = await guardAdminLayout();
   if (guard.outcome === "redirect") redirect(guard.destination);
 
-  const { member, user, permissionMatrix, isFullAdmin: actorIsFullAdmin, nonce } =
-    guard;
+  const {
+    member,
+    user,
+    permissionMatrix,
+    isFullAdmin: actorIsFullAdmin,
+    adminNavPanels,
+    nonce,
+  } = guard;
   const canManageContent = hasAdminAreaAccess(member, {
     area: "content",
     level: "edit",
@@ -76,13 +82,14 @@ export default async function AdminLayout({
         >
           Skip to main content
         </a>
-        <NavBar user={user} features={effectiveModules} />
+        <NavBar user={user} features={effectiveModules} surface="staff" />
         <HelpWidgetProvider>
         <div className="flex flex-1 flex-col md:flex-row">
           <AdminSidebar
             features={effectiveModules}
             permissionMatrix={permissionMatrix}
             isFullAdmin={actorIsFullAdmin}
+            panels={adminNavPanels}
             hutLeaderLabel={liveClubIdentity.hutLeaderLabel}
           />
           <AdminCommandPalette

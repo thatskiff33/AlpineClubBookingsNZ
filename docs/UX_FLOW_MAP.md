@@ -60,7 +60,7 @@ Journey: Fill in personal details and nominators, submit the application, and fo
 
 Screen: `/dashboard`.
 
-Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay.
+Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay. The Lodge Kiosk card offers Open Kiosk and, while the roster module is on, Who's at the lodge.
 
 [Guide](user-guide/README.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -124,7 +124,7 @@ Journey: Request to join or create a family group, manage eligible dependants, o
 
 Screen: `/lodge-roster`.
 
-Journey: When enabled, choose the lodge card and read names and nights for the next 30 nights. Name visibility follows that lodge’s setting; contact and payment details are absent.
+Journey: When enabled, open it from the dashboard's Lodge Kiosk card, choose the lodge card and read names and nights for the next 30 nights. Name visibility follows that lodge’s setting; contact and payment details are absent.
 
 [Guide](user-guide/whos-at-the-lodge.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -994,6 +994,25 @@ view-only without Finance edit.
 [Guide](guides/stuck-states.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ## Shared screen patterns
+
+### Admin navigation panels
+
+Screen: every `/admin` page and the `/finance` workspace.
+
+Shows: a sidebar panel for each role held — Admin (the full menu), Bookings,
+Membership, Content, Finance or Treasurer — chosen from each role's permission
+matrix, never its name. Staff pages drop Book and My Bookings from the top
+bar, an Admin account that is not also a club member never sees My Bookings
+there, and the sidebar leaves
+both dashboards to the top bar. Who's at the lodge is a Lodge Kiosk card button
+on `/dashboard`, not a top-bar link.
+
+Journey: open a staff page on the first panel, or use the switcher's buttons
+when more than one role gives a panel; the choice is remembered per browser. A
+panel only narrows the per-item permission filter, so it never shows a link the
+full menu would hide; other pages stay reachable through Ctrl K.
+
+[Guide](guides/access-roles.md)
 
 ## Feedback Conventions
 

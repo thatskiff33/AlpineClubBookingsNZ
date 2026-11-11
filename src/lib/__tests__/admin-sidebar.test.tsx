@@ -299,6 +299,7 @@ describe("AdminSidebar", () => {
         isFullAdmin={false}
       />,
     );
+    // #108: rendered with no `panels`, so the full menu this test is about.
     expect(
       screen
         .getByRole("link", { name: "Club Currency & Locale" })
