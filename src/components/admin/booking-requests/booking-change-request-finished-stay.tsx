@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import Link from "next/link";
 import { useRef, useState, type ComponentType, type ReactNode } from "react";
@@ -121,7 +122,7 @@ export function useFinishedStayQuotes(onError: (message: string) => void) {
     patch(id, { loading: true, figures: null });
     const forOfficerEntry = officerEntryKey(answers.officerGuests ?? null, answers.officerPromo ?? null);
     try {
-      const response = await fetch(`/api/admin/booking-change-requests/${id}/quote`, {
+      const response = await fetchWithRecentAuth(`/api/admin/booking-change-requests/${id}/quote`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

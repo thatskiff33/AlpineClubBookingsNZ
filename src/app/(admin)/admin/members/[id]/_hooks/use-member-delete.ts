@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useState, type Dispatch, type SetStateAction } from "react";
 import { toast } from "sonner";
@@ -34,7 +35,7 @@ export function useMemberDelete({
     setDeleteSubmitting(true);
     setDeleteError("");
     try {
-      const res = await fetch(
+      const res = await fetchWithRecentAuth(
         `/api/admin/members/${member.id}/lifecycle/delete`,
         {
           method: "POST",
