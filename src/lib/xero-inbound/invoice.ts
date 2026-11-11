@@ -16,6 +16,7 @@ import {
   hasStrongSubscriptionInvoiceMatch,
 } from "@/lib/xero-membership-sync";
 import { type XeroObjectLinkInput, upsertXeroObjectLink } from "@/lib/xero-sync";
+import { retiredCardRefundReversalLink } from "@/lib/xero-operation-outbox-payload";
 import { type IncrementalInvoiceReconciliationResult, type IncrementalMembershipReconciliationResult } from "./types";
 import { buildXeroPaymentDisplayNumber } from "./amounts";
 import { dedupeResolvedXeroObjectLinks, dedupeXeroObjectLinks, getDerivedInboundPaymentRole, isDeletedXeroPaymentStatus, PRIMARY_INVOICE_CASH_ALLOCATIONS_KEY, recoverBookingScopedLinksFromOutboundOperations } from "./object-links";
@@ -121,6 +122,8 @@ export async function reconcileXeroInvoice(
   const cashAllocationCount =
     (invoice.overpayments?.length ?? 0) + (invoice.prepayments?.length ?? 0);
   for (const link of relatedLinks) {
+    // A voided reversal stops counting as coverage and is not raised again (`INV-PAY-151`).
+    const retired = retiredCardRefundReversalLink(link.role, invoice.status);
     await upsertXeroObjectLink({
       localModel: link.localModel,
       localId: link.localId,
@@ -131,6 +134,7 @@ export async function reconcileXeroInvoice(
       ...(link.role === "PRIMARY_INVOICE"
         ? { metadata: { [PRIMARY_INVOICE_CASH_ALLOCATIONS_KEY]: cashAllocationCount }, mergeMetadata: true }
         : {}),
+      ...(retired ?? {}),
       role: link.role,
     });
   }

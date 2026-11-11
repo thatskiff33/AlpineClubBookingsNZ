@@ -381,7 +381,7 @@ export async function queuePaidAnotherWayXero(
     const documentDate = xeroDocumentDateFromInstant(close.closedAt, close.clubZone);
     if (coveredCents > 0) {
       // #4369: both rows, or neither. The reversal is the covered cents; the
-      // bank note is the whole close, not the remainder.
+      // bank note, queued once below, is the whole close, not the remainder.
       const reversal = await enqueueCardRefundReversalInvoiceOperation({
         paymentId: close.paymentId,
         bookingId: close.bookingId,
@@ -396,20 +396,6 @@ export async function queuePaidAnotherWayXero(
           `Paid-another-way close ${close.operationId}: the Stripe reversal was not queued (${reversal.message}), so the bank note was not queued either.`,
         );
       }
-      const queued = await enqueueXeroRefundCreditNoteOperation(close.paymentId, close.amountCents, {
-        createdByMemberId: close.actingMemberId,
-        refundMethod: "internet-banking",
-        paidAnotherWayTaskId: close.recordId,
-        documentDate,
-        ...(plan.creditsInvoiceId ? { creditsInvoiceId: plan.creditsInvoiceId } : {}),
-        store: tx,
-      });
-      if (!queued.queueOperationId) {
-        throw new Error(
-          `Paid-another-way close ${close.operationId}: the bank-transfer refund note was not queued (${queued.message}), so the Stripe reversal was not queued either.`,
-        );
-      }
-      return "stripe-reversal-and-bank-note";
     }
     const queued = await enqueueXeroRefundCreditNoteOperation(close.paymentId, close.amountCents, {
       createdByMemberId: close.actingMemberId,
@@ -421,6 +407,14 @@ export async function queuePaidAnotherWayXero(
       ...(plan.creditsInvoiceId ? { creditsInvoiceId: plan.creditsInvoiceId } : {}),
       store: tx,
     });
+    if (coveredCents > 0) {
+      if (!queued.queueOperationId) {
+        throw new Error(
+          `Paid-another-way close ${close.operationId}: the bank-transfer refund note was not queued (${queued.message}), so the Stripe reversal was not queued either.`,
+        );
+      }
+      return "stripe-reversal-and-bank-note";
+    }
     if (queued.queueOperationId === null) return "nothing";
     return "refund-note";
   }

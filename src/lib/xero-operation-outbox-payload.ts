@@ -71,6 +71,21 @@ export function liveCardRefundReversalCents(metadata: unknown): number {
 }
 
 /**
+ * What an inbound read of this invoice does to its reversal link (`INV-PAY-151`).
+ * A voided or deleted invoice retires the link, keeping the cents already
+ * stored. Any other status, and any other role, changes nothing.
+ */
+export function retiredCardRefundReversalLink(
+  role: string,
+  invoiceStatus: unknown,
+): { active: false; metadata: { status: string }; mergeMetadata: true } | null {
+  if (role !== CARD_REFUND_REVERSAL_INVOICE_ROLE) return null;
+  const status = typeof invoiceStatus === "string" ? invoiceStatus.toUpperCase() : "";
+  if (!CANCELLED_CARD_REFUND_REVERSAL_STATUSES.has(status)) return null;
+  return { active: false, metadata: { status }, mergeMetadata: true };
+}
+
+/**
  * The complete set of outbox queue types the pending scan dispatches (#1272,
  * item 4 of #1208). Single source of truth: the pending-outbox scan
  * (`processQueuedXeroOutboxOperations`) filters `queueType IN (...)` on this

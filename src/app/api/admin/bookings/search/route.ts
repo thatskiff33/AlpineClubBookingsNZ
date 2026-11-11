@@ -10,6 +10,7 @@ import { exactContains, exactPrefix } from "@/lib/prisma-exact-prefix";
 import { requireAdmin } from "@/lib/session-guards";
 import { z } from "zod";
 import { formatDateOnly } from "@/lib/date-only";
+import { NOT_CARD_REFUND_REVERSAL_INVOICE } from "@/lib/xero-operation-outbox-payload";
 
 const adminBookingSearchQuerySchema = z.object({
   q: z.string().trim().min(2),
@@ -229,6 +230,8 @@ export async function GET(request: NextRequest) {
               status: {
                 in: ["PENDING", "RUNNING"],
               },
+              // A failed-card-refund reversal is not the booking invoice (`INV-PAY-151`).
+              ...NOT_CARD_REFUND_REVERSAL_INVOICE,
             },
             select: {
               localId: true,
