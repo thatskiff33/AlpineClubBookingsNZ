@@ -68,6 +68,9 @@ vi.mock("@/lib/prisma", () => ({
     // ADDITIONAL intents; this booking has none.
     paymentTransaction: { findMany: mocks.paymentTransactionFindMany },
     payment: { findUnique: mocks.paymentFindUnique },
+    // #4744: every non-review mint reads whether its door key already holds a
+    // recovery. This booking has none.
+    paymentRecoveryOperation: { findUnique: async () => null },
   },
 }));
 // #3245: PARTIAL, through `importOriginal`. This used to replace the whole
@@ -435,7 +438,7 @@ beforeEach(() => {
     unpaidAskOffsetCents: 0,
     retiredAdditionalAsks: [],
     // #3954 round 6: and folded no waiting re-issue in.
-    foldedReissuedAsks: { cents: 0, modificationIds: [], invoiceCents: 0 },
+    foldedWaitingAsks: { cents: 0, invoiceCents: 0, reissues: { cents: 0, modificationIds: [], invoiceCents: 0 }, increases: [] },
     settlementMethod: null,
     policyRetainedAmountCents: 0,
     xeroRefundAmountCents: 0,
