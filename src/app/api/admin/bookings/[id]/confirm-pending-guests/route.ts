@@ -58,6 +58,7 @@ import {
 } from "@/lib/saved-payment-method";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE as CURRENCY_REFUSED } from "@/lib/stripe-charge-currency";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const confirmPendingGuestsSchema = z.object({
   allowOverbook: z.boolean().optional(),
@@ -101,6 +102,8 @@ export async function POST(
   const session = guard.session;
   const { id: bookingId } = await params;
 
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   const body = await request.json().catch(() => ({}));
   const parsedBody = confirmPendingGuestsSchema.safeParse(body);
   if (!parsedBody.success) {

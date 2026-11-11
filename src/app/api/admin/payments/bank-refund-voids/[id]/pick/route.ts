@@ -8,6 +8,7 @@ import {
   BankRefundVoidAnswerRefusal,
   pickRefundForUnmatchedVoid,
 } from "@/lib/bank-refund-void-follow-up";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const bodySchema = z.object({ lineId: z.string().min(1).max(64), confirmed: z.literal(true) }).strict();
 
@@ -26,6 +27,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!guard.ok) return guard.response;
   const { id } = await params;
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await request.json();
   } catch {
