@@ -6,7 +6,6 @@
  * never audited, never echoed in an error.
  */
 
-import { createHash } from "crypto";
 import type { CredentialResolution } from "@/lib/integration-credentials";
 
 /** What the store row's encrypted value holds. */
@@ -17,28 +16,15 @@ interface StoredXeroTokenSet {
   expiresAt: string;
   tenantId: string | null;
   /**
-   * The previous release's fingerprint of the `XeroToken` row (#3454): it reads
-   * this copy only while the fingerprint matches. Optional on read, so a value
-   * written once `XeroToken` is gone (R3) still parses; always written while the
-   * previous release can run.
+   * A fingerprint R2 stored beside the tokens. This release does not write it.
+   * Optional so a row R2 wrote still loads; present and not a string is rejected.
    */
   mirror?: string;
-}
-
-/**
- * The previous release's fingerprint of a `XeroToken` row this release created:
- * SHA-256 over `id:accessToken:refreshToken`, the two ciphertext columns being
- * the database's '' default (#3806 R2). Non-secret, and stored only inside the
- * encrypted store value.
- */
-export function freshRowMirror(rowId: string): string {
-  return createHash("sha256").update(`${rowId}::`, "utf8").digest("hex");
 }
 
 export function serializeStoredTokenSet(
   tokens: { accessToken: string; refreshToken: string; expiresAt: Date },
   tenantId: string | null,
-  mirror: string,
 ): string {
   const value: StoredXeroTokenSet = {
     v: 1,
@@ -46,7 +32,6 @@ export function serializeStoredTokenSet(
     refreshToken: tokens.refreshToken,
     expiresAt: tokens.expiresAt.toISOString(),
     tenantId,
-    mirror,
   };
   return JSON.stringify(value);
 }
@@ -88,12 +73,11 @@ export type ConnectionTokenSetRefusal = "absent" | "unreadable" | "other-tenant"
  * `connectionTenantId` (#3806 review).
  *
  * Refused when it is missing, unreadable or malformed, AND when it names a
- * different organisation from the connection. That disagreement means the two
- * were written by different code: a release from before #3454, which writes
- * only `XeroToken`, reconnected after a #3454 or later release had stored a
- * copy, and the trigger carried the new tenant into `XeroConnection` while the
- * store kept the old grant. Its tokens would act on an organisation the club
- * has left, so only a reconnect settles it. A copy that names the SAME
+ * different organisation from the connection. That disagreement means the
+ * connection row and the store copy were written from different grants (two
+ * connects at once, or a release from before #3454 that reconnected while a
+ * later release's copy remained). Its tokens would act on an organisation the
+ * club has left, so only a reconnect settles it. A copy that names the SAME
  * organisation cannot be told apart from a current one; the upgrade notes
  * cover that case.
  */

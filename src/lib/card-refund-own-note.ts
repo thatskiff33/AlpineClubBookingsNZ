@@ -1,7 +1,8 @@
 import { PaymentSource } from "@prisma/client";
 
 import { findAdditionalCaptureReceiptInvoiceId } from "@/lib/additional-capture-receipt-link";
-import { cardRefundDoorOf, cardRefundNoteCutoverSeconds, madeSinceCardRefundNoteCutover } from "@/lib/card-refund-own-note-share";
+import { cardRefundDoorOf, cardRefundNoteCutoverSeconds, madeSinceCardRefundNoteCutover, readCardRefundNoteShare } from "@/lib/card-refund-own-note-share";
+import { readCreditReleaseReceiptInvoiceId } from "@/lib/credit-release-xero-payment";
 import { pairResendRecordedFirst, readFailedRefundsAnsweredBy } from "@/lib/card-refund-resend-answer";
 import { noteLateCaptureRefunds } from "@/lib/late-capture-refund-credit-note";
 import { findLateCapturePaymentIntents } from "@/lib/late-capture-xero-receipt";
@@ -46,7 +47,9 @@ import { enqueueXeroRefundCreditNoteOperation } from "@/lib/xero-operation-outbo
  * A refund of a late capture is the late-capture note's to size (per capture,
  * against that capture's receipt, `planLateCaptureCardNotes`), so it is handed
  * there. Each other note names the invoice its refunded capture's own receipt
- * paid (#3953, `findAdditionalCaptureReceiptInvoiceId`), read here from the
+ * paid (#3953, `findAdditionalCaptureReceiptInvoiceId`), or, when that capture
+ * has no receipt of its own, the invoice the credit-release sweep recorded it
+ * against (#4493, `readCreditReleaseReceiptInvoiceId`). Read here from the
  * refund for every writer, so it never depends on which writer queues first.
  * Returns the queued rows. A refund with no row on the payment is skipped.
  * Outside any transaction, as every caller's note enqueue was before.
@@ -81,7 +84,7 @@ export async function queueCardRefundOwnNotes(params: {
       }
       continue;
     }
-    const creditsInvoiceId = intent ? await findAdditionalCaptureReceiptInvoiceId(intent) : null;
+    const creditsInvoiceId = intent ? await invoiceACardRefundCredits(intent) : null;
     const result = await enqueueXeroRefundCreditNoteOperation(params.paymentId, refund.amountCents, {
       refundMethod: "card",
       cardRefundId: refund.stripeRefundId,
@@ -91,6 +94,26 @@ export async function queueCardRefundOwnNotes(params: {
     if (result.queueOperationId) queued.push(result.queueOperationId);
   }
   return queued;
+}
+
+/**
+ * The invoice a refunded capture's note credits: its own receipt (#3953), or
+ * the invoice the credit-release sweep recorded when it has none (#4493).
+ * The own note and the canonical delta both ask here (`INV-SSOT-001`).
+ */
+export async function invoiceACardRefundCredits(paymentIntentId: string): Promise<string | null> {
+  return (await findAdditionalCaptureReceiptInvoiceId(paymentIntentId)) ?? (await readCreditReleaseReceiptInvoiceId(paymentIntentId));
+}
+
+/**
+ * #4493: a counted refund of a capture the sweep recorded is noted on its own
+ * record. A refund `readCardRefundNoteShare` gives nothing (not counted, or
+ * made before the cutover) stays in the canonical delta.
+ */
+async function creditReleaseRefundHasOwnNote(paymentId: string, stripeRefundId: string, paymentIntentId: string | null): Promise<boolean> {
+  if (!paymentIntentId || !(await readCreditReleaseReceiptInvoiceId(paymentIntentId))) return false;
+  const share = await readCardRefundNoteShare(prisma, paymentId, stripeRefundId);
+  return (share?.amountCents ?? 0) > 0;
 }
 
 /**
@@ -252,12 +275,15 @@ type SendNotingRefunds = <R extends { refunds: ReadonlyArray<MadeRefund> }>(call
  *   is marked here, and the rule applied. A failed-later row's refund also
  *   says so in its Stripe metadata (`CARD_REFUND_FAILED_LATER_REASON`), and is
  *   never the delta even when no unmarked slice is found;
- * - any other app door's: left in the delta, which is queued as before. On a
- *   bank transfer that is a duplicate capture's or a superseded intent's
- *   refund, of money Xero never received; a cancellation or an edit never
- *   refunds one to a card. Each door records its refund the moment Stripe
- *   answers, so this sync is seldom the first to (ARCHITECTURE, "A later
- *   refund folded into the first note").
+ * - any other app door's: left in the delta, which is queued as before,
+ *   except a refund of a capture the credit-release sweep has recorded
+ *   (#4493). That one is its own note when it qualifies
+ *   (`readCardRefundNoteShare`), so a canonical note already on the payment
+ *   cannot swallow it. The others, on a bank transfer, are a duplicate
+ *   capture's or a superseded intent's refund, of money Xero never received.
+ *   Each door records its refund the moment Stripe answers, so this sync is
+ *   seldom the first to (ARCHITECTURE, "A later refund folded into the first
+ *   note").
  */
 export async function queueWebhookCardRefundNotes(params: {
   payment: { id: string; source: PaymentSource };
@@ -275,8 +301,9 @@ export async function queueWebhookCardRefundNotes(params: {
   const newly = new Set(params.newlyCountedRefundIds);
   const rows = await prisma.paymentRefund.findMany({
     where: { paymentId: params.payment.id, stripeRefundId: { in: [...newly] } },
-    select: { stripeRefundId: true, stripeCreatedAt: true, createdAt: true },
+    select: { stripeRefundId: true, stripePaymentIntentId: true, stripeCreatedAt: true, createdAt: true },
   });
+  const intentByRefund = new Map(rows.map((row) => [row.stripeRefundId, row.stripePaymentIntentId]));
   const cutoverSeconds = await cardRefundNoteCutoverSeconds(prisma);
   const sinceCutover = new Set(rows.filter((row) => madeSinceCardRefundNoteCutover(row, cutoverSeconds)).map((row) => row.stripeRefundId));
   const own: string[] = [];
@@ -290,7 +317,12 @@ export async function queueWebhookCardRefundNotes(params: {
         // Round 8: a re-send recorded before its slice is marked - never the delta (`pairResendRecordedFirst`).
         const resend = await pairResendRecordedFirst(params.payment.id, refund);
         if (resend === "marked") rule = await readAppRefundRule(params.payment.id, refund.id);
-        else if (resend === "none" && refund.metadata?.reason !== CARD_REFUND_FAILED_LATER_REASON) continue;
+        else if (resend === "none" && refund.metadata?.reason !== CARD_REFUND_FAILED_LATER_REASON) {
+          // #4493: a price reduction or an officer refund of a recorded credit-release
+          // capture. Left here, it stays in the one canonical note and is dropped once that note exists.
+          if (!(await creditReleaseRefundHasOwnNote(params.payment.id, refund.id, intentByRefund.get(refund.id) ?? null))) continue;
+          own.push(refund.id);
+        }
       }
       if (rule === "own") own.push(refund.id);
     } else if (door === "outside-app") {

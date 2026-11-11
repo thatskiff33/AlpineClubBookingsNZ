@@ -618,7 +618,7 @@ describe("every ask-minting door routes through the sizing rule (INV-PAY-047)", 
         "sizeAdditionalAsk (#3340, #3371).",
     ).toMatch(
       // #3954 round 6: the fold that joins it is recorded first, then sized in.
-      /if \(hasSucceededPayment && priceDiffCents > 0\) \{\s*(?:\/\/[^\n]*\n\s*)*foldedReissuedAsks = await foldWaitingReissuedAsks\(tx, booking\);\s*additionalAsk = sizeAdditionalAsk\(\{/,
+      /if \(hasSucceededPayment && priceDiffCents > 0\) \{\s*(?:\/\/[^\n]*\n\s*)*foldedWaitingAsks = await foldWaitingAsks\(tx, booking\);\s*additionalAsk = sizeAdditionalAsk\(\{/,
     );
     expect(
       source,

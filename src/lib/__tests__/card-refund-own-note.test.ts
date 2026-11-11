@@ -22,15 +22,21 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/xero-operation-outbox", () => ({ enqueueXeroRefundCreditNoteOperation: vi.fn() }));
 vi.mock("@/lib/late-capture-refund-credit-note", () => ({ noteLateCaptureRefunds: vi.fn() }));
 vi.mock("@/lib/late-capture-xero-receipt", () => ({ findLateCapturePaymentIntents: vi.fn(async () => new Set()) }));
+const { mockReleaseInvoice, mockShare } = vi.hoisted(() => ({
+  mockReleaseInvoice: vi.fn(async (): Promise<string | null> => null),
+  mockShare: vi.fn(async () => null as { amountCents: number; coveredCents: number; answeredCents: number; uncoveredCents: number } | null),
+}));
 vi.mock("@/lib/additional-capture-receipt-link", () => ({ findAdditionalCaptureReceiptInvoiceId: vi.fn(async () => null) }));
+vi.mock("@/lib/credit-release-xero-payment", () => ({ readCreditReleaseReceiptInvoiceId: mockReleaseInvoice }));
 vi.mock("@/lib/card-refund-resend-answer", () => ({ readFailedRefundsAnsweredBy: vi.fn(), pairResendRecordedFirst: vi.fn(async () => "none") }));
 vi.mock("@/lib/card-refund-own-note-share", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/card-refund-own-note-share")),
   cardRefundNoteCutoverSeconds: async () => null,
+  readCardRefundNoteShare: mockShare,
 }));
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
-import { queueAnsweringRefundNotes, queueWebhookCardRefundNotes, replayNotingEachRefund } from "@/lib/card-refund-own-note";
+import { queueAnsweringRefundNotes, queueCardRefundOwnNotes, queueWebhookCardRefundNotes, replayNotingEachRefund } from "@/lib/card-refund-own-note";
 import { pairResendRecordedFirst, readFailedRefundsAnsweredBy } from "@/lib/card-refund-resend-answer";
 import { findAdditionalCaptureReceiptInvoiceId } from "@/lib/additional-capture-receipt-link";
 import { noteLateCaptureRefunds } from "@/lib/late-capture-refund-credit-note";
@@ -221,6 +227,72 @@ describe("one rule for a re-send's own note: the replay and charge.refunded agre
       expect(findAdditionalCaptureReceiptInvoiceId).toHaveBeenCalledWith("pi_card");
     } finally {
       vi.mocked(findAdditionalCaptureReceiptInvoiceId).mockResolvedValue(null);
+    }
+  });
+
+  it("#4493: an app-door refund of a recorded credit-release capture is its own note, naming that invoice", async () => {
+    answers({});
+    mockReleaseInvoice.mockResolvedValue("invoice-booking");
+    mockShare.mockResolvedValue({ amountCents: 4_000, coveredCents: 0, answeredCents: 0, uncoveredCents: 4_000 });
+    vi.mocked(enqueueXeroRefundCreditNoteOperation).mockReset().mockResolvedValue({ queueOperationId: "op" } as never);
+    try {
+      await queueWebhookCardRefundNotes({
+        payment: { id: "payment-1", source: PaymentSource.INTERNET_BANKING },
+        deltaCents: 4_000,
+        refunds: [appDoor("re_rel", "edit_financial_review")],
+        newlyCountedRefundIds: ["re_rel"],
+      });
+      expect(vi.mocked(enqueueXeroRefundCreditNoteOperation).mock.calls.map(([, cents, options]) => [cents, options?.cardRefundId, options?.creditsInvoiceId])).toEqual([
+        [4_000, "re_rel", "invoice-booking"],
+      ]);
+      expect(mockReleaseInvoice).toHaveBeenCalledWith("pi_card");
+    } finally {
+      mockReleaseInvoice.mockResolvedValue(null);
+      mockShare.mockResolvedValue(null);
+    }
+  });
+
+  it("#4493: a credit-release capture whose refund does not qualify stays in the canonical delta", async () => {
+    answers({});
+    mockReleaseInvoice.mockResolvedValue("invoice-booking");
+    mockShare.mockResolvedValue({ amountCents: 0, coveredCents: 0, answeredCents: 0, uncoveredCents: 0 });
+    try {
+      expect(await bothWriters("re_rel", appDoor("re_rel", "edit_financial_review"))).toEqual({ replayOwn: 0, webhookOwn: 0, webhookCanonicalCents: 4_000 });
+    } finally {
+      mockReleaseInvoice.mockResolvedValue(null);
+      mockShare.mockResolvedValue(null);
+    }
+  });
+
+  it("#4493: an own note names the capture's own receipt ahead of the sweep's invoice", async () => {
+    vi.mocked(findAdditionalCaptureReceiptInvoiceId).mockResolvedValue("invoice-capture");
+    mockReleaseInvoice.mockResolvedValue("invoice-booking");
+    vi.mocked(enqueueXeroRefundCreditNoteOperation).mockReset().mockResolvedValue({ queueOperationId: "op" } as never);
+    try {
+      await queueCardRefundOwnNotes({ paymentId: "payment-1", stripeRefundIds: ["re_rel"] });
+      expect(vi.mocked(enqueueXeroRefundCreditNoteOperation)).toHaveBeenCalledWith(
+        "payment-1",
+        4_000,
+        expect.objectContaining({ cardRefundId: "re_rel", creditsInvoiceId: "invoice-capture" }),
+      );
+    } finally {
+      vi.mocked(findAdditionalCaptureReceiptInvoiceId).mockResolvedValue(null);
+      mockReleaseInvoice.mockResolvedValue(null);
+    }
+  });
+
+  it("#4493: an own note names the sweep's invoice when the capture has no other receipt", async () => {
+    mockReleaseInvoice.mockResolvedValue("invoice-booking");
+    vi.mocked(enqueueXeroRefundCreditNoteOperation).mockReset().mockResolvedValue({ queueOperationId: "op" } as never);
+    try {
+      await queueCardRefundOwnNotes({ paymentId: "payment-1", stripeRefundIds: ["re_rel"] });
+      expect(vi.mocked(enqueueXeroRefundCreditNoteOperation)).toHaveBeenCalledWith(
+        "payment-1",
+        4_000,
+        expect.objectContaining({ cardRefundId: "re_rel", creditsInvoiceId: "invoice-booking" }),
+      );
+    } finally {
+      mockReleaseInvoice.mockResolvedValue(null);
     }
   });
 

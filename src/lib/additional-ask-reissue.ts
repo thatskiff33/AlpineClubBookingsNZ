@@ -9,7 +9,7 @@
  * - `queueReissuedAskRecovery` / `readReissuedAskRecovery` /
  *   `writeReissuedAskUnderRecovery` - the re-issue is durable from the edit's
  *   commit and the door's mint completes it, fenced.
- * - `foldWaitingReissuedAsks` - a later increase asks for a waiting re-issue too.
+ * - `foldWaitingAsks` - a later increase asks for a waiting re-issue, or a waiting increase retry, too.
  * - `cancelRetiredAdditionalAsksNow` - after commit, the retired intents die at
  *   Stripe before anything is minted.
  *
@@ -18,18 +18,22 @@
 import { PaymentRecoveryOperationStatus, PaymentTransactionKind, type Prisma } from "@prisma/client";
 
 import { ADDITIONAL_ASK_QUEUE_TRANSACTION_OPTIONS, lockAdditionalAskQueue } from "@/lib/additional-ask-queue-transaction";
-import { closeWaitingAskRecoveries, PENDING_ASK_NETTED_BY_REDUCTION_NOTE } from "@/lib/additional-ask-recovery-close";
+import {
+  assertAskRecoveryNotBeingRaised,
+  closeWaitingAskRecoveries,
+  PENDING_ASK_NETTED_BY_REDUCTION_NOTE,
+  type WaitingAskCloseFence,
+} from "@/lib/additional-ask-recovery-close";
 import {
   inFlightAskRecoveries,
   reductionLeftAfterAskCents,
   retireUnpaidAskChain,
-  type PendingAskRecovery,
   type ReductionAgainstUnpaidAsk,
   type RetiredAdditionalAsk,
   type UnpaidAskBooking,
   type UnpaidAskDb,
 } from "@/lib/additional-ask-reduction";
-import { isRecoveryReplaySettled, sizeRecoveryReplayAsk } from "@/lib/additional-ask-recovery-replay";
+import { isRecoveryReplaySettled, recoveryAskBeyondPaymentAskCents, sizeRecoveryReplayAsk } from "@/lib/additional-ask-recovery-replay";
 import {
   NO_ADDITIONAL_ASK,
   reissueUnpaidAdditionalAsk,
@@ -48,10 +52,17 @@ import {
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
 import { unpaidAskBillingEvidence } from "@/lib/unpaid-ask-billing-evidence";
+import { ordinaryAskDoorRequest, type OrdinaryAskDoor } from "@/lib/ordinary-ask-request";
 import {
-  NO_FOLDED_REISSUED_ASKS,
+  NO_FOLDED_WAITING_ASKS,
+  recordedFoldedAskInvoiceCents,
+  recordedFoldedIncreaseAsks,
+  recordedFoldedReissuedAskModificationIds,
   recordedReissuedAskInvoiceCents,
+  recordedReissuedAskInvoiceUnsureCents,
+  type FoldedIncreaseAsk,
   type FoldedReissuedAsks,
+  type FoldedWaitingAsks,
 } from "@/lib/unpaid-ask-offset-marker";
 import { formatCents } from "@/lib/utils";
 
@@ -235,33 +246,38 @@ export async function cancelRetiredAdditionalAsksNow({
 export const WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE =
   "Not minted: a later price increase asked for this re-issued card request together with its own extra, on one fresh ask (#3954).";
 
+/** What a waiting increase retry a later increase folded in says about itself (#4744). */
+export const WAITING_INCREASE_FOLDED_BY_INCREASE_NOTE =
+  "Not minted: a later price increase asked for this increase together with its own extra, on one fresh ask (#4744).";
+
 /**
- * #3954 review round 4: A LATER INCREASE ASKS FOR A WAITING RE-ISSUE TOO.
+ * #3954 review round 4, widened by #4744: A LATER INCREASE ASKS FOR A WAITING
+ * ASK TOO.
  *
- * A reduction's smaller re-issue waits on its recovery until it is minted - for
- * the door's one-minute grace, or longer when that mint failed. Nothing on the
- * `Payment` shows it, so an increase sized off the `Payment` alone
- * (`sizeAdditionalAsk`) asked only for its own money; its mint then overtook
- * the re-issue and, under #3340's rule, the re-issue's whole figure was lost -
- * or, inside the grace, the door's re-issue minted after it and superseded the
- * increase's ask instead. The increase now folds every waiting re-issue into
- * its own ask as carried money (`INV-PAY-098`) and closes it under its locks,
- * fenced exactly as a reduction closes one (`closeWaitingAskRecoveries`), so
- * one fresh ask asks for both. Returns what it folded, for `sizeAdditionalAsk`.
+ * A reduction's smaller re-issue, and an increase whose card mint failed, wait
+ * on their recovery until minted. Nothing on the `Payment` shows either, so an
+ * increase sized off the `Payment` alone asked only for its own money. The
+ * member could then pay that short ask and be asked again for the earlier one.
+ * The increase now folds every waiting re-issue and every waiting increase
+ * retry into its own ask as carried money (`INV-PAY-098`) and closes them
+ * under its locks, fenced exactly as a reduction closes one
+ * (`closeWaitingAskRecoveries`), so one fresh ask asks for all of it.
  *
- * Re-issues only. An increase's own failed mint is not folded: a later ask
- * never settles it (#4015), so its replay is settled only by its own row and
- * carries the later ask, superseding it (`isRecoveryReplaySettled`).
+ * Skipped, and left to their own replay: an officer's review charge, a frozen
+ * figure with no edit to re-derive (#3340's recency rule), and one whose own
+ * row already exists — that row is the `Payment`'s ask, which this mint
+ * already carries. A retry claimed within the last two minutes refuses the
+ * edit (409) rather than be closed under a mint that is in flight.
  */
-export async function foldWaitingReissuedAsks(
+export async function foldWaitingAsks(
   tx: UnpaidAskDb,
   booking: UnpaidAskBooking,
   now: Date = new Date(),
-): Promise<FoldedReissuedAsks> {
+): Promise<FoldedWaitingAsks> {
   const payment = booking.payment;
-  if (!payment) return NO_FOLDED_REISSUED_ASKS;
+  if (!payment) return NO_FOLDED_WAITING_ASKS;
   const operations = await inFlightAskRecoveries(tx, booking, payment);
-  if (operations.length === 0) return NO_FOLDED_REISSUED_ASKS;
+  if (operations.length === 0) return NO_FOLDED_WAITING_ASKS;
   const [transactions, modifications] = await Promise.all([
     tx.paymentTransaction.findMany({
       where: { paymentId: payment.id, kind: PaymentTransactionKind.ADDITIONAL },
@@ -273,47 +289,93 @@ export async function foldWaitingReissuedAsks(
       select: { id: true, priceDiffCents: true, changeFeeCents: true, newData: true },
     }),
   ]);
-  const waiting: PendingAskRecovery[] = [];
+  const reissueWaiting: FoldedAskClose[] = [];
+  const increaseWaiting: FoldedAskClose[] = [];
+  const increases: FoldedIncreaseAsk[] = [];
   for (const operation of operations) {
     if (isEditFinancialReviewAdditionalIntentRecoveryKey(operation.idempotencyKey)) continue;
     const bookingModificationId = bookingModificationIdForAdditionalIntentRecoveryKey(operation.idempotencyKey);
     if (!bookingModificationId) continue;
+    const modification = modifications.find((row) => row.id === bookingModificationId) ?? null;
     const replay = sizeRecoveryReplayAsk({
       frozenAmountCents: operation.amountCents,
-      modification: modifications.find((row) => row.id === bookingModificationId) ?? null,
+      modification,
       payment,
     });
-    if (replay.kind !== "reissue" || isRecoveryReplaySettled(replay, operation, transactions)) continue;
-    waiting.push({
+    if (replay.kind === "frozen") continue;
+    if (isRecoveryReplaySettled(replay, operation, transactions)) {
+      // A worker may have written its row and still be completing its invoice.
+      // Refuse a recent claim even then. An older settled worker keeps its
+      // completion: its money is already on the Payment, so nothing is folded.
+      assertAskRecoveryNotBeingRaised(operation, now);
+      continue;
+    }
+    // The close matches only the fence. The cents stay here, for this fold's own sum.
+    const pending: FoldedAskClose = {
       id: operation.id,
       bookingModificationId,
-      kind: replay.kind,
       status: operation.status,
       attempts: operation.attempts,
       processingStartedAt: operation.processingStartedAt ?? null,
-      askCents: replay.frozenCents,
-      invoiceCents: 0,
-      foldedInvoiceCents: 0,
-      invoiceUnknown: false,
-      foldedInvoiceUnknown: false,
-    });
+      askCents: 0,
+    };
+    if (replay.kind === "reissue") {
+      reissueWaiting.push({ ...pending, askCents: replay.frozenCents });
+      continue;
+    }
+    const askCents = recoveryAskBeyondPaymentAskCents(replay);
+    if (askCents === null || askCents <= 0) continue;
+    increases.push(foldedIncreaseEntry(bookingModificationId, operation, modification, askCents, modifications));
+    increaseWaiting.push({ ...pending, askCents });
   }
-  // #4217 (`INV-LOCK-002`): the Payment row before the recoveries it closes.
-  if (waiting.length > 0) await lockPaymentForRefundedTotal(tx, payment.id);
-  await closeWaitingAskRecoveries(tx, waiting, now, WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE);
-  // Round 6: recorded on the increase's own history (`unpaidAskOffsetHistory`),
-  // so its replay, a later reduction and each re-issue's invoice still see them.
-  return {
-    cents: waiting.reduce((sum, recovery) => sum + recovery.askCents, 0),
-    modificationIds: waiting.map((recovery) => recovery.bookingModificationId),
-    invoiceCents: waiting.reduce(
+  const reissues: FoldedReissuedAsks = {
+    cents: reissueWaiting.reduce((sum, recovery) => sum + recovery.askCents, 0),
+    modificationIds: reissueWaiting.map((recovery) => recovery.bookingModificationId),
+    invoiceCents: reissueWaiting.reduce(
       (sum, recovery) =>
-        sum +
-        recordedReissuedAskInvoiceCents(
-          modifications.find((row) => row.id === recovery.bookingModificationId)?.newData,
-        ),
+        sum + recordedReissuedAskInvoiceCents(modifications.find((row) => row.id === recovery.bookingModificationId)?.newData),
       0,
     ),
+  };
+  // #4217 (`INV-LOCK-002`): the Payment row before the recoveries it closes.
+  if (reissueWaiting.length + increaseWaiting.length > 0) await lockPaymentForRefundedTotal(tx, payment.id);
+  await closeWaitingAskRecoveries(tx, reissueWaiting, now, WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE);
+  await closeWaitingAskRecoveries(tx, increaseWaiting, now, WAITING_INCREASE_FOLDED_BY_INCREASE_NOTE);
+  return {
+    cents: reissues.cents + increases.reduce((sum, entry) => sum + entry.askCents, 0),
+    invoiceCents: reissues.invoiceCents + increases.reduce((sum, entry) => sum + entry.invoiceCents, 0),
+    reissues,
+    increases,
+  };
+}
+
+/** A waiting ask this fold will close: the fence, plus the cents this fold records. */
+type FoldedAskClose = WaitingAskCloseFence & {
+  bookingModificationId: string;
+  askCents: number;
+};
+
+/** What one folded increase retry records: its money beyond the Payment, and the invoice answer frozen on its recovery. */
+function foldedIncreaseEntry(
+  modificationId: string,
+  operation: { hadIssuedXeroInvoice: boolean | null },
+  modification: { priceDiffCents: number; changeFeeCents: number; newData: unknown } | null,
+  askCents: number,
+  modifications: readonly { id: string; newData: unknown }[],
+): FoldedIncreaseAsk {
+  const ownNet = modification ? modification.priceDiffCents + modification.changeFeeCents : 0;
+  const history = modification?.newData;
+  const nested = recordedFoldedIncreaseAsks(history);
+  const reissueUnsure = recordedFoldedReissuedAskModificationIds(history).some(
+    (id) => recordedReissuedAskInvoiceUnsureCents(modifications.find((row) => row.id === id)?.newData) > 0,
+  );
+  const hadIssuedXeroInvoice = operation.hadIssuedXeroInvoice ?? null;
+  return {
+    modificationId,
+    askCents,
+    invoiceCents: (hadIssuedXeroInvoice === true ? Math.max(0, ownNet) : 0) + recordedFoldedAskInvoiceCents(history),
+    invoiceUnsure: hadIssuedXeroInvoice === null || nested.unsure || nested.entries.some((entry) => entry.invoiceUnsure) || reissueUnsure,
+    hadIssuedXeroInvoice,
   };
 }
 
@@ -370,6 +432,57 @@ export async function queueReissuedAskRecovery(
   });
 }
 
+/**
+ * #4744: a folding increase's own ask is durable from the edit's commit.
+ *
+ * Closing the earlier retry means that money now depends on this edit's
+ * after-commit mint. A process dying between the commit and that mint, or the
+ * enqueue that follows a failed mint, would lose it. The edit writes its own
+ * recovery here, under the door's Stripe key, claimable only after the same
+ * grace a re-issue gets, and the door completes it. A non-folding increase is
+ * unchanged: its recovery is still written only if the mint fails.
+ */
+export async function queueFoldingAskRecovery(
+  tx: Prisma.TransactionClient,
+  {
+    bookingId,
+    paymentId,
+    bookingModificationId,
+    door,
+    settled,
+    now = new Date(),
+  }: {
+    bookingId: string;
+    paymentId: string | null;
+    bookingModificationId: string;
+    door: OrdinaryAskDoor | null;
+    settled: { additionalAsk: AdditionalAsk; hasIssuedXeroInvoice: boolean; foldedWaitingAsks?: FoldedWaitingAsks };
+    now?: Date;
+  },
+): Promise<void> {
+  const folded = settled.foldedWaitingAsks ?? NO_FOLDED_WAITING_ASKS;
+  if (
+    folded.cents <= 0 ||
+    settled.additionalAsk.reissuesUnpaidAsk ||
+    settled.additionalAsk.amountCents <= 0 ||
+    !paymentId ||
+    !door
+  ) {
+    return;
+  }
+  const { idempotencyKey } = ordinaryAskDoorRequest(door, bookingId, bookingModificationId);
+  await enqueueAdditionalPaymentIntentRecovery({
+    bookingId,
+    paymentId,
+    idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey(bookingModificationId),
+    amountCents: settled.additionalAsk.amountCents,
+    stripeIdempotencyKey: idempotencyKey,
+    hadIssuedXeroInvoice: settled.hasIssuedXeroInvoice,
+    nextRetryAt: new Date(now.getTime() + REISSUED_ASK_INLINE_MINT_GRACE_MS),
+    store: tx,
+  });
+}
+
 /** A re-issued ask's recovery, as the door's after-commit mint reads it. */
 export type ReissuedAskRecovery = {
   id: string;
@@ -414,12 +527,15 @@ export async function readReissuedAskRecovery(
  * way nobody mints under its Stripe key again. Null for anything else - still
  * waiting, claimed by the runner, completed with a mint, or failed.
  */
-export function reissueClosedUnminted(
+export function askClosedUnminted(
   recovery: Pick<ReissuedAskRecovery, "status" | "lastError"> | null,
 ): "netted" | "folded" | null {
   if (recovery?.status !== PaymentRecoveryOperationStatus.SUCCEEDED) return null;
   if (recovery.lastError === PENDING_ASK_NETTED_BY_REDUCTION_NOTE) return "netted";
-  return recovery.lastError === WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE ? "folded" : null;
+  return recovery.lastError === WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE ||
+    recovery.lastError === WAITING_INCREASE_FOLDED_BY_INCREASE_NOTE
+    ? "folded"
+    : null;
 }
 
 /**
@@ -430,7 +546,7 @@ export function reissueClosedUnminted(
  * runner that claimed it after the grace, moved that state, so this writes
  * nothing (null) and the member is asked through whichever owns it now.
  */
-export async function writeReissuedAskUnderRecovery<T>(
+export async function writeAskUnderDoorRecovery<T>(
   recovery: ReissuedAskRecovery,
   paymentIntentId: string,
   write: (store: Prisma.TransactionClient) => Promise<T>,
