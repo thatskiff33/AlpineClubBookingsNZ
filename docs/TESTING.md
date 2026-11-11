@@ -1429,13 +1429,14 @@ discriminated by a named test in the tree already:
   (#4116).
 
 `admin-attention-primitive-contract.test.ts` is the census that keeps the admin
-tree routed through the module: a direct `scrollIntoView` / `scrollTo`, or a
-focus deferred to `requestAnimationFrame`, fails it, and its one exclusion is
-listed beside the primitive in `DIRECT_SCROLL_EXCLUSIONS`. A bare effect-driven
+tree and the member `/book` wizard (#4945) routed through the module: a direct
+`scrollIntoView` / `scrollTo`, or a focus deferred to `requestAnimationFrame`,
+fails it, and its exclusions are listed beside the primitive in
+`DIRECT_SCROLL_EXCLUSIONS`. A bare effect-driven
 `.focus()` passes it, which is a stated limit rather than an oversight — the
 module says why, and names the four surfaces that still hand-roll their
 attention. It scans the tree from disk, so `pnpm run test:related` cannot reach
-it; run it by name when an admin file gains a scroll or a focus.
+it; run it by name when a censused file gains a scroll or a focus.
 
 ## A fake store applies `where` through one evaluator
 
