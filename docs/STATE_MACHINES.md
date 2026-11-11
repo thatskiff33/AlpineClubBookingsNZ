@@ -5059,7 +5059,7 @@ password accepted -> JWT session issued with twoFactorVerified=false
 module off -> session treated verified for normal routing
 module on + unenrolled -> protected layout redirects to /login/enroll
 module on + enrolled -> protected layout redirects to /login/verify
-valid TOTP/email/recovery code -> server mints single-use challenge token (hashed, short TTL)
+valid TOTP/email/recovery code -> server mints `<KIND>.<secret>` (the whole token is hashed, short TTL)
 session update carrying that token -> jwt callback consumes it -> twoFactorVerified=true
 client-forged session update without a valid token -> ignored, session stays unverified
 invalid attempts -> per-member counter increments -> 15 minute lockout after 5 failures
@@ -5087,10 +5087,13 @@ A session carries `lastAuthenticatedAt`, separate from `sessionIssuedAt`.
 (#4619).
 
 ```text
-sign-in completes -> lastAuthenticatedAt = now
-  password or Google, no second factor left -> the jwt sign-in branch
-  second factor required -> consuming the two-factor session challenge
-session.update carrying lastAuthenticatedAt -> ignored
+password sign-in, no authenticator factor still owed -> lastAuthenticatedAt = now
+  an email factor does not count as owed
+  jwt sign-in branch, after the member reload, credentials provider only
+authenticator-app challenge consumed -> lastAuthenticatedAt = now
+emailed link, Google, recovery code, or emailed code -> stamp unchanged
+a challenge with no proof prefix -> stamp unchanged
+session.update carrying lastAuthenticatedAt or a proof kind -> ignored
 step-up proof accepted -> server mints SessionReauthChallenge (keyed hash, two minutes, one member)
   authenticator-app code when they have an app
   passkey when one exists (#4617); until then that proof never succeeds
@@ -5104,9 +5107,11 @@ requireRecentAuth -> pass while the stamp is at most 5 minutes old; otherwise 40
 the dialog replays the refused request once, body unchanged; a second refusal is not replayed
 ```
 
-To verify: `recent-auth.test.ts` (the window on the frozen clock, and the typed
-refusal), `auth-session-refresh.test.ts` (a client-supplied stamp is ignored; a
-consumed challenge refreshes it), `session-reauth.test.ts` (an emailed code is
+To verify: `recent-auth.test.ts` (the window on the frozen clock, the typed
+refusal, and an emailed-link session with no stamp), `auth-session-refresh.test.ts`
+(a client-supplied stamp is ignored; a password or authenticator app writes it;
+an emailed link, Google, a recovery code, and an emailed code do not; a
+consumed reauthentication challenge refreshes it), `session-reauth.test.ts` (an emailed code is
 refused and a failed proof counts), `session-reauth.realdb.test.ts` (two
 concurrent consumes, one success), and `confirm-its-you-dialog.test.tsx` (the
 replay is once, body unchanged).
