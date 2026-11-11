@@ -23,15 +23,16 @@ import {
 } from "@/lib/xero-supplementary-invoice-statuses";
 import { alertTakenBackInvoicesPaidAgain, returnMovedInvoicesToCapturedIntent } from "@/lib/superseded-ask-invoice-return";
 import {
-  OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES,
   attachPaymentIntentToWaitingSupplementaryInvoiceOperations,
   hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent,
   lockSupplementaryInvoiceAnchor,
   releaseWaitingSupplementaryInvoiceOperations,
 } from "@/lib/xero-operation-outbox";
 import { enqueueAdditionalCaptureReceiptOperation } from "@/lib/additional-capture-receipt-enqueue";
-import { anchorCaptureHasReceipt } from "@/lib/additional-capture-receipt-link";
-import { asRecord } from "@/lib/xero-json";
+import {
+  reviveRetiredSupplementaryInvoice,
+  type RetiredInvoiceRevival,
+} from "@/lib/xero-supplementary-invoice-revive";
 
 /**
  * The code the reaper stamps on an operation it retires, and the ONLY code the
@@ -47,7 +48,7 @@ export const STALE_WAITING_PAYMENT_ERROR_CODE = "STALE_WAITING_PAYMENT";
  * status-and-code guarded `updateMany`, so a replayed webhook, or the confirm
  * route racing it, finds nothing to claim and alerts nobody a second time.
  */
-const CAPTURED_NOT_ISSUED_ERROR_CODE = "STALE_WAITING_PAYMENT_CAPTURED";
+export const CAPTURED_NOT_ISSUED_ERROR_CODE = "STALE_WAITING_PAYMENT_CAPTURED";
 
 /**
  * A retired invoice another operation already answers: an invoice for the same
@@ -55,7 +56,7 @@ const CAPTURED_NOT_ISSUED_ERROR_CODE = "STALE_WAITING_PAYMENT_CAPTURED";
  * change was decided instead. Terminal and never revived, so a replay, or the
  * second late-success caller, finds nothing to revive or alert about.
  */
-const COVERED_ERROR_CODE = "STALE_WAITING_PAYMENT_COVERED";
+export const COVERED_ERROR_CODE = "STALE_WAITING_PAYMENT_COVERED";
 
 /** #4324: retired rows the release revives, has alerted on, or found covered.
  * Other CANCELLED rows were withdrawn and bill nothing. */
@@ -107,12 +108,12 @@ export type CapturedAdditionalPaymentXeroOutcome =
 
 type CaptureRefusal = "short-of-ask" | "not-captured" | "unreadable-invoice";
 
-type IssueRefusal =
+export type IssueRefusal =
   | CaptureRefusal
   | "invoice-already-linked"
   | "another-invoice-queued";
 
-const ISSUE_REFUSAL_TEXT: Record<IssueRefusal, string> = {
+export const ISSUE_REFUSAL_TEXT: Record<IssueRefusal, string> = {
   "short-of-ask":
     "the card captured less than the invoice would bill, so issuing it would record more money as received than arrived",
   "not-captured":
@@ -125,7 +126,7 @@ const ISSUE_REFUSAL_TEXT: Record<IssueRefusal, string> = {
     "another supplementary invoice for this booking change is already queued, so issuing it would bill it twice",
 };
 
-type CapturedTransaction = { status: PaymentStatus; amountCents: number } | null;
+export type CapturedTransaction = { status: PaymentStatus; amountCents: number } | null;
 
 /**
  * WHAT HAPPENS TO THIS CAPTURE'S MONEY: refunded, awaiting a treasurer, or
@@ -269,7 +270,7 @@ async function loadRetiredInvoiceCandidates(
  * safe the invoice is not issued and an officer is told; the difference is
  * collected by hand.
  */
-function captureRefusalFor(
+export function captureRefusalFor(
   transaction: CapturedTransaction,
   requestPayload: Prisma.JsonValue | null,
   /** #3403 review (M2): what the other invoices naming this capture already bill; it covers them all together. */
@@ -515,177 +516,8 @@ async function releaseWaitingInvoicesForCapture(
 }
 
 /** What these invoices bill together (an unreadable one, nothing). */
-function billedByOthers(operations: ReadonlyArray<{ requestPayload: Prisma.JsonValue | null }>): number {
+export function billedByOthers(operations: ReadonlyArray<{ requestPayload: Prisma.JsonValue | null }>): number {
   return operations.reduce((total, operation) => total + (supplementaryInvoiceBilledCents(operation.requestPayload) ?? 0), 0);
-}
-
-type RetiredInvoiceRevival =
-  | { outcome: "requeued" }
-  | { outcome: "already" }
-  | { outcome: "refused"; reason: IssueRefusal };
-
-/**
- * THE RETIRED-ROW STEP, one body for both callers (`INV-SSOT`). The caller
- * holds `lockSupplementaryInvoiceAnchor` on `anchorId` for the whole call.
- * No email and no provider call: the release sends the officer alert after
- * this returns `refused`.
- *
- * `stampRefusal` is false for the keep. A refusal (the capture does not cover
- * the invoice, the change is already linked, or another invoice is queued)
- * then writes nothing, so the after-commit release still stamps
- * `STALE_WAITING_PAYMENT_CAPTURED` and emails the officer together. A covering
- * invoice, and a revival with its older rows stamped covered, do commit.
- */
-async function reviveRetiredSupplementaryInvoice(
-  tx: Prisma.TransactionClient,
-  {
-    operation,
-    anchorId,
-    supersededIds,
-    paymentIntentId,
-    transaction,
-    bookingId,
-    stampRefusal,
-  }: {
-    operation: {
-      id: string;
-      localModel: string;
-      requestPayload: Prisma.JsonValue | null;
-    };
-    anchorId: string;
-    /** Older retired rows on this change and intent: stamped covered when this revival or a covering invoice commits. */
-    supersededIds: string[];
-    paymentIntentId: string;
-    transaction: CapturedTransaction;
-    /** The capture's booking, for its receipt check (#3953); null with no capture. */
-    bookingId: string | null;
-    stampRefusal: boolean;
-  },
-): Promise<RetiredInvoiceRevival> {
-  const retiredIds = [operation.id, ...supersededIds];
-  const stampCovered = (ids: string[], message: string) =>
-    ids.length === 0
-      ? Promise.resolve()
-      : tx.xeroSyncOperation.updateMany({
-          where: {
-            id: { in: ids },
-            status: "CANCELLED",
-            lastErrorCode: STALE_WAITING_PAYMENT_ERROR_CODE,
-          },
-          data: { lastErrorCode: COVERED_ERROR_CODE, lastErrorMessage: message },
-        });
-
-  // An invoice for this SAME request already on its way or sent (the repair
-  // tool re-parked one on this intent and it has been released, or sent)
-  // covers the capture. Checked first, because once that one is sent the
-  // change carries an active link, and reading that as "already linked" is the
-  // false alarm a correct booking must not raise.
-  const covering = await tx.xeroSyncOperation.findFirst({
-    where: {
-      ...SUPPLEMENTARY_INVOICE_CREATE_WHERE,
-      id: { notIn: retiredIds },
-      localModel: operation.localModel,
-      localId: anchorId,
-      status: { not: "CANCELLED" },
-      requestPayload: { path: ["paymentIntentId"], equals: paymentIntentId },
-    },
-    select: { id: true },
-  });
-  if (covering) {
-    await stampCovered(
-      retiredIds,
-      `Retired, and the linked payment was captured later; outbox operation ${covering.id} already invoices that payment.`,
-    );
-    return { outcome: "already" };
-  }
-
-  const others = await tx.xeroSyncOperation.findMany({
-    where: { ...supplementaryInvoicesNamingIntentWhere(paymentIntentId), id: { notIn: retiredIds } },
-    select: { requestPayload: true },
-  });
-  let refusal: IssueRefusal | null = captureRefusalFor(transaction, operation.requestPayload, billedByOthers(others));
-  if (!refusal) {
-    const existingLink = await tx.xeroObjectLink.findFirst({
-      where: {
-        localModel: operation.localModel,
-        localId: anchorId,
-        xeroObjectType: "INVOICE",
-        role: "SUPPLEMENTARY_INVOICE",
-        active: true,
-      },
-      select: { id: true },
-    });
-    if (existingLink) {
-      refusal = "invoice-already-linked";
-    } else {
-      const outstanding = await tx.xeroSyncOperation.findFirst({
-        where: {
-          ...SUPPLEMENTARY_INVOICE_CREATE_WHERE,
-          id: { notIn: retiredIds },
-          localModel: operation.localModel,
-          localId: anchorId,
-          status: { in: [...OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES] },
-        },
-        select: { id: true },
-      });
-      if (outstanding) refusal = "another-invoice-queued";
-    }
-  }
-
-  // The keep leaves a refusal for the after-commit release, stamp and alert
-  // together. Nothing is written, including the older rows' covered stamps.
-  if (refusal && !stampRefusal) return { outcome: "refused", reason: refusal };
-
-  await stampCovered(
-    supersededIds,
-    `Retired, and superseded by the newer invoice ${operation.id} for the same payment request, which that payment's capture was decided against.`,
-  );
-
-  if (refusal) {
-    const claimed = await tx.xeroSyncOperation.updateMany({
-      where: {
-        id: operation.id,
-        status: "CANCELLED",
-        lastErrorCode: STALE_WAITING_PAYMENT_ERROR_CODE,
-      },
-      data: {
-        lastErrorCode: CAPTURED_NOT_ISSUED_ERROR_CODE,
-        lastErrorMessage: `The linked payment was captured after this invoice was retired, and it was not re-issued: ${ISSUE_REFUSAL_TEXT[refusal]}.`,
-      },
-    });
-    // Lost the claim: another caller already revived, covered or alerted it.
-    return claimed.count === 1 ? { outcome: "refused", reason: refusal } : { outcome: "already" };
-  }
-
-  // #3953 round 8 (`INV-PAY-139`): the capture's own receipt may already
-  // record it - linked, RUNNING or with a decision stored, which it stores
-  // under this same anchor lock - so the invoice is revived unpaid there:
-  // it still bills the change, and the capture has one recorder.
-  const payload = asRecord(operation.requestPayload) ?? {};
-  const unpaid =
-    bookingId !== null &&
-    payload.recordPayment !== false &&
-    (await anchorCaptureHasReceipt(tx, {
-      bookingId,
-      bookingModificationId: operation.localModel === "BookingModification" ? anchorId : null,
-      paymentIntentId,
-    }));
-  const revived = await tx.xeroSyncOperation.updateMany({
-    where: {
-      id: operation.id,
-      status: "CANCELLED",
-      lastErrorCode: STALE_WAITING_PAYMENT_ERROR_CODE,
-    },
-    data: {
-      ...(unpaid ? { requestPayload: { ...payload, recordPayment: false } as Prisma.InputJsonObject } : {}),
-      status: "PENDING",
-      startedAt: null,
-      completedAt: null,
-      lastErrorCode: null,
-      lastErrorMessage: null,
-    },
-  });
-  return revived.count === 1 ? { outcome: "requeued" } : { outcome: "already" };
 }
 
 async function requeueRetiredSupplementaryInvoiceOperation(args: {
