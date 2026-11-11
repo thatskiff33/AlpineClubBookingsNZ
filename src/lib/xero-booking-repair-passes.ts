@@ -459,14 +459,16 @@ async function applyQueuedAction(
     case "QUEUE_HISTORICAL_ORGANISER_INVOICE": return applyHistoricalOrganiserInvoiceRepair(action, deps);
     case "QUEUE_SUPPLEMENTARY_INVOICE": {
       /**
-       * #4413: the plan is explicit for every edit, so an ordinary price
-       * increase no longer inherits the enqueue's paid default. `chargeKind`
-       * selects the same request the plan read, for the fresh capture check.
+       * #4413: the plan is explicit for every edit. A payload that omits
+       * `recordPayment` is unpaid. Passing that omission through would hit the
+       * enqueue's paid default and book a Stripe receipt for money never taken.
+       * `chargeKind` selects the same request the plan read, for the fresh
+       * capture check.
        */
       const recordPayment =
         typeof action.payload.recordPayment === "boolean"
           ? action.payload.recordPayment
-          : undefined;
+          : false;
       const waitForConfirmedAdditionalPayment =
         typeof action.payload.waitForConfirmedAdditionalPayment === "boolean"
           ? action.payload.waitForConfirmedAdditionalPayment
@@ -533,6 +535,12 @@ async function applyQueuedAction(
           );
           action.resultMessage = `${action.resultMessage} Could not re-check whether the member's card was captured while this sweep ran; if it was, this invoice may be waiting for a confirmation that has already happened.`;
         }
+        // #3403 (`INV-PAY-140`): parked on an ask a later request already
+        // superseded. Called holding nothing, after the enqueue has committed,
+        // as the live edit does. No new lock key, order or site
+        // (`INV-LOCK-001`, `INV-LOCK-002`, `INV-LOCK-003`): the carry takes
+        // the keys it already takes.
+        await deps.followSupersededAskInvoicesForIntentSafely(paymentIntentId);
       }
       return;
     }

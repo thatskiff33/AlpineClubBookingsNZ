@@ -456,7 +456,7 @@ export function supplementaryInvoiceChargeRequestWhere(
         reason: buildEditFinancialReviewChargeReason(bookingModificationId),
       },
     ],
-  } as const;
+  };
 }
 
 export function missingSupplementaryInvoiceManualReviewSummary(

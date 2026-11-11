@@ -4,6 +4,7 @@ import {
   formatBookingXeroRepairHumanSummary,
   runBookingXeroRepair,
 } from "@/lib/xero-booking-repair";
+import { applyActionsForPass } from "@/lib/xero-booking-repair-passes";
 import { PartialRefundError } from "@/lib/payment-transactions";
 import { withTimeZoneAsync } from "@/lib/__tests__/helpers/timezone";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -736,6 +737,9 @@ function createDependencies(state: {
     releaseXeroSupplementaryInvoiceOperationsForPaymentIntent: vi
       .fn()
       .mockResolvedValue({ released: 1, queueOperationIds: ["queue_released"] }),
+    // #3403: the live edit's follow, injected so a waiting repair can be seen
+    // to ask for it without taking the carry's locks.
+    followSupersededAskInvoicesForIntentSafely: vi.fn().mockResolvedValue(undefined),
     processQueuedXeroOutboxOperations: vi.fn().mockResolvedValue({
       found: 0,
       processed: 0,
@@ -2968,6 +2972,8 @@ describe("runBookingXeroRepair", () => {
         },
       );
       expect(deps.releaseXeroSupplementaryInvoiceOperationsForPaymentIntent).not.toHaveBeenCalled();
+      expect(deps.followSupersededAskInvoicesForIntentSafely).toHaveBeenCalledTimes(1);
+      expect(deps.followSupersededAskInvoicesForIntentSafely).toHaveBeenCalledWith("pi_ordinary");
     });
 
     it("records payment when the edit's own capture covers the invoice", async () => {
@@ -2982,6 +2988,7 @@ describe("runBookingXeroRepair", () => {
         },
       );
       expect(deps.releaseXeroSupplementaryInvoiceOperationsForPaymentIntent).not.toHaveBeenCalled();
+      expect(deps.followSupersededAskInvoicesForIntentSafely).not.toHaveBeenCalled();
     });
 
     it("raises the invoice unpaid when nothing attributable was captured", async () => {
@@ -2991,6 +2998,7 @@ describe("runBookingXeroRepair", () => {
           expect.anything(),
           { recordPayment: false, waitForConfirmedAdditionalPayment: false, paymentIntentId: undefined },
         );
+        expect(deps.followSupersededAskInvoicesForIntentSafely).not.toHaveBeenCalled();
       };
       // No request at all.
       await unpaid(bookingWith([]));
@@ -3019,6 +3027,71 @@ describe("runBookingXeroRepair", () => {
       expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
         expect.anything(),
         { recordPayment: false, waitForConfirmedAdditionalPayment: false, paymentIntentId: undefined },
+      );
+      expect(deps.followSupersededAskInvoicesForIntentSafely).not.toHaveBeenCalled();
+    });
+
+    it("a superseded ask still waits on its own intent, and the carry is asked to follow the later request", async () => {
+      const { deps } = await repair(bookingWith([
+        ordinaryRequest({ status: "FAILED" }),
+      ]), {}, true);
+
+      expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+        expect.anything(),
+        {
+          recordPayment: true,
+          waitForConfirmedAdditionalPayment: true,
+          paymentIntentId: "pi_ordinary",
+        },
+      );
+      expect(deps.followSupersededAskInvoicesForIntentSafely).toHaveBeenCalledWith("pi_ordinary");
+    });
+
+    it("treats a missing recordPayment as unpaid, so the enqueue cannot record a Stripe payment by default", async () => {
+      const deps = createDependencies({ bookings: [] });
+      await applyActionsForPass(
+        [{
+          bookingId: "booking_1",
+          bookingStatus: "CONFIRMED",
+          paymentId: "payment_1",
+          paymentStatus: "SUCCEEDED",
+          memberId: "member_1",
+          memberName: "Member",
+          memberEmail: "member@example.com",
+          checkIn: "2026-06-10",
+          checkOut: "2026-06-12",
+          findings: [],
+          actions: [{
+            key: "queue:supplementary-invoice:mod_1",
+            bookingId: "booking_1",
+            type: "QUEUE_SUPPLEMENTARY_INVOICE",
+            description: "Queue the missing supplementary invoice.",
+            safeToAutoApply: true,
+            status: "planned",
+            resultMessage: null,
+            payload: {
+              bookingId: "booking_1",
+              bookingModificationId: "mod_1",
+              priceDiffCents: 2500,
+              changeFeeCents: 500,
+              waitForConfirmedAdditionalPayment: true,
+              paymentIntentId: "pi_ordinary",
+              chargeKind: "ordinary",
+            },
+          }],
+        }],
+        deps,
+        false,
+        CLUB_FORMAT_TEST,
+      );
+
+      expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          recordPayment: false,
+          waitForConfirmedAdditionalPayment: true,
+          paymentIntentId: "pi_ordinary",
+        }),
       );
     });
 

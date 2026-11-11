@@ -8,3 +8,6 @@
   card request waits until the card payment succeeds. A payment already taken
   is recorded. A bank transfer, or an edit with no card payment to point at,
   is raised as unpaid so the treasurer can record the money when it arrives.
+  A request a later card payment already carries waits on that later payment.
+  An invoice instruction that does not say whether to record a card payment
+  is sent unpaid.

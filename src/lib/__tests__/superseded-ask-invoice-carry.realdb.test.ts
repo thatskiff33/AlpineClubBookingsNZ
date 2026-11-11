@@ -1482,6 +1482,24 @@ function deferred() {
         expect(await invoices()).toHaveLength(1);
       });
 
+      it("an ask a later request already carries waits on that later request", async () => {
+        await seedPaidBooking();
+        await seedPrimaryInvoiceOperation();
+        const a = await priceIncrease(MOD_A, A_CENTS, { xeroLeg: false });
+        await declineCard(a);
+        const b = await priceIncrease(MOD_B, B_CENTS, { xeroLeg: false });
+
+        await applyRepair();
+
+        expect(await invoiceFor(MOD_A)).toMatchObject({
+          status: "WAITING_PAYMENT",
+          waitsOn: b,
+          parkedFrom: a,
+          recordPayment: true,
+          cents: A_CENTS,
+        });
+      });
+
       it("a bank-transfer edit is raised unpaid, with no Stripe payment recorded", async () => {
         await seedPaidBooking("INTERNET_BANKING");
         await seedPrimaryInvoiceOperation();
