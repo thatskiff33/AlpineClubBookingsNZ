@@ -86,7 +86,12 @@ export async function completeMemberDetailsGateIfShown(page: Page): Promise<void
     };
     await fillIfEmpty(/address line 1/i, "12 Mountain Rd");
     await fillIfEmpty(/city|town/i, "Alpine Village");
+    await fillIfEmpty(/^region$/i, "Waikato");
     await fillIfEmpty(/postcode|postal code/i, "3420");
+    await fillIfEmpty(/^country$/i, "New Zealand");
+    await fillIfEmpty(/^country code$/i, "64");
+    await fillIfEmpty(/^area code$/i, "27");
+    await fillIfEmpty(/^phone number$/i, "5550199");
     const postalAddressMissing = dialog.getByText("Postal Address Line 1", {
       exact: true,
     });
