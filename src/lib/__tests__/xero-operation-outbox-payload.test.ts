@@ -302,6 +302,7 @@ describe("xero operation outbox payload parsing", () => {
       "GROUP_SETTLEMENT_INVOICE_VOID",
       "MEMBERSHIP_SUBSCRIPTION_INVOICE",
       "KEPT_LATE_CAPTURE_INVOICE",
+      "CARD_REFUND_REVERSAL_INVOICE",
       "ADDITIONAL_CAPTURE_RECEIPT",
       "ORGANISER_EXTRA_ADJUSTMENT",
     ]);
@@ -415,6 +416,7 @@ describe("xero operation outbox payload parsing", () => {
       ["GROUP_SETTLEMENT_INVOICE_VOID", "INVOICE"],
       ["MEMBERSHIP_SUBSCRIPTION_INVOICE", "INVOICE"],
       ["KEPT_LATE_CAPTURE_INVOICE", "INVOICE"],
+      ["CARD_REFUND_REVERSAL_INVOICE", "INVOICE"],
       ["ADDITIONAL_CAPTURE_RECEIPT", "PAYMENT"],
     ]);
     for (const queueType of XERO_OUTBOX_QUEUE_TYPES) {

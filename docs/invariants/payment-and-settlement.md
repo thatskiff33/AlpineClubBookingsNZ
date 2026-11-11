@@ -1430,8 +1430,8 @@ one, check the other.
     open row owes that Stripe created before the cutoff migration, or one whose
     row closed "Paid another way" (`INV-PAY-142`) is raised dead; one naming no
     booking only alerts and is audited.
-  - **Paid another way** notes only what a card note still in Xero does not
-    cover, kept on its record (`failedLaterCardNoteCoverCents`).
+  - **Paid another way** queues a Stripe reversal for the cents a card note
+    still covers, and a bank note for the whole close (`INV-PAY-151`).
   - **Officers hear once per refused slice or failed-later decision**, and
     again if retries run out.
   - **Deploy window**: an older release closes a refused row as paid and drops
@@ -2869,10 +2869,12 @@ _Legacy: settles tasks raised before #4317._
     it": owed nowhere; reviews net the full raised amount; the journal retains
     it. "Still owed": the task records the paid part; a dead row
     (`card_refund_still_owed_<task>`) keeps the rest owed.
-  - **Xero** (8 Oct): every kind queues a bank-transfer note keyed on the
-    task, sized by it less its own notes, dated the close's day, where an
-    invoice exists to credit; else none (`:no-xero-note`). No card note fills
-    that cash.
+  - **Xero** (8 Oct): a close no card note covers queues a bank-transfer note
+    keyed on the task, sized by it less its own notes, dated the close's day,
+    where an invoice exists to credit; else none (`:no-xero-note`). No card
+    note fills that cash. When a card note covers some of the close, the 10
+    Nov rule replaces this (`INV-PAY-151`): a Stripe reversal for the covered
+    cents, and the bank note for the whole close.
   - **A late capture: receipt, then credit** (8 Oct). The note names the
     capture's receipt by its invoice, never by intent. With none in Xero, the
     close queues it (`INV-PAY-110`), requeuing a failed one that cannot have
@@ -4125,3 +4127,35 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
   `cancel-card-refund-shortfall-preview.test.ts`,
   `clipped-mirror-open-hand-back.test.ts` and
   `superseded-refund-cancel-hold-back.realdb.test.ts`.
+
+## INV-PAY-151
+
+**Related: `INV-PAY-122`** and **`INV-PAY-128`**.
+
+- **A Paid another way close of a failed-later card refund whose card note
+  covers some of it queues two Xero documents** (#4369, 10 Nov 2026). An
+  ACCREC invoice for the covered cents records that money back in the Stripe
+  account. A bank-transfer refund credit note for the whole close records what
+  was paid. A close with no cover queues only the bank note.
+- The invoice is coded like the note it undoes (`hutFeeRefunds`, GST
+  inclusive), paid in full into the Stripe bank account, never emailed, never
+  allocated, and never stored on `Payment.xeroInvoiceId`. It is dated the club
+  day of the close. A lock on or after that day dates the invoice and its
+  payment the next open day and keeps the close day in the reference. A voided
+  or deleted one is not raised again.
+- Coverage subtracts a reversal only once its invoice link is active and not
+  voided or deleted. One still queued changes nothing. Paying back less than
+  the card note leaves the over-coverage the reconciliation report already
+  lists. While the reversal is linked and the bank note is only queued, the
+  gap is the close's own uncovered cents, and card-note sizing raises no
+  Stripe note for it.
+- The close does not store `paidAnotherWayCardNoteCover`. A capacity-race
+  shortfall still does.
+- Both rows go in the close's transaction, after the record and the money
+  line, under the locks already held. Either enqueue refusing throws, so
+  neither commits. No new advisory lock. Xero is called after commit.
+- Proven by `card-refund-paid-another-way-xero.test.ts`,
+  `card-refund-paid-another-way.test.ts`,
+  `xero-card-refund-reversal-invoice.test.ts`,
+  `card-refund-reversal-coverage.test.ts` and
+  `card-refund-paid-another-way.realdb.test.ts`.

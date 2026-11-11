@@ -24,6 +24,7 @@ import { keptReceiptHeldForOfficer } from "@/lib/kept-late-capture-receipt-rows"
 import { lockKeptCaptureAnchor } from "@/lib/kept-late-capture-change-receipt";
 import { paidAnotherWayReceiptRetryInstruction } from "@/lib/paid-another-way-receipt-retry-wording";
 import { enqueueXeroRefundCreditNoteOperation } from "@/lib/xero-operation-outbox";
+import { enqueueCardRefundReversalInvoiceOperation } from "@/lib/xero-card-refund-reversal-invoice";
 import { xeroDocumentDateFromInstant } from "@/lib/xero-provider-dates";
 
 /**
@@ -47,10 +48,10 @@ export type PaidAnotherWayXeroPlan =
        */
       creditsInvoiceId?: string;
       /**
-       * #4104 (`failedLaterCardNoteCoverCents`): how much of what this row owes
-       * a card refund note already in Xero answers - raised while a refund
-       * Stripe failed later still counted. That much of the bank transfer takes
-       * no note of its own; the close's note is for the rest. Absent for none.
+       * #4104, rewritten by #4369 (`INV-PAY-151`): how much of this close a card
+       * refund note still answers, after live reversal invoices. When it is
+       * more than zero the close queues a Stripe reversal for these cents and
+       * a bank-transfer note for the whole close. Absent for none.
        */
       cardNoteCoversCents?: number;
     }
@@ -248,12 +249,12 @@ function failedRefundCentsOf(operation: CardNoteCoverOperation): number {
  * two, in part where the excess is smaller.
  *
  * The close counts as noted for all it paid back (its key is the ordinary
- * `now`), and its own note is sized for the rest (`queuePaidAnotherWayXero`),
- * so the bank transfer takes that much of the excess, and a later card refund's
- * note is sized as it would have been. A close for less than this leaves the
- * rest of the excess: the Xero note credits more than went back, which the
- * Xero reconciliation report lists as refund coverage above the refunded total
- * (`stripe-refund-over-coverage`) for an officer to correct in Xero.
+ * `now`). When this is more than zero, the close queues a Stripe reversal for
+ * these cents and a bank note for the whole close (`INV-PAY-151`). A close for
+ * less than the card note leaves the rest of the excess: the Xero note credits
+ * more than went back, which the Xero reconciliation report lists as refund
+ * coverage above the refunded total (`stripe-refund-over-coverage`) for an
+ * officer to correct in Xero.
  *
  * An unreadable resolved note decides nothing here (0); the note's own enqueue
  * refuses on it.
@@ -310,8 +311,7 @@ export type PaidAnotherWayXeroQueued =
   | "refund-note-after-receipt"
   | "refund-note-after-failed-receipt"
   | "receipt-held-for-officer"
-  | "covered-by-card-note"
-  | "refund-note-beyond-card-note"
+  | "stripe-reversal-and-bank-note"
   | "nothing";
 
 /**
@@ -325,13 +325,17 @@ export function paidAnotherWayXeroAuditFollowUp(queued: PaidAnotherWayXeroQueued
   if (queued === "refund-note-after-failed-receipt") {
     return `. ${paidAnotherWayReceiptRetryInstruction("failed", "the refund note follows")}`;
   }
+  if (queued === "stripe-reversal-and-bank-note") {
+    return ". Xero will record an invoice for the failed card refund's money back in the Stripe account, and a bank-transfer refund credit note for the full amount paid back.";
+  }
   return "";
 }
 
 /**
- * #4104: how much of a close of `amountCents` the plan's card note answers -
- * what the close's record keeps (`paidAnotherWayCardNoteCoverContext`) and its
- * own note leaves out (`queuePaidAnotherWayXero`). 0 for any other plan.
+ * #4104 / #4369 (`INV-PAY-151`): how much of a close of `amountCents` a card
+ * note still answers. That is the Stripe reversal the close queues. The bank
+ * note is the whole close. 0 for any other plan. The close no longer stores
+ * this on the record; a capacity-race shortfall still does.
  */
 export function paidAnotherWayCardNoteCoversCents(plan: PaidAnotherWayXeroPlan, amountCents: number): number {
   return plan.xeroRefundNote === "now" ? Math.min(amountCents, plan.cardNoteCoversCents ?? 0) : 0;
@@ -340,10 +344,11 @@ export function paidAnotherWayCardNoteCoversCents(plan: PaidAnotherWayXeroPlan, 
 /**
  * Queue what the plan says, on the close's transaction, after its record:
  *
- * - `now` (M3 / round 5): the bank-transfer refund note, for exactly the amount
- *   paid back, keyed on the record so it is sized on its own beside any card
- *   note (the record is already in this transaction, so the cash evidence
- *   counts it);
+ * - `now` (M3 / round 5, #4369): the bank-transfer refund note, for the whole
+ *   amount paid back. When a card note still covers some of it, the same
+ *   transaction also queues a Stripe reversal invoice for those cents
+ *   (`INV-PAY-151`). Either enqueue refusing queues neither: the throw rolls
+ *   the close back. A close with no cover queues only the bank note;
  * - `after-receipt` (round 6): the late charge's receipt, on its approval task;
  *   the receipt's worker queues the note once it is in Xero. The record is
  *   already in this transaction, so the enqueue reads the refund as closed. The
@@ -372,21 +377,52 @@ export async function queuePaidAnotherWayXero(
   },
 ): Promise<PaidAnotherWayXeroQueued> {
   if (plan.xeroRefundNote === "now") {
-    // #4104: what a card note already in Xero answers takes no second note.
     const coveredCents = paidAnotherWayCardNoteCoversCents(plan, close.amountCents);
-    if (coveredCents >= close.amountCents) return "covered-by-card-note";
-    const queued = await enqueueXeroRefundCreditNoteOperation(close.paymentId, close.amountCents - coveredCents, {
+    const documentDate = xeroDocumentDateFromInstant(close.closedAt, close.clubZone);
+    if (coveredCents > 0) {
+      // #4369: both rows, or neither. The reversal is the covered cents; the
+      // bank note is the whole close, not the remainder.
+      const reversal = await enqueueCardRefundReversalInvoiceOperation({
+        paymentId: close.paymentId,
+        bookingId: close.bookingId,
+        closeTaskId: close.recordId,
+        amountCents: coveredCents,
+        closedOn: documentDate,
+        createdByMemberId: close.actingMemberId,
+        store: tx,
+      });
+      if (!reversal.queueOperationId) {
+        throw new Error(
+          `Paid-another-way close ${close.operationId}: the Stripe reversal was not queued (${reversal.message}), so the bank note was not queued either.`,
+        );
+      }
+      const queued = await enqueueXeroRefundCreditNoteOperation(close.paymentId, close.amountCents, {
+        createdByMemberId: close.actingMemberId,
+        refundMethod: "internet-banking",
+        paidAnotherWayTaskId: close.recordId,
+        documentDate,
+        ...(plan.creditsInvoiceId ? { creditsInvoiceId: plan.creditsInvoiceId } : {}),
+        store: tx,
+      });
+      if (!queued.queueOperationId) {
+        throw new Error(
+          `Paid-another-way close ${close.operationId}: the bank-transfer refund note was not queued (${queued.message}), so the Stripe reversal was not queued either.`,
+        );
+      }
+      return "stripe-reversal-and-bank-note";
+    }
+    const queued = await enqueueXeroRefundCreditNoteOperation(close.paymentId, close.amountCents, {
       createdByMemberId: close.actingMemberId,
       refundMethod: "internet-banking",
       paidAnotherWayTaskId: close.recordId,
       // Round 7 (money M4): the club day of the close, as the receipt's worker
       // dates a waiting close's note (`notePaidAnotherWayCloseOnReceipt`).
-      documentDate: xeroDocumentDateFromInstant(close.closedAt, close.clubZone),
+      documentDate,
       ...(plan.creditsInvoiceId ? { creditsInvoiceId: plan.creditsInvoiceId } : {}),
       store: tx,
     });
     if (queued.queueOperationId === null) return "nothing";
-    return coveredCents > 0 ? "refund-note-beyond-card-note" : "refund-note";
+    return "refund-note";
   }
   if (plan.xeroRefundNote === "none") return "nothing";
   if (plan.receipt === null) {

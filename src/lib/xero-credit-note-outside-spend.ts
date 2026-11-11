@@ -15,6 +15,7 @@ import { exactProviderAmountToCents } from "@/lib/money-provider-amount";
 import { isLiveXeroPaymentStatus } from "@/lib/xero-payment-status";
 import type { XeroNoteAllocation, XeroNotePayment } from "@/lib/xero-credit-note-spent-outside-app";
 import { BOOKING_INVOICE_LINK_MODELS } from "@/lib/xero-credit-note-write-down";
+import { NOT_CARD_REFUND_REVERSAL_INVOICE_LINK } from "@/lib/xero-operation-outbox-payload";
 
 /** The note's allocations with an exact-cent amount and an invoice (anything else is skipped). */
 export function xeroAllocationsOf(
@@ -103,7 +104,13 @@ export async function outsideSpendCents(
           // Only a booking's invoice is "the app's own" here: those are the ones the inbound sync
           // mirrors. An offset against a subscription or other invoice moved the member's credit
           // and nothing else will record it.
-          where: { xeroObjectType: "INVOICE", xeroObjectId: { in: invoiceIds }, localModel: { in: [...BOOKING_INVOICE_LINK_MODELS] } },
+          where: {
+            xeroObjectType: "INVOICE",
+            xeroObjectId: { in: invoiceIds },
+            localModel: { in: [...BOOKING_INVOICE_LINK_MODELS] },
+            // A failed-card-refund reversal is money back in Stripe, not the booking's bill (`INV-PAY-151`).
+            ...NOT_CARD_REFUND_REVERSAL_INVOICE_LINK,
+          },
           select: { xeroObjectId: true },
         })
       : [],

@@ -10,7 +10,6 @@ import { formatBookingReference } from "@/lib/booking-reference";
 import {
   PaidAnotherWayXeroChangedError,
   paidAnotherWayXeroAuditFollowUp,
-  paidAnotherWayCardNoteCoversCents,
   paidAnotherWayXeroPlan,
   paidAnotherWayXeroPromise,
   queuePaidAnotherWayXero,
@@ -27,7 +26,6 @@ import { recordCardRefundMadeBeforePaidAnotherWay } from "@/lib/cancel-card-refu
 import type { ClubTimeZone } from "@/lib/club-time";
 import logger from "@/lib/logger";
 import { MANUAL_REFUND_TASK_REASON_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
-import { paidAnotherWayCardNoteCoverContext } from "@/lib/card-refund-paid-another-way-cash";
 import { cardRefundPaidAnotherWayOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
 import {
   DEAD_CARD_REFUND_OPERATION_SELECT,
@@ -185,9 +183,9 @@ export interface DeadCardRefundRow {
    */
   xeroRefundNote: PaidAnotherWayXeroPromise;
   /**
-   * #4104: how much of it a card refund note already in Xero answers - a refund
-   * Stripe accepted, noted and failed later (`failedLaterCardNoteCoverCents`);
-   * 0 for none. With it, `xeroRefundNote` is `covered-by-card-note`.
+   * #4104 / #4369: how much of it a card refund note still answers. With it,
+   * `xeroRefundNote` is `covered-by-card-note`: the close queues a Stripe
+   * reversal for these cents and a bank note for the whole amount. 0 for none.
    */
   cardNoteCoversCents: number;
   /** Its last failure looked like a timeout or a network error, so Stripe may have refunded after all. */
@@ -353,12 +351,6 @@ async function postPaidAnotherWayLine(
   await writeBookingLedgerRows(tx, rows);
 }
 
-/** The record's `reviewContext` for a card-note cover, or nothing (A-F1). */
-function cardNoteCoverReviewContext(cardNoteCoversCents: number): { reviewContext?: Prisma.InputJsonObject } {
-  const reviewContext = paidAnotherWayCardNoteCoverContext(cardNoteCoversCents);
-  return reviewContext ? { reviewContext } : {};
-}
-
 /** Close one dead card refund as paid another way. See the module comment. */
 export async function closeCardRefundPaidAnotherWay(
   input: CardRefundPaidAnotherWayInput,
@@ -496,9 +488,6 @@ export async function closeCardRefundPaidAnotherWay(
         completedByMemberId: input.actingMemberId,
         note,
         reason: paidAnotherWayReason(booking.id, input.paidBack, rest),
-        // #4104 delta review (A-F1): what a card note already in Xero answers
-        // of the close, so its share counts it covered.
-        ...cardNoteCoverReviewContext(paidAnotherWayCardNoteCoversCents(xeroPlan, input.amountCents)),
       },
       select: { id: true },
     });
@@ -586,7 +575,7 @@ export async function closeCardRefundPaidAnotherWay(
   // invoice, or on an officer, queued nothing to run.
   if (
     result.xeroQueued === "refund-note" ||
-    result.xeroQueued === "refund-note-beyond-card-note" ||
+    result.xeroQueued === "stripe-reversal-and-bank-note" ||
     result.xeroQueued === "receipt-then-refund-note"
   ) {
     // The note's (or the receipt's) row committed with the close: only the kick is left.

@@ -706,7 +706,7 @@ rendering are active and its test passes; this design closes no bug by itself.
 | #4336 | Old live reading cannot revive a voided refund note | R23 and section 6: terminal tombstone before timestamp comparison |
 | #4347 | Old reading cannot revive/count a voided account-credit note | R09/R23: same object-head terminal rule; grant liability and document coverage stay distinct |
 | #4362 | Fully-credit-paid or zero-priced booking posts charges and balances zero | R01/R10: charges are independent of cash settle; credit applies equal liability, explicit zero event needs no fake receipt |
-| #4369 | Failed card refund then bank hand-back shows Stripe return and separate bank payment | R13 reverses the card refund; R14 pays the same RP by bank; section 7 renders #4361's reversal plus bank note |
+| #4369 | Failed card refund then bank hand-back shows Stripe return and separate bank payment | R13 reverses the card refund; R14 pays the same RP by bank; section 7 renders #4361's reversal plus bank note. The current queue (10 Nov 2026) reverses the covered cents and queues the bank note on this close; M13 must still render that reversal and that bank note from the ledger |
 | #4370 | Later Xero note cannot make failed card refund count again | R13/R23 and ownership: Stripe owns card cash; Xero changes coverage/applications only |
 | #4380 | Late 5000-cent capture/refund on cancelled booking leaves matching Xero pair, net zero | R24/R06/R12: matched source pair and per-capture manifest; no unrelated cancellation invoice credit |
 | #4381 | Paid-another-way close records kept 8000-cent change once on invoice already billing it | R24/R14: distinct retained receipt and bank hand-back with exact obligation/coverage; no repeated change revenue |

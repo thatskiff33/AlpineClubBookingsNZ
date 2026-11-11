@@ -6740,7 +6740,13 @@ applied to a figure nobody saw; the page refreshes and they choose again. The
 order is `lock(1)`, then the Payment row, then the allocation, which takes the
 row it already holds. The claim is a status-guarded
 `updateMany` before any money moves; a lost claim writes nothing. The close's
-hand-back task and ledger line are written in the same transaction. The worker
+hand-back task and ledger line are written in the same transaction. When the
+card note covers some of the close (#4369, `INV-PAY-151`), that same
+transaction also inserts two outbox rows — the Stripe reversal invoice and the
+bank note — after the record and the money line, under the locks already held
+(`lock(1)`, then the Payment row). No new advisory key (`INV-LOCK-002`). A
+lost claim writes neither row. The provider calls stay in the workers, after
+commit. The worker
 never claims a dead row, and the Xero note is an outbox row kicked after the
 commit, so no provider call runs under the key. A late capture's refund also
 takes the approval task's row (`lockKeptLateCaptureTask`, #3924 round 6) after

@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   listOperations: vi.fn(),
   applyLocalRefundAllocation: vi.fn(),
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
+  enqueueReversal: vi.fn(async () => ({ queueOperationId: "rev-1", message: "queued" })),
   kick: vi.fn(),
   createAuditLog: vi.fn(),
   readLateCaptureXeroReceipt: vi.fn(),
@@ -81,6 +82,12 @@ vi.mock("@/lib/booking-ledger-write", () => ({
   writeBookingLedgerRows: (_store: unknown, rows: unknown[]) => {
     calls.push("ledger-line");
     return mocks.writeLedgerRows(rows);
+  },
+}));
+vi.mock("@/lib/xero-card-refund-reversal-invoice", () => ({
+  enqueueCardRefundReversalInvoiceOperation: (...args: unknown[]) => {
+    calls.push("xero-reversal");
+    return mocks.enqueueReversal(...args);
   },
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
@@ -286,6 +293,7 @@ beforeEach(() => {
   mocks.claim.mockResolvedValue({ count: 1 });
   mocks.applyLocalRefundAllocation.mockResolvedValue(undefined);
   mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({ queueOperationId: "xop-1" });
+  mocks.enqueueReversal.mockResolvedValue({ queueOperationId: "rev-1", message: "queued" });
   mocks.kick.mockResolvedValue(undefined);
   mocks.createAuditLog.mockResolvedValue(undefined);
   mocks.readLateCaptureXeroReceipt.mockResolvedValue({ kind: "none" });
@@ -724,10 +732,10 @@ describe("closing a dead card refund as paid another way", () => {
     );
   });
 
-  // #4104 delta review (MH): a re-planned door row whose slice records a refund
-  // Stripe failed later - its card note still in Xero - notes only the rest,
-  // and the outbox is still kicked for the note it did queue.
-  it("MUTATION: a re-planned row's failed refund still noted in Xero: only the rest is noted, and the outbox is kicked", async () => {
+  // #4369: a re-planned door row whose slice records a refund Stripe failed
+  // later. The card note covers $50 of the $150 close, so the close queues a
+  // $50 Stripe reversal and a $150 bank note, and does not store the cover.
+  it("MUTATION: a re-planned row's failed refund still noted in Xero queues both documents for the whole close", async () => {
     mocks.findOperation.mockResolvedValue(
       deadOperation({
         allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 15_000, stripeKeySuffix: "refused1", failedRefundIds: ["re_1"] }],
@@ -736,12 +744,16 @@ describe("closing a dead card refund as paid another way", () => {
     mocks.noteCoverageCents.mockResolvedValueOnce(9_000);
     mocks.noteEligibleCashCents.mockResolvedValueOnce(4_000);
     const result = await close();
-    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("p-1", 10_000, expect.objectContaining({ paidAnotherWayTaskId: "task-1" }));
-    expect(result.xeroQueued).toBe("refund-note-beyond-card-note");
+    expect(mocks.enqueueReversal).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 5_000, closeTaskId: "task-1" }));
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("p-1", 15_000, expect.objectContaining({ paidAnotherWayTaskId: "task-1" }));
+    expect(result.xeroQueued).toBe("stripe-reversal-and-bank-note");
     expect(mocks.kick).toHaveBeenCalledTimes(1);
-    // A-F1: the record keeps what the card note answers, so its share counts it covered.
-    expect(mocks.createRecord).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ reviewContext: { paidAnotherWayCardNoteCover: 5_000 } }) }),
+    expect(mocks.createRecord.mock.calls[0]?.[0]?.data).not.toHaveProperty("reviewContext");
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        summary: expect.stringContaining("money back in the Stripe account"),
+      }),
+      expect.anything(),
     );
   });
 

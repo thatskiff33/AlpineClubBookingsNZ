@@ -92,15 +92,14 @@ import { exactContains } from "@/lib/prisma-exact-prefix";
  */
 
 /**
- * #4104 delta review (A-F1, `INV-PAY-128`): HOW MUCH OF A `now` CLOSE A CARD
- * REFUND NOTE ALREADY IN XERO ANSWERS - the card note of a refund Stripe failed
- * later (`failedLaterCardNoteCoverCents`), capped at what the close paid back.
- * The close's own note is for the rest, so its record keeps this figure: the
- * close's share counts it as covered (`readPaidAnotherWayCloseShare`), or the
- * self-heal and the repair tool would read that much of the close as un-noted
- * forever and size later card notes short. Kept in the record's
- * `reviewContext` (`paidAnotherWayCardNoteCover`) beside a paid-twice
- * resolution, which keeps it when written; written once, at the close.
+ * #4104 delta review (A-F1, `INV-PAY-128`), and #4369 (`INV-PAY-151`): how much
+ * of a record a card note already answers, so `readPaidAnotherWayCloseShare`
+ * leaves that much out of the record's own note.
+ *
+ * A Paid another way close no longer writes this. It queues a Stripe reversal
+ * for the covered cents and a bank note for the whole close, so the share must
+ * not shrink that note. A capacity-race shortfall still writes it. A record
+ * that still has it is that shortfall, or a close from before this release.
  */
 export function paidAnotherWayCardNoteCoverContext(cardNoteCoversCents: number): { paidAnotherWayCardNoteCover: number } | null {
   return cardNoteCoversCents > 0 ? { paidAnotherWayCardNoteCover: cardNoteCoversCents } : null;

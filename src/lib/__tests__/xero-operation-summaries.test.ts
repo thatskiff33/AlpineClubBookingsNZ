@@ -63,6 +63,25 @@ describe("summarizeXeroOperation — queued outbox payloads", () => {
     );
   });
 
+  it("summarizes a queued invoice for a failed card refund back in Stripe (#4369)", () => {
+    const summary = summarizeXeroOperation({
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      requestPayload: {
+        queueType: "CARD_REFUND_REVERSAL_INVOICE",
+        bookingId: "booking-abcdefghijklmno",
+        paymentId: "payment-abcdefghijklmno",
+        closeTaskId: "task-abcdefghijklmno",
+        amountCents: 8000,
+        closedOn: "2026-07-01",
+      },
+      responsePayload: null,
+    }, CLUB_FORMAT_TEST);
+    expect(summary?.title).toBe("Queued: record a failed card refund back in Stripe");
+    expect(factValue(summary!, "Amount")).toBe("$80.00");
+    expect(factValue(summary!, "Closed on")).toBe("2026-07-01");
+  });
+
   it("summarizes a queued invoice for a kept late payment (#3635)", () => {
     const summary = summarizeXeroOperation({
       entityType: "INVOICE",

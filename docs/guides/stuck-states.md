@@ -239,7 +239,11 @@ cancellation's, an approved refund request's, a booking change's, a late card
 charge's or a superseded payment's - queues a Xero refund credit note for
 exactly the amount paid back, worded as a bank transfer ("Refund requested via
 internet banking") and dated the day you closed it, as long as the app has a
-Xero invoice to credit. If the payment's invoice is still on its way to Xero,
+Xero invoice to credit. When a card note already covers some of what you pay
+back, closing also queues an invoice for that covered amount, recording the
+failed card refund's money back in the Stripe account, and the bank-transfer
+note is for the full amount. Paying back less than the card note leaves the
+difference on the Xero reconciliation report. If the payment's invoice is still on its way to Xero,
 the app does not know of one yet: the dialog says no note is queued, and you
 check Xero and record the refund there by hand if it needs one.
 

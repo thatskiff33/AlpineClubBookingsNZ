@@ -64,6 +64,7 @@ const mocks = vi.hoisted(() => ({
   updateXeroBookingInvoiceForBooking: vi.fn(),
   createXeroSupplementaryInvoice: vi.fn(),
   createXeroKeptLateCaptureInvoice: vi.fn(),
+  createXeroCardRefundReversalInvoice: vi.fn(),
   recordAdditionalCaptureReceipt: vi.fn(),
   enqueueAdditionalCaptureReceiptOperation: vi.fn(),
   anchorCaptureHasReceipt: vi.fn(),
@@ -263,6 +264,9 @@ vi.mock("@/lib/xero-supplementary-invoices", () => ({
 }));
 vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({
   createXeroKeptLateCaptureInvoice: mocks.createXeroKeptLateCaptureInvoice,
+}));
+vi.mock("@/lib/xero-card-refund-reversal-invoice", () => ({
+  createXeroCardRefundReversalInvoice: mocks.createXeroCardRefundReversalInvoice,
 }));
 vi.mock("@/lib/additional-capture-receipt-enqueue", () => ({
   enqueueAdditionalCaptureReceiptOperation: mocks.enqueueAdditionalCaptureReceiptOperation,
@@ -3753,6 +3757,24 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
         },
       },
       handler: mocks.createXeroKeptLateCaptureInvoice,
+    },
+    // #4369: a failed card refund's money back in the Stripe account.
+    CARD_REFUND_REVERSAL_INVOICE: {
+      op: {
+        id: "op_card_refund_reversal_1",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "CARD_REFUND_REVERSAL_INVOICE",
+          bookingId: "booking_1",
+          paymentId: "payment_1",
+          closeTaskId: "task_close_1",
+          amountCents: 8000,
+          closedOn: "2026-07-01",
+        },
+      },
+      handler: mocks.createXeroCardRefundReversalInvoice,
     },
     // #3953: a change's card capture nothing waited on, anchored on its ledger row.
     ADDITIONAL_CAPTURE_RECEIPT: {

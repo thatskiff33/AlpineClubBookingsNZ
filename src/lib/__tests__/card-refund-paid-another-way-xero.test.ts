@@ -11,7 +11,11 @@ const mocks = vi.hoisted(() => ({
   eligibleCashCents: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 0),
   lateCaptureIntent: vi.fn<(...args: unknown[]) => Promise<string | null>>(async () => null),
   receipt: vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ kind: "recorded", invoiceId: "inv-receipt" })),
-  enqueueNote: vi.fn<(...args: unknown[]) => Promise<{ queueOperationId: string }>>(async () => ({ queueOperationId: "xop-1" })),
+  enqueueNote: vi.fn<(...args: unknown[]) => Promise<{ queueOperationId: string | null; message?: string }>>(async () => ({ queueOperationId: "xop-1" })),
+  enqueueReversal: vi.fn<(...args: unknown[]) => Promise<{ queueOperationId: string | null; message: string }>>(async () => ({
+    queueOperationId: "rev-1",
+    message: "Stripe reversal invoice queued for background processing.",
+  })),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -36,6 +40,9 @@ vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({
 }));
 vi.mock("@/lib/kept-late-capture-receipt-rows", () => ({ keptReceiptHeldForOfficer: async () => false }));
 vi.mock("@/lib/xero-operation-outbox", () => ({ enqueueXeroRefundCreditNoteOperation: (...args: unknown[]) => mocks.enqueueNote(...args) }));
+vi.mock("@/lib/xero-card-refund-reversal-invoice", () => ({
+  enqueueCardRefundReversalInvoiceOperation: (...args: unknown[]) => mocks.enqueueReversal(...args),
+}));
 
 import {
   paidAnotherWayXeroPlan,
@@ -64,6 +71,11 @@ beforeEach(() => {
   mocks.unreadable.mockReturnValue([]);
   mocks.coveredCents.mockResolvedValue(0);
   mocks.eligibleCashCents.mockResolvedValue(0);
+  mocks.enqueueNote.mockResolvedValue({ queueOperationId: "xop-1" });
+  mocks.enqueueReversal.mockResolvedValue({
+    queueOperationId: "rev-1",
+    message: "Stripe reversal invoice queued for background processing.",
+  });
   mocks.lateCaptureIntent.mockResolvedValue(null);
 });
 
@@ -81,44 +93,58 @@ const queue = (xeroPlan: Awaited<ReturnType<typeof plan>>, amountCents: number) 
 const noteCents = () => mocks.enqueueNote.mock.calls[0]?.[1];
 
 describe("a failed-later row closed as paid another way (#4104, money 2; delta MH, MM1, MM2, ML1)", () => {
-  it("MUTATION: while its card note still covers it - notes exceed the card cash by at least the refund - no second note", async () => {
+  it("MUTATION: a card note that covers the close queues a Stripe reversal for the cover and a bank note for the whole close", async () => {
     mocks.coveredCents.mockResolvedValue(10_000);
     mocks.eligibleCashCents.mockResolvedValue(6_000);
     const xeroPlan = await plan();
-    // The ordinary `now` close (MM1): its record counts as noted, so the bank
-    // transfer takes up the card note's excess and a later refund's note is
-    // sized as it would have been.
     expect(xeroPlan).toEqual({ xeroRefundNote: "now", cardNoteCoversCents: 4_000 });
     expect(paidAnotherWayXeroPromise(xeroPlan)).toBe("covered-by-card-note");
-    expect(await queue(xeroPlan, 4_000)).toBe("covered-by-card-note");
-    expect(mocks.enqueueNote).not.toHaveBeenCalled();
-    expect(xeroQueuedMessage("covered-by-card-note", "Bank transfer")).toMatch(/already in Xero records what you paid back/);
+    expect(await queue(xeroPlan, 4_000)).toBe("stripe-reversal-and-bank-note");
+    expect(mocks.enqueueReversal).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 4_000, closeTaskId: "task-1", paymentId: "p-1", closedOn: "2026-07-01" }),
+    );
+    expect(noteCents()).toBe(4_000);
+    expect(mocks.enqueueNote.mock.calls[0]?.[2]).toMatchObject({ paidAnotherWayTaskId: "task-1", refundMethod: "internet-banking" });
+    expect(mocks.enqueueReversal.mock.invocationCallOrder[0]).toBeLessThan(mocks.enqueueNote.mock.invocationCallOrder[0]!);
+    const queued = xeroQueuedMessage("stripe-reversal-and-bank-note", "Bank transfer");
+    expect(queued).toMatch(/money back in the Stripe account/);
+    expect(queued).toMatch(/full amount paid back/);
+    expect(queued).not.toMatch(/needs no new note|already records what you paid back/);
   });
 
-  it("MUTATION (ML1): a card note covering part of it answers that part; the close's note is for the rest", async () => {
+  it("MUTATION: a card note covering part of the close reverses that part and notes the whole close, not the remainder", async () => {
     mocks.coveredCents.mockResolvedValue(7_500);
     mocks.eligibleCashCents.mockResolvedValue(6_000);
     const xeroPlan = await plan();
     expect(xeroPlan).toEqual({ xeroRefundNote: "now", cardNoteCoversCents: 1_500 });
-    expect(await queue(xeroPlan, 4_000)).toBe("refund-note-beyond-card-note");
-    expect(noteCents()).toBe(2_500);
-    expect(mocks.enqueueNote.mock.calls[0]?.[2]).toMatchObject({ paidAnotherWayTaskId: "task-1", refundMethod: "internet-banking" });
-    expect(xeroQueuedMessage("refund-note-beyond-card-note", "Bank transfer")).toMatch(/records part of what you paid back; .* "Bank transfer" is queued for the rest/);
+    expect(await queue(xeroPlan, 4_000)).toBe("stripe-reversal-and-bank-note");
+    expect(mocks.enqueueReversal).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 1_500 }));
+    expect(noteCents()).toBe(4_000);
   });
 
-  it("MUTATION (MM2): a close for less than the card note covers queues nothing, and says the note credits more than went back", async () => {
+  it("a close for less than the card note covers queues both documents for that part, and says the note credits more than went back", async () => {
     mocks.coveredCents.mockResolvedValue(10_000);
     mocks.eligibleCashCents.mockResolvedValue(6_000);
     const xeroPlan = await plan();
-    expect(await queue(xeroPlan, 1_000)).toBe("covered-by-card-note");
-    expect(mocks.enqueueNote).not.toHaveBeenCalled();
-    // A-F1: the close's record keeps only what it paid back, never the whole cover.
+    expect(await queue(xeroPlan, 1_000)).toBe("stripe-reversal-and-bank-note");
+    expect(mocks.enqueueReversal).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 1_000 }));
+    expect(noteCents()).toBe(1_000);
     expect(paidAnotherWayCardNoteCoversCents(xeroPlan, 1_000)).toBe(1_000);
     expect(paidAnotherWayCardNoteCoversCents({ xeroRefundNote: "none" }, 1_000)).toBe(0);
-    // D4: the dialog says so before the close, for a part close as for a full one.
     const promise = xeroRefundNotePromise("covered-by-card-note", "Bank transfer", "$40.00");
-    expect(promise).toMatch(/card refund credit note for \$40\.00 of this refund/);
+    expect(promise).toMatch(/invoice for \$40\.00 recording the failed card refund's money back in the Stripe account/);
+    expect(promise).toMatch(/full amount you pay back/);
     expect(promise).toMatch(/If you pay back less than \$40\.00, Xero's note credits more than went back: the Xero reconciliation report lists the difference/);
+    expect(promise).not.toMatch(/needs no new note/);
+  });
+
+  it("a bank note that will not queue leaves the reversal uncommitted: the close throws", async () => {
+    mocks.coveredCents.mockResolvedValue(10_000);
+    mocks.eligibleCashCents.mockResolvedValue(6_000);
+    mocks.enqueueNote.mockResolvedValue({ queueOperationId: null, message: "the hand-resolved note cannot be read" });
+    const xeroPlan = await plan();
+    await expect(queue(xeroPlan, 4_000)).rejects.toThrow(/bank-transfer refund note was not queued/);
+    expect(mocks.enqueueReversal).toHaveBeenCalledTimes(1);
   });
 
   it("with no card note left over for it (never raised, or credited back), the bank note is queued as for any close", async () => {
@@ -176,8 +202,9 @@ describe("a failed-later row closed as paid another way (#4104, money 2; delta M
       allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 7_000 }] };
     const xeroPlan = await plan(rest);
     expect(xeroPlan).toEqual({ xeroRefundNote: "now", cardNoteCoversCents: 7_000 });
-    expect(await queue(xeroPlan, 7_000)).toBe("covered-by-card-note");
-    expect(mocks.enqueueNote).not.toHaveBeenCalled();
+    expect(await queue(xeroPlan, 7_000)).toBe("stripe-reversal-and-bank-note");
+    expect(mocks.enqueueReversal).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 7_000 }));
+    expect(noteCents()).toBe(7_000);
   });
 
   it("a close with no invoice to credit queues nothing, card note or not", async () => {

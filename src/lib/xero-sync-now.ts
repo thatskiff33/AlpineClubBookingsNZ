@@ -13,6 +13,7 @@ import { reconcileXeroCreditNote } from "@/lib/xero-inbound/credit-note";
 import { failIfRecountLeftUnsettled } from "@/lib/xero-inbound/recount-left-unsettled";
 import { runXeroInboundCronCycle } from "@/lib/xero-cron-runner";
 import type { CreditNote, Invoice } from "xero-node";
+import { CARD_REFUND_REVERSAL_INVOICE_ROLE } from "@/lib/xero-operation-outbox-payload";
 
 export class XeroSyncNowError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
@@ -137,8 +138,13 @@ export async function syncBookingFromXeroNow(bookingId: string) {
       { localModel: "BookingModification", localId: { in: modifications.map((row) => row.id) } },
       { localModel: "ManualRefundTask", localId: { in: tasks.map((row) => row.id) } },
     ],
-  }, select: { xeroObjectId: true, xeroObjectType: true } });
-  const invoiceIds = new Set(links.filter((link) => link.xeroObjectType === "INVOICE").map((link) => link.xeroObjectId));
+  }, select: { xeroObjectId: true, xeroObjectType: true, role: true } });
+  // A reversal invoice records money back in Stripe. It is not a bill to sync as the booking's invoice (`INV-PAY-151`).
+  const invoiceIds = new Set(
+    links
+      .filter((link) => link.xeroObjectType === "INVOICE" && link.role !== CARD_REFUND_REVERSAL_INVOICE_ROLE)
+      .map((link) => link.xeroObjectId),
+  );
   const noteIds = new Set(links.filter((link) => link.xeroObjectType === "CREDIT_NOTE").map((link) => link.xeroObjectId));
   if (booking.payment?.xeroRefundCreditNoteId) noteIds.add(booking.payment.xeroRefundCreditNoteId);
   if (booking.payment?.xeroInvoiceId) invoiceIds.add(booking.payment.xeroInvoiceId);

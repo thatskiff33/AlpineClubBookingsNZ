@@ -2938,8 +2938,10 @@ Stated limits:
 - **A dashboard refund that settles a row Stripe gave up on is noted in
   full.** A re-send that failed too is owed by a row raised dead
   (`raised-dead`), which is never sent again; the treasurer is told to pay the
-  member another way and close it as "Paid another way", whose note is sized
-  against the failed refund's card note. A refund made in the Stripe dashboard
+  member another way and close it as "Paid another way". A close no card note
+  covers is sized by the task less its own notes. When the failed refund's
+  card note covers some of the close, the close queues a Stripe reversal for
+  the covered cents and a bank note for the whole amount (`INV-PAY-151`). A refund made in the Stripe dashboard
   instead is linked to nothing the app made, so it gets its own note and the
   failed refund's note still stands: Xero credits that amount twice until an
   officer voids one (owner decision, 25 Oct 2026). #4361 plans the automated

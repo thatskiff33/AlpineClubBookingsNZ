@@ -15,6 +15,7 @@ import {
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE,
   XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
+  XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
@@ -184,6 +185,38 @@ function groupSettlementInvoiceRequeuePayload(
  * already raised (the task's link) and records only a missing payment. FAILED
  * or PARTIAL (the payment failed); null for any other row.
  */
+/**
+ * #4369 (`INV-PAY-151`): a failed card refund's Stripe reversal is replayed
+ * from its queued payload, back to PENDING. The worker re-uses an invoice
+ * already raised and records only a missing payment. A voided invoice is
+ * completed and not raised again. FAILED or PARTIAL; null for any other row.
+ * This must run before the generic invoice repair, which would send it as a
+ * booking invoice.
+ */
+function cardRefundReversalInvoiceRequeuePayload(
+  operation: RetryableOperation,
+): Record<string, unknown> | null {
+  if (
+    operation.direction !== "OUTBOUND" ||
+    operation.entityType !== "INVOICE" ||
+    operation.operationType !== "CREATE" ||
+    operation.localModel !== "Payment"
+  ) {
+    return null;
+  }
+  const queued = readQueuedOutboxPayload(operation.requestPayload);
+  return queued?.queueType === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE
+    ? {
+        queueType: queued.queueType,
+        bookingId: queued.bookingId,
+        paymentId: queued.paymentId,
+        closeTaskId: queued.closeTaskId,
+        amountCents: queued.amountCents,
+        closedOn: queued.closedOn,
+      }
+    : null;
+}
+
 function keptLateCaptureInvoiceRequeuePayload(
   operation: RetryableOperation,
 ): Record<string, unknown> | null {
@@ -1078,6 +1111,21 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
             "Only a failed or partial kept-payment invoice with its queued amount can be retried.",
         };
   }
+  if (
+    operation.localModel === "Payment" &&
+    (operation.queueType === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE ||
+      readQueuedOutboxPayload(operation.requestPayload)?.queueType ===
+        XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE)
+  ) {
+    return cardRefundReversalInvoiceRequeuePayload(operation) &&
+      (operation.status === "FAILED" || operation.status === "PARTIAL")
+      ? { supported: true, reason: null }
+      : {
+          supported: false,
+          reason:
+            "Only a failed or partial failed-card-refund reversal with its queued amount can be retried.",
+        };
+  }
   // #3953: a change's card payment receipt is retried on its own row, any stored plan kept.
   if (readAdditionalCaptureReceiptPayload(operation.requestPayload)) {
     return operation.status === "FAILED"
@@ -1445,6 +1493,17 @@ export async function retryXeroSyncOperation(
       "kept-payment invoice",
     );
     return { message: "Queued the kept-payment Xero invoice for retry." };
+  }
+
+  const cardRefundReversalPayload = cardRefundReversalInvoiceRequeuePayload(operation);
+  if (cardRefundReversalPayload) {
+    await requeueOutboxRowForRetry(
+      operation,
+      cardRefundReversalPayload,
+      ["FAILED", "PARTIAL"],
+      "failed-card-refund reversal",
+    );
+    return { message: "Queued the failed-card-refund reversal invoice for retry." };
   }
 
   // #3924 round 9: a late capture's released change invoice, so its worker's

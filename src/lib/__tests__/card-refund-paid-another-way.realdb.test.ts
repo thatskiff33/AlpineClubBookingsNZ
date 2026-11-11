@@ -38,6 +38,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 import { currentXeroClaim } from "@/lib/__tests__/helpers/xero-claim";
+import { CARD_REFUND_REVERSAL_INVOICE_ROLE } from "@/lib/xero-operation-outbox-payload";
 
 /** A plain test label for the skipped outbox row (not a credential). */
 const SKIPPED_ROW_LABEL = ["race", "3372", "paw", "skipped"].join("-");
@@ -490,6 +491,62 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       expect(await prisma.auditLog.count({ where: { entityId: OPERATION_ID } })).toBe(0);
       // And it owes nothing more: the refund Stripe made filled its slice.
       expect(await owedNow()).toBe(0);
+    });
+
+    it("#4369: a card note covering the close queues a Stripe reversal and a bank note for the whole amount", async () => {
+      await prisma.paymentRecoveryOperation.update({
+        where: { id: OPERATION_ID },
+        data: {
+          allocationPlan: [{ paymentTransactionId: TRANSACTION_ID, amountCents: REFUND_CENTS, failedRefundIds: ["re_race_4369"] }],
+        },
+      });
+      await prisma.xeroObjectLink.create({
+        data: {
+          localModel: "Payment",
+          localId: PAYMENT_ID,
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_race_4369_card",
+          role: "REFUND_CREDIT_NOTE",
+          active: true,
+          metadata: { amountCents: REFUND_CENTS },
+        },
+      });
+
+      const result = await close();
+      expect(result.xeroQueued).toBe("stripe-reversal-and-bank-note");
+      const record = await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: BOOKING_ID } });
+      expect(record.reviewContext).toBeNull();
+      const rows = await prisma.xeroSyncOperation.findMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
+      const reversal = rows.find((row) => row.queueType === "CARD_REFUND_REVERSAL_INVOICE");
+      const note = rows.find((row) => row.queueType === "REFUND_CREDIT_NOTE");
+      expect(reversal?.idempotencyKey).toBe(`payment:${PAYMENT_ID}:card-refund-reversal:${record.id}`);
+      expect(reversal?.requestPayload).toMatchObject({
+        amountCents: REFUND_CENTS,
+        closedOn: "2026-07-01",
+        closeTaskId: record.id,
+      });
+      expect(note?.requestPayload).toMatchObject({
+        refundAmountCents: REFUND_CENTS,
+        refundMethod: "internet-banking",
+        paidAnotherWayTaskId: record.id,
+      });
+
+      await prisma.xeroObjectLink.create({
+        data: {
+          localModel: "Payment",
+          localId: PAYMENT_ID,
+          xeroObjectType: "INVOICE",
+          xeroObjectId: "inv_race_4369_reversal",
+          role: CARD_REFUND_REVERSAL_INVOICE_ROLE,
+          active: true,
+          metadata: { closeTaskId: record.id, amountCents: REFUND_CENTS, bookingId: BOOKING_ID },
+        },
+      });
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } });
+      const gap = await readRefundCreditNoteGap(payment);
+      expect(gap.uncoveredCents).toBe(REFUND_CENTS);
+      expect(gap.paidAnotherWayUncoveredCents).toBe(REFUND_CENTS);
+      expect(gap.uncoveredCents - gap.paidAnotherWayUncoveredCents).toBe(0);
     });
 
     it("a refund still being retried is refused and nothing is written", async () => {

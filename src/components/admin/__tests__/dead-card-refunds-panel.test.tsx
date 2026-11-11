@@ -325,16 +325,16 @@ describe("the Paid another way dialog", () => {
     expect(screen.getByText(/later reported it failed - a retry that failed again/)).toBeInTheDocument();
     expect(
       screen.getByText(
-        `Xero already holds a card refund credit note for $40.00 of this refund, raised when the card provider first accepted it. Up to that much of what you pay back needs no new note; for anything beyond it, a Xero refund credit note worded "${BANK_NOTE_WORDING}" is queued when you close it. If you pay back less than $40.00, Xero's note credits more than went back: the Xero reconciliation report lists the difference as refund coverage above the refunded total, for you to correct in Xero.`,
+        `Closing this queues two Xero documents: an invoice for $40.00 recording the failed card refund's money back in the Stripe account, and a Xero refund credit note for the full amount you pay back, worded "${BANK_NOTE_WORDING}". If you pay back less than $40.00, Xero's note credits more than went back: the Xero reconciliation report lists the difference as refund coverage above the refunded total, for you to correct in Xero.`,
       ),
     ).toBeInTheDocument();
     fireEvent.click(fullChoice());
     fireEvent.change(noteBox(), { target: { value: "Bank transfer" } });
-    respond(200, { success: true, xeroQueued: "refund-note-beyond-card-note" });
+    respond(200, { success: true, xeroQueued: "stripe-reversal-and-bank-note" });
     fireEvent.click(closeButton());
     await waitFor(() =>
       expect(mocks.toastSuccess).toHaveBeenCalledWith(
-        `Closed. $150.00 recorded as paid back in full. A card refund credit note already in Xero records part of what you paid back; a Xero refund credit note worded "${BANK_NOTE_WORDING}" is queued for the rest.`,
+        `Closed. $150.00 recorded as paid back in full. An invoice recording the failed card refund's money back in the Stripe account, for the amount its card note covered, is queued, and a Xero refund credit note worded "${BANK_NOTE_WORDING}" is queued for the full amount paid back.`,
       ),
     );
   });

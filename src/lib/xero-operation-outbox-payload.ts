@@ -32,6 +32,43 @@ export const XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE = "MEMBERSHIP_SUBSCRIPTION_IN
 // capture on a cancelled booking a treasurer KEPT. Anchored on the #3639
 // approval task (`xero-kept-late-capture-invoice.ts`).
 export const XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE = "KEPT_LATE_CAPTURE_INVOICE";
+// #4369 (`INV-PAY-151`): the invoice that records a failed card refund's money
+// back in the Stripe account, queued when Paid another way closes a debt the
+// old card note still covers. Anchored on the Payment; the close record is in
+// the payload and the idempotency key (`xero-card-refund-reversal-invoice.ts`).
+export const XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE = "CARD_REFUND_REVERSAL_INVOICE";
+export const CARD_REFUND_REVERSAL_INVOICE_ROLE = "CARD_REFUND_REVERSAL_INVOICE";
+export const CARD_REFUND_REVERSAL_PAYMENT_ROLE = "CARD_REFUND_REVERSAL_PAYMENT";
+
+/**
+ * An invoice create on a Payment that bills the member. A reversal invoice is
+ * not one of those (`INV-PAY-151`): readers that treat any invoice create on
+ * the Payment as the booking's bill exclude it with this.
+ */
+export const NOT_CARD_REFUND_REVERSAL_INVOICE = {
+  NOT: { queueType: XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE },
+} as const;
+
+/** The same exclusion on an invoice link, which is named by role rather than queue type. */
+export const NOT_CARD_REFUND_REVERSAL_INVOICE_LINK = {
+  NOT: { role: CARD_REFUND_REVERSAL_INVOICE_ROLE },
+} as const;
+
+const CANCELLED_CARD_REFUND_REVERSAL_STATUSES = new Set(["VOIDED", "DELETED"]);
+
+/**
+ * Cents a live reversal invoice still takes off refund-note coverage. A voided
+ * or deleted one, or one with no recorded amount, takes off nothing
+ * (`INV-PAY-151`). A reversal that has not reached Xero has no link, so it is
+ * not passed here.
+ */
+export function liveCardRefundReversalCents(metadata: unknown): number {
+  const record = asRecord(metadata);
+  const status = typeof record?.status === "string" ? record.status : "";
+  if (CANCELLED_CARD_REFUND_REVERSAL_STATUSES.has(status)) return 0;
+  const cents = record?.amountCents;
+  return typeof cents === "number" && Number.isInteger(cents) && cents > 0 ? cents : 0;
+}
 
 /**
  * The complete set of outbox queue types the pending scan dispatches (#1272,
@@ -60,6 +97,7 @@ export const XERO_OUTBOX_QUEUE_TYPES = [
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE,
   XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
   XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
+  XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE, // #4369 (`INV-PAY-151`)
   XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
   XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, // #4299 (`INV-PAY-148`)
 ] as const;
@@ -228,6 +266,21 @@ export function subscriptionInvoiceOutboxRow(chargeId: string) {
  * date (orchestrator decision 29 Sep 2026). `paymentIntentId` names the
  * capture whose refunds the refund note answers.
  */
+/**
+ * #4369 (`INV-PAY-151`): the covered cents of one Paid another way close, and
+ * the club day of that close. The worker dates the invoice that day, or the
+ * first open day after a Xero lock, and keeps this day in the reference.
+ */
+interface QueuedCardRefundReversalInvoiceOutboxPayload {
+  queueType: typeof XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE;
+  bookingId: string;
+  paymentId: string;
+  closeTaskId: string;
+  amountCents: number;
+  /** `YYYY-MM-DD`, the club's calendar day of the close. */
+  closedOn: string;
+}
+
 interface QueuedKeptLateCaptureInvoiceOutboxPayload {
   queueType: typeof XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE;
   bookingId: string;
@@ -264,6 +317,7 @@ export type QueuedOutboxPayload =
   | QueuedGroupSettlementInvoiceVoidOutboxPayload
   | QueuedSubscriptionInvoiceOutboxPayload
   | QueuedKeptLateCaptureInvoiceOutboxPayload
+  | QueuedCardRefundReversalInvoiceOutboxPayload
   | QueuedAdditionalCaptureReceiptOutboxPayload;
 
 export interface QueuedOutboxExpectedOperation {
@@ -523,6 +577,27 @@ export function readQueuedOutboxPayload(
   if (queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE) return { queueType }; // #3971
   if (queueType === XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE) return readAdditionalCaptureReceiptPayload(value);
 
+  if (queueType === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE) {
+    const bookingId = readString(payload.bookingId);
+    const paymentId = readString(payload.paymentId);
+    const closeTaskId = readString(payload.closeTaskId);
+    const amountCents = readNumber(payload.amountCents);
+    const closedOn = readString(payload.closedOn);
+    if (
+      !bookingId ||
+      !paymentId ||
+      !closeTaskId ||
+      amountCents === null ||
+      !Number.isInteger(amountCents) ||
+      amountCents <= 0 ||
+      !closedOn ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(closedOn)
+    ) {
+      return null;
+    }
+    return { queueType, bookingId, paymentId, closeTaskId, amountCents, closedOn };
+  }
+
   if (queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE) {
     const bookingId = readString(payload.bookingId);
     const manualRefundTaskId = readString(payload.manualRefundTaskId);
@@ -695,6 +770,9 @@ export function getQueuedOutboxExpectedOperation(
             : queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE
               ? // #3635: the approval task that owns the kept capture.
                 ["ManualRefundTask"]
+            : queueType === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE
+              ? // #4369: the payment the failed card refund was on.
+                ["Payment"]
             : ["Member"],
   };
 }
