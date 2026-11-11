@@ -16,7 +16,7 @@ export type PasskeyGuard =
       session: NonNullable<TwoFactorApiSession>;
       member: TwoFactorApiMember;
     }
-  | { ok: false; response: NextResponse };
+  | { ok: false; response: Response };
 
 /** Same limiter and session load as the authenticator-code verify route. */
 export async function guardPasskeyRequest(request: NextRequest): Promise<PasskeyGuard> {

@@ -27,6 +27,9 @@ let webauthn: typeof import("@/lib/webauthn");
   "passkey challenge and counter claims — real PostgreSQL (#4617)",
   { timeout: 20_000 },
   () => {
+    const previousAuthUrl = process.env.NEXTAUTH_URL;
+    const authUrlWasSet = Object.prototype.hasOwnProperty.call(process.env, "NEXTAUTH_URL");
+
     beforeAll(async () => {
       assertSafeRaceDbUrl(RACE_DB_URL, LABEL);
       process.env.DATABASE_URL = RACE_DB_URL;
@@ -56,6 +59,8 @@ let webauthn: typeof import("@/lib/webauthn");
     }, 60_000);
 
     afterAll(async () => {
+      if (authUrlWasSet) process.env.NEXTAUTH_URL = previousAuthUrl;
+      else delete process.env.NEXTAUTH_URL;
       if (prisma) {
         await prisma.member.deleteMany({ where: { id: MEMBER } }).catch(() => undefined);
         await prisma.$disconnect().catch(() => undefined);
