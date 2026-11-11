@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -131,7 +132,7 @@ export function ConfirmPendingGuestsButton({
     setError("");
 
     try {
-      const res = await fetch(
+      const res = await fetchWithRecentAuth(
         `/api/admin/bookings/${bookingId}/confirm-pending-guests`,
         {
           method: "POST",

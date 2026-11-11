@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useState } from "react";
 import Link from "next/link";
@@ -60,7 +61,7 @@ async function writeCredential(
   key: GoogleCredentialKey,
   value: string,
 ): Promise<void> {
-  const res = await fetch(CREDENTIALS_ENDPOINT, {
+  const res = await fetchWithRecentAuth(CREDENTIALS_ENDPOINT, {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },

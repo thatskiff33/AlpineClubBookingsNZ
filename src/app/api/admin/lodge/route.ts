@@ -15,6 +15,7 @@ import { clubSeasonYear } from "@/lib/financial-year";
 import { ensureDefaultSeasonSubscriptionForNewMember } from "@/lib/member-subscription-defaults";
 import { isFullAdmin } from "@/lib/access-roles";
 import { getDefaultLodgeId } from "@/lib/lodges";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 // Multi-lodge kiosks: each kiosk login binds to its lodge via a single
 // MemberLodgeAccess STAFF grant (getStaffLodgeBinding in lodge-auth.ts);
@@ -156,6 +157,8 @@ export async function GET() {
   });
   if (!guard.ok) return guard.response;
   const session = guard.session;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   let accounts = await prisma.member.findMany({
     where: { role: "LODGE" },
     select: KIOSK_SELECT,
@@ -413,6 +416,8 @@ export async function POST(request: NextRequest) {
       { status: 403 },
     );
   }
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   const body = await request.json();
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {

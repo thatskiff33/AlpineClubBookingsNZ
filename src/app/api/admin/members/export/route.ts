@@ -29,6 +29,7 @@ import {
   grantMembershipAdminDietaryAccess,
   readMemberDietaryRequirementsByIds,
 } from "@/lib/member-dietary";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const AGE_TIER_VALUES = Object.values(AgeTier);
 const SUBSCRIPTION_STATUS_FILTERS = [
@@ -58,6 +59,8 @@ const csvEscape = escapeCsvCell;
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   const flags = await loadMemberFieldsFlags();
   // The club's own temporal API, bound to the PERSISTED club timezone (CT-4,
   // #2870; INV-CONFIG-002) rather than the container's environment.
