@@ -14,6 +14,7 @@ import {
 } from "@/lib/magic-link";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 // Admin API for the magic-link sign-in expiry (epic #2030, child #2103). The
 // Login & Security page's magic-link card writes PUT to persist
@@ -46,6 +47,8 @@ export async function PUT(request: Request) {
   if (!guard.ok) return guard.response;
 
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await request.json();
   } catch {

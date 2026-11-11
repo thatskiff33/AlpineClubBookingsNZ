@@ -87,6 +87,7 @@ import {
 } from "@/lib/xero-contact-create-recovery";
 import { DIETARY_ERASURE_PATCH } from "@/lib/member-dietary";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 // Route-private: a Next.js route module's export surface is its handlers.
 const DELETION_CLAIM_RELEASE_FULL_ADMIN_MESSAGE =
@@ -288,6 +289,8 @@ export async function POST(
     notifyMember?: boolean;
     confirmReleasedApproval?: boolean;
   };
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     const raw = await request.json();
     body = actionSchema.parse(raw);
