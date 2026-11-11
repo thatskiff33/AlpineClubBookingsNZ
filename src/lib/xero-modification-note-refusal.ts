@@ -14,7 +14,7 @@ import { formatCents } from "@/lib/utils";
 import { asRecord } from "@/lib/xero-json";
 
 /** Opening the repair tool and the retry screen both recognise. Not the clearing note's. */
-export const MODIFICATION_NOTE_EXCEEDS_DUE_MARKER = "The original invoice owes ";
+const MODIFICATION_NOTE_EXCEEDS_DUE_MARKER = "The original invoice owes ";
 
 const PAID_OFF = /already been paid off/i;
 const GREATER_THAN_OUTSTANDING = /amount is greater than amount outstanding/i;
@@ -34,10 +34,10 @@ export type ModificationNoteInvoiceRefusal = "paid-off" | "shortfall";
  * Keep the refund note. Voiding it makes the next nightly run raise another.
  * The modification note is the one to void, and only once it has nothing on it.
  */
-export const CARD_REFUND_MODIFICATION_NOTE_REMEDY =
+const CARD_REFUND_MODIFICATION_NOTE_REMEDY =
   "Keep the refund note, which carries the Stripe refund payment. Void the modification note only after confirming it has no allocations or refunds. On the Xero operations screen, Resolve the partial operation and its failed requeue and allocate rows. Do not mark the row non-replayable. Do not void the refund note: the next nightly run would raise another.";
 
-export const MODIFICATION_NOTE_SHORTFALL_REVIEW =
+const MODIFICATION_NOTE_SHORTFALL_REVIEW =
   "The original invoice owes less than this modification credit note, so nothing was created. Review it by hand; a retry will not succeed.";
 
 export function modificationNoteRefusalSummary(refusal: ModificationNoteInvoiceRefusal): string {

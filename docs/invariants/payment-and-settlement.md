@@ -2314,9 +2314,7 @@ total at apply).
 - **Neither is a refund method, and neither moves a settlement.** A
   modification note is allocated against the original invoice; a refund note's
   settling payment keeps the bank-transfer account and reference. A cash
-  hand-back keeps the internet-banking method. A Stripe card refund of a price
-  cut is neither of these notes: it is the cancellation's refund note, settled
-  from the Stripe account (#3993).
+  hand-back keeps the internet-banking method.
 - **The wording travels with the decision.** It rides as `noteWording` beside
   the method in the outbox payload, read by `readModificationNoteWording` (a
   refund note: `readRefundNoteWording`, cash only beside internet banking, so a
