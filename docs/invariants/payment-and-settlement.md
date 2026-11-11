@@ -1386,7 +1386,7 @@ operations, and neither covers the other's ground. Change one, check the other.
   `releaseXeroSupplementaryInvoiceForCapturedPaymentIntent` both ask it:
   refunded retires, undecided stays waiting, kept is released or re-queued. An invoice the capture does not cover
   is not issued, and an officer is told. A retired row is re-queued from
-  **that row**, the largest ask per change, under
+  **that row** by the release and by a keep inside its claim, the largest ask per change, under
   `lockSupplementaryInvoiceAnchor`, once - unpaid where the capture's own
   receipt records it (`INV-PAY-139`); it alerts once where another invoice
   is linked or queued. One for the same request (its sent payload keeps
@@ -1899,14 +1899,14 @@ and **`INV-PAY-147`** (slice evidence).
 **Related: `INV-PAY-110`** (kept late captures) **and `INV-PAY-139`**.
 
 - **A kept change capture on a cancelled, invoiced booking is recorded by the
-  document the evidence names** (#4324; owner, 25 Oct 2026, amending one case
+  document the evidence names** (#4324, amending one case
   of `INV-PAY-110`): a second invoice for a change the primary bills would
   count the income twice.
 - **One decision** (`keptChangeCaptureRoute`), taken once by the keep or
   the repair tool, under the task row then the change's anchor lock, after
   finding the capture's receipt or kept invoice:
-  - a change invoice naming the capture, paid or awaiting release: the
-    late-success release (`INV-PAY-104`);
+  - a change invoice naming the capture: the late-success release
+    (`INV-PAY-104`), and a `STALE_WAITING_PAYMENT` row re-queued inside the keep, no repair finding;
   - a #3980 gap invoice billing it (`primaryInvoiceGapBillsChange`), the
     primary billing it (settled against it, or no supplementary invoice,
     and not raced past it: `primaryInvoiceMissedChange`), or a live

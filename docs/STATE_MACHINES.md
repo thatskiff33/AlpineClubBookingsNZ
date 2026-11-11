@@ -4166,8 +4166,9 @@ supplementary invoice WAITING_PAYMENT on a card ask's intent (INV-PAY-104;
   -> a price reduction retires the chain -> CANCELLED,
      ADDITIONAL_ASK_RETIRED_BY_REDUCTION (INV-PAY-120)
   -> the pay door closed and nothing carries it -> CANCELLED,
-     STALE_WAITING_PAYMENT (the reaper; only a capture of that same intent
-     revives it; while a supersede's cancel of that intent is still in
+     STALE_WAITING_PAYMENT (the reaper; a capture of that same intent
+     revives it, and a treasurer's keep does that inside its claim for the
+     row on the anchor it holds; while a supersede's cancel of that intent is still in
      flight the reaper keeps it, and the cancel's last step moves it, #4665)
 inbound webhook/event recorded -> reconciliation worker processes event
 failure -> retry/backoff/admin visibility
