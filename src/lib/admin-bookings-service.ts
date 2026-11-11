@@ -11,8 +11,11 @@ import {
   paymentSourceFilters,
   xeroStateFilters,
   type PaymentSourceFilter,
+  XERO_ACTIVITY_STATUSES,
+  XERO_INVOICE_EXPECTED_PAYMENT_STATUSES,
   type XeroActivitySummary,
   type XeroState,
+  type XeroStateFilter,
 } from "@/lib/admin-operational-state";
 import { bookingOwner } from "@/lib/booking-owner";
 import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
@@ -72,6 +75,21 @@ export const ADMIN_BOOKINGS_PAGE_SIZE = 100;
 // size instead of one unbounded findMany, bounding peak memory while keeping
 // exact totals and page contents.
 export const ADMIN_BOOKINGS_DERIVED_SCAN_CHUNK_SIZE = 500;
+
+// Ceiling on the distinct Xero-synced records the derived-filter pre-filter
+// (#4939) will turn into an id list. Past it the pre-filter steps aside and
+// the scan runs unnarrowed, rather than sending one enormous `IN` list.
+export const ADMIN_BOOKINGS_XERO_PREFILTER_MAX_RECORDS = 5_000;
+
+// The `localModel` names a booking's Xero activity is recorded under. A sync
+// operation links to its record by model name and id, not a foreign key, and
+// a booking's activity is the union of its own, its payment's and its
+// modifications' (`deriveBookingOperationalState`).
+const XERO_ACTIVITY_LOCAL_MODELS = {
+  booking: "Booking",
+  payment: "Payment",
+  modification: "BookingModification",
+} as const;
 
 const bookingSortColumns = new Set<BookingSortBy>([
   "member",
@@ -724,7 +742,9 @@ function buildBookingWhere(
  * IT IS THE SQL HALF ONLY. The Xero/bed/change filters are derived in
  * JavaScript after this query (see `listAdminBookings`), so a count taken
  * through this clause is an upper bound while one of those three is active.
- * Anything that must be exact has to run the list itself.
+ * Anything that must be exact has to run the list itself. The list's
+ * derived-filter pre-filter (#4939) is not part of this clause either: it is a
+ * superset condition that only narrows the list's own scan.
  */
 export function buildAdminBookingsWhere(
   query: AdminBookingsQuery,
@@ -1127,13 +1147,17 @@ function deriveBookingOperationalState(
 ): AdminBookingOperationalState {
   const paymentSource = (booking.payment?.source ?? "NONE") as PaymentSourceFilter;
   const activity = mergeXeroActivitySummaries([
-    activityByRecord.get(`Booking:${booking.id}`) ?? emptyXeroActivitySummary(),
+    activityByRecord.get(`${XERO_ACTIVITY_LOCAL_MODELS.booking}:${booking.id}`) ??
+      emptyXeroActivitySummary(),
     booking.payment
-      ? activityByRecord.get(`Payment:${booking.payment.id}`) ?? emptyXeroActivitySummary()
+      ? activityByRecord.get(`${XERO_ACTIVITY_LOCAL_MODELS.payment}:${booking.payment.id}`) ??
+        emptyXeroActivitySummary()
       : emptyXeroActivitySummary(),
     ...booking.modifications.map(
       (modification) =>
-        activityByRecord.get(`BookingModification:${modification.id}`) ??
+        activityByRecord.get(
+          `${XERO_ACTIVITY_LOCAL_MODELS.modification}:${modification.id}`
+        ) ??
         emptyXeroActivitySummary()
     ),
   ]);
@@ -1200,10 +1224,19 @@ async function loadXeroStateInputs(bookings: BookingCandidate[]) {
     booking.modifications.map((modification) => modification.id)
   );
   const operationScope: Prisma.XeroSyncOperationWhereInput[] = [
-    ...(bookingIds.length ? [{ localModel: "Booking", localId: { in: bookingIds } }] : []),
-    ...(paymentIds.length ? [{ localModel: "Payment", localId: { in: paymentIds } }] : []),
+    ...(bookingIds.length
+      ? [{ localModel: XERO_ACTIVITY_LOCAL_MODELS.booking, localId: { in: bookingIds } }]
+      : []),
+    ...(paymentIds.length
+      ? [{ localModel: XERO_ACTIVITY_LOCAL_MODELS.payment, localId: { in: paymentIds } }]
+      : []),
     ...(modificationIds.length
-      ? [{ localModel: "BookingModification", localId: { in: modificationIds } }]
+      ? [
+          {
+            localModel: XERO_ACTIVITY_LOCAL_MODELS.modification,
+            localId: { in: modificationIds },
+          },
+        ]
       : []),
   ];
 
@@ -1234,6 +1267,166 @@ async function loadXeroStateInputs(bookings: BookingCandidate[]) {
       )
     ),
   };
+}
+
+/**
+ * SQL PRE-FILTERS FOR THE DERIVED FILTERS (#4939).
+ *
+ * The Xero, bed and change states are worked out in JavaScript
+ * (`deriveBookingOperationalState`), so the derived-filter path has to visit
+ * candidates and check each one. Without a narrowing clause that visit covered
+ * every booking the club ever took, and grew with its history rather than with
+ * the answer. Each builder below returns a cheap condition every booking that
+ * can reach the filter value must meet — a SUPERSET of the real matches — or
+ * `null` where no such condition is worth stating. The JavaScript check still
+ * runs on every candidate and stays the authority; a pre-filter only decides
+ * which bookings are worth checking.
+ *
+ * The one way to get this wrong is a pre-filter NARROWER than the derivation:
+ * it silently hides a booking from the officer filtering for it. The
+ * equality suites (`admin-bookings-derived-prefilter.test.ts` and its realdb
+ * twin) compare each filter value's result against the derivation alone.
+ */
+async function xeroStatePrefilter(
+  filter: XeroStateFilter
+): Promise<Prisma.BookingWhereInput | null> {
+  switch (filter) {
+    case "operationFailed":
+    case "operationPartial":
+    case "operationPending":
+      // Precedence (failed, then partial, then pending) only ever removes
+      // bookings from a state, so "holds at least one operation counted
+      // toward this state" is necessary, whatever else it holds.
+      return xeroActivityPrefilter(XERO_ACTIVITY_STATUSES[filter]);
+    case "invoiceLinked":
+      // Only a booking with a payment can be linked: the evidence set is
+      // read for `booking.payment` alone. The evidence rule itself (#3467,
+      // stored id else an active PRIMARY_INVOICE link) has no SQL form and is
+      // not spelled a second time here.
+      return { payment: { isNot: null } };
+    case "invoiceMissing":
+      // `invoiceExpected` is a payment-status test, so only a payment in one
+      // of those statuses can be missing its invoice.
+      return {
+        payment: { is: { status: { in: [...XERO_INVOICE_EXPECTED_PAYMENT_STATUSES] } } },
+      };
+    case "all":
+      return null;
+  }
+}
+
+/**
+ * The bookings holding at least one Xero sync operation in `statuses`, on the
+ * booking itself, its payment or any of its modifications — the three records
+ * `deriveBookingOperationalState` merges. Every operation counts, not only the
+ * latest one, because the activity summary counts them all.
+ */
+async function xeroActivityPrefilter(
+  statuses: readonly string[]
+): Promise<Prisma.BookingWhereInput | null> {
+  const records = await prisma.xeroSyncOperation.findMany({
+    where: {
+      status: { in: [...statuses] },
+      localModel: { in: Object.values(XERO_ACTIVITY_LOCAL_MODELS) },
+      localId: { not: null },
+    },
+    select: { localModel: true, localId: true },
+    distinct: ["localModel", "localId"],
+    take: ADMIN_BOOKINGS_XERO_PREFILTER_MAX_RECORDS + 1,
+  });
+  if (records.length > ADMIN_BOOKINGS_XERO_PREFILTER_MAX_RECORDS) return null;
+
+  const idsOf = (model: string) =>
+    records.flatMap((record) =>
+      record.localModel === model && record.localId ? [record.localId] : []
+    );
+  const bookingIds = idsOf(XERO_ACTIVITY_LOCAL_MODELS.booking);
+  const paymentIds = idsOf(XERO_ACTIVITY_LOCAL_MODELS.payment);
+  const modificationIds = idsOf(XERO_ACTIVITY_LOCAL_MODELS.modification);
+  const reaches: Prisma.BookingWhereInput[] = [
+    ...(bookingIds.length ? [{ id: { in: bookingIds } }] : []),
+    ...(paymentIds.length ? [{ payment: { is: { id: { in: paymentIds } } } }] : []),
+    ...(modificationIds.length
+      ? [{ modifications: { some: { id: { in: modificationIds } } } }]
+      : []),
+  ];
+
+  // No record holds such an operation, so no booking can match.
+  return reaches.length ? { OR: reaches } : { id: { in: [] } };
+}
+
+/**
+ * Bed-state necessary conditions, read off `deriveBedState`. Only called when
+ * the bed-allocation module is on; off, every booking derives "complete" and
+ * the filter is not applied at all.
+ */
+function bedStatePrefilter(filter: BedStateFilter): Prisma.BookingWhereInput | null {
+  // "unallocated" and "partial" need an expected guest-night (so a guest), an
+  // allocatable status, and no whole-lodge hold (which reports "complete").
+  const owesBeds: Prisma.BookingWhereInput = {
+    wholeLodgeHold: false,
+    status: { in: [...BED_ALLOCATABLE_BOOKING_STATUSES] },
+    guests: { some: {} },
+  };
+
+  switch (filter) {
+    case "unallocated":
+      // Not "no allocation rows": a row for a night the guest is not expected
+      // on leaves the booking unallocated, so that would be too narrow.
+      return owesBeds;
+    case "partial":
+      return { AND: [owesBeds, { bedAllocations: { some: {} } }] };
+    case "warning":
+      // A warning is read off allocation rows, and a whole-lodge hold returns
+      // "complete" before warnings are looked at.
+      return { wholeLodgeHold: false, bedAllocations: { some: {} } };
+    case "complete":
+      // "complete" is the fall-through state — module rules, holds, statuses
+      // that hold no beds, guestless and fully allocated bookings all land
+      // there — so no cheap condition covers it.
+    case "all":
+      return null;
+  }
+}
+
+/**
+ * Change-state conditions: each is the SQL form of the flag
+ * `deriveBookingOperationalState` sets for that value, read from the same
+ * relations the candidate load includes unfiltered.
+ */
+function changeStatePrefilter(
+  filter: ChangeStateFilter
+): Prisma.BookingWhereInput | null {
+  switch (filter) {
+    case "requiresReview":
+      return { OR: [{ requiresAdminReview: true }, { adminReviewStatus: "PENDING" }] };
+    case "pendingRequest":
+      return { changeRequests: { some: { status: "REQUESTED" } } };
+    case "hasModification":
+      return { modifications: { some: {} } };
+    case "creditGenerated":
+      return {
+        OR: [
+          { creditsFromCancellation: { some: {} } },
+          { modifications: { some: { creditsFromModification: { some: {} } } } },
+        ],
+      };
+    case "all":
+      return null;
+  }
+}
+
+/** Every active derived filter's pre-filter, AND-composed; null when none narrows. */
+async function buildDerivedFilterPrefilter(
+  query: AdminBookingsQuery,
+  bedAllocationEnabled: boolean
+): Promise<Prisma.BookingWhereInput | null> {
+  const fragments = [
+    await xeroStatePrefilter(query.xeroState),
+    bedAllocationEnabled ? bedStatePrefilter(query.bedState) : null,
+    changeStatePrefilter(query.changeState),
+  ].filter((fragment): fragment is Prisma.BookingWhereInput => fragment !== null);
+  return fragments.length ? { AND: fragments } : null;
 }
 
 /**
@@ -1372,11 +1565,17 @@ export async function listAdminBookings(
   // match. Chunk-scoped Xero activity lookups are equivalent to a global load
   // because deriveBookingOperationalState only reads records keyed by the
   // booking's own ids. Totals and page contents stay exact — the whole match
-  // set is still visited, never truncated.
+  // set is still visited, never truncated. The SQL pre-filter (#4939) only
+  // drops bookings that cannot match, so the visit covers plausible rows
+  // rather than the club's whole history; the JS checks below still decide.
+  const prefilter = await buildDerivedFilterPrefilter(query, bedAllocationEnabled);
+  const scanWhere: Prisma.BookingWhereInput = prefilter
+    ? { AND: [where, prefilter] }
+    : where;
   const matches: Array<{ id: string; key: string | number | Date }> = [];
   let cursorId: string | undefined;
   for (;;) {
-    const chunk = await loadBookingCandidates(where, {
+    const chunk = await loadBookingCandidates(scanWhere, {
       take: ADMIN_BOOKINGS_DERIVED_SCAN_CHUNK_SIZE,
       cursorId,
     });

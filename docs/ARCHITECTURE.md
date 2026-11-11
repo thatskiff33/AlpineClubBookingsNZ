@@ -1150,6 +1150,25 @@ after Xero accepted the invoice. And the offered affordance is ONE field
 action" beside a Retry: the sentence and the link label are read off the same
 decision.
 
+**An admin list's derived filter must pre-narrow in SQL with a superset
+condition, and the JavaScript derivation stays the authority** (#4939). A filter
+on a value computed in JavaScript — Admin → Bookings' Xero, bed and change
+states — cannot be a `where` clause, so the list scans candidates in chunks and
+keeps those the derivation passes. Unnarrowed, that scan visits every booking
+the club ever took and slows down every year. `listAdminBookings` therefore
+ANDs a per-value condition into the scan (`buildDerivedFilterPrefilter` in
+`src/lib/admin-bookings-service.ts`): each states only what every match must
+have — a Xero operation in the value's statuses on the booking, its payment or
+a modification; an allocatable status and a guest; a modification row — never
+the rule itself, so the invoice-evidence rule (#3467) and Xero precedence keep
+one spelling. A value with no cheap necessary condition (bed `complete`) scans
+unnarrowed, and so does a Xero activity filter whose record list would exceed
+`ADMIN_BOOKINGS_XERO_PREFILTER_MAX_RECORDS`. A condition narrower than the
+derivation silently hides bookings from the officer filtering for them, so
+`admin-bookings-derived-prefilter.test.ts` and its realdb twin require every
+value's result to equal the derivation's alone; extend their shared scenarios
+(`support/admin-bookings-derived-scenarios.ts`) with any new value or condition.
+
 Admin settings sections follow one canonical edit model (developer rule, binding
 for new or modified sections; the `AGENTS.md` routing table sends you here for it, and this page is where it is stated in full).
 A section
