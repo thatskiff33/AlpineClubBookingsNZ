@@ -556,11 +556,15 @@ passkey. A passkey will work once that sign-in exists (#4617). An emailed code
 is never accepted, and nor is a recovery code. The dialog then sends the
 original request once more, with the same body.
 
-**What is stored.** The session token carries `lastAuthenticatedAt`, written
-only when sign-in completes or when the server consumes a single-use
-`SessionReauthChallenge`. The challenge is a keyed hash bound to that member,
-with a two-minute life. A browser cannot set the time. The five minutes is a
-security floor, not a club setting (`INV-AUTH-008`).
+**What is stored.** The session token carries `lastAuthenticatedAt`. A password
+sign-in writes it only when no authenticator factor is still owed (an email
+factor does not count as owed). An authenticator-app code writes it. An
+emailed link, Google, a recovery code, and an emailed code do not, and none
+of them clears a stamp already there. Consuming a single-use
+`SessionReauthChallenge` still writes it. The challenge is a keyed hash bound
+to that member, with a two-minute life. The proof kind is a prefix inside
+that hash, so the browser cannot set the time or the kind. The five minutes
+is a security floor, not a club setting (`INV-AUTH-008`).
 
 **Failed attempts.** A wrong authenticator code counts toward the existing
 two-factor lockout (five failures, then fifteen minutes). A wrong password

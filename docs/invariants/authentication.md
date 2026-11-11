@@ -181,15 +181,21 @@ This file holds only the rules.
   epoch millisecond and is not older than five minutes. A missing stamp fails
   closed. No route calls it yet.
 - **The five minutes is a security floor, not a club setting.**
-- **Only sign-in completion, or consuming a reauthentication challenge, writes
-  the stamp.** The `jwt` callback in [`auth.ts`](../../src/lib/auth.ts) sets it
-  when a sign-in mints the token and when a two-factor session challenge is
-  consumed, and again when it claims a `SessionReauthChallenge`. A
-  `session.update()` payload that carries the field is ignored. The challenge
-  is server-minted, stored as a keyed hash, bound to one member, and consumed
+- **A password proof writes the stamp only when no authenticator factor is
+  still owed.** An email factor does not count as owed, so that password step
+  writes it and the later emailed code does not. An authenticator-app consume
+  writes it, including enrolment. An emailed link, Google, a recovery code,
+  and an emailed code do not, and none of them clears a stamp already there.
+  The `jwt` callback in [`auth.ts`](../../src/lib/auth.ts) decides this from
+  server-side facts: the credentials provider, the member row after reload,
+  and the kind prefixed into the hashed two-factor challenge. A
+  reauthentication challenge still writes it. A `session.update()` payload
+  that carries the time, or a proof kind, is ignored. The challenge is
+  server-minted, stored as a keyed hash, bound to one member, and consumed
   by one status-guarded claim.
-- **The proof is an authenticator-app code, a passkey once one exists, or the
-  password only when the person has neither.** An emailed code and a recovery
-  code are never accepted. A failed proof counts toward the two-factor lockout,
-  or the per-account password throttle when the proof is the password.
+- **The confirm dialog accepts an authenticator-app code, a passkey once one
+  exists, or the password only when the person has neither.** An emailed code
+  and a recovery code are never accepted there. A failed proof counts toward
+  the two-factor lockout, or the per-account password throttle when the proof
+  is the password.
 - **The confirm dialog replays the refused request once, with the same body.**
