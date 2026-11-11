@@ -1,5 +1,6 @@
 "use client";
 
+import { adminHref } from "@/lib/admin-hubs";
 import { useCallback, useState, useEffect, useLayoutEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
@@ -651,7 +652,7 @@ export function useBookingWizard() {
       hasAdminAccess(session.user) &&
       !hasAccessRole(session.user, "USER")
     ) {
-      router.replace("/admin/book");
+      router.replace(adminHref("book"));
     }
   }, [session, router]);
 

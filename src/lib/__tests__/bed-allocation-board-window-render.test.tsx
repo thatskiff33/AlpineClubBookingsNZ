@@ -15,7 +15,7 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { useEffect, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DashboardPayload } from "@/app/(admin)/admin/bed-allocation/_components/types";
+import type { DashboardPayload } from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/types";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
@@ -95,7 +95,7 @@ vi.mock("@/components/admin/bed-allocation-move-dialog", () => ({
 
 // The board's contents are covered by their own component tests; here we only
 // need to know WHETHER the board rendered at all.
-vi.mock("@/app/(admin)/admin/bed-allocation/_components/room-table", () => ({
+vi.mock("@/app/(admin)/admin/booking-desk/bed-allocation/_components/room-table", () => ({
   RoomTable: ({
     onReassignBed,
   }: {
@@ -129,14 +129,14 @@ vi.mock("@/app/(admin)/admin/bed-allocation/_components/room-table", () => ({
     </div>
   ),
 }));
-vi.mock("@/app/(admin)/admin/bed-allocation/_components/bucket-board", () => ({
+vi.mock("@/app/(admin)/admin/booking-desk/bed-allocation/_components/bucket-board", () => ({
   BucketBoard: () => <div data-testid="bucket-board" />,
 }));
 vi.mock("@/components/admin/bed-range-assign-dialog", () => ({
   BedRangeAssignDialog: () => null,
 }));
 
-import AdminBedAllocationPage from "@/app/(admin)/admin/bed-allocation/page";
+import AdminBedAllocationPage from "@/app/(admin)/admin/booking-desk/bed-allocation/page";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 function buildPayload(): DashboardPayload {

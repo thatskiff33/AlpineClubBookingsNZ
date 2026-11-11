@@ -56,7 +56,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DashboardPayload } from "@/app/(admin)/admin/bed-allocation/_components/types";
+import type { DashboardPayload } from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/types";
 import {
   BOARD_LODGE_MISMATCH_CODE,
   BOARD_LODGE_MISMATCH_MESSAGE,
@@ -107,17 +107,17 @@ vi.mock("@/components/admin/bed-allocation-move-dialog", () => ({
     dialog: <div data-testid="move-dialog-seam" />,
   }),
 }));
-vi.mock("@/app/(admin)/admin/bed-allocation/_components/room-table", () => ({
+vi.mock("@/app/(admin)/admin/booking-desk/bed-allocation/_components/room-table", () => ({
   RoomTable: () => <div data-testid="room-table" />,
 }));
-vi.mock("@/app/(admin)/admin/bed-allocation/_components/bucket-board", () => ({
+vi.mock("@/app/(admin)/admin/booking-desk/bed-allocation/_components/bucket-board", () => ({
   BucketBoard: () => <div data-testid="bucket-board" />,
 }));
 vi.mock("@/components/admin/bed-range-assign-dialog", () => ({
   BedRangeAssignDialog: () => null,
 }));
 
-import AdminBedAllocationPage from "@/app/(admin)/admin/bed-allocation/page";
+import AdminBedAllocationPage from "@/app/(admin)/admin/booking-desk/bed-allocation/page";
 
 const LODGES = [
   { id: "lodge-1", name: "Alpine Lodge", active: true },

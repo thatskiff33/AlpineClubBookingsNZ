@@ -548,7 +548,7 @@ describe("unverified-write copy contract (#2668)", () => {
         silently forked them. The first is a CAPACITY write.
       */
       {
-        file: "src/app/(admin)/admin/waitlist/page.tsx",
+        file: "src/app/(admin)/admin/booking-desk/waitlist/page.tsx",
         outcome: "this booking was force-confirmed",
       },
       {

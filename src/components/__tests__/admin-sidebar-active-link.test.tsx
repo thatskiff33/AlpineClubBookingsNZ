@@ -83,11 +83,11 @@ describe("the sidebar's active link over a moved hub", () => {
     stubPendingCounts();
   });
 
-  it("PREMISE: the Finance, Website, Rules, Help & system and Messages & email hubs have moved, and nothing else has", () => {
+  it("PREMISE: the Finance, Website, Rules, Help & system, Messages & email and Bookings hubs have moved, and nothing else has", () => {
     const moved = ADMIN_PAGES.filter((page) => page.moved);
     expect(moved.length).toBeGreaterThan(0);
     expect(new Set(moved.map((page) => page.hub))).toEqual(
-      new Set(["finance", "website", "rules", "system", "messages"]),
+      new Set(["finance", "website", "rules", "system", "messages", "bookings"]),
     );
     expect(moved.find((page) => page.id === "payments")?.hubPath).toBe(
       "/admin/finance/payments",
@@ -122,6 +122,15 @@ describe("the sidebar's active link over a moved hub", () => {
     ["Notifications & Email's hub URL", "/admin/messages/notifications", ["Notifications & Email"]],
     ["Delivery Rules' hub URL", "/admin/messages/notification-rules", []],
     ["a policy page's hub URL", "/admin/rules/booking-policies/cancellation", ["Booking Policies"]],
+    // C10 (#4807): Bookings, at the hub URL and the address the menu still uses.
+    ["Bookings' old URL", "/admin/bookings", ["Bookings"]],
+    ["Bookings' hub URL", "/admin/booking-desk/bookings", ["Bookings"]],
+    ["Booking Requests' old URL", "/admin/booking-requests", ["Booking Requests"]],
+    ["Booking Requests' hub URL", "/admin/booking-desk/booking-requests", ["Booking Requests"]],
+    ["Book on Behalf's hub URL", "/admin/booking-desk/book", ["Book on Behalf"]],
+    ["Bed Allocation's hub URL", "/admin/booking-desk/bed-allocation", ["Bed Allocation"]],
+    ["the Waitlist's old URL", "/admin/waitlist", ["Waitlist"]],
+    ["the Waitlist's hub URL", "/admin/booking-desk/waitlist", ["Waitlist"]],
   ])("highlights the same link at %s (%s)", async (_label, pathname, expected) => {
     await expect(activeLabels(pathname)).resolves.toEqual([...expected].sort());
   });
@@ -134,5 +143,6 @@ describe("the sidebar's active link over a moved hub", () => {
 
   it("highlights nothing at the hub's own root, which is no page yet (C13)", async () => {
     await expect(activeLabels("/admin/finance")).resolves.toEqual([]);
+    await expect(activeLabels("/admin/booking-desk")).resolves.toEqual([]);
   });
 });

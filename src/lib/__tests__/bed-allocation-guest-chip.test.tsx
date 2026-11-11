@@ -4,13 +4,13 @@ import "@testing-library/jest-dom/vitest";
 import type { ReactNode } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { getBookingAccent } from "@/app/(admin)/admin/bed-allocation/_components/booking-accent";
-import { GuestChip } from "@/app/(admin)/admin/bed-allocation/_components/guest-chip";
+import { getBookingAccent } from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/booking-accent";
+import { GuestChip } from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/guest-chip";
 import type {
   BedOption,
   BedOptionGroup,
   BucketGuestGroup,
-} from "@/app/(admin)/admin/bed-allocation/_components/types";
+} from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/types";
 import { AGE_TIER_COLORS } from "@/lib/admin-family-group-ui-helpers";
 
 vi.mock("@dnd-kit/core", () => ({

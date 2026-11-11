@@ -1,5 +1,6 @@
 "use client";
 
+import { adminHref } from "@/lib/admin-hubs";
 import Link from "next/link";
 import { useClubFormat } from "@/components/club-format-provider";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -424,7 +425,7 @@ function buildPublicRequestsPath(
 }
 
 export function PublicBookingRequestsPanel({
-  basePath = "/admin/booking-requests",
+  basePath = adminHref("booking-requests"),
   fixedSearchParams = EMPTY_SEARCH_PARAMS,
   showHeading = true,
   canEdit = true,

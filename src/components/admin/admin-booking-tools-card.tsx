@@ -207,7 +207,7 @@ export function AdminBookingToolsCard({
     lodgeId,
   });
   const bedAllocationHref = buildHrefWithReturnTo(
-    `/admin/bed-allocation?${bedAllocationParams.toString()}`,
+    `${adminHref("bed-allocation")}?${bedAllocationParams.toString()}`,
     returnTo,
   );
 

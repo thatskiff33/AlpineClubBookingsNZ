@@ -16,8 +16,8 @@ import { CREDIT_RELEASE_ASK_REASON } from "@/lib/credit-release-ask-keys";
  * Server-side: since #4019 the status fragment composes the whole-lodge "not
  * yet paid" rule from `booking-payment-flow.ts`, whose graph reaches the Prisma
  * runtime. The deep links the client-side admin sidebar needs live in the
- * import-free `unpaid-finished-stays-hrefs.ts`, so no client module imports
- * this one.
+ * `unpaid-finished-stays-hrefs.ts` (which imports only `adminHref`), so no
+ * client module imports this one.
  */
 /** The collection queue uses the modification paths' unpaid classification. */
 export function buildUnpaidFinishedStaysStatusWhere(): Prisma.BookingWhereInput {

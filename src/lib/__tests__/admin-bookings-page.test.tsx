@@ -59,7 +59,7 @@ vi.mock("@/lib/module-settings", async (importOriginal) => {
 
 import AdminBookingsPage, {
   formatAdminBookingGuestCount,
-} from "@/app/(admin)/admin/bookings/page";
+} from "@/app/(admin)/admin/booking-desk/bookings/page";
 import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import {

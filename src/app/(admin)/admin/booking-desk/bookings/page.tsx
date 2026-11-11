@@ -1,3 +1,4 @@
+import { adminHref } from "@/lib/admin-hubs";
 import Link from "next/link";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -339,13 +340,13 @@ export default async function AdminBookingsPage({
     return currentSearchParams;
   }
   const currentSearchParams = visibleSearchParams();
-  const currentBookingsPath = buildPathWithSearch("/admin/bookings", currentSearchParams);
+  const currentBookingsPath = buildPathWithSearch(adminHref("bookings"), currentSearchParams);
 
   function withPage(nextParams: URLSearchParams, targetPage: number) {
     nextParams.delete("page");
     if (targetPage > 1) nextParams.set("page", String(targetPage));
     const queryString = nextParams.toString();
-    return queryString ? `/admin/bookings?${queryString}` : "/admin/bookings";
+    return queryString ? `${adminHref("bookings")}?${queryString}` : adminHref("bookings");
   }
 
   function sortHref(column: BookingSortBy) {
@@ -415,7 +416,7 @@ export default async function AdminBookingsPage({
         title="All Bookings"
         actions={
           canEditBookings ? (
-            <Link href="/admin/book" className="app-button-brand">
+            <Link href={adminHref("book")} className="app-button-brand">
               + Create Booking
             </Link>
           ) : (
@@ -746,7 +747,7 @@ export default async function AdminBookingsPage({
                         </Link>
                         {booking.requiresAdminReview ? (
                           <Link
-                            href={`/admin/booking-requests?tab=approvals&bookingId=${booking.id}&status=ALL`}
+                            href={`${adminHref("booking-requests")}?tab=approvals&bookingId=${booking.id}&status=ALL`}
                             className="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >
                             <MiniChip tone="warning" icon={Eye}>Review</MiniChip>

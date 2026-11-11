@@ -4,13 +4,18 @@
  * The section IS the sidebar's (`buildAdminNavSections` in `admin-sidebar.tsx`): this
  * split groups help by the areas the product already shows operators, so the
  * module a page's help lives in is the menu heading they found it under.
+ *
+ * Keys are the registry OLD paths (C10 #4807). The help widget looks a page
+ * up by `canonicalAdminPathname`, which reads a moved page's hub URL as its
+ * old path in either switch state, so these are never `adminHref`.
  */
+import { getAdminPage } from "@/lib/admin-hubs";
 import { entry, help, type HelpEntry } from "../types";
 import { BOOKING_STATUS_GLOSSARY } from "../booking-status-glossary";
 
 export const adminBookingsAndBedsHelpEntries: HelpEntry[] = [
   entry(
-    "/admin/booking-requests",
+    getAdminPage("booking-requests").oldPath,
     help(
       "Booking Requests",
       "This page manages public or internal booking requests before they become normal bookings.",
@@ -42,7 +47,7 @@ export const adminBookingsAndBedsHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/bookings",
+    getAdminPage("bookings").oldPath,
     help(
       "Bookings",
       "This page searches and manages normal booking records after they have been created.",
@@ -81,7 +86,7 @@ export const adminBookingsAndBedsHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/book",
+    getAdminPage("book").oldPath,
     help(
       "Book on Behalf",
       "This page lets an admin create a booking for a member or approved requester.",
@@ -110,7 +115,7 @@ export const adminBookingsAndBedsHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/bed-allocation",
+    getAdminPage("bed-allocation").oldPath,
     help(
       "Bed Allocation",
       "Bed allocation assigns paid or confirmed guests to rooms and beds for specific lodge nights.",
@@ -144,7 +149,7 @@ export const adminBookingsAndBedsHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/waitlist",
+    getAdminPage("waitlist").oldPath,
     help(
       "Waitlist",
       "The waitlist page manages members waiting for capacity and offers places when beds become available.",

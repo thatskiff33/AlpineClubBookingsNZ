@@ -3,12 +3,12 @@
 import "@testing-library/jest-dom/vitest";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { getBookingAccent } from "@/app/(admin)/admin/bed-allocation/_components/booking-accent";
-import { BucketBoard } from "@/app/(admin)/admin/bed-allocation/_components/bucket-board";
+import { getBookingAccent } from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/booking-accent";
+import { BucketBoard } from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/bucket-board";
 import type {
   BucketGuestGroup,
   DashboardBookingSummary,
-} from "@/app/(admin)/admin/bed-allocation/_components/types";
+} from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/types";
 import { AGE_TIER_COLORS } from "@/lib/admin-family-group-ui-helpers";
 
 vi.mock("@dnd-kit/core", () => ({

@@ -35,7 +35,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/bed-allocation/_components/allocation-chip.tsx": {
+  "src/app/(admin)/admin/booking-desk/bed-allocation/_components/allocation-chip.tsx": {
     "accessibility/minimum-text-size": {
       "count": 4
     },
@@ -43,12 +43,12 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/bed-allocation/_components/board-cell.tsx": {
+  "src/app/(admin)/admin/booking-desk/bed-allocation/_components/board-cell.tsx": {
     "accessibility/minimum-text-size": {
       "count": 5
     }
   },
-  "src/app/(admin)/admin/bed-allocation/_components/guest-chip.tsx": {
+  "src/app/(admin)/admin/booking-desk/bed-allocation/_components/guest-chip.tsx": {
     "accessibility/minimum-text-size": {
       "count": 1
     },
@@ -56,12 +56,12 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/bed-allocation/page.tsx": {
+  "src/app/(admin)/admin/booking-desk/bed-allocation/page.tsx": {
     "jsx-a11y/label-has-associated-control": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/book/page.tsx": {
+  "src/app/(admin)/admin/booking-desk/book/page.tsx": {
     "design-system/no-raw-input": {
       "count": 2
     },
@@ -460,7 +460,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/waitlist/page.tsx": {
+  "src/app/(admin)/admin/booking-desk/waitlist/page.tsx": {
     "design-system/no-raw-select": {
       "count": 1
     }

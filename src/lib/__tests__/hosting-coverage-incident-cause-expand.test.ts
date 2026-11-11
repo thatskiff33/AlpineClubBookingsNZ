@@ -73,7 +73,7 @@ const WRITER_MODULE = "src/lib/adult-member-hosting-review.ts";
 
 /** The two officer surfaces that render a cause. */
 const OFFICER_SURFACES = [
-  "src/app/(admin)/admin/bookings/page.tsx",
+  "src/app/(admin)/admin/booking-desk/bookings/page.tsx",
   "src/lib/stuck-state-dashboard.ts",
 ];
 

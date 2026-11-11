@@ -213,11 +213,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
     label: NEEDS_ATTENTION_LABEL,
     items: [
       { href: adminHref("xero"), label: "Silent Xero Webhook", icon: Bell },
-      {
-        href: "/admin/booking-requests",
-        label: "Booking Requests",
-        icon: ClipboardList,
-      },
+      { ...adminLink("booking-requests"), icon: ClipboardList },
       ...buildAdminQueueViews(clubToday).map(({ href, label, icon }) => ({
         href,
         label,
@@ -247,19 +243,11 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
   {
     label: "Bookings & Beds",
     items: [
-      { href: "/admin/bookings", label: "Bookings", icon: BookOpen },
-      {
-        href: "/admin/booking-requests",
-        label: "Booking Requests",
-        icon: ClipboardList,
-      },
-      { href: "/admin/book", label: "Book on Behalf", icon: UserPlus },
-      {
-        href: "/admin/bed-allocation",
-        label: "Bed Allocation",
-        icon: BedDouble,
-      },
-      { href: "/admin/waitlist", label: "Waitlist", icon: Clock },
+      { ...adminLink("bookings"), icon: BookOpen },
+      { ...adminLink("booking-requests"), icon: ClipboardList },
+      { ...adminLink("book"), icon: UserPlus },
+      { ...adminLink("bed-allocation"), icon: BedDouble },
+      { ...adminLink("waitlist"), icon: Clock },
     ],
   },
   {
@@ -843,7 +831,7 @@ function SidebarLinks({
     counts.newBookingPolicyExceptionRequests +
     counts.publicBookingRequests;
   if (bookingRequestCount > 0) {
-    badges["/admin/booking-requests"] = bookingRequestCount;
+    badges[adminHref("booking-requests")] = bookingRequestCount;
   }
   if (counts.unpaidFinishedStays > 0) {
     badges[buildUnpaidFinishedStaysHref(clubToday)] = counts.unpaidFinishedStays;

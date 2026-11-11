@@ -4,13 +4,13 @@ import "@testing-library/jest-dom/vitest";
 import type { ComponentProps, ReactNode } from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AllocationChip } from "@/app/(admin)/admin/bed-allocation/_components/allocation-chip";
-import { getBookingAccent } from "@/app/(admin)/admin/bed-allocation/_components/booking-accent";
+import { AllocationChip } from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/allocation-chip";
+import { getBookingAccent } from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/booking-accent";
 import type {
   BedOption,
   BedOptionGroup,
   DashboardAllocation,
-} from "@/app/(admin)/admin/bed-allocation/_components/types";
+} from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/types";
 import { AGE_TIER_COLORS } from "@/lib/admin-family-group-ui-helpers";
 
 vi.mock("@dnd-kit/core", () => ({

@@ -140,7 +140,7 @@ vi.mock("@/components/promo-code-input", () => ({
   PromoCodeInput: () => null,
 }))
 
-import AdminBookPage from "@/app/(admin)/admin/book/page"
+import AdminBookPage from "@/app/(admin)/admin/booking-desk/book/page"
 
 function deferred<T>() {
   let resolve!: (value: T) => void

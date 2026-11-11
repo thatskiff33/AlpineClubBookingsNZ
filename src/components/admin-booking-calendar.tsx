@@ -1,5 +1,6 @@
 "use client";
 
+import { adminHref } from "@/lib/admin-hubs";
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -174,7 +175,7 @@ export function AdminBookingCalendar() {
   const monthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
   const currentPageParams = new URLSearchParams(searchParams.toString());
   currentPageParams.set("month", monthKey);
-  const currentBookingsPath = buildPathWithSearch("/admin/bookings", currentPageParams);
+  const currentBookingsPath = buildPathWithSearch(adminHref("bookings"), currentPageParams);
 
   const fetchBookings = useCallback(async () => {
     setLoading(true);

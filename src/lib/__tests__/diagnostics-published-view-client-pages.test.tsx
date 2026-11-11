@@ -663,7 +663,7 @@ describe("/admin/waitlist publishes the window it applied (#2816)", () => {
   it("publishes the URL window the fetch actually used", async () => {
     routerMocks.search = "from=2026-08-01&to=2026-08-31&page=2&pageSize=50";
     const { default: AdminWaitlistPage } = await import(
-      "@/app/(admin)/admin/waitlist/page"
+      "@/app/(admin)/admin/booking-desk/waitlist/page"
     );
 
     render(
@@ -690,7 +690,7 @@ describe("/admin/waitlist publishes the window it applied (#2816)", () => {
     // writes them to the URL.
     routerMocks.search = "from=2026-08-01&to=2026-08-31";
     const { default: AdminWaitlistPage } = await import(
-      "@/app/(admin)/admin/waitlist/page"
+      "@/app/(admin)/admin/booking-desk/waitlist/page"
     );
 
     render(
@@ -731,7 +731,7 @@ describe("/admin/waitlist publishes the window it applied (#2816)", () => {
     );
     routerMocks.search = "from=13-45-2026&to=2026-08-31";
     const { default: AdminWaitlistPage } = await import(
-      "@/app/(admin)/admin/waitlist/page"
+      "@/app/(admin)/admin/booking-desk/waitlist/page"
     );
 
     render(

@@ -5,13 +5,13 @@ import {
   BED_ALLOCATION_SCREEN_READER_INSTRUCTIONS,
   createBedAllocationAnnouncements,
   describeBedAllocationDrop,
-} from "@/app/(admin)/admin/bed-allocation/_components/allocation-drag-feedback";
-import { deriveActiveDragDates } from "@/app/(admin)/admin/bed-allocation/_components/active-drag-dates";
+} from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/allocation-drag-feedback";
+import { deriveActiveDragDates } from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/active-drag-dates";
 import type {
   BedOption,
   BucketGuestGroup,
   DashboardAllocation,
-} from "@/app/(admin)/admin/bed-allocation/_components/types";
+} from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/types";
 
 function buildAllocation(
   overrides: Partial<DashboardAllocation> = {},
@@ -226,7 +226,7 @@ describe("authoritative allocation move entry seam (#2595)", () => {
     const pageSource = readFileSync(
       resolve(
         process.cwd(),
-        "src/app/(admin)/admin/bed-allocation/page.tsx",
+        "src/app/(admin)/admin/booking-desk/bed-allocation/page.tsx",
       ),
       "utf8",
     );

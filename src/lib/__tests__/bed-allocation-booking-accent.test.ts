@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   BOOKING_ACCENTS,
   getBookingAccent,
-} from "@/app/(admin)/admin/bed-allocation/_components/booking-accent";
+} from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/booking-accent";
 
 describe("bed allocation booking accents", () => {
   it("maps the same booking id to the same accent", () => {

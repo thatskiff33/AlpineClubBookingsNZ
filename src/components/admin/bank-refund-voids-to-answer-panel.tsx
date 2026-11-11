@@ -1,5 +1,6 @@
 "use client";
 
+import { adminHref } from "@/lib/admin-hubs";
 import { useId, useState } from "react";
 import Link from "next/link";
 import { Landmark } from "lucide-react";
@@ -193,7 +194,7 @@ export function BankRefundVoidsToAnswerPanel({
               <li key={row.linkId} className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted p-2">
                 <div>
                   <div className="text-sm font-medium">
-                    <Link href={`/admin/bookings/${row.bookingId}`} className="underline">
+                    <Link href={`${adminHref("bookings")}/${row.bookingId}`} className="underline">
                       Booking {row.bookingReference}
                     </Link>
                     {" - "}
