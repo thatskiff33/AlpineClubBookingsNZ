@@ -3409,15 +3409,15 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   then the lodge capacity lock, after the status-guarded PENDING -> CONFIRMED
   claim — and creates the row (PENDING, the card about to be charged, the
   path's `reason`), then stamps its `reference` with the key
-  `mintedSavedCardChargeKey` builds: `pending_charge_<bookingId>_<rowId>`,
-  until #4682 switches it to the `_v2` key (that key plus `_v2`, #4646). A row
-  is an attempt row only when its `reference` is either key built from ITS OWN
-  id (`savedCardChargeKeyShape`): read first, write later, because the release
-  before #4646 reads only the original key and would mint a second charge
-  beside a `_v2` row it met. Because every path writes its
-  row under the same two locks, two paths can never both hold an open attempt
-  for one payment: the second to take the locks reads the first's row. That is
-  the guard the shared key used to provide by accident, and it now covers
+  `mintedSavedCardChargeKey` builds: `pending_charge_<bookingId>_<rowId>_v2`
+  (#4682; #4646). A row is an attempt row when its `reference` is that key or
+  the original key without `_v2`, built from ITS OWN id
+  (`savedCardChargeKeyShape`). Both shapes are still read: an original-key row
+  from an earlier release is re-sent under its stored key. Because every path
+  writes its row under the same two locks, two paths can never both hold an
+  open attempt for one payment: the second to take the locks reads the first's
+  row. That is the guard the shared key used to provide by accident, and it now
+  covers
   `charge-saved-method`, which gained the same claim (it had none) so that its
   row is written under the same locks — a route writing its attempt unlocked
   would re-open the race the ledger closes.
@@ -3661,9 +3661,9 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   write is claimed on "still no intent" under the Payment lock, so a lost
   adoption writes nothing. Without adoption a lost response's capture was
   invisible even to `INV-PAY-043`, and the re-send after 24 hours was a second
-  charge. **The limit until #4682:** new attempts still mint the original key
-  (`INV-PAY-081`), which sends no id, so their asynchronous capture ends at
-  `attempt_key_expired`, alerted once as unmatched (`INV-INT-033`).
+  charge. An original-key row, the shape minted before #4682, sends no id, so
+  its asynchronous capture stays unmatched and ends at `attempt_key_expired`,
+  alerted once (`INV-INT-033`). That is the old shape, not this mint.
 
 ## INV-PAY-090
 
