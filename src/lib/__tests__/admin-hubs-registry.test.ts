@@ -2006,6 +2006,8 @@ describe("the registry is inert", () => {
       "C8: saving and cancelling return to Member Notices at its adminHref",
     "src/components/admin/club-posts/club-posts-admin.tsx":
       "C8: the Message Board's tab links and search form address it at its adminHref",
+    "src/app/(admin)/admin/subscription-categories/page.tsx":
+      "#4496: added after C8, registered in MEMBERS_HUB; its Fees link is adminHref",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;
