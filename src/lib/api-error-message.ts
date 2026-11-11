@@ -118,10 +118,15 @@
  */
 export const MODULE_DISABLED_ERROR_CODE = "MODULE_DISABLED";
 
-function errorObject(body: unknown): { error?: unknown; code?: unknown } | null {
+/** A parsed body that is a JSON object, or `null` for anything else. */
+export function jsonObjectOrNull(body: unknown): Record<string, unknown> | null {
   return typeof body === "object" && body !== null && !Array.isArray(body)
-    ? (body as { error?: unknown; code?: unknown })
+    ? (body as Record<string, unknown>)
     : null;
+}
+
+function errorObject(body: unknown): { error?: unknown; code?: unknown } | null {
+  return jsonObjectOrNull(body);
 }
 
 /** The sentence to show, from a body the caller has already parsed. */
