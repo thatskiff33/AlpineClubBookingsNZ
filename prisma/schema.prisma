@@ -4245,41 +4245,15 @@ model HostingCoverageReevaluation {
 }
 
 // ---------------------------------------------------------------------------
-// Xero OAuth Token (single row) — RETIRING (#3806)
-// ---------------------------------------------------------------------------
-//
-// Kept only for the previous release (#3454), which reads, refreshes, connects
-// and disconnects through this row alone. Since #3806 R2 the tokens live only in
-// the credential store and the connection facts and refresh lease live in
-// `XeroConnection`. This release keeps the row present while connected, with
-// `tenantId`, `expiresAt` and the old lease current, and never names the two
-// ciphertext columns: they are `@ignore`d so the generated client cannot put
-// them in a SELECT, an INSERT or a RETURNING (INV-OPS-005), and the database
-// fills them with '' on create (the schema's `@default("")` mirrors the column default for the drift check only). The table is dropped in R3 (#3806).
-
-model XeroToken {
-  id                     String    @id @default(cuid())
-  accessToken            String    @default("") @ignore
-  refreshToken           String    @default("") @ignore
-  expiresAt              DateTime
-  tenantId               String?
-  refreshInProgressUntil DateTime?
-  createdAt              DateTime  @default(now())
-  updatedAt              DateTime  @updatedAt
-}
-
-// ---------------------------------------------------------------------------
-// Xero connection (single row, no secret) — #3806 R2
+// Xero connection (single row, no secret) — #3806
 // ---------------------------------------------------------------------------
 //
 // The one answer to "is Xero connected, to which tenant, until when", and the
 // refresh lease. Holds no token, ciphertext or key; the tokens are one row of
 // the encrypted credential store (`xero-oauth` / `token-set`). One row, id
-// "default" (a CHECK constraint in the migration). While `XeroToken` exists, a
-// statement trigger on it copies the latest row's `tenantId` and `expiresAt`
-// here and deletes this row when none is left, so the previous release's writes
-// are reflected too; the lease column is written only by the token store.
-// Read it through `readXeroConnection` (src/lib/xero-connection.ts).
+// "default" (a CHECK constraint in the migration). Read it through
+// `readXeroConnection` (src/lib/xero-connection.ts). The old `XeroToken` table
+// was dropped in the windowed release `20261210100000_contract_drop_xero_token`.
 
 model XeroConnection {
   id                     String    @id @default("default")

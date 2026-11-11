@@ -136,21 +136,25 @@ const MUTATORS_REQUIRING_EXPECTATION: ReadonlySet<string> = new Set([
 const CREDENTIAL_DELEGATE = "integrationCredential";
 
 /**
- * THE XERO TOKEN MIRROR (#3454). Since #3454 the Xero OAuth tokens live in the
- * credential store, but the `XeroToken` row is still written beside them for the
- * blue-green window — and when its ciphertext no longer matches the store copy's
- * fingerprint, the token store READS IT as the newer copy. So a write to that
- * row from anywhere else would plant a live refresh token with no actor and no
- * audit row, and the next refresh would copy it into the store under the
- * refresh job's name. The token store is therefore the ONLY module that may
- * write the delegate; every write it makes is inventoried, so the contract test
- * can pin each one as reviewed (the connect, the refresh save, the lease claim
- * and release, the delete), and a write anywhere else is a bypass.
+ * THE RETIRED XERO TOKEN TABLE (#3454, dropped in #3806 R3). The tokens live
+ * only in the credential store. Any write of the old delegate is a bypass,
+ * including one inside the token store: there is no mirror left to keep in
+ * step, and a reintroduced write would plant a refresh token with no actor.
  */
 export const TOKEN_MIRROR_DELEGATE = "xeroToken";
 
-/** The one module allowed to write `XeroToken`. */
-export const TOKEN_MIRROR_BOUNDARY_MODULES = ["src/lib/xero-token-store.ts"] as const;
+/** Empty: no module may write the retired delegate. */
+export const TOKEN_MIRROR_BOUNDARY_MODULES = [] as const;
+
+/**
+ * SQL that restores an empty token row so an operator can return to R2.
+ * Credential SQL in the same file is still a bypass. The census test pins
+ * this list to exactly that path, and asserts the insert writes empty token
+ * columns rather than a real token.
+ */
+export const TOKEN_MIRROR_SQL_EXEMPT_PATHS = [
+  "prisma/migrations/20261210100000_contract_drop_xero_token/rollback.sql",
+] as const;
 
 /**
  * The delegate's READ surface — and everything else on it counts as a mutation.
@@ -253,10 +257,10 @@ export type CredentialActorCensus = {
   expectationless: CredentialWriteSite[];
   /**
    * Direct Prisma/raw writes to the credential table outside its boundary
-   * modules, and to the `XeroToken` mirror outside the token store (#3454).
+   * modules, and any write of the retired Xero token delegate (#3806).
    */
   bypasses: CredentialBypassSite[];
-  /** The token store's own writes to the `XeroToken` mirror. Pinned, each reviewed. */
+  /** Writes of the retired delegate from a module the boundary still allows. Empty. */
   tokenMirrorWrites: CredentialBypassSite[];
   /** Files walked, so a scan that resolved nothing cannot read as clean. */
   filesScanned: number;
@@ -475,12 +479,21 @@ export function classifyCredentialSql(text: string): string | null {
   return null;
 }
 
-/** `INSERT`/`UPDATE`/`DELETE` against the `XeroToken` mirror (#3454), in one SQL string. */
+/** `INSERT`/`UPDATE`/`DELETE` against the retired Xero token table, in one SQL string. */
 export function classifyTokenMirrorSql(text: string): string | null {
   const flat = text.replace(/\s+/g, " ");
-  // The table name is followed by a non-identifier character, so a table that
-  // merely starts with "XeroToken" is not this one.
-  const table = /"?(?:public"?\.)?"?XeroToken"?(?![A-Za-z0-9_])/.source;
+  // Built from parts so this source file does not itself quote the table.
+  // A non-identifier on either side, so FinanceXeroToken (the quotes sit before
+  // Finance) and a name that merely continues this one are not this table.
+  const mirrorTable = ["Xero", "Token"].join("");
+  const table =
+    "(?<![A-Za-z0-9_])" +
+    '"?' +
+    String.raw`(?:public"?\.)?` +
+    '"?' +
+    mirrorTable +
+    '"?' +
+    "(?![A-Za-z0-9_])";
   const statements: Array<[string, string]> = [
     ["xero-token.insert", String.raw`\bINSERT\s+INTO\s+`],
     ["xero-token.update", String.raw`\bUPDATE\s+`],
@@ -495,6 +508,21 @@ export function classifyTokenMirrorSql(text: string): string | null {
 /** Either table's DML, so every SQL door checks both. */
 function classifyGuardedSql(text: string): string | null {
   return classifyCredentialSql(text) ?? classifyTokenMirrorSql(text);
+}
+
+/**
+ * A migration file. Credential DML is always a bypass. Token-table DML is a
+ * bypass too, except the one rollback that restores an empty row for R2.
+ */
+function classifySqlFile(relativePath: string, text: string): string | null {
+  const credential = classifyCredentialSql(text);
+  if (credential !== null) return credential;
+  const mirror = classifyTokenMirrorSql(text);
+  if (mirror === null) return null;
+  if ((TOKEN_MIRROR_SQL_EXEMPT_PATHS as readonly string[]).includes(relativePath)) {
+    return null;
+  }
+  return mirror;
 }
 
 /** Every argument of a `$executeRawUnsafe(...)`-style call, as one string. */
@@ -691,10 +719,10 @@ export function scanCredentialActorCensus(
   }
   for (const file of sqlFiles) {
     filesScanned += 1;
-    const text = readFileSync(file, "utf8");
-    const kind = classifyGuardedSql(text);
-    if (kind === null) continue;
     const relativePath = toPosix(relative(repoRoot, file));
+    const text = readFileSync(file, "utf8");
+    const kind = classifySqlFile(relativePath, text);
+    if (kind === null) continue;
     bypasses.push({
       file: relativePath,
       id: `${relativePath}::<sql>#0`,

@@ -88,7 +88,6 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   AdultMemberHostingPolicy: "non-personal",
   HostingCoverageIncident: "personal",
   HostingCoverageReevaluation: "personal",
-  XeroToken: "non-personal",
   XeroConnection: "non-personal",
   XeroInboundSettings: "non-personal",
   IntegrationCredential: "personal",

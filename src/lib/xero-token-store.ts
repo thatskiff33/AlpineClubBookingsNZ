@@ -5,10 +5,9 @@
  * connection row and the refresh lease, and reports connection status. Keeps
  * token plaintext out of the database.
  *
- * Since #3454 the tokens live in the encrypted integration credential store;
- * since #3806 R2 the connection's non-secret facts and the refresh lease live in
- * `XeroConnection`, and the `XeroToken` row is kept only for the previous release
- * — see "Where things live" below.
+ * Since #3454 the tokens live in the encrypted integration credential store.
+ * Since #3806 the connection's non-secret facts and the only refresh lease live
+ * in `XeroConnection`. The old `XeroToken` table is gone.
  */
 
 import type { Prisma } from "@prisma/client";
@@ -35,12 +34,16 @@ import {
   XERO_CONNECTION_ID,
 } from "@/lib/xero-connection";
 import { invalidateXeroOrganisationCaches } from "@/lib/xero-organisation-cache-bus";
-import { XERO_TOKEN_ROW_ORDER } from "@/lib/xero-token-row-order";
 import {
   XeroTokenDecryptError,
   xeroTokenSaveRefusal,
   type XeroTokenSaveRefusal,
 } from "@/lib/xero-token-errors";
+import {
+  serializeStoredTokenSet,
+  tokenSetForConnection,
+  type ConnectionTokenSetRefusal,
+} from "@/lib/xero-token-set";
 
 /**
  * Why a Xero connection needs attention: its stored tokens cannot be read
@@ -48,12 +51,6 @@ import {
  * server's configuration fixes it; see `XeroTokenSaveRefusal`).
  */
 export type XeroReentryCause = "tokens-unreadable" | XeroTokenSaveRefusal;
-import {
-  freshRowMirror,
-  serializeStoredTokenSet,
-  tokenSetForConnection,
-  type ConnectionTokenSetRefusal,
-} from "@/lib/xero-token-set";
 
 // Every caller already finds these here.
 export {
@@ -70,11 +67,7 @@ export interface TokenData {
 }
 
 export interface XeroTokenRecord extends TokenData {
-  /**
-   * When a refresh in progress somewhere releases its lease: the later of this
-   * release's lease and the previous release's (#3806), or null when neither is
-   * held. A process that lost the claim waits on it.
-   */
+  /** When the refresh lease releases, or null when none is held. */
   refreshInProgressUntil: Date | null;
 }
 
@@ -84,15 +77,8 @@ export interface XeroTokenRecord extends TokenData {
  */
 export interface XeroRefreshLease {
   leaseUntil: Date;
-  /**
-   * The `XeroToken` row whose lease was claimed beside ours, or null when there
-   * was no such row (#3806: the previous release claims only that one).
-   */
-  tokenRowId: string | null;
   /** The credential-store version read under the lease; the save compares-and-sets on it. */
   storeVersion: CredentialVersion;
-  /** The store copy's mirror fingerprint, carried forward unchanged (see rule 3 below). */
-  mirror: string;
 }
 
 export const XERO_TOKEN_REFRESH_LEASE_MS = 2 * 60 * 1000;
@@ -111,7 +97,7 @@ export type XeroTokenRefreshLeaseClaim =
     };
 
 // ---------------------------------------------------------------------------
-// Where things live (#3454, #3806 R2)
+// Where things live (#3454, #3806)
 // ---------------------------------------------------------------------------
 //
 // THE TOKENS are ONE row of the encrypted integration-credential store
@@ -121,43 +107,24 @@ export type XeroTokenRefreshLeaseClaim =
 // "xero": a refresh every half hour must not drop the cached Xero client id and
 // secret, and a token that no longer decrypts needs a RECONNECT, which is not the
 // "re-enter your credentials" aggregate `providerNeedsReentry("xero")` drives.
-// It is the only copy this release reads: there is no fallback.
 //
 // THE CONNECTION AND THE LEASE are the one `XeroConnection` row: no row means
 // not connected; it carries the tenant, the access token's expiry and the
 // refresh lease, and nothing secret. `readXeroConnection` is the one reader of
-// the facts (`xero-connection.ts`).
+// the facts (`xero-connection.ts`). There is no advisory lock (`INV-LOCK-001`).
+// Inside one transaction the order is that row, then the credential-store write
+// (`INV-LOCK-002`). `withCredentialTransaction` is only `prisma.$transaction`
+// plus cache invalidation; it does not take a lock before the callback.
 //
-// THE `XeroToken` ROW STAYS FOR THE PREVIOUS RELEASE (#3454), which can run
-// beside this one during a deploy and after a rollback. That code reads,
-// refreshes, connects and disconnects through `XeroToken` alone, treats no row
-// as not connected, claims its lease on `XeroToken.refreshInProgressUntil`, and
-// reads the store copy only while the store's `mirror` matches a hash of the
-// row's id and ciphertext. Xero refresh tokens ROTATE — each is spendable once —
-// so if the two releases ever disagreed about the current tokens, one of them
-// would end up holding a spent refresh token. Four rules prevent that:
+// TWO CONNECTS AT THE SAME MOMENT can still commit the connection row from one
+// grant and the store copy from the other, because the store write uses
+// `expect: "any"`. `tokenSetForConnection` reads a tenant disagreement as
+// reconnect-required. That is the remaining limit. `XeroConnection` is a
+// singleton, so the old "two token rows" limit is gone with the table.
 //
-//   1. while connected the row is PRESENT, with `tenantId` and `expiresAt`
-//      current, written in the same transaction as every connect and refresh;
-//   2. a refresh claims BOTH leases, `XeroToken`'s first and then ours, in one
-//      transaction, so this release and the previous one compete for one
-//      refresh token. `XeroToken` first is also the order a statement trigger
-//      on that table fixes for every writer of either release: it keeps
-//      `XeroConnection` in step with what the previous release writes there,
-//      so its connect, refresh and disconnect reach this release too;
-//   3. this release never writes or reads the row's ciphertext columns (they
-//      are `@ignore`d in the schema), so the store copy's `mirror` stays valid.
-//      A connect replaces the row with a fresh one whose ciphertext columns the
-//      database fills with '', and records the hash of exactly that; a refresh
-//      leaves the row's ciphertext alone and carries the `mirror` it read under
-//      the lease. The previous release therefore always reads the store copy;
-//   4. a write the previous release makes rewrites both copies itself (it is
-//      the #3454 dual-write), so its rows keep matching too.
-//
-// The trigger and the row go in R3 (#3806). THE STORE'S CACHE IS NEVER USED FOR
-// THE TOKENS: `readIntegrationCredentialRow` reads through the database on the
-// caller's client, so a refresh token another container has just rotated can
-// never be served stale from this process.
+// THE STORE'S CACHE IS NEVER USED FOR THE TOKENS: `readIntegrationCredentialRow`
+// reads through the database on the caller's client, so a refresh token another
+// container has just rotated can never be served stale from this process.
 
 /** The credential-store namespace for the Xero OAuth token set. */
 export const XERO_OAUTH_TOKEN_PROVIDER = "xero-oauth";
@@ -165,17 +132,14 @@ export const XERO_OAUTH_TOKEN_PROVIDER = "xero-oauth";
 export const XERO_OAUTH_TOKEN_KEY = "token-set";
 
 /**
- * The wrapped key the `XeroToken` ciphertext was encrypted under until #3806 R2.
+ * The wrapped key the old token ciphertext was encrypted under until #3806 R2.
  * Nothing here uses it any more. A leftover row would still be read by the
  * provider's re-entry aggregate, and after an auth-secret change nothing would
  * ever replace it, so the next connect, disconnect or verify-reset deletes it.
  */
 const RETIRED_XERO_TOKEN_KEY = "token_key";
 
-type XeroTokenDb = Pick<
-  Prisma.TransactionClient,
-  "xeroToken" | "xeroConnection" | "integrationCredential"
->;
+type XeroTokenDb = Pick<Prisma.TransactionClient, "xeroConnection" | "integrationCredential">;
 
 /** Who is writing the tokens, and from which request. Required on every write. */
 export interface XeroTokenWriteContext {
@@ -183,29 +147,21 @@ export interface XeroTokenWriteContext {
   request?: CredentialRequestContext;
 }
 
-function laterOf(a: Date | null, b: Date | null): Date | null {
-  if (a === null) return b;
-  if (b === null) return a;
-  return a.getTime() >= b.getTime() ? a : b;
-}
-
 interface CurrentTokens {
   record: XeroTokenRecord;
   storeVersion: CredentialVersion;
-  mirror: string;
 }
 
 /**
  * Read the current token set on `db`, or `null` when Xero is not connected.
  * Throws `XeroTokenDecryptError` when a connection exists but its store copy is
  * missing, unreadable or malformed, or names a different organisation from the
- * connection (`tokenSetForConnection`): only a reconnect fixes that, and there
- * is no other copy this release may read.
+ * connection (`tokenSetForConnection`): only a reconnect fixes that.
  */
 async function readCurrentTokens(db: XeroTokenDb): Promise<CurrentTokens | null> {
-  // The store row first: every writer of either release that replaces the token
-  // set also rewrites or deletes the connection row, so a disconnect committing
-  // between these reads leaves the SECOND read saying "not connected".
+  // The store row first: every writer that replaces the token set also rewrites
+  // or deletes the connection row, so a disconnect committing between these
+  // reads leaves the SECOND read saying "not connected".
   const stored = await readIntegrationCredentialRow(
     db,
     XERO_OAUTH_TOKEN_PROVIDER,
@@ -216,10 +172,6 @@ async function readCurrentTokens(db: XeroTokenDb): Promise<CurrentTokens | null>
     select: { tenantId: true, refreshInProgressUntil: true },
   });
   if (!connection) return null;
-  const previousReleaseLease = await db.xeroToken.findFirst({
-    orderBy: XERO_TOKEN_ROW_ORDER,
-    select: { refreshInProgressUntil: true },
-  });
   const tokenSet = tokenSetForConnection(stored, connection.tenantId);
   if (!tokenSet.usable || stored.status !== "configured") {
     throw new XeroTokenDecryptError(
@@ -233,13 +185,9 @@ async function readCurrentTokens(db: XeroTokenDb): Promise<CurrentTokens | null>
       refreshToken: value.refreshToken,
       expiresAt: new Date(value.expiresAt),
       tenantId: value.tenantId ?? connection.tenantId ?? undefined,
-      refreshInProgressUntil: laterOf(
-        connection.refreshInProgressUntil,
-        previousReleaseLease?.refreshInProgressUntil ?? null,
-      ),
+      refreshInProgressUntil: connection.refreshInProgressUntil,
     },
     storeVersion: stored.version,
-    mirror: value.mirror ?? "",
   };
 }
 
@@ -263,16 +211,16 @@ export interface SaveXeroTokenOptions extends XeroTokenWriteContext {
 }
 
 /**
- * Store a token set: the store copy, the connection row and the previous
- * release's row, one transaction, one audit row.
+ * Store a token set: the store copy and the connection row, one transaction,
+ * one audit row.
  *
- * A REFRESH (`options.lease`) is fenced three times. The `XeroToken` and
- * `XeroConnection` updates are each guarded on the lease this process claimed —
- * a reconnect or a later claim in the meantime matches nothing and the save
- * throws — and the store write is a compare-and-set on the version the claim read
- * under its lock, so a writer that bypassed the leases makes this one lose too.
- * Any failure rolls everything back. The Xero call that produced these tokens
- * happened outside any transaction (`INV-INT-003`).
+ * A REFRESH (`options.lease`) is fenced twice. The `XeroConnection` update is
+ * guarded on the lease this process claimed — a reconnect or a later claim in
+ * the meantime matches nothing and the save throws — and the store write is a
+ * compare-and-set on the version the claim read under its lock, so a writer
+ * that bypassed the lease makes this one lose too. Any failure rolls everything
+ * back. The Xero call that produced these tokens happened outside any
+ * transaction (`INV-INT-003`).
  *
  * A CONNECT replaces whatever was stored — the operator has just authorised a
  * fresh grant and there is nothing older to be stale against — and resets the
@@ -287,22 +235,6 @@ export async function saveXeroTokens(
   if (lease) {
     const tenantId = tokens.tenantId ?? null;
     await withCredentialTransaction([XERO_OAUTH_TOKEN_PROVIDER], async (tx) => {
-      // `XeroToken` first: the lock order the trigger on it fixes (rule 2).
-      if (lease.tokenRowId !== null) {
-        const previousRelease = await tx.xeroToken.updateMany({
-          where: {
-            id: lease.tokenRowId,
-            refreshInProgressUntil: { lte: lease.leaseUntil },
-          },
-          data: {
-            expiresAt: tokens.expiresAt,
-            tenantId,
-            refreshInProgressUntil: null,
-          },
-        });
-        if (previousRelease.count !== 1) throw new Error(LEASE_LOST_MESSAGE);
-      }
-
       const connection = await tx.xeroConnection.updateMany({
         where: {
           id: XERO_CONNECTION_ID,
@@ -320,8 +252,7 @@ export async function saveXeroTokens(
         tx,
         provider: XERO_OAUTH_TOKEN_PROVIDER,
         key: XERO_OAUTH_TOKEN_KEY,
-        // The row's ciphertext is untouched, so its fingerprint is unchanged.
-        value: serializeStoredTokenSet(tokens, tenantId, lease.mirror),
+        value: serializeStoredTokenSet(tokens, tenantId),
         actor: options.actor,
         expect: { expect: "version", version: lease.storeVersion },
         cause: { kind: "token-refresh" },
@@ -342,28 +273,9 @@ export async function saveXeroTokens(
       });
       const tenantId = tokens.tenantId ?? previous?.tenantId ?? null;
 
-      // `XeroToken` first (rule 2). Replacing the row rather than updating it
-      // means its ciphertext columns are the database's '' default, whose
-      // fingerprint this release knows without reading them (rule 3). It also
-      // fences any refresh in flight: its lease-guarded update finds no row.
-      //
-      // KNOWN LIMIT: two connects at the same moment can leave TWO rows, as they
-      // could under #3454 — neither delete sees the other's uncommitted insert.
-      // No delete follows the connection upsert to tidy that up, because it
-      // would take `XeroToken` row locks after `XeroConnection`'s, the reverse
-      // of rule 2. It is tolerated instead: every reader of either release
-      // takes the most recently written row (`XERO_TOKEN_ROW_ORDER`), so both
-      // releases still claim the same lease; the first refresh rewrites that
-      // row and the connection from the store copy, the last connect's; and
-      // the next connect or disconnect deletes both. If the two connects named
-      // different organisations and the connection followed the other one, the
-      // store copy no longer matches it and reads as "reconnect required"
-      // (`tokenSetForConnection`).
-      await tx.xeroToken.deleteMany();
-      const row = await tx.xeroToken.create({
-        data: { expiresAt: tokens.expiresAt, tenantId },
-        select: { id: true },
-      });
+      // The connection row first, then the store (the lock order above). A
+      // connect clears any refresh in flight: its lease-guarded update finds
+      // the lease nulled and matches nothing.
       await tx.xeroConnection.upsert({
         where: { id: XERO_CONNECTION_ID },
         create: { id: XERO_CONNECTION_ID, expiresAt: tokens.expiresAt, tenantId },
@@ -375,7 +287,7 @@ export async function saveXeroTokens(
         tx,
         provider: XERO_OAUTH_TOKEN_PROVIDER,
         key: XERO_OAUTH_TOKEN_KEY,
-        value: serializeStoredTokenSet(tokens, tenantId, freshRowMirror(row.id)),
+        value: serializeStoredTokenSet(tokens, tenantId),
         actor: options.actor,
         // A connect is a fresh grant the operator has just authorised; it
         // replaces whatever was stored and has nothing to be stale against.
@@ -443,25 +355,29 @@ export async function getXeroTokenReadability(): Promise<XeroTokenReadability> {
   return tokenSetForConnection(stored, connection.tenantId).usable ? "readable" : "unreadable";
 }
 
-/** The claim lost to a lease held on `XeroConnection` alone; rolls our claim back. */
-class XeroConnectionLeaseHeld extends Error {}
-
 /** A lease row nobody holds at `now`: never claimed, or its lease has run out. */
-const leaseIsFreeAt = (now: Date) => ({ OR: [{ refreshInProgressUntil: null }, { refreshInProgressUntil: { lte: now } }] });
+const leaseIsFreeAt = (now: Date) => ({
+  OR: [{ refreshInProgressUntil: null }, { refreshInProgressUntil: { lte: now } }],
+});
 
 /**
- * The data-key re-encrypt's fence (#4456): rule 2's row locks, each guarded on NO lease at all, never taking one over
- * (an expired one may be a stalled refresh). False while either is set; no connection row, no lease. CONCURRENCY_AND_LOCKING.md.
+ * The data-key re-encrypt's fence (#4456): the connection row, guarded on NO
+ * lease at all, never taking one over (an expired one may be a stalled
+ * refresh). False while one is set; no connection row, no lease.
+ * CONCURRENCY_AND_LOCKING.md.
  */
 export async function fenceXeroTokenSetRewrite(tx: XeroTokenDb): Promise<boolean> {
   const unheld = { refreshInProgressUntil: null };
-  const tokenRow = await tx.xeroToken.findFirst({ select: { id: true }, orderBy: XERO_TOKEN_ROW_ORDER });
-  if (tokenRow) {
-    const previousRelease = await tx.xeroToken.updateMany({ where: { id: tokenRow.id, ...unheld }, data: unheld });
-    if (previousRelease.count !== 1) return false;
-  }
-  const ours = await tx.xeroConnection.updateMany({ where: { id: XERO_CONNECTION_ID, ...unheld }, data: unheld });
-  return ours.count === 1 || !(await tx.xeroConnection.findUnique({ where: { id: XERO_CONNECTION_ID }, select: { id: true } }));
+  const ours = await tx.xeroConnection.updateMany({
+    where: { id: XERO_CONNECTION_ID, ...unheld },
+    data: unheld,
+  });
+  if (ours.count === 1) return true;
+  const row = await tx.xeroConnection.findUnique({
+    where: { id: XERO_CONNECTION_ID },
+    select: { id: true },
+  });
+  return row === null;
 }
 
 export async function claimXeroTokenRefreshLease(options?: {
@@ -469,114 +385,52 @@ export async function claimXeroTokenRefreshLease(options?: {
   leaseMs?: number;
 }): Promise<XeroTokenRefreshLeaseClaim> {
   const now = options?.now ?? new Date();
-  const leaseUntil = new Date(
-    now.getTime() + (options?.leaseMs ?? XERO_TOKEN_REFRESH_LEASE_MS)
-  );
-  const leaseIsFree = leaseIsFreeAt(now);
+  const leaseUntil = new Date(now.getTime() + (options?.leaseMs ?? XERO_TOKEN_REFRESH_LEASE_MS));
 
-  try {
-    return await prisma.$transaction(async (tx): Promise<XeroTokenRefreshLeaseClaim> => {
-      const connection = await tx.xeroConnection.findUnique({
-        where: { id: XERO_CONNECTION_ID },
-        select: { id: true },
-      });
-      if (!connection) {
-        return { claimed: false, tokens: null, leaseUntil: null };
-      }
-
-      // CLAIM FIRST, THEN READ (#3454 review), and BOTH LEASES (#3806 R2).
-      //
-      // The previous release's lease first: it claims only
-      // `XeroToken.refreshInProgressUntil`, so that is where the two releases
-      // exclude each other, and `XeroToken` first is the lock order the trigger
-      // fixes for every writer (rule 2 above). Ours second: it is the lease that
-      // stays when `XeroToken` goes. A claim that wins holds both rows' locks
-      // until this transaction commits, and every writer of the token set — a
-      // connect, a refresh save, a disconnect, a verify-reset, of either release
-      // — takes one of them first. So the store copy read below is the one that
-      // belongs to this lease, and the version the save compares-and-sets on is
-      // the one read under it.
-      const tokenRow = await tx.xeroToken.findFirst({
-        select: { id: true },
-        orderBy: XERO_TOKEN_ROW_ORDER,
-      });
-      let won = true;
-      if (tokenRow) {
-        const previousRelease = await tx.xeroToken.updateMany({
-          where: { id: tokenRow.id, ...leaseIsFree },
-          data: { refreshInProgressUntil: leaseUntil },
-        });
-        won = previousRelease.count === 1;
-      }
-      if (won) {
-        const ours = await tx.xeroConnection.updateMany({
-          where: { id: XERO_CONNECTION_ID, ...leaseIsFree },
-          data: { refreshInProgressUntil: leaseUntil },
-        });
-        if (ours.count !== 1) {
-          // Somebody holds our lease without the previous release's: give the
-          // one we just took back rather than hold half a lease.
-          if (tokenRow) throw new XeroConnectionLeaseHeld();
-          won = false;
-        }
-      }
-
-      // Read on THIS transaction's client, through the database, so the refresh
-      // token handed back is the one stored now — never a cached copy another
-      // container has already spent.
-      const current = await readCurrentTokens(tx);
-      if (!won) {
-        return {
-          claimed: false,
-          tokens: current?.record ?? null,
-          leaseUntil: current?.record.refreshInProgressUntil ?? null,
-        };
-      }
-      if (!current) {
-        // Unreachable: this transaction holds the connection row's lock.
-        throw new Error("Xero connection disappeared under its own refresh lease");
-      }
-      return {
-        claimed: true,
-        tokens: { ...current.record, refreshInProgressUntil: leaseUntil },
-        leaseUntil,
-        lease: {
-          leaseUntil,
-          tokenRowId: tokenRow?.id ?? null,
-          storeVersion: current.storeVersion,
-          mirror: current.mirror,
-        },
-      };
+  return prisma.$transaction(async (tx): Promise<XeroTokenRefreshLeaseClaim> => {
+    // CLAIM FIRST, THEN READ (#3454 review). The winning update holds the
+    // connection row's lock until this transaction commits, and every writer of
+    // the token set — a connect, a refresh save, a disconnect, a verify-reset,
+    // and the data-key re-encrypt through `fenceXeroTokenSetRewrite` — takes
+    // that row first. So the store copy read below is the one that belongs to
+    // this lease. A count other than 1 matched nothing: no row, or a lease
+    // still held. Nothing was taken, so there is nothing to roll back.
+    const claimed = await tx.xeroConnection.updateMany({
+      where: { id: XERO_CONNECTION_ID, ...leaseIsFreeAt(now) },
+      data: { refreshInProgressUntil: leaseUntil },
     });
-  } catch (error) {
-    if (!(error instanceof XeroConnectionLeaseHeld)) throw error;
-    const current = await readCurrentTokens(prisma);
+
+    const current = await readCurrentTokens(tx);
+    if (claimed.count !== 1) {
+      return {
+        claimed: false,
+        tokens: current?.record ?? null,
+        leaseUntil: current?.record.refreshInProgressUntil ?? null,
+      };
+    }
+    if (!current) {
+      // Unreachable: this transaction holds the connection row's lock.
+      throw new Error("Xero connection disappeared under its own refresh lease");
+    }
     return {
-      claimed: false,
-      tokens: current?.record ?? null,
-      leaseUntil: current?.record.refreshInProgressUntil ?? null,
+      claimed: true,
+      tokens: { ...current.record, refreshInProgressUntil: leaseUntil },
+      leaseUntil,
+      lease: {
+        leaseUntil,
+        storeVersion: current.storeVersion,
+      },
     };
-  }
+  });
 }
 
 /**
- * Release a refresh lease — both halves, `XeroToken`'s first. Each only if it is
- * still this claim's (or an earlier one's). A lease is not a credential write and
+ * Release a refresh lease, only if it is still this claim's (or an earlier
+ * one's). A newer lease is left alone. A lease is not a credential write and
  * audits nothing.
  */
-export async function releaseXeroTokenRefreshLease(
-  lease: XeroRefreshLease,
-): Promise<void> {
+export async function releaseXeroTokenRefreshLease(lease: XeroRefreshLease): Promise<void> {
   await prisma.$transaction(async (tx) => {
-    if (lease.tokenRowId !== null) {
-      await tx.xeroToken.updateMany({
-        where: {
-          id: lease.tokenRowId,
-          refreshInProgressUntil: { lte: lease.leaseUntil },
-        },
-        data: { refreshInProgressUntil: null },
-      });
-    }
     await tx.xeroConnection.updateMany({
       where: {
         id: XERO_CONNECTION_ID,
@@ -635,9 +489,9 @@ export async function getXeroConnectionStatus(): Promise<{
 }
 
 /**
- * Destroy the stored Xero tokens — the store copy, the connection and the
- * previous release's row — on a transaction the caller owns, recording ONE audit
- * row for the token set that names who did it and why (#3454).
+ * Destroy the stored Xero tokens — the store copy and the connection — on a
+ * transaction the caller owns, recording ONE audit row for the token set that
+ * names who did it and why (#3454).
  *
  * The row is written whenever a connection was destroyed, which includes a
  * connection whose store copy was already missing (one made before #3454 and
@@ -651,8 +505,6 @@ export async function deleteXeroTokensInTransaction(
     cause: CredentialMutationCause;
   },
 ): Promise<boolean> {
-  // `XeroToken` first (rule 2); its trigger then deletes the connection too.
-  const previousRelease = await params.tx.xeroToken.deleteMany();
   const connection = await params.tx.xeroConnection.deleteMany();
   const storeRemoved = await deleteIntegrationCredentialInTransaction({
     tx: params.tx,
@@ -665,8 +517,7 @@ export async function deleteXeroTokensInTransaction(
     cause: params.cause,
     request: params.request,
   });
-  const connectionRemoved = previousRelease.count > 0 || connection.count > 0;
-  if (!storeRemoved && connectionRemoved) {
+  if (!storeRemoved && connection.count > 0) {
     await recordCredentialMutation(params.tx, {
       action: CREDENTIAL_AUDIT_ACTIONS.deleted,
       summary: `${deletedCredentialSummary(XERO_OAUTH_TOKEN_PROVIDER, XERO_OAUTH_TOKEN_KEY)} (pre-upgrade copy only)`,
@@ -679,7 +530,7 @@ export async function deleteXeroTokensInTransaction(
     });
   }
   await deleteRetiredTokenKey(params.tx, params, params.cause);
-  return storeRemoved || connectionRemoved;
+  return storeRemoved || connection.count > 0;
 }
 
 /**

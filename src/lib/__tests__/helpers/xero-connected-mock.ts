@@ -60,7 +60,6 @@ export function connectedXeroFixture(params: {
       expiresAt: params.expiresAt,
     },
     params.storeTenantId === undefined ? params.tenantId : params.storeTenantId,
-    "0".repeat(64),
   );
   const encrypted = encryptCredential({
     provider: XERO_OAUTH_TOKEN_PROVIDER,

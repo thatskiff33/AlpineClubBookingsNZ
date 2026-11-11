@@ -1849,7 +1849,13 @@ describe("the registry is inert", () => {
     "src/lib/__tests__/next-config-admin-hub-urls.test.ts":
       "S1: walks each retired page's redirect through the real config",
     "src/app/(admin)/layout.tsx": "C4: the site-style banner links with adminHref",
-    "src/app/(admin)/admin/website/appearance/page.tsx": "C4: its cards link and title with adminLink",
+    "src/app/(admin)/admin/website/appearance/page.tsx": "C4: its title is the registry label",
+    "src/lib/admin-appearance-pages.ts":
+      "#108: the Website hub's cards and the Content sidebar menu, linked with adminHref",
+    "src/lib/admin-nav-panels.ts":
+      "#108: the role menus name their pages by registry id, matched in old-path form",
+    "src/lib/__tests__/admin-nav-panels.test.tsx":
+      "#108: every page a role menu names is a sidebar page, at its adminHref",
     "src/app/(admin)/admin/website/appearance/identity/page.tsx":
       "C4: its back link is adminLink",
     "src/app/(admin)/admin/website/site-style/page.tsx":
