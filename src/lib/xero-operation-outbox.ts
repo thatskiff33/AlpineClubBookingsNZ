@@ -1872,8 +1872,13 @@ export async function releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
     select: { id: true },
   });
 
+  // #3403: fence the write on this intent as well as WAITING_PAYMENT. An
+  // invoice a later request has taken over between the read and the write is
+  // not this capture's to release, or the outbox would record a Stripe
+  // payment for a request that has not been captured.
   return releaseWaitingSupplementaryInvoiceOperations(
     waitingOperations.map((operation) => operation.id),
+    paymentIntentId,
   );
 }
 

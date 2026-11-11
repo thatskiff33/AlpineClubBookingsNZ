@@ -334,8 +334,10 @@ async function applyLateCaptureRefundRepair(
  * queueing would only narrow the window; check-then-write always leaves one.
  * Read AFTERWARDS and there is no window at all - the row the webhook's release
  * needs already exists before anybody looks at the capture, so whichever of the
- * two observes it first, one of them releases it, and the release is an
- * `updateMany` fenced on `WAITING_PAYMENT`, so both observing it is harmless.
+ * two observes it first, one of them releases it. The write is fenced on
+ * `WAITING_PAYMENT` and on this PaymentIntent, so a second release matches
+ * nothing, and an invoice a later request has already taken over is not
+ * released as this capture's.
  * The end state is byte-identical to the live path's own, because it IS the live
  * path's release function.
  *
