@@ -38,18 +38,24 @@ export function MemberExportControl({ href }: { href: string }) {
 }
 
 async function downloadMemberExport(href: string): Promise<void> {
-  const response = await fetchWithRecentAuth(href);
-  if (!response.ok) {
+  try {
+    const response = await fetchWithRecentAuth(href);
+    if (!response.ok) {
+      toast.error("Could not export members.");
+      return;
+    }
+    const header = response.headers.get("Content-Disposition") ?? "";
+    const named = /filename="([^"]+)"/.exec(header);
+    const filename = named?.[1] ?? "members.csv";
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch {
     toast.error("Could not export members.");
-    return;
   }
-  const header = response.headers.get("Content-Disposition") ?? "";
-  const named = /filename="([^"]+)"/.exec(header);
-  const filename = named?.[1] ?? "members.csv";
-  const url = URL.createObjectURL(await response.blob());
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
 }

@@ -40,7 +40,9 @@ describe("member export when officer sign-in is enforced (#4619)", () => {
       const element = realCreate(tag);
       if (tag === "a") {
         anchors.push(element as HTMLAnchorElement);
-        element.click = () => undefined;
+        element.click = () => {
+          expect(element.parentElement).toBe(document.body);
+        };
       }
       return element;
     });
