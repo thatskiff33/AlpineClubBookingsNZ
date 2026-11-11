@@ -65,6 +65,8 @@ import {
   getCapacityShortNights,
   type AdvisoryNight,
 } from "../_lib/capacity-advisory";
+import { readJsonOrNull } from "../_lib/read-json-or-null";
+import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import {
   type AvailablePromoCode,
   type BookingPaymentMethod,
@@ -76,6 +78,21 @@ import {
   type RoomOption,
   type WorkPartyEvent,
 } from "../_components/types";
+
+/*
+ * #4942: what a wizard write says when its reply cannot be read. Each POST can
+ * have committed (a create may already have used account credit), so the copy
+ * sends the member to My Bookings rather than claiming nothing happened. Kept
+ * in this file so the #2668 contract walk reads it inside each catch.
+ */
+const CHECK_MY_BOOKINGS = "Open My Bookings to check before trying again.";
+const CREATE_UNVERIFIED_MESSAGE = unverifiedWriteMessage("your booking was created", CHECK_MY_BOOKINGS);
+const WAITLIST_UNVERIFIED_MESSAGE = unverifiedWriteMessage(
+  "you were added to the waitlist or booked",
+  CHECK_MY_BOOKINGS,
+);
+const DRAFT_UNVERIFIED_MESSAGE = unverifiedWriteMessage("your draft was saved", CHECK_MY_BOOKINGS);
+const QUOTE_UNREADABLE_MESSAGE = "We could not calculate the price. Check your connection and try again.";
 
 interface GuestProfileRequiredMember {
   memberId: string;
@@ -1499,103 +1516,108 @@ export function useBookingWizard() {
     // Fetch price quote
     const checkInStr = checkIn!;
     const checkOutStr = checkOut!;
-    const res = await fetch("/api/bookings/quote", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        checkIn: checkInStr,
-        checkOut: checkOutStr,
-        lodgeId: requestedLodgeId,
-        guests: guestPayload.map((g) => ({
-          ageTier: g.ageTier,
-          isMember: g.isMember,
-          memberId: g.memberId,
-          stayStart: g.stayStart,
-          stayEnd: g.stayEnd,
-          nights: g.nights,
-        })),
-      }),
-    });
-    if (activeScopedLodgeIdRef.current !== requestedLodgeId) {
-      setPriceLoading(false);
-      if (activeScopedLodgeIdRef.current === null) returnToUnresolvedLodge();
-      return;
-    }
-
-    if (res.ok) {
-      const data = await res.json();
+    try {
+      const res = await fetch("/api/bookings/quote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          checkIn: checkInStr,
+          checkOut: checkOutStr,
+          lodgeId: requestedLodgeId,
+          guests: guestPayload.map((g) => ({
+            ageTier: g.ageTier,
+            isMember: g.isMember,
+            memberId: g.memberId,
+            stayStart: g.stayStart,
+            stayEnd: g.stayEnd,
+            nights: g.nights,
+          })),
+        }),
+      });
       if (activeScopedLodgeIdRef.current !== requestedLodgeId) {
-        setPriceLoading(false);
         if (activeScopedLodgeIdRef.current === null) returnToUnresolvedLodge();
         return;
       }
-      setPriceQuote(data);
-      setStep("review");
 
-      // Fetch available promo codes for the member
-      fetch("/api/promo-codes/available")
-        .then((r) => {
-          setPromoCodesEnabled(r.status !== 404);
-          return r.ok ? r.json() : [];
-        })
-        .then((codes) => setAvailablePromoCodes(codes))
-        .catch(() => {});
+      if (res.ok) {
+        const data = await res.json();
+        if (activeScopedLodgeIdRef.current !== requestedLodgeId) {
+          if (activeScopedLodgeIdRef.current === null) returnToUnresolvedLodge();
+          return;
+        }
+        setPriceQuote(data);
+        setStep("review");
 
-      // Fetch active working bee events that overlap these dates; events
-      // bound to another lodge are filtered out server-side.
-      const workPartySequence = ++workPartySequenceRef.current;
-      workPartyAbortRef.current?.abort();
-      const workPartyController = new AbortController();
-      workPartyAbortRef.current = workPartyController;
-      const ownsWorkPartyRequest = () =>
-        workPartySequence === workPartySequenceRef.current &&
-        activeScopedLodgeIdRef.current === requestedLodgeId;
-      fetch(
-        `/api/work-parties/active?checkIn=${checkInStr}&checkOut=${checkOutStr}${
-          `&lodgeId=${encodeURIComponent(requestedLodgeId)}`
-        }`,
-        { signal: workPartyController.signal },
-      )
-        .then((r) => r.ok ? r.json() : { events: [] })
-        .then((data) => {
-          const events: WorkPartyEvent[] = data.events || [];
-          if (!ownsWorkPartyRequest()) return;
-          setActiveWorkPartyEvents(events);
-          if (
-            selectedWorkPartyEventId &&
-            !events.some((e) => e.id === selectedWorkPartyEventId)
-          ) {
-            const previous = activeWorkPartyEvents.find(
-              (e) => e.id === selectedWorkPartyEventId
-            );
-            setSelectedWorkPartyEventId(null);
-            setAttendingWorkParty(false);
-            if (previous) {
-              setWorkPartyClearedNotice(previous.name);
+        // Fetch available promo codes for the member
+        fetch("/api/promo-codes/available")
+          .then((r) => {
+            setPromoCodesEnabled(r.status !== 404);
+            return r.ok ? r.json() : [];
+          })
+          .then((codes) => setAvailablePromoCodes(codes))
+          .catch(() => {});
+
+        // Fetch active working bee events that overlap these dates; events
+        // bound to another lodge are filtered out server-side.
+        const workPartySequence = ++workPartySequenceRef.current;
+        workPartyAbortRef.current?.abort();
+        const workPartyController = new AbortController();
+        workPartyAbortRef.current = workPartyController;
+        const ownsWorkPartyRequest = () =>
+          workPartySequence === workPartySequenceRef.current &&
+          activeScopedLodgeIdRef.current === requestedLodgeId;
+        fetch(
+          `/api/work-parties/active?checkIn=${checkInStr}&checkOut=${checkOutStr}${
+            `&lodgeId=${encodeURIComponent(requestedLodgeId)}`
+          }`,
+          { signal: workPartyController.signal },
+        )
+          .then((r) => r.ok ? r.json() : { events: [] })
+          .then((data) => {
+            const events: WorkPartyEvent[] = data.events || [];
+            if (!ownsWorkPartyRequest()) return;
+            setActiveWorkPartyEvents(events);
+            if (
+              selectedWorkPartyEventId &&
+              !events.some((e) => e.id === selectedWorkPartyEventId)
+            ) {
+              const previous = activeWorkPartyEvents.find(
+                (e) => e.id === selectedWorkPartyEventId
+              );
+              setSelectedWorkPartyEventId(null);
+              setAttendingWorkParty(false);
+              if (previous) {
+                setWorkPartyClearedNotice(previous.name);
+              }
+              // Combined, the codes stay and the working-bee effect re-prices
+              // them without it; alone, the discount just goes.
+              setAppliedPromos((current) =>
+                current.some((promo) => promo.workPartyEvent) && !combineWorkPartyWithCodesRef.current
+                  ? []
+                  : current
+              );
             }
-            // Combined, the codes stay and the working-bee effect re-prices
-            // them without it; alone, the discount just goes.
-            setAppliedPromos((current) =>
-              current.some((promo) => promo.workPartyEvent) && !combineWorkPartyWithCodesRef.current
-                ? []
-                : current
-            );
-          }
-        })
-        .catch((requestError) => {
-          if (requestError instanceof DOMException && requestError.name === "AbortError") return;
-          if (ownsWorkPartyRequest()) setActiveWorkPartyEvents([]);
-        })
-        .finally(() => {
-          if (workPartyAbortRef.current === workPartyController) {
-            workPartyAbortRef.current = null;
-          }
-        });
-    } else {
-      const data = await res.json();
-      handleBookingApiError(data, "Failed to calculate price");
+          })
+          .catch((requestError) => {
+            if (requestError instanceof DOMException && requestError.name === "AbortError") return;
+            if (ownsWorkPartyRequest()) setActiveWorkPartyEvents([]);
+          })
+          .finally(() => {
+            if (workPartyAbortRef.current === workPartyController) {
+              workPartyAbortRef.current = null;
+            }
+          });
+      } else {
+        handleBookingApiError((await readJsonOrNull(res)) ?? {}, "Failed to calculate price");
+      }
+    } catch {
+      // #4942: a quote is a read, so "try again" is the whole truth here. The
+      // lodge fences above still decide whose screen this is.
+      if (activeScopedLodgeIdRef.current === requestedLodgeId) setError(QUOTE_UNREADABLE_MESSAGE);
+      else if (activeScopedLodgeIdRef.current === null) returnToUnresolvedLodge();
+    } finally {
+      setPriceLoading(false);
     }
-    setPriceLoading(false);
   }
 
   async function handleSubmit() {
@@ -1648,92 +1670,99 @@ export function useBookingWizard() {
     const checkInStr = checkIn!;
     const checkOutStr = checkOut!;
 
-    const res = await fetch("/api/bookings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        checkIn: checkInStr,
-        checkOut: checkOutStr,
-        lodgeId: scopedLodgeId,
-        guests: guestPayload,
-        // #2721: only the declarations that still describe a live collision
-        // travel; see `declarationsPayload`.
-        dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
-        notes: notes || undefined,
-        ...createRequestPromoFields(appliedPromos),
-        workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
-        expectedArrivalTime: expectedArrivalTime || undefined,
-        requestedRoomId: requestedRoomId || undefined,
-        cancelIfGuestsBumped:
-          guests.some((g) => !g.isMember) && cancelIfGuestsBumped
-            ? true
+    let navigating = false;
+    try {
+      const res = await fetch("/api/bookings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          checkIn: checkInStr,
+          checkOut: checkOutStr,
+          lodgeId: scopedLodgeId,
+          guests: guestPayload,
+          // #2721: only the declarations that still describe a live collision
+          // travel; see `declarationsPayload`.
+          dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
+          notes: notes || undefined,
+          ...createRequestPromoFields(appliedPromos),
+          workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
+          expectedArrivalTime: expectedArrivalTime || undefined,
+          requestedRoomId: requestedRoomId || undefined,
+          cancelIfGuestsBumped:
+            guests.some((g) => !g.isMember) && cancelIfGuestsBumped
+              ? true
+              : undefined,
+          applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
+          paymentMethod:
+            paymentMethod === "internet_banking" ? paymentMethod : undefined,
+          memberReviewJustification: requiresAdminReviewLocal
+            ? memberReviewJustification.trim()
             : undefined,
-        applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
-        paymentMethod:
-          paymentMethod === "internet_banking" ? paymentMethod : undefined,
-        memberReviewJustification: requiresAdminReviewLocal
-          ? memberReviewJustification.trim()
-          : undefined,
-      }),
-    });
+        }),
+      });
 
-    if (res.ok) {
-      const data = await res.json();
-      if (groupTrip && groupBookingsEnabled) {
-        // Best-effort: open the group so the share link is waiting on the
-        // booking page. Bookings that aren't committed yet (e.g. non-member
-        // holds in PENDING, or admin review) can't anchor a group, so tell
-        // the member instead of silently dropping their choice; never block
-        // the redirect.
-        let groupOpened = false;
-        try {
-          const groupRes = await fetch("/api/group-bookings", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              organiserBookingId: data.id,
-              paymentMode: groupPaymentMode,
-            }),
+      const data = await readJsonOrNull(res);
+      if (!data || (res.ok && typeof data.id !== "string")) {
+        // The server answered but the receipt is unreadable — a gateway error
+        // page, or a 200 with no booking id. Never `/bookings/undefined`.
+        setError(CREATE_UNVERIFIED_MESSAGE);
+      } else if (res.ok) {
+        // The group call has its own catch, so its failure is a toast and never
+        // reaches the "could not verify" catch below: this booking exists.
+        if (groupTrip && groupBookingsEnabled) {
+          // Best-effort: open the group so the share link is waiting on the
+          // booking page. Bookings that aren't committed yet (e.g. non-member
+          // holds in PENDING, or admin review) can't anchor a group, so tell
+          // the member instead of silently dropping their choice; never block
+          // the redirect.
+          let groupOpened = false;
+          try {
+            const groupRes = await fetch("/api/group-bookings", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                organiserBookingId: data.id,
+                paymentMode: groupPaymentMode,
+              }),
+            });
+            groupOpened = groupRes.ok;
+          } catch {
+            // fall through to the toast
+          }
+          if (!groupOpened) {
+            toast.info(
+              "Your group trip couldn't be opened yet. You can open it from your booking page once the booking is confirmed.",
+            );
+          }
+        }
+        // Card path: stay in the wizard and take payment as step 4 (#1084).
+        // Everything else keeps the existing redirects: internet banking gets
+        // its invoice instructions, holds/review/zero-due have nothing to pay.
+        if (
+          showPaymentMethodChoice &&
+          paymentMethod === "stripe" &&
+          isPaymentOwedBookingStatus(data.status)
+        ) {
+          setCreatedBooking({
+            id: data.id,
+            status: data.status,
+            amountCents: remainingToPay,
+            returnUrl: `${window.location.origin}/bookings/${data.id}`,
           });
-          groupOpened = groupRes.ok;
-        } catch {
-          // fall through to the toast
+          setStep("pay");
+          setSubmitting(false);
+          window.scrollTo({ top: 0 });
+          return;
         }
-        if (!groupOpened) {
-          toast.info(
-            "Your group trip couldn't be opened yet. You can open it from your booking page once the booking is confirmed.",
-          );
-        }
-      }
-      // Card path: stay in the wizard and take payment as step 4 (#1084).
-      // Everything else keeps the existing redirects: internet banking gets
-      // its invoice instructions, holds/review/zero-due have nothing to pay.
-      if (
-        showPaymentMethodChoice &&
-        paymentMethod === "stripe" &&
-        isPaymentOwedBookingStatus(data.status)
-      ) {
-        setCreatedBooking({
-          id: data.id,
-          status: data.status,
-          amountCents: remainingToPay,
-          returnUrl: `${window.location.origin}/bookings/${data.id}`,
-        });
-        setStep("pay");
-        setSubmitting(false);
-        window.scrollTo({ top: 0 });
-        return;
-      }
-      // Land on the payment card when payment is the next step; the hash is a
-      // harmless no-op when the card isn't rendered (holds, review, zero due).
-      router.push(
-        showPaymentMethodChoice
-          ? `/bookings/${data.id}#payment`
-          : `/bookings/${data.id}`,
-      );
-    } else {
-      const data = await res.json();
-      if (data.code === "CAPACITY_EXCEEDED" && data.canWaitlist) {
+        // Land on the payment card when payment is the next step; the hash is a
+        // harmless no-op when the card isn't rendered (holds, review, zero due).
+        navigating = true;
+        router.push(
+          showPaymentMethodChoice
+            ? `/bookings/${data.id}#payment`
+            : `/bookings/${data.id}`,
+        );
+      } else if (data.code === "CAPACITY_EXCEEDED" && data.canWaitlist) {
         setShowWaitlistPrompt(true);
         setWaitlistFullNights(data.fullNights || []);
         setWaitlistAlternateLodgeIds([]);
@@ -1745,7 +1774,12 @@ export function useBookingWizard() {
         // null for everything else, so no hard failure can open the door.
         setExceptionOffer(readExceptionOffer(data));
       }
-      setSubmitting(false);
+    } catch {
+      setError(CREATE_UNVERIFIED_MESSAGE);
+    } finally {
+      // Held through `router.push` so the button cannot be pressed twice while
+      // the booking page loads; every other ending hands it back (#4942).
+      if (!navigating) setSubmitting(false);
     }
   }
 
@@ -1778,62 +1812,70 @@ export function useBookingWizard() {
     const checkInStr = checkIn!;
     const checkOutStr = checkOut!;
 
-    const res = await fetch("/api/bookings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        checkIn: checkInStr,
-        checkOut: checkOutStr,
-        guests: guestPayload,
-        // #2721: only the declarations that still describe a live collision
-        // travel; see `declarationsPayload`.
-        dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
-        notes: notes || undefined,
-        ...createRequestPromoFields(appliedPromos),
-        workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
-        expectedArrivalTime: expectedArrivalTime || undefined,
-        requestedRoomId: requestedRoomId || undefined,
-        cancelIfGuestsBumped:
-          guests.some((g) => !g.isMember) && cancelIfGuestsBumped
-            ? true
+    let navigating = false;
+    try {
+      const res = await fetch("/api/bookings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          checkIn: checkInStr,
+          checkOut: checkOutStr,
+          guests: guestPayload,
+          // #2721: only the declarations that still describe a live collision
+          // travel; see `declarationsPayload`.
+          dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
+          notes: notes || undefined,
+          ...createRequestPromoFields(appliedPromos),
+          workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
+          expectedArrivalTime: expectedArrivalTime || undefined,
+          requestedRoomId: requestedRoomId || undefined,
+          cancelIfGuestsBumped:
+            guests.some((g) => !g.isMember) && cancelIfGuestsBumped
+              ? true
+              : undefined,
+          lodgeId: scopedLodgeId,
+          /**
+           * #2930 fix round: the credit the member applied on the review step
+           * travels with the waitlist post too.
+           *
+           * THIS POST CAN CREATE A REAL BOOKING. `POST /api/bookings` runs the
+           * ordinary create first and only falls through to
+           * `createWaitlistedBooking` when capacity refuses — `waitlist: true`
+           * says "and if it refuses, waitlist me", not "do not book me". Since
+           * this became the review step's PRIMARY action rather than a fallback
+           * after a 409, the member reaches it with the credit control on screen
+           * and the total reading as covered; if beds freed up between the
+           * advisory and the press, they got the booking without the credit and
+           * owed more than the screen quoted. `handleSubmit` has always sent it.
+           *
+           * On the waitlist arm it is simply ignored: `createWaitlistedBooking`
+           * takes no `applyCreditCents` and a waitlist place moves no money.
+           */
+          applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
+          waitlist: true,
+          alternateLodgeIds:
+            waitlistAlternateLodgeIds.length > 0
+              ? waitlistAlternateLodgeIds
+              : undefined,
+          memberReviewJustification: requiresAdminReviewLocal
+            ? memberReviewJustification.trim()
             : undefined,
-        lodgeId: scopedLodgeId,
-        /**
-         * #2930 fix round: the credit the member applied on the review step
-         * travels with the waitlist post too.
-         *
-         * THIS POST CAN CREATE A REAL BOOKING. `POST /api/bookings` runs the
-         * ordinary create first and only falls through to
-         * `createWaitlistedBooking` when capacity refuses — `waitlist: true`
-         * says "and if it refuses, waitlist me", not "do not book me". Since
-         * this became the review step's PRIMARY action rather than a fallback
-         * after a 409, the member reaches it with the credit control on screen
-         * and the total reading as covered; if beds freed up between the
-         * advisory and the press, they got the booking without the credit and
-         * owed more than the screen quoted. `handleSubmit` has always sent it.
-         *
-         * On the waitlist arm it is simply ignored: `createWaitlistedBooking`
-         * takes no `applyCreditCents` and a waitlist place moves no money.
-         */
-        applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
-        waitlist: true,
-        alternateLodgeIds:
-          waitlistAlternateLodgeIds.length > 0
-            ? waitlistAlternateLodgeIds
-            : undefined,
-        memberReviewJustification: requiresAdminReviewLocal
-          ? memberReviewJustification.trim()
-          : undefined,
-      }),
-    });
+        }),
+      });
 
-    if (res.ok) {
-      const data = await res.json();
-      router.push(`/bookings/${data.id}`);
-    } else {
-      const data = await res.json();
-      handleBookingApiError(data, "Failed to join waitlist");
-      setJoiningWaitlist(false);
+      const data = await readJsonOrNull(res);
+      if (!data || (res.ok && typeof data.id !== "string")) {
+        setError(WAITLIST_UNVERIFIED_MESSAGE);
+      } else if (res.ok) {
+        navigating = true;
+        router.push(`/bookings/${data.id}`);
+      } else {
+        handleBookingApiError(data, "Failed to join waitlist");
+      }
+    } catch {
+      setError(WAITLIST_UNVERIFIED_MESSAGE);
+    } finally {
+      if (!navigating) setJoiningWaitlist(false);
     }
   }
 
@@ -1859,48 +1901,56 @@ export function useBookingWizard() {
     const checkInStr = checkIn!;
     const checkOutStr = checkOut!;
 
-    const res = await fetch("/api/bookings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        checkIn: checkInStr,
-        checkOut: checkOutStr,
-        guests: guestPayload,
-        // #2721: only the declarations that still describe a live collision
-        // travel; see `declarationsPayload`.
-        dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
-        notes: notes || undefined,
-        ...createRequestPromoFields(appliedPromos),
-        workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
-        expectedArrivalTime: expectedArrivalTime || undefined,
-        requestedRoomId: requestedRoomId || undefined,
-        cancelIfGuestsBumped:
-          guests.some((g) => !g.isMember) && cancelIfGuestsBumped
-            ? true
+    let navigating = false;
+    try {
+      const res = await fetch("/api/bookings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          checkIn: checkInStr,
+          checkOut: checkOutStr,
+          guests: guestPayload,
+          // #2721: only the declarations that still describe a live collision
+          // travel; see `declarationsPayload`.
+          dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
+          notes: notes || undefined,
+          ...createRequestPromoFields(appliedPromos),
+          workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
+          expectedArrivalTime: expectedArrivalTime || undefined,
+          requestedRoomId: requestedRoomId || undefined,
+          cancelIfGuestsBumped:
+            guests.some((g) => !g.isMember) && cancelIfGuestsBumped
+              ? true
+              : undefined,
+          applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
+          lodgeId: scopedLodgeId,
+          draft: true,
+          memberReviewJustification: requiresAdminReviewLocal
+            ? memberReviewJustification.trim() || undefined
             : undefined,
-        applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
-        lodgeId: scopedLodgeId,
-        draft: true,
-        memberReviewJustification: requiresAdminReviewLocal
-          ? memberReviewJustification.trim() || undefined
-          : undefined,
-      }),
-    });
+        }),
+      });
 
-    if (res.ok) {
-      const data = await res.json();
-      if (groupTrip && groupBookingsEnabled) {
-        // Drafts can't anchor a group; tell the member where the option went.
-        toast.info("You can open the group trip after confirming your booking.");
+      const data = await readJsonOrNull(res);
+      if (!data || (res.ok && typeof data.id !== "string")) {
+        setError(DRAFT_UNVERIFIED_MESSAGE);
+      } else if (res.ok) {
+        if (groupTrip && groupBookingsEnabled) {
+          // Drafts can't anchor a group; tell the member where the option went.
+          toast.info("You can open the group trip after confirming your booking.");
+        }
+        navigating = true;
+        router.push(`/bookings/${data.id}`);
+      } else {
+        handleBookingApiError(data, "Failed to save draft");
+        // Same reviewable-refusal door as the confirm path: a draft is refused by
+        // the same policy gates, and the member's remedy is the same request.
+        setExceptionOffer(readExceptionOffer(data));
       }
-      router.push(`/bookings/${data.id}`);
-    } else {
-      const data = await res.json();
-      handleBookingApiError(data, "Failed to save draft");
-      // Same reviewable-refusal door as the confirm path: a draft is refused by
-      // the same policy gates, and the member's remedy is the same request.
-      setExceptionOffer(readExceptionOffer(data));
-      setSavingDraft(false);
+    } catch {
+      setError(DRAFT_UNVERIFIED_MESSAGE);
+    } finally {
+      if (!navigating) setSavingDraft(false);
     }
   }
 
