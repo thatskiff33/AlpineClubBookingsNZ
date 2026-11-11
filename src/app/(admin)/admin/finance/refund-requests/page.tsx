@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import {
   adminCreditGrantAccountLabel,
   GRANT_ACCOUNT_MISSING_MESSAGE,
+  type AdminCreditGrantAccount,
 } from "@/lib/admin-credit-grant-account"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
@@ -137,7 +138,7 @@ interface CreditApprovalRequestData {
   memberId: string
   amountCents: number
   description: string
-  grantAccount: "MEMBER_OWN_MONEY" | "GOODWILL" | null
+  grantAccount: AdminCreditGrantAccount | null
   status: "PENDING" | "APPROVED" | "REJECTED"
   createdAt: string
   reviewedAt: string | null

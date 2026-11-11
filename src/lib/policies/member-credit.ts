@@ -1,6 +1,10 @@
 // test seam
-import type { AdminCreditGrantAccount } from "@/lib/admin-credit-grant-account";
-import { isAdminCreditGrantAccount } from "@/lib/admin-credit-grant-account";
+import {
+  DEDUCTION_HAS_NO_ACCOUNT_MESSAGE,
+  GRANT_ACCOUNT_REQUIRED_MESSAGE,
+  isAdminCreditGrantAccount,
+  type AdminCreditGrantAccount,
+} from "@/lib/admin-credit-grant-account";
 import { formatCents, formatSignedCents } from "@/lib/utils";
 
 import type { ClubFormat } from "@/lib/club-format";
@@ -31,10 +35,10 @@ export function assertGrantAccountMatchesAmount(
   grantAccount: AdminCreditGrantAccount | null,
 ): void {
   if (amountCents > 0 && !isAdminCreditGrantAccount(grantAccount)) {
-    throw new MemberCreditValidationError("Choose which account this credit belongs to.");
+    throw new MemberCreditValidationError(GRANT_ACCOUNT_REQUIRED_MESSAGE);
   }
   if (amountCents < 0 && grantAccount !== null) {
-    throw new MemberCreditValidationError("A deduction does not choose a Xero account.");
+    throw new MemberCreditValidationError(DEDUCTION_HAS_NO_ACCOUNT_MESSAGE);
   }
 }
 

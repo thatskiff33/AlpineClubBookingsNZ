@@ -5,6 +5,7 @@ import type {
   MembershipTypeSubscriptionBehavior,
   Title,
 } from "@prisma/client";
+import type { AdminCreditGrantAccount } from "@/lib/admin-credit-grant-account";
 import type {
   AdminActor,
   AuditLogEntry,
@@ -380,6 +381,6 @@ export interface PendingCreditAdjustmentItem {
   amountCents: number;
   description: string;
   createdAt: string;
-  grantAccount: "MEMBER_OWN_MONEY" | "GOODWILL" | null;
+  grantAccount: AdminCreditGrantAccount | null;
   requestedBy: AdminActor;
 }

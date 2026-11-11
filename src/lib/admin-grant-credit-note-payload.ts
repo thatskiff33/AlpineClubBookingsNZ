@@ -4,13 +4,14 @@
  * A leaf so the payload registry can recognise the queue type without taking
  * the worker, and so the registry file stays inside its size budget.
  */
+import { ADMIN_CREDIT_GRANT_MAPPING } from "@/lib/admin-credit-grant-account";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 
 export const XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE = "ADMIN_GRANT_CREDIT_NOTE" as const;
 
-const MAPPING_KEYS = ["hutFeeRefunds", "goodwillWriteOffs"] as const;
+const MAPPING_KEYS = Object.values(ADMIN_CREDIT_GRANT_MAPPING);
 
-export type AdminGrantNoteMappingKey = (typeof MAPPING_KEYS)[number];
+export type AdminGrantNoteMappingKey = (typeof ADMIN_CREDIT_GRANT_MAPPING)[keyof typeof ADMIN_CREDIT_GRANT_MAPPING];
 
 export interface AdminGrantCreditNotePayload {
   queueType: typeof XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE;

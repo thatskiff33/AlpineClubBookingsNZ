@@ -10,9 +10,10 @@ import {
 import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { formatCentsPlain } from "@/lib/utils";
-import { isAdminCreditGrantAccount } from "@/lib/admin-credit-grant-account";
+import { ADMIN_CREDIT_GRANT_ACCOUNTS } from "@/lib/admin-credit-grant-account";
 import {
   ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT,
+  assertGrantAccountMatchesAmount,
   MemberCreditValidationError,
 } from "@/lib/policies/member-credit";
 
@@ -52,21 +53,17 @@ const adjustmentSchema = z
     amountCents: z.number().int().refine((v) => v !== 0, "Amount cannot be zero"),
     description: z.string().min(1, "Description is required").max(500),
     idempotencyKey: z.string().uuid("Idempotency key must be a UUID"),
-    grantAccount: z.enum(["MEMBER_OWN_MONEY", "GOODWILL"]).optional(),
+    grantAccount: z.enum(ADMIN_CREDIT_GRANT_ACCOUNTS).optional(),
   })
   .superRefine((value, ctx) => {
-    if (value.amountCents > 0 && !value.grantAccount) {
+    try {
+      assertGrantAccountMatchesAmount(value.amountCents, value.grantAccount ?? null);
+    } catch (error) {
+      if (!(error instanceof MemberCreditValidationError)) throw error;
       ctx.addIssue({
         code: "custom",
         path: ["grantAccount"],
-        message: "Choose which account this credit belongs to.",
-      });
-    }
-    if (value.amountCents < 0 && value.grantAccount) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["grantAccount"],
-        message: "A deduction does not choose a Xero account.",
+        message: error.message,
       });
     }
   });
@@ -96,14 +93,13 @@ export async function POST(
       );
     }
 
-    const grantAccount = parsed.data.grantAccount ?? null;
     const result = await createAdminAdjustmentRequest(
       id,
       parsed.data.amountCents,
       parsed.data.description,
       session.user.id,
       parsed.data.idempotencyKey,
-      grantAccount && isAdminCreditGrantAccount(grantAccount) ? grantAccount : null,
+      parsed.data.grantAccount ?? null,
       getClientIp(request)
     );
 

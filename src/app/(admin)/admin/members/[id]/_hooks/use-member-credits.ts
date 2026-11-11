@@ -2,7 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import type { AdminCreditGrantAccount } from "@/lib/admin-credit-grant-account";
+import {
+  GRANT_ACCOUNT_REQUIRED_MESSAGE,
+  type AdminCreditGrantAccount,
+} from "@/lib/admin-credit-grant-account";
 import { parseSignedDecimalDollarsToCents } from "@/lib/money-input";
 import type {
   CreditHistoryItem,
@@ -73,7 +76,7 @@ export function useMemberCredits(id: string) {
       return;
     }
     if (cents > 0 && !grantAccount) {
-      setAdjustmentError("Choose which account this credit belongs to.");
+      setAdjustmentError(GRANT_ACCOUNT_REQUIRED_MESSAGE);
       return;
     }
     const idempotencyKey = adjustmentIdempotencyKey ?? crypto.randomUUID();
