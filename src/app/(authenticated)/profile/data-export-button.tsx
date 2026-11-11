@@ -33,7 +33,7 @@ export function DataExportButton() {
       // answered its absence (#2801).
       const [, matchedFilename] =
         disposition.match(/filename="(.+?)"/) ?? [];
-      const filename = matchedFilename ?? "tac-my-data.json";
+      const filename = matchedFilename ?? "my-data.json";
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

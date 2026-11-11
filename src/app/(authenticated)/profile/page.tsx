@@ -683,8 +683,10 @@ export default async function ProfilePage({
           <CardContent className="space-y-4">
             <div>
               <p className="text-sm text-muted-foreground mb-2">
-                Download a machine-readable copy of all data the system holds
-                about you (JSON format, max 5 times per day).
+                Download your profile, bookings, credits and other personal records
+                as JSON (up to 5 times per day). The file lists exclusions.
+                Contact the club’s privacy officer for anything else, including
+                a dependant’s record.
               </p>
               <DataExportButton />
             </div>

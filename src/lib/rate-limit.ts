@@ -461,6 +461,7 @@ export const rateLimiters = {
   /** Family group join request: 3 per hour */
   familyGroupJoinRequest: { id: "family-group-join-request", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Personal data export: 5 per day */
+  subjectAccessReport: { id: "subject-access-report", limit: 20, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
   dataExport: { id: "data-export", limit: 5, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
   /** Account deletion request: 3 per day */
   deletionRequest: { id: "deletion-request", limit: 3, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,

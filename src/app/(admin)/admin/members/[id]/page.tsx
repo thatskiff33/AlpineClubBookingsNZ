@@ -1,5 +1,7 @@
 "use client";
 
+import { SubjectAccessReport } from "./_components/subject-access-report";
+
 import { useCallback, useEffect, useRef, useState, use } from "react";
 import { formatStayDateOrNull } from "@/lib/club-time";
 import { useSession } from "next-auth/react";
@@ -871,6 +873,8 @@ export default function MemberDetailPage({
             {xeroError}
           </div>
         )}
+
+      {actorIsFullAdmin && <SubjectAccessReport memberId={member.id} />}
 
       <MemberSummaryStrip
         member={member}

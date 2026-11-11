@@ -1,0 +1,30 @@
+import "server-only";
+import { prisma } from "@/lib/prisma";
+
+/** Subject-linked scalar records. Shared narratives and security material are excluded. */
+export async function readAdditionalSubjectRecords(memberId: string) {
+  return {
+    MembershipSubscriptionChargeCoverage: await prisma.membershipSubscriptionChargeCoverage.findMany({ where: { memberId: memberId }, select: { id: true, chargeId: true, memberId: true, releasedAt: true, createdAt: true } }),
+    MembershipBillingException: await prisma.membershipBillingException.findMany({ where: { memberId: memberId }, select: { id: true, fingerprint: true, seasonYear: true, code: true, memberId: true, familyGroupId: true, firstSeenAt: true, lastSeenAt: true, resolvedAt: true, createdAt: true, updatedAt: true } }),
+    SeasonalMembershipAssignment: await prisma.seasonalMembershipAssignment.findMany({ where: { memberId: memberId }, select: { id: true, memberId: true, seasonYear: true, applyFrom: true, assignedByMemberId: true, sourceDetail: true, createdAt: true, updatedAt: true } }),
+    MemberLifecycleActionRequest: await prisma.memberLifecycleActionRequest.findMany({ where: { OR: [{ memberId: memberId }, { requestedByMemberId: memberId }] }, select: { id: true, memberId: true, reviewNote: true, requestedByMemberId: true, requestedAt: true, reviewedByMemberId: true, reviewedAt: true, processedAt: true, createdAt: true, updatedAt: true } }),
+    PromoRedemption: await prisma.promoRedemption.findMany({ where: { memberId: memberId }, select: { id: true, promoCodeId: true, bookingId: true, applicationOrder: true, memberId: true, discountCents: true, priceAdjustmentCents: true, freeNightsUsed: true, eligibleGuestCount: true, createdAt: true } }),
+    PromoRedemptionAllocation: await prisma.promoRedemptionAllocation.findMany({ where: { memberId: memberId }, select: { id: true, promoRedemptionId: true, promoCodeId: true, bookingId: true, memberId: true, discountCents: true, priceAdjustmentCents: true, freeNightsUsed: true, createdAt: true } }),
+    PromoCodeAssignment: await prisma.promoCodeAssignment.findMany({ where: { memberId: memberId }, select: { id: true, promoCodeId: true, memberId: true, createdAt: true } }),
+    HostingCoverageReevaluation: await prisma.hostingCoverageReevaluation.findMany({ where: { memberId: memberId }, select: { id: true, memberId: true, lodgeId: true, sourceBookingId: true, actorMemberId: true, enqueuedAt: true, processedAt: true, attempts: true, claimExpiresAt: true } }),
+    FinanceSyncRun: await prisma.financeSyncRun.findMany({ where: { requestedByMemberId: memberId }, select: { id: true, workflow: true, startedAt: true, completedAt: true, totalRowCount: true, xeroTenantId: true, requestedByMemberId: true, createdAt: true, updatedAt: true } }),
+    AiAssistantUsageEvent: await prisma.aiAssistantUsageEvent.findMany({ where: { memberId: memberId }, select: { id: true, month: true, memberId: true, surface: true, model: true, success: true, statusCode: true, durationMs: true, costCents: true, questionChars: true, createdAt: true } }),
+    NoticeAudience: await prisma.noticeAudience.findMany({ where: { memberId: memberId }, select: { id: true, noticeId: true, memberId: true, lodgeId: true, committeeRoleId: true, createdAt: true } }),
+    NoticeReadReceipt: await prisma.noticeReadReceipt.findMany({ where: { memberId: memberId }, select: { id: true, noticeId: true, memberId: true, readAt: true, acknowledgedAt: true } }),
+    BookingModification: await prisma.bookingModification.findMany({ where: { memberId: memberId }, select: { id: true, bookingId: true, memberId: true, modificationType: true, priceDiffCents: true, changeFeeCents: true, createdAt: true } }),
+    NewBookingPolicyExceptionRequest: await prisma.newBookingPolicyExceptionRequest.findMany({ where: { requestedByMemberId: memberId }, select: { id: true, lodgeId: true, requestedByMemberId: true, reviewedByMemberId: true, reviewedAt: true, attemptCount: true, conflictCount: true, lastConflictAt: true, supersededByRequestId: true, cancelledAt: true, createdBookingId: true, version: true, openStateKey: true, createdAt: true, updatedAt: true } }),
+    MemberLodgeAccess: await prisma.memberLodgeAccess.findMany({ where: { memberId: memberId }, select: { id: true, memberId: true, lodgeId: true, createdById: true, createdAt: true } }),
+    FamilyGroupJoinRequest: await prisma.familyGroupJoinRequest.findMany({ where: { subjectMemberId: memberId }, select: { id: true, familyGroupId: true, requesterId: true, type: true, status: true, createdAt: true, reviewedAt: true, reviewedBy: true, invitedMemberId: true, childDateOfBirth: true, requestedDateOfBirth: true, linkedMemberId: true, subjectMemberId: true } }),
+    DeletionRequest: await prisma.deletionRequest.findMany({ where: { memberId: memberId }, select: { id: true, memberId: true, reviewedBy: true, reviewedAt: true, createdAt: true, updatedAt: true } }),
+    AdminCreditAdjustmentRequest: await prisma.adminCreditAdjustmentRequest.findMany({ where: { memberId: memberId }, select: { id: true, memberId: true, amountCents: true, idempotencyKey: true, requestedById: true, reviewedById: true, reviewedAt: true, createdAt: true, updatedAt: true } }),
+    CommitteeAssignment: await prisma.committeeAssignment.findMany({ where: { memberId: memberId }, select: { id: true, memberId: true, committeeRoleId: true, blurb: true, sortOrder: true, published: true, showPhone: true, isActive: true, assignedByMemberId: true, createdAt: true, updatedAt: true } }),
+    OrganisationContact: await prisma.organisationContact.findMany({ where: { memberId: memberId }, select: { id: true, organisationId: true, memberId: true, createdAt: true, updatedAt: true } }),
+    SchoolMemberClassification: await prisma.schoolMemberClassification.findMany({ where: { memberId: memberId }, select: { memberId: true, decidedBy: true, decidedAt: true } }),
+    MemberMoneyObligation: await prisma.memberMoneyObligation.findMany({ where: { memberId: memberId }, select: { id: true, journalId: true, obligationKey: true, memberId: true, organisationId: true, faceCents: true } }),
+  };
+}

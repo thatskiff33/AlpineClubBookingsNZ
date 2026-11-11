@@ -153,7 +153,7 @@ const DIETARY_REACH: Readonly<Record<string, CensusEntry>> = {
     "self form state; sends the key only while ON",
   "src/app/api/member/onboarding/route.ts": "self reader for onboarding, ON only",
   "src/components/member-onboarding-wizard.tsx": "onboarding form props",
-  "src/app/api/member/data-export/route.ts":
+  "src/lib/subject-access-export.ts":
     "the subject's own full export (ON or OFF, owner decision 20 Sep 2026)",
   "src/lib/admin-member-detail-service.ts":
     "membership-admin detail reader and editor writer",
@@ -203,6 +203,8 @@ const DIETARY_MODULE_IMPORTERS: Readonly<Record<string, CensusEntry>> = {
   "src/app/api/profile/route.ts": "self write (profile and onboarding)",
   "src/app/api/member/onboarding/route.ts": "self display grant",
   "src/app/api/member/data-export/route.ts": "self data-export grant",
+  "src/lib/subject-access-export.ts": "shared subject export reader",
+  "src/app/api/admin/members/subject-access/route.ts": "Full Admin subject access grant",
   "src/app/api/admin/members/[id]/route.ts": "membership grant from requireAdmin",
   "src/app/api/admin/members/route.ts": "membership grant for create",
   "src/app/api/admin/members/export/route.ts": "membership grant for the CSV column",
