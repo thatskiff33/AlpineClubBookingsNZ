@@ -8,6 +8,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+const heldBackRead = vi.hoisted(() => vi.fn(async () => ({ byTransaction: new Map<string, number>(), totalCents: 0 })));
+vi.mock("@/lib/superseded-capture-hold-back", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/superseded-capture-hold-back")),
+  readSupersededCaptureHeldBack: (...args: unknown[]) => heldBackRead(...args),
+}));
 const policy = vi.hoisted(() => ({ loadCancellationPolicy: vi.fn() }));
 vi.mock("@/lib/cancellation", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/cancellation")),
@@ -143,6 +148,27 @@ describe("a later edit sizes its refund net of an open task (scenario B: $300 ->
       todayAtClub: TODAY,
     });
     expect(options).toBeNull();
+  });
+
+  it("takes a live superseded capture off the same cash basis, and never below zero (#4872)", async () => {
+    policy.loadCancellationPolicy.mockResolvedValue(FULL_REFUND);
+    heldBackRead.mockResolvedValueOnce({ byTransaction: new Map([["txn-superseded", 4_000]]), totalCents: 4_000 });
+    const options = await calculateModificationSettlementOptions({ reduction: noReductionAgainstUnpaidAsk(-20000),
+      booking: paidBooking(25000) as never,
+      netChargeCents: -20000,
+      db: store(20000) as never,
+      todayAtClub: TODAY,
+    });
+    // $300 paid, $200 already promised by hand, $40 still owned by the superseded refund: $60 left.
+    expect(options).toMatchObject({ basisAmountCents: 6_000, cardRefundAmountCents: 6_000 });
+
+    heldBackRead.mockResolvedValueOnce({ byTransaction: new Map([["txn-superseded", 20_000]]), totalCents: 20_000 });
+    expect(await calculateModificationSettlementOptions({ reduction: noReductionAgainstUnpaidAsk(-20000),
+      booking: paidBooking(25000) as never,
+      netChargeCents: -20000,
+      db: store(20000) as never,
+      todayAtClub: TODAY,
+    })).toBeNull();
   });
 });
 

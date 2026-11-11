@@ -18,6 +18,7 @@ import {
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import {
   enqueueCapacityClaimFailedRefundRecovery,
   enqueueDuplicateCaptureRefundRecovery,
@@ -1206,7 +1207,15 @@ async function settleBookingPaymentInTransaction(
       // both mint identical `capacity_claim_failed_<bookingId>_<pi>_<txn>_
       // <amount>` Stripe keys, Stripe answers repeats with the original
       // refunds, and the ledger dedupes on refund id.
-      const { slices: refundPlan, plannedAmountCents: plannedRefundCents } = await planStripeRefundAllocation({ paymentId: payment.id, amountCents, store: tx });
+      // #4872: leave a live superseded capture to its own refund. `amountCents` stays
+      // the capture just taken; what the plan cannot carry is still the shortfall task.
+      const heldBack = await readSupersededCaptureHeldBack(tx, payment.id);
+      const { slices: refundPlan, plannedAmountCents: plannedRefundCents } = await planStripeRefundAllocation({
+        paymentId: payment.id,
+        amountCents,
+        store: tx,
+        heldBackByTransaction: heldBack.byTransaction,
+      });
       // #4154 (`INV-PAY-135`): what the plan does not carry is a hand-back task to check, raised with the cancel.
       const shortfallTaskRaised = await raiseCapacityRaceRefundShortfallTask(tx, { bookingId: booking.id, paymentId: payment.id, paymentIntentId, chargedCents: amountCents, plannedRefundCents, format: settlement.format });
       if (plannedRefundCents > 0) {

@@ -53,6 +53,7 @@ const mocks = vi.hoisted(() => ({
   findPaymentTransactionByIntentId: vi.fn(),
   refundPaymentTransactions: vi.fn(),
   planStripeRefundAllocation: vi.fn(),
+  readSupersededCaptureHeldBack: vi.fn(async () => ({ byTransaction: new Map<string, number>(), totalCents: 0 })),
   enqueueCapacityClaimFailedRefundRecovery: vi.fn(),
   markCapacityClaimFailedRefundRecoverySucceeded: vi.fn(),
   recordCapacityClaimFailedRefundRecoveryInlineError: vi.fn(),
@@ -96,6 +97,9 @@ vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
 // superseded machinery's rows, which this suite's transaction double does not
 // model; nothing here is superseded. Pinned by issue-1992-duplicate-capture-refund
 // and superseded-capture-ownership, and on PostgreSQL by superseded-intent-card-doors.
+vi.mock("@/lib/superseded-capture-hold-back", () => ({
+  readSupersededCaptureHeldBack: (...args: unknown[]) => mocks.readSupersededCaptureHeldBack(...args),
+}));
 vi.mock("@/lib/superseded-capture-ownership", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/superseded-capture-ownership")),
   supersededMachineryOwnsCapture: async () => false,
@@ -1112,6 +1116,7 @@ describe("markBookingPaymentSucceeded", () => {
         paymentId: "payment-1",
         amountCents: 10000,
         store: tx,
+        heldBackByTransaction: expect.any(Map),
       });
 
       // Failure path: the operation stays PENDING for the cron (never marked

@@ -787,6 +787,14 @@ import "./superseded-refund-another-door-hold.realdb.test";
 // the hand-off flipping that charge captured on the Payment row. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4866-` fixtures.
 import "./superseded-refund-cancel-hold-back.realdb.test";
+// #4872 reuses it to prove the other refund doors leave a live superseded
+// capture to its own refund: an edit's own-card plan, an approved refund
+// request, a capacity race, a booking-change credit, a plan-less recovery row,
+// and a manual hand-back including a card-shortfall check. Each claim queues
+// behind the hand-off flipping that charge captured on the Payment row.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4872-` fixtures.
+import "./superseded-refund-4872-hold-back.realdb.test";
 // #4685 reuses it to prove an account-credit Xero note stamps the one credit it
 // was raised for, by id, and that a row queued without the id still stamps.
 // Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own

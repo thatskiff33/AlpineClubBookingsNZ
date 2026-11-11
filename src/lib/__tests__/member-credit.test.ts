@@ -48,11 +48,16 @@ vi.mock("@/lib/booking-ledger-credit-sync", () => ({
 }));
 
 const mockApplyLocalRefundAllocation = vi.fn();
+const mockReadSupersededCaptureHeldBack = vi.fn(async () => ({ byTransaction: new Map<string, number>(), totalCents: 0 }));
 const mockStartXeroSyncOperation = vi.fn();
 const mockRepairLegacyAppliedCreditNoteAllocationsForBooking = vi.fn();
 
 vi.mock("@/lib/payment-transactions", () => ({
   applyLocalRefundAllocation: mockApplyLocalRefundAllocation,
+  lockPaymentForRefundedTotal: vi.fn(async () => undefined),
+}));
+vi.mock("@/lib/superseded-capture-hold-back", () => ({
+  readSupersededCaptureHeldBack: (...args: unknown[]) => mockReadSupersededCaptureHeldBack(...args),
 }));
 vi.mock("@/lib/xero-sync", () => ({
   buildXeroIdempotencyKey: (...parts: unknown[]) => parts.join(":"),
@@ -274,6 +279,31 @@ describe("member-credit helpers", () => {
         paymentId: "payment-1",
         amountCents: 3750,
         store: prisma,
+        heldBackByTransaction: expect.any(Map),
+      });
+    });
+
+    it("passes a live superseded capture's hold-back into the allocation and locks the payment after the credit (#4872)", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      const held = new Map([["txn-superseded", 6_500]]);
+      mockReadSupersededCaptureHeldBack.mockResolvedValueOnce({ byTransaction: held, totalCents: 6_500 });
+      vi.mocked(prisma.memberCredit.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.memberCredit.create).mockResolvedValue({} as any);
+
+      const { createBookingModificationCredit } = await import("@/lib/member-credit");
+      const { lockPaymentForRefundedTotal } = await import("@/lib/payment-transactions");
+      await createBookingModificationCredit("member-1", 3750, "booking-abc12345", "mod-held", undefined, undefined, "payment-1");
+
+      expect(prisma.memberCredit.create).toHaveBeenCalled();
+      expect(lockPaymentForRefundedTotal).toHaveBeenCalledWith(prisma, "payment-1");
+      expect(vi.mocked(prisma.memberCredit.create).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(lockPaymentForRefundedTotal).mock.invocationCallOrder[0]!,
+      );
+      expect(mockApplyLocalRefundAllocation).toHaveBeenCalledWith({
+        paymentId: "payment-1",
+        amountCents: 3750,
+        store: prisma,
+        heldBackByTransaction: held,
       });
     });
 

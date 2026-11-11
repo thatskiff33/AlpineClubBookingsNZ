@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   processRefund: vi.fn(),
   refundPaymentTransactions: vi.fn(),
   planStripeRefundAllocation: vi.fn(),
+  readSupersededCaptureHeldBack: vi.fn(async () => ({ byTransaction: new Map<string, number>(), totalCents: 0 })),
   isXeroConnected: vi.fn(),
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
@@ -113,6 +114,10 @@ vi.mock("@/lib/payment-recovery", () => ({
     mocks.enqueueRefundRequestRefundRecovery(...args),
 }));
 
+vi.mock("@/lib/superseded-capture-hold-back", () => ({
+  readSupersededCaptureHeldBack: (...args: unknown[]) => mocks.readSupersededCaptureHeldBack(...args),
+}));
+
 vi.mock("@/lib/payment-transactions", () => ({
   lockPaymentForRefundedTotal: mocks.lockPaymentForRefundedTotal,
   refundPaymentTransactions: mocks.refundPaymentTransactions,
@@ -144,6 +149,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 describe("PUT /api/admin/refund-requests/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.readSupersededCaptureHeldBack.mockResolvedValue({ byTransaction: new Map(), totalCents: 0 });
 
     mocks.auth.mockResolvedValue({
       user: { id: "admin_1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
@@ -407,6 +413,39 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       expect(mocks.planStripeRefundAllocation).not.toHaveBeenCalled();
       expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
       expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    });
+
+    it("nets a live superseded capture out of the cap, and refuses when only that money would pay the appeal (#4872)", async () => {
+      mocks.readSupersededCaptureHeldBack.mockResolvedValueOnce({
+        byTransaction: new Map([["txn_superseded", 10_000]]),
+        totalCents: 10_000,
+      });
+
+      const response = await PUT(approveFor(2500), { params: Promise.resolve({ id: "refund_1" }) });
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error: "Amount exceeds maximum refundable of $0.00",
+      });
+      expect(mocks.refundRequestUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.planStripeRefundAllocation).not.toHaveBeenCalled();
+    });
+
+    it("passes the superseded-capture hold-back into the frozen card plan (#4872)", async () => {
+      const held = new Map([["txn_superseded", 4_000]]);
+      mocks.readSupersededCaptureHeldBack.mockResolvedValueOnce({ byTransaction: held, totalCents: 4_000 });
+
+      const response = await PUT(approveFor(2500), { params: Promise.resolve({ id: "refund_1" }) });
+
+      expect(response.status).toBe(200);
+      expect(mocks.planStripeRefundAllocation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paymentId: "payment_1",
+          amountCents: 2500,
+          store: expect.anything(),
+          heldBackByTransaction: held,
+        }),
+      );
     });
 
     it("#4124: also nets a card refund still owed on the payment, so an appeal cannot promise it twice", async () => {

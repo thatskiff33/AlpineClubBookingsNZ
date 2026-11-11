@@ -24,6 +24,7 @@ import {
   planStripeRefundAllocation,
   refundPaymentTransactions,
 } from "@/lib/payment-transactions";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import { inlineRefundAfterAttempt } from "@/lib/refused-card-refund-retry";
 import { NO_CARD_REFUND_OWED, queueUnmadeRefundRequestCardRefund, refundRequestCardRefundAnswer } from "@/lib/refund-request-card-refund";
 import { buildRefundRequestRefundMetadata, buildRefundRequestRefundStripeKeyPrefix } from "@/lib/payment-recovery-keys";
@@ -170,6 +171,8 @@ export async function PUT(
       // writer holding it without `lock(1)` (a hand-back's completion, a refund's
       // record, a failed-later debt) lands between them (`RefundAppealHandedBack`).
       await lockPaymentForRefundedTotal(tx, payment.id);
+      // #4872: a live superseded capture is not cash this appeal can approve against.
+      const heldBack = await readSupersededCaptureHeldBack(tx, payment.id);
       const handedBack = await refundAppealHandedBackParts(tx, {
         id: payment.id,
         bookingId: booking.id,
@@ -184,7 +187,10 @@ export async function PUT(
           refundedAmountCents: true,
         },
       });
-      const maxRefundable = getRemainingRefundableCentsNetOf(lockedPayment, totalRefundAppealHandedBackCents(handedBack));
+      const maxRefundable = getRemainingRefundableCentsNetOf(
+        lockedPayment,
+        totalRefundAppealHandedBackCents(handedBack) + heldBack.totalCents,
+      );
       // #3956 (`INV-PAY-123`): a joiner's booking the group organiser paid for
       // by card has no transaction of its own to plan a refund from - the money
       // sits in the organiser's combined payment, so its appeal is refunded out
@@ -255,6 +261,7 @@ export async function PUT(
         paymentId: payment.id,
         amountCents: approvedAmountCents,
         store: tx,
+        heldBackByTransaction: heldBack.byTransaction,
       });
 
       // #3827 (owner decision D-3813-7, `INV-PAY-118`): on a booking paid by

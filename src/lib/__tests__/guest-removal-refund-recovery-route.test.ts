@@ -131,7 +131,12 @@ beforeEach(() => {
   mockPlanStripeRefundAllocation.mockImplementation(ownCardRefundPlan);
   mocks.auth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
   mocks.requireActiveSessionUser.mockResolvedValue(null);
-  mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) => cb({}));
+  mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) => cb({
+    $executeRaw: vi.fn(async () => 1),
+    paymentRecoveryOperation: { findMany: vi.fn(async () => []), findUnique: mocks.recoveryFindUnique },
+    payment: { findUnique: vi.fn(async () => null) },
+    paymentTransaction: { findMany: vi.fn(async () => []) },
+  }));
   mocks.memberFindUnique.mockResolvedValue({
     id: "m1",
     email: "m@example.com",

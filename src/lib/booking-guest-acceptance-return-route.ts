@@ -14,11 +14,11 @@ import {
   calculateFullReductionSettlementOptions,
   type BookingModificationSettlementOptions,
 } from "@/lib/booking-modify-settlement";
+import { refundableCashForModification } from "@/lib/booking-modify-settlement-options";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hasCapturedPayment, isSettledBookingStatus } from "@/lib/booking-payment-state";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
 import type { CalendarDate } from "@/lib/club-time";
-import { refundableCashNetOfOpenHandBacks } from "@/lib/edit-refund-hand-back";
 import { deriveBookingAppliedCreditCents, lockMemberCreditLedger } from "@/lib/member-credit";
 import { organiserCardCanReturnInFull } from "@/lib/organiser-child-refund";
 
@@ -74,13 +74,13 @@ export async function fullReductionReturnRoute(
   // Captured cash: the edit's money-back arm, at 100% and never above what is
   // still refundable (`calculateFullReductionSettlementOptions`); null once a
   // card has been refunded in full.
-  // Net of edit refunds already promised back by hand (#3827, `INV-PAY-117`):
-  // an earlier edit's open task is cash the club owes, not cash it holds.
+  // The edit's one cash basis (#4872, `INV-PAY-150`): open hand-backs and a
+  // live superseded capture are not cash this re-price can return.
   const settlementOptions = capturedCash
     ? calculateFullReductionSettlementOptions({
         booking: loaded,
         netChargeCents: reduction.netChargeLeftCents,
-        refundableCashCents: await refundableCashNetOfOpenHandBacks(tx, booking.payment),
+        refundableCashCents: await refundableCashForModification(tx, booking.payment, reduction),
         todayAtClub,
       })
     : null;

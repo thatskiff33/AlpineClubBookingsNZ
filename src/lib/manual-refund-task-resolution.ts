@@ -22,7 +22,8 @@ import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manua
 import { requireMemberCreditRecipient } from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { enqueueEditFinancialReviewRefundRecovery } from "@/lib/payment-recovery";
-import { applyLocalRefundAllocation } from "@/lib/payment-transactions";
+import { applyLocalRefundAllocation, lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import { readCapacityRaceStripeRefundedForTask } from "@/lib/capacity-race-refunded-total-correction";
 // A settlement write's refusal, as the operator reads it (#3827 split it out).
 import { settlementWriteRefusal } from "@/lib/manual-refund-task-settlement-refusal";
@@ -397,10 +398,15 @@ export async function resolveManualRefundTask(
       // exists.
       try {
         if (settlementRoute.kind === "local-allocation" && settlementRoute.refundCents > 0) {
+          // #4872: after the credit give-back (member ledger before any Payment row).
+          // The hold-back also covers a card-shortfall check part's newest-first fall-through.
+          await lockPaymentForRefundedTotal(tx, settlementRoute.paymentId);
+          const heldBack = await readSupersededCaptureHeldBack(tx, settlementRoute.paymentId);
           await applyLocalRefundAllocation({
             paymentId: settlementRoute.paymentId,
             amountCents: settlementRoute.refundCents,
             store: tx, preferTransactionIds: settlementRoute.cardShortfall?.preferTransactionIds, onlyTransactionIds: settlementRoute.cardShortfall?.onlyTransactionIds, // #4097, #4154
+            heldBackByTransaction: heldBack.byTransaction,
           });
         }
         // `account-credit` is written by the closure's re-price below, once the

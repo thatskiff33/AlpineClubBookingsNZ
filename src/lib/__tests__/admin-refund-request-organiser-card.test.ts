@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   refundPaymentTransactions: vi.fn(),
   planStripeRefundAllocation: vi.fn(),
+  readSupersededCaptureHeldBack: vi.fn(async () => ({ byTransaction: new Map<string, number>(), totalCents: 0 })),
   enqueueRefundRequestRefundRecovery: vi.fn(),
   isXeroConnected: vi.fn(),
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
@@ -78,6 +79,9 @@ vi.mock("@/lib/logger", () => ({
 }));
 vi.mock("@/lib/payment-recovery", () => ({
   enqueueRefundRequestRefundRecovery: mocks.enqueueRefundRequestRefundRecovery,
+}));
+vi.mock("@/lib/superseded-capture-hold-back", () => ({
+  readSupersededCaptureHeldBack: (...args: unknown[]) => mocks.readSupersededCaptureHeldBack(...args),
 }));
 vi.mock("@/lib/payment-transactions", () => ({
   lockPaymentForRefundedTotal: mocks.lockPaymentForRefundedTotal,

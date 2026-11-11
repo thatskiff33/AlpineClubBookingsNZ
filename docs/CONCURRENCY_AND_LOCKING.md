@@ -6877,8 +6877,14 @@ Stripe call:
   It reads the row's plan and writes compare-and-set on it, skipping a slice
   already moved, so two deliveries of one refusal move it, and alert, once.
 - **The edit refund door** (`executeBookingModificationRefund`, #3984,
-  `INV-PAY-146`) freezes its plan before Stripe, outside the edit transaction.
-  After success or throw it queues the whole read plan if any slice is unmade:
+  `INV-PAY-146`) freezes its plan before Stripe. Since #4872 that freeze takes
+  the Payment row (`lockPaymentForRefundedTotal`), reads the superseded-capture
+  hold-back, and commits before Stripe is asked. No provider call runs inside
+  it. A plan-less card-refund recovery derives its missing plan the same way
+  after provider preflight (`processBookingModificationRefundOperation`). A
+  manual hand-back reads the hold-back after its claim and after any credit
+  give-back, so a member-ledger lock still comes before the Payment row.
+  After success or throw the edit queues the whole read plan if any slice is unmade:
   made slices marked, refusals moved, unanswered slices on their original key.
   The lockless `charge.refunded` recorder may update the ledger before recovery;
   the worker still sends the original slices and keys. Recording keeps the

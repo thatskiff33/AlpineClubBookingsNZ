@@ -1834,7 +1834,9 @@ release).
 and **`INV-PAY-147`** (slice evidence).
 
 - A booking edit's own-card refund freezes its allocation with
-  `planStripeRefundAllocation` before asking Stripe, rejects a shortfall with
+  `planStripeRefundAllocation` before asking Stripe. The freeze takes the Payment
+  row and reads the superseded-capture hold-back in one short transaction, which
+  commits before Stripe is asked (#4872, `INV-PAY-150`). It rejects a shortfall with
   the existing exceeds-captured error, and sends exactly those slices through
   `refundPaymentTransactions` (#3984).
 - On success or throw, `inlineRefundAfterAttempt` reads that same plan. If any
@@ -4095,33 +4097,31 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
 **Related: `INV-PAY-145`** (plan-less superseded sizing), **`INV-PAY-117`**
 (open hand-backs), **`INV-PAY-131`** (the cancel preview).
 
-- **A cancellation leaves a live superseded capture to its own refund**
-  (#4866). A superseded intent's refund with no stored plan sizes its request
-  on its charge's ledger (#4699), so a cancellation's card slice or credit
-  allocation on that charge shrank it and the row closed with the member
-  short, unalerted; where the
-  booking's own money fell short of the policy's cap, the tier also counted
-  that capture as paid.
-- **What the machinery owns, per charge** (`supersededCaptureHeldBack`), by the
-  Xero reading's rule (`readSupersededCaptureOwnership`): what a
-  `REFUND_SUPERSEDED_PAYMENT` row not yet `SUCCEEDED` would send
-  (`reArmWouldSendCents`), held or dead included; while a
-  `CANCEL_PAYMENT_INTENT` row is in flight, all its captured charge holds; and
-  what open rows owe back again after Stripe failed one later
-  (`supersededRefundsOwedAgainCents`). Never more than the charge holds.
-- **The paid claim** reads it under the Payment row, before the mirror fold,
-  which folds into none of it (`foldMirrorRefundIntoLedger`). It joins the open
-  hand-backs, so no tier counts it as paid;
-  `planCardRefundFromLedger` gives it no slice, nor does a refund as account
-  credit (`applyLocalRefundAllocation`). The preview reads the same figure for
-  its refund and its card plan.
+- **Refund doors leave a live superseded capture to its own refund**
+  (#4866, #4872). A superseded intent's refund with no stored plan sizes its
+  request on its charge's ledger (#4699), so another door's slice or allocation
+  on that charge shrank it and the row closed short, unalerted.
+- **What the machinery owns, per charge** (`supersededCaptureHeldBack`), by
+  `readSupersededCaptureOwnership`: what a `REFUND_SUPERSEDED_PAYMENT` not yet
+  `SUCCEEDED` would send (`reArmWouldSendCents`), held or dead included; while a
+  `CANCEL_PAYMENT_INTENT` is in flight, all its captured charge; and what open
+  rows owe back again after Stripe failed one later. Never more than the charge holds.
+- **Read under the Payment row**, with the plan or allocation, and off any paid
+  figure, with the open hand-backs. No card plan, credit, mirror fold or hand-back
+  takes it. An empty reading changes no slice, amount or Stripe key. A stored plan
+  is never rewritten. A missing plan the hold-back would shrink, against recorded
+  refunds alone, keeps the debt.
+- **Doors:** cancellation and its preview (#4866); an edit's own-card plan;
+  a refund request, including its cap; a capacity race's card plan (the amount
+  owed back stays the capture; a short plan still raises its task); a booking-change
+  credit; a plan-less recovery row's first plan; a manual hand-back, including a
+  card-shortfall check after its preferred charges (#4872). An edit review's card
+  plan, a "Paid another way" close and a group cancellation are #4879.
 - **The race.** The hand-off flips the charge captured under the Payment row,
   then writes the refund row before its cancel row closes, so a claim queued
-  behind it sees one of them live. No new lock (`INV-LOCK-001` to
-  `INV-LOCK-003`).
-- Limit: an edit's, a refund request's and a capacity race's card plans still
-  take no account of it.
+  behind it sees one of them live. No new lock (`INV-LOCK-001` to `INV-LOCK-003`).
 - Proven by `superseded-capture-hold-back.test.ts`,
   `cancel-card-refund-shortfall-preview.test.ts`,
-  `clipped-mirror-open-hand-back.test.ts` and
-  `superseded-refund-cancel-hold-back.realdb.test.ts`.
+  `clipped-mirror-open-hand-back.test.ts`,
+  `superseded-refund-cancel-hold-back.realdb.test.ts` and
+  `superseded-refund-4872-hold-back.realdb.test.ts`.

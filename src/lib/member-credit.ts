@@ -13,7 +13,9 @@ import { RESTORED_CREDIT_PREFIX, bookingAppliedCreditWhere } from "@/lib/member-
 import { createAuditLog } from "./audit";
 import { recordBookingEvent } from "./booking-events";
 import { isPrismaUniqueConstraintError } from "./prisma-errors";
-import { applyLocalRefundAllocation } from "./payment-transactions";
+import { withStoreTransaction } from "@/lib/db-transaction";
+import { applyLocalRefundAllocation, lockPaymentForRefundedTotal } from "./payment-transactions";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import logger from "@/lib/logger";
 import { formatCents } from "@/lib/utils";
 import { clubFormatValues } from "@/lib/club-format-server";
@@ -225,65 +227,72 @@ export async function createBookingModificationCredit(
   tx?: Prisma.TransactionClient,
   paymentId?: string
 ): Promise<void> {
-  const db = tx || prisma;
-  const existingCredit = await findBookingModificationCredit(
-    db,
-    bookingModificationId
-  );
-  if (existingCredit) {
-    await assertMatchingBookingModificationCredit(db, existingCredit, {
-      memberId,
-      amountCents,
-      bookingId,
-      bookingModificationId,
-      xeroCreditNoteId,
-    });
-    return;
-  }
-
-  try {
-    await db.memberCredit.create({
-      data: {
-        memberId,
-        amountCents,
-        type: CreditType.BOOKING_MODIFICATION_REFUND,
-        description: `Booking reduction credit for booking ${bookingId.slice(0, 8)}`,
-        sourceBookingId: bookingId,
-        sourceBookingModificationId: bookingModificationId,
-        xeroCreditNoteId: xeroCreditNoteId ?? null,
-      },
-    });
-  } catch (error) {
-    if (!isPrismaUniqueConstraintError(error)) {
-      throw error;
-    }
-
-    const replayedCredit = await findBookingModificationCredit(
+  // #4872: the credit, its ledger lines and the payment allocation commit together.
+  // A root-client caller gets its own transaction; a caller that already holds one
+  // keeps it. The Payment row comes after the member-ledger writes (`INV-LOCK-002`).
+  await withStoreTransaction(tx ?? prisma, async (db) => {
+    const existingCredit = await findBookingModificationCredit(
       db,
       bookingModificationId
     );
-    if (!replayedCredit) {
-      throw error;
+    if (existingCredit) {
+      await assertMatchingBookingModificationCredit(db, existingCredit, {
+        memberId,
+        amountCents,
+        bookingId,
+        bookingModificationId,
+        xeroCreditNoteId,
+      });
+      return;
     }
-    await assertMatchingBookingModificationCredit(db, replayedCredit, {
-      memberId,
-      amountCents,
-      bookingId,
-      bookingModificationId,
-      xeroCreditNoteId,
-    });
-    // Replay: the allocation happened atomically with the original credit.
-    return;
-  }
-  await syncBookingLedgerCredits({ bookingId, store: db });
 
-  if (paymentId) {
-    await applyLocalRefundAllocation({
-      paymentId,
-      amountCents,
-      store: db,
-    });
-  }
+    try {
+      await db.memberCredit.create({
+        data: {
+          memberId,
+          amountCents,
+          type: CreditType.BOOKING_MODIFICATION_REFUND,
+          description: `Booking reduction credit for booking ${bookingId.slice(0, 8)}`,
+          sourceBookingId: bookingId,
+          sourceBookingModificationId: bookingModificationId,
+          xeroCreditNoteId: xeroCreditNoteId ?? null,
+        },
+      });
+    } catch (error) {
+      if (!isPrismaUniqueConstraintError(error)) {
+        throw error;
+      }
+
+      const replayedCredit = await findBookingModificationCredit(
+        db,
+        bookingModificationId
+      );
+      if (!replayedCredit) {
+        throw error;
+      }
+      await assertMatchingBookingModificationCredit(db, replayedCredit, {
+        memberId,
+        amountCents,
+        bookingId,
+        bookingModificationId,
+        xeroCreditNoteId,
+      });
+      // Replay: the allocation happened atomically with the original credit.
+      return;
+    }
+    await syncBookingLedgerCredits({ bookingId, store: db });
+
+    if (paymentId) {
+      await lockPaymentForRefundedTotal(db, paymentId);
+      const heldBack = await readSupersededCaptureHeldBack(db, paymentId);
+      await applyLocalRefundAllocation({
+        paymentId,
+        amountCents,
+        store: db,
+        heldBackByTransaction: heldBack.byTransaction,
+      });
+    }
+  });
 }
 
 async function findBookingModificationCredit(
