@@ -34,6 +34,7 @@ import {
   readAppliedCreditLedgerQueueType,
 } from "@/lib/xero-applied-credit-operation-serialization";
 import { asArray, asRecord, readNumber, readString } from "@/lib/xero-json";
+import { modificationNoteInvoiceRefusalRetryReason } from "@/lib/xero-modification-note-refusal";
 import {
   parsePaymentCreditNoteRetryInput,
   readCashRefundMethod,
@@ -127,6 +128,7 @@ type RetryableOperation = Pick<
   // that omit it simply fall back to payload-based delta detection.
   queueType?: XeroSyncOperation["queueType"];
   lastErrorCode?: XeroSyncOperation["lastErrorCode"]; // #4688: optional; Retry's own refusal reads the stored row
+  lastErrorMessage?: XeroSyncOperation["lastErrorMessage"]; // #3993: a paid-off allocation or a shortfall before create
 };
 
 export class XeroOperationRetryError extends Error {
@@ -1134,6 +1136,12 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     }
 
     if (operation.entityType === "CREDIT_NOTE" && operation.operationType === "CREATE") {
+      // #3993: an edit note the invoice cannot take is not replayed. A payment's
+      // refund note is not this row, even if its message happens to say the same.
+      if (operation.localModel === "BookingModification") {
+        const refusal = modificationNoteInvoiceRefusalRetryReason(operation);
+        if (refusal) return { supported: false, reason: refusal };
+      }
       if (parseRefundCreditNoteRepairInput(operation)) {
         return { supported: true, reason: null };
       }
@@ -1283,6 +1291,8 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     }
 
     if (operation.localModel === "BookingModification" && operation.localId) {
+      const refusal = modificationNoteInvoiceRefusalRetryReason(operation);
+      if (refusal) return { supported: false, reason: refusal };
       return { supported: true, reason: null };
     }
 

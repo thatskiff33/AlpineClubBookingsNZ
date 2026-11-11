@@ -1564,6 +1564,7 @@ async function dispatchDatePostTransactionSideEffects({
     settlementAmountCents: result.xeroRefundAmountCents,
     settlementMethod: result.settlementMethod,
     refundedThroughStripe: result.hasSucceededPayment,
+    paymentId: result.paymentId,
     appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     // #3653: the organiser child refund raises the one note, after Stripe.
     organiserChildRefundOwnsCreditNote: result.organiserChildRefund !== null,

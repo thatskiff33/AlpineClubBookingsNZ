@@ -3201,6 +3201,138 @@ describe("runBookingXeroRepair", () => {
     );
   });
 
+  describe("a Stripe card refund is not offered a modification note (#3993)", () => {
+    const reduction = (paymentOverrides: Record<string, unknown> = {}, newData?: Record<string, unknown>) =>
+      makeBooking({
+        payment: { ...makeBooking().payment, source: "STRIPE", ...paymentOverrides },
+        modifications: [
+          {
+            id: "mod_card",
+            bookingId: "booking_1",
+            modificationType: "GUEST_REMOVE",
+            priceDiffCents: -3000,
+            changeFeeCents: 0,
+            ...(newData ? { newData } : {}),
+            createdAt: new Date("2026-05-02T00:00:00Z"),
+          },
+        ],
+      });
+    const reportFor = async (
+      booking: ReturnType<typeof makeBooking>,
+      extra: { operations?: ReturnType<typeof makeOperation>[]; links?: Record<string, unknown>[] } = {},
+    ) => {
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: createDependencies({ bookings: [booking], ...extra }),
+        scope: { all: true },
+      });
+      return report.passes[0].bookings[0];
+    };
+
+    it("MUTATION: a captured Stripe reduction with refund-note coverage reports neither a missing modification note nor a queue for one", async () => {
+      const bookingReport = await reportFor(reduction({ refundedAmountCents: 3000 }), {
+        links: [
+          paymentLink({
+            id: "link_refund_note",
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_refund",
+            role: "REFUND_CREDIT_NOTE",
+            metadata: { amountCents: 3000 },
+          }),
+        ],
+      });
+
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_MODIFICATION_CREDIT_NOTE");
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_CREDIT_NOTE_ALLOCATION");
+      expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_MODIFICATION_CREDIT_NOTE");
+      expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_CREDIT_NOTE_ALLOCATION");
+    });
+
+    it("still reports a missing note for an internet-banking payment, and for a stored bank wording on a Stripe payment", async () => {
+      const bank = await reportFor(
+        makeBooking({
+          payment: { ...makeBooking().payment, source: "INTERNET_BANKING" },
+          modifications: [
+            {
+              id: "mod_bank",
+              bookingId: "booking_1",
+              modificationType: "GUEST_REMOVE",
+              priceDiffCents: -3000,
+              changeFeeCents: 0,
+              createdAt: new Date("2026-05-02T00:00:00Z"),
+            },
+          ],
+        }),
+      );
+      expect(bank.findings.map((finding) => finding.code)).toContain("MISSING_MODIFICATION_CREDIT_NOTE");
+
+      const storedBank = await reportFor(reduction(), {
+        operations: [
+          makeOperation({
+            id: "op_bank_note",
+            localId: "mod_card",
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            status: "FAILED",
+            xeroObjectId: null,
+            xeroObjectType: "CREDIT_NOTE",
+            lastErrorMessage: "503 Service Unavailable",
+            requestPayload: { invoiceId: "inv_primary", refundAmountCents: 3000, refundMethod: "internet-banking" },
+          }),
+        ],
+      });
+      expect(storedBank.actions.map((action) => action.type)).toContain("REQUEUE_XERO_OPERATION");
+    });
+
+    it("still reports a missing scoped give-back beside a card refund", async () => {
+      const bookingReport = await reportFor(
+        reduction({}, { appliedCreditGiveBack: { basisCents: 2000, givenBackCents: 2000 } }),
+      );
+      expect(bookingReport.actions.map((action) => action.key)).toContain("queue:give-back-note:mod_card");
+      expect(bookingReport.actions.map((action) => action.key)).not.toContain("queue:mod-credit-note:mod_card");
+    });
+
+    it("MUTATION: a failed edit note the invoice cannot take is manual review; a 503 on the same row still retries", async () => {
+      const shortfall = "The original invoice owes $0.00, less than this $30.00 modification credit note; nothing was created.";
+      const refused = await reportFor(reduction(), {
+        operations: [
+          makeOperation({
+            id: "op_short",
+            localId: "mod_card",
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            status: "FAILED",
+            xeroObjectId: null,
+            xeroObjectType: "CREDIT_NOTE",
+            lastErrorMessage: shortfall,
+            requestPayload: { invoiceId: "inv_primary", refundAmountCents: 3000 },
+          }),
+        ],
+      });
+      expect(refused.findings).toContainEqual(
+        expect.objectContaining({ code: "MANUAL_REVIEW_REQUIRED", safeToAutoApply: false }),
+      );
+      expect(refused.actions.map((action) => action.type)).not.toContain("REQUEUE_XERO_OPERATION");
+      expect(refused.actions.map((action) => action.type)).not.toContain("QUEUE_MODIFICATION_CREDIT_NOTE");
+
+      const transient = await reportFor(reduction(), {
+        operations: [
+          makeOperation({
+            id: "op_503",
+            localId: "mod_card",
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            status: "FAILED",
+            xeroObjectId: null,
+            xeroObjectType: "CREDIT_NOTE",
+            lastErrorMessage: "503 Service Unavailable",
+            requestPayload: { invoiceId: "inv_primary", refundAmountCents: 3000 },
+          }),
+        ],
+      });
+      expect(transient.actions.map((action) => action.type)).toContain("REQUEUE_XERO_OPERATION");
+    });
+  });
+
   // #1427: no captured payment means no cancellation-policy tier can have
   // applied — the full delta is the correct bookkeeping correction (#1015),
   // and it stays auto-applyable.
@@ -4443,6 +4575,28 @@ describe("runBookingXeroRepair", () => {
       expect(
         bookingReport.actions.some((action) => JSON.stringify(action.payload).includes("operation_partial_note"))
       ).toBe(true);
+    });
+
+    it("MUTATION (#3993): a PARTIAL note Xero refused as already paid off is manual review, and the same row without that error still retries", async () => {
+      const paidOff = await classify([
+        noteRow({
+          id: "operation_paid_off",
+          status: "PARTIAL",
+          responsePayload: { allocationError: "The invoice you are trying to allocate to has already been paid off" },
+        }),
+      ]);
+
+      expect(paidOff.findings).toContainEqual(
+        expect.objectContaining({ code: "MANUAL_REVIEW_REQUIRED", safeToAutoApply: false }),
+      );
+      expect(paidOff.actions.map((action) => action.type)).not.toContain("QUEUE_CREDIT_NOTE_ALLOCATION");
+      expect(paidOff.actions.map((action) => action.type)).not.toContain("REQUEUE_XERO_OPERATION");
+      expect(JSON.stringify(paidOff.findings)).toContain("Keep the refund note");
+
+      const transient = await classify([noteRow({ id: "operation_transient", status: "PARTIAL", lastErrorMessage: "503 Service Unavailable" })]);
+      expect(transient.findings).toContainEqual(
+        expect.objectContaining({ code: "MISSING_CREDIT_NOTE_ALLOCATION", safeToAutoApply: true }),
+      );
     });
 
     it("MUTATION: reports a PARTIAL row whose retry is running, and queues nothing beside it", async () => {

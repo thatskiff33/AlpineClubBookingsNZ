@@ -86,7 +86,8 @@ import {
   withoutScopedSideNotes,
 } from "@/lib/xero-booking-repair-side-notes";
 import { addAppliedCreditFindings, waitForAppliedCreditWorkBeforeClearing } from "./xero-booking-repair-applied-credit";
-import { addBlockedNoteAllocationFinding, addResolvedNoteAllocationFinding, dispatchOwnNoteRow } from "./xero-booking-repair-own-note-row";
+import { addBlockedNoteAllocationFinding, addResolvedNoteAllocationFinding, dispatchOwnNoteRow, reportModificationNoteInvoiceRefusal } from "./xero-booking-repair-own-note-row";
+import { isStripeCardRefundEdit, modificationNoteInvoiceRefusal } from "@/lib/xero-modification-note-refusal";
 import { addKeptLateCaptureRefundByHandFinding, addLateCaptureCardRefundByHandFindings, addPaidAnotherWayReceiptFinding } from "./xero-booking-repair-paid-another-way";
 import { addKeptChangeCaptureFinding, addUnrecordedAdditionalCaptureFindings, keptInvoiceBillsChange } from "./xero-booking-repair-additional-capture";
 import { addRefundRequestNoteNotQueuedFindings, paidBackRefundRequestCents } from "./xero-booking-repair-request-notes";
@@ -961,6 +962,15 @@ export function classifyBookingContext(
         addScopedSideNoteFindings({ bookingId: booking.id, modificationId: modification.id, note: giveBackNote, edit: { operations: modificationOperations, links: modificationLinks }, actionMap, findings });
       }
       const { links: noteLinks, operations: noteOperations } = withoutScopedSideNotes(modificationLinks, modificationOperations);
+      // #3993: a captured Stripe reduction that was not kept as credit, and
+      // whose stored note is not a bank, cash, or invoice-correction wording,
+      // is a refund note. Do not mint a modification note for that cash.
+      const cardRefundEdit = isStripeCardRefundEdit({
+        paymentSource: payment?.source ?? null,
+        paymentHasCapturedMoney,
+        settlementMethod: readJsonRecord(modification.newData)?.settlementMethod,
+        operationPayloads: noteOperations.map((operation) => operation.requestPayload),
+      });
       const modificationCreditNote = resolveObjectFromCandidates({
         links: noteLinks,
         operations: noteOperations,
@@ -1049,7 +1059,17 @@ export function classifyBookingContext(
           // missing invoice-applied note behind a blocked finding.
           { payloadQueueType: XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE }
         );
-        if (blockingOperation?.kind === "retryable") {
+        const blockingRecord =
+          blockingOperation && blockingOperation.kind !== "resolved" ? blockingOperation.operation : null;
+        const invoiceRefusal = blockingRecord ? modificationNoteInvoiceRefusal(blockingRecord) : null;
+        if (invoiceRefusal && blockingRecord) {
+          // Paid off, or the invoice owed less than the note. Not a retry.
+          reportModificationNoteInvoiceRefusal(findings, actionMap, booking.id, invoiceRefusal, {
+            modificationId: modification.id,
+            operationId: blockingRecord.id,
+            operationStatus: blockingRecord.status,
+          });
+        } else if (blockingOperation?.kind === "retryable") {
           const action = addAction(
             actionMap,
             buildRetryAction(booking.id, blockingOperation)
@@ -1066,6 +1086,9 @@ export function classifyBookingContext(
             },
             actionKeys: [action.key],
           });
+        } else if (!blockingOperation && cardRefundEdit) {
+          // The card cash is a refund note. A missing modification note is not
+          // minted, and uncovered cash is the nightly check's to raise.
         } else if (!blockingOperation) {
           if (storedSettlement !== null || !paymentHasCapturedMoney) {
             // Sizing is safe: either the stored ledger records the
@@ -1250,8 +1273,17 @@ export function classifyBookingContext(
             ownNoteRow.outcome === "allocation-row-first"
               ? ownNoteRow.blocking
               : getBlockingOperation(noteOperations, "ALLOCATION", "ALLOCATE");
+          const allocationRecord =
+            blockingOperation && blockingOperation.kind !== "resolved" ? blockingOperation.operation : null;
+          const allocationRefusal = allocationRecord ? modificationNoteInvoiceRefusal(allocationRecord) : null;
           if (ownNoteRow.outcome === "handled") {
             // Reported, or the row's own retry offered: nothing queued beside it.
+          } else if (allocationRefusal && allocationRecord) {
+            reportModificationNoteInvoiceRefusal(findings, actionMap, booking.id, allocationRefusal, {
+              modificationId: modification.id,
+              creditNoteId: modificationCreditNote.objectId,
+              operationId: allocationRecord.id,
+            });
           } else if (blockingOperation?.kind === "retryable") {
             const action = addAction(
               actionMap,
@@ -1270,6 +1302,10 @@ export function classifyBookingContext(
               },
               actionKeys: [action.key],
             });
+          } else if (!blockingOperation && cardRefundEdit) {
+            // Do not allocate a card refund's modification note onto the invoice
+            // the card already paid. A transient failure of the note's own row
+            // is offered above; this is only a fresh allocation.
           } else if (!blockingOperation) {
             if (storedSettlement !== null || !paymentHasCapturedMoney) {
               // The allocation must match the NOTE's evidenced amount, not

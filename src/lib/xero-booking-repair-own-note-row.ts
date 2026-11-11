@@ -11,7 +11,12 @@ import type {
   XeroObjectLinkRecord,
   XeroOperationRecord,
 } from "./xero-booking-repair-types";
-import { addAction, addFinding, addResolvedInXeroFinding, buildRetryAction } from "./xero-booking-repair-findings";
+import { addAction, addFinding, addResolvedInXeroFinding, buildManualReviewAction, buildRetryAction } from "./xero-booking-repair-findings";
+import {
+  modificationNoteInvoiceRefusal,
+  modificationNoteRefusalSummary,
+  type ModificationNoteInvoiceRefusal,
+} from "@/lib/xero-modification-note-refusal";
 import {
   blockingCandidates,
   getBlockingOperation,
@@ -183,6 +188,26 @@ function isOwnAttempt(operation: XeroOperationRecord, creditNoteId: string, plan
  * and `links` are the arm's scope: the whole booking's for a clearing note,
  * the note's own for an edit's note.
  */
+/** A paid-off or shortfall edit note: manual review, nothing queued or retried (#3993). */
+export function reportModificationNoteInvoiceRefusal(
+  findings: MutableFinding[],
+  actionMap: Map<string, BookingXeroRepairAction>,
+  bookingId: string,
+  refusal: ModificationNoteInvoiceRefusal,
+  details: Record<string, unknown>,
+) {
+  const summary = modificationNoteRefusalSummary(refusal);
+  const action = addAction(actionMap, buildManualReviewAction(bookingId, summary));
+  addFinding(findings, {
+    code: "MANUAL_REVIEW_REQUIRED",
+    severity: "manual_review",
+    summary,
+    safeToAutoApply: false,
+    details,
+    actionKeys: [action.key],
+  });
+}
+
 export function dispatchOwnNoteRow(
   findings: MutableFinding[],
   actionMap: Map<string, BookingXeroRepairAction>,
@@ -203,6 +228,20 @@ export function dispatchOwnNoteRow(
     }
   }
   if (row.kind === "retry" || row.kind === "unretryable") {
+    // #3993: the invoice cannot take this note. Report the remedy and offer
+    // nothing, including a retry of the row. A transient failure has neither
+    // marker and still retries below.
+    if (arm.kind === "modification") {
+      const refusal = modificationNoteInvoiceRefusal(row.operation);
+      if (refusal) {
+        reportModificationNoteInvoiceRefusal(findings, actionMap, arm.bookingId, refusal, {
+          ...arm.retryDetails,
+          creditNoteId: arm.creditNoteId,
+          operationId: row.operation.id,
+        });
+        return HANDLED;
+      }
+    }
     const plan = readPlan(row.operation.requestPayload);
     const candidates = blockingCandidates(operations, "ALLOCATION", "ALLOCATE");
     const own = candidates.filter((operation) => isOwnAttempt(operation, arm.creditNoteId, plan));

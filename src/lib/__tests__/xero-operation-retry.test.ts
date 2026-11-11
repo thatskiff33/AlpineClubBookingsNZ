@@ -340,6 +340,48 @@ describe("resolved in Xero is never re-run (#3635, INV-INT-025)", () => {
   });
 });
 
+describe("a modification note the invoice cannot take is not retried (#3993)", () => {
+  const editNote = (overrides: Record<string, unknown>) =>
+    makeOperation({
+      status: "FAILED",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "BookingModification",
+      localId: "mod_1",
+      xeroObjectId: "cn_1",
+      requestPayload: { invoiceId: "inv_primary", refundAmountCents: 4000 },
+      ...overrides,
+    });
+  const shortfall = "The original invoice owes $0.00, less than this $40.00 modification credit note; nothing was created.";
+
+  it("MUTATION: refuses the shortfall and the paid-off validation, and retries the same row without them", () => {
+    expect(getXeroOperationRetryMeta(editNote({ lastErrorMessage: shortfall })).supported).toBe(false);
+    expect(getXeroOperationRetryMeta(editNote({
+      status: "PARTIAL",
+      responsePayload: { allocationError: "The invoice you are trying to allocate to has already been paid off" },
+    })).supported).toBe(false);
+    expect(getXeroOperationRetryMeta(editNote({
+      lastErrorMessage: "Credit Note cannot be allocated as amount is greater than amount outstanding",
+    })).supported).toBe(false);
+    expect(getXeroOperationRetryMeta(editNote({ lastErrorMessage: "503 Service Unavailable" })).supported).toBe(true);
+    expect(getXeroOperationRetryMeta(editNote({ status: "PARTIAL", lastErrorMessage: "503 Service Unavailable" })).supported).toBe(true);
+
+    const paymentNote = makeOperation({
+      status: "PARTIAL",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: "pay_1",
+      xeroObjectId: "cn_pay",
+      requestPayload: { allocation: { invoiceId: "inv_1", amount: 40 } },
+    });
+    expect(getXeroOperationRetryMeta({
+      ...paymentNote,
+      lastErrorMessage: "The invoice you are trying to allocate to has already been paid off",
+    })).toEqual(getXeroOperationRetryMeta(paymentNote));
+  });
+});
+
 describe("getXeroOperationRetryMeta", () => {
   it("marks failed payment invoice operations as retryable", () => {
     expect(getXeroOperationRetryMeta(makeOperation())).toEqual({

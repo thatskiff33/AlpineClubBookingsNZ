@@ -1955,13 +1955,13 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         hasIssuedXeroInvoice: true,
         priceDiffCents: -7300,
         settlementAmountCents: 7300,
-        // A card refund issues an ordinary modification credit note; account
-        // credit issues the UNAPPLIED one. The method follows the route the money
-        // actually took rather than an election nobody made.
+        // A card refund is the payment's refund note, keyed on this task.
+        // Account credit issues the UNAPPLIED modification note. The method
+        // follows the route the money actually took.
         settlementMethod: "card",
-        // ...and the note says which instrument the money went back on
-        // (`INV-PAY-101`): this route refunded the card.
         refundMethod: "card",
+        paymentId: "payment-1",
+        reviewTaskId: "task-1",
         // The structural edit queued its own narration update when it committed.
         datesChanged: false,
         guestIdentityChanged: false,

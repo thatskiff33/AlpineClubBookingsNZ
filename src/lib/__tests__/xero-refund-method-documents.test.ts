@@ -649,6 +649,7 @@ describe("#3791: a review task's share is a document of its own", () => {
     expect((error as Error).message).toContain(`deallocation dealloc-1 is ${status}`);
     expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({ id: "op-note" }), error);
     expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+    expect(mocks.getInvoice).not.toHaveBeenCalled();
   });
 
   it("MUTATION: once the deallocation has been retried, an operator retry of the note raises it", async () => {
@@ -683,6 +684,7 @@ describe("#3791: a review task's share is a document of its own", () => {
       refundMethod: "account-credit",
     })).rejects.toBeInstanceOf(XeroAppliedCreditOperationBusyError);
     expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+    expect(mocks.getInvoice).not.toHaveBeenCalled();
   });
 
   it("an edit's own note with no deallocation on its payment is raised at once", async () => {
@@ -994,7 +996,7 @@ describe("clearing-note allocation across the booking's invoices (#3535)", () =>
     expect(mocks.startXeroSyncOperation.mock.calls[0]![0]).not.toHaveProperty("queueType");
   });
 
-  it("leaves an edit's reduction note on the original invoice without reading any invoice", async () => {
+  it("reads the original invoice before an edit's reduction note, and still allocates it when the invoice can take it", async () => {
     await createXeroCreditNoteForModification({
       format: CLUB_FORMAT_TEST,
       bookingId: BOOKING_ID,
@@ -1002,7 +1004,7 @@ describe("clearing-note allocation across the booking's invoices (#3535)", () =>
       bookingModificationId: "cmmodification01",
     });
 
-    expect(mocks.getInvoice).not.toHaveBeenCalled();
+    expect(mocks.getInvoice).toHaveBeenCalled();
     expect(mocks.createCreditNoteAllocation).toHaveBeenCalledTimes(1);
     // The key it always had (#3535 must not change an edit's key): the Xero
     // idempotency key rides as the call's fifth argument.
@@ -1013,6 +1015,71 @@ describe("clearing-note allocation across the booking's invoices (#3535)", () =>
       requestPayload: Record<string, unknown>;
     };
     expect(recorded.requestPayload).not.toHaveProperty("allocations");
+  });
+
+  it("MUTATION (#3993): an edit note the original invoice cannot take creates nothing; the same unpaid invoice does", async () => {
+    const { XeroFake } = await import("@/test/providers/xero-fake");
+    const { ModificationNoteExceedsInvoiceDueError } = await import("@/lib/xero-modification-note-refusal");
+    const fake = new XeroFake();
+    const contact = fake.createContact("member", "member_1");
+    const invoice = fake.createInvoice("booking", contact.contactID, 2500);
+    fake.payInvoice("card", invoice.invoiceID, 2500);
+    const dueFromFake = async (_tenant: string, invoiceId: string) => {
+      const row = fake.snapshot().invoices.find((item) => item.invoiceID === invoiceId);
+      return {
+        body: {
+          invoices: row
+            ? [{ invoiceID: row.invoiceID, status: row.status, amountDue: row.amountDueCents / 100 }]
+            : [],
+        },
+      };
+    };
+    mocks.getInvoice.mockImplementation(dueFromFake);
+    mocks.bookingFindUnique.mockResolvedValue({
+      ...bookingRow(),
+      payment: { id: PAYMENT_ID, xeroInvoiceId: invoice.invoiceID },
+    });
+
+    const refused = createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 2500,
+      bookingModificationId: "cmmodification01",
+      syncOperation: xeroClaim("op-short"),
+    });
+    await expect(refused).rejects.toBeInstanceOf(ModificationNoteExceedsInvoiceDueError);
+    await expect(refused).rejects.toThrow(/The original invoice owes /);
+    await expect(refused).rejects.not.toThrow(/invoice-clearing/);
+    expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({ id: "op-short" }), expect.any(ModificationNoteExceedsInvoiceDueError));
+    expect(fake.snapshot().creditNotes).toEqual([]);
+
+    // Control: the same invoice, unpaid, can take the note. Removing the guard
+    // would have created the note on the paid invoice above.
+    const open = new XeroFake();
+    const openContact = open.createContact("member", "member_1");
+    const openInvoice = open.createInvoice("booking", openContact.contactID, 2500);
+    mocks.getInvoice.mockImplementation(async (_tenant: string, invoiceId: string) => {
+      const row = open.snapshot().invoices.find((item) => item.invoiceID === invoiceId);
+      return {
+        body: {
+          invoices: row
+            ? [{ invoiceID: row.invoiceID, status: row.status, amountDue: row.amountDueCents / 100 }]
+            : [],
+        },
+      };
+    });
+    mocks.bookingFindUnique.mockResolvedValue({
+      ...bookingRow(),
+      payment: { id: PAYMENT_ID, xeroInvoiceId: openInvoice.invoiceID },
+    });
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 2500,
+      bookingModificationId: "cmmodification01",
+    });
+    expect(mocks.retryXeroWriteWithContactRepair).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1051,6 +1118,7 @@ describe("itemised modification notes (#3530)", () => {
   });
 
   it("the modification credit note lists the removed nights as its credit and keeps the method on the reference", async () => {
+    configureInvoicesDue({ invoice_1: 200 });
     await createXeroCreditNoteForModification({
       format: CLUB_FORMAT_TEST,
       bookingId: BOOKING_ID,

@@ -1453,6 +1453,17 @@ its allocation refused) reports `MISSING_CREDIT_NOTE_ALLOCATION` with that
 operation's retry, never a fresh allocation; while a retry is running on it,
 or where the retry is refused, the report says the allocation is blocked and
 offers nothing, and you check again later or allocate it by hand in Xero.
+Since #3993 a paid-off allocation (Xero says the invoice has already been paid
+off, or the amount is greater than the amount outstanding) and a modification
+note the invoice cannot take are not retried and are not safe to apply: the
+report asks for manual review. For a card refund that already produced both
+notes, keep the refund note, which carries the Stripe refund payment. Void the
+modification note only after confirming it has no allocations or refunds. On
+the Xero operations screen, Resolve the partial operation and its failed
+requeue and allocate rows. Do not mark the row non-replayable, which warns
+forever. Do not void the refund note: inbound sync would retire its link and
+the next nightly run would raise another. This change does not perform that
+remedy, and it uses no production Xero, Stripe, or database.
 Since #4762 the same holds for an invoice-clearing note whose operation the
 retry refuses: reported blocked with the reason and the invoices left to
 allocate by hand, never a fresh allocation of the whole note against the

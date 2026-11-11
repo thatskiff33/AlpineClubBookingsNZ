@@ -60,6 +60,7 @@ import {
   readInvoiceAmountsDue,
   type ClearingAllocationTarget,
 } from "@/lib/xero-clearing-allocations";
+import { ModificationNoteExceedsInvoiceDueError } from "@/lib/xero-modification-note-refusal";
 import type { ClubFormat } from "@/lib/club-format";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
@@ -179,6 +180,21 @@ export async function createXeroCreditNoteForModification(params: {
   }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
+  // #3993: an edit's note targets the original invoice for the whole amount.
+  // Read what it still owes before creating anything. A card-paid invoice owes
+  // nothing, and creating first used to leave an unallocated note behind. A
+  // give-back has already waited for its deallocation, so this read sees the
+  // reopened amount. A partial row that already has a note is retried by
+  // allocating only, and does not enter here.
+  if (bookingModificationId) {
+    const [due] = await readInvoiceAmountsDue(xero, tenantId, [originalInvoiceId]);
+    const owed = due?.amountDueCents ?? 0;
+    if (owed < refundAmountCents) {
+      const error = new ModificationNoteExceedsInvoiceDueError(refundAmountCents, owed, params.format);
+      if (syncOperation) await failXeroSyncOperation(syncOperation, error);
+      throw error;
+    }
+  }
   // The INVOICED PARTY, not the booking's member (#3368; #3367's leftover).
   // A modification credit note on a school booking belongs against the
   // school's own Xero customer, exactly as the original invoice was. Where no
