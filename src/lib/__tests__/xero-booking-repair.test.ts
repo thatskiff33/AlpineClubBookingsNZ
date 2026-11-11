@@ -641,9 +641,9 @@ function createDependencies(state: {
       // supplementary invoice parked on a PaymentIntent. It answers from the
       // booking's transactions AS THEY STAND NOW rather than from a canned row,
       // which is what lets a test flip a capture mid-sweep and see the tool
-      // notice; and it applies the same three criteria plus the intent id the
-      // real query does, so a test cannot pass on a row the real read would
-      // never have returned.
+      // notice. The query is the booking and the intent; the apply step then
+      // asks `isSupplementaryInvoiceChargeRequestRow`, so the mock must hand
+      // back the fields that predicate reads.
       paymentRefund: {
         findMany: vi.fn().mockImplementation(async ({ where }: any) =>
           (state.paymentRefunds ?? []).filter((refund) => refund.paymentId === where?.paymentId),
@@ -673,7 +673,14 @@ function createDependencies(state: {
             )
             .sort(compareLedgerRowsNewestFirst);
           return row
-            ? { status: row.status, amountCents: row.amountCents }
+            ? {
+                status: row.status,
+                amountCents: row.amountCents,
+                kind: row.kind,
+                source: row.source,
+                reason: row.reason ?? null,
+                bookingModificationId: row.bookingModificationId ?? null,
+              }
             : null;
         }),
       },
@@ -3226,6 +3233,17 @@ describe("runBookingXeroRepair", () => {
       }, true);
       expect(shortRepair.deps.releaseXeroSupplementaryInvoiceOperationsForPaymentIntent).not.toHaveBeenCalled();
       expect(queueAction(shortRepair.bookingReport)?.status).toBe("manual_review");
+    });
+
+    it("does not release a mid-sweep capture that no longer belongs to this edit", async () => {
+      const captured = ordinaryRequest();
+      const moved = await repair(bookingWith([captured]), {
+        onSupplementaryInvoiceEnqueue: () => {
+          captured.status = "SUCCEEDED";
+          captured.bookingModificationId = "mod_other";
+        },
+      }, true);
+      expect(moved.deps.releaseXeroSupplementaryInvoiceOperationsForPaymentIntent).not.toHaveBeenCalled();
     });
   });
 

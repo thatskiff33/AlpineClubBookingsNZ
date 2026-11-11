@@ -12,7 +12,7 @@ import { sliceAfterRecordedRefusals } from "@/lib/refused-card-refund-retry";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   classifyEditReviewChargeCapture,
-  supplementaryInvoiceChargeRequestWhere,
+  isSupplementaryInvoiceChargeRequestRow,
   type SupplementaryInvoiceChargeKind,
 } from "./xero-booking-repair-payments";
 import type { BookingXeroRepairAction, BookingXeroRepairBookingSummary, BookingXeroRepairPassReport, XeroBookingRepairActionStatus } from "./xero-booking-repair-types";
@@ -359,17 +359,32 @@ async function releaseRepairedSupplementaryInvoiceIfAlreadyPaid(params: {
   chargeKind: SupplementaryInvoiceChargeKind;
 }) {
   const { action, deps } = params;
+  // The intent identifies one ledger row. Whether it is still this edit's ask
+  // is the same predicate classification used, not a second query spelling.
   const request = await deps.prisma.paymentTransaction.findFirst({
     where: {
       payment: { bookingId: params.bookingId },
       stripePaymentIntentId: params.paymentIntentId,
-      ...supplementaryInvoiceChargeRequestWhere(params.bookingModificationId, params.chargeKind),
     },
     orderBy: [...LEDGER_ROWS_NEWEST_FIRST],
-    select: { status: true, amountCents: true },
+    select: {
+      status: true,
+      amountCents: true,
+      kind: true,
+      source: true,
+      reason: true,
+      bookingModificationId: true,
+    },
   });
 
-  if (!request) {
+  if (
+    !request ||
+    !isSupplementaryInvoiceChargeRequestRow(
+      request,
+      params.bookingModificationId,
+      params.chargeKind,
+    )
+  ) {
     return;
   }
 

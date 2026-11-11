@@ -8,12 +8,8 @@ import {
 } from "@prisma/client";
 import type { BookingPaymentRecord } from "./xero-booking-repair-types";
 import { captureChangeId } from "@/lib/additional-capture-receipt-link";
-import {
-  editReviewChargeRequestCriteria,
-  isEditReviewChargeRequestRow,
-} from "@/lib/edit-financial-review-charge-shape";
+import { isEditReviewChargeRequestRow } from "@/lib/edit-financial-review-charge-shape";
 import { compareLedgerRowsNewestFirst } from "@/lib/payment-ledger-order";
-import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-keys";
 import { isCapturedTransactionStatus } from "@/lib/payment-transactions";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 
@@ -416,8 +412,13 @@ export type SupplementaryInvoiceChargeKind = "review" | "ordinary";
  * Review matching stays `isEditReviewChargeRequestRow`. An ordinary edit is a
  * Stripe ADDITIONAL request `captureChangeId` attributes to this edit — the
  * stamp, or a review charge whose reason names the edit and carries no stamp.
+ *
+ * The fresh read after enqueue loads the planned PaymentIntent's one row
+ * (`PaymentTransaction.stripePaymentIntentId` is unique) and asks this
+ * function, so the query cannot grow a second spelling of the same rule
+ * (`INV-SSOT`).
  */
-function isSupplementaryInvoiceChargeRequestRow(
+export function isSupplementaryInvoiceChargeRequestRow(
   row: {
     kind: PaymentTransactionKind;
     source: PaymentSource;
@@ -433,30 +434,6 @@ function isSupplementaryInvoiceChargeRequestRow(
     row.source === PaymentSource.STRIPE &&
     captureChangeId(row) === bookingModificationId
   );
-}
-
-/**
- * The same row, as a query. The ordinary arm is `captureChangeId`: the stamp
- * wins, and a null stamp falls through to the review-charge reason. The two
- * spellings decide the same request — one at classify time, one on the fresh
- * read after enqueue (`INV-SSOT`).
- */
-export function supplementaryInvoiceChargeRequestWhere(
-  bookingModificationId: string,
-  chargeKind: SupplementaryInvoiceChargeKind,
-) {
-  if (chargeKind === "review") return editReviewChargeRequestCriteria(bookingModificationId);
-  return {
-    kind: PaymentTransactionKind.ADDITIONAL,
-    source: PaymentSource.STRIPE,
-    OR: [
-      { bookingModificationId },
-      {
-        bookingModificationId: null,
-        reason: buildEditFinancialReviewChargeReason(bookingModificationId),
-      },
-    ],
-  };
 }
 
 export function missingSupplementaryInvoiceManualReviewSummary(
