@@ -12,7 +12,8 @@ password throttle, what a refused or throttled sign-in answers, the
 per-account limits on password-reset and sign-in-link requests, anything that
 keys a limit on an account rather than an internet address, any code that
 writes `passwordHash`, the session token's `jwt` callback and
-`sessionIssuedAt`, or `lastAuthenticatedAt` and `requireRecentAuth`.
+`sessionIssuedAt`, `lastAuthenticatedAt` and `requireRecentAuth`, or a
+passkey used as a second sign-in step.
 
 Index: [`docs/DOMAIN_INVARIANTS.md`](../DOMAIN_INVARIANTS.md) — every `INV-*` ID
 with a one-line description of what it covers. ID scheme and allocation rules:
@@ -177,7 +178,7 @@ This file holds only the rules.
 - **A session records when the person last proved who they are.**
   `requireRecentAuth` in
   [`require-recent-auth.ts`](../../src/lib/require-recent-auth.ts) is the one
-  check (`INV-SSOT`). Listed routes call it (`INV-AUTH-009`). While the
+  check (`INV-SSOT`). Listed routes call it (`INV-AUTH-010`). While the
   officer sign-in switch is off, the check does not read the session, and a
   missing stamp still passes. While the switch is on, it passes only when
   `lastAuthenticatedAt` is a finite epoch millisecond and is not older than
@@ -196,13 +197,39 @@ This file holds only the rules.
   server-minted, stored as a keyed hash, and bound to one member. The
   reauthentication challenge is consumed by one status-guarded claim.
 - **The confirm dialog accepts an authenticator-app code, a passkey once one
-  exists, or the password only when the person has neither.** An emailed code
-  and a recovery code are never accepted there. A failed proof counts toward
-  the two-factor lockout, or the per-account password throttle when the proof
-  is the password.
+  exists (`INV-AUTH-009`), or the password only when the person has neither.**
+  An emailed code and a recovery code are never accepted there. A failed proof
+  counts toward the two-factor lockout, or the per-account password throttle
+  when the proof is the password.
 - **The confirm dialog replays the refused request once, with the same body.**
 
 ## INV-AUTH-009
+
+- **A passkey enrols a member without changing `twoFactorEnabled`.** That flag
+  still means an authenticator app or an emailed code. `isSecondFactorEnrolled`
+  in [`second-factor-enrolment.ts`](../../src/lib/second-factor-enrolment.ts)
+  is the only enrolment rule (`INV-SSOT`): true when the flag is on, a passkey
+  is stored, or the session already says enrolled.
+- **An officer's second factor is an authenticator app or a passkey.**
+  `satisfiesOfficerSecondFactor` is true for a stored passkey, or for the flag
+  on with method `TOTP`. Email never qualifies. Nothing enforces that rule yet
+  (#4618). Removing the last such factor calls `assertLastFactorRemovable`,
+  which allows the removal until that issue replaces it.
+- **The relying party comes from `NEXTAUTH_URL`.** The id is its hostname and
+  the expected origin is its origin. A missing or unparseable URL throws. No
+  host is hardcoded (`INV-CONFIG-001`).
+- **A challenge is single-use and lasts two minutes,** the same duration as a
+  two-factor session challenge. The plaintext is stored. The row is claimed
+  with `deleteMany` before the signature is checked, and the claim succeeds
+  only when one row is deleted.
+- **A backwards counter is refused and audited, and the stored counter stays.**
+  The stored counter is passed into verification. Zero followed by zero
+  succeeds. A higher counter is saved with `updateMany` where the id and the
+  counter still equal the verified value; a lost claim is refused and audited.
+  Audit metadata is the passkey name or credential id and the two counters,
+  never the public key.
+
+## INV-AUTH-010
 
 - **Listed admin routes require a fresh proof first.** The route list and the
   operation list live in
@@ -213,4 +240,3 @@ This file holds only the rules.
   #4620 sets it true. While it is false the check does not read the session.
   While it is true a missing stamp fails closed. Refreshing a Xero token
   (`saveXeroTokens`) is not a listed operation. Typed confirmations stay.
-

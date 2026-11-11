@@ -1,5 +1,5 @@
 /**
- * Call-graph census for destructive admin routes (#4619, INV-AUTH-009).
+ * Call-graph census for destructive admin routes (#4619, INV-AUTH-010).
  *
  * A handler reaches an operation when a call from that handler, including
  * through a helper or a callback, resolves to a named export in

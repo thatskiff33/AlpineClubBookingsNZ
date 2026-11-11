@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import { startAuthentication } from "@simplewebauthn/browser";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -89,11 +90,16 @@ function cloneFormData(body: FormData): FormData {
 }
 
 /**
- * The passkey ceremony (#4617). Until that lands there is no assertion, and
- * the server refuses the proof.
+ * The same passkey assertion as sign-in (#4617). Options come from the
+ * confirm dialog's own challenge, which lists only this member's passkeys.
  */
-async function buildPasskeyAssertion(): Promise<unknown> {
-  return null;
+async function buildPasskeyAssertion(optionsJSON: unknown): Promise<unknown> {
+  if (!optionsJSON || typeof optionsJSON !== "object") {
+    throw new Error("That passkey didn't work. Try again.");
+  }
+  return startAuthentication({
+    optionsJSON: optionsJSON as Parameters<typeof startAuthentication>[0]["optionsJSON"],
+  });
 }
 
 function finish(proved: boolean) {
@@ -108,6 +114,12 @@ export function ConfirmItsYouHost() {
   useEffect(() => {
     const listener = () => setTick((value) => value + 1);
     listeners.add(listener);
+    const slot = (
+      window as Window & { __PW_CONFIRM__?: { open?: () => Promise<boolean> } }
+    ).__PW_CONFIRM__;
+    if (slot && typeof slot === "object") {
+      slot.open = () => askToConfirmIdentity();
+    }
     return () => {
       listeners.delete(listener);
     };
@@ -119,6 +131,7 @@ export function ConfirmItsYouHost() {
 
 function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) {
   const [factors, setFactors] = useState<ReauthFactor[] | null>(null);
+  const [passkeyOptions, setPasskeyOptions] = useState<unknown>(null);
   const [secret, setSecret] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pendingProof, setPendingProof] = useState(false);
@@ -142,6 +155,11 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
             setFactors([]);
           } else {
             setFactors(listed);
+            setPasskeyOptions(
+              typeof body === "object" && body !== null && "passkeyOptions" in body
+                ? (body as { passkeyOptions?: unknown }).passkeyOptions ?? null
+                : null,
+            );
           }
         }
       } catch {
@@ -156,11 +174,19 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
     };
   }, []);
 
-  const factor = factors?.[0] ?? null;
+  const hasTotp = factors?.includes("TOTP") === true;
+  const hasPasskey = factors?.includes("PASSKEY") === true;
+  const hasPassword = factors?.includes("PASSWORD") === true;
+  const primary: ReauthFactor | null = hasTotp
+    ? "TOTP"
+    : hasPassword
+      ? "PASSWORD"
+      : hasPasskey
+        ? "PASSKEY"
+        : null;
 
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault();
-    if (!factor || pendingProof) return;
+  async function prove(factor: ReauthFactor) {
+    if (pendingProof) return;
     setPendingProof(true);
     setError(null);
     try {
@@ -168,7 +194,7 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
         factor === "PASSWORD"
           ? { factor, password: secret }
           : factor === "PASSKEY"
-            ? { factor, assertion: await buildPasskeyAssertion() }
+            ? { factor, assertion: await buildPasskeyAssertion(passkeyOptions) }
             : { factor, code: secret };
       const response = await fetch("/api/auth/reauth", {
         method: "POST",
@@ -195,6 +221,12 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
     }
   }
 
+  function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!primary) return;
+    void prove(primary);
+  }
+
   return (
     <Dialog
       open
@@ -210,7 +242,7 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={onSubmit} className="space-y-4">
-          {factor === "TOTP" ? (
+          {hasTotp ? (
             <div className="space-y-2">
               <Label htmlFor="reauth-code">Authenticator code</Label>
               <Input
@@ -222,7 +254,7 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
               />
             </div>
           ) : null}
-          {factor === "PASSWORD" ? (
+          {hasPassword ? (
             <div className="space-y-2">
               <Label htmlFor="reauth-password">Password</Label>
               <Input
@@ -234,7 +266,7 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
               />
             </div>
           ) : null}
-          {factor === "PASSKEY" ? (
+          {hasPasskey ? (
             <p className="text-sm text-muted-foreground">
               {"Use your passkey to confirm it's you."}
             </p>
@@ -253,8 +285,18 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={pendingProof || !factor}>
-              {factor === "PASSKEY" ? "Use your passkey" : "Confirm"}
+            {hasPasskey && hasTotp ? (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={pendingProof}
+                onClick={() => void prove("PASSKEY")}
+              >
+                Use your passkey
+              </Button>
+            ) : null}
+            <Button type="submit" disabled={pendingProof || !primary}>
+              {primary === "PASSKEY" ? "Use your passkey" : "Confirm"}
             </Button>
           </DialogFooter>
         </form>

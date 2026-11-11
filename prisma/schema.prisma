@@ -54,6 +54,12 @@ enum TwoFactorMethod {
   EMAIL
 }
 
+/// Why a short-lived WebAuthn challenge was minted (#4617). Not a sign-in method.
+enum WebAuthnChallengePurpose {
+  registration
+  authentication
+}
+
 enum FinanceSnapshotType {
   PROFIT_AND_LOSS_MONTHLY
   PROFIT_AND_LOSS_BY_MONTH
@@ -688,6 +694,8 @@ model Member {
   twoFactorRecoveryCodes                     TwoFactorRecoveryCode[]
   twoFactorSessionChallenges                 TwoFactorSessionChallenge[]
   sessionReauthChallenges                    SessionReauthChallenge[]
+  webAuthnCredentials                        WebAuthnCredential[]
+  webAuthnChallenges                         WebAuthnChallenge[]
   subscriptions                              MemberSubscription[]
   memberSubscriptionsManuallyPaid            MemberSubscription[]                    @relation("MemberSubscriptionManualPaidBy")
   membershipChargesReceived                  MembershipSubscriptionCharge[]          @relation("MembershipChargeRecipient")
@@ -984,6 +992,41 @@ model SessionReauthChallenge {
   expiresAt  DateTime
   consumedAt DateTime?
   createdAt  DateTime  @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+  @@index([expiresAt])
+}
+
+// A passkey (#4617). The public key stays in this row; it never enters a session
+// or an audit payload. `twoFactorEnabled` is not a passkey: that flag is still
+// only the authenticator app or an emailed code.
+model WebAuthnCredential {
+  id           String   @id @default(cuid())
+  memberId     String
+  credentialId String   @unique
+  publicKey    Bytes
+  counter      Int      @default(0)
+  transports   String[] @default([])
+  name         String   @default("Passkey")
+  createdAt    DateTime @default(now())
+  lastUsedAt   DateTime?
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+}
+
+// Single-use WebAuthn challenge. The plaintext is what the ceremony signed;
+// it is not a secret (the browser already holds it) and it lives two minutes.
+model WebAuthnChallenge {
+  id        String                   @id @default(cuid())
+  memberId  String
+  challenge String                   @unique
+  purpose   WebAuthnChallengePurpose
+  expiresAt DateTime
+  createdAt DateTime                 @default(now())
 
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 

@@ -7,7 +7,7 @@ import {
 } from "@/lib/recent-auth";
 
 /**
- * The one recent-authentication check (#4616, INV-AUTH-008, INV-AUTH-009).
+ * The one recent-authentication check (#4616, INV-AUTH-008, INV-AUTH-010).
  *
  * Listed admin routes call it after authorisation and before the body.
  * While officer sign-in is off (#4620 has not flipped the switch) it returns

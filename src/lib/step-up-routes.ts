@@ -1,5 +1,5 @@
 /**
- * Destructive admin routes that ask for a fresh proof (#4619, INV-AUTH-009).
+ * Destructive admin routes that ask for a fresh proof (#4619, INV-AUTH-010).
  *
  * One list of operations and one list of routes. The census walks each admin
  * handler's calls, through helpers, and the two lists have to match. Handlers

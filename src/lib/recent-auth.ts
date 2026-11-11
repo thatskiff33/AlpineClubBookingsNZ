@@ -52,6 +52,7 @@ export function isWithinRecentAuthWindow(
 export type RecentAuthSignInProof =
   | "password"
   | "TOTP"
+  | "passkey"
   | "magic-link"
   | "google"
   | "email"
@@ -61,15 +62,15 @@ export type RecentAuthSignInProof =
  * Whether this proof starts the five-minute clock.
  *
  * A password counts only when no authenticator factor is still owed. An
- * authenticator-app proof always counts. An emailed link, Google, an emailed
- * code, and a recovery code never do.
+ * authenticator-app proof and a passkey always count. An emailed link, Google,
+ * an emailed code, and a recovery code never do.
  */
 export function recentAuthSignInCounts(
   proof: RecentAuthSignInProof,
   owesAuthenticatorApp: boolean,
 ): boolean {
   if (proof === "password") return !owesAuthenticatorApp;
-  return proof === "TOTP";
+  return proof === "TOTP" || proof === "passkey";
 }
 
 /**
@@ -80,6 +81,7 @@ export function recentAuthSignInProofFromChallengeKind(
   kind: string | null,
 ): RecentAuthSignInProof | null {
   if (kind === "TOTP") return "TOTP";
+  if (kind === "PASSKEY") return "passkey";
   if (kind === "EMAIL") return "email";
   if (kind === "RECOVERY") return "recovery";
   return null;
