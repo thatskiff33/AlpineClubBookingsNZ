@@ -23,6 +23,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+// #4938: React's request-scoped `cache()`, so the dashboard's member read can be
+// shown to share the layout's. Outside `inRequestScope` it memoises nothing.
+vi.mock("react", async (importOriginal) => {
+  const { requestScopedCache } = await import(
+    "@/lib/__tests__/helpers/request-cache-scope"
+  );
+  return {
+    ...(await importOriginal<typeof import("react")>()),
+    cache: requestScopedCache,
+  };
+});
+
 const mocks = vi.hoisted(() => ({
   session: null as Record<string, unknown> | null,
   moduleFlags: {} as Record<string, boolean>,
@@ -102,6 +114,8 @@ vi.mock("@/lib/capacity", () => ({
 import MemberCalendarPage from "@/app/(authenticated)/calendar/page";
 import AdminCalendarPage from "@/app/(admin)/admin/calendar/page";
 import DashboardPage from "@/app/(authenticated)/dashboard/page";
+import { loadSignedInMember } from "@/lib/signed-in-member";
+import { inRequestScope } from "@/lib/__tests__/helpers/request-cache-scope";
 import {
   canEditCalendarEvents,
   canManageCalendarEvents,
@@ -137,6 +151,19 @@ const LODGE_EDIT_MATRIX = {
   content: "none",
   support: "none",
 } as const;
+
+/** Every string child anywhere in a rendered element tree (no DOM required). */
+function collectText(node: ReactNode, found: string[] = []): string[] {
+  if (typeof node === "string") found.push(node);
+  if (Array.isArray(node)) {
+    for (const child of node) collectText(child, found);
+    return found;
+  }
+  if (!isValidElement(node)) return found;
+  const props = (node as ReactElement).props as Record<string, unknown>;
+  collectText(props.children as ReactNode, found);
+  return found;
+}
 
 /** Every `href` prop anywhere in a rendered element tree (no DOM required). */
 function collectHrefs(node: ReactNode, found: string[] = []): string[] {
@@ -279,5 +306,34 @@ describe("member dashboard respects both calendar rules", () => {
 
     expect(mocks.calendarEventFindMany).toHaveBeenCalledTimes(1);
     expect(collectHrefs(tree)).toContain("/calendar");
+  });
+});
+
+// #4938: this file holds the dashboard's harness, so the dashboard's share of
+// the per-render member read is pinned here rather than in a copy of it.
+describe("the dashboard shares the layout's member read", () => {
+  it("reads the Member row once between the layout and the page", async () => {
+    mocks.memberFindUnique.mockResolvedValue({ requiresInduction: true });
+
+    await inRequestScope(async () => {
+      // What the authenticated layout reads before the page renders.
+      await loadSignedInMember("member-1");
+      await DashboardPage();
+    });
+
+    expect(mocks.memberFindUnique).toHaveBeenCalledTimes(1);
+    expect(mocks.memberInductionFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { memberId: "member-1" } }),
+    );
+  });
+
+  it("asks a member who must be inducted to start, from the shared row's flag", async () => {
+    mocks.moduleFlags = { induction: true };
+    mocks.memberFindUnique.mockResolvedValue({ requiresInduction: true });
+
+    const tree = await DashboardPage();
+
+    expect(collectText(tree)).toContain("Not started");
+    expect(collectText(tree)).toContain("Your induction is required — please complete it.");
   });
 });

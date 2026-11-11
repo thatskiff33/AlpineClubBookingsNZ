@@ -500,6 +500,13 @@ carries, and `auth()` answers no session. The setting is read on every
 refresh, so a change applies to people already signed in on their next
 request.
 
+**Once per request, not once per call (#4938).** `auth()` and the module
+flags it reads are memoised with React `cache()`, so a page's layout, guard
+and page share one refresh: the member, module-settings and login-security rows
+are read once per page render. The memo ends with the render, so every change
+above still reaches the next request. Route handlers and server actions are not
+renders: each `auth()` there refreshes, as before.
+
 **What the person sees.** The same as any ended session: the next page load
 goes to sign-in with the page as the return path, and an API call answers 401.
 Signing in again starts a new clock.

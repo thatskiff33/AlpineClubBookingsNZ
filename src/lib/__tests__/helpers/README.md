@@ -123,6 +123,24 @@ throws rather than guessing.
 What it does not model: `where`, `orderBy` and `take` are not applied, so the
 mock still decides which row comes back.
 
+## A request-scoped `cache()` (memoised server reads)
+
+```ts
+vi.mock("react", async (importOriginal) => {
+  const { requestScopedCache } = await import("@/lib/__tests__/helpers/request-cache-scope");
+  return { ...(await importOriginal<typeof import("react")>()), cache: requestScopedCache };
+});
+
+await inRequestScope(() => Promise.all([auth(), auth()])); // one refresh
+```
+
+Vitest loads React's client build, where `cache()` memoises nothing, so a test
+cannot tell a read wrapped in `cache()` from one that is not. This stand-in
+keeps the server contract: one result per function and arguments inside
+`inRequestScope`, a fresh memo for every scope, and no memo outside one (a route
+handler or server action). Use it to prove a read runs once per render (#4938).
+Import it directly rather than through the barrel, like `clock.ts`.
+
 ## Recovery-alert focus (jsdom only)
 
 ```ts
