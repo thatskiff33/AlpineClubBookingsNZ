@@ -160,7 +160,7 @@ function jsxAttrMatchesListedGet(component: string, attr: string, scopes: Map<st
       if (matched) return;
       if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) && ts.isIdentifier(node.tagName) && node.tagName.text === component) {
         for (const attribute of node.attributes.properties) {
-          if (!ts.isJsxAttribute(attribute) || attribute.name.text !== attr || !attribute.initializer) continue;
+          if (!ts.isJsxAttribute(attribute) || jsxAttributeName(attribute.name) !== attr || !attribute.initializer) continue;
           const expr = ts.isStringLiteral(attribute.initializer)
             ? attribute.initializer
             : ts.isJsxExpression(attribute.initializer)
@@ -438,17 +438,40 @@ function resolveFile(stem: string): string | null {
 function fetchIdentifier(expr: ts.Expression): ts.Identifier | null {
   const node = unwrap(expr);
   if (ts.isIdentifier(node) && node.text === "fetch") return node;
-  if ((ts.isPropertyAccessExpression(node) || ts.isPropertyAccessChain(node)) && node.name.text === "fetch") {
+  if (
+    (ts.isPropertyAccessExpression(node) || ts.isPropertyAccessChain(node)) &&
+    ts.isIdentifier(node.name) &&
+    node.name.text === "fetch"
+  ) {
     const object = unwrap(node.expression);
     if (ts.isIdentifier(object) && (object.text === "window" || object.text === "globalThis")) return node.name;
   }
   return null;
 }
 
-function enclosingFunction(node: ts.Node): ts.SignatureDeclaration | null {
+type BodyFn =
+  | ts.FunctionDeclaration
+  | ts.MethodDeclaration
+  | ts.FunctionExpression
+  | ts.ArrowFunction;
+
+function isBodyFn(node: ts.Node): node is BodyFn {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node)
+  );
+}
+
+function jsxAttributeName(name: ts.JsxAttributeName): string | undefined {
+  return ts.isIdentifier(name) ? name.text : undefined;
+}
+
+function enclosingFunction(node: ts.Node): BodyFn | null {
   let current: ts.Node | undefined = node.parent;
   while (current) {
-    if (ts.isFunctionLike(current) && current.body) return current;
+    if (isBodyFn(current) && current.body) return current;
     current = current.parent;
   }
   return null;
@@ -486,7 +509,7 @@ function isAnchor(node: ts.Node): node is ts.JsxOpeningElement | ts.JsxSelfClosi
 
 function anchorHref(node: ts.JsxOpeningElement | ts.JsxSelfClosingElement): ts.Expression | null {
   for (const attribute of node.attributes.properties) {
-    if (!ts.isJsxAttribute(attribute) || attribute.name.text !== "href" || !attribute.initializer) continue;
+    if (!ts.isJsxAttribute(attribute) || jsxAttributeName(attribute.name) !== "href" || !attribute.initializer) continue;
     if (ts.isStringLiteral(attribute.initializer)) return attribute.initializer;
     if (ts.isJsxExpression(attribute.initializer) && attribute.initializer.expression) return attribute.initializer.expression;
   }
@@ -494,18 +517,15 @@ function anchorHref(node: ts.JsxOpeningElement | ts.JsxSelfClosingElement): ts.E
 }
 
 function inSwitchOffBranch(node: ts.Node): boolean {
-  let current: ts.Node | undefined = node;
-  while (current?.parent) {
-    const parent = current.parent;
-    if (ts.isConditionalExpression(parent)) {
-      if (contains(parent.whenFalse, node) && isSwitchOn(parent.condition)) return true;
-      if (contains(parent.whenTrue, node) && isSwitchOff(parent.condition)) return true;
+  for (let current = node.parent; current; current = current.parent) {
+    if (ts.isConditionalExpression(current)) {
+      if (contains(current.whenFalse, node) && isSwitchOn(current.condition)) return true;
+      if (contains(current.whenTrue, node) && isSwitchOff(current.condition)) return true;
     }
-    if (ts.isIfStatement(parent)) {
-      if (parent.elseStatement && contains(parent.elseStatement, node) && isSwitchOn(parent.expression)) return true;
-      if (contains(parent.thenStatement, node) && isSwitchOff(parent.expression)) return true;
+    if (ts.isIfStatement(current)) {
+      if (current.elseStatement && contains(current.elseStatement, node) && isSwitchOn(current.expression)) return true;
+      if (contains(current.thenStatement, node) && isSwitchOff(current.expression)) return true;
     }
-    current = parent;
   }
   return false;
 }
