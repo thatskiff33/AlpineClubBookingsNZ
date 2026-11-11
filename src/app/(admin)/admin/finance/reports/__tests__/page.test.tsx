@@ -446,6 +446,37 @@ describe("stale responses never own the screen (#2378 fix round)", () => {
   });
 });
 
+describe("a range the API refuses (#4937)", () => {
+  it("shows the API's message in place of the previous range's figures", async () => {
+    const message =
+      "Reports cover at most 732 days (about two years); this range is 3653 days. Choose a shorter range.";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.includes("from=2020-01-01")
+          ? new Response(JSON.stringify({ error: message }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            })
+          : new Response(JSON.stringify(EMPTY_REPORT), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }),
+      ),
+    );
+
+    render(<ReportsPage />);
+    expect(await screen.findByText("Total Bookings")).toBeInTheDocument();
+
+    fireEvent.change(await screen.findByLabelText("From"), {
+      target: { value: "2020-01-01" },
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.queryByText("Total Bookings")).not.toBeInTheDocument();
+  });
+});
+
 describe("occupancy scope label survives a lost lodge list (#2887)", () => {
   /*
     `/admin/reports` is in the FINANCE area. `FINANCE_ADMIN`, `FINANCE_USER` and

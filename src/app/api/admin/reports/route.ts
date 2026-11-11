@@ -10,7 +10,7 @@ import {
   netCollectedPaymentSelect,
   summarizeNetCollectedWithLedgerGap,
 } from "@/lib/additional-ledger-gap";
-import { getOccupiedBedsForNight } from "@/lib/capacity";
+import { getOccupiedBedsForNights } from "@/lib/capacity";
 import { resolveMetricsCapacityAndScope } from "@/lib/finance-booking-metrics";
 import logger from "@/lib/logger";
 import {
@@ -28,6 +28,7 @@ import {
 import { dateOnlyInstantOf, endOfClubDayInclusive, parseCalendarDate, startOfClubDay } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { addDaysDateOnly, eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
+import { reportRangeLimitError } from "@/lib/date-range-presets";
 import { summarizeBookingMoneyReconciliations } from "@/lib/booking-money-reconciliation";
 
 const reportQuerySchema = z.object({
@@ -80,6 +81,9 @@ export async function GET(request: NextRequest) {
   const toDay = dateOnlyInstantOf(to);
   const deletedWhere = buildBookingDeletedWhere(parsed.data.deleted);
   if (toInstant <= fromInstant) return NextResponse.json({ error: "to must be after from" }, { status: 400 });
+  // #4937: the daily series runs on the thread serving every member, so cap it first.
+  const rangeError = reportRangeLimitError(fromDay, toDay);
+  if (rangeError) return NextResponse.json({ error: rangeError }, { status: 400 });
 
   // Validate an explicit lodge scope the way the write paths do (400 on
   // unknown/inactive). Omitted stays "all active lodges" — the sanctioned
@@ -228,10 +232,10 @@ export async function GET(request: NextRequest) {
         booking.status,
       ),
     );
-    const occupancyByDate = days.map((day) => {
-      const beds = getOccupiedBedsForNight(day, occupancyBookings);
+    // One occupancy index for the whole range (#4937), not one per night.
+    const occupancyByDate = getOccupiedBedsForNights(days, occupancyBookings).map(({ night, occupiedBeds: beds }) => {
       return {
-        date: formatDateOnly(day),
+        date: formatDateOnly(night),
         occupiedBeds: beds,
         availableBeds: lodgeCapacity - beds,
         occupancyRate:
