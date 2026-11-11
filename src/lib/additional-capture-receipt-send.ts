@@ -12,7 +12,8 @@ import { formatCents } from "@/lib/utils";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { completeXeroSyncOperation } from "@/lib/xero-sync";
 import { answerKeptLateCaptureRefunds } from "@/lib/kept-late-capture-change-receipt";
-import { amountDueOn, legOwnsPayment, type InvoiceRead } from "@/lib/additional-capture-receipt-invoice-read";
+import { CREDIT_RELEASE_PAYMENT_ROLE } from "@/lib/credit-release-xero-payment";
+import { amountDueOn, findRecordedPayment, type InvoiceRead } from "@/lib/additional-capture-receipt-invoice-read";
 import { receiptUnrecordedCents, type AdditionalCaptureReceiptPlan } from "@/lib/additional-capture-receipt-payload";
 import { ADDITIONAL_CAPTURE_PAYMENT_ROLE } from "@/lib/additional-capture-receipt-link";
 import { XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
@@ -126,15 +127,26 @@ export async function sendAdditionalCaptureReceiptLegs(input: {
   return paymentIds[0] ?? null;
 }
 
-/** A payment on the invoice that is this leg's own: same reference, same amount, and not another role's link. */
-export async function findReceiptLegPayment(read: InvoiceRead | null, reference: string, amountCents: number) {
-  const ids = (read?.invoice.payments ?? []).flatMap((payment) => (payment.paymentID ? [payment.paymentID] : []));
-  if (ids.length === 0) return null;
-  const others = await prisma.xeroObjectLink.findMany({
-    where: { xeroObjectId: { in: ids }, active: true, role: { not: ADDITIONAL_CAPTURE_PAYMENT_ROLE } },
+/** Active credit-release links for payments on the invoice just read. The one exclusion #4435 uses. */
+async function readSweepPaymentIds(read: InvoiceRead): Promise<ReadonlySet<string>> {
+  const paymentIds = (read.invoice.payments ?? []).flatMap((payment) => (payment.paymentID ? [payment.paymentID] : []));
+  if (paymentIds.length === 0) return new Set();
+  const links = await prisma.xeroObjectLink.findMany({
+    where: {
+      role: CREDIT_RELEASE_PAYMENT_ROLE,
+      active: true,
+      xeroObjectType: "PAYMENT",
+      xeroObjectId: { in: paymentIds },
+    },
     select: { xeroObjectId: true },
   });
-  return legOwnsPayment(read, reference, amountCents, new Set(others.map((link) => link.xeroObjectId)));
+  return new Set(links.map((link) => link.xeroObjectId));
+}
+
+/** This leg's own payment: #4435's rule, the reference, the leg's amount, and no credit-release link. */
+export async function findReceiptLegPayment(read: InvoiceRead | null, reference: string, amountCents: number) {
+  if (!read) return null;
+  return findRecordedPayment(read, reference, amountCents, await readSweepPaymentIds(read));
 }
 
 function alreadyRecordedNote(paymentIds: readonly string[]): string {

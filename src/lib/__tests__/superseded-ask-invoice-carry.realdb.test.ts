@@ -1428,9 +1428,30 @@ function deferred() {
         const a = await priceIncrease(MOD_A, A_CENTS);
         stripe.failCancels = 1;
         const b = await priceIncrease(MOD_B, B_CENTS);
-        const { enqueueXeroSupplementaryInvoiceOperation } = await import("@/lib/xero-operation-outbox");
-        // The repair's QUEUE_SUPPLEMENTARY_INVOICE for an ordinary edit: no plan, the enqueue's defaults.
-        const repair = () => enqueueXeroSupplementaryInvoiceOperation({ bookingId: BOOKING_ID, bookingModificationId: MOD_A, priceDiffCents: A_CENTS, changeFeeCents: 0 });
+        const [{ enqueueXeroSupplementaryInvoiceOperation }, { planSupplementaryInvoicePayment }] = await Promise.all([
+          import("@/lib/xero-operation-outbox"),
+          import("@/lib/xero-booking-repair-payments"),
+        ]);
+        // The repair's QUEUE_SUPPLEMENTARY_INVOICE for an ordinary edit: the
+        // explicit plan from A's own request, not the enqueue's paid default.
+        const payment = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, include: { transactions: true } });
+        const plan = planSupplementaryInvoicePayment({
+          payment,
+          bookingModificationId: MOD_A,
+          expectedNetAmountCents: A_CENTS,
+          hasOpenIntentMintRecovery: false,
+          chargeKind: "ordinary",
+        });
+        if (plan.outcome !== "queue") throw new Error(`race-3403: A's repair plan was ${plan.outcome}`);
+        const repair = () =>
+          enqueueXeroSupplementaryInvoiceOperation(
+            { bookingId: BOOKING_ID, bookingModificationId: MOD_A, priceDiffCents: A_CENTS, changeFeeCents: 0 },
+            {
+              recordPayment: plan.recordPayment,
+              waitForConfirmedAdditionalPayment: plan.waitForConfirmedAdditionalPayment,
+              paymentIntentId: plan.paymentIntentId,
+            },
+          );
 
         const release = deferred();
         const { pid, holder } = await holdAnchor(MOD_A, release.promise);
@@ -1458,6 +1479,97 @@ function deferred() {
       it.each(["repair", "move"] as const)("%s first: one invoice for A's change, waiting on B", async (first) => {
         const { a, b } = await race(first);
         expect(await invoiceFor(MOD_A)).toMatchObject({ status: "WAITING_PAYMENT", waitsOn: b, parkedFrom: a, cents: A_CENTS });
+      });
+    });
+
+    describe("#4413: a repaired ordinary invoice follows the edit's own request", () => {
+      /** The primary invoice's own outbox row, completed before the edit, so repair will bill the difference. */
+      async function seedPrimaryInvoiceOperation() {
+        await prisma.xeroSyncOperation.create({
+          data: {
+            id: "race-3403-primary-invoice",
+            direction: "OUTBOUND",
+            entityType: "INVOICE",
+            operationType: "CREATE",
+            localModel: "Payment",
+            localId: PAYMENT_ID,
+            status: "SUCCEEDED",
+            xeroObjectType: "INVOICE",
+            xeroObjectId: "inv_race_3403_primary",
+            queueType: "BOOKING_INVOICE",
+            completedAt: new Date("2026-06-01T00:00:00.000Z"),
+            startedAt: new Date("2026-06-01T00:00:00.000Z"),
+            requestPayload: { queueType: "BOOKING_INVOICE", bookingId: BOOKING_ID },
+          },
+        });
+      }
+
+      async function applyRepair() {
+        const { runBookingXeroRepair } = await import("@/lib/xero-booking-repair");
+        return runBookingXeroRepair(CLUB_FORMAT_TEST, { scope: { bookingId: BOOKING_ID }, apply: true });
+      }
+
+      it("an unpaid card ask waits until its capture, which releases it once, and a second run queues nothing", async () => {
+        await seedPaidBooking();
+        await seedPrimaryInvoiceOperation();
+        const intent = await priceIncrease(MOD_A, A_CENTS, { xeroLeg: false });
+        const first = await applyRepair();
+        const action = first.passes[0]!.bookings[0]!.actions.find((candidate) => candidate.type === "QUEUE_SUPPLEMENTARY_INVOICE");
+        expect(action?.status).toBe("queued");
+        expect(action?.payload).toMatchObject({
+          recordPayment: true,
+          waitForConfirmedAdditionalPayment: true,
+          paymentIntentId: intent,
+        });
+        expect(await invoiceFor(MOD_A)).toMatchObject({ status: "WAITING_PAYMENT", waitsOn: intent, recordPayment: true, cents: A_CENTS });
+
+        // The member pays the parked ask. The live capture release sends the invoice, and a second release finds nothing left waiting.
+        await payWithCard(intent);
+        expect(await invoiceFor(MOD_A)).toMatchObject({ status: "PENDING", waitsOn: intent, recordPayment: true });
+        const { releaseXeroSupplementaryInvoiceOperationsForPaymentIntent } = await import("@/lib/xero-operation-outbox");
+        expect(await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(intent)).toMatchObject({ released: 0 });
+
+        const again = await applyRepair();
+        expect(again.passes.at(-1)!.bookings[0]!.actions.map((candidate) => candidate.type)).not.toContain("QUEUE_SUPPLEMENTARY_INVOICE");
+        expect(await invoices()).toHaveLength(1);
+      });
+
+      it("an ask a later request already carries waits on that later request", async () => {
+        await seedPaidBooking();
+        await seedPrimaryInvoiceOperation();
+        const a = await priceIncrease(MOD_A, A_CENTS, { xeroLeg: false });
+        await declineCard(a);
+        const b = await priceIncrease(MOD_B, B_CENTS, { xeroLeg: false });
+
+        await applyRepair();
+
+        expect(await invoiceFor(MOD_A)).toMatchObject({
+          status: "WAITING_PAYMENT",
+          waitsOn: b,
+          parkedFrom: a,
+          recordPayment: true,
+          cents: A_CENTS,
+        });
+      });
+
+      it("a bank-transfer edit is raised unpaid, with no Stripe payment recorded", async () => {
+        await seedPaidBooking("INTERNET_BANKING");
+        await seedPrimaryInvoiceOperation();
+        await prisma.bookingModification.create({
+          data: {
+            id: MOD_A,
+            bookingId: BOOKING_ID,
+            memberId: MEMBER_ID,
+            modificationType: "GUEST_ADD",
+            previousData: {},
+            newData: {},
+            priceDiffCents: A_CENTS,
+          },
+        });
+        const report = await applyRepair();
+        const action = report.passes[0]!.bookings[0]!.actions.find((candidate) => candidate.type === "QUEUE_SUPPLEMENTARY_INVOICE");
+        expect(action?.payload).toMatchObject({ recordPayment: false, waitForConfirmedAdditionalPayment: false, paymentIntentId: null });
+        expect(await invoiceFor(MOD_A)).toMatchObject({ status: "PENDING", recordPayment: false, waitsOn: null, cents: A_CENTS });
       });
     });
 

@@ -159,9 +159,9 @@ export interface AiDiagnosticsSelectGrant {
  *
  * The credential-bearing relations stay permanently out of scope (ADR-007 §1) and
  * are named here so a future reader can see they were considered:
- * `IntegrationCredential` (encrypted provider secrets and Xero OAuth tokens) and
- * `XeroToken` (the same tokens, encrypted, mirrored since #3454) are not granted, not readable, and not
- * grantable by any tool pack.
+ * `IntegrationCredential` (encrypted provider secrets and the Xero OAuth tokens)
+ * stays permanently out of scope. `XeroToken` is gone, not a second live secret
+ * store. Neither is granted, readable, or grantable by any tool pack.
  *
  * The twelve, and the tool that argues for each:
  *

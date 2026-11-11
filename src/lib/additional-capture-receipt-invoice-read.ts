@@ -4,34 +4,34 @@
  * worker (`additional-capture-xero-receipt.ts`, which makes the metered read)
  * when #4324 grew it past its size budget.
  */
-import type { Invoice, Payment } from "xero-node";
-import { providerAmountToCents } from "@/lib/money-provider-amount";
+import type { Invoice } from "xero-node";
 import { readXeroInvoiceOperationOutcome } from "@/lib/xero-booking-invoice-outcome";
+import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { isLiveXeroPaymentStatus } from "@/lib/xero-payment-status";
 
 /** The invoice as the worker read it from Xero. */
 export type InvoiceRead = { status: string; amountDueCents: number; invoice: Invoice };
 
 /**
- * #4434: a payment already on the invoice is THIS leg's own only when its
- * reference matches, its amount is this leg's amount, and its id is not linked
- * under another role (the credit-release sweep uses the same reference on the
- * primary). Anything else is someone else's payment.
+ * An earlier run's live payment for one receipt leg (#4435, and every leg of
+ * #4434): the reference matches, the amount equals this leg, and the payment
+ * id has no active credit-release link. A missing amount is not this leg.
  */
-export function legOwnsPayment(
+export function findRecordedPayment(
   read: InvoiceRead | null,
   reference: string,
-  amountCents: number,
-  paymentIdsUnderAnotherRole: ReadonlySet<string>,
-): Payment | null {
+  receiptAmountCents: number,
+  sweepPaymentIds: ReadonlySet<string>,
+) {
   return (
     (read?.invoice.payments ?? []).find(
       (payment) =>
-        Boolean(payment.paymentID) &&
+        payment.paymentID &&
         payment.reference === reference &&
-        isLiveXeroPaymentStatus(payment.status) &&
-        providerAmountToCents(payment.amount) === amountCents &&
-        !paymentIdsUnderAnotherRole.has(payment.paymentID ?? ""),
+        // A missing or non-finite provider amount is not this receipt's cents.
+        providerAmountToCents(payment.amount) === receiptAmountCents &&
+        !sweepPaymentIds.has(payment.paymentID) &&
+        isLiveXeroPaymentStatus(payment.status),
     ) ?? null
   );
 }

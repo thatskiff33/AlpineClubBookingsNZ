@@ -1872,9 +1872,8 @@ export async function releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
     select: { id: true },
   });
 
-  return releaseWaitingSupplementaryInvoiceOperations(
-    waitingOperations.map((operation) => operation.id),
-  );
+  // #3403: also match this intent, so an invoice a later request took over is not released as a Stripe receipt.
+  return releaseWaitingSupplementaryInvoiceOperations(waitingOperations.map((operation) => operation.id), paymentIntentId);
 }
 
 /**

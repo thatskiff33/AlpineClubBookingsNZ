@@ -1144,6 +1144,12 @@ describe("enqueueXeroSupplementaryInvoiceOperation", () => {
         where: expect.objectContaining({
           id: { in: ["op_supplementary_1"] },
           status: "WAITING_PAYMENT",
+          // #3403: a row moved onto another intent between the read and this
+          // write must not match. Status alone would mark that later request paid.
+          requestPayload: {
+            path: ["paymentIntentId"],
+            equals: "pi_additional",
+          },
         }),
         data: expect.objectContaining({
           status: "PENDING",

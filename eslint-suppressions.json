@@ -695,10 +695,10 @@
   },
   "src/components/admin-sidebar.tsx": {
     "accessibility/minimum-text-size": {
-      "count": 4
+      "count": 3
     },
     "design-system/no-raw-button": {
-      "count": 2
+      "count": 1
     }
   },
   "src/components/admin/__tests__/display-token-textarea.test.tsx": {

@@ -3,14 +3,11 @@
  * BILLS IT (#3953, `INV-PAY-139`; owner decision and plan, 21 Oct 2026: "check,
  * then bill and pay").
  *
- * A change made while the booking's primary invoice did not yet exist queues no
- * supplementary invoice: the primary is built later from the post-change price
- * and bills the extra itself. A capture of that change's ask that the primary's
- * own payment did not record gets a receipt row
- * (`additional-capture-receipt-enqueue.ts`) - from the late-success release
- * when it lands after the invoice, or from the invoice's link save when it
- * landed before - and this worker records it, AT CAPTURE TIME, against the
- * invoice that bills it:
+ * A change before the primary invoice exists queues no supplementary invoice:
+ * the primary later bills the post-change price. A capture the primary's own
+ * payment did not record gets a receipt row (`additional-capture-receipt-enqueue.ts`),
+ * from late-success release or the invoice's link save. This worker records it
+ * at capture time against the invoice that bills it:
  *
  *  - THE GAP INVOICE, where the capture's change is one the #3980 gap invoice
  *    bills for (`INV-PAY-136`): the primary bills the booking as it was before
@@ -24,32 +21,27 @@
  * writer took, are recorded against each invoice in turn, capped at that
  * invoice's room. What none of them can take is told to an officer.
  *
- * ONE RECORDER PER CAPTURE (review round 1, `additional-capture-recorder.ts`).
- * Before it decides anything the worker reads who records the capture and
- * stands down for the primary's own payment, a supplementary invoice for the
- * change or naming the capture, or a gap invoice whose payment took it. It
- * plans one capture per booking at a time, and not while the booking's
- * invoice create is running (it waits, back to PENDING). The gap invoice never
+ * ONE RECORDER PER CAPTURE (`additional-capture-recorder.ts`). The worker
+ * stands down for the primary's own payment or a paying supplementary or gap
+ * invoice that records this capture. One receipt plans per booking at a time,
+ * waiting back to PENDING during a running invoice create. A gap invoice never
  * pays itself from a capture with a receipt row.
  *
- * NOTHING IS GUESSED. The worker refuses - the row FAILED with
- * `ADDITIONAL_CAPTURE_RECEIPT_REFUSED`, an officer told - where Xero cannot be
- * read, the invoice that bills the capture has nothing due, the gap invoice
- * has not reached Xero, the invoice's own payment is still owed (a PARTIAL
- * create), or a retry's invoice no longer has the room it was sized at. It
- * WAITS while the gap invoice is still being sent. Where the primary cannot
- * take the capture and no gap invoice exists, #3980's own check
- * (`recheckPrimaryInvoiceWorthGap`) raises one, never a second, and the
- * receipt waits for it. A capture on a booking since cancelled - save one a
- * treasurer KEPT, whose change the primary bills (#4324, `INV-PAY-144`,
- * `kept-late-capture-change-receipt.ts`) - or paid by internet banking, is
- * closed unsent.
+ * NOTHING IS GUESSED. An unreadable invoice, nothing due, a gap invoice not
+ * yet in Xero, an invoice's PARTIAL create still owing its own payment, or a
+ * retry with insufficient room causes FAILED `ADDITIONAL_CAPTURE_RECEIPT_REFUSED`
+ * and an officer alert. A gap invoice being sent causes a wait. If the primary
+ * cannot take the capture and no gap exists, `recheckPrimaryInvoiceWorthGap`
+ * raises one (never a second) and the receipt waits. Cancelled or internet-
+ * banking bookings close unsent, save a treasurer-kept capture whose change
+ * the primary bills (#4324, `INV-PAY-144`, `kept-late-capture-change-receipt.ts`).
  *
  * NEVER TWICE. One row per capture, queued under the per-anchor
  * supplementary-invoice lock; the payment link returns early; an earlier run's
- * payment is found by its reference; and the payment decided is stored on the
- * row BEFORE Xero is called, so a retry sends the same invoice, amount, date
- * and Xero key, or refuses - it never decides again.
+ * payment counts only when the reference matches, the amount equals the
+ * receipt, and it has no active credit-release payment link. The decision is
+ * stored on the row BEFORE Xero is called, so a retry sends the same invoice,
+ * amount, date and Xero key, or refuses - it never decides again.
  *
  * No provider call is made under a lock or inside a transaction (`INV-LOCK-004`).
  */
@@ -174,7 +166,7 @@ const REFUSAL_TEXT = {
   "change-unknown":
     "its ledger row names no booking change, and a supplementary invoice on this booking records a card payment without naming which, so whether this payment is already recorded cannot be told. Check Xero, record it by hand if it is missing, then mark this operation resolved",
   "figures-changed":
-    "the invoice no longer has the amount due this payment was sized at when it was first tried, and Xero shows no payment under its reference. Record it by hand in Xero, then mark this operation resolved",
+    "the invoice no longer has the amount this payment was sized at, and Xero shows no payment of this amount that is not already the credit-release payment. Record it by hand in Xero, then mark this operation resolved",
   "naming-unreadable":
     "a Xero invoice that names this card payment is set to record part of it, but what that invoice bills could not be read, so nothing was guessed. Check that invoice, record the payment by hand, then mark this operation resolved",
 } as const;
@@ -265,21 +257,27 @@ export async function recordAdditionalCaptureReceipt(
     return null;
   };
 
-  const existingLinks = await prisma.xeroObjectLink.findMany({
-    where: {
-      localModel: "PaymentTransaction",
-      localId: paymentTransactionId,
-      xeroObjectType: "PAYMENT",
-      role: ADDITIONAL_CAPTURE_PAYMENT_ROLE,
-      active: true,
-    },
-    orderBy: { createdAt: "asc" },
-    select: { xeroObjectId: true, metadata: true },
-  });
   // One leg, or a row that has not planned yet: any link is the whole receipt,
-  // as before. Several legs are done only when every one of them is linked,
-  // so a retry after the first payment still sends the rest (#4434).
+  // read as before. Several legs are done only when every one of them is
+  // linked, so a retry after the first payment still sends the rest (#4434).
   const plannedLegs = queued.plan?.legs;
+  const severalLegs = Boolean(plannedLegs && plannedLegs.length > 1);
+  const linkWhere = {
+    localModel: "PaymentTransaction" as const,
+    localId: paymentTransactionId,
+    xeroObjectType: "PAYMENT" as const,
+    role: ADDITIONAL_CAPTURE_PAYMENT_ROLE,
+    active: true,
+  };
+  const existingLinks = severalLegs
+    ? await prisma.xeroObjectLink.findMany({
+        where: linkWhere,
+        orderBy: { createdAt: "asc" },
+        select: { xeroObjectId: true, metadata: true },
+      })
+    : await prisma.xeroObjectLink
+        .findFirst({ where: linkWhere, select: { xeroObjectId: true, metadata: true } })
+        .then((link) => (link ? [link] : []));
   const alreadyDone =
     existingLinks.length > 0 &&
     (!plannedLegs || plannedLegs.length <= 1 || everyPlannedLegLinked(plannedLegs, existingLinks));

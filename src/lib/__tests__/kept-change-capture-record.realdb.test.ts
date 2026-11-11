@@ -829,6 +829,87 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     ).toBe(0);
   });
 
+  it("#4382: a retired change invoice is re-queued in the keep's commit, and a rolled-back keep leaves it retired", async () => {
+    await seed("OPEN", { marked: false });
+    const queued = await outbox.enqueueXeroSupplementaryInvoiceOperation(
+      { bookingId: BOOKING_ID, bookingModificationId: MODIFICATION_ID, priceDiffCents: 8_000, changeFeeCents: 0 },
+      { paymentIntentId: CHANGE_INTENT, waitForConfirmedAdditionalPayment: true },
+    );
+    const operationId = queued.queueOperationId!;
+    await prisma.xeroSyncOperation.update({
+      where: { id: operationId },
+      data: {
+        status: "CANCELLED",
+        completedAt: new Date("2026-06-20T00:00:00.000Z"),
+        lastErrorCode: "STALE_WAITING_PAYMENT",
+        lastErrorMessage: "retired by the reaper",
+      },
+    });
+
+    await expect(
+      prisma.$transaction(async (tx) => {
+        const claimed = await tx.manualRefundTask.updateMany({
+          where: { id: TASK_ID, status: "OPEN" },
+          data: { status: "DISMISSED", completedAt: new Date(), note: "kept (rolled back)" },
+        });
+        expect(claimed.count).toBe(1);
+        await keep.planKeptLateCaptureXeroRecord({
+          manualRefundTaskId: TASK_ID,
+          bookingId: BOOKING_ID,
+          paymentIntentId: CHANGE_INTENT,
+          clubZone: ZONE as never,
+          store: tx,
+        });
+        throw new Error("roll back the keep");
+      }),
+    ).rejects.toThrow("roll back the keep");
+    await expect(prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).resolves.toMatchObject({
+      status: "CANCELLED",
+      lastErrorCode: "STALE_WAITING_PAYMENT",
+    });
+    await expect(prisma.manualRefundTask.findUniqueOrThrow({ where: { id: TASK_ID } })).resolves.toMatchObject({ status: "OPEN" });
+
+    // Finish is not called. The row is PENDING because the revival committed with the keep.
+    const plan = await dismiss();
+    expect(plan).toEqual({ kind: "change-payment", paymentIntentId: CHANGE_INTENT });
+    const revived = await prisma.xeroSyncOperation.findUniqueOrThrow({
+      where: { id: operationId },
+      select: { status: true, lastErrorCode: true, lastErrorMessage: true, startedAt: true, completedAt: true, updatedAt: true },
+    });
+    expect(revived).toMatchObject({
+      status: "PENDING",
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      startedAt: null,
+      completedAt: null,
+    });
+    expect(await supplementaryRows()).toHaveLength(1);
+    expect(await receiptRows()).toEqual([]);
+    expect(
+      await prisma.xeroSyncOperation.count({
+        where: { localModel: "ManualRefundTask", localId: TASK_ID, queueType: "KEPT_LATE_CAPTURE_INVOICE" },
+      }),
+    ).toBe(0);
+
+    const again = await prisma.$transaction((tx) =>
+      keep.planKeptLateCaptureXeroRecord({
+        manualRefundTaskId: TASK_ID,
+        bookingId: BOOKING_ID,
+        paymentIntentId: CHANGE_INTENT,
+        clubZone: ZONE as never,
+        store: tx,
+      }),
+    );
+    expect(again).toEqual({ kind: "change-payment", paymentIntentId: CHANGE_INTENT });
+    const after = await prisma.xeroSyncOperation.findUniqueOrThrow({
+      where: { id: operationId },
+      select: { status: true, updatedAt: true },
+    });
+    expect(after).toEqual({ status: "PENDING", updatedAt: revived.updatedAt });
+    expect(await supplementaryRows()).toHaveLength(1);
+    expect(await receiptRows()).toEqual([]);
+  });
+
   it("an approval with the receipt still undecided withdraws it", async () => {
     await seed("OPEN");
     await dismiss();

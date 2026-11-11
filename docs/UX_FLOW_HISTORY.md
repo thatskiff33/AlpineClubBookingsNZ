@@ -1480,9 +1480,10 @@ Two doors into one form, one officer queue behind them.
 Who else is staying, over a bounded forward window, for members only. Off
 unless the club turns it on.
 
-- **Member door** — a **Who's at the lodge** entry in the main navigation
-  (shown only while the `memberLodgeRoster` module is on) leads to
-  `/lodge-roster`. There is no dashboard card and no API route: the page is
+- **Member door** — a **Who's at the lodge** button on the member
+  dashboard's Lodge Kiosk card (shown only while the `memberLodgeRoster` module
+  is on; it left the main navigation in #108) leads to `/lodge-roster`. There
+  is no API route: the page is
   rendered entirely on the server, so there is no endpoint to call directly and
   nothing crosses into the browser but what is drawn.
 - **What it shows** — one card per lodge the member can already book, each

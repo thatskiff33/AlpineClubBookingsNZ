@@ -1386,7 +1386,7 @@ operations, and neither covers the other's ground. Change one, check the other.
   `releaseXeroSupplementaryInvoiceForCapturedPaymentIntent` both ask it:
   refunded retires, undecided stays waiting, kept is released or re-queued. An invoice the capture does not cover
   is not issued, and an officer is told. A retired row is re-queued from
-  **that row**, the largest ask per change, under
+  **that row** by the release and by a keep inside its claim, the largest ask per change, under
   `lockSupplementaryInvoiceAnchor`, once - unpaid where the capture's own
   receipt records it (`INV-PAY-139`); it alerts once where another invoice
   is linked or queued. One for the same request (its sent payload keeps
@@ -1720,8 +1720,8 @@ refunded total it corrects).
 **Related: `INV-PAY-136`** (gap invoice), **`INV-PAY-104`** (late-success
 release).
 
-- **A change's card capture that nothing else records is recorded against the
-  Xero invoice that bills it, by one recorder** (#3953; owner, 21 Oct 2026).
+- **A change's otherwise unrecorded card capture gets one recorder, on its
+  billing Xero invoice** (#3953).
 - **One recorder.** The primary's create stores the captures its cash covers;
   every other gets an `ADDITIONAL_CAPTURE_RECEIPT` row, at link save or
   late-success release. The gap invoice pays only from unclaimed cash, never
@@ -1734,22 +1734,30 @@ release).
 - **Once.** Queued per capture under the per-anchor supplementary-invoice lock;
   never on an internet-banking or cancelled booking, save a kept capture
   (`INV-PAY-144`).
-- **Where.** The gap invoice billing its change, else an unpaid invoice naming
-  it or the change's own, else the primary less unallocated credit: the
-  capture net of other writers, capped at the room; the rest to an officer.
+- **Where.** One recorder per dollar (#4434). Unpaid invoices naming the
+  capture, oldest first, then the gap billing the change, the change's own
+  unpaid invoice, then the primary less unallocated credit. Each leg takes
+  only that invoice's room. A paying invoice that also names it counts as
+  already recorded; unreadable billed cents are refused. Anything left goes
+  to an officer. Never a Xero overpayment.
 - **Never twice.** One receipt plans per booking at a time, never during a
-  live create; it stores its decision under the change's lock before calling
-  Xero; a retry finds its payment by reference, sends it or refuses.
+  live create. Store the ordered invoice list under the change's lock before
+  Xero, guarded on the running claim. Each leg matches reference, that leg's
+  cents, and no active `CREDIT_RELEASE_PAYMENT` link (#4435); else the same
+  per-invoice key, or refuse. A retry sends only legs still unlinked. The
+  stored plan's top-level fields are the first leg.
 - **Refused, never guessed.** Xero unreadable, nothing due, an uncertain
   recorder or changed figures: FAILED `ADDITIONAL_CAPTURE_RECEIPT_REFUSED`,
   an officer told.
-- **Refunds and repair.** A Stripe refund names the receipt's invoice. The
+- **Refunds and repair.** A Stripe refund names the first leg's invoice. The
   repair tool reports "card payment not recorded in Xero" and queues the
-  receipt; a missing or revived invoice goes unpaid where a receipt records it.
+  receipt, and names a receipt that planned several legs and linked fewer.
+  A missing or revived invoice goes unpaid where a receipt records it.
 - Pinned by `additional-capture-xero-receipt.test.ts`,
   `additional-capture-recorder.test.ts`,
   `additional-capture-receipt.realdb.test.ts`,
-  `additional-capture-receipt-unattributed.realdb.test.ts` and
+  `additional-capture-receipt-unattributed.realdb.test.ts`,
+  `additional-capture-receipt-sweep-retry.realdb.test.ts` and
   `xero-booking-repair.test.ts`.
 
 ## INV-PAY-140
@@ -1768,7 +1776,7 @@ release).
   naming it, never folded together; an unpaid carrier invoices nothing. Bank
   transfer queues each unpaid when priced: nothing moves.
 - **Who moves it.** The supersede's cancel step (failed or captured), every
-  superseding minter, an edit leg parking on an already-failed ask, and the
+  superseding minter, repair or edit parking on a failed ask, and the
   reaper before retiring - never while the ask's cancel runs (#4665); its
   last step moves it.
 - **Refused, left as it was:** an ended booking, a linked or second queued
@@ -1897,14 +1905,14 @@ and **`INV-PAY-147`** (slice evidence).
 **Related: `INV-PAY-110`** (kept late captures) **and `INV-PAY-139`**.
 
 - **A kept change capture on a cancelled, invoiced booking is recorded by the
-  document the evidence names** (#4324; owner, 25 Oct 2026, amending one case
+  document the evidence names** (#4324, amending one case
   of `INV-PAY-110`): a second invoice for a change the primary bills would
   count the income twice.
 - **One decision** (`keptChangeCaptureRoute`), taken once by the keep or
   the repair tool, under the task row then the change's anchor lock, after
   finding the capture's receipt or kept invoice:
-  - a change invoice naming the capture, paid or awaiting release: the
-    late-success release (`INV-PAY-104`);
+  - a change invoice naming the capture: the late-success release
+    (`INV-PAY-104`), and a `STALE_WAITING_PAYMENT` row re-queued inside the keep, no repair finding;
   - a #3980 gap invoice billing it (`primaryInvoiceGapBillsChange`), the
     primary billing it (settled against it, or no supplementary invoice,
     and not raced past it: `primaryInvoiceMissedChange`), or a live
@@ -2984,12 +2992,12 @@ _Legacy: settles tasks raised before #4317._
   intent set, on BOTH forks (an ordinary edit bills the `BookingModification`'s
   signed components, a review charge bills the combined total). It queues no
   second invoice because the anchor-scoped, advisory-locked decision is the only
-  one. A failure to queue is recorded and NOT retried, because the replay has
-  already written this edit's `ADDITIONAL` transaction and a retry would read
-  that row as a supersession; that binds EVERY `await` after the write, and the
-  read of the signed components happens BEFORE the mint. The booking-vs-Xero
-  repair pass offers `QUEUE_SUPPLEMENTARY_INVOICE` built from the same two
-  components.
+  one. A failed queue is not retried: the replay has written this edit's
+  `ADDITIONAL` row, and a retry would read it as a supersession, so every
+  later `await` is bound and the signed components are read BEFORE the mint.
+  The repair offers `QUEUE_SUPPLEMENTARY_INVOICE` from those components, and a
+  Stripe payment only when that edit's card request was captured or waits
+  (#4413).
 - **The replay bills the EDIT's answer to "was there an invoice to supplement",
   never the answer that is true when the cron arrives** (#3181). A primary
   invoice minted after the edit already bills the edit itself, so the edit-time
@@ -3407,15 +3415,15 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   then the lodge capacity lock, after the status-guarded PENDING -> CONFIRMED
   claim — and creates the row (PENDING, the card about to be charged, the
   path's `reason`), then stamps its `reference` with the key
-  `mintedSavedCardChargeKey` builds: `pending_charge_<bookingId>_<rowId>`,
-  until #4682 switches it to the `_v2` key (that key plus `_v2`, #4646). A row
-  is an attempt row only when its `reference` is either key built from ITS OWN
-  id (`savedCardChargeKeyShape`): read first, write later, because the release
-  before #4646 reads only the original key and would mint a second charge
-  beside a `_v2` row it met. Because every path writes its
-  row under the same two locks, two paths can never both hold an open attempt
-  for one payment: the second to take the locks reads the first's row. That is
-  the guard the shared key used to provide by accident, and it now covers
+  `mintedSavedCardChargeKey` builds: `pending_charge_<bookingId>_<rowId>_v2`
+  (#4682; #4646). A row is an attempt row when its `reference` is that key or
+  the original key without `_v2`, built from ITS OWN id
+  (`savedCardChargeKeyShape`). Both shapes are still read: an original-key row
+  from an earlier release is re-sent under its stored key. Because every path
+  writes its row under the same two locks, two paths can never both hold an
+  open attempt for one payment: the second to take the locks reads the first's
+  row. That is the guard the shared key used to provide by accident, and it now
+  covers
   `charge-saved-method`, which gained the same claim (it had none) so that its
   row is written under the same locks — a route writing its attempt unlocked
   would re-open the race the ledger closes.
@@ -3659,9 +3667,9 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   write is claimed on "still no intent" under the Payment lock, so a lost
   adoption writes nothing. Without adoption a lost response's capture was
   invisible even to `INV-PAY-043`, and the re-send after 24 hours was a second
-  charge. **The limit until #4682:** new attempts still mint the original key
-  (`INV-PAY-081`), which sends no id, so their asynchronous capture ends at
-  `attempt_key_expired`, alerted once as unmatched (`INV-INT-033`).
+  charge. An original-key row, the shape minted before #4682, sends no id, so
+  its asynchronous capture stays unmatched and ends at `attempt_key_expired`,
+  alerted once (`INV-INT-033`). That is the old shape, not this mint.
 
 ## INV-PAY-090
 

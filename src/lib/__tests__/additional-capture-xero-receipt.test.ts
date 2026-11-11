@@ -40,7 +40,10 @@ const mocks = vi.hoisted(() => ({
   // #4494: the unpaid payload a gap invoice's payment overlapping the credit-release sweep's share is sent with.
   unpaidGapPayloadIfOverlapping: vi.fn(),
 }));
-vi.mock("@/lib/credit-release-xero-payment", () => ({ unpaidGapPayloadIfOverlapping: mocks.unpaidGapPayloadIfOverlapping }));
+vi.mock("@/lib/credit-release-xero-payment", () => ({
+  CREDIT_RELEASE_PAYMENT_ROLE: "CREDIT_RELEASE_PAYMENT",
+  unpaidGapPayloadIfOverlapping: mocks.unpaidGapPayloadIfOverlapping,
+}));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -528,7 +531,7 @@ describe("recordAdditionalCaptureReceipt", () => {
   });
 
   it("returns at once, and writes nothing to Xero, when the capture's payment is already linked", async () => {
-    mocks.findManyLink.mockResolvedValue([{ xeroObjectId: "xero_payment_earlier", metadata: { invoiceId: PRIMARY } }]);
+    mocks.findFirstLink.mockResolvedValue({ xeroObjectId: "xero_payment_earlier", metadata: { invoiceId: PRIMARY } });
     const seam = providers();
 
     await expect(run(seam)).resolves.toBe("xero_payment_earlier");
@@ -560,19 +563,35 @@ describe("recordAdditionalCaptureReceipt", () => {
     expect(seam.createXeroPaymentForInvoice).toHaveBeenCalledWith(expect.objectContaining({ invoiceId: PRIMARY, amountCents: 8000 }));
   });
 
-  it("does not adopt a payment of the right amount that another role already linked", async () => {
+  it("does not adopt the sweep's payment of a later leg's amount (#4435)", async () => {
+    const CHANGE = "33333333-3333-4333-8333-333333333333";
+    invoices[CHANGE] = { amountDue: 5000 };
     invoices[PRIMARY] = {
-      amountDue: 0,
-      payments: [{ paymentID: "sweep_pay", reference: "Stripe pi_change", amount: 80, status: "AUTHORISED" }],
+      amountDue: 3000,
+      payments: [{ paymentID: "sweep_pay", reference: "Stripe pi_change", amount: 30, status: "AUTHORISED" }],
     };
-    mocks.findManyLink.mockImplementation(async (args: { where?: { role?: { not?: string }; xeroObjectId?: { in?: string[] } } }) =>
-      args.where?.role?.not === ADDITIONAL_CAPTURE_PAYMENT_ROLE && args.where.xeroObjectId?.in?.includes("sweep_pay")
+    mocks.findManyLink.mockImplementation(async (args: { where?: { role?: string; xeroObjectId?: { in?: string[] } } }) =>
+      args.where?.role === "CREDIT_RELEASE_PAYMENT" && args.where.xeroObjectId?.in?.includes("sweep_pay")
         ? [{ xeroObjectId: "sweep_pay" }]
         : [],
     );
+    mocks.readCaptureRecorder.mockResolvedValue(
+      receiptRecorder({
+        target: {
+          kind: "CHANGE_INVOICE",
+          operation: { id: "op_change", status: "SUCCEEDED", requestPayload: { recordPayment: false }, responsePayload: {}, manuallyResolvedAt: null },
+          link: { id: "link_change", xeroObjectId: CHANGE, active: true },
+        },
+      }),
+    );
     const seam = providers();
     await expect(run(seam)).resolves.toBe("xero_payment_1");
-    expect(seam.createXeroPaymentForInvoice).toHaveBeenCalledTimes(1);
+    expect(seam.createXeroPaymentForInvoice).toHaveBeenNthCalledWith(1, expect.objectContaining({ invoiceId: CHANGE, amountCents: 5000 }));
+    expect(seam.createXeroPaymentForInvoice).toHaveBeenNthCalledWith(2, expect.objectContaining({ invoiceId: PRIMARY, amountCents: 3000 }));
+    expect(mocks.findManyLink).toHaveBeenCalledWith({
+      where: { role: "CREDIT_RELEASE_PAYMENT", active: true, xeroObjectType: "PAYMENT", xeroObjectId: { in: ["sweep_pay"] } },
+      select: { xeroObjectId: true },
+    });
   });
 
   it("records the rest on the next invoice when the first has less due than the capture", async () => {
@@ -708,6 +727,22 @@ describe("recordAdditionalCaptureReceipt", () => {
     const seam = providers();
     await expectWait(seam);
   });
+
+  it("recovers only the remainder after another recorder's share, before applying the room cap (#4435)", async () => {
+    mocks.readCaptureRecorder.mockResolvedValue(receiptRecorder({ alreadyRecordedCents: 3000 }));
+    invoices[PRIMARY] = { amountDue: 0, payments: [
+      { paymentID: "full_capture", reference: "Stripe pi_change", amount: 80 },
+      { paymentID: "receipt_remainder", reference: "Stripe pi_change", amount: 50 },
+    ] };
+    const seam = providers();
+
+    await run(seam);
+
+    expect(seam.createXeroPaymentForInvoice).not.toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      xeroObjectId: "receipt_remainder",
+      responsePayload: expect.objectContaining({ plan: expect.objectContaining({ amountCents: 5000, capturedCents: 5000 }) }),
+    }));  });
 
   it.each([
     ["a booking since cancelled (K)", capture({}, "CANCELLED"), "booking-cancelled"],
@@ -976,6 +1011,21 @@ describe("recordAdditionalCaptureReceipt", () => {
     expect(mocks.sendAdminXeroSyncErrorAlert.mock.calls[0][0].errorMessage).not.toContain("op_note_gap");
   });
 
+  it("plans its own payment instead of adopting the sweep's equal payment (#4435)", async () => {
+    invoices[PRIMARY] = { amountDue: 8000, payments: [{ paymentID: "sweep_payment", reference: "Stripe pi_change", amount: 80 }] };
+    mocks.findManyLink.mockResolvedValue([{ xeroObjectId: "sweep_payment" }]);
+    const seam = providers();
+
+    await expect(run(seam)).resolves.toBe("xero_payment_1");
+
+    expect(storedPlan()).toMatchObject({ invoiceId: PRIMARY, amountCents: 8000, capturedCents: 8000 });
+    expect(seam.createXeroPaymentForInvoice).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      invoiceId: PRIMARY,
+      amountCents: 8000,
+      idempotencyKey: `payment-intent:pi_change:additional-capture-payment:${PRIMARY}:v1`,
+    }));
+  });
+
   describe("a retry, with the decision stored", () => {
     const plan = { target: "GAP_INVOICE", invoiceId: GAP, amountCents: 8000, capturedCents: 8000, date: "2026-06-30" };
     beforeEach(() => {
@@ -990,6 +1040,7 @@ describe("recordAdditionalCaptureReceipt", () => {
 
       // Round 4 (1b): who records it is read again, but nothing is decided again.
       expect(mocks.readCaptureRecorder).toHaveBeenCalledTimes(1);
+      expect(mocks.findManyLink).not.toHaveBeenCalled();
       expect(mocks.updateOperation).not.toHaveBeenCalled();
       expect(seam.createXeroPaymentForInvoice).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -999,6 +1050,71 @@ describe("recordAdditionalCaptureReceipt", () => {
           idempotencyKey: `payment-intent:pi_change:additional-capture-payment:${GAP}:v1`,
         }),
       );
+    });
+
+    it("sends its stored payment when the same reference and amount belong to the sweep (#4435)", async () => {
+      invoices[GAP] = { amountDue: 8000, payments: [{ paymentID: "sweep_payment", reference: "Stripe pi_change", amount: 80 }] };
+      mocks.findManyLink.mockResolvedValue([{ xeroObjectId: "sweep_payment" }]);
+      const seam = providers();
+
+      await expect(run(seam)).resolves.toBe("xero_payment_1");
+
+      expect(seam.createXeroPaymentForInvoice).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        invoiceId: GAP,
+        amountCents: 8000,
+        role: ADDITIONAL_CAPTURE_PAYMENT_ROLE,
+        idempotencyKey: `payment-intent:pi_change:additional-capture-payment:${GAP}:v1`,
+      }));
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ xeroObjectId: "xero_payment_1" }));
+      expect(mocks.findManyLink).toHaveBeenCalledExactlyOnceWith({
+        where: { role: "CREDIT_RELEASE_PAYMENT", active: true, xeroObjectType: "PAYMENT", xeroObjectId: { in: ["sweep_payment"] } },
+        select: { xeroObjectId: true },
+      });
+    });
+
+    it.each([10, undefined, NaN, Infinity])("does not recover a payment with the right reference but amount %s (#4435)", async (amount) => {
+      invoices[GAP] = { amountDue: 8000, payments: [{ paymentID: "wrong_amount", reference: "Stripe pi_change", amount }] };
+      const seam = providers();
+
+      await expect(run(seam)).resolves.toBe("xero_payment_1");
+
+      expect(seam.createXeroPaymentForInvoice).toHaveBeenCalledTimes(1);
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ xeroObjectId: "xero_payment_1" }));
+    });
+
+    it.each(["DELETED", "VOIDED"])("does not recover a %s payment even with the right reference and amount", async (status) => {
+      invoices[GAP] = { amountDue: 8000, payments: [{ paymentID: "retired_payment", reference: "Stripe pi_change", amount: 80, status }] };
+      const seam = providers();
+
+      await expect(run(seam)).resolves.toBe("xero_payment_1");
+
+      expect(seam.createXeroPaymentForInvoice).toHaveBeenCalledTimes(1);
+    });
+
+    it("still refuses changed figures when only the sweep's equal payment exists (#4435)", async () => {
+      invoices[GAP] = { amountDue: 0, payments: [{ paymentID: "sweep_payment", reference: "Stripe pi_change", amount: 80 }] };
+      mocks.findManyLink.mockResolvedValue([{ xeroObjectId: "sweep_payment" }]);
+      const seam = providers();
+
+      await run(seam);
+
+      expectRefused("figures-changed");
+      expect(mocks.failXeroSyncOperation.mock.calls[0][3].lastErrorMessage).toContain("no payment of this amount that is not already the credit-release payment");
+      expect(seam.createXeroPaymentForInvoice).not.toHaveBeenCalled();
+    });
+
+    it("skips the sweep's first match and recovers its own second payment (#4435)", async () => {
+      invoices[GAP] = { amountDue: 0, payments: [
+        { paymentID: "sweep_payment", reference: "Stripe pi_change", amount: 80 },
+        { paymentID: "receipt_payment", reference: "Stripe pi_change", amount: 80 },
+      ] };
+      mocks.findManyLink.mockResolvedValue([{ xeroObjectId: "sweep_payment" }]);
+      const seam = providers();
+
+      await expect(run(seam)).resolves.toBe("receipt_payment");
+
+      expect(seam.createXeroPaymentForInvoice).not.toHaveBeenCalled();
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ xeroObjectId: "receipt_payment" }));
     });
 
     it.each([

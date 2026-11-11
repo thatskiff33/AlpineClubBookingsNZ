@@ -98,6 +98,23 @@ describe("two-factor system actors (INV-PRIV-020)", () => {
       }),
       db,
     );
+    await recordTwoFactorClear(db, {
+      before: {
+        twoFactorEnabled: false,
+        twoFactorMethod: null,
+        authenticatorApp: false,
+        passkeyCount: 1,
+      },
+      actor,
+      subjectMemberId: "member-1",
+    });
+    expect(createAuditLog).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        action: TWO_FACTOR_AUDIT_ACTIONS.cleared,
+        metadata: expect.objectContaining({ passkeyCount: 1, authenticatorApp: false }),
+      }),
+      db,
+    );
   });
 });
 

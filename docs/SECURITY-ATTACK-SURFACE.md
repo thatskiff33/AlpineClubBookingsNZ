@@ -580,35 +580,18 @@ incident can rely on the following:
   `cause: verify-reset` naming the credential that caused it
   (`causedByCredential`, a name and never a value). A treasurer asking why the
   connection broke now gets both halves.
-- **This release no longer writes or reads token ciphertext in `XeroToken`
-  (#3806 R2).** A blue-green deploy runs the previous release (#3454) beside
-  this one for a while, and after a rollback it runs alone; it reads,
-  refreshes, connects and disconnects through `XeroToken` and the store copy.
-  So this release keeps that row present while connected, with its tenant and
-  expiry current, and claims the previous release's refresh lease beside its
-  own; Xero refresh tokens can be spent once, so the two releases still compete
-  for one. It never writes or reads the row's two ciphertext columns: the
-  schema ignores them, a row it creates gets an empty value, and its
-  credential-store copy carries the fingerprint the previous release checks,
-  so that release keeps reading the store copy. **The row is not empty yet:**
-  until this release's first connect replaces it, or R3 drops the table, it
-  still holds the last ciphertext #3454 wrote, encrypted under the wrapped key
-  below; after this release's first refresh that refresh token has been spent.
-  The previous release's own writes are attributed through the store as this
-  release's are (the tokens entered the store with it). Only the token store
-  may write `XeroToken`: the credential census reports any other writer, raw
-  SQL or migration that rewrites it, because the previous release would read a
-  rewritten row as the newer copy, and no production raw SQL may name the
-  table at all. The connection facts and the lease live in `XeroConnection`,
-  which holds no secret; a test pins its six fields. The table is dropped in a
-  later release.
-- **The wrapped Xero token key is retired here (#3806 R2).** It encrypted only
-  the `XeroToken` ciphertext. This release never generates or reads it, and its
+- **The `XeroToken` table is gone (#3806).** The only copy of the access and
+  refresh tokens is the credential-store row. The census reports any
+  reintroduced `xeroToken` write, and any SQL that inserts, updates or deletes
+  that table, as a bypass. `XeroConnection` holds the tenant, the access-token
+  expiry and the refresh lease, and nothing secret; a test pins its six fields
+  (`id`, `tenantId`, `expiresAt`, `refreshInProgressUntil`, `createdAt`,
+  `updatedAt`).
+- **The wrapped Xero token key is retired (#3806).** It encrypted only the old
+  `XeroToken` ciphertext. This release never generates or reads it, and its
   next connect, disconnect or verify-reset deletes the row under that
-  operation's actor. While the previous release still runs it generates a new
-  key whenever it writes the tokens and finds none, and records that as
-  `xero-token-key-generation`, so such rows can appear after this release
-  ships until that release has drained.
+  operation's actor. A rollback to R2 can generate a new one when it writes
+  the tokens and finds none, and records that as `xero-token-key-generation`.
 - **A member's second factor** — the TOTP secret (`Member.totpSecret`) and the
   recovery codes — stays where it is, encrypted or hashed at rest; it is not a
   provider credential. Enrolment, replacing the recovery codes and the
