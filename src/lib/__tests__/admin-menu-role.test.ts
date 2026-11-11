@@ -54,7 +54,9 @@ const HUB_LABELS: Record<string, readonly string[]> = {
 };
 
 function labels(keys: readonly string[]): string[] {
-  const byKey = new Map(ADMIN_HUBS.map((hub) => [hub.key, hub.label]));
+  const byKey = new Map<string, string>(
+    ADMIN_HUBS.map((hub) => [hub.key, hub.label]),
+  );
   return keys.map((key) => byKey.get(key) ?? key);
 }
 
