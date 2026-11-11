@@ -230,9 +230,10 @@ describe("createAdminGrantCreditNote (#4431)", () => {
       payload: { ...payload, mappingKey: "goodwillWriteOffs" },
     });
     expect(mocks.getResolvedAccountMappingWithFallback).toHaveBeenCalledWith("goodwillWriteOffs");
-    const note = mocks.createCreditNotes.mock.calls[0][1].creditNotes[0];
-    expect(note.lineItems[0]).toEqual(expect.objectContaining({ itemCode: "HUT", taxType: "OUTPUT2" }));
-    expect(note.lineItems[0].accountCode).toBeUndefined();
+    const note = mocks.createCreditNotes.mock.calls[0]?.[1]?.creditNotes[0];
+    const line = note?.lineItems?.[0];
+    expect(line).toEqual(expect.objectContaining({ itemCode: "HUT", taxType: "OUTPUT2" }));
+    expect(line?.accountCode).toBeUndefined();
   });
 
   it("fails a credit that is not a positive admin adjustment for the payload amount, before calling Xero", async () => {
