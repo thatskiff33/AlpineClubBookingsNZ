@@ -121,10 +121,10 @@ import type { XeroRecordActivityData } from "@/lib/xero-record-types";
 import AgeTierSettingsPage from "@/app/(admin)/admin/rules/age-tier-settings/page";
 import { PromoCodesPageClient } from "@/app/(admin)/admin/rules/promo-codes/promo-codes-page-client";
 // #1940 pass 3 delegated lanes (membership / lodge settings editors).
-import AdminMemberFieldsPage from "@/app/(admin)/admin/member-fields/page";
-import AdminMembershipTypesPage from "@/app/(admin)/admin/membership-types/page";
+import AdminMemberFieldsPage from "@/app/(admin)/admin/membership/member-fields/page";
+import AdminMembershipTypesPage from "@/app/(admin)/admin/membership/membership-types/page";
 import LockersPage from "@/app/(admin)/admin/lockers/page";
-import CommitteePage from "@/app/(admin)/admin/committee/page";
+import CommitteePage from "@/app/(admin)/admin/membership/committee/page";
 import AdminDisplayDevicesPage from "@/app/(admin)/admin/display/devices/page";
 import AdminDisplayLayoutsPage from "@/app/(admin)/admin/display/layouts/page";
 import AdminDisplayTemplatesPage from "@/app/(admin)/admin/display/templates/page";
@@ -149,29 +149,29 @@ import { NonMemberContactForm } from "@/components/admin/non-member-contact-form
 import AdminWaitlistPage from "@/app/(admin)/admin/waitlist/page";
 import AdminBookPage from "@/app/(admin)/admin/book/page";
 // #1997 admin action-button surfaces (membership queues lane).
-import DeletionRequestsClient from "@/app/(admin)/admin/deletion-requests/deletion-requests-client";
-import MemberApplicationsPage from "@/app/(admin)/admin/member-applications/page";
-import MembershipCancellationsPage from "@/app/(admin)/admin/membership-cancellations/page";
+import DeletionRequestsClient from "@/app/(admin)/admin/membership/deletion-requests/deletion-requests-client";
+import MemberApplicationsPage from "@/app/(admin)/admin/membership/member-applications/page";
+import MembershipCancellationsPage from "@/app/(admin)/admin/membership/membership-cancellations/page";
 // #1997 admin action-button surfaces (support / communications lane).
 import AdminIssueReportsPage from "@/app/(admin)/admin/system/issue-reports/page";
 import CommunicationsPage from "@/app/(admin)/admin/messages/communications/page";
 import { FamilySuggestionsPanel } from "@/components/admin/family-groups/family-suggestions-panel";
 // #1997 member-detail action cards (membership / finance lane).
-import { MemberDeletionCard } from "@/app/(admin)/admin/members/[id]/_components/member-deletion-card";
-import { MemberCreditCard } from "@/app/(admin)/admin/members/[id]/_components/member-credit-card";
-import { MemberParentLinksCard } from "@/app/(admin)/admin/members/[id]/_components/member-parent-links-card";
-import { MemberDependentsCard } from "@/app/(admin)/admin/members/[id]/_components/member-dependents-card";
+import { MemberDeletionCard } from "@/app/(admin)/admin/membership/members/[id]/_components/member-deletion-card";
+import { MemberCreditCard } from "@/app/(admin)/admin/membership/members/[id]/_components/member-credit-card";
+import { MemberParentLinksCard } from "@/app/(admin)/admin/membership/members/[id]/_components/member-parent-links-card";
+import { MemberDependentsCard } from "@/app/(admin)/admin/membership/members/[id]/_components/member-dependents-card";
 import { FamilyGroupEditor } from "@/components/admin/family-group-editor";
-import FamilyGroupsPage from "@/app/(admin)/admin/family-groups/page";
-import { MemberBillingFamilyCard } from "@/app/(admin)/admin/members/[id]/_components/member-billing-family-card";
-import { MemberLodgeAccessCard } from "@/app/(admin)/admin/members/[id]/_components/member-lodge-access-card";
-import { MemberPartnerLinkCard } from "@/app/(admin)/admin/members/[id]/_components/member-partner-link-card";
-import { MemberSeasonalMembershipCard } from "@/app/(admin)/admin/members/[id]/_components/member-seasonal-membership-card";
-import { MemberCommitteeAssignmentsCard } from "@/app/(admin)/admin/members/[id]/_components/member-committee-assignments-card";
-import { MemberLifecycleCard } from "@/app/(admin)/admin/members/[id]/_components/member-lifecycle-card";
-import { MemberDetailHeader } from "@/app/(admin)/admin/members/[id]/_components/member-detail-header";
-import { MemberContactGroup } from "@/app/(admin)/admin/members/[id]/_components/member-contact-group";
-import type { MemberGroupEditState } from "@/app/(admin)/admin/members/[id]/_hooks/use-member-group-edit";
+import FamilyGroupsPage from "@/app/(admin)/admin/membership/family-groups/page";
+import { MemberBillingFamilyCard } from "@/app/(admin)/admin/membership/members/[id]/_components/member-billing-family-card";
+import { MemberLodgeAccessCard } from "@/app/(admin)/admin/membership/members/[id]/_components/member-lodge-access-card";
+import { MemberPartnerLinkCard } from "@/app/(admin)/admin/membership/members/[id]/_components/member-partner-link-card";
+import { MemberSeasonalMembershipCard } from "@/app/(admin)/admin/membership/members/[id]/_components/member-seasonal-membership-card";
+import { MemberCommitteeAssignmentsCard } from "@/app/(admin)/admin/membership/members/[id]/_components/member-committee-assignments-card";
+import { MemberLifecycleCard } from "@/app/(admin)/admin/membership/members/[id]/_components/member-lifecycle-card";
+import { MemberDetailHeader } from "@/app/(admin)/admin/membership/members/[id]/_components/member-detail-header";
+import { MemberContactGroup } from "@/app/(admin)/admin/membership/members/[id]/_components/member-contact-group";
+import type { MemberGroupEditState } from "@/app/(admin)/admin/membership/members/[id]/_hooks/use-member-group-edit";
 import type { MemberContactEditForm } from "@/lib/admin-member-edit-groups";
 
 const SITE_CONTENT_DOCUMENTS = [

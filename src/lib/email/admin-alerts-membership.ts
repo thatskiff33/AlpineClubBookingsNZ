@@ -18,6 +18,7 @@ import {
 } from "./admin-alerts-shared";
 import { renderEmailHtml } from "@/lib/email-theme";
 
+import { adminHref } from "@/lib/admin-hubs";
 export async function sendAdminMembershipApplicationPendingEmail(data: {
   applicationId: string;
   applicantName: string;
@@ -25,7 +26,7 @@ export async function sendAdminMembershipApplicationPendingEmail(data: {
   familyMemberCount: number;
 }) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/member-applications`;
+  const reviewUrl = `${baseUrl}${adminHref("member-applications")}`;
 
   await sendToAdmins({
     subject: `Membership application ready: ${data.applicantName}`,
@@ -69,7 +70,7 @@ export async function sendAdminMembershipCancellationRequestAlert(params: {
   reason?: string | null;
 }) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/membership-cancellations`;
+  const reviewUrl = `${baseUrl}${adminHref("membership-cancellations")}`;
 
   await sendToAdmins({
     subject: `Membership cancellation ready: ${params.requesterName}`,
@@ -99,7 +100,7 @@ export async function sendAdminAccountDeletionRequestedAlert(params: {
   reason?: string | null;
 }) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/deletion-requests?status=PENDING`;
+  const reviewUrl = `${baseUrl}${adminHref("deletion-requests")}?status=PENDING`;
 
   await sendToAdmins({
     subject: `Account deletion requested: ${params.memberName}`,
@@ -131,7 +132,7 @@ export async function sendAdminMemberArchiveRequestedAlert(params: {
   reason: string;
 }) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/membership-cancellations`;
+  const reviewUrl = `${baseUrl}${adminHref("membership-cancellations")}`;
 
   await sendToAdmins({
     subject: `Member archive requested: ${params.memberName}`,
@@ -163,7 +164,7 @@ export async function sendAdminMemberDeleteRequestedAlert(params: {
   // on /admin/deletion-requests) rather than the member record, so a second
   // admin can approve/reject without having to know where to look. `memberId`
   // is retained on the params/templateData for audit continuity.
-  const reviewUrl = `${baseUrl}/admin/deletion-requests`;
+  const reviewUrl = `${baseUrl}${adminHref("deletion-requests")}`;
 
   await sendToAdmins({
     subject: `Member delete requested: ${params.memberName}`,
@@ -230,7 +231,7 @@ export async function sendAdminMemberDeleteRejectedEmail(params: {
   reviewNote?: string | null;
 }) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/members/${encodeURIComponent(params.memberId)}`;
+  const reviewUrl = `${baseUrl}${adminHref("member-detail", { id: params.memberId })}`;
 
   if (
     !(await shouldSendDirectAdminSystemEmail("admin-member-delete-rejected"))

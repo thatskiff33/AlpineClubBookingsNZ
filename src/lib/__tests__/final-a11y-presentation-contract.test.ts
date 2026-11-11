@@ -10,7 +10,7 @@ function source(path: string) {
 const migratedAdminChrome = [
   "src/app/(admin)/admin/rules/age-tier-settings/page.tsx",
   "src/app/(admin)/admin/lockers/page.tsx",
-  "src/app/(admin)/admin/committee/page.tsx",
+  "src/app/(admin)/admin/membership/committee/page.tsx",
   "src/app/(admin)/admin/hut-leaders/page.tsx",
   "src/app/(admin)/admin/hut-leaders/_components/assignment-form.tsx",
   "src/app/(admin)/admin/work-parties/page.tsx",
@@ -40,10 +40,10 @@ describe("#1819 final accessibility presentation contract", () => {
       "src/app/(authenticated)/profile/family-group-section.tsx",
     );
     const memberHeader = source(
-      "src/app/(admin)/admin/members/[id]/_components/member-detail-header.tsx",
+      "src/app/(admin)/admin/membership/members/[id]/_components/member-detail-header.tsx",
     );
     const memberContact = source(
-      "src/app/(admin)/admin/members/[id]/_components/member-contact-group.tsx",
+      "src/app/(admin)/admin/membership/members/[id]/_components/member-contact-group.tsx",
     );
     // Fifth wide surface, and the only one on the PUBLIC site: the {{hut-fees}}
     // rate table (#2129). It scrolls horizontally rather than shrinking, so the
@@ -176,11 +176,11 @@ describe("#1819 final accessibility presentation contract", () => {
       "src/components/calendar/month-calendar.tsx",
       "src/components/ui/dropdown-menu.tsx",
       "src/app/(admin)/admin/chores/page.tsx",
-      "src/app/(admin)/admin/committee/page.tsx",
-      "src/app/(admin)/admin/members/[id]/_components/member-committee-assignments-card.tsx",
+      "src/app/(admin)/admin/membership/committee/page.tsx",
+      "src/app/(admin)/admin/membership/members/[id]/_components/member-committee-assignments-card.tsx",
       "src/components/admin/booking-policies/minimum-night-stay-section.tsx",
       "src/components/admin/booking-policies/booking-periods-section.tsx",
-      "src/app/(admin)/admin/family-groups/page.tsx",
+      "src/app/(admin)/admin/membership/family-groups/page.tsx",
       "src/app/(admin)/admin/hut-leaders/_components/assignment-form.tsx",
     ];
     for (const file of files) {
@@ -311,13 +311,13 @@ describe("#1819 final accessibility presentation contract", () => {
     const badge = source("src/components/ui/badge.tsx");
     const destructiveSurfaces = [
       "src/app/(admin)/admin/waitlist/page.tsx",
-      "src/app/(admin)/admin/members/[id]/_components/member-detail-header.tsx",
-      "src/app/(admin)/admin/members/[id]/_components/member-dependents-card.tsx",
-      "src/app/(admin)/admin/members/[id]/_components/member-parent-links-card.tsx",
-      "src/app/(admin)/admin/members/[id]/_components/member-delete-request-dialog.tsx",
-      "src/app/(admin)/admin/members/[id]/_components/member-deletion-card.tsx",
-      "src/app/(admin)/admin/members/[id]/_components/member-lifecycle-card.tsx",
-      "src/app/(admin)/admin/members/[id]/_components/member-delete-review-dialog.tsx",
+      "src/app/(admin)/admin/membership/members/[id]/_components/member-detail-header.tsx",
+      "src/app/(admin)/admin/membership/members/[id]/_components/member-dependents-card.tsx",
+      "src/app/(admin)/admin/membership/members/[id]/_components/member-parent-links-card.tsx",
+      "src/app/(admin)/admin/membership/members/[id]/_components/member-delete-request-dialog.tsx",
+      "src/app/(admin)/admin/membership/members/[id]/_components/member-deletion-card.tsx",
+      "src/app/(admin)/admin/membership/members/[id]/_components/member-lifecycle-card.tsx",
+      "src/app/(admin)/admin/membership/members/[id]/_components/member-delete-review-dialog.tsx",
     ].map(source).join("\n");
 
     for (const primitive of [button, badge]) {
@@ -343,7 +343,7 @@ describe("#1819 final accessibility presentation contract", () => {
     // focusable, NAMED scroll region, not a bare `overflow-x-auto` div (axe
     // `scrollable-region-focusable`, WCAG 2.1.1).
     const tree = source(
-      "src/app/(admin)/admin/members/[id]/_components/member-family-tree-card.tsx",
+      "src/app/(admin)/admin/membership/members/[id]/_components/member-family-tree-card.tsx",
     );
 
     expect(tree).toContain('className="max-w-full overflow-x-auto"');
@@ -358,7 +358,7 @@ describe("#1819 final accessibility presentation contract", () => {
 
   it("keeps partner search results contained on narrow member cards", () => {
     const partner = source(
-      "src/app/(admin)/admin/members/[id]/_components/member-partner-link-card.tsx",
+      "src/app/(admin)/admin/membership/members/[id]/_components/member-partner-link-card.tsx",
     );
 
     expect(partner).toContain(

@@ -35,13 +35,13 @@ reason: the lockers list now sorts and case-folds in the club's locale
   (#3566, owner decision 6), which reads the format from the provider in the
   page component; splitting the page is a separate refactor.
 
-file: src/app/(admin)/admin/member-applications/page.tsx
+file: src/app/(admin)/admin/membership/member-applications/page.tsx
 lines: 818
 reason: the required club date format threaded through an already-oversized
   module (#3566); splitting it is a separate refactor that would not remove
   the parameter.
 
-file: src/app/(admin)/admin/members/[id]/_components/member-dependent-dialog.tsx
+file: src/app/(admin)/admin/membership/members/[id]/_components/member-dependent-dialog.tsx
 lines: 714
 reason: the required club date format threaded through an already-oversized
   module (#3566); splitting it is a separate refactor that would not remove

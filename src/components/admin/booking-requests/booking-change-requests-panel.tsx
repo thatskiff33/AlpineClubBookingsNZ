@@ -49,6 +49,7 @@ import {
   type DecisionDraft,
 } from "@/components/admin/booking-requests/booking-change-request-panel-model";
 
+import { adminHref } from "@/lib/admin-hubs";
 type RequestFilter = "REQUESTED" | "APPROVED" | "REJECTED" | "ALL";
 
 const requestFilters = new Set<RequestFilter>([
@@ -461,7 +462,7 @@ export function BookingChangeRequestsPanel({
                     </Link>
                     {owner.id ? (
                       <Link
-                        href={buildHrefWithReturnTo(`/admin/members/${owner.id}`, currentPath)}
+                        href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: owner.id })}`, currentPath)}
                         className="text-info-11 hover:underline"
                       >
                         Open member

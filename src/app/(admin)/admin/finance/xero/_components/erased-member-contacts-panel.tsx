@@ -1,5 +1,6 @@
 "use client"
 
+import { adminHref } from "@/lib/admin-hubs";
 /**
  * The erased-member Xero contact review (#3058). `INV-INT-024`.
  *
@@ -121,7 +122,7 @@ function ReviewRow({
         */}
         {row.erasure === "ANONYMISED_BY_DELETION_REQUEST" ? (
           <a
-            href={buildHrefWithReturnTo(`/admin/members/${row.memberId}`, returnTo)}
+            href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: row.memberId })}`, returnTo)}
             className="font-mono font-medium text-primary hover:underline"
           >
             {row.memberId}

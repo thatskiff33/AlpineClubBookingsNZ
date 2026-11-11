@@ -1,3 +1,4 @@
+import { adminHref } from "@/lib/admin-hubs";
 /**
  * Admin alerts about membership and member records: applications, cancellation
  * and archive requests, deletion decisions, and family-group requests.
@@ -30,7 +31,7 @@ export function adminFamilyGroupRequestTemplate(data: {
     ${paragraph("<strong>Requester:</strong> " + escapeHtml(data.requesterName))}
     ${paragraph("<strong>Group:</strong> " + escapeHtml(data.groupName))}
     ${multilineBlock(escapeHtml(data.details))}
-    ${button("Review Requests", (process.env.NEXTAUTH_URL || "http://localhost:3000") + "/admin/family-groups")}
+    ${button("Review Requests", (process.env.NEXTAUTH_URL || "http://localhost:3000") + adminHref("family-groups"))}
     ${supportContactMuted()}
   `);
 }

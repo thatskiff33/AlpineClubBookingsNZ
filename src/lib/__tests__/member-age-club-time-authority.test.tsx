@@ -79,9 +79,9 @@ import { cleanup, render, screen } from "@testing-library/react";
 
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
-import { MemberSummaryStrip } from "@/app/(admin)/admin/members/[id]/_components/member-summary-strip";
+import { MemberSummaryStrip } from "@/app/(admin)/admin/membership/members/[id]/_components/member-summary-strip";
 import { searchFamilyGroupCandidateMembers } from "@/lib/admin-family-group-member-search";
-import type { MemberDetail } from "@/app/(admin)/admin/members/[id]/_types";
+import type { MemberDetail } from "@/app/(admin)/admin/membership/members/[id]/_types";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const ENVIRONMENT_ZONE = "America/Denver";

@@ -9,8 +9,9 @@
  *
  * Officers still open every page at its old URL while `ADMIN_HUBS_LIVE` is off.
  * C4 (#4801) has moved the Website pages, C5 (#4802) the Finance pages, C6
- * (#4803) the Fees & booking rules pages, C7 (#4804) the Help & system pages
- * and C8 (#4805) the Messages & email pages: their files live under the hub,
+ * (#4803) the Fees & booking rules pages, C7 (#4804) the Help & system pages,
+ * C8 (#4805) the Messages & email pages and C9 (#4806) the Members pages:
+ * their files live under the hub,
  * the old URL is served from that file by a `beforeFiles` rewrite, and the hub
  * URL redirects back. Links go through `adminHref`, which keeps returning the
  * old URL until the switch is on.

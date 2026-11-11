@@ -48,7 +48,7 @@ const AGE_LABEL_SURFACES = [
   "src/components/admin/family-groups/request-review-card.tsx",
   "src/components/admin/family-groups/login-holder-section.tsx",
   "src/components/admin/family-group-editor.tsx",
-  "src/app/(admin)/admin/family-groups/page.tsx",
+  "src/app/(admin)/admin/membership/family-groups/page.tsx",
   "src/components/admin/family-groups/family-suggestions-panel.tsx",
 ] as const;
 
@@ -58,7 +58,7 @@ const AGE_RENDERERS = [
   "src/components/admin/family-groups/request-review-card.tsx",
   "src/components/admin/family-groups/login-holder-section.tsx",
   "src/components/admin/family-group-editor.tsx",
-  "src/app/(admin)/admin/family-groups/page.tsx",
+  "src/app/(admin)/admin/membership/family-groups/page.tsx",
 ] as const;
 
 // A CALL to the helper, not a mention of its name in a doc comment.
@@ -160,7 +160,7 @@ describe("identity age — which modules may render it (#2568)", () => {
 
   it("keeps the routine family-group overview table free of the age display", () => {
     const page = sourceFiles.find(
-      ({ file }) => file === "src/app/(admin)/admin/family-groups/page.tsx"
+      ({ file }) => file === "src/app/(admin)/admin/membership/family-groups/page.tsx"
     );
     expect(page).toBeTruthy();
 

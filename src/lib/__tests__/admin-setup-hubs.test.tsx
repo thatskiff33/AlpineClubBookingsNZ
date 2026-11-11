@@ -47,7 +47,7 @@ import { IntegrationReadinessSection } from "@/app/(admin)/admin/system/health/_
 import { AdminHubSectionCards } from "@/components/admin-hub-page";
 import { BedDouble, Coins, MessageSquareText } from "lucide-react";
 import IntegrationsHubPage from "@/app/(admin)/admin/integrations/page";
-import MembershipSetupHubPage from "@/app/(admin)/admin/membership-setup/page";
+import MembershipSetupHubPage from "@/app/(admin)/admin/membership/membership-setup/page";
 import { loadAdminSetupPermissionMatrix } from "@/app/(admin)/admin/setup/permission-matrix";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 

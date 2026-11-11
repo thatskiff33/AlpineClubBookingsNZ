@@ -6,7 +6,7 @@
  * the same three fallback questions answer for every unmapped page.
  *
  * A moved page's chips are keyed by its registry old path, as its entry is
- * (C5 #4802, C6 #4803, C7 #4804, C8 #4805; see `admin/finance.ts`).
+ * (C5 #4802, C6 #4803, C7 #4804, C8 #4805, C9 #4806; see `admin/finance.ts`).
  */
 import { getAdminPage } from "@/lib/admin-hubs";
 import type { HelpQuestion } from "./types";
@@ -66,7 +66,7 @@ export const ADMIN_HELP_QUESTIONS: Record<string, HelpQuestion[]> = {
       a: "Booking actions can affect capacity and money, so confirm the date range and payment source before you change state.",
     },
   ],
-  "/admin/members": [
+  [getAdminPage("members").oldPath]: [
     {
       q: "How do I edit a member?",
       a: "Search or filter to the member, use their name or Open to enter the read-only detail page, expand the relevant section, then choose that section's Edit.",
@@ -88,7 +88,7 @@ export const ADMIN_HELP_QUESTIONS: Record<string, HelpQuestion[]> = {
       a: "Use bulk import or update only with reviewed CSV data and a clear rollback expectation.",
     },
   ],
-  "/admin/member-applications": [
+  [getAdminPage("member-applications").oldPath]: [
     {
       q: "What does this page track?",
       a: "Membership applications, nomination progress, and admin approval or rejection.",

@@ -40,7 +40,7 @@ corrected in place, with a paragraph recording what #3123 added, exactly as
 
 ## Routes and pages
 
-file: src/app/(admin)/admin/members/_components/member-import-dialog.tsx
+file: src/app/(admin)/admin/membership/members/_components/member-import-dialog.tsx
 lines: 868
 reason: twelve lines, and they are the browser half of a defect whose server
   half is in `member-csv-import.ts`. The import preview refuses a cancellation

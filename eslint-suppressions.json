@@ -80,7 +80,7 @@
       "count": 3
     }
   },
-  "src/app/(admin)/admin/committee/page.tsx": {
+  "src/app/(admin)/admin/membership/committee/page.tsx": {
     "design-system/no-native-confirm": {
       "count": 1
     },
@@ -154,7 +154,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/family-groups/page.tsx": {
+  "src/app/(admin)/admin/membership/family-groups/page.tsx": {
     "design-system/no-native-confirm": {
       "count": 2
     },
@@ -224,7 +224,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/induction/[id]/print/page.tsx": {
+  "src/app/(admin)/admin/membership/induction/[id]/print/page.tsx": {
     "design-system/no-raw-table": {
       "count": 1
     }
@@ -269,7 +269,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/member-applications/_components/approval-mapping-panel.tsx": {
+  "src/app/(admin)/admin/membership/member-applications/_components/approval-mapping-panel.tsx": {
     "design-system/no-raw-button": {
       "count": 1
     },
@@ -283,12 +283,12 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/member-applications/page.tsx": {
+  "src/app/(admin)/admin/membership/member-applications/page.tsx": {
     "design-system/no-raw-input": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/members/[id]/_components/member-account-access-group.tsx": {
+  "src/app/(admin)/admin/membership/members/[id]/_components/member-account-access-group.tsx": {
     "design-system/no-raw-button": {
       "count": 1
     },
@@ -296,7 +296,7 @@
       "count": 5
     }
   },
-  "src/app/(admin)/admin/members/[id]/_components/member-committee-assignments-card.tsx": {
+  "src/app/(admin)/admin/membership/members/[id]/_components/member-committee-assignments-card.tsx": {
     "design-system/no-native-confirm": {
       "count": 1
     },
@@ -304,7 +304,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/members/[id]/_components/member-dependent-dialog.tsx": {
+  "src/app/(admin)/admin/membership/members/[id]/_components/member-dependent-dialog.tsx": {
     "design-system/no-raw-button": {
       "count": 1
     },
@@ -312,17 +312,17 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/members/[id]/_components/member-family-tree-card.tsx": {
+  "src/app/(admin)/admin/membership/members/[id]/_components/member-family-tree-card.tsx": {
     "jsx-a11y/no-noninteractive-tabindex": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/members/[id]/_components/member-lodge-access-card.tsx": {
+  "src/app/(admin)/admin/membership/members/[id]/_components/member-lodge-access-card.tsx": {
     "design-system/no-raw-input": {
       "count": 2
     }
   },
-  "src/app/(admin)/admin/members/[id]/_components/member-parent-link-dialog.tsx": {
+  "src/app/(admin)/admin/membership/members/[id]/_components/member-parent-link-dialog.tsx": {
     "design-system/no-raw-button": {
       "count": 1
     },
@@ -330,17 +330,17 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/members/[id]/_components/member-xero-create-dialog.tsx": {
+  "src/app/(admin)/admin/membership/members/[id]/_components/member-xero-create-dialog.tsx": {
     "design-system/no-raw-input": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/members/[id]/_hooks/use-member-relationships.ts": {
+  "src/app/(admin)/admin/membership/members/[id]/_hooks/use-member-relationships.ts": {
     "design-system/no-native-confirm": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/members/[id]/merge/page.tsx": {
+  "src/app/(admin)/admin/membership/members/[id]/merge/page.tsx": {
     "design-system/no-raw-button": {
       "count": 1
     },
@@ -348,27 +348,27 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/members/_components/member-editor-dialog.tsx": {
+  "src/app/(admin)/admin/membership/members/_components/member-editor-dialog.tsx": {
     "design-system/no-raw-input": {
       "count": 4
     }
   },
-  "src/app/(admin)/admin/members/_components/member-import-dialog.tsx": {
+  "src/app/(admin)/admin/membership/members/_components/member-import-dialog.tsx": {
     "accessibility/minimum-text-size": {
       "count": 4
     }
   },
-  "src/app/(admin)/admin/members/_components/member-table.tsx": {
+  "src/app/(admin)/admin/membership/members/_components/member-table.tsx": {
     "design-system/no-raw-input": {
       "count": 2
     }
   },
-  "src/app/(admin)/admin/members/_components/member-xero-entrance-fee-fields.tsx": {
+  "src/app/(admin)/admin/membership/members/_components/member-xero-entrance-fee-fields.tsx": {
     "design-system/no-raw-input": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/members/page.tsx": {
+  "src/app/(admin)/admin/membership/members/page.tsx": {
     "design-system/no-raw-button": {
       "count": 1
     }

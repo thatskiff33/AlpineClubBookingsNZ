@@ -122,7 +122,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "admin-membership-application-pending": {
     "defaultSubject": "Membership application ready: {{applicantName}}",
-    "defaultBody": "Membership Application Ready for Review\n\nBoth nominators have now confirmed a new membership application.\n\nApplicant: {{applicantName}}\nEmail: {{applicantEmail}}\n\nDependent family members included in this application: {{familyMemberCount}}\n\nReview Application: {{BASE_URL}}/admin/member-applications\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+    "defaultBody": "Membership Application Ready for Review\n\nBoth nominators have now confirmed a new membership application.\n\nApplicant: {{applicantName}}\nEmail: {{applicantEmail}}\n\nDependent family members included in this application: {{familyMemberCount}}\n\nReview Application: {{BASE_URL}}" + adminHref("member-applications") + "\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
   },
   "membership-application-approved": {
     "defaultSubject": "Your {{CLUB_NAME}} membership has been approved",
@@ -154,7 +154,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "admin-family-group-request": {
     "defaultSubject": "Family Group Request: {{requesterName}} ({{requestType}})",
-    "defaultBody": "Family Group Request\n\nA new {{requestType}} request has been submitted.\n\nRequester: {{requesterName}}\n\nGroup: {{groupName}}\n\n{{details}}\n\nReview Requests: {{BASE_URL}}/admin/family-groups\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+    "defaultBody": "Family Group Request\n\nA new {{requestType}} request has been submitted.\n\nRequester: {{requesterName}}\n\nGroup: {{groupName}}\n\n{{details}}\n\nReview Requests: {{BASE_URL}}" + adminHref("family-groups") + "\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
   },
   "join-request-confirmation": {
     "defaultSubject": "Join request submitted — {{CLUB_BOOKINGS_NAME}}",

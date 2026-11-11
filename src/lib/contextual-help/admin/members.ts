@@ -9,7 +9,7 @@ import { entry, help, type HelpEntry } from "../types";
 
 export const adminMembersHelpEntries: HelpEntry[] = [
   entry(
-    "/admin/member-applications",
+    getAdminPage("member-applications").oldPath,
     help(
       "Applications",
       "This page tracks membership applications, nomination progress, and admin approval or rejection.",
@@ -41,7 +41,7 @@ export const adminMembersHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/family-groups",
+    getAdminPage("family-groups").oldPath,
     help(
       "Family Groups",
       "Family groups link adults and dependents so shared bookings, dependents, inherited emails, and family requests can be reviewed safely. The Suggestions tab surfaces likely family relationships among ungrouped members so admins can create or dismiss groups deliberately.",
@@ -79,7 +79,7 @@ export const adminMembersHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/membership-cancellations",
+    getAdminPage("membership-cancellations").oldPath,
     help(
       "Cancellations",
       "This page handles membership cancellation, archive, and related lifecycle action requests. Its Settings tab holds the cancellation warning and rejoin-process text and the Xero cancellation handling.",
@@ -117,7 +117,7 @@ export const adminMembersHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/members",
+    getAdminPage("members").oldPath,
     help(
       "Members",
       "Members is the main directory for member records, login access, profile data, roles, imports, and member-level actions.",
@@ -191,7 +191,7 @@ export const adminMembersHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/induction",
+    getAdminPage("induction").oldPath,
     help(
       "Induction",
       "Induction pages manage induction templates, sign-offs, and member completion tracking.",

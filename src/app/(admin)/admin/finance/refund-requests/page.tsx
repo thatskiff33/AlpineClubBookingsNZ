@@ -736,7 +736,7 @@ export default function RefundRequestsPage() {
                   const isOwnRequest = session?.user?.id === request.requestedBy.id
                   const isReviewing = reviewingCreditId === request.id
                   const creditLedgerHref = buildHrefWithReturnTo(
-                    `/admin/members/${request.member.id}#account-credit`,
+                    `${adminHref("member-detail", { id: request.member.id })}#account-credit`,
                     currentRefundRequestsPath
                   )
 
@@ -747,7 +747,7 @@ export default function RefundRequestsPage() {
                           <div>
                             <CardTitle className="text-lg">
                               <Link
-                                href={buildHrefWithReturnTo(`/admin/members/${request.member.id}`, currentRefundRequestsPath)}
+                                href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: request.member.id })}`, currentRefundRequestsPath)}
                                 className="hover:underline"
                               >
                                 {request.member.firstName} {request.member.lastName}
@@ -796,7 +796,7 @@ export default function RefundRequestsPage() {
                           <div>
                             <span className="text-muted-foreground">Member:</span>{" "}
                             <Link
-                              href={buildHrefWithReturnTo(`/admin/members/${request.member.id}`, currentRefundRequestsPath)}
+                              href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: request.member.id })}`, currentRefundRequestsPath)}
                               className="text-info-11 hover:underline"
                             >
                               Open member

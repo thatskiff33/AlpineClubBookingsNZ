@@ -1316,7 +1316,7 @@ function buildSeedAdminCheck(
         details: [
           "Run setup:check again inside an environment with database access, or review /admin/setup after login.",
         ],
-        href: "/admin/members",
+        href: adminHref("members"),
       },
       progress,
     );
@@ -1339,7 +1339,7 @@ function buildSeedAdminCheck(
         adminCount > 0
           ? ["Admin login is available."]
           : ["Command: pnpm run db:seed"],
-      href: "/admin/members",
+      href: adminHref("members"),
     },
     progress,
   );
@@ -1676,7 +1676,7 @@ function buildKeyRateHolderCheck(
           ? "A built-in membership type needs repair. Open Membership Types to reactivate it or restore its booking behavior."
           : "Full and Non-Member membership types are ready.",
       details: db ? warnings : ["Check membership types after connecting the database."],
-      href: "/admin/membership-types",
+      href: adminHref("membership-types"),
     },
     progress,
   );

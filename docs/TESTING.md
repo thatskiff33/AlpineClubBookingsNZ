@@ -91,7 +91,7 @@ Not covered: `React.createElement`, an element named through a variable
 
 The pattern is in [`UX_FLOW_MAP.md`](UX_FLOW_MAP.md#forms-4467). A form on it
 is tested in jsdom, like
-`src/app/(admin)/admin/committee/__tests__/committee-role-form.test.tsx`:
+`src/app/(admin)/admin/membership/committee/__tests__/committee-role-form.test.tsx`:
 
 - **Assert the wiring by resolving it.** Read the control's
   `aria-describedby`, look each id up with `document.getElementById`, and

@@ -1,5 +1,6 @@
 "use client"
 
+import { adminHref } from "@/lib/admin-hubs";
 /**
  * The missing-Xero-contact panel (#2939). `INV-INT-022`, `INV-INT-023`.
  *
@@ -179,7 +180,7 @@ function RowList({
           <li key={row.memberId} className="px-3 py-2 text-xs">
             <div className="flex flex-wrap items-center gap-2">
               <a
-                href={buildHrefWithReturnTo(`/admin/members/${row.memberId}`, returnTo)}
+                href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: row.memberId })}`, returnTo)}
                 className="font-medium text-primary hover:underline"
               >
                 {row.memberName}

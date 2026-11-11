@@ -1970,7 +1970,7 @@ describe("the registry is inert", () => {
       "C6: the Seasons & Rates card's link, and the fees and seasons permission checks, are adminHref",
     "src/app/(admin)/admin/lodges/[id]/setup/page.tsx": "C6: the seasons link is adminHref",
     "src/app/(admin)/admin/lodges/_components/other-lodge-season-rates.tsx": "C6: the Fees link is adminHref",
-    "src/app/(admin)/admin/membership-types/page.tsx": "C6: the age tier settings link is adminHref",
+    "src/app/(admin)/admin/membership/membership-types/page.tsx": "C6: the age tier settings link is adminHref",
     "src/app/(admin)/admin/rooms-beds/page.tsx": "C6: its back link is adminLink",
     "src/lib/contextual-help/admin/rates-and-policies.ts":
       "C6: the Rules pages' help is keyed by each page's registry old path",

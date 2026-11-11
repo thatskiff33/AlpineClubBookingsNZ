@@ -99,11 +99,11 @@ const TWO_CALENDAR_YEAR_NAME =
  */
 const ADOPTED = [
   "src/app/(authenticated)/profile/page.tsx",
-  "src/app/(admin)/admin/members/[id]/_components/member-seasonal-membership-card.tsx",
-  "src/app/(admin)/admin/membership-types/page.tsx",
+  "src/app/(admin)/admin/membership/members/[id]/_components/member-seasonal-membership-card.tsx",
+  "src/app/(admin)/admin/membership/membership-types/page.tsx",
   "src/app/api/member/data-export/route.ts",
-  "src/app/(admin)/admin/members/[id]/_components/member-summary-strip.tsx",
-  "src/app/(admin)/admin/members/[id]/_components/member-subscription-history-table.tsx",
+  "src/app/(admin)/admin/membership/members/[id]/_components/member-summary-strip.tsx",
+  "src/app/(admin)/admin/membership/members/[id]/_components/member-subscription-history-table.tsx",
   "src/lib/admin-member-detail-helpers.ts",
   // The four money and provider sites, adopted by #3116. See this file's
   // docblock for why they were held back and what changed.
@@ -119,7 +119,7 @@ const ADOPTED = [
  * remembering to come here. `admin-member-detail-helpers.ts` lives in `src/lib`
  * but builds this screen's section-nav previews, so it is named explicitly.
  */
-const MEMBER_DETAIL_SCREEN_DIR = "src/app/(admin)/admin/members/[id]";
+const MEMBER_DETAIL_SCREEN_DIR = "src/app/(admin)/admin/membership/members/[id]";
 const MEMBER_DETAIL_SCREEN_EXTRA = ["src/lib/admin-member-detail-helpers.ts"];
 
 /** Every non-test `.ts`/`.tsx` under a directory, recursively. */
@@ -188,7 +188,7 @@ describe("the surfaces that adopted the shared derivation (#3103)", () => {
     // The one `seasonYear + 1` left in an adopted file. It seeds the "to season"
     // picker with the NEXT SEASON, so sweeping it would change which season the
     // page rolls assignments into rather than how a season is spelled.
-    expect(read("src/app/(admin)/admin/membership-types/page.tsx")).toContain(
+    expect(read("src/app/(admin)/admin/membership/membership-types/page.tsx")).toContain(
       "defaultSeasonYear + 1",
     );
   });

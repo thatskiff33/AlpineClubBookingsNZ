@@ -1,6 +1,6 @@
 # File-size allowances for #3691 and its #3693 CI repair
 
-file: src/app/(admin)/admin/membership-types/page.tsx
+file: src/app/(admin)/admin/membership/membership-types/page.tsx
 lines: 1903
 reason: the repair control shares the existing membership-type editor draft and
   permission state; splitting only this control would duplicate that state.

@@ -730,7 +730,7 @@ export default function SubscriptionsPage() {
                   <MemberDetailLink
                     canViewMembership={canViewMembership}
                     href={buildHrefWithReturnTo(
-                      `/admin/members/${sub.memberId}`,
+                      `${adminHref("member-detail", { id: sub.memberId })}`,
                       currentSubscriptionsPath,
                     )}
                     className="rounded-sm text-foreground hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

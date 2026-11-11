@@ -423,7 +423,7 @@ export default async function AdminDashboardPage() {
     canViewAdminHrefWithMatrix(permissionMatrix, "/admin/bed-allocation");
   const canViewMembers = canViewAdminHrefWithMatrix(
     permissionMatrix,
-    "/admin/members",
+    adminHref("members"),
   );
   const canViewPayments = canViewAdminHrefWithMatrix(
     permissionMatrix,
@@ -573,7 +573,7 @@ export default async function AdminDashboardPage() {
       )}
 
       {stats.pendingDeletionRequests > 0 && (
-        <Link href="/admin/deletion-requests?status=PENDING">
+        <Link href={`${adminHref("deletion-requests")}?status=PENDING`}>
           <Card className="border-danger-6 bg-danger-3 hover:shadow-md transition-shadow cursor-pointer">
             <CardContent className="flex items-start gap-3 pt-5">
               <Trash2 className="h-5 w-5 text-danger-11 flex-shrink-0 mt-0.5" />
@@ -593,7 +593,7 @@ export default async function AdminDashboardPage() {
       )}
 
       {stats.pendingMembershipReviews > 0 && (
-        <Link href="/admin/membership-cancellations">
+        <Link href={adminHref("membership-cancellations")}>
           <Card className="border-warning-6 bg-warning-3 hover:shadow-md transition-shadow cursor-pointer">
             <CardContent className="flex items-start gap-3 pt-5">
               <UserX className="h-5 w-5 text-warning-11 flex-shrink-0 mt-0.5" />
@@ -741,7 +741,7 @@ export default async function AdminDashboardPage() {
       {showSecondaryRow && (
         <div className="grid gap-4 sm:grid-cols-2">
           {canViewMembers && (
-            <Link href="/admin/members" className="group">
+            <Link href={adminHref("members")} className="group">
               <Card className="border-border bg-card hover:shadow-sm transition-shadow cursor-pointer">
                 <CardContent className="flex items-center justify-between gap-3 py-4">
                   <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
@@ -890,7 +890,7 @@ export default async function AdminDashboardPage() {
             </CardHeader>
             <CardContent>
               <Button asChild variant="outline" size="sm" className="w-full">
-                <Link href="/admin/members">
+                <Link href={adminHref("members")}>
                   Manage Members
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>

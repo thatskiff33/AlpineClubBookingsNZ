@@ -22,6 +22,7 @@ import type { ChangeRequestPromoChange } from "@/lib/booking-change-request-prom
 import type { ClubFormat } from "@/lib/club-format";
 import type { OverCapacityNight } from "@/lib/over-capacity-confirmation";
 import { formatCents } from "@/lib/utils";
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * #3750: the parts of a locked-period change-request card that exist because
@@ -366,7 +367,7 @@ export function RequestedGuestAdds({
               — member (
               <Link
                 className="text-info-11 hover:underline"
-                href={returnTo(`/admin/members/${guest.memberId}`)}
+                href={returnTo(`${adminHref("member-detail", { id: guest.memberId })}`)}
               >
                 open member
               </Link>

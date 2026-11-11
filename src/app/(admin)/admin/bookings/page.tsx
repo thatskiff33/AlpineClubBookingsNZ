@@ -74,6 +74,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { adminHref } from "@/lib/admin-hubs";
 export function formatAdminBookingGuestCount(totalGuests: number, nonMemberGuests: number) {
   return `${totalGuests} (${nonMemberGuests} non-member${nonMemberGuests === 1 ? "" : "s"})`;
 }
@@ -675,7 +676,7 @@ export default async function AdminBookingsPage({
                     <TableCell>
                       {owner.id ? (
                         <Link
-                          href={buildHrefWithReturnTo(`/admin/members/${owner.id}`, currentBookingsPath)}
+                          href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: owner.id })}`, currentBookingsPath)}
                           className="group inline-block rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         >
                           <span className="block text-sm font-medium text-foreground group-hover:text-primary group-hover:underline">

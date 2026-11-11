@@ -223,23 +223,11 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         label,
         icon,
       })),
-      {
-        href: "/admin/member-applications",
-        label: "Applications",
-        icon: ClipboardList,
-      },
-      { href: "/admin/family-groups", label: "Family Groups", icon: Users },
+      { ...adminLink("member-applications"), icon: ClipboardList },
+      { ...adminLink("family-groups"), icon: Users },
       { ...adminLink("refund-requests"), icon: RotateCcw },
-      {
-        href: "/admin/membership-cancellations",
-        label: "Cancellation Requests",
-        icon: UserX,
-      },
-      {
-        href: "/admin/deletion-requests",
-        label: "Deletion Requests",
-        icon: Trash2,
-      },
+      { ...adminLink("membership-cancellations"), icon: UserX },
+      { ...adminLink("deletion-requests"), icon: Trash2 },
       { ...adminLink("issue-reports"), icon: Bug },
       { href: "/admin/hut-leaders", label: "Hut Leaders", icon: Bell },
     ],
@@ -297,34 +285,18 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
   {
     label: "Members",
     items: [
-      {
-        href: "/admin/members",
-        label: "Members",
-        icon: Users,
-      },
+      { ...adminLink("members"), icon: Users },
       { ...adminLink("subscriptions"), icon: FileText },
-      {
-        href: "/admin/member-applications",
-        label: "Applications",
-        icon: ClipboardList,
-      },
-      {
-        href: "/admin/membership-cancellations",
-        label: "Cancellation Requests",
-        icon: UserX,
-      },
-      { href: "/admin/induction", label: "Induction", icon: ClipboardCheck },
+      { ...adminLink("member-applications"), icon: ClipboardList },
+      { ...adminLink("membership-cancellations"), icon: UserX },
+      { ...adminLink("induction"), icon: ClipboardCheck },
       { ...adminLink("communications"), icon: Mail },
       { ...adminLink("message-board"), icon: MessageSquare },
       { ...adminLink("notices"), icon: Newspaper },
       // Lockers is lodge-scoped (#130, ADR-005) — reached via the lodge hub's
       // "Lockers" card, not a standalone sidebar entry. The command palette
       // offers it (S2 #4797); the page picks a lodge itself.
-      {
-        href: "/admin/family-groups",
-        label: "Family Groups",
-        icon: Users,
-      },
+      { ...adminLink("family-groups"), icon: Users },
     ],
   },
   {
@@ -407,11 +379,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         icon: Stethoscope,
       },
       { ...adminLink("audit-log"), icon: Shield },
-      {
-        href: "/admin/deletion-requests",
-        label: "Deletion Requests",
-        icon: Trash2,
-      },
+      { ...adminLink("deletion-requests"), icon: Trash2 },
     ],
   },
   {
@@ -425,11 +393,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         icon: LockKeyhole,
       },
       { href: "/admin/lodges", label: "Lodges", icon: Building2 },
-      {
-        href: "/admin/membership-setup",
-        label: "Membership & Members",
-        icon: BadgeCheck,
-      },
+      { ...adminLink("membership-setup"), icon: BadgeCheck },
       { ...adminLink("appearance"), icon: Palette },
       { ...adminLink("bookings-setup"), icon: BedDouble },
       {
@@ -480,7 +444,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         icon: ServerCog,
         fullAdminOnly: true,
       },
-      { href: "/admin/committee", label: "Committee", icon: UsersRound },
+      { ...adminLink("committee"), icon: UsersRound },
     ],
   },
 ];
@@ -829,10 +793,10 @@ function SidebarLinks({
   // Map href -> badge count
   const badges: Record<string, number> = {};
   if (counts.memberApplications > 0) {
-    badges["/admin/member-applications"] = counts.memberApplications;
+    badges[adminHref("member-applications")] = counts.memberApplications;
   }
   if (counts.familyRequests > 0) {
-    badges["/admin/family-groups"] = counts.familyRequests;
+    badges[adminHref("family-groups")] = counts.familyRequests;
   }
   const bookingRequestCount =
     counts.bookingReviews +
@@ -867,7 +831,7 @@ function SidebarLinks({
     badges[adminHref("payments")] = counts.manualRefundTasks;
   }
   if (counts.membershipCancellations + counts.archiveRequests > 0) {
-    badges["/admin/membership-cancellations"] =
+    badges[adminHref("membership-cancellations")] =
       counts.membershipCancellations + counts.archiveRequests;
   }
   // The deletion-requests page hosts two flows: self-service account deletions
@@ -875,7 +839,7 @@ function SidebarLinks({
   // (memberDeleteRequests, DELETE requests status REQUESTED). Merge both into
   // one attention badge, mirroring the cancellations+archive merge above (#1938).
   if (counts.deletionRequests + counts.memberDeleteRequests > 0) {
-    badges["/admin/deletion-requests"] =
+    badges[adminHref("deletion-requests")] =
       counts.deletionRequests + counts.memberDeleteRequests;
   }
   if (counts.issueReports > 0) {

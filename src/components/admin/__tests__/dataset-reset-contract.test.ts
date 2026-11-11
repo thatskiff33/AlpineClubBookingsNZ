@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest"
 vi.setConfig({ testTimeout: 30_000 })
 
 const INCLUDED_DATASETS = [
-  ["Members", "src/app/(admin)/admin/members/_components/member-filter-toolbar.tsx"],
+  ["Members", "src/app/(admin)/admin/membership/members/_components/member-filter-toolbar.tsx"],
   ["Bookings", "src/components/admin/booking-filters.tsx"],
   ["Payments", "src/app/(admin)/admin/finance/payments/page.tsx"],
   ["Subscriptions", "src/app/(admin)/admin/finance/subscriptions/page.tsx"],
@@ -16,11 +16,11 @@ const INCLUDED_DATASETS = [
   ["Waitlist", "src/app/(admin)/admin/waitlist/page.tsx"],
   ["Xero Operations", "src/app/(admin)/admin/finance/xero/_components/operations-panel.tsx"],
   ["Xero Inbound Events", "src/app/(admin)/admin/finance/xero/_components/inbound-events-panel.tsx"],
-  ["Family Groups", "src/app/(admin)/admin/family-groups/page.tsx"],
+  ["Family Groups", "src/app/(admin)/admin/membership/family-groups/page.tsx"],
   ["Issue Reports", "src/app/(admin)/admin/system/issue-reports/page.tsx"],
-  ["Deletion Requests", "src/app/(admin)/admin/deletion-requests/deletion-requests-client.tsx"],
-  ["Membership Cancellations", "src/app/(admin)/admin/membership-cancellations/page.tsx"],
-  ["Member Applications", "src/app/(admin)/admin/member-applications/page.tsx"],
+  ["Deletion Requests", "src/app/(admin)/admin/membership/deletion-requests/deletion-requests-client.tsx"],
+  ["Membership Cancellations", "src/app/(admin)/admin/membership/membership-cancellations/page.tsx"],
+  ["Member Applications", "src/app/(admin)/admin/membership/member-applications/page.tsx"],
   ["Booking Request Approvals", "src/components/admin/booking-requests/booking-approvals-panel.tsx"],
   ["Booking Request Changes", "src/components/admin/booking-requests/booking-change-requests-panel.tsx"],
   ["Public Booking Requests", "src/components/admin/booking-requests/public-booking-requests-panel.tsx"],

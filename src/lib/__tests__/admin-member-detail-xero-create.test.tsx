@@ -5,7 +5,7 @@ import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support
 import type { ReactNode } from "react";
 import { Suspense } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import MemberDetailPage from "@/app/(admin)/admin/members/[id]/page";
+import MemberDetailPage from "@/app/(admin)/admin/membership/members/[id]/page";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 
 const fetchMock = vi.fn();
@@ -39,7 +39,7 @@ vi.mock("@/components/member-address-fields", () => ({
 }));
 
 vi.mock(
-  "@/app/(admin)/admin/members/[id]/_components/member-lodge-access-card",
+  "@/app/(admin)/admin/membership/members/[id]/_components/member-lodge-access-card",
   () => ({ MemberLodgeAccessCard: () => null }),
 );
 

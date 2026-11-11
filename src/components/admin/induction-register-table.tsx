@@ -33,6 +33,7 @@ import {
   INDUCTION_STATUS_LABELS,
 } from "@/lib/induction-display";
 
+import { adminHref } from "@/lib/admin-hubs";
 interface RegisterRow {
   id: string;
   kind: InductionKind;
@@ -518,7 +519,7 @@ export function InductionRegisterTable() {
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1">
                           <Button asChild size="sm" variant="outline">
-                            <Link href={`/admin/induction/${row.id}/print`}>
+                            <Link href={`${adminHref("induction-print", { id: row.id })}`}>
                               View
                             </Link>
                           </Button>

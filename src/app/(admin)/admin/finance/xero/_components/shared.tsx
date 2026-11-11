@@ -32,6 +32,7 @@ import type {
   XeroReferenceCacheMeta,
 } from "./types"
 
+import { adminHref } from "@/lib/admin-hubs";
 export type ToggleSection = (section: SectionKey, nextOpen: boolean) => void
 
 export function SectionCard({
@@ -413,7 +414,7 @@ export function SyncReportView({
         {report.updated.map((member, index) => (
           <div key={`${member.memberId}-${index}`} className="flex items-start justify-between border-b py-1 text-xs last:border-0">
             <div>
-              <a href={buildHrefWithReturnTo(`/admin/members/${member.memberId}`, returnTo)} className="font-medium text-primary hover:underline">
+              <a href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: member.memberId })}`, returnTo)} className="font-medium text-primary hover:underline">
                 {member.name}
               </a>
               <ul className="mt-0.5 list-inside list-disc text-muted-foreground">
@@ -433,7 +434,7 @@ export function SyncReportView({
         {report.skippedNameMismatch.map((mismatch) => (
           <div key={`${mismatch.memberId}-${mismatch.xeroContactId}`} className="flex items-start justify-between gap-3 border-b py-1 text-xs last:border-0">
             <div>
-              <a href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, returnTo)} className="font-medium text-primary hover:underline">
+              <a href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: mismatch.memberId })}`, returnTo)} className="font-medium text-primary hover:underline">
                 {mismatch.memberName}
               </a>
               <p className="text-muted-foreground">{mismatch.memberEmail}</p>

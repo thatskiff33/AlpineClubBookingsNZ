@@ -82,7 +82,7 @@ vi.mock("@/components/admin/induction-template-manager", () => ({
 }));
 
 import BookingPeriodsPage from "@/app/(admin)/admin/rules/booking-policies/periods/page";
-import AdminMembershipTypesPage from "@/app/(admin)/admin/membership-types/page";
+import AdminMembershipTypesPage from "@/app/(admin)/admin/membership/membership-types/page";
 import SiteContentAdminPage from "@/app/(admin)/admin/website/site-content/page";
 // #2046: the five Lobby Display leaves and the converted [id]-aware drill-downs.
 import DisplayDevicesPage from "@/app/(admin)/admin/display/devices/page";
@@ -98,8 +98,8 @@ import DisplaySetupPage from "@/app/(admin)/admin/display/setup/page";
 import LodgeDisplaySettingsPage from "@/app/(admin)/admin/lodges/[id]/display/page";
 import LodgeRosterSettingsPage from "@/app/(admin)/admin/lodges/[id]/roster/page";
 import XeroRecordActivityPage from "@/app/(admin)/admin/finance/xero/records/[localModel]/[localId]/page";
-import AdminInductionSettingsPage from "@/app/(admin)/admin/induction/settings/page";
-import { MemberDetailHeader } from "@/app/(admin)/admin/members/[id]/_components/member-detail-header";
+import AdminInductionSettingsPage from "@/app/(admin)/admin/membership/induction/settings/page";
+import { MemberDetailHeader } from "@/app/(admin)/admin/membership/members/[id]/_components/member-detail-header";
 
 /**
  * Every admin leaf renders inside the app shell, which since CT-4 (#2870)
@@ -281,7 +281,7 @@ describe("admin drill-down leaf back links", () => {
 //   - src/app/(admin)/admin/lodges/[id]/page.tsx (error fallback → /admin/lodges)
 //   - src/app/(admin)/admin/lodges/[id]/setup/page.tsx (main → lodge config; and
 //     the "not found" fallback → /admin/lodges)
-//   - src/app/(admin)/admin/members/[id]/page.tsx (error fallback → returnTo)
-//   - src/app/(admin)/admin/members/[id]/merge/page.tsx (→ master member)
+//   - src/app/(admin)/admin/membership/members/[id]/page.tsx (error fallback → returnTo)
+//   - src/app/(admin)/admin/membership/members/[id]/merge/page.tsx (→ master member)
 // The Xero record activity page (dynamic returnTo) is covered by the async
 // server-render case immediately above.
