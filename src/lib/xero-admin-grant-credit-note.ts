@@ -157,7 +157,17 @@ export async function createAdminGrantCreditNote(input: {
       workflow: "createAdminGrantCreditNote",
       operationId: syncOperation.id,
       createdByMemberId: operation.createdByMemberId ?? undefined,
-      buildRequestPayload: (resolvedContactId) => ({ creditNotes: [buildCreditNote(resolvedContactId)] }),
+      // A contact repair replaces the stored payload with this object (#3791).
+      // The queue fields have to stay on it: the next outbox pass reads
+      // `queueType` from the payload, and without it the row stays pending
+      // and the credit never receives its note.
+      buildRequestPayload: (resolvedContactId) => ({
+        creditNotes: [buildCreditNote(resolvedContactId)],
+        queueType: payload.queueType,
+        amountCents: payload.amountCents,
+        mappingKey: payload.mappingKey,
+        memberCreditId: payload.memberCreditId,
+      }),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(
           () =>
