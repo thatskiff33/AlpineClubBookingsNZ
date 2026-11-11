@@ -322,12 +322,17 @@ export async function verifyTwoFactorEmailCode(memberId: string, code: string) {
 }
 
 /** Prefixed into the hashed session challenge before the secret. */
-export type TwoFactorChallengeProof = "TOTP" | "EMAIL" | "RECOVERY";
+export type TwoFactorChallengeProof = "TOTP" | "EMAIL" | "RECOVERY" | "PASSKEY";
 
 function isTwoFactorChallengeProof(
   value: unknown,
 ): value is TwoFactorChallengeProof {
-  return value === "TOTP" || value === "EMAIL" || value === "RECOVERY";
+  return (
+    value === "TOTP" ||
+    value === "EMAIL" ||
+    value === "RECOVERY" ||
+    value === "PASSKEY"
+  );
 }
 
 /**
@@ -350,7 +355,7 @@ export function twoFactorChallengeProofKind(
 // by the jwt callback, so a client-forged POST to /api/auth/session can never
 // flip twoFactorVerified.
 //
-// The proof kind is a prefix of that token (`TOTP.`, `EMAIL.`, `RECOVERY.`)
+// The proof kind is a prefix of that token (`TOTP.`, `EMAIL.`, `RECOVERY.`, `PASSKEY.`)
 // and is inside the hashed secret, so swapping the prefix fails the hash.
 //
 // Not refused while a ring is missing (#4456 review): short-lived, like the email

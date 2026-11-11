@@ -37,6 +37,6 @@ export async function POST(request: NextRequest) {
     await recordTwoFactorFailure(guard.member.id);
     return passkeyJsonError(result.status, result.error);
   }
-  await markTwoFactorSessionVerified();
+  await markTwoFactorSessionVerified("PASSKEY");
   return NextResponse.json({ ok: true });
 }
