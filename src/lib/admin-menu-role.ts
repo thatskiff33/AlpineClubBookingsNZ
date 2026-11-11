@@ -18,11 +18,8 @@ import {
   type AccessRoleAssignmentInput,
   type PrivilegeCheckInput,
 } from "@/lib/access-roles";
-import { ADMIN_HUBS, ADMIN_PAGES } from "@/lib/admin-hubs";
-import {
-  isAdminMenuDestination,
-  type AdminHubPage,
-} from "@/lib/admin-hubs/define";
+import { ADMIN_HUBS, ADMIN_MENU_DESTINATIONS } from "@/lib/admin-hubs";
+import type { AdminHubPage } from "@/lib/admin-hubs/define";
 import {
   ADMIN_PERMISSION_AREAS,
   canAccessConsolidatedFeesPage,
@@ -122,9 +119,8 @@ export function hubsForRoleMatrix(
   );
   if (editsEverything) return everyHub();
 
-  const destinations = ADMIN_PAGES.filter(isAdminMenuDestination);
   const editable = new Set<string>();
-  for (const page of destinations) {
+  for (const { page } of ADMIN_MENU_DESTINATIONS) {
     if (destinationEditable(page, matrix)) editable.add(page.hub);
   }
   if (editable.size > 0) {
@@ -135,7 +131,7 @@ export function hubsForRoleMatrix(
   }
 
   const viewable = new Set<string>();
-  for (const page of destinations) {
+  for (const { page } of ADMIN_MENU_DESTINATIONS) {
     if (destinationViewable(page, matrix)) viewable.add(page.hub);
   }
   return hubKeysInOrder(viewable);
