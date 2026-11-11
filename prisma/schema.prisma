@@ -371,6 +371,13 @@ enum AdminCreditAdjustmentRequestStatus {
   REJECTED
 }
 
+/// Which Xero account a positive manual credit grant's note posts to (#4431).
+/// No default: a request made before the choice existed stays null.
+enum AdminCreditGrantAccount {
+  MEMBER_OWN_MONEY
+  GOODWILL
+}
+
 enum BookingChangeRequestStatus {
   REQUESTED
   APPROVED
@@ -7622,6 +7629,8 @@ model AdminCreditAdjustmentRequest {
   memberId       String
   amountCents    Int
   description    String
+  /// Null on a deduction, and on a grant requested before an account was chosen.
+  grantAccount   AdminCreditGrantAccount?
   idempotencyKey String
   status         AdminCreditAdjustmentRequestStatus @default(PENDING)
   requestedById  String

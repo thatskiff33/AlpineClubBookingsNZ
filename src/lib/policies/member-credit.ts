@@ -1,4 +1,6 @@
 // test seam
+import type { AdminCreditGrantAccount } from "@/lib/admin-credit-grant-account";
+import { isAdminCreditGrantAccount } from "@/lib/admin-credit-grant-account";
 import { formatCents, formatSignedCents } from "@/lib/utils";
 
 import type { ClubFormat } from "@/lib/club-format";
@@ -17,6 +19,23 @@ export interface AdminAdjustmentRequestComparison {
   amountCents: number;
   description: string;
   requestedById: string;
+  grantAccount: AdminCreditGrantAccount | null;
+}
+
+/**
+ * A positive grant names one of the two accounts. A deduction names none.
+ * A positive request stored without one cannot be approved later by guessing.
+ */
+export function assertGrantAccountMatchesAmount(
+  amountCents: number,
+  grantAccount: AdminCreditGrantAccount | null,
+): void {
+  if (amountCents > 0 && !isAdminCreditGrantAccount(grantAccount)) {
+    throw new MemberCreditValidationError("Choose which account this credit belongs to.");
+  }
+  if (amountCents < 0 && grantAccount !== null) {
+    throw new MemberCreditValidationError("A deduction does not choose a Xero account.");
+  }
 }
 
 export interface CreditAmountEntry {
@@ -100,7 +119,8 @@ export function assertMatchingIdempotentAdjustmentRequest(
     request.memberId !== expected.memberId ||
     request.amountCents !== expected.amountCents ||
     request.description !== expected.description ||
-    request.requestedById !== expected.requestedById
+    request.requestedById !== expected.requestedById ||
+    request.grantAccount !== expected.grantAccount
   ) {
     throw new MemberCreditValidationError(ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT);
   }
