@@ -12,10 +12,7 @@ import {
 import { MEMBER_PRIVILEGE_CHECK_SELECT } from "@/lib/access-role-definitions";
 import { buildLoginPath } from "@/lib/auth-redirect";
 import { prisma } from "@/lib/prisma";
-import {
-  buildTwoFactorGatePath,
-  isTwoFactorSessionBlocked,
-} from "@/lib/two-factor-gate";
+import { factorGateRedirect } from "@/lib/two-factor-gate";
 
 export type FinanceAccessMember = {
   id: string;
@@ -76,19 +73,14 @@ export async function requireFinanceViewer(
     redirect("/change-password");
   }
 
-  if (
-    isTwoFactorSessionBlocked({
-      sessionUser: session.user,
-      member,
-    })
-  ) {
-    redirect(
-      buildTwoFactorGatePath({
-        sessionUser: session.user,
-        member,
-        callbackPath,
-      }),
-    );
+  const factorGate = factorGateRedirect({
+    sessionUser: session.user,
+    member,
+    callbackPath,
+    pathname: callbackPath,
+  });
+  if (factorGate) {
+    redirect(factorGate);
   }
 
   if (!hasFinanceViewerAccess(member)) {

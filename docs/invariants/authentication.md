@@ -210,9 +210,8 @@ This file holds only the rules.
   is stored, or the session already says enrolled.
 - **An officer's second factor is an authenticator app or a passkey.**
   `satisfiesOfficerSecondFactor` is true for a stored passkey, or for the flag
-  on with method `TOTP`. Email never qualifies. Nothing enforces that rule yet
-  (#4618). Removing the last such factor calls `assertLastFactorRemovable`,
-  which allows the removal until that issue replaces it.
+  on with method `TOTP`. Email never qualifies. Who must enrol, and the refusal
+  to remove their last such factor, are `INV-AUTH-010`.
 - **The relying party comes from `NEXTAUTH_URL`.** The id is its hostname and
   the expected origin is its origin. A missing or unparseable URL throws. No
   host is hardcoded (`INV-CONFIG-001`).
@@ -226,3 +225,27 @@ This file holds only the rules.
   counter still equal the verified value; a lost claim is refused and audited.
   Audit metadata is the passkey name or credential id and the two counters,
   never the public key.
+
+## INV-AUTH-010
+
+- **The officer requirement is recomputed on every session refresh.**
+  `isOfficerTwoFactorRequired` is the only "must enrol" check. It is true only
+  when the release constant is on, the club policy is on, the member is not the
+  lodge kiosk, they can still sign in, and they are a Full Admin or hold a role
+  that requires it. Full Admin stays required whatever a role definition says.
+  Not required drops only that role. `twoFactorRequired` stays the club-wide
+  module and is not this rule.
+- **Only an authenticator app or a passkey satisfies it.** That check is
+  `satisfiesOfficerSecondFactor` (`INV-AUTH-009`). An emailed code does not.
+- **Grace starts once, on first exposure, and a reset does not start another.**
+  The deadline is a club civil date (`INV-DATE`). After it, only the enrolment
+  pages, the profile security card, and sign-out stay open. While the release
+  constant is off, nobody is required and nothing is stamped. #4620 is the edit
+  that turns the constant on.
+- **A required officer cannot remove their last satisfying factor.**
+  `assertLastFactorRemovable` refuses that delete. A member the rule does not
+  require can still remove a passkey.
+- **A lost factor has a way back.** Any other Full Admin may reset it after
+  their own step-up, never themselves. The officer is emailed and their
+  sessions end. The operator command is the way back when that Full Admin is
+  the only one.

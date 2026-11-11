@@ -22,7 +22,10 @@ import type {
 
 import { getClubIdentitySync } from "@/lib/club-identity-settings";
 import { prisma } from "@/lib/prisma";
-import { assertEnrolmentNotSuperseded } from "@/lib/officer-factor-reset";
+import {
+  assertEnrolmentNotSuperseded,
+  FactorResetBlocksEnrolmentError,
+} from "@/lib/officer-factor-reset";
 import {
   assertLastFactorRemovable,
   LastOfficerFactorError,
@@ -299,6 +302,13 @@ export async function verifyPasskeyRegistration(input: {
   } catch (error) {
     if (error instanceof PasskeyCapError) {
       return { ok: false, status: 409, error: "You can save up to 10 passkeys." };
+    }
+    if (error instanceof FactorResetBlocksEnrolmentError) {
+      return {
+        ok: false,
+        status: 409,
+        error: "Sign in again before adding a passkey.",
+      };
     }
     if (isUniqueConflict(error)) {
       return { ok: false, status: 409, error: "That passkey is already saved." };

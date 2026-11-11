@@ -38,7 +38,10 @@ import {
   loadSessionMemberSecurity,
 } from "./session-member-security";
 import { loadEffectiveModuleFlags } from "./module-settings";
-import { loadClubSessionMaxAgeHours } from "./login-security-settings";
+import { loadLoginSecurityRefresh } from "./login-security-settings";
+import { OFFICER_SIGN_IN_RELEASE_ENABLED } from "./officer-sign-in-release";
+import { resolveOfficerTwoFactorClaims } from "./officer-two-factor";
+import { clubTimeZone } from "./club-time/server";
 import { isSessionPastMaxAge } from "./session-max-age";
 import {
   ACCOUNT_SESSION_IDLE_SECONDS,
@@ -136,6 +139,14 @@ declare module "next-auth" {
       twoFactorRequired: boolean;
       twoFactorVerified: boolean;
       twoFactorEnrolled: boolean;
+      /**
+       * Officer rule (#4618). Independent of `twoFactorRequired`, which stays
+       * the club-wide module. Absent on a token that has not been refreshed.
+       */
+      officerTwoFactorRequired?: boolean;
+      twoFactorSatisfiesOfficer?: boolean;
+      /** Epoch ms, or null when they are not required or they already satisfy. */
+      officerTwoFactorGraceEndsAt?: number | null;
       /** A passkey is stored. The public key is not. Absent means none. */
       hasPasskey?: boolean;
       twoFactorMethod: "TOTP" | "EMAIL" | null;
@@ -609,8 +620,8 @@ export const authConfig = {
           token.twoFactorVerified = true;
           token.twoFactorVerifiedByChallenge = true;
           // The kind is the prefix of the hashed token, not a session field.
-          // Only an authenticator app starts the clock. A miss never clears
-          // a stamp that is already there.
+          // An authenticator app or a passkey starts the clock. A miss never
+          // clears a stamp that is already there.
           const proof = recentAuthSignInProofFromChallengeKind(
             twoFactorChallengeProofKind(challengeToken),
           );
@@ -659,20 +670,48 @@ export const authConfig = {
         const member = await loadSessionMemberSecurity(token.id);
 
         if (member) {
-          const [modules, clubSessionMaxAgeHours] = await Promise.all([
+          const [modules, loginSecurity] = await Promise.all([
             loadEffectiveModuleFlags(),
-            // #4611: read on every refresh, so a changed setting reaches
-            // existing sessions on their next one.
-            loadClubSessionMaxAgeHours(),
+            // #4611 and #4618: session age and the officer policy, one read
+            // on every refresh, so a changed setting reaches existing sessions
+            // on their next one.
+            loadLoginSecurityRefresh(),
           ]);
+          const clubSessionMaxAgeHours = loginSecurity.sessionMaxAgeHours;
           const twoFactorRequired = modules.twoFactor === true;
+          // The officer claims are a separate fact from the module flag.
+          // While the release is off they stay false and nothing is stamped.
+          const zone = OFFICER_SIGN_IN_RELEASE_ENABLED ? await clubTimeZone() : null;
+          const officerClaims = await resolveOfficerTwoFactorClaims({
+            releaseEnabled: OFFICER_SIGN_IN_RELEASE_ENABLED,
+            policyEnabled: loginSecurity.officerTwoFactorPolicy,
+            graceDays: loginSecurity.officerTwoFactorGraceDays,
+            member: {
+              id: token.id,
+              canLogin: member.canLogin,
+              role: member.role,
+              financeAccessLevel: member.financeAccessLevel,
+              accessRoles: member.accessRoles,
+              twoFactorEnabled: member.twoFactorEnabled,
+              twoFactorMethod: member.twoFactorMethod,
+              hasPasskey: member.hasPasskey,
+              twoFactorGraceStartedAt: member.twoFactorGraceStartedAt,
+              factorsResetAt: member.factorsResetAt,
+            },
+            zone,
+            now: new Date(),
+          });
           // An email factor does not count as owed: the password step is the
           // proof, and the emailed code never starts or refreshes the clock.
-          // A later refresh has no `user`, so it cannot stamp again.
+          // A later refresh has no `user`, so it cannot stamp again. A required
+          // officer who already has an authenticator app does not get a
+          // password stamp even when the club-wide module is off. A passkey
+          // does not set twoFactorEnabled, so a passkey-only officer's
+          // password sign-in still stamps.
           const owesAuthenticatorApp =
-            twoFactorRequired &&
             member.twoFactorEnabled === true &&
-            member.twoFactorMethod !== "EMAIL";
+            member.twoFactorMethod !== "EMAIL" &&
+            (twoFactorRequired || officerClaims.officerTwoFactorRequired);
           if (
             passwordSignIn &&
             recentAuthSignInCounts("password", owesAuthenticatorApp)
@@ -730,6 +769,9 @@ export const authConfig = {
             isRevokedMemberSession(member, sessionIssuedAt, token.id) ||
             pastMaxAge;
           token.twoFactorRequired = twoFactorRequired;
+          token.officerTwoFactorRequired = officerClaims.officerTwoFactorRequired;
+          token.twoFactorSatisfiesOfficer = officerClaims.twoFactorSatisfiesOfficer;
+          token.officerTwoFactorGraceEndsAt = officerClaims.officerTwoFactorGraceEndsAt;
           const enrolled = isSecondFactorEnrolled({
             twoFactorEnabled: member.twoFactorEnabled,
             hasPasskey: member.hasPasskey,
@@ -768,6 +810,9 @@ export const authConfig = {
           // session.
           token.sessionInvalidated = true;
           token.kioskAccount = false;
+          token.officerTwoFactorRequired = false;
+          token.twoFactorSatisfiesOfficer = false;
+          token.officerTwoFactorGraceEndsAt = null;
         }
       }
 
@@ -812,6 +857,12 @@ export const authConfig = {
         session.user.lastAuthenticatedAt = token.lastAuthenticatedAt;
       }
       session.user.twoFactorRequired = Boolean(token.twoFactorRequired);
+      session.user.officerTwoFactorRequired = token.officerTwoFactorRequired === true;
+      session.user.twoFactorSatisfiesOfficer = token.twoFactorSatisfiesOfficer === true;
+      session.user.officerTwoFactorGraceEndsAt =
+        typeof token.officerTwoFactorGraceEndsAt === "number"
+          ? token.officerTwoFactorGraceEndsAt
+          : null;
       session.user.twoFactorVerified = Boolean(token.twoFactorVerified);
       session.user.twoFactorEnrolled = Boolean(token.twoFactorEnrolled);
       session.user.hasPasskey = token.hasPasskey === true;

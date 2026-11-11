@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { clubFormat } from "@/lib/club-format-server";
+import { clubFormat, clubFormatValues } from "@/lib/club-format-server";
 import type { BoundClubFormat } from "@/lib/club-format-bound";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { seasonSelectLabel } from "@/lib/season-label";
@@ -52,6 +52,7 @@ import { getFirstAccessibleAdminHref } from "@/lib/admin-permissions";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { clubTime } from "@/lib/club-time/server";
+import { formatOfficerGraceDeadline } from "@/lib/officer-two-factor-grace";
 import { formatDateOnly } from "@/lib/date-only";
 import {
   grantSelfDietaryAccess,
@@ -265,8 +266,26 @@ export default async function ProfilePage({
     select: { id: true, name: true, createdAt: true },
     orderBy: { createdAt: "asc" },
   });
+  const officerTwoFactorRequired = session.user.officerTwoFactorRequired === true;
+  const officerTwoFactorSatisfied = session.user.twoFactorSatisfiesOfficer === true;
+  let officerGraceLabel: string | null = null;
+  if (
+    officerTwoFactorRequired &&
+    !officerTwoFactorSatisfied &&
+    typeof session.user.officerTwoFactorGraceEndsAt === "number"
+  ) {
+    const format = await clubFormatValues();
+    officerGraceLabel = formatOfficerGraceDeadline(
+      new Date(session.user.officerTwoFactorGraceEndsAt),
+      club.zone,
+      format,
+    );
+  }
   const showTwoFactorSecurityCard =
-    modules.twoFactor || member.twoFactorEnabled || passkeyRows.length > 0;
+    modules.twoFactor ||
+    member.twoFactorEnabled ||
+    passkeyRows.length > 0 ||
+    officerTwoFactorRequired;
   // #4456: codes retired by a key change; the card tells the member to replace them.
   const recoveryCodesRetired =
     member.twoFactorEnabled && (await memberHoldsRetiredRecoveryCodes(member.id));
@@ -452,6 +471,9 @@ export default async function ProfilePage({
                 enabled={member.twoFactorEnabled}
                 method={member.twoFactorMethod}
                 moduleEnabled={modules.twoFactor}
+                officerRequired={officerTwoFactorRequired}
+                officerSatisfied={officerTwoFactorSatisfied}
+                officerGraceLabel={officerGraceLabel}
                 passkeys={passkeyRows.map((row) => ({
                   id: row.id,
                   name: row.name,

@@ -7,6 +7,7 @@ import {
   getFamilyInviteReturnNonce,
 } from "@/lib/family-invite-return-address";
 import { resolvePostLoginLandingPath } from "@/lib/post-login-landing";
+import { officerMayEnrolAuthenticatorApp } from "@/lib/second-factor-enrolment";
 import { TwoFactorEnrollPanel } from "../two-factor-panels";
 
 function singleSearchParam(value?: string | string[]) {
@@ -66,7 +67,27 @@ export default async function TwoFactorEnrollPage({
     },
   });
 
-  if (!session.user.twoFactorRequired || session.user.twoFactorVerified) {
+  const moduleChallengePending =
+    session.user.twoFactorRequired && !session.user.twoFactorVerified;
+  if (!moduleChallengePending) {
+    // A required officer can open the same panel when the club-wide module
+    // is off, until they have an authenticator app. A passkey is added from
+    // the profile card and does not come through here.
+    if (
+      officerMayEnrolAuthenticatorApp({
+        officerTwoFactorRequired: session.user.officerTwoFactorRequired,
+        twoFactorSatisfiesOfficer: session.user.twoFactorSatisfiesOfficer,
+        // The session does not carry the enabled flag. An app that still
+        // satisfies the officer rule is the only case that must look enabled
+        // here; a stored method with the flag off may be enrolled again.
+        twoFactorEnabled:
+          session.user.twoFactorSatisfiesOfficer === true &&
+          session.user.twoFactorMethod === "TOTP",
+        twoFactorMethod: session.user.twoFactorMethod,
+      })
+    ) {
+      return <TwoFactorEnrollPanel callbackUrl={landing} />;
+    }
     redirect(landing);
   }
 

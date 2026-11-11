@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { generateTotpEnrollment } from "@/lib/two-factor";
+import { authenticatorEnrolmentBlock } from "@/lib/second-factor-enrolment";
 import {
   passwordChangeRequiredResponse,
   requireTwoFactorApiSession,
@@ -17,25 +18,17 @@ export async function GET() {
   const locked = twoFactorLockoutResponse(guard.member);
   if (locked) return locked;
 
-  if (!guard.session.user.twoFactorRequired) {
-    return NextResponse.json(
-      { error: "Two-factor authentication is not required" },
-      { status: 400 },
-    );
-  }
-
-  if (guard.session.user.twoFactorVerified) {
-    return NextResponse.json(
-      { error: "Two-factor authentication is already verified" },
-      { status: 400 },
-    );
-  }
-
-  if (guard.member.twoFactorEnabled) {
-    return NextResponse.json(
-      { error: "Two-factor authentication is already enrolled" },
-      { status: 409 },
-    );
+  const blocked = authenticatorEnrolmentBlock({
+    twoFactorRequired: guard.session.user.twoFactorRequired,
+    twoFactorVerified: guard.session.user.twoFactorVerified,
+    officerTwoFactorRequired: guard.session.user.officerTwoFactorRequired,
+    twoFactorSatisfiesOfficer: guard.session.user.twoFactorSatisfiesOfficer,
+    twoFactorEnabled: guard.member.twoFactorEnabled,
+    twoFactorMethod: guard.member.twoFactorMethod,
+    refuseVerifiedModuleSession: true,
+  });
+  if (blocked) {
+    return NextResponse.json({ error: blocked.error }, { status: blocked.status });
   }
 
   return NextResponse.json(

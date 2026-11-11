@@ -8,6 +8,8 @@ import {
   verifyTwoFactorEmailCode,
 } from "@/lib/two-factor";
 import {
+  enrolmentSessionIssuedAt,
+  factorResetEnrolmentResponse,
   markTwoFactorSessionVerified,
   passwordChangeRequiredResponse,
   requireTwoFactorApiSession,
@@ -72,13 +74,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid code" }, { status: 400 });
   }
 
-  const recoveryCodes = await enrollTwoFactor({
-    memberId: guard.member.id,
-    method: "EMAIL",
-    // The member is enrolling their own second factor (#3454).
-    actor: { kind: "member", memberId: guard.member.id },
-    request: getAuditRequestContext(request),
-  });
+  let recoveryCodes: string[];
+  try {
+    recoveryCodes = await enrollTwoFactor({
+      memberId: guard.member.id,
+      method: "EMAIL",
+      // The member is enrolling their own second factor (#3454).
+      actor: { kind: "member", memberId: guard.member.id },
+      request: getAuditRequestContext(request),
+      sessionIssuedAt: enrolmentSessionIssuedAt(guard.session),
+    });
+  } catch (error) {
+    const reset = factorResetEnrolmentResponse(error);
+    if (reset) return reset;
+    throw error;
+  }
   await markTwoFactorSessionVerified("EMAIL");
 
   return NextResponse.json({ ok: true, recoveryCodes });

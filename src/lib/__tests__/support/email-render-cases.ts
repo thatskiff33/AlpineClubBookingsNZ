@@ -52,6 +52,7 @@ import {
   accountDeletionRejectedTemplate,
   adminPasswordResetTemplate,
   emailChangeNotificationTemplate,
+  officerFactorResetTemplate,
   emailChangeVerificationTemplate,
   emailVerificationTemplate,
   magicLinkLoginTemplate,
@@ -769,6 +770,8 @@ const GENERATED_CASES: EmailRenderCase[] = [
     emailChangeVerificationTemplate("newEmail-1", "verifyUrl-2", new Date("2026-03-04T00:00:00.000Z")) },
   { id: "emailChangeNotificationTemplate:minimal", fn: "emailChangeNotificationTemplate", render: () =>
     emailChangeNotificationTemplate("newEmail-1") },
+  { id: "officerFactorResetTemplate:minimal", fn: "officerFactorResetTemplate", render: () =>
+    officerFactorResetTemplate("firstName-1") },
   { id: "formatChoreRosterDate:minimal", fn: "formatChoreRosterDate", render: () =>
     formatChoreRosterDate("2026-04-16") },
   { id: "choreRosterTemplate:minimal", fn: "choreRosterTemplate", render: () =>

@@ -99,3 +99,51 @@ export function officerMayEnrolAuthenticatorApp(user: {
   // app (method stored, flag off) may be enrolled again.
   return !(user.twoFactorEnabled === true && user.twoFactorMethod === "TOTP");
 }
+
+/**
+ * Why authenticator-app setup or enrolment must stop, or null when it may
+ * proceed. A required officer who is not already on the app proceeds even
+ * when the club-wide module is off. Someone already on the app is refused.
+ * A member the officer rule does not require keeps today's module answers.
+ */
+export function authenticatorEnrolmentBlock(input: {
+  twoFactorRequired?: boolean | null;
+  twoFactorVerified?: boolean | null;
+  officerTwoFactorRequired?: boolean | null;
+  twoFactorSatisfiesOfficer?: boolean | null;
+  twoFactorEnabled?: boolean | null;
+  twoFactorMethod?: string | null;
+  /** Setup refuses a session that has already finished the module challenge. */
+  refuseVerifiedModuleSession?: boolean;
+}): { status: 400 | 409; error: string } | null {
+  if (officerMayEnrolAuthenticatorApp(input)) return null;
+  if (input.twoFactorRequired !== true) {
+    if (
+      input.officerTwoFactorRequired === true &&
+      input.twoFactorEnabled === true &&
+      input.twoFactorMethod === "TOTP"
+    ) {
+      return {
+        status: 409,
+        error: "Two-factor authentication is already enrolled",
+      };
+    }
+    return {
+      status: 400,
+      error: "Two-factor authentication is not required",
+    };
+  }
+  if (input.refuseVerifiedModuleSession && input.twoFactorVerified === true) {
+    return {
+      status: 400,
+      error: "Two-factor authentication is already verified",
+    };
+  }
+  if (input.twoFactorEnabled === true) {
+    return {
+      status: 409,
+      error: "Two-factor authentication is already enrolled",
+    };
+  }
+  return null;
+}

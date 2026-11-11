@@ -477,7 +477,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // request-path header (absent header ⇒ full-ADMIN fallback, silently
   // excluding support-area admins). See admin-permissions.ts.
   "/api/admin/security/magic-link": "support",
+  "/api/admin/security/officer-two-factor": "support",
   "/api/admin/security/password-policy": "support",
+  "/api/admin/security/two-factor-reset/[memberId]": "support",
   "/api/admin/setup": "support",
   "/api/admin/setup/finance-report-mappings": "finance",
   "/api/admin/setup/finance-report-mappings/backfill": "finance",

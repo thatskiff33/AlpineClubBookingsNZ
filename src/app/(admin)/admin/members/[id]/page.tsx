@@ -24,7 +24,8 @@ import {
   parseInviteAuditDetails as parseInviteAuditDetailsHelper,
 } from "@/lib/admin-member-detail-helpers";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
-import { isFullAdmin, sessionPrivilegeInput } from "@/lib/access-roles";
+import { deriveUserType, isFullAdmin, sessionPrivilegeInput } from "@/lib/access-roles";
+import { OFFICER_SIGN_IN_RELEASE_ENABLED } from "@/lib/officer-sign-in-release";
 import {
   canAdminRequestMembershipCancellation,
   NON_MEMBER_ROLE_VALUES,
@@ -43,6 +44,7 @@ import { MemberGroupCard } from "./_components/member-group-card";
 import { MemberSummaryStrip } from "./_components/member-summary-strip";
 import { MemberContactGroup } from "./_components/member-contact-group";
 import { MemberAccountAccessGroup } from "./_components/member-account-access-group";
+import { OfficerFactorResetButton } from "./_components/officer-factor-reset-button";
 import { MemberXeroContactSummary } from "./_components/member-xero-contact-summary";
 import { MemberSubscriptionHistoryTable } from "./_components/member-subscription-history-table";
 import { MemberHistoryGroup } from "./_components/member-history-group";
@@ -914,6 +916,12 @@ export default function MemberDetailPage({
             inheritEmail={inheritEmail}
             canEdit={canEditMembership}
           />
+          {OFFICER_SIGN_IN_RELEASE_ENABLED &&
+          actorIsFullAdmin &&
+          !isSelf &&
+          deriveUserType(member.accessRoles ?? []) !== "lodge" ? (
+            <OfficerFactorResetButton memberId={member.id} />
+          ) : null}
           <MemberLodgeAccessCard memberId={id} ancestorRendersViewOnlyBanner />
         </MemberGroupCard>
 

@@ -15,6 +15,16 @@ configure the `magicLink` and `googleLogin` modules you enable on
 [Modules](modules.md). See [`SECURITY.md`](../SECURITY.md) and the
 [disclosure policy](../../SECURITY.md) for the wider security posture.
 
+When officer sign-in is switched on (#4620), the same page also has an
+**Officer two-factor** card. A Full Admin can require an authenticator app or a
+passkey for Full Admins and for officers whose role can edit Finance or
+Support & System, and can set a grace period of 0 to 60 days (14 by default).
+Anyone else who can open the page sees that card but cannot change it. The
+same Full Admin sees who has not set one up yet. Resetting a lost factor is a
+button on the other person's account, after the Full Admin has confirmed it is
+them. It emails that person and ends their sessions. A club with one Full
+Admin uses `pnpm run auth:reset-factors -- --member <email>` instead.
+
 ## When you'd use it
 
 - You want to raise password strength requirements for the whole club.

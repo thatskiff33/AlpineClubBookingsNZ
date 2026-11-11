@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
+import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
+import {
+  REQUEST_METHOD_HEADER,
+  REQUEST_PATH_HEADER,
+} from "@/lib/internal-return-path";
 import {
   hasFinanceManagerAccess,
   hasFinanceViewerAccess,
@@ -8,7 +13,7 @@ import {
   loadFinanceAccessMember,
   type FinanceAccessMember,
 } from "@/lib/finance-auth";
-import { isTwoFactorSessionBlocked } from "@/lib/two-factor-gate";
+import { factorGateRedirect } from "@/lib/two-factor-gate";
 
 type FinanceApiAuthSuccess = {
   ok: true;
@@ -66,10 +71,22 @@ async function requireFinanceApiAccess(input: {
     };
   }
 
+  let pathname: string | null = null;
+  let method: string | null = null;
+  try {
+    const requestHeaders = await headers();
+    pathname = requestHeaders.get(REQUEST_PATH_HEADER);
+    method = requestHeaders.get(REQUEST_METHOD_HEADER);
+  } catch {
+    pathname = null;
+  }
   if (
-    isTwoFactorSessionBlocked({
+    factorGateRedirect({
       sessionUser: session.user,
       member,
+      pathname,
+      method,
+      callbackPath: pathname,
     })
   ) {
     return {

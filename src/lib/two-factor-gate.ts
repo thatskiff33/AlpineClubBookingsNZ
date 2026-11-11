@@ -1,4 +1,5 @@
 import { getSafeInternalReturnPath } from "@/lib/internal-return-path";
+import { officerClaimsAreGated } from "@/lib/officer-two-factor-claims";
 import { isSecondFactorEnrolled } from "@/lib/second-factor-enrolment";
 
 export type TwoFactorSessionUser = {
@@ -100,11 +101,19 @@ export function isOfficerEnrolmentSessionBlocked(params: {
   now?: Date;
 }): boolean {
   const user = params.sessionUser;
-  if (user?.officerTwoFactorRequired !== true) return false;
-  if (user.twoFactorSatisfiesOfficer === true) return false;
-  if (user.officerTwoFactorGraceEndsAt == null) return false;
   const now = params.now ?? new Date();
-  if (now.getTime() < user.officerTwoFactorGraceEndsAt) return false;
+  if (
+    !officerClaimsAreGated(
+      {
+        officerTwoFactorRequired: user?.officerTwoFactorRequired === true,
+        twoFactorSatisfiesOfficer: user?.twoFactorSatisfiesOfficer === true,
+        officerTwoFactorGraceEndsAt: user?.officerTwoFactorGraceEndsAt ?? null,
+      },
+      now,
+    )
+  ) {
+    return false;
+  }
   return !isOfficerEnrolmentPathAllowed(params.pathname, params.method);
 }
 

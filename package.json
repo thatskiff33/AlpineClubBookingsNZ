@@ -73,6 +73,7 @@
     "booking-ledger:census": "tsx --conditions=react-server scripts/booking-ledger-census.ts",
     "credential:census": "tsx scripts/audit/credential-actor-census.ts",
     "data-keys:reencrypt": "tsx --conditions=react-server scripts/data-keys-reencrypt.ts",
+    "auth:reset-factors": "tsx --conditions=react-server scripts/auth-reset-factors.ts",
     "diagnostics:bundle": "tsx scripts/diagnostics/generate-knowledge-bundle.ts",
     "diagnostics:provision-role": "tsx scripts/diagnostics/provision-ai-diagnostics-role.ts",
     "setup:check": "tsx --conditions=react-server scripts/setup.ts check",

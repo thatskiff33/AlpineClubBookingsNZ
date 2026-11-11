@@ -34,10 +34,9 @@ import {
 } from "@/lib/member-onboarding";
 import { getCurrentSiteBanners } from "@/lib/site-banners";
 import { getWebsiteThemeRenderState } from "@/lib/club-theme";
-import {
-  buildTwoFactorGatePath,
-  isTwoFactorSessionBlocked,
-} from "@/lib/two-factor-gate";
+import { officerClaimsAreGated } from "@/lib/officer-two-factor-claims";
+import { factorGateRedirect } from "@/lib/two-factor-gate";
+import { OfficerGraceBanner } from "@/components/officer-grace-banner";
 
 export default async function AuthenticatedLayout({
   children,
@@ -79,20 +78,27 @@ export default async function AuthenticatedLayout({
   }
 
   const requestedPath = requestHeaders.get(REQUEST_PATH_HEADER);
-  if (
-    isTwoFactorSessionBlocked({
-      sessionUser: session.user,
-      member,
-    })
-  ) {
-    redirect(
-      buildTwoFactorGatePath({
-        sessionUser: session.user,
-        member,
-        callbackPath: requestedPath,
-      }),
-    );
+  const factorGate = factorGateRedirect({
+    sessionUser: session.user,
+    member,
+    callbackPath: requestedPath,
+    pathname: requestedPath,
+  });
+  if (factorGate) {
+    redirect(factorGate);
   }
+  const officerGraceReminder =
+    session.user.officerTwoFactorRequired === true &&
+    session.user.twoFactorSatisfiesOfficer !== true &&
+    session.user.officerTwoFactorGraceEndsAt != null &&
+    !officerClaimsAreGated(
+      {
+        officerTwoFactorRequired: true,
+        twoFactorSatisfiesOfficer: false,
+        officerTwoFactorGraceEndsAt: session.user.officerTwoFactorGraceEndsAt,
+      },
+      new Date(),
+    );
 
   // Lodge-only accounts can only access /lodge/* routes. Combined access-role
   // accounts continue to their requested member or finance workspace.
@@ -219,6 +225,9 @@ export default async function AuthenticatedLayout({
           Skip to main content
         </a>
         <SiteBanners banners={siteBanners} />
+        {officerGraceReminder ? (
+          <OfficerGraceBanner endsAt={session.user.officerTwoFactorGraceEndsAt ?? null} />
+        ) : null}
         <NavBar user={user} features={effectiveModules} />
         <HelpWidgetProvider>
           <main

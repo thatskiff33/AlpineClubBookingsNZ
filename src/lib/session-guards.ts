@@ -23,7 +23,8 @@ import {
 } from "@/lib/internal-return-path";
 import { prisma } from "@/lib/prisma";
 import {
-  isTwoFactorSessionBlocked,
+  factorGateRedirect,
+  type TwoFactorGateMember,
   type TwoFactorSessionUser,
 } from "@/lib/two-factor-gate";
 
@@ -174,6 +175,36 @@ function twoFactorRequiredResponse() {
   );
 }
 
+/**
+ * The club-wide challenge and the officer enrolment gate, as one answer.
+ * The request path lets an allowlisted enrolment route through after grace.
+ * A missing path fails closed for a gated officer.
+ */
+async function factorGateResponse(params: {
+  sessionUser?: TwoFactorSessionUser | null;
+  member?: TwoFactorGateMember | null;
+  allowForcePasswordChange?: boolean;
+}): Promise<NextResponse | null> {
+  let pathname: string | null = null;
+  let method: string | null = null;
+  try {
+    const requestHeaders = await headers();
+    pathname = requestHeaders.get(REQUEST_PATH_HEADER);
+    method = requestHeaders.get(REQUEST_METHOD_HEADER);
+  } catch {
+    pathname = null;
+  }
+  const destination = factorGateRedirect({
+    sessionUser: params.sessionUser,
+    member: params.member,
+    allowForcePasswordChange: params.allowForcePasswordChange,
+    pathname,
+    method,
+    callbackPath: pathname,
+  });
+  return destination ? twoFactorRequiredResponse() : null;
+}
+
 async function inferAdminAccessRequirement(
   options: RequireAdminOptions,
 ): Promise<AdminAccessRequirement | null> {
@@ -273,13 +304,12 @@ export async function requireAdmin(
     };
   }
 
-  if (
-    isTwoFactorSessionBlocked({
-      sessionUser: session.user,
-      member,
-    })
-  ) {
-    return { ok: false, response: twoFactorRequiredResponse() };
+  const factorGate = await factorGateResponse({
+    sessionUser: session.user,
+    member,
+  });
+  if (factorGate) {
+    return { ok: false, response: factorGate };
   }
 
   return {
@@ -378,15 +408,13 @@ export async function requireActiveSessionUser(
   }
 
   const sessionUser = options.sessionUser ?? (await auth())?.user;
-  if (
-    sessionUser?.id === userId &&
-    isTwoFactorSessionBlocked({
+  if (sessionUser?.id === userId) {
+    const factorGate = await factorGateResponse({
       sessionUser,
       member,
       allowForcePasswordChange: options.allowForcePasswordChange,
-    })
-  ) {
-    return twoFactorRequiredResponse();
+    });
+    if (factorGate) return factorGate;
   }
 
   return null;

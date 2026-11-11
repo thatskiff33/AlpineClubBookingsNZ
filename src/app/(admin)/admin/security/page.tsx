@@ -1,10 +1,15 @@
 import type { Metadata } from "next";
 import { GoogleSecurityCard } from "@/components/admin/google-security-card";
 import { MagicLinkSecurityCard } from "@/components/admin/magic-link-security-card";
+import { OfficerTwoFactorCard } from "@/components/admin/security/officer-two-factor-card";
 import { PasswordPolicyCard } from "@/components/admin/security/password-policy-card";
+import { isFullAdmin } from "@/lib/access-roles";
+import { auth } from "@/lib/auth";
 import { getGoogleSetupState } from "@/lib/google-config";
 import { loadLoginSecuritySettings } from "@/lib/login-security-settings";
 import { loadClubModuleSettings } from "@/lib/module-settings";
+import { loadOfficerTwoFactorReport } from "@/lib/officer-two-factor";
+import { OFFICER_SIGN_IN_RELEASE_ENABLED } from "@/lib/officer-sign-in-release";
 import { clubFormatValues } from "@/lib/club-format-server";
 
 // Login & Security admin page (epic #2030, child #2033). Scaffolds the page and
@@ -42,6 +47,12 @@ export default async function AdminSecurityPage() {
       })),
     ]);
   const googleConfigured = googleState.clientIdSet && googleState.clientSecretSet;
+  const session = OFFICER_SIGN_IN_RELEASE_ENABLED ? await auth() : null;
+  const viewerIsFullAdmin = session?.user ? isFullAdmin(session.user) : false;
+  const officerReport =
+    OFFICER_SIGN_IN_RELEASE_ENABLED && viewerIsFullAdmin
+      ? await loadOfficerTwoFactorReport()
+      : [];
 
   return (
     <div className="space-y-8">
@@ -65,6 +76,39 @@ export default async function AdminSecurityPage() {
           verified={googleState.verified}
           needsReentry={googleState.needsReentry}
         />
+        {OFFICER_SIGN_IN_RELEASE_ENABLED ? (
+          <OfficerTwoFactorCard canEdit={viewerIsFullAdmin} />
+        ) : null}
+        {OFFICER_SIGN_IN_RELEASE_ENABLED && viewerIsFullAdmin ? (
+          <section className="space-y-3 rounded-lg border p-6">
+            <h2 className="text-base font-semibold">Officers still to set up</h2>
+            <p className="text-sm text-muted-foreground">
+              People who must use an authenticator app or a passkey, and have
+              not yet. A reset ends grace: the next sign-in goes to set-up.
+            </p>
+            {officerReport.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Everyone required is set up.</p>
+            ) : (
+              <ul className="divide-y text-sm">
+                {officerReport.map((row) => (
+                  <li key={row.memberId} className="flex items-baseline justify-between gap-4 py-2">
+                    <span>
+                      {row.name}{" "}
+                      <span className="text-muted-foreground">{row.email}</span>
+                    </span>
+                    <span className="shrink-0 text-muted-foreground">
+                      {row.grace === "not-started"
+                        ? "Grace not started"
+                        : row.grace === "ended"
+                          ? "Grace ended"
+                          : `By ${row.grace}`}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        ) : null}
       </div>
     </div>
   );

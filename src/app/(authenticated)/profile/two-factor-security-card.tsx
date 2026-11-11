@@ -24,6 +24,9 @@ export function TwoFactorSecurityCard({
   moduleEnabled,
   passkeys,
   recoveryCodesRetired = false,
+  officerRequired = false,
+  officerSatisfied = false,
+  officerGraceLabel = null,
 }: {
   enabled: boolean;
   method: "TOTP" | "EMAIL" | null;
@@ -31,6 +34,11 @@ export function TwoFactorSecurityCard({
   passkeys: ProfilePasskey[];
   /** The member's saved recovery codes were retired by a key change (#4456). */
   recoveryCodesRetired?: boolean;
+  /** The officer rule requires an authenticator app or a passkey. */
+  officerRequired?: boolean;
+  officerSatisfied?: boolean;
+  /** The grace deadline in the club's date format, when they are still inside it. */
+  officerGraceLabel?: string | null;
 }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -149,11 +157,16 @@ export function TwoFactorSecurityCard({
         : passkeys.length > 0
           ? "Passkey"
           : "Not set";
-  const statusDescription = enrolled
-    ? moduleEnabled
-      ? `Method: ${methodLabel}`
-      : `Method: ${methodLabel}. The club currently has two-factor sign-in disabled, but your account remains enrolled.`
-    : "Enrollment is required the next time the club enables two-factor authentication.";
+  const officerNeedsFactor = officerRequired && !officerSatisfied;
+  const statusDescription = officerNeedsFactor
+    ? officerGraceLabel
+      ? `Set up an authenticator app or a passkey by ${officerGraceLabel}.`
+      : "Set up an authenticator app or a passkey."
+    : enrolled
+      ? moduleEnabled
+        ? `Method: ${methodLabel}`
+        : `Method: ${methodLabel}. The club currently has two-factor sign-in disabled, but your account remains enrolled.`
+      : "Enrollment is required the next time the club enables two-factor authentication.";
 
   return (
     <div className="space-y-3 border-t pt-3">
@@ -161,8 +174,8 @@ export function TwoFactorSecurityCard({
         <div>
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">Two-factor authentication</span>
-            <Badge variant={enrolled ? "success" : "secondary"}>
-              {enrolled ? "Enabled" : "Not enrolled"}
+            <Badge variant={!officerNeedsFactor && enrolled ? "success" : "secondary"}>
+              {!officerNeedsFactor && enrolled ? "Enabled" : "Not enrolled"}
             </Badge>
           </div>
           <p className="mt-0.5 text-xs text-muted-foreground">

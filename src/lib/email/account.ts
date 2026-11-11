@@ -1,6 +1,7 @@
 import {
   accountDeletionApprovedTemplate,
   accountDeletionRejectedTemplate,
+  officerFactorResetTemplate,
   adminPasswordResetTemplate,
   emailChangeNotificationTemplate,
   emailChangeVerificationTemplate,
@@ -197,6 +198,20 @@ export async function sendEmailChangeNotification(
     bookingContext: "none",
     templateName: "email-change-notification",
     templateData: { newEmail },
+  });
+}
+
+export async function sendOfficerFactorResetEmail(email: string, firstName: string) {
+  await sendEmail({
+    to: email,
+    subject: `Your authenticator was reset — ${CLUB_BOOKINGS_NAME}`,
+    html: await renderEmailHtml(() => officerFactorResetTemplate(firstName)),
+    // Account/security mail is never booking-scoped, and must NEVER be
+    // suppressible by a booking flag: withholding this notice hides a reset
+    // that has already ended the member's sessions.
+    bookingContext: "none",
+    templateName: "officer-factor-reset",
+    templateData: { firstName },
   });
 }
 
