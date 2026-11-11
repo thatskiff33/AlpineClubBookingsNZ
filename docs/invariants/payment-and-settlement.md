@@ -1191,11 +1191,11 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   clearing note void the invoice while returning the credit LOCALLY. After a
   cancel of an allocated-credit booking the restored credit is local-only (the
   cancelled invoice consumed its funding note); the local ledger is the source
-  of truth and Xero catches up on the next use, via the mint-fresh branch. Goodwill, settled (#2717): only the minted note's
-  `ADMIN_ADJUSTMENT` share posts to `goodwillWriteOffs` (EXPENSE, falling back
-  to `hutFeeRefunds` while unset, `INV-INT-021`); every other share, restored
-  credit included, is the member's own money and stays on `hutFeeRefunds`.
-  Noteless is not the accounting question.
+  of truth and Xero catches up on the next use, via the mint-fresh branch. A new
+  manual grant carries the note queued at approval, and spend allocates it. Only a
+  noteless legacy `ADMIN_ADJUSTMENT` is still minted, to
+  `goodwillWriteOffs` (falling back to `hutFeeRefunds` while unset, `INV-INT-021`).
+  Every other minted share, restored credit included, stays on `hutFeeRefunds`.
 
 ## INV-PAY-127
 
@@ -1770,7 +1770,7 @@ release).
   naming it, never folded together; an unpaid carrier invoices nothing. Bank
   transfer queues each unpaid when priced: nothing moves.
 - **Who moves it.** The supersede's cancel step (failed or captured), every
-  superseding minter, an edit leg parking on an already-failed ask, and the
+  superseding minter, repair or edit parking on a failed ask, and the
   reaper before retiring - never while the ask's cancel runs (#4665); its
   last step moves it.
 - **Refused, left as it was:** an ended booking, a linked or second queued
@@ -2986,12 +2986,12 @@ _Legacy: settles tasks raised before #4317._
   intent set, on BOTH forks (an ordinary edit bills the `BookingModification`'s
   signed components, a review charge bills the combined total). It queues no
   second invoice because the anchor-scoped, advisory-locked decision is the only
-  one. A failure to queue is recorded and NOT retried, because the replay has
-  already written this edit's `ADDITIONAL` transaction and a retry would read
-  that row as a supersession; that binds EVERY `await` after the write, and the
-  read of the signed components happens BEFORE the mint. The booking-vs-Xero
-  repair pass offers `QUEUE_SUPPLEMENTARY_INVOICE` built from the same two
-  components.
+  one. A failed queue is not retried: the replay has written this edit's
+  `ADDITIONAL` row, and a retry would read it as a supersession, so every
+  later `await` is bound and the signed components are read BEFORE the mint.
+  The repair offers `QUEUE_SUPPLEMENTARY_INVOICE` from those components, and a
+  Stripe payment only when that edit's card request was captured or waits
+  (#4413).
 - **The replay bills the EDIT's answer to "was there an invoice to supplement",
   never the answer that is true when the cron arrives** (#3181). A primary
   invoice minted after the edit already bills the edit itself, so the edit-time

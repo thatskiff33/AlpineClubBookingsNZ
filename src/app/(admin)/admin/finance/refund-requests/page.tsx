@@ -5,6 +5,10 @@ import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
 import { useSession } from "next-auth/react"
 import { useRouter, useSearchParams } from "next/navigation"
+import {
+  adminCreditGrantAccountLabel,
+  GRANT_ACCOUNT_MISSING_MESSAGE,
+} from "@/lib/admin-credit-grant-account"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -134,6 +138,7 @@ interface CreditApprovalRequestData {
   memberId: string
   amountCents: number
   description: string
+  grantAccount: "MEMBER_OWN_MONEY" | "GOODWILL" | null
   status: "PENDING" | "APPROVED" | "REJECTED"
   createdAt: string
   reviewedAt: string | null
@@ -736,6 +741,7 @@ export default function RefundRequestsPage() {
                 {creditApprovals.map((request) => {
                   const isOwnRequest = session?.user?.id === request.requestedBy.id
                   const isReviewing = reviewingCreditId === request.id
+                  const accountMissing = request.amountCents > 0 && !request.grantAccount
                   const creditLedgerHref = buildHrefWithReturnTo(
                     `/admin/members/${request.member.id}#account-credit`,
                     currentRefundRequestsPath
@@ -810,6 +816,14 @@ export default function RefundRequestsPage() {
                           <p className="text-sm whitespace-pre-wrap">
                             {request.description}
                           </p>
+                          {request.amountCents > 0 && (
+                            <p className="text-sm mt-2">
+                              <span className="text-muted-foreground">Xero account: </span>
+                              {request.grantAccount
+                                ? adminCreditGrantAccountLabel(request.grantAccount)
+                                : GRANT_ACCOUNT_MISSING_MESSAGE}
+                            </p>
+                          )}
                         </div>
 
                         {request.status !== "PENDING" && (
@@ -852,16 +866,18 @@ export default function RefundRequestsPage() {
                               </span>
                             ) : (
                               <>
-                                <ViewOnlyActionButton
-                                  canEdit={canEditFinance}
-                                  describeReason={false}
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={isReviewing}
-                                  onClick={() => handleCreditReview(request, "APPROVE")}
-                                >
-                                  {isReviewing ? "Working..." : "Approve"}
-                                </ViewOnlyActionButton>
+                                {!accountMissing && (
+                                  <ViewOnlyActionButton
+                                    canEdit={canEditFinance}
+                                    describeReason={false}
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={isReviewing}
+                                    onClick={() => handleCreditReview(request, "APPROVE")}
+                                  >
+                                    {isReviewing ? "Working..." : "Approve"}
+                                  </ViewOnlyActionButton>
+                                )}
                                 <ViewOnlyActionButton
                                   canEdit={canEditFinance}
                                   describeReason={false}
