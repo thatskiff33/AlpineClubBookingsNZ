@@ -5029,36 +5029,45 @@ Rendered panel tests cover accepted, pending, rejected and network-failed reques
 direct browser journeys require protected content after Continue and verification,
 without a later helper navigation (#4060).
 
-## Recent authentication (#4616)
+## Recent Authentication And Step-Up Lifecycle (#4616)
 
-A session carries `lastAuthenticatedAt`, separate from `sessionIssuedAt`.
-`requireRecentAuth` (`INV-AUTH-008`) is the one check. No route calls it yet
-(#4619).
+The session token's `lastAuthenticatedAt` (`INV-AUTH-008`): when the person
+last proved who they are. It keeps no status column; the state is the stamp's
+age, read through `isRecentlyAuthenticated` in
+`src/lib/recent-auth-policy.ts`. The step-up challenge is a
+`SessionReauthChallenge` row that lives only between mint and consume.
 
 ```text
-sign-in completes -> lastAuthenticatedAt = now
-  password or Google, no second factor left -> the jwt sign-in branch
-  second factor required -> consuming the two-factor session challenge
-session.update carrying lastAuthenticatedAt -> ignored
-step-up proof accepted -> server mints SessionReauthChallenge (keyed hash, two minutes, one member)
-  authenticator-app code when they have an app
-  passkey when one exists (#4617); until then that proof never succeeds
-  password only when they have neither
-  emailed code or recovery code -> refused, and the failure counts
-session update carrying that challenge -> jwt callback claims the row (consumedAt was null) -> lastAuthenticatedAt = now
-replay, expiry, another member, or a forged token -> claim matches nothing, stamp unchanged
-five wrong authenticator proofs -> the existing two-factor lockout
-wrong password proofs -> the existing per-account password throttle
-requireRecentAuth -> pass while the stamp is at most 5 minutes old; otherwise 403 REAUTH_REQUIRED
-the dialog replays the refused request once, body unchanged; a second refusal is not replayed
+sign-in completes (any provider) -> jwt callback stamps lastAuthenticatedAt = now (beside sessionIssuedAt)
+refresh, role change, two-factor verification -> stamp unchanged
+token minted before #4616 (no stamp) -> never recent; never back-filled
+stamp age <= 5 min -> recent: requireRecentAuth admits
+required two-factor not yet verified -> requireRecentAuth answers the two-factor refusal, whatever the stamp
+stamp age > 5 min, missing, or in the future -> stale: requireRecentAuth answers 403 RECENT_AUTH_REQUIRED (before any side effect or body read)
+stale + dialog -> GET /api/auth/reauth offers TOTP (app enrolled) or PASSWORD (no app, no passkey)
+app enrolled but no stored secret -> no method: GET and POST answer 409 STEP_UP_UNAVAILABLE, never the password
+EMAIL or RECOVERY proof -> 400, nothing checked or counted
+PASSWORD while an app is enrolled -> 409, nothing checked or counted
+wrong app code -> two-factor failure counted -> 5th failure locks 15 min -> locked: 429 before the code is read
+wrong password -> counted by the shared password budget (claimed before the compare) -> waiting: 429 LOGIN_THROTTLED
+right proof -> count cleared -> challenge minted (keyed hash, member-bound, 2 min) -> updateSession carries the raw token
+jwt callback consumes it (one guarded delete, count 1) -> stamp = now -> recent (the route requires stamp >= mint time)
+replayed, expired, other-member or made-up token -> deletes nothing -> stamp unchanged
+client session.update() carrying lastAuthenticatedAt -> ignored -> stamp unchanged
+dialog confirmed -> refused request replayed once, body unchanged -> its answer returned (a second refusal is not re-asked)
+dialog cancelled -> original refusal returned, request not resent
 ```
 
-To verify: `recent-auth.test.ts` (the window on the frozen clock, and the typed
-refusal), `auth-session-refresh.test.ts` (a client-supplied stamp is ignored; a
-consumed challenge refreshes it), `session-reauth.test.ts` (an emailed code is
-refused and a failed proof counts), `session-reauth.realdb.test.ts` (two
-concurrent consumes, one success), and `confirm-its-you-dialog.test.tsx` (the
-replay is once, body unchanged).
+To verify: `recent-auth-policy.test.ts` (the window on the frozen clock, the
+methods), `auth-recent-auth-claim.test.ts` (end to end through the Auth.js
+handler: sign-in stamp, the 5:00/5:01 boundary, a forged update ignored, a
+consumed challenge refreshing, a two-factor verification not),
+`recent-auth-route.test.ts` (the route, and the real two-factor lockout
+counting failed app codes), `session-reauth-challenge.realdb.test.ts` (replay,
+expiry, other member, and two consumers forced to meet: exactly one success),
+`recent-auth-provider.test.tsx` (the dialog replays once) and
+`recent-auth-refusal-census.test.ts` (only `requireRecentAuth` sends the
+refusal the dialog replays).
 
 ## Password Sign-In Throttle (#4609)
 

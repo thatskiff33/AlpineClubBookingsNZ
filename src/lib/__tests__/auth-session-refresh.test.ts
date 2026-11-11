@@ -94,6 +94,10 @@ vi.mock("@/lib/session-reauth", () => ({
   consumeSessionReauthChallenge: mockConsumeSessionReauthChallenge,
 }));
 
+vi.mock("@/lib/session-reauth-challenge", () => ({
+  consumeSessionReauthChallenge: vi.fn(async () => false),
+}));
+
 // #2087: auth.ts now resolves the Google provider from the C1 store. The jwt
 // callback under test never touches Google, so stub the resolver modules to keep
 // this suite isolated from the credential store.

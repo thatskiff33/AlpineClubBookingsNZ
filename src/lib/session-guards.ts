@@ -167,7 +167,8 @@ function forbiddenResponse() {
   return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 }
 
-function twoFactorRequiredResponse() {
+/** The refusal for a session whose required two-factor step is not done yet. */
+export function twoFactorRequiredResponse() {
   return NextResponse.json(
     { error: "Two-factor verification required" },
     { status: 403 },

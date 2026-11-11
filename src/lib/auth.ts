@@ -45,8 +45,10 @@ import {
   isKioskSessionMember,
   resolveRequestSessionIdleSeconds,
 } from "./session-idle-expiry";
-import { consumeSessionReauthChallenge } from "./session-reauth";
 import { consumeTwoFactorSessionChallenge } from "./two-factor";
+import { consumeSessionReauthChallenge as consumeMarkedReauthChallenge } from "./session-reauth";
+import { consumeSessionReauthChallenge } from "./session-reauth-challenge";
+import { readLastAuthenticatedAtMs } from "./recent-auth-policy";
 import { hashActionToken, isActionTokenFormat } from "./action-tokens";
 import {
   linkGoogleAccount,
@@ -119,10 +121,9 @@ declare module "next-auth" {
        */
       sessionIssuedAt?: number;
       /**
-       * Epoch ms the person last proved who they are (#4616). Set only when
-       * sign-in completes or a reauthentication challenge is consumed. Absent
-       * on a token that has never been stamped, which fails a recent-auth
-       * check closed.
+       * Epoch ms the person last proved who they are (#4616, INV-AUTH-008):
+       * set when sign-in completes, refreshed only by a consumed step-up
+       * challenge. `requireRecentAuth` reads it; absent means never.
        */
       lastAuthenticatedAt?: number;
       twoFactorRequired: boolean;
@@ -548,13 +549,16 @@ export const authConfig = {
     },
     async jwt({ token, user, trigger, session }) {
       if (user) {
+        const signedInAt = Date.now();
         token.role = user.role;
         token.accessRoles = [];
         token.id = user.id as string;
         token.forcePasswordChange = user.forcePasswordChange;
         token.isEmailVerified = user.isEmailVerified;
-        token.sessionIssuedAt = Date.now();
-        token.lastAuthenticatedAt = Date.now();
+        token.sessionIssuedAt = signedInAt;
+        // #4616 (INV-AUTH-008): one of the stamp's two writers; the step-up
+        // consume below is the other, and nothing back-fills it.
+        token.lastAuthenticatedAt = signedInAt;
         token.sessionInvalidated = false;
         token.twoFactorVerified = false;
         token.twoFactorVerifiedByChallenge = false;
@@ -585,14 +589,9 @@ export const authConfig = {
         if (challengeVerified) {
           token.twoFactorVerified = true;
           token.twoFactorVerifiedByChallenge = true;
-          // Sign-in finishes when the second factor is consumed.
-          token.lastAuthenticatedAt = Date.now();
         }
       }
 
-      // #4616 (INV-AUTH-008): lastAuthenticatedAt is never copied off the
-      // client payload. Only a consumed server-minted challenge, or the
-      // sign-in branch above, writes it.
       if (
         trigger === "update" &&
         typeof token.id === "string" &&
@@ -604,11 +603,20 @@ export const authConfig = {
         "reauthChallengeToken" in session.user &&
         typeof session.user.reauthChallengeToken === "string"
       ) {
-        const reauthConsumed = await consumeSessionReauthChallenge(
-          token.id,
-          session.user.reauthChallengeToken,
-        );
-        if (reauthConsumed) {
+        // #4616 (INV-AUTH-008): the payload is client-reachable, so its
+        // `lastAuthenticatedAt` is never read; only consuming this member's
+        // server-minted step-up token moves the stamp. The two-factor
+        // challenge above never does: it also takes emailed and recovery codes.
+        const reauthenticated =
+          (await consumeMarkedReauthChallenge(
+            token.id,
+            session.user.reauthChallengeToken,
+          )) ||
+          (await consumeSessionReauthChallenge(
+            token.id,
+            session.user.reauthChallengeToken,
+          ));
+        if (reauthenticated) {
           token.lastAuthenticatedAt = Date.now();
         }
       }
@@ -755,11 +763,9 @@ export const authConfig = {
       if (typeof token.sessionIssuedAt === "number") {
         session.user.sessionIssuedAt = token.sessionIssuedAt;
       }
-      if (
-        typeof token.lastAuthenticatedAt === "number" &&
-        Number.isFinite(token.lastAuthenticatedAt)
-      ) {
-        session.user.lastAuthenticatedAt = token.lastAuthenticatedAt;
+      const lastAuthenticatedAt = readLastAuthenticatedAtMs(token);
+      if (lastAuthenticatedAt !== null) {
+        session.user.lastAuthenticatedAt = lastAuthenticatedAt;
       }
       session.user.twoFactorRequired = Boolean(token.twoFactorRequired);
       session.user.twoFactorVerified = Boolean(token.twoFactorVerified);

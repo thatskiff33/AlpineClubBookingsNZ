@@ -20,11 +20,11 @@ nomination bearer tokens use hash-at-rest storage.
 ## Keyed code hashes and the data-encryption key ring (#4456)
 
 Two-factor recovery codes, emailed two-factor codes, the single-use
-session-challenge token and the reauthentication challenge (#4616) are not
-plain SHA-256: they are HMAC-SHA256 under a secret key. The six-digit codes
-have too little entropy to survive an unkeyed hash, and the two challenges
-use the same keyed hash so a ring rotation still matches a challenge that has
-not expired. The key comes from the data-encryption key ring
+session-challenge token and the step-up challenge token (#4616) are not plain
+SHA-256: they are HMAC-SHA256 under a secret key. A six-digit code has too
+little entropy to survive an unkeyed hash, and the challenges use the same
+keyed hash so a ring rotation still matches one that has not expired. The key
+comes from the data-encryption key ring
 (`src/lib/data-encryption-keys.ts`; the variable is described in
 [`CONFIGURATION.md`](../CONFIGURATION.md#data-encryption-keys-4456)):
 
@@ -38,8 +38,8 @@ not expired. The key comes from the data-encryption key ring
   hash cannot be re-keyed, so recovery codes issued under the auth secret stop
   working at cut-over (owner decision on #4456), and `memberHoldsRetiredRecoveryCodes`
   drives the notice telling the member to generate a new set. Emailed codes
-  last ten minutes and session challenges, including the reauthentication
-  challenge, two, so theirs simply expire.
+  last ten minutes and session and step-up challenges two, so theirs simply
+  expire. The reauthentication challenge uses that same two-minute life.
 - **Retired in the database:** `pnpm run data-keys:reencrypt
   --retire-legacy-recovery-codes` rewrites each unused auth-secret hash as
   `retired.legacy-auth-secret:<hex>`. No release computes a candidate with that

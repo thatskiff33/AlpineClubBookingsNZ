@@ -973,15 +973,18 @@ model TwoFactorSessionChallenge {
   @@index([expiresAt])
 }
 
-// Single-use proof that a signed-in member just confirmed who they are (#4616).
-// Minted server-side after a step-up check, consumed by one status-guarded
-// claim in the Auth.js jwt callback. A client session update cannot set
-// lastAuthenticatedAt. An emailed code is never a way to mint one.
+// Single-use proof that a signed-in member just proved themselves again with
+// their app code or password (#4616, INV-AUTH-008). Minted by the step-up
+// route, consumed (deleted) by the Auth.js jwt callback, which only then
+// refreshes the session's lastAuthenticatedAt; a client-forged session update
+// cannot move it. Stored as a keyed hash, like the challenge above.
 model SessionReauthChallenge {
   id         String    @id @default(cuid())
   memberId   String
   tokenHash  String    @unique
   expiresAt  DateTime
+  // Set when the claim consumes the row in place. The other claim deletes an
+  // unconsumed row instead. Either one is single-use.
   consumedAt DateTime?
   createdAt  DateTime  @default(now())
 

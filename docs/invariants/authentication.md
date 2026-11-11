@@ -5,14 +5,15 @@ Audience: Developer, Agent.
 Prefix defined in this file: **`INV-AUTH`** — how the app decides whether a
 sign-in attempt may proceed, without telling anyone which accounts exist,
 which passwords it lets a person choose, how long a signed-in session
-lasts, and how recently the person must have proved who they are.
+lasts, and when a signed-in person must prove who they are again.
 
 Read this file when you are changing password sign-in, the per-account
 password throttle, what a refused or throttled sign-in answers, the
 per-account limits on password-reset and sign-in-link requests, anything that
 keys a limit on an account rather than an internet address, any code that
 writes `passwordHash`, the session token's `jwt` callback and
-`sessionIssuedAt`, or `lastAuthenticatedAt` and `requireRecentAuth`.
+`sessionIssuedAt`, or `lastAuthenticatedAt`, the step-up challenge and
+`requireRecentAuth`.
 
 Index: [`docs/DOMAIN_INVARIANTS.md`](../DOMAIN_INVARIANTS.md) — every `INV-*` ID
 with a one-line description of what it covers. ID scheme and allocation rules:
@@ -26,7 +27,8 @@ The threat, the fallback and the stated limits are in
 the request limits
 [`SECURITY.md`](../SECURITY.md#per-account-email-request-limits-4613), and
 [`SECURITY.md`](../SECURITY.md#breached-password-check-4610), for the session
-cap [`SECURITY.md`](../SECURITY.md#maximum-session-age-4611); the row
+cap [`SECURITY.md`](../SECURITY.md#maximum-session-age-4611), for step-up
+[`SECURITY.md`](../SECURITY.md#recent-authentication-and-step-up-4616); the row
 lock is in
 [`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md#narrow-row--and-table-lock-protocols).
 This file holds only the rules.
@@ -80,7 +82,7 @@ This file holds only the rules.
   so failures spaced 59 minutes apart still add up; a fixed hourly window would
   also reset the ceiling every hour.
 - **Password sign-in and authenticated current-password checks share the
-  budget** (#4640). Change-password uses the authenticated member's stored
+  budget** (#4640), the step-up password among them (#4616). Change-password uses the authenticated member's stored
   email after session validation; a refused claim answers HTTP 429 with
   `LOGIN_THROTTLED` without comparing the password. Emailed sign-in links, Google, two-factor code
   entry and lodge PIN sign-in are unaffected, and the per-address limiter is
@@ -174,22 +176,30 @@ This file holds only the rules.
 
 ## INV-AUTH-008
 
-- **A session records when the person last proved who they are.**
-  `requireRecentAuth` in
-  [`require-recent-auth.ts`](../../src/lib/require-recent-auth.ts) is the one
-  check (`INV-SSOT`). It passes only when `lastAuthenticatedAt` is a finite
-  epoch millisecond and is not older than five minutes. A missing stamp fails
-  closed. No route calls it yet.
-- **The five minutes is a security floor, not a club setting.**
-- **Only sign-in completion, or consuming a reauthentication challenge, writes
-  the stamp.** The `jwt` callback in [`auth.ts`](../../src/lib/auth.ts) sets it
-  when a sign-in mints the token and when a two-factor session challenge is
-  consumed, and again when it claims a `SessionReauthChallenge`. A
-  `session.update()` payload that carries the field is ignored. The challenge
-  is server-minted, stored as a keyed hash, bound to one member, and consumed
-  by one status-guarded claim.
-- **The proof is an authenticator-app code, a passkey once one exists, or the
-  password only when the person has neither.** An emailed code and a recovery
-  code are never accepted. A failed proof counts toward the two-factor lockout,
-  or the per-account password throttle when the proof is the password.
-- **The confirm dialog replays the refused request once, with the same body.**
+- **A session's `lastAuthenticatedAt` has two writers only:** the `jwt`
+  callback's sign-in branch in [`auth.ts`](../../src/lib/auth.ts), and that
+  callback consuming a step-up challenge
+  ([`session-reauth-challenge.ts`](../../src/lib/session-reauth-challenge.ts)).
+  A `session.update()` payload carrying the field is never read; a refresh, a
+  role change or a two-factor verification never moves it; nothing
+  back-fills it.
+- **The challenge is single-use, server-minted and member-bound:** a 256-bit
+  token stored only as the keyed two-factor code hash, live two minutes,
+  consumed by one guarded single-row delete (count exactly one). No advisory
+  key.
+- **`requireRecentAuth` in [`recent-auth.ts`](../../src/lib/recent-auth.ts) is
+  the one check and the only sender of `RECENT_AUTH_REQUIRED`** (`INV-SSOT`).
+  **It runs before any side effect or body read; a refusal means nothing
+  happened**, which is what makes the replay safe. A proof at most five
+  minutes old passes; an older, missing or future one gets that HTTP 403. A
+  session with required two-factor unverified gets the two-factor refusal
+  instead. The window is a security floor, not a club setting.
+- **Step-up takes the app code when the person is enrolled with an
+  authenticator app, and the password only when they have neither an app nor
+  a passkey** (`resolveStepUpMethods`). An app enrolment without its secret
+  offers no method. Emailed and recovery codes are never accepted.
+- **A failed step-up counts:** a wrong app code towards the two-factor
+  lockout sign-in uses, refused unread while locked; a password against the
+  shared password budget, claimed before the compare (`INV-AUTH-004`).
+- **The dialog replays a refused request at most once, body unchanged**
+  (`fetchWithRecentAuth`); a second refusal is returned, not asked again.

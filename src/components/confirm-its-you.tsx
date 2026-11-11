@@ -17,7 +17,7 @@ import {
   isReauthFactor,
   isReauthRequiredPayload,
   type ReauthFactor,
-} from "@/lib/recent-auth";
+} from "@/lib/recent-auth-factors";
 
 /**
  * Opens the confirm dialog and resolves once the person has proved themselves,

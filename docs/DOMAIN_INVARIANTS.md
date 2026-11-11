@@ -37,7 +37,7 @@ description, so you can find the right file without opening more than one.
 | [`operations.md`](invariants/operations.md) | `INV-OPS`, `INV-LOCK` | raw SQL, advisory or row locking, which lock tier a writer takes, deployment, dropping a column, changing what a value already stored in a column means (an audit `category`, a status string) so the rows already written no longer match the code, what may be used as test input, mocking a money seam in a test that asserts money |
 | [`product-configuration.md`](invariants/product-configuration.md) | `INV-CONFIG` | adding a value or feature a club could answer differently, a new setting existing deployments will not have, or a default an upgrade must fall back to |
 | [`single-source-of-truth.md`](invariants/single-source-of-truth.md) | `INV-SSOT` | adding a constant, helper, formatter, type, validation rule or config value a second place will need; comparing two values; putting a default on a parameter that resolves an environment or configuration authority; or writing a guard, census or ratchet that claims to cross-check another one |
-| [`authentication.md`](invariants/authentication.md) | `INV-AUTH` | password sign-in, the per-account password throttle, what a refused or throttled sign-in answers, the breach-list check on a chosen password, the maximum session age |
+| [`authentication.md`](invariants/authentication.md) | `INV-AUTH` | password sign-in, the per-account password throttle, what a refused or throttled sign-in answers, the breach-list check on a chosen password, the maximum session age, recent authentication and step-up |
 
 Three supporting files sit beside them: the full id scheme in
 [`SCHEME.md`](invariants/SCHEME.md); the word-budget register of approved
@@ -360,6 +360,8 @@ Prefix `INV-PAY`.
 | `INV-PAY-146` | Edit card refunds freeze allocation before Stripe and preserve replay keys |
 | `INV-PAY-147` | Refund slice evidence prevents replay after Stripe forgets idempotency keys |
 | `INV-PAY-148` | Organiser bank-transfer edit invoices, unpaid-first netting and historical repair |
+| `INV-PAY-149` | A dead card refund closes with nothing owed or retries its card |
+| `INV-PAY-150` | A cancellation leaves a live superseded capture to its own refund |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -1018,7 +1020,8 @@ ten pre-split domain headings the index keeps verbatim.
 
 How the app decides whether a sign-in attempt may proceed, without telling
 anyone which accounts exist, which passwords it lets a person choose, how
-long a signed-in session lasts, and how recently they proved who they are.
+long a signed-in session lasts, and when a signed-in person must prove who
+they are again.
 File: [`invariants/authentication.md`](invariants/authentication.md).
 Prefix `INV-AUTH`. Added by #4609; it is not one of the ten pre-split domain
 headings the index keeps verbatim.
@@ -1032,4 +1035,4 @@ headings the index keeps verbatim.
 | `INV-AUTH-005` | Reset and sign-in-link requests limited per account, answered as accepted |
 | `INV-AUTH-006` | Chosen passwords screened by prefix-only breach lookup; fails open |
 | `INV-AUTH-007` | Sessions end a fixed time after sign-in; missing stamp is expired |
-| `INV-AUTH-008` | Recent proof is five minutes; the client cannot stamp it |
+| `INV-AUTH-008` | Recent-auth stamp: sign-in or consumed challenge only; five-minute step-up |
