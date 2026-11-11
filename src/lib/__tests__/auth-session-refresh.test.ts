@@ -8,6 +8,7 @@ const {
   mockRawAuth,
   mockLoadEffectiveModuleFlags,
   mockConsumeTwoFactorSessionChallenge,
+  mockConsumeSessionReauthChallenge,
 } = vi.hoisted(() => ({
   mockFindUnique: vi.fn(),
   mockFindFirst: vi.fn(),
@@ -15,6 +16,7 @@ const {
   mockRawAuth: vi.fn(),
   mockLoadEffectiveModuleFlags: vi.fn(),
   mockConsumeTwoFactorSessionChallenge: vi.fn(),
+  mockConsumeSessionReauthChallenge: vi.fn(),
   mockNextAuth: vi.fn(() => ({
     handlers: {},
     signIn: vi.fn(),
@@ -88,6 +90,10 @@ vi.mock("@/lib/two-factor", () => ({
   consumeTwoFactorSessionChallenge: mockConsumeTwoFactorSessionChallenge,
 }));
 
+vi.mock("@/lib/session-reauth", () => ({
+  consumeSessionReauthChallenge: mockConsumeSessionReauthChallenge,
+}));
+
 // #2087: auth.ts now resolves the Google provider from the C1 store. The jwt
 // callback under test never touches Google, so stub the resolver modules to keep
 // this suite isolated from the credential store.
@@ -128,6 +134,8 @@ describe("auth session refresh", () => {
     mockLoadEffectiveModuleFlags.mockResolvedValue({ twoFactor: false });
     mockConsumeTwoFactorSessionChallenge.mockReset();
     mockConsumeTwoFactorSessionChallenge.mockResolvedValue(false);
+    mockConsumeSessionReauthChallenge.mockReset();
+    mockConsumeSessionReauthChallenge.mockResolvedValue(false);
   });
 
   it("refreshes a stale admin JWT role from the database", async () => {
@@ -905,5 +913,100 @@ describe("auth session refresh", () => {
       where: { id: "member-1" },
       data: { lastLoginAt: expect.any(Date) },
     });
+  });
+
+  function signedInMember() {
+    mockFindUnique.mockResolvedValue({
+      role: "MEMBER",
+      accessRoles: [{ role: "USER" }],
+      forcePasswordChange: false,
+      emailVerified: true,
+      passwordChangedAt: null,
+      twoFactorEnabled: false,
+      twoFactorMethod: null,
+    });
+  }
+
+  it("stamps lastAuthenticatedAt when sign-in completes, and a refresh does not move it", async () => {
+    signedInMember();
+    const signedIn = await authConfig.callbacks.jwt?.({
+      token: {},
+      user: {
+        id: "member-1",
+        role: "MEMBER",
+        forcePasswordChange: false,
+        isEmailVerified: true,
+        twoFactorEnabled: false,
+        twoFactorMethod: null,
+      },
+    } as never);
+    expect(signedIn).toEqual(
+      expect.objectContaining({ lastAuthenticatedAt: Date.now() }),
+    );
+
+    const refreshed = await authConfig.callbacks.jwt?.({
+      token: { id: "member-1", sessionIssuedAt: Date.now(), lastAuthenticatedAt: 1_000 },
+    } as never);
+    expect(refreshed).toEqual(expect.objectContaining({ lastAuthenticatedAt: 1_000 }));
+    expect(mockConsumeSessionReauthChallenge).not.toHaveBeenCalled();
+  });
+
+  it("leaves a token with no lastAuthenticatedAt unstamped on refresh", async () => {
+    signedInMember();
+    const refreshed = await authConfig.callbacks.jwt?.({
+      token: { id: "member-1", sessionIssuedAt: Date.now() },
+    } as never);
+    expect(refreshed).not.toHaveProperty("lastAuthenticatedAt");
+  });
+
+  it("ignores a forged session update that carries lastAuthenticatedAt", async () => {
+    signedInMember();
+    const forgedStamp = Date.now();
+    const refreshed = await authConfig.callbacks.jwt?.({
+      token: {
+        id: "member-1",
+        sessionIssuedAt: Date.now(),
+        lastAuthenticatedAt: 1_000,
+      },
+      trigger: "update",
+      session: { user: { lastAuthenticatedAt: forgedStamp } },
+    } as never);
+
+    expect(mockConsumeSessionReauthChallenge).not.toHaveBeenCalled();
+    expect(refreshed).toEqual(expect.objectContaining({ lastAuthenticatedAt: 1_000 }));
+  });
+
+  it("refreshes lastAuthenticatedAt only when the reauthentication challenge is consumed", async () => {
+    signedInMember();
+    mockConsumeSessionReauthChallenge.mockResolvedValue(false);
+    const rejected = await authConfig.callbacks.jwt?.({
+      token: {
+        id: "member-1",
+        sessionIssuedAt: Date.now(),
+        lastAuthenticatedAt: 1_000,
+      },
+      trigger: "update",
+      session: {
+        user: { reauthChallengeToken: "forged", lastAuthenticatedAt: Date.now() },
+      },
+    } as never);
+    expect(mockConsumeSessionReauthChallenge).toHaveBeenCalledWith("member-1", "forged");
+    expect(rejected).toEqual(expect.objectContaining({ lastAuthenticatedAt: 1_000 }));
+
+    mockConsumeSessionReauthChallenge.mockResolvedValue(true);
+    const accepted = await authConfig.callbacks.jwt?.({
+      token: {
+        id: "member-1",
+        sessionIssuedAt: Date.now(),
+        lastAuthenticatedAt: 1_000,
+      },
+      trigger: "update",
+      session: {
+        user: { reauthChallengeToken: "minted", lastAuthenticatedAt: 9_999_999_999_999 },
+      },
+    } as never);
+    expect(accepted).toEqual(
+      expect.objectContaining({ lastAuthenticatedAt: Date.now() }),
+    );
   });
 });
