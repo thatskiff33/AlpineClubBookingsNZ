@@ -4051,3 +4051,72 @@ Historical repair needs reviewed dry-run keys, shows later reductions and
 refunds, bills each recorded positive net (B1's accepted over-billing), skips
 billed or queued changes and joins the place's other findings. Legacy review charges stay refused. Tests:
 the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.ts`.
+
+## INV-PAY-149
+
+**Related: `INV-PAY-122`**, **`INV-PAY-128`**, **`INV-PAY-145`**.
+
+- **A dead card refund is settled on Stuck States, never by a new Stripe
+  dashboard refund** (owner decisions 5 and 7 on #4361; #4368). Two settlements
+  beside "Paid another way" record no money; finance:edit, as it.
+- **Nothing left owed.** A dead row owing nothing, nothing of its own unsent, is
+  listed while refunds attributed to it exist, and closes to `SUCCEEDED` naming
+  them; it moves no money and makes no Stripe or Xero call. A $0 off the
+  payment's cap alone is a developer's. Re-checked under the locks against what
+  the treasurer saw.
+- **Try the card again** re-arms it (`rearmedPaymentRecoveryOperationData`); the
+  runner's preflight reads Stripe first. Outside Stripe's key window, unless a
+  re-send is shown safe it refuses (409): nothing owed; a row raised for a
+  person; a may-have-refunded failure; the payment holding less than its unsent
+  slices; unmarked plan slices not adding up to them (a plan-less superseded
+  one: what its charge holds, while every refund attributed to it is its own);
+  any failed-later row on the payment, open or paid (#4492); a counted,
+  unstamped, unmarked refund Stripe lists from this booking's same door
+  (unreadable refuses); or a moved owed figure or plan. Where "Paid another way"
+  cannot close it either, the refusal points to a developer.
+- **One row, one winner.** All three settlements share `lockDeadCardRefundRow`
+  (`lock(1)`, row, Payment row) and its claim: dead, on the plan read. A closed
+  row is never re-armed, nor a re-armed one closed until given up again. Each is
+  audited (`payment`).
+- Limit: another door's unmatched refund of the same money, failing later, is
+  owed beside the row (#4104, #4492); one its charge takes after a re-arm holds
+  the runner (#4858).
+- Proven by `card-refund-dead-row-actions.test.ts`,
+  `card-refund-dead-row-actions.realdb.test.ts`, `dead-row-actions-route.test.ts`
+  and `dead-card-refunds-panel.test.tsx`.
+
+## INV-PAY-150
+
+**Related: `INV-PAY-145`** (plan-less superseded sizing), **`INV-PAY-117`**
+(open hand-backs), **`INV-PAY-131`** (the cancel preview).
+
+- **A cancellation leaves a live superseded capture to its own refund**
+  (#4866). A superseded intent's refund with no stored plan sizes its request
+  on its charge's ledger (#4699), so a cancellation's card slice or credit
+  allocation on that charge shrank it and the row closed with the member
+  short, unalerted; where the
+  booking's own money fell short of the policy's cap, the tier also counted
+  that capture as paid.
+- **What the machinery owns, per charge** (`supersededCaptureHeldBack`), by the
+  Xero reading's rule (`readSupersededCaptureOwnership`): what a
+  `REFUND_SUPERSEDED_PAYMENT` row not yet `SUCCEEDED` would send
+  (`reArmWouldSendCents`), held or dead included; while a
+  `CANCEL_PAYMENT_INTENT` row is in flight, all its captured charge holds; and
+  what open rows owe back again after Stripe failed one later
+  (`supersededRefundsOwedAgainCents`). Never more than the charge holds.
+- **The paid claim** reads it under the Payment row, before the mirror fold,
+  which folds into none of it (`foldMirrorRefundIntoLedger`). It joins the open
+  hand-backs, so no tier counts it as paid;
+  `planCardRefundFromLedger` gives it no slice, nor does a refund as account
+  credit (`applyLocalRefundAllocation`). The preview reads the same figure for
+  its refund and its card plan.
+- **The race.** The hand-off flips the charge captured under the Payment row,
+  then writes the refund row before its cancel row closes, so a claim queued
+  behind it sees one of them live. No new lock (`INV-LOCK-001` to
+  `INV-LOCK-003`).
+- Limit: an edit's, a refund request's and a capacity race's card plans still
+  take no account of it.
+- Proven by `superseded-capture-hold-back.test.ts`,
+  `cancel-card-refund-shortfall-preview.test.ts`,
+  `clipped-mirror-open-hand-back.test.ts` and
+  `superseded-refund-cancel-hold-back.realdb.test.ts`.
