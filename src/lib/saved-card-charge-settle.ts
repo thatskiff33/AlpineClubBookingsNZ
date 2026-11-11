@@ -399,7 +399,8 @@ async function keepExistingRow(
  *   did not attribute to an API request, so an intent whose lost-response POST
  *   answered `processing` and captured asynchronously arrives with no key, and
  *   every redelivery of it carries none either. Only a `_v2` key's sends carry
- *   the id, and nothing mints one until #4682 (`mintedSavedCardChargeKey`).
+ *   the id. A new attempt mints that key (`mintedSavedCardChargeKey`, #4682).
+ *   An original-key row is still not adopted from metadata.
  *
  * Either way only a PRIMARY Stripe row that is PENDING/PROCESSING and holds NO
  * intent id is adopted, only when its `reference` is a key ITS OWN id builds
@@ -414,10 +415,9 @@ async function keepExistingRow(
  * own settle, or between two deliveries, resolves with one writer. Returns null
  * when there is nothing to adopt, and the handler proceeds as before.
  *
- * The case left is Stripe's limit plus the rollout: an original-key attempt —
- * every one minted until #4682 — whose capture was asynchronous carries no key
- * and no id, so it still ends at `attempt_key_expired`, alerted as unmatched
- * (`INV-INT-033`).
+ * The case left is the old shape. An original-key attempt minted before #4682,
+ * whose capture was asynchronous, carries no key and no id, so it still ends
+ * at `attempt_key_expired`, alerted as unmatched (`INV-INT-033`).
  */
 export async function adoptSavedCardChargeAttemptForIntent(params: {
   journal: BookingJournalContext;

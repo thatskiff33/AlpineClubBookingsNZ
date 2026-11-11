@@ -1816,10 +1816,10 @@ inside the caller's claim transaction (under `lock(1)` and the lodge lock,
 after the PENDING -> CONFIRMED claim) BEFORE Stripe is asked, with its own
 Stripe idempotency key stored on `reference`. Two key shapes are read as an
 attempt row's: `pending_charge_<bookingId>_<rowId>` and the `_v2` key (that key
-plus `_v2`, #4646). Only the first is minted until #4682
-(`mintedSavedCardChargeKey`), because the release before #4646 reads only it
-and would charge again beside a `_v2` row it met during a deploy or after a
-rollback. The charge's metadata names the row (`savedCardAttemptId`) only under
+plus `_v2`). A new attempt mints the `_v2` key (`mintedSavedCardChargeKey`,
+#4682), and an asynchronous capture of one is adopted by the attempt id its
+metadata carries. An original-key row minted before that is re-sent under its
+stored key. The charge's metadata names the row (`savedCardAttemptId`) only under
 a `_v2` key, so a re-sent key always sends its first body:
 
 ```text
@@ -1864,7 +1864,7 @@ next attempt finds a PRIMARY row still holding captured cash -> REFUSED
        redelivery of it) -> the metadata's `savedCardAttemptId` = the row's id,
        its payment this booking's and its key the `_v2` shape (#4646)
      the row write is claimed on "still no intent": a lost adoption writes nothing
-     an original-key attempt (every one minted until #4682) has neither link
+     an original-key attempt (minted before #4682) has neither link
      for an asynchronous capture
        -> stays PENDING, ends at `attempt_key_expired`, alerted as unmatched
 ```
@@ -2063,8 +2063,8 @@ event so Stripe redelivers (`INV-INT-033`). Which minting flows can reach it:
 | Pay step and `/pay` link, PRIMARY | No | - | `attachMintedCardIntent` writes the PRIMARY row under lock(1) before the client secret leaves the server; a refused attach cancels the intent and never hands the secret out |
 | Saved-card charge, answer received (`chargeSavedCardAttempt`) | No | - | The request's `settleSavedCardChargeAttempt` writes the intent onto the attempt row. It can commit after the webhook's first read and before `adoptSavedCardChargeAttemptForIntent`, which then finds no row without an intent; so the webhook reads the row by intent id once more before calling the payment unmatched, finds the PRIMARY row, and settles as usual (`already_paid` when the request settled first) |
 | Saved-card charge, answer lost, Stripe attributes the capture to the request | No | - | `adoptSavedCardChargeAttemptForIntent` adopts it by `event.request.idempotency_key` |
-| Saved-card charge under a `_v2` key, answer lost, capture asynchronous (`event.request` null) | No | - | `adoptSavedCardChargeAttemptForIntent` adopts it by the attempt id the metadata carries (`savedCardAttemptId`, #4646); a redelivery finds the row by intent id. This release reads `_v2` rows but does not mint them; #4682 does |
-| Saved-card charge under the original key (every one minted until #4682), answer lost, capture asynchronous; or the attempt row already ended | Yes, `APP_INTENT_NO_TRANSACTION` | Lost money | The card was charged and no row can be linked: the original key's metadata names no row, and an ended row is never adopted. The attempt ends at `attempt_key_expired`, and a redelivered event reaches the same branch |
+| Saved-card charge under a `_v2` key, answer lost, capture asynchronous (`event.request` null) | No | - | `adoptSavedCardChargeAttemptForIntent` adopts it by the attempt id the metadata carries (`savedCardAttemptId`, #4646); a redelivery finds the row by intent id. A new attempt mints this key (#4682) |
+| Saved-card charge under the original key (rows minted before #4682), answer lost, capture asynchronous; or the attempt row already ended | Yes, `APP_INTENT_NO_TRANSACTION` | Lost money | The card was charged and no row can be linked: the original key's metadata names no row, and an ended row is never adopted. The attempt ends at `attempt_key_expired`, and a redelivered event reaches the same branch |
 | An app intent confirmed outside the app after its attach was refused or never ran (dashboard or API) | Yes, `APP_INTENT_NO_TRANSACTION` | Lost money | No row was ever written for it |
 | An intent another deployment minted on the same Stripe account (its `bookingId` is not here) | Yes, `APP_INTENT_NO_TRANSACTION` | Unexpected: money this app holds no record of | One deployment serves one club, so it should not happen. Each deployment needs its own Stripe account or test sandbox: staging, development and CI sharing one test account would record each other's app intents. Their emails are held off production, so the cost there is only rows |
 | Additional asks: edit, review charge, currency and price re-issue, released credit | No | - | Each carries `type: ADDITIONAL_ASK_INTENT_TYPE` and is routed to `handleAdditionalModificationPaymentSucceeded` first |
@@ -5059,7 +5059,7 @@ password accepted -> JWT session issued with twoFactorVerified=false
 module off -> session treated verified for normal routing
 module on + unenrolled -> protected layout redirects to /login/enroll
 module on + enrolled -> protected layout redirects to /login/verify
-valid TOTP/email/recovery code -> server mints single-use challenge token (hashed, short TTL)
+valid TOTP/email/recovery code -> server mints `<KIND>.<secret>` (the whole token is hashed, short TTL)
 session update carrying that token -> jwt callback consumes it -> twoFactorVerified=true
 client-forged session update without a valid token -> ignored, session stays unverified
 invalid attempts -> per-member counter increments -> 15 minute lockout after 5 failures
@@ -5087,10 +5087,13 @@ A session carries `lastAuthenticatedAt`, separate from `sessionIssuedAt`.
 (#4619).
 
 ```text
-sign-in completes -> lastAuthenticatedAt = now
-  password or Google, no second factor left -> the jwt sign-in branch
-  second factor required -> consuming the two-factor session challenge
-session.update carrying lastAuthenticatedAt -> ignored
+password sign-in, no authenticator factor still owed -> lastAuthenticatedAt = now
+  an email factor does not count as owed
+  jwt sign-in branch, after the member reload, credentials provider only
+authenticator-app challenge consumed -> lastAuthenticatedAt = now
+emailed link, Google, recovery code, or emailed code -> stamp unchanged
+a challenge with no proof prefix -> stamp unchanged
+session.update carrying lastAuthenticatedAt or a proof kind -> ignored
 step-up proof accepted -> server mints SessionReauthChallenge (keyed hash, two minutes, one member)
   authenticator-app code when they have an app
   passkey when one is stored (#4617, INV-AUTH-009); the same assertion as sign-in
@@ -5104,9 +5107,11 @@ requireRecentAuth -> pass while the stamp is at most 5 minutes old; otherwise 40
 the dialog replays the refused request once, body unchanged; a second refusal is not replayed
 ```
 
-To verify: `recent-auth.test.ts` (the window on the frozen clock, and the typed
-refusal), `auth-session-refresh.test.ts` (a client-supplied stamp is ignored; a
-consumed challenge refreshes it), `session-reauth.test.ts` (an emailed code is
+To verify: `recent-auth.test.ts` (the window on the frozen clock, the typed
+refusal, and an emailed-link session with no stamp), `auth-session-refresh.test.ts`
+(a client-supplied stamp is ignored; a password or authenticator app writes it;
+an emailed link, Google, a recovery code, and an emailed code do not; a
+consumed reauthentication challenge refreshes it), `session-reauth.test.ts` (an emailed code is
 refused and a failed proof counts), `session-reauth.realdb.test.ts` (two
 concurrent consumes, one success), `confirm-its-you-dialog.test.tsx` (the
 replay is once, body unchanged), and `webauthn.realdb.test.ts` (one of two

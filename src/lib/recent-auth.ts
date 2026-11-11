@@ -45,6 +45,46 @@ export function isWithinRecentAuthWindow(
   );
 }
 
+/**
+ * How a sign-in was proved, from server-side facts only (#4994, INV-AUTH-008).
+ * `email` is an emailed code. `recovery` is a recovery code.
+ */
+export type RecentAuthSignInProof =
+  | "password"
+  | "TOTP"
+  | "magic-link"
+  | "google"
+  | "email"
+  | "recovery";
+
+/**
+ * Whether this proof starts the five-minute clock.
+ *
+ * A password counts only when no authenticator factor is still owed. An
+ * authenticator-app proof always counts. An emailed link, Google, an emailed
+ * code, and a recovery code never do.
+ */
+export function recentAuthSignInCounts(
+  proof: RecentAuthSignInProof,
+  owesAuthenticatorApp: boolean,
+): boolean {
+  if (proof === "password") return !owesAuthenticatorApp;
+  return proof === "TOTP";
+}
+
+/**
+ * The verify-route method prefixed into a two-factor challenge, as a sign-in
+ * proof. Anything else, including a token minted with no prefix, is not one.
+ */
+export function recentAuthSignInProofFromChallengeKind(
+  kind: string | null,
+): RecentAuthSignInProof | null {
+  if (kind === "TOTP") return "TOTP";
+  if (kind === "EMAIL") return "email";
+  if (kind === "RECOVERY") return "recovery";
+  return null;
+}
+
 export function isReauthRequiredPayload(body: unknown): boolean {
   return (
     typeof body === "object" &&
