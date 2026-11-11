@@ -86,6 +86,8 @@ describe("recent authentication window (#4616)", () => {
     expect(recentAuthSignInCounts("password", true)).toBe(false);
     expect(recentAuthSignInCounts("TOTP", false)).toBe(true);
     expect(recentAuthSignInCounts("TOTP", true)).toBe(true);
+    expect(recentAuthSignInCounts("passkey", false)).toBe(true);
+    expect(recentAuthSignInCounts("passkey", true)).toBe(true);
     const never: RecentAuthSignInProof[] = [
       "magic-link",
       "google",
@@ -97,6 +99,7 @@ describe("recent authentication window (#4616)", () => {
       expect(recentAuthSignInCounts(proof, true)).toBe(false);
     }
     expect(recentAuthSignInProofFromChallengeKind("TOTP")).toBe("TOTP");
+    expect(recentAuthSignInProofFromChallengeKind("PASSKEY")).toBe("passkey");
     expect(recentAuthSignInProofFromChallengeKind("EMAIL")).toBe("email");
     expect(recentAuthSignInProofFromChallengeKind("RECOVERY")).toBe("recovery");
     expect(recentAuthSignInProofFromChallengeKind(null)).toBeNull();

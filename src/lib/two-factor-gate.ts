@@ -1,10 +1,12 @@
 import { getSafeInternalReturnPath } from "@/lib/internal-return-path";
+import { isSecondFactorEnrolled } from "@/lib/second-factor-enrolment";
 
 export type TwoFactorSessionUser = {
   id?: string | null;
   twoFactorRequired?: boolean;
   twoFactorVerified?: boolean;
   twoFactorEnrolled?: boolean;
+  hasPasskey?: boolean;
 };
 
 export type TwoFactorGateMember = {
@@ -36,9 +38,11 @@ export function buildTwoFactorGatePath(params: {
   callbackPath?: string | null;
 }) {
   const callbackUrl = getSafeInternalReturnPath(params.callbackPath) ?? "/dashboard";
-  const enrolled =
-    params.member?.twoFactorEnabled === true ||
-    params.sessionUser?.twoFactorEnrolled === true;
+  const enrolled = isSecondFactorEnrolled({
+    twoFactorEnabled: params.member?.twoFactorEnabled,
+    hasPasskey: params.sessionUser?.hasPasskey,
+    sessionEnrolled: params.sessionUser?.twoFactorEnrolled,
+  });
   const destination = enrolled ? "/login/verify" : "/login/enroll";
   const query = new URLSearchParams({ callbackUrl });
   return `${destination}?${query.toString()}`;

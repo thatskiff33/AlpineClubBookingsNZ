@@ -328,6 +328,15 @@ async function captureAnonymisationPayload(
       sessionReauthChallenge: {
         deleteMany: revokedTokens.sessionReauthChallenge,
       },
+      // #4617: erasure reads the passkey count, then deletes the credentials
+      // and their challenges, on this same transaction.
+      webAuthnCredential: {
+        count: vi.fn().mockResolvedValue(0),
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+      webAuthnChallenge: {
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
       // The APPROVAL_IN_PROGRESS -> APPROVED finalisation is claimed inside the
       // transaction, guarded on still owning it.
       deletionRequest: {

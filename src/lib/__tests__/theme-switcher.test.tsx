@@ -2,7 +2,12 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ThemeSwitcher } from "@/components/theme-switcher";
+import { ThemeMenuItems, ThemeSwitcher } from "@/components/theme-switcher";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const { setThemeMock, useThemeMock } = vi.hoisted(() => ({
   setThemeMock: vi.fn(),
@@ -52,6 +57,22 @@ describe("ThemeSwitcher", () => {
 
     expect(setThemeMock).toHaveBeenNthCalledWith(1, "light");
     expect(setThemeMock).toHaveBeenNthCalledWith(2, "system");
+  });
+
+  it("offers theme choices as menu radio items when they sit inside a menu", () => {
+    render(
+      <DropdownMenu open>
+        <DropdownMenuTrigger>Account</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <ThemeMenuItems />
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    );
+
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(screen.getByRole("menuitemradio", { name: "Light" })).toBeTruthy();
+    expect(screen.getByRole("menuitemradio", { name: "Dark" })).toBeTruthy();
+    expect(screen.getByRole("menuitemradio", { name: "Follow system" })).toBeTruthy();
   });
 
   it("falls back to Follow system before a valid stored theme is available", () => {

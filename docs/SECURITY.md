@@ -551,10 +551,10 @@ before a destructive action.
 
 **What an officer sees.** Nothing yet: no route asks. When one does (#4619), a
 confirmation older than five minutes gets a small dialog. They enter the code
-from their authenticator app, or their password if they have no app and no
-passkey. A passkey will work once that sign-in exists (#4617). An emailed code
-is never accepted, and nor is a recovery code. The dialog then sends the
-original request once more, with the same body.
+from their authenticator app, their passkey, or their password if they have
+neither an app nor a passkey. An emailed code is never accepted, and nor is a
+recovery code. The dialog then sends the original request once more, with the
+same body.
 
 **What is stored.** The session token carries `lastAuthenticatedAt`. A password
 sign-in writes it only when no authenticator factor is still owed (an email
@@ -578,8 +578,9 @@ free guessing oracle.
 
 - **No route asks yet.** The check and the dialog exist; #4619 decides where
   they apply.
-- **A passkey cannot confirm anyone yet.** The server has a seam for it and
-  rejects every passkey proof until #4617.
+- **A passkey confirms the same way it signs in (`INV-AUTH-009`).** The dialog
+  offers it only for a passkey this member has saved. The public key is not
+  in the session or the audit row.
 - **During a blue/green cutover the old slot has no stamp and no check.** The
   migration only adds the challenge table. Draining code never reads it.
 

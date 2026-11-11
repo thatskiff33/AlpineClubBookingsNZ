@@ -5097,7 +5097,7 @@ a challenge with no proof prefix -> stamp unchanged
 session.update carrying lastAuthenticatedAt or a proof kind -> ignored
 step-up proof accepted -> server mints SessionReauthChallenge (keyed hash, two minutes, one member)
   authenticator-app code when they have an app
-  passkey when one exists (#4617); until then that proof never succeeds
+  passkey when one is stored (#4617, INV-AUTH-009); the same assertion as sign-in
   password only when they have neither
   emailed code or recovery code -> refused, and the failure counts
 session update carrying that challenge -> jwt callback claims the row (consumedAt was null) -> lastAuthenticatedAt = now
@@ -5114,8 +5114,9 @@ refusal, and an emailed-link session with no stamp), `auth-session-refresh.test.
 an emailed link, Google, a recovery code, and an emailed code do not; a
 consumed reauthentication challenge refreshes it), `session-reauth.test.ts` (an emailed code is
 refused and a failed proof counts), `session-reauth.realdb.test.ts` (two
-concurrent consumes, one success), and `confirm-its-you-dialog.test.tsx` (the
-replay is once, body unchanged).
+concurrent consumes, one success), `confirm-its-you-dialog.test.tsx` (the
+replay is once, body unchanged), and `webauthn.realdb.test.ts` (one of two
+challenge claims, and one of two counter updates).
 
 ## Password Sign-In Throttle (#4609)
 
