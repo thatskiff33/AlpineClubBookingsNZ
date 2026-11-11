@@ -19,7 +19,6 @@ CREATE TABLE "StripeBalanceTransactionEvidence" (
   "stripeRefundId" TEXT,
   "payoutId" TEXT,
   "stripeCreatedAt" TIMESTAMP(3) NOT NULL,
-  "recordedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "StripeBalanceTransactionEvidence_pkey" PRIMARY KEY ("id")
 );
 

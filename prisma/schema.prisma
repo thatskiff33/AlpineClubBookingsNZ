@@ -4875,9 +4875,10 @@ enum StripePayoutStatus {
   CANCELED
 }
 
-/// One Stripe balance transaction, stored once. The application inserts and
-/// selects only (#4520, Ledger M8). A contradicted replay is a new row Stripe
-/// will not send: balance transactions are immutable, so this row is never updated.
+/// One Stripe balance transaction, stored once. Insert and select only
+/// (#4520, Ledger M8). A repeated insert of the same Stripe id is ignored;
+/// the row is never updated. When it was stored is not a column: the economic
+/// instant is `stripeCreatedAt`.
 model StripeBalanceTransactionEvidence {
   /// Stripe's balance-transaction id (`txn_…`).
   id                String   @id
@@ -4895,15 +4896,13 @@ model StripeBalanceTransactionEvidence {
   stripeRefundId    String?
   payoutId          String?
   stripeCreatedAt   DateTime
-  recordedAt        DateTime @default(now())
 
   @@index([stripeCreatedAt])
   @@index([paymentIntentId])
   @@index([payoutId])
 }
 
-/// Mutable payout head. Status changes are conditional on the status read
-/// under a row lock; the balance-transaction rows above are not locked.
+/// Mutable payout head. Its status can change. Balance-transaction rows are not.
 model StripePayout {
   /// Stripe's payout id (`po_…`).
   id                          String             @id
