@@ -43,7 +43,7 @@ vi.mock("@/lib/prisma", () => ({
 
 // #4936: the pre-filter's bulk link read is the real one, over `linkFindMany`.
 vi.mock("@/lib/xero-sync", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/xero-sync")>()),
+  ...((await importOriginal()) as typeof import("@/lib/xero-sync")),
   sumCoveredRefundCreditNoteCents: mocks.sumCovered,
 }));
 
