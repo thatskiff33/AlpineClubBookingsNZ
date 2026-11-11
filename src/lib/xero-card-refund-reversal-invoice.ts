@@ -53,8 +53,8 @@ import {
   CARD_REFUND_REVERSAL_INVOICE_ROLE,
   CARD_REFUND_REVERSAL_PAYMENT_ROLE,
   XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE,
-  readQueuedOutboxPayload,
-} from "@/lib/xero-operation-outbox-payload";
+} from "@/lib/xero-card-refund-reversal-outbox";
+import { readQueuedOutboxPayload } from "@/lib/xero-operation-outbox-payload";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export {

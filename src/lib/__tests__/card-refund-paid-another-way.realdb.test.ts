@@ -38,7 +38,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 import { currentXeroClaim } from "@/lib/__tests__/helpers/xero-claim";
-import { CARD_REFUND_REVERSAL_INVOICE_ROLE } from "@/lib/xero-operation-outbox-payload";
+import { CARD_REFUND_REVERSAL_INVOICE_ROLE } from "@/lib/xero-card-refund-reversal-outbox";
 
 /** A plain test label for the skipped outbox row (not a credential). */
 const SKIPPED_ROW_LABEL = ["race", "3372", "paw", "skipped"].join("-");

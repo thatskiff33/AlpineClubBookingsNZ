@@ -12,7 +12,7 @@ import { isCapturedTransactionStatus, latestTransactionOfKind } from "@/lib/paym
 import { type AccountCreditAllocationTarget } from "./types";
 import { invoiceCorrectionNoteIds, noCashModificationNoteIds } from "./account-credit-modification-notes";
 import { receiptCountsInvoiceCorrections } from "./settle-from-cash";
-import { NOT_CARD_REFUND_REVERSAL_INVOICE_LINK } from "@/lib/xero-operation-outbox-payload";
+import { NOT_CARD_REFUND_REVERSAL_INVOICE_LINK } from "@/lib/xero-card-refund-reversal-outbox";
 
 async function resolvePaymentIdsByInvoiceTargets(
   creditNoteId: string,

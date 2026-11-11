@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { useState } from "react";
 import { Menu, Mountain, LogOut, User, ChevronDown } from "lucide-react";
-import { ThemeSwitcher } from "@/components/theme-switcher";
+import { ThemeMenuItems, ThemeSwitcher } from "@/components/theme-switcher";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -234,9 +234,8 @@ export function NavBar({ user, features, surface = "member" }: NavBarProps) {
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <div className="px-2 py-1.5">
-                <ThemeSwitcher />
-              </div>
+              <DropdownMenuLabel>Theme</DropdownMenuLabel>
+              <ThemeMenuItems />
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="cursor-pointer text-danger-11 focus:bg-danger-3 focus:text-danger-11"

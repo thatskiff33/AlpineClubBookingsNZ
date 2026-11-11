@@ -502,8 +502,8 @@ To collect it by hand:
 2. If that one request already asks for both changes' money, nothing more is
    needed once the member pays it.
 3. Otherwise ask the member for the second change's amount another way, such as
-   the supplementary invoice the Xero repair tool raises for a change whose
-   card request stopped, and record it as paid the usual way.
+   the supplementary invoice the Xero repair tool raises unpaid for a change
+   whose card request stopped, and record it as paid when the money arrives.
 
 ## Settings reference
 

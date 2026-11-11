@@ -3,13 +3,24 @@
 /**
  * Small controls of the admin sidebar, kept apart from the nav catalogue in
  * `admin-sidebar.tsx` so that file stays within its size budget: the queue
- * counts behind the badges, the "Search…" trigger, and the role-panel switcher
- * (#108).
+ * counts behind the badges, the "Search…" trigger, the role-panel switcher
+ * (#108), and the hub-menu role switcher (C14 #4811).
  */
 import { useEffect, useLayoutEffect, useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { ADMIN_HUBS } from "@/lib/admin-hubs";
+import { hubRoot } from "@/lib/admin-hubs/define";
 import { openAdminCommandPalette } from "@/lib/admin-command-palette-events";
 import type { AdminPendingCounts } from "@/lib/admin-pending-counts";
 import {
@@ -149,6 +160,94 @@ export function PanelSwitcher({
         </Button>
       ))}
     </div>
+  );
+}
+
+/** Sentinel for "All my roles". Not a role token; the save posts null. */
+const ALL_MY_ROLES = "all-my-roles";
+
+/**
+ * The role whose hub menu is showing (C14 #4811). Rendered only when the
+ * caller has already decided this officer holds two or more menu roles and is
+ * not a Full Admin. "All my roles" clears the preference.
+ */
+export function MenuRoleSwitcher({
+  roles,
+  selected,
+}: {
+  roles: readonly { token: string; label: string }[];
+  selected: string | null;
+}) {
+  const router = useRouter();
+  return (
+    <div className="mb-2 space-y-1">
+      <p className="text-xs font-medium text-muted-foreground">Show menu for</p>
+      <Select
+        value={selected ?? ALL_MY_ROLES}
+        onValueChange={(value) => {
+          const role = value === ALL_MY_ROLES ? null : value;
+          void fetch("/api/admin/menu-role", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ role }),
+          })
+            .then((response) => {
+              if (response.ok) router.refresh();
+            })
+            .catch(() => undefined);
+        }}
+      >
+        <SelectTrigger aria-label="Show menu for">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={ALL_MY_ROLES}>All my roles</SelectItem>
+          {roles.map((role) => (
+            <SelectItem key={role.token} value={role.token}>
+              {role.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+/**
+ * One link per hub the role menu kept, in registry order (C14 #4811). The hub
+ * list C13 would render is not in this tree, so this is that list.
+ */
+export function HubMenuLinks({
+  keys,
+  onNavigate,
+}: {
+  keys: readonly string[];
+  onNavigate?: () => void;
+}) {
+  const pathname = usePathname();
+  const hubs = ADMIN_HUBS.filter((hub) => keys.includes(hub.key));
+  return (
+    <nav aria-label="Admin sections" className="flex flex-col gap-0.5">
+      {hubs.map((hub) => {
+        const href = hubRoot(hub.prefix);
+        const active = pathname === href || pathname.startsWith(`${href}/`);
+        return (
+          <Link
+            key={hub.key}
+            href={href}
+            onClick={onNavigate}
+            className={cn(
+              "flex items-center rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              active
+                ? "app-nav-link-active"
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+            )}
+          >
+            {hub.label}
+          </Link>
+        );
+      })}
+    </nav>
   );
 }
 

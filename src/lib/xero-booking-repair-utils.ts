@@ -2,8 +2,8 @@
 // repair tool. Extracted verbatim from xero-booking-repair.ts (#1208 item 2).
 // Per #1208, this file's readJson* guards are intentionally kept local (NOT
 // merged into @/lib/xero-json) to preserve behavior.
+import { XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE } from "@/lib/xero-card-refund-reversal-outbox";
 import {
-  XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
   readQueueType,

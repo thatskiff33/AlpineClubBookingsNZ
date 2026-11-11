@@ -1,5 +1,5 @@
 import { XERO_ACTIVE_OPERATION_STATUSES } from "./xero-active-operation-statuses";
-import { NOT_CARD_REFUND_REVERSAL_INVOICE } from "@/lib/xero-operation-outbox-payload";
+import { NOT_CARD_REFUND_REVERSAL_INVOICE } from "@/lib/xero-card-refund-reversal-outbox";
 import "server-only";
 
 import { BookingStatus, PaymentSource } from "@prisma/client";

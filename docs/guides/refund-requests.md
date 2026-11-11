@@ -122,8 +122,13 @@ payment not yet made (being retried, or stopped and listed on [Stuck States](stu
 
 1. On a pending manual credit approval, click **Approve** or **Reject**. If *you*
    raised the request, you cannot approve it — "Needs another admin to approve this
-   request" — this is the two-person rule. An approved adjustment is applied to the
-   member's credit ledger.
+   request" — this is the two-person rule. A credit grant shows the Xero account
+   the requester chose (the member's own money, or goodwill). You cannot change
+   it. A grant requested before that choice existed has to be rejected and asked
+   for again. A deduction against credit that already has a Xero note is refused
+   and stays pending, because the note would stay at its full amount. An approved
+   adjustment is applied to the member's credit ledger. A grant also queues its
+   Xero credit note at that moment.
 
 ## Settings reference
 

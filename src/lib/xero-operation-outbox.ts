@@ -64,6 +64,8 @@ import {
 } from "@/lib/xero-mappings";
 import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
 import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-allocation";
+import { scanSpacesAdminGrantNotesAwaitingRetry } from "@/lib/admin-grant-credit-note";
+import { createAdminGrantCreditNote } from "@/lib/xero-admin-grant-credit-note";
 import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
 import { deallocateExcessAppliedCreditForBooking } from "@/lib/xero-applied-credit-deallocation";
 import { outboxScanLeavesAwaitingOwnNote, OWN_NOTE_EXPECTED_KEY } from "@/lib/unpaid-ask-billed-offset-order";
@@ -78,9 +80,11 @@ import {
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
 import { createXeroKeptLateCaptureInvoice } from "@/lib/xero-kept-late-capture-invoice";
 import { createXeroCardRefundReversalInvoice } from "@/lib/xero-card-refund-reversal-invoice";
+import { XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE } from "@/lib/xero-card-refund-reversal-outbox";
 import { recordAdditionalCaptureReceipt } from "@/lib/additional-capture-xero-receipt";
 import { outboxScanSpacesWaitingReceipts } from "@/lib/additional-capture-receipt-gate";
 import { scanSpacesRefundNotesAwaitingResolve } from "@/lib/xero-refund-note-in-flight";
+import { XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE } from "@/lib/admin-grant-credit-note-payload";
 import { primaryInvoiceGapPayload } from "@/lib/additional-capture-receipt-payload";
 import { anchorCaptureHasReceipt, bookingHasUnattributedCaptures, keptInvoiceBillsChangeCapture } from "@/lib/additional-capture-receipt-link";
 import { isXeroConnected } from "@/lib/xero-token-store";
@@ -114,7 +118,6 @@ import {
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE,
   XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
-  XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE,
   XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
@@ -1874,9 +1877,8 @@ export async function releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
     select: { id: true },
   });
 
-  return releaseWaitingSupplementaryInvoiceOperations(
-    waitingOperations.map((operation) => operation.id),
-  );
+  // #3403: also match this intent, so an invoice a later request took over is not released as a Stripe receipt.
+  return releaseWaitingSupplementaryInvoiceOperations(waitingOperations.map((operation) => operation.id), paymentIntentId);
 }
 
 /**
@@ -2966,7 +2968,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
         in: [...XERO_OUTBOX_QUEUE_TYPES],
       },
       // Rows waiting their turn are looked at only every few minutes, not on every kick (#3954, #3953, #4692 `INV-INT-035`).
-      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date()), scanSpacesRefundNotesAwaitingResolve(new Date())],
+      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date()), scanSpacesRefundNotesAwaitingResolve(new Date()), scanSpacesAdminGrantNotesAwaitingRetry(new Date())],
     },
     // Ties on `createdAt` (same ms; all rows under the frozen clock) fall to `id`:
     // deterministic, not insertion order (#4663; STATE_MACHINES.md).
@@ -3154,6 +3156,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
           format,
           { createdByMemberId: queuedOperation.createdByMemberId ?? undefined, syncOperation: claimed, memberCreditId: payload.memberCreditId }
         );
+      } else if (payload?.queueType === XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE) {
+        await createAdminGrantCreditNote({ syncOperation: claimed, payload });
       } else if (
         payload?.queueType === XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE
       ) {
@@ -3174,10 +3178,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
         });
       } else if (payload?.queueType === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE) {
         // #4369: a failed card refund's money back in the Stripe account.
-        await createXeroCardRefundReversalInvoice({
-          syncOperation: claimed,
-          createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
-        });
+        await createXeroCardRefundReversalInvoice({ syncOperation: claimed, createdByMemberId: queuedOperation.createdByMemberId ?? undefined });
       } else if (payload?.queueType === XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE) {
         // #3953: a change's card capture nothing waited on, recorded against the invoice billing it.
         await recordAdditionalCaptureReceipt({ syncOperation: claimed, createdByMemberId: queuedOperation.createdByMemberId ?? undefined });

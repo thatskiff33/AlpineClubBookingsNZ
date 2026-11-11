@@ -67,6 +67,7 @@ import {
   hashRecoveryCode,
   hashTwoFactorCode,
   recordTwoFactorFailure,
+  twoFactorChallengeProofKind,
   verifyTotpCode,
   verifyTwoFactorEmailCode,
   TWO_FACTOR_MAX_FAILED_ATTEMPTS,
@@ -317,14 +318,19 @@ describe("two-factor helpers", () => {
   });
 
   it("stores session challenge tokens hashed with a short expiry", async () => {
-    const token = await createTwoFactorSessionChallenge("member-1");
+    const token = await createTwoFactorSessionChallenge("member-1", "TOTP");
 
     const createCall =
       mockPrisma.twoFactorSessionChallenge.create.mock.calls[0]?.[0];
-    expect(token).toMatch(/^[0-9a-f]{64}$/);
+    expect(token).toMatch(/^TOTP\.[0-9a-f]{64}$/);
+    expect(twoFactorChallengeProofKind(token)).toBe("TOTP");
     expect(createCall.data.memberId).toBe("member-1");
     expect(createCall.data.tokenHash).toBe(hashTwoFactorCode(token));
     expect(createCall.data.tokenHash).not.toBe(token);
+    const swapped = `EMAIL.${token.slice("TOTP.".length)}`;
+    expect(twoFactorChallengeProofKind(swapped)).toBe("EMAIL");
+    expect(hashTwoFactorCode(swapped)).not.toBe(createCall.data.tokenHash);
+    expect(twoFactorChallengeProofKind(token.slice("TOTP.".length))).toBeNull();
     expect(createCall.data.expiresAt.getTime()).toBeGreaterThan(Date.now());
     // Housekeeping removes only expired rows so live challenges cannot race.
     expect(
@@ -446,7 +452,9 @@ describe("no two-factor write under AUTH_SECRET while stored data names a ring k
     try {
       await expect(createTwoFactorEmailCode("member-1")).resolves.toMatchObject({ code: expect.stringMatching(/^\d{6}$/) });
       expect(mockPrisma.twoFactorEmailCode.create).toHaveBeenCalledOnce();
-      await expect(createTwoFactorSessionChallenge("member-1")).resolves.toMatch(/^[0-9a-f]{64}$/);
+      await expect(createTwoFactorSessionChallenge("member-1", "EMAIL")).resolves.toMatch(
+        /^EMAIL\.[0-9a-f]{64}$/,
+      );
       expect(mockPrisma.integrationCredential.count).not.toHaveBeenCalled();
       expect(mockPrisma.member.count).not.toHaveBeenCalled();
       expect(mockPrisma.twoFactorRecoveryCode.count).not.toHaveBeenCalled();

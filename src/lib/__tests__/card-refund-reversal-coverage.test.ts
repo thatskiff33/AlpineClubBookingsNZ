@@ -23,7 +23,7 @@ vi.mock("@/lib/xero-sync", () => ({
   sumCoveredRefundCreditNoteCents: async () => state.grossLinkedCents,
 }));
 
-import { CARD_REFUND_REVERSAL_INVOICE_ROLE, liveCardRefundReversalCents } from "@/lib/xero-operation-outbox-payload";
+import { CARD_REFUND_REVERSAL_INVOICE_ROLE, liveCardRefundReversalCents } from "@/lib/xero-card-refund-reversal-outbox";
 import { sumRefundCreditNoteCoverageCents } from "@/lib/xero-resolved-in-xero-fences";
 
 const resolved = { coveredCents: 0, correlationKeys: [], operationIds: [], unreadableOperationIds: [] };

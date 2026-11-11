@@ -6,18 +6,27 @@
  */
 import type { Invoice } from "xero-node";
 import { readXeroInvoiceOperationOutcome } from "@/lib/xero-booking-invoice-outcome";
+import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { isLiveXeroPaymentStatus } from "@/lib/xero-payment-status";
 
 /** The invoice as the worker read it from Xero. */
 export type InvoiceRead = { status: string; amountDueCents: number; invoice: Invoice };
 
-/** An earlier run's payment of this capture on the invoice, found by its reference. */
-export function findRecordedPayment(read: InvoiceRead | null, reference: string) {
+/** An earlier run's live payment: matching reference, equal receipt cents, no active sweep link. */
+export function findRecordedPayment(
+  read: InvoiceRead | null,
+  reference: string,
+  receiptAmountCents: number,
+  sweepPaymentIds: ReadonlySet<string>,
+) {
   return (
     (read?.invoice.payments ?? []).find(
       (payment) =>
-        Boolean(payment.paymentID) &&
+        payment.paymentID &&
         payment.reference === reference &&
+        // A missing or non-finite provider amount is not this receipt's cents.
+        providerAmountToCents(payment.amount) === receiptAmountCents &&
+        !sweepPaymentIds.has(payment.paymentID) &&
         isLiveXeroPaymentStatus(payment.status),
     ) ?? null
   );

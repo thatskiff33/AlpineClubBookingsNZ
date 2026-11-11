@@ -13,7 +13,7 @@ import { reconcileXeroCreditNote } from "@/lib/xero-inbound/credit-note";
 import { failIfRecountLeftUnsettled } from "@/lib/xero-inbound/recount-left-unsettled";
 import { runXeroInboundCronCycle } from "@/lib/xero-cron-runner";
 import type { CreditNote, Invoice } from "xero-node";
-import { CARD_REFUND_REVERSAL_INVOICE_ROLE } from "@/lib/xero-operation-outbox-payload";
+import { CARD_REFUND_REVERSAL_INVOICE_ROLE } from "@/lib/xero-card-refund-reversal-outbox";
 
 export class XeroSyncNowError extends Error {
   constructor(message: string, readonly status: number) { super(message); }

@@ -15,7 +15,7 @@ import { exactProviderAmountToCents } from "@/lib/money-provider-amount";
 import { isLiveXeroPaymentStatus } from "@/lib/xero-payment-status";
 import type { XeroNoteAllocation, XeroNotePayment } from "@/lib/xero-credit-note-spent-outside-app";
 import { BOOKING_INVOICE_LINK_MODELS } from "@/lib/xero-credit-note-write-down";
-import { NOT_CARD_REFUND_REVERSAL_INVOICE_LINK } from "@/lib/xero-operation-outbox-payload";
+import { NOT_CARD_REFUND_REVERSAL_INVOICE_LINK } from "@/lib/xero-card-refund-reversal-outbox";
 
 /** The note's allocations with an exact-cent amount and an invoice (anything else is skipped). */
 export function xeroAllocationsOf(

@@ -1,6 +1,8 @@
 import type { EntranceFeeCategory } from "@prisma/client";
+import { readAdminGrantCreditNotePayload, XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE, type AdminGrantCreditNotePayload } from "@/lib/admin-grant-credit-note-payload";
 import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, type OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
+import { readCardRefundReversalInvoicePayload, XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE, type QueuedCardRefundReversalInvoiceOutboxPayload } from "@/lib/xero-card-refund-reversal-outbox";
 import {
   parseRefundMethod, readModificationNoteWording, readRefundNoteWording,
   type ModificationNoteWording, type RefundMethod, type RefundNoteWording,
@@ -17,10 +19,7 @@ export const XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE = "SUPPLEMENTARY_INVOICE";
 export const XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE = "MODIFICATION_CREDIT_NOTE";
 export const XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE = "MODIFICATION_ACCOUNT_CREDIT_NOTE";
 export const XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE = "CREDIT_NOTE_ALLOCATION";
-// #1620 — orchestration op: on IB invoice raise, allocate the member's existing
-// floating credit notes against the booking's invoice (allocate-existing applied
-// credit). The handler does the local lot math + enqueues the per-note
-// CREDIT_NOTE_ALLOCATION ops; it is NOT itself a single Xero call.
+// #1620: allocate the member's existing notes; this row is not itself one Xero call.
 export const XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE = "APPLIED_CREDIT_ALLOCATION";
 export const XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE = "APPLIED_CREDIT_DEALLOCATION";
 export const XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE = "MEMBERSHIP_CANCELLATION_CREDIT_NOTE";
@@ -32,68 +31,8 @@ export const XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE = "MEMBERSHIP_SUBSCRIPTION_IN
 // capture on a cancelled booking a treasurer KEPT. Anchored on the #3639
 // approval task (`xero-kept-late-capture-invoice.ts`).
 export const XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE = "KEPT_LATE_CAPTURE_INVOICE";
-// #4369 (`INV-PAY-151`): the invoice that records a failed card refund's money
-// back in the Stripe account, queued when Paid another way closes a debt the
-// old card note still covers. Anchored on the Payment; the close record is in
-// the payload and the idempotency key (`xero-card-refund-reversal-invoice.ts`).
-export const XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE = "CARD_REFUND_REVERSAL_INVOICE";
-export const CARD_REFUND_REVERSAL_INVOICE_ROLE = "CARD_REFUND_REVERSAL_INVOICE";
-export const CARD_REFUND_REVERSAL_PAYMENT_ROLE = "CARD_REFUND_REVERSAL_PAYMENT";
 
-/**
- * An invoice create on a Payment that bills the member. A reversal invoice is
- * not one of those (`INV-PAY-151`): readers that treat any invoice create on
- * the Payment as the booking's bill exclude it with this.
- */
-export const NOT_CARD_REFUND_REVERSAL_INVOICE = {
-  NOT: { queueType: XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE },
-} as const;
-
-/** The same exclusion on an invoice link, which is named by role rather than queue type. */
-export const NOT_CARD_REFUND_REVERSAL_INVOICE_LINK = {
-  NOT: { role: CARD_REFUND_REVERSAL_INVOICE_ROLE },
-} as const;
-
-const CANCELLED_CARD_REFUND_REVERSAL_STATUSES = new Set(["VOIDED", "DELETED"]);
-
-/**
- * Cents a live reversal invoice still takes off refund-note coverage. A voided
- * or deleted one, or one with no recorded amount, takes off nothing
- * (`INV-PAY-151`). A reversal that has not reached Xero has no link, so it is
- * not passed here.
- */
-export function liveCardRefundReversalCents(metadata: unknown): number {
-  const record = asRecord(metadata);
-  const status = typeof record?.status === "string" ? record.status : "";
-  if (CANCELLED_CARD_REFUND_REVERSAL_STATUSES.has(status)) return 0;
-  const cents = record?.amountCents;
-  return typeof cents === "number" && Number.isInteger(cents) && cents > 0 ? cents : 0;
-}
-
-/**
- * What an inbound read of this invoice does to its reversal link (`INV-PAY-151`).
- * A voided or deleted invoice retires the link, keeping the cents already
- * stored. Any other status, and any other role, changes nothing.
- */
-export function retiredCardRefundReversalLink(
-  role: string,
-  invoiceStatus: unknown,
-): { active: false; metadata: { status: string }; mergeMetadata: true } | null {
-  if (role !== CARD_REFUND_REVERSAL_INVOICE_ROLE) return null;
-  const status = typeof invoiceStatus === "string" ? invoiceStatus.toUpperCase() : "";
-  if (!CANCELLED_CARD_REFUND_REVERSAL_STATUSES.has(status)) return null;
-  return { active: false, metadata: { status }, mergeMetadata: true };
-}
-
-/**
- * The complete set of outbox queue types the pending scan dispatches (#1272,
- * item 4 of #1208). Single source of truth: the pending-outbox scan
- * (`processQueuedXeroOutboxOperations`) filters `queueType IN (...)` on this
- * list, and the canonical per-type parse switch in `readQueuedOutboxPayload`
- * covers exactly these members. Ordered to mirror the historical scan
- * predicate for an obvious 1:1 audit, later types appended. REQUEUE/BACKFILL/
- * inbound rows carry no queueType and are intentionally excluded.
- */
+/** Pending-scan queue types (#1272). Later types are appended. REQUEUE, BACKFILL and inbound rows have none. */
 export const XERO_OUTBOX_QUEUE_TYPES = [
   XERO_OUTBOX_ENTRANCE_FEE_TYPE,
   XERO_OUTBOX_BOOKING_INVOICE_TYPE,
@@ -115,6 +54,7 @@ export const XERO_OUTBOX_QUEUE_TYPES = [
   XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE, // #4369 (`INV-PAY-151`)
   XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
   XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, // #4299 (`INV-PAY-148`)
+  XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE, // #4431
 ] as const;
 
 interface QueuedEntranceFeeOutboxPayload {
@@ -281,21 +221,6 @@ export function subscriptionInvoiceOutboxRow(chargeId: string) {
  * date (orchestrator decision 29 Sep 2026). `paymentIntentId` names the
  * capture whose refunds the refund note answers.
  */
-/**
- * #4369 (`INV-PAY-151`): the covered cents of one Paid another way close, and
- * the club day of that close. The worker dates the invoice that day, or the
- * first open day after a Xero lock, and keeps this day in the reference.
- */
-interface QueuedCardRefundReversalInvoiceOutboxPayload {
-  queueType: typeof XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE;
-  bookingId: string;
-  paymentId: string;
-  closeTaskId: string;
-  amountCents: number;
-  /** `YYYY-MM-DD`, the club's calendar day of the close. */
-  closedOn: string;
-}
-
 interface QueuedKeptLateCaptureInvoiceOutboxPayload {
   queueType: typeof XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE;
   bookingId: string;
@@ -333,7 +258,8 @@ export type QueuedOutboxPayload =
   | QueuedSubscriptionInvoiceOutboxPayload
   | QueuedKeptLateCaptureInvoiceOutboxPayload
   | QueuedCardRefundReversalInvoiceOutboxPayload
-  | QueuedAdditionalCaptureReceiptOutboxPayload;
+  | QueuedAdditionalCaptureReceiptOutboxPayload
+  | AdminGrantCreditNotePayload;
 
 export interface QueuedOutboxExpectedOperation {
   entityType: "INVOICE" | "CREDIT_NOTE" | "ALLOCATION" | "CONTACT" | "PAYMENT";
@@ -353,6 +279,7 @@ export interface QueuedOutboxExpectedOperation {
     // row is skipped on every pass and never sent.
     | "ManualRefundTask"
     | "PaymentTransaction"
+    | "MemberCredit"
   >;
 }
 
@@ -388,6 +315,7 @@ export function readQueuedOutboxPayload(
   }
 
   if (queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE) return readOrganiserExtraAdjustmentPayload(value);
+  if (queueType === XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE) return readAdminGrantCreditNotePayload(value);
   if (queueType === XERO_OUTBOX_BOOKING_INVOICE_TYPE) {
     const bookingId = readString(payload.bookingId);
     return bookingId ? { queueType, bookingId } : null;
@@ -591,27 +519,7 @@ export function readQueuedOutboxPayload(
 
   if (queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE) return { queueType }; // #3971
   if (queueType === XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE) return readAdditionalCaptureReceiptPayload(value);
-
-  if (queueType === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE) {
-    const bookingId = readString(payload.bookingId);
-    const paymentId = readString(payload.paymentId);
-    const closeTaskId = readString(payload.closeTaskId);
-    const amountCents = readNumber(payload.amountCents);
-    const closedOn = readString(payload.closedOn);
-    if (
-      !bookingId ||
-      !paymentId ||
-      !closeTaskId ||
-      amountCents === null ||
-      !Number.isInteger(amountCents) ||
-      amountCents <= 0 ||
-      !closedOn ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(closedOn)
-    ) {
-      return null;
-    }
-    return { queueType, bookingId, paymentId, closeTaskId, amountCents, closedOn };
-  }
+  if (queueType === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE) return readCardRefundReversalInvoicePayload(value);
 
   if (queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE) {
     const bookingId = readString(payload.bookingId);
@@ -696,6 +604,7 @@ export function getQueuedOutboxExpectedOperation(
   }
 
   if (queueType === XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE) return { entityType: "PAYMENT", operationType: "CREATE", localModels: ["PaymentTransaction"] };
+  if (queueType === XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE) return { entityType: "CREDIT_NOTE", operationType: "CREATE", localModels: ["MemberCredit"] };
   if (queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE) {
     return {
       entityType: "INVOICE",
@@ -785,9 +694,7 @@ export function getQueuedOutboxExpectedOperation(
             : queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE
               ? // #3635: the approval task that owns the kept capture.
                 ["ManualRefundTask"]
-            : queueType === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE
-              ? // #4369: the payment the failed card refund was on.
-                ["Payment"]
+            : queueType === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE ? ["Payment"] // #4369
             : ["Member"],
   };
 }

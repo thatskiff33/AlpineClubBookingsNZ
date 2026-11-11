@@ -8,8 +8,8 @@ import {
   CARD_REFUND_REVERSAL_INVOICE_ROLE,
   liveCardRefundReversalCents,
   NOT_CARD_REFUND_REVERSAL_INVOICE,
-  XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
-} from "@/lib/xero-operation-outbox-payload";
+} from "@/lib/xero-card-refund-reversal-outbox";
+import { XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { parsePaymentCreditNoteRetryInput } from "@/lib/xero-payment-credit-note-payload";
 import { countsTowardRefundNoteCoverage, refundNoteIdSets } from "@/lib/xero-refund-note-status";
 import { sumCoveredRefundCreditNoteCents } from "@/lib/xero-sync";

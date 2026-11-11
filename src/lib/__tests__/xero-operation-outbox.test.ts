@@ -66,6 +66,7 @@ const mocks = vi.hoisted(() => ({
   createXeroKeptLateCaptureInvoice: vi.fn(),
   createXeroCardRefundReversalInvoice: vi.fn(),
   recordAdditionalCaptureReceipt: vi.fn(),
+  createAdminGrantCreditNote: vi.fn(),
   enqueueAdditionalCaptureReceiptOperation: vi.fn(),
   anchorCaptureHasReceipt: vi.fn(),
   bookingHasUnattributedCaptures: vi.fn(),
@@ -267,6 +268,9 @@ vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({
 }));
 vi.mock("@/lib/xero-card-refund-reversal-invoice", () => ({
   createXeroCardRefundReversalInvoice: mocks.createXeroCardRefundReversalInvoice,
+}));
+vi.mock("@/lib/xero-admin-grant-credit-note", () => ({
+  createAdminGrantCreditNote: mocks.createAdminGrantCreditNote,
 }));
 vi.mock("@/lib/additional-capture-receipt-enqueue", () => ({
   enqueueAdditionalCaptureReceiptOperation: mocks.enqueueAdditionalCaptureReceiptOperation,
@@ -1148,6 +1152,12 @@ describe("enqueueXeroSupplementaryInvoiceOperation", () => {
         where: expect.objectContaining({
           id: { in: ["op_supplementary_1"] },
           status: "WAITING_PAYMENT",
+          // #3403: a row moved onto another intent between the read and this
+          // write must not match. Status alone would mark that later request paid.
+          requestPayload: {
+            path: ["paymentIntentId"],
+            equals: "pi_additional",
+          },
         }),
         data: expect.objectContaining({
           status: "PENDING",
@@ -2523,12 +2533,14 @@ describe("processQueuedXeroOutboxOperations", () => {
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
+        expect.objectContaining({ OR: expect.any(Array) }),
       ],
     });
-    // #4299: the pinned types, the organiser extra adjustment, and #4369's reversal.
-    expect(args.where.queueType.in).toHaveLength(20);
+    // #4299, #4369 and #4431: the pinned types, the organiser extra, the reversal, and the admin grant note.
+    expect(args.where.queueType.in).toHaveLength(21);
     expect(args.where.queueType.in).toContain("ORGANISER_EXTRA_ADJUSTMENT");
     expect(args.where.queueType.in).toContain("CARD_REFUND_REVERSAL_INVOICE");
+    expect(args.where.queueType.in).toContain("ADMIN_GRANT_CREDIT_NOTE");
     // The legacy `requestPayload->>'queueType'` OR predicate is gone.
     expect(args.where.OR).toBeUndefined();
     expect(JSON.stringify(args.where)).not.toContain("requestPayload");
@@ -2637,6 +2649,8 @@ describe("processQueuedXeroOutboxOperations", () => {
   it("MUTATION (#3954 round 8): a billed-offset note waiting for its edit's own note is requeued under its wait code, and the scan spaces it out", async () => {
     const { BILLED_OFFSET_AWAITING_OWN_NOTE_CODE, BILLED_OFFSET_OWN_NOTE_RECHECK_MS } = await import("@/lib/unpaid-ask-billed-offset-order");
     const { ADDITIONAL_CAPTURE_RECEIPT_RECHECK_MS, ADDITIONAL_CAPTURE_RECEIPT_WAITING_CODE } = await import("@/lib/additional-capture-receipt-gate");
+    const { ADMIN_GRANT_NOTE_AWAITING_RETRY_RECHECK_MS } = await import("@/lib/admin-grant-credit-note");
+    const { ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE } = await import("@/lib/xero-operation-error-codes");
     mocks.findManyOperations.mockResolvedValue([
       {
         id: "op_dealloc_waiting",
@@ -2681,6 +2695,14 @@ describe("processQueuedXeroOutboxOperations", () => {
           { lastErrorCode: null },
           { lastErrorCode: { not: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } },
           { updatedAt: { lte: new Date(Date.now() - REFUND_NOTE_AWAITING_RESOLVE_RECHECK_MS) } },
+        ],
+      },
+      // #4431: a failed admin grant note is spaced until its retry is due.
+      {
+        OR: [
+          { lastErrorCode: null },
+          { lastErrorCode: { not: ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE } },
+          { updatedAt: { lte: new Date(Date.now() - ADMIN_GRANT_NOTE_AWAITING_RETRY_RECHECK_MS) } },
         ],
       },
     ]);
@@ -3794,6 +3816,21 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       },
       handler: mocks.recordAdditionalCaptureReceipt,
     },
+    ADMIN_GRANT_CREDIT_NOTE: {
+      op: {
+        id: "op_admin_grant_1",
+        localId: "credit_1",
+        localModel: "MemberCredit",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "ADMIN_GRANT_CREDIT_NOTE",
+          amountCents: 2500,
+          mappingKey: "hutFeeRefunds",
+          memberCreditId: "credit_1",
+        },
+      },
+      handler: mocks.createAdminGrantCreditNote,
+    },
   };
 
   beforeEach(() => {
@@ -3824,6 +3861,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
     mocks.createXeroInvoiceForGroupSettlement.mockResolvedValue("inv");
     mocks.voidXeroInvoiceForCancelledGroupSettlement.mockResolvedValue(undefined);
     mocks.createXeroMembershipSubscriptionInvoice.mockResolvedValue("inv");
+    mocks.createAdminGrantCreditNote.mockResolvedValue(undefined);
   });
 
   it("has one dispatch fixture for every queue type and no extras", () => {

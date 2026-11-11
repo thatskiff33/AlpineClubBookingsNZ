@@ -16,7 +16,7 @@ import {
   hasStrongSubscriptionInvoiceMatch,
 } from "@/lib/xero-membership-sync";
 import { type XeroObjectLinkInput, upsertXeroObjectLink } from "@/lib/xero-sync";
-import { retiredCardRefundReversalLink } from "@/lib/xero-operation-outbox-payload";
+import { retiredCardRefundReversalLink } from "@/lib/xero-card-refund-reversal-outbox";
 import { type IncrementalInvoiceReconciliationResult, type IncrementalMembershipReconciliationResult } from "./types";
 import { buildXeroPaymentDisplayNumber } from "./amounts";
 import { dedupeResolvedXeroObjectLinks, dedupeXeroObjectLinks, getDerivedInboundPaymentRole, isDeletedXeroPaymentStatus, PRIMARY_INVOICE_CASH_ALLOCATIONS_KEY, recoverBookingScopedLinksFromOutboundOperations } from "./object-links";

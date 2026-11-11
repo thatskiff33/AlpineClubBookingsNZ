@@ -10,7 +10,7 @@ import { exactContains, exactPrefix } from "@/lib/prisma-exact-prefix";
 import { requireAdmin } from "@/lib/session-guards";
 import { z } from "zod";
 import { formatDateOnly } from "@/lib/date-only";
-import { NOT_CARD_REFUND_REVERSAL_INVOICE } from "@/lib/xero-operation-outbox-payload";
+import { NOT_CARD_REFUND_REVERSAL_INVOICE } from "@/lib/xero-card-refund-reversal-outbox";
 
 const adminBookingSearchQuerySchema = z.object({
   q: z.string().trim().min(2),
