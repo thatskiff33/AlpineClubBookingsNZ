@@ -208,6 +208,16 @@ vi.mock("@/lib/xero-sync", () => ({
       .table("xeroObjectLink")
       .filter((l) => l.localModel === "Payment" && l.localId === paymentId && l.role === "REFUND_CREDIT_NOTE" && l.active)
       .reduce((sum, l) => sum + ((l.metadata as { amountCents: number }).amountCents ?? 0), 0),
+  // #4936: the same links' recorded cents, for many payments in one read.
+  readActiveRefundNoteMetadataCentsByPayment: async (paymentIds: readonly string[]) => {
+    const centsByPayment = new Map<string, number>();
+    for (const l of h.table("xeroObjectLink")) {
+      if (l.localModel !== "Payment" || !paymentIds.includes(l.localId as string) || l.role !== "REFUND_CREDIT_NOTE" || !l.active) continue;
+      const cents = (l.metadata as { amountCents?: number }).amountCents ?? 0;
+      centsByPayment.set(l.localId as string, (centsByPayment.get(l.localId as string) ?? 0) + cents);
+    }
+    return centsByPayment;
+  },
   findCanonicalPaymentRefundCreditNote: async () => null,
   upsertXeroObjectLink: async (link: Record<string, unknown>) => {
     h.writeLinks([link]);

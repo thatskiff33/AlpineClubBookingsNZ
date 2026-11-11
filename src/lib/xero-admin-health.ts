@@ -10,6 +10,7 @@ import { getTodaysXeroUsageSummary } from "@/lib/xero-api-usage";
 import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoice-evidence";
 import { getXeroContactLinkMismatchSnapshot } from "@/lib/xero-contact-link-mismatches";
 import { findCreditNotesSpentOutsideApp } from "@/lib/xero-credit-note-spent-outside-flag";
+import { readActiveRefundNoteMetadataCentsByPayment } from "@/lib/xero-sync";
 import {
   findResolvedBookingInvoiceCreate,
   readResolvedRefundCreditNoteCoverage,
@@ -382,8 +383,21 @@ export async function getRefundsMissingXeroCreditNotes(options?: {
     orderBy: { updatedAt: "asc" },
   });
 
+  // #4936: the candidates only ever grow, so first drop - in one query - every
+  // payment its active links' recorded amounts already cover up to the raw
+  // `refundedAmountCents` mirror. Safe because the exact reader's eligible cash
+  // is capped at that mirror (`resolveStripeCashRefundEvidence`), and its
+  // coverage is those links at no less than these amounts plus resolved notes
+  // that are never negative, so such a payment's gap is always 0. Anything the
+  // bound cannot settle - a legacy link without a recorded amount, a short
+  // sum - still goes through the exact reader below.
+  const linkedCentsByPayment = await readActiveRefundNoteMetadataCentsByPayment(payments.map((payment) => payment.id));
+  const candidates = payments.filter(
+    (payment) => (linkedCentsByPayment.get(payment.id) ?? 0) < payment.refundedAmountCents,
+  );
+
   const formatted: RefundMissingCreditNote[] = [];
-  for (const payment of payments) {
+  for (const payment of candidates) {
     const gap = await readRefundCreditNoteGap(payment);
     if (gap.uncoveredCents <= 0) {
       continue;

@@ -92,6 +92,7 @@ vi.mock("@/lib/xero-api-usage", () => ({
 }));
 vi.mock("@/lib/xero-sync", () => ({
   sumCoveredRefundCreditNoteCents: vi.fn().mockResolvedValue(0),
+  readActiveRefundNoteMetadataCentsByPayment: vi.fn().mockResolvedValue(new Map()),
 }));
 vi.mock("@/lib/stripe-cash-refund-evidence", () => ({
   resolveStripeCashRefundEvidence: vi.fn(),
