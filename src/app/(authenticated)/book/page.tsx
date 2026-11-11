@@ -1,10 +1,13 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ExternalLink, UserMinus } from "lucide-react";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { scrollToError } from "@/hooks/use-scroll-to-feedback";
 import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
 import {
   describeBookingMemberNightConflictBooking,
@@ -19,6 +22,7 @@ import { WaitlistAlternateLodges } from "./_components/waitlist-alternate-lodges
 import { ReviewStep } from "./_components/review-step";
 import { PayStep } from "./_components/pay-step";
 import {
+  BOOKING_WIZARD_ERROR_ID,
   PROFILE_FAMILY_GROUP_RETURN_TO_BOOK,
   readSubscriptionLockoutView,
 } from "./_components/types";
@@ -40,6 +44,7 @@ export default function BookPage() {
     priceQuote,
     priceLoading,
     error,
+    errorAttentionKey,
     errorPaymentTargets,
     subscriptionInvoiceUrl,
     subscriptionInvoiceNumber,
@@ -176,6 +181,24 @@ export default function BookPage() {
       disabled={joiningWaitlist}
     />
   );
+
+  // #4945: the 409 "fully booked" card is drawn above the step indicator, so a
+  // member who pressed Continue at the foot of the review step would never see
+  // it. Each refused create retires the card before it posts, so every 409 is
+  // a fresh false-to-true arrival here. Deliberately NOT keyed on
+  // `errorAttentionKey`: a Join Waitlist refused from inside this card raises
+  // the error box above it, and that explanation must keep the focus.
+  const waitlistPromptRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!showWaitlistPrompt) return;
+    scrollToError(waitlistPromptRef, { block: "center" });
+  }, [showWaitlistPrompt]);
+
+  const hasErrorActions =
+    lodgeUnresolved ||
+    guestProfileBlocks.length > 0 ||
+    memberNightConflicts.length > 0 ||
+    errorPaymentTargets.length > 0;
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -314,219 +337,250 @@ export default function BookPage() {
         </Alert>
       )}
 
-      {error && (
-        <div role="alert" className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">
-          <p>{error}</p>
-          {/*
-            #2701: the booking was refused because no lodge could be determined.
-            The lodge selector is NOT on screen in that state — an empty list
-            makes `LodgeSelect` render nothing — so "try again" needs something
-            to try again with, or it is advice the member cannot act on.
-          */}
-          {lodgeUnresolved && (
-            <div className="mt-3">
-              <Button variant="outline" onClick={retryLodgeOptions}>
-                Try again
-              </Button>
-            </div>
-          )}
-          {guestProfileBlocks.length > 0 && (
-            <div className="mt-3 space-y-3">
-              {guestProfileBlocks.map((block) => {
-                const actionLabel = getGuestProfileActionLabel(block);
-                return (
-                  <div
-                    key={block.memberId}
-                    className="rounded-md border border-danger-6 bg-card p-3"
-                  >
-                    <p className="font-medium text-danger-11">{block.name}</p>
-                    <p className="mt-1">{getGuestProfileBlockMessage(block)}</p>
-                    {block.missingFields.length > 0 && (
-                      <p className="mt-1 text-danger-11">
-                        Missing: {block.missingFields.join(", ")}
-                      </p>
-                    )}
-                    {actionLabel && (
-                      block.action === "complete_details" && block.canCurrentUserResolve ? (
-                        <Link
-                          href={PROFILE_FAMILY_GROUP_RETURN_TO_BOOK}
-                          className="mt-2 inline-flex text-sm font-medium text-danger-11 underline underline-offset-4"
-                        >
-                          {actionLabel}
-                        </Link>
-                      ) : (
-                        <p className="mt-2 font-medium text-danger-11">{actionLabel}</p>
-                      )
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {memberNightConflicts.length > 0 && (
-            <div className="mt-3 space-y-3">
-              {memberNightConflicts.map((conflict) => (
-                <div
-                  // #2250: an unentitled row carries no booking or guest id, so
-                  // the key falls back to what every row always has.
-                  key={
-                    conflict.guestId ??
-                    `${conflict.memberId}-${conflict.conflictingNights[0]}`
-                  }
-                  className="rounded-md border border-danger-6 bg-card p-3"
-                >
-                  <p className="font-medium text-danger-11">
-                    {conflict.memberName}
-                  </p>
-                  {/* #2250: which nights, and — only for a viewer the server
-                      marked canOpenBooking — whose booking it is. A member
-                      adding a guest who turns out to be on a stranger's
-                      booking learns the nights are taken, not whose booking
-                      took them. */}
-                  <p className="mt-1">
-                    {[
-                      describeBookingMemberNightConflictNights(conflict, format),
-                      describeBookingMemberNightConflictBooking(conflict),
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                  </p>
-                  {/* #2250: the next step is always stated, not only when no
-                      button is available — a member who has never seen "Remove
-                      me from this booking" needs telling what it does, so it
-                      sits ABOVE the buttons it describes. This is the booking
-                      wizard, the one surface whose reader is actually choosing
-                      the dates, so it is also the one place allowed to offer
-                      "choose different dates" (the admin booking-request routes
-                      return the same 409 and cannot). */}
-                  <p className="mt-2 text-danger-11">
-                    {describeBookingMemberNightConflictNextStep(conflict, {
-                      canChooseDifferentDates: true,
-                    })}
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {conflict.canOpenBooking && conflict.bookingId && (
-                      <Button
-                        asChild
-                        size="sm"
-                        variant="outline"
-                        className="border-danger-6 text-danger-11 hover:bg-danger-3"
-                      >
-                        <Link href={`/bookings/${conflict.bookingId}`}>
-                          <ExternalLink className="mr-2 h-4 w-4" />
-                          Open booking
-                        </Link>
-                      </Button>
-                    )}
-                    {conflict.canSelfRemove && (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="border-danger-6 text-danger-11 hover:bg-danger-3"
-                        onClick={() => void handleRemoveConflictGuest(conflict)}
-                        disabled={removingConflictGuestId === conflict.guestId}
-                      >
-                        <UserMinus className="mr-2 h-4 w-4" />
-                        {removingConflictGuestId === conflict.guestId
-                          ? "Removing..."
-                          : "Remove me from this booking"}
-                      </Button>
-                    )}
-                  </div>
+      {/*
+        #4945: the wizard's ONE failure slot, rendered through the shared
+        recovery box so it is permanently mounted (one live region, registered
+        before any message arrives) and takes focus and scrolls into view when
+        a failure arrives. Most failures now come from the review step, screens
+        below this slot, where a static block left the member on a button that
+        just seemed to reset. `errorAttentionKey` re-takes attention when a
+        second press is refused with the identical sentence.
+      */}
+      <FocusedActionError
+        id={BOOKING_WIZARD_ERROR_ID}
+        error={error}
+        attentionKey={errorAttentionKey}
+        action={
+          hasErrorActions ? (
+            <div className="space-y-3">
+              {/*
+                #2701: the booking was refused because no lodge could be determined.
+                The lodge selector is NOT on screen in that state — an empty list
+                makes `LodgeSelect` render nothing — so "try again" needs something
+                to try again with, or it is advice the member cannot act on.
+              */}
+              {lodgeUnresolved && (
+                <div>
+                  <Button variant="outline" onClick={retryLodgeOptions}>
+                    Try again
+                  </Button>
                 </div>
-              ))}
-            </div>
-          )}
-          {errorPaymentTargets.length > 0 && (
-            <div className="mt-3 space-y-2">
-              {errorPaymentTargets.map((target) => (
-                <div key={`${target.name}-${target.invoiceNumber ?? target.invoiceUrl ?? "none"}`}>
-                  {target.invoiceUrl ? (
-                    <a
-                      href={target.invoiceUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="app-button-brand"
+              )}
+              {guestProfileBlocks.length > 0 && (
+                <div className="space-y-3">
+                  {guestProfileBlocks.map((block) => {
+                    const actionLabel = getGuestProfileActionLabel(block);
+                    return (
+                      <div
+                        key={block.memberId}
+                        className="rounded-md border border-danger-6 bg-card p-3"
+                      >
+                        <p className="font-medium text-danger-11">{block.name}</p>
+                        <p className="mt-1">{getGuestProfileBlockMessage(block)}</p>
+                        {block.missingFields.length > 0 && (
+                          <p className="mt-1 text-danger-11">
+                            Missing: {block.missingFields.join(", ")}
+                          </p>
+                        )}
+                        {actionLabel && (
+                          block.action === "complete_details" && block.canCurrentUserResolve ? (
+                            <Link
+                              href={PROFILE_FAMILY_GROUP_RETURN_TO_BOOK}
+                              className="mt-2 inline-flex text-sm font-medium text-danger-11 underline underline-offset-4"
+                            >
+                              {actionLabel}
+                            </Link>
+                          ) : (
+                            <p className="mt-2 font-medium text-danger-11">{actionLabel}</p>
+                          )
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {memberNightConflicts.length > 0 && (
+                <div className="space-y-3">
+                  {memberNightConflicts.map((conflict) => (
+                    <div
+                      // #2250: an unentitled row carries no booking or guest id, so
+                      // the key falls back to what every row always has.
+                      key={
+                        conflict.guestId ??
+                        `${conflict.memberId}-${conflict.conflictingNights[0]}`
+                      }
+                      className="rounded-md border border-danger-6 bg-card p-3"
                     >
-                      {target.name === "Your subscription"
-                        ? "Pay Your Subscription"
-                        : `Pay ${target.name}'s Subscription`}
-                    </a>
-                  ) : target.invoiceNumber ? (
-                    <p className="text-sm">
-                      {target.name}: invoice reference{" "}
-                      <strong>{target.invoiceNumber}</strong> — check your email from Xero for the payment link.
-                    </p>
-                  ) : null}
+                      <p className="font-medium text-danger-11">
+                        {conflict.memberName}
+                      </p>
+                      {/* #2250: which nights, and — only for a viewer the server
+                          marked canOpenBooking — whose booking it is. A member
+                          adding a guest who turns out to be on a stranger's
+                          booking learns the nights are taken, not whose booking
+                          took them. */}
+                      <p className="mt-1">
+                        {[
+                          describeBookingMemberNightConflictNights(conflict, format),
+                          describeBookingMemberNightConflictBooking(conflict),
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                      </p>
+                      {/* #2250: the next step is always stated, not only when no
+                          button is available — a member who has never seen "Remove
+                          me from this booking" needs telling what it does, so it
+                          sits ABOVE the buttons it describes. This is the booking
+                          wizard, the one surface whose reader is actually choosing
+                          the dates, so it is also the one place allowed to offer
+                          "choose different dates" (the admin booking-request routes
+                          return the same 409 and cannot). */}
+                      <p className="mt-2 text-danger-11">
+                        {describeBookingMemberNightConflictNextStep(conflict, {
+                          canChooseDifferentDates: true,
+                        })}
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {conflict.canOpenBooking && conflict.bookingId && (
+                          <Button
+                            asChild
+                            size="sm"
+                            variant="outline"
+                            className="border-danger-6 text-danger-11 hover:bg-danger-3"
+                          >
+                            <Link href={`/bookings/${conflict.bookingId}`}>
+                              <ExternalLink className="mr-2 h-4 w-4" />
+                              Open booking
+                            </Link>
+                          </Button>
+                        )}
+                        {conflict.canSelfRemove && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="border-danger-6 text-danger-11 hover:bg-danger-3"
+                            onClick={() => void handleRemoveConflictGuest(conflict)}
+                            disabled={removingConflictGuestId === conflict.guestId}
+                          >
+                            <UserMinus className="mr-2 h-4 w-4" />
+                            {removingConflictGuestId === conflict.guestId
+                              ? "Removing..."
+                              : "Remove me from this booking"}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
+              {errorPaymentTargets.length > 0 && (
+                <div className="space-y-2">
+                  {errorPaymentTargets.map((target) => (
+                    <div key={`${target.name}-${target.invoiceNumber ?? target.invoiceUrl ?? "none"}`}>
+                      {target.invoiceUrl ? (
+                        <a
+                          href={target.invoiceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="app-button-brand"
+                        >
+                          {target.name === "Your subscription"
+                            ? "Pay Your Subscription"
+                            : `Pay ${target.name}'s Subscription`}
+                        </a>
+                      ) : target.invoiceNumber ? (
+                        <p className="text-sm">
+                          {target.name}: invoice reference{" "}
+                          <strong>{target.invoiceNumber}</strong> — check your email from Xero for the payment link.
+                        </p>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      )}
+          ) : null
+        }
+      />
 
       {/*
         The cross-lodge opt-in (ADR-004), built once and rendered on BOTH doors
         to the waitlist (#2930 fix round): the 409 refusal prompt below, and the
         review step's primary Join Waitlist, which never raises that prompt.
+
+        #4945: the prompt sits in a permanently mounted polite region, for the
+        same reason the error box above is permanently mounted — a region
+        inserted already populated is missed by some screen-reader/browser
+        pairs. Polite, not an alert: the wizard keeps exactly one assertive
+        region, and the card takes focus as well.
       */}
-      {showWaitlistPrompt && (
-        <Card className="border-cat1-6 bg-cat1-3">
-          <CardContent className="pt-6 space-y-4">
-            <div className="flex items-start gap-3">
-              <div className="rounded-full bg-cat1-3 p-2 mt-0.5">
-                <svg className="h-5 w-5 text-cat1-11" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-                </svg>
+      <div role="status" className={showWaitlistPrompt ? undefined : "sr-only"}>
+        {showWaitlistPrompt && (
+          <Card
+            ref={waitlistPromptRef}
+            tabIndex={-1}
+            aria-labelledby="booking-waitlist-prompt-heading"
+            className="border-cat1-6 bg-cat1-3 outline-none"
+          >
+            <CardContent className="pt-6 space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="rounded-full bg-cat1-3 p-2 mt-0.5">
+                  <svg className="h-5 w-5 text-cat1-11" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                  </svg>
+                </div>
+                <div>
+                  <h2
+                    id="booking-waitlist-prompt-heading"
+                    className="font-semibold text-cat1-11"
+                  >
+                    {lodges.length > 1 && selectedLodge
+                      ? `${selectedLodge.name} is fully booked`
+                      : "Lodge is fully booked"}
+                  </h2>
+                  <p className="text-sm text-cat1-11 mt-1">
+                    {/*
+                      #2930: the server now names every night the party cannot
+                      occupy, INCLUDING the ones a whole-lodge hold blocks. Those
+                      used to be absent from `fullNights` (a held night's available
+                      beds are pinned to 0, never negative, so the old filter
+                      skipped it), which rendered here as the literal sentence
+                      "is at capacity on 0 nights" — a tell that distinguished a
+                      held lodge from a full one in plain sight, and ungrammatical
+                      besides. The empty arm below is now only reachable if the
+                      server sends no list at all, and says nothing about why.
+                    */}
+                    {waitlistFullNights.length === 0
+                      ? `${lodgeLabel} is at capacity on your dates.`
+                      : waitlistFullNights.length === 1
+                        ? `${lodgeLabel} is at capacity on ${waitlistFullNights[0]}.`
+                        : `${lodgeLabel} is at capacity on ${waitlistFullNights.length} of your nights.`}{" "}
+                    You can join the waitlist and we&apos;ll email you when a spot opens up.
+                  </p>
+                </div>
               </div>
-              <div>
-                <h2 className="font-semibold text-cat1-11">
-                  {lodges.length > 1 && selectedLodge
-                    ? `${selectedLodge.name} is fully booked`
-                    : "Lodge is fully booked"}
-                </h2>
-                <p className="text-sm text-cat1-11 mt-1">
-                  {/*
-                    #2930: the server now names every night the party cannot
-                    occupy, INCLUDING the ones a whole-lodge hold blocks. Those
-                    used to be absent from `fullNights` (a held night's available
-                    beds are pinned to 0, never negative, so the old filter
-                    skipped it), which rendered here as the literal sentence
-                    "is at capacity on 0 nights" — a tell that distinguished a
-                    held lodge from a full one in plain sight, and ungrammatical
-                    besides. The empty arm below is now only reachable if the
-                    server sends no list at all, and says nothing about why.
-                  */}
-                  {waitlistFullNights.length === 0
-                    ? `${lodgeLabel} is at capacity on your dates.`
-                    : waitlistFullNights.length === 1
-                      ? `${lodgeLabel} is at capacity on ${waitlistFullNights[0]}.`
-                      : `${lodgeLabel} is at capacity on ${waitlistFullNights.length} of your nights.`}{" "}
-                  You can join the waitlist and we&apos;ll email you when a spot opens up.
-                </p>
+              {waitlistAlternateLodges}
+              <div className="flex gap-3 justify-end">
+                <Button
+                  variant="outline"
+                  onClick={() => setShowWaitlistPrompt(false)}
+                  disabled={joiningWaitlist}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleJoinWaitlist}
+                  disabled={joiningWaitlist}
+                  className="bg-cat1-9 hover:bg-cat1-9"
+                >
+                  {joiningWaitlist ? "Joining waitlist..." : "Join Waitlist"}
+                </Button>
               </div>
-            </div>
-            {waitlistAlternateLodges}
-            <div className="flex gap-3 justify-end">
-              <Button
-                variant="outline"
-                onClick={() => setShowWaitlistPrompt(false)}
-                disabled={joiningWaitlist}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleJoinWaitlist}
-                disabled={joiningWaitlist}
-                className="bg-cat1-9 hover:bg-cat1-9"
-              >
-                {joiningWaitlist ? "Joining waitlist..." : "Join Waitlist"}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+            </CardContent>
+          </Card>
+        )}
+      </div>
 
       {/* Step indicator */}
       <nav aria-label="Booking progress">

@@ -60,6 +60,7 @@ import type {
   RoomOption,
   WorkPartyEvent,
 } from "./types";
+import { BOOKING_WIZARD_ERROR_ID } from "./types";
 
 export function ReviewStep({
   checkIn,
@@ -674,6 +675,7 @@ export function ReviewStep({
               </p>
               <Textarea
                 id="review-justification"
+                aria-describedby={BOOKING_WIZARD_ERROR_ID}
                 value={memberReviewJustification}
                 onChange={(e) => setMemberReviewJustification(e.target.value)}
                 rows={3}

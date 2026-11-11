@@ -9,7 +9,11 @@ import {
 } from "react";
 
 /**
- * THE ONE HOME FOR "WHERE DOES THE ADMIN'S ATTENTION GO AFTER AN ACTION" (#2934).
+ * THE ONE HOME FOR "WHERE DOES THE ADMIN'S ATTENTION GO AFTER AN ACTION" (#2934)
+ * — and the member's too. Built for the admin tree, it also positions the member
+ * booking wizard's failures (`/book`, #4945): a refused create, waitlist join or
+ * draft focuses the wizard's error box or "fully booked" card through
+ * `scrollToError`, wherever on the page the member pressed the button.
  *
  * An admin action ends in one of four places, and each has one primitive here:
  *
@@ -50,11 +54,11 @@ import {
  * (a message string, an edit nonce) drives the effect, so the transition lands in
  * the commit that produced it.
  *
- * `admin-attention-primitive-contract.test.ts` keeps the admin tree routed
- * through this module — a direct `scrollIntoView` / `scrollTo` or a
- * `requestAnimationFrame`-driven focus outside it fails that census. The one
- * standing exclusion is listed in {@link DIRECT_SCROLL_EXCLUSIONS}, next to the
- * fact it excludes (`INV-SSOT-001`).
+ * `admin-attention-primitive-contract.test.ts` keeps the admin tree and the
+ * `/book` wizard routed through this module — a direct `scrollIntoView` /
+ * `scrollTo` or a `requestAnimationFrame`-driven focus outside it fails that
+ * census. The standing exclusions are listed in {@link DIRECT_SCROLL_EXCLUSIONS},
+ * next to the fact each excludes (`INV-SSOT-001`).
  *
  * WHAT THE CENSUS DOES NOT HOLD, stated here rather than left to be inferred
  * from "the one home": a bare effect-driven `.focus()` passes it, and four
@@ -85,10 +89,10 @@ export interface AttentionOptions {
 }
 
 /**
- * Admin files allowed a direct `scrollIntoView` / `scrollTo` call, with the
- * reason. Each entry is a deep link or a layout concern rather than the result
- * of an admin's action, which is the only thing this module positions for.
- * Shrinking this list is the ratchet; a new entry is a decision to record here.
+ * Censused files allowed a direct `scrollIntoView` / `scrollTo` call, with the
+ * reason. Each entry is a deep link or a layout concern this module cannot
+ * express. Shrinking this list is the ratchet; a new entry is a decision to
+ * record here.
  */
 export const DIRECT_SCROLL_EXCLUSIONS: ReadonlyArray<{
   file: string;
@@ -98,6 +102,11 @@ export const DIRECT_SCROLL_EXCLUSIONS: ReadonlyArray<{
     file: "src/app/(admin)/admin/members/[id]/page.tsx",
     reason:
       "the /admin/members/[id]#account-credit deep link scrolls once the collapsed Finance accordion has finished expanding — a navigation restore, not an action result",
+  },
+  {
+    file: "src/app/(authenticated)/book/_hooks/use-booking-wizard.ts",
+    reason:
+      "a successful card booking moves the wizard to its pay step and scrolls the WINDOW to the top (#1084, #4945). The member layout scrolls the document rather than a container, and `scrollToTop` only scrolls the nearest overflow container, so it would focus the step without moving the page. The jump is instant, so reduced motion is not at stake",
   },
 ];
 

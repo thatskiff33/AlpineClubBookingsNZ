@@ -1,4 +1,6 @@
-// The admin tree positions attention through ONE module (#2934, `INV-SSOT-001`).
+// The admin tree positions attention through ONE module (#2934, `INV-SSOT-001`),
+// and so does the member booking wizard (`/book`, #4945), whose review-step
+// failures once landed in a static block screens above the button pressed.
 //
 // `src/hooks/use-scroll-to-feedback.ts` is the single home of "where does the
 // admin's attention go after an action": failure, reveal and success each have
@@ -12,7 +14,7 @@
 // fact, not here, and a stale entry fails below so the list can only shrink.
 //
 // It reads the tree from disk, so `pnpm run test:related` cannot reach it — run
-// it by name (`pnpm run test:named`) when an admin file gains a scroll or focus.
+// it by name (`pnpm run test:named`) when a censused file gains a scroll or focus.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -31,13 +33,18 @@ const ADMIN_PREFIXES = [
   "src/hooks/",
 ];
 
-function isAdminSource(file: string) {
+// Member surfaces held to the same rule (#4945).
+const MEMBER_PREFIXES = ["src/app/(authenticated)/book/"];
+
+const CENSUS_PREFIXES = [...ADMIN_PREFIXES, ...MEMBER_PREFIXES];
+
+function isCensusedSource(file: string) {
   if (!/\.(ts|tsx)$/.test(file)) return false;
   if (file.includes("__tests__/") || /\.test\.tsx?$/.test(file)) return false;
-  return ADMIN_PREFIXES.some((prefix) => file.startsWith(prefix));
+  return CENSUS_PREFIXES.some((prefix) => file.startsWith(prefix));
 }
 
-function trackedAdminSources(): string[] {
+function trackedCensusedSources(): string[] {
   const listing = execFileSync("git", ["ls-files", "-z", "src"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -47,7 +54,7 @@ function trackedAdminSources(): string[] {
     .split("\0")
     .filter(Boolean)
     .map((file) => file.replaceAll("\\", "/"))
-    .filter(isAdminSource)
+    .filter(isCensusedSource)
     .sort();
 }
 
@@ -65,13 +72,17 @@ function findings(file: string) {
   return { direct: direct.length, deferred: deferred.length };
 }
 
-describe("admin attention goes through the shared primitive (#2934)", () => {
-  const files = trackedAdminSources();
+describe("admin and /book attention goes through the shared primitive (#2934, #4945)", () => {
+  const files = trackedCensusedSources();
   const excluded = new Set(DIRECT_SCROLL_EXCLUSIONS.map((entry) => entry.file));
 
-  it("enumerates the admin tree", () => {
+  it("enumerates the admin tree and the /book wizard", () => {
     expect(files.length).toBeGreaterThan(100);
     expect(files).toContain(PRIMITIVE_MODULE);
+    expect(files).toContain("src/app/(authenticated)/book/page.tsx");
+    expect(files).toContain(
+      "src/app/(authenticated)/book/_hooks/use-booking-wizard.ts",
+    );
   });
 
   it("has no direct scrollIntoView / scrollTo outside the primitive and its recorded exclusions", () => {
@@ -83,10 +94,10 @@ describe("admin attention goes through the shared primitive (#2934)", () => {
 
     expect(
       offenders,
-      "INV-SSOT-001 / #2934: an admin surface scrolls directly instead of through " +
+      "INV-SSOT-001 / #2934: an admin or /book surface scrolls directly instead of through " +
         "`scrollToError` / `revealEditor` / `scrollToTop` / `useActionAttention` / " +
         "`useRevealAttention` in `src/hooks/use-scroll-to-feedback.ts`. Route it there; " +
-        "if the scroll is genuinely not the result of an admin's action, record it in " +
+        "if the scroll is genuinely something the module cannot express, record it in " +
         "`DIRECT_SCROLL_EXCLUSIONS` with the reason.",
     ).toEqual([]);
   });
@@ -109,7 +120,7 @@ describe("admin attention goes through the shared primitive (#2934)", () => {
 
   it("keeps every exclusion live, so the list can only shrink", () => {
     for (const entry of DIRECT_SCROLL_EXCLUSIONS) {
-      expect(files, `${entry.file} is no longer a tracked admin source`).toContain(
+      expect(files, `${entry.file} is no longer a censused source`).toContain(
         entry.file,
       );
       expect(

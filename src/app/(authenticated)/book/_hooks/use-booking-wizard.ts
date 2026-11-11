@@ -300,6 +300,18 @@ export function useBookingWizard() {
   const [priceLoading, setPriceLoading] = useState(false);
   const [error, setError] = useState("");
   /**
+   * #4945: one count per failure a member's own press raised — Continue to
+   * Payment / Confirm, Join Waitlist, Save as Draft. The page's error box and
+   * the 409 waitlist card take focus and scroll into view when it moves, so a
+   * second press refused with the IDENTICAL sentence still lands the member on
+   * the explanation instead of leaving them on a button that looks dead. Only
+   * an action bumps it; a re-quote or a typed note never does.
+   */
+  const [errorAttentionKey, setErrorAttentionKey] = useState(0);
+  function takeErrorAttention() {
+    setErrorAttentionKey((key) => key + 1);
+  }
+  /**
    * #2701: the member tried to book and no lodge could be determined. Drives
    * the retry affordance beside the refusal — without it the member is told to
    * "try again in a moment" with nothing to try again WITH, since the lodge
@@ -1624,16 +1636,19 @@ export function useBookingWizard() {
     if (!scopedLodgeId) {
       setError(BOOKING_LODGE_UNRESOLVED_MEMBER_MESSAGE);
       setLodgeUnresolved(true);
+      takeErrorAttention();
       return;
     }
     if (requiresAdminReviewLocal && !memberReviewJustification.trim()) {
       setError("Please add a reason for booking without an adult guest. This goes to an admin for review.");
+      takeErrorAttention();
       return;
     }
     const guestPayload = buildGuestPayload();
     const stayRangeError = validateGuestStayRanges(guestPayload);
     if (stayRangeError) {
       setError(stayRangeError);
+      takeErrorAttention();
       return;
     }
     setSubmitting(true);
@@ -1721,6 +1736,8 @@ export function useBookingWizard() {
         });
         setStep("pay");
         setSubmitting(false);
+        // A window scroll, recorded in `DIRECT_SCROLL_EXCLUSIONS` (#4945): the
+        // member layout scrolls the document, which `scrollToTop` never does.
         window.scrollTo({ top: 0 });
         return;
       }
@@ -1745,6 +1762,7 @@ export function useBookingWizard() {
         // null for everything else, so no hard failure can open the door.
         setExceptionOffer(readExceptionOffer(data));
       }
+      takeErrorAttention();
       setSubmitting(false);
     }
   }
@@ -1754,16 +1772,19 @@ export function useBookingWizard() {
       setStep("dates");
       setError(BOOKING_LODGE_UNRESOLVED_MEMBER_MESSAGE);
       setLodgeUnresolved(true);
+      takeErrorAttention();
       return;
     }
     if (requiresAdminReviewLocal && !memberReviewJustification.trim()) {
       setError("Please add a reason for booking without an adult guest before joining the waitlist.");
+      takeErrorAttention();
       return;
     }
     const guestPayload = buildGuestPayload();
     const stayRangeError = validateGuestStayRanges(guestPayload);
     if (stayRangeError) {
       setError(stayRangeError);
+      takeErrorAttention();
       return;
     }
     setJoiningWaitlist(true);
@@ -1833,6 +1854,7 @@ export function useBookingWizard() {
     } else {
       const data = await res.json();
       handleBookingApiError(data, "Failed to join waitlist");
+      takeErrorAttention();
       setJoiningWaitlist(false);
     }
   }
@@ -1842,12 +1864,14 @@ export function useBookingWizard() {
       setStep("dates");
       setError(BOOKING_LODGE_UNRESOLVED_MEMBER_MESSAGE);
       setLodgeUnresolved(true);
+      takeErrorAttention();
       return;
     }
     const guestPayload = buildGuestPayload();
     const stayRangeError = validateGuestStayRanges(guestPayload);
     if (stayRangeError) {
       setError(stayRangeError);
+      takeErrorAttention();
       return;
     }
     setSavingDraft(true);
@@ -1900,6 +1924,7 @@ export function useBookingWizard() {
       // Same reviewable-refusal door as the confirm path: a draft is refused by
       // the same policy gates, and the member's remedy is the same request.
       setExceptionOffer(readExceptionOffer(data));
+      takeErrorAttention();
       setSavingDraft(false);
     }
   }
@@ -2206,6 +2231,7 @@ export function useBookingWizard() {
     priceQuote,
     priceLoading,
     error,
+    errorAttentionKey,
     errorPaymentTargets,
     subscriptionInvoiceUrl,
     subscriptionInvoiceNumber,
