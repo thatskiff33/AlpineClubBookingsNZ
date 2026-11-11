@@ -4866,6 +4866,57 @@ enum UnrecognisedStripePaymentReason {
   APP_INTENT_NOT_PRIMARY
 }
 
+/// Stripe's payout status. An unrecognised value is not stored (#4520).
+enum StripePayoutStatus {
+  PENDING
+  IN_TRANSIT
+  PAID
+  FAILED
+  CANCELED
+}
+
+/// One Stripe balance transaction, stored once. The application inserts and
+/// selects only (#4520, Ledger M8). A contradicted replay is a new row Stripe
+/// will not send: balance transactions are immutable, so this row is never updated.
+model StripeBalanceTransactionEvidence {
+  /// Stripe's balance-transaction id (`txn_…`).
+  id                String   @id
+  type              String
+  reportingCategory String
+  amountCents       Int
+  feeCents          Int
+  netCents          Int
+  /// As Stripe sent it, including case.
+  currency          String
+  /// Frozen `fee_details` components. Not a tax split.
+  feeDetails        Json
+  sourceId          String?
+  paymentIntentId   String?
+  stripeRefundId    String?
+  payoutId          String?
+  stripeCreatedAt   DateTime
+  recordedAt        DateTime @default(now())
+
+  @@index([stripeCreatedAt])
+  @@index([paymentIntentId])
+  @@index([payoutId])
+}
+
+/// Mutable payout head. Status changes are conditional on the status read
+/// under a row lock; the balance-transaction rows above are not locked.
+model StripePayout {
+  /// Stripe's payout id (`po_…`).
+  id                          String             @id
+  amountCents                 Int
+  currency                    String
+  status                      StripePayoutStatus
+  automatic                   Boolean
+  arrivalDate                 DateTime?          @db.Date
+  failureBalanceTransactionId String?
+  stripeCreatedAt             DateTime
+  updatedAt                   DateTime           @updatedAt
+}
+
 // ---------------------------------------------------------------------------
 // Webhook Delivery Monitoring (OBS-08)
 // ---------------------------------------------------------------------------
