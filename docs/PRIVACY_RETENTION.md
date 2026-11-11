@@ -9,6 +9,10 @@ contacts. It records purpose, retention and the end action in one table.
 purpose; it does not introduce an automatic deletion period. Settings records
 are personal because they retain the updating officer's identifier.
 
+The starter Privacy Policy uses `{{email-log-retention}}` to describe the current
+email-log setting on every render. Edited policy pages should use this token too;
+see the [upgrade instructions](UPGRADING.md#correct-the-starter-privacy-policy-4914).
+
 ## Automatic retention and operator review
 
 The three new automatic jobs cover old email logs, rejected membership

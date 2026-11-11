@@ -57,6 +57,8 @@ sequencing):
 `PrivacyRetentionSettings` is a club-wide singleton (`id = "default"`). Email
 logs, applications and member identity are club-wide; retention previews and
 jobs cover all lodges while preserving booking and financial lodge references.
+The `{{email-log-retention}}` page token reads this same club-wide policy; it
+takes no lodge parameter.
 
 ## Member money journal (#4513)
 

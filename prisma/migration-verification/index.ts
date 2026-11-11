@@ -1,3 +1,4 @@
+import correctStarterPrivacyRetentionAndHosting from "./20261210120000_correct_starter_privacy_retention_and_hosting";
 import addClubTimeSettings from "./20260822010000_add_club_time_settings";
 import addHutLeaderAssignmentSource from "./20260820020000_add_hut_leader_assignment_source";
 import addMemberEmailInheritanceChoice from "./20260813010000_add_member_email_inheritance_choice";
@@ -48,6 +49,7 @@ import type { DataMigrationVerification } from "./types";
  * in order, and advances through it.
  */
 export const DATA_MIGRATION_VERIFICATIONS: DataMigrationVerification[] = [
+  correctStarterPrivacyRetentionAndHosting,
   clearWaldvogelLodgeAddress,
   clearStarterFooterAffiliations,
   updateStarterHomeGuestCopy,

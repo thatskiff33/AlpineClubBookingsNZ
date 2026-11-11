@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { tokensForContext } from "../token-catalogue";
 import { starterPageContent } from "../../../prisma/starter-page-content";
 
 // Production deploys run Prisma migrations but not the seed, so the starter
@@ -296,7 +297,8 @@ describe("starter page content backfill migration", () => {
     readFileSync(HOME_GUEST_COPY_MIGRATION_PATH, "utf8"),
   );
   const allInsertSql = `${insertSql}\n${backfill404Sql}\n${policyPagesSql}\n${bookingRequestsSql}\n${schoolBookingsSql}`;
-  const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}\n${genericiseLodgeCopySql}\n${privacyAuditRetentionSql}\n${homeGuestCopySql}`;
+  const privacyRetentionSql = readFileSync(join(process.cwd(), "prisma/migrations/20261210120000_correct_starter_privacy_retention_and_hosting/migration.sql"), "utf8");
+  const combinedSql = `${privacyRetentionSql}\n${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}\n${genericiseLodgeCopySql}\n${privacyAuditRetentionSql}\n${homeGuestCopySql}`;
 
   it("inserts exactly the starter pages defined for the seed", () => {
     const insertedIds = [
@@ -694,7 +696,7 @@ describe("starter privacy audit-retention update migration (#4031)", () => {
   it("writes the current privacy seed copy, with the real audit-log schedule", () => {
     const page = starterPageContent.find((p) => p.slug === "privacy");
     expect(page).toBeDefined();
-    expect(nthCmsBlock(sql, 1)).toBe(page!.contentHtml);
+    expect(nthCmsBlock(sql, 1)).toContain("at least 10 years");
     expect(page!.contentHtml).not.toContain("Retained for 90 days, then automatically pruned");
     expect(page!.contentHtml).toContain("at least 10 years");
     expect(sql).toContain("updatedAt");
@@ -705,10 +707,52 @@ describe("starter privacy audit-retention update migration (#4031)", () => {
     // backfill) moves to the seed's header; any other header is kept.
     const page = starterPageContent.find((p) => p.slug === "privacy");
     const policyPagesSql = readFileSync(POLICY_PAGES_MIGRATION_PATH, "utf8");
-    const previousHeader = page!.headerText.replace("Last updated 17 October 2026", "Last updated 1 April 2026");
+    const previousHeader = page!.headerText.replace("Last updated 12 November 2026", "Last updated 1 April 2026");
     expect(policyPagesSql).toContain(sqlQuote(previousHeader));
     expect(statementsOnly(sql)).toContain(`WHEN "headerText" = ${sqlQuote(previousHeader)}`);
-    expect(statementsOnly(sql)).toContain(`THEN ${sqlQuote(page!.headerText)}`);
+    expect(statementsOnly(sql)).toContain(`THEN ${sqlQuote(page!.headerText.replace("Last updated 12 November 2026", "Last updated 17 October 2026"))}`);
     expect(statementsOnly(sql)).toContain(`ELSE "headerText"`);
+  });
+});
+
+
+describe("starter privacy retention census (#4914)", () => {
+  const page = starterPageContent.find((p) => p.slug === "privacy")!;
+  it("uses only the configured email-log schedule, never a literal period", () => {
+    const emailLine = page.contentHtml.match(/<li><strong>Email logs:<\/strong>(.*?)<\/li>/)?.[1];
+    expect(emailLine?.trim()).toBe("{{email-log-retention}}.");
+  });
+  it("registers every retention token for the page editor", () => {
+    const retentionTokens = [...page.contentHtml.matchAll(/\{\{([^}]*retention[^}]*)\}\}/g)].map((m) => m[1]);
+    expect(retentionTokens).toContain("email-log-retention");
+    const catalogue = tokensForContext("page-content-body").map((t) => t.token);
+    for (const token of retentionTokens) expect(catalogue).toContain(token);
+  });
+});
+
+
+describe("starter privacy retention and hosting migration (#4914)", () => {
+  const sql = readFileSync(join(process.cwd(), "prisma/migrations/20261210120000_correct_starter_privacy_retention_and_hosting/migration.sql"), "utf8");
+  const previousSql = readFileSync(PRIVACY_AUDIT_RETENTION_MIGRATION_PATH, "utf8");
+  const page = starterPageContent.find((p) => p.slug === "privacy")!;
+  it("writes the seed body and guards on the exact #4031 body", () => {
+    expect(nthCmsBlock(sql, 1)).toBe(page.contentHtml);
+    expect(sql.match(/\$previous\$([\s\S]*?)\$previous\$/)?.[1]).toBe(nthCmsBlock(previousSql, 1));
+    expect(sql).toContain('AND "contentHtml" = $previous$');
+    expect(sql).toContain('WHERE "slug" = \'privacy\'');
+  });
+  it("preserves a custom header and uses the UTC statement clock", () => {
+    expect(sql).toContain(`WHEN "headerText" = ${sqlQuote(page.headerText.replace("12 November 2026", "17 October 2026"))}`);
+    expect(sql).toContain(`THEN ${sqlQuote(page.headerText)}`);
+    expect(sql).toContain('ELSE "headerText"');
+    expect(sql).toContain("statement_timestamp() AT TIME ZONE 'UTC'");
+  });
+  it("uses host-neutral text and visible deployment review notes", () => {
+    expect(page.contentHtml).not.toMatch(/Lightsail|Sydney|encrypted and stored in AWS S3/);
+    for (const section of [5, 6]) {
+      const text = page.contentHtml.split(`<div><h2>${section}.`)[1]?.split('</div>')[0];
+      expect(text).toContain("Admin note:");
+      expect(text).toMatch(/hosting provider, region, backup store/);
+    }
   });
 });
