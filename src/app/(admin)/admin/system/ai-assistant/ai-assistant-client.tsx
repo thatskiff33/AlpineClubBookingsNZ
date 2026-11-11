@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
@@ -158,7 +159,7 @@ function KeyCard({
     }
     setSaving(true);
     try {
-      const res = await fetch(CREDENTIALS_URL, {
+      const res = await fetchWithRecentAuth(CREDENTIALS_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

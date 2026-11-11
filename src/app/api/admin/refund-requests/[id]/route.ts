@@ -45,6 +45,7 @@ import {
   notifyOrganiserOfJoinerAppealRefund,
   runOrganiserChildAppealRefundNow,
 } from "@/lib/organiser-child-appeal-refund";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 /** #3827 (`INV-PAY-118`): thrown inside the approval to roll its claim back. */
 class RefundRequestHandBackNotRaisedError extends Error {}
@@ -70,6 +71,8 @@ export async function PUT(
   if (!guard.ok) return guard.response;
   const session = guard.session;
   const { id } = await params;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   const money = await clubFormat();
 
   const refundRequest = await prisma.refundRequest.findUnique({

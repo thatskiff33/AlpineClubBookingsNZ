@@ -1,4 +1,5 @@
 "use client"
+import { fetchWithRecentAuth } from "@/components/confirm-its-you"
 
 import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
@@ -273,7 +274,7 @@ export function ContactSyncPanel({
     try {
       let response: Response
       try {
-        response = await fetch("/api/admin/xero/import-member-contact", {
+        response = await fetchWithRecentAuth("/api/admin/xero/import-member-contact", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ xeroContactId: contact.contactId }),

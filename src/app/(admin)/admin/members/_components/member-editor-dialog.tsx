@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -665,7 +666,7 @@ export function MemberEditorDialog({
         body.forcePasswordChange = form.forcePasswordChange;
       if (!currentEditingMember) body.sendInvite = form.sendInvite;
 
-      const res = await fetch(url, {
+      const res = await fetchWithRecentAuth(url, {
         method: currentEditingMember ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
