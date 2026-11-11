@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
   bookingFindMany: vi.fn(),
   lockerFindMany: vi.fn(),
   memberFindUnique: vi.fn(),
+  memberInductionFindFirst: vi.fn(),
 }));
 
 class NotFoundError extends Error {}
@@ -70,6 +71,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     locker: { findMany: mocks.lockerFindMany },
     member: { findUnique: mocks.memberFindUnique },
+    memberInduction: { findFirst: mocks.memberInductionFindFirst },
     calendarEvent: { findMany: mocks.calendarEventFindMany },
     committeeAssignment: { findFirst: mocks.committeeAssignmentFindFirst },
   },
@@ -157,6 +159,7 @@ beforeEach(() => {
   mocks.bookingFindMany.mockResolvedValue([]);
   mocks.lockerFindMany.mockResolvedValue([]);
   mocks.memberFindUnique.mockResolvedValue(null);
+  mocks.memberInductionFindFirst.mockResolvedValue(null);
   mocks.calendarEventFindMany.mockResolvedValue([]);
   mocks.committeeAssignmentFindFirst.mockResolvedValue(null);
 });

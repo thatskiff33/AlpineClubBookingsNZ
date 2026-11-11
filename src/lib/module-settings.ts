@@ -1,3 +1,4 @@
+import { cache } from "react";
 import type { PrismaClient } from "@prisma/client";
 import {
   CLUB_MODULE_SETTINGS_ID,
@@ -265,17 +266,26 @@ export async function loadEffectiveModuleFlagsStrict(
  * Read the club's module flags, treating any failure as "optional modules off".
  *
  * An EVIDENCE caller must use `loadEffectiveModuleFlagsStrict` above instead.
+ *
+ * Memoised per server-component render with React `cache()` (#4938): the
+ * authenticated layout, the page beneath it and the session refresh inside
+ * `auth()` share one read of the settings row. Nothing is cached across
+ * requests, so a saved change reaches the very next one. Outside a render —
+ * route handlers, server actions, the proxy, cron — `cache()` memoises nothing
+ * and each call reads afresh. The strict loader above stays un-memoised.
  */
-export async function loadEffectiveModuleFlags(): Promise<FeatureFlags> {
-  try {
-    const record = await readClubModuleSettingsRecord(prisma);
+export const loadEffectiveModuleFlags = cache(
+  async (): Promise<FeatureFlags> => {
+    try {
+      const record = await readClubModuleSettingsRecord(prisma);
 
-    return getEffectiveModuleFlags(normalizeClubModuleSettings(record));
-  } catch (err) {
-    logger.error(
-      { err },
-      "Failed to load club module settings; disabling optional modules",
-    );
-    return DISABLED_MODULE_FLAGS;
-  }
-}
+      return getEffectiveModuleFlags(normalizeClubModuleSettings(record));
+    } catch (err) {
+      logger.error(
+        { err },
+        "Failed to load club module settings; disabling optional modules",
+      );
+      return DISABLED_MODULE_FLAGS;
+    }
+  },
+);
