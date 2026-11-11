@@ -897,7 +897,13 @@ const nextAuth = NextAuth(buildRequestAuthConfig);
 export const { handlers, signIn, signOut, unstable_update: updateSession } =
   nextAuth;
 
-async function readRequestSession() {
+/**
+ * Memoised per server-component render (#4938): every caller in one render
+ * shares one refresh, the next request refreshes again (INV-AUTH-007), and
+ * outside a render `cache()` memoises nothing. Wrap only here — a second
+ * `cache()` is a second memo. docs/SECURITY.md has the detail.
+ */
+export const auth = cache(async () => {
   const session = await nextAuth.auth();
 
   if (session?.user?.sessionInvalidated) {
@@ -905,25 +911,7 @@ async function readRequestSession() {
   }
 
   return session;
-}
-
-/**
- * The signed-in session for this request, or `null` (#4938).
- *
- * Memoised with React `cache()`, so a layout, a guard and a page in one
- * server-component render share ONE refresh: the jwt callback's member,
- * module-settings and login-security reads run once per render rather than
- * once per caller. The memo lives for that render only, so INV-AUTH-007 still
- * holds — a role change, a switched-off login or a changed session age takes
- * effect on the very next request. Outside a render (route handlers, server
- * actions, the proxy) `cache()` memoises nothing and every call refreshes, as
- * before; that is also why no `updateSession()` caller (all are route
- * handlers) can read a pre-update session back from here.
- *
- * Wrapped here, at the one definition, never at a call site: `cache()` memoises
- * per function identity, so a second wrapper would be a second memo.
- */
-export const auth = cache(readRequestSession);
+});
 
 /**
  * Diagnostics-only raw session probe (#1669). Returns the UNWRAPPED
