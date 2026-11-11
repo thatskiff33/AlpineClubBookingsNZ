@@ -140,4 +140,28 @@ describe("POST /api/admin/menu-role", () => {
     expect(response.status).toBe(400);
     expect(mocks.findUnique).not.toHaveBeenCalled();
   });
+
+  it("marks the cookie Secure in production", async () => {
+    mocks.live = true;
+    admit();
+    mocks.findUnique.mockResolvedValue(treasurerMember());
+    vi.stubEnv("NODE_ENV", "production");
+    try {
+      const response = await POST(post({ role: "FINANCE_ADMIN" }));
+      expect(response.cookies.get(ADMIN_MENU_ROLE_COOKIE)?.secure).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("answers 405 after any-admin for a non-POST method while hubs are on", async () => {
+    mocks.live = true;
+    admit();
+    const response = await GET();
+    expect(response.status).toBe(405);
+    expect(response.headers.get("Allow")).toBe("POST");
+    expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: "any-admin" });
+    expect(mocks.findUnique).not.toHaveBeenCalled();
+    expect(response.headers.getSetCookie()).toEqual([]);
+  });
 });

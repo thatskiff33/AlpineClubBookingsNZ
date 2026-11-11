@@ -95,3 +95,29 @@ describe("permission guards do not import the menu-role switcher", () => {
     expect(reached).toContain(path.join(SRC, "lib/admin-permissions.ts"));
   });
 });
+
+describe("the admin layout reads the menu only while hubs are on", () => {
+  const source = stripComments(
+    readFileSync(path.join(ROOT, "src/app/(admin)/layout.tsx"), "utf8"),
+  );
+
+  it("calls resolveAdminMenu only in the hubs-live branch, and reads the cookie once there", () => {
+    expect(source).toMatch(
+      /const menu = ADMIN_HUBS_LIVE\s*\?\s*resolveAdminMenu\(/,
+    );
+    expect(source.match(/resolveAdminMenu\(/g)).toEqual(["resolveAdminMenu("]);
+    expect(source.match(/cookies\(\)/g)).toEqual(["cookies()"]);
+    const menuAt = source.indexOf("const menu = ADMIN_HUBS_LIVE");
+    const cookieAt = source.indexOf("cookies()");
+    expect(cookieAt).toBeGreaterThan(menuAt);
+  });
+
+  it("passes the menu to the sidebar and not to the command palette", () => {
+    const paletteAt = source.indexOf("<AdminCommandPalette");
+    const palette = source.slice(paletteAt, source.indexOf("/>", paletteAt));
+    expect(palette).not.toContain("menuHubKeys");
+    expect(palette).not.toContain("menuRoles");
+    expect(palette).not.toContain("selectedMenuRole");
+    expect(source).toContain("menuHubKeys={menu?.hubKeys}");
+  });
+});
