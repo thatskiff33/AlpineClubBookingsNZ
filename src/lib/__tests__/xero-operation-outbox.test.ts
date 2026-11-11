@@ -2525,9 +2525,10 @@ describe("processQueuedXeroOutboxOperations", () => {
         expect.objectContaining({ OR: expect.any(Array) }),
       ],
     });
-    // #4299: the eighteen pinned types and the organiser extra adjustment.
-    expect(args.where.queueType.in).toHaveLength(19);
+    // #4299: the pinned types, the organiser extra adjustment, and #4369's reversal.
+    expect(args.where.queueType.in).toHaveLength(20);
     expect(args.where.queueType.in).toContain("ORGANISER_EXTRA_ADJUSTMENT");
+    expect(args.where.queueType.in).toContain("CARD_REFUND_REVERSAL_INVOICE");
     // The legacy `requestPayload->>'queueType'` OR predicate is gone.
     expect(args.where.OR).toBeUndefined();
     expect(JSON.stringify(args.where)).not.toContain("requestPayload");

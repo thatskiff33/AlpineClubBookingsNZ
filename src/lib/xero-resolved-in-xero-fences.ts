@@ -206,9 +206,17 @@ export async function sumRefundCreditNoteCoverageCents(
       role: CARD_REFUND_REVERSAL_INVOICE_ROLE,
       active: true,
     },
-    select: { metadata: true },
+    select: { role: true, metadata: true },
   });
-  const reversed = reversals.reduce((sum, link) => sum + liveCardRefundReversalCents(link.metadata), 0);
+  // The role is on the row as well as in the query: a credit note also stores
+  // amountCents, and only this role undoes coverage (`INV-PAY-151`).
+  const reversed = reversals.reduce(
+    (sum, link) =>
+      link.role === CARD_REFUND_REVERSAL_INVOICE_ROLE
+        ? sum + liveCardRefundReversalCents(link.metadata)
+        : sum,
+    0,
+  );
   return Math.max(0, gross - reversed);
 }
 
