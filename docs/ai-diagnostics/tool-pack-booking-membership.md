@@ -812,8 +812,8 @@ the stored form, and case-folding it would hide the mismatch that is sometimes t
 whole answer.
 
 No API key, OAuth token, webhook signing secret or encrypted credential value is
-readable by this credential at all: `IntegrationCredential` and `XeroToken` are
-permanently out of scope (ADR-007 §1).
+readable by this credential at all: `IntegrationCredential` stays permanently
+out of scope (ADR-007 §1). `XeroToken` is gone, not a second live secret store.
 
 ## What this pack CANNOT answer, and why that matters
 

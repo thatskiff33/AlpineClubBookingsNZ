@@ -75,6 +75,7 @@ vi.mock("@/lib/two-factor", () => ({
 
 import { POST as sendEmailCode } from "@/app/api/auth/2fa/email/send/route";
 import { POST as enrollEmail } from "@/app/api/auth/2fa/enroll/email/route";
+import { POST as enrollTotp } from "@/app/api/auth/2fa/enroll/totp/route";
 import { POST as verifyCode } from "@/app/api/auth/2fa/verify/route";
 import { GET as setupTotp } from "@/app/api/auth/2fa/totp/setup/route";
 import { POST as regenerateRecoveryCodes } from "@/app/api/auth/2fa/recovery/regenerate/route";
@@ -175,7 +176,19 @@ describe("two-factor auth routes", () => {
       actor: { kind: "member", memberId: "member-1" },
       request: expect.any(Object),
     });
-    expect(mocks.markTwoFactorSessionVerified).toHaveBeenCalled();
+    expect(mocks.markTwoFactorSessionVerified).toHaveBeenCalledWith("EMAIL");
+  });
+
+  it("enrolls an authenticator app and records that proof", async () => {
+    const response = await enrollTotp(
+      request("/api/auth/2fa/enroll/totp", {
+        secret: "BASE32SECRETBASE32",
+        code: "123456",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.markTwoFactorSessionVerified).toHaveBeenCalledWith("TOTP");
   });
 
   it("verifies recovery codes for enrolled accounts", async () => {
@@ -195,7 +208,34 @@ describe("two-factor auth routes", () => {
       "member-1",
       "ABCD-EFGH-IJKL",
     );
-    expect(mocks.markTwoFactorSessionVerified).toHaveBeenCalled();
+    expect(mocks.markTwoFactorSessionVerified).toHaveBeenCalledWith("RECOVERY");
+  });
+
+  it("verifies an authenticator-app code and records that proof", async () => {
+    mocks.requireTwoFactorApiSession.mockResolvedValue(
+      sessionGuard({ enrolled: true, method: "TOTP" }),
+    );
+
+    const response = await verifyCode(
+      request("/api/auth/2fa/verify", { method: "TOTP", code: "123456" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.verifyStoredTotpCode).toHaveBeenCalledWith("member-1", "123456");
+    expect(mocks.markTwoFactorSessionVerified).toHaveBeenCalledWith("TOTP");
+  });
+
+  it("verifies an emailed code and records that proof", async () => {
+    mocks.requireTwoFactorApiSession.mockResolvedValue(
+      sessionGuard({ enrolled: true, method: "EMAIL" }),
+    );
+
+    const response = await verifyCode(
+      request("/api/auth/2fa/verify", { method: "EMAIL", code: "123456" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.markTwoFactorSessionVerified).toHaveBeenCalledWith("EMAIL");
   });
 
   it("rejects mismatched enrolled methods", async () => {

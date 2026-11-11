@@ -804,8 +804,8 @@ act only on their own), and 2 for a job's write: `TWO_FACTOR_SYSTEM_ACTORS`.
 6. **No plaintext reaches audit, log or error output.** The payload type has no
    field a value fits into, and the store calls no logger (`INV-PRIV-011`).
 7. **The proof is mechanical, over every DIRECT CALL.**
-   `credential-actor-census.test.ts` walks the tree, and also allows writes to
-   the old `XeroToken` row only from the token store; `two-factor-secret-census.test.ts`
+   `credential-actor-census.test.ts` walks the tree, and treats every `XeroToken`
+   write as a bypass; `two-factor-secret-census.test.ts`
    pins every second-factor writer, nested relation writes included; its
    docblock lists the shapes no walk sees (spreads, computed keys, raw SQL). Scanner tests prove seeded bypasses are
    reported. A wrapper hides its callers soundly: it requires an actor.

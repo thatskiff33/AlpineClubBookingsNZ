@@ -350,7 +350,7 @@ describe("credential-actor census scanner: the XeroToken mirror (#3454)", () => 
     expect(census.tokenMirrorWrites).toEqual([]);
   });
 
-  it("inventories the token store's own mirror writes instead of reporting them", () => {
+  it("REPORTS a write inside the token store: the table is gone, so there is no mirror boundary", () => {
     const census = tree({
       "src/lib/xero-token-store.ts": `
         export async function save(tx: any) {
@@ -359,10 +359,8 @@ describe("credential-actor census scanner: the XeroToken mirror (#3454)", () => 
       `,
     });
 
-    expect(census.bypasses).toEqual([]);
-    expect(census.tokenMirrorWrites.map((write) => write.statement)).toEqual([
-      "xeroToken.updateMany",
-    ]);
+    expect(census.tokenMirrorWrites).toEqual([]);
+    expect(census.bypasses.map((bypass) => bypass.statement)).toEqual(["xeroToken.updateMany"]);
   });
 
   it("REPORTS raw SQL and a migration that rewrite the mirror, but not a read", () => {
@@ -383,6 +381,37 @@ describe("credential-actor census scanner: the XeroToken mirror (#3454)", () => 
       "raw.$executeRawUnsafe",
       "sql.xero-token.delete",
     ]);
+  });
+
+  it("does not treat FinanceXeroToken as the retired token table", () => {
+    const census = tree({
+      "prisma/migrations/20260101000000_x/migration.sql": `
+        DELETE FROM "FinanceXeroToken";
+      `,
+    });
+
+    expect(census.bypasses).toEqual([]);
+  });
+
+  it("does not treat this drop's rollback insert as a token-table bypass", () => {
+    const census = tree({
+      "prisma/migrations/20261210100000_contract_drop_xero_token/rollback.sql": `
+        INSERT INTO "XeroToken" ("id", "accessToken", "refreshToken")
+        VALUES ('r3-rollback', '', '');
+      `,
+    });
+
+    expect(census.bypasses).toEqual([]);
+  });
+
+  it("still reports credential SQL in that same rollback file", () => {
+    const census = tree({
+      "prisma/migrations/20261210100000_contract_drop_xero_token/rollback.sql": `
+        UPDATE "IntegrationCredential" SET "ciphertext" = 'x';
+      `,
+    });
+
+    expect(census.bypasses.map((bypass) => bypass.statement)).toEqual(["sql.update"]);
   });
 });
 
