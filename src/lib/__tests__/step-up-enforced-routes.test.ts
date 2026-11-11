@@ -106,7 +106,7 @@ const admin = {
 };
 
 function unread() {
-  const request = new Request("https://club.example/api/admin/step-up", {
+  const request = new NextRequest("https://club.example/api/admin/step-up", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ filename: "nightly.sql", confirm: "RESTORE" }),
@@ -115,7 +115,7 @@ function unread() {
   return { request, read };
 }
 
-function withParams(request: Request) {
+function withParams(request: NextRequest) {
   return [request, { params: Promise.resolve({ id: "row-1" }) }] as const;
 }
 
