@@ -23,7 +23,9 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
+import { FINANCE_WORKSPACE_PATH } from "@/lib/admin-permissions";
 import { servedAdminPathname } from "@/lib/admin-hubs";
 import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
 import { cn } from "@/lib/utils";
@@ -36,26 +38,57 @@ interface NavBarUser {
   canAccessFinance?: boolean;
   isHutLeader?: boolean;
   isStayingGuest?: boolean;
+  /**
+   * The account's User Type is Admin (`classifyAccountRecord`, the Edit Member
+   * page's classification) and it is not also a club member (no `USER`): its
+   * holder books from their own member login, so the bar leaves out My
+   * Bookings. An Admin who is also a club member keeps it.
+   */
+  isAdminOnlyAccount?: boolean;
 }
+
+/**
+ * Which shell is drawing the bar (#108). The staff shells — `/admin` and the
+ * `/finance` workspace — leave out the member-journey links (Book, My
+ * Bookings): an administrator at work reaches booking through "Book on Behalf"
+ * in the sidebar. The bar never carries Who's at the lodge: it is a button on
+ * the member dashboard's Lodge Kiosk card.
+ */
+export type NavBarSurface = "member" | "staff";
 
 interface NavBarProps {
   user: NavBarUser;
   features: FeatureFlags;
+  surface?: NavBarSurface;
 }
 
-const memberLinks = [
+interface NavBarLink {
+  href: string;
+  label: string;
+  /** Left out of the bar on the staff shells (#108). */
+  memberSurfaceOnly?: boolean;
+  /** Left out for an Admin account that is not also a club member. */
+  hiddenForAdminOnlyAccount?: boolean;
+}
+
+const memberLinks: NavBarLink[] = [
   { href: "/", label: "Home" },
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/book", label: "Book" },
-  { href: "/bookings", label: "My Bookings" },
+  { href: "/book", label: "Book", memberSurfaceOnly: true },
+  {
+    href: "/bookings",
+    label: "My Bookings",
+    memberSurfaceOnly: true,
+    hiddenForAdminOnlyAccount: true,
+  },
   { href: "/profile", label: "Profile" },
 ];
 
-const financeLink = { href: "/finance", label: "Finance" };
+const financeLink: NavBarLink = {
+  href: FINANCE_WORKSPACE_PATH,
+  label: "Finance",
+};
 
-// The member lodge roster (#2942). Off unless the club turns the module on,
-// so the link is conditional rather than part of `memberLinks` above.
-const lodgeRosterLink = { href: "/lodge-roster", label: "Who's at the lodge" };
 /*
   The Admin link is the SHELL entrance, not a page this user is known to hold
   (#2984). Portal standing is any one of the seven areas, so a finance-only
@@ -95,12 +128,15 @@ export function getNavBarLinks(
   user: NavBarUser,
   features: FeatureFlags,
   hutLeaderLabel = "Hut Leader",
-) {
+  surface: NavBarSurface = "member",
+): NavBarLink[] {
   const hutLeaderLink = { href: "/lodge/kiosk", label: hutLeaderLabel };
-  return [
+  const links: NavBarLink[] = [
     ...memberLinks,
-    ...(user.canAccessFinance && features.financeDashboard ? [financeLink] : []),
-    ...(features.memberLodgeRoster ? [lodgeRosterLink] : []),
+    ...(user.canAccessFinance &&
+    isFeatureHrefVisible(FINANCE_WORKSPACE_PATH, features)
+      ? [financeLink]
+      : []),
     ...(features.kiosk
       ? user.isHutLeader && features.hutLeaders
         ? [hutLeaderLink]
@@ -110,9 +146,14 @@ export function getNavBarLinks(
       : []),
     ...(user.canAccessAdmin || user.role === "ADMIN" ? [adminLink] : []),
   ];
+  return links.filter(
+    (link) =>
+      !(surface === "staff" && link.memberSurfaceOnly) &&
+      !(user.isAdminOnlyAccount && link.hiddenForAdminOnlyAccount),
+  );
 }
 
-export function NavBar({ user, features }: NavBarProps) {
+export function NavBar({ user, features, surface = "member" }: NavBarProps) {
   const club = useClubIdentity();
   // The served form of a moved admin page's URL, the same on the server and in
   // the browser (C3 #4800): the profile link returns here. Not an admin path,
@@ -124,7 +165,7 @@ export function NavBar({ user, features }: NavBarProps) {
       ? "/profile"
       : buildProfilePathWithReturnTo(pathname);
 
-  const links = getNavBarLinks(user, features, club.hutLeaderLabel);
+  const links = getNavBarLinks(user, features, club.hutLeaderLabel, surface);
 
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";

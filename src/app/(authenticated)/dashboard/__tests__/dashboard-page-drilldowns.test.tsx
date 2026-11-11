@@ -193,6 +193,44 @@ describe("DashboardPage summary card drill-downs", () => {
     expect(html).toContain("10% off per individual");
   });
 
+  it("offers the lodge roster under Open Kiosk while its module is on", async () => {
+    mocks.loadEffectiveModuleFlags.mockResolvedValue({
+      ...moduleFlags(),
+      kiosk: true,
+      memberLodgeRoster: true,
+    });
+    const html = await renderDashboardPage();
+
+    const kiosk = html.indexOf('href="/lodge/kiosk"');
+    const roster = html.indexOf('href="/lodge-roster"');
+    expect(kiosk).toBeGreaterThan(-1);
+    expect(roster).toBeGreaterThan(kiosk);
+  });
+
+  it("leaves the lodge roster off the card while its module is off", async () => {
+    mocks.loadEffectiveModuleFlags.mockResolvedValue({
+      ...moduleFlags(),
+      kiosk: true,
+      memberLodgeRoster: false,
+    });
+    const html = await renderDashboardPage();
+
+    expect(html).toContain('href="/lodge/kiosk"');
+    expect(html).not.toContain('href="/lodge-roster"');
+  });
+
+  it("keeps the roster's card while the kiosk module is off", async () => {
+    mocks.loadEffectiveModuleFlags.mockResolvedValue({
+      ...moduleFlags(),
+      kiosk: false,
+      memberLodgeRoster: true,
+    });
+    const html = await renderDashboardPage();
+
+    expect(html).toContain('href="/lodge-roster"');
+    expect(html).not.toContain('href="/lodge/kiosk"');
+  });
+
   it("shows a lodge occupancy meter for the next stay's dates", async () => {
     const html = await renderDashboardPage();
 

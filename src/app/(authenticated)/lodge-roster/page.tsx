@@ -11,10 +11,11 @@ import {
   ROSTER_WINDOW_DAYS,
   type LodgeRoster,
 } from "@/lib/member-lodge-roster";
+import { MEMBER_LODGE_ROSTER_LINK } from "@/lib/member-lodge-roster-link";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 
 export const metadata = {
-  title: "Who's at the lodge",
+  title: MEMBER_LODGE_ROSTER_LINK.label,
 };
 
 /**
