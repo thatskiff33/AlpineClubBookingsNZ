@@ -53,7 +53,8 @@ Five local rules in `scripts/eslint/design-system.mjs` report what bypasses the
 primitives in `src/components/ui/`, each naming the one to use:
 `design-system/no-raw-button`, `no-raw-input`, `no-raw-select` and
 `no-raw-table` for the intrinsic JSX element, and `no-native-confirm` for the
-browser's confirm box: called through `window`, `globalThis`, `self`, `top` or
+browser's confirm box. A radio is `Radio` from `src/components/ui/radio.tsx`.
+The confirm rule covers a call through `window`, `globalThis`, `self`, `top` or
 `parent`, destructured from one of them, or called bare when the name resolves
 to the global. A `confirm` from `useConfirm()` is the sanctioned one.
 Today's usages are recorded in `eslint-suppressions.json` with the debt above,

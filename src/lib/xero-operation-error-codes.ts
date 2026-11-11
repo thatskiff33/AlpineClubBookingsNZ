@@ -34,3 +34,9 @@ export const XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE = "REFUND_NOTE_UNRECORDED";
  * every oldest-first scan for as long as the resolve takes.
  */
 export const XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE = "REFUND_NOTE_AWAITING_RESOLVE";
+
+/**
+ * An applied-credit allocation is waiting because the grant's own note failed
+ * and must be retried. Spacing matches a refund note waiting to be resolved.
+ */
+export const ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE = "ADMIN_GRANT_NOTE_AWAITING_RETRY";

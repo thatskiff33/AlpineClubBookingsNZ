@@ -636,7 +636,7 @@ Journey: Filter payments, open a record, and inspect its booking and provider st
 
 Screen: `/admin/refund-requests`.
 
-Shows: Refund requests with booking context and decision controls.
+Shows: Refund requests with booking context and decision controls. A credit approval shows the account the requester chose.
 
 Journey: Open a request, inspect the booking and amounts, then use the permitted decision action.
 
