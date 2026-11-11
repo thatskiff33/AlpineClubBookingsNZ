@@ -154,7 +154,7 @@ function moneyColumns(booking: CleanupMoneyColumns): CleanupMoneyColumns {
 export function toOpenEditReviewInput(row: LoadedEditReview): OpenEditReviewInput {
   const checkIn = row.modification
     ? modificationCheckInChange(row.modification.previousData, row.modification.newData)
-    : { changed: false, newCheckIn: null, unreadable: false };
+    : { changed: false, previousCheckIn: null, newCheckIn: null, unreadable: false };
   const addedNightPrices = new Map<string, number | null>();
   for (const guest of row.booking.guests) {
     for (const night of guest.nights) {
@@ -265,11 +265,14 @@ async function prospectiveFee(
 ): Promise<number> {
   if (modification === null) return 0;
   const checkIn = modificationCheckInChange(modification.previousData, modification.newData);
-  if (!checkIn.changed || checkIn.newCheckIn === null || modification.changeFeeCents > 0) return 0;
+  // Whether a stored fee is added again is the decision function's rule. This
+  // only prices the move, and it prices it from the day the edit left behind.
+  if (!checkIn.changed || checkIn.previousCheckIn === null || checkIn.newCheckIn === null) return 0;
   // The fee function reads status, check-in, lodge and final price only.
+  // The live booking check-in is already the new day, so it is not the original.
   const booking = {
     status: row.booking.status,
-    checkIn: row.booking.checkIn,
+    checkIn: dateOnlyInstantOf(checkIn.previousCheckIn),
     lodgeId: row.booking.lodgeId,
     finalPriceCents: row.booking.finalPriceCents,
   } as LoadedBookingForModify;
@@ -283,6 +286,52 @@ async function prospectiveFee(
   });
 }
 
+function modificationIdOf(context: unknown): string | null {
+  if (context === null || typeof context !== "object") return null;
+  const id = (context as { bookingModificationId?: unknown }).bookingModificationId;
+  return typeof id === "string" && id.length > 0 ? id : null;
+}
+
+async function hydrateReview(
+  task: ReviewRow,
+  modification: LoadedEditReview["modification"],
+  store: Prisma.TransactionClient,
+  todayAtClub: CalendarDate,
+): Promise<LoadedEditReview> {
+  return {
+    id: task.id,
+    bookingId: task.bookingId,
+    status: task.status,
+    reviewContext: task.reviewContext,
+    createdAt: task.createdAt,
+    booking: task.booking,
+    modification,
+    prospectiveChangeFeeCents: await prospectiveFee(task, modification, store, todayAtClub),
+  };
+}
+
+async function reloadOpenDecision(
+  store: Prisma.TransactionClient,
+  taskId: string,
+  todayAtClub: CalendarDate,
+): Promise<OpenEditReviewDecision | "closed"> {
+  const task = await store.manualRefundTask.findUnique({
+    where: { id: taskId },
+    select: REVIEW_SELECT,
+  });
+  if (task === null || task.status !== "OPEN") return "closed";
+  const modificationId = modificationIdOf(task.reviewContext);
+  const modification =
+    modificationId === null
+      ? null
+      : await store.bookingModification.findUnique({
+          where: { id: modificationId },
+          select: { id: true, changeFeeCents: true, previousData: true, newData: true },
+        });
+  const row = await hydrateReview(task, modification, store, todayAtClub);
+  return decideOpenEditReview(toOpenEditReviewInput(row));
+}
+
 async function loadRows(
   store: Prisma.TransactionClient,
   todayAtClub: CalendarDate,
@@ -292,18 +341,7 @@ async function loadRows(
     orderBy: { id: "asc" },
     select: REVIEW_SELECT,
   });
-  const modificationIds = [
-    ...new Set(
-      tasks
-        .map((task) => {
-          const context = task.reviewContext;
-          if (context === null || typeof context !== "object") return null;
-          const id = (context as { bookingModificationId?: unknown }).bookingModificationId;
-          return typeof id === "string" && id.length > 0 ? id : null;
-        })
-        .filter((id): id is string => id !== null),
-    ),
-  ];
+  const modificationIds = [...new Set(tasks.map((task) => modificationIdOf(task.reviewContext)).filter((id): id is string => id !== null))];
   const modifications =
     modificationIds.length === 0
       ? []
@@ -314,23 +352,9 @@ async function loadRows(
   const modificationById = new Map(modifications.map((row) => [row.id, row]));
   const rows: LoadedEditReview[] = [];
   for (const task of tasks) {
-    const context = task.reviewContext;
-    const modificationId =
-      context !== null && typeof context === "object" &&
-      typeof (context as { bookingModificationId?: unknown }).bookingModificationId === "string"
-        ? (context as { bookingModificationId: string }).bookingModificationId
-        : null;
+    const modificationId = modificationIdOf(task.reviewContext);
     const modification = modificationId ? (modificationById.get(modificationId) ?? null) : null;
-    rows.push({
-      id: task.id,
-      bookingId: task.bookingId,
-      status: task.status,
-      reviewContext: task.reviewContext,
-      createdAt: task.createdAt,
-      booking: task.booking,
-      modification,
-      prospectiveChangeFeeCents: await prospectiveFee(task, modification, store, todayAtClub),
-    });
+    rows.push(await hydrateReview(task, modification, store, todayAtClub));
   }
   const taskIds = tasks.map((task) => task.id);
   const recoveryWhere = [
@@ -362,11 +386,19 @@ export async function applyOpenEditReviews({
   actingMemberId,
   format,
   resolveTask,
+  refreshDecision,
 }: {
   decisions: readonly OpenEditReviewDecision[];
   actingMemberId: string;
   format: ClubFormat;
   resolveTask: (input: ManualRefundTaskResolution, format: ClubFormat) => Promise<unknown>;
+  /**
+   * Re-read one task immediately before it is settled. A consent removal can
+   * commit while earlier tasks are being closed; the snapshot those decisions
+   * were planned from would otherwise refund a guest that removal already
+   * credited. `"closed"` means the row is no longer OPEN, so nothing is written.
+   */
+  refreshDecision?: (planned: OpenEditReviewDecision) => Promise<OpenEditReviewDecision | "closed">;
 }): Promise<{
   settled: OpenEditReviewDecision[];
   closedWithNoMoney: OpenEditReviewDecision[];
@@ -375,8 +407,17 @@ export async function applyOpenEditReviews({
   const settled: OpenEditReviewDecision[] = [];
   const closedWithNoMoney: OpenEditReviewDecision[] = [];
   const leftOpen: LeftOpenRow[] = [];
-  for (const decision of decisions) {
+  for (const planned of decisions) {
     try {
+      const decision = refreshDecision ? await refreshDecision(planned) : planned;
+      if (decision === "closed") {
+        leftOpen.push({
+          bookingId: planned.bookingId,
+          taskId: planned.taskId,
+          message: "This refund task has already been closed.",
+        });
+        continue;
+      }
       if (decision.action === "dismiss") {
         await resolveTask(
           {
@@ -406,7 +447,7 @@ export async function applyOpenEditReviews({
       }
     } catch (error) {
       if (error instanceof ManualBookingPaymentError) {
-        leftOpen.push({ bookingId: decision.bookingId, taskId: decision.taskId, message: error.message });
+        leftOpen.push({ bookingId: planned.bookingId, taskId: planned.taskId, message: error.message });
         continue;
       }
       throw error;
@@ -641,6 +682,8 @@ export async function runEditReviewCleanup({
       actingMemberId,
       format,
       resolveTask: resolveManualRefundTask,
+      refreshDecision: (plannedDecision) =>
+        client.$transaction((tx) => reloadOpenDecision(tx, plannedDecision.taskId, todayAtClub)),
     });
     report.settled = applied.settled;
     report.closedWithNoMoney = applied.closedWithNoMoney;

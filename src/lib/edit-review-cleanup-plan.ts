@@ -4,6 +4,7 @@ import type { CalendarDate } from "@/lib/club-time";
 import { isCalendarDate } from "@/lib/club-time";
 import {
   editFinancialReviewGuestsRemovedSinceRaised,
+  editFinancialReviewRemovedByItsOwnEdit,
   editFinancialReviewStrandMovesNights,
   editFinancialReviewStrandRecords,
   isNonNegativeIntegerCents,
@@ -178,25 +179,6 @@ function strandHasNegativeTotal(strand: unknown): boolean {
 }
 
 /**
- * The review's own edit removed this guest: every stored night was surrendered
- * and none were added. The same test `editFinancialReviewGuestsRemovedSinceRaised`
- * uses to stay silent, so a removal the review itself made is credited here
- * and a later consent removal is not priced at all.
- */
-function removedByItsOwnEdit(
-  strand: {
-    surrenderedNightDates: readonly string[];
-    addedNightDates: readonly string[];
-    storedEvidence: { nightPrices: readonly { date: string }[] };
-  },
-  guestGone: boolean,
-): boolean {
-  if (!guestGone || strand.addedNightDates.length > 0) return false;
-  const surrendered = new Set(strand.surrenderedNightDates);
-  return surrendered.size > 0 && strand.storedEvidence.nightPrices.every((night) => surrendered.has(night.date));
-}
-
-/**
  * Price one OPEN edit review, or say why it closes with no money.
  *
  * Net = charges − credits + change fee. A positive net is charged, a negative
@@ -248,7 +230,7 @@ export function decideOpenEditReview(input: OpenEditReviewInput): OpenEditReview
     if (guestTotalCents === null) return dismiss(input, "null-guest-total");
     if (guestTotalCents < 0) return dismiss(input, "negative-stored-total");
     const guestGone = !input.currentGuestIds.has(strand.bookingGuestId);
-    if (removedByItsOwnEdit(strand, guestGone)) {
+    if (guestGone && editFinancialReviewRemovedByItsOwnEdit(strand)) {
       credits += guestTotalCents;
       continue;
     }
@@ -430,24 +412,51 @@ export function listDismissedShortenings(
 
 /**
  * Check-in dates on a modification's before/after snapshots.
- * `unreadable` when either snapshot has no calendar check-in, so the fee is
- * not guessed as zero.
+ *
+ * A guest add or removal stores no check-in at all. That is "check-in did not
+ * move", and the fee is zero — not an unreadable date. Unreadable is a check-in
+ * that is present but not a calendar day, or present on only one side, or a
+ * snapshot that is not an object. The fee is then not guessed as zero, because
+ * a date change with a broken snapshot must not be priced.
+ *
+ * `previousCheckIn` is the day the change fee is measured from. The booking's
+ * live check-in is already the new day: the parked edit wrote it before it
+ * raised the review.
  */
 export function modificationCheckInChange(previousData: unknown, newData: unknown): {
   changed: boolean;
+  previousCheckIn: CalendarDate | null;
   newCheckIn: CalendarDate | null;
   unreadable: boolean;
 } {
   const previous = readCheckIn(previousData);
   const next = readCheckIn(newData);
-  if (previous === null || next === null) return { changed: false, newCheckIn: next, unreadable: true };
-  return { changed: previous !== next, newCheckIn: next, unreadable: false };
+  if (previous.state === "absent" && next.state === "absent") {
+    return { changed: false, previousCheckIn: null, newCheckIn: null, unreadable: false };
+  }
+  if (previous.state !== "date" || next.state !== "date") {
+    return {
+      changed: false,
+      previousCheckIn: previous.state === "date" ? previous.date : null,
+      newCheckIn: next.state === "date" ? next.date : null,
+      unreadable: true,
+    };
+  }
+  return {
+    changed: previous.date !== next.date,
+    previousCheckIn: previous.date,
+    newCheckIn: next.date,
+    unreadable: false,
+  };
 }
 
-function readCheckIn(data: unknown): CalendarDate | null {
-  if (data === null || typeof data !== "object") return null;
+type CheckInRead = { state: "absent" } | { state: "invalid" } | { state: "date"; date: CalendarDate };
+
+function readCheckIn(data: unknown): CheckInRead {
+  if (data === null || typeof data !== "object") return { state: "invalid" };
+  if (!Object.prototype.hasOwnProperty.call(data, "checkIn")) return { state: "absent" };
   const value = (data as { checkIn?: unknown }).checkIn;
-  if (typeof value !== "string") return null;
+  if (typeof value !== "string") return { state: "invalid" };
   const day = value.slice(0, 10);
-  return isCalendarDate(day) ? day : null;
+  return isCalendarDate(day) ? { state: "date", date: day } : { state: "invalid" };
 }

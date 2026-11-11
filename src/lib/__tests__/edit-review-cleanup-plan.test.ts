@@ -5,6 +5,7 @@ import {
   decideOpenEditReview,
   isFrozenEditReviewHeadline,
   listDismissedShortenings,
+  modificationCheckInChange,
   type OpenEditReviewInput,
 } from "@/lib/edit-review-cleanup-plan";
 import { editedBookingTotalCents } from "@/lib/edit-night-valuation";
@@ -230,6 +231,31 @@ describe("pricing one open edit review (#4343)", () => {
     expect(
       decideOpenEditReview({ ...withFee, bookingStatus: "DRAFT", paymentCaptured: false }),
     ).toMatchObject({ action: "dismiss", reason: "nothing-owing", });
+  });
+
+  it("treats a guest add or removal, which stores no check-in, as an unchanged date", () => {
+    const add = modificationCheckInChange(
+      { guestCount: 1, finalPriceCents: 20_000 },
+      { guestCount: 2, finalPriceCents: 52_000 },
+    );
+    expect(add).toEqual({ changed: false, previousCheckIn: null, newCheckIn: null, unreadable: false });
+    const oneSided = modificationCheckInChange({ guestCount: 1 }, { checkIn: "2026-12-20" });
+    expect(oneSided.unreadable).toBe(true);
+    expect(modificationCheckInChange({ checkIn: "not-a-day" }, { checkIn: "2026-12-20" }).unreadable).toBe(true);
+  });
+
+  it("measures a date change from the snapshot's previous check-in, not the live booking day", () => {
+    // The parked edit has already written 2026-12-20 onto the booking. The fee
+    // still has to see the day it moved away from.
+    expect(modificationCheckInChange({ checkIn: "2026-11-18" }, { checkIn: "2026-12-20" })).toEqual({
+      changed: true,
+      previousCheckIn: "2026-11-18",
+      newCheckIn: "2026-12-20",
+      unreadable: false,
+    });
+    expect(
+      modificationCheckInChange({ checkIn: "2026-12-20T00:00:00.000Z" }, { checkIn: "2026-12-20" }).changed,
+    ).toBe(false);
   });
 
   it("dismisses a zero net, and a priced edit with no modification anchor", () => {

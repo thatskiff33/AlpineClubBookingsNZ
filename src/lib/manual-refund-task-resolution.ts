@@ -12,7 +12,12 @@ import { postHandBackLedgerLine } from "@/lib/booking-ledger-hand-back";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { recordManualRefundTaskClosureAudit } from "@/lib/manual-refund-task-audit";
 import { hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
-import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
+import {
+  EDIT_REVIEW_LATER_REMOVAL_COMPLETION_REFUSAL,
+  editFinancialReviewGuestsRemovedSinceRaised,
+  isNonNegativeIntegerCents,
+  parseEditFinancialReviewContext,
+} from "@/lib/edit-financial-review-context";
 import { chooseEditReviewSettlementRoute, executeEditReviewSettlement, queueEditReviewChargeInvoiceInTransaction, type EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { giveBackCancelledShareCredit, writeEditReviewAccountCredit, type EditReviewAccountCreditOutcome } from "@/lib/edit-financial-review-account-credit";
 import { cancelledBookingRefundInvoiceId, queueCancelledBookingHandBackNoteInTransaction, queueRefundRequestCreditNoteInTransaction, refundMethodForEditReviewRoute } from "@/lib/edit-financial-review-xero-leg";
@@ -218,6 +223,23 @@ export async function resolveManualRefundTask(
     // into a silently skipped refund allocation on a row already COMPLETED.
     let settlement: { amountCents: number; amended: boolean } | null = null;
     if (resolution === "completed") {
+      if (isEditReview) {
+        // A consent removal is allowed while this review is still OPEN, and it
+        // has already credited the guest. Read under lock(1), which that
+        // removal also holds, so the two cannot both pay.
+        const context = parseEditFinancialReviewContext(task.reviewContext);
+        if (context !== null) {
+          const guests = await tx.bookingGuest.findMany({
+            where: { bookingId: task.bookingId },
+            select: { id: true },
+          });
+          if (
+            editFinancialReviewGuestsRemovedSinceRaised(context, new Set(guests.map((guest) => guest.id))).length > 0
+          ) {
+            throw new ManualBookingPaymentError(EDIT_REVIEW_LATER_REMOVAL_COMPLETION_REFUSAL, 409);
+          }
+        }
+      }
       if (isEditReview && !trimmedNote) {
         // #3030: an edit-review completion is an admin pricing real money from
         // evidence, so the reasoning is part of the record. The legacy kinds keep

@@ -3991,6 +3991,46 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
     );
   });
 
+  it("refuses to complete an edit review whose guest was removed after it was raised", async () => {
+    mocks.bookingGuestFindMany.mockResolvedValue([]);
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({
+        reviewContext: reviewContext({
+          occurrence: {
+            bookingId: "booking-1",
+            bookingGuestId: "guest-1",
+            cause: "INEXACT_STORED_NIGHT_PRICES",
+            surrenderedNightDates: ["2026-08-01"],
+            addedNightDates: [],
+            storedEvidence: {
+              guestTotalCents: 20_000,
+              nightPrices: [
+                { date: "2026-08-01", priceCents: 10_000 },
+                { date: "2026-08-02", priceCents: 10_000 },
+              ],
+            },
+          },
+        }),
+      }),
+    );
+
+    await expect(
+      resolveManualRefundTask(
+        {
+          taskId: "task-1",
+          resolution: "completed",
+          note: "Priced from the stored nights.",
+          actingMemberId: "admin-1",
+          confirmedAmountCents: 10_000,
+          direction: "REFUND_TO_MEMBER",
+          recordedNightPrices: null,
+        },
+        CLUB_FORMAT_TEST,
+      ),
+    ).rejects.toThrow(/removed after it was raised/);
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+  });
+
   it("SHAPE 2 (#3257): a surviving strand with NO night rows now RE-BASES from its stored total (#4317 review H1)", async () => {
     /*
       The strand carries $80.00 and no row saying what any night of it sold for.

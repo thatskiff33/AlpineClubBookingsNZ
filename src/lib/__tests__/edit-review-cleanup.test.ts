@@ -208,6 +208,32 @@ describe("settling open reviews", () => {
     expect(resolveTask).toHaveBeenCalledTimes(1);
   });
 
+  it("re-reads a consent removal before it settles, and dismisses instead of refunding", async () => {
+    const resolveTask = vi.fn(async () => undefined);
+    const dismiss = {
+      action: "dismiss" as const,
+      taskId: "task-1",
+      bookingId: "booking-1",
+      reason: "consent-removed" as const,
+      note: "already credited",
+      removedGuestIds: ["guest-1"],
+      remainingStrandGuestIds: ["guest-2"],
+    };
+    const result = await applyOpenEditReviews({
+      decisions: [complete],
+      actingMemberId: "member-1",
+      format: CLUB_FORMAT_TEST,
+      resolveTask: resolveTask as never,
+      refreshDecision: async () => dismiss,
+    });
+    expect(result.settled).toEqual([]);
+    expect(result.closedWithNoMoney).toEqual([dismiss]);
+    expect(resolveTask).toHaveBeenCalledWith(
+      expect.objectContaining({ resolution: "dismissed", taskId: "task-1" }),
+      CLUB_FORMAT_TEST,
+    );
+  });
+
   it("does not complete a task again once it is no longer OPEN", () => {
     const row = {
       id: "task-1",

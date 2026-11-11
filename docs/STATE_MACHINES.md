@@ -2879,7 +2879,9 @@ removal (`CONSENT_DECLINE` / `CONSENT_EXPIRY`): owner decision D-14 says a membe
 who never consented must always be able to come off a booking, so that removal
 proceeds rather than being held behind a pricing question nobody has answered.
 No removal parks its money since #4317, so the exemption's only effect is that
-the fence does not refuse it.
+the fence does not refuse it. Completing the review that guest was on is refused
+under the same lock: the removal already credited them, and
+`bookings:edit-review-cleanup` dismisses the review instead of settling it.
 
 The transition is a status-fenced conditional update, so a double click can
 never double-apply the allocation, and the row is never processed by any cron —

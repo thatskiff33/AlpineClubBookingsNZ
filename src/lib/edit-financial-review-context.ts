@@ -293,6 +293,27 @@ export function editFinancialReviewStrandMovesNights(
  * strands (`INV-SSOT`); `strandIndex` is a strand's place in it, the ordinal the
  * settle card's evidence block names each guest by ("Guest 1 of 2").
  */
+
+/**
+ * The review's own edit removed this guest: every stored night was surrendered
+ * and none were added. Where it held no stored rows, a whole surrender is read
+ * as that removal, so the warning errs towards silence. One predicate: the
+ * "removed since raised" list stays silent on it, and the cleanup credits it.
+ */
+export function editFinancialReviewRemovedByItsOwnEdit(strand: {
+  surrenderedNightDates: readonly string[];
+  addedNightDates: readonly string[];
+  storedEvidence: { nightPrices: readonly { date: string }[] };
+}): boolean {
+  if (strand.addedNightDates.length > 0) return false;
+  const surrendered = new Set<string>(strand.surrenderedNightDates);
+  return surrendered.size > 0 && strand.storedEvidence.nightPrices.every((night) => surrendered.has(night.date));
+}
+
+/** Completing the review would pay the guest's removal a second time. Dismiss it. */
+export const EDIT_REVIEW_LATER_REMOVAL_COMPLETION_REFUSAL =
+  "A guest this review names was removed after it was raised, and that removal already credited them, so this review cannot be settled.";
+
 export function editFinancialReviewGuestsRemovedSinceRaised(
   context: EditFinancialReviewContext,
   currentGuestIds: ReadonlySet<string>,
@@ -308,12 +329,7 @@ export function editFinancialReviewGuestsRemovedSinceRaised(
   return strands.flatMap((strand, strandIndex) => {
     if (!editFinancialReviewStrandMovesNights(strand)) return [];
     if (currentGuestIds.has(strand.bookingGuestId)) return [];
-    const surrendered = new Set<string>(strand.surrenderedNightDates);
-    const removedByItsOwnEdit =
-      surrendered.size > 0 &&
-      strand.addedNightDates.length === 0 &&
-      strand.storedEvidence.nightPrices.every((night) => surrendered.has(night.date));
-    if (removedByItsOwnEdit) return [];
+    if (editFinancialReviewRemovedByItsOwnEdit(strand)) return [];
     return [
       {
         bookingGuestId: strand.bookingGuestId,
