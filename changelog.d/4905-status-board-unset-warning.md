@@ -1,0 +1,1 @@
+- The hourly status board now warns and explains in its job summary when it is not configured. Agent guidance points to `pnpm run status` until the hosted board is live (#4905).

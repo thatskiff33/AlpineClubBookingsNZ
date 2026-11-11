@@ -1,5 +1,7 @@
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
@@ -324,6 +326,53 @@ describe("edge cases", () => {
 });
 
 describe("the scheduled workflow", () => {
+  const targetScript = workflow.match(/- name: Find the board issue\n\s+id: target\n\s+run: \|\n((?: {10}.*\n|\n)+)/)?.[1];
+
+  it("warns and records a local fallback when the hosted board is unconfigured", () => {
+    const unset = targetScript?.split("elif")[0];
+    expect(unset).toContain("::warning title=Status board::");
+    expect(unset).toContain('echo "run=false" >> "${GITHUB_OUTPUT}"');
+    expect(unset).toMatch(/pnpm run status.*>> "\$\{GITHUB_STEP_SUMMARY\}"/);
+  });
+
+  it.each([
+    ["", 0, "run=false\n"],
+    ["123", 0, "run=true\n"],
+    ["not-an-issue", 1, ""],
+  ])("handles target %j without calling GitHub", (target, status, output) => {
+    expect(targetScript).toBeDefined();
+    const directory = mkdtempSync(join(tmpdir(), "status-board-target-"));
+    const outputPath = join(directory, "output");
+    const summaryPath = join(directory, "summary");
+    try {
+      writeFileSync(outputPath, "");
+      writeFileSync(summaryPath, "");
+      // Reject an accidental GitHub call while running the workflow's actual shell.
+      const result = spawnSync("bash", ["--noprofile", "--norc"], {
+        input: `gh() { echo 'Unexpected GitHub call' >&2; exit 99; }\n${targetScript}`,
+        encoding: "utf8",
+        env: { PATH: process.env.PATH, STATUS_BOARD_ISSUE: target, GITHUB_OUTPUT: outputPath, GITHUB_STEP_SUMMARY: summaryPath },
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(status);
+      expect(result.stderr).toBe("");
+      expect(readFileSync(outputPath, "utf8")).toBe(output);
+      const summary = readFileSync(summaryPath, "utf8");
+      if (target === "") {
+        expect(result.stdout).toContain("::warning title=Status board::");
+        expect(result.stdout).toContain("STATUS_BOARD_ISSUE");
+        expect(result.stdout).toContain("docs/agents/COORDINATION.md");
+        expect(summary).toContain("hosted status board is not live");
+        expect(summary).toContain("`pnpm run status` prints the same board");
+      } else {
+        expect(summary).toBe("");
+        if (status !== 0) expect(result.stdout).toContain("::error title=Status board::");
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("runs on a schedule, where `github.event.repository` is absent, as well as from the default branch on dispatch", () => {
     expect(workflow).toContain(
       "if: github.event_name == 'schedule' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)");
