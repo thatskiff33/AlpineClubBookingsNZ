@@ -48,11 +48,16 @@ export type TwoFactorRequestContext = StructuredAuditEvent["request"];
  * factor or issues codes. Which job may record which action is
  * `assertTwoFactorActorMayAct`'s.
  */
+/** The operator command that clears a lost officer factor (#4618). May only clear. */
+export const OFFICER_FACTOR_RESET_JOB_NAME = "officer-factor-reset";
+
 export const TWO_FACTOR_SYSTEM_ACTORS = [
   /** The retention job anonymising a former member after their period (#4457). */
   FORMER_MEMBER_ANONYMISATION_JOB_NAME,
   /** The operator's re-encrypt moving stored data to the current data key (#4456). */
   DATA_KEY_REENCRYPT_JOB_NAME,
+  /** The operator command for a club whose Full Admin has lost their factor (#4618). */
+  OFFICER_FACTOR_RESET_JOB_NAME,
 ] as const;
 
 export type TwoFactorSystemActor = (typeof TWO_FACTOR_SYSTEM_ACTORS)[number];

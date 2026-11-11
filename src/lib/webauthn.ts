@@ -22,7 +22,11 @@ import type {
 
 import { getClubIdentitySync } from "@/lib/club-identity-settings";
 import { prisma } from "@/lib/prisma";
-import { assertLastFactorRemovable } from "@/lib/second-factor-requirement";
+import { assertEnrolmentNotSuperseded } from "@/lib/officer-factor-reset";
+import {
+  assertLastFactorRemovable,
+  LastOfficerFactorError,
+} from "@/lib/second-factor-requirement";
 import { satisfiesOfficerSecondFactor } from "@/lib/second-factor-enrolment";
 import { TWO_FACTOR_SESSION_CHALLENGE_TTL_MS } from "@/lib/two-factor";
 import {
@@ -220,6 +224,8 @@ export async function verifyPasskeyRegistration(input: {
   name: unknown;
   actor: TwoFactorPersonActor;
   request?: TwoFactorRequestContext;
+  /** Issue time of the session registering. A reset newer than it refuses. */
+  sessionIssuedAt?: Date | null;
 }): Promise<{ ok: true } | PasskeyFailure> {
   const named = normalisePasskeyName(input.name);
   if (!named.ok) return { ok: false, status: 400, error: named.error };
@@ -259,6 +265,11 @@ export async function verifyPasskeyRegistration(input: {
   const transports = transportList(input.response, credential.transports);
   try {
     await prisma.$transaction(async (tx) => {
+      await assertEnrolmentNotSuperseded(
+        tx,
+        input.memberId,
+        input.sessionIssuedAt ?? null,
+      );
       const saved = await tx.webAuthnCredential.count({
         where: { memberId: input.memberId },
       });
@@ -429,7 +440,18 @@ export async function deletePasskey(input: {
     hasPasskey: remaining > 0,
   });
   if (!stillOfficerFactor) {
-    await assertLastFactorRemovable(input.memberId);
+    try {
+      await assertLastFactorRemovable(input.memberId);
+    } catch (error) {
+      if (error instanceof LastOfficerFactorError) {
+        return {
+          ok: false,
+          status: 400,
+          error: "Keep an authenticator app or another passkey before removing this one.",
+        };
+      }
+      throw error;
+    }
   }
 
   const deleted = await prisma.$transaction(async (tx) => {

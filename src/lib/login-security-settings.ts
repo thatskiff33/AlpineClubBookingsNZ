@@ -1,3 +1,4 @@
+import { clampOfficerTwoFactorGraceDays } from "@/lib/officer-two-factor-grace";
 import { prisma } from "@/lib/prisma";
 import {
   normalizeLoginSecurityPolicy,
@@ -61,9 +62,32 @@ export async function loadLoginSecuritySettings(): Promise<LoginSecuritySettings
  * It never extends a session.
  */
 export async function loadClubSessionMaxAgeHours(): Promise<number> {
+  return (await loadLoginSecurityRefresh()).sessionMaxAgeHours;
+}
+
+/**
+ * Session age and the officer two-factor policy, one read, for the token
+ * refresh. An absent row is policy on and 14 days, matching the column
+ * defaults. A stored grace value is clamped into 0–60. A failed read throws.
+ */
+export async function loadLoginSecurityRefresh(): Promise<{
+  sessionMaxAgeHours: number;
+  officerTwoFactorPolicy: boolean;
+  officerTwoFactorGraceDays: number;
+}> {
   const record = await prisma.loginSecuritySetting.findUnique({
     where: { id: LOGIN_SECURITY_SETTINGS_ID },
-    select: { sessionMaxAgeHours: true },
+    select: {
+      sessionMaxAgeHours: true,
+      officerTwoFactorPolicy: true,
+      officerTwoFactorGraceDays: true,
+    },
   });
-  return normalizeLoginSecurityPolicy(record).sessionMaxAgeHours;
+  return {
+    sessionMaxAgeHours: normalizeLoginSecurityPolicy(record).sessionMaxAgeHours,
+    officerTwoFactorPolicy: record?.officerTwoFactorPolicy ?? true,
+    officerTwoFactorGraceDays: clampOfficerTwoFactorGraceDays(
+      record?.officerTwoFactorGraceDays ?? 14,
+    ),
+  };
 }

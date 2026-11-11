@@ -20,6 +20,7 @@ const mockPrisma = vi.hoisted(() => {
       create: vi.fn(),
     },
     member: { findUnique: vi.fn() },
+    $executeRaw: vi.fn().mockResolvedValue(0),
     $transaction: vi.fn(),
   };
   db.$transaction.mockImplementation(async (arg: unknown) => {
@@ -35,6 +36,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/audit", () => ({ createAuditLog }));
 vi.mock("@/lib/second-factor-requirement", () => ({
   assertLastFactorRemovable: mockAssert,
+  LastOfficerFactorError: class LastOfficerFactorError extends Error {},
 }));
 vi.mock("@simplewebauthn/server", async () => {
   const actual = (await vi.importActual(

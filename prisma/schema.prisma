@@ -522,6 +522,12 @@ model Member {
   // off. The token refresh refuses any session issued before it, the same way
   // it treats passwordChangedAt, so re-enabling login never revives one.
   sessionsRevokedAt       DateTime?
+  // #4618: the first time the officer requirement reached this member. Null
+  // until then. A reset does not clear it; a later factorsResetAt means grace
+  // is already over and is not started again.
+  twoFactorGraceStartedAt DateTime?
+  // #4618: when an administrator or the operator cleared this member's factors.
+  factorsResetAt          DateTime?
   lastLoginAt             DateTime?
   twoFactorEnabled        Boolean          @default(false)
   twoFactorMethod         TwoFactorMethod?
@@ -868,6 +874,10 @@ model AccessRoleDefinition {
   lodgeLevel      AdminPermissionLevel @default(NONE)
   contentLevel    AdminPermissionLevel @default(NONE)
   supportLevel    AdminPermissionLevel @default(NONE)
+  // #4618: null is Default (finance or support Edit requires an officer
+  // factor). true is Required. false is Not required, and drops only this
+  // role. Full Admin has no row here and cannot be exempted.
+  requiresTwoFactor Boolean?
   sortOrder       Int                  @default(0)
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
@@ -5858,6 +5868,12 @@ model LoginSecuritySetting {
   // (INV-AUTH-007). Default 7 days; the app clamps it to 8..720 hours
   // (normalizeLoginSecurityPolicy). The lodge kiosk keeps its own 30 days.
   sessionMaxAgeHours  Int      @default(168)
+  // #4618: officers who can move money or change system settings, and every
+  // Full Admin, must use an authenticator app or a passkey. Default on. The
+  // release constant keeps this inert until #4620 turns it on. Grace is whole
+  // days, 0 to 60, and an absent row reads as 14.
+  officerTwoFactorPolicy    Boolean @default(true)
+  officerTwoFactorGraceDays Int     @default(14)
   updatedByMemberId   String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @default(now()) @updatedAt
