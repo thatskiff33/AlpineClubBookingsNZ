@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
+import { ADVISORY_LOCK_CALL } from "./support/advisory-lock-source";
 import { balancedBrackets } from "./support/balanced-brackets";
 import {
   blankLiterals,
@@ -1928,9 +1929,6 @@ function routePathOf(rel: string): string | null {
     .filter((segment) => segment.length > 0 && !/^\(.*\)$/.test(segment));
   return `/${segments.join("/")}`;
 }
-
-/** Any acquisition of a transaction-scoped advisory lock, blocking or fail-fast. */
-const ADVISORY_LOCK_CALL = /pg_(?:try_)?advisory_xact_lock\(/g;
 
 /**
  * The first argument of a lock call, read across line breaks from the opening
