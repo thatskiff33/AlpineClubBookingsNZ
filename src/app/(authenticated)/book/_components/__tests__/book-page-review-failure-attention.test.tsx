@@ -28,10 +28,9 @@ const wizard = vi.hoisted(() => ({
 }));
 
 vi.mock("@/app/(authenticated)/book/_hooks/use-booking-wizard", async (importOriginal) => {
-  const actual =
-    await importOriginal<
-      typeof import("@/app/(authenticated)/book/_hooks/use-booking-wizard")
-    >();
+  const actual = (await importOriginal()) as typeof import(
+    "@/app/(authenticated)/book/_hooks/use-booking-wizard"
+  );
   return {
     ...actual,
     useBookingWizard: () => {
