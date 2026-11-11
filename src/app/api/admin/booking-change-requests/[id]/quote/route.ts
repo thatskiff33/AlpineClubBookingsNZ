@@ -4,6 +4,7 @@ import {
   finishedStayQuoteResponse,
   finishedStayQuoteSchema,
 } from "@/lib/booking-change-request-admin-decision";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 /**
  * #3750 (P2 on #3955): what approving a locked-period change request on a
@@ -23,6 +24,8 @@ export async function POST(
 
   const { id } = await params;
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await req.json();
   } catch {

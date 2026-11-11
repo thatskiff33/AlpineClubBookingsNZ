@@ -10,6 +10,7 @@ import {
   CardRefundPaidAnotherWayError,
   closeCardRefundPaidAnotherWay,
 } from "@/lib/card-refund-paid-another-way";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 /**
  * Explicit confirmation, as the hand-back completion asks, so closing a money
@@ -56,6 +57,8 @@ export async function POST(
   const { id } = await params;
 
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await request.json();
   } catch {

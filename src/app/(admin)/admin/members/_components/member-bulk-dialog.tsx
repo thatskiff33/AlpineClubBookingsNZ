@@ -1,4 +1,5 @@
 "use client"
+import { fetchWithRecentAuth } from "@/components/confirm-its-you"
 
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
@@ -51,7 +52,7 @@ export function MemberBulkDialog({
     try {
       const body: Record<string, unknown> = { ids: [...selectedIds], action }
       if (action === "set-role") body.accessRoles = [bulkRole]
-      const res = await fetch("/api/admin/members/bulk-update", {
+      const res = await fetchWithRecentAuth("/api/admin/members/bulk-update", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
