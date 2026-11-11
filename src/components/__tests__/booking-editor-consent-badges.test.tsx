@@ -15,6 +15,7 @@ import { BookingEditor, type BookingEditorData } from "@/components/booking-edit
 function booking(guests: BookingEditorData["guests"]): BookingEditorData {
   return {
     id: "bk-1",
+    lodgeName: "Ruapehu Lodge",
     checkIn: "2026-08-08",
     checkOut: "2026-08-10",
     nights: 2,

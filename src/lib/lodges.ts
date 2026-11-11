@@ -173,6 +173,37 @@ export async function countActiveLodges(db: LodgeDb): Promise<number> {
   return db.lodge.count({ where: { active: true } });
 }
 
+/**
+ * INV-CAP-039: the lodge fields a booking LIST row selects so it can name its
+ * lodge. Spread into each list query's `select` (`lodge: BOOKING_LIST_LODGE_SELECT`)
+ * so every list asks the same question of the same row.
+ */
+export const BOOKING_LIST_LODGE_SELECT = {
+  select: { name: true, active: true },
+} as const satisfies Prisma.LodgeDefaultArgs;
+
+/**
+ * INV-CAP-039: the lodge name a booking LIST row shows, or null for none — the
+ * one place the ADR-002 single-lodge presentation rule is decided for member
+ * booking lists (My Bookings and the dashboard's rows).
+ *
+ * Exactly one active lodge hides the name, so a single-lodge club's lists look
+ * as they always have. Any other count shows it, and 0 is deliberately on that
+ * side: a count that says "no lodges" is not evidence the club has one. A row at
+ * a lodge that is no longer active is always named whatever the count, so a club
+ * that archived its second lodge never shows a booking still there unlabelled.
+ *
+ * The name is always the BOOKING's own lodge, never the club default (#2918,
+ * #2919). The screens that ask a member to review or pay for one booking (the
+ * booking page, the pay link) name it unconditionally and do not ask this.
+ */
+export function bookingListLodgeLabel(
+  activeLodgeCount: number,
+  lodge: { name: string; active: boolean },
+): string | null {
+  return activeLodgeCount !== 1 || !lodge.active ? lodge.name : null;
+}
+
 // Prisma where-fragment scoping a query to exactly one lodge. Named for the
 // historical expand-release null tolerance; the entity tables it is used on now
 // have a NOT NULL lodgeId, so it is a strict match (see below).

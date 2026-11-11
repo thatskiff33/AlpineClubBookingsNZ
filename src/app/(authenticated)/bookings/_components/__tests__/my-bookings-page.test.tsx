@@ -26,6 +26,9 @@ vi.mock("@/lib/prisma", () => ({
     // read. Defaulted to empty so these nesting cases keep asserting only what
     // they are about; the qualifier has its own suite.
     manualRefundTask: { findMany: vi.fn(async () => []) },
+    // INV-CAP-039: the active-lodge count behind the list's lodge line.
+    // Defaulted to a single-lodge club, whose rows carry no lodge name.
+    lodge: { count: vi.fn(async () => 1) },
   },
 }));
 
@@ -80,6 +83,7 @@ function booking(overrides: Record<string, unknown> = {}) {
     checkOut: new Date("2026-08-12T00:00:00.000Z"),
     finalPriceCents: 12000,
     guests: [] as unknown[],
+    lodge: { name: "Ruapehu Lodge", active: true },
     ...overrides,
   };
 }
@@ -314,5 +318,47 @@ describe("MyBookingsPage stored-money verdicts are officer-only (#3278)", () => 
     const html = await renderPage();
     expect(html).toContain("/bookings/A");
     expect(html).not.toContain("recorded amount needs review");
+  });
+});
+
+// INV-CAP-039: the page decides, from the database, whether each row names its
+// lodge, and the list renders exactly that decision.
+describe("MyBookingsPage names each booking's lodge per ADR-002 (INV-CAP-039)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(auth).mockResolvedValue({ user: { id: VIEWER_ID } } as never);
+  });
+
+  it("names each row's own lodge once the club has a second active lodge", async () => {
+    vi.mocked(prisma.lodge.count).mockResolvedValue(2);
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([
+      booking({ id: "A", lodge: { name: "Ruapehu Lodge", active: true } }),
+      booking({ id: "B", lodge: { name: "Second Lodge", active: true } }),
+    ] as never);
+
+    const html = await renderPage();
+    expect(html).toContain("Ruapehu Lodge");
+    expect(html).toContain("Second Lodge");
+  });
+
+  it("leaves a single-lodge club's rows as they were", async () => {
+    vi.mocked(prisma.lodge.count).mockResolvedValue(1);
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([booking()] as never);
+
+    const html = await renderPage();
+    expect(html).not.toContain("Ruapehu Lodge");
+    expect(html).not.toContain('data-testid="booking-list-lodge"');
+  });
+
+  it("names a booking left at an archived lodge even with one active lodge", async () => {
+    vi.mocked(prisma.lodge.count).mockResolvedValue(1);
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([
+      booking({ id: "A" }),
+      booking({ id: "B", lodge: { name: "Old Hut", active: false } }),
+    ] as never);
+
+    const html = await renderPage();
+    expect(html).toContain("Old Hut");
+    expect(html).not.toContain("Ruapehu Lodge");
   });
 });

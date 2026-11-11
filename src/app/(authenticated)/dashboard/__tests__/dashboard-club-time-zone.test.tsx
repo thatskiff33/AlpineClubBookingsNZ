@@ -119,6 +119,8 @@ vi.mock("@/lib/prisma", () => ({
       findMany: mocks.bookingFindMany,
     },
     locker: { findMany: mocks.lockerFindMany },
+    // INV-CAP-039: the active-lodge count behind the rows' lodge line.
+    lodge: { count: vi.fn(async () => 1) },
     member: { findUnique: mocks.memberFindUnique },
     calendarEvent: { findMany: mocks.calendarEventFindMany },
   },

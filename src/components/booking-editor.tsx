@@ -97,6 +97,13 @@ interface EditPolicyInfo {
 
 export interface BookingEditorData {
   id: string;
+  /**
+   * INV-CAP-039: the name of THIS booking's lodge (`booking.lodge.name`), never
+   * the club default. Stay Details always shows it, as the wizard's review step
+   * does (#2701), so a member checking the booking before paying is told where
+   * the stay is in every club, one lodge or several.
+   */
+  lodgeName: string;
   checkIn: string;
   checkOut: string;
   nights: number;
@@ -319,6 +326,12 @@ export function BookingEditor({
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
+            {/* INV-CAP-039: unconditional, for the #2701 reason — the page must
+                not look the same whether or not the lodge is the right one. */}
+            <div className="col-span-2">
+              <p className="text-sm text-muted-foreground">Lodge</p>
+              <p className="font-medium">{booking.lodgeName}</p>
+            </div>
             <div>
               <p className="text-sm text-muted-foreground">Check-in</p>
               <p className="font-medium">

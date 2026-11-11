@@ -16,6 +16,11 @@ import {
 } from "@/lib/booking-money-reconciliation-store";
 import { bookingMoneyReconciliationForViewer } from "@/lib/booking-money-reconciliation-audience";
 import { canSeeBookingAdminTools } from "@/lib/admin-permissions";
+import {
+  BOOKING_LIST_LODGE_SELECT,
+  bookingListLodgeLabel,
+  countActiveLodges,
+} from "@/lib/lodges";
 
 export default async function MyBookingsPage() {
   const session = await auth();
@@ -82,38 +87,45 @@ export default async function MyBookingsPage() {
   // for the officer's internal note, whose column the read does not even select.
   const exceptionRequests = await readMemberExceptionRequests(session.user.id);
 
-  const bookings = await prisma.booking.findMany({
-    where: {
-      deletedAt: null,
-      OR: [
-        { memberId: session.user.id },
-        { guests: { some: { memberId: session.user.id } } },
-      ],
-    },
-    include: {
-      // #3278: the stored-money classification below is derived from THIS read,
-      // so the per-night and adjustment evidence it needs rides along here
-      // rather than arriving from a second query. The relation shapes are the
-      // canonical `BOOKING_MONEY_RECONCILIATION_SELECT`'s own, spread rather
-      // than retyped (`INV-SSOT`); the Booking scalars it names come with the
-      // `include`. A second read would let a commit land between the two and
-      // have the page render one read's total wearing the other read's verdict.
-      guests: {
-        include: {
-          nights: BOOKING_MONEY_RECONCILIATION_SELECT.guests.select.nights,
-        },
+  const [bookings, activeLodgeCount] = await Promise.all([
+    prisma.booking.findMany({
+      where: {
+        deletedAt: null,
+        OR: [
+          { memberId: session.user.id },
+          { guests: { some: { memberId: session.user.id } } },
+        ],
       },
-      promoRedemptions: BOOKING_MONEY_RECONCILIATION_SELECT.promoRedemptions,
-      nightAdjustments: BOOKING_MONEY_RECONCILIATION_SELECT.nightAdjustments,
-      // #796 discriminator: a group joiner also links to its organiser via
-      // parentBookingId, so the list needs the join row to tell it apart from a
-      // genuine #738 split child. Mirrors [id]/page.tsx's nonMemberGuestChildren
-      // filter (`hasNonMembers && !groupBookingJoin`).
-      groupBookingJoin: { select: { id: true } },
-    },
-    // Newest start date first, with a stable createdAt tiebreaker (#771).
-    orderBy: [{ checkIn: "desc" }, { createdAt: "desc" }],
-  });
+      include: {
+        // #3278: the stored-money classification below is derived from THIS read,
+        // so the per-night and adjustment evidence it needs rides along here
+        // rather than arriving from a second query. The relation shapes are the
+        // canonical `BOOKING_MONEY_RECONCILIATION_SELECT`'s own, spread rather
+        // than retyped (`INV-SSOT`); the Booking scalars it names come with the
+        // `include`. A second read would let a commit land between the two and
+        // have the page render one read's total wearing the other read's verdict.
+        guests: {
+          include: {
+            nights: BOOKING_MONEY_RECONCILIATION_SELECT.guests.select.nights,
+          },
+        },
+        promoRedemptions: BOOKING_MONEY_RECONCILIATION_SELECT.promoRedemptions,
+        nightAdjustments: BOOKING_MONEY_RECONCILIATION_SELECT.nightAdjustments,
+        // #796 discriminator: a group joiner also links to its organiser via
+        // parentBookingId, so the list needs the join row to tell it apart from a
+        // genuine #738 split child. Mirrors [id]/page.tsx's nonMemberGuestChildren
+        // filter (`hasNonMembers && !groupBookingJoin`).
+        groupBookingJoin: { select: { id: true } },
+        // INV-CAP-039: the row's own lodge, for `bookingListLodgeLabel` below.
+        lodge: BOOKING_LIST_LODGE_SELECT,
+      },
+      // Newest start date first, with a stable createdAt tiebreaker (#771).
+      orderBy: [{ checkIn: "desc" }, { createdAt: "desc" }],
+    }),
+    // INV-CAP-039: read from the database alongside the list, never inferred
+    // from a client-side lodge list that can fail to load (#2701).
+    countActiveLodges(prisma),
+  ]);
 
   // Split-booking grouping (#738): a mixed party is a member booking plus a
   // linked provisional non-member booking. Label both so a family reads as one.
@@ -160,6 +172,7 @@ export default async function MyBookingsPage() {
       checkOut: booking.checkOut.toISOString(),
       guestCount: booking.guests.length,
       finalPriceCents: booking.finalPriceCents,
+      lodgeLabel: bookingListLodgeLabel(activeLodgeCount, booking.lodge),
       moneyReconciliation,
       // #3033: the price above is the post-change total, and it is real — but a
       // booking with an open review has an adjustment on top of it that nobody

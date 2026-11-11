@@ -122,7 +122,9 @@ export function BookingStayPreferences({
       {memberArrivalInstructions ? (
         <Card id="directions" className="scroll-mt-20">
           <CardHeader>
-            <CardTitle>How to Get to the Lodge</CardTitle>
+            {/* INV-CAP-039: names THIS booking's lodge, whose own travel note
+                and door code are below. */}
+            <CardTitle>How to get to {booking.lodge.name}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <p className="whitespace-pre-wrap">
