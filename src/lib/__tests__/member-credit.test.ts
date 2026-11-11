@@ -1605,8 +1605,13 @@ describe("member-credit helpers", () => {
 });
 
 describe("admin grant credit note (#4431)", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    const { prisma } = await import("@/lib/prisma");
+    // The concurrent-approval case replaces the transaction for the rest of the file.
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback: (tx: typeof prisma) => unknown) =>
+      callback(prisma),
+    );
     mockStartXeroSyncOperation.mockResolvedValue({ id: "op-grant" });
     mockKickQueuedXeroOutbox.mockResolvedValue(null);
   });
