@@ -203,8 +203,8 @@ describe("the failed-card-refund reversal invoice (#4369)", () => {
 
   it("queues one row per close, and will not queue another after the invoice was voided", async () => {
     const store = {
-      xeroSyncOperation: { findFirst: vi.fn(async () => null) },
-      xeroObjectLink: { findFirst: vi.fn(async () => null) },
+      xeroSyncOperation: { findFirst: vi.fn<() => Promise<{ id: string } | null>>(async () => null) },
+      xeroObjectLink: { findFirst: vi.fn<() => Promise<{ id: string } | null>>(async () => null) },
     };
     const queued = await enqueueCardRefundReversalInvoiceOperation({
       paymentId: "pay-1",

@@ -2869,12 +2869,9 @@ _Legacy: settles tasks raised before #4317._
     it": owed nowhere; reviews net the full raised amount; the journal retains
     it. "Still owed": the task records the paid part; a dead row
     (`card_refund_still_owed_<task>`) keeps the rest owed.
-  - **Xero** (8 Oct): a close no card note covers queues a bank-transfer note
-    keyed on the task, sized by it less its own notes, dated the close's day,
-    where an invoice exists to credit; else none (`:no-xero-note`). No card
-    note fills that cash. When a card note covers some of the close, the 10
-    Nov rule replaces this (`INV-PAY-151`): a Stripe reversal for the covered
-    cents, and the bank note for the whole close.
+  - **Xero** (8 Oct): no card-note cover queues a bank-transfer note for the
+    task less its own notes, dated the close's day, where an invoice exists
+    to credit; else none (`:no-xero-note`). A covered close is `INV-PAY-151`.
   - **A late capture: receipt, then credit** (8 Oct). The note names the
     capture's receipt by its invoice, never by intent. With none in Xero, the
     close queues it (`INV-PAY-110`), requeuing a failed one that cannot have

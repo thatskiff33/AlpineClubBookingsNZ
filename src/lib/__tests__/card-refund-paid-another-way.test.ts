@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
   listOperations: vi.fn(),
   applyLocalRefundAllocation: vi.fn(),
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
-  enqueueReversal: vi.fn(async () => ({ queueOperationId: "rev-1", message: "queued" })),
+  enqueueReversal: vi.fn(),
   kick: vi.fn(),
   createAuditLog: vi.fn(),
   readLateCaptureXeroReceipt: vi.fn(),
