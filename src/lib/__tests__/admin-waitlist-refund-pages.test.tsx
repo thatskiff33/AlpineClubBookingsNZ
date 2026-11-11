@@ -629,6 +629,7 @@ describe("Admin refund and credit review page", () => {
               id: "credit-request-1",
               memberId: "member-2",
               amountCents: 3000,
+              grantAccount: "GOODWILL",
               description: "Manual correction",
               status: "PENDING",
               createdAt: "2026-07-01T00:00:00.000Z",
