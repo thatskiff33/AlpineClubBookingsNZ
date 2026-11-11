@@ -821,6 +821,15 @@ function createDependencies(state: {
     enqueueAdditionalCaptureReceiptOperation: vi.fn().mockResolvedValue({ outcome: "queued", queueOperationId: "op_receipt" }),
     // #4324: the keep's own decision, for a kept change capture.
     planKeptLateCaptureXeroRecord: vi.fn().mockResolvedValue({ kind: "receipt-queued", queueOperationId: "op_receipt" }),
+    // #3548: the repair's settle of an operator-applied refund note. Tests that
+    // do not apply that action never call it.
+    finishRefundCreditNoteSettlement: vi.fn().mockResolvedValue({
+      refundPaymentResponseBody: null,
+      payments: [],
+      refundPaymentErr: null,
+      refundPaymentSkipReason: null,
+      completionClaimLost: false,
+    }),
     // #3924 round 12: none, unless a test says so.
     readLateCaptureCardRefundsByHand: vi
       .fn()
@@ -2953,7 +2962,7 @@ describe("runBookingXeroRepair", () => {
       return { report, deps, bookingReport: report.passes[0].bookings[0] };
     }
 
-    function queueAction(bookingReport: { actions: Array<{ type: string; payload: Record<string, unknown>; status?: string; resultMessage?: string }> }) {
+    function queueAction(bookingReport: { actions: Array<{ type: string; payload: Record<string, unknown>; status?: string; resultMessage?: string | null }> }) {
       return bookingReport.actions.find((action) => action.type === "QUEUE_SUPPLEMENTARY_INVOICE");
     }
 
