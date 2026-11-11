@@ -2893,7 +2893,7 @@ validate_prisma_schema_matches_migrations() {
 # gets the default table grants, and DML through a view runs with its owner's
 # rights, so it must be narrowed to SELECT first. So is an append-only relation
 # (`APPEND_ONLY_RELATIONS`: BookingLedgerLine, AuditLog, the member-money
-# journal) the app could change beyond INSERT: UPDATE, DELETE, TRUNCATE, TRIGGER,
+# journal, and Stripe balance-transaction evidence) the app could change beyond INSERT: UPDATE, DELETE, TRUNCATE, TRIGGER,
 # REFERENCES or a column UPDATE. The fix is a re-run of `db:provision-roles --apply`. The SQL
 # between the markers is run as shipped by database-roles.realdb.test.ts.
 verify_least_privilege_role_grants() {
@@ -2921,7 +2921,7 @@ WHERE n.nspname = 'public'
        OR NOT pg_catalog.has_table_privilege(:'app_role', c.oid, 'SELECT')
        OR (c.relkind IN ('v', 'm')
            AND pg_catalog.has_table_privilege(:'app_role', c.oid, 'INSERT, UPDATE, DELETE'))
-       OR (c.relname IN ('BookingLedgerLine', 'AuditLog', 'MemberMoneyEvent', 'MemberMoneyJournal', 'MemberMoneyLine', 'MemberMoneyObligation', 'MemberMoneyApplication', 'MemberMoneySourceLink', 'MemberMoneySourcePosting', 'MemberMoneyRefundReservation', 'MemberMoneyRefundReservationRelease')
+       OR (c.relname IN ('BookingLedgerLine', 'AuditLog', 'MemberMoneyEvent', 'MemberMoneyJournal', 'MemberMoneyLine', 'MemberMoneyObligation', 'MemberMoneyApplication', 'MemberMoneySourceLink', 'MemberMoneySourcePosting', 'MemberMoneyRefundReservation', 'MemberMoneyRefundReservationRelease', 'StripeBalanceTransactionEvidence')
            AND (pg_catalog.has_table_privilege(:'app_role', c.oid, 'UPDATE, DELETE, TRUNCATE, TRIGGER, REFERENCES')
                 OR pg_catalog.has_any_column_privilege(:'app_role', c.oid, 'UPDATE'))));
 SQL

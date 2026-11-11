@@ -69,7 +69,8 @@ export const APPLICATION_SCHEMA = "public";
  * Relations the application role may only INSERT into and SELECT from. A row in
  * one of these is a fact that is corrected by appending another row, never by
  * rewriting it: the booking ledger (`docs/design/booking-ledger.md` §4), the
- * audit log and the member-money journal. Adding a relation here — or a column to
+ * audit log, the member-money journal and Stripe balance-transaction evidence.
+ * Adding a relation here — or a column to
  * `AUDIT_ANONYMISED_REQUEST_COLUMNS` — is a release that asks every deployment to
  * re-run `pnpm run db:provision-roles --apply`, and its upgrade note says so,
  * unless the migration that creates the relation narrows it itself, as the
@@ -77,7 +78,12 @@ export const APPLICATION_SCHEMA = "public";
  * a migration creates).
  */
 export const APPEND_ONLY_RELATIONS = [
-  "BookingLedgerLine", "AuditLog", ...MEMBER_MONEY_RELATIONS,
+  "BookingLedgerLine",
+  "AuditLog",
+  ...MEMBER_MONEY_RELATIONS,
+  // Not a journal table: provisioning must still refuse UPDATE and DELETE.
+  // StripePayout stays off this list because its status changes.
+  "StripeBalanceTransactionEvidence",
 ] as const;
 
 /** Prisma's migration history: the application reads it, only migrations write it. */
@@ -87,7 +93,7 @@ export const MIGRATION_HISTORY_RELATION = "_prisma_migrations";
  * The migration that creates the newest append-only relations. A database whose
  * history lacks it runs an older release, and provisioning asks for this release's migrations first.
  */
-export const APPEND_ONLY_SCHEMA_MIGRATION = "20261210080000_member_money_applications";
+export const APPEND_ONLY_SCHEMA_MIGRATION = "20261211010000_stripe_balance_evidence";
 
 /**
  * The audit relation the retention role maintains. It may UPDATE only
