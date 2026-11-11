@@ -505,7 +505,7 @@ const TRANSACTION_OPENERS = [
   "withXeroVerifyReset(",
   // #3954 round 4: the door's re-issue mint and the recovery runner's claim
   // hold each write their caller's rows inside their fenced transaction.
-  "writeReissuedAskUnderRecovery(",
+  "writeAskUnderDoorRecovery(",
   "holdAdditionalIntentRecoveryClaim(",
   // #4442: the inline minters' queue writes their caller's rows inside the
   // transaction that re-reads the carried balance under the global key.

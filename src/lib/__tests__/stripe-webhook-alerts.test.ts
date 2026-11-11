@@ -323,6 +323,10 @@ vi.mock("@/lib/prisma", () => ({
     xeroSyncOperation: {
       findMany: async () => [],
     },
+    // #4493: the sweep's receipt link. None of these refunds were recorded by it.
+    xeroObjectLink: {
+      findFirst: async () => null,
+    },
     bookingDefaults: {
       findUnique: (...args: unknown[]) => mockBookingDefaultsFindUnique(...args),
     },

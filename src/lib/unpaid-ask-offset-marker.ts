@@ -113,23 +113,32 @@ const BILLED_OFFSET_UNSURE_KEY = "unpaidAskBilledOffsetUnsureCents" as const;
 const REISSUED_ASK_INVOICE_UNSURE_KEY = "reissuedAskInvoiceUnsureCents" as const;
 
 /**
- * #3954 review round 6: the waiting re-issues a later INCREASE folded into its
- * own ask (`foldWaitingReissuedAsks`), recorded on that increase's history row
- * so nothing that reads the increase later loses them:
+ * #3954 review round 6, widened by #4744: the waiting asks a later INCREASE
+ * folded into its own (`foldWaitingAsks`) — a reduction's re-issue, or an
+ * increase whose card mint failed and is still waiting on its retry. Recorded
+ * on that increase's history so nothing that reads it later loses them:
  *
- * - its mint's recovery replay asks for them again (`sizeRecoveryReplayAsk`) -
+ * - its mint's recovery replay asks for them again (`sizeRecoveryReplayAsk`) —
  *   their own recoveries were closed by the fold, so nothing else will;
  * - a later reduction that nets that replay off counts them, and their
- *   invoices (`recordedFoldedReissuedAskInvoiceCents`);
- * - each folded reduction's own supplementary invoice (decision A) is queued
- *   on the increase's minted intent (`queueFoldedReissuedAskInvoices`), and the
- *   repair pass reads it as accounted for (`foldingIncreaseFor`).
+ *   invoices (`recordedFoldedAskInvoiceCents`);
+ * - each folded edit's own supplementary invoice is queued on the increase's
+ *   minted intent (`queueFoldedAskInvoices`), and the repair pass reads it as
+ *   accounted for (`foldingIncreaseFor`).
+ *
+ * Blue/green: the string keys below are the ones the previous release reads.
+ * `foldedReissuedAskCents` and `foldedReissuedAskInvoiceCents` now hold the
+ * TOTAL of everything folded, re-issues and increases together, so a replay
+ * or a reduction still on the previous release asks for a folded increase
+ * and counts its invoice. The re-issue ids keep their own key. Each folded
+ * increase is also named, with its own figures, under `foldedIncreaseAsks`.
  */
-const FOLDED_REISSUE_KEY = "foldedReissuedAskCents" as const;
+const FOLDED_ASK_CENTS_KEY = "foldedReissuedAskCents" as const;
 const FOLDED_REISSUE_IDS_KEY = "foldedReissuedAskModificationIds" as const;
-const FOLDED_REISSUE_INVOICE_KEY = "foldedReissuedAskInvoiceCents" as const;
+const FOLDED_ASK_INVOICE_KEY = "foldedReissuedAskInvoiceCents" as const;
+const FOLDED_INCREASES_KEY = "foldedIncreaseAsks" as const;
 
-/** What an increase folded in: the re-issues' money, their reducing edits, and their invoices' figure. */
+/** What an increase folded in of waiting re-issues: their money, their reducing edits, and their invoices' figure. */
 export type FoldedReissuedAsks = {
   readonly cents: number;
   readonly modificationIds: readonly string[];
@@ -137,6 +146,39 @@ export type FoldedReissuedAsks = {
 };
 
 export const NO_FOLDED_REISSUED_ASKS: FoldedReissuedAsks = { cents: 0, modificationIds: [], invoiceCents: 0 };
+
+/**
+ * One waiting increase retry an edit folded in. `askCents` is what its replay
+ * would add beyond the `Payment`'s live ask (its own net plus everything it
+ * had already folded). `invoiceCents` includes its own deferred invoice and
+ * every nested folded invoice; `foldedAskInvoiceParts` splits actual anchors.
+ */
+export type FoldedIncreaseAsk = {
+  readonly modificationId: string;
+  readonly askCents: number;
+  readonly invoiceCents: number;
+  readonly invoiceUnsure: boolean;
+  readonly hadIssuedXeroInvoice: boolean | null;
+};
+
+/** Everything an increase folded in: the total, the re-issues, and each increase retry. */
+export type FoldedWaitingAsks = {
+  readonly cents: number;
+  readonly invoiceCents: number;
+  readonly reissues: FoldedReissuedAsks;
+  readonly increases: readonly FoldedIncreaseAsk[];
+};
+
+export const NO_FOLDED_WAITING_ASKS: FoldedWaitingAsks = {
+  cents: 0,
+  invoiceCents: 0,
+  reissues: NO_FOLDED_REISSUED_ASKS,
+  increases: [],
+};
+
+/** The repair pass's summary when a folded increase's invoice was never queued on the later card request. */
+export const FOLDED_INCREASE_INVOICE_MISSING_SUMMARY =
+  "This change's money was asked for on a later change's card request, and no supplementary Xero invoice was raised for it. Raise one for this change, waiting on that later card request.";
 
 /** An edit that set nothing against an unpaid ask - a guest add, which only folds. */
 export const NO_UNPAID_ASK_SETTLEMENT = {
@@ -163,7 +205,7 @@ export function unpaidAskOffsetHistory(settled: {
   reissuedAskInvoiceUnsureCents: number;
   unpaidAskBilledOffsetCents: number;
   unpaidAskBilledOffsetUnsureCents: number;
-  foldedReissuedAsks: FoldedReissuedAsks;
+  foldedWaitingAsks: FoldedWaitingAsks;
 }): {
   [HISTORY_KEY]?: number;
   [RETIRED_PENDING_ASKS_KEY]?: string[];
@@ -172,17 +214,21 @@ export function unpaidAskOffsetHistory(settled: {
   [BILLED_OFFSET_KEY]?: number;
   [BILLED_OFFSET_OWN_NOTE_EXPECTED_KEY]?: boolean;
   [BILLED_OFFSET_UNSURE_KEY]?: number;
-  [FOLDED_REISSUE_KEY]?: number;
+  [FOLDED_ASK_CENTS_KEY]?: number;
   [FOLDED_REISSUE_IDS_KEY]?: string[];
-  [FOLDED_REISSUE_INVOICE_KEY]?: number;
+  [FOLDED_ASK_INVOICE_KEY]?: number;
+  [FOLDED_INCREASES_KEY]?: FoldedIncreaseAsk[];
 } {
-  const folded = settled.foldedReissuedAsks;
+  const folded = settled.foldedWaitingAsks;
   const foldedHistory =
     folded.cents > 0
       ? {
-          [FOLDED_REISSUE_KEY]: folded.cents,
-          [FOLDED_REISSUE_IDS_KEY]: [...folded.modificationIds],
-          ...(folded.invoiceCents > 0 ? { [FOLDED_REISSUE_INVOICE_KEY]: folded.invoiceCents } : {}),
+          [FOLDED_ASK_CENTS_KEY]: folded.cents,
+          ...(folded.reissues.modificationIds.length > 0
+            ? { [FOLDED_REISSUE_IDS_KEY]: [...folded.reissues.modificationIds] }
+            : {}),
+          ...(folded.invoiceCents > 0 ? { [FOLDED_ASK_INVOICE_KEY]: folded.invoiceCents } : {}),
+          ...(folded.increases.length > 0 ? { [FOLDED_INCREASES_KEY]: folded.increases.map((entry) => ({ ...entry })) } : {}),
         }
       : {};
   if (settled.unpaidAskOffsetCents <= 0) return foldedHistory;
@@ -261,14 +307,14 @@ export const REISSUED_ASK_INVOICE_UNSURE_SUMMARY =
 export const UNPAID_ASK_BILLED_OFFSET_UNSURE_SUMMARY =
   "This change cancelled or reduced an unpaid additional payment, and it could not be established whether the booking's Xero invoice had already billed that money. Check the invoice: if it bills that additional payment, raise a credit note for the amount shown against it.";
 
-/** What an increase folded in of waiting re-issues, or 0 (round 6). */
-export function recordedFoldedReissuedAskCents(newData: unknown): number {
-  return recordedPositiveCents(newData, FOLDED_REISSUE_KEY);
+/** What an increase folded in of waiting asks, re-issues and increase retries together, or 0 (#4744). */
+export function recordedFoldedAskCents(newData: unknown): number {
+  return recordedPositiveCents(newData, FOLDED_ASK_CENTS_KEY);
 }
 
-/** What the folded re-issues' own supplementary invoices bill, or 0 (round 6). */
-export function recordedFoldedReissuedAskInvoiceCents(newData: unknown): number {
-  return recordedPositiveCents(newData, FOLDED_REISSUE_INVOICE_KEY);
+/** What the folded asks' own supplementary invoices bill, or 0. */
+export function recordedFoldedAskInvoiceCents(newData: unknown): number {
+  return recordedPositiveCents(newData, FOLDED_ASK_INVOICE_KEY);
 }
 
 /** The reducing edits whose waiting re-issues an increase folded in (round 6). */
@@ -277,22 +323,118 @@ export function recordedFoldedReissuedAskModificationIds(newData: unknown): stri
   return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
 }
 
+function parseFoldedIncrease(item: unknown): FoldedIncreaseAsk | null {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+  const row = item as Record<string, unknown>;
+  const { modificationId, askCents, invoiceCents, invoiceUnsure, hadIssuedXeroInvoice } = row;
+  if (typeof modificationId !== "string" || modificationId.length === 0) return null;
+  if (!Number.isInteger(askCents) || (askCents as number) <= 0) return null;
+  if (!Number.isInteger(invoiceCents) || (invoiceCents as number) < 0) return null;
+  if (typeof invoiceUnsure !== "boolean") return null;
+  if (hadIssuedXeroInvoice !== null && typeof hadIssuedXeroInvoice !== "boolean") return null;
+  return {
+    modificationId,
+    askCents: askCents as number,
+    invoiceCents: invoiceCents as number,
+    invoiceUnsure,
+    hadIssuedXeroInvoice,
+  };
+}
+
+/**
+ * The increase retries an edit folded in. A missing key is none. Anything that
+ * is not a well-formed entry is dropped, and that drop makes the record unsure
+ * so a later reader reports it for a person rather than billing a guess.
+ */
+export function recordedFoldedIncreaseAsks(newData: unknown): { entries: FoldedIncreaseAsk[]; unsure: boolean } {
+  const raw = historyRecord(newData)?.[FOLDED_INCREASES_KEY];
+  if (raw === undefined) return { entries: [], unsure: false };
+  if (!Array.isArray(raw)) return { entries: [], unsure: true };
+  const entries: FoldedIncreaseAsk[] = [];
+  let unsure = false;
+  for (const item of raw) {
+    const parsed = parseFoldedIncrease(item);
+    if (parsed) entries.push(parsed);
+    else unsure = true;
+  }
+  return { entries, unsure };
+}
+
+/** The edits, re-issues and increase retries, whose waiting asks this increase folded in. */
+export function recordedFoldedAskModificationIds(newData: unknown): string[] {
+  return [
+    ...recordedFoldedReissuedAskModificationIds(newData),
+    ...recordedFoldedIncreaseAsks(newData).entries.map((entry) => entry.modificationId),
+  ];
+}
+
 /** The edits whose unpaid asks a reduction's history says it retired (#3954 round 8), or none. */
 export function recordedRetiredAskModificationIds(newData: unknown): string[] {
   const ids = historyRecord(newData)?.[RETIRED_PENDING_ASKS_KEY];
   return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
 }
 
-/** The increase whose history says it folded this reduction's waiting re-issue in, or null. */
+/** The increase whose history says it folded this edit's waiting ask in — a re-issue or an increase retry — or null. */
 export function foldingIncreaseFor<M extends { id: string; newData: unknown }>(
   modificationId: string,
   modifications: readonly M[],
 ): M | null {
   return (
-    modifications.find((modification) =>
-      recordedFoldedReissuedAskModificationIds(modification.newData).includes(modificationId),
-    ) ?? null
+    modifications.find((modification) => recordedFoldedAskModificationIds(modification.newData).includes(modificationId)) ??
+    null
   );
+}
+
+/**
+ * The increases that folded this edit in, nearest first. A repeated id stops
+ * the walk, so a cycle is followed once.
+ */
+function foldFolders<M extends { id: string; newData: unknown }>(
+  modificationId: string,
+  modifications: readonly M[],
+): M[] {
+  const folders: M[] = [];
+  const seen = new Set<string>();
+  let current = modificationId;
+  while (!seen.has(current) && seen.size <= modifications.length) {
+    seen.add(current);
+    const folder = foldingIncreaseFor(current, modifications);
+    if (!folder) break;
+    folders.push(folder);
+    current = folder.id;
+  }
+  return folders;
+}
+
+/**
+ * Whether a folded ask's invoice is still someone else's to raise: walk the
+ * fold chain to the outermost increase, and stop when that increase's recovery
+ * is still open or a later reduction retired it. A minted folder with no such
+ * retirement has already had its chance to queue the invoice.
+ */
+export function isFoldedAskAccountedFor<M extends { id: string; newData: unknown }>(
+  modificationId: string,
+  modifications: readonly M[],
+  openRecoveryModificationIds: ReadonlySet<string>,
+): boolean {
+  return foldFolders(modificationId, modifications).some(
+    (folder) => openRecoveryModificationIds.has(folder.id) || retiringReductionFor(folder.id, modifications) !== null,
+  );
+}
+
+/**
+ * #4744: what the repair pass does with an increase a later edit folded in.
+ * `accounted` raises nothing (the folder still owes the invoice, or a reduction
+ * retired it). `missing` is a person raising the invoice on the later card
+ * request. `none` is an edit nobody folded.
+ */
+export function foldedIncreaseInvoiceRepair<M extends { id: string; newData: unknown }>(
+  modificationId: string,
+  modifications: readonly M[],
+  openRecoveryModificationIds: ReadonlySet<string>,
+): "none" | "accounted" | "missing" {
+  if (!foldingIncreaseFor(modificationId, modifications)) return "none";
+  return isFoldedAskAccountedFor(modificationId, modifications, openRecoveryModificationIds) ? "accounted" : "missing";
 }
 
 /**
@@ -323,23 +465,5 @@ export function isReissueRetiredByLaterReduction<M extends { id: string; newData
   modifications: readonly M[],
 ): boolean {
   if (retiringReductionFor(reductionId, modifications)) return true;
-  const increase = foldingIncreaseFor(reductionId, modifications);
-  return Boolean(increase && retiringReductionFor(increase.id, modifications));
-}
-
-/**
- * #3954 round 6: a reduction's re-issue a later increase folded in has its
- * invoice accounted for while that increase's own ask is still to mint (its
- * recovery open) - the invoice is queued on that mint - or once a later
- * reduction retired that increase's ask in turn and names it.
- */
-export function isFoldedReissueAccountedFor<M extends { id: string; newData: unknown }>(
-  reductionId: string,
-  modifications: readonly M[],
-  openRecoveryModificationIds: ReadonlySet<string>,
-): boolean {
-  const increase = foldingIncreaseFor(reductionId, modifications);
-  return Boolean(
-    increase && (openRecoveryModificationIds.has(increase.id) || retiringReductionFor(increase.id, modifications)),
-  );
+  return foldFolders(reductionId, modifications).some((folder) => retiringReductionFor(folder.id, modifications) !== null);
 }

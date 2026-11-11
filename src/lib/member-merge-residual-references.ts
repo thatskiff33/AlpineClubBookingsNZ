@@ -87,3 +87,31 @@ export async function findMemberMergeResidualReferences(
   }
   return found;
 }
+
+/**
+ * Rows a move may re-point, captured before member merge waits on a Member row.
+ *
+ * The attempt savepoint rolls the moves back and runs them again after the
+ * wait (#4876). An unbounded `where: { column: loser }` on that retry would
+ * absorb a row an officer committed during the wait — the reviewer, the
+ * hold's maker, a late report — and the residual check below would see
+ * nothing. The id list is the preview's set. A row that starts naming the
+ * duplicate only after this read stays put, and {@link findMemberMergeResidualReferences}
+ * refuses the merge (#4855). Self-relations and `Booking.member` keep their
+ * own captured lists. `movedLast` runs once, under the Member rows.
+ */
+export async function captureMemberMergeMoveRowIds(
+  db: unknown,
+  loserId: string,
+): Promise<ReadonlyMap<string, readonly string[]>> {
+  const captured = new Map<string, readonly string[]>();
+  for (const spec of MEMBER_MERGE_RELATION_SPECS) {
+    if (spec.bucket !== "move" || spec.movedLast || spec.selfRelation || spec.key === "Booking.member") continue;
+    const rows = await mergeDelegate<IdReadingDelegate>(db, spec.delegate).findMany({
+      where: { [spec.column]: loserId },
+      select: { id: true },
+    });
+    captured.set(spec.key, rows.map((row) => row.id).sort());
+  }
+  return captured;
+}
