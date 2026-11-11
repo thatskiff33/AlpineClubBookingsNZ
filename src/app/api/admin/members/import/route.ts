@@ -239,9 +239,9 @@ export async function POST(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  // Rate limit: 5 imports per hour
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
+  // Rate limit: 5 imports per hour
   const rateLimitResponse = await applyRateLimit(
     { id: "member-import", limit: 5, windowSeconds: 60 * 60 },
     req,
