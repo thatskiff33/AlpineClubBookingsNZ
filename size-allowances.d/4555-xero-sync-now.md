@@ -1,6 +1,6 @@
 # File-size allowances for #4432
 
-file: src/app/(admin)/admin/membership/members/[id]/page.tsx
+file: src/app/(admin)/admin/members/[id]/page.tsx
 lines: 1353
 reason: one callback prop refreshes the existing client-side member snapshot after inbound sync; extracting the existing oversized page is a separate refactor.
 

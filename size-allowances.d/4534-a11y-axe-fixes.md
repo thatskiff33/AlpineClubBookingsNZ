@@ -21,12 +21,12 @@ reason: one aria-label on each of the three option controls the module
   options editor renders (number, on/off, enum), naming each from the option
   descriptor's own label, which sits as an unassociated Label above them.
 
-file: src/app/(admin)/admin/membership/member-applications/_components/approval-mapping-panel.tsx
+file: src/app/(admin)/admin/member-applications/_components/approval-mapping-panel.tsx
 lines: 737
 reason: one aria-label on the joining-fee invoice select, which axe reported
   as an unnamed select (select-name, critical) on member applications.
 
-file: src/app/(admin)/admin/membership/members/_components/member-import-dialog.tsx
+file: src/app/(admin)/admin/members/_components/member-import-dialog.tsx
 lines: 882
 reason: the column-mapping and date-format selects are rendered by two small
   helpers that did not receive the field's name; each gains a `label` prop,

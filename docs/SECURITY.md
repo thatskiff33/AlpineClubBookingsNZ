@@ -551,16 +551,22 @@ before a destructive action.
 
 **What an officer sees.** Nothing yet: no route asks. When one does (#4619), a
 confirmation older than five minutes gets a small dialog. They enter the code
-from their authenticator app, or their password if they have no app and no
-passkey. A passkey will work once that sign-in exists (#4617). An emailed code
-is never accepted, and nor is a recovery code. The dialog then sends the
-original request once more, with the same body.
+from their authenticator app, their passkey, or their password if they have
+neither an app nor a passkey. An emailed code is never accepted, and nor is a
+recovery code. The dialog then sends the original request once more, with the
+same body.
 
-**What is stored.** The session token carries `lastAuthenticatedAt`, written
-only when sign-in completes or when the server consumes a single-use
-`SessionReauthChallenge`. The challenge is a keyed hash bound to that member,
-with a two-minute life. A browser cannot set the time. The five minutes is a
-security floor, not a club setting (`INV-AUTH-008`).
+**What is stored.** The session token carries `lastAuthenticatedAt`. A password
+sign-in writes it only when no authenticator factor is still owed (an email
+factor does not count as owed). An authenticator-app code writes it, including
+when that code enrols the app. An emailed link, Google, a recovery code, and
+an emailed code do not, and none of them clears a stamp already there.
+Consuming a single-use `SessionReauthChallenge` still writes it. That
+reauthentication challenge is a keyed hash bound to that member, with a
+two-minute life. Separately, the two-factor session challenge is stored as a
+keyed hash of a token whose prefix is the kind (`TOTP`, `EMAIL`, or
+`RECOVERY`), so the browser cannot set the time or the kind. The five minutes
+is a security floor, not a club setting (`INV-AUTH-008`).
 
 **Failed attempts.** A wrong authenticator code counts toward the existing
 two-factor lockout (five failures, then fifteen minutes). A wrong password
@@ -572,8 +578,9 @@ free guessing oracle.
 
 - **No route asks yet.** The check and the dialog exist; #4619 decides where
   they apply.
-- **A passkey cannot confirm anyone yet.** The server has a seam for it and
-  rejects every passkey proof until #4617.
+- **A passkey confirms the same way it signs in (`INV-AUTH-009`).** The dialog
+  offers it only for a passkey this member has saved. The public key is not
+  in the session or the audit row.
 - **During a blue/green cutover the old slot has no stamp and no check.** The
   migration only adds the challenge table. Draining code never reads it.
 

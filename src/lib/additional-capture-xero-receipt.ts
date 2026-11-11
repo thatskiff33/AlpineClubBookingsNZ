@@ -3,14 +3,11 @@
  * BILLS IT (#3953, `INV-PAY-139`; owner decision and plan, 21 Oct 2026: "check,
  * then bill and pay").
  *
- * A change made while the booking's primary invoice did not yet exist queues no
- * supplementary invoice: the primary is built later from the post-change price
- * and bills the extra itself. A capture of that change's ask that the primary's
- * own payment did not record gets a receipt row
- * (`additional-capture-receipt-enqueue.ts`) - from the late-success release
- * when it lands after the invoice, or from the invoice's link save when it
- * landed before - and this worker records it, AT CAPTURE TIME, against the
- * invoice that bills it:
+ * A change before the primary invoice exists queues no supplementary invoice:
+ * the primary later bills the post-change price. A capture the primary's own
+ * payment did not record gets a receipt row (`additional-capture-receipt-enqueue.ts`),
+ * from late-success release or the invoice's link save. This worker records it
+ * at capture time against the invoice that bills it:
  *
  *  - THE GAP INVOICE, where the capture's change is one the #3980 gap invoice
  *    bills for (`INV-PAY-136`): the primary bills the booking as it was before
@@ -24,32 +21,27 @@
  * primary's own payment took), capped at that invoice's room. Cash it leaves
  * over is told to an officer with both figures.
  *
- * ONE RECORDER PER CAPTURE (review round 1, `additional-capture-recorder.ts`).
- * Before it decides anything the worker reads who records the capture and
- * stands down for the primary's own payment, a supplementary invoice for the
- * change or naming the capture, or a gap invoice whose payment took it. It
- * plans one capture per booking at a time, and not while the booking's
- * invoice create is running (it waits, back to PENDING). The gap invoice never
+ * ONE RECORDER PER CAPTURE (`additional-capture-recorder.ts`). The worker
+ * stands down for the primary's own payment or a paying supplementary or gap
+ * invoice that records this capture. One receipt plans per booking at a time,
+ * waiting back to PENDING during a running invoice create. A gap invoice never
  * pays itself from a capture with a receipt row.
  *
- * NOTHING IS GUESSED. The worker refuses - the row FAILED with
- * `ADDITIONAL_CAPTURE_RECEIPT_REFUSED`, an officer told - where Xero cannot be
- * read, the invoice that bills the capture has nothing due, the gap invoice
- * has not reached Xero, the invoice's own payment is still owed (a PARTIAL
- * create), or a retry's invoice no longer has the room it was sized at. It
- * WAITS while the gap invoice is still being sent. Where the primary cannot
- * take the capture and no gap invoice exists, #3980's own check
- * (`recheckPrimaryInvoiceWorthGap`) raises one, never a second, and the
- * receipt waits for it. A capture on a booking since cancelled - save one a
- * treasurer KEPT, whose change the primary bills (#4324, `INV-PAY-144`,
- * `kept-late-capture-change-receipt.ts`) - or paid by internet banking, is
- * closed unsent.
+ * NOTHING IS GUESSED. An unreadable invoice, nothing due, a gap invoice not
+ * yet in Xero, an invoice's PARTIAL create still owing its own payment, or a
+ * retry with insufficient room causes FAILED `ADDITIONAL_CAPTURE_RECEIPT_REFUSED`
+ * and an officer alert. A gap invoice being sent causes a wait. If the primary
+ * cannot take the capture and no gap exists, `recheckPrimaryInvoiceWorthGap`
+ * raises one (never a second) and the receipt waits. Cancelled or internet-
+ * banking bookings close unsent, save a treasurer-kept capture whose change
+ * the primary bills (#4324, `INV-PAY-144`, `kept-late-capture-change-receipt.ts`).
  *
  * NEVER TWICE. One row per capture, queued under the per-anchor
  * supplementary-invoice lock; the payment link returns early; an earlier run's
- * payment is found by its reference; and the payment decided is stored on the
- * row BEFORE Xero is called, so a retry sends the same invoice, amount, date
- * and Xero key, or refuses - it never decides again.
+ * payment counts only when the reference matches, the amount equals the
+ * receipt, and it has no active credit-release payment link. The decision is
+ * stored on the row BEFORE Xero is called, so a retry sends the same invoice,
+ * amount, date and Xero key, or refuses - it never decides again.
  *
  * No provider call is made under a lock or inside a transaction (`INV-LOCK-004`).
  */
@@ -72,6 +64,7 @@ import { asRecord } from "@/lib/xero-json";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { formatCents } from "@/lib/utils";
 import { buildXeroIdempotencyKey, completeXeroSyncOperation, failXeroSyncOperation, sanitizeForJson } from "@/lib/xero-sync";
+import { CREDIT_RELEASE_PAYMENT_ROLE } from "@/lib/credit-release-xero-payment";
 import { readCaptureRecorder } from "@/lib/additional-capture-recorder";
 import {
   ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE,
@@ -198,7 +191,7 @@ const REFUSAL_TEXT = {
   "change-unknown":
     "its ledger row names no booking change, and a supplementary invoice on this booking records a card payment without naming which, so whether this payment is already recorded cannot be told. Check Xero, record it by hand if it is missing, then mark this operation resolved",
   "figures-changed":
-    "the invoice no longer has the amount due this payment was sized at when it was first tried, and Xero shows no payment under its reference. Record it by hand in Xero, then mark this operation resolved",
+    "the invoice no longer has the amount this payment was sized at, and Xero shows no payment of this amount that is not already the credit-release payment. Record it by hand in Xero, then mark this operation resolved",
 } as const;
 export type AdditionalCaptureReceiptRefusal = keyof typeof REFUSAL_TEXT;
 
@@ -235,6 +228,20 @@ async function readInvoice(
   const amountDueCents = providerAmountToCents(invoice?.amountDue);
   if (!invoice || amountDueCents === null) return null;
   return { status: String(invoice.status ?? ""), amountDueCents, invoice };
+}
+
+/** Only active sweep links for payments on the invoice just read can exclude a recovery. */
+async function readSweepPaymentIds(read: InvoiceRead): Promise<ReadonlySet<string>> {
+  const paymentIds = (read.invoice.payments ?? []).flatMap((payment) => payment.paymentID ? [payment.paymentID] : []);
+  if (paymentIds.length === 0) return new Set();
+  const links = await prisma.xeroObjectLink.findMany({
+    where: {
+      role: CREDIT_RELEASE_PAYMENT_ROLE, active: true,
+      xeroObjectType: "PAYMENT", xeroObjectId: { in: paymentIds },
+    },
+    select: { xeroObjectId: true },
+  });
+  return new Set(links.map((link) => link.xeroObjectId));
 }
 
 /**
@@ -445,14 +452,14 @@ export async function recordAdditionalCaptureReceipt(
     if (!read) return refuse("xero-unreadable", { invoiceId });
 
     // A lost response: an earlier run recorded it, and only its link is missing.
-    const recorded = findRecordedPayment(read, reference);
+    const recorded = findRecordedPayment(read, reference, capturedCents, await readSweepPaymentIds(read));
     if (recorded?.paymentID) {
       await finishRecorded({
         paymentId: recorded.paymentID,
         plan: {
           target,
           invoiceId,
-          amountCents: providerAmountToCents(recorded.amount) ?? capturedCents,
+          amountCents: capturedCents,
           capturedCents,
           date: String(recorded.date ?? ""),
         },
@@ -573,15 +580,16 @@ export async function recordAdditionalCaptureReceipt(
 
   async function sendPlannedPayment(plan: AdditionalCaptureReceiptPlan, fromStore: boolean): Promise<string | null> {
     if (fromStore) {
-      // A retry: an earlier run may have recorded it and lost the reply, or
-      // the invoice may have changed since. Never decided again. Its own
-      // payment, found by reference, is linked FIRST (round 5, item 2): a
-      // payment already in Xero is never refused as if it were not.
+      // A retry may have recorded the payment and lost the reply, or the
+      // invoice may have changed. Never decide again. Link its own payment
+      // first when the reference and amount match and it has no active
+      // credit-release link (round 5): a payment already in Xero is never
+      // refused as if it were not.
       const client = await providers.getAuthenticatedXeroClient();
       const read = await readInvoice(providers, client, plan.invoiceId);
       if (!read) return refuse("xero-unreadable", { plan });
       const otherRecorder = await recorderNowElsewhere();
-      const recorded = findRecordedPayment(read, reference);
+      const recorded = findRecordedPayment(read, reference, plan.amountCents, await readSweepPaymentIds(read));
       if (recorded?.paymentID) {
         await finishRecorded({ paymentId: recorded.paymentID, plan, recoveredExisting: true });
         if (otherRecorder) await settleOtherRecorder(otherRecorder, plan.invoiceId);

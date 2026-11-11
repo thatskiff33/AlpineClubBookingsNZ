@@ -1411,6 +1411,9 @@ const OVERVIEW_CATCH_ALL_ALLOWLIST: string[] = [
   // Cross-area navigation badge counts for the admin shell; genuinely
   // belongs to "overview" (every scoped admin sees the nav).
   "/api/admin/pending-counts",
+  // The role-menu preference (C14 #4811). The path falls through to overview;
+  // the handler's own gate is any admitted admin, and the cookie is not access.
+  "/api/admin/menu-role",
 ];
 
 describe("admin API authorization matrix (issue #1132)", () => {

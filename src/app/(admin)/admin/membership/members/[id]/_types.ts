@@ -380,5 +380,6 @@ export interface PendingCreditAdjustmentItem {
   amountCents: number;
   description: string;
   createdAt: string;
+  grantAccount: "MEMBER_OWN_MONEY" | "GOODWILL" | null;
   requestedBy: AdminActor;
 }

@@ -7,13 +7,13 @@ body to its own file would not shrink the debt: the gate follows a rename
 only when the old path is deleted, so the body would be judged a new
 over-budget file instead.
 
-file: src/app/(admin)/admin/membership/family-groups/page.tsx
+file: src/app/(admin)/admin/family-groups/page.tsx
 lines: 881
 reason: the default export now names the Groups and Suggestions tabs for the
   shared tab shell; the 860-line Groups body it wraps is the page this file
   already was, and a separate file for it would be new debt, not less.
 
-file: src/app/(admin)/admin/membership/membership-cancellations/page.tsx
+file: src/app/(admin)/admin/membership-cancellations/page.tsx
 lines: 1228
 reason: the default export now names the Requests and Settings tabs for the
   shared tab shell; the queue body it wraps is the page this file already

@@ -3,7 +3,7 @@
 Dietary/allergy information touches every existing member writer and reader,
 each by a few lines; the shared logic lives in the new src/lib/member-dietary.ts.
 
-file: src/app/(admin)/admin/membership/members/_components/member-editor-dialog.tsx
+file: src/app/(admin)/admin/members/_components/member-editor-dialog.tsx
 lines: 1292
 reason: the create-only dietary input and its request key sit beside the occupation field they mirror; the form has no other seam to host them.
 
@@ -63,7 +63,7 @@ file: src/lib/redact-sensitive-json.ts
 lines: 898
 reason: the two dietary/allergy key fragments belong in the one redactor key list; a second list is what INV-PRIV-011 forbids.
 
-file: src/app/(admin)/admin/membership/members/_components/member-import-dialog.tsx
+file: src/app/(admin)/admin/members/_components/member-import-dialog.tsx
 lines: 876
 reason: the preview must know whether the club takes the dietary column, so the dialog passes the member-fields flag it already fetches; five lines at the one preview call.
 

@@ -91,7 +91,7 @@ reason: ten lines. Two "exactly one" branches — the only board to seed, and th
   only live screen to name in a headline — become first-with-no-rest reads, so
   each acts on the row its own condition tested for.
 
-file: src/app/(admin)/admin/membership/membership-types/page.tsx
+file: src/app/(admin)/admin/membership-types/page.tsx
 lines: 1868
 reason: ten lines, and one of the three real defects this tranche found. The
   reorder bounded `targetIndex` and never bounded `index`: a negative one makes
@@ -126,7 +126,7 @@ reason: six lines. The first eligible guest is both the "nobody is eligible"
   chore grouping reads its bucket once rather than testing presence and then
   looking it up again. The reduce's seed cast goes with it.
 
-file: src/app/(admin)/admin/membership/committee/page.tsx
+file: src/app/(admin)/admin/committee/page.tsx
 lines: 801
 reason: five lines. The four boolean assignment fields are declared `as const`,
   so the key reaches a computed property name and the form lookup as a literal;
@@ -162,7 +162,7 @@ reason: three lines. The side-rail main cell is zone 0 by that skeleton's own
   rule, and a model with no zones has no main cell to draw — which is what the
   rail-only render now says instead of passing `undefined` into a cell.
 
-file: src/app/(admin)/admin/membership/members/_components/member-import-dialog.tsx
+file: src/app/(admin)/admin/members/_components/member-import-dialog.tsx
 lines: 871
 reason: three lines. The previous wizard step is read once, and its presence IS
   the "there is a step before this one" test the index comparison expressed.

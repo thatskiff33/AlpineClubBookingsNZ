@@ -90,7 +90,7 @@ reason: 1 line: `useClubFormat()` at the top of each component that renders an a
   cannot call. A hook has to sit in the component that renders, so there is no
   seam to lift it through; the file was far over budget before this change.
 
-file: src/app/(admin)/admin/membership/members/[id]/page.tsx
+file: src/app/(admin)/admin/members/[id]/page.tsx
 lines: 1354
 reason: 2 lines: `useClubFormat()` at the top of each component that renders an amount, and
   the club's format on every formatter call beneath it, including the module-level

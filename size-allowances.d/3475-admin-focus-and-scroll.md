@@ -2,7 +2,7 @@
 
 One file, and the growth is the fix itself.
 
-file: src/app/(admin)/admin/membership/committee/page.tsx
+file: src/app/(admin)/admin/committee/page.tsx
 lines: 819
 reason: eighteen lines on a 800-line route shell, and they are the change this
   issue exists to make. The committee screen was the last admin surface deciding

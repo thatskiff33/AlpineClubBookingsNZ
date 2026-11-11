@@ -75,7 +75,7 @@ reason: `getStats` now derives its month bounds with calendar arithmetic instead
   hands Prisma are date-only bounds and which are instants. The dashboard's
   seam is `getStats` itself, which this change is inside.
 
-file: src/app/(admin)/admin/membership/deletion-requests/deletion-requests-client.tsx
+file: src/app/(admin)/admin/deletion-requests/deletion-requests-client.tsx
 lines: 1493
 reason: two hook reads and one sentence; the four stamps this page renders are all
   instants and now say so.
@@ -111,18 +111,18 @@ lines: 562
 reason: one hook read and one sentence, inside the account card that renders the
   created and updated stamps.
 
-file: src/app/(admin)/admin/membership/member-applications/page.tsx
+file: src/app/(admin)/admin/member-applications/page.tsx
 lines: 814
 reason: a family member's DATE OF BIRTH shared a formatter with the submission and
   review INSTANTS, so one of the two was always wrong; the split is the fix and
   the docblock on each half is what keeps them apart. A birthday rendered a day
   early is a named regression anchor on this issue.
 
-file: src/app/(admin)/admin/membership/membership-cancellations/page.tsx
+file: src/app/(admin)/admin/membership-cancellations/page.tsx
 lines: 1216
 reason: one import pair, one hook, and the shared note on the stamp formatter.
 
-file: src/app/(admin)/admin/membership/membership-types/page.tsx
+file: src/app/(admin)/admin/membership-types/page.tsx
 lines: 1858
 reason: SUPERSEDED IN PLACE. Group D added a twelve-line note recording why the
   season-year derivation was left on its host-local clock; CT-4 group F1 has since
@@ -226,7 +226,7 @@ lines: 698
 reason: one import pair, one hook read, and a sentence naming the cache-refresh
   stamp as an instant. Three lines, and no seam here that a split would follow.
 
-file: src/app/(admin)/admin/membership/family-groups/page.tsx
+file: src/app/(admin)/admin/family-groups/page.tsx
 lines: 871
 reason: CT-4 REVIEW found this page unmigrated: the partner-invite expiry and the
   group creation stamp are real instants and were rendered through a shared
@@ -235,7 +235,7 @@ reason: CT-4 REVIEW found this page unmigrated: the partner-invite expiry and th
   misread expiry "a real operational hazard". Splitting an 871-line queue page
   is a separate refactor and would not shrink this hunk.
 
-file: src/app/(admin)/admin/membership/members/[id]/page.tsx
+file: src/app/(admin)/admin/members/[id]/page.tsx
 lines: 1352
 reason: two lines. `lifeMemberDate` is a `@db.Date` calendar day and was going
   through the member-detail INSTANT formatter, so a club behind UTC named the

@@ -16,7 +16,7 @@ lines: 965
 reason: one import line, so the seasons link comes from the hub registry. The
   link sits inside the setup step it explains.
 
-file: src/app/(admin)/admin/membership/membership-types/page.tsx
+file: src/app/(admin)/admin/membership-types/page.tsx
 lines: 1904
 reason: one import line, so the age tier settings link comes from the hub
   registry. Splitting the membership-types editor to absorb an import would

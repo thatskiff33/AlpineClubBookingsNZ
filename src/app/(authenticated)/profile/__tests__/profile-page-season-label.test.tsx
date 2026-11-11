@@ -53,7 +53,10 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: { member: { findUnique: mocks.memberFindUnique } },
+  prisma: {
+    member: { findUnique: mocks.memberFindUnique },
+    webAuthnCredential: { findMany: async () => [] },
+  },
 }));
 
 vi.mock("@/lib/promo", () => ({

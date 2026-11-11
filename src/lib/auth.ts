@@ -45,8 +45,16 @@ import {
   isKioskSessionMember,
   resolveRequestSessionIdleSeconds,
 } from "./session-idle-expiry";
+import { isSecondFactorEnrolled } from "./second-factor-enrolment";
+import {
+  recentAuthSignInCounts,
+  recentAuthSignInProofFromChallengeKind,
+} from "./recent-auth";
 import { consumeSessionReauthChallenge } from "./session-reauth";
-import { consumeTwoFactorSessionChallenge } from "./two-factor";
+import {
+  consumeTwoFactorSessionChallenge,
+  twoFactorChallengeProofKind,
+} from "./two-factor";
 import { hashActionToken, isActionTokenFormat } from "./action-tokens";
 import {
   linkGoogleAccount,
@@ -128,6 +136,8 @@ declare module "next-auth" {
       twoFactorRequired: boolean;
       twoFactorVerified: boolean;
       twoFactorEnrolled: boolean;
+      /** A passkey is stored. The public key is not. Absent means none. */
+      hasPasskey?: boolean;
       twoFactorMethod: "TOTP" | "EMAIL" | null;
       /**
        * Post-login landing preference (#2090). null = follow the role default
@@ -142,6 +152,7 @@ declare module "next-auth" {
     isEmailVerified: boolean;
     twoFactorEnabled: boolean;
     twoFactorMethod: "TOTP" | "EMAIL" | null;
+    hasPasskey?: boolean;
   }
 }
 
@@ -284,10 +295,11 @@ export const authConfig = {
       },
     }),
     // Passwordless magic-link sign-in (#2034). Additive to the password
-    // provider above and returns the EXACT same user shape, so the unchanged
-    // jwt/session callbacks stamp role, the admin-permission matrix, and the
-    // 2FA claims identically — a 2FA-enabled member still lands on
-    // /login/verify. This provider NEVER sets twoFactorVerified.
+    // provider above and returns the same user shape, so role, the
+    // admin-permission matrix, and the 2FA claims are filled the same way —
+    // a 2FA-enabled member still lands on /login/verify. An emailed link does
+    // not start the recent-proof clock (INV-AUTH-008). This provider NEVER
+    // sets twoFactorVerified.
     Credentials({
       id: "magic-link",
       name: "magic-link",
@@ -510,9 +522,10 @@ export const authConfig = {
         }
       }
 
-      // Eligible: record the login timestamp, then allow — the unchanged
-      // jwt/session callbacks stamp the member identity (never the Google sub)
-      // and leave 2FA to be challenged as usual.
+      // Eligible: record the login timestamp, then allow. The jwt callback
+      // stamps the member identity (never the Google sub) and leaves 2FA to
+      // be challenged as usual. Google does not start the recent-proof clock
+      // (INV-AUTH-008).
       try {
         await prisma.member.update({
           where: { id: user.id as string },
@@ -546,7 +559,12 @@ export const authConfig = {
       }
       return true;
     },
-    async jwt({ token, user, trigger, session }) {
+    async jwt({ token, user, account, trigger, session }) {
+      // Only the sign-in call carries `user`. A password is the credentials
+      // provider. Whether it still owes an authenticator is known after the
+      // member reload below, so the stamp waits until then.
+      const passwordSignIn =
+        Boolean(user) && account?.provider === "credentials";
       if (user) {
         token.role = user.role;
         token.accessRoles = [];
@@ -554,11 +572,15 @@ export const authConfig = {
         token.forcePasswordChange = user.forcePasswordChange;
         token.isEmailVerified = user.isEmailVerified;
         token.sessionIssuedAt = Date.now();
-        token.lastAuthenticatedAt = Date.now();
         token.sessionInvalidated = false;
         token.twoFactorVerified = false;
         token.twoFactorVerifiedByChallenge = false;
-        token.twoFactorEnrolled = user.twoFactorEnabled;
+        token.hasPasskey = user.hasPasskey === true;
+        token.twoFactorEnrolled = isSecondFactorEnrolled({
+          twoFactorEnabled: user.twoFactorEnabled === true,
+          hasPasskey: user.hasPasskey === true,
+          sessionEnrolled: false,
+        });
         token.twoFactorMethod = user.twoFactorMethod;
       }
 
@@ -578,21 +600,30 @@ export const authConfig = {
         // twoFactorVerified must never be trusted here. Verification is only
         // honoured when the update carries the single-use challenge token
         // minted server-side by markTwoFactorSessionVerified().
+        const challengeToken = session.user.twoFactorChallengeToken;
         const challengeVerified = await consumeTwoFactorSessionChallenge(
           token.id,
-          session.user.twoFactorChallengeToken,
+          challengeToken,
         );
         if (challengeVerified) {
           token.twoFactorVerified = true;
           token.twoFactorVerifiedByChallenge = true;
-          // Sign-in finishes when the second factor is consumed.
-          token.lastAuthenticatedAt = Date.now();
+          // The kind is the prefix of the hashed token, not a session field.
+          // Only an authenticator app starts the clock. A miss never clears
+          // a stamp that is already there.
+          const proof = recentAuthSignInProofFromChallengeKind(
+            twoFactorChallengeProofKind(challengeToken),
+          );
+          if (proof !== null && recentAuthSignInCounts(proof, false)) {
+            token.lastAuthenticatedAt = Date.now();
+          }
         }
       }
 
-      // #4616 (INV-AUTH-008): lastAuthenticatedAt is never copied off the
-      // client payload. Only a consumed server-minted challenge, or the
-      // sign-in branch above, writes it.
+      // #4616 / #4994 (INV-AUTH-008): the time and the proof kind are never
+      // read off the client payload. A password that owes no authenticator,
+      // an authenticator-app consume, or a reauthentication challenge writes
+      // the stamp. Anything else leaves it as it was.
       if (
         trigger === "update" &&
         typeof token.id === "string" &&
@@ -635,6 +666,19 @@ export const authConfig = {
             loadClubSessionMaxAgeHours(),
           ]);
           const twoFactorRequired = modules.twoFactor === true;
+          // An email factor does not count as owed: the password step is the
+          // proof, and the emailed code never starts or refreshes the clock.
+          // A later refresh has no `user`, so it cannot stamp again.
+          const owesAuthenticatorApp =
+            twoFactorRequired &&
+            member.twoFactorEnabled === true &&
+            member.twoFactorMethod !== "EMAIL";
+          if (
+            passwordSignIn &&
+            recentAuthSignInCounts("password", owesAuthenticatorApp)
+          ) {
+            token.lastAuthenticatedAt = Date.now();
+          }
           const kioskAccount = isKioskSessionMember(member);
 
           token.role = member.canLogin === false ? "USER" : member.role;
@@ -686,11 +730,17 @@ export const authConfig = {
             isRevokedMemberSession(member, sessionIssuedAt, token.id) ||
             pastMaxAge;
           token.twoFactorRequired = twoFactorRequired;
-          token.twoFactorEnrolled = member.twoFactorEnabled;
+          const enrolled = isSecondFactorEnrolled({
+            twoFactorEnabled: member.twoFactorEnabled,
+            hasPasskey: member.hasPasskey,
+            sessionEnrolled: false,
+          });
+          token.hasPasskey = member.hasPasskey === true;
+          token.twoFactorEnrolled = enrolled;
           token.twoFactorMethod = member.twoFactorMethod ?? null;
           if (!twoFactorRequired) {
             token.twoFactorVerified = true;
-          } else if (!member.twoFactorEnabled) {
+          } else if (!enrolled) {
             token.twoFactorVerified = false;
             token.twoFactorVerifiedByChallenge = false;
           } else if (user) {
@@ -764,6 +814,7 @@ export const authConfig = {
       session.user.twoFactorRequired = Boolean(token.twoFactorRequired);
       session.user.twoFactorVerified = Boolean(token.twoFactorVerified);
       session.user.twoFactorEnrolled = Boolean(token.twoFactorEnrolled);
+      session.user.hasPasskey = token.hasPasskey === true;
       session.user.twoFactorMethod =
         token.twoFactorMethod === "TOTP" || token.twoFactorMethod === "EMAIL"
           ? token.twoFactorMethod
