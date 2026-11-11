@@ -48,7 +48,9 @@ parts you can change.
      setting existed. A member whose subscription is not paid for the season
      cannot book at all, and sees a banner asking them to pay first.
    - **Let them book, at non-member rates.** They may book, but their own nights
-     are charged at the **non-member rate** until the subscription is paid.
+     are charged at the **non-member rate** until the subscription is paid. They
+     see the unpaid-subscription banner and can still pick a lodge and dates
+     straight away.
 
 2. Your club stays on whatever it was doing until you change this. If the lockout
    was on it keeps stopping unpaid members; if it was off it keeps letting them
