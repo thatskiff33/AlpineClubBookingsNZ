@@ -105,7 +105,8 @@ Signs only accept reports while the anonymous-QR switch in **Settings** is on.
 
 - Back to the [documentation hub](../README.md).
 - Sibling guides: [Lodge Kiosk](lodge.md), [Lodge Instructions](lodge-instructions.md),
-  [Hut Leaders](hut-leaders.md), [Work Parties](work-parties.md).
+  [Hut Leaders](hut-leaders.md), [Work Parties](work-parties.md),
+  [Food Orders](food-orders.md).
 - Reference: lodge scoping in
   [Lodge Scoping Contract](../multi-lodge/lodge-scoping-contract.md); the QR bearer
   token in [`SECURITY.md`](../SECURITY.md).

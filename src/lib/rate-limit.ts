@@ -673,6 +673,8 @@ export const rateLimiters = {
    * fault report at the moment somebody is standing in front of the fault.
    */
   maintenanceReportMember: { id: "maintenance-report-member", limit: 10, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /** Food orders (fork #121): 10/hour per member (and 10x per IP), like maintenanceReportMember; not authSensitive. */
+  foodOrderMember: { id: "food-order-member", limit: 10, windowSeconds: 60 * 60 } as RateLimitConfig,
   /**
    * Club message board: 10 posts per hour per member (#2994).
    *

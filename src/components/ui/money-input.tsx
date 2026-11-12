@@ -36,6 +36,13 @@ export interface MoneyInputProps extends NativeMoneyInputProps {
   /** Inclusive cents bounds used by the whole-dollar controls. */
   minCents?: number;
   maxCents?: number;
+  /**
+   * Whether to offer the whole-dollar step controls: the up/down buttons and
+   * ArrowUp/ArrowDown stepping. Default true. Pass false where a person only
+   * types the amount (the food-order price, fork #121); the box then renders alone,
+   * with no space reserved for the buttons.
+   */
+  stepButtons?: boolean;
 }
 
 function hasThirdFractionalDigit(value: string): boolean {
@@ -64,6 +71,7 @@ export function MoneyInput({
   normalizeDraft,
   minCents,
   maxCents,
+  stepButtons = true,
   id,
   disabled = false,
   readOnly = false,
@@ -124,7 +132,7 @@ export function MoneyInput({
   return (
     <div className="space-y-1">
       {label ? <Label htmlFor={inputId}>{label}</Label> : null}
-      <div className="flex items-stretch gap-1">
+      <div className={cn("flex items-stretch", stepButtons && "gap-1")}>
         <Input
           {...inputProps}
           id={inputId}
@@ -139,13 +147,14 @@ export function MoneyInput({
           onChange={(event) => changeValue(event.target.value)}
           onKeyDown={(event) => {
             onKeyDown?.(event);
-            if (event.defaultPrevented) return;
+            if (event.defaultPrevented || !stepButtons) return;
             if (event.key === "ArrowUp" || event.key === "ArrowDown") {
               event.preventDefault();
               step(event.key === "ArrowUp" ? 1 : -1);
             }
           }}
         />
+        {stepButtons ? (
         <div className="flex flex-col gap-1">
           <button
             type="button"
@@ -170,6 +179,7 @@ export function MoneyInput({
             <ChevronDown aria-hidden="true" className="size-3" />
           </button>
         </div>
+        ) : null}
       </div>
       {error ? (
         <p id={errorId} role="alert" className="text-sm text-danger">

@@ -143,6 +143,8 @@ const ORACLE_ROUTE_AREAS: ReadonlyArray<{
       "/admin/calendar",
       "/admin/display",
       "/admin/maintenance-reports",
+      // Fork #121: the Food Orders settings card.
+      "/admin/food-orders",
     ],
   },
   {
@@ -241,6 +243,7 @@ const ORACLE_MODULE_GATES: ReadonlyArray<{
   { flag: "aiAssistant", prefixes: ["/admin/ai-assistant"] },
   { flag: "aiDiagnostics", prefixes: ["/admin/ai-diagnostics"] },
   { flag: "maintenanceReports", prefixes: ["/admin/maintenance-reports"] },
+  { flag: "foodOrders", prefixes: ["/admin/food-orders"] },
   { flag: "commsPortal", prefixes: ["/admin/message-board"] },
   { flag: "alpineCentralServer", prefixes: ["/admin/alpine-server"] },
 ];

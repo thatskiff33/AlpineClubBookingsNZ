@@ -101,6 +101,7 @@ For what an officer sees and does on each screen, use the
 | `family-groups` | membership | `ARCHITECTURE.md` (family groups / billing, hidden family suggestions) | [guide](guides/family-groups.md); Suggestions tab: [guide](guides/family-suggestions.md) | 2 |
 | `fee-configuration` | finance | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) (redirect → Fees) | 2 |
 | `fees` | bookings (route map); page opens on **bookings or finance** (`canAccessConsolidatedFeesPage`) | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) | 2 |
+| `food-orders` | lodge | `multi-lodge/lodge-scoping-contract.md` (FoodOrder scoping), `SECURITY-ATTACK-SURFACE.md` (member routes `/food-order`, `/food-orders` and their API) | [guide](guides/food-orders.md) | — (foodOrders module, off by default; outside #2050) |
 | `google` | finance | [`guides/security.md`](guides/security.md) (Google sign-in credentials, verified in-app before the module can be enabled), [`guides/integrations.md`](guides/integrations.md) | [guide](guides/integrations.md) (`google/setup` wizard) | — (epic #2030; postdates #2050) |
 | `health` | support | — | [guide](guides/health.md) (Integration readiness section, S1 #4796) | 4 |
 | `hut-leaders` | lodge | `ARCHITECTURE.md` (hut-leader auto-assign cron), `invariants/booking-dates-and-capacity.md` (`INV-DATE-031`: night cover, school-night kinds #3819) | [guide](guides/hut-leaders.md) | 3 |
@@ -151,7 +152,7 @@ For what an officer sees and does on each screen, use the
 
 ## Summary
 
-- **83** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
+- **84** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
 - **2** areas are already served by a **feature hub** (`display` → lobby-display,
   `lodges` → multi-lodge). #2050 should extend, not duplicate, those hubs.
 - **13** areas have **no reference coverage** beyond their operator guide

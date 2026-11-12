@@ -136,6 +136,14 @@ Journey: When enabled, read recent posts, page to older posts, or compose a mess
 
 [Guide](user-guide/the-message-board.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
+### Order food and food orders
+
+Screen: `/food-order` and `/food-orders`.
+
+Journey: When enabled, open Order food from the dashboard, choose the lodge and needed-by date, add item lines (description, quantity and type, such as 2 Loaves), then send. Food orders lists your orders. Committee, current hut leaders and Lodge Operations admins see every order; committee, hut leaders at that order's lodge and Lodge Operations edit admins tick items received as they arrive (the order closes on the last) or record its price. The totals panel adds a By year breakdown, earlier years collapsed under Previous years. An emailed link pins its order at the top.
+
+[Guide](guides/food-orders.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
 ## Admin overview
 
 ### AI Diagnostics deployment and operator guide — ai-diagnostics
@@ -539,6 +547,16 @@ Shows: Lodge faults, their descriptions and resolution state.
 Journey: Filter faults by lodge and status, inspect a report, then record the next action.
 
 [Guide](guides/maintenance-reports.md) · [History](UX_FLOW_HISTORY.md#lodge-maintenance-reports-2780)
+
+### Food Orders — food-orders
+
+Screen: `/admin/food-orders`.
+
+Shows: The food officer email orders go to and the officer label.
+
+Journey: Edit, change the address or label, then save or cancel.
+
+[Guide](guides/food-orders.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Rooms & Beds — rooms-beds
 

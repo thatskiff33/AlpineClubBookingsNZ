@@ -3,6 +3,7 @@ import {
   adminIssueReportTemplate,
   adminMaintenanceReportTemplate,
   adminServerVersionPausedTemplate,
+  foodOrderPlacedTemplate,
   type AdminDigestCounts,
   type AdminDigestServerVersion,
 } from "@/lib/email-templates/admin-ops";
@@ -10,7 +11,14 @@ import {
   getAdminAlertEmails,
   sendAdminAlertTo,
   sendToAdmins,
+  shouldSendDirectAdminSystemEmail,
 } from "./admin-alerts-shared";
+import { sendEmail } from "./core";
+import {
+  FOOD_ORDER_NO_NOTE_TEXT,
+  formatFoodOrderItemLine,
+  type FoodOrderUnitValue,
+} from "@/lib/food-order-rules";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { describeServerVersionPause } from "@/lib/servernz-api-version";
 import logger from "@/lib/logger";
@@ -194,5 +202,62 @@ export async function sendAdminMaintenanceReportAlert(data: {
       maintenanceReportUrl: data.maintenanceReportUrl,
     },
     preferenceKey: "adminMaintenanceReport",
+  });
+}
+
+const FOOD_ORDER_PLACED_TEMPLATE = "food-order-placed";
+
+/**
+ * Fork #121: a member placed a food order. Sent to ONE address, the food
+ * officer email in the Food Orders settings (fork #121 owner decisions 6 and 10), not to
+ * an admin audience: the officer is whoever the committee names there, admin or
+ * not. The order is already stored when this runs, and the caller sends it
+ * after the create transaction commits and never awaits it into the response.
+ *
+ * It is an admin/system template, so the club-wide Delivery Rules can mute it
+ * like any other non-locked alert; the order stays in the history either way.
+ * `itemsText` is the plain-text item list, so an operator who rewrites this
+ * template at /admin/email-messages still gets every item and quantity.
+ */
+export async function sendFoodOrderPlacedEmail(data: {
+  to: string;
+  orderId: string;
+  lodgeId: string;
+  officerLabel: string;
+  lodgeName: string;
+  neededBy: string;
+  orderedBy: string;
+  items: Array<{ description: string; quantity: string; unit: FoodOrderUnitValue }>;
+  notes: string | null;
+  foodOrderUrl: string;
+}) {
+  if (!(await shouldSendDirectAdminSystemEmail(FOOD_ORDER_PLACED_TEMPLATE))) {
+    return;
+  }
+
+  const itemsText = data.items
+    .map((item) => formatFoodOrderItemLine(item))
+    .join("\n");
+
+  await sendEmail({
+    to: data.to,
+    subject: `Food order: ${data.lodgeName}, needed by ${data.neededBy}`,
+    html: await renderEmailHtml(() => foodOrderPlacedTemplate(data)),
+    templateName: FOOD_ORDER_PLACED_TEMPLATE,
+    templateData: {
+      officerLabel: data.officerLabel,
+      lodgeName: data.lodgeName,
+      neededBy: data.neededBy,
+      orderedBy: data.orderedBy,
+      itemsText,
+      // The same fallback the HTML shows, so an override reads correctly too.
+      notes: data.notes ?? FOOD_ORDER_NO_NOTE_TEXT,
+      foodOrderUrl: data.foodOrderUrl,
+    },
+    // A food order is not linked to a booking (fork #121 owner decision 9).
+    bookingContext: "none",
+    lodgeId: data.lodgeId,
+    // One business event per order: a re-drive of the same order is one email.
+    idempotencyKey: `food-order-placed:${data.orderId}`,
   });
 }

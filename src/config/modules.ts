@@ -39,6 +39,7 @@ export const MODULE_KEYS = [
   "memberLodgeRoster",
   "alpineCentralServer",
   "commsPortal",
+  "foodOrders",
 ] as const;
 
 export type ModuleKey = (typeof MODULE_KEYS)[number];
@@ -191,6 +192,11 @@ export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
   // every other member who can book that lodge. An upgrade must not start
   // doing that because nobody opted out (#2942).
   memberLodgeRoster: false,
+  // Default OFF, inverting the general ON rule above on purpose (fork #121,
+  // owner decision 14): an order goes to the food officer's email address, and
+  // until the committee has entered one in the Food Orders settings there is
+  // nobody to send it to.
+  foodOrders: false,
 };
 
 /**
@@ -527,6 +533,18 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       "A booking that includes a child never names anyone in it: it shows a family or group label instead, at every setting.",
       "Nights under a whole-lodge hold are shown as \"Reserved for a private booking\", without naming or counting the party. The booking calendar still shows them as full.",
       "When off, the roster page returns Not Found and no roster data is read.",
+    ],
+  },
+  // Fork #121.
+  foodOrders: {
+    key: "foodOrders",
+    label: "Food orders",
+    description:
+      "Members order food for a lodge stay from a card on their dashboard. Each order is emailed to your food officer, and a hut leader or committee member marks it received when it arrives. The price can be recorded for the club's history; nothing is charged.",
+    dependencies: [
+      "Enter the food officer's email address under Admin → Lodge → Food Orders before members can order. Until then the order page says ordering is not set up.",
+      "Hut leaders at that lodge, committee members and Lodge Operations edit admins tick items received as they arrive (the order closes on the last) and record its price. The price is a record only: it is never charged, invoiced or sent to Xero.",
+      "When off, the order and history pages and their APIs return Not Found, and the dashboard card and settings page are hidden. Existing orders are kept.",
     ],
   },
 };

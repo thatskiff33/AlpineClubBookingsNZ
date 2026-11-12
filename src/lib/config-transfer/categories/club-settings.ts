@@ -258,6 +258,9 @@ export const SINGLETONS: SingletonSpec[] = [
       // nothing leaves the building. The retention window that deletes posts is
       // equally non-travelling -- see ClubPostSettings in MODEL_LEVEL_EXCLUSIONS.
       "commsPortal",
+      // foodOrders SHOULD-TRAVEL (fork #121): a capability flag; the officer address
+      // (FoodOrderSettings) is instance-local, so a target with none takes no orders.
+      "foodOrders",
     ],
     excluded: {
       multiPromoCodes:

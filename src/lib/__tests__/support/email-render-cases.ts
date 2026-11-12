@@ -114,6 +114,7 @@ import {
   adminEmailWithheldTemplate,
   adminIssueReportTemplate,
   adminMaintenanceReportTemplate,
+  foodOrderPlacedTemplate,
   adminServerVersionPausedTemplate,
   websiteContactTemplate,
 } from "@/lib/email-templates/admin-ops";
@@ -1096,6 +1097,10 @@ const GENERATED_CASES: EmailRenderCase[] = [
     adminMaintenanceReportTemplate({ lodgeName: "lodgeName-1", reportedBy: "reportedBy-2", sourceLabel: "sourceLabel-3", photoLabel: "photoLabel-4", summary: "summary-5", answers: [], maintenanceReportUrl: "maintenanceReportUrl-6" }) },
   { id: "adminMaintenanceReportTemplate:full", fn: "adminMaintenanceReportTemplate", render: () =>
     adminMaintenanceReportTemplate({ lodgeName: "lodgeName-1", reportedBy: "reportedBy-2", sourceLabel: "sourceLabel-3", photoLabel: "photoLabel-4", summary: "summary-5", answers: [{ label: "label-6", value: "value-7" }, { label: "label-8", value: "value-9" }], maintenanceReportUrl: "maintenanceReportUrl-10" }) },
+  { id: "foodOrderPlacedTemplate:minimal", fn: "foodOrderPlacedTemplate", render: () =>
+    foodOrderPlacedTemplate({ officerLabel: "officerLabel-1", lodgeName: "lodgeName-2", neededBy: "neededBy-3", orderedBy: "orderedBy-4", items: [{ description: "description-5", quantity: "6", unit: "ITEMS" }], notes: null, foodOrderUrl: "foodOrderUrl-7" }) },
+  { id: "foodOrderPlacedTemplate:full", fn: "foodOrderPlacedTemplate", render: () =>
+    foodOrderPlacedTemplate({ officerLabel: "officerLabel-1", lodgeName: "lodgeName-2", neededBy: "neededBy-3", orderedBy: "orderedBy-4", items: [{ description: "description-5", quantity: "1", unit: "LOAVES" }, { description: "description-7", quantity: "0.5", unit: "PACKETS" }], notes: "notes-9", foodOrderUrl: "foodOrderUrl-10" }) },
   { id: "refundRequestApprovedTemplate:minimal", fn: "refundRequestApprovedTemplate", render: () =>
     refundRequestApprovedTemplate({ firstName: "firstName-1", amountCents: 102, bankTransferCents: 0, adminNotes: "adminNotes-3", checkIn: new Date("2026-03-05T00:00:00.000Z"), checkOut: new Date("2026-03-06T00:00:00.000Z") }, CLUB_FORMAT_TEST) },
   // #3827 (D-3813-7): an internet-banking appeal's refund is promised, not

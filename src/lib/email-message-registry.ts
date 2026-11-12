@@ -164,6 +164,9 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // LOCKED_DELIVERY_TEMPLATE_NAMES: no money moves, and a club that would rather
   // read the queue than the mail must be allowed to mute it.
   "admin-maintenance-report",
+  // Fork #121: a food order, to the Food Orders settings address. Mutable, not
+  // delivery-locked: no money moves and every order stays in the history.
+  "food-order-placed",
   // #49 (owner decision "second template"): the version-only notice a Lodge
   // Operations editor who does not receive the Daily digest is sent while
   // syncing with the Alpine Central Server is paused. Its own template so a
@@ -494,6 +497,8 @@ const REQUIRED_TOKEN_ALTERNATIVES: Partial<
 };
 
 const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
+  // Fork #121: an override that dropped the item list would send an empty order.
+  "food-order-placed": ["itemsText"],
   "booking-confirmed": [
     "CLUB_LODGE_TRAVEL_NOTE",
     "doorCodeNote",
@@ -1145,6 +1150,11 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   "bulk-communication": {
     triggerSummary: "Admin bulk communication send",
     frequency: "Per admin send action",
+  },
+  "food-order-placed": {
+    triggerSummary:
+      "A member placed a food order for a lodge; sent to the food officer email in the Food Orders settings",
+    frequency: "Per food order",
   },
   "website-contact": {
     triggerSummary: "Website contact form submission",
@@ -2370,6 +2380,13 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "summary",
   "answersText",
   "maintenanceReportUrl",
+  // Fork #121: the food-order email's tokens; none carries a bearer token or secret.
+  "officerLabel",
+  "neededBy",
+  "orderedBy",
+  "itemsText",
+  "notes",
+  "foodOrderUrl",
   // #49: the Daily digest's central-server-version entry. `serverVersionNote`
   // is the composed sentence (empty while the versions match); the other two
   // are the raw numbers behind it. None carries a key, a URL or a member.

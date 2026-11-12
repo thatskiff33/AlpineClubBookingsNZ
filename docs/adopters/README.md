@@ -156,6 +156,9 @@ per-route index if you would rather start from a URL.
   nights that need cover, and their kiosk PINs.
 - [Work Parties](../guides/work-parties.md) — working-bee events and their
   automatic booking discount.
+- [Food Orders](../guides/food-orders.md) — members order food for a stay, the
+  food officer is emailed, and hut leaders or committee members confirm it
+  arrived (the optional `foodOrders` module).
 - [Events Calendar](../guides/calendar.md) — the club events calendar, recurring
   events, per-instance vs series edits, MiroTalk video meetings, and the Events
   calendar module switch.
