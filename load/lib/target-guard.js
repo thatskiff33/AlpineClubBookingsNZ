@@ -202,7 +202,10 @@ export function assertSafeDatabaseTarget(env) {
   }
   // pg decodes query keys before applying connection options. Check the
   // decoded names too: ?%68ost=remote must not escape the checked authority.
-  const query = tail.split("?")[1];
+  // Everything after the FIRST "?" is the query, as pg reads it: a second "?"
+  // must not hide `&host=` from the check.
+  const queryStart = tail.indexOf("?");
+  const query = queryStart === -1 ? "" : tail.slice(queryStart + 1);
   const keys = query ? query.split("#")[0].split("&").map(function (part) {
     try {
       return decodeURIComponent(part.split("=")[0].replace(/\+/g, " ")).toLowerCase();

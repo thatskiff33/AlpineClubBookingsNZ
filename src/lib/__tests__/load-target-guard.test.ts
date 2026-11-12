@@ -69,6 +69,8 @@ describe("assertSafeDatabaseTarget", () => {
       "postgresql://u:p@localhost:5433/db?%70ort=5432",
       "postgresql://u:p@localhost:5433/db?%68ostaddr=10.0.0.5",
       "postgresql://u:p@localhost:5433/db?connectionString=postgresql://remote/db",
+      // pg reads the whole text after the first "?" as the query.
+      "postgresql://u:p@localhost:5433/db?x=1?&host=127.0.0.1&port=6000",
       "postgresql://u:p@localhost:5433,db.example.com:5433/db",
     ]) {
       expect(() => assertSafeDatabaseTarget(confirmed(url))).toThrow(
