@@ -675,7 +675,7 @@ function refuseUnfiledReleaseDocs(cmd, { target, tag, version, previousTag }) {
       [
         `Write it through a pull request, linked first under "Published release notes" in ${RELEASE_NOTES_DIR}/README.md,`,
         `  or let prepare write the stub: git switch --detach ${MAIN_REF} && pnpm run release:cut prepare --amend --execute`,
-        `Then merge it and run pnpm run release:cut publish --execute`,
+        `Finish the page and delete its unfinished marker, merge it, then run pnpm run release:cut publish --execute`,
       ].join("\n"),
     );
   }
