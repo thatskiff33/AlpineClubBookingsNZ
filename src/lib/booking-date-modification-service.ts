@@ -1,5 +1,5 @@
 import { assertEditQuotedFigures, unchangedPriceQuotedFigures } from "@/lib/edit-quoted-figures";
-import type { EditQuotedFigures } from "@/lib/booking-modify-quote-request";
+import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";

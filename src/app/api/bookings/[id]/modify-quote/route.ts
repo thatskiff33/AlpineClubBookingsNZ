@@ -8,7 +8,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { buildShiftPreviewResponse } from "@/lib/booking-shift-preview";
-import { unchangedPriceQuotedFigures } from "@/lib/edit-quoted-figures";
+import { unchangedPriceQuotedFigures, type EditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import {
@@ -91,7 +91,6 @@ import { selectedIndexesForStoredGuestTargets } from "@/lib/promo-stored-guest-t
 import {
   modifyQuoteSchema,
   isDateOnlyOverrideViolation,
-  type EditQuotedFigures,
   type NormalizedAddGuest,
 } from "@/lib/booking-modify-quote-request";
 import {

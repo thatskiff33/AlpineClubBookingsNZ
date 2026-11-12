@@ -168,20 +168,6 @@ export function isDateOnlyOverrideViolation(
   );
 }
 
-/**
- * #4924 (`INV-MOD-062`): the preview's figures, returned as `quotedFigures` and
- * sent back unchanged on Save, where the save refuses if its own differ.
- * Integer cents; `netChargeCents` is before the unpaid-ask offset.
- */
-export const editQuotedFiguresSchema = z.object({
-  newFinalPriceCents: z.number().int(),
-  priceDiffCents: z.number().int(),
-  changeFeeCents: z.number().int(),
-  netChargeCents: z.number().int(),
-});
-
-export type EditQuotedFigures = z.infer<typeof editQuotedFiguresSchema>;
-
 export type NormalizedAddGuest = MemberGuestConsentGuestFields & {
   firstName: string;
   lastName: string;

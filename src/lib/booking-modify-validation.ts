@@ -41,7 +41,7 @@ import {
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
-import type { EditQuotedFigures } from "@/lib/booking-modify-quote-request";
+import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 
 export type BatchModifyInput = {
   /**

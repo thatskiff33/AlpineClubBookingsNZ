@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { modifyQuoteSchema, editQuotedFiguresSchema } from "@/lib/booking-modify-quote-request";
+import { modifyQuoteSchema } from "@/lib/booking-modify-quote-request";
+import { editQuotedFiguresSchema } from "@/lib/edit-quoted-figures";
 import { hostingCoverageOverrideSchema } from "@/lib/adult-member-hosting-same-owner";
 import { hostingCoverageLinkedMoveSchema } from "@/lib/adult-member-hosting-linked-move";
 

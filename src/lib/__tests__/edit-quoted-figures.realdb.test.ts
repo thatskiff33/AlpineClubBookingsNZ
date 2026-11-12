@@ -29,7 +29,7 @@ import { releaseBookingJournalForTeardown } from "./support/booking-financial-hi
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
-import type { EditQuotedFigures } from "@/lib/booking-modify-quote-request";
+import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";

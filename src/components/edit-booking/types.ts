@@ -1,7 +1,7 @@
 import type { AgeTier, MemberGuestConsentStatus } from "@prisma/client";
 import type { MinimumStayViolation } from "@/lib/booking-policies";
 import type { AggregatedPolicyExceptions } from "@/lib/booking-policy-exceptions";
-import type { EditQuotedFigures } from "@/lib/booking-modify-quote-request";
+import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 
 /**
  * The wire shapes the edit-booking panel is handed and the ones it reads back.

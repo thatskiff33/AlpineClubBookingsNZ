@@ -1,6 +1,9 @@
 import type { ClubFormat } from "@/lib/club-format";
-import type { EditQuotedFigures } from "@/lib/booking-modify-quote-request";
-import { EDIT_PRICE_CHANGED_CODE } from "@/lib/edit-quoted-figures";
+import {
+  EDIT_PRICE_CHANGED_CODE,
+  editQuotedFiguresSchema,
+  type EditQuotedFigures,
+} from "@/lib/edit-quoted-figures";
 import { formatCents } from "@/lib/utils";
 
 /**
@@ -11,22 +14,8 @@ export function readEditPriceChangedFigures(data: unknown): EditQuotedFigures | 
   if (!data || typeof data !== "object") return null;
   const record = data as { code?: unknown; figures?: unknown };
   if (record.code !== EDIT_PRICE_CHANGED_CODE) return null;
-  const figures = record.figures as Partial<Record<keyof EditQuotedFigures, unknown>> | null;
-  if (
-    !figures ||
-    typeof figures.newFinalPriceCents !== "number" ||
-    typeof figures.priceDiffCents !== "number" ||
-    typeof figures.changeFeeCents !== "number" ||
-    typeof figures.netChargeCents !== "number"
-  ) {
-    return null;
-  }
-  return {
-    newFinalPriceCents: figures.newFinalPriceCents,
-    priceDiffCents: figures.priceDiffCents,
-    changeFeeCents: figures.changeFeeCents,
-    netChargeCents: figures.netChargeCents,
-  };
+  const figures = editQuotedFiguresSchema.safeParse(record.figures);
+  return figures.success ? figures.data : null;
 }
 
 function describeNetCharge(cents: number, format: ClubFormat): string {

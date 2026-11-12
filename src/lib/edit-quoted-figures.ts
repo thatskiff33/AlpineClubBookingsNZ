@@ -1,4 +1,4 @@
-import type { EditQuotedFigures } from "@/lib/booking-modify-quote-request";
+import { z } from "zod";
 
 /**
  * #4924 (`INV-MOD-062`): an edit settles only the figures the member was shown.
@@ -9,7 +9,18 @@ import type { EditQuotedFigures } from "@/lib/booking-modify-quote-request";
  * difference — the club day crossed a change-fee band, a rate or promo moved,
  * or the two pricing paths drifted — refuses the save with the fresh figures,
  * so the member re-previews instead of being settled an amount they never saw.
+ * Integer cents; `netChargeCents` is before the unpaid-ask offset. No server
+ * imports: the panel parses the refusal's figures with this same schema.
  */
+export const editQuotedFiguresSchema = z.object({
+  newFinalPriceCents: z.number().int(),
+  priceDiffCents: z.number().int(),
+  changeFeeCents: z.number().int(),
+  netChargeCents: z.number().int(),
+});
+
+export type EditQuotedFigures = z.infer<typeof editQuotedFiguresSchema>;
+
 export const EDIT_PRICE_CHANGED_CODE = "EDIT_PRICE_CHANGED";
 
 export class EditPriceChangedError extends Error {
@@ -31,15 +42,8 @@ export function unchangedPriceQuotedFigures(finalPriceCents: number): EditQuoted
   return { newFinalPriceCents: finalPriceCents, priceDiffCents: 0, changeFeeCents: 0, netChargeCents: 0 };
 }
 
-// A record rather than a list, so a figure added to `EditQuotedFigures` and
-// not compared here is a compile error instead of a silently skipped field.
-const COMPARED: Record<keyof EditQuotedFigures, true> = {
-  newFinalPriceCents: true,
-  priceDiffCents: true,
-  changeFeeCents: true,
-  netChargeCents: true,
-};
-const QUOTED_FIGURE_KEYS = Object.keys(COMPARED) as Array<keyof EditQuotedFigures>;
+// Read off the schema, so a figure added to it is compared without a second list.
+const QUOTED_FIGURE_KEYS = editQuotedFiguresSchema.keyof().options;
 
 /**
  * Throws `EditPriceChangedError` carrying `fresh` when any figure differs.
