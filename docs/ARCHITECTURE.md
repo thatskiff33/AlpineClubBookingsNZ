@@ -1169,6 +1169,14 @@ derivation silently hides bookings from the officer filtering for them, so
 value's result to equal the derivation's alone; extend their shared scenarios
 (`support/admin-bookings-derived-scenarios.ts`) with any new value or condition.
 
+**Every mutating request on an admin screen shows its failure** (#4976). A
+delete, remove or toggle is a mutation like a save: on any non-2xx reply, or a
+request that never arrives, the handler shows the server's sentence or a
+fallback in a `role="alert"` region the officer can see at that moment — not
+inside a closed form — and reads the body only through
+`src/lib/api-error-message.ts`, so an HTML error page never surfaces as a JSON
+parse error (`INV-SSOT`).
+
 Admin settings sections follow one canonical edit model (developer rule, binding
 for new or modified sections; the `AGENTS.md` routing table sends you here for it, and this page is where it is stated in full).
 A section
