@@ -12,6 +12,8 @@ export const BOOKING_MESSAGE_KEYS = [
   // already confirmed and held, so the sentence above would promise a
   // confirmation that has already happened.
   "booking.detail.switchToInternetBankingWholeLodge",
+  "booking.detail.switchToInternetBankingConfirm",
+  "booking.detail.switchToInternetBankingConfirmWholeLodge",
   // #3033 (epic #2797): the club's EXPLANATION of why a stay change is waiting on
   // a person, beneath the banner that states the facts. Configurable because the
   // owner named this wording as the cost of decision D1 — it "has to be honest
@@ -150,6 +152,24 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
       "Shown beside the same button on an approved whole-lodge booking, which is already confirmed and held, so the ordinary sentence's promise to confirm the booking after the payment would be untrue.",
     defaultBody:
       "Prefer to pay by internet banking? We will email a Xero invoice. Your whole-lodge booking stays confirmed while the payment is outstanding.",
+    tokens: ALL_TOKENS,
+  },
+  {
+    key: "booking.detail.switchToInternetBankingConfirm",
+    section: "Booking Detail",
+    label: "Confirm switch to Internet Banking",
+    description: "Shown in the confirmation dialog before switching to Internet Banking.",
+    defaultBody:
+      "We'll email you a Xero invoice to pay by bank transfer, and confirm your booking once the payment is reconciled. You can't switch back to paying by card from this page.",
+    tokens: ALL_TOKENS,
+  },
+  {
+    key: "booking.detail.switchToInternetBankingConfirmWholeLodge",
+    section: "Booking Detail",
+    label: "Confirm switch to Internet Banking (approved whole-lodge booking)",
+    description: "Shown in the confirmation dialog before switching to Internet Banking (approved whole-lodge booking).",
+    defaultBody:
+      "We'll email you a Xero invoice to pay by bank transfer. Your whole-lodge booking stays confirmed while the payment is outstanding. You can't switch back to paying by card from this page.",
     tokens: ALL_TOKENS,
   },
   {
