@@ -56,6 +56,7 @@ import {
 import { registerAfterKeySave } from "@/lib/servernz-push-registration";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 // POST /api/admin/integrations/credentials — write-only credential setter.
 //
@@ -214,6 +215,8 @@ export async function POST(request: Request) {
   const guard = await requireFullAdmin();
   if (!guard.ok) return guard.response;
 
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
   const parsed = bodySchema.safeParse(json.body);

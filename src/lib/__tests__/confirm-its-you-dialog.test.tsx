@@ -11,7 +11,7 @@ import {
 } from "@/components/confirm-its-you";
 import { recentAuthRefusalBody } from "@/lib/recent-auth";
 
-const RESTORE_BODY = JSON.stringify({ confirmation: "RESTORE" });
+const RESTORE_BODY = JSON.stringify({ filename: "nightly.sql", confirm: "RESTORE" });
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -100,5 +100,30 @@ describe("confirm it's you dialog (#4616)", () => {
     expect(
       calls.filter((call) => call.init?.method === "POST" && call.url.includes("/api/auth/reauth")),
     ).toHaveLength(0);
+  });
+
+  it("sends a FormData body on the original attempt and the one replay", async () => {
+    render(<ConfirmItsYouHost />);
+    const body = new FormData();
+    body.append("bundle", "zip-bytes");
+    body.append("expectedFingerprint", "abc");
+    const pending = fetchWithRecentAuth("/api/admin/config-transfer/apply", {
+      method: "POST",
+      body,
+    });
+
+    const password = await screen.findByLabelText("Password");
+    fireEvent.change(password, { target: { value: "lodge-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await pending;
+
+    const sent = protectedCalls(calls);
+    expect(sent).toHaveLength(2);
+    for (const call of sent) {
+      expect(call.init?.body).toBeInstanceOf(FormData);
+      const form = call.init?.body as FormData;
+      expect(form.get("bundle")).toBe("zip-bytes");
+      expect(form.get("expectedFingerprint")).toBe("abc");
+    }
   });
 });

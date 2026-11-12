@@ -5,6 +5,7 @@ import { actorIsFullAdmin } from "@/lib/admin-account-guards";
 import { executeMemberMerge, MemberMergeError } from "@/lib/member-merge";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const paramsSchema = z.object({ id: z.string().min(1) });
 
@@ -31,6 +32,8 @@ export async function POST(
     );
   }
 
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   const parsedParams = paramsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json(
