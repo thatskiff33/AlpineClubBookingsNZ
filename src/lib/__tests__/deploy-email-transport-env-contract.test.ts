@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { bashFixturePath, bashGateArgs } from "./helpers/bash-fixture-path";
 import { readRepoFile } from "./helpers/compose";
-import { DEPLOY_SCRIPT, shellFunctionSource } from "./helpers/deploy-script";
+import { DEPLOY_SCRIPT, deployShellSource, shellFunctionSource } from "./helpers/deploy-script";
 import { resolveEmailDeliveryConfigFromEnv } from "@/lib/email-delivery";
 
 /*
@@ -32,6 +32,8 @@ import { resolveEmailDeliveryConfigFromEnv } from "@/lib/email-delivery";
 */
 
 const SCRIPT = readRepoFile(DEPLOY_SCRIPT);
+/** The script with the libraries it sources, for lifting functions (#4980). */
+const SHELL = deployShellSource();
 
 const ROOT = mkdtempSync(path.join(tmpdir(), "deploy-proxied-host-"));
 afterAll(() => rmSync(ROOT, { recursive: true, force: true }));
@@ -50,7 +52,7 @@ function exactLine(line: string): string {
 }
 
 function lift(names: string[]): string {
-  return names.map((name) => shellFunctionSource(SCRIPT, name)).join("\n");
+  return names.map((name) => shellFunctionSource(SHELL, name)).join("\n");
 }
 
 type Run = { code: number | null; stdout: string; stderr: string; dir: string };
@@ -93,10 +95,13 @@ describe("the wrapper reads a fork's image repositories with Compose's .env gram
     const body = shellFunctionSource(SCRIPT, "resolve_image_repository");
     expect(body).toContain('compose_env_file_value "$key" "$SOURCE_REPO/.env"');
     expect(SCRIPT).not.toContain("read_source_env_value");
-    // Defined above both nested halves, so the wrapper process has it.
-    const reader = SCRIPT.indexOf("\ncompose_env_file_value() {");
-    expect(reader).toBeGreaterThan(0);
-    expect(reader).toBeLessThan(SCRIPT.indexOf("\nrun_production_wrapper() {"));
+    // Defined once, in the readers library the script sources above both
+    // nested halves (#4980), so the wrapper process has it.
+    expect(SCRIPT).not.toContain("\ncompose_env_file_value() {");
+    expect(readRepoFile("scripts/lib/compose-env-file.sh")).toContain("\ncompose_env_file_value() {");
+    const sourced = SCRIPT.indexOf('\n. "$DEPLOY_SCRIPT_LIB_DIR/compose-env-file.sh"\n');
+    expect(sourced).toBeGreaterThan(0);
+    expect(sourced).toBeLessThan(SCRIPT.indexOf("\nrun_production_wrapper() {"));
   });
 
   it.each([
@@ -363,7 +368,7 @@ describe("step 3 checks the email transport each app service would receive (#427
       const body = shellFunctionSource(SCRIPT, "require_resolved_email_transport_for_service");
       expect(body).toContain('"$VALIDATED_ENVIRONMENT_ROLE" != "non-production"');
       expect(body).not.toMatch(/(env_file_value|env_value) APP_ENVIRONMENT_ROLE/);
-      expect(shellFunctionSource(SCRIPT, "require_environment_role_env_key")).toContain(
+      expect(shellFunctionSource(SHELL, "require_environment_role_env_key")).toContain(
         'VALIDATED_ENVIRONMENT_ROLE="$normalised"',
       );
     });
