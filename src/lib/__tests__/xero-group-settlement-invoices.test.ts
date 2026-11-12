@@ -205,11 +205,8 @@ vi.mock("@/lib/xero-group-settlement-void-outbox", () => ({
 import { prisma } from "@/lib/prisma";
 import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
-import {
-  deferredGroupInvoiceEmailPayload,
-  GroupSettlementInvoiceEmailDeferredError,
-  readDeferredGroupInvoiceEmail,
-} from "@/lib/xero-group-settlement-invoice-outbox";
+import { deferredGroupInvoiceEmailPayload, readDeferredGroupInvoiceEmail } from "@/lib/xero-group-settlement-invoice-outbox";
+import { GroupSettlementInvoiceEmailDeferredError } from "@/lib/xero-applied-credit-operation-serialization";
 import { getAuthenticatedXeroClient, resetXeroRateLimitStateForTests } from "@/lib/xero-api-client";
 import {
   voidXeroInvoiceForAbandonedGroupSettlement,

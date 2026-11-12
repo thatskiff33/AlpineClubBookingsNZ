@@ -27,7 +27,6 @@ import {
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { GROUP_SETTLEMENT_INVOICE_ROLE } from "@/lib/group-settlement-invoice-binding";
-import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import { GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CODE } from "@/lib/xero-operation-error-codes";
 import { asRecord } from "@/lib/xero-json";
 import { scanSpacesWaitCode } from "@/lib/xero-operation-wait-spacing";
@@ -260,21 +259,6 @@ export function readDeferredGroupInvoiceEmail(payload: unknown): { invoice: unkn
   return record?.deferredInvoiceSend === GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CAUSE
     ? { invoice: record.invoice ?? null }
     : null;
-}
-
-/**
- * Thrown after the fence committed with the email owed. The outbox returns the
- * row to PENDING under the deferred code, marker kept, rather than failing it.
- */
-export class GroupSettlementInvoiceEmailDeferredError extends XeroAppliedCreditOperationBusyError {
-  constructor(settlementId: string, invoiceId: string) {
-    super(
-      `The combined invoice ${invoiceId} for group settlement ${settlementId} is raised but its email was not sent; the outbox asks Xero again shortly`,
-      null,
-      GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CODE,
-    );
-    this.name = "GroupSettlementInvoiceEmailDeferredError";
-  }
 }
 
 /** Leave a row whose email is owed out of the scan until its recheck is due. */

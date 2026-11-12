@@ -58,12 +58,12 @@ import {
 } from "@/lib/xero-group-settlement-void-outbox";
 import { isGroupSettlementBoundToInvoice } from "@/lib/group-settlement-invoice-binding";
 import { voidCancelledGroupSettlementInvoice } from "./xero-group-settlement-invoice-voids";
+import { GroupSettlementInvoiceEmailDeferredError } from "@/lib/xero-applied-credit-operation-serialization";
 import {
   boundGroupSettlementInvoiceCompletion,
   currentGroupSettlementInvoiceAttempt,
   deferredGroupInvoiceEmailPayload,
   GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CAUSE,
-  GroupSettlementInvoiceEmailDeferredError,
   groupSettlementInvoiceCreateKey,
   groupSettlementInvoiceLink,
   parseGroupSettlementInvoiceAttempt,

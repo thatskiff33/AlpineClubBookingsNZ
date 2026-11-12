@@ -357,7 +357,7 @@ import {
   queueXeroBookingEditSettlement,
 } from "@/lib/xero-booking-edit-settlement";
 import { XERO_OUTBOX_QUEUE_TYPES } from "@/lib/xero-operation-outbox-payload";
-import { XeroAppliedCreditOperationBusyError, XeroRefundCreditNoteInFlightError, XeroRefundCreditNoteUnrecordedError } from "@/lib/xero-applied-credit-operation-serialization";
+import { GroupSettlementInvoiceEmailDeferredError, XeroAppliedCreditOperationBusyError, XeroRefundCreditNoteInFlightError, XeroRefundCreditNoteUnrecordedError } from "@/lib/xero-applied-credit-operation-serialization";
 import { XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } from "@/lib/xero-operation-error-codes";
 import { REFUND_NOTE_AWAITING_RESOLVE_RECHECK_MS } from "@/lib/xero-refund-note-in-flight";
 import { matchesWhere } from "./support/prisma-where";
@@ -2911,7 +2911,6 @@ describe("processQueuedXeroOutboxOperations", () => {
   });
 
   it("MUTATION (#4919): hands a group invoice whose email is owed back to PENDING under its wait code, never FAILED", async () => {
-    const { GroupSettlementInvoiceEmailDeferredError } = await import("@/lib/xero-group-settlement-invoice-outbox");
     const { GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CODE } = await import("@/lib/xero-operation-error-codes");
     mocks.findManyOperations.mockResolvedValue([
       {
