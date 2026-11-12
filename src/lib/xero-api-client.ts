@@ -13,6 +13,7 @@
  */
 
 import { XeroClient } from "xero-node";
+import { xeroTestClientOverride } from "./xero-test-client-override";
 import logger from "@/lib/logger";
 import {
   recordXeroApiUsage,
@@ -156,6 +157,10 @@ function refreshFailureRequiresReconnect(err: unknown): boolean {
 // Simple mutex to prevent concurrent token refreshes from using the same refresh token
 let _tokenRefreshPromise: Promise<{ xero: XeroClient; tenantId: string }> | null = null;
 
+// Test-only provider seam (#4908): tokens are skipped; the daily-limit latch,
+// callXeroApi's environment gate and withXeroRetry all still run.
+export { setXeroClientForTests, resetXeroClientForTests } from "./xero-test-client-override";
+
 function tokenNeedsRefresh(tokens: XeroTokenRecord, now = Date.now()) {
   return now >= tokens.expiresAt.getTime() - TOKEN_REFRESH_BUFFER_MS;
 }
@@ -223,6 +228,9 @@ export async function getAuthenticatedXeroClient(): Promise<{
   tenantId: string;
 }> {
   throwIfXeroDailyLimitActive();
+
+  const testClient = xeroTestClientOverride();
+  if (testClient) return testClient;
 
   const tokens = await loadXeroTokens();
   if (!tokens) {
