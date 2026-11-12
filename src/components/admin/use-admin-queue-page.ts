@@ -115,3 +115,27 @@ export function useAdminQueuePage({
     pagination,
   }
 }
+
+/**
+ * Read one deep-linked record from its queue route when it is not on the page
+ * the list loaded, so the panel can pin it above the page (INV-OPS-017). Reads
+ * across every status so a link still lands whatever filter is showing.
+ * Answers null when the record is gone or the read fails; the list itself is
+ * unaffected.
+ */
+export async function fetchFocusedQueueRecord<Row extends { id: string }>(
+  route: string,
+  recordKey: "bookingId" | "requestId",
+  recordId: string,
+): Promise<Row | null> {
+  try {
+    const params = new URLSearchParams({ status: "ALL", [recordKey]: recordId, pageSize: "1" })
+    const response = await fetch(`${route}?${params.toString()}`)
+    if (!response.ok) return null
+    const body = (await response.json()) as { data?: unknown }
+    const rows = Array.isArray(body?.data) ? (body.data as Row[]) : []
+    return rows.find((row) => row.id === recordId) ?? null
+  } catch {
+    return null
+  }
+}

@@ -64,3 +64,7 @@ export function parseAdminListPageParam(value: string | null | undefined): numbe
   const page = Number(value)
   return Number.isSafeInteger(page) && page >= 1 ? page : 1
 }
+
+/** The note beside a deep-linked record pinned above a queue page. */
+export const PINNED_QUEUE_RECORD_NOTE =
+  "Opened from a link — shown here because it is not on the page below."

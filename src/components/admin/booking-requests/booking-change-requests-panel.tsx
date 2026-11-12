@@ -8,6 +8,15 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Button, type ButtonProps } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
+import { Pagination } from "@/components/admin/admin-pagination";
+import {
+  fetchFocusedQueueRecord,
+  useAdminQueuePage,
+} from "@/components/admin/use-admin-queue-page";
+import {
+  PINNED_QUEUE_RECORD_NOTE,
+  parseAdminListPageParam,
+} from "@/lib/admin-list-page";
 import { bookingOwner } from "@/lib/booking-owner";
 import { ChangeRequestPaymentLine } from "@/components/admin/booking-requests/change-request-payment-line";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
@@ -92,6 +101,7 @@ function buildBookingChangeRequestsPath(
   fixedSearchParams: Record<string, string>,
   status: RequestFilter,
   requestId: string | null,
+  page: number,
 ) {
   return buildBookingRequestDatasetPath({
     basePath,
@@ -101,6 +111,7 @@ function buildBookingChangeRequestsPath(
     defaultStatus: "REQUESTED",
     recordKey: "requestId",
     recordId: requestId,
+    page,
   });
 }
 
@@ -121,6 +132,14 @@ export function BookingChangeRequestsPanel({
   const [filter, setFilter] = useState<RequestFilter>(
     isRequestFilter(initialFilter) ? initialFilter : defaultFilter
   );
+  const queuePage = useAdminQueuePage({
+    filterKey: filter,
+    initialPage: parseAdminListPageParam(searchParams.get("page")),
+  });
+  const { page, receive } = queuePage;
+  // INV-OPS-017: a deep-linked request that is not on the loaded page is read
+  // by id and pinned above it, so the link always lands on its request.
+  const [pinnedRequest, setPinnedRequest] = useState<BookingChangeRequestData | null>(null);
   const [loading, setLoading] = useState(true);
   /**
    * Every open decision draft, keyed by the request it belongs to.
@@ -183,6 +202,7 @@ export function BookingChangeRequestsPanel({
     fixedSearchParams,
     filter,
     requestId,
+    page,
   );
 
   useEffect(() => {
@@ -193,12 +213,25 @@ export function BookingChangeRequestsPanel({
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`/api/admin/booking-change-requests?status=${filter}`);
+      const response = await fetch(
+        `/api/admin/booking-change-requests?status=${filter}&page=${page}`,
+      );
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || "Failed to load booking change requests");
       }
-      setRequests(Array.isArray(data?.data) ? data.data : []);
+      const rows: BookingChangeRequestData[] = Array.isArray(data?.data) ? data.data : [];
+      setRequests(rows);
+      receive(data, rows.length);
+      setPinnedRequest(
+        requestId && !rows.some((request) => request.id === requestId)
+          ? await fetchFocusedQueueRecord<BookingChangeRequestData>(
+              "/api/admin/booking-change-requests",
+              "requestId",
+              requestId,
+            )
+          : null,
+      );
       setMemberGuestFind(data?.memberGuestFind ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load booking change requests");
@@ -207,7 +240,7 @@ export function BookingChangeRequestsPanel({
     }
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.
-  }, [filter, setError, setLoading, setRequests, setMemberGuestFind]);
+  }, [filter, page, receive, requestId, setError, setLoading, setRequests, setMemberGuestFind]);
 
   useEffect(() => {
     fetchRequests();
@@ -307,6 +340,8 @@ export function BookingChangeRequestsPanel({
     }
   }
 
+  const shownRequests = pinnedRequest ? [pinnedRequest, ...requests] : requests;
+
   /*
     #2160: the view-only explanation lives here, once, at the top of the section —
     announced on arrival and ahead of the controls it explains — instead of on
@@ -372,13 +407,13 @@ export function BookingChangeRequestsPanel({
 
       {loading ? (
         <div className="py-8 text-center">Loading...</div>
-      ) : requests.length === 0 ? (
+      ) : shownRequests.length === 0 ? (
         <div className="py-8 text-center text-muted-foreground">
           No {filter === "ALL" ? "" : filter.toLowerCase() + " "}booking change requests found.
         </div>
       ) : (
         <div className="space-y-4">
-          {requests.map((request) => {
+          {shownRequests.map((request) => {
             const summary =
               request.requestedChanges?.requested?.summary ||
               "Locked-period booking change";
@@ -403,6 +438,11 @@ export function BookingChangeRequestsPanel({
                 className={request.id === requestId ? "border-warning-6" : undefined}
               >
                 <CardHeader>
+                  {request === pinnedRequest ? (
+                    <p className="text-sm font-medium text-warning-11">
+                      {PINNED_QUEUE_RECORD_NOTE}
+                    </p>
+                  ) : null}
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <CardTitle className="text-lg">{owner.firstName} {owner.lastName}</CardTitle>
@@ -677,6 +717,9 @@ export function BookingChangeRequestsPanel({
           })}
         </div>
       )}
+      {!loading && queuePage.pagination ? (
+        <Pagination {...queuePage.pagination} aria-label="Booking change request pages" />
+      ) : null}
       </div>
     </div>
   );

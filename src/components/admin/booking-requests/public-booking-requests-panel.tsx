@@ -3,13 +3,22 @@ import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import Link from "next/link";
 import { useClubFormat } from "@/components/club-format-provider";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { pluralHutLeaderLabel } from "@/config/hut-leader-label";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
+import { Pagination } from "@/components/admin/admin-pagination";
+import {
+  fetchFocusedQueueRecord,
+  useAdminQueuePage,
+} from "@/components/admin/use-admin-queue-page";
+import {
+  PINNED_QUEUE_RECORD_NOTE,
+  parseAdminListPageParam,
+} from "@/lib/admin-list-page";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -412,6 +421,7 @@ function buildPublicRequestsPath(
   fixedSearchParams: Record<string, string>,
   status: PublicRequestFilter,
   requestId: string | null,
+  page: number,
 ) {
   return buildBookingRequestDatasetPath({
     basePath,
@@ -421,6 +431,7 @@ function buildPublicRequestsPath(
     defaultStatus: "QUEUE",
     recordKey: "requestId",
     recordId: requestId,
+    page,
   });
 }
 
@@ -468,6 +479,18 @@ export function PublicBookingRequestsPanel({
   const [requests, setRequests] = useState<PublicBookingRequestData[]>([]);
   const [filter, setFilter] = useState<PublicRequestFilter>(
     isPublicRequestFilter(initialFilter) ? initialFilter : "QUEUE"
+  );
+  const queuePage = useAdminQueuePage({
+    filterKey: filter,
+    initialPage: parseAdminListPageParam(searchParams.get("page")),
+  });
+  const { page, receive } = queuePage;
+  // INV-OPS-017: a deep-linked request that is not on the loaded page is read
+  // by id and pinned above it, so the link always lands on its request.
+  const [pinnedRequest, setPinnedRequest] = useState<PublicBookingRequestData | null>(null);
+  const shownRequests = useMemo(
+    () => (pinnedRequest ? [pinnedRequest, ...requests] : requests),
+    [pinnedRequest, requests],
   );
   const [loading, setLoading] = useState(true);
   const [actioningId, setActioningId] = useState<string | null>(null);
@@ -563,6 +586,7 @@ export function PublicBookingRequestsPanel({
     fixedSearchParams,
     filter,
     requestId,
+    page,
   );
 
   useEffect(() => {
@@ -573,12 +597,23 @@ export function PublicBookingRequestsPanel({
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`/api/admin/booking-requests?status=${filter}`);
+      const response = await fetch(`/api/admin/booking-requests?status=${filter}&page=${page}`);
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || "Failed to load booking requests");
       }
-      setRequests(Array.isArray(data?.data) ? data.data : []);
+      const rows: PublicBookingRequestData[] = Array.isArray(data?.data) ? data.data : [];
+      setRequests(rows);
+      receive(data, rows.length);
+      setPinnedRequest(
+        requestId && !rows.some((request) => request.id === requestId)
+          ? await fetchFocusedQueueRecord<PublicBookingRequestData>(
+              "/api/admin/booking-requests",
+              "requestId",
+              requestId,
+            )
+          : null,
+      );
       setMemberChoosesPayment(data.memberWholeLodgeChoosesPaymentMethod === true);
       return true;
     } catch (err) {
@@ -589,7 +624,16 @@ export function PublicBookingRequestsPanel({
     }
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.
-  }, [filter, setError, setLoading, setRequests, setMemberChoosesPayment]);
+  }, [
+    filter,
+    page,
+    receive,
+    requestId,
+    setError,
+    setLoading,
+    setRequests,
+    setMemberChoosesPayment,
+  ]);
 
   useEffect(() => {
     fetchRequests();
@@ -1210,14 +1254,14 @@ export function PublicBookingRequestsPanel({
   // ref only once fired so a request first seen without links still computes
   // when it later gains them.
   useEffect(() => {
-    for (const request of requests) {
+    for (const request of shownRequests) {
       if (linkConflictLoadedRef.current.has(request.id)) continue;
       if (!LINKING_EDITOR_STATUSES.has(request.status)) continue;
       if (request.linkedGuestMembers.length === 0) continue;
       linkConflictLoadedRef.current.add(request.id);
       void refreshLinkConflicts(request, request.linkedGuestMembers);
     }
-  }, [requests, refreshLinkConflicts]);
+  }, [shownRequests, refreshLinkConflicts]);
 
   function handleLinkMember(
     request: PublicBookingRequestData,
@@ -1421,6 +1465,7 @@ export function PublicBookingRequestsPanel({
           setRequests((current) =>
             current.filter((candidate) => candidate.id !== request.id),
           );
+          setPinnedRequest((current) => (current?.id === request.id ? null : current));
           setDeclineRecovery({
             requestId: request.id,
             heldBookingId: request.heldBookingId,
@@ -1539,13 +1584,13 @@ export function PublicBookingRequestsPanel({
 
       {loading ? (
         <div className="py-8 text-center">Loading...</div>
-      ) : requests.length === 0 ? (
+      ) : shownRequests.length === 0 ? (
         <div className="py-8 text-center text-muted-foreground">
           No booking requests found for this filter.
         </div>
       ) : (
         <div className="space-y-4">
-          {requests.map((request) => {
+          {shownRequests.map((request) => {
             const isActioning = actioningId === request.id;
             // #2263: a member whole-lodge request has ONE admin lifecycle —
             // approve directly with a priced headcount, or decline. The quote,
@@ -1572,6 +1617,11 @@ export function PublicBookingRequestsPanel({
                 className={request.id === requestId ? "border-warning-6" : undefined}
               >
                 <CardHeader>
+                  {request === pinnedRequest ? (
+                    <p className="text-sm font-medium text-warning-11">
+                      {PINNED_QUEUE_RECORD_NOTE}
+                    </p>
+                  ) : null}
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <CardTitle className="text-lg">
@@ -2663,6 +2713,9 @@ export function PublicBookingRequestsPanel({
           })}
         </div>
       )}
+      {!loading && queuePage.pagination ? (
+        <Pagination {...queuePage.pagination} aria-label="Booking request pages" />
+      ) : null}
 
       {/* #1791: per-decline requester-email choice, mirroring the #1705/#1769a
           pattern. Declining always emails the requester (contactEmail is always
