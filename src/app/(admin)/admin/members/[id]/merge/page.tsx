@@ -353,8 +353,12 @@ export default function MemberMergePage({
         </Button>
       )}
 
-      <FocusedActionError id="member-merge-error" error={error}
-        attentionKey={errorAttentionKey} className="mt-4" />
+      <FocusedActionError
+        id="member-merge-error"
+        error={error}
+        attentionKey={errorAttentionKey}
+        className="mt-4"
+      />
 
       {/* Preview panel */}
       {preview && (

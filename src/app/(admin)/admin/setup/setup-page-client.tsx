@@ -304,6 +304,8 @@ export function SetupPageClient({
       }
       setReadiness(body.readiness);
       setProgress(body.progress);
+      // A reload that finds setup reopened retires this session's finish notice.
+      if (!body.progress.completedAt) setFinishMessage("");
       return body;
     } catch (loadError) {
       setLoadError(

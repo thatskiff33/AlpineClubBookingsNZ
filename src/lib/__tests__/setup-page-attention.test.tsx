@@ -172,6 +172,30 @@ describe("Setup action attention", () => {
     expect(document.activeElement).toBe(refresh);
   });
 
+  it("drops the finish notice when a refresh finds setup reopened", async () => {
+    mount();
+    const finish = await screen.findByRole("button", {
+      name: "Mark Setup Complete",
+    });
+    const completed = response({
+      ...setup,
+      progress: { ...setup.progress, completedAt: "2026-07-01T00:00:00.000Z" },
+    });
+    fetchMock.mockResolvedValueOnce(response({})).mockResolvedValueOnce(completed);
+    fireEvent.click(finish);
+    const status = screen.getByRole("status");
+    await waitFor(() =>
+      expect(status).toHaveTextContent("Setup has been marked complete."),
+    );
+    // Another admin reopened setup; this page's Refresh reloads it.
+    fetchMock.mockResolvedValue(response(setup));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(status).toBeEmptyDOMElement());
+    expect(
+      screen.queryByText("Setup has been marked complete."),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows saved completion as a banner without announcing it on load", async () => {
     fetchMock.mockResolvedValue(
       response({
