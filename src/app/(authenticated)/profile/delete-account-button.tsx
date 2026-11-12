@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,10 +15,24 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { AlertTriangle } from "lucide-react";
 
+/** The member's open deletion request, its date already in club time. */
+export interface PendingDeletionRequest {
+  requestedOn: string;
+}
+
 /**
  * F-COMP-04: Request Account Deletion button with confirmation modal.
+ *
+ * #4956: while the member has an open request (read by the profile page through
+ * `OPEN_DELETION_REQUEST_STATUSES`), a lasting notice replaces the button, so a
+ * reload never offers the irreversible-action dialog again.
  */
-export function DeleteAccountButton() {
+export function DeleteAccountButton({
+  pendingRequest = null,
+}: {
+  pendingRequest?: PendingDeletionRequest | null;
+}) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -40,6 +55,8 @@ export function DeleteAccountButton() {
       }
       setSubmitted(true);
       setOpen(false);
+      // The server-read notice (with the request's date) takes over.
+      router.refresh();
     } catch {
       setError("Failed to submit request. Please try again.");
     } finally {
@@ -47,9 +64,24 @@ export function DeleteAccountButton() {
     }
   }
 
+  if (pendingRequest) {
+    return (
+      <p
+        role="status"
+        className="text-sm text-info-11 bg-info-3 border border-info-6 rounded-md px-3 py-2"
+      >
+        You asked for your account to be deleted on {pendingRequest.requestedOn}.
+        An admin will review it and contact you by email.
+      </p>
+    );
+  }
+
   if (submitted) {
     return (
-      <p className="text-sm text-success-11 bg-success-3 border border-success-6 rounded-md px-3 py-2">
+      <p
+        role="status"
+        className="text-sm text-success-11 bg-success-3 border border-success-6 rounded-md px-3 py-2"
+      >
         Your deletion request has been submitted. An admin will review it and
         contact you by email.
       </p>

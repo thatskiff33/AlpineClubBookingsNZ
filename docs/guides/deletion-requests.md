@@ -19,7 +19,8 @@ to read the queues and membership **edit** to approve or reject.
 ## When you'd use it
 
 - A member has asked (through their profile) to delete their account and you need
-  to review it.
+  to review it. Until you approve or reject it, the member's profile shows the
+  date they asked, in place of the request button.
 - A member record was created in error (a typo duplicate with no meaningful
   history) and an admin has raised a permanent hard-delete for a second admin to
   approve.

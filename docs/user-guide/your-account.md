@@ -50,7 +50,8 @@ set a password, never at login.
 In the **Change Email** section, enter your **New email** and click **Request
 Email Change**. A verification link is sent to the **new** address; the change
 only takes effect after you click that link. Your current email keeps working
-until then.
+until then. While the link is waiting to be clicked, the section names the new
+address and when the link expires; requesting another change replaces it.
 
 ### Two-factor authentication (2FA)
 
@@ -126,7 +127,8 @@ The **Privacy & Data** section gives you two rights:
   account. This is **irreversible** and an admin reviews it first; on approval
   you are anonymised, your future bookings are cancelled, and your login is
   deactivated. You always receive a final privacy receipt when a deletion is
-  approved.
+  approved. While your request is waiting for review, the section shows the
+  date you asked instead of the button, so you can see it was received.
 
 ## What to expect
 

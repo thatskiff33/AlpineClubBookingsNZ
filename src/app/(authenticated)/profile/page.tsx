@@ -52,6 +52,8 @@ import { getFirstAccessibleAdminHref } from "@/lib/admin-permissions";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { clubTime } from "@/lib/club-time/server";
+import { systemClubClock } from "@/lib/club-time";
+import { OPEN_DELETION_REQUEST_STATUSES } from "@/lib/deletion-request-decision";
 import { formatDateOnly } from "@/lib/date-only";
 import {
   grantSelfDietaryAccess,
@@ -235,6 +237,41 @@ export default async function ProfilePage({
   // the member dashboard. Members with no accessible admin page have no
   // meaningful choice, so the control is hidden.
   const canChooseLanding = getFirstAccessibleAdminHref(member) !== null;
+
+  // #4956: requests the member started that wait on someone else (an officer,
+  // or the member clicking a link) stay on the page, read from the server, until
+  // they resolve. Admins cannot self-delete, so their deletion read is skipped.
+  // Both are the member's own rows: this page only ever renders the signed-in
+  // member, never a family or delegated view.
+  const [openDeletionRequest, pendingEmailChangeToken] = await Promise.all([
+    isAdmin
+      ? null
+      : prisma.deletionRequest.findFirst({
+          where: {
+            memberId: member.id,
+            status: { in: OPEN_DELETION_REQUEST_STATUSES },
+          },
+          select: { createdAt: true },
+          orderBy: { createdAt: "desc" },
+        }),
+    prisma.emailChangeToken.findFirst({
+      where: {
+        memberId: member.id,
+        expiresAt: { gt: systemClubClock.nowInstant() },
+      },
+      select: { newEmail: true, expiresAt: true },
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
+  const pendingDeletionRequest = openDeletionRequest
+    ? { requestedOn: club.instantDate(openDeletionRequest.createdAt) }
+    : null;
+  const pendingEmailChange = pendingEmailChangeToken
+    ? {
+        newEmail: pendingEmailChangeToken.newEmail,
+        expiresOn: club.instantDateTime(pendingEmailChangeToken.expiresAt),
+      }
+    : null;
 
   const currentSub = member.subscriptions.find(
     (s) => s.seasonYear === currentSeasonYear,
@@ -642,7 +679,10 @@ export default async function ProfilePage({
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <ChangeEmailForm currentEmail={member.email} />
+            <ChangeEmailForm
+              currentEmail={member.email}
+              pendingChange={pendingEmailChange}
+            />
           </CardContent>
         </Card>
 
@@ -693,7 +733,9 @@ export default async function ProfilePage({
                 Request permanent deletion of your account. An admin will review
                 your request. This action is irreversible.
               </p>
-              {!isAdmin && <DeleteAccountButton />}
+              {!isAdmin && (
+                <DeleteAccountButton pendingRequest={pendingDeletionRequest} />
+              )}
               {isAdmin && (
                 <p className="text-sm text-muted-foreground italic">
                   Admin accounts cannot be self-deleted. Contact another admin.
