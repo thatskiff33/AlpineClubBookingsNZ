@@ -73,7 +73,6 @@ without rebuilding. A blank browser DSN disables browser error reports and
 replay. Source-map upload credentials are build-time settings. See
 [`CONFIGURATION.md`](../../CONFIGURATION.md#sentry).
 
-
 ### 3. Seed default — "the starting value is wrong for everyone"
 
 A **seed default** is the value a fresh install begins with: the seeded

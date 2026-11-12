@@ -2766,8 +2766,8 @@ rate-limited, or temporarily unavailable.
 
 | Variable                                  | Description                                                                                                      |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `SENTRY_DSN`                              | Server/edge Sentry DSN, read at runtime.                                                                                          |
-| `NEXT_PUBLIC_SENTRY_DSN`                  | Browser Sentry DSN, read at runtime through a public no-store endpoint; blank disables browser reporting.                                                                                              |
+| `SENTRY_DSN`                              | Server/edge Sentry DSN, read at runtime.                                                                         |
+| `NEXT_PUBLIC_SENTRY_DSN`                  | Browser Sentry DSN, read at runtime through a public no-store endpoint; blank disables browser reporting.        |
 | `SENTRY_ORG`                              | Sentry organization slug for source map uploads.                                                                 |
 | `SENTRY_PROJECT`                          | Sentry project slug for source map uploads.                                                                      |
 | `SENTRY_AUTH_TOKEN`                       | Sentry auth token for source map uploads during build.                                                           |

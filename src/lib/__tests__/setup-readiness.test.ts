@@ -230,19 +230,19 @@ describe("setup-readiness", () => {
     }
   });
 
-describe("Sentry runtime readiness", () => {
-  it.each([undefined, "", "   ", "https://public@example.ingest.sentry.io/1"])("reports browser reporting from the runtime environment (%s)", browserDsn => {
-    const report = buildSetupReadiness({
-      env: { ...baseEnv, NEXT_PUBLIC_SENTRY_DSN: browserDsn },
-      database: completeDatabase,
-      configDir: makeConfigDir(),
+  describe("Sentry runtime readiness", () => {
+    it.each([undefined, "", "   ", "https://public@example.ingest.sentry.io/1"])("reports browser reporting from the runtime environment (%s)", browserDsn => {
+      const report = buildSetupReadiness({
+        env: { ...baseEnv, NEXT_PUBLIC_SENTRY_DSN: browserDsn },
+        database: completeDatabase,
+        configDir: makeConfigDir(),
+      });
+      const sentry = findStep(report, "sentry")!;
+      expect(sentry.status).toBe(browserDsn?.trim() ? "complete" : "warning");
+      expect(sentry.details.join(" ")).toContain(browserDsn?.trim() ? "configured at runtime" : "off");
+      expect(sentry.details.join(" ")).not.toContain("https://public@");
     });
-    const sentry = findStep(report, "sentry")!;
-    expect(sentry.status).toBe(browserDsn?.trim() ? "complete" : "warning");
-    expect(sentry.details.join(" ")).toContain(browserDsn?.trim() ? "configured at runtime" : "off");
-    expect(sentry.details.join(" ")).not.toContain("https://public@");
   });
-});
 
   it("reports a complete setup without exposing secret values", () => {
     const readiness = buildSetupReadiness({
