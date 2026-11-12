@@ -1,11 +1,84 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import fixtures from "./fixtures/provider-contracts.json";
+import synthetic from "./fixtures/provider-contracts.json";
 import { StripeFake } from "./stripe-fake";
 import { XeroFake } from "./xero-fake";
 import { invoiceWire, invoiceWireDueCents } from "./round-trip-harness";
+import { scanForSecrets } from "@/lib/diagnostics/knowledge/secret-scan";
+
+/**
+ * Where the pinned expectations came from (#4908). `synthetic` fixtures are
+ * hand-written from public docs and carry no capture data; `recorded-sandbox`
+ * ones are sanitised sandbox replies and must say when they were captured,
+ * against which API versions, and where the owner's review is recorded
+ * (`docs/TESTING.md`, "Capturing sandbox fixtures").
+ */
+type Provenance = {
+  kind: "synthetic" | "recorded-sandbox";
+  capturedOn: string | null;
+  apiVersions: { xero: string | null; stripe: string | null };
+  reviewedIn: string | null;
+};
+
+/** The problems with a fixture file's provenance and content; empty when it is usable. */
+function provenanceProblems(file: { provenance: Provenance }): string[] {
+  const { kind, capturedOn, apiVersions, reviewedIn } = file.provenance;
+  const problems: string[] = [];
+  const captureFields = [capturedOn, apiVersions.xero, apiVersions.stripe, reviewedIn];
+  if (kind === "synthetic") {
+    if (captureFields.some((value) => value !== null)) problems.push("a synthetic fixture carries no capture date, API version or review");
+  } else if (kind === "recorded-sandbox") {
+    // Format only: the frozen test clock would date any real capture in the future.
+    if (!capturedOn || !/^\d{4}-\d{2}-\d{2}$/.test(capturedOn)) problems.push("capturedOn must be a YYYY-MM-DD date");
+    if (!apiVersions.xero || !apiVersions.stripe) problems.push("a recording names both providers' API versions");
+    if (!reviewedIn || !/^#\d+$/.test(reviewedIn)) problems.push("reviewedIn names the issue or PR (#n) holding the owner's review");
+  } else {
+    problems.push(`unknown fixture kind ${String(kind)}`);
+  }
+  // Public repository: a recording keeps no address, secret or provider-minted id.
+  const text = JSON.stringify(file);
+  if (/[\w.+-]+@[\w-]+\.[\w.]+/.test(text)) problems.push("an email address");
+  // The bundle generator's scanner, plus prefixes it confirms by entropy but a fixture must never hold at all.
+  if (scanForSecrets(text).length || /\b(?:sk|rk|pk)_(?:live|test)_|\bwhsec_|\bBearer\s|\beyJ[\w-]{8,}\.[\w-]{8,}\./i.test(text)) problems.push("a credential");
+  if (/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i.test(text)) problems.push("a Xero GUID; replace it with a local alias");
+  if (/\b(?:pi|ch|py|re|txn|po|in|ii|sub|si|seti|cs|cus|acct|evt|pm|src|card|tok)_[A-Za-z0-9]{14,}\b/.test(text)) problems.push("a Stripe object id; replace it with a local alias");
+  return problems;
+}
+
+/**
+ * A reviewed sandbox recording, when one is committed beside the synthetic set,
+ * replaces it with the same keys; otherwise the synthetic set runs. The suite's
+ * title names the kind it ran.
+ */
+const RECORDED = join(import.meta.dirname, "fixtures", "provider-contracts.recorded-sandbox.json");
+type Fixtures = typeof synthetic & { provenance: Provenance };
+const fixtures: Fixtures = existsSync(RECORDED) ? JSON.parse(readFileSync(RECORDED, "utf8")) : synthetic;
+const provenance = fixtures.provenance;
+
+it("provider fixture provenance is complete for its kind and carries nothing private", () => {
+  expect(synthetic.provenance.kind).toBe("synthetic");
+  expect(provenanceProblems(synthetic as Fixtures)).toEqual([]);
+  expect(provenanceProblems(fixtures)).toEqual([]);
+  if (fixtures !== synthetic) expect(provenance.kind).toBe("recorded-sandbox");
+  const recorded: Provenance = { kind: "recorded-sandbox", capturedOn: "2026-06-30", apiVersions: { xero: "2.0", stripe: "2026-05-28.basil" }, reviewedIn: "#4908" };
+  expect(provenanceProblems({ provenance: recorded })).toEqual([]);
+  expect(provenanceProblems({ provenance: { ...recorded, capturedOn: "2026-11-12" } })).toEqual([]);
+  expect(provenanceProblems({ provenance: { ...recorded, capturedOn: "12/11/2026" } })).toEqual(["capturedOn must be a YYYY-MM-DD date"]);
+  expect(provenanceProblems({ provenance: { ...recorded, apiVersions: { xero: "2.0", stripe: null }, reviewedIn: null } })).toHaveLength(2);
+  expect(provenanceProblems({ provenance: { ...synthetic.provenance as Provenance, capturedOn: "2026-06-30" } })).toEqual(["a synthetic fixture carries no capture date, API version or review"]);
+  expect(provenanceProblems({ provenance: synthetic.provenance as Provenance, contact: "someone@example.com", key: "sk_test_abc", tenant: "0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0", intent: "pi_3Q0abcdEFGH12345" } as { provenance: Provenance })).toEqual([
+    "an email address", "a credential", "a Xero GUID; replace it with a local alias", "a Stripe object id; replace it with a local alias",
+  ]);
+  // A Xero access token (a JWT), a scanner-only shape, and the Stripe ids a capture also mints.
+  const withField = (value: string) => provenanceProblems({ provenance: synthetic.provenance as Provenance, value } as { provenance: Provenance });
+  expect(withField("eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4eXoifQ.c2lnbmF0dXJl")).toEqual(["a credential"]);
+  expect(withField(`ghp_${"aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5"}`)).toEqual(["a credential"]);
+  for (const id of ["txn_1Q0abcdEFGH12345", "py_1Q0abcdEFGH12345", "seti_1Q0abcdEFGH12345"]) expect(withField(id)).toEqual(["a Stripe object id; replace it with a local alias"]);
+});
 
 /** Fixed expectations are authored separately in JSON; never regenerate from the fake. */
-describe("provider fixture contracts (synthetic; sandbox conformance unverified)", () => {
+describe(`provider fixture contracts (kind: ${provenance.kind}${provenance.capturedOn ? `, captured ${provenance.capturedOn}` : "; sandbox conformance unverified"})`, () => {
   it("pins Xero partial payment, allocation refusal, allocation removal, void and payment deletion", () => {
     const xero = new XeroFake();
     const c = xero.createContact("contact", "member-a");
