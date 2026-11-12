@@ -7,6 +7,7 @@ import {
 import logger from "@/lib/logger";
 import { getClientIp } from "@/lib/rate-limit";
 import { requireAdmin } from "@/lib/session-guards";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const deleteRequestSchema = z.object({
   reason: z.string().trim().min(1).max(1000),
@@ -20,6 +21,8 @@ export async function POST(
   if (!guard.ok) return guard.response;
   const session = guard.session;
   let body: z.infer<typeof deleteRequestSchema>;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = deleteRequestSchema.parse(await request.json());
   } catch {

@@ -61,6 +61,7 @@ import {
   DELETED_ACCOUNT_BULK_REACTIVATE_MESSAGE,
   isDeletedAccountRecord,
 } from "@/lib/deleted-account";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const bulkUpdateSchema = z.object({
   ids: z.array(z.string()).min(1, "At least one member ID is required").max(100),
@@ -84,6 +85,8 @@ export async function POST(req: NextRequest) {
   if (!guard.ok) return guard.response;
   const session = guard.session;
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await req.json();
   } catch {
