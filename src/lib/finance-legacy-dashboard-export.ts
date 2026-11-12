@@ -6,6 +6,7 @@ import {
 } from "@/lib/finance-booking-metrics";
 import { clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
+import { parseFinanceBookingMetricDate } from "@/lib/finance-booking-metric-calculations";
 import { prisma } from "@/lib/prisma";
 import { buildBookingDeletedWhere } from "@/lib/booking-delete-visibility";
 import { formatCentsPlain } from "@/lib/utils";
@@ -14,7 +15,6 @@ import {
   type BookingMoneyReconciliationReason,
 } from "@/lib/booking-money-reconciliation";
 
-const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MILLISECONDS_PER_DAY = 86_400_000;
 
 const legacyDashboardBookingExportSelect =
@@ -87,19 +87,6 @@ export interface LegacyDashboardBookingExportResult {
   asOfDate: string;
   bookings: LegacyDashboardBookingRow[];
   forward_bookings: LegacyDashboardForwardBookingRow[];
-}
-
-function parseIsoDate(value: string, fieldName: string): Date {
-  if (!ISO_DATE_PATTERN.test(value)) {
-    throw new Error(`${fieldName} must use YYYY-MM-DD`);
-  }
-
-  const parsed = new Date(`${value}T00:00:00.000Z`);
-  if (formatDateOnly(parsed) !== value) {
-    throw new Error(`${fieldName} must be a valid date`);
-  }
-
-  return parsed;
 }
 
 function toIsoDate(value: Date): string {
@@ -264,11 +251,11 @@ export async function getLegacyDashboardBookingExport(input: {
    */
   clubTimeZone: ClubTimeZone;
 }): Promise<LegacyDashboardBookingExportResult> {
-  const historyStartDate = parseIsoDate(
+  const historyStartDate = parseFinanceBookingMetricDate(
     input.historyStartDate,
     "historyStartDate"
   );
-  const asOfDate = parseIsoDate(input.asOfDate, "asOfDate");
+  const asOfDate = parseFinanceBookingMetricDate(input.asOfDate, "asOfDate");
   const forwardStartDate = addUtcDays(asOfDate, 1);
 
   const bookings = await prisma.booking.findMany({

@@ -432,6 +432,22 @@ describe("#25: Eligible Members API", () => {
     expect(res.status).toBe(400);
   });
 
+  it.each([
+    ["startDate=2026-02-30&endDate=2026-03-02"],
+    ["startDate=2026-02-26&endDate=2026-02-30"],
+  ])("returns 400 for a date that is not a real calendar day (%s)", async (query) => {
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
+
+    const { GET } = await import("@/app/api/admin/hut-leaders/eligible-members/route");
+    const { NextRequest } = await import("next/server");
+    const req = new NextRequest(`http://localhost/api/admin/hut-leaders/eligible-members?${query}&lodgeId=lodge-1`);
+
+    const res = await GET(req);
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "startDate and endDate are required (YYYY-MM-DD)" });
+    expect(mockPrisma.bookingGuest.findMany).not.toHaveBeenCalled();
+  });
+
   it("returns 403 for non-admin", async () => {
     mockAuth.mockResolvedValue({ user: { id: "u1", role: "USER", accessRoles: [{ role: "USER" }] } });
     mockPrisma.member.findUnique.mockResolvedValue({

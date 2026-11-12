@@ -20,7 +20,7 @@ describe("finance booking metric calculations", () => {
   it("rejects invalid and reversed date-only metric windows", () => {
     expect(() =>
       getFinanceBookingMetricsWindowDayCount("2026-02-31", "2026-03-01")
-    ).toThrow("from must be a valid date");
+    ).toThrow("from must be a real calendar day as YYYY-MM-DD");
     expect(() =>
       getFinanceBookingMetricsWindowDayCount("2026-05-02", "2026-04-30")
     ).toThrow("to must be on or after from");

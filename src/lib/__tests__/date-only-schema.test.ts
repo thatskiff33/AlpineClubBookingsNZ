@@ -110,3 +110,76 @@ describe("census: no file declares its own date-only refine (#4931)", () => {
     expect(sites(MESSAGE)).toEqual([HOME]);
   });
 });
+
+describe("census: no hand-written date-only pattern outside the allowed files (ALP-580)", () => {
+  const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
+  const SHAPE_HOME = "src/lib/club-time/calendar-date.ts";
+
+  /**
+   * The files allowed to spell `/^\d{4}-\d{2}-\d{2}$/` outside a `.regex(` call,
+   * each with its reason. That pattern is a SHAPE check: it accepts `2026-02-30`.
+   * A real calendar day is `dateOnlyStringSchema` for a request field, or
+   * `isCalendarDate` from `@/lib/club-time` (what `isDateOnlyString` delegates
+   * to) for a bare check. Shrinks only; a new entry needs a reason a reviewer
+   * accepts.
+   *
+   * The `.regex(` spelling is not counted here; ALP-574's census owns it.
+   */
+  const ALLOWED: Record<string, string> = {
+    [SHAPE_HOME]: "the home of the shape check behind isCalendarDate, which isDateOnlyString delegates to",
+    "src/app/api/applications/route.ts":
+      "calendarDayOfBirth, its own validator: tells an applicant a mistyped shape from a non-existent day",
+    "src/app/api/display/state/route.ts": "already pairs the shape with isDateOnlyString",
+    "src/lib/config-transfer/values.ts":
+      "strictDate pairs the shape with a real-day check, to tell an importer which of the two a cell fails",
+    "src/lib/diagnostics/page-context/projections.ts":
+      "one shape in a closed vocabulary of values safe to travel unredacted, not a date validator",
+    "src/app/(admin)/admin/finance/payments/_applied-query-vocabulary.ts":
+      "mirrors admin-payments-service's regex dateSchema; ALP-574 (#5089) moves both onto isDateOnlyString, and the entry goes with it",
+  };
+
+  // The literal, unless it is the argument of `.regex(`.
+  const HAND_PATTERN = /(?<!\.regex\(\s*)\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\//g;
+
+  const sourceFiles = (): string[] => {
+    const found: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== "__tests__" && entry.name !== "node_modules") walk(full);
+        } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+          found.push(path.relative(REPO_ROOT, full).split(path.sep).join("/"));
+        }
+      }
+    };
+    walk(path.join(REPO_ROOT, "src"));
+    return found.sort();
+  };
+
+  const sites = () =>
+    sourceFiles().flatMap((file) => {
+      const code = stripComments(fs.readFileSync(path.join(REPO_ROOT, file), "utf8"));
+      return Array.from(code.matchAll(HAND_PATTERN), () => file);
+    });
+
+  it("finds the shape home's own pattern, so the scan is not blind", () => {
+    expect(sites().filter((file) => file === SHAPE_HOME)).toEqual([SHAPE_HOME]);
+  });
+
+  it("counts both spellings it refuses and skips the one ALP-574 owns", () => {
+    const count = (code: string) => Array.from(code.matchAll(HAND_PATTERN)).length;
+    expect(count("const P = /^\\d{4}-\\d{2}-\\d{2}$/;")).toBe(1);
+    expect(count("if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(v)) return;")).toBe(1);
+    expect(count("z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/)")).toBe(0);
+    expect(count("z\n  .string()\n  .regex(\n    /^\\d{4}-\\d{2}-\\d{2}$/,\n  )")).toBe(0);
+  });
+
+  it("finds no hand-written pattern outside the allowed files", () => {
+    expect(sites().filter((file) => !(file in ALLOWED))).toEqual([]);
+  });
+
+  it("finds every allowed file still spelling it, so a stale entry is removed", () => {
+    expect([...new Set(sites())].sort()).toEqual(Object.keys(ALLOWED).sort());
+  });
+});

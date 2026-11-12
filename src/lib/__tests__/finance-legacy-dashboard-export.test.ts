@@ -277,7 +277,7 @@ describe("finance legacy dashboard export", () => {
         asOfDate: "2026-04-10",
         clubTimeZone: CLUB_ZONE,
       })
-    ).rejects.toThrow("historyStartDate must use YYYY-MM-DD");
+    ).rejects.toThrow("historyStartDate must be a real calendar day as YYYY-MM-DD");
     expect(mockFindMany).not.toHaveBeenCalled();
   });
 });

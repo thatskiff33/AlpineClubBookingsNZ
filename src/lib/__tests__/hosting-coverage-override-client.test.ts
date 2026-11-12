@@ -42,6 +42,10 @@ describe("hosting coverage override client contract", () => {
         ...VALID,
         strandedBookings: [{ ...VALID.strandedBookings[0], nights: ["tomorrow"] }],
       },
+      {
+        ...VALID,
+        strandedBookings: [{ ...VALID.strandedBookings[0], nights: ["2026-02-30"] }],
+      },
     ]) {
       expect(readHostingCoverageOverridePrompt(invalid)).toBeNull();
     }

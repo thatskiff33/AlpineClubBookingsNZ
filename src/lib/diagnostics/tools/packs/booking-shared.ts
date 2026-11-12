@@ -94,6 +94,7 @@ import {
 import type { AdminPermissionArea } from "@/lib/admin-permissions";
 import { defuseRoleLabels, foldUntrustedText } from "../../untrusted-text";
 import { FINANCE_UNPARSEABLE_VALUE } from "./finance-shared";
+import { isCalendarDate } from "@/lib/club-time";
 
 /**
  * The area a CORRELATION entry requires and a RECORD-SCOPED audit entry does not.
@@ -371,19 +372,6 @@ export const PHONE_SEARCH_TERM = z
   .refine((digits) => digits.length >= 6 && digits.length <= 15);
 
 /**
- * A NEW ZEALAND CALENDAR DAY on the way out.
- *
- * Every date this pack projects is produced by `dateOnly()` in the entry's own SQL
- * or by `formatDateOnly` in its evidence source, so a value that is not
- * day-shaped means the projection read a column it did not think it was reading.
- * Reporting the sentinel makes that visible instead of shipping whatever the column
- * held into a field a consumer will parse as a date — and, worse, than shipping a
- * full ISO instant, which a model would read as a moment and narrate with a time
- * the booking does not have.
- */
-const PROJECTABLE_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
-
-/**
  * A boolean that may be genuinely UNKNOWN.
  *
  * `boolOf` maps everything that is not exactly `true` to `false`, which is right
@@ -407,11 +395,22 @@ export function nullableBoolOf(value: unknown): boolean | null {
   return value === true;
 }
 
+/**
+ * A NEW ZEALAND CALENDAR DAY on the way out.
+ *
+ * Every date this pack projects is produced by `dateOnly()` in the entry's own SQL
+ * or by `formatDateOnly` in its evidence source, so a value that is not a real
+ * calendar day means the projection read a column it did not think it was reading.
+ * Reporting the sentinel makes that visible instead of shipping whatever the column
+ * held into a field a consumer will parse as a date — and, worse, than shipping a
+ * full ISO instant, which a model would read as a moment and narrate with a time
+ * the booking does not have.
+ */
 export function dateOnlyOrNull(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   const text = String(value);
   if (text.length === 0) return null;
-  return PROJECTABLE_DATE_ONLY.test(text) ? text : FINANCE_UNPARSEABLE_VALUE;
+  return isCalendarDate(text) ? text : FINANCE_UNPARSEABLE_VALUE;
 }
 
 /**
