@@ -272,9 +272,9 @@ as root, only PostgreSQL commands run as the package's unprivileged `postgres`
 account, which owns the fresh cluster directory; migrations and tests retain
 the caller's checkout permissions. Non-root checks use their own account.
 The script discovers the installed server tools under `/usr/lib/postgresql/*/bin`.
-A missing PostgreSQL binary fails explicitly; unit-shard success is not database evidence. The
-broader `realdb-all` job's discovery and no-skip check on GitHub remain advisory,
-so cite that job's actual result separately before making the PR ready.
+A missing PostgreSQL binary fails explicitly; unit-shard success is not database evidence. On
+GitHub, the broader `realdb-all` job runs every realdb file and its no-skip
+check; the required `verify` check fails unless it passed (#4907).
 
 ## Checking `main` after a merge
 
