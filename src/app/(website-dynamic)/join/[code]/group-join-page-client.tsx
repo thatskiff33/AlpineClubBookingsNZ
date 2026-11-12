@@ -126,6 +126,9 @@ export function GroupJoinPageClient({
     return (
       <div className="mx-auto flex min-h-[60vh] max-w-lg items-center justify-center p-4">
         <Card className="w-full">
+          {/* No visible title while loading, but the page still needs its one
+              h1 in every render state (#4951). */}
+          <h1 className="sr-only">Join a group booking</h1>
           <CardContent className="py-8 text-center text-muted-foreground">Loading...</CardContent>
         </Card>
       </div>

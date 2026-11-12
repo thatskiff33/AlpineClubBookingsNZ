@@ -766,7 +766,7 @@ Four rules, and they are all deliberate:
 fails when any `CardTitle` under `src/app/(public)`, `src/app/(authenticated)`,
 `src/app/(website-dynamic)` or the shared member cards omits `headingLevel`, and
 holds the count of unclassified titles everywhere else at exactly
-`UNCLASSIFIED_BASELINE` (266 when #4951 landed). It fails both ways: a new
+`UNCLASSIFIED_BASELINE` (263 when #4951 landed). It fails both ways: a new
 unclassified title must be classified rather than raise the number, and a sweep
 that classifies titles lowers the constant in the same change. The admin,
 finance and lodge screens are swept by area. When the baseline reaches zero,

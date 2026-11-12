@@ -34,10 +34,11 @@ const MEMBER_FACING_ROOTS = [
 ];
 
 /**
- * Shared single-card member screens that live outside those roots (#4951 §2).
- * They render no `CardTitle` today; listing them keeps that true.
+ * Shared member screens that live outside those roots (#4951 §2): the cards
+ * a member or delegate reaches from an email link, held to the same rule.
  */
 const MEMBER_FACING_SHARED_FILES = [
+  "src/components/member-guest-delegate-consent-card.tsx",
   "src/components/membership-cancellation-confirm-card.tsx",
   "src/components/nomination-confirm-card.tsx",
   "src/components/partner-invite-claim-card.tsx",
@@ -47,7 +48,7 @@ const MEMBER_FACING_SHARED_FILES = [
  * The number of production `CardTitle`s that still omit `headingLevel`. Only
  * ever lower it: a sweep that classifies titles sets it to the new count.
  */
-const UNCLASSIFIED_BASELINE = 266;
+const UNCLASSIFIED_BASELINE = 263;
 
 function isMemberFacing(file: string) {
   return (

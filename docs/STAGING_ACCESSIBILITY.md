@@ -360,9 +360,10 @@ screens a member reaches from an email link or their account:
   carries an sr-only `<h1>`. Covered: `/pay/[token]`, `/reset-password`,
   `/change-password`, `/verify-email`, `/confirm-email-change`,
   `/family-invite/[token]`, `/membership-cancellation/[token]`,
-  `/lodge-maintenance/[token]`, `/nominations/[token]`, `/notices/[id]`, and
-  the `/booking-requests` respond and verify screens. Pages that already had
-  an `<h1>` (dashboard, bookings, a single booking) give their cards level 2.
+  `/lodge-maintenance/[token]`, `/nominations/[token]`, `/notices/[id]`,
+  `/join/[code]`, `/lodge-instructions`, and the `/booking-requests` respond
+  and verify screens. Pages that already had an `<h1>` (dashboard, bookings, a
+  single booking, the guest-consent screen) give their cards level 2.
 - **Identical tab titles.** Each of those routes, plus `/login`, `/dashboard`,
   `/bookings` and `/bookings/[id]`, now sets a fixed page title that the root
   template turns into "<Page> | <Club>". Client pages get theirs from a small
@@ -370,7 +371,8 @@ screens a member reaches from an email link or their account:
   `/notices/[id]` is a fixed "Notice" so the title needs no second access check.
 
 Pinned by `src/app/(public)/__tests__/single-card-screen-headings.test.tsx`,
-`src/app/__tests__/member-token-screen-headings.test.tsx`, the `/pay` page
+`src/app/__tests__/member-token-screen-headings.test.tsx`,
+`src/app/__tests__/client-loading-state-headings.test.tsx`, the `/pay` page
 suite, and `src/app/__tests__/member-route-titles.test.ts`. The
 `card-title-classification-census.test.ts` census keeps the member-facing
 roots fully classified and ratchets the admin and finance remainder

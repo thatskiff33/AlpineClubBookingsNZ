@@ -130,7 +130,7 @@ export function MemberGuestDelegateConsentCard({
     return (
       <Card className="border-success-6 bg-success-3">
         <CardHeader>
-          <CardTitle className="text-success-11">
+          <CardTitle headingLevel={2} className="text-success-11">
             {guestFirstName} is on this booking
           </CardTitle>
         </CardHeader>
@@ -159,7 +159,7 @@ export function MemberGuestDelegateConsentCard({
     return (
       <Card className="border-success-6 bg-success-3">
         <CardHeader>
-          <CardTitle className="text-success-11">
+          <CardTitle headingLevel={2} className="text-success-11">
             You&apos;ve said no for {guestFirstName}
           </CardTitle>
         </CardHeader>
@@ -195,7 +195,9 @@ export function MemberGuestDelegateConsentCard({
             Waiting for an answer
           </Badge>
         </div>
-        <CardTitle>
+        {/* /bookings/consent/[guestId] renders its own h1 above this card in
+            every state, so each title here is level 2 like its siblings. */}
+        <CardTitle headingLevel={2}>
           {bookerName} has added {guestHeadingName} to a booking
         </CardTitle>
       </CardHeader>
