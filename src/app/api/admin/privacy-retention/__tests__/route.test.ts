@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_PRIVACY_RETENTION_SETTINGS, MEMBERSHIP_RETENTION_FIELDS } from "@/lib/privacy-retention-shared";
+import { BOOKING_RETENTION_FIELDS, DEFAULT_PRIVACY_RETENTION_SETTINGS, MEMBERSHIP_RETENTION_FIELDS } from "@/lib/privacy-retention-shared";
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
@@ -30,7 +30,7 @@ beforeEach(() => {
   mocks.hasAdminAreaAccess.mockReturnValue(true);
   mocks.getSettings.mockResolvedValue(DEFAULT_PRIVACY_RETENTION_SETTINGS);
   mocks.saveSettings.mockResolvedValue(DEFAULT_PRIVACY_RETENTION_SETTINGS);
-  mocks.preview.mockResolvedValue({ settings: DEFAULT_PRIVACY_RETENTION_SETTINGS, ...groups });
+  mocks.preview.mockResolvedValue({ settings: DEFAULT_PRIVACY_RETENTION_SETTINGS, clearedBookingDietary: 3, ...groups });
 });
 
 describe("privacy retention admin API", () => {
@@ -48,6 +48,7 @@ describe("privacy retention admin API", () => {
     expect(mocks.preview).toHaveBeenCalledWith({ page: 2, pageSize: 25, memberAfter: undefined, includeMembers: true });
     const payload = await response.json();
     expect(payload.settings).toEqual(DEFAULT_PRIVACY_RETENTION_SETTINGS);
+    expect(payload.clearedBookingDietary).toBe(3);
     expect(mocks.getSettings).not.toHaveBeenCalled();
     expect(payload.preview.formerMembers.rows[0]).toEqual({ id: "former-1", date: "2018-06-01T00:00:00.000Z" });
     expect(payload.preview.blockedMembers.rows[0].reasons).toEqual(["Has account credit"]);
@@ -107,4 +108,12 @@ describe("privacy retention admin API", () => {
     expect(response.status).toBe(400);
     expect(mocks.saveSettings).not.toHaveBeenCalled();
   });
+});
+
+it.each([...BOOKING_RETENTION_FIELDS])("rejects %s changes without bookings edit", async field => {
+  mocks.hasAdminAreaAccess.mockImplementation((_user, permission) => permission.area !== "bookings");
+  const old = DEFAULT_PRIVACY_RETENTION_SETTINGS[field];
+  const changed = { ...DEFAULT_PRIVACY_RETENTION_SETTINGS, [field]: typeof old === "boolean" ? !old : old + 1 };
+  expect((await PUT(put(changed))).status).toBe(403);
+  expect(mocks.saveSettings).not.toHaveBeenCalled();
 });

@@ -3,24 +3,32 @@ import type { PrismaClient } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getPrivacyRetentionSettings, PRIVACY_RETENTION_SETTINGS_ID } from "@/lib/privacy-retention-settings";
 import { privacyRetentionSelection, selectFormerMemberBatch, RETENTION_BATCH_SIZE } from "@/lib/privacy-retention-selection";
+import { createAuditLog } from "@/lib/audit";
+import { clearExpiredStayDietaryValues } from "@/lib/member-dietary-booking-writes";
 import { anonymiseFormerMember } from "@/lib/privacy-retention-anonymise";
 
 const CLAIM_LIFETIME_MS = 60 * 60 * 1000;
 type JobOptions = { now?: Date; db?: PrismaClient };
 export type PrivacyRetentionResult = {
   skipped?: "disabled" | "busy";
-  deletedEmailLogs: number; deletedApplications: number; anonymised: number; blocked: number;
+  deletedEmailLogs: number; deletedApplications: number; anonymised: number; blocked: number; clearedBookingDietary: number;
 };
-const empty = (): PrivacyRetentionResult => ({ deletedEmailLogs: 0, deletedApplications: 0, anonymised: 0, blocked: 0 });
+const empty = (): PrivacyRetentionResult => ({ deletedEmailLogs: 0, deletedApplications: 0, anonymised: 0, blocked: 0, clearedBookingDietary: 0 });
 
 async function runClaimed(
-  kind: "prune" | "anonymise", { now = new Date(), db = prisma }: JobOptions,
+  kind: "prune" | "anonymise" | "dietary", { now = new Date(), db = prisma }: JobOptions,
 ): Promise<PrivacyRetentionResult> {
   const result = empty();
   const settings = await getPrivacyRetentionSettings(db);
-  const enabledField = kind === "prune" ? "pruneLogsAndApplicationsEnabled" : "anonymiseMembersEnabled";
-  const claimField = kind === "prune" ? "pruneStartedAt" : "anonymiseStartedAt";
+  const enabledField = kind === "prune" ? "pruneLogsAndApplicationsEnabled" : kind === "dietary" ? "bookingDietaryClearEnabled" : "anonymiseMembersEnabled";
+  const claimField = kind === "prune" ? "pruneStartedAt" : kind === "dietary" ? "bookingDietaryClearStartedAt" : "anonymiseStartedAt";
   if (!settings[enabledField]) return { ...result, skipped: "disabled" };
+  // A new installation may not have saved settings yet; preserve defaults and
+  // never overwrite a concurrently saved policy. The default-on job needs a lease row.
+  if (kind === "dietary") await db.privacyRetentionSettings.upsert({
+    where: { id: PRIVACY_RETENTION_SETTINGS_ID },
+    create: { id: PRIVACY_RETENTION_SETTINGS_ID }, update: {},
+  });
   const claimed = await db.privacyRetentionSettings.updateMany({
     where: {
       id: PRIVACY_RETENTION_SETTINGS_ID, [enabledField]: true,
@@ -49,6 +57,22 @@ async function runClaimed(
           if (count < RETENTION_BATCH_SIZE) break;
         }
       }
+    } else if (kind === "dietary") {
+      for (;;) {
+        const count = await db.$transaction(async tx => {
+          const current = await getPrivacyRetentionSettings(tx);
+          if (!current.bookingDietaryClearEnabled) return 0;
+          const { bookingDietaryCutoff } = await privacyRetentionSelection(current, now);
+          return clearExpiredStayDietaryValues(tx, { cutoff: bookingDietaryCutoff, take: RETENTION_BATCH_SIZE });
+        });
+        result.clearedBookingDietary += count;
+        if (count < RETENTION_BATCH_SIZE) break;
+      }
+      await createAuditLog({
+        action: "privacy.retention.booking_dietary_cleared", category: "privacy",
+        entityType: "PrivacyRetentionSettings", entityId: PRIVACY_RETENTION_SETTINGS_ID,
+        summary: "Expired stay dietary values cleared", metadata: { count: result.clearedBookingDietary },
+      }, db);
     } else {
       let afterId: string | undefined;
       for (;;) {
@@ -80,4 +104,8 @@ export function runPersonalDataPruneJob(options: JobOptions = {}) {
 }
 export function runFormerMemberAnonymisationJob(options: JobOptions = {}) {
   return runClaimed("anonymise", options);
+}
+
+export function runBookingDietaryClearJob(options: JobOptions = {}) {
+  return runClaimed("dietary", options);
 }

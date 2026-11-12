@@ -16,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { ForbiddenSaveError, useSectionEditState } from "@/hooks/use-section-edit-state";
-import { MEMBERSHIP_RETENTION_FIELDS, privacyRetentionSettingsSchema, type PrivacyRetentionSettingsValues } from "@/lib/privacy-retention-shared";
+import { BOOKING_RETENTION_FIELDS, DEFAULT_PRIVACY_RETENTION_SETTINGS, MEMBERSHIP_RETENTION_FIELDS, privacyRetentionSettingsSchema, type PrivacyRetentionSettingsValues } from "@/lib/privacy-retention-shared";
 import { formatClubInstantDate, formatStayDateOrNull, parseInstant } from "@/lib/club-time";
 
 type PreviewGroup = {
@@ -32,6 +32,7 @@ type Payload = {
     blockedMembers?: PreviewGroup;
     undatedMembers?: PreviewGroup;
   };
+  clearedBookingDietary: number;
   pageSize: number;
   canViewMembership: boolean;
   formerMemberCandidateCount?: number;
@@ -40,11 +41,13 @@ type Payload = {
 };
 const ENDPOINT = "/api/admin/privacy-retention";
 const PERIOD_FIELDS = [
+  ["bookingDietaryRetentionDays", "Stay dietary notes after departure (days)"],
   ["emailLogRetentionYears", "Email logs (years)"],
   ["rejectedApplicationRetentionYears", "Rejected applications (years)"],
   ["formerMemberRetentionYears", "Former members after leaving (years)"],
 ] as const;
 const SWITCH_FIELDS = [
+  ["bookingDietaryClearEnabled", "Enable after-stay dietary clearing"],
   ["pruneLogsAndApplicationsEnabled", "Enable email log and rejected application pruning"],
   ["anonymiseMembersEnabled", "Enable former-member anonymisation"],
   ["sentryReplayEnabled", "Enable Sentry Session Replay"],
@@ -59,6 +62,7 @@ const GROUPS = [
 
 export function PrivacyRetentionClient({ page, memberCursors = [] }: { page: number; memberCursors?: string[] }) {
   const canEdit = useAdminAreaEditAccess("support");
+  const canEditBookings = useAdminAreaEditAccess("bookings");
   const canEditMembership = useAdminAreaEditAccess("membership");
   const clubTime = useClubTime();
   const router = useRouter();
@@ -137,19 +141,21 @@ export function PrivacyRetentionClient({ page, memberCursors = [] }: { page: num
             {!section.editing && <ViewOnlyActionButton {...section.editTriggerProps} canEdit={canEdit} describeReason={false} disabled={!draft || section.loading} onClick={section.startEditing}>Edit</ViewOnlyActionButton>}
           </CardHeader>
           <CardContent className="space-y-5">
-            <p className="text-sm text-muted-foreground">Pruning and anonymisation ship off. Check the dry-run lists below before enabling either job. Changing a setting does not run a job immediately.</p>
+            <p className="text-sm text-muted-foreground">Email/application pruning and former-member anonymisation ship off. After-stay dietary clearing ships on, with a {DEFAULT_PRIVACY_RETENTION_SETTINGS.bookingDietaryRetentionDays}-day period, so the first nightly run after upgrade clears older stay notes. Changing a setting does not run a job immediately.</p>
             {section.loading ? <p>Loading retention settings and preview…</p> : draft ? <>
               <div className="grid gap-4 sm:grid-cols-3">
                 {PERIOD_FIELDS.map(([field, label]) => <div key={field} className="space-y-2">
                   <Label htmlFor={field}>{label}</Label>
-                  <Input id={field} type="number" min={privacyRetentionSettingsSchema.shape[field].minValue ?? undefined} max={privacyRetentionSettingsSchema.shape[field].maxValue ?? undefined} step={1} value={draft[field]} disabled={!editing || section.saving || (MEMBERSHIP_RETENTION_FIELDS.has(field) && canEditMembership !== true)} onChange={(event) => section.setDraft({ [field]: Number(event.target.value) })} />
+                  <Input id={field} type="number" min={privacyRetentionSettingsSchema.shape[field].minValue ?? undefined} max={privacyRetentionSettingsSchema.shape[field].maxValue ?? undefined} step={1} value={draft[field]} disabled={!editing || section.saving || (MEMBERSHIP_RETENTION_FIELDS.has(field) && canEditMembership !== true) || (BOOKING_RETENTION_FIELDS.has(field) && canEditBookings !== true)} onChange={(event) => section.setDraft({ [field]: Number(event.target.value) })} />
                 </div>)}
               </div>
+              {canEditBookings !== true && <p className="text-sm text-muted-foreground">Bookings edit access is required to change stay dietary retention.</p>}
+              <p className="text-sm text-muted-foreground">Stay dietary notes are cleared for member and non-member guests, including cancelled stays. A note re-entered on an older stay is cleared the next night. Switching the dietary field off does not stop retention; use the separate clearing switch. Cleared notes cannot be recovered here.</p>
               {canEditMembership !== true && <p className="text-sm text-muted-foreground">Membership edit access is required to change member and application retention.</p>}
               <p className="text-sm text-muted-foreground">Former-member retention starts from the recorded leaving date. Members with no leaving date are never anonymised automatically. Financial records are retained.</p>
               <div className="space-y-3">
                 {SWITCH_FIELDS.map(([field, label]) => <label key={field} className="flex items-start gap-3">
-                  <input type="checkbox" checked={draft[field]} disabled={!editing || section.saving || (MEMBERSHIP_RETENTION_FIELDS.has(field) && canEditMembership !== true)} aria-describedby={field === "sentryReplayEnabled" ? "replay-notice" : undefined} onChange={(event) => section.setDraft({ [field]: event.target.checked })} />
+                  <input type="checkbox" checked={draft[field]} disabled={!editing || section.saving || (MEMBERSHIP_RETENTION_FIELDS.has(field) && canEditMembership !== true) || (BOOKING_RETENTION_FIELDS.has(field) && canEditBookings !== true)} aria-describedby={field === "sentryReplayEnabled" ? "replay-notice" : undefined} onChange={(event) => section.setDraft({ [field]: event.target.checked })} />
                   <span className="text-sm">{label}</span>
                 </label>)}
               </div>
@@ -167,6 +173,7 @@ export function PrivacyRetentionClient({ page, memberCursors = [] }: { page: num
         <p className="text-sm text-muted-foreground">These lists use the saved periods and the same eligibility checks as the jobs, even while the jobs are off. No records are changed by this preview. Each page checks up to 25 former-member candidates. Eligible and blocked counts describe this page; other counts include all matching records.</p>
         <div role="alert">{previewError}</div>
         {payload && <>
+          <Card><CardHeader><CardTitle className="text-lg">Stay dietary notes to clear ({payload.clearedBookingDietary})</CardTitle></CardHeader><CardContent><p className="text-sm text-muted-foreground">Count of saved notes past the retention period. No dietary values are shown.</p></CardContent></Card>
           {!payload.canViewMembership && <p className="text-sm text-muted-foreground">Membership view access is required to see rejected-application, former-member, blocked-member and undated-member lists.</p>}
           {payload.canViewMembership && <p className="text-sm">Former-member candidates across all pages: {payload.formerMemberCandidateCount ?? 0}</p>}
           {GROUPS.map(([key, title, dateLabel]) => {

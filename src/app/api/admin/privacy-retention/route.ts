@@ -4,7 +4,7 @@ import { getPrivacyRetentionPreview } from "@/lib/privacy-retention";
 import {
   getPrivacyRetentionSettings, savePrivacyRetentionSettings,
 } from "@/lib/privacy-retention-settings";
-import { MEMBERSHIP_RETENTION_FIELDS, privacyRetentionSettingsSchema } from "@/lib/privacy-retention-shared";
+import { BOOKING_RETENTION_FIELDS, MEMBERSHIP_RETENTION_FIELDS, privacyRetentionSettingsSchema } from "@/lib/privacy-retention-shared";
 import { requireAdmin } from "@/lib/session-guards";
 
 export async function GET(request: Request) {
@@ -31,6 +31,7 @@ export async function GET(request: Request) {
   });
   return NextResponse.json({
     settings,
+    clearedBookingDietary: preview.clearedBookingDietary,
     preview: {
       emailLogs: preview.emailLogs,
       ...(canViewMembership ? {
@@ -71,6 +72,12 @@ export async function PUT(request: Request) {
     const current = await getPrivacyRetentionSettings();
     if ([...MEMBERSHIP_RETENTION_FIELDS].some(field => parsed.data[field] !== current[field])) {
       return NextResponse.json({ error: "Membership edit access is required to change member or application retention." }, { status: 403 });
+    }
+  }
+  if (!hasAdminAreaAccess(guard.session.user, { area: "bookings", level: "edit" })) {
+    const current = await getPrivacyRetentionSettings();
+    if ([...BOOKING_RETENTION_FIELDS].some(field => parsed.data[field] !== current[field])) {
+      return NextResponse.json({ error: "Bookings edit access is required to change stay dietary retention." }, { status: 403 });
     }
   }
   const settings = await savePrivacyRetentionSettings(parsed.data, guard.session.user.id);
