@@ -567,3 +567,30 @@ case-sensitive default. #4146, #4165, #4190.
 - **Scope the query as well where an indexed column allows.** An exact prefix
   still matches a longer id beginning with the same id and delimiter; the
   duplicate-capture lookup also scopes by `bookingId`.
+
+## INV-SSOT-007
+
+An admin page that loads a list or totals on the client has three outcomes:
+rows, no rows, and "could not load". The third never renders as either of the
+others. A failed read shows the shared `AdminLoadError`
+(`src/components/admin/admin-load-error.tsx`) in place of the empty state,
+clears the previous query's rows and totals, and offers **Try again**. #4961.
+
+- **One component, one wording.** The alert carries `role="alert"`. Its
+  sentence comes from `src/lib/api-error-message.ts` or
+  `src/lib/admin-query-error.ts`, which also hold the two fixed fallbacks for
+  an outage and a dropped connection. A page writes no private reader.
+- **No fake answers.** Summary totals are not drawn while the error shows:
+  `$0.00` or `0` under an outage reads as a real figure. The same goes for a
+  warning whose absence means "all clear", such as Hut Leaders' unassigned
+  nights.
+- **Stale rows are the other half of the defect.** A failure after a filter
+  change used to leave the previous search's rows under the new filters, which
+  reads as an answer to a question nobody asked.
+- **A census keeps it one.** `admin-load-error-census.test.ts` reads the page
+  sources and fails if a file imports the component without being listed, or
+  if a listed empty state is no longer behind its page's load-error gate. The
+  behaviour is proven per page by `admin-list-load-failure.test.tsx`. Both are
+  disk-scanning: run them with `pnpm run test:named`.
+- **Not every page is covered yet.** The four pages from #4961 are; others
+  join the census when they adopt the component.

@@ -1176,6 +1176,30 @@ answers: it fails if a new route group arrives without an error screen and a
 loading decision, or if a group with a reason gains a `loading.tsx` (anywhere
 in the group, except the admin and member areas, whose per-page ones stay).
 
+### A list or total that fails to load (#4961)
+
+The screens above cover a whole page failing. A page that loads its own list
+on the client can also fail on one read while the page itself is fine. That
+failure is said in place, never shown as the list's empty state:
+
+- The shared `src/components/admin/admin-load-error.tsx` replaces the empty
+  state: a heading such as **Payments could not be loaded**, the reason, and
+  **Try again**, which re-runs that read. It is an error alert
+  (`role="alert"`), so a screen reader announces it.
+- The previous query's rows and totals are cleared, and summary figures are
+  not drawn while the error shows, so no `$0.00` or zero count reads as a real
+  answer.
+- **Payments**: a refused filter (a 400) keeps its field message under
+  **More filters** and also says above the table to check the filters, so the
+  reason is visible with that panel closed.
+- **Hut Leaders**: when the unassigned-nights check fails, the page says the
+  nights could not be checked, because no amber card means every night is
+  covered.
+- **Subscriptions** and **Communications** send history follow the same rule.
+
+The rule is `INV-SSOT-007` in
+[`invariants/single-source-of-truth.md`](invariants/single-source-of-truth.md#inv-ssot-007).
+
 ## Back-link convention (admin drill-down leaves) (#2046)
 
 Admin hubs (`/admin/setup`, `/admin/display`, `/admin/appearance`, …) open a

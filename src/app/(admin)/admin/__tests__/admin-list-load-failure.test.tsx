@@ -12,7 +12,7 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/admin",
 }));
 vi.mock("@/hooks/use-admin-area-edit-access", async (original) => ({
-  ...await original<typeof import("@/hooks/use-admin-area-edit-access")>(),
+  ...(await original()) as typeof import("@/hooks/use-admin-area-edit-access"),
   useAdminAreaEditAccess: () => true,
 }));
 vi.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: "admin", accessRoles: [{ role: "ADMIN" }] } } }) }));
@@ -22,8 +22,19 @@ vi.mock("@/components/admin/manual-refund-task-queue", () => ({ ManualRefundTask
 vi.mock("@/app/(admin)/admin/finance/subscriptions/_components/subscription-billing-panel", () => ({ SubscriptionBillingPanel: () => null }));
 vi.mock("@/components/club-identity-provider", () => ({ useClubIdentity: () => ({ hutLeaderLabel: "Hut Leader" }) }));
 vi.mock("@/app/(admin)/admin/hut-leaders/_components/assignment-form", () => ({
-  AssignmentForm: ({ onVisibleMonthChange }: { onVisibleMonthChange: (month: string) => void }) =>
-    <button onClick={() => onVisibleMonthChange("2026-08")}>Next calendar month</button>,
+  // The real form's conflict preview reads the page's assignments, so stale
+  // rows would warn about a clash with an assignment nobody can see.
+  AssignmentForm: ({ onVisibleMonthChange, onPickNights, onSelectAnyMember, summary }: {
+    onVisibleMonthChange: (month: string) => void;
+    onPickNights: (range: { startDate: string; endDate: string }) => void;
+    onSelectAnyMember: (member: { id: string; firstName: string; lastName: string }) => void;
+    summary: { conflicts: Array<{ name: string }> } | null;
+  }) => <>
+    <button onClick={() => onVisibleMonthChange("2026-08")}>Next calendar month</button>
+    <button onClick={() => onPickNights({ startDate: "2026-07-09", endDate: "2026-07-12" })}>Pick nights</button>
+    <button onClick={() => onSelectAnyMember({ id: "new", firstName: "New", lastName: "Leader" })}>Pick member</button>
+    {summary?.conflicts.map((conflict) => <p key={conflict.name}>Clashes with {conflict.name}</p>)}
+  </>,
 }));
 // Keep page query state real; only replace Radix's portal/selection machinery.
 vi.mock("@/components/ui/select", async () => {
@@ -88,6 +99,7 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
   if (url.startsWith("/api/admin/hut-leaders/unassigned-dates?")) return failure && failUnassigned ? fail() : response({ unassignedDates: [{ date: "2026-07-10", bookingCount: 1, guestCount: 3 }] });
   if (url.startsWith("/api/admin/hut-leaders?")) return failure && failAssignments ? fail() : response({ assignments: [assignment] });
   if (url.startsWith("/api/admin/occupancy?")) return response({ nights: [] });
+  if (url.startsWith("/api/admin/hut-leaders/eligible-members?")) return response({ members: [] });
   if (url === "/api/admin/age-tiers") return response({ ageTiers: [] });
   throw new Error(`Unexpected test request: ${url}`);
 });
@@ -153,9 +165,13 @@ for (const kind of ["server", "network"] as const) {
     it("Hut Leaders clears assignments when a calendar reload fails and recovers", async () => {
       render(<HutLeadersPage />);
       await screen.findByText("Previous Leader");
+      fireEvent.click(screen.getByRole("button", { name: "Pick nights" }));
+      fireEvent.click(screen.getByRole("button", { name: "Pick member" }));
+      expect(screen.getByText("Clashes with Previous Leader")).toBeInTheDocument();
       failure = kind;
       fireEvent.click(screen.getByRole("button", { name: "Next calendar month" }));
       const alert = await assertFailure("hut-leaders-assignments-load-error", /No hut leader assignments yet/, "Previous Leader");
+      expect(screen.queryByText("Clashes with Previous Leader")).not.toBeInTheDocument();
       failure = null;
       fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
       await screen.findByText("Previous Leader");
