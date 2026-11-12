@@ -100,7 +100,8 @@ discipline"): a defect the PR introduces or that blocks it is fixed in the PR;
 a pre-existing defect found nearby is filed as a new issue.
 
 Open the PR from `.github/pull_request_template.md`, copying headings and labels
-verbatim with values on the label's line. The diff decides when the changelog
+verbatim with values on the label's line.
+[The diff decides](../../CONTRIBUTING.md#branch-protection) when the changelog
 and `## Concurrency And Lock Impact` sections are required, but fill the whole
 template regardless. `Closes #NNN` works only in the PR description.
 
