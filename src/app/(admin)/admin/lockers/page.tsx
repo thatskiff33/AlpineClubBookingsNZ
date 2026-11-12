@@ -179,15 +179,15 @@ export default function LockersPage() {
 
       setMembers(body.members ?? []);
       setLockers(body.lockers ?? []);
-    } catch (loadError) {
+    } catch (readError) {
       // An aborted request means the lodge changed (or the page unmounted);
       // a newer request owns the list now.
-      if (loadError instanceof DOMException && loadError.name === "AbortError") {
+      if (readError instanceof DOMException && readError.name === "AbortError") {
         return;
       }
       setLoadError(
-        loadError instanceof Error
-          ? loadError.message
+        readError instanceof Error
+          ? readError.message
           : "Failed to load lockers",
       );
     } finally {
