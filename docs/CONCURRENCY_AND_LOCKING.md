@@ -77,6 +77,43 @@ detail — the deleted-booking refund tasks below are the longest example — it
 expanding that entry and must agree with it; if the two ever diverge, the entry
 is what CI enforces and this page is the defect.
 
+### The lock(1) transaction budget (#4933)
+
+Prisma counts the wait for `pg_advisory_xact_lock(1)` against an interactive
+transaction's budget, and its defaults are `maxWait` 2 s / `timeout` 5 s. A
+Tier-2 writer that keeps them loses to any legitimate holder that runs longer:
+bed-range assignment and group settlement are each allowed 30 s. The loser rolls
+back cleanly, but before #4933 booking create then answered a member with a 400
+"Failed to create booking", which reads as "your request was wrong".
+
+The rule (`INV-LOCK-005`): a transaction that waits for lock(1) passes
+`LOCK1_HOLDER_TRANSACTION_BUDGET` (`src/lib/db-transaction.ts`, `maxWait` 10 s /
+`timeout` 30 s) - the one definition, so a writer can outlast the longest holder
+it queues behind - and its route maps P2028 / P2034 through
+`isTransactionContention` to a retryable 503. `withOptionalTransaction` takes the
+budget as an optional third argument and applies it only to the transaction it
+opens; a caller-supplied `tx` keeps its opener's budget, and in tx-mode the
+service takes neither lock(1) nor options. On the constant today:
+`createDraftBooking`, `createConfirmedBooking` (own transaction),
+`LINKED_MOVE_TRANSACTION_BUDGET`, `assignBedRange` and the group-settlement
+settle. `POST /api/bookings` answers contention on its draft, confirmed and
+waitlisted paths with 503, `Retry-After: 2` and "The booking system is busy right
+now. Nothing was saved, so please try again in a moment." The booking wizard and
+the admin booking page already show the server's message. Lock order inside
+both create transactions is unchanged: global, then `acquireLodgeCapacityLock`,
+then the member keys.
+
+**The pool trade-off.** A waiter holds its pooled connection for as long as it
+waits, so a wider budget swaps opaque failures for pool pressure: a burst of
+creates queued behind a 30 s holder can occupy every one of a web slot's 10
+connections (`DEPLOYMENT.md` -> "Connection pool sizing") for longer than it did
+on the defaults, and other pages on that container wait for `pool_timeout`
+(10 s) meanwhile. That is accepted deliberately - the requests that wait now
+mostly succeed instead of failing - and `connection_limit` is unchanged. If load
+shows the pool starving, the remedies are shrinking the lock(1) hold (moving
+read-only preflight before the lock) or reserving pool headroom for lock(1)
+writers, not shortening the budget back below the longest holder.
+
 ### A writer that does BOTH takes BOTH — global first
 
 Many writers do both tiers at once: a Stripe capture claims capacity **and**
