@@ -11,6 +11,10 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
+import { Pagination } from "@/components/admin/admin-pagination";
+import { fetchOffPageQueueRecord, useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
+import { PinnedQueueRecordNote } from "@/components/admin/pinned-queue-record-note";
+import { parseAdminListPageParam } from "@/lib/admin-list-page";
 import { bookingOwner } from "@/lib/booking-owner";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -102,6 +106,7 @@ function buildBookingApprovalsPath(
   fixedSearchParams: Record<string, string>,
   status: ReviewFilter,
   bookingId: string | null,
+  page: number,
 ) {
   return buildBookingRequestDatasetPath({
     basePath,
@@ -111,6 +116,7 @@ function buildBookingApprovalsPath(
     defaultStatus: "PENDING",
     recordKey: "bookingId",
     recordId: bookingId,
+    page,
   });
 }
 
@@ -136,6 +142,14 @@ export function BookingApprovalsPanel({
   const [filter, setFilter] = useState<ReviewFilter>(
     isReviewFilter(initialFilter) ? initialFilter : defaultFilter,
   );
+  const queuePage = useAdminQueuePage({
+    filterKey: filter,
+    initialPage: parseAdminListPageParam(searchParams.get("page")),
+  });
+  const { page, setPage, receive, beginLoad } = queuePage;
+  // INV-OPS-017: a deep-linked booking that is not on the loaded page is read
+  // by id and pinned above it, so the link always lands on its booking.
+  const [pinnedBooking, setPinnedBooking] = useState<BookingReviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [reviewingId, setReviewingId] = useState<string | null>(null);
   const [notesById, setNotesById] = useState<Record<string, string>>({});
@@ -166,28 +180,36 @@ export function BookingApprovalsPanel({
     fixedSearchParams,
     filter,
     focusedBookingId,
+    page,
   );
 
   const fetchBookings = useCallback(async () => {
+    const isCurrent = beginLoad();
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`/api/admin/booking-reviews?status=${filter}`);
+      const response = await fetch(`/api/admin/booking-reviews?status=${filter}&page=${page}`);
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || "Failed to load booking reviews");
       }
-      setBookings(Array.isArray(data?.data) ? data.data : []);
+      const rows: BookingReviewData[] = Array.isArray(data?.data) ? data.data : [];
+      const pinned = await fetchOffPageQueueRecord("/api/admin/booking-reviews", "bookingId", focusedBookingId, rows);
+      if (!isCurrent()) return true; // a newer read owns the list
+      setBookings(rows);
+      receive(data, rows.length);
+      setPinnedBooking(pinned);
       return true;
     } catch (err) {
+      if (!isCurrent()) return true;
       setError(err instanceof Error ? err.message : "Failed to load booking reviews");
       return false;
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.
-  }, [filter, setBookings, setError, setLoading]);
+  }, [beginLoad, filter, page, receive, focusedBookingId, setBookings, setError, setLoading, setPinnedBooking]);
 
   useEffect(() => {
     fetchBookings();
@@ -218,7 +240,7 @@ export function BookingApprovalsPanel({
       bookingId,
       decision,
       noEmails:
-        bookings.find((booking) => booking.id === bookingId)?.noEmails === true,
+        shownBookings.find((booking) => booking.id === bookingId)?.noEmails === true,
     });
     setNotifyDialogOpen(true);
   }
@@ -286,6 +308,7 @@ export function BookingApprovalsPanel({
           setBookings((current) =>
             current.filter((booking) => booking.id !== bookingId),
           );
+          setPinnedBooking((current) => (current?.id === bookingId ? null : current));
           setDecisionRecovery({ bookingId, message: recoveryBase });
           setRecoveryAttentionVersion((version) => version + 1);
           const refreshed = await fetchBookings();
@@ -346,6 +369,8 @@ export function BookingApprovalsPanel({
     by some screen-reader/browser pairings. It sits OUTSIDE the `space-y-6`
     stack so the empty wrapper an edit-capable admin gets costs no layout.
   */
+  const shownBookings = pinnedBooking ? [pinnedBooking, ...bookings] : bookings;
+
   const viewOnlyBanner = (
     <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
       Your admin role can view bookings awaiting approval but cannot decide
@@ -421,28 +446,30 @@ export function BookingApprovalsPanel({
           </Button>
         ))}
         <DatasetResetButton
-          disabled={filter === defaultFilter}
-          onReset={() => setFilter(defaultFilter)}
+          disabled={filter === defaultFilter && page === 1}
+          onReset={() => { setFilter(defaultFilter); setPage(1); }}
         />
       </div>
 
       {loading ? (
         <div className="py-8 text-center">Loading...</div>
-      ) : bookings.length === 0 ? (
+      ) : shownBookings.length === 0 ? (
         <div className="py-8 text-center text-muted-foreground">
           No {filter === "ALL" ? "" : filter.toLowerCase() + " "}booking reviews found.
         </div>
       ) : (
         <div className="space-y-4">
-          {bookings.map((booking) => {
+          {shownBookings.map((booking) => {
             const decided = booking.adminReviewStatus !== "PENDING";
             const highlighted = booking.id === focusedBookingId;
+            const pinned = booking === pinnedBooking;
             return (
               <Card
                 key={booking.id}
                 className={highlighted ? "border-warning-6" : undefined}
               >
                 <CardHeader>
+                  {pinned ? <PinnedQueueRecordNote /> : null}
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <CardTitle className="text-lg">
@@ -575,6 +602,9 @@ export function BookingApprovalsPanel({
           })}
         </div>
       )}
+      {!loading && queuePage.pagination ? (
+        <Pagination {...queuePage.pagination} aria-label="Booking approvals pages" />
+      ) : null}
 
       {/* #1790: per-decision member-email choice, mirroring the #1695/#1705
           pattern. Both approve and reject email the member either way, so the

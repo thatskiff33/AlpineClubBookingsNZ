@@ -1598,7 +1598,7 @@ describe("evaluateProposalPartyViolations", () => {
 });
 
 describe("readUnifiedExceptionQueue (merges both sources)", () => {
-  it("merges new-booking + modification rows, newest first, with one envelope", async () => {
+  it("merges new-booking + modification rows, REQUESTED oldest first, with one envelope", async () => {
     mocks.nbFindMany.mockResolvedValue([
       {
         id: "nb-1",
@@ -1646,10 +1646,19 @@ describe("readUnifiedExceptionQueue (merges both sources)", () => {
     const result = await readUnifiedExceptionQueue({ status: "REQUESTED", page: 1, pageSize: 25 });
 
     expect(result.total).toBe(2);
-    expect(result.data[0]).toMatchObject({ source: "MODIFICATION", id: "bcr-1", summary: "check-out to 2026-07-12" });
-    expect(result.data[1]).toMatchObject({ source: "NEW_BOOKING", id: "nb-1", reasonCodes: ["MINIMUM_STAY"] });
+    // INV-OPS-017: the waiting queue reads oldest first, from each source too,
+    // so the source cap never drops the longest-waiting rows.
+    expect(result.data[0]).toMatchObject({ source: "NEW_BOOKING", id: "nb-1", reasonCodes: ["MINIMUM_STAY"] });
+    expect(result.data[1]).toMatchObject({ source: "MODIFICATION", id: "bcr-1", summary: "check-out to 2026-07-12" });
+    expect(mocks.nbFindMany.mock.calls[0][0].orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+    expect(mocks.bcrFindMany.mock.calls[0][0].orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
     // Modification source filters on kind POLICY_EXCEPTION.
     expect(mocks.bcrFindMany.mock.calls[0][0].where).toMatchObject({ kind: "POLICY_EXCEPTION", status: "REQUESTED" });
+
+    // Every other filter stays newest first.
+    const all = await readUnifiedExceptionQueue({ status: "ALL", page: 1, pageSize: 25 });
+    expect(all.data.map((item) => item.id)).toEqual(["bcr-1", "nb-1"]);
+    expect(mocks.nbFindMany.mock.calls[1][0].orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
   });
 });
 

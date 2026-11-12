@@ -13,6 +13,9 @@ import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button"
+import { Pagination } from "@/components/admin/admin-pagination"
+import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page"
+import { parseAdminListPageParam } from "@/lib/admin-list-page"
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -185,6 +188,12 @@ export default function RefundRequestsPage() {
   const [filter, setFilter] = useState<ReviewFilter>(
     isReviewFilter(initialFilter) ? initialFilter : "PENDING"
   )
+  // INV-OPS-017: refund appeals are capped per page; credit approvals are not.
+  const refundPage = useAdminQueuePage({
+    filterKey: filter,
+    initialPage: parseAdminListPageParam(searchParams.get("page")),
+  })
+  const { page, setPage, receive } = refundPage
   const [reviewingRefundId, setReviewingRefundId] = useState<string | null>(null)
   const [reviewingCreditId, setReviewingCreditId] = useState<string | null>(null)
   const [adminNotes, setAdminNotes] = useState("")
@@ -202,7 +211,9 @@ export default function RefundRequestsPage() {
   const [notifyDialogOpen, setNotifyDialogOpen] = useState(false)
   const currentParams = new URLSearchParams(searchParams.toString())
   currentParams.delete("status")
+  currentParams.delete("page")
   if (filter !== "PENDING") currentParams.set("status", filter)
+  if (page > 1) currentParams.set("page", String(page))
   const currentQuery = currentParams.toString()
   const currentRefundRequestsPath = currentQuery
     ? `${REFUND_REQUESTS_HREF}?${currentQuery}`
@@ -218,7 +229,7 @@ export default function RefundRequestsPage() {
 
     try {
       const [refundRes, creditRes] = await Promise.all([
-        fetch(`/api/admin/refund-requests?status=${filter}`),
+        fetch(`/api/admin/refund-requests?status=${filter}&page=${page}`),
         fetch(`/api/admin/credit-approvals?status=${filter}`),
       ])
 
@@ -231,13 +242,13 @@ export default function RefundRequestsPage() {
         creditRes.json(),
       ])
 
-      setRefundRequests(
-        Array.isArray(refundData)
-          ? refundData
-          : Array.isArray(refundData?.data)
-            ? refundData.data
-            : []
-      )
+      const refundRows: RefundRequestData[] = Array.isArray(refundData)
+        ? refundData
+        : Array.isArray(refundData?.data)
+          ? refundData.data
+          : []
+      setRefundRequests(refundRows)
+      receive(refundData, refundRows.length)
       setCreditApprovals(Array.isArray(creditData) ? creditData : [])
     } catch {
       setError("Failed to load review queue")
@@ -246,7 +257,7 @@ export default function RefundRequestsPage() {
     }
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.
-  }, [filter, setCreditApprovals, setError, setLoading, setRefundRequests])
+  }, [filter, page, receive, setCreditApprovals, setError, setLoading, setRefundRequests])
 
   useEffect(() => {
     fetchRequests()
@@ -480,8 +491,8 @@ export default function RefundRequestsPage() {
           </Button>
         ))}
         <DatasetResetButton
-          disabled={filter === "PENDING"}
-          onReset={() => setFilter("PENDING")}
+          disabled={filter === "PENDING" && page === 1}
+          onReset={() => { setFilter("PENDING"); setPage(1); }}
         />
       </div>
 
@@ -497,7 +508,7 @@ export default function RefundRequestsPage() {
             <section className="space-y-4">
               <div className="flex items-center gap-2">
                 <h2 className="text-xl font-semibold">Refund Appeals</h2>
-                <Badge variant="secondary">{refundRequests.length}</Badge>
+                <Badge variant="secondary">{refundPage.total ?? refundRequests.length}</Badge>
               </div>
 
               <div className="space-y-4">
@@ -727,6 +738,9 @@ export default function RefundRequestsPage() {
                   )
                 })}
               </div>
+              {refundPage.pagination ? (
+                <Pagination {...refundPage.pagination} aria-label="Refund appeal pages" />
+              ) : null}
             </section>
           )}
 
