@@ -4,8 +4,12 @@ import fs from "fs/promises";
 import path from "path";
 import {
   ALLOWED_IMAGE_EXTS,
+  IMAGE_DERIVATIVES_DIRECTORY,
+  imageContentTypeForExt,
   imagePublicUrl,
-  resolveInImagesRoot,
+  listImageDerivatives,
+  resolveAlbumPathInImagesRoot,
+  type ImageDerivative,
 } from "@/lib/image-storage";
 import { getClubIdentity } from "@/lib/club-identity-settings";
 import {
@@ -38,11 +42,25 @@ import { clubFormatValues } from "@/lib/club-format-server";
 import type { ClubFormat } from "@/lib/club-format";
 import { escapeRegExp } from "@/lib/escape-regexp";
 
+export type PhotoGalleryImageCopy = {
+  src: string;
+  width: number;
+  height: number;
+};
+
 export type PhotoGalleryImage = {
   src: string;
   alt: string;
   width: number | null;
   height: number | null;
+  /**
+   * Website-sized WebP copies of an Image Manager photo (#4935,
+   * INV-PUB-004), narrowest first. Absent for inline page images and for a
+   * photo with no current copies (uploaded before copies existed and not yet
+   * backfilled, too narrow, or a GIF/AVIF) — which then renders as the
+   * original exactly as before.
+   */
+  copies?: PhotoGalleryImageCopy[];
 };
 
 export type EmbeddedBodyPart =
@@ -392,12 +410,71 @@ function normaliseGalleryDirectoryInput(value: string): string {
     .replace(/\/+$/g, "");
 }
 
+// Every format's dimensions sit in its header: a JPEG's frame header follows
+// its metadata segments, at most a few tens of KB into a stripped file. This
+// bounds what a gallery render reads per photo (#4935), where it used to read
+// every original whole. A header past the bound gets the gallery's defaults.
+const IMAGE_HEADER_READ_BYTES = 64 * 1024;
+
+async function readImageFileDimensions(absPath: string) {
+  const contentType = imageContentTypeForExt(
+    path.extname(absPath).toLowerCase(),
+  );
+  if (!contentType) return null;
+  let handle;
+  try {
+    handle = await fs.open(absPath, "r");
+    const buffer = Buffer.alloc(IMAGE_HEADER_READ_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return extractImageDimensions(buffer.subarray(0, bytesRead), contentType);
+  } catch {
+    return null;
+  } finally {
+    await handle?.close();
+  }
+}
+
+/**
+ * The copies of one photo a gallery may use: only those at least as new as
+ * the original. A copy older than its original belongs to an earlier file of
+ * the same name — replaced by code that predates copies, during a blue/green
+ * cutover or after a rollback — and serving it would show the old photo.
+ */
+async function currentGalleryCopies(
+  absDir: string,
+  originalPath: string,
+  derivatives: ImageDerivative[],
+): Promise<PhotoGalleryImageCopy[]> {
+  if (derivatives.length === 0) return [];
+  let originalMtimeMs: number;
+  try {
+    originalMtimeMs = (await fs.stat(originalPath)).mtimeMs;
+  } catch {
+    return [];
+  }
+  const copies: PhotoGalleryImageCopy[] = [];
+  for (const derivative of derivatives) {
+    if (derivative.mtimeMs < originalMtimeMs) continue;
+    const copyPath = path.join(
+      absDir,
+      IMAGE_DERIVATIVES_DIRECTORY,
+      derivative.fileName,
+    );
+    const dimensions = await readImageFileDimensions(copyPath);
+    if (!dimensions) continue;
+    copies.push({ src: imagePublicUrl(copyPath), ...dimensions });
+  }
+  return copies;
+}
+
 async function listPhotoGalleryImagesFromDirectory(
   directoryInput: string,
   format: ClubFormat,
 ): Promise<PhotoGalleryImage[]> {
   const relDir = normaliseGalleryDirectoryInput(directoryInput);
-  const absDir = resolveInImagesRoot(relDir);
+  // A copies folder is never an album: its files are copies of photos listed
+  // with their originals, not photos of their own.
+  const absDir = resolveAlbumPathInImagesRoot(relDir);
   if (!absDir) {
     return [];
   }
@@ -415,34 +492,25 @@ async function listPhotoGalleryImagesFromDirectory(
       ALLOWED_IMAGE_EXTS.has(path.extname(entry.name).toLowerCase()),
   );
 
+  const derivatives = await listImageDerivatives(absDir);
   const images = await Promise.all(
     files.map(async (entry) => {
       // absDir is resolveInImagesRoot-contained; entry.name comes from readdir
       // of that directory (filtered to allowed image extensions), not input.
       const filePath = path.join(absDir, entry.name);
-      const bytes = await fs.readFile(filePath);
-      const ext = path.extname(entry.name).toLowerCase();
-      const contentType =
-        ext === ".jpg" || ext === ".jpeg"
-          ? "image/jpeg"
-          : ext === ".png"
-            ? "image/png"
-            : ext === ".gif"
-              ? "image/gif"
-              : ext === ".webp"
-                ? "image/webp"
-                : ext === ".avif"
-                  ? "image/avif"
-                  : null;
-      const dimensions = contentType
-        ? extractImageDimensions(bytes, contentType)
-        : null;
+      const dimensions = await readImageFileDimensions(filePath);
+      const copies = await currentGalleryCopies(
+        absDir,
+        filePath,
+        derivatives.get(entry.name) ?? [],
+      );
 
       return {
         src: imagePublicUrl(filePath),
         alt: entry.name,
         width: dimensions?.width ?? 1200,
         height: dimensions?.height ?? 900,
+        ...(copies.length > 0 ? { copies } : {}),
       } satisfies PhotoGalleryImage;
     }),
   );

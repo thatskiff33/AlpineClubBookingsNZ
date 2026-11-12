@@ -80,6 +80,11 @@ import { sanitizePageContentHtml } from "../page-content-html";
 import { starterSiteContent } from "../../../prisma/starter-site-content";
 import logger from "@/lib/logger";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import fs from "fs/promises";
+import path from "path";
+import sharp from "sharp";
+import { writeImageDerivatives } from "@/lib/image-derivatives";
+import { IMAGES_ROOT, IMAGE_DERIVATIVES_DIRECTORY } from "@/lib/image-storage";
 
 describe("buildEmbeddedBody", () => {
   it("maps every public data token, including lodge variants, through the shared registry", async () => {
@@ -493,5 +498,102 @@ describe("deriveAltFromImageSrc (#1947)", () => {
     expect(
       deriveAltFromImageSrc("data:image/png;base64,iVBORw0KGgoAAAANSU"),
     ).toBe("");
+  });
+});
+
+// #4935 (INV-PUB-004): a directory gallery lists real files, so these use a
+// unique folder under the real (gitignored) images root and remove it after.
+describe("{{photo-gallery: <folder>}} website-sized copies (#4935)", () => {
+  const folder = `vitest-gallery-${process.pid}`;
+  const absDir = path.join(IMAGES_ROOT, folder);
+
+  beforeEach(async () => {
+    await fs.mkdir(absDir, { recursive: true });
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await fs.rm(absDir, { recursive: true, force: true });
+  });
+
+  async function store(name: string, width: number, height: number) {
+    const bytes = await sharp({
+      create: { width, height, channels: 3, background: "#335577" },
+    })
+      .jpeg()
+      .toBuffer();
+    await fs.writeFile(path.join(absDir, name), bytes);
+    return bytes;
+  }
+
+  async function galleryImages() {
+    const parts = await buildEmbeddedBody(`{{photo-gallery: ${folder}}}`);
+    expect(parts).toHaveLength(1);
+    const [part] = parts;
+    if (part?.type !== "photo-gallery") throw new Error("expected a gallery");
+    return part.images;
+  }
+
+  it("lists each photo's current copies with their own dimensions, and never a copy as a photo", async () => {
+    const bytes = await store("lodge.jpg", 2000, 1500);
+    await writeImageDerivatives(bytes, absDir, "lodge.jpg");
+    await store("small.jpg", 300, 200);
+
+    const images = await galleryImages();
+    expect(images.map((image) => image.alt)).toEqual(["lodge.jpg", "small.jpg"]);
+    const base = `/api/images/uploaded/${folder}`;
+    expect(images[0]).toEqual({
+      src: `${base}/lodge.jpg`,
+      alt: "lodge.jpg",
+      width: 2000,
+      height: 1500,
+      copies: [
+        { src: `${base}/${IMAGE_DERIVATIVES_DIRECTORY}/lodge.jpg.400.webp`, width: 400, height: 300 },
+        { src: `${base}/${IMAGE_DERIVATIVES_DIRECTORY}/lodge.jpg.800.webp`, width: 800, height: 600 },
+        { src: `${base}/${IMAGE_DERIVATIVES_DIRECTORY}/lodge.jpg.1600.webp`, width: 1600, height: 1200 },
+      ],
+    });
+    // No copies, no `copies` key: the gallery renders the original as before.
+    expect(images[1]).toEqual({
+      src: `${base}/small.jpg`,
+      alt: "small.jpg",
+      width: 300,
+      height: 200,
+    });
+  });
+
+  it("ignores copies older than their original (replaced by code that made none)", async () => {
+    const bytes = await store("lodge.jpg", 2000, 1500);
+    await writeImageDerivatives(bytes, absDir, "lodge.jpg");
+    const copy = await fs.stat(
+      path.join(absDir, IMAGE_DERIVATIVES_DIRECTORY, "lodge.jpg.400.webp"),
+    );
+    const later = new Date(copy.mtimeMs + 60_000);
+    await fs.utimes(path.join(absDir, "lodge.jpg"), later, later);
+
+    const [image] = await galleryImages();
+    expect(image).not.toHaveProperty("copies");
+  });
+
+  it("reads each photo's dimensions from a bounded header read, never the whole file", async () => {
+    const bytes = await store("lodge.jpg", 2000, 1500);
+    await writeImageDerivatives(bytes, absDir, "lodge.jpg");
+    const readFile = vi.spyOn(fs, "readFile");
+    const open = vi.spyOn(fs, "open");
+
+    const [image] = await galleryImages();
+    expect(image?.width).toBe(2000);
+    expect(image?.copies).toHaveLength(3);
+    expect(readFile).not.toHaveBeenCalled();
+    // The spies see the module's own fs: one header read per photo and copy.
+    expect(open).toHaveBeenCalledTimes(4);
+  });
+
+  it("does not open the copies folder as a gallery", async () => {
+    const bytes = await store("lodge.jpg", 2000, 1500);
+    await writeImageDerivatives(bytes, absDir, "lodge.jpg");
+    const parts = await buildEmbeddedBody(
+      `{{photo-gallery: ${folder}/${IMAGE_DERIVATIVES_DIRECTORY}}}`,
+    );
+    expect(parts).toEqual([{ type: "photo-gallery", images: [] }]);
   });
 });
