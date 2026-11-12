@@ -1,7 +1,7 @@
 # Load Testing (k6 harness)
 
 This is the evidence framework for the production-hardening target of
-"stable at 100+ concurrent users" (issue #1884). It drives the app **over
+"stable at 100+ concurrent users" (issue #1884). The scenarios drive the app **over
 HTTP only** with [k6](https://k6.io) scripts that live in
 [`load/`](../load/). Each scenario ramps to a configurable peak (default
 100 VUs) and has k6 `thresholds`, so every run has explicit pass/fail
@@ -28,16 +28,14 @@ In concrete terms for this harness:
   5433) is reset and reseeded by the e2e scripts and is the only acceptable
   datastore behind a target.
 - **Never `:5432`.** On club deployment hosts (and at least one developer
-  machine) port 5432 is the **live production Postgres**. The harness never
-  speaks to a database at all — HTTP to the app only — and its target guard
-  hard-refuses any `BASE_URL` mentioning `:5432`.
+  machine) port 5432 is the **live production Postgres**. The scenarios speak HTTP to the app only; the volume seeder writes directly
+  to the disposable database. Both target guards refuse `:5432`.
 - **No live providers.** The contention scenario creates child-only
   `AWAITING_REVIEW` bookings so they genuinely hold capacity, but never calls
   payment-confirmation or Xero endpoints. The staging stack runs with
   `CRON_ENABLED=false` and captures the resulting admin-review notifications
   in Mailpit; never point it at live SES.
-- A full 100-VU run is **owner-gated**: agents build and syntax-check this
-  harness but do not execute load runs autonomously.
+- A full 100-VU run is **owner-gated**: agents may run the reduced local smoke profile; full runs require the owner.
 
 ### The pre-flight target guard
 
@@ -80,7 +78,88 @@ Credentials are passed to k6 via env only — the scripts refuse to run an
 authenticated scenario without `LOAD_USER_PASSWORD`.
 
 k6 itself is a single binary: <https://k6.io/docs/get-started/installation/>.
-It is deliberately **not** an npm dependency and never runs in CI.
+It is deliberately **not** an npm dependency. The advisory scheduled smoke job
+installs it separately.
+
+## Volume, local Stripe stub and scheduled smoke
+
+For the complete fixture, use the load wrapper instead of the basic E2E stack:
+
+```bash
+cp .env.staging.example .env.staging
+bash scripts/load-stack.sh prepare
+pnpm run load:smoke
+bash scripts/load-stack.sh down
+```
+
+`prepare` creates its own `load-issue4940` Compose project, two bookable
+lodges, generated stub-only Stripe credentials and TLS certificates, and a
+volume history. It refuses the shared production/staging project names. The
+app resolves `api.stripe.com` to the local HTTPS stub; the runtime network is
+internal, so services cannot contact Internet providers. Mail goes to Mailpit,
+Xero remains disconnected, and the volume seeder refuses a stored Xero
+connection. No real provider credentials belong in the source env file.
+
+The fixture defaults to **2,000 members and five past seasons**, with
+multi-night stays, members and non-member guests, card and bank payment rows,
+credits and card refund rows. `LOAD_VOLUME_MEMBERS`, `LOAD_VOLUME_SEASONS` and
+`LOAD_VOLUME_SEED` change the history size and deterministic random seed.
+The volume entry point reuses the demo booking and settlement writers; it
+creates historical fixture rows, without contacting providers. This gives
+queries realistic row counts; it does **not** load-test bank settlement or
+historical card refunds. The seeder refuses repeat runs; reset the stack first.
+
+To seed an already prepared disposable stack directly:
+
+```bash
+LOAD_TEST_CONFIRM_TARGET=1 ALLOW_DEMO_SEED=1 \
+  DATABASE_URL=postgresql://tac:local-password@localhost:5433/tacbookings \
+  pnpm run load:seed-volume
+```
+
+The database guard runs before reads or writes. It requires explicit opt-in,
+a local allowlisted hostname and an explicit non-5432 port, and refuses routing
+query parameters, including encoded names. The demo guard also refuses
+production mode and existing non-demo members with bookings.
+
+`load:smoke` runs every journey at **10 VUs**, with the published thresholds,
+then recreates the app with `CRON_ENABLED=true` using
+[`load/compose.cron-on.yml`](../load/compose.cron-on.yml). Its final
+`cron-overlap` scenario runs dashboard reads and mixed writes concurrently
+with an explicit `/api/cron` invocation, using the generated stack's local
+cron secret. It requires a successful cron completion, so a short run cannot
+pass simply because it missed the scheduler's three-hour boundary. The combined
+profile uses 10 read workers, 10 write workers and one cron worker.
+
+[`load-smoke.yml`](../.github/workflows/load-smoke.yml) runs weekly and on
+manual dispatch, with read-only repository permission, no secrets, a 60-minute
+limit and unconditional stack cleanup. It is advisory and has no PR trigger;
+it is not a required check. It uploads k6 JSON summaries, stack logs and
+`profile.json` for 14 days. The profile records the running app's available
+cores and actual `connection_limit`; the default uncapped app currently uses
+pool **5**. Compare runs only within a labelled resource profile. Full 100-VU
+evidence remains owner-gated, and the historical pool-10 results below are a
+separate profile. A threshold failure is evidence to investigate, not permission
+to weaken budgets, bcrypt cost or CPU constraints.
+
+### Coverage and limits
+
+| Scenario | Journeys exercised | Not exercised |
+| --- | --- | --- |
+| `public-browse` | Public pages, login page, unauthenticated availability refusal | Authenticated reads or writes |
+| `login` | Simultaneous credentials login using the configured account pool | 2FA, external identity providers |
+| `member-dashboard` | Dashboard HTML, lodge list, calendar, credit balance | Quote, booking wizard UI, writes |
+| `booking-contention` | One lodge/night, child-only review holds, exact final occupancy | Paid booking, cross-lodge writes |
+| `mixed-writes` | Create, extend dates and cancel across two lodges and several nights; final capacity ceilings | Card refund and bank settlement |
+| `admin-reads` | Admin bookings JSON list, annual report, bed board as seeded admin | Browser rendering, officer writes |
+| `payment-path` | Card booking, intent creation on local stub, signed test-mode webhook and duplicate replay, paid status | Stripe network latency, declines, real card processing |
+| `cron-overlap` | Dashboard and mixed writes while the real general cron runner executes; scheduler enabled | Every daily job, Xero queue or webhooks |
+
+Xero callbacks/queue, Internet Banking settlement, standalone price quotes,
+real card refunds, and multi-step browser interactions remain unmeasured.
+Neither a green smoke job nor the historical reads proves capacity for those
+paths. File performance defects separately; this kit does not change product
+performance or thresholds.
 
 ## Environment variables
 
@@ -107,9 +186,21 @@ It is deliberately **not** an npm dependency and never runs in CI.
 | `LODGE_CAPACITY` | no | `20` | Expected capacity of the selected seeded lodge; teardown fails if observed occupancy exceeds it. |
 | `CONTENTION_EXPECTED_BASELINE` | no | `0` | Required occupied-bed baseline for the contention night. A mismatch aborts before writes; reset the stack or set this deliberately for a known non-empty fixture. |
 
+Additional knobs for the volume scenarios:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `LOAD_VOLUME_USERS` / `LOAD_VOLUME_DOMAIN` | `0` / required when positive | First N volume member accounts; smoke obtains the domain from the demo guard and uses the pool for login/dashboard too. |
+| `LOAD_ADMIN_EMAIL` / `LOAD_ADMIN_PASSWORD` | seeded E2E admin / member password | Admin API persona. |
+| `STAY_OFFSET_DAYS` / `MIXED_NIGHT_SPREAD` | `120` / `3` | Future mixed-write window, relative to the run's UTC date. |
+| `MIXED_ITERATIONS` | `5` | Create/change/cancel cycles per worker; smoke uses 4. |
+| `PAYMENT_ITERATIONS` / `PAYMENT_OFFSET_DAYS` | `3` / `30` | Paid stays per worker and their offset beyond the mixed window. |
+| `STRIPE_STUB_URL` | `http://127.0.0.1:12111` | Local control/signing endpoint, checked by the HTTP target guard. |
+| `CRON_SECRET` | required for cron overlap | Disposable stack's cron secret, read by smoke from its generated env file. |
+
 ## Scenarios
 
-All four live in `load/scenarios/` and share `load/lib/` (guard, config,
+All eight live in `load/scenarios/` and share `load/lib/` (guard, config,
 login helper). Convenience wrappers exist in `package.json` (`pnpm run
 load:public` etc.) — they only pass through to `k6 run` and abort on the
 guard unless the env above is set.
@@ -156,10 +247,15 @@ BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
 
 **The core scaling evidence.** `PEAK_VUS` members stampede
 `POST /api/bookings` for **one lodge + one night**
-(`CONTENTION_CHECKIN`), which serialises on the per-lodge advisory lock
-(`pg_advisory_xact_lock(hashtextextended(lodgeId, 0))` — see
+(`CONTENTION_CHECKIN`). Booking create takes the global advisory lock
+`pg_advisory_xact_lock(1)` first and then the per-lodge capacity key from
+`acquireLodgeCapacityLock` (`INV-LOCK-001` for the tier, `INV-LOCK-002` for the
+global-before-lodge order — see
 [`CONCURRENCY_AND_LOCKING.md`](CONCURRENCY_AND_LOCKING.md) and
-[`CAPACITY_MODEL.md`](CAPACITY_MODEL.md)). Race losers block on the lock,
+[`CAPACITY_MODEL.md`](CAPACITY_MODEL.md)). Every booking create in the app
+therefore queues behind one key, whichever lodge it books, so this scenario
+measures the whole app's booking-write throughput, not one lodge's. Race losers
+block on the lock,
 re-check capacity, and receive the app's normal sold-out answer, so the
 scenario asserts on the **outcome distribution**, not just 200s:
 
@@ -258,17 +354,32 @@ BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
 
 - Each scenario uses a separate block of synthetic client IPs. This prevents a
   login run from consuming the dashboard or contention scenario's fixed-window
-  rate-limit budget when the four profiles run back to back on one throwaway
+  rate-limit budget when the profiles run back to back on one throwaway
   stack. Re-running the same scenario still requires a fresh stack or an
   expired limiter window.
 
-- **Measured baseline and rerun:** the first 100-VU evidence run found public
-  p95 2.24 s, cold-login p95 23.01 s, dashboard aggregate p95 12.5 s, and
-  contention p95 29.18 s. Those results are not a pass: the original harness
-  amplified contention writes, did not hold capacity, and mixed bootstrap
-  login into dashboard latency. Rerun all four scenarios from a freshly reset
-  stack after these corrections. Keep the published thresholds unchanged and
-  attach the k6 summaries to #1884.
+- **Measured baseline (16 Jul 2026, 0.8-CPU profile, app pool 10):** the
+  corrected rerun recorded on #1884
+  ([evidence comment](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/1884#issuecomment-4987714526))
+  ran on an isolated stack with the app container at **0.8 CPU / 1 GiB**,
+  PostgreSQL `max_connections=30`, and an app connection pool of **10**:
+
+  | Scenario | Result | Threshold verdict |
+  | --- | --- | --- |
+  | Public browse | p95 702.83 ms, checks 100%, failures 0% | pass |
+  | Member dashboard | 100/100 bootstrap logins, read p95 247.93 ms, failures 0%, 22,127 iterations | pass |
+  | Booking contention | 100/100 auth-ready, exactly 20 created + 80 capacity 409s, final occupancy 20, p95 3.78 s, failures and unexpected 0% | pass |
+  | Cold-login burst | 100/100 logins succeeded, failures 0%, p95 23.98 s | **fails** the 2 s login budget |
+
+  One isolated cold login took 290.89 ms; the burst figure is bcrypt queueing
+  on a CPU pinned near 80%, with no pool exhaustion, restart or OOM. PR #1920
+  kept every threshold unchanged.
+- **Superseded figures (15 Jul 2026):** the first 100-VU run's public p95
+  2.24 s, cold-login p95 23.01 s (2.99% failed), dashboard aggregate p95
+  12.5 s, and contention p95 29.18 s (4.05% failed) are **not** current
+  evidence. That harness amplified contention writes, did not hold capacity,
+  and mixed bootstrap login into dashboard latency; quote the 16 Jul figures
+  above instead.
 - **Deployment profile remains evidence, not a code workaround:** the measured
   stack was CPU-bound while the app container was limited below one CPU. A
   follow-up run may profile roughly 2 app CPUs, but it must be reported as a
@@ -280,10 +391,11 @@ BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
   `cpus: 0.8` cap was lifted after production measurement showed cold page
   renders CFS-throttling into multi-second loads — see `DEPLOYMENT.md` → "App
   CPU sizing"). The recorded baselines above predate this and describe the
-  sub-one-CPU profile; a future full run happens on the uncapped-weighted
-  profile of the host it runs on, and must be labelled with that host's core
-  count, per the separate-resource-profile rule above. To reproduce the
-  historical constrained profile, add `cpus: 0.8` back for the run.
+  sub-one-CPU profile (0.8 CPU, pool 10); a future full run happens on the
+  uncapped-weighted profile of the host it runs on, and must be labelled with
+  that host's core count and app pool size, per the separate-resource-profile
+  rule above. To reproduce the historical constrained profile, add
+  `cpus: 0.8` back for the run.
 - **Public layout reads:** module flags, theme, lodge capacity, and current
   banners use independent 15-second caches with tagged invalidation on their
   admin write paths, including lodge settings and configuration imports.
@@ -307,4 +419,16 @@ BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
   module disabled for load personas (the default seed state) or logins will
   park at `/login/verify`.
 - k6 scripts are ES modules executed by k6's own runtime — they are not part
-  of the app bundle, `pnpm test`, or CI, and `k6` is not a dependency.
+  of the app bundle or `pnpm test`; the scheduled smoke job runs them with k6.
+
+## New-run evidence (#4940)
+
+The extended journeys have no measured load baseline yet. In the implementation
+sandbox, Docker is unavailable, so the complete stack and 10-VU run could not
+be executed. Unit checks cover guard rejection, deterministic volume planning,
+night/capacity oracles and the local Stripe stub against the real Stripe SDK;
+these are correctness evidence, not latency results. The first scheduled/manual
+smoke artifacts must be reviewed before quoting capacity for the new journeys.
+Record its commit, resource profile, volume counts, scenario p95/error rates,
+occupancy verdict and cron completion count here after that run. No 100-VU run
+was performed for this change.
