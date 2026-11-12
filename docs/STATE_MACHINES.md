@@ -3960,13 +3960,28 @@ on `FAILED` alone. An installation whose role nobody has declared, and a live
 installation that has declared a local capture mailbox, both land on `FAILED`
 instead, carrying a `deliveryBlockReason`: those are configuration faults, so they
 stay retryable and go out by themselves once the deployment is corrected —
-PROVIDED the row still holds a rendered body. It does not for the twenty-six
+PROVIDED the row still holds a rendered body. It does not for the
 `SENSITIVE_EMAIL_LOG_TEMPLATES`, nor for any message whose logged recipient is
 redacted, because a live sign-in link, a door code or a payment link must not sit
 at rest; and the retry cron selects only rows that still hold one. Such a row is
 therefore written AT `attempts = 3`, which drops it out of the retry query and
-into the operator's email-failure review queue for a manual re-send, and its
-`errorMessage` says exactly that rather than promising it will self-heal.
+into the operator's email-failure review queue, and its `errorMessage` says so
+rather than promising it will self-heal. The queue cannot resend it: it says why
+on the row and links its booking or member, and the officer sends a fresh
+message from there (or from Token Email Recovery for its three templates).
+
+An exhausted `FAILED` row that still holds a body can be handed back to the
+cron with **Try again** (#4963): one status-guarded `updateMany` (id, `FAILED`,
+`attempts >= 3`, `RETAINS_REPLAYABLE_EMAIL_BODY`) sets `attempts = 2` and dates
+`lastAttemptAt` past the backoff, then writes an `email.failure.requeued` audit
+row. A press that matches nothing (another press won, the cron sent it, or no
+body is left) is refused with 409 and writes no audit row. The route never
+sends: the cron's next run selects the row and re-runs its suppression, No-emails
+and authority checks before its guarded claim. `deliveryBlockReason` is left for
+that run's terminal write to clear. Archive and Try again are both audit rows,
+and the newer of the two decides whether the row shows as archived. Pinned by
+`email-failure-requeue.test.ts` and, against a real database,
+`email-failure-requeue.realdb.test.ts`.
 A copy that has explicitly declared a capture mailbox transmits into it normally
 and its rows are ordinary `SENT`.
 
@@ -3980,6 +3995,7 @@ revoked authority or stale mailbox -> detail CTA removed, bearer/page action pre
 unknown legacy authority -> retired for manual review
 application rollback -> old worker cannot select quarantined new-version booking body
 exhausted or suppressed -> admin-visible failure/suppression
+exhausted + body retained -> operator requeue (Try again) -> retryable failed
 ```
 
 The organiser's extra-invoice notice (#4299) starts as a durable `FAILED` row

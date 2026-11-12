@@ -225,13 +225,13 @@ home for that explanation and is not repeated here.
   installation that cannot say what it is has not earned one.
 - **"Retryable" holds only while the row still carries a body, and a row nothing
   can replay is landed where an operator sees it.** No rendered body is persisted
-  for the twenty-six `SENSITIVE_EMAIL_LOG_TEMPLATES`, nor for any message whose
+  for the `SENSITIVE_EMAIL_LOG_TEMPLATES`, nor for any message whose
   logged recipient is redacted, because a live sign-in link, a door code or a
   payment link must not sit at rest — and the retry cron selects only rows that
   still hold one. Such a row is therefore written AT the retry ceiling, which
   drops it out of the retry query and into the `attempts >= 3` operator
-  email-failure review queue, and every operator sentence about it says it must be
-  re-sent by hand rather than claiming it will self-heal. Retaining the body for
+  email-failure review queue, and the queue says it cannot be resent there and
+  links its booking or member, never that it will self-heal. Retaining the body for
   those templates is not an acceptable alternative: that is the hazard they are
   excluded for.
 - **A `deliveryBlockReason` describes the row as it stands, and is cleared the

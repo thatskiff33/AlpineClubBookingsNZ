@@ -224,9 +224,10 @@ Three readings, and they mean different things:
   **Some of it will not, and you have to send those by hand.** A message that
   carries something which must not be stored — a sign-in link, a door code, a
   payment link — keeps no copy of itself, so there is nothing left to re-send
-  automatically. Those messages are listed under **Admin -> Email** for review,
-  each one saying plainly that it needs a manual re-send, and the list is where to
-  go once the declaration is corrected.
+  automatically. Those messages are listed under **Exhausted Email Failures** on
+  [Email Deliverability](email-deliverability.md), each one saying plainly that it
+  cannot be resent from there and linking its booking or member, and the list is
+  where to go once the declaration is corrected.
 - **None.** Nothing has been held back. That is what an installation nobody is
   using looks like.
 - **Not available.** The count could not be read from the database — usually a

@@ -1265,8 +1265,10 @@ the correct behaviour for a copy pointed at a live provider.
 is refused: each message is recorded as failed, carrying a reason that names
 `EMAIL_SERVER_HOST`, and it goes out by itself once the host is corrected. Mail is
 delayed rather than lost — except for the messages that keep no stored copy (a
-sign-in link, a door code, a payment link), which are listed under **Admin →
-Email** for a manual re-send, as they always are.
+sign-in link, a door code, a payment link). Those are listed under **Exhausted
+Email Failures** on **Admin → Monitoring & Support → Email Deliverability**,
+which cannot resend them: each row says why and links its booking or member, so
+an officer can send a fresh message from there (#4963).
 
 **If your capture genuinely has a public name.** Some sinks legitimately do — a
 mailpit reachable only at a public DNS name. Declare
