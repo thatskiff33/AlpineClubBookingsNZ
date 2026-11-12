@@ -13,25 +13,6 @@ It complements the two documents next to it and does not repeat them:
   synced and roll it onto a running database and deployment without losing data
   or breaking the live app color mid-deploy.
 
-## Review privacy retention before enabling cleanup (#4457)
-
-The three new automatic jobs ship OFF. After upgrading, review the
-[personal-data retention schedule](PRIVACY_RETENTION.md) and visit
-**Admin → Privacy retention** (`/admin/privacy-retention`) to inspect counts,
-member candidates and the configured periods before enabling any job. Defaults
-are 2 years for email logs, 1 year after reviewedAt for rejected applications,
-and 7 years after explicit leavingDate for former-member profile anonymisation.
-The periods are club settings. Disabling a job stops future cleanup; it cannot
-restore already deleted logs or applications, or anonymised profile values.
-
-Inactive members without leavingDate are listed separately and are never
-automatically erased. Establish a departure date from evidence rather than
-assuming an old login or inactive flag means the person left. Stable member
-IDs and financial references survive anonymisation for reconciliation.
-Existing audit, token, report and communications retention remains governed by
-its own lifecycle. Sentry Replay defaults OFF; before opting in, update the
-privacy notice to name Sentry Replay as described in [security notes](SECURITY.md#personal-data-retention-and-sentry-replay).
-
 ## Principles
 
 1. **Upgrade tag-to-tag, one release at a time.** Deploy released tags
@@ -137,6 +118,120 @@ as a red flag and check the release notes before deploying.
 ---
 
 ## Unreleased
+
+### Upgrade checklist for this release
+
+The order to work in, from the release you run now to this one. Every step
+points at the section that explains it; none of them repeats it. The
+production runbook ([`PRODUCTION_UPGRADE_RUNBOOK.md`](PRODUCTION_UPGRADE_RUNBOOK.md)) is the procedure these steps
+fit into.
+
+**Before the deploy**
+
+1. Rehearse the upgrade on staging first. The minimum is
+   `pnpm run db:rehearse-epic --database-url <throwaway> --base <from-tag>`
+   ([what it proves](BLUE_GREEN_MIGRATION_POLICY.md#rehearsing-an-epics-deploy)).
+   Keep your own record of it in the runbook's
+   [§7 template](PRODUCTION_UPGRADE_RUNBOOK.md#7-staging-rehearsal-record) if
+   you keep one.
+2. Work through the runbook's [§1 pre-flight](PRODUCTION_UPGRADE_RUNBOOK.md#1-pre-flight),
+   including the [restore-tested backup](PRODUCTION_UPGRADE_RUNBOOK.md#11-verified-restore-tested-database-backup-with-s3-durability-confirmed).
+   When a windowed migration is pending, the backup is taken immediately
+   before migrating ([Generic upgrade procedure](#generic-upgrade-procedure),
+   step 3).
+3. Do the before-the-deploy part of each of these sections:
+   - [Payment transaction history outlives its payment (#4574)](#payment-transaction-history-outlives-its-payment-4574)
+   - [Booking-ledger history outlives its booking (#4514)](#booking-ledger-history-outlives-its-booking-4514)
+   - [Nightly backups stream to a disk-backed spool volume (#4487)](#nightly-backups-stream-to-a-disk-backed-spool-volume-4487)
+   - [The Xero connection moves to its own table (#3806)](#the-xero-connection-moves-to-its-own-table-some-installs-reconnect-xero-once-3806)
+   - [The old Xero token table is dropped (#3806)](#the-old-xero-token-table-is-dropped-3806)
+   - [Credit used or un-used in Xero is mirrored by itself (#4270)](#credit-used-or-un-used-in-xero-is-mirrored-by-itself-4270)
+   - [Count audit entries with an unrecognised retention class (#3940)](#count-audit-entries-with-an-unrecognised-retention-class-before-you-upgrade-3940)
+   - [Count old audit entries with no severity (#3524)](#count-old-audit-entries-with-no-severity-before-you-upgrade-3524)
+   - [Settle failing late-payment notices (#4131)](#settle-failing-late-payment-notices-before-you-deploy-the-late-payment-refund-change-4131)
+   - [Declare whether this deployment is the live site (#3034)](#you-must-declare-whether-this-deployment-is-the-live-site-3034-epic-2986)
+   - [Capture mailboxes and `EMAIL_SERVER_HOST` (#3071)](#if-any-copy-of-your-site-uses-a-capture-mailbox-check-email_server_host-3071)
+   - [Google Analytics stops until an admin re-enters the measurement id (#2573)](#google-analytics-stops-until-an-admin-re-enters-the-measurement-id-2573)
+   - [The obsolete family-group "role" column is removed (#2520)](#the-obsolete-family-group-role-column-is-removed-2520)
+   - [Re-export configuration bundles for format version 3 (#2363)](#re-export-configuration-bundles-for-format-version-3-2363)
+4. Optional, and only if you choose it:
+   [Optional: stop connecting the app as the database superuser (#4453)](#optional-stop-connecting-the-app-as-the-database-superuser-4453).
+
+**During the window**
+
+1. This release carries windowed migrations, so it needs an announced
+   maintenance window. Which migrations are windowed is the ledger's answer
+   ([`BLUE_GREEN_MIGRATION_SAFETY.tsv`](BLUE_GREEN_MIGRATION_SAFETY.tsv),
+   [how to read it](#how-to-read-docsblue_green_migration_safetytsv)). Run them
+   by the runbook's
+   [§2.4 windowed migration deploy sequence](PRODUCTION_UPGRADE_RUNBOOK.md#24-windowed-migration-deploy-sequence):
+   every pending windowed migration shares one window, and each is named in the
+   override reason.
+2. Keep to what these sections say about the window itself:
+   - [Payment transaction history outlives its payment (#4574)](#payment-transaction-history-outlives-its-payment-4574)
+   - [Booking-ledger history outlives its booking (#4514)](#booking-ledger-history-outlives-its-booking-4514)
+   - [The old Xero token table is dropped (#3806)](#the-old-xero-token-table-is-dropped-3806)
+   - [The app records which payment settled each booking (#4211)](#the-app-records-which-payment-settled-each-booking-4211)
+   - [A card refund on a bank-transfer payment gets its own Xero credit note (#4312)](#a-card-refund-on-a-bank-transfer-payment-gets-its-own-xero-credit-note-4312)
+   - [Do not mark an edit's refund task paid back until cutover completes (#3827)](#do-not-mark-an-edits-refund-task-paid-back-until-cutover-completes-3827)
+   - [Family email inheritance becomes direct-parent only (#2716)](#family-email-inheritance-becomes-direct-parent-only-and-re-resolves-itself-2716)
+   - [The subscription booking lockout becomes a three-way choice (#2543)](#the-subscription-booking-lockout-becomes-a-three-way-choice-2543)
+
+**After the deploy**
+
+1. Work through the runbook's
+   [§3 post-upgrade checklist](PRODUCTION_UPGRADE_RUNBOOK.md#3-post-upgrade-checklist),
+   including the
+   [§3.4 money and integrations spot-check](PRODUCTION_UPGRADE_RUNBOOK.md#34-spot-check-money-and-integrations).
+2. Review privacy retention before switching on any cleanup job:
+   [Review privacy retention before enabling cleanup (#4457)](#review-privacy-retention-before-enabling-cleanup-4457).
+   Deleted data cannot be restored.
+3. Do the after-the-deploy part of each of these sections:
+   - [Member money journal foundation (#4513)](#member-money-journal-foundation-4513)
+   - [Member-money applications and refund reservations (#4691)](#member-money-applications-and-refund-reservations-4691)
+   - [The Xero connection moves to its own table (#3806)](#the-xero-connection-moves-to-its-own-table-some-installs-reconnect-xero-once-3806)
+   - [Check card cancellations left behind by earlier cash-payment reversals (#4320)](#check-card-cancellations-left-behind-by-earlier-cash-payment-reversals-4320)
+   - [Credit used or un-used in Xero is mirrored by itself (#4270)](#credit-used-or-un-used-in-xero-is-mirrored-by-itself-4270)
+   - [Check finished stays for a second card payment that was never refunded (#4285)](#check-finished-stays-for-a-second-card-payment-that-was-never-refunded-4285)
+   - [Count voided bank-transfer refund notes, then switch the follow-up on (#4162)](#count-voided-bank-transfer-refund-notes-then-switch-the-follow-up-on-4162)
+   - [List bank-transfer refunds that have no Xero credit note (#4230)](#list-bank-transfer-refunds-that-have-no-xero-credit-note-4230)
+   - [A later bank-transfer hand-back gets its own Xero credit note (#4287)](#a-later-bank-transfer-hand-back-gets-its-own-xero-credit-note-4287)
+   - [A card refund on a bank-transfer payment gets its own Xero credit note (#4312)](#a-card-refund-on-a-bank-transfer-payment-gets-its-own-xero-credit-note-4312)
+   - [One-off correction of the starter privacy policy's audit-log retention (#4031)](#one-off-correction-of-the-starter-privacy-policys-audit-log-retention-4031)
+   - [Declare whether this deployment is the live site (#3034)](#you-must-declare-whether-this-deployment-is-the-live-site-3034-epic-2986)
+   - [The club's time zone moves into the database (#2989)](#the-clubs-time-zone-moves-into-the-database-2989-epic-2988)
+   - [Family email inheritance becomes direct-parent only (#2716)](#family-email-inheritance-becomes-direct-parent-only-and-re-resolves-itself-2716)
+   - [Google Analytics stops until an admin re-enters the measurement id (#2573)](#google-analytics-stops-until-an-admin-re-enters-the-measurement-id-2573)
+   - [The subscription booking lockout becomes a three-way choice (#2543)](#the-subscription-booking-lockout-becomes-a-three-way-choice-2543)
+   - [Re-export configuration bundles for format version 4 (#2364)](#re-export-configuration-bundles-for-format-version-4-2364)
+   - [One-off cleanup of another club's lodge address (#2484)](#one-off-cleanup-of-another-clubs-lodge-address-2484)
+   - [One-off cleanup of another club's footer affiliations (#2490)](#one-off-cleanup-of-another-clubs-footer-affiliations-2490)
+   - [One-off rewrite of the front-page hero (#2431)](#one-off-rewrite-of-the-front-page-hero-that-advertised-guest-booking-2431)
+   - [The public "Book Now" button is switched OFF for every club (#2430)](#the-public-book-now-button-is-switched-off-for-every-club-2430)
+   - [The bumped-booking email now points non-members somewhere they can go (#2430)](#the-bumped-booking-email-now-points-non-members-somewhere-they-can-go-2430)
+   - [One-off repair of saved email template wording (#2269)](#one-off-repair-of-saved-email-template-wording-2269)
+   - [Post-upgrade action: check the email templates screen](#post-upgrade-action-check-the-email-templates-screen)
+   - [One-off rewrite of stored bed-allocation activity categories (#2751)](#one-off-rewrite-of-stored-bed-allocation-activity-categories-2751)
+   - [One-off categorisation of older activity entries with no category (#2581)](#one-off-categorisation-of-older-activity-entries-with-no-category-2581)
+
+### Review privacy retention before enabling cleanup (#4457)
+
+The three new automatic jobs ship OFF. After upgrading, review the
+[personal-data retention schedule](PRIVACY_RETENTION.md) and visit
+**Admin → Privacy retention** (`/admin/privacy-retention`) to inspect counts,
+member candidates and the configured periods before enabling any job. Defaults
+are 2 years for email logs, 1 year after reviewedAt for rejected applications,
+and 7 years after explicit leavingDate for former-member profile anonymisation.
+The periods are club settings. Disabling a job stops future cleanup; it cannot
+restore already deleted logs or applications, or anonymised profile values.
+
+Inactive members without leavingDate are listed separately and are never
+automatically erased. Establish a departure date from evidence rather than
+assuming an old login or inactive flag means the person left. Stable member
+IDs and financial references survive anonymisation for reconciliation.
+Existing audit, token, report and communications retention remains governed by
+its own lifecycle. Sentry Replay defaults OFF; before opting in, update the
+privacy notice to name Sentry Replay as described in [security notes](SECURITY.md#personal-data-retention-and-sentry-replay).
 
 ### Payment transaction history outlives its payment (#4574)
 
