@@ -346,4 +346,36 @@ cards in the product still have no heading semantics. Changing the primitive
 touches every card in ~167 files and would put the wrong level on many of them,
 so it is not a fix to make in passing — tracked in #2796, which also records
 that this same trap has now been patched per-page three times (#1242,
-`roster-editor.tsx`, and this one).
+`roster-editor.tsx`, and this one). Superseded for the member-facing screens
+by #4951 below.
+
+## #4951 Member Screen Headings and Tab Titles (2026-11-12)
+
+Static fix, no visual change. Two gaps a screen-reader user hits on the
+screens a member reaches from an email link or their account:
+
+- **No level-1 heading.** Each single-card screen's card title now renders as
+  the page's `<h1>` (`headingLevel={1}`) in every render state — loading,
+  invalid link, form, success, error. A loading state with no visible title
+  carries an sr-only `<h1>`. Covered: `/pay/[token]`, `/reset-password`,
+  `/change-password`, `/verify-email`, `/confirm-email-change`,
+  `/family-invite/[token]`, `/membership-cancellation/[token]`,
+  `/lodge-maintenance/[token]`, `/nominations/[token]`, `/notices/[id]`, and
+  the `/booking-requests` respond and verify screens. Pages that already had
+  an `<h1>` (dashboard, bookings, a single booking) give their cards level 2.
+- **Identical tab titles.** Each of those routes, plus `/login`, `/dashboard`,
+  `/bookings` and `/bookings/[id]`, now sets a fixed page title that the root
+  template turns into "<Page> | <Club>". Client pages get theirs from a small
+  server `layout.tsx`. Titles never carry a name, amount or token, and
+  `/notices/[id]` is a fixed "Notice" so the title needs no second access check.
+
+Pinned by `src/app/(public)/__tests__/single-card-screen-headings.test.tsx`,
+`src/app/__tests__/member-token-screen-headings.test.tsx`, the `/pay` page
+suite, and `src/app/__tests__/member-route-titles.test.ts`. The
+`card-title-classification-census.test.ts` census keeps the member-facing
+roots fully classified and ratchets the admin and finance remainder
+(`docs/ARCHITECTURE.md` → "Card titles and heading semantics (#2796)").
+
+Not done here: the admin and finance card titles (swept by area, each sweep
+lowering the census baseline), and a real screen-reader walkthrough, which
+stays a human manual-QA task.

@@ -68,7 +68,7 @@ operative ones:
 
 ## Public authoritative content
 
-What the public site is allowed to publish.
+What the public site is allowed to publish, and a member page's outline and title.
 File: [`invariants/public-content.md`](invariants/public-content.md). Prefix
 `INV-PUB`.
 
@@ -77,6 +77,7 @@ File: [`invariants/public-content.md`](invariants/public-content.md). Prefix
 | `INV-PUB-001` | Fee/policy PageContent blocks are enabled and server-rendered; tokens alone publish nothing |
 | `INV-PUB-002` | Public fees use current effective-dated schedules; joining fees resolve from `JoiningFee` only |
 | `INV-PUB-003` | A named lodge token resolves one active lodge or nothing |
+| `INV-PUB-004` | Member pages: own tab title, one h1; CardTitles declare a level |
 
 ## Money
 
