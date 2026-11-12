@@ -21,6 +21,7 @@ import {
   countStaleProcessingXeroInboundEvents,
   countStaleRunningXeroOperations,
 } from "@/lib/xero-stale-operations";
+import { XERO_CRON_JOB_NAMES } from "@/lib/xero-cron-jobs";
 
 const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
 
@@ -456,7 +457,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     }),
     prisma.cronJobRun.findFirst({
       where: {
-        jobName: "xero-membership-refresh",
+        jobName: XERO_CRON_JOB_NAMES.memberships,
       },
       orderBy: { startedAt: "desc" },
       select: {
