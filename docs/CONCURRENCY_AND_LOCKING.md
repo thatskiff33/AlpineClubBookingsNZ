@@ -8296,8 +8296,10 @@ mirror participate too. A competing cron or manual caller reports “A sync is
 already running” and performs no provider or domain work.
 
 The Xero webhook's after-response kick takes the same claim through
-`runXeroWebhookInboundKick` (#4922): one attempt, no retry, and no `CronRun`
-row, so webhook traffic never shows in cron health. Holding it, the kick runs
+`runXeroWebhookInboundKick` (#4922): one attempt on one short dedicated
+connection, no retry, and no `CronRun` row, so webhook traffic never shows in
+cron health. A burst of deliveries opens a burst of these short connections
+outside Prisma's pool. Holding it, the kick runs
 the whole cycle with its smaller batch bounds. Finding it held, the kick still
 applies stored events, each claimed row by row, so a webhook during a long
 scheduled run is not left for the next cycle. It never runs the contact,
