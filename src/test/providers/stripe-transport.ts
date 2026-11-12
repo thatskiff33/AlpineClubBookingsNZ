@@ -92,7 +92,10 @@ export function stripeTransport(fake: StripeFake) {
       create: async (params: Stripe.RefundCreateParams, options?: Stripe.RequestOptions) => invoke(() => write(key(options?.idempotencyKey), params, () => {
         const id = params.payment_intent ?? fake.snapshot().intents.find(i => `charge-${i.id}` === params.charge)?.id;
         if (!id) throw new Error("A refund needs a known intent or charge");
-        const r = fake.refund(key(), id, params.amount ?? intent(id).amount_received);
+        // Without an amount Stripe refunds what is left: the capture less every refund not failed.
+        const left = intent(id).amount_received - fake.snapshot().refunds.filter(r => r.payment_intent === id && r.status !== "failed").reduce((n, r) => n + r.amount, 0);
+        if (params.amount === undefined && left === 0) throw new StripeFakeError("charge_already_refunded", "Charge has already been refunded");
+        const r = fake.refund(key(), id, params.amount ?? left);
         refundInputs.set(r.id, structuredClone(params));
         return refundWire(r);
       })),

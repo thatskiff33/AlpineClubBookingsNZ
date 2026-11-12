@@ -13,8 +13,9 @@ import { XeroFake, XeroValidationError } from "./xero-fake";
  *
  * Bodies are native Xero JSON passed through xero-node's own
  * `ObjectSerializer`, the same deserializer the SDK runs on an HTTP reply.
- * Invoices reuse `invoiceWire` (`INV-SSOT`). Not modelled: tax, currencies,
- * pagination, auth, rate limits beyond what `failNext` injects, invoice edits,
+ * Invoices reuse `invoiceWire` (`INV-SSOT`). Lists page as Xero does: no
+ * `page` returns everything, a `page` returns that slice of `pageSize`
+ * (default 100). Not modelled: tax, currencies, auth, rate limits beyond what `failNext` injects, invoice edits,
  * payment dates, the organisation record and email. Anything absent from the
  * method table throws, so the app's organisation read falls back as it does
  * when Xero is unreachable.
@@ -102,13 +103,17 @@ export function xeroTransport(fake: XeroFake) {
     return (c: Record<string, unknown>) => String(c.EmailAddress ?? "").toLowerCase() === address.toLowerCase();
   };
 
+  // Xero's paging: without `page` every match, with it one slice of `pageSize` (default 100).
+  const paged = <T>(items: T[], page?: number, pageSize = 100) =>
+    page === undefined ? items : items.slice((page - 1) * pageSize, page * pageSize);
+
   // Each signature is the SDK's positional one, so argument slots are compiler-checked.
   const api = {
     getInvoice: (...[, id]: Args<"getInvoice">) =>
       call("Invoices", () => ({ Invoices: invoices().filter(i => i.InvoiceID === id) })),
-    getInvoices: (...[, , where, , iDs, , contactIDs, statuses]: Args<"getInvoices">) => call("Invoices", () => {
+    getInvoices: (...[, , where, , iDs, , contactIDs, statuses, page, , , , , pageSize]: Args<"getInvoices">) => call("Invoices", () => {
       if (where !== undefined) throw new Error(`The Xero test transport does not model the where clause ${where}`);
-      return { Invoices: invoices().filter(i => (!iDs?.length || iDs.includes(i.InvoiceID)) && (!contactIDs?.length || contactIDs.includes(i.Contact.ContactID)) && (!statuses?.length || statuses.includes(i.Status))) };
+      return { Invoices: paged(invoices().filter(i => (!iDs?.length || iDs.includes(i.InvoiceID)) && (!contactIDs?.length || contactIDs.includes(i.Contact.ContactID)) && (!statuses?.length || statuses.includes(i.Status))), page, pageSize) };
     }),
     createInvoices: (...[, body, , , idempotencyKey]: Args<"createInvoices">) => call("Invoices", () => {
       const input = one(body.invoices);
@@ -119,10 +124,10 @@ export function xeroTransport(fake: XeroFake) {
     }),
     getContact: (...[, id]: Args<"getContact">) =>
       call("Contacts", () => ({ Contacts: contacts().filter(c => c.ContactID === id) })),
-    getContacts: (...[, , where, , iDs, , , , searchTerm]: Args<"getContacts">) => call("Contacts", () => {
+    getContacts: (...[, , where, , iDs, page, , , searchTerm, pageSize]: Args<"getContacts">) => call("Contacts", () => {
       const matches = contactsWhere(where);
       const term = searchTerm?.toLowerCase();
-      return { Contacts: contacts().filter(c => matches(c) && (!iDs?.length || iDs.includes(c.ContactID)) && (!term || c.Name.toLowerCase().includes(term))) };
+      return { Contacts: paged(contacts().filter(c => matches(c) && (!iDs?.length || iDs.includes(c.ContactID)) && (!term || c.Name.toLowerCase().includes(term))), page, pageSize) };
     }),
     createContacts: (...[, body, , idempotencyKey]: Args<"createContacts">) => call("Contacts", () => {
       const input = one(body.contacts);

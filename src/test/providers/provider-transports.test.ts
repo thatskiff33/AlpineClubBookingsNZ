@@ -70,6 +70,19 @@ describe("provider transport mapping", () => {
     await expect(xero.accountingApi.getContacts(tenantId, undefined, 'Name="member-a"')).rejects.toThrow("does not model");
   });
 
+  it("pages lists as Xero does, so the app's paging loops end", async () => {
+    const fake = new XeroFake(); const { xero, tenantId } = xeroTransport(fake);
+    const c = fake.createContact("contact", "member-a");
+    for (const n of [1, 2, 3]) fake.createInvoice(`invoice-${n}`, c.contactID, 1000);
+    const ids = async (page?: number) => (await xero.accountingApi.getInvoices(tenantId, undefined, undefined, undefined, undefined, undefined, undefined, undefined, page, false, false, undefined, false, 2)).body.invoices!.map(i => i.invoiceID);
+    expect(await ids()).toHaveLength(3);
+    expect([...await ids(1), ...await ids(2)]).toEqual(await ids());
+    expect(await ids(3)).toEqual([]);
+    const contactPage = (page: number) => xero.accountingApi.getContacts(tenantId, undefined, undefined, undefined, undefined, page, false, false, undefined, 20);
+    expect((await contactPage(1)).body.contacts).toHaveLength(1);
+    expect((await contactPage(2)).body.contacts).toEqual([]);
+  });
+
   it("raises injected HTTP failures in xero-node's shape, so the real retry wrapper classifies them", async () => {
     const session = xeroTransport(new XeroFake());
     session.failNext({ statusCode: 429, headers: { "retry-after": "60", "x-rate-limit-problem": "day" } });
@@ -95,6 +108,9 @@ describe("provider transport mapping", () => {
     const listed = []; for await (const item of stripe.refunds.list({ payment_intent: i.id })) listed.push(item);
     expect(listed).toHaveLength(1);
     await expect(processRefund({ paymentIntentId: i.id, amountCents: 4000 })).rejects.toBeInstanceOf(Stripe.errors.StripeInvalidRequestError);
+    // Without an amount Stripe refunds what is left, and then refuses.
+    expect(await stripe.refunds.create({ payment_intent: i.id })).toMatchObject({ amount: 3000 });
+    await expect(stripe.refunds.create({ payment_intent: i.id })).rejects.toMatchObject({ code: "charge_already_refunded" });
     fake.failRefund(r.id);
     expect(transport.events().map(e => e.type)).toContain("refund.failed");
     expect(transport.events().find(e => e.type === "charge.refunded")!.data.object).toMatchObject({ amount_refunded: 2000 });

@@ -188,8 +188,9 @@ intents, captures and refunds through `setStripeClientForTests`, and its
 `processStripeWebhookEvent`. Fake refusals come back as the SDK's
 `StripeInvalidRequestError`, and a reused idempotency key with other
 parameters as `StripeIdempotencyError`. A call either transport does not model
-throws rather than guessing, and neither ever touches the network. Not
-modelled: Xero payment dates and the organisation record; Stripe payment-method
+throws rather than guessing, and neither ever touches the network. Xero lists page as Xero
+does (`page` and `pageSize`). Not modelled: Xero payment dates and the
+organisation record; Stripe payment-method
 collection (an intent is authorised on create) and any `expand` but an
 intent's `latest_charge`. While a Xero session is installed, `isXeroConnected()`
 reports connected, so the journeys that check it first take their Xero path.
@@ -198,7 +199,8 @@ reports connected, so the journeys that check it first take their Xero path.
 is `test`, and every read re-checks it, so production cannot set
 the override. No environment variable reaches it.
 [`production-import-census.test.ts`](../src/test/providers/production-import-census.test.ts)
-fails if any non-test file under `src/` imports from `src/test/`. The existing
+fails if any non-test file under `src/` imports test code: `src/test/`, a
+`__tests__` directory or a `*.test.*` / `*.spec.*` file. The existing
 `vi.mock` suites stay as they are; new money journeys should prefer the
 transports.
 
