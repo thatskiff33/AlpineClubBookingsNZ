@@ -460,29 +460,36 @@ export async function keepRefusedPrePersistedRefundOwed({
 }
 
 /**
- * #4104: a cancellation's inline refund that failed partway (`PartialRefundError`)
+ * #4104: a pre-persisted inline refund that failed partway (`PartialRefundError`)
  * with nothing refused (a refusal is `keepRefusedPrePersistedRefundOwed`'s): its
  * pre-persisted row is re-planned as the runner would (`replanPrePersistedRow`) -
  * each slice made marked with its refund, so a failure Stripe reports later is
  * owed by this row by its refund id. Best effort: unmarked, the runner replays a
  * made slice's key and Stripe answers with the original refund.
  */
-export async function markCancellationAttempt({
+export async function markPrePersistedRefundAttempt({
   bookingId,
+  idempotencyKey,
   plan,
   error,
 }: {
   bookingId: string;
+  idempotencyKey: string;
   plan: ReadonlyArray<RefundAllocationSlice>;
   error: unknown;
 }): Promise<void> {
   const answered = answersBeforeFailure(error);
   if (answered.length === 0) return;
   try {
-    await replanPrePersistedRow({ idempotencyKey: buildBookingCancellationRefundIdempotencyKey(bookingId), plan, answered });
+    await replanPrePersistedRow({ idempotencyKey, plan, answered });
   } catch (err) {
-    logger.error({ err, bookingId }, "Could not mark a cancellation refund's made slices (#4104)");
+    logger.error({ err, bookingId, idempotencyKey }, "Could not mark a pre-persisted refund's made slices (#4104, #4992)");
   }
+}
+
+/** Cancellation compatibility: the shared marker always takes the debt's own key. */
+export function markCancellationAttempt(args: { bookingId: string; plan: ReadonlyArray<RefundAllocationSlice>; error: unknown }): Promise<void> {
+  return markPrePersistedRefundAttempt({ ...args, idempotencyKey: buildBookingCancellationRefundIdempotencyKey(args.bookingId) });
 }
 
 /**

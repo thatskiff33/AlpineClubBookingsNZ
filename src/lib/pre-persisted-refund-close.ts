@@ -2,7 +2,7 @@
  * #4126, #4144 (`INV-PAY-130`, `INV-SSOT`): A PRE-PERSISTED DOOR CLOSES ONLY
  * THE ROW IT SENT.
  *
- * Five doors write their card refund's recovery row BEFORE the inline attempt -
+ * The doors write their card refund's recovery row BEFORE the inline attempt -
  * the cancellation, the edit financial review, the duplicate capture, the
  * capacity race and the treasurer-approved late capture - and close it
  * `SUCCEEDED` once Stripe has made every slice. Between the refund and the
@@ -15,7 +15,7 @@
  *
  * So the close is a compare-and-set on the plan the door sent:
  *
- * - four doors close an open row still on that plan (`sentPlanRowWhere`). A row
+ * - the sent-plan doors close an open row still on that plan (`sentPlanRowWhere`). A row
  *   the runner holds on the same plan is closed, which is harmless: its replay
  *   of the same keys is answered with the door's refunds, and only the close
  *   that moved the row writes a record;
@@ -71,8 +71,9 @@ export async function closePrePersistedRefundRow({
   });
 }
 
-/** The five pre-persisted doors: each names its alert's once-ever key (`<door>-close-lost:<row id>`). */
+/** The pre-persisted doors: each names its alert's once-ever key (`<door>-close-lost:<row id>`). */
 export const PRE_PERSISTED_REFUND_DOORS = {
+  "booking-modification": { name: "the booking modification", refundLabel: "The booking edit’s card refund" },
   cancellation: { name: "the cancellation", refundLabel: "The cancellation's card refund" },
   "edit-review": { name: "the edit financial review", refundLabel: "The edit review's card refund" },
   "duplicate-capture": { name: "the duplicate capture", refundLabel: "The duplicate capture's refund" },
@@ -128,7 +129,7 @@ function logContext(lost: LostCloseContext): Record<string, unknown> {
  * replays it. A row that is gone should not be - nothing deletes a door's
  * refund row (the mark-paid reversal deletes only superseded-intent rows) - so
  * it is logged as an error, not alerted. A row still
- * untouched is an anomaly: for the four sent-plan doors nothing moves an
+ * untouched is an anomaly: for the sent-plan doors nothing moves an
  * untouched row's plan once every slice was made - their re-plan follows only a
  * refusal (`keepRefusedPrePersistedRefundOwed`), a refund Stripe failed later
  * re-plans only a tried row, and a repeat enqueue writes the plan the door sends

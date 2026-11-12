@@ -12,9 +12,9 @@
  * re-price's prefix was missing from the map, so its replay never converged.
  *
  * The census finds EVERY caller by AST and pins each one's reason to the
- * literal it sent before the reason was derived, so the change of source is
+ * door it uses and the prefix/reason it sent before they were shared, so it is
  * byte-identical on Stripe and a new caller is asked here whether the map knows
- * its prefix. The behavioural half drives the real helper per caller;
+ * its door. The behavioural half drives the real helper per caller;
  * `payment-recovery.test.ts` pins that the replay processor builds the same
  * body per stored prefix.
  */
@@ -30,7 +30,7 @@ import {
 const h = vi.hoisted(() => ({
   alertPaymentRecoveryOfficers: vi.fn(),
   refundPaymentTransactions: vi.fn(),
-  enqueueBookingModificationRefundRecovery: vi.fn(),
+  markBookingModificationRefundRecoverySucceeded: vi.fn(),
 }));
 
 vi.mock("@/lib/payment-recovery-alert", () => ({ alertPaymentRecoveryOfficers: h.alertPaymentRecoveryOfficers }));
@@ -40,22 +40,19 @@ vi.mock("@/lib/logger", () => ({
 }));
 vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/payment-transactions")),
-  planStripeRefundAllocation: vi.fn(async ({ amountCents }: { amountCents: number }) => ({
-    slices: [{ paymentTransactionId: "txn_refund", amountCents }],
-    plannedAmountCents: amountCents,
-    totalRefundableCents: amountCents,
-  })),
   refundPaymentTransactions: h.refundPaymentTransactions,
 }));
 vi.mock("@/lib/payment-recovery", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/payment-recovery")),
-  enqueueBookingModificationRefundRecovery:
-    h.enqueueBookingModificationRefundRecovery,
+  markBookingModificationRefundRecoverySucceeded:
+    h.markBookingModificationRefundRecoverySucceeded,
 }));
 
-import { planStripeRefundAllocation, PartialRefundError } from "@/lib/payment-transactions";
 import { executeBookingModificationRefund } from "@/lib/booking-modification-settlement";
 import {
+  BOOKING_MODIFICATION_REFUND_DOORS,
+  type BookingModificationRefundDoor,
+  buildBookingModificationRefundKeyPrefix,
   bookingModificationRefundReasonForKeyPrefix,
   buildBookingModificationRefundMetadata,
 } from "@/lib/payment-recovery-keys";
@@ -63,16 +60,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const HELPER = "executeBookingModificationRefund";
 
-type Caller = { file: string; keyPrefix: string };
-
-/** The literal head of `idempotencyKeyPrefix`: `guest_accept_refund_${id}` -> `guest_accept_refund_`. */
-function literalKeyPrefix(node: ts.Expression): string | undefined {
-  if (ts.isTemplateExpression(node)) return node.head.text || undefined;
-  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-    return node.text || undefined;
-  }
-  return undefined;
-}
+type Caller = { file: string; door: BookingModificationRefundDoor };
 
 function scanCallers(): { callers: Caller[]; unreadable: string[] } {
   const callers: Caller[] = [];
@@ -104,10 +92,9 @@ function scanCallers(): { callers: Caller[]; unreadable: string[] } {
                   p.name.text === name,
               )?.initializer
             : undefined;
-        const prefix = property("idempotencyKeyPrefix");
-        const keyPrefix = prefix ? literalKeyPrefix(prefix) : undefined;
-        if (keyPrefix) {
-          callers.push({ file: relativeSource(file), keyPrefix });
+        const door = property("door");
+        if (door && ts.isStringLiteral(door) && door.text in BOOKING_MODIFICATION_REFUND_DOORS) {
+          callers.push({ file: relativeSource(file), door: door.text as BookingModificationRefundDoor });
         } else {
           unreadable.push(where);
         }
@@ -136,37 +123,35 @@ const REASON_SENT_BEFORE_4101: Record<string, string> = {
 describe("INV-MOD-061: a booking edit's card refund and its replay send one request (#4101)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // The inline refund fails after Stripe may have made it (a timeout): the
-    // helper stores its key prefix for the replay.
-    h.refundPaymentTransactions.mockRejectedValue(new Error("Stripe timed out"));
-    h.enqueueBookingModificationRefundRecovery.mockResolvedValue({});
+    h.refundPaymentTransactions.mockResolvedValue({ refunds: [{ refundId: "re-1", paymentIntentId: "pi-1", amountCents: 4000, status: "succeeded", slice: { paymentTransactionId: "txn_refund", amountCents: 4000 } }] });
+    h.markBookingModificationRefundRecoverySucceeded.mockResolvedValue({ count: 1 });
   });
 
-  it("reads every caller's key prefix as a literal, so none escapes the check", () => {
-    // INV-MOD-061: a caller passing a computed prefix cannot be checked here.
-    // Spell its head as a literal at the call site, or extend this census to
-    // read the new shape - never exempt it.
-    expect(UNREADABLE, "INV-MOD-061: unreadable executeBookingModificationRefund prefix").toEqual([]);
+  it("reads every caller's registered door, so none escapes the check", () => {
+    // Dynamic doors must extend the scan, never silently escape it.
+    expect(UNREADABLE, "INV-MOD-061: unreadable executeBookingModificationRefund door").toEqual([]);
   });
 
   it("finds the four booking-edit refund callers, each with a prefix the reason map knows", () => {
-    expect(CALLERS.map(({ file, keyPrefix }) => `${file} ${keyPrefix}`).sort()).toEqual([
-      "src/app/api/bookings/[id]/guests/[guestId]/route.ts guest_remove_refund_",
-      "src/lib/booking-batch-modification-service.ts mod_batch_refund_",
-      "src/lib/booking-date-modification-service.ts mod_dates_refund_",
-      "src/lib/booking-guest-acceptance-reprice.ts guest_accept_refund_",
+    expect(CALLERS.map(({ file, door }) => `${file} ${door}`).sort()).toEqual([
+      "src/app/api/bookings/[id]/guests/[guestId]/route.ts guestRemoval",
+      "src/lib/booking-batch-modification-service.ts batchModify",
+      "src/lib/booking-date-modification-service.ts dateChange",
+      "src/lib/booking-guest-acceptance-reprice.ts guestAcceptanceReprice",
     ]);
-    for (const { file, keyPrefix } of CALLERS) {
+    for (const { file, door } of CALLERS) {
+      const keyPrefix = buildBookingModificationRefundKeyPrefix(door, "booking-1");
       expect(
-        bookingModificationRefundReasonForKeyPrefix(`${keyPrefix}booking-1_mod-1`),
+        bookingModificationRefundReasonForKeyPrefix(`${keyPrefix}_mod-1`),
         `INV-MOD-061: ${file} passes ${keyPrefix}, which bookingModificationRefundReasonForKeyPrefix does not know - add its reason there`,
       ).not.toBe("booking_modification_refund_recovery");
     }
   });
 
   it.each(CALLERS)(
-    "$file ($keyPrefix): sends its pre-#4101 reason, and the replay rebuilds it from the stored prefix",
-    async ({ keyPrefix }) => {
+    "$file ($door): sends its pre-#4101 reason, and the replay rebuilds it from the stored prefix",
+    async ({ door }) => {
+      const keyPrefix = BOOKING_MODIFICATION_REFUND_DOORS[door].prefix;
       const bookingId = "booking-1";
       await executeBookingModificationRefund({
         format: CLUB_FORMAT_TEST,
@@ -176,14 +161,14 @@ describe("INV-MOD-061: a booking edit's card refund and its replay send one requ
           paymentId: "pay-1",
           bookingModificationId: "mod-1",
           organiserChildRefund: null,
+          ownCardRefund: { plan: [{ paymentTransactionId: "txn_refund", amountCents: 4000 }] },
         } as never,
-        idempotencyKeyPrefix: `${keyPrefix}${bookingId}`,
+        door,
         failureMessage: "inline refund failed",
-        recoveryFailureMessage: "enqueue failed",
       });
 
       const [inline] = h.refundPaymentTransactions.mock.calls[0];
-      const [enqueued] = h.enqueueBookingModificationRefundRecovery.mock.calls[0];
+      const storedPrefix = `${buildBookingModificationRefundKeyPrefix(door, bookingId)}_mod-1`;
       // Byte-identical to what this caller sent while it passed the reason by
       // hand, so refunds Stripe already holds replay too.
       expect(inline.metadata, `INV-MOD-061: ${keyPrefix} changed its Stripe reason`).toEqual({
@@ -192,13 +177,13 @@ describe("INV-MOD-061: a booking edit's card refund and its replay send one requ
       });
       // The replay sends under the prefix the row stored, so it must be the
       // inline call's own.
-      expect(enqueued.stripeKeyPrefix).toBe(inline.idempotencyKeyPrefix);
+      expect(storedPrefix).toBe(inline.idempotencyKeyPrefix);
       // The body the replay's modification branch builds from that stored
       // prefix alone (pinned per prefix in payment-recovery.test.ts).
       expect(
         buildBookingModificationRefundMetadata(
           bookingId,
-          bookingModificationRefundReasonForKeyPrefix(enqueued.stripeKeyPrefix),
+          bookingModificationRefundReasonForKeyPrefix(storedPrefix),
         ),
         "INV-MOD-061: the replay would send another body under the same key",
       ).toEqual(inline.metadata);
@@ -206,57 +191,86 @@ describe("INV-MOD-061: a booking edit's card refund and its replay send one requ
   );
 });
 
-// #3984: the plan carries progress for every slice, even on a thrown attempt.
-describe("an edit's frozen refund plan after a partial attempt (#3984)", () => {
-  const plan = [
-    { paymentTransactionId: "made", amountCents: 2000 },
-    { paymentTransactionId: "refused", amountCents: 3000 },
-    { paymentTransactionId: "unanswered", amountCents: 3000 },
-  ];
-  const execute = () => executeBookingModificationRefund({
-    format: CLUB_FORMAT_TEST, bookingId: "booking-1",
-    result: { pendingRefundAmountCents: 8000, paymentId: "pay-1", bookingModificationId: "mod-1", organiserChildRefund: null } as never,
-    idempotencyKeyPrefix: "mod_dates_refund_booking-1", failureMessage: "refund failed", recoveryFailureMessage: "enqueue failed",
-  });
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(planStripeRefundAllocation).mockResolvedValue({ slices: plan, plannedAmountCents: 8000, totalRefundableCents: 8000 });
-    h.enqueueBookingModificationRefundRecovery.mockResolvedValue({ created: true });
-    h.refundPaymentTransactions.mockRejectedValue(new PartialRefundError({
-      completedRefundCents: 2000,
-      refunds: [
-        { paymentIntentId: "pi_made", refundId: "re_made", amountCents: 2000 },
-        { paymentIntentId: "pi_refused", refundId: "re_refused", amountCents: 3000 },
-      ],
-      refusedSlices: [plan[1]], cause: new Error("third slice lost its reply"), format: CLUB_FORMAT_TEST,
-    }));
+
+/** AST calls, including enclosing functions: comments cannot stand in for a reserve. */
+function callsNamed(name: string) {
+  const calls: { file: string; node: ts.CallExpression; source: ts.SourceFile }[] = [];
+  for (const file of sourceFiles()) {
+    const code = readFileSync(file, "utf8");
+    if (!code.includes(name)) continue;
+    const source = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true);
+    const visit = (node: ts.Node) => {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === name) {
+        calls.push({ file: relativeSource(file), node, source });
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+  }
+  return calls;
+}
+
+function property(node: ts.Node | undefined, name: string): ts.Expression | undefined {
+  if (!node || !ts.isObjectLiteralExpression(node)) return undefined;
+  const value = node.properties.find((p): p is ts.PropertyAssignment =>
+    ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === name);
+  return value?.initializer;
+}
+
+function containingFunction(node: ts.Node): string | undefined {
+  for (let parent = node.parent; parent; parent = parent.parent) {
+    if (ts.isFunctionDeclaration(parent)) return parent.name?.text;
+  }
+  return undefined;
+}
+
+// These edges bind the after-commit attempt to its transaction producer. The
+// realdb crash-window tests prove the persisted state; this census prevents a
+// fifth executor or a shared removal caller escaping that coverage unnoticed.
+describe("every booking-edit refund reserves its debt before commit (#4992)", () => {
+  const reserves = callsNamed("reserveModificationRefundDebts");
+  const producerFiles: Record<BookingModificationRefundDoor, string> = {
+    dateChange: "src/lib/booking-date-modification-service.ts",
+    batchModify: "src/lib/booking-batch-modification-service.ts",
+    guestRemoval: "src/lib/booking-guest-removal-service.ts",
+    guestAcceptanceReprice: "src/lib/booking-guest-acceptance-reprice.ts",
+  };
+
+  it("each registered executor has one matching reserve using its transaction client", () => {
+    expect(reserves.map(({ file, node }) => `${file} ${property(node.arguments[1], "door")?.getText()}`).sort()).toEqual(
+      Object.entries(producerFiles).map(([door, file]) => `${file} "${door}"`).sort(),
+    );
+    for (const { door } of CALLERS) {
+      const reserve = reserves.find(({ file }) => file === producerFiles[door]);
+      expect(reserve, `missing in-transaction reserve for ${door}`).toBeDefined();
+      expect(reserve!.node.arguments[0]?.getText()).toBe("tx");
+      // A reserve nested in an after-commit callback would have no tx binding.
+      let bindsTx = false;
+      for (let node = reserve!.node.parent; node; node = node.parent) {
+        if (ts.isFunctionLike(node) && node.parameters.some((p) => p.name.getText() === "tx" ||
+          (ts.isObjectBindingPattern(p.name) && p.name.elements.some((e) => e.name.getText() === "tx")))) bindsTx = true;
+      }
+      expect(bindsTx, `${door} reserve must run in its tx scope`).toBe(true);
+    }
   });
 
-  it("keeps the whole plan: made marked, refused on a fresh key, unanswered on its original key", async () => {
-    expect((await execute()).refundDestination).toBe("own_card_pending");
-    expect(h.refundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ allocation: plan }));
-    expect(h.enqueueBookingModificationRefundRecovery).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 8000, allocationPlan: [
-      { ...plan[0], madeRefundId: "re_made" }, { ...plan[1], stripeKeySuffix: "refused1" }, plan[2],
-    ] }));
-    expect(h.alertPaymentRecoveryOfficers).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 3000, paymentIntentId: "pi_refused" }), CLUB_FORMAT_TEST);
+  it("the guest route and consent's shared removal are the complete service caller population", () => {
+    expect(callsNamed("removeBookingGuestInTransaction").map(({ file, node }) => `${file} ${containingFunction(node)}`).sort()).toEqual([
+      "src/app/api/bookings/[id]/guests/[guestId]/route.ts DELETE",
+      "src/lib/member-guest-consent-service.ts removeClaimedConsentGuest",
+    ]);
+    expect(reserves.filter(({ file, node }) => file === producerFiles.guestRemoval &&
+      containingFunction(node) === "removeBookingGuestInTransaction")).toHaveLength(1);
   });
 
-  it("still alerts a refused slice when writing recovery also fails (#4117)", async () => {
-    h.enqueueBookingModificationRefundRecovery.mockRejectedValue(new Error("enqueue failed too"));
-    expect((await execute()).refundDestination).toBe("own_card_pending");
-    expect(h.alertPaymentRecoveryOfficers).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not repeat the refusal alert when the recovery row already exists", async () => {
-    h.enqueueBookingModificationRefundRecovery.mockResolvedValue({ created: false });
-    await execute();
-    expect(h.alertPaymentRecoveryOfficers).not.toHaveBeenCalled();
-  });
-
-  it("keeps the original shortfall failure before Stripe and queues the full debt", async () => {
-    vi.mocked(planStripeRefundAllocation).mockResolvedValue({ slices: [plan[0]], plannedAmountCents: 2000, totalRefundableCents: 2000 });
-    expect((await execute()).refundDestination).toBe("own_card_pending");
-    expect(h.refundPaymentTransactions).not.toHaveBeenCalled();
-    expect(h.enqueueBookingModificationRefundRecovery).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 8000, allocationPlan: undefined }));
+  it("both consent decline and expiry use that reserved removal with the same transaction", () => {
+    const calls = callsNamed("removeClaimedConsentGuest");
+    expect(calls.map(({ node }) => containingFunction(node)).sort()).toEqual([
+      "expireMemberGuestConsent", "respondToMemberGuestConsent",
+    ]);
+    expect(calls.map(({ node }) => property(node.arguments[1], "kind")?.getText()).sort()).toEqual([
+      '"CONSENT_DECLINE"', '"CONSENT_EXPIRY"',
+    ]);
+    for (const { node } of calls) expect(node.arguments[0]?.getText()).toBe("tx");
   });
 });

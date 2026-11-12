@@ -50,7 +50,7 @@ import { sendBookingModifiedEmail } from "@/lib/email/booking";
 import { editRefundBankTransferPayee, raiseEditRefundHandBackIfOwed } from "@/lib/edit-refund-hand-back";
 import { fullReductionReturnRoute } from "@/lib/booking-guest-acceptance-return-route";
 import { getDefaultLodgeId } from "@/lib/lodges";
-import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
+import { reserveModificationRefundDebts } from "@/lib/booking-modification-settlement";
 import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import logger from "@/lib/logger";
 import {
@@ -142,6 +142,7 @@ export type GuestAcceptanceReprice =
       priceDiffCents: number;
       refundAmountCents: number;
       /** The Stripe slice of `refundAmountCents`, refunded after commit. */
+      ownCardRefund: import("@/lib/booking-modification-settlement").BookingModificationPaymentContext["ownCardRefund"];
       pendingRefundAmountCents: number;
       /**
        * #3653 (composed by #3829): non-null when that slice goes back to the
@@ -339,6 +340,7 @@ export async function repriceBookingAfterGuestAcceptance(
       bookingModificationId: null,
       priceDiffCents: 0,
       refundAmountCents: 0,
+      ownCardRefund: null,
       pendingRefundAmountCents: 0,
       organiserChildRefund: null,
       accountCreditAmountCents: 0,
@@ -521,7 +523,9 @@ export async function repriceBookingAfterGuestAcceptance(
   await queueEditAskFollowUps(tx, { bookingId, paymentId: booking.payment?.id ?? null, bookingModificationId: bookingModification.id, door: "guestAcceptanceReprice", settled: paymentImpact });
   // #3653 (composed by #3829): an organiser-settled child's refund debt, before
   // this re-price commits, as every edit door reserves it.
-  await reserveOrganiserChildModificationRefund(tx, {
+  const ownCardRefund = await reserveModificationRefundDebts(tx, {
+    door: "guestAcceptanceReprice",
+    pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
     plan: adjusted.organiserChildRefund,
     bookingId,
     payment: booking.payment,
@@ -533,6 +537,7 @@ export async function repriceBookingAfterGuestAcceptance(
     bookingModificationId: bookingModification.id,
     priceDiffCents,
     refundAmountCents: paymentImpact.refundAmountCents,
+    ownCardRefund,
     pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
     organiserChildRefund: adjusted.organiserChildRefund
       ? { amountCents: adjusted.organiserChildRefund.amountCents }
@@ -583,6 +588,7 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
   // this modification and durable recovery on failure (#818).
   const { pendingRefundAmountCents, organiserChildRefund, paymentId, additionalAsk, retiredAdditionalAsks, hasSucceededPayment, hasIssuedXeroInvoice, paymentCustomerId, priceLines } = reprice;
   const paymentContext = {
+    ownCardRefund: reprice.ownCardRefund,
     pendingRefundAmountCents, organiserChildRefund, paymentId, additionalAsk, retiredAdditionalAsks,
     hasSucceededPayment, hasIssuedXeroInvoice, paymentCustomerId, priceLines, bookingModificationId,
     memberEmail: reprice.owner.email,
@@ -594,10 +600,8 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
     format,
     bookingId,
     result: paymentContext,
-    idempotencyKeyPrefix: `guest_accept_refund_${bookingId}`,
-    failureMessage: "Stripe refund failed after a guest-acceptance re-price - enqueueing recovery",
-    recoveryFailureMessage:
-      "Failed to enqueue guest-acceptance re-price refund recovery - manual reconciliation required",
+    door: "guestAcceptanceReprice",
+    failureMessage: "Stripe refund failed after a guest-acceptance re-price; the pre-persisted debt stays owed",
   });
   // #3954: the retired asks die at Stripe and the smaller one is minted - the
   // only ask a re-price can mint, since it never raises a settled price.

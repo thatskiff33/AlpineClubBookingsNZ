@@ -1,6 +1,6 @@
 import { withAdditionalAskQueueTransaction } from "@/lib/additional-ask-queue-transaction";
 import type { ModificationLine } from "@/lib/booking-modification-lines";
-import { PaymentRecoveryOperationStatus, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { Prisma, PaymentRecoveryOperationStatus, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 
 import type { AdditionalAsk } from "@/lib/additional-payment-ask";
 import type { RetiredAdditionalAsk } from "@/lib/additional-ask-reduction";
@@ -31,12 +31,16 @@ import logger from "@/lib/logger";
 import {
   enqueueAdditionalPaymentIntentRecovery,
   enqueueBookingModificationRefundRecovery,
+  markBookingModificationRefundRecoverySucceeded,
   processPaymentRecoveryOperations,
 } from "@/lib/payment-recovery";
 import { runOrganiserChildRefundDebtNow } from "@/lib/organiser-child-refund-executor";
 import type { BookingModifiedRefundDestination } from "@/lib/booking-modified-email-copy";
 import {
   buildAdditionalIntentRecoveryIdempotencyKey,
+  buildBookingModificationRefundKeyPrefix,
+  buildBookingModificationRefundRecoveryIdempotencyKey,
+  type BookingModificationRefundDoor,
   bookingModificationRefundReasonForKeyPrefix,
   buildBookingModificationRefundMetadata,
   buildOrganiserChildModificationRefundKey,
@@ -56,13 +60,16 @@ import type { ClubFormat } from "@/lib/club-format";
 import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
 import { ownCardRefundMade, STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE } from "@/lib/payment-transaction-status";
 import {
-  alertRefusedCardRefund,
-  inlineRefundAfterAttempt,
-  refundSliceCents,
-  type InlineRefundRead,
+  keepRefusedPrePersistedRefundOwed,
+  markPrePersistedRefundAttempt,
 } from "@/lib/refused-card-refund-retry";
 
+import { closeDoorRow } from "@/lib/pre-persisted-refund-close";
+import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
+
 export type BookingModificationPaymentContext = {
+  /** #4992: frozen in the edit transaction; null plan means the whole debt awaits planning. */
+  ownCardRefund: { plan: RefundAllocationSlice[] | null } | null;
   pendingRefundAmountCents: number;
   /**
    * #3653: non-null when the refund comes out of a group organiser's combined
@@ -132,6 +139,58 @@ export type BookingModificationPaymentContext = {
   priceLines: ModificationLine[] | null;
 };
 
+/**
+ * #4992 / INV-PAY-146: reserve both possible card debts in the edit's transaction.
+ * Existing global → lodge → booking → Payment ordering is retained (INV-LOCK-001/002/003).
+ * No provider call: planning only reads/backfills the local transaction ledger.
+ */
+export async function reserveModificationRefundDebts(
+  tx: Prisma.TransactionClient,
+  args: Parameters<typeof reserveOrganiserChildModificationRefund>[1] & {
+    door: BookingModificationRefundDoor;
+    pendingRefundAmountCents: number;
+  },
+): Promise<BookingModificationPaymentContext["ownCardRefund"]> {
+  await reserveOrganiserChildModificationRefund(tx, args);
+  return reserveBookingModificationCardRefund(tx, {
+    ...args,
+    paymentId: args.payment?.id ?? null,
+    organiserChildRefund: args.plan,
+  });
+}
+
+/** Persist the member's own-card debt before the edit can commit, even when planning fails. */
+async function reserveBookingModificationCardRefund(
+  tx: Prisma.TransactionClient,
+  { door, bookingId, paymentId, bookingModificationId, pendingRefundAmountCents, organiserChildRefund }: {
+    door: BookingModificationRefundDoor;
+    bookingId: string;
+    paymentId: string | null;
+    bookingModificationId: string;
+    pendingRefundAmountCents: number;
+    organiserChildRefund: { amountCents: number } | null;
+  },
+): Promise<BookingModificationPaymentContext["ownCardRefund"]> {
+  if (pendingRefundAmountCents <= 0 || !paymentId || organiserChildRefund) return null;
+  let plan: RefundAllocationSlice[] | null = null;
+  try {
+    const planned = await planStripeRefundAllocation({ paymentId, amountCents: pendingRefundAmountCents, store: tx });
+    if (planned.plannedAmountCents < pendingRefundAmountCents) throw new Error(STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE);
+    plan = planned.slices;
+  } catch (err) {
+    // A database error must abort the edit, rather than continue an aborted transaction.
+    if (err instanceof Prisma.PrismaClientKnownRequestError || err instanceof Prisma.PrismaClientUnknownRequestError) throw err;
+    logger.error({ err, bookingId, paymentId }, "Could not plan the edit's card refund; reserving the whole debt (#4992)");
+  }
+  await enqueueBookingModificationRefundRecovery({
+    bookingId, paymentId, bookingModificationId, amountCents: pendingRefundAmountCents,
+    stripeKeyPrefix: `${buildBookingModificationRefundKeyPrefix(door, bookingId)}_${bookingModificationId}`,
+    ...(plan ? { allocationPlan: plan } : {}),
+    store: tx,
+  });
+  return { plan };
+}
+
 export async function drainSupersededPrimaryIntents({
   bookingId,
   supersededPrimaryPaymentIntents,
@@ -168,16 +227,14 @@ export async function executeBookingModificationRefund({
   format,
   bookingId,
   result,
-  idempotencyKeyPrefix,
+  door,
   failureMessage,
-  recoveryFailureMessage,
 }: {
   format: ClubFormat;
   bookingId: string;
   result: BookingModificationPaymentContext;
-  idempotencyKeyPrefix: string;
+  door: BookingModificationRefundDoor;
   failureMessage: string;
-  recoveryFailureMessage: string;
 }): Promise<BookingModificationRefundOutcome> {
   if (result.pendingRefundAmountCents <= 0 || !result.paymentId) {
     // #4057: an organiser child's refund that was not run here is still owed.
@@ -207,82 +264,47 @@ export async function executeBookingModificationRefund({
     return { stripeRefundId: undefined, refundDestination: made ? "organiser_card" : "organiser_card_pending" };
   }
 
-  // The exact prefix this route uses (#1152): recovery retries replay the
-  // identical Stripe keys, so a refund that succeeded on Stripe without being
-  // recorded is replayed, never re-minted.
+  const plan = result.ownCardRefund?.plan;
+  if (!plan) {
+    logger.error({ bookingId, amountCents: result.pendingRefundAmountCents }, failureMessage);
+    return { stripeRefundId: undefined, refundDestination: "own_card_pending" };
+  }
+  const idempotencyKeyPrefix = buildBookingModificationRefundKeyPrefix(door, bookingId);
   const stripeKeyPrefix = `${idempotencyKeyPrefix}_${result.bookingModificationId}`;
+  const idempotencyKey = buildBookingModificationRefundRecoveryIdempotencyKey(result.bookingModificationId);
   const paymentId = result.paymentId;
-  const keepOwed = (amountCents: number, allocationPlan?: RefundAllocationSlice[]) =>
-    enqueueBookingModificationRefundRecovery({
-      bookingId,
-      paymentId,
-      bookingModificationId: result.bookingModificationId,
-      amountCents,
-      stripeKeyPrefix,
-      allocationPlan,
-    }).catch((enqueueErr) => {
-      logger.error({ err: enqueueErr, bookingId }, recoveryFailureMessage);
-      return null;
-    });
-
-  const keepUnmade = async (read: InlineRefundRead) => {
-    if (read.unmadeCents <= 0) return;
-    const queued = await keepOwed(refundSliceCents(read.plan), read.plan);
-    // #4117: when no row could be written, the alert is the only record.
-    if (read.refusedCents > 0 && (queued === null || queued?.created)) {
-      await alertRefusedCardRefund({
-        bookingId,
-        paymentIntentId: read.refused[0]?.paymentIntentId || queued?.paymentIntentId || "",
-        refusedCents: read.refusedCents,
-      }, format);
-    }
-  };
-
-  let plan: RefundAllocationSlice[] | undefined;
   try {
-    // #3984: freeze before Stripe; a webhook may record an unrecorded refund
-    // before recovery runs, but must never shift its slice amount and key.
-    const planned = await planStripeRefundAllocation({ paymentId, amountCents: result.pendingRefundAmountCents });
-    if (planned.plannedAmountCents < result.pendingRefundAmountCents) {
-      throw new Error(STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE);
-    }
-    plan = planned.slices;
     const refundResult = await refundPaymentTransactions({
       format,
       paymentId,
       amountCents: result.pendingRefundAmountCents,
       allocation: plan,
-      // #1507: build the Stripe metadata from the shared helper so a recovery
-      // replay (which reconstructs this same reason from the stored key prefix)
-      // sends a byte-identical body and Stripe replays the original refund
-      // instead of rejecting the reused idempotency key.
       metadata: buildBookingModificationRefundMetadata(bookingId, bookingModificationRefundReasonForKeyPrefix(idempotencyKeyPrefix)),
-      // Each edit gets its own prefix: two equal reductions must create two
-      // refunds, while this edit's recovery replays its original request.
       idempotencyKeyPrefix: stripeKeyPrefix,
-      obligation: { scope: "modification", id: result.bookingModificationId }, // #4516: the R05 the edit posted
+      obligation: { scope: "modification", id: result.bookingModificationId },
     });
-    const read = inlineRefundAfterAttempt(plan, refundResult);
-    if (read.refusedCents > 0) logger.error({ bookingId, refusedCents: read.refusedCents }, failureMessage);
-    await keepUnmade(read);
+    const refused = await keepRefusedPrePersistedRefundOwed({ bookingId, idempotencyKey, plan, attempt: refundResult, format });
+    if (refused) {
+      logger.error({ err: refused, bookingId }, failureMessage);
+      return { stripeRefundId: undefined, refundDestination: "own_card_pending" };
+    }
+    const made = ownCardRefundMade(refundResult.refunds);
+    if (made) {
+      await closeDoorRow({
+        door: "booking-modification", idempotencyKey, bookingId,
+        paymentIntentId: refundResult.refunds[0]?.paymentIntentId ?? "",
+        amountCents: result.pendingRefundAmountCents, refundId: refundResult.refunds[0]?.refundId ?? null,
+        format, context: { paymentId, bookingModificationId: result.bookingModificationId },
+      }, async (key) => (await markBookingModificationRefundRecoverySucceeded({ idempotencyKey: key, sentPlan: plan })).count === 1);
+    }
     return {
       stripeRefundId: refundResult.refunds[0]?.refundId,
-      refundDestination: ownCardRefundMade(refundResult.refunds) ? "own" : "own_card_pending",
+      refundDestination: made ? "own" : "own_card_pending",
     };
-  } catch (refundErr) {
-    logger.error(
-      { err: refundErr, bookingId, amount: result.pendingRefundAmountCents },
-      failureMessage,
-    );
-    if (plan) {
-      // Made slices stay marked, refusals move keys, unanswered slices keep
-      // theirs: a made-but-unrecorded refund must replay the original request.
-      await keepUnmade(inlineRefundAfterAttempt(plan, { error: refundErr }));
-    } else {
-      // Planning failed before Stripe was asked: keep today's whole debt.
-      await keepOwed(result.pendingRefundAmountCents);
-    }
-    // #4070: not made here, so the email says it is on its way.
+  } catch (err) {
+    const refused = await keepRefusedPrePersistedRefundOwed({ bookingId, idempotencyKey, plan, attempt: { error: err }, format });
+    if (!refused) await markPrePersistedRefundAttempt({ bookingId, idempotencyKey, plan, error: err });
+    logger.error({ err, bookingId, amountCents: result.pendingRefundAmountCents }, failureMessage);
     return { stripeRefundId: undefined, refundDestination: "own_card_pending" };
   }
 }

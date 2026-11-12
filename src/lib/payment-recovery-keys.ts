@@ -542,36 +542,26 @@ export function cardRefundOperationRefundMetadata(operation: {
   );
 }
 
-// #1507: map a modification refund's Stripe idempotency-key prefix to the
-// Stripe metadata `reason`. THE ONE SPELLING (`INV-MOD-061`, #4101): the inline
-// settlement helper (executeBookingModificationRefund) stamps the reason this
-// returns for the prefix its caller passes, and the recovery replay rebuilds it
-// from the same prefix stored on the row (`stripeKeyPrefix`, #1152), so the two
-// send one request. The first four rows are the helper's callers
-// (booking-date/-batch modification services, the guest-removal route and the
-// guest-acceptance re-price); a new caller adds its prefix here or its refunds
-// carry the generic recovery reason, which
-// `modification-refund-replay-reason.test.ts` refuses. Legacy rows enqueued
-// before #1152 carry no stored prefix; they keep the historical recovery reason
-// and their operation-scoped key (they were never shared-key with the inline
-// refund, so convergence does not apply to them).
+/** #4992 / INV-MOD-061: the edit's reserve, inline attempt and replay share one request. */
+export const BOOKING_MODIFICATION_REFUND_DOORS = {
+  dateChange: { prefix: "mod_dates_refund_", reason: "date_change_price_decrease" },
+  batchModify: { prefix: "mod_batch_refund_", reason: "batch_modification" },
+  guestRemoval: { prefix: "guest_remove_refund_", reason: "guest_removed_price_decrease" },
+  guestAcceptanceReprice: { prefix: "guest_accept_refund_", reason: "guest_accepted_promo_reprice" },
+} as const;
+
+export type BookingModificationRefundDoor = keyof typeof BOOKING_MODIFICATION_REFUND_DOORS;
+
+export function buildBookingModificationRefundKeyPrefix(door: BookingModificationRefundDoor, bookingId: string): string {
+  return `${BOOKING_MODIFICATION_REFUND_DOORS[door].prefix}${bookingId}`;
+}
+
+/** Legacy rows keep the historical recovery reason when their prefix is absent. */
 export function bookingModificationRefundReasonForKeyPrefix(
   keyPrefix: string | null | undefined,
 ): string {
-  if (keyPrefix?.startsWith("mod_dates_refund_")) {
-    return "date_change_price_decrease";
-  }
-  if (keyPrefix?.startsWith("mod_batch_refund_")) {
-    return "batch_modification";
-  }
-  if (keyPrefix?.startsWith("guest_remove_refund_")) {
-    return "guest_removed_price_decrease";
-  }
-  // #4101: a guest's acceptance that re-prices a paid booking down
-  // (`settleGuestAcceptanceRepriceAfterCommit`). Missing before #4101, its
-  // replay sent the default reason below and Stripe refused the reused key.
-  if (keyPrefix?.startsWith("guest_accept_refund_")) {
-    return "guest_accepted_promo_reprice";
+  for (const { prefix, reason } of Object.values(BOOKING_MODIFICATION_REFUND_DOORS)) {
+    if (keyPrefix?.startsWith(prefix)) return reason;
   }
   // Capacity-race auto-refund (payment succeeded after the final capacity
   // claim failed). The inline path builds its Stripe metadata from

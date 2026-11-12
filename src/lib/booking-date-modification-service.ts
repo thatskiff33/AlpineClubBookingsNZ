@@ -119,7 +119,7 @@ import {
 } from "@/lib/date-only";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { sendBookingModifiedEmail } from "@/lib/email";
-import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
+import { reserveModificationRefundDebts } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
 import {
   recordBookingNightAdjustments,
@@ -1299,7 +1299,9 @@ export async function modifyBookingDates({
       );
     }
     // #3653: an organiser-settled child's refund debt, before this edit commits.
-    await reserveOrganiserChildModificationRefund(tx, {
+    const ownCardRefund = await reserveModificationRefundDebts(tx, {
+      door: "dateChange",
+      pendingRefundAmountCents: payments.pendingRefundAmountCents,
       plan: payments.organiserChildRefund,
       bookingId,
       payment: booking.payment,
@@ -1380,6 +1382,7 @@ export async function modifyBookingDates({
       xeroRefundAmountCents,
       appliedCreditGivenBackCents: payments.appliedCreditGivenBackCents,
       xeroAdditionalAmountCents,
+      ownCardRefund,
       organiserChildRefund: payments.organiserChildRefund,
       zeroDollarAutoPaid,
       paymentId: booking.payment?.id ?? null,
@@ -1397,10 +1400,8 @@ export async function modifyBookingDates({
     format,
     bookingId,
     result,
-    idempotencyKeyPrefix: `mod_dates_refund_${bookingId}`,
-    failureMessage: "Stripe refund failed after date change - enqueueing recovery",
-    recoveryFailureMessage:
-      "Failed to enqueue payment recovery for Stripe refund failure after date change",
+    door: "dateChange",
+    failureMessage: "Stripe refund failed after date change; the pre-persisted debt stays owed",
   });
 
   const additionalMint = await createModificationAdditionalPaymentIntent({

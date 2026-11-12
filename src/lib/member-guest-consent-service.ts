@@ -371,6 +371,7 @@ async function removeClaimedConsentGuest(
 }> {
   try {
     const result = await removeBookingGuestInTransaction({
+      door: "guestRemoval",
       tx,
       bookingId: params.bookingId,
       guestId: params.guestId,

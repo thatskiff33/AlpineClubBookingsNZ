@@ -336,6 +336,9 @@ async function enqueueLedgerRefundRecovery({
   return { created: inserted.count > 0, paymentIntentId: representativePaymentIntentId };
 }
 
+/** #4992: close only the pre-persisted edit debt on the frozen plan actually sent. */
+export const markBookingModificationRefundRecoverySucceeded = (args: DoorCloseArgs) => closePrePersistedRefundRow(args);
+
 export async function enqueueBookingModificationRefundRecovery({
   bookingId,
   paymentId,
