@@ -107,7 +107,7 @@ export async function approveBedAllocationsWithLocksHeld(
     where: buildApproveBedAllocationsWhere(input),
     select: { room: { select: { lodgeId: true } } },
   })).map((allocation) => allocation.room.lodgeId);
-  for (const lodgeId of lockLodgeIds) {
+  for (const lodgeId of new Set(lockLodgeIds)) {
     await assertLodgeCapacityLockHeld(input.db, lodgeId, "approveBedAllocationsWithLocksHeld");
   }
 
