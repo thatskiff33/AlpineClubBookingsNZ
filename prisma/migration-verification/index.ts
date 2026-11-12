@@ -1,3 +1,4 @@
+import releaseCancelledBookingPromos from "./20261211010000_release_cancelled_booking_promos";
 import addClubTimeSettings from "./20260822010000_add_club_time_settings";
 import addHutLeaderAssignmentSource from "./20260820020000_add_hut_leader_assignment_source";
 import addMemberEmailInheritanceChoice from "./20260813010000_add_member_email_inheritance_choice";
@@ -78,4 +79,5 @@ export const DATA_MIGRATION_VERIFICATIONS: DataMigrationVerification[] = [
   addXeroConnection,
   memberMoneyJournal,
   memberMoneyApplications,
+  releaseCancelledBookingPromos,
 ];
