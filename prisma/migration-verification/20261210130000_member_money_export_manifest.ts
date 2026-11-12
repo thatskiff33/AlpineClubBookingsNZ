@@ -9,7 +9,7 @@ const right = (grantee: string, privilege: string) =>
   `has_table_privilege(${grantee}, format('public.%I', t.name), '${privilege}')`;
 
 const verification: DataMigrationVerification = {
-  migration: "20261210120000_member_money_export_manifest",
+  migration: "20261210130000_member_money_export_manifest",
   intent:
     "Add two empty append-only export-manifest tables and narrow only those tables, for every grantee but their owner and without naming a role, to rights that cannot change a row: SELECT and INSERT survive, UPDATE, DELETE, TRUNCATE, TRIGGER and REFERENCES do not. No other table's grants and no existing row change.",
   executionMode: "case_transaction",

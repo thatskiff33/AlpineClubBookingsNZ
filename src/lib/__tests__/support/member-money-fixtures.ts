@@ -143,7 +143,7 @@ export async function createMemberMoneyScratchDatabase(
       CREATE TABLE "PaymentRefund" (id text PRIMARY KEY, "stripeRefundId" text UNIQUE, "stripePaymentIntentId" text, "paymentId" text REFERENCES "Payment"(id))`);
     await owner.query(readFileSync(MEMBER_MONEY_JOURNAL_MIGRATION, "utf8"));
     await owner.query(readFileSync("prisma/migrations/20261210080000_member_money_applications/migration.sql", "utf8"));
-    await owner.query(readFileSync("prisma/migrations/20261210120000_member_money_export_manifest/migration.sql", "utf8"));
+    await owner.query(readFileSync("prisma/migrations/20261210130000_member_money_export_manifest/migration.sql", "utf8"));
     const statements = buildDatabaseRolesSql({
       databaseName: name,
       migrator: { roleName: roles.migrator, password: "m".repeat(28) },
