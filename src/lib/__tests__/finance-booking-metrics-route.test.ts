@@ -35,6 +35,7 @@ vi.mock("@/lib/finance-booking-metrics", () => ({
 }));
 
 import { GET as getFinanceBookingMetricsRoute } from "@/app/api/finance/bookings/metrics/route";
+import { DATE_ONLY_INVALID_MESSAGE } from "@/lib/date-only-schema";
 
 function viewerSession() {
   return { user: { id: "finance-viewer-1", role: "USER", accessRoles: [{ role: "USER" }] } };
@@ -365,6 +366,27 @@ describe("finance booking metrics route", () => {
       error:
         "Invalid finance booking metrics query. Use paired realizedFrom/realizedTo and/or forwardFrom/forwardTo dates in YYYY-MM-DD format.",
     });
+    expect(mockGetFinanceBookingMetrics).not.toHaveBeenCalled();
+  });
+
+  // ALP-567: the query was a shape-only regex, so `realizedCutoff=2026-02-30`
+  // reached the metrics loader, which threw on it and the route answered 500.
+  // Every date field is now refused as a 400 before anything is loaded.
+  it.each([
+    ["realizedFrom", "realizedFrom=2026-02-30&realizedTo=2026-03-10"],
+    ["realizedTo", "realizedFrom=2026-02-01&realizedTo=2026-02-30"],
+    ["realizedCutoff", "realizedFrom=2026-02-01&realizedTo=2026-03-10&realizedCutoff=2026-02-30"],
+    ["forwardFrom", "forwardFrom=2026-02-30&forwardTo=2026-03-10"],
+    ["forwardTo", "forwardFrom=2026-02-01&forwardTo=2026-02-30"],
+    ["forwardAsOf", "forwardFrom=2026-02-01&forwardTo=2026-03-10&forwardAsOf=2026-02-30"],
+  ])("returns 400 when %s is not a real calendar day", async (field, query) => {
+    const response = await getFinanceBookingMetricsRoute(
+      new NextRequest(`https://example.org/api/finance/bookings/metrics?${query}`)
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.details.fieldErrors[field]).toEqual([DATE_ONLY_INVALID_MESSAGE]);
     expect(mockGetFinanceBookingMetrics).not.toHaveBeenCalled();
   });
 
