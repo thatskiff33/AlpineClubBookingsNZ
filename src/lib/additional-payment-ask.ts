@@ -87,6 +87,21 @@ export interface AdditionalAskPayment {
 }
 
 /**
+ * #4442: what an ask that CARRIES the live ask is sized from - the two columns
+ * above and the intent they name. Required, so a sizing site cannot forget which
+ * ask it carried: the minter re-reads that ask under its lock before its
+ * supersede commits (`queueSupersededAdditionalIntentCancellationRows`).
+ */
+export interface AdditionalAskSizingPayment extends AdditionalAskPayment {
+  additionalPaymentIntentId: string | null;
+}
+
+/** The live ask's intent when it is still owed, else null - read with the figure it carries. */
+function carriedLiveAskIntentId(payment: AdditionalAskSizingPayment | null | undefined): string | null {
+  return outstandingAdditionalAskCents(payment) > 0 ? (payment?.additionalPaymentIntentId ?? null) : null;
+}
+
+/**
  * The unpaid balance of the ask this payment currently carries, in cents; 0 when
  * there is no ask or it has been collected. A `null` payment (a card booking
  * that has never minted a `Payment` row) carries nothing.
@@ -170,10 +185,26 @@ class AdditionalAskValue {
    */
   readonly #reissuesUnpaidAsk: boolean;
 
-  constructor(params: { ownCents: number; carriedCents: number; reissuesUnpaidAsk?: boolean }) {
+  /**
+   * #4442: the LIVE ask whose money this one asks for again - the unpaid ask
+   * read off the `Payment` and carried, or the very request a restate or raise
+   * re-issues. Null when it re-asks no live ask. A capture of that ask landing
+   * between this sizing and the minter's supersede would be paid twice, so the
+   * minter re-reads it under the `Payment` row lock and refuses to write if it
+   * was captured (`queueSupersededAdditionalIntentCancellationRows`).
+   */
+  readonly #carriedFromIntentId: string | null;
+
+  constructor(params: {
+    ownCents: number;
+    carriedCents: number;
+    reissuesUnpaidAsk?: boolean;
+    carriedFromIntentId?: string | null;
+  }) {
     this.amountCents = params.ownCents + params.carriedCents;
     this.#carriedCents = params.carriedCents;
     this.#reissuesUnpaidAsk = params.reissuesUnpaidAsk ?? false;
+    this.#carriedFromIntentId = params.carriedFromIntentId ?? null;
   }
 
   get carriedCents(): number {
@@ -183,6 +214,11 @@ class AdditionalAskValue {
   /** Private for the reason `#carriedCents` is: a spread cannot carry it. */
   get reissuesUnpaidAsk(): boolean {
     return this.#reissuesUnpaidAsk;
+  }
+
+  /** Private for the same reason: the ask and the live ask it re-asks travel as one value. */
+  get carriedFromIntentId(): string | null {
+    return this.#carriedFromIntentId;
   }
 }
 
@@ -197,6 +233,7 @@ function buildAdditionalAsk(params: {
   ownCents: number;
   carriedCents: number;
   reissuesUnpaidAsk?: boolean;
+  carriedFromIntentId?: string | null;
 }): AdditionalAsk {
   return new AdditionalAskValue(params);
 }
@@ -233,7 +270,7 @@ export function sizeAdditionalAsk({
 }: {
   priceDiffCents: number;
   changeFeeCents: number;
-  payment: AdditionalAskPayment | null | undefined;
+  payment: AdditionalAskSizingPayment | null | undefined;
   /**
    * #3954 review round 4: a reduction's smaller re-issued ask still waiting on
    * its mint, which this increase folds in and closes
@@ -247,12 +284,15 @@ export function sizeAdditionalAsk({
   return buildAdditionalAsk({
     ownCents: priceDiffCents + changeFeeCents,
     carriedCents: outstandingAdditionalAskCents(payment) + Math.max(0, waitingReissuedAskCents),
+    carriedFromIntentId: carriedLiveAskIntentId(payment),
   });
 }
 
 /** The stored ADDITIONAL row a review charge's later share reads back. */
 export interface CarriedAskRecord {
   carriedAskCents: number;
+  /** #4442: the request's own intent - a raise re-issued on a new intent re-asks it. */
+  stripePaymentIntentId: string | null;
 }
 
 /**
@@ -275,11 +315,12 @@ export function sizeReviewChargeAsk({
   payment,
 }: {
   shareTotalCents: number;
-  payment: AdditionalAskPayment | null | undefined;
+  payment: AdditionalAskSizingPayment | null | undefined;
 }): AdditionalAsk {
   return buildAdditionalAsk({
     ownCents: shareTotalCents,
     carriedCents: outstandingAdditionalAskCents(payment),
+    carriedFromIntentId: carriedLiveAskIntentId(payment),
   });
 }
 
@@ -319,6 +360,7 @@ export function raiseReviewChargeAsk({
   return buildAdditionalAsk({
     ownCents: shareTotalCents,
     carriedCents: request.carriedAskCents,
+    carriedFromIntentId: request.stripePaymentIntentId,
   });
 }
 
@@ -330,10 +372,13 @@ export function raiseReviewChargeAsk({
 export function restateAdditionalAsk(request: {
   amountCents: number;
   carriedAskCents: number;
+  /** #4442: the intent re-issued, which this ask re-asks in full. */
+  stripePaymentIntentId: string;
 }): AdditionalAsk {
   return buildAdditionalAsk({
     ownCents: request.amountCents - request.carriedAskCents,
     carriedCents: request.carriedAskCents,
+    carriedFromIntentId: request.stripePaymentIntentId,
   });
 }
 
@@ -448,14 +493,22 @@ export function reductionLeftAfterUnpaidAskCents({
  */
 export function reissueUnpaidAdditionalAsk({
   askLeftCents,
+  carriedFrom,
 }: {
   askLeftCents: number;
+  /**
+   * #4442: a minter's re-issue also carries the live ask minted since the
+   * reduction (`sizeReissuedAskReplay`): the `Payment` it read that from. The
+   * reduction's own re-issue carries only asks it retired, and passes none.
+   */
+  carriedFrom?: AdditionalAskSizingPayment | null;
 }): AdditionalAsk {
   if (askLeftCents <= 0) return NO_ADDITIONAL_ASK;
   return buildAdditionalAsk({
     ownCents: 0,
     carriedCents: askLeftCents,
     reissuesUnpaidAsk: true,
+    carriedFromIntentId: carriedLiveAskIntentId(carriedFrom),
   });
 }
 

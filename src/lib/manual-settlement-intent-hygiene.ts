@@ -271,6 +271,8 @@ export async function withdrawManualSettlementIntentCancellations(
     bookingId: booking.id,
     paymentId,
     newPaymentIntentId: liveAsk,
+    // #4442: a settle raises no new ask, so it carries none to re-read.
+    carriedFromIntentId: null,
     store: tx,
   });
   // Condemned by a rule above, or adopted by the settle: each keeps a

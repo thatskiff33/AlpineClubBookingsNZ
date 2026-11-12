@@ -340,6 +340,8 @@ export async function processCreditReleaseAskOperation(
       bookingId: operation.bookingId,
       paymentId: operation.paymentId,
       newPaymentIntentId: intent.id,
+      // #4442: the shared re-read; the sizing-basis check above already refuses the same capture.
+      carriedFromIntentId: ask.carriedFromIntentId,
       store,
     });
   });

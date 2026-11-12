@@ -12,7 +12,7 @@ import {
   reissueUnpaidAdditionalAsk,
   sizeAdditionalAsk,
   type AdditionalAsk,
-  type AdditionalAskPayment,
+  type AdditionalAskSizingPayment,
 } from "@/lib/additional-payment-ask";
 import { recordedFoldedReissuedAskCents } from "@/lib/unpaid-ask-offset-marker";
 
@@ -56,7 +56,7 @@ export function sizeRecoveryReplayAsk({
 }: {
   frozenAmountCents: number;
   modification: RecoveryReplayModification | null;
-  payment: AdditionalAskPayment | null | undefined;
+  payment: AdditionalAskSizingPayment | null | undefined;
 }): RecoveryReplayAsk {
   const ownCents = modification
     ? modification.priceDiffCents + modification.changeFeeCents
@@ -97,10 +97,11 @@ export function sizeReissuedAskReplay({
   payment,
 }: {
   frozenAmountCents: number;
-  payment: AdditionalAskPayment | null | undefined;
+  payment: AdditionalAskSizingPayment | null | undefined;
 }): AdditionalAsk {
   return reissueUnpaidAdditionalAsk({
     askLeftCents: frozenAmountCents + outstandingAdditionalAskCents(payment),
+    carriedFrom: payment,
   });
 }
 

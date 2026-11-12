@@ -108,23 +108,29 @@ export async function reissueAdditionalIntentInClubCurrency({
       "Could not read a stale additional ask's provenance for its currency re-issue (#3954); the re-issue records none",
     );
   }
-  await upsertPaymentIntentTransaction({
-    paymentId,
-    kind: PaymentTransactionKind.ADDITIONAL,
-    paymentIntentId: pi.id,
-    amountCents: ask.amountCents,
-    carriedAskCents: ask.carriedCents,
-    status: PaymentStatus.PENDING,
-    reason: reason ?? undefined,
-    stripeCustomerId: customerId,
-    ...(stale?.hadIssuedXeroInvoice != null ? { hadIssuedXeroInvoice: stale.hadIssuedXeroInvoice } : {}),
-    ...(stale?.bookingModificationId ? { bookingModificationId: stale.bookingModificationId } : {}),
-  });
+  // #4442: the re-issued request is the stale one asked again, so it is
+  // re-read under the `Payment` row lock in the transaction that writes this
+  // row and its supersede: paid meanwhile, nothing is written and this throws.
   await queueSupersededAdditionalIntentCancellations({
     format,
     bookingId,
     paymentId,
     newPaymentIntentId: pi.id,
+    carriedFromIntentId: ask.carriedFromIntentId,
+    writeAskRow: (store) =>
+      upsertPaymentIntentTransaction({
+        paymentId,
+        kind: PaymentTransactionKind.ADDITIONAL,
+        paymentIntentId: pi.id,
+        amountCents: ask.amountCents,
+        carriedAskCents: ask.carriedCents,
+        status: PaymentStatus.PENDING,
+        reason: reason ?? undefined,
+        stripeCustomerId: customerId,
+        ...(stale?.hadIssuedXeroInvoice != null ? { hadIssuedXeroInvoice: stale.hadIssuedXeroInvoice } : {}),
+        ...(stale?.bookingModificationId ? { bookingModificationId: stale.bookingModificationId } : {}),
+        store,
+      }),
   });
   await reconcilePaymentAggregates({ paymentId });
   if (await retireAskOnEndedBooking({ format, bookingId, paymentId, paymentIntentId: pi.id })) return null;

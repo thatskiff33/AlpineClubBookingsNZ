@@ -142,6 +142,7 @@ export async function GET(
         ask: restateAdditionalAsk({
           amountCents: pi.amount,
           carriedAskCents: row?.carriedAskCents ?? 0,
+          stripePaymentIntentId: pi.id,
         }),
         reason: row?.reason ?? null,
         customerId: payment.stripeCustomerId,

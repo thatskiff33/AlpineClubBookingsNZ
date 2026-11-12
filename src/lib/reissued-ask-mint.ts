@@ -39,7 +39,7 @@
 import type Stripe from "stripe";
 
 import { sizeReissuedAskReplay } from "@/lib/additional-ask-recovery-replay";
-import type { AdditionalAsk, AdditionalAskPayment } from "@/lib/additional-payment-ask";
+import type { AdditionalAsk, AdditionalAskSizingPayment } from "@/lib/additional-payment-ask";
 import type { ClubFormat } from "@/lib/club-format";
 import logger from "@/lib/logger";
 import { ADDITIONAL_ASK_INTENT_TYPE } from "@/lib/ordinary-ask-request";
@@ -76,7 +76,7 @@ export function planReissuedAskMint({
   /** The re-issue's recovery row: its frozen figure and the Stripe key frozen with it. */
   recovery: { amountCents: number; stripeKey: string };
   /** The `Payment` as it stands now, for any ask minted since the reduction. */
-  payment: AdditionalAskPayment | null | undefined;
+  payment: AdditionalAskSizingPayment | null | undefined;
 }): ReissuedAskMintPlan {
   const ask = sizeReissuedAskReplay({ frozenAmountCents: recovery.amountCents, payment });
   const idempotencyKey =
@@ -189,12 +189,14 @@ export async function resolveAskCustomerId(payment: AskCustomerPayment): Promise
  */
 export async function readAskMintPayment(
   paymentId: string,
-): Promise<AdditionalAskPayment & AskCustomerPayment> {
+): Promise<AdditionalAskSizingPayment & AskCustomerPayment> {
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
     select: {
       additionalAmountCents: true,
       additionalPaymentStatus: true,
+      // #4442: which ask a re-issue carries, re-read under the minter's lock.
+      additionalPaymentIntentId: true,
       stripeCustomerId: true,
       // #3369: the owner may be an Organisation; `resolveAskCustomerId` reads both.
       booking: {

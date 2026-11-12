@@ -539,6 +539,8 @@ async function syncEditReviewChargeRequestUnderClaim(
       // above is what proves it belongs to another edit.
       additionalAmountCents: true,
       additionalPaymentStatus: true,
+      // #4442: and its intent, which the mint re-reads under its lock.
+      additionalPaymentIntentId: true,
     },
   });
   // THE FIX (#3371, `INV-PAY-098`). This used to pass the bare share total, so a

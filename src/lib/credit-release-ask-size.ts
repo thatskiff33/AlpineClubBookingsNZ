@@ -2,7 +2,7 @@ import {
   NO_ADDITIONAL_ASK,
   sizeReviewChargeAsk,
   type AdditionalAsk,
-  type AdditionalAskPayment,
+  type AdditionalAskSizingPayment,
 } from "@/lib/additional-payment-ask";
 
 /**
@@ -27,7 +27,7 @@ export function sizeCreditReleaseAsk({
 }: {
   releasedCents: number;
   unaskedCents: number;
-  payment: AdditionalAskPayment | null | undefined;
+  payment: AdditionalAskSizingPayment | null | undefined;
 }): AdditionalAsk {
   const ownCents = Math.min(Math.max(0, releasedCents), Math.max(0, unaskedCents));
   if (ownCents <= 0) return NO_ADDITIONAL_ASK;

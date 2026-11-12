@@ -16,6 +16,7 @@ import {
 } from "@/lib/payment-recovery";
 import type { ClubFormat } from "@/lib/club-format";
 import { followSupersededAskInvoicesSafely } from "@/lib/superseded-ask-invoice-carry";
+import { refuseIfCarriedAskCaptured } from "@/lib/carried-ask-recheck";
 
 export type SupersededPrimaryPaymentIntent = {
   paymentTransactionId: string;
@@ -128,16 +129,32 @@ export async function queueSupersededPrimaryIntentCancellations(
  * browser may still be holding is dead by the time the replacement exists.
  * Best-effort throughout: a Stripe outage leaves exactly the pre-#3340
  * behaviour, a queued operation the recovery cron completes.
+ *
+ * #4442: THE NEW ASK'S ROW (`writeAskRow`) AND THE DURABLE ROWS COMMIT TOGETHER,
+ * after the ask it carried is re-read under the `Payment` row lock
+ * (`refuseIfCarriedAskCaptured`). A capture of that ask since the sizing read
+ * throws `CarriedAskCapturedError` with nothing written, so a request asking
+ * for money already paid never exists; the caller's failure path re-plans it.
+ * The row is still written before the supersede, inside that transaction, for
+ * the #3340 fix round's reason (a reconcile must not mirror the retiring ask).
  */
 export async function queueSupersededAdditionalIntentCancellations(options: {
   bookingId: string;
   paymentId: string;
   newPaymentIntentId: string;
+  /** The live ask the new one re-asks (`AdditionalAsk.carriedFromIntentId`). */
+  carriedFromIntentId: string | null;
+  /** Writes the new intent's own ledger row, on the transaction it is handed. */
+  writeAskRow: (store: Prisma.TransactionClient) => Promise<unknown>;
   /** The club's format (#3565), resolved once by the caller and handed to each immediate run. */
   format: ClubFormat;
 }): Promise<{ paymentTransactionId: string; paymentIntentId: string }[]> {
-  const queued = await queueSupersededAdditionalIntentCancellationRows(options);
-  await cancelSupersededAdditionalIntentsNow({ ...options, queued });
+  const { writeAskRow, ...rest } = options;
+  const queued = await prisma.$transaction(async (store) => {
+    await writeAskRow(store);
+    return queueSupersededAdditionalIntentCancellationRows({ ...rest, store });
+  });
+  await cancelSupersededAdditionalIntentsNow({ ...rest, queued });
   return queued.map(({ paymentTransactionId, paymentIntentId }) => ({ paymentTransactionId, paymentIntentId }));
 }
 
@@ -181,6 +198,13 @@ const SUPERSEDABLE_ADDITIONAL_ASK_STATUS_WHERE = [
  * supersede the rest" atomically against a price reduction can do both in one
  * transaction (#3954 review round 4, `holdAdditionalIntentRecoveryClaim`), then
  * run the cancellations after commit.
+ *
+ * #4442: a minter names the live ask its new request carried
+ * (`carriedFromIntentId`), and it is re-read here first, under the `Payment`
+ * row lock, in the minter's transaction: captured since the sizing read, the
+ * transaction throws `CarriedAskCapturedError` and writes nothing
+ * (`carried-ask-recheck.ts`). This is the one point every minter passes
+ * through between its sizing read and its commit.
  */
 export async function queueSupersededAdditionalIntentCancellationRows(options: {
   bookingId: string;
@@ -190,9 +214,22 @@ export async function queueSupersededAdditionalIntentCancellationRows(options: {
    * reversal re-applying this rule to a payment with no live ask (#4320).
    */
   newPaymentIntentId: string | null;
+  /**
+   * #4442: the live ask the new request re-asks (`AdditionalAsk.carriedFromIntentId`);
+   * null where it re-asks none - a retire that replaces nothing, or an ask that
+   * carried nothing. Given, `store` must be the minter's transaction.
+   */
+  carriedFromIntentId: string | null;
   store?: Prisma.TransactionClient;
 }): Promise<QueuedSupersededIntentCancellation[]> {
   const store = options.store ?? prisma;
+  if (options.carriedFromIntentId) {
+    if (!options.store) throw new Error("A carried ask is re-read only inside the minter's transaction (#4442)");
+    await refuseIfCarriedAskCaptured(options.store, {
+      paymentId: options.paymentId,
+      carriedFromIntentId: options.carriedFromIntentId,
+    });
+  }
   const pendingAdditional = await store.paymentTransaction.findMany({
     where: {
       paymentId: options.paymentId,

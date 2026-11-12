@@ -2932,6 +2932,11 @@ async function processCreateAdditionalPaymentIntentOperation(
       bookingId: operation.bookingId,
       paymentId: operation.paymentId,
       newPaymentIntentId: pi.id,
+      // #4442: the live ask this replay carried, re-read under the lock; paid
+      // since the sizing read, the claim hold throws with nothing written and
+      // the row retries, re-sized from what is still owed. A frozen figure
+      // names none - it records no provenance to re-read.
+      carriedFromIntentId: replay.kind === "frozen" ? null : replay.ask.carriedFromIntentId,
       store,
     });
   });
