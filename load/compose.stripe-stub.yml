@@ -85,8 +85,8 @@ services:
     mem_limit: 128m
     cpus: 0.5
 
-# No runtime service on this stack can dial an Internet provider, even if a
-# DNS alias disappears. Images are pulled/built before services start.
-networks:
-  default:
-    internal: true
+# The default network is deliberately NOT `internal: true`: Docker does not
+# publish ports for a container that is only on an internal network
+# (moby/moby#36174), so the host-side k6 run and volume seeder could not reach
+# the app or Postgres. Isolation from real Stripe is the alias above plus the
+# generated sk_test_loadstub_ key, which the real API would refuse.

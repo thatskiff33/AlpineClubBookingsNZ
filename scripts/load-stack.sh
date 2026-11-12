@@ -30,12 +30,11 @@ cd "$(dirname "$0")/.."
 SOURCE_ENV_FILE="${E2E_ENV_FILE:-.env.staging}"
 COMPOSE_PROJECT="${E2E_COMPOSE_PROJECT:-load-issue4940}"
 export E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT"
-if [[ ! "$COMPOSE_PROJECT" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
-  echo "Invalid E2E_COMPOSE_PROJECT: expected a Docker Compose project name." >&2
-  exit 1
-fi
-if [[ "$COMPOSE_PROJECT" == "tacbookings" || "$COMPOSE_PROJECT" == "tacbookings-staging" ]]; then
-  echo "Refusing a shared compose project; choose a disposable load project." >&2
+# `prepare` drops the project's schema and `down` deletes its volumes, so only
+# a project named as a load stack is accepted: production and staging project
+# names vary by deploy directory and cannot be listed here.
+if [[ ! "$COMPOSE_PROJECT" =~ ^load-[a-z0-9][a-z0-9_-]*$ ]]; then
+  echo "Refusing E2E_COMPOSE_PROJECT=$COMPOSE_PROJECT: a load stack's project name starts with load-." >&2
   exit 1
 fi
 STUB_DIR=".artifacts/load-stub"
@@ -134,6 +133,14 @@ require_prepared() {
   fi
 }
 
+# CPU limit of one service's running container, in cores ("uncapped" if none).
+container_cpus() {
+  local id nano
+  id="$(stub_compose ps -q "$1")"
+  nano="$(docker inspect --format '{{.HostConfig.NanoCpus}}' "$id")"
+  if [[ "$nano" == "0" ]]; then echo '"uncapped"'; else node -e "console.log($nano / 1e9)"; fi
+}
+
 case "${1:-}" in
   prepare)
     prepare
@@ -147,14 +154,27 @@ case "${1:-}" in
     require_prepared
     stub_compose up -d --wait app stripe-stub
     ;;
+  require-running)
+    require_prepared
+    # The app and stub must be up in THIS load project before any k6 run, so
+    # leftover env files from a failed prepare cannot send load elsewhere.
+    for service in app stripe-stub; do
+      if [[ -z "$(stub_compose ps -q --status running "$service")" ]]; then
+        echo "The $service service is not running in compose project $COMPOSE_PROJECT." >&2
+        exit 1
+      fi
+    done
+    ;;
   profile)
     require_prepared
-    # Values from the actual running app, without emitting its database URL.
-    stub_compose exec -T -e LOAD_VOLUME_USERS="${LOAD_VOLUME_USERS:-2000}" app node -e '
+    # Values from the actual running containers, without emitting the database URL.
+    stub_compose exec -T -e LOAD_VOLUME_USERS="${LOAD_VOLUME_USERS:-2000}" -e PEAK_VUS="${PEAK_VUS:-}" \
+      -e APP_CPUS="$(container_cpus app)" -e POSTGRES_CPUS="$(container_cpus postgres)" app node -e '
       const os = require("node:os");
       const pool = new URL(process.env.DATABASE_URL).searchParams.get("connection_limit");
       console.log(JSON.stringify({ cores: os.availableParallelism(), pool: pool ? Number(pool) : "pg default",
-        appCpu: "compose default (uncapped)", vus: 10, volumeMembers: Number(process.env.LOAD_VOLUME_USERS || 2000) }, null, 2));
+        appCpus: JSON.parse(process.env.APP_CPUS), postgresCpus: JSON.parse(process.env.POSTGRES_CPUS),
+        vus: Number(process.env.PEAK_VUS) || "unset", volumeMembers: Number(process.env.LOAD_VOLUME_USERS || 2000) }, null, 2));
     '
     ;;
   cron-secret)
@@ -174,7 +194,7 @@ case "${1:-}" in
     rm -rf "$STUB_DIR"
     ;;
   *)
-    echo "Usage: $0 {prepare|cron-on|cron-off|profile|cron-secret|logs|down}" >&2
+    echo "Usage: $0 {prepare|cron-on|cron-off|require-running|profile|cron-secret|logs|down}" >&2
     exit 1
     ;;
 esac

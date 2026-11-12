@@ -88,15 +88,17 @@ For the complete fixture, use the load wrapper instead of the basic E2E stack:
 ```bash
 cp .env.staging.example .env.staging
 bash scripts/load-stack.sh prepare
-pnpm run load:smoke
+LOAD_TEST_CONFIRM_TARGET=1 pnpm run load:smoke
 bash scripts/load-stack.sh down
 ```
 
 `prepare` creates its own `load-issue4940` Compose project, two bookable
 lodges, generated stub-only Stripe credentials and TLS certificates, and a
-volume history. It refuses the shared production/staging project names. The
-app resolves `api.stripe.com` to the local HTTPS stub; the runtime network is
-internal, so services cannot contact Internet providers. Mail goes to Mailpit,
+volume history. It accepts only a project name starting `load-`. The
+app resolves `api.stripe.com` to the local HTTPS stub, and the only Stripe key
+it holds is a generated stub key the real API would refuse. The compose network
+is not internal-only, because Docker publishes no ports for a container on an
+internal network and k6 runs on the host. Mail goes to Mailpit,
 Xero remains disconnected, and the volume seeder refuses a stored Xero
 connection. No real provider credentials belong in the source env file.
 
@@ -136,7 +138,8 @@ manual dispatch, with read-only repository permission, no secrets, a 60-minute
 limit and unconditional stack cleanup. It is advisory and has no PR trigger;
 it is not a required check. It uploads k6 JSON summaries, stack logs and
 `profile.json` for 14 days. The profile records the running app's available
-cores and actual `connection_limit`; the default uncapped app currently uses
+cores, actual `connection_limit`, the app and Postgres CPU limits and the VU
+count; the default uncapped app currently uses
 pool **5**. Compare runs only within a labelled resource profile. Full 100-VU
 evidence remains owner-gated, and the historical pool-10 results below are a
 separate profile. A threshold failure is evidence to investigate, not permission

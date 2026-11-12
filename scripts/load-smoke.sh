@@ -4,7 +4,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export BASE_URL="${BASE_URL:-http://localhost:3001}"
-export LOAD_TEST_CONFIRM_TARGET="${LOAD_TEST_CONFIRM_TARGET:-1}"
+# The target opt-in stays the caller's: the guard's confirmation step is not
+# defaulted here.
+if [[ "${LOAD_TEST_CONFIRM_TARGET:-}" != "1" ]]; then
+  echo "Set LOAD_TEST_CONFIRM_TARGET=1 once BASE_URL is confirmed to be the disposable load stack." >&2
+  exit 1
+fi
+bash scripts/load-stack.sh require-running
 export PEAK_VUS=10
 export LOAD_VOLUME_USERS="${LOAD_VOLUME_USERS:-${LOAD_VOLUME_MEMBERS:-2000}}"
 # Reuse the seeder's domain instead of maintaining a second default in k6.
@@ -17,8 +23,11 @@ export LOAD_ADMIN_PASSWORD="$LOAD_USER_PASSWORD"
 export RAMP_UP=10s STEADY=30s RAMP_DOWN=10s
 export MIXED_ITERATIONS=4
 # Relative to this run, separate from the mixed/payment windows and demo data.
+# +116 sits between the last seeded fixture window (+111..+112, two lodges) and
+# the mixed-writes window (+120), so the UTC run day being one behind the club's
+# day still lands on an empty night (#4002 lists the seeded windows).
 export CONTENTION_CHECKIN
-CONTENTION_CHECKIN="$(node -e 'console.log(new Date(Date.now()+90*86400000).toISOString().slice(0,10))')"
+CONTENTION_CHECKIN="$(node --input-type=module -e 'import { addDaysIso, utcDayOf } from "./load/lib/stay-window.js"; console.log(addDaysIso(utcDayOf(Date.now()), 116))')"
 mkdir -p .artifacts/load
 bash scripts/load-stack.sh profile > .artifacts/load/profile.json
 failed=0

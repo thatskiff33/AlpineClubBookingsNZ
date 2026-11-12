@@ -41,7 +41,7 @@ of synthetic history, then run the advisory 10-VU smoke profile:
 ```bash
 cp .env.staging.example .env.staging
 bash scripts/load-stack.sh prepare
-pnpm run load:smoke
+LOAD_TEST_CONFIRM_TARGET=1 pnpm run load:smoke
 bash scripts/load-stack.sh down
 ```
 
