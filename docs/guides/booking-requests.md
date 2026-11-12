@@ -23,6 +23,16 @@ Find it at **Admin → Bookings & Beds → Booking Requests**
 appears under **Admin → Needs Attention → Booking Requests**, and the badge
 counts waiting policy exceptions alongside the other queues.
 
+Each tab shows how many items are waiting on it, and the four tab counts add up
+to the sidebar badge. A plain link to the page — the sidebar's, or a bookmark —
+opens on the first tab that has work, in tab order (Approvals, Changes, Policy
+Exceptions, Public Requests), or on **Approvals** when nothing is waiting. The
+dashboard's **Booking Requests** card opens the same tab. A link that names a
+tab, a single booking or request, or a status filter always opens where it
+points. **Changes** counts only locked-period change requests; a
+policy-exception request, whether for a new booking or a change to one, is
+counted on **Policy Exceptions**, where it is listed.
+
 > The two older routes **`/admin/booking-approvals`** and
 > **`/admin/booking-change-requests`** are redirects: they open this page on the
 > **Approvals** and **Changes** tabs respectively. They have no separate screen,
@@ -49,7 +59,8 @@ are listed on the booking for you to relay.
 
 ### Approvals — decide a flagged booking
 
-1. Open **Booking Requests**; the **Approvals** tab is selected by default.
+1. Open **Booking Requests** and choose the **Approvals** tab (the page opens on
+   it when it has work, or when no tab does).
    Filter by **Pending**, **Approved**, **Rejected**, or **All**.
 
    ![Booking Requests, Approvals tab: a pending review card for a member with Approve and Reject and cancel buttons](../images/admin/admin-booking-requests.png)

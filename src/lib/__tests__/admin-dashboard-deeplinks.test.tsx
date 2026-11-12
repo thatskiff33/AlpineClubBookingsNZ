@@ -26,6 +26,9 @@ vi.mock("@/lib/prisma", () => ({
     memberLifecycleActionRequest: { count: vi.fn() },
     deletionRequest: { count: vi.fn() },
     bookingChangeRequest: { count: vi.fn() },
+    // #4969: the card reads all four Booking Requests queues.
+    newBookingPolicyExceptionRequest: { count: vi.fn(async () => 0) },
+    bookingRequest: { count: vi.fn(async () => 0) },
     lodge: { count: vi.fn() },
   },
 }));
@@ -64,6 +67,7 @@ import {
   getHutLeaderDashboardCoverage,
 } from "@/lib/hut-leader-coverage";
 import { prisma } from "@/lib/prisma";
+import { buildBookingRequestsHref } from "@/lib/admin-booking-requests-path";
 import {
   netCollectedBookingSelect,
   netCollectedCaptureEvidenceSelect,
@@ -73,6 +77,9 @@ import {
 function mockDashboardCounts({
   pendingBookingReviews,
   pendingBookingChangeRequests,
+  pendingPolicyExceptionRequests = 0,
+  pendingModificationPolicyExceptions = 0,
+  pendingPublicBookingRequests = 0,
   pendingDeletionRequests = 0,
   unpaidFinishedStays = 0,
   unsettledAdditionalFinishedStays = 0,
@@ -80,6 +87,11 @@ function mockDashboardCounts({
 }: {
   pendingBookingReviews: number;
   pendingBookingChangeRequests: number;
+  /** New-booking exception requests (their own table). */
+  pendingPolicyExceptionRequests?: number;
+  /** POLICY_EXCEPTION change requests, listed on the Policy Exceptions tab. */
+  pendingModificationPolicyExceptions?: number;
+  pendingPublicBookingRequests?: number;
   pendingDeletionRequests?: number;
   unpaidFinishedStays?: number;
   unsettledAdditionalFinishedStays?: number;
@@ -120,8 +132,17 @@ function mockDashboardCounts({
   vi.mocked(prisma.deletionRequest.count).mockResolvedValue(
     pendingDeletionRequests,
   );
-  vi.mocked(prisma.bookingChangeRequest.count).mockResolvedValue(
-    pendingBookingChangeRequests,
+  vi.mocked(prisma.bookingChangeRequest.count).mockImplementation((async (
+    args: { where?: { kind?: string } },
+  ) =>
+    args.where?.kind === "POLICY_EXCEPTION"
+      ? pendingModificationPolicyExceptions
+      : pendingBookingChangeRequests) as any);
+  vi.mocked(prisma.newBookingPolicyExceptionRequest.count).mockResolvedValue(
+    pendingPolicyExceptionRequests,
+  );
+  vi.mocked(prisma.bookingRequest.count).mockResolvedValue(
+    pendingPublicBookingRequests,
   );
   vi.mocked(getHutLeaderDashboardCoverage).mockResolvedValue({
     unassignedDates: [],
@@ -157,6 +178,72 @@ describe("admin dashboard deep links", () => {
     const html = renderToStaticMarkup(await AdminDashboardPage());
 
     expect(html).toContain('href="/admin/booking-requests?tab=approvals"');
+  });
+
+  // #4969: the card opens the tab the Booking Requests page itself would land
+  // on, so a policy exception or public request alone no longer hides the card
+  // or sends the officer to an empty Approvals tab.
+  it.each([
+    {
+      queue: "only policy exceptions",
+      counts: { pendingPolicyExceptionRequests: 1 },
+      tab: "exceptions" as const,
+      summary: "1 policy exception request waiting",
+    },
+    {
+      queue: "only change-type policy exceptions",
+      counts: { pendingModificationPolicyExceptions: 2 },
+      tab: "exceptions" as const,
+      summary: "2 policy exception requests waiting",
+    },
+    {
+      queue: "new-booking and change-type policy exceptions",
+      counts: {
+        pendingPolicyExceptionRequests: 1,
+        pendingModificationPolicyExceptions: 1,
+      },
+      tab: "exceptions" as const,
+      summary: "2 policy exception requests waiting",
+    },
+    {
+      queue: "only public requests",
+      counts: { pendingPublicBookingRequests: 3 },
+      tab: "public" as const,
+      summary: "3 public booking requests waiting",
+    },
+    {
+      queue: "changes, exceptions and public requests",
+      counts: {
+        pendingBookingChangeRequests: 1,
+        pendingPolicyExceptionRequests: 2,
+        pendingPublicBookingRequests: 1,
+      },
+      tab: "changes" as const,
+      summary:
+        "1 change request, 2 policy exception requests and 1 public booking request waiting",
+    },
+  ])("links the booking request card to the page's landing tab when $queue are pending", async ({ counts, tab, summary }) => {
+    mockDashboardCounts({
+      pendingBookingReviews: 0,
+      pendingBookingChangeRequests: 0,
+      ...counts,
+    });
+
+    const html = renderToStaticMarkup(await AdminDashboardPage());
+
+    expect(html).toContain(`href="${buildBookingRequestsHref(tab)}"`);
+    expect(html).toContain(summary);
+  });
+
+  it("hides the booking request card when no queue has work", async () => {
+    mockDashboardCounts({
+      pendingBookingReviews: 0,
+      pendingBookingChangeRequests: 0,
+    });
+
+    const html = renderToStaticMarkup(await AdminDashboardPage());
+
+    expect(html).not.toContain("/admin/booking-requests");
   });
 
   it("links pending account deletion request alerts to the deletion request queue", async () => {

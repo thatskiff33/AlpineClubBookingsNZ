@@ -81,6 +81,8 @@ import {
 } from "@/lib/unpaid-finished-stays";
 import { buildUnpaidFinishedStaysHref, buildUnsettledAdditionalStaysHref } from "@/lib/unpaid-finished-stays-hrefs";
 import { adminHref } from "@/lib/admin-hubs";
+import { getBookingRequestPendingCounts } from "@/lib/admin-booking-request-pending-counts";
+import { describeBookingRequestsAlert } from "@/lib/admin-booking-requests-alert";
 
 // #2264: the upcoming check-ins list renders its date range in a fixed-width
 // column, so it stays compact — day plus short month, no year. F3 (#3079)
@@ -137,8 +139,7 @@ async function getStats(permissionMatrix: Promise<AdminPermissionMatrix>) {
     pendingMembershipCancellations,
     pendingMemberArchives,
     pendingDeletionRequests,
-    pendingBookingReviews,
-    pendingBookingChangeRequests,
+    bookingRequestCounts,
     { unassignedDates: unassignedHutLeaderDates, handovers: hutLeaderHandovers },
     activeLodgeCount,
     rosterDaysNeedingChores,
@@ -256,12 +257,9 @@ async function getStats(permissionMatrix: Promise<AdminPermissionMatrix>) {
     prisma.deletionRequest.count({
       where: { status: { in: OPEN_DELETION_REQUEST_STATUSES } },
     }),
-    prisma.booking.count({
-      where: { adminReviewStatus: "PENDING", deletedAt: null },
-    }),
-    prisma.bookingChangeRequest.count({
-      where: { status: "REQUESTED" },
-    }),
+    // The four Booking Requests queues, defined once beside the sidebar's
+    // badge counts (#4969), so the card and the badge cannot count differently.
+    getBookingRequestPendingCounts(),
     // `today` IS STILL PASSED, and the reason changed with #3123 —
     // `getUnassignedHutLeaderDates` no longer falls back to `getTodayDateOnly()`
     // and `APP_TIME_ZONE`, so this is no longer the difference between the
@@ -353,8 +351,7 @@ async function getStats(permissionMatrix: Promise<AdminPermissionMatrix>) {
     pendingMembershipCancellations,
     pendingMemberArchives,
     pendingDeletionRequests,
-    pendingBookingReviews,
-    pendingBookingChangeRequests,
+    bookingRequestCounts,
     pendingMembershipReviews:
       pendingMembershipCancellations + pendingMemberArchives,
     rosterDaysNeedingChores,
@@ -452,20 +449,9 @@ export default async function AdminDashboardPage() {
       ? `${stats.pendingCreditApprovals} manual credit approval${stats.pendingCreditApprovals === 1 ? "" : "s"}`
       : null,
   ].filter(Boolean) as string[];
-  const hasPendingBookingApprovals =
-    stats.pendingBookingReviews > 0 || stats.pendingBookingChangeRequests > 0;
-  const bookingRequestsHref =
-    stats.pendingBookingReviews > 0
-      ? "/admin/booking-requests?tab=approvals"
-      : "/admin/booking-requests?tab=changes";
-  const bookingApprovalSummary = [
-    stats.pendingBookingReviews > 0
-      ? `${stats.pendingBookingReviews} new booking review${stats.pendingBookingReviews === 1 ? "" : "s"}`
-      : null,
-    stats.pendingBookingChangeRequests > 0
-      ? `${stats.pendingBookingChangeRequests} change request${stats.pendingBookingChangeRequests === 1 ? "" : "s"}`
-      : null,
-  ].filter(Boolean) as string[];
+  const bookingRequestsAlert = describeBookingRequestsAlert(
+    stats.bookingRequestCounts,
+  );
   const pendingMembershipReviewSummary = [
     stats.pendingMembershipCancellations > 0
       ? `${stats.pendingMembershipCancellations} cancellation request${
@@ -504,15 +490,15 @@ export default async function AdminDashboardPage() {
         </Link>
       )}
 
-      {hasPendingBookingApprovals && (
-        <Link href={bookingRequestsHref}>
+      {bookingRequestsAlert && (
+        <Link href={bookingRequestsAlert.href}>
           <Card className="border-warning-6 bg-warning-3 hover:shadow-md transition-shadow cursor-pointer">
             <CardContent className="flex items-start gap-3 pt-5">
               <AlertTriangle className="h-5 w-5 text-warning-11 flex-shrink-0 mt-0.5" />
               <div>
                 <p className="font-medium text-warning-11">Booking Requests</p>
                 <p className="text-sm text-warning-11 mt-1">
-                  {bookingApprovalSummary.join(" and ")} waiting for admin decision.
+                  {bookingRequestsAlert.summary} waiting for admin decision.
                 </p>
               </div>
             </CardContent>
