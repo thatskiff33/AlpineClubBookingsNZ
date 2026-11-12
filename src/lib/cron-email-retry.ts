@@ -7,7 +7,10 @@ import {
   getEmailTransporter,
   type SentMessageInfo,
 } from "@/lib/email/internal";
-import { RETAINS_REPLAYABLE_EMAIL_BODY } from "@/lib/email/retry-selection";
+import {
+  EMAIL_RETRY_MAX_ATTEMPTS,
+  RETAINS_REPLAYABLE_EMAIL_BODY,
+} from "@/lib/email/retry-selection";
 import {
   describeDeliveryDecision,
   resolveDeliveryPolicy,
@@ -25,7 +28,6 @@ import {
 import { adminEmailDeliveryFailedTemplate } from "@/lib/email-templates/admin-ops";
 import { renderEmailHtml } from "@/lib/email-theme";
 
-const MAX_ATTEMPTS = 3;
 const RETRY_FAILURE_ALERT_TEMPLATE = "admin-email-failure";
 
 /**
@@ -67,7 +69,7 @@ async function retireUnverifiableBookingEmail(params: {
         bookingRetryHtmlBody: params.expectedBookingRetryHtmlBody,
       },
       data: {
-        attempts: MAX_ATTEMPTS,
+        attempts: EMAIL_RETRY_MAX_ATTEMPTS,
         lastAttemptAt: new Date(),
         htmlBody: null,
         bookingRetryHtmlBody: null,
@@ -220,7 +222,7 @@ export async function retryFailedEmails(): Promise<{
       // not in this filter, and the guarded claim below re-asserts `FAILED`
       // before any send. Do not widen this to a status list.
       status: "FAILED",
-      attempts: { lt: MAX_ATTEMPTS },
+      attempts: { lt: EMAIL_RETRY_MAX_ATTEMPTS },
       ...RETAINS_REPLAYABLE_EMAIL_BODY,
       lastAttemptAt: { not: { gte: backoffThreshold } },
     },
@@ -348,13 +350,13 @@ export async function retryFailedEmails(): Promise<{
         // (status FAILED, attempts < MAX, retained body) forever, so once fifty
         // such rows exist the batch of 50 is refilled with the same stuck rows
         // every run and retry dies for every newer email behind them.
-        // Pushing attempts to MAX_ATTEMPTS drops it out of the query and lands
-        // it in the review queue, which is what the operator needs.
+        // Pushing attempts to EMAIL_RETRY_MAX_ATTEMPTS drops it out of the query
+        // and lands it in the review queue, which is what the operator needs.
         await prisma.emailLog
           .update({
             where: { id: emailLog.id },
             data: {
-              attempts: MAX_ATTEMPTS,
+              attempts: EMAIL_RETRY_MAX_ATTEMPTS,
               lastAttemptAt: new Date(),
               // #3035: retired for a #2258 attribution reason, not an
               // environment one.
@@ -619,7 +621,7 @@ export async function retryFailedEmails(): Promise<{
 
       // Alert admin when email exhausts retries
       if (
-        newAttempts >= MAX_ATTEMPTS &&
+        newAttempts >= EMAIL_RETRY_MAX_ATTEMPTS &&
         emailLog.templateName !== RETRY_FAILURE_ALERT_TEMPLATE
       ) {
         try {
