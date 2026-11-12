@@ -1,5 +1,7 @@
 "use client";
 
+import { SubjectAccessReport } from "./_components/subject-access-report";
+
 import { useCallback, useEffect, useRef, useState, use } from "react";
 import { formatStayDateOrNull } from "@/lib/club-time";
 import { useSession } from "next-auth/react";
@@ -1178,6 +1180,9 @@ export default function MemberDetailPage({
                   Merge a duplicate into this member
                 </Button>
               </div>
+            )}
+            {actorIsFullAdmin && (
+              <SubjectAccessReport className={embeddedCardClassName} memberId={member.id} />
             )}
           </div>
         </MemberGroupCard>

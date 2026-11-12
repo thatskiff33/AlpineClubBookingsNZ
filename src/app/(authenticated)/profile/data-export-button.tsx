@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
+import { saveResponseAsFile } from "@/lib/save-response-as-file";
 
 /**
  * F-COMP-03: Download My Data button.
@@ -26,23 +27,7 @@ export function DataExportButton() {
         setError(body.error || "Failed to generate export.");
         return;
       }
-      const blob = await res.blob();
-      const disposition = res.headers.get("Content-Disposition") || "";
-      // The captured name is the condition: the group is mandatory, so it is
-      // present exactly when the header matched, and the default name already
-      // answered its absence (#2801).
-      const [, matchedFilename] =
-        disposition.match(/filename="(.+?)"/) ?? [];
-      const filename = matchedFilename ?? "tac-my-data.json";
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      await saveResponseAsFile(res, "my-data.json");
     } catch {
       setError("Failed to download data. Please try again.");
     } finally {

@@ -13,6 +13,12 @@ import {
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
+// #4915: the sections the export gained have their own tests
+// (subject-access-export.realdb.test.ts); this file is about the reads it kept.
+vi.mock("@/lib/subject-access-export-sections", () => ({
+  buildSubjectAccessSections: vi.fn(async () => ({})),
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: {
@@ -175,7 +181,7 @@ describe("F-COMP-03: Personal Data Export", () => {
 
     const disposition = res.headers.get("Content-Disposition");
     expect(disposition).toMatch(/attachment/);
-    expect(disposition).toMatch(/tac-my-data-\d{4}-\d{2}-\d{2}\.json/);
+    expect(disposition).toMatch(/my-data-\d{4}-\d{2}-\d{2}\.json/);
 
     const body = await res.json();
     expect(body.profile.firstName).toBe("Alice");

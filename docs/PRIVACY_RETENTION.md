@@ -42,6 +42,55 @@ see [backups](guides/backups.md), the
 [audit retention runbook](AUDIT_RETENTION_ARCHIVE_RUNBOOK.md) and
 [security notes](SECURITY.md).
 
+## Answering an access request
+
+Anyone may ask the club for a copy of the personal information it holds about
+them. Two downloads produce the same file, from the same builder
+(`INV-PRIV-023`):
+
+- **A member** downloads their own copy from **Profile → Download My Data**,
+  at most five times a day. Each download is recorded in their activity.
+- **A Full Admin** produces the copy for anyone else from **Admin → Members →
+  a member → Lifecycle & Deletion → Subject access report**. Only Full Admins
+  see the card, the server checks the role again, and it asks you to confirm
+  your sign-in first. Each officer may produce 20 reports a day. Every report is
+  recorded in the audit log under `privacy`, naming you and the person.
+
+The card finds the person three ways:
+
+1. **This member**, including a dependant with no login: use
+   **Download this member's report** on their own page.
+2. **By email**, for a member, an applicant or someone who sent a booking
+   request. If more than one member record uses the address (a parent and a
+   dependant, say), the report is refused: open the right member's page instead.
+3. **A non-member guest, by name.** Guest records hold no email address, so a
+   guest cannot be found by email. Search their name, pick the stay they
+   describe (name and dates), and download that row's report.
+   Each stay is its own guest record, so a guest who stayed several times needs
+   one report per stay.
+
+Before you send a file, check who is asking:
+
+- the request comes from the address on the record, or the person proves who
+  they are another way (for a guest, by describing the stay);
+- a parent or guardian asking for a dependant has the right to see the record;
+- you send the file only to the person it is about, or to someone they
+  authorised in writing.
+
+What the file contains, and what it leaves out:
+
+- Every personal record the club holds about the person, or a named exclusion
+  with its reason in the file's `exclusions` list. Review the exclusions and add
+  anything the person is owed by hand.
+- Only the person's own rows. On a booking someone else made, the file shows the
+  person's own guest row, never the other guests or the booker.
+- Records filed by email address (email log, applications, booking requests)
+  are withheld when the address belongs to another member record as well. The
+  file says
+  `emailKeyedRecords: withheld`; check those records by hand with the address's
+  owner in mind.
+- Money is in integer cents, labelled with the currency.
+
 ## Model schedule
 
 | Prisma model | Purpose / personal data | Retention period or retained purpose | End action |

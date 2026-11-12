@@ -101,7 +101,7 @@ const ADOPTED = [
   "src/app/(authenticated)/profile/page.tsx",
   "src/app/(admin)/admin/members/[id]/_components/member-seasonal-membership-card.tsx",
   "src/app/(admin)/admin/membership-types/page.tsx",
-  "src/app/api/member/data-export/route.ts",
+  "src/lib/subject-access-export.ts",
   "src/app/(admin)/admin/members/[id]/_components/member-summary-strip.tsx",
   "src/app/(admin)/admin/members/[id]/_components/member-subscription-history-table.tsx",
   "src/lib/admin-member-detail-helpers.ts",

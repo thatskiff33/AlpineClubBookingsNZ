@@ -116,7 +116,7 @@ For what an officer sees and does on each screen, use the
 | `maintenance-reports` | lodge | `multi-lodge/lodge-scoping-contract.md` (scoping), `SECURITY.md` (QR bearer token) | [guide](guides/maintenance-reports.md) | — (maintenanceReports module, on by default; outside #2050) |
 | `member-applications` | membership | `ARCHITECTURE.md` (membership application / nominations) | [guide](guides/member-applications.md) | 2 |
 | `member-fields` | membership | — | [guide](guides/member-fields.md) | 2 |
-| `members` | membership | `ARCHITECTURE.md` (members, CSV import, roles) | [guide](guides/members.md) | 2 |
+| `members` | membership (subject access report: Full Admin only) | `ARCHITECTURE.md` (members, CSV import, roles); [access requests](PRIVACY_RETENTION.md#answering-an-access-request) | [guide](guides/members.md) | 2 |
 | `membership-cancellations` | membership | `CANCELLATIONS.md`, `ARCHITECTURE.md` (cancellation review queue) | [guide](guides/membership-cancellations.md) (Settings tab included) | 2 |
 | `membership-setup` | membership | `ARCHITECTURE.md` (membership types) | [guide](guides/membership-setup.md) | 2 |
 | `membership-types` | membership | `ARCHITECTURE.md` (seasonal membership types) | [guide](guides/membership-types.md) | 2 |

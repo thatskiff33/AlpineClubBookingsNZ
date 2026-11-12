@@ -235,7 +235,7 @@ than with a screenshot:
 - **History & Activity** — bookings, Xero activity, and the audit log.
 - **Lifecycle & Deletion** — cancellation, archive (two-admin), hard-delete
   request (two-admin), and, for Full Admins, **Merge a duplicate** into this
-  record.
+  record and the **Subject access report**.
 
 ### Merge a duplicate
 
@@ -244,6 +244,14 @@ than with a screenshot:
    identity; the duplicate's history moves onto the master and the duplicate is
    deleted. You **Preview merge**, then type the exact server-issued confirmation
    phrase to execute — it cannot be undone.
+
+### Subject access report
+
+Full Admins answer a request for a copy of someone's personal information from
+a member's **Lifecycle & Deletion** section: this member, anyone by email, or a
+non-member guest picked from a name search. Each report asks you to confirm your
+sign-in and is audited. Who to check and what the file holds:
+[Answering an access request](../PRIVACY_RETENTION.md#answering-an-access-request).
 
 ## Settings reference
 

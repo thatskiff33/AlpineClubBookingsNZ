@@ -84,7 +84,7 @@ export interface DietaryAccessGrant {
  */
 type MemberGrantRecord = {
   readonly kind: "member";
-  readonly purpose: "self" | "self-data-export" | "membership-admin" | "member-merge";
+  readonly purpose: "self" | "self-data-export" | "membership-admin" | "member-merge" | "subject-access-export";
   readonly actorMemberId: string;
   /**
    * The members this grant may read: the subject for a self grant, the two
@@ -92,6 +92,7 @@ type MemberGrantRecord = {
    * membership administration.
    */
   readonly memberIds: readonly string[] | null;
+  readonly exportGuestId?: string;
 };
 
 type BookingGuestGrantRecord = {
@@ -161,6 +162,29 @@ export function grantSelfDataExportDietaryAccess(
   session: SignedInSession,
 ): DietaryAccessGrant {
   return mintGrant("self-data-export", session.user.id, [session.user.id]);
+}
+
+/** Full Admin responding to a verified access request; never a parent self-service grant. */
+export async function grantOfficerSubjectAccessDietaryAccess(
+  actorMemberId: string,
+  subject: { memberId?: string; guestId?: string },
+): Promise<DietaryAccessGrant | null> {
+  if (!(await actorIsFullAdmin(prisma, actorMemberId))) return null;
+  return registerGrant({ kind: "member", purpose: "subject-access-export", actorMemberId,
+    memberIds: subject.memberId ? [subject.memberId] : [], exportGuestId: subject.guestId });
+}
+
+/** Only an exact non-member guest selected by the verified officer grant. */
+export async function readSubjectAccessGuestDietary(grant: DietaryAccessGrant) {
+  const record = grantRecord(grant);
+  if (!record || record.kind !== "member" || record.purpose !== "subject-access-export") {
+    throw new Error("Subject access grant required");
+  }
+  if (!record.exportGuestId) return null;
+  const row = await prisma.bookingGuest.findFirst({
+    where: { id: record.exportGuestId, memberId: null }, select: { dietaryRequirements: true },
+  });
+  return row?.dietaryRequirements ?? null;
 }
 
 type GrantDb = Prisma.TransactionClient | PrismaClient;
@@ -635,14 +659,14 @@ export async function readOwnBookingGuestDietaryForExport(
   db: BookingGuestDb = prisma,
 ): Promise<OwnBookingGuestDietaryExportRow[]> {
   const record = grantRecord(grant);
-  if (!record || record.kind !== "member" || record.purpose !== "self-data-export") {
+  if (!record || record.kind !== "member" || !["self-data-export", "subject-access-export"].includes(record.purpose)) {
     throw new Error("Own booking dietary values need the subject's data-export grant");
   }
   // The subject's own guest rows on ANY booking (their own, or somebody else's
   // they were added to), identified by the stay dates only: another member's
   // booking id is not the subject's data.
   const rows = await db.bookingGuest.findMany({
-    where: { memberId: record.actorMemberId, dietaryRequirements: { not: null } },
+    where: { memberId: { in: [...(record.memberIds ?? [])] }, dietaryRequirements: { not: null } },
     select: { stayStart: true, stayEnd: true, dietaryRequirements: true },
     orderBy: [{ stayStart: "asc" }, { id: "asc" }],
   });

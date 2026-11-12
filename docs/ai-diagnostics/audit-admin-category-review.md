@@ -584,10 +584,10 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  538
+row-producing sites:  540
 uncategorised:        0
 category values: admin 112, booking 109, xero 51, family 35, payment 71,
-                 lodge 68, account 19, security 25, privacy 22,
+                 lodge 68, account 19, security 25, privacy 24,
                  communication 21, system 4
 ```
 
@@ -903,6 +903,13 @@ refund writes when the journal refused to reserve its slice and Stripe was not a
 `booking-payment.card-refund.reservation-released-by-operator`, an owner's release of a
 reservation nothing could answer. Both filed `payment` beside the other card refund rows;
 nobody's readership changes.
+
+#4915 then added two (`privacy` 22 -> 24, 538 -> 540, MEASURED with
+`pnpm run audit:census`): `member.data_exported`, a member downloading their own
+data, and `member.subject_access_exported`, a Full Admin's subject access report on
+one person. Both are `privacy`, so they need `membership:view` to read, and the
+report's row reaches the subject's own timeline on purpose: the subject sees that a
+copy of their record was released.
 
 #4680 then added one (`xero` 49 -> 50, 531 -> 532, MEASURED with
 `pnpm run audit:census`): `xero.organiser_adjustment_note.run_stood_down`, the row an
