@@ -31,11 +31,12 @@ counts waiting policy exceptions alongside the other queues.
 Every tab's list shows 25 requests a page, with a total line such as "Showing
 1–25 of 40" under it (shown even when everything fits on one page) and
 **Previous** / **Next** buttons when there is more. On **Approvals**,
-**Changes** and **Public Requests** the waiting filter lists the oldest request
-first, so the one that has waited longest is at the top; decided and **All**
+**Changes**, **Public Requests** and **Policy Exceptions** the waiting filter
+lists the oldest request first, so the one that has waited longest is at the top; decided and **All**
 filters list the newest first, and **All** on Approvals keeps every pending
-booking ahead of the decided ones. Changing the filter or tab returns to page 1;
-the page stays in the address; and if deciding the last request on a page
+booking ahead of the decided ones. Changing the filter or tab, or pressing
+**Reset**, returns to page 1; the page stays in the address (except on
+**Policy Exceptions**, which keeps its filter and page on screen only); and if deciding the last request on a page
 empties it, the list steps back a page. A link that opens one booking or
 request — from an email, **Needs Attention** or the Bookings Review chip —
 shows that record pinned above the list, with a note, when it is not on the

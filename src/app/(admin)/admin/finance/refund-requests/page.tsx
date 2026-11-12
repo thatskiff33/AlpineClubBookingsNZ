@@ -193,7 +193,7 @@ export default function RefundRequestsPage() {
     filterKey: filter,
     initialPage: parseAdminListPageParam(searchParams.get("page")),
   })
-  const { page, receive } = refundPage
+  const { page, setPage, receive } = refundPage
   const [reviewingRefundId, setReviewingRefundId] = useState<string | null>(null)
   const [reviewingCreditId, setReviewingCreditId] = useState<string | null>(null)
   const [adminNotes, setAdminNotes] = useState("")
@@ -491,8 +491,8 @@ export default function RefundRequestsPage() {
           </Button>
         ))}
         <DatasetResetButton
-          disabled={filter === "PENDING"}
-          onReset={() => setFilter("PENDING")}
+          disabled={filter === "PENDING" && page === 1}
+          onReset={() => { setFilter("PENDING"); setPage(1); }}
         />
       </div>
 

@@ -33,7 +33,7 @@ reason: the fixed 100-row read becomes a paged read with the shared pager;
   the change is the panel's own load and render wiring.
 
 file: src/components/admin/booking-requests/public-booking-requests-panel.tsx
-lines: 2761
+lines: 2763
 reason: the public queue gains paging and the pinned deep-linked request
   inside its existing load and list render; splitting this panel is a
   refactor of its own, well beyond this change.

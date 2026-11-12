@@ -479,7 +479,7 @@ export function PublicBookingRequestsPanel({
     filterKey: filter,
     initialPage: parseAdminListPageParam(searchParams.get("page")),
   });
-  const { page, receive } = queuePage;
+  const { page, setPage, receive, beginLoad } = queuePage;
   // INV-OPS-017: a deep-linked request that is not on the loaded page is read
   // by id and pinned above it, so the link always lands on its request.
   const [pinnedRequest, setPinnedRequest] = useState<PublicBookingRequestData | null>(null);
@@ -589,6 +589,7 @@ export function PublicBookingRequestsPanel({
   }, [currentPath, router]);
 
   const fetchRequests = useCallback(async () => {
+    const isCurrent = beginLoad();
     setLoading(true);
     setError("");
     try {
@@ -598,11 +599,11 @@ export function PublicBookingRequestsPanel({
         throw new Error(data.error || "Failed to load booking requests");
       }
       const rows: PublicBookingRequestData[] = Array.isArray(data?.data) ? data.data : [];
+      const pinned = await fetchOffPageQueueRecord("/api/admin/booking-requests", "requestId", requestId, rows);
+      if (!isCurrent()) return true; // a newer read owns the list
       setRequests(rows);
       receive(data, rows.length);
-      setPinnedRequest(
-        await fetchOffPageQueueRecord("/api/admin/booking-requests", "requestId", requestId, rows),
-      );
+      setPinnedRequest(pinned);
       setMemberChoosesPayment(data.memberWholeLodgeChoosesPaymentMethod === true);
       return true;
     } catch (err) {
@@ -614,6 +615,7 @@ export function PublicBookingRequestsPanel({
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.
   }, [
+    beginLoad,
     filter,
     page,
     receive,
@@ -1567,8 +1569,8 @@ export function PublicBookingRequestsPanel({
           </Button>
         ))}
         <DatasetResetButton
-          disabled={filter === "QUEUE"}
-          onReset={() => setFilter("QUEUE")}
+          disabled={filter === "QUEUE" && page === 1}
+          onReset={() => { setFilter("QUEUE"); setPage(1); }}
         />
       </div>
 

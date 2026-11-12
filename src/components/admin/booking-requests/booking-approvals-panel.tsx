@@ -146,7 +146,7 @@ export function BookingApprovalsPanel({
     filterKey: filter,
     initialPage: parseAdminListPageParam(searchParams.get("page")),
   });
-  const { page, receive } = queuePage;
+  const { page, setPage, receive, beginLoad } = queuePage;
   // INV-OPS-017: a deep-linked booking that is not on the loaded page is read
   // by id and pinned above it, so the link always lands on its booking.
   const [pinnedBooking, setPinnedBooking] = useState<BookingReviewData | null>(null);
@@ -184,6 +184,7 @@ export function BookingApprovalsPanel({
   );
 
   const fetchBookings = useCallback(async () => {
+    const isCurrent = beginLoad();
     setLoading(true);
     setError("");
     try {
@@ -193,11 +194,11 @@ export function BookingApprovalsPanel({
         throw new Error(data.error || "Failed to load booking reviews");
       }
       const rows: BookingReviewData[] = Array.isArray(data?.data) ? data.data : [];
+      const pinned = await fetchOffPageQueueRecord("/api/admin/booking-reviews", "bookingId", focusedBookingId, rows);
+      if (!isCurrent()) return true; // a newer read owns the list
       setBookings(rows);
       receive(data, rows.length);
-      setPinnedBooking(
-        await fetchOffPageQueueRecord("/api/admin/booking-reviews", "bookingId", focusedBookingId, rows),
-      );
+      setPinnedBooking(pinned);
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load booking reviews");
@@ -207,7 +208,7 @@ export function BookingApprovalsPanel({
     }
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.
-  }, [filter, page, receive, focusedBookingId, setBookings, setError, setLoading, setPinnedBooking]);
+  }, [beginLoad, filter, page, receive, focusedBookingId, setBookings, setError, setLoading, setPinnedBooking]);
 
   useEffect(() => {
     fetchBookings();
@@ -444,8 +445,8 @@ export function BookingApprovalsPanel({
           </Button>
         ))}
         <DatasetResetButton
-          disabled={filter === defaultFilter}
-          onReset={() => setFilter(defaultFilter)}
+          disabled={filter === defaultFilter && page === 1}
+          onReset={() => { setFilter(defaultFilter); setPage(1); }}
         />
       </div>
 

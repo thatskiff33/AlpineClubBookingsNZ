@@ -187,7 +187,7 @@ export default function MemberApplicationsPage() {
     filterKey: filter,
     initialPage: parseAdminListPageParam(searchParams.get("page")),
   });
-  const { page, receive } = queuePage;
+  const { page, setPage, receive } = queuePage;
   const [applications, setApplications] = useState<ApplicationRecord[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -606,8 +606,8 @@ export default function MemberApplicationsPage() {
             </Button>
           ))}
           <DatasetResetButton
-            disabled={filter === "PENDING_ADMIN"}
-            onReset={() => setFilter("PENDING_ADMIN")}
+            disabled={filter === "PENDING_ADMIN" && page === 1}
+            onReset={() => { setFilter("PENDING_ADMIN"); setPage(1); }}
           />
         </div>
       </div>

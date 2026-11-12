@@ -457,7 +457,7 @@ rules first written here. #2765 extended it with the measured-audience half.
   pages through `useAdminQueuePage` and renders the shared `Pagination` with
   `formatAdminListRange` as its summary. A filter
   change returns to page 1, a page left empty by a decision steps back one, and
-  the page is kept in the URL.
+  the page is kept in the URL wherever the screen keeps its filter there.
 - A work queue's pending filter reads oldest first (`adminQueueCreatedOrder`).
   A focused deep link (`bookingId=`, `requestId=`) whose record is off the
   current page shows it pinned above the list (`fetchOffPageQueueRecord`,

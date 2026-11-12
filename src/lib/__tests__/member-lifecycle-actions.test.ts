@@ -1716,8 +1716,8 @@ describe("admin member lifecycle request list (#1938)", () => {
     ).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { action: "DELETE", status: "REQUESTED" },
-        // INV-OPS-017: the pending queue reads oldest first.
-        orderBy: [{ requestedAt: "asc" }, { id: "asc" }],
+        // The deletion queue keeps newest first; only the archive queue is #4960's.
+        orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
       }),
     );
     expect(result.total).toBe(1);
@@ -1790,6 +1790,8 @@ describe("admin member lifecycle request list (#1938)", () => {
     ).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { action: "ARCHIVE", status: "REQUESTED" },
+        // INV-OPS-017: the archive queue's pending filter reads oldest first.
+        orderBy: [{ requestedAt: "asc" }, { id: "asc" }],
       }),
     );
   });

@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
 
 import type { PaginationProps } from "@/components/admin/admin-pagination"
 import {
@@ -28,9 +28,12 @@ function readNumber(value: unknown): number | null {
  *
  * The page belongs to one filter: when `filterKey` changes the effective page
  * is 1 straight away, so the list's fetch effect runs once with the reset page
- * rather than once stale and once reset. `receive` records the total from the
- * route's `adminListPage` keys and steps back a page when a decision emptied
- * the last one. `pagination` is the props for the shared `Pagination`, with
+ * rather than once stale and once reset, and the stored page is reset during
+ * that render, so returning to an earlier filter starts on page 1 as well.
+ * `receive` records the total from the route's `adminListPage` keys and steps
+ * back a page when a decision emptied the last one. `beginLoad` marks a list
+ * read and answers whether it is still the newest, so a slower response for a
+ * page or filter the officer has left never replaces the one now shown. `pagination` is the props for the shared `Pagination`, with
  * the total line shown even on a single page.
  */
 export function useAdminQueuePage({
@@ -46,6 +49,7 @@ export function useAdminQueuePage({
   }))
   const [received, setReceived] = useState<(ReceivedPage & { filterKey: string }) | null>(null)
 
+  if (state.filterKey !== filterKey) setState({ filterKey, page: 1 })
   const page = state.filterKey === filterKey ? state.page : 1
 
   const setPage = useCallback(
@@ -85,6 +89,12 @@ export function useAdminQueuePage({
     [filterKey, page],
   )
 
+  const loadSeqRef = useRef(0)
+  const beginLoad = useCallback(() => {
+    const seq = ++loadSeqRef.current
+    return () => seq === loadSeqRef.current
+  }, [])
+
   const current = received && received.filterKey === filterKey ? received : null
 
   const pagination = useMemo<PaginationProps | null>(() => {
@@ -111,6 +121,7 @@ export function useAdminQueuePage({
     page,
     setPage,
     receive,
+    beginLoad,
     total: current?.total ?? null,
     pagination,
   }

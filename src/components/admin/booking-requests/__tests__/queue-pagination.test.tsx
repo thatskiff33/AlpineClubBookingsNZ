@@ -236,6 +236,15 @@ describe("BookingApprovalsPanel paging", () => {
       expect(fetches.reads(route).at(-1)!.searchParams.get("status")).toBe("APPROVED"),
     );
     expect(pageOf(fetches.reads(route).at(-1)!)).toBe("1");
+
+    // Back to the first filter: it starts on page 1, not the page it was left on.
+    fireEvent.click(screen.getByRole("button", { name: "Pending" }));
+    await waitFor(() =>
+      expect(fetches.reads(route).at(-1)!.searchParams.get("status")).toBe("PENDING"),
+    );
+    expect(pageOf(fetches.reads(route).at(-1)!)).toBe("1");
+    expect(await screen.findByText("Showing 1–25 of 40")).toBeInTheDocument();
+    expect(fetches.reads(route).filter((url) => pageOf(url) === "2")).toHaveLength(2);
   });
 
   it("shows the total line on a single page", async () => {
@@ -295,6 +304,50 @@ describe("BookingApprovalsPanel paging", () => {
     render(<BookingApprovalsPanel />);
     expect(await screen.findByText("Showing 26–40 of 40")).toBeInTheDocument();
     expect(fetches.reads(route).map(pageOf)).toEqual(["3", "2"]);
+  });
+
+  it("Reset returns a later page of the default filter to page 1", async () => {
+    navigation.search = "page=2";
+    const fetches = installFetch({
+      [route]: (url) => envelope([booking], Number(pageOf(url)), 40),
+    });
+    render(<BookingApprovalsPanel />);
+    expect(await screen.findByText("Showing 26–40 of 40")).toBeInTheDocument();
+
+    const reset = screen.getByRole("button", { name: "Reset" });
+    expect(reset).toBeEnabled();
+    fireEvent.click(reset);
+    expect(await screen.findByText("Showing 1–25 of 40")).toBeInTheDocument();
+    expect(pageOf(fetches.reads(route).at(-1)!)).toBe("1");
+    expect(screen.getByRole("button", { name: /^Reset\./ })).toBeDisabled();
+  });
+
+  it("never lets a slower read for a filter it has left replace the list shown", async () => {
+    const slow: { release?: () => void } = {};
+    global.fetch = vi.fn(async (input: unknown) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.searchParams.get("status") === "APPROVED") {
+        await new Promise<void>((resolve) => {
+          slow.release = resolve;
+        });
+        const stale = { ...booking, id: "booking-2", member: { ...booking.member, firstName: "Stale", lastName: "Row" } };
+        return jsonResponse(envelope([stale], 1, 3));
+      }
+      return jsonResponse(envelope([booking], 1, 40));
+    }) as unknown as typeof fetch;
+    render(<BookingApprovalsPanel />);
+    await screen.findByText("Showing 1–25 of 40");
+
+    fireEvent.click(screen.getByRole("button", { name: "Approved" }));
+    await waitFor(() => expect(slow.release).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "Pending" }));
+    expect(await screen.findByText("Showing 1–25 of 40")).toBeInTheDocument();
+
+    slow.release!();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText(/Stale Row/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Riley Chen/)).toBeInTheDocument();
+    expect(screen.getByText("Showing 1–25 of 40")).toBeInTheDocument();
   });
 });
 

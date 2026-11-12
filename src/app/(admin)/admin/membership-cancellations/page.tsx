@@ -386,7 +386,7 @@ function MembershipCancellationRequests() {
     filterKey: "REQUESTED",
     initialPage: parseAdminListPageParam(searchParams.get("archivePage")),
   });
-  const { page, receive } = cancellationPage;
+  const { page, setPage, receive } = cancellationPage;
   const { page: archivePageNumber, receive: receiveArchive } = archivePage;
   const [data, setData] = useState<CancellationResponse | null>(null);
   const [archiveData, setArchiveData] = useState<ArchiveResponse | null>(null);
@@ -713,8 +713,8 @@ function MembershipCancellationRequests() {
             </SelectContent>
           </Select>
           <DatasetResetButton
-            disabled={filter === "REQUESTED"}
-            onReset={() => setFilter("REQUESTED")}
+            disabled={filter === "REQUESTED" && page === 1}
+            onReset={() => { setFilter("REQUESTED"); setPage(1); }}
           />
           <Button
             variant="outline"

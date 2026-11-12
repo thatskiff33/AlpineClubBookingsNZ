@@ -128,7 +128,7 @@ export function BookingChangeRequestsPanel({
     isRequestFilter(initialFilter) ? initialFilter : defaultFilter
   );
   const pageParam = parseAdminListPageParam(searchParams.get("page"));
-  const { page, receive, pagination } = useAdminQueuePage({ filterKey: filter, initialPage: pageParam });
+  const { page, setPage, receive, beginLoad, pagination } = useAdminQueuePage({ filterKey: filter, initialPage: pageParam });
   // INV-OPS-017: a deep-linked request off the loaded page is pinned above it.
   const [pinnedRequest, setPinnedRequest] = useState<BookingChangeRequestData | null>(null);
   const shownRequests = pinnedRequest ? [pinnedRequest, ...requests] : requests;
@@ -189,12 +189,7 @@ export function BookingChangeRequestsPanel({
   /** This row's officer entry as sent (#4030, #4533). */
   const entryOf = (request: BookingChangeRequestData) => officerEntryOf(request, decisionDraftFor(request.id));
   const currentPath = buildBookingChangeRequestsPath(
-    basePath,
-    searchParams.toString(),
-    fixedSearchParams,
-    filter,
-    requestId,
-    page,
+    basePath, searchParams.toString(), fixedSearchParams, filter, requestId, page,
   );
 
   useEffect(() => {
@@ -202,6 +197,7 @@ export function BookingChangeRequestsPanel({
   }, [currentPath, router]);
 
   const fetchRequests = useCallback(async () => {
+    const isCurrent = beginLoad();
     setLoading(true);
     setError("");
     try {
@@ -211,9 +207,11 @@ export function BookingChangeRequestsPanel({
         throw new Error(data.error || "Failed to load booking change requests");
       }
       const rows: BookingChangeRequestData[] = Array.isArray(data?.data) ? data.data : [];
+      const pinned = await fetchOffPageQueueRecord("/api/admin/booking-change-requests", "requestId", requestId, rows);
+      if (!isCurrent()) return;
       setRequests(rows);
       receive(data, rows.length);
-      setPinnedRequest(await fetchOffPageQueueRecord("/api/admin/booking-change-requests", "requestId", requestId, rows));
+      setPinnedRequest(pinned);
       setMemberGuestFind(data?.memberGuestFind ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load booking change requests");
@@ -222,7 +220,7 @@ export function BookingChangeRequestsPanel({
     }
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.
-  }, [filter, page, receive, requestId, setError, setLoading, setRequests, setMemberGuestFind, setPinnedRequest]);
+  }, [beginLoad, filter, page, receive, requestId, setError, setLoading, setRequests, setMemberGuestFind, setPinnedRequest]);
 
   useEffect(() => {
     fetchRequests();
@@ -380,8 +378,8 @@ export function BookingChangeRequestsPanel({
           </Button>
         ))}
         <DatasetResetButton
-          disabled={filter === defaultFilter}
-          onReset={() => setFilter(defaultFilter)}
+          disabled={filter === defaultFilter && page === 1}
+          onReset={() => { setFilter(defaultFilter); setPage(1); }}
         />
       </div>
 
