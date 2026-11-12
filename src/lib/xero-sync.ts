@@ -489,7 +489,15 @@ function getAttemptWhere(
 const START_OPERATION_INSERT_ATTEMPTS = 3;
 
 export async function startXeroSyncOperation(
-  input: XeroSyncOperationInput & { store?: Prisma.TransactionClient }
+  input: XeroSyncOperationInput & {
+    store?: Prisma.TransactionClient;
+    /**
+     * #4921 prerequisite (`INV-INT-038`): never hand back another attempt's
+     * active row. The active-correlation-key violation is thrown for the
+     * caller to resolve, so its claim is always a row it inserted itself.
+     */
+    shareActiveOperation?: false;
+  }
 ) {
   // When a caller passes an in-flight transaction client the operation row is
   // written inside that transaction so it commits atomically with the caller's
@@ -546,6 +554,7 @@ export async function startXeroSyncOperation(
       // Not on a caller's transaction (the root client is none): the violation has
       // aborted it, so no read can follow (#4338).
       if (!isPrismaUniqueConstraintError(error) || !input.correlationKey || db !== prisma) throw error;
+      if (input.shareActiveOperation === false) throw error;
       const { correlationKey } = input;
       const existing = await db.xeroSyncOperation.findFirst({
         where: { correlationKey, status: { in: [...XERO_ACTIVE_OPERATION_STATUSES] } },
