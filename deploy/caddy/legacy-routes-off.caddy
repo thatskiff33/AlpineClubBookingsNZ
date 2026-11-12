@@ -1,0 +1,5 @@
+# CADDY_LEGACY_ROUTES=off (the default): no `/finance-legacy*` route, so those
+# requests reach the app like any other path. This snippet adds nothing; it
+# exists so the Caddyfile's
+# `import /etc/caddy/deploy/legacy-routes-{$CADDY_LEGACY_ROUTES:off}.caddy`
+# resolves to a file in every mode. The alternative is `legacy-routes-on.caddy`.
