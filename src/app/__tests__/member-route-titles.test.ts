@@ -45,6 +45,21 @@ const ROUTES: Array<[route: string, load: () => Promise<{ metadata?: Metadata }>
   ["/bookings", () => import("../(authenticated)/bookings/page"), "My bookings"],
   ["/bookings/[id]", () => import("../(authenticated)/bookings/[id]/page"), "Booking details"],
   ["/notices/[id]", () => import("../(authenticated)/notices/[id]/page"), "Notice"],
+  [
+    "/lodge-instructions",
+    () => import("../(authenticated)/lodge-instructions/layout"),
+    "Lodge instructions",
+  ],
+  [
+    "/booking-requests/respond/[token]",
+    () => import("../(website-dynamic)/booking-requests/respond/[token]/page"),
+    "Your booking quote",
+  ],
+  [
+    "/booking-requests/verify/[token]",
+    () => import("../(website-dynamic)/booking-requests/verify/[token]/page"),
+    "Confirm your booking request",
+  ],
 ];
 
 describe("member-facing routes set their own tab title (#4951)", () => {
