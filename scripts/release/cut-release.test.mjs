@@ -80,7 +80,41 @@ function configure(cwd) {
  * A bare origin holding one release-tagged commit plus pending fragments, and a
  * clean clone of it. Returns `{ origin, repo }`.
  */
-function makeFixture({ fragments = { "4400-a-fix.md": "- **A fix (#4400).** Body.\n" }, tags = ["v0.13.2"], changelog = CHANGELOG } = {}) {
+// The two upgrade documents prepare checks (#4979), cut down to what it reads.
+const GUIDE_TOP = [
+  "# Upgrading",
+  "",
+  "## Principles",
+  "",
+  "## How to read `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`",
+  "",
+  "## Generic upgrade procedure",
+  "",
+].join("\n");
+const UPGRADING_READY = [
+  GUIDE_TOP,
+  "## Unreleased",
+  "",
+  "### Upgrade checklist for this release",
+  "",
+  "1. Rehearse.",
+  "",
+  "---",
+  "",
+  "## v0.13.1 → v0.13.2",
+  "",
+  "Older steps.",
+  "",
+].join("\n");
+const RUNBOOK_AGNOSTIC = "# Production Upgrade Runbook\n\nThis runbook is release-agnostic.\n\n## 0. Scope\n";
+const READY_DOCS = { "docs/UPGRADING.md": UPGRADING_READY, "docs/PRODUCTION_UPGRADE_RUNBOOK.md": RUNBOOK_AGNOSTIC };
+
+function makeFixture({
+  fragments = { "4400-a-fix.md": "- **A fix (#4400).** Body.\n" },
+  tags = ["v0.13.2"],
+  changelog = CHANGELOG,
+  docs = {},
+} = {}) {
   const origin = path.join(tempDir("release-cut-origin-"), "origin.git");
   execFileSync("git", ["init", "-q", "--bare", "-b", "main", origin]);
   const seed = tempDir("release-cut-seed-");
@@ -93,6 +127,10 @@ function makeFixture({ fragments = { "4400-a-fix.md": "- **A fix (#4400).** Body
   fs.mkdirSync(path.join(seed, "size-allowances.d"));
   fs.writeFileSync(path.join(seed, "size-allowances.d", "README.md"), "# Allowances\n");
   fs.writeFileSync(path.join(seed, "size-allowances.d", "4300-spent.md"), "lines: 900\n");
+  for (const [relative, body] of Object.entries(docs)) {
+    fs.mkdirSync(path.dirname(path.join(seed, relative)), { recursive: true });
+    fs.writeFileSync(path.join(seed, relative), body);
+  }
   git(seed, "add", "--all");
   git(seed, "commit", "-qm", "released base");
   for (const tag of tags) git(seed, "tag", "-a", tag, "-m", tag);
@@ -455,6 +493,65 @@ describe("release:cut prepare on a fixture repository", () => {
       /This clone has a tag v0\.13\.3 that origin does not/,
     );
     expect(error.recovery).toContain("git tag -d v0.13.3");
+  });
+
+  it("folds the upgrade guide's Unreleased steps into the release's heading (#4979)", () => {
+    const { repo } = makeFixture({ docs: READY_DOCS });
+    const dryLog = silentLog();
+    prepareRelease({ repoRoot: repo, date: "2026-10-31", run: fixtureRunner(repo), log: dryLog });
+    expect(dryLog.text()).toContain(
+      '4. fold docs/UPGRADING.md "## Unreleased" into "## v0.13.2 → v0.13.3", leaving an empty "## Unreleased"',
+    );
+    expect(dryLog.text()).toContain("git add --all -- CHANGELOG.md package.json changelog.d size-allowances.d docs/UPGRADING.md");
+    expect(dryLog.text()).not.toContain("it does NOT yet");
+
+    prepareRelease({ repoRoot: repo, execute: true, date: "2026-10-31", run: fixtureRunner(repo), log: silentLog() });
+
+    const folded = fs.readFileSync(path.join(repo, "docs", "UPGRADING.md"), "utf8");
+    expect(folded).toContain(
+      ["## Unreleased", "", "---", "", "## v0.13.2 → v0.13.3", "", "### Upgrade checklist for this release"].join("\n"),
+    );
+    expect(folded.match(/^## Unreleased$/gm)).toHaveLength(1);
+    expect(git(repo, "show", "--name-status", "--format=", "HEAD").split("\n")).toContain("M\tdocs/UPGRADING.md");
+    expect(git(repo, "status", "--porcelain", "--untracked-files=all")).toBe("");
+  });
+
+  it("does not fold an empty Unreleased block, and warns when the checklist is missing", () => {
+    const empty = makeFixture({
+      docs: { ...READY_DOCS, "docs/UPGRADING.md": `${GUIDE_TOP}## Unreleased\n\n---\n\n## v0.13.1 → v0.13.2\n` },
+    });
+    const emptyLog = silentLog();
+    prepareRelease({ repoRoot: empty.repo, date: "2026-10-31", run: fixtureRunner(empty.repo), log: emptyLog });
+    expect(emptyLog.text()).not.toContain("fold docs/UPGRADING.md");
+
+    const bare = makeFixture({
+      docs: { ...READY_DOCS, "docs/UPGRADING.md": `${GUIDE_TOP}## Unreleased\n\n### A step (#4500)\n\nDo it.\n` },
+    });
+    const bareLog = silentLog();
+    prepareRelease({ repoRoot: bare.repo, date: "2026-10-31", run: fixtureRunner(bare.repo), log: bareLog });
+    expect(bareLog.text()).toContain("(it does NOT yet: write one)");
+  });
+
+  it("refuses a release-specific section above the guide's Unreleased block, dry run included", () => {
+    const misplaced = UPGRADING_READY.replace("## Unreleased", "### Review this first (#4457)\n\n## Unreleased");
+    const { repo } = makeFixture({ docs: { ...READY_DOCS, "docs/UPGRADING.md": misplaced } });
+    const before = snapshot(repo);
+    const error = expectRefusal(
+      () => prepareRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
+      /upgrade documents are not ready[\s\S]*"### Review this first \(#4457\)"/,
+    );
+    expect(error.recovery).toContain("Public Reference Release Checklist");
+    expect(snapshot(repo)).toEqual(before);
+  });
+
+  it("refuses a runbook still scoped to a release older than origin's latest tag", () => {
+    const stale = "# Production Upgrade Runbook\n\nFrom `v0.9.0` up to `v0.10.0`.\n\n## 0. Scope\n";
+    const { repo } = makeFixture({ docs: { ...READY_DOCS, "docs/PRODUCTION_UPGRADE_RUNBOOK.md": stale } });
+    expectRefusal(
+      () => prepareRelease({ repoRoot: repo, execute: true, run: fixtureRunner(repo), log: silentLog() }),
+      /scopes it to v0\.10\.0, older than v0\.13\.2/,
+    );
+    expect(git(repo, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
   });
 
   it("refuses when there is nothing to release", () => {
