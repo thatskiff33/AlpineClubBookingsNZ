@@ -7,8 +7,9 @@ import {
   MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS,
 } from "@/lib/finance-booking-metrics";
 import logger from "@/lib/logger";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
-const isoDateParam = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const isoDateParam = dateOnlyStringSchema;
 
 function validateWindowSpan(
   input: {

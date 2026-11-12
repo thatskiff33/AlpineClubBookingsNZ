@@ -13,10 +13,11 @@ import { custodianBedHoldErrorResponse } from "@/lib/custodian-assignment-routes
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { isCustodianOccupancy } from "@/lib/custodian-occupancy";
 import { readSavedHutLeaderSchoolNightsWarning } from "@/lib/hut-leader-school-nights-warning";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 const updateSchema = z.object({
-  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  startDate: dateOnlyStringSchema.optional(),
+  endDate: dateOnlyStringSchema.optional(),
   lodgeId: z.string().min(1).optional(),
   // Custodian bed hold (#2286), THREE-state and deliberately so:
   //   absent          -> leave the bed exactly as it is

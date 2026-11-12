@@ -57,14 +57,13 @@ import {
   type BookingMoneyReconciliation,
 } from "@/lib/booking-money-reconciliation";
 import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoice-evidence";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 export type BookingSortBy = "member" | "lastUpdated" | "checkIn" | "guests" | "total" | "status";
 export type SortDir = "asc" | "desc";
 type BedStateFilter = "all" | "unallocated" | "partial" | "complete" | "warning";
 type BedState = Exclude<BedStateFilter, "all">;
 type ChangeStateFilter = "all" | "requiresReview" | "pendingRequest" | "hasModification" | "creditGenerated";
-
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 // One page of the admin bookings list. Kept as a constant so the service and
 // its callers share a single window size (previously a bare `100`).
@@ -104,18 +103,18 @@ const validBookingStatuses = new Set<BookingStatus>(Object.values(BookingStatus)
 
 export const adminBookingsQuerySchema = z.object({
   status: z.string().optional(),
-  from: dateSchema.optional(),
-  to: dateSchema.optional(),
-  updatedFrom: dateSchema.optional(),
-  updatedTo: dateSchema.optional(),
-  checkInFrom: dateSchema.optional(),
-  checkInTo: dateSchema.optional(),
+  from: dateOnlyStringSchema.optional(),
+  to: dateOnlyStringSchema.optional(),
+  updatedFrom: dateOnlyStringSchema.optional(),
+  updatedTo: dateOnlyStringSchema.optional(),
+  checkInFrom: dateOnlyStringSchema.optional(),
+  checkInTo: dateOnlyStringSchema.optional(),
   // Check-out range (#1709): lets the dashboard "Unpaid Finished Stays" card
   // deep-link to status=PAYMENT_PENDING&checkOutTo=<today> — every finished
   // stay with payment still owing (retroactive card creates qualify from the
   // moment of creation).
-  checkOutFrom: dateSchema.optional(),
-  checkOutTo: dateSchema.optional(),
+  checkOutFrom: dateOnlyStringSchema.optional(),
+  checkOutTo: dateOnlyStringSchema.optional(),
   search: z.string().trim().max(100).optional(),
   upcoming: z.string().optional(),
   sort: z.string().optional(),

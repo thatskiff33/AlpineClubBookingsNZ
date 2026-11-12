@@ -18,6 +18,7 @@ import {
   type ClubTimeZone,
 } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 const querySchema = z.object({
   status: z.string().optional().default("all"),
@@ -27,8 +28,8 @@ const querySchema = z.object({
   localId: z.string().trim().optional().default(""),
   resourceId: z.string().trim().optional().default(""),
   eventType: z.string().trim().optional().default("all"),
-  createdFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  createdTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  createdFrom: dateOnlyStringSchema.optional(),
+  createdTo: dateOnlyStringSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(25),
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(100).optional(),

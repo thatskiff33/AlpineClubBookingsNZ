@@ -21,6 +21,7 @@ import {
 } from "@/lib/partner-invite-token-policy";
 import { requestPartnerLink } from "@/lib/member-partner-link";
 import { nameField } from "@/lib/zod-helpers";
+import { dateOfBirthStringSchema } from "@/lib/date-only-schema";
 
 const createGroupSchema = z.object({
   groupName: z
@@ -42,7 +43,7 @@ const createGroupSchema = z.object({
         dateOfBirth: z
           .string({ error: "Date of birth is required" })
           .min(1, "Date of birth is required")
-          .regex(/^\d{4}-\d{2}-\d{2}$/, "Date of birth must be YYYY-MM-DD format"),
+          .pipe(dateOfBirthStringSchema),
       })
     )
     .max(6, "A group creation request can include at most 6 infant/child/youth members")
