@@ -902,6 +902,7 @@ describe("the Messages & email hub keeps each page's own admission (C8 #4805)", 
     ["/api/admin/email-templates", "support", []],
     ["/api/admin/booking-messages", "support", []],
     ["/api/admin/communications/send", "membership", ["communications"]],
+    ["/api/admin/communications/preview", "membership", ["communications"]],
     ["/api/admin/notices/x123/reads", "membership", ["memberNotices"]],
     ["/api/admin/club-posts/x123", "membership", ["commsPortal"]],
   ] as const)("leaves the API %s on %s", (pathname, area, flags) => {

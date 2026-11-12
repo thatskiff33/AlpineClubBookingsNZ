@@ -58,14 +58,16 @@ it("does nothing for a notice that is not published", async () => {
   expect(mocks.sendEmail).not.toHaveBeenCalled();
 });
 
-it("emails only members opted in to marketingEmails", async () => {
+// #4987: a notice is club business, sent under the opt-out Club notices
+// preference (INV-PRIV-023) — never the newsletter (marketingEmails) opt-in.
+it("emails every audience member except those who turned club notices off", async () => {
   mocks.resolveAudience.mockResolvedValue([
     { memberId: "m1", name: "A", email: "a@x.test", audienceVia: "All members", viaExplicitMember: false },
     { memberId: "m2", name: "B", email: "b@x.test", audienceVia: "All members", viaExplicitMember: false },
   ]);
   mocks.memberFindMany.mockResolvedValue([
-    { id: "m1", firstName: "A", notificationPreference: { marketingEmails: true } },
-    { id: "m2", firstName: "B", notificationPreference: { marketingEmails: false } },
+    { id: "m1", firstName: "A", notificationPreference: { clubNotices: true, marketingEmails: false } },
+    { id: "m2", firstName: "B", notificationPreference: { clubNotices: false, marketingEmails: true } },
   ]);
 
   const result = await sendNoticePublishedEmails("notice-1");
@@ -73,7 +75,7 @@ it("emails only members opted in to marketingEmails", async () => {
   expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
   expect(mocks.sendEmail.mock.calls[0][0].to).toBe("a@x.test");
   expect(result.sent).toBe(1);
-  // m2 opted out -> skipped.
+  // m2 turned club notices off (its newsletter opt-in is irrelevant) -> skipped.
   expect(result.skipped).toBe(1);
 });
 
@@ -82,7 +84,7 @@ it("counts a suppressed recipient as skipped (suppression enforced inside sendEm
     { memberId: "m1", name: "A", email: "a@x.test", audienceVia: "All members", viaExplicitMember: false },
   ]);
   mocks.memberFindMany.mockResolvedValue([
-    { id: "m1", firstName: "A", notificationPreference: { marketingEmails: true } },
+    { id: "m1", firstName: "A", notificationPreference: { clubNotices: true, marketingEmails: false } },
   ]);
   mocks.sendEmail.mockResolvedValue({ status: "suppressed" });
 
@@ -91,7 +93,7 @@ it("counts a suppressed recipient as skipped (suppression enforced inside sendEm
   expect(result.skipped).toBe(1);
 });
 
-it("treats a member with no preference row as opted out", async () => {
+it("emails a member with no preference row (club notices start on)", async () => {
   mocks.resolveAudience.mockResolvedValue([
     { memberId: "m1", name: "A", email: "a@x.test", audienceVia: "All members", viaExplicitMember: false },
   ]);
@@ -100,8 +102,8 @@ it("treats a member with no preference row as opted out", async () => {
   ]);
 
   const result = await sendNoticePublishedEmails("notice-1");
-  expect(mocks.sendEmail).not.toHaveBeenCalled();
-  expect(result.skipped).toBe(1);
+  expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+  expect(result).toEqual({ sent: 1, skipped: 0 });
 });
 
 it("resets the single-send claim when the pre-send phase fails, so a retry can send", async () => {
@@ -127,8 +129,8 @@ it("does NOT reset the claim after a partial send (would double-email delivered 
     { memberId: "m2", name: "B", email: "b@x.test", audienceVia: "All members", viaExplicitMember: false },
   ]);
   mocks.memberFindMany.mockResolvedValue([
-    { id: "m1", firstName: "A", notificationPreference: { marketingEmails: true } },
-    { id: "m2", firstName: "B", notificationPreference: { marketingEmails: true } },
+    { id: "m1", firstName: "A", notificationPreference: { clubNotices: true, marketingEmails: false } },
+    { id: "m2", firstName: "B", notificationPreference: { clubNotices: true, marketingEmails: false } },
   ]);
   // First recipient delivers, second throws mid-batch.
   mocks.sendEmail
@@ -151,10 +153,10 @@ it("writes an audit record with the send counts after the batch", async () => {
     { memberId: "m3", name: "C", email: "c@x.test", audienceVia: "All members", viaExplicitMember: false },
   ]);
   mocks.memberFindMany.mockResolvedValue([
-    { id: "m1", firstName: "A", notificationPreference: { marketingEmails: true } },
-    { id: "m2", firstName: "B", notificationPreference: { marketingEmails: true } },
-    // m3 opted out.
-    { id: "m3", firstName: "C", notificationPreference: { marketingEmails: false } },
+    { id: "m1", firstName: "A", notificationPreference: { clubNotices: true, marketingEmails: false } },
+    { id: "m2", firstName: "B", notificationPreference: { clubNotices: true, marketingEmails: false } },
+    // m3 turned club notices off.
+    { id: "m3", firstName: "C", notificationPreference: { clubNotices: false, marketingEmails: true } },
   ]);
   // m1 sends, m2 suppressed.
   mocks.sendEmail
@@ -174,5 +176,6 @@ it("writes an audit record with the send counts after the batch", async () => {
     sentCount: 1,
     failedCount: 1,
     optedOutCount: 1,
+    neverOptedInCount: 0,
   });
 });

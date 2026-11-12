@@ -8,7 +8,6 @@
  */
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
-import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { checkRateLimit, type RateLimitConfig } from "@/lib/rate-limit";
 import {

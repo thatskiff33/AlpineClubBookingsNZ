@@ -32,6 +32,7 @@ import {
   GET as commsGet,
   POST as commsPost,
 } from "@/app/api/admin/communications/send/route";
+import { GET as commsPreviewGet } from "@/app/api/admin/communications/preview/route";
 import { POST as xeroLinkPost } from "@/app/api/admin/members/[id]/xero-link/route";
 import { POST as xeroPushPost } from "@/app/api/admin/members/[id]/xero-push/route";
 import { POST as xeroUnlinkPost } from "@/app/api/admin/members/[id]/xero-unlink/route";
@@ -160,6 +161,15 @@ describe("finance/support/comms action route guards (#1997)", () => {
 
   it("communications send GET requires membership:view", async () => {
     const res = await commsGet();
+    expect(res.status).toBe(403);
+    expect(mocks.requireAdmin).toHaveBeenCalledWith({
+      permission: MEMBERSHIP_VIEW,
+    });
+  });
+
+  // #4987: the recipient preview only reads counts, so membership:view.
+  it("communications preview GET requires membership:view", async () => {
+    const res = await commsPreviewGet(req("GET"));
     expect(res.status).toBe(403);
     expect(mocks.requireAdmin).toHaveBeenCalledWith({
       permission: MEMBERSHIP_VIEW,

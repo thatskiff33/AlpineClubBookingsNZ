@@ -79,15 +79,17 @@ When you publish a notice you can tick **Also email this notice to the audience*
 (off by default). This sends **one** email per notice — a single-send guard
 means re-publishing never re-emails. The email:
 
-- goes only to audience members who opted in to club communications (the same
-  preference the Communications tool uses), and
+- is a **club notice** (#4987): it goes to every audience member except those
+  who turned off **Club notices** on their profile, including members who never
+  saved their preferences — the same rule as a Communications club notice
+  ([`INV-PRIV-023`](../invariants/analytics-and-privacy.md#inv-priv-023)), and
 - respects email suppression (bounces/complaints) automatically.
 
 The email is a short "new notice" message with a link back to the notice on the
 site; the full notice always lives in the app.
 
 When the batch finishes, an audit record (`notice.emailSent`) is written with the
-audience size and the sent / failed / opted-out counts, so there is a trail of
+audience size and the sent / failed / opted-out / never-opted-in counts, so there is a trail of
 each send. If the send cannot even begin — for example the audience can't be
 resolved — the one-time send guard is released so a later re-publish can retry;
 once emails have started going out it is never released, so successful recipients
