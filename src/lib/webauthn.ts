@@ -25,6 +25,7 @@ import { prisma } from "@/lib/prisma";
 import {
   assertEnrolmentNotSuperseded,
   FactorResetBlocksEnrolmentError,
+  lockMemberFactorRow,
 } from "@/lib/officer-factor-reset";
 import {
   assertLastFactorRemovable,
@@ -435,51 +436,53 @@ export async function deletePasskey(input: {
     return { ok: false, status: 400, error: "That passkey is no longer saved." };
   }
 
-  const [member, remaining] = await Promise.all([
-    prisma.member.findUnique({
-      where: { id: input.memberId },
-      select: { twoFactorEnabled: true, twoFactorMethod: true },
-    }),
-    prisma.webAuthnCredential.count({
-      where: { memberId: input.memberId, id: { not: credential.id } },
-    }),
-  ]);
-  const stillOfficerFactor = satisfiesOfficerSecondFactor({
-    twoFactorEnabled: member?.twoFactorEnabled,
-    twoFactorMethod: member?.twoFactorMethod,
-    hasPasskey: remaining > 0,
-  });
-  if (!stillOfficerFactor) {
-    try {
-      await assertLastFactorRemovable(input.memberId);
-    } catch (error) {
-      if (error instanceof LastOfficerFactorError) {
-        return {
-          ok: false,
-          status: 400,
-          error: "Keep an authenticator app or another passkey before removing this one.",
-        };
-      }
-      throw error;
-    }
-  }
+  // The last-factor check runs under the member row lock, so two deletes of
+  // a required officer's last two passkeys cannot both see one remaining.
+  let deleted: boolean;
+  try {
+    deleted = await prisma.$transaction(async (tx) => {
+      await lockMemberFactorRow(tx, input.memberId);
+      const [member, remaining] = await Promise.all([
+        tx.member.findUnique({
+          where: { id: input.memberId },
+          select: { twoFactorEnabled: true, twoFactorMethod: true },
+        }),
+        tx.webAuthnCredential.count({
+          where: { memberId: input.memberId, id: { not: credential.id } },
+        }),
+      ]);
+      const stillOfficerFactor = satisfiesOfficerSecondFactor({
+        twoFactorEnabled: member?.twoFactorEnabled,
+        twoFactorMethod: member?.twoFactorMethod,
+        hasPasskey: remaining > 0,
+      });
+      if (!stillOfficerFactor) await assertLastFactorRemovable(input.memberId);
 
-  const deleted = await prisma.$transaction(async (tx) => {
-    const result = await tx.webAuthnCredential.deleteMany({
-      where: { id: credential.id, memberId: input.memberId },
+      const result = await tx.webAuthnCredential.deleteMany({
+        where: { id: credential.id, memberId: input.memberId },
+      });
+      if (result.count !== 1) return false;
+      await auditPasskey({
+        action: TWO_FACTOR_AUDIT_ACTIONS.passkeyRemoved,
+        memberId: input.memberId,
+        actor: input.actor,
+        request: input.request,
+        passkeyName: credential.name,
+        credentialId: credential.credentialId,
+        db: tx,
+      });
+      return true;
     });
-    if (result.count !== 1) return false;
-    await auditPasskey({
-      action: TWO_FACTOR_AUDIT_ACTIONS.passkeyRemoved,
-      memberId: input.memberId,
-      actor: input.actor,
-      request: input.request,
-      passkeyName: credential.name,
-      credentialId: credential.credentialId,
-      db: tx,
-    });
-    return true;
-  });
+  } catch (error) {
+    if (error instanceof LastOfficerFactorError) {
+      return {
+        ok: false,
+        status: 400,
+        error: "Keep an authenticator app or another passkey before removing this one.",
+      };
+    }
+    throw error;
+  }
   if (!deleted) {
     return { ok: false, status: 400, error: "That passkey is no longer saved." };
   }

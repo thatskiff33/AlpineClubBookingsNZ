@@ -191,6 +191,9 @@ describe("auth session refresh", () => {
         // #4612: with role and the rows, the record's classification, which
         // decides the lodge kiosk account's longer idle window.
         financeAccessLevel: true,
+        // #4618: the officer grace stamp and the last factor reset.
+        twoFactorGraceStartedAt: true,
+        factorsResetAt: true,
       },
     });
     expect(refreshedToken).toEqual(
@@ -564,6 +567,10 @@ describe("auth session refresh", () => {
       hasPasskey: false,
       twoFactorMethod: null,
       postLoginLanding: null,
+      // #4618: a token without the officer claims projects as not required.
+      officerTwoFactorRequired: false,
+      officerTwoFactorGraceEndsAt: null,
+      twoFactorSatisfiesOfficer: false,
     });
   });
 

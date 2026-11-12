@@ -394,6 +394,40 @@ describe("passkey ceremonies (#4617)", () => {
     expect(mockPrisma.webAuthnCredential.deleteMany).not.toHaveBeenCalled();
   });
 
+  it("refuses a required officer's last passkey with a 400, under the member lock (#4618)", async () => {
+    const { LastOfficerFactorError } = await import("@/lib/second-factor-requirement");
+    mockAssert.mockRejectedValueOnce(new LastOfficerFactorError());
+    mockPrisma.webAuthnCredential.findFirst.mockResolvedValue({
+      id: "row-1",
+      name: "Passkey",
+      credentialId: "cred-1",
+    });
+    mockPrisma.member.findUnique.mockResolvedValue({
+      twoFactorEnabled: false,
+      twoFactorMethod: null,
+    });
+    mockPrisma.webAuthnCredential.count.mockResolvedValue(0);
+    mockPrisma.$executeRaw.mockClear();
+
+    await expect(
+      deletePasskey({ memberId: MEMBER, id: "row-1", actor: ACTOR }),
+    ).resolves.toEqual({
+      ok: false,
+      status: 400,
+      error: "Keep an authenticator app or another passkey before removing this one.",
+    });
+    expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.webAuthnCredential.deleteMany).not.toHaveBeenCalled();
+
+    mockPrisma.webAuthnCredential.count.mockResolvedValue(1);
+    mockPrisma.webAuthnCredential.deleteMany.mockResolvedValueOnce({ count: 1 });
+    mockAssert.mockClear();
+    await expect(
+      deletePasskey({ memberId: MEMBER, id: "row-1", actor: ACTOR }),
+    ).resolves.toEqual({ ok: true });
+    expect(mockAssert).not.toHaveBeenCalled();
+  });
+
   it("consumes a challenge only when one unexpired row is deleted", async () => {
     mockPrisma.webAuthnChallenge.deleteMany.mockResolvedValueOnce({ count: 1 });
     await expect(consumeWebAuthnChallenge(MEMBER, "c", "authentication")).resolves.toBe(true);

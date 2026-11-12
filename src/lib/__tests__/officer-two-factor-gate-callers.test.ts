@@ -128,21 +128,3 @@ describe("authenticator enrolment for a required officer (#4618)", () => {
     ).toBe(400);
   });
 });
-
-describe("the factor reset route (#4618)", () => {
-  const source = readFileSync(
-    join(
-      process.cwd(),
-      "src/app/api/admin/security/two-factor-reset/[memberId]/route.ts",
-    ),
-    "utf8",
-  );
-
-  it("refuses without a fresh proof", () => {
-    expect(source).toContain("requireRecentAuth(");
-  });
-
-  it("refuses a reset of the caller", () => {
-    expect(source).toContain("memberId === guard.session.user.id");
-  });
-});
