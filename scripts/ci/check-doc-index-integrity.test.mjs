@@ -1468,7 +1468,9 @@ describe("tracked citation source extensions", () => {
     // ask's door and its recovery replay send one Stripe request.
     // Moved up again by #4101, which shipped INV-MOD-061: an edit's card refund
     // and its recovery replay send one Stripe request.
-    const planted = "INV-MOD-062";
+    // Moved up again by #4924, which shipped INV-MOD-062: an edit settles only
+    // the figures its preview showed the member.
+    const planted = "INV-MOD-063";
     // The precondition the fixture rests on. When this fails, `planted` has been
     // taken by a real invariant: move it up one, and no further.
     expect(files.get("docs/DOMAIN_INVARIANTS.md")).not.toContain(planted);

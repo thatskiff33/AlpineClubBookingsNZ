@@ -481,6 +481,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-059` | A guest's dietary value is seeded once, then carried by identity |
 | `INV-MOD-060` | An ordinary price ask's door and replay send one Stripe request |
 | `INV-MOD-061` | An edit's card refund and its replay send one Stripe request |
+| `INV-MOD-062` | An edit settles only the figures its preview showed |
 
 ### Adult-member hosting
 
