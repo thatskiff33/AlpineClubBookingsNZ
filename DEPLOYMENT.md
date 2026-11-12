@@ -661,6 +661,10 @@ Start from `.env.example` and the configuration reference:
 cp .env.example .env
 ```
 
+The template declares `APP_ENVIRONMENT_ROLE=non-production`. On the club's live
+site, change it to `APP_ENVIRONMENT_ROLE=production` (see "Environment safety"
+below).
+
 See `CONFIGURATION.md` for every supported environment variable and
 `config/club.json` field.
 
@@ -691,7 +695,10 @@ Minimum production categories:
   brought up yourself needs the line by hand.
   `scripts/run-production-blue-green-deploy.sh` refuses to run without exactly
   `production` — at step 3 of 20, before the migration and long before the
-  cutover — so a live deployment cannot reach UNKNOWN through the supported path.
+  cutover — and First Bootstrap runs the same check
+  (`bash scripts/check-environment-role.sh`) before its first `docker compose up`,
+  so neither supported way of standing up the live site starts it as UNKNOWN or
+  as a copy.
   **It is not `APP_RUNTIME_ROLE`**, which sits beside it in the same Compose
   environment, names which container *slot* a process is (`web-blue`,
   `web-green`, `cron-leader`, `staging`), and is never read to decide whether
@@ -837,12 +844,27 @@ From the target host:
 git clone https://github.com/<owner>/AlpineClubBookingsNZ.git AlpineClubBookingsNZ
 cd AlpineClubBookingsNZ
 cp .env.example .env
-# edit .env with your own values
+# edit .env with your own values, and set the live-site declaration:
+#   APP_ENVIRONMENT_ROLE=production
+bash scripts/check-environment-role.sh
 docker compose up -d --build postgres
 docker compose run --rm migrate
 docker compose up -d --build app app_blue app_green caddy
 docker compose ps
 ```
+
+**Set `APP_ENVIRONMENT_ROLE=production` before the first `docker compose up`,
+and run `bash scripts/check-environment-role.sh` first.** `.env.example` ships
+`APP_ENVIRONMENT_ROLE=non-production`, which is right for a laptop and wrong
+here: a live site started from the template unchanged believes it is a copy, so
+it emails no member (confirmations, receipts, password resets) and replaces the
+email addresses on the club's real Xero contacts. The check refuses anything but
+exactly `production` before any container starts, and names the variable. It is
+the same check the blue/green deploy runs at step 3
+(`scripts/lib/environment-role-check.sh`), and needs only `bash`. A staging site
+or rehearsal copy does not use First Bootstrap; it uses
+`docker-compose.staging.yml`, which declares `non-production` itself. See
+`docs/guides/environment-role.md`.
 
 To validate the production image alone (without Compose), build it locally:
 

@@ -16,6 +16,12 @@ pnpm exec prisma generate
 pnpm run setup:check
 ```
 
+The copied `.env` declares `APP_ENVIRONMENT_ROLE=non-production`, which is right
+for a local checkout. The club's live site sets `APP_ENVIRONMENT_ROLE=production`
+instead; [`DEPLOYMENT.md` → "First Bootstrap"](../DEPLOYMENT.md#first-bootstrap)
+checks it before anything starts, and
+[`guides/environment-role.md`](guides/environment-role.md) explains why.
+
 Use Node.js 24 LTS and pnpm 11 (the version pinned in `package.json`
 `packageManager`; see
 [`CONTRIBUTING.md` → "Package manager: pnpm"](../CONTRIBUTING.md#package-manager-pnpm)
