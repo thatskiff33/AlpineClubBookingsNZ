@@ -232,6 +232,12 @@ describe("POST /api/admin/bed-allocation/allocations/range", () => {
     expect(mockAssignBedRange).not.toHaveBeenCalled();
   });
 
+  it("refuses a `to` day that does not exist (2026-02-30)", async () => {
+    const response = await post({ ...validBody, to: "2026-02-30" });
+    expect(response.status).toBe(400);
+    expect(mockAssignBedRange).not.toHaveBeenCalled();
+  });
+
   /*
    * Prisma codes that mean "nothing was written, something collided" must not
    * fall through to a generic 500 — the admin can act on both of these (#2251

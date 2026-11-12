@@ -244,6 +244,19 @@ describe("audit query helpers", () => {
     expect(oversizedPage.details?.fieldErrors.pageSize).toBeDefined();
   });
 
+  it("refuses a day that does not exist (2026-02-30) before building a where clause", () => {
+    const result = parseAdminAuditLogQuery(
+      new URLSearchParams({ from: "2026-02-30" }),
+      CLUB_ZONE,
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    // No `where` clause is produced for the route to hand to Prisma.
+    expect(result).not.toHaveProperty("data");
+    expect(result.details?.fieldErrors.from).toBeDefined();
+  });
+
   // #3302: this used to be a private, untested "$" + toFixed(2) copy — no
   // thousands grouping, no configured-currency awareness. It now derives from
   // the shared `formatCents`, so a metadata amount over $999 groups.

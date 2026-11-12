@@ -328,6 +328,16 @@ describe("F9: GET /api/lodge/roster/[date] - completedAt/completedVia", () => {
     expect(data.error).toBe("Unauthorised");
     expect(mockPrisma.choreAssignment.findMany).not.toHaveBeenCalled();
   });
+
+  it("refuses a day that does not exist (2026-02-30) before querying", async () => {
+    const { GET } = await import("@/app/api/lodge/roster/[date]/route");
+    const req = new Request("http://localhost/api/lodge/roster/2026-02-30") as any;
+
+    const res = await GET(req, makeParams("2026-02-30"));
+
+    expect(res.status).toBe(400);
+    expect(mockPrisma.choreAssignment.findMany).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -770,6 +780,16 @@ describe("F9: GET /api/lodge/guests/[date] - arrivedAt/departedAt", () => {
 
     expect(res.status).toBe(401);
     expect(data.error).toBe("Unauthorised");
+    expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses a day that does not exist (2026-02-30) before querying", async () => {
+    const { GET } = await import("@/app/api/lodge/guests/[date]/route");
+    const req = new Request("http://localhost/api/lodge/guests/2026-02-30") as any;
+
+    const res = await GET(req, makeParams("2026-02-30"));
+
+    expect(res.status).toBe(400);
     expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
   });
 

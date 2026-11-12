@@ -83,6 +83,7 @@ import {
 import { PUT as updateProfile } from "@/app/api/profile/route";
 import { PUT as updateMember } from "@/app/api/admin/members/[id]/route";
 import { POST as register } from "@/app/api/auth/register/route";
+import { DATE_OF_BIRTH_INVALID_MESSAGE } from "@/lib/date-only-schema";
 
 const adminSession = { user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any;
 const memberSession = { user: { id: "m1", role: "USER", accessRoles: [{ role: "USER" }] } } as any;
@@ -499,6 +500,21 @@ describe("Profile API: structured phone and address fields", () => {
         error: "Date of birth cannot be in the future",
       })
     );
+    expect(prisma.member.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-existent day of birth before touching the database (ALP-574)", async () => {
+    vi.mocked(auth).mockResolvedValue(memberSession);
+
+    const res = await updateProfile(makeProfilePut({
+      ...validProfileBody,
+      dateOfBirth: "2026-02-30",
+    }));
+
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toMatchObject({
+      details: { dateOfBirth: [DATE_OF_BIRTH_INVALID_MESSAGE] },
+    });
     expect(prisma.member.update).not.toHaveBeenCalled();
   });
 

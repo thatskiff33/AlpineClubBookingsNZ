@@ -17,6 +17,8 @@
  * Diagnostics as an applied filter would report a narrowing that never happened.
  */
 
+import { isDateOnlyString } from "@/lib/date-only";
+
 export const APPLIED_PAYMENT_STATUS_VALUES = [
   "PENDING",
   "PROCESSING",
@@ -37,14 +39,12 @@ export function isAppliedPaymentStatus(
 }
 
 /**
- * The date shape the schema's `dateSchema` accepts — the same `YYYY-MM-DD` regex
- * and no more. That schema does no calendar check either, so mirroring the regex
- * mirrors exactly what is genuinely applied.
+ * The dates the schema's `dateOnlyStringSchema` accepts: a real calendar day as
+ * `YYYY-MM-DD`. Both use the same predicate, so `2026-02-30` is neither applied
+ * nor published as applied (ALP-574).
  */
-export const APPLIED_PAYMENTS_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
 export function isAppliedPaymentsDate(value: string): boolean {
-  return APPLIED_PAYMENTS_DATE_PATTERN.test(value);
+  return isDateOnlyString(value);
 }
 
 /**

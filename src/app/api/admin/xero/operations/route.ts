@@ -44,9 +44,9 @@ const querySchema = z.object({
  * `XeroSyncOperation.createdAt` / `XeroInboundEvent.createdAt` are INSTANTS, and
  * the operator typing a date means the club's calendar day — so the window is
  * derived from the PERSISTED club timezone (`INV-CONFIG-002`), not from the
- * container's `TZ`. The zod schema has already pinned the shape to
- * `^\d{4}-\d{2}-\d{2}$`, so `requireCalendarDate` cannot throw on a bound that
- * reached here.
+ * container's `TZ`. The zod schema has already refused anything but a real
+ * calendar day (`dateOnlyStringSchema`), so `requireCalendarDate` cannot throw
+ * on a bound that reached here.
  */
 function startOfInputDate(date: string, zone: ClubTimeZone) {
   return startOfClubDay(requireCalendarDate(date), zone);

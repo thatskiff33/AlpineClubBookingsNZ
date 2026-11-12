@@ -23,6 +23,7 @@ vi.mock("@/lib/joining-fee", () => ({
 
 import { POST } from "@/app/api/admin/members/[id]/joining-fee/preview/route";
 import { formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { DATE_OF_BIRTH_INVALID_MESSAGE } from "@/lib/date-only-schema";
 
 const PREVIEW = {
   defaultAmountCents: 10000,
@@ -116,6 +117,21 @@ describe("POST /api/admin/members/[id]/joining-fee/preview — applicant DOB rou
     );
 
     expect(response.status).toBe(400);
+    expect(previewForInputs).not.toHaveBeenCalled();
+    expect(previewForMember).not.toHaveBeenCalled();
+  });
+
+  it("refuses a dateOfBirth day that does not exist (2026-02-30), with the shared message", async () => {
+    const response = await POST(
+      makeRequest({ membershipTypeKey: "FULL", dateOfBirth: "2026-02-30" }),
+      routeParams,
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.details.fieldErrors.dateOfBirth).toContain(
+      DATE_OF_BIRTH_INVALID_MESSAGE,
+    );
     expect(previewForInputs).not.toHaveBeenCalled();
     expect(previewForMember).not.toHaveBeenCalled();
   });
