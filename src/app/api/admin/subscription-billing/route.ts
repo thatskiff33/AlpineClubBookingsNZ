@@ -96,8 +96,9 @@ function invalidate() {
 // Pure reads only — any exception reconciliation is done by the caller BEFORE
 // this loads, so the GET stays a non-mutating view (#2148 constraint 3).
 async function loadBillingData(seasonYear: number, decisionDate: Date) {
-  const [preview, charges, exceptions, settings, xeroInvoicingEnabled] = await Promise.all([
-    buildSubscriptionBillingPreview({ seasonYear, decisionDate }),
+  const xeroInvoicingEnabled = await isXeroInvoicingEnabled();
+  const [preview, charges, exceptions, settings] = await Promise.all([
+    buildSubscriptionBillingPreview({ seasonYear, decisionDate, xeroInvoicingOff: !xeroInvoicingEnabled }),
     prisma.membershipSubscriptionCharge.findMany({
       where: { seasonYear },
       orderBy: { createdAt: "desc" },
@@ -112,7 +113,6 @@ async function loadBillingData(seasonYear: number, decisionDate: Date) {
       take: 100,
     }),
     prisma.membershipSubscriptionBillingSettings.findUnique({ where: { id: "default" } }),
-    isXeroInvoicingEnabled(),
   ]);
   const previewFingerprints = new Set(preview.exceptions.map((item) => item.fingerprint));
   const visiblePersistentExceptions = exceptions.filter(

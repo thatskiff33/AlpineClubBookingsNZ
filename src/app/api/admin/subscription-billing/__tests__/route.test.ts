@@ -458,6 +458,8 @@ describe("subscription billing with Xero off (#4986)", () => {
     expect(mocks.charges.count).toHaveBeenCalledWith({
       where: { seasonYear: 2026, status: { in: ["QUEUED", "PROCESSING", "INVOICE_CREATED"] } },
     });
+    // The preview shows what is owed rather than the unset-mapping exception.
+    expect(mocks.buildPreview).toHaveBeenCalledWith(expect.objectContaining({ xeroInvoicingOff: true }));
   });
 
   it("with Xero on, the same confirm goes through and GET counts nothing (control)", async () => {
@@ -470,6 +472,7 @@ describe("subscription billing with Xero off (#4986)", () => {
     const getResponse = await GET(new NextRequest("http://localhost/api/admin/subscription-billing?seasonYear=2026&decisionDate=2026-07-13"));
     await expect(getResponse.json()).resolves.toMatchObject({ xeroInvoicing: { enabled: true, awaitingXeroCount: 0 } });
     expect(mocks.charges.count).not.toHaveBeenCalled();
+    expect(mocks.buildPreview).toHaveBeenCalledWith(expect.objectContaining({ xeroInvoicingOff: false }));
   });
 });
 

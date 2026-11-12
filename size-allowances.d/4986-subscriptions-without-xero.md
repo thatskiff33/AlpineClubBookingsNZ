@@ -21,10 +21,11 @@ reason: the joining-fee decision must be read before the approval transaction
   approval warnings are assembled in this function, so they live here too.
 
 file: src/lib/membership-subscription-billing.ts
-lines: 1906
+lines: 1913
 reason: `queueApprovedMembershipSubscriptionCharges` must return before it
   freezes a charge, so the early return and its result flag belong inside it.
-  That is the seam M7 (#4519) replaces.
+  That is the seam M7 (#4519) replaces. The preview's read-only Xero-off option
+  has to sit on the mapping check it skips.
 
 file: src/lib/xero-operation-retry.ts
 lines: 2134

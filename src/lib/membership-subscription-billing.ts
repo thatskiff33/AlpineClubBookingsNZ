@@ -69,7 +69,7 @@ export type SubscriptionBillingExceptionCode =
   | "MISSING_FAMILY_RECIPIENT"
   | "INVALID_FAMILY_RECIPIENT"
   | "PER_FAMILY_FEE_IN_INDIVIDUAL_MODE"
-  | "MISSING_XERO_ACCOUNT_MAPPING"
+  | typeof MISSING_XERO_ACCOUNT_MAPPING_CODE
   | "FAMILY_ALREADY_BILLED"
   // #4110 decisions 4 and 5: a member of a family a closed charge still bills
   // whom Finance must decide how to bill. Withholds, like FAMILY_ALREADY_BILLED.
@@ -369,6 +369,13 @@ export async function buildSubscriptionBillingPreview(input: {
    * inside a transaction (see the guard below).
    */
   yearEndMonth?: number;
+  /**
+   * #4986: the Subscriptions page's read-only view while Xero is off. Nothing
+   * can be confirmed then (`INV-INT-038`), so the account-mapping check is
+   * skipped and the officer sees what is owed rather than an empty preview.
+   * Never passed on a confirm path.
+   */
+  xeroInvoicingOff?: boolean;
 }): Promise<SubscriptionBillingPreview> {
   const db = input.store ?? prisma;
   // "Today" means the CLUB's calendar day, from its PERSISTED timezone, encoded
@@ -1420,7 +1427,7 @@ export async function buildSubscriptionBillingPreview(input: {
   }
   entries.sort((left, right) => compareOrdinal(left.key, right.key));
   const invoiceEntries = entries.filter((entry) => entry.billingBasis !== "NO_INVOICE");
-  if (invoiceEntries.length > 0) {
+  if (invoiceEntries.length > 0 && !input.xeroInvoicingOff) {
     const mapping = await getResolvedAccountMapping("subscriptionIncome", db);
     if (!mapping.code || !mapping.codeExplicitlyConfigured) {
       // Drop every invoiceable entry, keeping the NO_INVOICE ones. The
@@ -1542,7 +1549,7 @@ async function resolveSupersededExceptions(
       ...(input.scopedMemberIds ? {
         OR: [
           { memberId: { in: input.scopedMemberIds } },
-          { code: "MISSING_XERO_ACCOUNT_MAPPING", memberId: null },
+          { code: MISSING_XERO_ACCOUNT_MAPPING_CODE, memberId: null },
         ],
       } : {}),
       ...(input.currentFingerprints.length ? { fingerprint: { notIn: input.currentFingerprints } } : {}),
