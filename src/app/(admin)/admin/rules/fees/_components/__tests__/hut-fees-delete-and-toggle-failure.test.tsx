@@ -157,6 +157,19 @@ describe("Hut Fees: a refused delete or toggle is readable (#4976)", () => {
     await expectRecoveryAlertToHoldFocus(errorBox());
   });
 
+  it("clears an earlier refusal when the next attempt succeeds", async () => {
+    mutationResponse = () => Response.json({ error: "Season not found" }, { status: 404 });
+    renderSection();
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Winter 2026" }));
+    await waitFor(() => expect(errorBox()).toHaveTextContent("Season not found"));
+
+    mutationResponse = () => Response.json({ success: true });
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate Winter 2026" }));
+
+    await waitFor(() => expect(seasonFetches).toBe(2));
+    expect(errorBox()).not.toHaveTextContent("Season not found");
+  });
+
   it("refreshes the seasons after a successful delete", async () => {
     mutationResponse = () => Response.json({ success: true });
     renderSection();
