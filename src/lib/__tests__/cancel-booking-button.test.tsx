@@ -317,6 +317,12 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
       screen.getByRole("button", { name: "Cancel without emailing" }),
     );
     expect(await screen.findByText("ACB-OLD")).toBeTruthy();
+    // #4949: the refusal lands focus on the reason the officer must give next.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByLabelText(/Private hosting override reason/i),
+      ),
+    );
     fireEvent.change(screen.getByLabelText(/Private hosting override reason/i), {
       target: { value: "Abandoned private override reason." },
     });

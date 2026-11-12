@@ -6,7 +6,7 @@
 // confirmation through a status region mounted before the request.
 
 import "@testing-library/jest-dom/vitest";
-import { act, fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
+import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -193,6 +193,8 @@ describe("the pay-link page announces its outcomes (#4949)", () => {
     expect(status).toHaveTextContent(
       "We've emailed you a fresh payment link. Please check your inbox.",
     );
+    // The button is gone, so focus moves to the confirmation, not the page.
+    await waitFor(() => expect(document.activeElement).toBe(status));
   });
 });
 

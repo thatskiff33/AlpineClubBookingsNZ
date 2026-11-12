@@ -5,7 +5,7 @@
 // request. One case per surface the issue names.
 
 import "@testing-library/jest-dom/vitest";
-import { act, fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
+import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -236,5 +236,7 @@ describe("action results fill a status region mounted before the request (#4949)
 
     expect(screen.getByRole("status")).toBe(status);
     expect(status).toHaveTextContent("Your deletion request has been submitted.");
+    // The trigger is gone, so the dialog hands focus to the confirmation.
+    await waitFor(() => expect(document.activeElement).toBe(status));
   });
 });

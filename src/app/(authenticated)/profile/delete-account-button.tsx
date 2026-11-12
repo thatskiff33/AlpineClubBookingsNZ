@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { AlertTriangle } from "lucide-react";
+import { focusAndKeepInView } from "@/hooks/use-scroll-to-feedback";
 
 /**
  * F-COMP-04: Request Account Deletion button with confirmation modal.
@@ -24,6 +25,7 @@ export function DeleteAccountButton() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const statusRef = useRef<HTMLParagraphElement>(null);
 
   async function handleSubmit() {
     setSubmitting(true);
@@ -49,10 +51,14 @@ export function DeleteAccountButton() {
   }
 
   // #4949: the confirmation fills a status region mounted with the button, so
-  // it is announced rather than inserted already filled.
+  // it is announced rather than inserted already filled. The button it replaces
+  // is gone by the time the dialog closes, so focus goes to the confirmation
+  // instead of Radix's restore dropping it on the page.
   return (
     <>
       <p
+        ref={statusRef}
+        tabIndex={-1}
         role="status"
         className={
           submitted
@@ -77,7 +83,13 @@ export function DeleteAccountButton() {
       )}
 
       <Dialog open={open} onOpenChange={(v) => !submitting && setOpen(v)}>
-        <DialogContent>
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            if (!submitted) return;
+            event.preventDefault();
+            focusAndKeepInView(statusRef.current);
+          }}
+        >
           <DialogHeader>
             <DialogTitle className="text-danger-11">Request Account Deletion</DialogTitle>
             <DialogDescription asChild>

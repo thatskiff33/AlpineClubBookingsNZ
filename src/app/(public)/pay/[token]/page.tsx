@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2, Clock } from "lucide-react";
@@ -74,6 +74,12 @@ export default function PayByLinkPage() {
     "idle"
   );
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  // #4949: "Email me a new link" unmounts once the link is sent, so focus moves
+  // to the confirmation that replaces it rather than dropping to the page.
+  const refreshStatusRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (refreshState === "sent") focusAndKeepInView(refreshStatusRef.current);
+  }, [refreshState]);
   const [bookingMessages, setBookingMessages] = useState<Record<string, string>>({});
   // #2919 review: the club-level values this page's message tokens resolve to.
   // Without them an operator's {{CLUB_LODGE_NAME}} reached the member as
@@ -298,7 +304,7 @@ export default function PayByLinkPage() {
       <NarrativeCard narrative={context.narrative} tone="info">
         {/* #4949: both outcomes land in regions mounted before the request. */}
         <div className="space-y-2">
-          <div role="status">
+          <div ref={refreshStatusRef} tabIndex={-1} role="status" className="outline-none">
             {refreshState === "sent" ? (
               <div className="flex items-start gap-2 rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
                 <CheckCircle2 aria-hidden className="h-5 w-5 shrink-0" />

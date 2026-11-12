@@ -171,17 +171,25 @@ export function CancelBookingButton({
   // own controls unmount. Each step's focus target, moved after the step
   // commits (a passive effect, so a closing notify dialog has already let go):
   // the status region while loading or cancelling, the heading of the preview
-  // or success panel, the trigger again on the way back to idle. The error step
-  // is focused by its `FocusedActionError` itself.
+  // or success panel, the trigger again on the way back to idle. A refusal that
+  // asks for a hosting override goes back to the preview with focus on the
+  // override reason, the control the person has to fill next, below the
+  // prompt's alert. The error step is focused by its `FocusedActionError` itself.
   const idPrefix = `cancel-booking-${bookingId}`;
   const triggerRef = useRef<HTMLButtonElement>(null);
   const statusRef = useRef<HTMLDivElement>(null);
   const previewHeadingRef = useRef<HTMLParagraphElement>(null);
   const successHeadingRef = useRef<HTMLParagraphElement>(null);
   const focusedStepRef = useRef(step);
+  const hostingOverrideRequestedRef = useRef(false);
   useEffect(() => {
     if (focusedStepRef.current === step) return;
     focusedStepRef.current = step;
+    if (step === "preview" && hostingOverrideRequestedRef.current) {
+      hostingOverrideRequestedRef.current = false;
+      focusAndKeepInView(document.getElementById(`${idPrefix}-hosting-override-reason`));
+      return;
+    }
     const target = {
       idle: triggerRef,
       loading: statusRef,
@@ -191,7 +199,7 @@ export function CancelBookingButton({
       error: null,
     }[step];
     if (target) focusAndKeepInView(target.current);
-  }, [step]);
+  }, [idPrefix, step]);
 
   function renderWithHostingOverrideRegion(content: ReactNode) {
     const busy = step === "loading" || step === "cancelling";
@@ -355,6 +363,7 @@ export function CancelBookingButton({
           setErrorMsg(
             "Review the affected bookings and nights, then explicitly confirm the private hosting override.",
           );
+          hostingOverrideRequestedRef.current = true;
           setStep("preview");
           return;
         }
