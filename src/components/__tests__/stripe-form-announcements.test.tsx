@@ -49,7 +49,6 @@ describe("PaymentForm announcements (#4949)", () => {
         amountCents={12500}
         returnUrl="http://localhost/return"
         onSuccess={noop}
-        onError={noop}
       />,
     );
     const alert = screen.getByRole("alert");
@@ -72,7 +71,6 @@ describe("PaymentForm announcements (#4949)", () => {
         amountCents={12500}
         returnUrl="http://localhost/return"
         onSuccess={noop}
-        onError={noop}
       />,
     );
     const status = screen.getByRole("status");
@@ -90,8 +88,8 @@ describe("PaymentForm announcements (#4949)", () => {
   it("gives two forms on one page distinct alert ids", () => {
     render(
       <>
-        <PaymentForm amountCents={100} returnUrl="/r" onSuccess={noop} onError={noop} />
-        <PaymentForm amountCents={200} returnUrl="/r" onSuccess={noop} onError={noop} />
+        <PaymentForm amountCents={100} returnUrl="/r" onSuccess={noop} />
+        <PaymentForm amountCents={200} returnUrl="/r" onSuccess={noop} />
       </>,
     );
     const [first, second] = screen.getAllByRole("alert");
@@ -102,7 +100,7 @@ describe("PaymentForm announcements (#4949)", () => {
 describe("SetupForm announcements (#4949)", () => {
   it("puts a failed card save in a recovery alert, which takes focus", async () => {
     stripe.confirmSetup.mockResolvedValue({ error: { message: DECLINE } });
-    render(<SetupForm returnUrl="http://localhost/return" onSuccess={noop} onError={noop} />);
+    render(<SetupForm returnUrl="http://localhost/return" onSuccess={noop} />);
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("");
 

@@ -17,6 +17,7 @@ import { useClubTime } from "@/components/club-time-provider";
 import { formatStayDateOrNull } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { focusAndKeepInView } from "@/hooks/use-scroll-to-feedback";
 import { useClubFormat } from "@/components/club-format-provider";
 // The presentation layer this page renders through, split out when the club-time
 // migration carried this file past its 500-line route-page budget. See that
@@ -431,7 +432,6 @@ export default function PayByLinkPage() {
                 setClientSecret(null);
                 void afterCardSuccess(paidIntentId);
               }}
-              onError={() => undefined}
             />
           </StripeProvider>
         ) : checkingPayment ? null : (

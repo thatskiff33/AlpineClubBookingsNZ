@@ -30,13 +30,14 @@ interface PaymentFormProps {
   // original single-total display.
   deferredGuestAmountCents?: number | null;
   onSuccess: (paymentIntentId: string) => void;
-  onError: (error: string) => void;
   returnUrl: string;
 }
 
 /**
  * Payment form using Stripe Elements PaymentElement.
- * Used for immediate payment on confirmed bookings.
+ * Used for immediate payment on confirmed bookings. A declined or failed card
+ * is shown and announced here, in the form's own recovery alert (#4949), so it
+ * is deliberately not handed to the caller to render a second time.
  */
 export default function PaymentForm({
   bookingId,
@@ -45,7 +46,6 @@ export default function PaymentForm({
   isSplit,
   deferredGuestAmountCents,
   onSuccess,
-  onError,
   returnUrl,
 }: PaymentFormProps) {
   const format = useClubFormat();
@@ -102,7 +102,6 @@ export default function PaymentForm({
 
     if (error) {
       setErrorMessage(error.message ?? "An unexpected error occurred.");
-      onError(error.message ?? "Payment failed");
       setIsProcessing(false);
     } else if (paymentIntent && paymentIntent.status === "succeeded") {
       setIsPaid(true);

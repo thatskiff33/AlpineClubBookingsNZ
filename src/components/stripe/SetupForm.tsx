@@ -10,7 +10,6 @@ import { FocusedActionError } from "@/components/focused-action-error";
 
 interface SetupFormProps {
   onSuccess: (setupIntentId: string) => void;
-  onError: (error: string) => void;
   returnUrl: string;
 }
 
@@ -21,7 +20,6 @@ interface SetupFormProps {
  */
 export default function SetupForm({
   onSuccess,
-  onError,
   returnUrl,
 }: SetupFormProps) {
   const stripe = useStripe();
@@ -50,7 +48,6 @@ export default function SetupForm({
 
     if (error) {
       setErrorMessage(error.message ?? "An unexpected error occurred.");
-      onError(error.message ?? "Card setup failed");
       setIsProcessing(false);
     } else if (setupIntent && setupIntent.status === "succeeded") {
       onSuccess(setupIntent.id);

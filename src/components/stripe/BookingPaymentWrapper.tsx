@@ -377,13 +377,11 @@ export default function BookingPaymentWrapper({
               deferredGuestAmountCents={deferredGuestAmountCents}
               returnUrl={returnUrl}
               onSuccess={handlePaymentSuccess}
-              onError={() => undefined}
             />
           ) : (
             <SetupForm
               returnUrl={returnUrl}
               onSuccess={() => onPaymentComplete()}
-              onError={() => undefined}
             />
           )}
         </StripeProvider>
