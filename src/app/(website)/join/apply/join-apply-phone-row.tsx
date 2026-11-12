@@ -21,7 +21,7 @@ import { Label } from "@/components/ui/label";
 const PHONE_HINT_ID = "join-apply-phone-hint";
 const PHONE_ERROR_ID = "join-apply-phone-error";
 
-export type PhoneField = "phoneCountryCode" | "phoneAreaCode" | "phoneNumber";
+type PhoneField = "phoneCountryCode" | "phoneAreaCode" | "phoneNumber";
 
 const PHONE_BOXES: ReadonlyArray<{
   field: PhoneField;
