@@ -13,15 +13,16 @@
  * `POSTS` names the posting call, and the census holds EACH write under that
  * entry to it, per site (#4928): the write's own enclosing function (its
  * nearest function-like ancestor) must call it by name, at least once per such
- * write it holds. A call elsewhere in the
- * file, in a sibling function, in a closure nested under the write's function,
- * or inside a helper the function calls does not count; a failure names the
- * write's `file:line`. A writer that posts through a helper names that helper
- * as its `call`, reviewed with the entry (group cancel and group settle do,
- * each helper a poster in its own right); there is no exception list. The pairing is by function, not by branch: a
- * computed-status site whose post runs only on its PAID branch passes, as does
- * a function whose calls sit on paths its writes are not on. So it proves no
- * function has fewer posts than writes; it does not prove every run of a write posts.
+ * write it holds. A call elsewhere in the file, in a sibling function, in a
+ * closure nested under the write's function, or inside a helper the function
+ * calls does not count; a failure names the write's `file:line`. A writer that
+ * posts through a helper names that helper as its `call`, reviewed with the
+ * entry (group cancel and group settle do, each helper a poster in its own
+ * right); there is no exception list. The pairing is by function, not by
+ * branch: a computed-status site whose post runs only on its PAID branch
+ * passes, as does a function whose calls sit on paths its writes are not on.
+ * So it proves no function has fewer posts than writes; it does not prove
+ * every run of a write posts.
  *
  * There is no third kind for a sale that posts nothing:
  * #4660 made the credit-covered create and the pay-step credit settle post,
