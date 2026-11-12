@@ -8,6 +8,7 @@
 
 import "server-only";
 
+import type { AccessRoleDefinitionLevelFields } from "@/lib/access-roles";
 import {
   ADMIN_CAPABLE_MEMBER_WHERE,
   DEFAULT_ACCESS_ROLE_DEFINITIONS,
@@ -39,11 +40,11 @@ import { isKioskSessionMember } from "@/lib/session-idle-expiry";
 
 type AccessRoleRow = {
   role: string | null;
-  roleDefinition?: {
-    requiresTwoFactor?: boolean | null;
-    financeLevel?: string | null;
-    supportLevel?: string | null;
-  } | null;
+  roleDefinition?:
+    | (Partial<Pick<AccessRoleDefinitionLevelFields, "financeLevel" | "supportLevel">> & {
+        requiresTwoFactor?: boolean | null;
+      })
+    | null;
 };
 
 /** Resolve one assignment, falling back to the seeded default at Default. */
