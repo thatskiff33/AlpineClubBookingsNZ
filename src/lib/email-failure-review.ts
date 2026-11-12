@@ -42,9 +42,10 @@ const REQUEUEABLE_EMAIL_FAILURE_WHERE = {
  * - `token_reissue`: one of Token Email Recovery's templates; reissue it there.
  * - `sensitive`: it carried a sign-in link, door code or payment link, so no
  *   copy was kept (`SENSITIVE_EMAIL_LOG_TEMPLATES`, INV-CONFIG-004).
- * - `retired`: no copy is left for another reason - a redacted recipient, a
- *   message whose retry belongs to something else, or a booking email the cron
- *   retired because it could not re-prove the recipient's authority.
+ * - `retired`: Try again cannot take it for another reason - a redacted
+ *   recipient, a message whose retry belongs to something else, or a booking
+ *   email with no booking, which the cron retires (body kept) because it cannot
+ *   check it against the booking's "No emails" switch.
  */
 export type ExhaustedEmailFailureRecovery =
   | "retry"

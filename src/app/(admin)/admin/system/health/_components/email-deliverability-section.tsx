@@ -32,7 +32,7 @@ const NO_RESEND_GUIDANCE: Record<
   sensitive:
     "No copy of this message was kept because it held a sign-in link, door code or payment link, so it can't be resent from here. Contact the member directly, using the booking or member link where one is shown.",
   retired:
-    "No copy of this message was kept (it was retired for safety, or its recipient was hidden in the log), so it can't be resent from here. Follow the failure reason, and contact the member directly if they still need it.",
+    "This message can't be resent from here: no copy of it was kept, its recipient was hidden in the log, or it was retired for safety (such as an old booking email that names no booking). Follow the failure reason, and contact the member directly if they still need it.",
 };
 
 function EmailFailureLinks({ failure }: { failure: ExhaustedEmailFailure }) {
