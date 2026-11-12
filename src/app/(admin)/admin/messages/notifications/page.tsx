@@ -25,14 +25,14 @@ const sections = [
   },
   {
     href: adminHref("email-messages"),
-    title: "Email Messages",
+    title: getAdminPage("email-messages").label,
     description:
       "Edit shared email variables and message wording for audited templates.",
     icon: Mail,
   },
   {
     href: adminHref("booking-messages"),
-    title: "Booking Messages",
+    title: getAdminPage("booking-messages").label,
     description:
       "Edit member-facing booking, payment, cancellation, and group booking copy.",
     icon: MessageSquareText,

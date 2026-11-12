@@ -1955,6 +1955,9 @@ describe("the registry is inert", () => {
       "C5: the member back-link labels are the registry's",
     "src/lib/__tests__/admin-moved-page-literals.test.ts":
       "C5: no production code spells a moved page's old URL as a literal",
+    "src/lib/__tests__/admin-hub-card-titles.test.ts":
+      "a hub card that opens a whole page is titled with its registry label",
+    "src/app/(admin)/admin/display/page.tsx": "its cards are titled with their pages' registry labels",
     "src/lib/__tests__/xero-oauth-return-path.test.ts":
       "C5: the OAuth return-path check accepts both Xero landing pages at either place",
     "src/app/(admin)/admin/rules/booking-policies/page.tsx": "C6: its cards link with adminHref",
