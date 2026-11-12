@@ -23,8 +23,35 @@ export type PrismaTransactionClient = Omit<
 >;
 
 /**
+ * The interactive-transaction budget of every writer that waits for the global
+ * key `pg_advisory_xact_lock(1)` (`INV-LOCK-005`) - the one definition.
+ *
+ * Prisma counts the wait for that key against `maxWait` / `timeout`, and its
+ * defaults (2 s / 5 s) lose to any legitimate holder that runs longer: bed-range
+ * assignment and group settlement are the longest, and run on this budget
+ * themselves, so a writer on it can outlast either of them. When it does run
+ * out Prisma answers P2028 (P2034 for a lost write conflict), NOTHING IS
+ * COMMITTED, and the caller answers "busy, try again" as a retryable 503
+ * through `isTransactionContention` rather than as a refusal.
+ *
+ * The trade-off: a waiter holds its pooled connection for as long as it waits,
+ * so a wider budget swaps opaque failures for pool pressure under a burst
+ * (`docs/CONCURRENCY_AND_LOCKING.md` -> "Tier 2").
+ */
+export const LOCK1_HOLDER_TRANSACTION_BUDGET = {
+  maxWait: 10_000,
+  timeout: 30_000,
+} as const;
+
+/** The options `prisma.$transaction` takes alongside an interactive callback. */
+type InteractiveTransactionOptions = {
+  maxWait?: number;
+  timeout?: number;
+};
+
+/**
  * Run `fn` inside the caller's transaction when one is supplied, otherwise open
- * a fresh `prisma.$transaction`.
+ * a fresh `prisma.$transaction` - with `options`, when given.
  *
  * This is the single seam that makes `createConfirmedBooking` and
  * `modifyBookingBatch` transaction-aware (#2525) without duplicating their
@@ -41,17 +68,21 @@ export type PrismaTransactionClient = Omit<
  * thunks the two services attach in tx-mode. Do not perform an external side
  * effect immediately after this resolves in tx-mode; the enclosing transaction
  * has not committed yet.
+ *
+ * `options` applies only to the transaction this opens: a caller-supplied `tx`
+ * already runs on its opener's budget, which governs.
  */
 export async function withOptionalTransaction<T>(
   tx: PrismaTransactionClient | undefined,
   fn: (tx: PrismaTransactionClient) => Promise<T>,
+  options?: InteractiveTransactionOptions,
 ): Promise<T> {
   if (tx) {
     return fn(tx);
   }
-  return prisma.$transaction((innerTx) =>
-    fn(innerTx as unknown as PrismaTransactionClient),
-  );
+  const run = (innerTx: Prisma.TransactionClient) =>
+    fn(innerTx as unknown as PrismaTransactionClient);
+  return options ? prisma.$transaction(run, options) : prisma.$transaction(run);
 }
 
 /**
