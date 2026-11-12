@@ -191,16 +191,15 @@ export async function buildShiftPreviewResponse({
       )
     : { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] };
 
+  const unchangedFigures = unchangedPriceQuotedFigures(booking.finalPriceCents);
   return NextResponse.json({
     newTotalPriceCents: booking.totalPriceCents,
     newDiscountCents: booking.discountCents,
     newPromoAdjustmentCents: booking.promoAdjustmentCents,
-    newFinalPriceCents: booking.finalPriceCents,
-    priceDiffCents: 0,
-    changeFeeCents: 0,
-    netChargeCents: 0,
-    // #4924 (`INV-MOD-062`): what `adminShiftBookingDates` compares before it writes.
-    quotedFigures: unchangedPriceQuotedFigures(booking.finalPriceCents),
+    // #4924 (`INV-MOD-062`): what `adminShiftBookingDates` compares before it
+    // writes, spread so the figures shown and the figures bound are one object.
+    ...unchangedFigures,
+    quotedFigures: unchangedFigures,
     settlementOptions: null,
     capacityAvailable: capacity.available,
     minimumStayValid: true,

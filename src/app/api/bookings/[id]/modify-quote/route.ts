@@ -852,17 +852,16 @@ export async function POST(
   if (requestIsIdentityOnly || requestIsCreditElectionOnly) {
     const refused = await dependantIdentityResponse([], new Set());
     if (refused) return refused;
+    const unchangedFigures = unchangedPriceQuotedFigures(booking.finalPriceCents);
     return NextResponse.json({
       availableCreditCents,
       newTotalPriceCents: booking.totalPriceCents,
       newDiscountCents: booking.discountCents,
       newPromoAdjustmentCents: booking.promoAdjustmentCents,
-      newFinalPriceCents: booking.finalPriceCents,
-      priceDiffCents: 0,
-      changeFeeCents: 0,
-      netChargeCents: 0,
       // #4924 (`INV-MOD-062`): what the save compares; this edit moves no money.
-      quotedFigures: unchangedPriceQuotedFigures(booking.finalPriceCents),
+      // Spread so the figures shown and the figures bound are one object.
+      ...unchangedFigures,
+      quotedFigures: unchangedFigures,
       settlementOptions: null,
       capacityAvailable: true,
       minimumStayValid: true,

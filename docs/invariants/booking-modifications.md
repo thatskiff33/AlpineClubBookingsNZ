@@ -138,8 +138,8 @@ second ask for the same money. Not recorded means not raised.
   `isDateOnlyOverrideViolation`, refuses a date-only override at both doors.
 - A save without figures saves as before. That is a temporary blue-green
   window for panels and scripts older than #4924, not a contract. Unbound
-  today: the second booking of a linked move (#3232) and the move-both arm,
-  whose request carries dates only.
+  today: `PUT /api/bookings/[id]/modify-dates`, the second booking of a linked
+  move (#3232) and the move-both arm, whose requests carry dates only.
 - Enforced by `booking-modify-quoted-figures.test.ts` (schema census,
   predicate, per-figure comparison), `modify-quoted-figures.test.ts` (route),
   `edit-booking-panel-price-changed.test.tsx` and
