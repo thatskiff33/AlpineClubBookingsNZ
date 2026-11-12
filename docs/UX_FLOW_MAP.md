@@ -68,7 +68,7 @@ Journey: Read upcoming stays and account notices, then open a booking or choose 
 
 Screen: `/book`.
 
-Journey: Choose lodge and nights, add guests, review the price and rules, then confirm and follow the offered payment step. If a rule blocks the stay, use the available exception-request journey.
+Journey: Choose lodge and nights, add guests, review the price and rules, then confirm and follow the offered payment step. If a rule blocks the stay, use the available exception-request journey. Work survives profile detours and refreshes in the same tab; expired dates are dropped. Submit, draft save, sign-out or Start again clears it.
 
 [Guide](user-guide/booking-a-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
