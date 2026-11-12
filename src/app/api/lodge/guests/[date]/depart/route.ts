@@ -42,7 +42,8 @@ const bodySchema = z.object({
  * is what leaves this endpoint free to record the next check-out. Skip the return
  * arrival and the row still reads "Departed" on the later morning — pressing the
  * button sends `departed: false`, which clears that stale state, and a second
- * press sends `departed: true` and records the real departure. Nothing is lost, because there was only ever one state to hold.
+ * press sends `departed: true` and records the real departure. Nothing is lost,
+ * because there was only ever one state to hold.
  */
 export async function PUT(
   req: NextRequest,
