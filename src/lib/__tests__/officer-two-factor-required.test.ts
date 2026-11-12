@@ -15,6 +15,8 @@ import {
   type OfficerTwoFactorAssignment,
 } from "@/lib/second-factor-enrolment";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { isLoginRevokedSession } from "@/lib/session-member-security";
+import { isTwoFactorSessionBlocked } from "@/lib/two-factor-gate";
 
 const ZONE = asClubTimeZone("Pacific/Auckland");
 const FROZEN_NOW = new Date("2026-07-01T00:00:00.000Z");
@@ -189,25 +191,33 @@ describe("isOfficerTwoFactorRequired (#4618)", () => {
   });
 
   it("keeps the existing challenge equal to the club-wide module, policy or not", () => {
-    function existingChallenge(moduleOn: boolean): boolean {
-      return moduleOn === true;
-    }
-    for (const policy of [true, false]) {
-      for (const release of [true, false]) {
-        for (const role of ["USER", "FINANCE_ADMIN", "ADMIN"] as const) {
-          const officer = isOfficerTwoFactorRequired({
-            releaseEnabled: release,
-            policyEnabled: policy,
-            kiosk: false,
-            assignments: [
-              role === "FINANCE_ADMIN"
-                ? seeded("FINANCE_ADMIN")
-                : assignment(role, null, null, null),
-            ],
-          });
-          expect(existingChallenge(true)).toBe(true);
-          expect(existingChallenge(false)).toBe(false);
-          expect(typeof officer).toBe("boolean");
+    for (const moduleOn of [true, false]) {
+      for (const policy of [true, false]) {
+        for (const release of [true, false]) {
+          for (const role of ["USER", "FINANCE_ADMIN", "ADMIN"] as const) {
+            const officer = isOfficerTwoFactorRequired({
+              releaseEnabled: release,
+              policyEnabled: policy,
+              kiosk: false,
+              assignments: [
+                role === "FINANCE_ADMIN"
+                  ? seeded("FINANCE_ADMIN")
+                  : assignment(role, null, null, null),
+              ],
+            });
+            // `twoFactorRequired` is the module flag; the officer claims sit
+            // beside it and never decide today's challenge.
+            const blocked = isTwoFactorSessionBlocked({
+              sessionUser: {
+                twoFactorRequired: moduleOn,
+                twoFactorVerified: false,
+                officerTwoFactorRequired: officer,
+                twoFactorSatisfiesOfficer: false,
+                officerTwoFactorGraceEndsAt: null,
+              },
+            });
+            expect(blocked).toBe(moduleOn);
+          }
         }
       }
     }
@@ -266,5 +276,21 @@ describe("officer grace (#4618)", () => {
     expect(
       officerGraceClosedByReset({ graceStartedAt: null, factorsResetAt: null }),
     ).toBe(false);
+  });
+});
+
+describe("rollback shape (#4618)", () => {
+  it("still ends a session issued before a reset under the old revocation check", () => {
+    const resetAt = new Date("2026-07-01T00:00:00.000Z");
+    // A reset row as the new columns leave it; old code reads only the two
+    // revocation columns.
+    const row = {
+      canLogin: true,
+      sessionsRevokedAt: resetAt,
+      factorsResetAt: resetAt,
+      twoFactorGraceStartedAt: null,
+    };
+    expect(isLoginRevokedSession(row, resetAt.getTime() - 1, "member-1")).toBe(true);
+    expect(isLoginRevokedSession(row, resetAt.getTime() + 1, "member-1")).toBe(false);
   });
 });
