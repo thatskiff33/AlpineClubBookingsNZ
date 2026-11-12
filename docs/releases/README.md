@@ -17,16 +17,17 @@ drafts that accompany a release. Newest first.
 
 ## v0.10.0 communication drafts
 
-These are **drafts for the owner to review and send** — nothing here is posted
-automatically. They are kept for the audit trail and as templates for future
-releases.
+These are **drafts, not releases**. They live in [`drafts/`](drafts/) so this
+directory's top level holds published release notes only (#4978). Nothing here
+is posted automatically. They are kept for the audit trail and as templates for
+future releases.
 
-- [v0.10.0 release notes (draft)](v0.10.0-release-notes-draft.md) — the release
-  notes awaiting owner review.
-- [v0.10.0 fork-communication drafts](v0.10.0-fork-comms-drafts.md) — messages
-  for downstream deployment forks.
-- [v0.10.0 committee heads-up (draft)](v0.10.0-committee-headsup-draft.md) — the
-  cancellation-policy-change note for the club committee.
+- [v0.10.0 release notes (draft)](drafts/v0.10.0-release-notes-draft.md) — the
+  release notes that were awaiting owner review.
+- [v0.10.0 fork-communication drafts](drafts/v0.10.0-fork-comms-drafts.md) —
+  messages for downstream deployment forks.
+- [v0.10.0 committee heads-up (draft)](drafts/v0.10.0-committee-headsup-draft.md)
+  — the cancellation-policy-change note for the club committee.
 
 When you cut a new release, add its notes here (newest at the top of *Published
 release notes*) and update the [documentation hub](../README.md) pointer if the

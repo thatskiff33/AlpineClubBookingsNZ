@@ -2,6 +2,8 @@ import { readFileSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
+import { shellFunctionSource } from "@/lib/__tests__/helpers/deploy-script";
+
 /**
  * The four deploy-integrity guards on `run-production-blue-green-deploy.sh` (#3539).
  *
@@ -62,10 +64,7 @@ describe("guard 1: a commit that exists on no remote is refused", () => {
   });
 
   it("takes BOTH a named override and a written reason, never one alone", () => {
-    const guard = code.slice(
-      code.indexOf("validate_deploy_commit_is_published() {"),
-      code.indexOf("resolve_image_refs() {"),
-    );
+    const guard = shellFunctionSource(code, "validate_deploy_commit_is_published");
 
     expect(guard).toContain(
       'if ! env_flag_is_true "$ALLOW_UNPUBLISHED_DEPLOY_COMMIT"; then',
@@ -379,10 +378,7 @@ describe("guard 1, second half: a remote-tracking ref is not the remote", () => 
   // `branch -r --contains` would then answer "published" for a commit no
   // remote holds. Reproduced in a scratch repo before this was written.
   it("confirms the branch with the remote rather than with the local cache", () => {
-    const guard = code.slice(
-      code.indexOf("validate_deploy_commit_is_published() {"),
-      code.indexOf("resolve_image_refs() {"),
-    );
+    const guard = shellFunctionSource(code, "validate_deploy_commit_is_published");
     expect(guard).toContain("git -C \"$SOURCE_REPO\" ls-remote --heads");
     expect(guard.indexOf("ls-remote --heads")).toBeLessThan(
       guard.indexOf('info "Deploy commit'),
@@ -394,10 +390,7 @@ describe("guard 1, second half: a remote-tracking ref is not the remote", () => 
   // published - so a remote that never answered downgrades to a warning, while
   // a remote that answered and does not have the branch is a real refusal.
   it("warns rather than refusing when no remote could be reached", () => {
-    const guard = code.slice(
-      code.indexOf("validate_deploy_commit_is_published() {"),
-      code.indexOf("resolve_image_refs() {"),
-    );
+    const guard = shellFunctionSource(code, "validate_deploy_commit_is_published");
     expect(guard).toContain('[ "$remote_answered" = "0" ]');
     const downgrade = guard.indexOf("Proceeding on that basis");
     expect(downgrade).toBeGreaterThan(-1);

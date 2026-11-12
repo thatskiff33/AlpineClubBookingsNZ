@@ -6,15 +6,30 @@ CI, and local experiments.
 
 ## 1. Fork And Install
 
+Start from the latest **release**, not from `main`. `main` is the development
+branch: on any given day it holds changes no release has tested yet, and it
+has no version name to report a bug against or roll back to. Releases are
+listed on the repository's GitHub **Releases** page.
+
 ```bash
 git clone https://github.com/<owner>/AlpineClubBookingsNZ.git
 cd AlpineClubBookingsNZ
+git fetch --tags
+git checkout "$(git describe --abbrev=0 --match 'v[0-9]*' origin/main)"
 cp .env.example .env
 cp config/club.example.json config/club.json
 pnpm install --frozen-lockfile
 pnpm exec prisma generate
 pnpm run setup:check
 ```
+
+The `git checkout` line finds the newest release tag on `main` (an annotated
+tag named like `v0.13.2`) and checks it out. Run `git describe --exact-match`
+at any time to print the release you are on. Git reports a "detached HEAD", which is
+expected: you are on a release, not on a branch. For a production host, follow
+[`DEPLOYMENT.md` → "First Bootstrap"](../DEPLOYMENT.md#first-bootstrap), which
+keeps the host checkout on a branch called `main` held at the release, because
+the deploy script expects that. To work on the code itself, `git switch main`.
 
 Use Node.js 24 LTS and pnpm 11 (the version pinned in `package.json`
 `packageManager`; see

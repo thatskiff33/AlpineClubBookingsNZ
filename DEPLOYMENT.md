@@ -831,11 +831,19 @@ Caddy binds privileged ports 80/443 and needs `NET_BIND_SERVICE`.
 
 ## First Bootstrap
 
+Install a **release**, not `main`. `main` is the development branch: what it
+holds on the day you clone has not been through a release, and it has no
+version name to report a bug against or roll back to. Releases are listed on
+the repository's GitHub **Releases** page.
+
 From the target host:
 
 ```bash
 git clone https://github.com/<owner>/AlpineClubBookingsNZ.git AlpineClubBookingsNZ
 cd AlpineClubBookingsNZ
+git fetch --tags
+git checkout -B main "$(git describe --abbrev=0 --match 'v[0-9]*' origin/main)"
+git describe --exact-match   # prints the release you are on, e.g. v0.13.2
 cp .env.example .env
 # edit .env with your own values
 docker compose up -d --build postgres
@@ -843,6 +851,13 @@ docker compose run --rm migrate
 docker compose up -d --build app app_blue app_green caddy
 docker compose ps
 ```
+
+The `git checkout` line finds the newest release tag on `main` and holds this
+checkout's `main` branch at it. The deploy script expects the host checkout to
+be on a branch called `main`, so the branch name stays and only the commit is
+the release. If `git describe --exact-match` prints an error instead of a
+version, you are not on a release: check the Releases page and run
+`git checkout -B main <tag>` with the tag shown there.
 
 To validate the production image alone (without Compose), build it locally:
 
@@ -878,11 +893,17 @@ The supported AlpineClubBookingsNZ deploy path is:
 ./scripts/run-production-blue-green-deploy.sh
 ```
 
-The script snapshots the resolved `origin/main` commit into a clean deployment
-workspace, selects the matching GHCR image tags, copies the environment file,
+The script snapshots the resolved commit (`origin/main` unless `DEPLOY_REF`
+names another) into a clean deployment workspace, selects the matching GHCR image tags, copies the environment file,
 preserves Caddy upstream state, then re-enters itself with
 `--internal-blue-green-deploy` to run the blue/green deployment engine before it
 fast-forwards the clean checkout after success.
+
+Since #4978 it refuses a commit that is not a published release, so the plain
+command above works only while `origin/main` is itself a tagged release. To
+deploy a release, name it — see [Cut the release first](#cut-the-release-first-4465)
+— and to deploy anything else, record why — see
+[The deploy refuses a commit that is not a release](#the-deploy-refuses-a-commit-that-is-not-a-release-4978).
 
 For a fork, set `GHCR_APP_IMAGE_REPOSITORY` and
 `GHCR_MIGRATE_IMAGE_REPOSITORY` if your image names differ from the defaults —
@@ -898,7 +919,8 @@ shell environment; the `.env` route survives it.
 
 Every production deploy runs a tagged release, so adopting clubs and forks can
 tell which `main` commit is a known-good release, and a rollback has a version
-to name. Before the deploy, cut the release with `pnpm run release:cut`
+to name. The deploy script enforces this (#4978): it refuses a commit no
+release tag points at unless you record a reason. Before the deploy, cut the release with `pnpm run release:cut`
 ([`scripts/release/cut-release.mjs`](scripts/release/cut-release.mjs)) — the
 full order, its refusals and its recovery messages are in
 [`docs/MAINTENANCE.md`](docs/MAINTENANCE.md#public-reference-release-checklist),
@@ -953,6 +975,58 @@ that would vouch for a commit nobody else has. If **no** remote can be reached
 at all, the deploy does not refuse on that ground: it warns that it could not
 confirm, says the local refs may be stale, and continues. An outage is not a
 reason to block a deploy whose commit really is pushed.
+
+### The deploy refuses a commit that is not a release (#4978)
+
+Straight after the published-commit check, and before any image is resolved,
+pulled or built and before any workspace or migration, the wrapper asks
+`origin` which release tags point at the commit it resolved. It does this in
+both modes, so `--build-and-push-images` will not build images for an untagged
+commit either. It passes only when an **annotated** tag named like `v0.13.2`,
+**on `origin`**, points at that exact commit, which is exactly what
+`pnpm run release:cut publish` creates. It refuses:
+
+- a commit no tag points at, which is what plain `origin/main` is between
+  releases;
+- a lightweight tag (`git tag v1.2.3` without `-a`);
+- a tag that exists only in the deploy host's clone and was never pushed;
+- a tag with another name pattern, such as `v1.2.3-rc1`.
+
+If `origin` cannot be reached at all, the deploy **refuses**. This is the
+opposite of the published-commit check above, on purpose: that check can fall
+back on remote-tracking refs, but the only local answer here is a local tag,
+which is exactly what this check does not trust. Use the override during an
+outage.
+
+The override takes a flag and a written reason, like the one above:
+
+```bash
+ALLOW_UNTAGGED_DEPLOY_COMMIT=1 \
+UNTAGGED_DEPLOY_COMMIT_REASON="hotfix for a failed payment webhook; release follows" \
+  ./scripts/run-production-blue-green-deploy.sh
+```
+
+The flag on its own is refused. With a reason, the deploy carries on and prints
+a warning with the reason in the deploy log on the host. Cut and deploy a
+release as soon as the reason no longer holds.
+
+A staging host that deploys `main` on purpose runs the same command with a
+standing reason:
+
+```bash
+ALLOW_UNTAGGED_DEPLOY_COMMIT=1 \
+UNTAGGED_DEPLOY_COMMIT_REASON="staging: rehearsing main before the next release" \
+  ./scripts/run-production-blue-green-deploy.sh
+```
+
+Both variables are read from the shell only, not from `.env`, and `sudo`
+strips the shell environment. If you run the script under `sudo`, pass them
+through explicitly, for example
+`sudo ALLOW_UNTAGGED_DEPLOY_COMMIT=1 UNTAGGED_DEPLOY_COMMIT_REASON="..." ./scripts/run-production-blue-green-deploy.sh`.
+
+A fork that does not tag its own releases needs the override on every deploy.
+The better fix is to tag releases in the fork with `pnpm run release:cut`; see
+[`docs/UPGRADING.md`](docs/UPGRADING.md#principles).
 
 ### Building the images on the host (#3539)
 

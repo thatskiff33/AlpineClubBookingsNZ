@@ -742,3 +742,25 @@ grant check is not applicable; the check that no grantee but the owner, PUBLIC
 included, holds a right that changes a row always runs. It does not prove
 historical parity, writer-cohort coverage or accounting policy; those activate
 in later milestones.
+
+## INV-OPS-017
+
+- **The production deploy refuses a commit that is not a published release.**
+  `scripts/run-production-blue-green-deploy.sh`, in deploy and image-build mode,
+  passes only when an annotated `vX.Y.Z` tag on `origin` points at the resolved
+  commit: asked with `git ls-remote`, matched on the peeled line, so a
+  lightweight tag, a tag only the host holds and a tag on another commit all
+  fail. An unreachable `origin` refuses too, because a local tag is what it
+  distrusts. It runs before any image, workspace or migration.
+- The only way past is `ALLOW_UNTAGGED_DEPLOY_COMMIT` with a non-empty
+  `UNTAGGED_DEPLOY_COMMIT_REASON`, printed in the deploy log; the flag alone is
+  refused. Staging deploys of `main` and forks that do not tag use it.
+- "Release tag" has one spelling per language, the same pattern as
+  `RELEASE_TAG` in `scripts/release/cut-release.mjs`; a test runs both over the
+  same names.
+- Adopter install steps (`docs/IMPLEMENTATION_GUIDE.md` §1, `DEPLOYMENT.md`
+  "First Bootstrap") check out the latest release tag straight after cloning.
+- Why: #4465 made "every production deploy is a tagged release" a written rule
+  with no enforcement, and no release was cut for four months (#4978).
+- Enforced by `deploy-release-tag-guard-script-contract.test.ts`, which runs
+  the guard against a scratch origin.

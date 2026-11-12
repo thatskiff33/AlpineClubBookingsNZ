@@ -40,6 +40,16 @@ privacy notice to name Sentry Replay as described in [security notes](SECURITY.m
    immediately previous tag. Skipping releases means you also skip their
    post-upgrade actions. If you must catch up several releases, apply each
    release's notes in order.
+
+   The deploy script enforces this (#4978): it refuses a commit that no
+   annotated `vX.Y.Z` tag on `origin` points at, unless
+   `ALLOW_UNTAGGED_DEPLOY_COMMIT=1` and a written
+   `UNTAGGED_DEPLOY_COMMIT_REASON` are set. Deploy with
+   `DEPLOY_REF=<tag>` after `git fetch origin tag <tag>`. **A fork** checks
+   tags on its own `origin`, so a fork that does not tag either tags its own
+   releases (`pnpm run release:cut` works in a fork) or sets the override on
+   every deploy. See
+   [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-that-is-not-a-release-4978).
 2. **Always back up the database before migrating.** A backup you have never
    restored is a hope, not a backup — see the Quarterly Backup Restore Drill in
    `docs/MAINTENANCE.md`. Take a fresh `pg_dump` immediately before every
