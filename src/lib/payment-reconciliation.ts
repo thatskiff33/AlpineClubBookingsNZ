@@ -1327,11 +1327,7 @@ async function settleBookingPaymentInTransaction(
     // that somehow raced past the lock cannot be resurrected to PAID.
     const claimed = await tx.booking.updateMany({
       where: { id: booking.id, status: { in: [...PAYABLE_SUCCESS_STATUS_LIST] } },
-      data: {
-        status: BookingStatus.PAID,
-        savedCardClaimAt: null,
-        draftExpiresAt: null,
-      },
+      data: { status: BookingStatus.PAID, draftExpiresAt: null, savedCardClaimAt: null },
     });
     if (claimed.count === 0) {
       throw new Error(
