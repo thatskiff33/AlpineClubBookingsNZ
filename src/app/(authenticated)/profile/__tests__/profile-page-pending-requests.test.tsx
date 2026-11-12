@@ -263,7 +263,7 @@ describe("ProfilePage pending requests (#4956)", () => {
       },
     );
 
-    it.each(["REJECTED", "COMPLETED"] as const)(
+    it.each(["REJECTED", "APPROVED"] as const)(
       "offers the button again once the only request is %s",
       async (status) => {
         deletionRows = [
