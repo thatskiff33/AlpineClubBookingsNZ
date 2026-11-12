@@ -636,7 +636,9 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   reprices a booking below its applied credit, and for the same reason: throwing
   would leave the member unable to pay their own booking. The requested amount,
   the applied amount, the shortfall and its cause are returned by the pay route
-  so the shortfall is always surfaced. `calculateBookingCreditApplication` keeps
+  so the shortfall is always surfaced; the card pay step renders it on every
+  response branch through `credit-election-outcome-copy.ts` (#4943).
+  `calculateBookingCreditApplication` keeps
   its throw-on-over-request contract at booking-create, where the wizard
   validated the balance in the same request and an over-request is a bug. The
   reported reason names the bound that ACTUALLY bound — the lower of the two —
