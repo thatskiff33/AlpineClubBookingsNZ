@@ -227,6 +227,30 @@ describe("verify's real-database gate (#4907)", () => {
     })).rejects.toThrow(new RegExp(`Timed out.*missing "${escapeRegex(name)}"`));
   });
 
+  it("cannot reuse a successful real-database result from an earlier attempt", async () => {
+    const urls = [];
+    await expect(requireTestShards({
+      ...options(),
+      maxWaitMs: 0,
+      loadJobs: () => getAttemptJobs({
+        apiUrl: "https://api.github.com",
+        repository: "club/repo",
+        runId: "123",
+        attempt: "2",
+        token: "test-token",
+        fetchImpl: async (url) => {
+          urls.push(url.pathname);
+          // A run-wide lookup can include the successful first attempt.
+          // Only the second attempt lacks the real-database result.
+          const jobs = url.pathname.includes("/attempts/2/")
+            ? otherJobs() : [...otherJobs(), realdb()];
+          return { ok: true, json: async () => ({ total_count: jobs.length, jobs }) };
+        },
+      }),
+    })).rejects.toThrow(new RegExp(`Timed out.*missing "${escapeRegex(name)}"`));
+    expect(urls).toEqual(["/repos/club/repo/actions/runs/123/attempts/2/jobs"]);
+  });
+
   it("waits for the real-database job, then accepts its success", async () => {
     let calls = 0;
     await expect(requireTestShards({
