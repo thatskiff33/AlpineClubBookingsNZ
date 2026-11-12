@@ -304,9 +304,6 @@ export async function retrieveRefund(
 }
 
 /**
- * Retrieve a PaymentIntent by ID.
- */
-/**
  * #4532 (`INV-INT-032`): the Checkout Session that took a PaymentIntent, if
  * any — a Stripe Payment Link pays through one — with its line items, or
  * `null` when the intent was not taken through Checkout (a dashboard charge).
@@ -324,6 +321,9 @@ export async function findCheckoutSessionForPaymentIntent(
   return sessions.data[0] ?? null;
 }
 
+/**
+ * Retrieve a PaymentIntent by ID.
+ */
 export async function getPaymentIntent(
   paymentIntentId: string,
   /**

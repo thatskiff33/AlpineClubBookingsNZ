@@ -48,6 +48,23 @@ export async function claimAlertCooldown({
 }
 
 /**
+ * #4532: how many alerts under a key prefix were claimed since `since` - a
+ * rolling cap reads it before claiming one more. A read, never a claim; the
+ * prefix matches literally (`exactPrefix`).
+ */
+export async function countAlertClaimsSince({
+  prefix,
+  since,
+  store = prisma,
+}: {
+  prefix: string;
+  since: Date;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<number> {
+  return store.alertCooldown.count({ where: { key: exactPrefix(prefix), lastAlertedAt: { gte: since } } });
+}
+
+/**
  * A window no stay outlives: claiming with it means "alert once, ever" for its
  * key (#3672). One named constant so every once-only alert shares it.
  */

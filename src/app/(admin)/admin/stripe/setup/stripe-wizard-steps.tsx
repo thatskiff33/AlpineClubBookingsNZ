@@ -115,7 +115,8 @@ export function PortalGuideStep({ context }: { context: StripeWizardContext }) {
               create a restricted key
             </a>{" "}
             instead if you prefer to limit its scope, as long as it can read the
-            account and create payment intents, refunds and customers.
+            account and Checkout Sessions and create payment intents, refunds
+            and customers.
           </li>
         </ul>
       </div>

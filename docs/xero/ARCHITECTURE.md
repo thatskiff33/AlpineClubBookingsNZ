@@ -1096,8 +1096,11 @@ queued to the outbox**. Since #4532 it is not dropped: the first branch,
 `!isAppCreatedPaymentIntent(metadata)`, hands it to
 `recordUnrecognisedStripePayment` (`unrecognised-stripe-payment.ts`), which
 writes one `UnrecognisedStripePayment` row (unique on the PaymentIntent id) and
-raises one unmuteable `admin-unrecognised-stripe-payment` alert, claimed once
-ever; the event completes. The treasurer codes the money against the Stripe
+covers it with one unmuteable `admin-unrecognised-stripe-payment` alert, claimed
+once ever and stamped `alertSentAt` (capped at five an hour, then one hourly
+`admin-unrecognised-stripe-payments-paused` alert); the event completes. A
+payment made through another platform on the account (Xero's own Pay now) may
+already be in Xero: the row keeps its Connect application and the alert says so. The treasurer codes the money against the Stripe
 clearing account by hand. Posting a mapped Payment Link to Xero automatically is
 #4532's part 2 and is not built. `INV-INT-032`.
 

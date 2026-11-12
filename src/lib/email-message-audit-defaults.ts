@@ -306,7 +306,12 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   // #4532 (`INV-INT-032`): a Stripe payment the app did not create.
   "admin-unrecognised-stripe-payment": {
     "defaultSubject": "Stripe payment the app did not create - code it in Xero: {{amount}}",
-    "defaultBody": "Stripe Payment the App Did Not Create\n\nA payment was taken on the club's Stripe account outside the app - through a Stripe Payment Link, a Checkout page or the Stripe dashboard. The app has no booking for it and has sent nothing to Xero.\n\n{{unrecognisedPaymentNote}}\n\nAmount: {{amount}}\nReceived: {{receivedAt}}\nDescription: {{description}}\nStripe payment: {{paymentIntentId}}\nCharge: {{chargeId}}\nCheckout session: {{checkoutSessionId}}\nPayment Link: {{paymentLinkId}}\n\nOpen in Stripe: {{stripeDashboardUrl}}"
+    "defaultBody": "Stripe Payment the App Did Not Create\n\nA payment was taken on the club's Stripe account outside the app - through a Stripe Payment Link, a Checkout page or the Stripe dashboard. The app has no booking for it and has sent nothing to Xero.\n\n{{applicationNote}}\n\n{{unrecognisedPaymentNote}}\n\nAmount: {{amount}}\nPaid: {{paidAt}}\nDescription: {{description}}\nStripe payment: {{paymentIntentId}}\nCharge: {{chargeId}}\nCheckout session: {{checkoutSessionId}}\nPayment Link: {{paymentLinkId}}\n\nOpen in Stripe: {{stripeDashboardUrl}}"
+  },
+  // #4532: the hourly stand-in once single-payment alerts are capped.
+  "admin-unrecognised-stripe-payments-paused": {
+    "defaultSubject": "More Stripe payments the app did not create - check Stripe",
+    "defaultBody": "More Stripe Payments the App Did Not Create\n\nPayments the app did not create are arriving faster than one email each can usefully report, so single-payment emails are paused for an hour.\n\n{{unrecognisedPaymentsPausedNote}}\n\nRecorded in the last hour: {{paymentCount}}\nSingle-payment emails resume after: {{pausedUntil}}\n\nOpen payments in Stripe: {{stripeDashboardUrl}}"
   },
   "admin-late-capture-held": {
     "defaultSubject": "Late payment held for approval: {{memberName}}",

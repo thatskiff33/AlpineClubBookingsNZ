@@ -1,5 +1,9 @@
 import { LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE } from "@/lib/late-capture-outside-app-note";
-import { UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
+import {
+  UNRECOGNISED_STRIPE_PAYMENT_NOTE,
+  UNRECOGNISED_STRIPE_PAYMENTS_PAUSED_NOTE,
+  unrecognisedPaymentApplicationNote,
+} from "@/lib/unrecognised-stripe-payment-note";
 import {
   EMAIL_AUDIT_DEFAULTS,
   type EmailAuditTemplateName,
@@ -141,6 +145,8 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // #4532: a Stripe payment the app did not create (a Payment Link, Checkout or
   // dashboard charge) - nothing reaches Xero. Same audience, sender and lock.
   "admin-unrecognised-stripe-payment",
+  // #4532: the hourly stand-in for those alerts once a burst passes the cap.
+  "admin-unrecognised-stripe-payments-paused",
   "admin-pending-deadline",
   "admin-booking-bumped",
   "admin-capacity-warning",
@@ -241,6 +247,8 @@ const LOCKED_DELIVERY_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // #4532: the same lock - money arrived with no record the app wrote and no
   // screen that lists it, so muting it would leave it uncoded in Xero.
   "admin-unrecognised-stripe-payment",
+  // #4532: the same lock - while the cap holds, it is the only notice of a burst.
+  "admin-unrecognised-stripe-payments-paused",
   // #3638: the same lock for the same reason as #2774 — this alert says the
   // club may hold the price twice (a card payment and a Xero payment on one
   // booking), and nothing is refunded or credited automatically, so muting it
@@ -698,7 +706,9 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // #4170: {{outsideAppRefundNote}} is the instruction - what the app did not do, and when to record it.
   "admin-late-capture-refunded-outside-app": ["memberName", "paymentIntentId", "amount", "outsideAppRefundNote"],
   // #4532: {{unrecognisedPaymentNote}} is the instruction - what it is and how to code it.
-  "admin-unrecognised-stripe-payment": ["amount", "paymentIntentId", "unrecognisedPaymentNote"],
+  "admin-unrecognised-stripe-payment": ["amount", "paymentIntentId", "unrecognisedPaymentNote", "applicationNote"],
+  // #4532: {{unrecognisedPaymentsPausedNote}} says why single alerts stopped and what to check.
+  "admin-unrecognised-stripe-payments-paused": ["paymentCount", "stripeDashboardUrl", "unrecognisedPaymentsPausedNote"],
   // #2774: {{handBackConflictNote}} is the whole message - it is the sentence
   // that says whether the money went out or was withheld. An override that drops
   // it turns a reconciliation notice into an unexplained mention of a booking, on
@@ -1033,7 +1043,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     triggerSummary:
       "A payment succeeded on the club's Stripe account that the app did not create - a Stripe Payment Link, a Checkout page or a dashboard charge - so there is no booking for it and nothing was sent to Xero",
     frequency:
-      "Once ever per Stripe payment - claim-guarded; a send that fails is retried by Stripe's redelivery of the payment's notification",
+      "Once ever per Stripe payment, and at most five in a rolling hour (then the hourly \"more payments\" alert instead). A copy the mail provider refused is re-sent by the email retry job; a failure before any copy was attempted fails Stripe's notification, and Stripe's redelivery sends it",
+  },
+  "admin-unrecognised-stripe-payments-paused": {
+    triggerSummary:
+      "More payments the app did not create arrived on the club's Stripe account in an hour than single-payment alerts are sent for - a burst such as card testing - so this replaces them until the hour passes",
+    frequency: "At most once per rolling hour, and only while the single-payment alerts are capped",
   },
   "admin-late-capture-hand-back-conflict": {
     triggerSummary:
@@ -1640,6 +1655,11 @@ export function sampleValue(token: string): string {
   if (token === "outsideAppRefundNote") return LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE;
   // #4532: the one passage, and the Stripe ids an unrecognised payment names.
   if (token === "unrecognisedPaymentNote") return UNRECOGNISED_STRIPE_PAYMENT_NOTE;
+  if (token === "unrecognisedPaymentsPausedNote") return UNRECOGNISED_STRIPE_PAYMENTS_PAUSED_NOTE;
+  // Previewed as the arm another platform's payment gets; a direct one renders it empty.
+  if (token === "applicationNote") return unrecognisedPaymentApplicationNote("ca_example");
+  if (token === "pausedUntil") return "1 Jul 2026, 10:00 am";
+  if (token === "paymentCount") return "12";
   if (token === "chargeId") return "ch_example";
   if (token === "checkoutSessionId") return "cs_example";
   if (token === "paymentLinkId") return "plink_example";
@@ -2226,9 +2246,15 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   // #4170: the outside-the-app refund alert's instruction.
   "outsideAppRefundNote",
   // #4532: a Stripe payment the app did not create - its instruction, when it
-  // arrived, and the Stripe ids and dashboard link a treasurer looks it up by.
+  // was paid, the Stripe ids and dashboard link a treasurer looks it up by, the
+  // other-platform sentence (empty for a direct payment), and the hourly
+  // "more payments" alert's note, count and end of the pause.
   "unrecognisedPaymentNote",
-  "receivedAt",
+  "paidAt",
+  "applicationNote",
+  "unrecognisedPaymentsPausedNote",
+  "paymentCount",
+  "pausedUntil",
   "chargeId",
   "checkoutSessionId",
   "paymentLinkId",

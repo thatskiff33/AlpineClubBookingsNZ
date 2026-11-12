@@ -7,8 +7,10 @@
  * Every step runs through the real writers: each delivery goes through
  * `processStripeWebhookEvent`, the row is claimed by the table's real unique
  * index, and the alert by the real once-ever `AlertCooldown` claim through the
- * real unmuteable sender. The only double is Stripe's Checkout read, through the
- * harness's one shared `@/lib/stripe` double; no Stripe call is made.
+ * real unmuteable sender. Two doubles: Stripe's Checkout read, through the
+ * harness's one shared `@/lib/stripe` double (no Stripe call is made), and a
+ * pass-through on `sendEmail` that counts each copy and can refuse it as a mail
+ * provider would.
  *
  * Ordinary Vitest runs skip the whole file. It needs the guarded, disposable
  * loopback PostgreSQL every realdb suite uses (`CONCURRENCY_RACE_DATABASE_URL`,
@@ -27,6 +29,20 @@ vi.mock("@/lib/stripe", async (importOriginal) =>
   (await import("./support/stripe-race-double")).stripeRaceDouble(await importOriginal()),
 );
 
+/** Each copy the real unmuteable sender hands the mailer, by template; `refuse` makes the mailer throw, as a provider outage does. */
+const mail = vi.hoisted(() => ({ sent: [] as string[], refuse: false }));
+vi.mock("@/lib/email/core", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/email/core");
+  return {
+    ...actual,
+    sendEmail: async (...args: Parameters<typeof actual.sendEmail>) => {
+      mail.sent.push(String(args[0].templateName));
+      if (mail.refuse) throw new Error("Mail provider unavailable");
+      return actual.sendEmail(...args);
+    },
+  };
+});
+
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 
@@ -34,10 +50,14 @@ const EVENT_PREFIX = "evt_race_4532_";
 const INTENT_PREFIX = "pi_race_4532_";
 const BOOKING_ID = "race-4532-no-such-booking";
 const TEMPLATE = "admin-unrecognised-stripe-payment";
+const PAUSED_TEMPLATE = "admin-unrecognised-stripe-payments-paused";
+/** Every claim this feature makes starts so: the single-payment keys and the paused key. */
+const FEATURE_KEY_PREFIX = "unrecognised-stripe-payment";
 
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let processStripeWebhookEvent: (typeof import("@/lib/stripe-webhook-service"))["processStripeWebhookEvent"];
 let alertKey: (typeof import("@/lib/unrecognised-stripe-payment"))["unrecognisedStripePaymentAlertKey"];
+let feature: typeof import("@/lib/unrecognised-stripe-payment");
 let harnessRole: { before: string | undefined; restore: () => void } | undefined;
 
 (RUN ? describe : describe.skip)(
@@ -49,10 +69,10 @@ let harnessRole: { before: string | undefined; restore: () => void } | undefined
 
     async function deleteFixtures() {
       await prisma.unrecognisedStripePayment.deleteMany({ where: { stripePaymentIntentId: { startsWith: INTENT_PREFIX } } });
-      await prisma.alertCooldown.deleteMany({ where: { key: { contains: INTENT_PREFIX } } });
+      await prisma.alertCooldown.deleteMany({ where: { key: { startsWith: FEATURE_KEY_PREFIX } } });
       await prisma.processedWebhookEvent.deleteMany({ where: { eventId: { startsWith: EVENT_PREFIX } } });
       await prisma.webhookLog.deleteMany({ where: { eventId: { startsWith: EVENT_PREFIX } } });
-      await prisma.emailLog.deleteMany({ where: { templateName: TEMPLATE } });
+      await prisma.emailLog.deleteMany({ where: { templateName: { in: [TEMPLATE, PAUSED_TEMPLATE] } } });
     }
 
     function succeededEvent(paymentIntentId: string, metadata: Record<string, string> = {}, eventId?: string): Stripe.Event {
@@ -62,6 +82,7 @@ let harnessRole: { before: string | undefined; restore: () => void } | undefined
         object: "event",
         type: "payment_intent.succeeded",
         livemode: false,
+        created: Date.parse("2026-06-30T21:00:00.000Z") / 1000,
         request: null,
         data: {
           object: {
@@ -74,6 +95,7 @@ let harnessRole: { before: string | undefined; restore: () => void } | undefined
             status: "succeeded",
             description: null,
             latest_charge: `ch_${paymentIntentId}`,
+            application: null,
             metadata,
           },
         },
@@ -98,11 +120,16 @@ let harnessRole: { before: string | undefined; restore: () => void } | undefined
       const { declareEnvironmentRoleForSuite } = await import("./helpers/environment-role");
       harnessRole = declareEnvironmentRoleForSuite("non-production");
       ({ processStripeWebhookEvent } = await import("@/lib/stripe-webhook-service"));
-      ({ unrecognisedStripePaymentAlertKey: alertKey } = await import("@/lib/unrecognised-stripe-payment"));
+      feature = await import("@/lib/unrecognised-stripe-payment");
+      alertKey = feature.unrecognisedStripePaymentAlertKey;
       await deleteFixtures();
     }, 60_000);
 
-    beforeEach(() => {
+    beforeEach(async () => {
+      // Each case starts with no claims, so the hourly cap counts only its own.
+      await prisma.alertCooldown.deleteMany({ where: { key: { startsWith: FEATURE_KEY_PREFIX } } });
+      mail.sent = [];
+      mail.refuse = false;
       resetStripeRaceHooks();
       checkoutReads = [];
       stripeRaceHooks.checkoutSession = async (paymentIntentId) => {
@@ -143,11 +170,14 @@ let harnessRole: { before: string | undefined; restore: () => void } | undefined
         stripePaymentLinkId: "plink_race_4532_donations",
         amountCents: 2500,
         currency: "nzd",
-        stripeCreatedAt: new Date("2026-06-30T20:00:00.000Z"),
+        // When it succeeded (the event), not when checkout began (the intent).
+        stripeSucceededAt: new Date("2026-06-30T21:00:00.000Z"),
         description: "Winter donation",
         stripeEventId: first.id,
       });
       expect(await alertClaims(intent)).toBe(1);
+      expect(row!.alertSentAt).toBeInstanceOf(Date);
+      expect(mail.sent).toEqual([TEMPLATE]);
       expect(await completed(first.id)).toBe(1);
 
       // Stripe redelivers the same event: the completed claim answers it.
@@ -197,8 +227,73 @@ let harnessRole: { before: string | undefined; restore: () => void } | undefined
       expect(checkoutReads).toEqual([intent, intent]);
       expect(await rows(intent)).toHaveLength(1);
       expect(await alertClaims(intent)).toBe(1);
+      expect(mail.sent).toEqual([TEMPLATE]);
       expect(await completed(a.id)).toBe(1);
       expect(await completed(b.id)).toBe(1);
+    });
+
+    it("keeps the claim and completes the event when the mail provider refuses every copy: the email retry job re-sends it", async () => {
+      const intent = `${INTENT_PREFIX}refused`;
+      mail.refuse = true;
+      const delivery = succeededEvent(intent);
+
+      expect(await deliver(delivery)).toBe(200);
+
+      expect(mail.sent).toEqual([TEMPLATE]);
+      expect(await alertClaims(intent)).toBe(1);
+      expect((await rows(intent))[0]!.alertSentAt).toBeInstanceOf(Date);
+      expect(await completed(delivery.id)).toBe(1);
+    });
+
+    /** A row and an alert claim as a delivery that died between claim and send leaves them. */
+    async function seedClaimedNotSent(intent: string, claimAgeMs: number) {
+      await prisma.unrecognisedStripePayment.create({
+        data: {
+          stripePaymentIntentId: intent,
+          amountCents: 2500,
+          currency: "nzd",
+          stripeSucceededAt: new Date("2026-06-30T21:00:00.000Z"),
+          stripeEventId: `${EVENT_PREFIX}dead`,
+        },
+      });
+      await prisma.alertCooldown.create({ data: { key: alertKey(intent), lastAlertedAt: new Date(new Date().getTime() - claimAgeMs) } });
+    }
+
+    it("re-sends, once, an alert claimed longer ago than the webhook lease and never sent", async () => {
+      const intent = `${INTENT_PREFIX}stale`;
+      await seedClaimedNotSent(intent, feature.UNRECOGNISED_PAYMENT_STALE_CLAIM_MS + 60_000);
+
+      expect(await deliver(succeededEvent(intent))).toBe(200);
+      expect(await deliver(succeededEvent(intent))).toBe(200);
+
+      expect(mail.sent).toEqual([TEMPLATE]);
+      expect(await alertClaims(intent)).toBe(1);
+      expect((await rows(intent))[0]!.alertSentAt).toBeInstanceOf(Date);
+      expect(checkoutReads).toEqual([]);
+    });
+
+    it("leaves a claim younger than the webhook lease to the sender holding it", async () => {
+      const intent = `${INTENT_PREFIX}fresh`;
+      await seedClaimedNotSent(intent, 60_000);
+
+      expect(await deliver(succeededEvent(intent))).toBe(200);
+
+      expect(mail.sent).toEqual([]);
+      expect((await rows(intent))[0]!.alertSentAt).toBeNull();
+    });
+
+    it("caps single alerts per hour and sends one \"more payments\" alert instead, recording every payment", async () => {
+      stripeRaceHooks.checkoutSession = async () => null;
+      const intents = Array.from({ length: 8 }, (_, index) => `${INTENT_PREFIX}burst_${index}`);
+
+      for (const intent of intents) expect(await deliver(succeededEvent(intent))).toBe(200);
+
+      const capped = intents.length - 5;
+      expect(mail.sent.filter((name) => name === TEMPLATE)).toHaveLength(intents.length - capped);
+      expect(mail.sent.filter((name) => name === PAUSED_TEMPLATE)).toHaveLength(1);
+      expect(
+        await prisma.unrecognisedStripePayment.count({ where: { stripePaymentIntentId: { in: intents }, alertSentAt: { not: null } } }),
+      ).toBe(intents.length);
     });
 
     it("leaves an app intent alone, even one whose booking cannot be found", async () => {

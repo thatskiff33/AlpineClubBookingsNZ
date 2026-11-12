@@ -422,6 +422,7 @@ describe("newly-registered hardcoded email templates (#1797)", () => {
       "admin-late-capture-refunded-outside-app",
       // #4532: money arrived with no record the app wrote and no screen listing it.
       "admin-unrecognised-stripe-payment",
+      "admin-unrecognised-stripe-payments-paused",
     ] as const) {
       const definition = getEmailTemplateDefinition(name);
       if (!definition) throw new Error(`missing ${name}`);

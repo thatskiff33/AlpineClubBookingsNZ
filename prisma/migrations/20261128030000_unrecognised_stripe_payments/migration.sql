@@ -6,11 +6,13 @@ CREATE TABLE "UnrecognisedStripePayment" (
     "stripeChargeId" TEXT,
     "stripeCheckoutSessionId" TEXT,
     "stripePaymentLinkId" TEXT,
+    "stripeApplicationId" TEXT,
     "amountCents" INTEGER NOT NULL,
     "currency" TEXT NOT NULL,
-    "stripeCreatedAt" TIMESTAMP(3) NOT NULL,
+    "stripeSucceededAt" TIMESTAMP(3) NOT NULL,
     "description" TEXT,
     "stripeEventId" TEXT NOT NULL,
+    "alertSentAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "UnrecognisedStripePayment_pkey" PRIMARY KEY ("id")

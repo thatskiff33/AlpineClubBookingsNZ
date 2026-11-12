@@ -504,12 +504,13 @@ describe("#2320 review — senders supply the composed notes their defaults rend
   it("admin-unrecognised-stripe-payment: {{unrecognisedPaymentNote}} says how to code it, and every Stripe id renders (#4532)", async () => {
     await sendAdminUnrecognisedStripePaymentAlert({
       amount: "$50.00",
-      receivedAt: "1 Jul 2026, 9:00 am",
+      paidAt: "1 Jul 2026, 9:00 am",
       description: "Donation",
       paymentIntentId: "pi_foreign_1",
       chargeId: "ch_foreign_1",
       checkoutSessionId: "cs_foreign_1",
       paymentLinkId: "plink_foreign_1",
+      applicationNote: "Another platform connected to the club's Stripe account created this payment.",
       stripeDashboardUrl: "https://dashboard.stripe.com/payments/pi_foreign_1",
     });
 
@@ -523,6 +524,8 @@ describe("#2320 review — senders supply the composed notes their defaults rend
     expect(rendered).toContain("Charge: ch_foreign_1");
     expect(rendered).toContain("Checkout session: cs_foreign_1");
     expect(rendered).toContain("Payment Link: plink_foreign_1");
+    expect(rendered).toContain("Paid: 1 Jul 2026, 9:00 am");
+    expect(rendered).toContain("Another platform connected to the club's Stripe account created this payment.");
     expect(rendered).toContain("Open in Stripe: https://dashboard.stripe.com/payments/pi_foreign_1");
     const [args] = mocks.sendUnmuteableAdminAlert.mock.calls[0] as [
       { subject: string; templateName: string; requirement: unknown },

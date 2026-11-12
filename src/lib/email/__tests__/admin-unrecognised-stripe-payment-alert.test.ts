@@ -16,8 +16,14 @@ vi.mock("@/lib/email/admin-alerts-shared", () => ({
   sendUnmuteableAdminAlert: mocks.sendUnmuteableAdminAlert,
 }));
 
-import { sendAdminUnrecognisedStripePaymentAlert } from "@/lib/email/admin-alerts-unrecognised-stripe-payment";
-import { UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
+import {
+  sendAdminUnrecognisedStripePaymentAlert,
+  sendAdminUnrecognisedStripePaymentsPausedAlert,
+} from "@/lib/email/admin-alerts-unrecognised-stripe-payment";
+import {
+  UNRECOGNISED_STRIPE_PAYMENT_NOTE,
+  UNRECOGNISED_STRIPE_PAYMENTS_PAUSED_NOTE,
+} from "@/lib/unrecognised-stripe-payment-note";
 
 type CapturedAlert = {
   subject: string;
@@ -29,12 +35,13 @@ type CapturedAlert = {
 
 const FIELDS = {
   amount: "$50.00",
-  receivedAt: "1 Jul 2026, 9:00 am",
+  paidAt: "1 Jul 2026, 9:00 am",
   description: "Donation <b>",
   paymentIntentId: "pi_foreign_1",
   chargeId: "ch_foreign_1",
   checkoutSessionId: "cs_foreign_1",
   paymentLinkId: "plink_foreign_1",
+  applicationNote: "",
   stripeDashboardUrl: "https://dashboard.stripe.com/payments/pi_foreign_1",
 };
 
@@ -58,5 +65,33 @@ describe("sendAdminUnrecognisedStripePaymentAlert (#4532)", () => {
     // A payer-typed description is escaped, never markup.
     expect(alert.html).toContain("Donation &lt;b&gt;");
     expect(alert.html).not.toContain("Donation <b>");
+  });
+
+  it("sends the hourly \"more payments\" alert through the same unmuteable path, to the same audience", async () => {
+    await sendAdminUnrecognisedStripePaymentsPausedAlert({
+      paymentCount: "12",
+      pausedUntil: "1 Jul 2026, 10:00 am",
+      stripeDashboardUrl: "https://dashboard.stripe.com/payments",
+    });
+
+    expect(mocks.sendToAdmins).not.toHaveBeenCalled();
+    const [alert] = mocks.sendUnmuteableAdminAlert.mock.calls[0] as [CapturedAlert];
+    expect(alert.subject).toBe("More Stripe payments the app did not create - check Stripe");
+    expect(alert.templateName).toBe("admin-unrecognised-stripe-payments-paused");
+    expect(alert.requirement).toEqual({ area: "finance", level: "edit" });
+    expect(alert.templateData).toEqual({
+      paymentCount: "12",
+      pausedUntil: "1 Jul 2026, 10:00 am",
+      stripeDashboardUrl: "https://dashboard.stripe.com/payments",
+      unrecognisedPaymentsPausedNote: UNRECOGNISED_STRIPE_PAYMENTS_PAUSED_NOTE,
+    });
+    expect(alert.html).toContain("card testing");
+  });
+
+  it("names another platform only when one created the payment", async () => {
+    await sendAdminUnrecognisedStripePaymentAlert({ ...FIELDS, applicationNote: "Another platform created this payment." });
+
+    const [alert] = mocks.sendUnmuteableAdminAlert.mock.calls[0] as [CapturedAlert];
+    expect(alert.html).toContain("Another platform created this payment.");
   });
 });

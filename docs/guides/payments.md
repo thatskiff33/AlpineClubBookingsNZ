@@ -1038,26 +1038,44 @@ retry it, or ask the treasurer.
 The club's Stripe account can take money that never went through the app: a
 Stripe Payment Link for donations, a Checkout page, or a charge made in the
 Stripe dashboard. The app has no booking for it and sends nothing to Xero, so
-without a note the Stripe clearing account in Xero stops reconciling (#4532).
+unless another system already recorded it (for example a Xero invoice's Pay
+now), the Stripe clearing account in Xero stops reconciling (#4532).
 
 When one succeeds, Finance editors get **"Stripe payment the app did not
 create - code it in Xero"**, once per payment. It cannot be muted. It names the
-amount, when it was paid, what was bought (the Checkout line items, or the
-payment's own description), and the Stripe payment, charge, Checkout session and
-Payment Link ids, with a link to the payment in Stripe. It never contains card
-details or who paid.
+amount, when it was paid, the description the club entered in Stripe (the
+Checkout line items, or the payment's own description), and the Stripe payment,
+charge, Checkout session and Payment Link ids, with a link to the payment in
+Stripe. When another platform connected to the club's Stripe account created the
+payment (Xero's own Pay now, for example), it says so: check whether that
+platform already recorded it before you code it. The app adds no card details or
+payer contact details; the description is whatever the club typed into Stripe,
+so it may name someone.
 
 What to do:
 
 1. Open the payment in Stripe from the link and decide what it is: a donation,
-   or income and its GST treatment.
+   or income and its tax treatment.
 2. Record it in Xero by hand against the Stripe clearing account (a Receive
    Money for the amount, and Stripe's fee if your club records fees), so the
    clearing account reconciles.
 
+**A burst of them.** After five of these emails in an hour, the app stops sending
+one per payment and sends a single **"More Stripe payments the app did not
+create - check Stripe"** email instead, at most once an hour, until the hour
+passes. It still records every payment. A burst like this can be card testing
+(many small charges made with stolen card numbers), so check the payments list
+in Stripe straight away.
+
+If an email could not be sent, the app tries again: a copy the mail provider
+refused is re-sent by the email retry job, and anything that stopped it before a
+copy was attempted makes Stripe repeat the notification later.
+
 The app keeps its own record of each such payment, but no screen lists them yet;
 the email is the notice. A payment the app made itself (any booking or group
-payment) never raises this alert.
+payment) never raises this alert. If the club uses a restricted Stripe key, it
+needs read access to Checkout Sessions for the email to name the Payment Link
+and what was bought; without it the payment is still recorded and alerted.
 
 ### Follow a payment into Stripe or Xero
 
