@@ -236,6 +236,7 @@ export const WysiwygEditor = forwardRef<
     value: string;
     onChange: (html: string) => void;
     placeholder?: string;
+    ariaLabel?: string;
     editorClassName?: string;
     wrapperClassName?: string;
     /**
@@ -264,6 +265,7 @@ export const WysiwygEditor = forwardRef<
     value,
     onChange,
     placeholder,
+    ariaLabel = "Page content",
     editorClassName = "min-h-48",
     wrapperClassName,
     tokenHelpContext,
@@ -1106,6 +1108,7 @@ export const WysiwygEditor = forwardRef<
       ) : null}
       {showHtmlFallback ? (
         <Textarea
+          aria-label={ariaLabel}
           value={value}
           onChange={(event) => onChange(event.target.value)}
           className={`${editorClassName} font-mono text-sm`}
@@ -1116,6 +1119,11 @@ export const WysiwygEditor = forwardRef<
         <div
           ref={setEditorNode}
           contentEditable={!readOnly}
+          role="textbox"
+          tabIndex={0}
+          aria-label={ariaLabel}
+          aria-multiline="true"
+          aria-readonly={readOnly}
           suppressContentEditableWarning
           onKeyUp={readOnly ? undefined : captureSelection}
           onMouseUp={readOnly ? undefined : captureSelection}
@@ -2528,6 +2536,7 @@ export function PageContentPanel() {
                     Header text
                   </span>
                   <WysiwygEditor
+                    ariaLabel="Header text"
                     ref={headerEditorRef}
                     key={`header-${selectedPageId ?? "none"}`}
                     value={draftHeaderText}
