@@ -161,7 +161,7 @@ export default function BookingRequestsPage() {
       ) : null}
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
-        <TabsList className="grid w-full grid-cols-2 sm:w-auto sm:grid-cols-4">
+        <TabsList className="grid h-auto w-full grid-cols-2 sm:w-auto sm:grid-cols-4">
           <TabsTrigger value="approvals">Approvals</TabsTrigger>
           <TabsTrigger value="changes">Changes</TabsTrigger>
           <TabsTrigger value="exceptions" className="gap-2">
