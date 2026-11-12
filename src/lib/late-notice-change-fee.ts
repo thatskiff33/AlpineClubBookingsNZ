@@ -49,7 +49,8 @@ export async function lateNoticeChangeFee(input: {
   todayAtClub: CalendarDate;
 }): Promise<number> {
   if (!lateNoticeChangeFeeApplies(input.booking)) return 0;
-  const policy = await loadCancellationPolicy(input.booking.checkIn, input.lodgeId, input.db);
+  const { db } = input;
+  const policy = await loadCancellationPolicy(input.booking.checkIn, input.lodgeId, db);
   return calculateChangeFee({
     // One club day for both operands, so the old and new day-counts cannot
     // be measured from two different todays.
