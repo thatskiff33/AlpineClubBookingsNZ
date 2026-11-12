@@ -1802,7 +1802,7 @@ release).
   one request per intent, 100 results, ten-second timeout, no network
   retries. More results, or a read or recording failure, permits no send;
   normal recovery backoff applies.
-- Refunds on the captured charge are recorded through
+- Captured-charge refunds are recorded through
   `recordStripeRefundsAgainstTransaction`, including ones the app never saw,
   via the `charge.refunded` note router. The superseded-payment refund is
   sized on the ledger after this recording (#4699; cancellations,
@@ -1811,14 +1811,14 @@ release).
   at or after the recovery debt's creation second, holds the entire row before
   any slice is sent, whatever its amount. Counted status comes from
   `isRecordedRefundStatus`; a stored refusal overrides a stale counted
-  listing. Stripe timestamps are compared in whole seconds.
+  listing. Timestamps compare in whole seconds.
 - #4858: a plan-less superseded-payment refund left owing also holds while
   the owed figure credits it with a refund its own request did not make
-  (`foreignRefundsSizingSupersededRow`). Until that refund is card-paid, its
-  bank close is refused (`INV-PAY-122`).
+  (`foreignRefundsSizingSupersededRow`). Until that refund is card-paid, the held
+  row's bank close is refused (`INV-PAY-122`), not sent to a developer.
 - A hold uses the guarded terminal failure: `FAILED`, attempts at the
-  ceiling, no retry. Only a winning claim alerts officers and writes a payment
-  audit entry. It neither closes the debt nor adopts the refund. Officers
+  ceiling, no retry. Only a winning claim alerts officers and audits the
+  payment. It neither closes the debt nor adopts the refund. Officers
   settle with **Paid another way**, never a dashboard refund.
 - Stripe keys stay unchanged; slice evidence is adopted under `INV-PAY-147`.
   Organiser-child and legacy group-settlement executors are outside this
@@ -2861,14 +2861,14 @@ _Legacy: settles tasks raised before #4317._
   refund** (#3372, owner 7 Oct 2026). `closeCardRefundPaidAnotherWay`
   (finance:edit) takes `lock(1)`, then the payment row, refuses (409) unless
   the owed figure is what the treasurer saw, and claims a dead row to
-  `SUCCEEDED` with a status guard. It records the amount on the unsent slices'
+  `SUCCEEDED`, status-guarded. It records the amount on unsent slices'
   charges (`applyLocalRefundAllocation`), writes a COMPLETED
   hand-back task under `card-refund-paid-another-way:<row>`, its `BANK_REFUND`
   line (`INV-MONEY-035`) and R14, and audits under `payment`. No Stripe call.
   - **Full or part, chosen** (8 Oct): "full" is exactly what is owed,
     "partial" above nil, below it; else 400.
   - **Its rest, chosen** (#4516, 2 Nov), no default; else 400. "Club keeps
-    it": owed nowhere; reviews net the full raised amount; the journal retains
+    it": owed nowhere; reviews net the full raised amount; the journal keeps
     it. "Still owed": the task records the paid part; a dead row
     (`card_refund_still_owed_<task>`) owes the rest.
   - **Xero** (8 Oct): a bank-transfer note keyed on the task, sized by it less
@@ -2879,8 +2879,9 @@ _Legacy: settles tasks raised before #4317._
     await one in flight; link then note once under the approval task's row,
     read first (`:note-after-receipt`). Cash evidence counts it once noted.
   - A superseded intent's row closes whole, only while its charge holds exactly
-    what it owes. An organiser child's is refused.
-  - **Refused** (#4492, `paidAnotherWayRefusal`; 409, reason listed): a
+    that. An organiser child's is refused.
+  - **Refused** (#4492, `paidAnotherWayRefusal`, list and close; 409, no writes,
+    stays listed): a
     failed-later sibling; a plan-less superseded row until its sizing refund
     is card-paid; a dead failed-later row a superseded send over-filled, or
     its unreadable charge.
