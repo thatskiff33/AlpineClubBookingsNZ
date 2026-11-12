@@ -20,7 +20,7 @@ description, so you can find the right file without opening more than one.
 
 | File under `docs/invariants/` | Prefixes | Read it when you are changing… |
 | --- | --- | --- |
-| [`public-content.md`](invariants/public-content.md) | `INV-PUB` | public fee/policy page content and named lodge tokens |
+| [`public-content.md`](invariants/public-content.md) | `INV-PUB` | public fee/policy page content, named lodge tokens, gallery image copies |
 | [`money.md`](invariants/money.md) | `INV-MONEY` | anything holding cents: fee authorities, whole-lodge pricing, promo caps, subscription charges, or the Xero invoice identity behind them |
 | [`booking-dates-and-capacity.md`](invariants/booking-dates-and-capacity.md) | `INV-DATE`, `INV-CAP`, plus `INV-LIFE-062` | what day it is, who is present, how many beds, which bed, custodian bed holds |
 | [`payment-and-settlement.md`](invariants/payment-and-settlement.md) | `INV-PAY` | taking, clearing, crediting or refunding money |
@@ -77,6 +77,7 @@ File: [`invariants/public-content.md`](invariants/public-content.md). Prefix
 | `INV-PUB-001` | Fee/policy PageContent blocks are enabled and server-rendered; tokens alone publish nothing |
 | `INV-PUB-002` | Public fees use current effective-dated schedules; joining fees resolve from `JoiningFee` only |
 | `INV-PUB-003` | A named lodge token resolves one active lodge or nothing |
+| `INV-PUB-004` | Galleries serve current, smaller copies made at upload; originals kept |
 
 ## Money
 
