@@ -10,6 +10,7 @@
  */
 import "server-only";
 
+import { cache } from "react";
 import NextAuth, { CredentialsSignin, type NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
@@ -896,7 +897,13 @@ const nextAuth = NextAuth(buildRequestAuthConfig);
 export const { handlers, signIn, signOut, unstable_update: updateSession } =
   nextAuth;
 
-export async function auth() {
+/**
+ * Memoised per server-component render (#4938): every caller in one render
+ * shares one refresh, the next request refreshes again (INV-AUTH-007), and
+ * outside a render `cache()` memoises nothing. Wrap only here — a second
+ * `cache()` is a second memo. docs/SECURITY.md has the detail.
+ */
+export const auth = cache(async () => {
   const session = await nextAuth.auth();
 
   if (session?.user?.sessionInvalidated) {
@@ -904,7 +911,7 @@ export async function auth() {
   }
 
   return session;
-}
+});
 
 /**
  * Diagnostics-only raw session probe (#1669). Returns the UNWRAPPED

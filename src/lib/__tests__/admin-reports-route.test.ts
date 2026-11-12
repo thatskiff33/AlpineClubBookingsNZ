@@ -86,6 +86,14 @@ vi.mock("@/lib/logger", () => ({
 vi.mock("@/lib/finance-booking-metrics", () => ({
   resolveMetricsCapacityAndScope: mockResolveMetricsCapacityAndScope,
 }));
+// The real occupancy count, wrapped so a test can see how often it runs (#4937).
+vi.mock("@/lib/capacity", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/capacity");
+  return {
+    ...actual,
+    getOccupiedBedsForNights: vi.fn(actual.getOccupiedBedsForNights),
+  };
+});
 
 const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
 
@@ -401,6 +409,40 @@ describe("admin reports route", () => {
       { date: "2026-09-27", occupiedBeds: 1, availableBeds: 28, occupancyRate: 3 },
     ]);
   }, 15_000);
+
+  it("accepts a range exactly MAX_REPORT_RANGE_DAYS long and counts its occupancy in one pass (#4937)", async () => {
+    const { MAX_REPORT_RANGE_DAYS } = await import("@/lib/date-range-presets");
+    const { getOccupiedBedsForNights } = await import("@/lib/capacity");
+    mockReportRows([reportBooking()]);
+
+    // 1 Jul 2026 to 1 Jul 2028 inclusive: two years across a leap day, plus one.
+    const { GET } = await import("@/app/api/admin/reports/route");
+    const response = await GET(
+      new NextRequest("http://localhost/api/admin/reports?from=2026-07-01&to=2028-07-01"),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(MAX_REPORT_RANGE_DAYS).toBe(732);
+    expect(data.occupancy).toHaveLength(MAX_REPORT_RANGE_DAYS);
+    expect(data.occupancy[0].date).toBe("2026-07-01");
+    expect(data.occupancy.at(-1).date).toBe("2028-07-01");
+    expect(getOccupiedBedsForNights).toHaveBeenCalledTimes(1);
+  }, 15_000);
+
+  it("refuses a range one day over MAX_REPORT_RANGE_DAYS, naming the limit, before reading a booking (#4937)", async () => {
+    const { GET } = await import("@/app/api/admin/reports/route");
+    const response = await GET(
+      new NextRequest("http://localhost/api/admin/reports?from=2026-07-01&to=2028-07-02"),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toContain("at most 732 days");
+    expect(data.error).toContain("this range is 733 days");
+    expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.payment.findMany).not.toHaveBeenCalled();
+  });
 
   it("uses the same stay cohort for status, guests, trends, lodge, and deleted scope", async () => {
     mockLodgeFindUnique.mockResolvedValue({ id: "lodge-2", active: true });
