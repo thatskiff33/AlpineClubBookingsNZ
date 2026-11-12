@@ -513,6 +513,12 @@ jobs:
           sudo systemctl start systemd-timesyncd || true
           date -u --iso-8601=seconds
 
+      # Only the real run uses the JSON reporter; the earlier --list probes
+      # override it with --reporter=list and never invoke this summariser.
+      - name: Summarise flaky Playwright tests
+        if: always()
+        run: node scripts/ci/summarise-playwright-flaky.mjs .artifacts/playwright-results.json
+
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
