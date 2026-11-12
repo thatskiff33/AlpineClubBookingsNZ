@@ -373,6 +373,28 @@ safe (`browserslist` above is the standing example).
   dropped `heroku-api-key` and a UUID `CRON_SECRET`. `targetRules` is not the fix
   either; in 8.28.0 it silently voids the allowlist entirely.
 
+### Refreshing container image digests
+
+Third-party containers use tag plus digest (`INV-OPS-017`). Dependabot updates
+Dockerfile and Compose references, but does not update workflow environment
+values, workflow services or shell assignments. When it changes Compose's
+PostgreSQL pin, copy that exact reference to every PostgreSQL service in
+`.github/workflows/ci.yml`; `deployment-image-contracts.test.ts` rejects drift.
+The deploy's Caddy helpers read Compose directly, so they need no copied pin.
+
+For Semgrep (`SEMGREP_IMAGE` in `ci.yml`) and the backup drill (`PG_IMAGE` in
+`scripts/backup-restore-drill.sh`), resolve the existing tag's registry manifest
+index digest, preserving its version and platform coverage. Use the digest of
+the multi-architecture index, rather than one platform's manifest. Keep the
+backup drill on Debian `postgres:16`; its measured restore baseline uses that
+variant. Review intentional version upgrades separately.
+
+Run `node scripts/ci/check-image-pins.mjs` and
+`pnpm run test:named scripts/ci/check-image-pins.test.mjs src/lib/__tests__/deployment-image-contracts.test.ts src/lib/__tests__/deploy-caddy-image-script-contract.test.ts`.
+The image check shares the existing action-pin CI step; required check and
+scanner step names stay unchanged. A rejected unsupported shape needs an
+explicit parser extension and test, rather than bypassing the check.
+
 ### Two Semgrep scans run per pull request, and only one of them blocks
 
 This trips up every reader of a `nosemgrep` annotation, so it is written down
