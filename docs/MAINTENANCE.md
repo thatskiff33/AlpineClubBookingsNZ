@@ -3138,8 +3138,31 @@ phases print their whole plan and change nothing without `--execute`.
    overrides it and `--date YYYY-MM-DD` overrides the release date. With
    `--execute` it creates `release/v<version>`, sets `package.json`'s
    `"version"` (`pnpm-lock.yaml` does not record it), compiles the changelog
-   (step 2) and commits. It never pushes. If it stops part way it prints how to
-   inspect the branch or abandon it.
+   (step 2), files the release documents (below) and commits. It never
+   pushes. If it stops part way it prints how to inspect the branch or abandon
+   it.
+
+   **A release's upgrade steps are filed under that release** (#4983). The
+   tool records the release boundary in the upgrade guide and the release
+   notes as well as the changelog, so nobody rolls them by hand:
+
+   - `docs/UPGRADING.md`: the `## Unreleased` heading becomes
+     `## v<previous> → v<version>`, `<previous>` being the same latest tag on
+     `origin`, and a fresh empty `## Unreleased` opens above it. When nothing
+     was waiting, the new section says the release has no manual upgrade
+     steps, so every tag has a section. Text above `## Unreleased` and every
+     released section are left untouched. It refuses a guide with no
+     `## Unreleased`, or one that already has the version's section.
+   - `docs/releases/v<version>.md`: a notes stub linking the version's
+     changelog and upgrade-guide sections. It carries an unfinished marker
+     (`<!-- release-notes:unfinished -->`) that `publish` refuses.
+   - `docs/releases/README.md`: the page listed first under "Published release
+     notes". The documentation hub links the index, not a version, so it needs
+     no edit.
+
+   The dry run lists each of these. Then, before merging the release-prep pull
+   request, read the new upgrade section and drop any step that no longer
+   applies, and write the notes page, deleting its marker.
 2. The compile step runs `scripts/release/compile-changelog.mjs` — on its own:
 
    ```bash
@@ -3178,7 +3201,8 @@ phases print their whole plan and change nothing without `--execute`.
    GitHub Actions for Docker image build, static analysis, secret scanning,
    dependency review, and GHCR publication.
 6. Push `release/v<version>` and open the release-prep pull request from the
-   template (`pnpm run pr:check <body-file>` first). It merges like any other.
+   template (`pnpm run pr:check <body-file>` first), with the notes page
+   written. It merges like any other.
 7. After it merges, tag the merged commit and publish the GitHub release:
 
    ```bash
@@ -3210,7 +3234,17 @@ phases print their whole plan and change nothing without `--execute`.
      be folded into a patch release: carry it, or revert the release-prep
      merge and prepare again as minor. Or **carry** them:
      `pnpm run release:cut publish --carry-late-fragments --execute` publishes
-     anyway and lists them as carried into the next release.
+     anyway and lists them as carried into the next release;
+   - `docs/UPGRADING.md` has no `## v<previous> → v<version>` section, or still
+     has upgrade steps under `## Unreleased` — a pull request with its own
+     upgrade step merged while the release-prep one was open. They would ship
+     in this tag but read as the next release's. Fold them:
+     `pnpm run release:cut prepare --amend --execute` moves them into the
+     untagged version's section (and rolls the guide if prep never did).
+     `--carry-late-fragments` does **not** carry upgrade steps, because a
+     step a club never sees under its release is the harm this check stops;
+   - `docs/releases/v<version>.md` is missing, or still carries the unfinished
+     marker. Write the page through a pull request, then publish.
 
    The dry run also checks `gh auth status` and that `gh` can reach the
    repository, and says which release body it will use: the section itself,

@@ -40,6 +40,13 @@ privacy notice to name Sentry Replay as described in [security notes](SECURITY.m
    immediately previous tag. Skipping releases means you also skip their
    post-upgrade actions. If you must catch up several releases, apply each
    release's notes in order.
+
+   Each release's steps sit under its own `## v<previous> → v<release>`
+   heading below. **`## Unreleased` holds steps for changes no release
+   contains yet**: a change that needs an upgrade step adds it there, and the
+   release tool files them under the version when the release is cut
+   (`docs/MAINTENANCE.md`, "Public Reference Release Checklist"). If you
+   deploy a released tag, you can skip `## Unreleased`.
 2. **Always back up the database before migrating.** A backup you have never
    restored is a hope, not a backup — see the Quarterly Backup Restore Drill in
    `docs/MAINTENANCE.md`. Take a fresh `pg_dump` immediately before every
