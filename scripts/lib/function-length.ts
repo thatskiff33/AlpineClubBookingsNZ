@@ -12,7 +12,9 @@
  *
  *   - a top-level `function` declaration, exported or not, `default` included;
  *   - a function expression or arrow assigned to a top-level `const`/`let`
- *     (through `as`, `satisfies`, `!` and parentheses, which change no shape);
+ *     (through `as`, `satisfies`, `!` and parentheses, which change no shape),
+ *     including one passed to a wrapping call — `forwardRef(…)`, `memo(…)`,
+ *     `withAuth(async () => …)` — whose span is the whole declaration;
  *   - a method, constructor or accessor of a top-level class (and of a class
  *     assigned to a top-level `const`).
  *
@@ -70,6 +72,17 @@ function unwrap(expression: ts.Expression): ts.Expression {
     }
     return current;
   }
+}
+
+/**
+ * A function, or a call wrapping one (`forwardRef((props, ref) => …)`,
+ * `memo(forwardRef(…))`): the shapes that make a top-level binding a function a
+ * reader opens. A wrapped component is still one long component.
+ */
+function isFunctionValue(expression: ts.Expression): boolean {
+  const value = unwrap(expression);
+  if (ts.isArrowFunction(value) || ts.isFunctionExpression(value)) return true;
+  return ts.isCallExpression(value) && value.arguments.some(isFunctionValue);
 }
 
 function memberName(
@@ -139,8 +152,7 @@ export function measureFunctions(file: string, text: string): FunctionSpan[] {
       continue;
     }
     if (ts.isExportAssignment(statement)) {
-      const value = unwrap(statement.expression);
-      if (ts.isArrowFunction(value) || ts.isFunctionExpression(value)) {
+      if (isFunctionValue(statement.expression)) {
         found.push({ name: "default", node: statement });
       }
       continue;
@@ -148,8 +160,7 @@ export function measureFunctions(file: string, text: string): FunctionSpan[] {
     if (!ts.isVariableStatement(statement)) continue;
     for (const declaration of statement.declarationList.declarations) {
       if (!declaration.initializer || !ts.isIdentifier(declaration.name)) continue;
-      const value = unwrap(declaration.initializer);
-      if (ts.isArrowFunction(value) || ts.isFunctionExpression(value)) {
+      if (isFunctionValue(declaration.initializer)) {
         // The declaration, not the bare arrow, so a one-declaration statement's
         // span starts at `const` like a reader's eye does.
         const node =
@@ -159,6 +170,7 @@ export function measureFunctions(file: string, text: string): FunctionSpan[] {
         found.push({ name: declaration.name.text, node });
         continue;
       }
+      const value = unwrap(declaration.initializer);
       if (ts.isClassExpression(value)) addClass(declaration.name.text, value);
     }
   }

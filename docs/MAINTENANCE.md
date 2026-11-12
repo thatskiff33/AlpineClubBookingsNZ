@@ -1043,13 +1043,14 @@ runs a second ratchet in the same run, over functions, with the same rule:
 
 **The ceiling is 300 lines** (`FUNCTION_LENGTH_LIMIT` in
 `scripts/lib/function-length-ratchet.ts`), a function a reviewer can still hold
-in their head in one sitting. Measured on 12 Nov 2026, 322 of 13,289 production
-functions are over it, carrying 92,699 lines of length debt; run
+in their head in one sitting. Measured on 13 Nov 2026, 323 of 13,565 production
+functions are over it, carrying 93,716 lines of length debt; run
 `pnpm run quality:budget --report` for the current figure and the longest ten.
 
 **What counts as a function** is what a reader opens and reads top to bottom: a
 top-level `function` declaration, a function or arrow assigned to a top-level
-`const`/`let`, and a method, constructor, accessor or arrow-valued field of a
+`const`/`let` (including one passed to a wrapping call such as `forwardRef(…)`
+or `memo(…)`, measured as the whole declaration), and a method, constructor, accessor or arrow-valued field of a
 top-level class (named `Class.member`). A function nested inside one of those is
 part of its length, not a unit of its own, so keeping a long function's phases
 as inner closures does not shorten it. A span runs from the first token to the

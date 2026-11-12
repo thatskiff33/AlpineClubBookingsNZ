@@ -95,8 +95,6 @@ export type FunctionRatchetResult = {
 
 type Measured = FunctionSpan & { file: string };
 
-const BUDGET = `function, <= ${FUNCTION_LENGTH_LIMIT} lines`;
-
 function keyOf(file: string, name: string): string {
   return `${file}#${name}`;
 }
@@ -127,7 +125,7 @@ export function evaluateFunctionLengthRatchet(input: {
   allowanceProblems?: ReadonlyArray<AllowanceProblem>;
 }): FunctionRatchetResult {
   const limit = input.limit ?? FUNCTION_LENGTH_LIMIT;
-  const budget = input.limit === undefined ? BUDGET : `function, <= ${limit} lines`;
+  const budget = `function, <= ${limit} lines`;
   const findings: FunctionFinding[] = [];
 
   // Malformed allowance files are reported by the file-size ratchet, which

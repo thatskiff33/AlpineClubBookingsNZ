@@ -76,6 +76,23 @@ describe("measureFunctions", () => {
     ]);
   });
 
+  it("measures a function passed to a wrapping call as the whole declaration", () => {
+    expect(
+      spans("src/a.tsx", [
+        "export const Editor = memo(forwardRef<HTMLDivElement, Props>((props, ref) => {",
+        "  return <div ref={ref} />;",
+        "}));",
+        "export const config = defineConfig({ a: 1 });",
+        "export default withAuth(async function handler() {",
+        "  return 1;",
+        "});",
+      ]).map((span) => [span.name, span.lines]),
+    ).toEqual([
+      ["Editor", 3],
+      ["default", 3],
+    ]);
+  });
+
   it("names class members by their class, including accessors, constructors and arrow fields", () => {
     expect(
       spans("src/a.ts", [
