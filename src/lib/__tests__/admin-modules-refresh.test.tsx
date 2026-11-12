@@ -91,7 +91,9 @@ describe("Modules layout refresh", () => {
     });
     expect(screen.getByRole("checkbox", { name: "Waitlist" })).not.toBeChecked();
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    // useActionAttention focuses the page container (the heading's third ancestor).
     const page = screen.getByRole("heading", { name: "Modules" }).parentElement?.parentElement?.parentElement;
+    if (!page) throw new Error("Modules page container not found");
     await expectToHoldFocus(page);
     expect(page).toContainElement(message);
 
