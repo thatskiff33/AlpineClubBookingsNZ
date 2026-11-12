@@ -749,8 +749,9 @@ in later milestones.
 
 Every push run of `ci.yml`, `e2e.yml` and `money-coverage.yml` runs to
 completion. A newer push never cancels it or replaces it while pending. Each
-push run's concurrency group is keyed on its commit, because GitHub replaces
-an older pending run in a shared group even with `cancel-in-progress: false`.
+push run's concurrency group is keyed on its branch and commit, because GitHub
+replaces an older pending run in a shared group even with
+`cancel-in-progress: false`.
 Pull-request runs keep one group per ref and cancel superseded runs. This holds
 for `epic/**` pushes too, which use the same `github.event.before` gates.
 
@@ -758,7 +759,8 @@ A release tags only a commit whose `ci.yml` push run on `main` had a
 successful `Publish GHCR images` job. `release:cut publish` asks GitHub for
 that job's result, not git history, on the commit it would tag (on a resume,
 the tagged commit). It refuses before any tag or release when the job did not
-succeed, when no run exists, or when GitHub's answer cannot be read.
+succeed, when no run exists, or when GitHub's answer cannot be read — so its
+token needs Actions read access.
 
 - Why: one shared group cancelled about half of `main`'s runs on a busy day
   (#4989). A cancelled run publishes no images, so a release tag on it could not

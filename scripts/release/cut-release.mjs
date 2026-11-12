@@ -599,7 +599,8 @@ function requirePublishedImages(cmd, repo, sha) {
     const args = ["api", "--hostname", repo.host, `repos/${repo.owner}/${repo.name}/${endpoint}`];
     const text = cmd.gh(
       args,
-      `Nothing was created. GitHub could not say whether CI published images for ${short}; fix gh's login or access to ${repo.slug}, then re-run.`,
+      `Nothing was created. GitHub could not say whether CI published images for ${short}; gh's login needs read access to ${repo.slug}'s ` +
+        `Actions (a fine-grained token: "Actions: Read"). Fix it, then re-run.`,
     );
     const unexpected = () =>
       new ReleaseCutError(
@@ -621,9 +622,12 @@ function requirePublishedImages(cmd, repo, sha) {
   const runs = api(`actions/workflows/${CI_WORKFLOW_FILE}/runs?head_sha=${sha}&event=push&branch=${MAIN_BRANCH}&per_page=${API_PAGE}`);
   const found = [];
   for (const ciRun of runs) {
-    const publish = api(`actions/runs/${ciRun.id}/jobs?per_page=${API_PAGE}`).find((job) => job.name === PUBLISH_IMAGES_JOB_NAME);
+    // Every attempt: a re-run of a run that already published must not hide
+    // the images an earlier attempt pushed. Otherwise report the latest one.
+    const attempts = api(`actions/runs/${ciRun.id}/jobs?filter=all&per_page=${API_PAGE}`).filter((job) => job.name === PUBLISH_IMAGES_JOB_NAME);
+    if (attempts.some((job) => job.conclusion === "success")) return { runId: ciRun.id, conclusion: "success" };
+    const publish = attempts.reduce((latest, job) => (latest && (latest.run_attempt ?? 0) >= (job.run_attempt ?? 0) ? latest : job), null);
     const outcome = publish ? (publish.conclusion ?? publish.status) : "never ran";
-    if (outcome === "success") return { runId: ciRun.id, conclusion: outcome };
     found.push(`run ${ciRun.id} (${ciRun.conclusion ?? ciRun.status}): "${PUBLISH_IMAGES_JOB_NAME}" ${outcome}`);
   }
   throw new ReleaseCutError(
@@ -705,9 +709,6 @@ export function publishRelease({
     }
     pkg = resumed.pkg;
   }
-  // After the resume decision, so it judges the commit that would be tagged —
-  // and before anything is created, in the dry run too.
-  const published = requirePublishedImages(cmd, repo, target);
   if (remote === null && local !== null && local !== target) {
     throw new ReleaseCutError(
       `This clone's tag ${tag} is on ${local.slice(0, 12)}, not ${target.slice(0, 12)}, and ${REMOTE} has no ${tag}: ` +
@@ -729,6 +730,9 @@ export function publishRelease({
       `Delete it and re-run, and publish creates the annotated tag: git tag -d ${tag} && pnpm run release:cut publish --execute --commit ${target}`,
     );
   }
+  // After every resume decision and tag refusal, so it judges the commit that
+  // would be tagged — and before anything is created, in the dry run too.
+  const published = requirePublishedImages(cmd, repo, target);
 
   const changelog = cmd.git(["show", `${target}:CHANGELOG.md`]);
   const section = releaseSection(changelog, version);

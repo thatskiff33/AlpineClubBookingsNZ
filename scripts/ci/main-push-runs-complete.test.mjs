@@ -12,7 +12,7 @@ import { parseWorkflowYaml } from "./check-workflow-suite-checkout-depth.mjs";
   own verdict. A shared concurrency group loses runs even with
   `cancel-in-progress: false`, because GitHub replaces an older PENDING run
   when a newer one joins the group — so a push's group must be unique to its
-  commit. Pull-request runs keep sharing one group per ref and cancelling.
+  branch and commit. Pull-request runs keep sharing one group per ref and cancelling.
 
   The check evaluates each top-level `concurrency` block for a push and a
   pull-request event rather than pinning its text, so an equivalent rewrite
@@ -132,6 +132,12 @@ function concurrencyProblems(concurrency) {
     const second = evaluateValue(concurrency.group, pushContext(branch, SHA_B));
     if (first === second) problems.push(`two pushes to ${branch} share the group "${first}", so one run replaces the other`);
     if (!String(first).includes(SHA_A)) problems.push(`a push to ${branch} has the group "${first}", which does not name its commit`);
+    if (cancels(concurrency, pushContext(branch, SHA_B))) problems.push(`a push to ${branch} cancels an in-progress run in its group`);
+  }
+  // An epic branch is usually cut at main's tip, so both push the same commit.
+  const mainPush = evaluateValue(concurrency.group, pushContext("main", SHA_A));
+  if (mainPush === evaluateValue(concurrency.group, pushContext("epic/example", SHA_A))) {
+    problems.push(`a push to main and a push to epic/example of one commit share the group "${mainPush}"`);
   }
   const older = evaluateValue(concurrency.group, pullRequestContext(7, SHA_A));
   const newer = evaluateValue(concurrency.group, pullRequestContext(7, SHA_B));
@@ -168,6 +174,19 @@ describe("INV-OPS-017: push runs never cancel or replace each other", () => {
     ).toContain('two pushes to main share the group "e2e-Workflow-refs/heads/main", so one run replaces the other');
   });
 
+  it("catches a per-commit group that ignores the branch or still cancels pushes", () => {
+    expect(
+      concurrencyProblems({
+        group: "ci-${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}",
+        "cancel-in-progress": "true",
+      }),
+    ).toEqual([
+      "a push to main cancels an in-progress run in its group",
+      "a push to epic/example cancels an in-progress run in its group",
+      `a push to main and a push to epic/example of one commit share the group "ci-Workflow-${SHA_A}"`,
+    ]);
+  });
+
   it("catches a fix that stops pull requests cancelling", () => {
     expect(
       concurrencyProblems({
@@ -176,8 +195,8 @@ describe("INV-OPS-017: push runs never cancel or replace each other", () => {
       }),
     ).toEqual(
       expect.arrayContaining([
-      'a pull request\'s two runs fall in different groups ("ci-Workflow-' + SHA_A + '", "ci-Workflow-' + SHA_B + '"), so the newer cannot cancel the older',
-      "a pull request's newer run does not cancel its older one",
+        'a pull request\'s two runs fall in different groups ("ci-Workflow-' + SHA_A + '", "ci-Workflow-' + SHA_B + '"), so the newer cannot cancel the older',
+        "a pull request's newer run does not cancel its older one",
       ]),
     );
   });

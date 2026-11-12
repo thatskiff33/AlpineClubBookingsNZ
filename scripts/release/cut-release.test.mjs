@@ -692,7 +692,7 @@ describe("release:cut publish on a fixture repository", () => {
     expect(text).toContain('CI: ci.yml run 101 published its images ("Publish GHCR images": success).');
     expect(run.calls.filter((call) => call.startsWith("gh "))).toEqual([
       `${GH_RUNS}ci.yml/runs?head_sha=${merged}&event=push&branch=main&per_page=100`,
-      `${GH_JOBS}101/jobs?per_page=100`,
+      `${GH_JOBS}101/jobs?filter=all&per_page=100`,
       "gh auth status --hostname github.com",
       "gh repo view fixture-owner/fixture-repo --json nameWithOwner --jq .nameWithOwner",
     ]);
@@ -714,7 +714,7 @@ describe("release:cut publish on a fixture repository", () => {
     const ordered = run.calls.filter((call) => call === "write notes" || /^(git (tag -a|push)|gh )/.test(call));
     expect(ordered).toEqual([
       `${GH_RUNS}ci.yml/runs?head_sha=${merged}&event=push&branch=main&per_page=100`,
-      `${GH_JOBS}101/jobs?per_page=100`,
+      `${GH_JOBS}101/jobs?filter=all&per_page=100`,
       "gh auth status --hostname github.com",
       "gh repo view fixture-owner/fixture-repo --json nameWithOwner --jq .nameWithOwner",
       "write notes",
@@ -1106,6 +1106,20 @@ describe("release:cut publish asks GitHub whether CI published the commit's imag
     expect(absent.recovery).toBe("Nothing was created. Tag a main commit whose ci.yml run published its images.");
   });
 
+  it("accepts images an earlier attempt published, and reports the latest attempt when none did", () => {
+    const { repo } = mergedReleaseFixture();
+    const rerunFailed = ciJobs({ ...ciJob(3, PUBLISH_IMAGES_JOB_NAME, "failure"), run_attempt: 2 }, { ...ciJob(2, PUBLISH_IMAGES_JOB_NAME), run_attempt: 1 });
+    const log = silentLog();
+    publishRelease({ repoRoot: repo, run: fixtureRunner(repo, { [GH_RUNS]: ciRuns(ciRun(101, "failure")), [GH_JOBS]: rerunFailed }), log });
+    expect(log.text()).toContain("CI: ci.yml run 101 published its images");
+
+    const neither = ciJobs({ ...ciJob(3, PUBLISH_IMAGES_JOB_NAME, "failure"), run_attempt: 2 }, { ...ciJob(2, PUBLISH_IMAGES_JOB_NAME, "cancelled"), run_attempt: 1 });
+    expectRefusal(
+      () => publishRelease({ repoRoot: repo, run: fixtureRunner(repo, { [GH_RUNS]: ciRuns(ciRun(101, "failure")), [GH_JOBS]: neither }), log: silentLog() }),
+      /run 101 \(failure\): "Publish GHCR images" failure\./,
+    );
+  });
+
   it("publishes when a later run for the commit published, even if an earlier one did not", () => {
     const { repo } = mergedReleaseFixture();
     const run = fixtureRunner(repo, {
@@ -1153,6 +1167,20 @@ describe("release:cut publish asks GitHub whether CI published the commit's imag
     expect(result).toMatchObject({ state: "pushed", commit: merged, executed: true });
     expect(run.calls.filter((call) => call.startsWith(GH_RUNS))).toEqual([expect.stringContaining(`head_sha=${merged}&`)]);
     expect(run.calls.some((call) => call.startsWith("gh ") && call.includes(moved))).toBe(false);
+  });
+
+  it("points a local-only tag at --commit before judging main's unpublished tip", () => {
+    const { repo, merged } = mergedReleaseFixture();
+    git(repo, "tag", "-a", "v0.13.3", "-m", "v0.13.3", merged);
+    git(repo, "commit", "-q", "--allow-empty", "-m", "Merge pull request #4600 (docs)");
+    git(repo, "push", "-q", "origin", "HEAD:main");
+    const run = fixtureRunner(repo, { [GH_RUNS]: (line) => (line.includes(`head_sha=${merged}&`) ? ciRuns(ciRun(101)) : ciRuns()) });
+    const error = expectRefusal(
+      () => publishRelease({ repoRoot: repo, execute: true, run, writeNotes: notesWriter(), log: silentLog() }),
+      /This clone's tag v0\.13\.3 is on [0-9a-f]{12}, not [0-9a-f]{12}, and origin has no v0\.13\.3/,
+    );
+    expect(error.recovery).toBe(`Resume against the tagged commit: pnpm run release:cut publish --execute --commit ${merged}`);
+    expect(run.sideEffects()).toEqual([]);
   });
 
   it("on a resume, refuses the tagged commit when its run did not publish", () => {

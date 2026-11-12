@@ -799,8 +799,9 @@ Do not store that token in the repository or `.env`.
 Every push to `main` gets a CI run of its own that runs to completion; a later
 merge never cancels or replaces it (`INV-OPS-017`). So a `main` commit has
 images exactly when its run's `Publish GHCR images` job succeeded — not merely
-because it is on `main`. A run that failed, or one cancelled by hand, published
-nothing; re-run it with `gh run rerun <run-id>`. `pnpm run release:cut publish`
+because it is on `main`. A run whose `Publish GHCR images` job did not succeed
+(skipped after a failed gate, failed, or cancelled by hand) published nothing;
+re-run it with `gh run rerun <run-id>`. `pnpm run release:cut publish`
 asks GitHub for that job's result and will not tag a commit without images.
 
 ### Supply chain
