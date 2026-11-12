@@ -44,7 +44,7 @@ invariant's file by its permanent id with
 | Webhooks, cron idempotency, provider callbacks, Xero member grouping | `INV-INT` → [integrations.md](docs/invariants/integrations.md) | [xero/ARCHITECTURE.md](docs/xero/ARCHITECTURE.md) |
 | An email, notification, template or its recipients | — | [notification-rules.md](docs/guides/notification-rules.md), [email-messages.md](docs/guides/email-messages.md), [Email Retry Lifecycle](docs/STATE_MACHINES.md#email-retry-lifecycle) |
 | Raw SQL, deployment, what may be used as test input; schema, migrations, what a column means | `INV-OPS` → [operations.md](docs/invariants/operations.md) | [BLUE_GREEN_MIGRATION_POLICY.md](docs/BLUE_GREEN_MIGRATION_POLICY.md#required-sequence) — every migration stays readable by the deployed old code; [ARCHITECTURE.md](docs/ARCHITECTURE.md#core-data-model) |
-| A transaction, lock key, or anything two writers can race | `INV-LOCK`, `INV-OPS` → [operations.md](docs/invariants/operations.md) | [CONCURRENCY_AND_LOCKING.md](docs/CONCURRENCY_AND_LOCKING.md#the-two-tier-protocol-1881), and the checklist below |
+| A transaction, lock key, or anything two writers can race | `INV-LOCK`, `INV-OPS` → [operations.md](docs/invariants/operations.md) | [CONCURRENCY_AND_LOCKING.md](docs/CONCURRENCY_AND_LOCKING.md#writer-index), and the checklist below |
 | Which lodge a model, query, route or fixture belongs to | — | [lodge-scoping-contract.md](docs/multi-lodge/lodge-scoping-contract.md) — update it first |
 | Any status transition (booking, payment, membership, waitlist, email, Xero outbox, cron, sign-in…) | — | [STATE_MACHINES.md](docs/STATE_MACHINES.md), that lifecycle's section |
 | Where code lives; module boundaries | — | [ARCHITECTURE.md](docs/ARCHITECTURE.md#module-boundaries) |
@@ -140,9 +140,10 @@ Add a row for a doc an agent must reach; cite ids, never line numbers
 ### Concurrency and lock checklist
 
 Before changing a transaction, booking lifecycle, capacity check, settlement,
-credit writer, webhook or cron, read the locking guide and classify every
-mutation. Cite `INV-LOCK-001` (tier), `INV-LOCK-002` (order, single mint of the
-per-lodge key) and `INV-LOCK-003` (register the site), not this aid:
+credit writer, webhook or cron, read the locking guide's writer index and
+classify every mutation. Cite `INV-LOCK-001` (tier), `INV-LOCK-002` (order,
+single mint of the per-lodge key) and `INV-LOCK-003` (register the site), not
+this aid:
 
 - global-cohort lifecycle and settlement-money transitions that must exclude
   cancel/capture/refund/hold-release use global `pg_advisory_xact_lock(1)`;
