@@ -1,8 +1,9 @@
 - **Admin delete and bulk-change prompts now say what will happen, and
   revoking a lobby screen asks first (#4973).** The bulk member dialog names
   the selected members (the first ten, then "and N more") and states each
-  action's effect: Deactivate sets every leaving date to today and clears
-  future shared-room bed placements, which Reactivate does not restore;
+  action's effect: Deactivate sets every leaving date to today, removes the
+  members from their family groups and clears future shared-room bed
+  placements, none of which Reactivate restores;
   Reactivate clears the leaving date; Change Access replaces each member's
   existing access roles with the one picked.
 

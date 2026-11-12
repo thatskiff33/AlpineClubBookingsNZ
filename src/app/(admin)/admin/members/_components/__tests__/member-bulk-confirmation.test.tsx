@@ -38,9 +38,9 @@ describe("bulk member confirmation", () => {
     expect(screen.getByText("Selected member 2")).toBeInTheDocument();
     expect(screen.getByText("and 1 more")).toBeInTheDocument();
   });
-  it("explains the leaving date and the placements Reactivate cannot restore", () => {
+  it("explains the leaving date, family groups and placements Reactivate cannot restore", () => {
     show("deactivate");
-    expect(screen.getByText(/leaving date will be set to today/i)).toHaveTextContent(/future shared-room bed placements will be cleared.*not restored by Reactivate/i);
+    expect(screen.getByText(/leaving date will be set to today/i)).toHaveTextContent(/removed from their family groups.*future shared-room bed placements will be cleared.*Reactivate restores neither/i);
   });
   it("explains that Reactivate clears the leaving date", () => {
     show("reactivate");

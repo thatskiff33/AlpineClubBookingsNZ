@@ -28,7 +28,7 @@ import type { BulkAction } from "../_types"
 // their own dialog, and "" is only the page's nothing-chosen-yet state.
 type MemberBulkDialogAction = Exclude<BulkAction, "" | "set-membership-type">
 const actionDescriptions: Record<MemberBulkDialogAction, string> = {
-  deactivate: "Each member's leaving date will be set to today. Their future shared-room bed placements will be cleared and are not restored by Reactivate.",
+  deactivate: "Each member's leaving date will be set to today. They will be removed from their family groups, and their future shared-room bed placements will be cleared; Reactivate restores neither.",
   reactivate: "Each member's leaving date will be cleared.",
   "set-role": "Each member's existing access roles will be replaced by the chosen role.",
 }
