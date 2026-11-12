@@ -5,6 +5,7 @@ import { adminHref } from "@/lib/admin-hubs";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   AlertCircle,
   ArrowRight,
@@ -131,6 +132,7 @@ function cloneSettings(settings: ModuleSettingsValues): ModuleSettingsValues {
 }
 
 export default function AdminModulesPage() {
+  const router = useRouter();
   // Module activation is a support-area setting; a support:view admin sees it
   // read-only (#1940). The PUT route enforces support:edit.
   const canEdit = useAdminAreaEditAccess("support");
@@ -143,7 +145,7 @@ export default function AdminModulesPage() {
   const pageRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
 
-  async function loadModules() {
+  async function loadModules(refreshLayout = false) {
     setLoading(true);
     setError("");
     setSavedMessage("");
@@ -158,6 +160,7 @@ export default function AdminModulesPage() {
       }
       setPayload(body);
       setDraft(cloneSettings(body.settings));
+      if (refreshLayout) router.refresh();
     } catch (loadError) {
       setError(
         loadError instanceof Error ? loadError.message : "Failed to load modules",
@@ -231,6 +234,7 @@ export default function AdminModulesPage() {
       setPayload(body);
       setDraft(cloneSettings(body.settings));
       setSavedMessage("Module settings saved.");
+      router.refresh();
     } catch (saveError) {
       setError(
         saveError instanceof Error ? saveError.message : "Failed to save modules",
@@ -284,7 +288,7 @@ export default function AdminModulesPage() {
           <Button
             type="button"
             variant="outline"
-            onClick={() => void loadModules()}
+            onClick={() => void loadModules(true)}
             disabled={loading || saving}
           >
             <RefreshCw className="mr-2 h-4 w-4" />
