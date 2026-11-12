@@ -135,7 +135,7 @@ export async function runResetFactorsCommand(
   io.log(`Reset the authenticator and passkeys for ${cleared.email}. Their sessions are ended.`);
   if (anotherFullAdmin) {
     io.log(
-      "Another Full Admin can do this in the app: Admin → Login & Security, or the button on the member's account.",
+      "Another Full Admin can do this in the app, from the button on the member's account.",
     );
   }
   return 0;
