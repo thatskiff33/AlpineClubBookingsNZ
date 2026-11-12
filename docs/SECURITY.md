@@ -176,15 +176,31 @@ account and a throttled unknown email look the same. One thing does differ: a
 valid sign-in or completed reset on a real account clears its count, which an
 unknown email's count never is (see the stated limits).
 
-**Password comparison cost (#4639).** Refused sign-ins use the precomputed
-`DUMMY_PASSWORD_HASH` in `src/lib/password-hashing.ts`. Every account-password
-writer, including lodge accounts, placeholders and seeds, imports
-`PASSWORD_BCRYPT_COST` from that module. A regression test compares the dummy
-hash's encoded cost with a newly generated password hash; changing the cost
-requires regenerating the dummy hash too. Existing stored passwords keep their
-original cost until replaced, so their comparison time can differ from the
-dummy comparison. In particular, existing cost-12 seed and lodge accounts now
-compare faster than unknown accounts. Hut-leader PINs use their separate policy.
+**Password comparison cost (#4639, #4934).** All account passwords and
+hut-leader PINs go through `src/lib/password-hashing.ts`. Its asynchronous
+`@node-rs/bcrypt` calls run on libuv's worker pool, leaving the request event
+loop free. Account hashes use `PASSWORD_BCRYPT_COST` (13); PINs retain their
+separate policy. Refused sign-ins use the same verifier with the precomputed
+`DUMMY_PASSWORD_HASH`. Placeholders and imports store the distinct
+`UNUSABLE_PLACEHOLDER_PASSWORD_HASH`, a valid cost-13 bcrypt hash of a discarded
+random value, without hashing per account. It must be a hash, not a marker:
+if login is later enabled, a wrong password still spends a full compare until
+the screened setup/reset flow replaces it with a real password.
+
+Regression tests compare both constants' encoded cost with a newly generated
+hash; changing the cost requires regenerating both. Existing stored hashes keep
+their original cost until replaced, so older cost-12 accounts can still compare
+faster than unknown accounts. Standard bcrypt hashes remain readable by both
+old and new releases, with no migration or rehash.
+
+The pinned native dependency ships Linux glibc and Alpine musl binaries for
+amd64 and arm64 without an install script. Next.js externalises it by default.
+The default four libuv workers also serve filesystem, DNS lookup and compression
+work. This change does not require setting `UV_THREADPOOL_SIZE`: profile the
+actual workload before tuning it, and record any change as a new load-test
+resource profile. A census rejects bcrypt imports outside this module, including
+operator scripts and seeds; `bcryptjs` remains a development-only compatibility
+oracle in tests (`INV-AUTH-011`).
 
 **What is stored.** `LoginThrottle` holds an HMAC-SHA256 of the lower-cased
 email under `AUTH_SECRET` (domain label `login-throttle:v1:`), a count and the
@@ -354,12 +370,12 @@ the unscreened one to a write inside a matching `if` or ternary arm, as in
 the matching test names only stable values: an unreassigned `const`, a
 parameter or a literal), then an `if (!result.ok)` that returns, both in a block
 enclosing the write and before it, where the screened argument and the written hash's
-`bcrypt.hash` input resolve to the same unreassigned `const` or parameter, and
+`hashPassword` input resolve to the same unreassigned `const` or parameter, and
 the call does not switch the check off — or be listed as exempt with its reason (placeholders, imports,
 erasure, the local demo seed and SQL fixtures store generated or unusable
 hashes). For an exempt writer the census also traces the value it writes,
-through `const` bindings and the `bcrypt.hash` input, and requires random
-bytes, the erased-account sentinel or a fixed literal (for raw SQL, the value
+through `const` bindings and the `hashPassword` input, and requires random
+bytes, the imported unusable-placeholder constant, the erased-account sentinel or a fixed literal (for raw SQL, the value
 written inline: no template holes, bind placeholders or bind arguments), so an
 exemption cannot come to cover a typed password. A writer that stores a
 parameter, or copies the `passwordHash` of an object built in the same
