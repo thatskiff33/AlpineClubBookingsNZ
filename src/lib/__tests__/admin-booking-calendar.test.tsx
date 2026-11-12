@@ -9,6 +9,7 @@ import {
   within,
 } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { AdminBookingCalendar } from "@/components/admin-booking-calendar";
 import { ClubTimeProvider } from "@/components/club-time-provider";
@@ -167,6 +168,17 @@ describe("AdminBookingCalendar", () => {
     expect(screen.queryByText(/School Quote/)).toBeNull();
     expect(screen.getByRole("button", { name: "Awaiting Review" }).getAttribute("aria-pressed")).toBe("false");
     expect(JSON.parse(window.localStorage.getItem("admin-calendar-hidden-statuses")!)).toEqual(["AWAITING_REVIEW"]);
+  });
+
+  it("exposes each booking as a named, keyboard-reachable link with the return path", async () => {
+    const user = userEvent.setup();
+    render(<AdminBookingCalendar />);
+    const links = await screen.findAllByRole("link", { name: /Paula Paid.*PAID.*2026-07-05.*2026-07-07/ });
+    const link = links[0]!;
+    for (const segment of links) expect(segment.getAttribute("href")).toBe("/bookings/booking-paid?returnTo=%2Fadmin%2Fbookings%3Fmonth%3D2026-07");
+    expect(link.getAttribute("href")).toBe("/bookings/booking-paid?returnTo=%2Fadmin%2Fbookings%3Fmonth%3D2026-07");
+    for (let step = 0; step < 30 && document.activeElement !== link; step++) await user.tab();
+    expect(document.activeElement).toBe(link);
   });
 
   it("hides cancelled bookings by default with the Cancelled pill off", async () => {
