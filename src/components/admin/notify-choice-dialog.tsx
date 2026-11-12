@@ -99,7 +99,9 @@ export function NotifyChoiceDialog({
         </DialogHeader>
         {summary}
         {notice}
-        <DialogFooter className="gap-2 sm:gap-2">
+        {/* Three nowrap buttons outgrow the dialog's 32rem on the longest
+            labels, so the row wraps (gap, not space-x, spaces wrapped rows). */}
+        <DialogFooter className="gap-2 sm:flex-wrap sm:gap-2 sm:space-x-0">
           <Button
             type="button"
             variant="outline"
