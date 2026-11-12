@@ -12,6 +12,7 @@ const {
   mockKickQueuedXeroOutboxOperationsIfConnected,
   mockSendAdminPaymentFailureAlert,
   mockLogAudit,
+  mockCreateAuditLog,
   mockBookingFindUnique,
   mockBookingUpdateMany,
   mockBookingUpdate,
@@ -52,6 +53,7 @@ const {
   }),
   mockSendAdminPaymentFailureAlert: vi.fn().mockResolvedValue(undefined),
   mockLogAudit: vi.fn(),
+  mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
   mockBookingFindUnique: vi.fn(),
   mockBookingUpdateMany: vi.fn(),
   mockBookingUpdate: vi.fn(),
@@ -126,6 +128,7 @@ vi.mock("@/lib/email", () => ({
 
 vi.mock("@/lib/audit", () => ({
   logAudit: (...args: unknown[]) => mockLogAudit(...args),
+  createAuditLog: (...args: unknown[]) => mockCreateAuditLog(...args),
 }));
 
 vi.mock("@/lib/payment-reconciliation", () => ({
@@ -788,6 +791,36 @@ describe("POST /api/payments/charge-saved-method", () => {
       expect(
         mockPaymentTransactionUpdateMany.mock.calls.find(([call]) => call?.data?.status === "FAILED"),
       ).toBeUndefined();
+    });
+
+    it("a release that fails twice on contention leaves the marker for recovery and writes the critical release-failed audit row (#4993)", async () => {
+      mockChargePaymentMethod.mockRejectedValue(
+        stripeSdkError({ type: "card_error", code: "card_declined", decline_code: "lost_card", message: "Your card was declined." }),
+      );
+      const contention = Object.assign(new Error("Transaction API error"), { code: "P2028" });
+      mockPrismaTransaction.mockImplementation(async (arg: unknown, options?: { maxWait?: number }) => {
+        // The release is the only transaction run with the compensating budget.
+        if (options?.maxWait === 5_000) throw contention;
+        return (arg as (tx: unknown) => unknown)(txClient);
+      });
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(500);
+      const releaseBudgets = mockPrismaTransaction.mock.calls.filter(([, options]) => options?.maxWait === 5_000);
+      expect(releaseBudgets).toHaveLength(2);
+      expect(releaseBudgets[0]![1]).toEqual({ maxWait: 5_000, timeout: 10_000 });
+      expect(releaseCall()).toBeUndefined();
+      expect(mockCreateAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "booking.saved_card_claim_release_failed",
+          entityId: "booking-1",
+          category: "payment",
+          severity: "critical",
+          outcome: "failure",
+          metadata: expect.objectContaining({ errorCode: "P2028" }),
+        }),
+      );
     });
 
     it("a non-captured answer (3DS outstanding) records the intent on the attempt row inside the locked release, hands the claim back, alerts, and answers 409 saying what happened — not success", async () => {
