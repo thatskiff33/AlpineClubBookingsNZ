@@ -1,5 +1,5 @@
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
-import { SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE } from "@/lib/xero-invoicing-off";
+import { XeroInvoicingOffError } from "@/lib/xero-invoicing-off";
 
 /**
  * #4986 (`INV-INT-038`): the one module guard for every writer that hands
@@ -15,15 +15,6 @@ import { SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE } from "@/lib/xero-invoicing-of
  */
 export function isXeroInvoicingEnabled(): Promise<boolean> {
   return isEffectiveModuleEnabled("xeroIntegration");
-}
-
-export class XeroInvoicingOffError extends Error {
-  readonly status = 409;
-
-  constructor(message: string = SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE) {
-    super(message);
-    this.name = "XeroInvoicingOffError";
-  }
 }
 
 /** Throws `XeroInvoicingOffError` while Xero is off; the subscription writers' entry check. */

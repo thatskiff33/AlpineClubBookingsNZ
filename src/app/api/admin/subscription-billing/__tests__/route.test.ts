@@ -21,6 +21,9 @@ const mocks = vi.hoisted(() => ({
   closeAlreadyPaid: vi.fn(),
 }));
 
+vi.mock("@/lib/xero-invoicing-guard", () =>
+  import("@/lib/__tests__/helpers/xero-invoicing-guard-mock"),
+);
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock("@/lib/membership-subscription-billing", () => ({

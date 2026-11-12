@@ -8,6 +8,9 @@ const enqueueMocks = vi.hoisted(() => ({
   chargeUpdate: vi.fn(),
 }));
 
+vi.mock("@/lib/xero-invoicing-guard", () =>
+  import("@/lib/__tests__/helpers/xero-invoicing-guard-mock"),
+);
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     membershipSubscriptionCharge: { findUnique: enqueueMocks.chargeFindUnique, updateMany: enqueueMocks.chargeUpdate },

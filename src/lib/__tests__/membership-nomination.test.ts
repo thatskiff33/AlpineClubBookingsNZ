@@ -68,6 +68,9 @@ const { prismaMock, emailMock, xeroMock, xeroOutboxMock, subscriptionBillingMock
   },
 }));
 
+vi.mock("@/lib/xero-invoicing-guard", () =>
+  import("@/lib/__tests__/helpers/xero-invoicing-guard-mock"),
+);
 vi.mock("@/lib/prisma", () => ({
   prisma: prismaMock,
 }));

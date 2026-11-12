@@ -37,6 +37,9 @@ const mocks = vi.hoisted(() => ({
   mapping: vi.fn(),
 }));
 
+vi.mock("@/lib/xero-invoicing-guard", () =>
+  import("@/lib/__tests__/helpers/xero-invoicing-guard-mock"),
+);
 vi.mock("@/lib/authoritative-fees", () => ({
   getEffectiveMembershipAnnualFee: mocks.effectiveFee,
   getFamilyBillingMode: mocks.familyMode,

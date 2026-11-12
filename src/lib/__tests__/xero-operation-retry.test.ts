@@ -57,6 +57,9 @@ const mocks = vi.hoisted(() => ({
   skipPartialGapRepairPayment: vi.fn(),
 }));
 
+vi.mock("@/lib/xero-invoicing-guard", () =>
+  import("@/lib/__tests__/helpers/xero-invoicing-guard-mock"),
+);
 vi.mock("@/lib/credit-release-xero-payment", () => ({
   skipPartialGapRepairPayment: async (...args: unknown[]) => (await mocks.skipPartialGapRepairPayment(...args)) ?? null,
 }));

@@ -21,8 +21,8 @@ import { enqueueMembershipSubscriptionChargeOperation } from "@/lib/xero-subscri
 import {
   assertSubscriptionInvoicingEnabled,
   isXeroInvoicingEnabled,
-  XeroInvoicingOffError,
 } from "@/lib/xero-invoicing-guard";
+import { XeroInvoicingOffError } from "@/lib/xero-invoicing-off";
 import {
   closeAlreadyPaidSubscriptionCharge,
   CloseAlreadyPaidChargeError,
