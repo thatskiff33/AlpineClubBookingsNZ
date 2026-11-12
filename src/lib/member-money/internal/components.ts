@@ -77,6 +77,32 @@ export function liveComponentGross(posted: readonly PostedRevenueLeg[]): Map<str
 /** The tax codes a component still carries money under. A code fully netted to zero no longer counts. */
 const liveCodes = (state: ComponentState) => [...state.byCode].filter(([, totals]) => totals.gross !== 0);
 
+/**
+ * One component's single live split (#4525, Ledger M13): the gross, net and tax
+ * its legs still carry under the one tax code left, and the booking they name.
+ * Null when no leg posts it. A component with no gross left is a zero split; legs
+ * that disagree on booking or lodge, or money under two tax codes, are a problem.
+ * The same rules a correction completes by (`liveSplit`).
+ */
+export type LiveComponentSplit =
+  | { grossCents: number; netCents: number; taxCents: number; taxCode: string | null; bookingId: string | null }
+  | { problem: string };
+
+export function liveComponentSplit(
+  posted: readonly PostedRevenueLeg[],
+  account: MemberMoneyAccount,
+  chargeIdentity: string,
+): LiveComponentSplit | null {
+  const legs = posted.filter((leg) => leg.account === account && leg.chargeIdentity === chargeIdentity);
+  const state = componentStates(legs).get(componentKey(account, chargeIdentity));
+  if (!state) return null;
+  if (state.scopes.size > 1) return { problem: `component ${chargeIdentity}'s posted legs disagree on its booking or lodge` };
+  const live = liveCodes(state);
+  if (live.length > 1) return { problem: `component ${chargeIdentity} carries money under more than one tax treatment` };
+  const [code, totals] = live[0] ?? [null, { gross: 0, net: 0, tax: 0 }];
+  return { grossCents: totals.gross, netCents: totals.net, taxCents: totals.tax, taxCode: code, bookingId: legs[0]!.bookingId };
+}
+
 type LiveSplit = { split: MemberMoneyTaxSplit | null } | { problem: string };
 
 /**

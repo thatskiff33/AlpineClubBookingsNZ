@@ -62,6 +62,15 @@ export async function releaseBookingJournalForTeardown(
 }
 
 async function releaseMemberMoneyJournalForTeardown(tx: Prisma.TransactionClient, ids: string[]): Promise<void> {
+  // #4525 (M13): a booking's export manifests name the booking and no batch.
+  const manifests = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "MemberMoneyExportManifest" WHERE "bookingId" = ANY(${ids}::text[])`;
+  if (manifests.length > 0) {
+    const manifestIds = manifests.map((row) => row.id);
+    await tx.$executeRaw`SET LOCAL session_replication_role = replica`;
+    await tx.$executeRaw`DELETE FROM "MemberMoneyExportCoverage" WHERE "manifestId" = ANY(${manifestIds}::text[])`;
+    await tx.$executeRaw`DELETE FROM "MemberMoneyExportManifest" WHERE id = ANY(${manifestIds}::text[])`;
+    await tx.$executeRaw`SET LOCAL session_replication_role = origin`;
+  }
   const batches = await tx.$queryRaw<{ journalId: string; eventId: string }[]>`
     WITH RECURSIVE named(id) AS (
       SELECT "journalId" FROM "MemberMoneyLine" WHERE "bookingId" = ANY(${ids}::text[])

@@ -2115,6 +2115,7 @@ model Booking {
   @@index([otherLodgeId])
   @@index([organisationId])
   memberMoneyLines MemberMoneyLine[]
+  memberMoneyExportManifests MemberMoneyExportManifest[]
 }
 
 // Durable booking-lifecycle event store (issue #740). One row per transition
@@ -9391,4 +9392,59 @@ model PrivacyHostingSettings {
   updatedAt         DateTime @default(now()) @updatedAt
 
   @@index([updatedByMemberId])
+}
+
+/// M13 (#4525): the outbound document families whose coverage a manifest records.
+enum MemberMoneyExportDocumentRole {
+  PRIMARY_BOOKING_INVOICE
+}
+
+enum MemberMoneyExportOutcome {
+  COVERED
+  CONFLICT
+}
+
+/// Why a document's lines could not be matched to the journal components they bill.
+enum MemberMoneyExportConflictReason {
+  STAY_CENTS
+  FEE_CENTS
+  COMPONENT_UNUSABLE
+}
+
+/// M13 (#4525): what one sent provider document covers, written once under its
+/// legacy correlation key. Immutable; the sender's XeroSyncOperation stays the
+/// delivery record and Payment.xeroInvoiceId the provider link.
+model MemberMoneyExportManifest {
+  id String @id @default(cuid())
+  documentRole MemberMoneyExportDocumentRole
+  legacyKey String
+  renderRevision Int
+  bookingId String
+  outcome MemberMoneyExportOutcome
+  reason MemberMoneyExportConflictReason?
+  payloadHash String
+  frozenMapping Json
+  lineTotalCents Int
+  providerInvoiceId String
+  createdAt DateTime @default(now())
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  coverage MemberMoneyExportCoverage[]
+  @@unique([documentRole, legacyKey])
+  @@unique([id, documentRole])
+  @@index([bookingId])
+}
+
+/// One journal component a manifest's document bills whole. A component is billed
+/// by at most one document of each role.
+model MemberMoneyExportCoverage {
+  id String @id @default(cuid())
+  manifestId String
+  documentRole MemberMoneyExportDocumentRole
+  account MemberMoneyAccount
+  chargeIdentity String
+  coveredCents Int
+  taxCode String?
+  manifest MemberMoneyExportManifest @relation(fields: [manifestId, documentRole], references: [id, documentRole], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([documentRole, account, chargeIdentity])
+  @@index([manifestId, documentRole])
 }
