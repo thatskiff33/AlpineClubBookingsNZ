@@ -84,6 +84,22 @@ export function parseAdminListPageParam(value: string | null | undefined): numbe
   return Number.isSafeInteger(page) && page >= 1 ? page : 1
 }
 
+/**
+ * Write a list's page into its URL: page 1 is the default and leaves no key,
+ * so a first-page link stays clean. `key` names a second pager's param on a
+ * screen with two lists (`archivePage`, `inPage`, `opPage`). Mutates and
+ * returns `params`.
+ */
+export function setAdminListPageParam(
+  params: URLSearchParams,
+  page: number,
+  key = "page",
+): URLSearchParams {
+  params.delete(key)
+  if (page > 1) params.set(key, String(page))
+  return params
+}
+
 /** The note beside a deep-linked record pinned above a queue page. */
 export const PINNED_QUEUE_RECORD_NOTE =
   "Opened from a link — shown here because it is not on the page below."

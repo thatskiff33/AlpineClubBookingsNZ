@@ -5,6 +5,7 @@ import {
   adminQueueCreatedOrder,
   formatAdminListRange,
   parseAdminListPageParam,
+  setAdminListPageParam,
 } from "@/lib/admin-list-page";
 
 describe("admin list page helpers (INV-OPS-017)", () => {
@@ -46,5 +47,14 @@ describe("admin list page helpers (INV-OPS-017)", () => {
     expect(parseAdminListPageParam("-2")).toBe(1);
     expect(parseAdminListPageParam("2.5")).toBe(1);
     expect(parseAdminListPageParam("abc")).toBe(1);
+  });
+
+  it("writes a later page into the URL and drops the key for page 1", () => {
+    const params = new URLSearchParams("status=ALL&page=4");
+    expect(setAdminListPageParam(params, 2).toString()).toBe("status=ALL&page=2");
+    expect(setAdminListPageParam(params, 1).toString()).toBe("status=ALL");
+    expect(setAdminListPageParam(new URLSearchParams("opPage=3"), 5, "opPage").toString()).toBe(
+      "opPage=5",
+    );
   });
 });

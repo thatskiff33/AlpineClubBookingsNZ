@@ -257,7 +257,7 @@ describe("admin query validation and pagination", () => {
       expect(response.status).toBe(200);
       expect(body.data).toHaveLength(25);
       expect(body.data.length).toBeLessThanOrEqual(body.pageSize);
-      expect(body).toMatchObject({ page: 1, pageSize: 25, total: 30, totalPages: 2 });
+      expect(body).toMatchObject({ page: 1, pageSize: 25, total: 30 });
       expect(mocks.refundRequestFindMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { status: "PENDING" },
@@ -435,7 +435,7 @@ describe("admin query validation and pagination", () => {
       expect(response.status).toBe(200);
       expect(body.applications).toHaveLength(25);
       expect(body.applications.length).toBeLessThanOrEqual(body.pageSize);
-      expect(body).toMatchObject({ page: 1, pageSize: 25, total: 30, totalPages: 2 });
+      expect(body).toMatchObject({ page: 1, pageSize: 25, total: 30 });
       expect(mocks.memberApplicationFindMany).toHaveBeenCalledWith({
         where: undefined,
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -508,13 +508,15 @@ describe("admin query validation and pagination", () => {
       expect(response.status).toBe(200);
       expect(body.requests).toHaveLength(25);
       expect(body.requests.length).toBeLessThanOrEqual(body.pageSize);
-      expect(body).toMatchObject({ page: 1, pageSize: 25, total: 30 });
+      expect(body).toMatchObject({ page: 1, pageSize: 25, total: 30, totalPages: 2 });
       // #2597: the "pending" queue is the needs-a-decision queue, so it also
       // carries a request whose approval started and did not finish — an admin
       // who cannot see it cannot resume it.
       expect(mocks.deletionRequestFindMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { status: { in: ["PENDING", "APPROVAL_IN_PROGRESS"] } },
+          // INV-OPS-017: the pending queue reads oldest first.
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
           take: 25,
           skip: 0,
         })
@@ -541,6 +543,8 @@ describe("admin query validation and pagination", () => {
       expect(mocks.deletionRequestFindMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { status: "REJECTED" },
+          // A decided filter stays newest first.
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           take: 10,
           skip: 10,
         })

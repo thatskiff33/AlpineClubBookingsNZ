@@ -114,7 +114,7 @@ describe("Admin waitlist page", () => {
       "/api/admin/waitlist?from=2026-07-01&to=2026-07-31&page=2&pageSize=10"
     );
     expect(screen.getByText("30 total")).toBeTruthy();
-    expect(screen.getByText("Showing 11-20 of 30")).toBeTruthy();
+    expect(screen.getByText("Showing 11–20 of 30")).toBeTruthy();
     expect(screen.getByText("Booking has no adult guest")).toBeTruthy();
 
     const memberLink = screen.getByRole("link", {
@@ -479,7 +479,7 @@ describe("Admin waitlist page", () => {
       target: { value: "50" },
     });
     nextPath = parseRouterPath(mocks.routerReplace.mock.calls.at(-1)?.[0]);
-    expect(nextPath.searchParams.get("page")).toBe("1");
+    expect(nextPath.searchParams.get("page")).toBeNull();
     expect(nextPath.searchParams.get("pageSize")).toBe("50");
 
     fireEvent.change(screen.getByLabelText("From"), {
@@ -493,7 +493,7 @@ describe("Admin waitlist page", () => {
     nextPath = parseRouterPath(mocks.routerReplace.mock.calls.at(-1)?.[0]);
     expect(nextPath.searchParams.get("from")).toBe("2026-08-01");
     expect(nextPath.searchParams.get("to")).toBe("2026-08-05");
-    expect(nextPath.searchParams.get("page")).toBe("1");
+    expect(nextPath.searchParams.get("page")).toBeNull();
     expect(nextPath.searchParams.get("pageSize")).toBe("10");
   });
 });

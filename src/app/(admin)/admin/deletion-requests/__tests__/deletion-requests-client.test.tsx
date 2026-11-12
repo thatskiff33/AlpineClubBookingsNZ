@@ -212,11 +212,13 @@ describe("AdminInitiatedDeletionSection (#1938)", () => {
     expect(lifecycleUrls.length).toBeGreaterThan(0);
     expect(lifecycleUrls[0]).toContain("page=1");
 
-    // Pager renders both controls and the page indicator.
-    const next = screen.getByRole("button", { name: "Next" });
+    // The shared pager (INV-OPS-017): both controls and the range text, and
+    // the self-service list states its empty total too.
+    const next = screen.getByRole("button", { name: "Next page" });
     expect(next).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Previous" })).not.toBeNull();
-    expect(screen.getByText("Page 1 of 2")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Previous page" })).not.toBeNull();
+    expect(screen.getByText("Showing 1–25 of 30")).not.toBeNull();
+    expect(screen.getByText("Showing 0 of 0")).not.toBeNull();
 
     // Advancing the page re-fetches with page=2.
     fireEvent.click(next);

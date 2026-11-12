@@ -77,6 +77,12 @@ import {
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { SortHeader } from "@/components/admin/sort-header";
 import { Pagination } from "@/components/admin/admin-pagination";
+import {
+  adminListPage,
+  formatAdminListRange,
+  parseAdminListPageParam,
+  setAdminListPageParam,
+} from "@/lib/admin-list-page";
 import { DiagnosticsRecordButton } from "@/components/help-widget/diagnostics-record-button";
 import {
   usePublishDiagnosticsViewState,
@@ -158,11 +164,6 @@ const PAYMENT_SOURCE_FILTER_LABELS: Record<string, string> = {
   STRIPE: "Stripe",
   INTERNET_BANKING: "Internet Banking",
 };
-
-function parsePageParam(value: string | null) {
-  const page = Number(value);
-  return Number.isInteger(page) && page > 0 ? page : 1;
-}
 
 function getSortBy(value: string | null): PaymentSortBy {
   return paymentSortColumns.has(value as PaymentSortBy)
@@ -445,7 +446,7 @@ export default function PaymentsPage() {
   const [amountMax, setAmountMax] = useState(searchParams.get("amountMax") || "");
   const [sortBy, setSortBy] = useState<PaymentSortBy>(() => getSortBy(searchParams.get("sortBy")));
   const [sortDir, setSortDir] = useState<SortDir>(() => getSortDir(searchParams.get("sortDir")));
-  const [page, setPage] = useState(() => parsePageParam(searchParams.get("page")));
+  const [page, setPage] = useState(() => parseAdminListPageParam(searchParams.get("page")));
   const [pageSize] = useState(25);
   const [data, setData] = useState<PaymentRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -567,7 +568,7 @@ export default function PaymentsPage() {
     if (amountMax) params.set("amountMax", amountMax);
     if (sortBy !== "lastUpdated") params.set("sortBy", sortBy);
     if (sortDir !== "desc") params.set("sortDir", sortDir);
-    if (page > 1) params.set("page", String(page));
+    setAdminListPageParam(params, page);
     return params;
   }, [
     status,
@@ -698,7 +699,7 @@ export default function PaymentsPage() {
     }
   }
 
-  const totalPages = Math.ceil(total / pageSize);
+  const { totalPages } = adminListPage({ page, pageSize, total });
   // #3372: the "may understate" check Reports carries beside the same figure.
   const netCollectedLedgerGapWarning = formatNetCollectedLedgerGapWarning(
     summary,
@@ -1416,7 +1417,7 @@ export default function PaymentsPage() {
         page={page}
         totalPages={totalPages}
         onPageChange={setPage}
-        summary={`Showing ${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, total)} of ${total}`}
+        summary={formatAdminListRange({ page, pageSize, total })}
       />
     </div>
   );

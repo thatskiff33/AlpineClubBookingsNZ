@@ -467,8 +467,9 @@ rules first written here. #2765 extended it with the measured-audience half.
   must import the hook and render `Pagination`, or be exempt in
   `NOT_A_QUEUE_LIST` with its reason, and each route must call
   `adminListPage`. It reads source text, so a new capped route is covered only
-  once it is added to that map; admin lists outside the officer queues are
-  not in it yet.
+  once it is added to that map. Every other admin list must take its range
+  text from `formatAdminListRange` and its URL page from
+  `parseAdminListPageParam`.
 
 ## INV-OPS-002
 
