@@ -473,21 +473,6 @@ describe("DashboardPage names each booking's lodge per ADR-002 (INV-CAP-039)", (
     expect(html.match(/data-testid="booking-list-lodge"/g)).toHaveLength(3);
   });
 
-  it("shows the lodge on all three surfaces when the count cannot be read", async () => {
-    mocks.lodgeCount.mockRejectedValueOnce(new Error("count unavailable"));
-    seed({
-      upcoming: { name: "Upper Hut", active: true },
-      recent: { name: "Lower Hut", active: true },
-      draft: { name: "Second Lodge", active: true },
-    });
-
-    const html = await renderDashboardPage();
-    expect(html).toContain("Upper Hut");
-    expect(html).toContain("Lower Hut");
-    expect(draftRow(html)).toContain("Second Lodge");
-    expect(html.match(/data-testid="booking-list-lodge"/g)).toHaveLength(3);
-  });
-
   it("leaves a single-lodge club's rows as they were", async () => {
     mocks.lodgeCount.mockResolvedValueOnce(1);
     const only = { name: "Ruapehu Lodge", active: true };

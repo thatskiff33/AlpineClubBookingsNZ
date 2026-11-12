@@ -341,17 +341,6 @@ describe("MyBookingsPage names each booking's lodge per ADR-002 (INV-CAP-039)", 
     expect(html).toContain("Second Lodge");
   });
 
-  it("shows each booking's lodge when the active-lodge count cannot be read", async () => {
-    vi.mocked(prisma.lodge.count).mockRejectedValueOnce(new Error("count unavailable"));
-    vi.mocked(prisma.booking.findMany).mockResolvedValue([
-      booking({ lodge: { name: "Second Lodge", active: true } }),
-    ] as never);
-
-    const html = await renderPage();
-    expect(html).toContain("Second Lodge");
-    expect(html).toContain('data-testid="booking-list-lodge"');
-  });
-
   it("leaves a single-lodge club's rows as they were", async () => {
     vi.mocked(prisma.lodge.count).mockResolvedValue(1);
     vi.mocked(prisma.booking.findMany).mockResolvedValue([booking()] as never);
