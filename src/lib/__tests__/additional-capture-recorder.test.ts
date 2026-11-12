@@ -419,6 +419,24 @@ describe("readCaptureRecorder (B, C)", () => {
     await expect(read()).resolves.toMatchObject({ kind: "receipt", alreadyRecordedCents: 3_000 });
   });
 
+  it.each([false, true])("counts a gap anchored on this change only once (unpaid namer: %s)", async (unpaidNamer) => {
+    const gap = gapCovering(3000);
+    found.covering = gap;
+    found.own = gap;
+    mocks.findPrimaryInvoiceGapInvoice.mockResolvedValue({
+      operation: gap, link: { xeroObjectId: "inv_gap", active: true }, anchorIds: ["mod_change"],
+    });
+    if (unpaidNamer) found.naming = {
+      id: "op_unpaid", requestPayload: { recordPayment: false, paymentIntentId: "pi_change" },
+    };
+    await expect(read()).resolves.toMatchObject({ kind: "receipt", alreadyRecordedCents: 3000 });
+  });
+
+  it("does not treat a paid gap anchored on this change as recording an unrelated capture", async () => {
+    found.own = { id: "op_gap", requestPayload: { primaryInvoiceGap: true, recordPayment: true } };
+    await expect(read()).resolves.toMatchObject({ kind: "receipt", alreadyRecordedCents: 0 });
+  });
+
   it("MUTATION round 4 (item 3): compares what the gap and the primary took against the GROSS capture, never net of a refund", async () => {
     // 80.00 captured, 30.00 refunded since, the gap took 50.00: net is covered,
     // gross is not, so the receipt records the 30.00 rest (the refund is its own note).

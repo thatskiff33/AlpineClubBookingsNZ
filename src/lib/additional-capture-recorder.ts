@@ -310,13 +310,18 @@ async function readBaseCaptureRecorder(
       }),
       supplementaryInvoiceLink(store, "BookingModification", modificationId),
     ]);
-    if (own && !recordsPayment(own.requestPayload)) {
+    // A gap may be anchored on this very change. Its payment share was read
+    // above; it is not a second change invoice recording the whole capture.
+    const ownIsGap = asRecord(own?.requestPayload)?.primaryInvoiceGap === true || (own != null && own.id === gap?.operation?.id);
+    if (ownIsGap) {
+      // The gap target (if it bills this change) is already in the chain.
+    } else if (own && !recordsPayment(own.requestPayload)) {
       pushTarget(targets, seen, { kind: "CHANGE_INVOICE", operation: own, link: ownLink });
     } else if (own && recordsPayment(own.requestPayload) && changeInvoiceRecordsCapture(own.requestPayload, input.paymentIntentId)) {
       // No unpaid invoice names the capture: this paying invoice records it.
       if (unpaidNaming.length === 0) return { kind: "supplementary-invoice", operationId: own.id };
       countPaying(own);
-    } else if (unpaidNaming.length === 0 && !own && ownLink) {
+    } else if (unpaidNaming.length === 0 && !own && ownLink && ownLink.xeroObjectId !== gap?.link?.xeroObjectId) {
       return { kind: "supplementary-invoice", operationId: null };
     }
   }

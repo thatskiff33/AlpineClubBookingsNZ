@@ -95,7 +95,7 @@ import {
   type AdditionalCaptureReceiptTarget,
 } from "@/lib/additional-capture-receipt-payload";
 import type { cardSettleAppliedCreditCents } from "@/lib/xero-primary-invoice-fee-gap";
-import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { ownRunningClaim, type XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 /** The payment figures the primary's applied-credit reservation reads. */
 type CardSettlePayment = Parameters<typeof cardSettleAppliedCreditCents>[1];
@@ -281,6 +281,16 @@ export async function recordAdditionalCaptureReceipt(
   if (alreadyDone) {
     const linkedId = existingLinks[0]?.xeroObjectId;
     if (!linkedId) return null;
+    if (queued.plan) {
+      const paymentIds = queued.plan.legs.map((leg) =>
+        existingLinks.find((link) => asRecord(link.metadata)?.invoiceId === leg.invoiceId)?.xeroObjectId ?? linkedId,
+      );
+      await completeRecordedReceipt(
+        { plan: queued.plan, paymentTransactionId, paymentIntentId, paymentId, bookingId, operationId, syncOperation: params.syncOperation, alertOfficer },
+        { paymentIds, recoveredExisting: true },
+      );
+      return paymentIds[0] ?? null;
+    }
     await completeXeroSyncOperation(params.syncOperation, {
       responsePayload: { alreadyRecorded: true, paymentId: linkedId, paymentIds: existingLinks.map((link) => link.xeroObjectId) },
       xeroObjectType: "PAYMENT",
@@ -547,7 +557,7 @@ export async function recordAdditionalCaptureReceipt(
       const nowIds = invoiceIdsForReceiptTargets(now.targets, primaryInvoiceId);
       if (!plan.targetInvoiceIds || !sameInvoiceIds(nowIds, plan.targetInvoiceIds)) return "target-moved" as const;
       const written = await tx.xeroSyncOperation.updateMany({
-        where: { id: operationId, status: "RUNNING", lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE },
+        where: { id: operationId, ...ownRunningClaim(params.syncOperation), lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE },
         data: { requestPayload: sanitizeForJson({ ...(asRecord(row?.requestPayload) ?? {}), plan }) },
       });
       return written.count === 1 ? ("stored" as const) : ("lost-claim" as const);

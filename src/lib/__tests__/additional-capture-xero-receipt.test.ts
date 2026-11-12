@@ -362,7 +362,7 @@ describe("recordAdditionalCaptureReceipt", () => {
     });
     expect(planStoreCall()).toEqual(
       expect.objectContaining({
-        where: { id: "op_receipt", status: "RUNNING", lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE },
+        where: { id: "op_receipt", status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE },
       }),
     );
     expect(seam.createXeroPaymentForInvoice).toHaveBeenCalledWith(
@@ -740,6 +740,45 @@ describe("recordAdditionalCaptureReceipt", () => {
     });
     const seam = providers();
     await expectWait(seam);
+  });
+
+  it("a stale planning claim cannot replace a newer claim's plan or send", async () => {
+    const newerClaim = new Date(TEST_XERO_CLAIMED_AT.getTime() + 1000);
+    mocks.updateManyOperation.mockImplementation(async (args) => {
+      if (args.data?.requestPayload?.plan) {
+        return { count: args.where.startedAt?.getTime() === newerClaim.getTime() ? 1 : 0 };
+      }
+      return { count: 1 };
+    });
+    await expectWait();
+    expect(planStoreCall().where.startedAt).toEqual(TEST_XERO_CLAIMED_AT);
+  });
+
+  it("finishes all linked legs in plan order and still alerts for the unrecorded remainder", async () => {
+    const plan = {
+      target: "CHANGE_INVOICE", invoiceId: GAP, amountCents: 3000,
+      capturedCents: 8000, date: "2026-06-30",
+      legs: [
+        { target: "CHANGE_INVOICE", invoiceId: GAP, amountCents: 3000 },
+        { target: "PRIMARY_INVOICE", invoiceId: PRIMARY, amountCents: 2000 },
+      ],
+    };
+    mocks.findUniqueOperation.mockResolvedValue({ requestPayload: { ...PAYLOAD, plan } });
+    mocks.findManyLink.mockResolvedValue([
+      { xeroObjectId: "pay_primary", metadata: { invoiceId: PRIMARY } },
+      { xeroObjectId: "pay_gap", metadata: { invoiceId: GAP } },
+    ]);
+    const seam = providers();
+    await expect(run(seam)).resolves.toBe("pay_gap");
+    expect(seam.createXeroPaymentForInvoice).not.toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      expect.anything(), expect.objectContaining({
+        responsePayload: expect.objectContaining({ paymentIds: ["pay_gap", "pay_primary"], unrecordedCents: 3000 }),
+      }),
+    );
+    expect(mocks.sendAdminXeroSyncErrorAlert).toHaveBeenCalledWith(expect.objectContaining({
+      errorMessage: expect.stringContaining("remaining $30.00"),
+    }));
   });
 
   it("recovers only the remainder after another recorder's share, before applying the room cap (#4435)", async () => {

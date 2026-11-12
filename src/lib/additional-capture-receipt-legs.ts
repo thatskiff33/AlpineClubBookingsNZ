@@ -100,15 +100,23 @@ export function sameInvoiceIds(left: readonly string[], right: readonly string[]
 }
 
 /** Every planned leg has an active payment link naming its invoice. */
-export function everyPlannedLegLinked(
+export function linkedReceiptLegCount(
   legs: readonly { invoiceId: string }[],
   links: readonly { metadata: unknown }[],
-): boolean {
+): number {
   const linked = new Set(
     links.flatMap((link) => {
       const invoiceId = asRecord(link.metadata)?.invoiceId;
       return typeof invoiceId === "string" ? [invoiceId] : [];
     }),
   );
-  return legs.length > 0 && legs.every((leg) => linked.has(leg.invoiceId));
+  return legs.filter((leg) => linked.has(leg.invoiceId)).length;
+}
+
+/** Every planned invoice, rather than merely the same number of links. */
+export function everyPlannedLegLinked(
+  legs: readonly { invoiceId: string }[],
+  links: readonly { metadata: unknown }[],
+): boolean {
+  return legs.length > 0 && linkedReceiptLegCount(legs, links) === legs.length;
 }
