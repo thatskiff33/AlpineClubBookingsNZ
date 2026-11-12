@@ -31,7 +31,7 @@ const mocks = vi.hoisted(() => ({
   processRefund: vi.fn(),
   refundPaymentTransactions: vi.fn(),
   planStripeRefundAllocation: vi.fn(),
-  readSupersededCaptureHeldBack: vi.fn(async () => ({ byTransaction: new Map<string, number>(), totalCents: 0 })),
+  readSupersededCaptureHeldBack: vi.fn<(...args: unknown[]) => Promise<{ byTransaction: Map<string, number>; totalCents: number }>>(async () => ({ byTransaction: new Map(), totalCents: 0 })),
   isXeroConnected: vi.fn(),
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),

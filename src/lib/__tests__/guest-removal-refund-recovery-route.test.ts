@@ -52,6 +52,8 @@ vi.mock("@/lib/payment-transactions", () => ({
   PartialRefundError: class PartialRefundError extends Error {
     completedRefundCents = 0;
   },
+  // #4872: the refund's plan is frozen under the Payment row before Stripe is asked.
+  lockPaymentForRefundedTotal: vi.fn(async () => undefined),
   planStripeRefundAllocation: mockPlanStripeRefundAllocation,
   refundPaymentTransactions: mocks.refundPaymentTransactions,
 }));

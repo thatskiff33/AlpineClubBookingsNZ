@@ -70,7 +70,8 @@ export async function refundableCashForModification(
 ): Promise<number> {
   const cashCents = await refundableCashNetOfOpenHandBacks(db, payment);
   // #4872 (`INV-PAY-150`): a live superseded capture is not cash the edit can return.
-  const heldBackCents = payment ? (await readSupersededCaptureHeldBack(db, payment.id)).totalCents : 0;
+  // With no refundable cash there is nothing to hold back, so no read.
+  const heldBackCents = payment && cashCents > 0 ? (await readSupersededCaptureHeldBack(db, payment.id)).totalCents : 0;
   const paidFeeCents = reduction.organiserExtras && payment
     ? effectiveOrganiserPaidChangeFeeCents(payment.changeFeeCents, reduction.organiserExtras)
     : 0;

@@ -486,7 +486,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/create-setup-intent/route.ts:59",
   "src/app/api/payments/switch-to-internet-banking/route.ts:127",
   "src/lib/adult-member-hosting-review.ts:3256",
-  "src/lib/booking-batch-modification-service.ts:1094",
+  "src/lib/booking-batch-modification-service.ts:1093",
   "src/lib/booking-cancel.ts:2537",
   "src/lib/booking-cancel.ts:568",
   "src/lib/booking-date-modification-service.ts:413",
@@ -523,8 +523,8 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
   "src/lib/member-guest-consent-service.ts:1355",
-  "src/lib/payment-recovery.ts:2751",
-  "src/lib/payment-recovery.ts:2803",
+  "src/lib/payment-recovery.ts:2775",
+  "src/lib/payment-recovery.ts:2827",
   "src/lib/xero-admin-health.ts:399",
 ];
 
@@ -809,7 +809,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // build. The walk cannot root it only because the literal names no delegate.
   "src/lib/member-lodge-roster.ts:112",
   "src/lib/payment-link.ts:81",
-  "src/lib/payment-reconciliation.ts:100",
+  "src/lib/payment-reconciliation.ts:101",
   "src/lib/stuck-state-dashboard.ts:629",
   "src/lib/xero-booking-repair-types.ts:246",
   "src/lib/xero-inbound/settlement-conflicts.ts:155",

@@ -8,7 +8,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
-const heldBackRead = vi.hoisted(() => vi.fn(async () => ({ byTransaction: new Map<string, number>(), totalCents: 0 })));
+const heldBackRead = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<{ byTransaction: Map<string, number>; totalCents: number }>>(async () => ({ byTransaction: new Map(), totalCents: 0 })));
 vi.mock("@/lib/superseded-capture-hold-back", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/superseded-capture-hold-back")),
   readSupersededCaptureHeldBack: (...args: unknown[]) => heldBackRead(...args),

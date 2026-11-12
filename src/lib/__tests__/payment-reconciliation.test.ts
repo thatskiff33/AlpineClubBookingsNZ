@@ -53,7 +53,7 @@ const mocks = vi.hoisted(() => ({
   findPaymentTransactionByIntentId: vi.fn(),
   refundPaymentTransactions: vi.fn(),
   planStripeRefundAllocation: vi.fn(),
-  readSupersededCaptureHeldBack: vi.fn(async () => ({ byTransaction: new Map<string, number>(), totalCents: 0 })),
+  readSupersededCaptureHeldBack: vi.fn<(...args: unknown[]) => Promise<{ byTransaction: Map<string, number>; totalCents: number }>>(async () => ({ byTransaction: new Map(), totalCents: 0 })),
   enqueueCapacityClaimFailedRefundRecovery: vi.fn(),
   markCapacityClaimFailedRefundRecoverySucceeded: vi.fn(),
   recordCapacityClaimFailedRefundRecoveryInlineError: vi.fn(),

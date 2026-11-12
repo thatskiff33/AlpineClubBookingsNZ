@@ -480,7 +480,7 @@ vi.mock("@/lib/logger", () => ({
 const clubFormatMock = vi.hoisted(() => vi.fn());
 const mockLockPaymentForRefundedTotal = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<undefined>>(async () => undefined));
 const mockReadSupersededCaptureHeldBack = vi.hoisted(() =>
-  vi.fn(async () => ({ byTransaction: new Map<string, number>(), totalCents: 0 })),
+  vi.fn<(...args: unknown[]) => Promise<{ byTransaction: Map<string, number>; totalCents: number }>>(async () => ({ byTransaction: new Map(), totalCents: 0 })),
 );
 vi.mock("@/lib/superseded-capture-hold-back", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/superseded-capture-hold-back")),
@@ -2628,14 +2628,12 @@ describe("payment recovery worker", () => {
 
   /** Booking charge, then a newer captured superseded charge. Newest-first reaches the second first. */
   function bookingAndSupersededCharges() {
-    return {
-      id: "payment-1",
-      stripePaymentIntentId: "pi_primary",
-      transactions: [
-        { id: "txn-primary", source: "STRIPE", stripePaymentIntentId: "pi_primary", amountCents: 13_000, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED, createdAt: new Date("2026-05-01T00:00:00.000Z") },
-        { id: "txn-superseded", source: "STRIPE", stripePaymentIntentId: "pi_superseded", amountCents: 6_500, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED, createdAt: new Date("2026-06-01T00:00:00.000Z") },
-      ],
-    };
+    // A bank charge (no intent) is spliced in by one case below.
+    const transactions: { id: string; source: string; stripePaymentIntentId: string | null; amountCents: number; refundedAmountCents: number; status: PaymentStatus; createdAt: Date }[] = [
+      { id: "txn-primary", source: "STRIPE", stripePaymentIntentId: "pi_primary", amountCents: 13_000, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED, createdAt: new Date("2026-05-01T00:00:00.000Z") },
+      { id: "txn-superseded", source: "STRIPE", stripePaymentIntentId: "pi_superseded", amountCents: 6_500, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED, createdAt: new Date("2026-06-01T00:00:00.000Z") },
+    ];
+    return { id: "payment-1", stripePaymentIntentId: "pi_primary", transactions };
   }
 
   it("a missing plan leaves a live superseded capture's charge out of the slices (#4872)", async () => {

@@ -78,7 +78,7 @@ const mocks = vi.hoisted(() => ({
   paymentRefundFindMany: vi.fn().mockResolvedValue([]),
   // #4097: the card refund shortfall's preflight - the Payment row, and the cancel's card refund row.
   lockPaymentForRefundedTotal: vi.fn().mockResolvedValue(undefined),
-  readSupersededCaptureHeldBack: vi.fn(async () => ({ byTransaction: new Map<string, number>(), totalCents: 0 })),
+  readSupersededCaptureHeldBack: vi.fn<(...args: unknown[]) => Promise<{ byTransaction: Map<string, number>; totalCents: number }>>(async () => ({ byTransaction: new Map(), totalCents: 0 })),
   paymentRecoveryOperationFindUnique: vi.fn().mockResolvedValue(null),
   // #4104 review (MM3): the payment's card refunds Stripe failed later, owed by rows of their own.
   failedLaterRecoveryRows: vi.fn((): unknown[] => []),

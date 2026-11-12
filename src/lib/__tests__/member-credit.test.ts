@@ -56,7 +56,7 @@ vi.mock("@/lib/booking-ledger-credit-sync", () => ({
 }));
 
 const mockApplyLocalRefundAllocation = vi.fn();
-const mockReadSupersededCaptureHeldBack = vi.fn(async () => ({ byTransaction: new Map<string, number>(), totalCents: 0 }));
+const mockReadSupersededCaptureHeldBack = vi.fn<(...args: unknown[]) => Promise<{ byTransaction: Map<string, number>; totalCents: number }>>(async () => ({ byTransaction: new Map(), totalCents: 0 }));
 const mockStartXeroSyncOperation = vi.fn();
 const mockKickQueuedXeroOutbox = vi.fn().mockResolvedValue(null);
 const mockRepairLegacyAppliedCreditNoteAllocationsForBooking = vi.fn();

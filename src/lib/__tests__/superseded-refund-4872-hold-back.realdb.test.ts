@@ -20,10 +20,13 @@ import { releaseBookingFinancialHistoryForTeardown } from "./support/booking-fin
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
 
-/** The one shared double: the LAST file to register a factory wins, so every realdb file registers this same one. */
+/** The shared doubles: the LAST file to register a factory wins, so every realdb file registers these same ones. */
 vi.mock("@/lib/stripe", async (importOriginal) =>
   (await import("./support/stripe-race-double")).stripeRaceDouble(await importOriginal()),
 );
+// The approval route imports `@/lib/auth`; the real one loads next-auth, which cannot
+// resolve `next/server` under the harness. `requireAdmin` is spied per call below.
+vi.mock("@/lib/auth", async () => (await import("./support/race-session-double")).raceAuthDouble());
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
