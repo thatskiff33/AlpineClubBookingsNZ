@@ -54,6 +54,8 @@ describe("change-scope: which pull requests can skip a required job's heavy step
     [[".trivyignore"], true],
     [["scripts/ci/first-install-smoke.mjs"], true],
     [["prisma/seed.ts"], true],
+    [["prisma/seed-data.ts"], true],
+    [["prisma/starter-page-content.ts"], true],
     [[".env.example"], true],
     [["prisma/demo-seed.ts"], false],
     [[".github/workflows/ci.yml"], true],

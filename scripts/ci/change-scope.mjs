@@ -77,10 +77,10 @@ export const CHANGE_SCOPES = {
       /^\.dockerignore$/,
       /^\.trivyignore$/,
       // The first-install smoke this job also runs (#4977): its harness, the
-      // seed it runs inside the builder-stage image, and the .env.example it
-      // copies for Compose to parse.
+      // seed it runs inside the builder-stage image with the prisma/ files that
+      // seed imports, and the .env.example it copies for Compose to parse.
       /^scripts\/ci\/first-install-smoke\.mjs$/,
-      /^prisma\/seed\.ts$/,
+      /^prisma\/(?:seed|seed-data|starter-page-content|starter-site-content)\.ts$/,
       /^\.env\.example$/,
       ...WORKFLOW_AND_CLASSIFIER,
     ],
