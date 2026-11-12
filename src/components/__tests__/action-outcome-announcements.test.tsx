@@ -86,7 +86,8 @@ const failures: Array<{
     surface: "switch to internet banking",
     ui: <SwitchToInternetBankingButton bookingId="bk_1" description="Pay by bank." />,
     alertId: "switch-to-internet-banking-bk_1-error",
-    steps: [/Pay by internet banking instead/],
+    // #4958: the switch posts only after the member confirms.
+    steps: [/Pay by internet banking instead/, /^Switch to internet banking$/],
   },
   {
     surface: "guest payment link",
