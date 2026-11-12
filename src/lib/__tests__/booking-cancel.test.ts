@@ -407,6 +407,7 @@ describe("cancelBooking credit refunds", () => {
             bookingEvent: { create: mocks.txBookingEventCreate },
             bookingModification: { findFirst: mocks.txBookingModificationFindFirst, findMany: vi.fn(async () => []) },
             $executeRaw: mocks.txExecuteRaw,
+            promoRedemption: { findFirst: mocks.promoRedemptionFindFirst },
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
             // the double answers with an ACTIVE one and the fence above stays on the
@@ -4234,12 +4235,12 @@ describe("cancelBooking credit refunds", () => {
       // redemption the booking carries inside its own transaction (its
       // two-code behaviour is pinned in multi-promo-redemptions.test.ts).
       expect(mocks.releaseBookingPromoRedemptions).toHaveBeenCalledWith(
-        expect.anything(),
+        mocks.lastTx,
         "bk_nc"
       );
     });
 
-    it("opens no promo transaction for a booking that carries no code (#3826)", async () => {
+    it("releases nothing for a booking that carries no code (#3826)", async () => {
       const booking = neverCapturedBooking();
       mocks.bookingFindUnique.mockResolvedValueOnce(booking);
       mocks.txBookingFindUnique.mockResolvedValueOnce(booking);
@@ -4703,6 +4704,7 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
             manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
             bookingModification: { findFirst: mocks.txBookingModificationFindFirst, findMany: vi.fn(async () => []) },
             $executeRaw: mocks.txExecuteRaw,
+            promoRedemption: { findFirst: mocks.promoRedemptionFindFirst },
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
             // the double answers with an ACTIVE one and the fence above stays on the
@@ -4870,6 +4872,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
             manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
             bookingModification: { findFirst: mocks.txBookingModificationFindFirst, findMany: vi.fn(async () => []) },
             $executeRaw: mocks.txExecuteRaw,
+            promoRedemption: { findFirst: mocks.promoRedemptionFindFirst },
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
             // the double answers with an ACTIVE one and the fence above stays on the
@@ -5168,6 +5171,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
             },
             bookingModification: { findFirst: mocks.txBookingModificationFindFirst, findMany: vi.fn(async () => []) },
             $executeRaw: mocks.txExecuteRaw,
+            promoRedemption: { findFirst: mocks.promoRedemptionFindFirst },
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
             // the double answers with an ACTIVE one and the fence above stays on the
