@@ -2,6 +2,14 @@ import { readFileSync } from "fs";
 import path from "path";
 import { Prisma } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
+
+// Fakes below model a correctly locked caller: the caller-held lock checks
+// (#4929) are proven against PostgreSQL in bed-allocation-lock-held.realdb.test.ts.
+vi.mock("@/lib/global-lock-held", () => ({ assertGlobalLockHeld: vi.fn() }));
+vi.mock("@/lib/lodge-capacity-lock", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/lodge-capacity-lock")>()),
+  assertLodgeCapacityLockHeld: vi.fn(),
+}));
 import { canonicalPartnerPair } from "@/lib/member-partner-link-shared";
 import { BED_ALLOCATION_PRIORITY_VOCABULARY } from "@/lib/bed-allocation-settings";
 
@@ -129,6 +137,11 @@ async function withPrismaRoomDb<T>(
     else prismaMock.lodge = previousLodge;
   }
 }
+
+// Each lock-held entry reads its row's lodge before checking that key (#4929).
+const bedLodgeKey = () => vi.fn().mockResolvedValue({ room: { lodgeId: "lodge-1" } });
+const roomLodgeKey = () => vi.fn().mockResolvedValue({ lodgeId: "lodge-1" });
+const allocationLodgeKeys = () => vi.fn().mockResolvedValue([{ room: { lodgeId: "lodge-1" } }]);
 
 describe("admin bed allocation", () => {
   it("validates date-only allocation ranges", () => {
@@ -407,6 +420,7 @@ describe("admin bed allocation", () => {
     const db = {
       bedAllocation: { findMany },
       lodgeBed: {
+        findUnique: bedLodgeKey(),
         update,
       },
     };
@@ -433,7 +447,7 @@ describe("admin bed allocation", () => {
     const findMany = vi.fn().mockResolvedValue([]);
     const db = {
       bedAllocation: { findMany },
-      lodgeBed: { update: vi.fn().mockResolvedValue({ id: "bed-1" }) },
+      lodgeBed: { findUnique: bedLodgeKey(), update: vi.fn().mockResolvedValue({ id: "bed-1" }) },
       hutLeaderAssignment: { findMany: vi.fn().mockResolvedValue([]) },
     };
 
@@ -464,7 +478,7 @@ describe("admin bed allocation", () => {
     const bedDelete = vi.fn();
     const db = {
       bedAllocation: { findMany },
-      lodgeBed: { delete: bedDelete },
+      lodgeBed: { findUnique: bedLodgeKey(), delete: bedDelete },
       hutLeaderAssignment: { findMany: vi.fn().mockResolvedValue([]) },
     };
 
@@ -494,7 +508,7 @@ describe("admin bed allocation", () => {
     const findMany = vi.fn().mockResolvedValue(rows);
     const db = {
       bedAllocation: { findMany },
-      lodgeBed: { delete: vi.fn() },
+      lodgeBed: { findUnique: bedLodgeKey(), delete: vi.fn() },
       hutLeaderAssignment: { findMany: vi.fn().mockResolvedValue([]) },
     };
 
@@ -585,13 +599,13 @@ describe("manuallyAllocateBedForNights", () => {
     }>;
   }) {
     return {
-    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       bookingGuest: {
         findUnique: vi.fn().mockResolvedValue(input.guest),
       },
       lodgeBed: {
         findUnique: vi.fn().mockResolvedValue(input.bed),
       },
+      lodgeRoom: { findUnique: roomLodgeKey() },
       // #2286: allocateBedNightWithLocksHeld refuses a custodian-held bed-night. No holds in
       // these cases, so every assertion below reads as it did before.
       hutLeaderAssignment: {
@@ -1249,7 +1263,6 @@ describe("same-date allocation moves (#2366)", () => {
     );
 
     return {
-    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       $executeRaw: vi.fn().mockResolvedValue(1),
       bookingGuest: {
         findUnique: vi.fn().mockResolvedValue({
@@ -1278,6 +1291,7 @@ describe("same-date allocation moves (#2366)", () => {
           room: { id: "room-2", lodgeId: "lodge-1", active: true },
         }),
       },
+      lodgeRoom: { findUnique: roomLodgeKey() },
       hutLeaderAssignment: {
         findMany: vi.fn().mockResolvedValue(input.custodianHolds ?? []),
       },
@@ -1541,16 +1555,18 @@ describe("bed type + bunk pairing (#1675)", () => {
     const findMany = vi
       .fn()
       .mockResolvedValue(overrides.groupMembers ?? []);
-    const findUnique = vi
-      .fn()
-      .mockResolvedValue(overrides.existingBed ?? null);
+    // A room projection is the lock-held entry's lodge-key read (#4929).
+    const findUnique = vi.fn(async (args: { select?: { room?: unknown } }) =>
+      args.select?.room
+        ? overrides.existingBed && { room: { lodgeId: "lodge-1" } }
+        : (overrides.existingBed ?? null),
+    );
     // The room-row lock is a tagged-template $executeRaw (#2289: it exists
     // only for the lock, so it returns an affected-row count and is never
     // read); a plain mock suffices.
     const executeRaw = vi.fn().mockResolvedValue(1);
     return {
       db: {
-    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
         $executeRaw: executeRaw,
         lodgeBed: { create, update, findMany, findUnique },
         bedAllocation: {
@@ -2026,7 +2042,6 @@ describe("bunk write transaction self-wrap (#1675)", () => {
 
   it("self-wraps a grouped create and runs the lock, membership check, and write on the tx client", async () => {
     const tx = {
-    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       $executeRaw: vi.fn().mockResolvedValue(1),
       lodgeBed: {
         findMany: vi.fn().mockResolvedValue([{ id: "top", bedType: "BUNK_TOP" }]),
@@ -2069,13 +2084,14 @@ describe("bunk write transaction self-wrap (#1675)", () => {
 
   it("self-wraps a bunk-affecting update and runs the lock, membership check, and write on the tx client", async () => {
     const tx = {
-    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       $executeRaw: vi.fn().mockResolvedValue(1),
       lodgeBed: {
-        findUnique: vi
-          .fn()
-          .mockResolvedValueOnce({ room: { lodgeId: "lodge-1" } })
-          .mockResolvedValue({ roomId: "room-1", bedType: "SINGLE", bunkGroup: null }),
+        // Room projections are the wrapper's and the entry check's lodge reads.
+        findUnique: vi.fn(async (args: { select?: { room?: unknown } }) =>
+          args.select?.room
+            ? { room: { lodgeId: "lodge-1" } }
+            : { roomId: "room-1", bedType: "SINGLE", bunkGroup: null },
+        ),
         findMany: vi.fn().mockResolvedValue([]),
         update: vi
           .fn()
@@ -2151,7 +2167,6 @@ describe("bunk write transaction self-wrap (#1675)", () => {
       .fn()
       .mockImplementation(({ data }) => ({ id: "bed-1", ...data }));
     const tx = {
-    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       $executeRaw: vi.fn().mockResolvedValue(1),
       lodgeBed: {
         findUnique: vi.fn().mockResolvedValue({ room: { lodgeId: "lodge-1" } }),
@@ -3036,7 +3051,7 @@ describe("deleteBedAllocationRoom (#1674 guarded hard delete)", () => {
         : vi.fn().mockResolvedValue({ id: "room-1", name: "Bunkroom" });
     return {
       db: {
-        lodgeRoom: { findFirst: roomFindFirst, delete: roomDelete },
+        lodgeRoom: { findUnique: roomLodgeKey(), findFirst: roomFindFirst, delete: roomDelete },
         bedAllocation: { findFirst: allocationFindFirst },
         lodgeBed: {
           deleteMany: bedDeleteMany,
@@ -3134,9 +3149,9 @@ describe("deleteBedAllocationRoom (#1674 guarded hard delete)", () => {
     // without failing this test. The tx client is a distinct object from the
     // top-level prisma singleton, which has no room/bed methods here.
     const tx = {
-    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       $executeRaw: vi.fn().mockResolvedValue(1),
       lodgeRoom: {
+        findUnique: roomLodgeKey(),
         findFirst: vi
           .fn()
           .mockResolvedValueOnce({ lodgeId: "lodge-1" })
@@ -3284,6 +3299,7 @@ describe("deleteBedAllocation orphan auto-promote (#1743)", () => {
   }) {
     return {
       bedAllocation: {
+        findUnique: bedLodgeKey(),
         delete: vi.fn().mockResolvedValue(input.deleted),
         findFirst: vi.fn().mockResolvedValue(input.partner ?? null),
         update: vi
@@ -3378,6 +3394,7 @@ describe("deleteBedAllocation orphan auto-promote (#1743)", () => {
     const night2 = allocationRow({ id: "alloc-2", stayDate: parseDateOnly("2026-07-02") });
     const db = {
       bedAllocation: {
+        findUnique: bedLodgeKey(),
         delete: vi
           .fn()
           .mockResolvedValueOnce(night1)
@@ -3406,7 +3423,6 @@ describe("deleteBedAllocation orphan auto-promote (#1743)", () => {
       partner: allocationRow({ id: "alloc-partner", isSecondOccupant: true }),
     });
     const tx = {
-    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       ...deleteDb,
       $executeRaw: vi.fn().mockResolvedValue(1),
       bedAllocation: {
@@ -3908,7 +3924,7 @@ describe("bed allocation board member-guest consent exclusion (D-12, #2307)", ()
 describe("approveBedAllocations — booking selector (#2252)", () => {
   it("accepts { bookingId } alone and scopes to that booking's draft rows only", async () => {
     const updateMany = vi.fn().mockResolvedValue({ count: 3 });
-    const db = { bedAllocation: { updateMany } };
+    const db = { bedAllocation: { findMany: allocationLodgeKeys(), updateMany } };
 
     const result = await approveBedAllocations({
       approvedByMemberId: "admin-1",
@@ -3930,7 +3946,7 @@ describe("approveBedAllocations — booking selector (#2252)", () => {
 
   it("only ever stamps rows that are still drafts, so already-approved rows keep their original stamps", async () => {
     const updateMany = vi.fn().mockResolvedValue({ count: 0 });
-    const db = { bedAllocation: { updateMany } };
+    const db = { bedAllocation: { findMany: allocationLodgeKeys(), updateMany } };
 
     await approveBedAllocations({
       approvedByMemberId: "admin-2",
@@ -3945,7 +3961,7 @@ describe("approveBedAllocations — booking selector (#2252)", () => {
 
   it("narrows rather than replaces when a booking is given alongside allocation ids", async () => {
     const updateMany = vi.fn().mockResolvedValue({ count: 1 });
-    const db = { bedAllocation: { updateMany } };
+    const db = { bedAllocation: { findMany: allocationLodgeKeys(), updateMany } };
 
     await approveBedAllocations({
       approvedByMemberId: "admin-1",
@@ -3963,7 +3979,7 @@ describe("approveBedAllocations — booking selector (#2252)", () => {
 
   it("narrows a range approval to the booking when both are given", async () => {
     const updateMany = vi.fn().mockResolvedValue({ count: 1 });
-    const db = { bedAllocation: { updateMany } };
+    const db = { bedAllocation: { findMany: allocationLodgeKeys(), updateMany } };
     const approvalRange = parseBedAllocationDateRange({
       from: "2026-07-01",
       to: "2026-07-08",
@@ -3986,7 +4002,7 @@ describe("approveBedAllocations — booking selector (#2252)", () => {
 
   it("still refuses an approval with no selector at all", async () => {
     const updateMany = vi.fn();
-    const db = { bedAllocation: { updateMany } };
+    const db = { bedAllocation: { findMany: allocationLodgeKeys(), updateMany } };
 
     await expect(
       approveBedAllocations({
@@ -4001,7 +4017,7 @@ describe("approveBedAllocations — booking selector (#2252)", () => {
 
   it("treats an empty allocation id list as no id selector, not as a wildcard", async () => {
     const updateMany = vi.fn().mockResolvedValue({ count: 2 });
-    const db = { bedAllocation: { updateMany } };
+    const db = { bedAllocation: { findMany: allocationLodgeKeys(), updateMany } };
 
     await approveBedAllocations({
       approvedByMemberId: "admin-1",
@@ -4027,7 +4043,7 @@ describe("approveBedAllocations — booking selector (#2252)", () => {
    */
   it("scopes a booking approval to the lodge the panel read, so an off-lodge anomaly row is not swept in", async () => {
     const updateMany = vi.fn().mockResolvedValue({ count: 2 });
-    const db = { bedAllocation: { updateMany } };
+    const db = { bedAllocation: { findMany: allocationLodgeKeys(), updateMany } };
 
     await approveBedAllocations({
       approvedByMemberId: "admin-1",
@@ -4046,7 +4062,7 @@ describe("approveBedAllocations — booking selector (#2252)", () => {
 
   it("keeps a booking approval club-wide when no lodge is given", async () => {
     const updateMany = vi.fn().mockResolvedValue({ count: 2 });
-    const db = { bedAllocation: { updateMany } };
+    const db = { bedAllocation: { findMany: allocationLodgeKeys(), updateMany } };
 
     await approveBedAllocations({
       approvedByMemberId: "admin-1",
@@ -4060,7 +4076,7 @@ describe("approveBedAllocations — booking selector (#2252)", () => {
 
   it("narrows the board's allocation ids to its lodge scope", async () => {
     const updateMany = vi.fn().mockResolvedValue({ count: 2 });
-    const db = { bedAllocation: { updateMany } };
+    const db = { bedAllocation: { findMany: allocationLodgeKeys(), updateMany } };
 
     // The row and lodge selectors compose: the service must not lock lodge-1
     // while approving a supplied id whose room belongs to another lodge.
@@ -4119,6 +4135,7 @@ describe("bed allocation lock semantics are two-way (#2252)", () => {
           room: { id: "room-1", active: true },
         }),
       },
+      lodgeRoom: { findUnique: roomLodgeKey() },
       member: { findMany: vi.fn().mockResolvedValue([]) },
       memberPartnerLink: { findUnique: vi.fn().mockResolvedValue(null) },
       bedAllocation: {
@@ -4162,6 +4179,7 @@ describe("bed allocation lock semantics are two-way (#2252)", () => {
 
     const db = {
       bedAllocation: {
+        findUnique: bedLodgeKey(),
         findFirst: vi.fn(async (args: unknown) => {
           void args;
           return rows[0] ?? null;

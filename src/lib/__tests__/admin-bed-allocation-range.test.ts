@@ -682,26 +682,25 @@ describe("assignBedRange", () => {
    * slipped keystroke in a date field.
    */
   it("refuses an absurd span WITHOUT enumerating it, and before touching the database", async () => {
-    const { db } = buildDb({});
+    vi.mocked(prisma.lodgeBed.findUnique).mockClear();
 
     await expect(
-      assignBedRange({
+      assignBedRangePublic({
         bookingGuestId: "guest-1",
         bedId: "bed-1",
         from: "2026-01-01",
         to: "9999-12-31",
         approvedByMemberId: "admin-1",
-        db: db as never,
       }),
     ).rejects.toThrow(
       `A range assignment covers at most ${MAX_BED_ALLOCATION_ASSIGN_RANGE_NIGHTS} nights`,
     );
 
     expect(eachDateOnlyInRange).not.toHaveBeenCalled();
-    // Validation happens before the guest/bed lookups, so no connection is held
-    // while a nonsense range is being refused.
-    expect(db.bookingGuest.findUnique).not.toHaveBeenCalled();
-    expect(db.lodgeBed.findUnique).not.toHaveBeenCalled();
+    // The public entry validates before its lodge-key lookup and transaction
+    // (the mock has no $transaction), so no connection is held while a
+    // nonsense range is being refused.
+    expect(prisma.lodgeBed.findUnique).not.toHaveBeenCalled();
   });
 
   it("rejects a range whose date out is not after its date in", async () => {

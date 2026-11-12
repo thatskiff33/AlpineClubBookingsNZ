@@ -228,7 +228,7 @@ function putMember(id: string, body: Record<string, unknown>) {
 function mockTransaction() {
   vi.mocked(prisma.$transaction).mockImplementation((async (op: any) =>
     op({
-    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
+      $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       $executeRaw: prisma.$executeRaw,
       member: {
         findUnique: prisma.member.findUnique,

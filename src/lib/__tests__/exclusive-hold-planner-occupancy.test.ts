@@ -1102,7 +1102,7 @@ describe("planner 2 — the lifecycle auto-allocator", () => {
   function buildLifecycleDb(bookings: AnyRow[], overrides: AnyRow = {}) {
     const reconciled = bookings.find((row) => row.id === "booking-ord");
     const db: AnyRow = {
-    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
+      $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       clubModuleSettings: {
         findUnique: vi.fn().mockResolvedValue({ bedAllocation: true }),
       },

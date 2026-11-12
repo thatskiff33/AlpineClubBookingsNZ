@@ -1,5 +1,13 @@
 import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// Fakes below model a correctly locked caller: the caller-held lock checks
+// (#4929) are proven against PostgreSQL in bed-allocation-lock-held.realdb.test.ts.
+vi.mock("@/lib/global-lock-held", () => ({ assertGlobalLockHeld: vi.fn() }));
+vi.mock("@/lib/lodge-capacity-lock", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/lodge-capacity-lock")>()),
+  assertLodgeCapacityLockHeld: vi.fn(),
+}));
 import { parseDateOnly } from "@/lib/date-only";
 
 
@@ -27,7 +35,6 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     $transaction: mocks.transaction,
     $executeRaw: mocks.executeRaw,
     hutLeaderAssignment: { findMany: mocks.hutLeaderAssignmentFindMany },
@@ -130,7 +137,6 @@ function bedRow() {
 /** A transactional client covering every delegate the guarded paths touch. */
 function buildDb(overrides: Record<string, unknown> = {}) {
   return {
-    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     $executeRaw: mocks.executeRaw,
     hutLeaderAssignment: { findMany: mocks.hutLeaderAssignmentFindMany },
     bookingGuest: { findUnique: vi.fn().mockResolvedValue(guestRow()) },
@@ -142,6 +148,8 @@ function buildDb(overrides: Record<string, unknown> = {}) {
       update: vi.fn().mockResolvedValue({ id: "bed-1" }),
     },
     lodgeRoom: {
+      // The lock-held entry's lodge-key read (#4929).
+      findUnique: vi.fn().mockResolvedValue({ lodgeId: "lodge-1" }),
       findFirst: vi.fn().mockResolvedValue({ id: "room-1" }),
       delete: vi.fn().mockResolvedValue({ id: "room-1" }),
       update: vi.fn().mockResolvedValue({ id: "room-1" }),
@@ -383,6 +391,7 @@ describe("chokepoint 5 — bed and room admin guards", () => {
           deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
         },
         lodgeRoom: {
+          findUnique: vi.fn().mockResolvedValue({ lodgeId: "lodge-1" }),
           findFirst: vi.fn().mockResolvedValue({ id: "room-1" }),
           delete: vi.fn().mockRejectedValue(
             p2003(

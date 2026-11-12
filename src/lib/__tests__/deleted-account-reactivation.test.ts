@@ -296,7 +296,7 @@ async function captureAnonymisationPayload(
     fn: (client: unknown) => unknown,
   ) => {
     const tx = {
-    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
+      $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       $executeRaw: vi.fn().mockResolvedValue(1),
       member: {
         count: vi.fn().mockResolvedValue(0),
@@ -663,7 +663,7 @@ describe("#2620 reactivation refusals, one path at a time", () => {
       fn: (client: unknown) => unknown,
     ) =>
       fn({
-    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
+        $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
         $executeRaw: vi.fn().mockResolvedValue(1),
         member: { updateMany, count: vi.fn().mockResolvedValue(2) },
         familyGroupMember: {
