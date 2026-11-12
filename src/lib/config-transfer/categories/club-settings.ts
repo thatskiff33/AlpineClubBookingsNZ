@@ -368,6 +368,14 @@ export const SINGLETONS: SingletonSpec[] = [
     },
     select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
     defaults: () => DEFAULT_MODULE_SETTINGS,
+    // A bundle from before #4932 has no skifieldWhakapapa: there,
+    // skifieldConditions also switched the Whakapapa report on, so it carries
+    // that answer across — as migration 20261212010000 does for a database.
+    reconcile: (incoming) =>
+      "skifieldWhakapapa" in incoming ||
+      typeof incoming.skifieldConditions !== "boolean"
+        ? incoming
+        : { ...incoming, skifieldWhakapapa: incoming.skifieldConditions },
   },
   {
     entity: "booking-defaults",

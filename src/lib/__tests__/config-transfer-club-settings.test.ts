@@ -180,6 +180,43 @@ describe("config-transfer club-settings", () => {
     ]);
   });
 
+  // #4932: before the split, skifieldConditions also switched the Whakapapa
+  // report on, so an older bundle's answer must carry across to the new flag.
+  it.each([true, false])(
+    "carries a pre-#4932 bundle's skifieldConditions=%s to skifieldWhakapapa",
+    async (value) => {
+      const older = Object.fromEntries(
+        Object.entries({ ...MODULES, skifieldConditions: value }).filter(
+          ([key]) => key !== "skifieldWhakapapa",
+        ),
+      );
+      const plan = await clubSettingsImporter.plan({
+        format: CLUB_FORMAT_TEST,
+        db: stubDb({
+          clubModuleSettings: { ...MODULES, skifieldConditions: value, skifieldWhakapapa: !value },
+        }),
+        files: new Map([
+          [
+            "club-settings/club-module-settings.json",
+            strToU8(JSON.stringify(older)),
+          ],
+        ]),
+        manifest: {} as never,
+        mode: "merge",
+        resolutions: new Map(),
+      });
+      expect(plan.errors).toEqual([]);
+      expect(plan.items).toEqual([
+        {
+          entity: "club-module-settings",
+          key: "default",
+          action: "update",
+          changedFields: ["skifieldWhakapapa"],
+        },
+      ]);
+    },
+  );
+
   // #3819 retired #3416's club-wide switch in favour of a per-lodge setting.
   // A bundle from a release that still exported it must import cleanly, and
   // the retired column must neither travel out nor be written in.
