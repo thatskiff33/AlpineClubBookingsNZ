@@ -33,6 +33,7 @@ vi.mock("@/lib/xero-hardening", () => ({
 }));
 
 vi.mock("@/lib/xero-inbound-reconciliation", () => ({
+  processStoredXeroInboundEventBatches: vi.fn(),
   runXeroInboundReconciliationCycle: vi.fn(),
 }));
 
@@ -44,10 +45,17 @@ vi.mock("@/lib/xero-operation-queue", () => ({
   processQueuedXeroOperationRetries: vi.fn(),
 }));
 
+import { withCronRunClaim } from "@/lib/cron-run-claim";
+import { recordCronJobRunSafe } from "@/lib/cron-job-run";
+import {
+  processStoredXeroInboundEventBatches,
+  runXeroInboundReconciliationCycle,
+} from "@/lib/xero-inbound-reconciliation";
 import {
   XeroCronRunnerError,
   runXeroCronTaskList,
   runXeroCronTasks,
+  runXeroWebhookInboundKick,
 } from "@/lib/xero-cron-runner";
 
 describe("xero cron runner", () => {
@@ -397,5 +405,34 @@ describe("xero cron runner", () => {
     });
     await expect(run).rejects.toBeInstanceOf(XeroCronRunnerError);
     expect(recordCronRun).toHaveBeenCalledWith(expect.objectContaining({ jobName: "xero-bank-refund-void-follow-up", status: "FAILURE", error: expect.stringContaining("could not be followed up") }));
+  });
+});
+
+describe("Xero webhook inbound kick (#4922)", () => {
+  const inbound = { batches: 1, found: 1, processed: 1, succeeded: 1, failed: 0, skipped: 0 };
+
+  it("runs the whole cycle with the webhook's bounds under the shared inbound claim, recording no CronRun row", async () => {
+    vi.clearAllMocks();
+    const cycle = { inbound, contactReconciliation: null, membershipReconciliation: null, invoiceReconciliation: null, deletedPaymentRecheck: null };
+    vi.mocked(runXeroInboundReconciliationCycle).mockResolvedValueOnce(cycle as never);
+
+    await expect(runXeroWebhookInboundKick({ batchSize: 2, maxBatches: 3 })).resolves.toEqual({ claimed: true, cycle });
+    expect(withCronRunClaim).toHaveBeenCalledOnce();
+    expect(withCronRunClaim).toHaveBeenCalledWith("xero-inbound-reconcile", expect.any(Function));
+    expect(runXeroInboundReconciliationCycle).toHaveBeenCalledWith({ batchSize: 2, maxBatches: 3 });
+    expect(processStoredXeroInboundEventBatches).not.toHaveBeenCalled();
+    expect(recordCronJobRunSafe).not.toHaveBeenCalled();
+  });
+
+  it("applies stored events only, once, while another run holds the claim", async () => {
+    vi.clearAllMocks();
+    vi.mocked(withCronRunClaim).mockResolvedValueOnce({ claimed: false });
+    vi.mocked(processStoredXeroInboundEventBatches).mockResolvedValueOnce(inbound);
+
+    await expect(runXeroWebhookInboundKick({ batchSize: 2, maxBatches: 3 })).resolves.toEqual({ claimed: false, inbound });
+    expect(withCronRunClaim).toHaveBeenCalledOnce();
+    expect(processStoredXeroInboundEventBatches).toHaveBeenCalledWith({ batchSize: 2, maxBatches: 3 });
+    expect(runXeroInboundReconciliationCycle).not.toHaveBeenCalled();
+    expect(recordCronJobRunSafe).not.toHaveBeenCalled();
   });
 });
