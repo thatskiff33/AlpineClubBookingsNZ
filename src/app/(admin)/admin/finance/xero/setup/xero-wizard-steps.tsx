@@ -18,6 +18,8 @@ import { xeroBaseCurrencyMismatch } from "@/lib/xero-base-currency";
 import { parseInstant, requireInstant, type BoundClubTime } from "@/lib/club-time";
 import { ConnectionStatusPanel } from "../_components/connection-status-panel";
 import { useXeroConnection } from "../_hooks/use-xero-connection";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { useActionFailure } from "@/hooks/use-action-failure";
 import type {
   XeroOrgReadError,
   XeroWizardContext,
@@ -125,7 +127,7 @@ export function CredentialsStep({
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [saving, setSaving] = useStepSaving(helpers);
-  const [error, setError] = useState("");
+  const failure = useActionFailure();
   const [success, setSuccess] = useState("");
 
   const canWrite = context.isFullAdmin;
@@ -149,7 +151,7 @@ export function CredentialsStep({
 
   async function handleSave() {
     setSaving(true);
-    setError("");
+    failure.clear();
     setSuccess("");
     try {
       // Write only the fields the operator actually filled in (Replace flow).
@@ -163,7 +165,7 @@ export function CredentialsStep({
       );
       helpers.refresh();
     } catch (saveError) {
-      setError(
+      failure.fail(
         saveError instanceof Error ? saveError.message : "Failed to save.",
       );
     } finally {
@@ -263,13 +265,11 @@ export function CredentialsStep({
           populated is dropped by some SR/browser pairings — AGENTS.md live-region
           rule / PolicyFeedback convention). The styled box exists only when there
           is a message, so the empty region takes no visible space. */}
-      <div role="alert">
-        {error ? (
-          <div className="rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11">
-            {error}
-          </div>
-        ) : null}
-      </div>
+      <FocusedActionError
+        id="xero-wizard-credentials-error"
+        error={failure.error}
+        attentionKey={failure.attentionKey}
+      />
       <div role="status">
         {success ? (
           <div className="rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
@@ -449,8 +449,15 @@ export function ConnectStep({
   // and never rendered either, so a refused authorisation came back to a wizard
   // that simply said "Not Connected" with no hint of what Xero had objected to.
   const clubTime = useClubTime();
-  const { status, handleDisconnect, error: connectionError } =
-    useXeroConnection();
+  // A failed Disconnect is the one action failure here, kept apart from that
+  // passive pair so it takes focus, again on a repeat (#4975).
+  const {
+    status,
+    handleDisconnect,
+    error: connectionError,
+    disconnectError,
+    disconnectAttention,
+  } = useXeroConnection();
 
   // #3633: Xero books every invoice in the organisation's base currency, and
   // card payments are charged in the club's. A warning only — connecting is
@@ -530,6 +537,11 @@ export function ConnectStep({
           `context.connected` branch below: a load that failed before it learned
           whether Xero is connected still has something to say, and a region
           that is itself conditional is a region screen readers never adopted. */}
+      <FocusedActionError
+        id="xero-wizard-disconnect-error"
+        error={disconnectError}
+        attentionKey={disconnectAttention}
+      />
       <div role="alert">
         {connectionError ? (
           <div className="flex items-start gap-2 rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11">
