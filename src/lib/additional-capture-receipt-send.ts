@@ -10,7 +10,7 @@ import { prisma } from "@/lib/prisma";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { formatCents } from "@/lib/utils";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
-import { completeXeroSyncOperation } from "@/lib/xero-sync";
+import { completeXeroSyncOperation, upsertXeroObjectLink } from "@/lib/xero-sync";
 import { answerKeptLateCaptureRefunds } from "@/lib/kept-late-capture-change-receipt";
 import { CREDIT_RELEASE_PAYMENT_ROLE } from "@/lib/credit-release-xero-payment";
 import { amountDueOn, findRecordedPayment, type InvoiceRead } from "@/lib/additional-capture-receipt-invoice-read";
@@ -70,6 +70,9 @@ export async function sendAdditionalCaptureReceiptLegs(input: {
     if (owned?.paymentID) {
       paymentIds.push(owned.paymentID);
       recoveredExisting = true;
+      // Linked now, before a later leg's create writes its own link: the
+      // refund paths read the oldest link as the first leg.
+      if (plan.legs.length > 1) await upsertXeroObjectLink(receiptLegLink(input, leg, owned.paymentID));
       if (input.fromStore) {
         const other = await input.recorderNowElsewhere();
         if (other) await input.settleOtherRecorder(other, leg.invoiceId);
@@ -118,13 +121,33 @@ export async function sendAdditionalCaptureReceiptLegs(input: {
         reference: input.reference,
         role: ADDITIONAL_CAPTURE_PAYMENT_ROLE,
         createdByMemberId: input.createdByMemberId,
-        metadata: { invoiceId: leg.invoiceId, target: leg.target, amountCents: leg.amountCents, paymentIntentId: input.paymentIntentId },
+        metadata: receiptLegMetadata(leg, input.paymentIntentId),
         date: plan.date,
       }),
     );
   }
   await completeRecordedReceipt(input, { paymentIds, recoveredExisting });
   return paymentIds[0] ?? null;
+}
+
+/** A leg's payment link on the capture's ledger row, naming the invoice it pays. */
+function receiptLegLink(
+  input: { paymentTransactionId: string; paymentIntentId: string },
+  leg: AdditionalCaptureReceiptPlan["legs"][number],
+  paymentId: string,
+) {
+  return {
+    localModel: "PaymentTransaction" as const,
+    localId: input.paymentTransactionId,
+    xeroObjectType: "PAYMENT" as const,
+    xeroObjectId: paymentId,
+    role: ADDITIONAL_CAPTURE_PAYMENT_ROLE,
+    metadata: receiptLegMetadata(leg, input.paymentIntentId),
+  };
+}
+
+function receiptLegMetadata(leg: AdditionalCaptureReceiptPlan["legs"][number], paymentIntentId: string) {
+  return { invoiceId: leg.invoiceId, target: leg.target, amountCents: leg.amountCents, paymentIntentId };
 }
 
 /** Active credit-release links for payments on the invoice just read. The one exclusion #4435 uses. */
@@ -181,14 +204,7 @@ export async function completeRecordedReceipt(
     xeroObjectType: "PAYMENT",
     xeroObjectId: firstPaymentId,
     xeroObjectUrl: buildXeroInvoiceUrl(plan.invoiceId),
-    extraLinks: plan.legs.map((leg, index) => ({
-      localModel: "PaymentTransaction" as const,
-      localId: input.paymentTransactionId,
-      xeroObjectType: "PAYMENT" as const,
-      xeroObjectId: recorded.paymentIds[index] ?? firstPaymentId,
-      role: ADDITIONAL_CAPTURE_PAYMENT_ROLE,
-      metadata: { invoiceId: leg.invoiceId, target: leg.target, amountCents: leg.amountCents, paymentIntentId: input.paymentIntentId },
-    })),
+    extraLinks: plan.legs.map((leg, index) => receiptLegLink(input, leg, recorded.paymentIds[index] ?? firstPaymentId)),
   });
   if (unrecordedCents > 0) {
     const format = await clubFormatValues();

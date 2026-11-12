@@ -79,6 +79,7 @@ vi.mock("@/lib/xero-sync", () => ({
   failXeroSyncOperation: mocks.failXeroSyncOperation,
   sanitizeForJson: (value: unknown) => value,
   startXeroSyncOperation: mocks.startXeroSyncOperation,
+  upsertXeroObjectLink: vi.fn(),
 }));
 vi.mock("@/lib/additional-capture-recorder", () => ({ readCaptureRecorder: mocks.readCaptureRecorder }));
 vi.mock("@/lib/xero-supplementary-invoice-late-capture", () => ({
