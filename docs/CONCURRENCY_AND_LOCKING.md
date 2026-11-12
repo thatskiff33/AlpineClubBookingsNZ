@@ -367,62 +367,58 @@ across the email. `INV-LOCK-002`: no new key or order. `INV-LOCK-003`: no new
 participant to register. The membership cancellation credit note's limit
 above applies to its late PARTIAL too. Proven by the same suite.
 
-### The Xero token refresh uses a row lease, shared across colours (#3454)
+### The Xero token refresh uses a row lease (#3454, #3806)
 
 `xero-token-store.ts` composes no booking, capacity, membership or money
-mutation and takes **no advisory lock**. One rotating refresh token may be
-spent only once, so a refresh first claims a lease with a status-guarded
-`updateMany` (`NULL` or expired → this lease). PostgreSQL re-evaluates that
-predicate after the row lock, so of two simultaneous claimants exactly one wins.
-The losers wait out the lease and re-read. The Xero call runs outside any
-transaction (`INV-INT-003`).
+mutation and takes **no advisory lock** (`INV-LOCK-001`). One rotating refresh
+token may be spent only once, so a refresh first claims a lease with a
+status-guarded `updateMany` on `XeroConnection.refreshInProgressUntil` (`NULL`
+or already expired → this claim's deadline). PostgreSQL re-evaluates that
+predicate after the row lock, so of two simultaneous claimants exactly one
+wins. The loser holds nothing: there is no second row to roll back. It waits
+out the lease and re-reads. The Xero call runs outside any transaction
+(`INV-INT-003`).
 
-**Since #3806 R2 there are two lease rows, claimed together.** The previous
-release (#3454) claims only `XeroToken.refreshInProgressUntil`, so this release
-claims that one first — that is where the two releases exclude each other — and
-then `XeroConnection.refreshInProgressUntil`, the lease that stays when
-`XeroToken` is dropped (R3). If the second is held, the first is rolled back:
-no process holds half a lease. Release and save clear both. While no
-`XeroToken` row exists, only `XeroConnection`'s is claimed.
+**One lease, on `XeroConnection` (id `default`).** #4407 (merge `aca15561a`)
+claimed `XeroToken` and then `XeroConnection`, and a statement trigger kept
+the connection in step, so a #3454 colour still refreshing could not split the
+token. #4456's re-encrypt fence joined that order (`df40ca756`: an expired
+lease is not free). Nothing merged since changed it. This release drops the
+table, both functions and the trigger. `INV-LOCK-002` shrinks to the
+connection row, then the credential-store write — the same relative order R2
+used after its `XeroToken` step. `withCredentialTransaction` is only
+`prisma.$transaction` plus cache invalidation; it does not take a lock before
+the callback. The `XeroToken` writers leave the inventory (`INV-LOCK-003`).
 
-**Lock order: `XeroToken`, then `XeroConnection`.** A statement trigger on
-`XeroToken` syncs `XeroConnection` at the end of each `XeroToken` statement, so
-every writer of either release that touches both tables touches `XeroToken`
-first. The token store's claim, save, release, connect and delete, and the
-data-key re-encrypt's fence (#4456, below), keep that order, so no cycle forms
-with the previous release's writers. The sync is ONE
-statement, reading one snapshot taken once its `XeroConnection` lock is
-granted, so a refresh, connect or disconnect committing while it waits is
-never half-seen and written back stale. It row-locks the connection only to
-change its tenant or expiry, so a lease claim (which changes neither) waits on
-no `XeroConnection` writer; otherwise it waits only for a row another
-transaction is writing or inserting at the same moment. Two connects at the
-same moment can still leave two `XeroToken` rows, as under #3454: every reader
-takes the most recently written one, and the next connect or disconnect
-deletes both (`saveXeroTokens`).
-
-**The claim takes the leases first and reads the tokens second, in the same
-transaction.** The winning `updateMany`s hold both rows' locks until the claim
-commits, and every writer of the token set (a connect, a refresh save, a
-disconnect, a verify-reset, of either release, and the data-key re-encrypt
-through `fenceXeroTokenSetRewrite`) takes one of those rows first. So
-the store copy the claim then reads is the one that belongs to its lease.
-Reading first and claiming second let a reconnect commit between the reads, and
-the refresh then overwrote it (#3454 review).
+**The claim takes the lease first and reads the tokens second, in the same
+transaction.** The winning `updateMany` holds the connection row until the
+claim commits, and every writer of the token set — a connect, a refresh save,
+a disconnect, a verify-reset, and the data-key re-encrypt through
+`fenceXeroTokenSetRewrite` — takes that row first. So the store copy the claim
+then reads is the one that belongs to its lease. A count other than 1 matched
+nothing (no row, or a lease still held). Nothing was taken, so there is
+nothing to roll back. Reading first and claiming second let a reconnect commit
+between the reads, and the refresh then overwrote it (#3454 review).
 
 **Before the Xero call, the refresh proves its save can succeed**
 (`assertXeroTokensCanBeStored`: the auth-secret capture gate). Otherwise it
 refuses without spending the refresh token.
 
-The save is one short transaction with three fences: the lease-guarded
-`XeroToken` update (when a row was claimed), the lease-guarded `XeroConnection`
-update, and a compare-and-set on the credential-store copy against the version
-the claim read under its locks. A reconnect, a later claim or a writer that
-bypassed the leases makes it lose, and losing any rolls back all three.
-`xero-token-credential-store.realdb.test.ts` proves the dual claim and the
-fences against real row locks, including against the previous release's own
-claim statement, and forces both of the trigger's interleavings with a queued
-table lock.
+The save is one short transaction with two fences. The `XeroConnection` update
+is guarded on `refreshInProgressUntil` still being at most this claim's
+deadline; a count other than 1 throws the lease-lost error and writes nothing,
+including the store. When it matches, the lease is cleared and `expiresAt` and
+`tenantId` are written, then the store compare-and-sets on the version the
+claim read. Release clears `refreshInProgressUntil` only when it is still at
+most this claim's deadline. A newer lease is left alone.
+`xero-token-credential-store.realdb.test.ts` proves the single claim, the lost
+save and that release against real row locks.
+
+**Two connects at the same moment can still commit the connection row from one
+grant and the store copy from the other**, because the store write uses
+`expect: "any"`. `tokenSetForConnection` reads a tenant disagreement as
+reconnect-required. That is the remaining limit. `XeroConnection` is a
+singleton, so the old limit of two `XeroToken` rows is gone with the table.
 
 ### The data-key re-encrypt joins the row claims and takes no advisory key (#4456)
 
@@ -437,7 +433,7 @@ already use:
 | Row | Its other writers | How the re-encrypt claims it |
 | --- | --- | --- |
 | `IntegrationCredential` | admin saves and deletes, verify-resets, the Xero connect, refresh and disconnect | `withCredentialTransaction`, the row read on that transaction, then `expect: version`: the `(ciphertext, iv, authTag)` compare-and-set. A writer that commits first makes it lose (`StaleCredentialWriteError`) |
-| the Xero token set (`xero-oauth`/`token-set`) | as above, plus the refresh lease | first `fenceXeroTokenSetRewrite`: the lease rows in the order above, `XeroToken` then `XeroConnection`, each guarded on `refreshInProgressUntil` being NULL. Any lease, held or expired, makes it lose; holding both row locks, it makes a new claim queue and then read the moved row |
+| the Xero token set (`xero-oauth`/`token-set`) | as above, plus the refresh lease | first `fenceXeroTokenSetRewrite`: the `XeroConnection` row only, guarded on `refreshInProgressUntil` being NULL. Any lease, held or expired, makes it lose; holding that row lock, it makes a new claim queue and then read the moved row |
 | `Member.totpSecret` | enrolment, the erasure and retention clears | `updateMany` guarded on the exact value read |
 | `TwoFactorRecoveryCode` (retiring a legacy code) | sign-in's use of a code (itself guarded on the hash it matched and `usedAt: null`), replacement, enrolment, erasure | `updateMany` guarded on the hash read and `usedAt: null`. A lost claim means the code was used or replaced meanwhile, so there is nothing left to retire and no retry |
 
@@ -455,7 +451,7 @@ only its own lease value. An expired lease is cleared by that refresh's save or
 release, or by the next claim; until then the row stays where it is and the
 report says to run again. `data-encryption-key-ring.realdb.test.ts` proves it:
 with the lease held, and with it expired but its refresh still in flight, the
-re-encrypt loses and the refresh saves; queued behind a held `XeroToken` row
+re-encrypt loses and the refresh saves; queued behind a held `XeroConnection` row
 lock in each order, the refresh's save wins and no refresh token is lost.
 
 ## The lock families

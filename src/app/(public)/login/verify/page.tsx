@@ -7,6 +7,7 @@ import {
   getFamilyInviteReturnNonce,
 } from "@/lib/family-invite-return-address";
 import { resolvePostLoginLandingPath } from "@/lib/post-login-landing";
+import { isSecondFactorEnrolled } from "@/lib/second-factor-enrolment";
 import { memberHoldsRetiredRecoveryCodes } from "@/lib/two-factor";
 import { TwoFactorVerifyPanel } from "../two-factor-panels";
 
@@ -72,7 +73,13 @@ export default async function TwoFactorVerifyPage({
     redirect(landing);
   }
 
-  if (!session.user.twoFactorEnrolled || !session.user.twoFactorMethod) {
+  if (
+    !isSecondFactorEnrolled({
+      twoFactorEnabled: false,
+      hasPasskey: session.user.hasPasskey === true,
+      sessionEnrolled: session.user.twoFactorEnrolled === true,
+    })
+  ) {
     // Carry only the explicit deep link across to /login/enroll; that page
     // re-resolves the default the same way, so the detour hop never bakes one in.
     // The #2974 tab-binding nonce rides along too, so the second hop can still
@@ -93,6 +100,7 @@ export default async function TwoFactorVerifyPage({
     <TwoFactorVerifyPanel
       callbackUrl={landing}
       enrolledMethod={session.user.twoFactorMethod}
+      hasPasskey={session.user.hasPasskey === true}
       recoveryCodesRetired={await memberHoldsRetiredRecoveryCodes(session.user.id)}
     />
   );

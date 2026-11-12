@@ -159,7 +159,7 @@ const noRawInput = rawElementRule(
   {
     raw: `Raw <input>: use Input from @/components/ui/input (it takes type="file" too), or MoneyInput or SecretInput for money and secrets. ${ISSUE}`,
     checkbox: `Raw <input type="checkbox">: use Checkbox from @/components/ui/checkbox. ${ISSUE}`,
-    radio: `Raw <input type="radio">: there is no radio primitive yet, so add one to src/components/ui/ and use it, rather than another raw input. ${ISSUE}`,
+    radio: `Raw <input type="radio">: use Radio from @/components/ui/radio. ${ISSUE}`,
   },
   (node) => {
     const typeAttr = attribute(node, "type");

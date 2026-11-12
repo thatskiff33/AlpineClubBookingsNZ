@@ -12,6 +12,7 @@ import { LocalBackupPathError } from "@/lib/backup-local";
 import { restoreLocalBackup } from "@/lib/backup-restore";
 import { getActiveBackupRun } from "@/lib/backup-run";
 import logger from "@/lib/logger";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 // POST /api/admin/backups/restore — restore a local backup over the LIVE database.
 //
@@ -60,6 +61,8 @@ export async function POST(request: Request) {
     );
   }
 
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
   const parsed = bodySchema.safeParse(json.body);

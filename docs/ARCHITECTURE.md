@@ -3256,8 +3256,7 @@ Operational Xero handles member/contact sync, booking invoices, payments,
 credit notes, item codes, contact groups, inbound webhooks, local caches, retry
 queues, and usage metering. Xero tokens are encrypted at rest in the
 credential store. OAuth token refresh uses a short database-backed lease on the
-`XeroConnection` row (and, until #3806 R3, on the previous release's
-`XeroToken` row too) so multiple app workers cannot use the same rotating
+`XeroConnection` row only, so multiple app workers cannot use the same rotating
 refresh token.
 Internet Banking bookings use this boundary to issue invoice-backed payment
 instructions and reconcile settlement from inbound Xero invoice/payment state.

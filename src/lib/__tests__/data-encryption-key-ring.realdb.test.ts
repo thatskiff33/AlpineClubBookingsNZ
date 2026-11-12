@@ -23,8 +23,8 @@
  *      after AUTH_SECRET is rotated, and a later ring key moves them again;
  *   6. (PR 2) a Xero token refresh racing the re-encrypt loses or wins cleanly
  *      and no refresh token is lost: with the lease held the re-encrypt loses
- *      and the refresh saves; forced to queue on the same `XeroToken` row lock,
- *      whichever goes first, the refresh's save still succeeds.
+ *      and the refresh saves; forced to queue on the same `XeroConnection` row
+ *      lock, whichever goes first, the refresh's save still succeeds.
  *
  * OFF by default, like every `*.realdb.test.ts`: it runs only with
  * `RUN_CONCURRENCY_RACE_TESTS=1` against `CONCURRENCY_RACE_DATABASE_URL`
@@ -106,7 +106,6 @@ let observerClient: PrismaClient;
     // connection the race tests make (the Xero suite clears these tables too).
     await prisma.member.deleteMany({ where: { id: MEMBER_ID } });
     await prisma.auditLog.deleteMany({ where: { entityId: { in: [MEMBER_ID, XERO_TOKEN_ENTITY] } } });
-    await prisma.xeroToken.deleteMany();
     await prisma.xeroConnection.deleteMany();
     await prisma.integrationCredential.deleteMany({ where: { provider: { in: ["xero-oauth", "google"] } } });
     await prisma.auditLog.deleteMany({ where: { entityId: { startsWith: "google:" } } });
@@ -641,16 +640,16 @@ let observerClient: PrismaClient;
     });
 
     // Row-lock waiters are granted in arrival order, so each case queues its two
-    // writers one at a time behind a held `XeroToken` lock to choose who goes first.
+    // writers one at a time behind a held `XeroConnection` lock to choose who goes first.
     it.each(["the refresh claim", "the re-encrypt"] as const)(
-      "queued behind the XeroToken row lock with %s first, no refresh token is lost",
+      "queued behind the XeroConnection row lock with %s first, no refresh token is lost",
       async (first) => {
         await connectLegacy();
         const held = deferred();
         const release = deferred();
         const holder = holderClient.$transaction(
           async (tx) => {
-            await tx.$executeRaw`SELECT 1 FROM "XeroToken" FOR UPDATE`;
+            await tx.$executeRaw`SELECT 1 FROM "XeroConnection" FOR UPDATE`;
             held.resolve();
             await release.promise;
           },

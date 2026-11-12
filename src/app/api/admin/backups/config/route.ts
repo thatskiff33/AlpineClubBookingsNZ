@@ -27,6 +27,7 @@ import {
   resolveLocalBackupSelection,
 } from "@/lib/backup-local";
 import logger from "@/lib/logger";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 // POST /api/admin/backups/config — write non-secret backup configuration.
 //
@@ -85,6 +86,8 @@ export async function POST(request: Request) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
   const parsed = bodySchema.safeParse(json.body);

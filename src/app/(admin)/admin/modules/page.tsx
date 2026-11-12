@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { adminHref } from "@/lib/admin-hubs";
 
@@ -214,7 +215,7 @@ export default function AdminModulesPage() {
     setSavedMessage("");
 
     try {
-      const response = await fetch("/api/admin/modules", {
+      const response = await fetchWithRecentAuth("/api/admin/modules", {
         method: "PUT",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },

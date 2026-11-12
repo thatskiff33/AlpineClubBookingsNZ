@@ -3,6 +3,7 @@ import { randomBytes } from "crypto";
 import bcrypt from "bcryptjs";
 
 import { prisma } from "@/lib/prisma";
+import { memberHasStoredPasskey, verifyPasskeyAssertion } from "@/lib/webauthn";
 import {
   isReauthFactor,
   type ReauthFactor,
@@ -49,29 +50,26 @@ export type ReauthProofResult =
     };
 
 /**
- * Whether this member has a passkey (#4617).
- *
- * The only writer of a true answer is that child. Until it lands, nobody has
- * one, and step-up does not treat a client flag as possession.
+ * Whether this member has a passkey (#4617). A client flag is not possession:
+ * the answer is a credential row.
  */
-export function memberHasPasskey(memberId: string): boolean {
-  // #4617 looks the member up. Nothing is stored yet, so the answer is no.
-  void memberId;
-  return false;
+export async function memberHasPasskey(memberId: string): Promise<boolean> {
+  return memberHasStoredPasskey(memberId);
 }
 
 /**
- * Verify a passkey assertion for step-up (#4617 replaces the body).
- *
- * A call today never succeeds, so a client cannot forge a passkey proof.
+ * Verify a passkey assertion for step-up (#4617). The same check as sign-in.
+ * A failed assertion returns false; the caller counts the lockout.
  */
 export async function verifyReauthPasskey(
   memberId: string,
   assertion: unknown,
 ): Promise<boolean> {
-  void memberId;
-  void assertion;
-  return false;
+  const result = await verifyPasskeyAssertion(memberId, assertion, {
+    kind: "member",
+    memberId,
+  });
+  return result.ok;
 }
 
 export function memberHasAuthenticatorApp(member: {
@@ -92,15 +90,15 @@ export function memberHasAuthenticatorApp(member: {
  * An authenticator app when they have one, a passkey when they have one, and
  * the password only when they have neither. An emailed code is never a factor.
  */
-export function reauthFactorsFor(member: {
+export async function reauthFactorsFor(member: {
   id: string;
   twoFactorEnabled: boolean;
   twoFactorMethod: string | null;
   totpSecret: string | null;
-}): ReauthFactor[] {
+}): Promise<ReauthFactor[]> {
   const factors: ReauthFactor[] = [];
   if (memberHasAuthenticatorApp(member)) factors.push("TOTP");
-  if (memberHasPasskey(member.id)) factors.push("PASSKEY");
+  if (await memberHasPasskey(member.id)) factors.push("PASSKEY");
   if (factors.length === 0) factors.push("PASSWORD");
   return factors;
 }
@@ -206,7 +204,7 @@ export async function proveSessionReauth(input: {
   assertion?: unknown;
 }): Promise<ReauthProofResult> {
   const { member } = input;
-  const factors = reauthFactorsFor(member);
+  const factors = await reauthFactorsFor(member);
 
   if (factors.includes("TOTP") || factors.includes("PASSKEY")) {
     const locked = getActiveTwoFactorLockout(member);

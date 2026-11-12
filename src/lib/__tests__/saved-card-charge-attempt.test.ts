@@ -329,10 +329,10 @@ function settle(
 }
 
 /**
- * Seed an attempt row as `begin` leaves it, but under the `_v2` key, which this
- * release reads and #4682 will mint. No release before #4646 ever wrote one,
- * so every seeded scenario below proves the readers accept the shape the mint
- * has not switched to yet; `begin`'s own rows carry the original key.
+ * Seed an attempt row as `begin` leaves it: a `_v2` key built from the row's
+ * own id, the shape a new attempt mints (#4682). A caller that passes its own
+ * `reference` seeds another shape — an original-key row from an earlier
+ * release — which is re-sent under that stored key, never rebuilt.
  */
 function seedAttempt(partial: Partial<LedgerRow> = {}): LedgerRow {
   const id = partial.id ?? `txn_seeded_${ledger.rows.length + 1}`;
@@ -360,8 +360,7 @@ beforeEach(() => {
 
 /**
  * The original key, spelled out here rather than built by the module, so the
- * tests pin it: what the release before #4646 minted and recognises, and what
- * this one still mints until #4682.
+ * tests pin it: what a release before #4682 minted. This one mints `_v2`.
  */
 const originalKey = (bookingId: string, rowId: string) => `pending_charge_${bookingId}_${rowId}`;
 
@@ -417,9 +416,9 @@ describe("the key and the metadata (INV-SSOT)", () => {
     expect(new Set(Object.values(SAVED_CARD_CHARGE_REASON)).size).toBe(3);
   });
 
-  it("#4682: the mint is the ORIGINAL key until every release that can run reads `_v2` (read first, write later)", () => {
-    expect(mintedSavedCardChargeKey("bk", "txn")).toBe(originalKey("bk", "txn"));
-    expect(savedCardChargeKeyShape(mintedSavedCardChargeKey("bk", "txn"), "bk", "txn")).toBe("no_attempt_id");
+  it("#4682: the mint is the `_v2` key, whose sends name the attempt", () => {
+    expect(mintedSavedCardChargeKey("bk", "txn")).toBe(savedCardChargeIdempotencyKey("bk", "txn"));
+    expect(savedCardChargeKeyShape(mintedSavedCardChargeKey("bk", "txn"), "bk", "txn")).toBe("names_attempt");
   });
 
   it("re-sends a key only inside Stripe's 24-hour window, with an hour of margin", () => {
@@ -428,7 +427,7 @@ describe("the key and the metadata (INV-SSOT)", () => {
 });
 
 describe("beginSavedCardChargeAttempt", () => {
-  it("fresh: creates a PENDING PRIMARY Stripe row carrying the card and the path's reason, then stamps its reference with the ORIGINAL key built from ITS OWN id (#4682 flips it)", async () => {
+  it("fresh: creates a PENDING PRIMARY Stripe row carrying the card and the path's reason, then stamps its reference with the `_v2` key built from ITS OWN id (#4682)", async () => {
     const attempt = await begin(CARD, SAVED_CARD_CHARGE_REASON.adminConfirmPendingGuests);
 
     expect(attempt.kind).toBe("fresh");
@@ -443,9 +442,8 @@ describe("beginSavedCardChargeAttempt", () => {
       reason: "admin_confirm_pending_guests_charge",
       stripePaymentIntentId: null,
     });
-    // Read first, write later (#4646): the release before #4646 recognises only
-    // this shape as an attempt row, so a `_v2` row it met would be re-minted.
-    expect(created.reference).toBe(originalKey(BOOKING, created.id));
+    // #4682: a new attempt's key names the row, so a lost answer can be adopted.
+    expect(created.reference).toBe(savedCardChargeIdempotencyKey(BOOKING, created.id));
     expect(attempt.idempotencyKey).toBe(created.reference);
     expect(attempt.staleIntentIdsToCancel).toEqual([]);
     // Two statements, one transaction: the create cannot know its own id.
@@ -901,7 +899,7 @@ describe("beginSavedCardChargeAttempt", () => {
 describe("chargeSavedCardAttempt", () => {
   const succeeded = { id: "pi_new", status: "succeeded", amount: 10000, payment_method: "pm_1" };
 
-  it("fresh: charges under the row's ORIGINAL key with the shared { bookingId, memberId } metadata, and nothing else — no attempt id until #4682", async () => {
+  it("fresh: charges under the row's `_v2` key with { bookingId, memberId, savedCardAttemptId }, and nothing else (#4682)", async () => {
     const attempt = await begin();
     mocks.chargePaymentMethod.mockResolvedValue(succeeded);
 
@@ -914,8 +912,8 @@ describe("chargeSavedCardAttempt", () => {
       // from `format` inside stripe.ts, so a caller cannot pass a second answer.
       customerId: "cus_1",
       paymentMethodId: "pm_1",
-      metadata: { bookingId: BOOKING, memberId: MEMBER },
-      idempotencyKey: originalKey(BOOKING, attempt.attemptRowId),
+      metadata: { bookingId: BOOKING, memberId: MEMBER, savedCardAttemptId: attempt.attemptRowId },
+      idempotencyKey: savedCardChargeIdempotencyKey(BOOKING, attempt.attemptRowId),
       format: CLUB_FORMAT_TEST,
     });
     expect(mocks.getPaymentIntent).not.toHaveBeenCalled();
@@ -1302,7 +1300,10 @@ describe("cross-path scenarios (the property the owner chose)", () => {
     await charge(admin);
 
     expect(mocks.chargePaymentMethod).toHaveBeenLastCalledWith(
-      expect.objectContaining({ idempotencyKey: admin.idempotencyKey, metadata: { bookingId: BOOKING, memberId: MEMBER } })
+      expect.objectContaining({
+        idempotencyKey: admin.idempotencyKey,
+        metadata: { bookingId: BOOKING, memberId: MEMBER, savedCardAttemptId: admin.attemptRowId },
+      })
     );
     expect(ledger.rows.map((r) => r.status)).toEqual([PaymentStatus.FAILED, PaymentStatus.PENDING]);
   });
@@ -1517,7 +1518,7 @@ describe("adoptSavedCardChargeAttemptForIntent (a webhook for an intent the ledg
   const sentMetadata = (attemptRowId: string) => ({ bookingId: BOOKING, memberId: MEMBER, savedCardAttemptId: attemptRowId });
   /**
    * #4646: adoption by metadata needs a `_v2` row, the only shape whose sends
-   * carry the attempt id. Nothing mints one until #4682, so it is seeded.
+   * carry the attempt id. Seeded directly, in the same shape `begin` mints.
    */
   const seedV2Attempt = () => {
     const seeded = seedAttempt();
@@ -1595,15 +1596,21 @@ describe("adoptSavedCardChargeAttemptForIntent (a webhook for an intent the ledg
       expect(await adopt({ idempotencyKey: null, metadata: sentMetadata(attempt.attemptRowId) })).toBeNull();
     });
 
-    it("the stated limit until #4682: a fresh attempt sends no attempt id, so its asynchronous capture is adopted by nothing", async () => {
+    it("a fresh attempt whose answer was lost is adopted when the event has no key", async () => {
       const attempt = await begin();
       mocks.chargePaymentMethod.mockRejectedValueOnce(Object.assign(new Error("socket hang up"), { code: "ECONNRESET" }));
       await expect(charge(attempt)).rejects.toBeDefined();
       const [{ metadata: sent }] = mocks.chargePaymentMethod.mock.calls[0] as [{ metadata: Record<string, string> }];
-      expect(sent).toEqual({ bookingId: BOOKING, memberId: MEMBER });
+      expect(sent).toEqual({ bookingId: BOOKING, memberId: MEMBER, savedCardAttemptId: attempt.attemptRowId });
 
-      expect(await adopt({ idempotencyKey: null, metadata: sent })).toBeNull();
-      expect(row(attempt.attemptRowId)).toMatchObject({ status: PaymentStatus.PENDING, stripePaymentIntentId: null });
+      expect(await adopt({ idempotencyKey: null, metadata: sent })).toEqual({
+        transactionId: attempt.attemptRowId,
+        ledgerStatus: PaymentStatus.SUCCEEDED,
+        keptExistingRow: false,
+        moved: true,
+        newlyCaptured: true,
+      });
+      expect(row(attempt.attemptRowId)).toMatchObject({ stripePaymentIntentId: "pi_lost", status: PaymentStatus.SUCCEEDED });
     });
 
     it("uses the metadata when the event names a request whose key is not a saved-card key", async () => {

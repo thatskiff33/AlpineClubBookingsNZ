@@ -59,10 +59,15 @@ for (const { rawPath, resolverPath } of routes) {
   actualAreaByRoute[rawPath] = requirement?.area ?? "__unresolved__";
 }
 
-// Only route that intentionally resolves to the `overview` catch-all: the
-// cross-area pending-counts aggregate that feeds the sidebar badges. Every
-// other overview landing is an unmapped route and a real finding.
-const OVERVIEW_ALLOWLIST = ["/api/admin/pending-counts"] as const;
+// Routes that intentionally resolve to the `overview` catch-all. Every other
+// overview landing is an unmapped route and a real finding.
+//   - pending-counts: the cross-area badge aggregate.
+//   - menu-role: the sidebar preference (C14 #4811). The catch-all is not the
+//     gate; the handler admits any admin and answers 404 while hubs are off.
+const OVERVIEW_ALLOWLIST = [
+  "/api/admin/pending-counts",
+  "/api/admin/menu-role",
+] as const;
 
 // Frozen snapshot of the COMPLETE /api/admin route -> area assignment, derived
 // from getAdminRouteRequirement() over the working tree. See the
@@ -75,8 +80,9 @@ const OVERVIEW_ALLOWLIST = ["/api/admin/pending-counts"] as const;
 //     records).
 //   - /api/admin/members/[id]/lodge-access -> membership (a member attribute
 //     written from member admin, governed by membership:edit).
-//   - /api/admin/pending-counts -> overview (the cross-area badge aggregate; the
-//     only intended overview API route).
+//   - /api/admin/pending-counts -> overview (the cross-area badge aggregate).
+//   - /api/admin/menu-role -> overview (the sidebar preference; the handler's
+//     any-admin check is the gate, not this catch-all).
 //   - member-prefix finance carve-outs (credits, xero-link/push/unlink) ->
 //     finance via SPECIAL_ROUTE_AREA_PATTERNS, not membership.
 const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
@@ -420,6 +426,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/membership-types/[id]/merge": "membership",
   "/api/admin/membership-types/reorder": "membership",
   "/api/admin/membership-types/roll-forward": "membership",
+  // The role-menu cookie (C14 #4811). The path has no area of its own, so it
+  // lands on the overview catch-all; the handler's `any-admin` is the gate.
+  "/api/admin/menu-role": "overview",
   "/api/admin/modules": "support",
   "/api/admin/mountain-conditions": "content",
   "/api/admin/notification-delivery-policies": "support",

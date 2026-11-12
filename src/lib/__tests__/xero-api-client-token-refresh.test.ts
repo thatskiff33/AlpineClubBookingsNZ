@@ -58,13 +58,11 @@ import {
   XeroReconnectRequiredError,
 } from "@/lib/xero-api-client";
 
-/** What a won claim hands back for the save and the release (#3806 R2). */
+/** What a won claim hands back for the save and the release. */
 function makeLease(leaseUntil: Date) {
   return {
     leaseUntil,
-    tokenRowId: "xero-token-1",
     storeVersion: "store-v1",
-    mirror: "mirror-fingerprint",
   };
 }
 

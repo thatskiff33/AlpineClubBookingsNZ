@@ -862,14 +862,13 @@ export function canAccessRoomsBedsPage(
   return matrix.lodge !== "none" || matrix.bookings !== "none";
 }
 
-/**
- * Finance portal access derives from the merged finance area level of the
- * admin permission matrix: view ⇒ finance viewer, edit ⇒ finance manager.
- * Seeded "Treasurer" is finance edit and "Finance Viewer" is finance view,
- * both club-editable like any other definition-backed role.
- */
+/** `/finance` access = finance level (view ⇒ viewer, edit ⇒ manager); the
+ *  matrix form is the sidebar link's rule too (#108), so they cannot differ. */
+export const FINANCE_WORKSPACE_PATH = "/finance";
+export const hasFinanceViewerAccessFromMatrix = (m: AdminPermissionMatrix) =>
+  LEVEL_RANK[m.finance] >= LEVEL_RANK.view;
 export function hasFinanceViewerAccess(input: AdminPermissionInput) {
-  return LEVEL_RANK[getAdminPermissionMatrix(input).finance] >= LEVEL_RANK.view;
+  return hasFinanceViewerAccessFromMatrix(getAdminPermissionMatrix(input));
 }
 
 /**

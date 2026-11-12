@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { AppProviders } from "@/components/app-providers";
 import { guardAdminLayout } from "@/lib/admin-layout-guard";
@@ -14,6 +15,11 @@ import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { getAiAssistantAvailability } from "@/lib/ai-assistant-config";
 import { adminHref } from "@/lib/admin-hubs";
+import { ADMIN_HUBS_LIVE } from "@/lib/admin-hubs/release";
+import {
+  ADMIN_MENU_ROLE_COOKIE,
+  resolveAdminMenu,
+} from "@/lib/admin-menu-role";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { getWebsiteThemeRenderState } from "@/lib/club-theme";
 import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
@@ -38,12 +44,26 @@ export default async function AdminLayout({
   const guard = await guardAdminLayout();
   if (guard.outcome === "redirect") redirect(guard.destination);
 
-  const { member, user, permissionMatrix, isFullAdmin: actorIsFullAdmin, nonce } =
-    guard;
+  const {
+    member,
+    user,
+    permissionMatrix,
+    isFullAdmin: actorIsFullAdmin,
+    adminNavPanels,
+    nonce,
+  } = guard;
   const canManageContent = hasAdminAreaAccess(member, {
     area: "content",
     level: "edit",
   });
+  // The cookie is a menu preference. It is not read while hubs are off, and
+  // it is never passed to the palette, the help widget or a guard.
+  const menu = ADMIN_HUBS_LIVE
+    ? resolveAdminMenu(
+        member,
+        (await cookies()).get(ADMIN_MENU_ROLE_COOKIE)?.value,
+      )
+    : null;
   const showOnboardingWizard = guard.showOnboardingWizard;
   const [effectiveModules, theme, lodgeCapacity, clubIdentity, clubFormat] =
     await Promise.all([
@@ -76,14 +96,18 @@ export default async function AdminLayout({
         >
           Skip to main content
         </a>
-        <NavBar user={user} features={effectiveModules} />
+        <NavBar user={user} features={effectiveModules} surface="staff" />
         <HelpWidgetProvider>
         <div className="flex flex-1 flex-col md:flex-row">
           <AdminSidebar
             features={effectiveModules}
             permissionMatrix={permissionMatrix}
             isFullAdmin={actorIsFullAdmin}
+            panels={adminNavPanels}
             hutLeaderLabel={liveClubIdentity.hutLeaderLabel}
+            menuHubKeys={menu?.hubKeys}
+            menuRoles={menu?.roles}
+            selectedMenuRole={menu?.selected}
           />
           <AdminCommandPalette
             features={effectiveModules}

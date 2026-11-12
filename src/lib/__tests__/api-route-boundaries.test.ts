@@ -77,6 +77,19 @@ function hasMemberGuard(contents: string) {
   );
 }
 
+// Passkey ceremonies share one guard module. Recognising the call is only a
+// session marker when that module's function actually loads the two-factor
+// session — the pin in this file reads the function body and fails if the
+// call is removed.
+function hasPasskeySessionGuard(fileContents: string, methodBody: string) {
+  return (
+    /\bguardPasskeyRequest\s*\(/.test(methodBody) &&
+    /import\s*\{[^}]*\bguardPasskeyRequest\b[^}]*\}\s*from\s*["'](?:\.\.\/)+guard["']/.test(
+      fileContents,
+    )
+  );
+}
+
 function hasFinanceGuard(contents: string) {
   return (
     /\brequireFinance(?:Viewer|Manager)ApiAccess\s*\(/.test(contents) ||
@@ -210,7 +223,11 @@ describe("API route boundary metadata", () => {
           `${routePath}: cron/deploy route lacks cron secret guard marker`,
         ];
       }
-      if (boundary === "member" && !hasMemberGuard(contents)) {
+      if (
+        boundary === "member" &&
+        !hasMemberGuard(contents) &&
+        !hasPasskeySessionGuard(contents, contents)
+      ) {
         return [`${routePath}: member route lacks active-session guard marker`];
       }
 
@@ -343,7 +360,13 @@ describe("API route boundary metadata", () => {
       const bodies = extractMethodBodies(routeContents(routePath));
 
       return Object.entries(bodies).flatMap(([method, body]) => {
-        if (hasMemberGuard(body) || /\bauth\s*\(/.test(body)) return [];
+        if (
+          hasMemberGuard(body) ||
+          hasPasskeySessionGuard(routeContents(routePath), body) ||
+          /\bauth\s*\(/.test(body)
+        ) {
+          return [];
+        }
 
         const documented = documentedMethods[method];
         if (documented && documented.boundary === "public") return [];
@@ -355,6 +378,17 @@ describe("API route boundary metadata", () => {
     });
 
     expect(violations).toEqual([]);
+  });
+
+  it("keeps the shared passkey guard on the two-factor session", () => {
+    const contents = fs.readFileSync(
+      path.join(process.cwd(), "src/app/api/auth/2fa/webauthn/guard.ts"),
+      "utf8",
+    );
+    const bodies = extractLocalFunctionBodies(contents);
+    expect(bodies.guardPasskeyRequest ?? "").toMatch(
+      /\brequireTwoFactorApiSession\s*\(/,
+    );
   });
 
   // -------------------------------------------------------------------------
