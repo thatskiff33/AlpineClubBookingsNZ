@@ -635,6 +635,7 @@ function booleanFlag(value: string | null | undefined): boolean | "invalid" | un
 const STACK_SCRIPTS = [
   "scripts/run-production-blue-green-deploy.sh",
   "scripts/e2e-stack.sh",
+  "scripts/load-stack.sh",
 ];
 
 function composeCombinations(): string[][] {
@@ -781,6 +782,8 @@ describe("GUARD B: the rendered compose environment (INV-CONFIG-004)", () => {
     expect(combinations.map((files) => files.join(" + ")).sort()).toEqual([
       "docker-compose.yml",
       "docker-compose.yml + docker-compose.staging.yml",
+      "docker-compose.yml + docker-compose.staging.yml + load/compose.stripe-stub.yml",
+      "docker-compose.yml + docker-compose.staging.yml + load/compose.stripe-stub.yml + load/compose.cron-on.yml",
     ]);
   });
 
