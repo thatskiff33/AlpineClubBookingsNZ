@@ -102,6 +102,7 @@ function billingTransactionClient() {
   };
 }
 
+import { setXeroInvoicingEnabled } from "@/lib/__tests__/helpers/xero-invoicing-guard-mock";
 import {
   buildComponentLineDescription,
   buildSubscriptionBillingPreview,
@@ -256,6 +257,27 @@ describe("membership subscription billing", () => {
    * is on 1 July, Denver still on 30 June. Any implementation that reads the
    * environment, the host, or the UTC clock answers 2026-07-01 and fails.
    */
+  // #4986 (INV-INT-038): approval billing writes charges that go out through the
+  // Xero outbox. With the module off it builds nothing and says why, so the
+  // approval can tell the officer to record payment manually.
+  it("approval billing with Xero off builds no preview, freezes no charge and reports it", async () => {
+    setXeroInvoicingEnabled(false);
+    try {
+      const result = await queueApprovedMembershipSubscriptionCharges({
+        memberIds: ["member-1"],
+        approvedByMemberId: "admin-1",
+      });
+      expect(result).toEqual({ chargeIds: [], exceptionCount: 0, xeroInvoicingOff: true });
+      expect(mocks.members.findMany).not.toHaveBeenCalled();
+      expect(mocks.executeRaw).not.toHaveBeenCalled();
+      expect(mocks.billingExceptions.updateMany).not.toHaveBeenCalled();
+      expect(mocks.billingExceptions.upsert).not.toHaveBeenCalled();
+      expect(mocks.enqueueChargeOperation).not.toHaveBeenCalled();
+    } finally {
+      setXeroInvoicingEnabled(true);
+    }
+  });
+
   describe("the default decision date", () => {
     // One block below pins its own instant to put the club's day on a season edge;
     // the root hook re-freezes the DEFAULT rather than a suite's pin, so hand it

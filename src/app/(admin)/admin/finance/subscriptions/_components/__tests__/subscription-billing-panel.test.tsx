@@ -20,6 +20,10 @@ vi.mock("@/components/confirm-dialog", () => ({
   useConfirm: () => ({ confirm: mocks.confirm, confirmDialog: null }),
 }));
 
+import {
+  MISSING_XERO_ACCOUNT_MAPPING_CODE,
+  SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE,
+} from "@/lib/xero-invoicing-off";
 import { SubscriptionBillingPanel } from "@/app/(admin)/admin/finance/subscriptions/_components/subscription-billing-panel";
 
 /**
@@ -136,6 +140,47 @@ describe("subscription billing panel", () => {
     expect(screen.getByRole("button", { name: "Retry" }).hasAttribute("disabled")).toBe(true);
     expect(screen.getAllByText("Configure billing")).toHaveLength(1);
     expect(screen.getByText("Open exceptions").nextSibling?.textContent).toBe("1");
+  });
+
+  // #4986 (INV-INT-038): a club without Xero gets a plain notice, not a dead
+  // end pointing at the hidden mappings screen, and cannot queue invoices that
+  // would wait for Xero and go out late.
+  function xeroPayload(enabled: boolean, awaitingXeroCount: number) {
+    const body = payload();
+    const mappingException = {
+      fingerprint: "mapping",
+      code: MISSING_XERO_ACCOUNT_MAPPING_CODE,
+      message: "Set the subscription income account in Xero mappings",
+    };
+    return {
+      ...body,
+      preview: { ...body.preview, exceptions: [...body.preview.exceptions, mappingException] },
+      xeroInvoicing: { enabled, awaitingXeroCount },
+    };
+  }
+
+  it("with Xero off, explains why, hides the mapping exception and disables Confirm and Retry (#4986)", async () => {
+    mocks.canEdit.mockReturnValue(true);
+    vi.stubGlobal("fetch", vi.fn(() => successResponse(xeroPayload(false, 1) as never)));
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    expect(await screen.findByText("Subscription invoicing needs Xero")).toBeTruthy();
+    expect(screen.getByText(new RegExp(SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE.replace(/[().]/g, "\\$&")))).toBeTruthy();
+    expect(screen.getByText("1 charge is waiting for Xero")).toBeTruthy();
+    expect(screen.queryByText("Set the subscription income account in Xero mappings")).toBeNull();
+    expect(screen.getByText("Open exceptions").nextSibling?.textContent).toBe("1");
+    expect(screen.getByRole("button", { name: "Confirm and queue annual batch" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Retry" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("with Xero on, shows the mapping exception and leaves Confirm and Retry live (control, #4986)", async () => {
+    mocks.canEdit.mockReturnValue(true);
+    vi.stubGlobal("fetch", vi.fn(() => successResponse(xeroPayload(true, 0) as never)));
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    expect(await screen.findByText("Set the subscription income account in Xero mappings")).toBeTruthy();
+    expect(screen.queryByText("Subscription invoicing needs Xero")).toBeNull();
+    expect(screen.queryByText(/waiting for Xero/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Confirm and queue annual batch" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "Retry" }).hasAttribute("disabled")).toBe(false);
   });
 
   it("removes an actionable preview immediately when its date changes and keeps it cleared after refresh failure", async () => {

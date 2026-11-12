@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 
 const mocks = vi.hoisted(() => ({
@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   enqueue: vi.fn(),
   audit: vi.fn(),
   revalidatePath: vi.fn(),
-  charges: { findMany: vi.fn() },
+  charges: { findMany: vi.fn(), count: vi.fn() },
   exceptions: { findMany: vi.fn() },
   settings: { findUnique: vi.fn(), upsert: vi.fn() },
   familyGroup: { findUnique: vi.fn() },
@@ -62,6 +62,8 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+import { setXeroInvoicingEnabled } from "@/lib/__tests__/helpers/xero-invoicing-guard-mock";
+import { SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE } from "@/lib/xero-invoicing-off";
 import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { GET, POST } from "@/app/api/admin/subscription-billing/route";
 
@@ -403,6 +405,71 @@ describe("admin subscription billing route", () => {
     expect(response.status).toBe(403);
     expect(mocks.familyGroup.findUnique).not.toHaveBeenCalled();
     expect(mocks.familyMarker.create).not.toHaveBeenCalled();
+  });
+});
+
+// #4986 (INV-INT-038): with the xeroIntegration module off, nothing can reach
+// the Xero outbox from this screen — the worker would not run it, so it would
+// wait and go out unchecked the day Xero comes back.
+describe("subscription billing with Xero off (#4986)", () => {
+  const confirmBody = {
+    action: "CONFIRM_ANNUAL_BATCH", seasonYear: 2026, decisionDate: "2026-07-13",
+    confirmationToken: "a".repeat(64), confirmed: true,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setXeroInvoicingEnabled(false);
+    mocks.requireAdmin.mockResolvedValue({ ok: true, session: { user: { id: "admin-1" } } });
+    mocks.buildPreview.mockResolvedValue(preview);
+    mocks.confirmPreview.mockResolvedValue({ chargeIds: ["charge-1"], exceptionCount: 0 });
+    mocks.enqueue.mockResolvedValue({ queueOperationId: "op-1", message: "queued" });
+    mocks.charges.findMany.mockResolvedValue([]);
+    mocks.charges.count.mockResolvedValue(2);
+    mocks.exceptions.findMany.mockResolvedValue([]);
+    mocks.settings.findUnique.mockResolvedValue(null);
+  });
+
+  afterEach(() => setXeroInvoicingEnabled(true));
+
+  it("CONFIRM_ANNUAL_BATCH refuses before the preview is frozen: no charge, no outbox row", async () => {
+    const response = await POST(request(confirmBody));
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE });
+    expect(mocks.buildPreview).not.toHaveBeenCalled();
+    expect(mocks.confirmPreview).not.toHaveBeenCalled();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("RETRY_CHARGE refuses without queueing", async () => {
+    const response = await POST(request({ action: "RETRY_CHARGE", chargeId: "charge-1" }));
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE });
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("GET still previews, and reports Xero off with the season's charges waiting for it", async () => {
+    const response = await GET(new NextRequest("http://localhost/api/admin/subscription-billing?seasonYear=2026&decisionDate=2026-07-13"));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      preview,
+      xeroInvoicing: { enabled: false, awaitingXeroCount: 2 },
+    });
+    expect(mocks.charges.count).toHaveBeenCalledWith({
+      where: { seasonYear: 2026, status: { in: ["QUEUED", "PROCESSING", "INVOICE_CREATED"] } },
+    });
+  });
+
+  it("with Xero on, the same confirm goes through and GET counts nothing (control)", async () => {
+    setXeroInvoicingEnabled(true);
+    const response = await POST(request(confirmBody));
+    expect(response.status).toBe(200);
+    expect(mocks.confirmPreview).toHaveBeenCalled();
+    expect(mocks.enqueue).toHaveBeenCalledWith("charge-1", { createdByMemberId: "admin-1" });
+
+    const getResponse = await GET(new NextRequest("http://localhost/api/admin/subscription-billing?seasonYear=2026&decisionDate=2026-07-13"));
+    await expect(getResponse.json()).resolves.toMatchObject({ xeroInvoicing: { enabled: true, awaitingXeroCount: 0 } });
+    expect(mocks.charges.count).not.toHaveBeenCalled();
   });
 });
 

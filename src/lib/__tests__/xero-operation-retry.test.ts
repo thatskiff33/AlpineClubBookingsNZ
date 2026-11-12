@@ -208,6 +208,8 @@ import { PARTIAL_REPAIR_EMAIL_STILL_FAILED_MESSAGE } from "@/lib/xero-partial-in
 import { XERO_PARTIAL_REPAIR_RUNNING_CODE, XERO_REFUND_NOTE_REPAIR_RUNNING_CODE } from "@/lib/xero-stale-operations";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { cardRefundNoteKeyTag } from "@/lib/card-refund-paid-another-way-cash";
+import { setXeroInvoicingEnabled } from "@/lib/__tests__/helpers/xero-invoicing-guard-mock";
+import { SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE } from "@/lib/xero-invoicing-off";
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
   return {
@@ -3491,6 +3493,24 @@ describe("retryXeroSyncOperation", () => {
       // Nothing runs inline: the outbox claim is the one execution authority.
       expect(mocks.createXeroInvoiceForBooking).not.toHaveBeenCalled();
       expect(mocks.createXeroEntranceFeeInvoice).not.toHaveBeenCalled();
+    });
+
+    // #4986 (INV-INT-038): the outbox worker skips every task while the module
+    // is off, so a retry then would sit PENDING and go out unchecked later.
+    it("refuses with Xero off, before reading the charge or writing the row (#4986)", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(failedSubscriptionInvoice());
+      mocks.findUniqueSubscriptionCharge.mockResolvedValue(unInvoicedCharge);
+      setXeroInvoicingEnabled(false);
+      try {
+        await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toMatchObject({
+          status: 409,
+          message: SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE,
+        });
+      } finally {
+        setXeroInvoicingEnabled(true);
+      }
+      expect(mocks.findUniqueSubscriptionCharge).not.toHaveBeenCalled();
+      expect(mocks.updateManyOperation).not.toHaveBeenCalled();
     });
 
     it("refuses a charge that already has a Xero invoice, so this screen never raises a second", async () => {
