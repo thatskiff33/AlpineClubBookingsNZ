@@ -61,8 +61,9 @@ const nextConfig: NextConfig = {
   // Both values identify the build, so both are stamped here once and reach
   // every compiler (see the docblock above). `APP_VERSION` is the `package.json`
   // version (#4985): the production image runs `node server.js` with no package
-  // manager, so the `npm_package_version` the app used to read was never set and
-  // every release reported "0.1.0". Read it only through `getAppVersion()`.
+  // manager, so the version variable npm and pnpm set for scripts was never
+  // there and every release reported "0.1.0". Read it only through
+  // `getAppVersion()`.
   // Next also inlines `env` into client bundles, so nothing secret goes here.
   env: {
     [PUBLIC_WEBSITE_NONCE_SEED_ENV_VAR]: resolvePublicWebsiteNonceSeed(),
