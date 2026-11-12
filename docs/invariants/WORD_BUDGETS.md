@@ -77,18 +77,24 @@ none listed), and an amendment the owner decides is new rule text, not drift to
 be compacted. When the last row goes, delete this section's table; the file
 stays for the agent-doc ceilings below.
 
+The waves that empty it are owned by #4990, which carries the wave plan. Wave 1
+compacted its ten largest rows, taking the table from 70,498 words to 56,750
+across 88 rows. None of the ten reached 300 without semantic damage, so each
+stays here at its new count while its exception is proposed on its deciding
+issue; a row moves to the table above only when the owner approves it there.
+
 | ID | Words |
 | --- | ---: |
-| `INV-MOD-025` | 4579 |
-| `INV-ADDPAY-037` | 2705 |
-| `INV-SSOT-004` | 2653 |
-| `INV-HOST-050` | 2220 |
-| `INV-PRIV-012` | 2086 |
-| `INV-CONFIG-005` | 1742 |
-| `INV-HOST-046` | 1726 |
-| `INV-HOST-045` | 1680 |
-| `INV-ADDPAY-039` | 1570 |
-| `INV-SSOT-001` | 1531 |
+| `INV-MOD-025` | 1677 |
+| `INV-ADDPAY-037` | 1417 |
+| `INV-SSOT-004` | 459 |
+| `INV-HOST-050` | 889 |
+| `INV-PRIV-012` | 854 |
+| `INV-CONFIG-005` | 665 |
+| `INV-HOST-046` | 764 |
+| `INV-HOST-045` | 727 |
+| `INV-ADDPAY-039` | 917 |
+| `INV-SSOT-001` | 375 |
 | `INV-PRIV-016` | 1512 |
 | `INV-HOST-051` | 1443 |
 | `INV-HOST-053` | 1434 |

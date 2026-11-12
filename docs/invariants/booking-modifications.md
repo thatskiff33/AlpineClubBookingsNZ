@@ -777,404 +777,181 @@ and promo codes (`INV-REQ-011`, `INV-REQ-013`) are applied the same way.
 ## INV-MOD-025
 
 **Amended by INV-MOD-028 (#3031, epic #2797; #4317).** Two of #2744's clauses
-below are gone rather than changed: the refund CEILING (it clamped a credit
-against a derived total, which is a valuation taken by arithmetic) and the old
-even-split write-back. Since #4317 every edit path values a held night by
-`valueStrandNights`, whose figures always add up to the guest's stored total, and
-none values one at current rates; see INV-MOD-028.
+are gone: the refund ceiling and the even-split write-back. Every edit path
+values a held night by `valueStrandNights`, whose figures add up to the guest's
+stored total, and none values one at current rates. Whether an edit's new
+nights are discounted is answered by INV-MOD-006 and INV-MOD-026 and nowhere
+else.
 
-**Not retired, and #2770 records why.** The owner's 10 Aug 2026 decision on #2756
-asked for this id to be retired, and #2770's acceptance criterion 5 repeated it.
-Following that literally would delete rules that are still true: `SCHEME.md`
-requires a retirement to replace the whole body with a one-line notice, and this
-body is #2736 (price the nights held, not the envelope), #2743 (sell only the
-nights the edit creates, with its four boundary cases) and #2744 (sold-price
-valuation, the refund ceiling, the negative-row refusal, the real-rate
-write-back) — every one of them still enforced by
-`booking-edit-guest-ranges-sparse.test.ts` and cited from
-`END_TO_END_TEST_MATRIX.md` and `STATE_MACHINES.md`. What the decision was
-pointing at was this id's group-discount carve-out, the sentence that said an
-in-progress edit's newly bought nights carry no discount. That is gone: #2756
-(PR #2772) removed it, and what remains below is the historical account of how it
-was fixed. The question of whether an edit's new nights are discounted is now
-answered by INV-MOD-006 and INV-MOD-026 and nowhere else. Raised on #2770 as an
-explicit decision rather than settled here.
+**Price the nights held, never the envelope (#2736).** An in-progress edit
+prices, quotes and persists each guest over the nights they hold — the canonical
+`BookingGuestNight` set — never over the `stayStart`/`stayEnd` envelope.
+`buildInProgressGuestRangePlan` carries the night set, reached through
+`getExplicitGuestBedNightKeys` with `expandStayEnvelopeToNightKeys` as the
+fallback for a guest with no night rows, so the expander's half-open contract
+(INV-DATE-020) and the bed-allocation planner's one-pseudo-guest-per-night feed
+are untouched. An existing guest's proposed nights are the held nights that
+survive the new check-out plus the new nights an extension buys, contiguous from
+the morning after their last held night (read off the night set, not `stayEnd`)
+and never before the booking's old check-out. Everything downstream reads that
+list:
 
-An in-progress edit prices, quotes and persists a guest over the nights that
-guest actually holds — the canonical `BookingGuestNight` set — never over the
-`stayStart`/`stayEnd` envelope, which fills a sparse stay's internal gaps
-(#2736). `buildInProgressGuestRangePlan` carries the night set through the
-plan, and each existing guest's proposed nights are the nights they already
-hold that survive the new check-out, plus the genuinely-new nights an extension
-buys, which run contiguously from the morning after their **last held night**
-(read off the night set, not off `stayEnd`, so a drifted envelope cannot
-reopen the gap) and never from before the booking's own **old check-out**
-(#2743 — see the next rule paragraph). Everything downstream reads that list:
-the future window is
-priced night by night through `calculateBookingPrice`'s explicit-nights branch
-so seasonal, age-tier and rate-membership-type differences still apply per
-night; the per-night amounts (`composeProposedNightPrices`) are computed over
-that list rather than by re-expanding a range, so the `BookingGuestNight` rows
-written back cover the right nights and a later edit no longer inherits a locked
-price for a night the guest never held; the capacity ranges carry
-their nights, so no bed is claimed on a night the guest is not there, and the
-window those ranges are checked over (`capacityRangeStart`) is the earliest
-night any of them actually OCCUPIES rather than the minimum pricing anchor
-(#2743) — the anchor reaches back to a guest's own stay end so a check-out-day
-extension stays chargeable, and following it would drag the check over past
-nights this edit puts nobody on, where an over-capacity night (#1668 override)
-or a whole-lodge hold (never admin-overridable, ADR-001 decision 5) would refuse
-an extension that adds nobody to it; and a
-guest is "active for the future" when they hold a future night, not when a
-window is nominally open. Two consequences are load-bearing and must not be
-traded away. First, for a **contiguous** stay that runs to the booking's own
-check-out — the ordinary one — every one of those outputs is
-identical to the pre-#2736 envelope arithmetic, to the cent, to the night and
-to the thrown error — that equivalence is what makes the rule safe to apply to
-live bookings, and it is proven by re-implementing the old arithmetic in
-`booking-edit-guest-ranges-sparse.test.ts` rather than asserted. Second, the
-plan reaches the night set through the canonical helpers
-(`getExplicitGuestBedNightKeys`, then `expandStayEnvelopeToNightKeys` as the
-fallback for a guest with no night rows), so the expander's half-open contract
-is untouched (INV-DATE-020) and the bed-allocation planner's one-pseudo-guest-
-per-night feed cannot grow a phantom second night. **History is not repriced.**
-A booking already edited under the envelope arithmetic — or under the
-today's-rate refund and averaged per-night rows this rule also corrects — keeps
-the rows and the price it was given; this rule binds edits from here on, and any
-correction to a member who was charged or refunded wrongly is an owner decision
-and a separate, audited adjustment. **#2745** carries that decision with its
-options; it was filed for the gap-night exposure and the #2744 over-refund is
-recorded on it as a second, wider one, because that error needed no gap in the
-stay to happen — only a season rate that had moved.
+- the future window is priced night by night through `calculateBookingPrice`'s
+  explicit-nights branch, so seasonal, age-tier and rate-membership-type
+  differences apply per night;
+- `composeProposedNightPrices` computes the per-night amounts over the list, so
+  the rows written back cover only nights the guest holds;
+- capacity ranges carry their nights, so no bed is claimed on a night the guest
+  is not there, and `capacityRangeStart` is the earliest night any range
+  occupies, not the pricing anchor, so an over-capacity night (#1668 override)
+  or whole-lodge hold (ADR-001 decision 5) that the edit puts nobody on cannot
+  refuse it;
+- a guest is active for the future when they hold a future night.
 
-**An edit sells only the nights it creates** (#2743). A night may be added to an
-existing guest only when the edit moves the booking's check-out, and only past
-the **old** check-out: the added leg is bounded below by `bookingCheckOut` as
-well as by the morning after the guest's last held night, so
-`[bookingCheckOut, newCheckOut)` is the whole of the ground it can cover. An
-edit that leaves the check-out where it is — a guest added, a guest removed, a
-promo or member-link change — cannot add a night to anybody. The rule exists
-because the #2029 reach-back (`maxDate(stayStart, minDate(editableFrom,
-stayEnd))`) reaches to the guest's own stay end, which is right one day behind
-the edit window and wrong a week behind: a #713 partial-stay guest who had gone
-home was put back on the booking for every remaining night and charged for them,
-on any edit that reaches this plan. A **name-only** edit is not one of them: it
-is identity-only on both routes and takes the price-preserving echo
-(`buildIdentityOnlyPricing` on apply, a `priceDiffCents: 0` early return on
-quote), so it never builds this plan at all — which is why the worked example is
-"adding one guest bought seven nights for another", not "a name correction did".
+For a contiguous stay that runs to the booking's check-out every output equals
+the pre-#2736 envelope arithmetic, to the cent, the night and the thrown error,
+proven by re-implementing that arithmetic in
+`booking-edit-guest-ranges-sparse.test.ts`.
 
-The discriminator is **not** whether the guest has gone home. It is whether their
-held nights reach the booking's own check-out, because that is the only thing
-`bookingCheckOut` can test. Boundary by boundary, because getting one wrong
-either keeps that over-charge or evicts somebody who is still in the lodge:
+**An edit sells only the nights it creates (#2743).** A night is added to an
+existing guest only when the edit moves the check-out, and only within
+`[bookingCheckOut, newCheckOut)`: the added leg is bounded below by
+`bookingCheckOut` and by the morning after the guest's last held night. An edit
+that leaves the check-out alone — a guest added or removed, a promo or
+member-link change — adds no night to anybody. A name-only edit never builds
+this plan: it is identity-only on both routes (`buildIdentityOnlyPricing` on
+apply, a `priceDiffCents: 0` early return on quote).
 
-- **Runs to the check-out** — their last held night is the night before
-  `bookingCheckOut`. Every ordinary stay. The bound is a no-op by construction
-  (`heldEndExclusive` already equals `bookingCheckOut`), so nothing about them
-  moves, extension included.
-- **Leaving today** — their stay end IS the booking's check-out, one day behind
-  the window. #2029's case, and the check-out is moving, so the genuinely-new
-  night is still bought at the same price from the same anchor. Also a no-op.
-- **Stops short of the check-out** — their last held night precedes
-  `bookingCheckOut`. The nights between their last one and that check-out are the
-  rest of somebody else's stay, were not created by this edit, and are no longer
-  sold to them. **This is not confined to a guest who has already departed.** A
-  guest who is in the lodge tonight and leaves on the 23rd of a booking that runs
-  to the 27th is in this branch too: extend the check-out and they get the new
-  nights with a three-night hole in front of them, and a bill smaller than the
-  back-fill used to make it. Money still only ever moves down, but it moves for a
-  guest who is present, and the bed board shows them out and back.
+The discriminator is whether a guest's held nights reach the booking's
+check-out, not whether they have gone home:
 
-**Stated, because there is no honoured way to express the alternative:** extending
-the check-out still admits *every* remaining guest for the nights past the old
-one, including a guest who has already gone home, and it will write those nights
-as a second run with a gap in front of them. Not because the request cannot
-*carry* a per-guest end — `BatchModifyInput.guestStayRanges` exists — but
-because this plan deliberately overrides it for every existing guest exactly as
-it does for an added one, and the edit panel does not offer the control on an
-in-progress edit (`gridMode` and `rangeMode` are both off when
-`isInProgressEdit`). An API caller that sends `guestStayRanges` for an existing
-guest on this path is **ignored, not refused**: a range inside the booking's
-check-out is a silent no-op, and only one extending past it takes effect, through
-envelope expansion. #2743's decision records the re-admission as accepted;
-changing it means giving the edit panel a per-guest end date and honouring the
-input, which is a new feature and not this rule.
+- **Runs to the check-out** (last held night is the night before
+  `bookingCheckOut`): `heldEndExclusive` already equals `bookingCheckOut`, so
+  the bound is a no-op, extension included.
+- **Leaving today** (stay end is the check-out, one day behind the window;
+  #2029): the new night is bought at the same price from the same anchor. Also a
+  no-op.
+- **Stops short of the check-out**, whether departed or still in the lodge: the
+  nights between their last one and the check-out are not sold to them, so an
+  extension gives them the new nights after a gap. Money only moves down, but
+  for a present guest too, and the bed board shows them out and back.
 
-**One consequence is deliberate and recorded rather than guarded.** Because
-nobody is back-filled any more, an edit can leave `Booking.checkOut` claiming
-nights no remaining guest holds — remove the only whole-run guest and the tail
-after the next-longest stay is uncovered. The save is accepted: refusing it would
-refuse the ordinary "remove the guest who was staying longest" edit, and the
-containment triggers (`BookingGuest_stay_range_within_booking`,
-`Booking_dates_consistent_with_guests`) permit it because they test containment,
-never coverage. The counterpart is that such a booking eventually walks into the
-refusal below, once its remaining nights fall behind the edit window — which is
-why that refusal must name a check-out the plan will actually accept.
+Extending the check-out still admits every remaining guest, a departed one
+included, for the nights past the old check-out, written as a second run after a
+gap. The plan overrides `BatchModifyInput.guestStayRanges` for every existing
+guest as for an added one, and the edit panel offers no per-guest end on an
+in-progress edit (`gridMode` and `rangeMode` are off when `isInProgressEdit`).
+An API caller's `guestStayRanges` for an existing guest is ignored, not refused:
+a range inside the check-out is a no-op, and one past it takes effect only
+through envelope expansion. #2743 accepted this; changing it is a new feature.
 
-The rule refuses one edit the envelope arithmetic allowed: when no remaining
-guest holds a night from the edit window on, the booking would be left with
-future nights nobody occupies, and the save is rejected rather than written. The
-refusal names the check-out that would work — the morning after the last night
-anybody still holds, **clamped at `editableFrom`** — instead of restating the
-rule, because the officer's real mistake is the date. The clamp is load-bearing,
-not tidiness: a check-out before `editableFrom` is refused by this function's own
-first guard and by `resolveTargetDates` before it, so an unclamped suggestion
-would name a remedy the code rejects and the booking would be editable by no
-route at all. Under #2736 alone the suggestion always landed exactly on
-`editableFrom` (that refusal needs a guest whose last night is the day before the
-window opens), so the trap opens only for #2743's shape — a guest who left well
-before the window. That string is a log line — both routes replace it before the
-operator sees it (#1888) — so making the edit panel say it is a separate UI
-change, and until then the officer sees only "Unable to price the requested
-future-night changes" with no date in it. Removing every guest still lands on the
-original sentence, and the refusal is unreachable for a contiguous stay that runs
-to the booking's own check-out, so no ordinary edit's wording moves. #2743 widens
-the same refusal to one more booking, deliberately: one whose check-out is still
-ahead but every guest's stay has already finished. That save used to go through
-by re-admitting and charging those guests; the nights are no longer sold, so
-nobody is left holding one and the booking's own inconsistency — a check-out
-claiming nights no guest ever booked — is reported instead of paid for. It fires
-only when **nobody** is left in the future window, never when the tail is merely
-partly uncovered (see the paragraph above).
+An edit may leave `Booking.checkOut` claiming nights no remaining guest holds
+(remove the only whole-run guest). The save is accepted, and the containment
+triggers (`BookingGuest_stay_range_within_booking`,
+`Booking_dates_consistent_with_guests`) permit it: they test containment, never
+coverage.
 
-**What the officer is shown when a re-admission is retained.** The quote emits a
-single aggregate line for all existing guests — `"Future-night date change"` or
-`"Future-night guest range change"`, carrying `futureExistingDeltaCents` summed
-across the whole party — with no per-guest and no per-night breakdown, and the
-in-progress panel renders no per-guest night grid. So an extension that bills
-four departed guests for three nights each shows as one dollar figure labelled as
-a date change. The accepted residual is the money, and it is accepted **without**
-a per-guest disclosure; itemizing it is a quote-route change, not this rule.
+**Refusal.** When no remaining guest holds a night from the edit window on —
+including a booking whose check-out is ahead but every guest's stay has finished
+— the save is rejected. It fires only when nobody is left in the future window,
+never when the tail is partly uncovered, and is unreachable for a contiguous
+stay that runs to the booking's check-out. It names the check-out that would
+work: the morning after the last night anybody holds, clamped at
+`editableFrom`, because an earlier one is refused by the function's first guard
+and by `resolveTargetDates`. Removing every guest yields the original sentence.
+Both routes replace the string before the operator sees it (#1888), so the
+officer sees "Unable to price the requested future-night changes"; showing the
+date is a separate UI change.
 
-**A frozen exception proposal is not the party an in-progress execution
-creates.** A policy-exception approval (`booking-exception-approval.ts`) executes
-`modifyBookingBatch` from a stored delta against a party the officer reviewed,
-built by `buildModificationProposalParties`, which resets every remaining guest
-to the new envelope. On an in-progress booking the execution instead gives a
-guest their own nights plus `[oldCheckOut, newCheckOut)`, so the reviewed
-proposal **over-states** the nights and the price. The divergence pre-dates #2743
-(this plan has always overridden per-guest ranges) and widens with it; the
-direction is safe — execution claims fewer beds and charges less than the
-reviewed artifact — and the **executed** party is authoritative.
-`booking-exception-frozen-party-matches-planner.test.ts` does not cover it: it
-compares the freeze against `prepareGuestPlan`, never against
-`buildInProgressGuestRangePlan`, and its fixtures are dated outside the frozen
-clock's in-progress window.
+**Disclosure.** The quote emits one aggregate line for all existing guests —
+`"Future-night date change"` or `"Future-night guest range change"`, carrying
+`futureExistingDeltaCents` summed across the party — with no per-guest or
+per-night breakdown, and the in-progress panel has no per-guest night grid. A
+retained re-admission's charge is accepted without per-guest disclosure;
+itemizing it is a quote-route change.
 
-**A night is worth what it was sold for, in both directions (#2744).** The plan
-passes the guest's stored `BookingGuestNight.priceCents` as `lockedNightPrices`
-to the old-price window and the new-price window alike, so a night given back by
-a removal or a shortened check-out is credited at the price the member actually
-paid — never at the current season rate, which after a rate rise handed back
-more than the club had ever charged and could leave a guest who genuinely slept
-at the lodge with a negative stored price. Both windows, not just the old one:
-the locks are what make a night the guest KEEPS carry one price on either side of
-the difference and cancel to nothing, so an extension's delta is still exactly
-the nights it adds and no night anybody already bought is ever re-rated. That
-half of INV-MOD-006 — **locks win over the discount** — is satisfied here as
-it is everywhere else, so a removal no longer strips a group discount the member
-bought (INV-MOD-005, INV-MOD-006).
+**Frozen exception proposals.** A policy-exception approval
+(`booking-exception-approval.ts`) executes `modifyBookingBatch` from a stored
+delta against a party from `buildModificationProposalParties`, which resets
+every remaining guest to the new envelope; on an in-progress booking execution
+gives each guest their own nights plus `[oldCheckOut, newCheckOut)`, so the
+reviewed proposal over-states nights and price. The executed party is
+authoritative; it claims fewer beds and charges less.
+`booking-exception-frozen-party-matches-planner.test.ts` does not cover this: it
+compares against `prepareGuestPlan`, not `buildInProgressGuestRangePlan`, with
+fixtures outside the frozen clock's in-progress window.
 
-**The group discount applies to what the edit BUYS, and the party is counted per
-night (#2756).** The other half of INV-MOD-006 is satisfied too. This plan used to
-price each guest on their own — one `calculateBookingPrice` call per guest with no
-group-discount config — so the party size the rule saw was always one, and a night
-an in-progress edit newly BOUGHT carried no discount where the same night bought
-before the stay began would have. On a club with the discount switched on that was
-an overcharge running against the member, and it was nobody's decision. The plan
-now prices the WHOLE PARTY in one pass per window, the way the guest-add route
-does, and each guest's amounts are their slice of that combined breakdown. Two
-passes, and which party each counts is the rule:
+**A night is worth what it was sold for, both ways (#2744).** The guest's stored
+`BookingGuestNight.priceCents` is passed as `lockedNightPrices` to the old-price
+and new-price windows alike: a night given back is credited at what the member
+paid, never the current season rate, and a kept night carries one price on both
+sides and cancels, so an extension's delta is exactly the nights it adds and no
+bought night is re-rated. Locks win over the discount, so a removal never strips
+a group discount the member bought (INV-MOD-005, INV-MOD-006). No edit leaves a
+guest owing less than nothing: a negative stored `priceCents` is not a sold price
+and is treated as no recoverable price, so giving a night back never charges the
+member. A night with no recoverable stored price is credited at its
+`valueStrandNights` value, neither at today's rate nor clamped (INV-MOD-028).
 
-- The **post-edit** party, over the nights each guest ends up holding, prices
-  everything this edit buys: an added guest's window, and the nights an extension
-  creates. The count needs no special-casing — a removed guest's proposed nights
-  stop at the edit window, a shortened check-out drops its own tail, and a
-  partial-stay guest is counted only on the nights they hold, so an absent night
-  cannot make up the minimum.
-- The **pre-edit** window, over the nights each guest currently holds inside the
-  edit window, values a night this edit takes AWAY — and it is passed **no discount
-  config at all**, so it is byte-identical to what it was before #2756, discount
-  configured or not. #2756 reaches the nights an edit BUYS and nothing else.
+**The group discount applies to what the edit buys, counted per night
+(#2756).** The plan prices the whole party in one pass per window, as the
+guest-add route does; each guest's amounts are their slice of the combined
+breakdown.
 
-  That is a money decision, not an oversight, and it is the second thing an
-  obvious-looking fix gets wrong. INV-MOD-006's "a party dropping below the minimum
-  on removal never loses a discount it bought" is achieved by the **lock**, which
-  covers every guest whose `BookingGuestNight` rows record what they paid and needs
-  no party counted. Passing the config would only ever have changed the guests the
-  lock cannot reach — a booking predating the rows, or one created by approving a
-  request (#2739 backfills those but cannot empty the population) — and for them
-  today's party is a guess, so it can only ever SHRINK the credit. A removal on
-  such a booking credited $160 for nights the club had charged $240 for, and a
-  shortened check-out kept $480 across six guests. The `refundCeilingCents` clamp
-  that then existed capped this leg from ABOVE only, so that direction had no
-  floor: the club would have kept money it should have returned, on the credit
-  leg, which is the leg #2744 exists to keep honest.
+- The **post-edit** pass, over the nights each guest ends up holding, prices
+  everything the edit buys: an added guest's window and an extension's new
+  nights. A removed guest's proposed nights stop at the edit window, a shortened
+  check-out drops its tail, and a partial-stay guest counts only on nights they
+  hold, so an absent night cannot make up the minimum.
+- The **pre-edit** pass, over the nights each guest holds inside the edit
+  window, values nights the edit takes away and is passed no discount config, so
+  it is byte-identical to before #2756. INV-MOD-006's "never loses a discount it
+  bought" on removal is achieved by the lock, which counts no party.
+- A night a guest **keeps** is valued from the post-edit pass in both windows, so
+  it cancels and nothing already bought moves — a legacy guest with no
+  recoverable price included — and crossing the minimum re-rates no slept night
+  (INV-MOD-005). The pass is bounded below by the earliest night the edit prices,
+  reaching below the edit window only for the #2029 check-out-day night.
+- A night below a guest's own first priced night is in that pass for the party
+  count only, and carried only when its price is locked, which needs no rate
+  lookup; an unlocked one is dropped, which can withhold a discount but never
+  invent one. The apply path maps a plan failure to the quote route's 400, so
+  preview and apply agree.
 
-  So a night with **no recoverable stored price** was credited at the guest's own
-  rate type at today's rate, no substitution — erring TOWARD the member for any
-  sane rate table, and bounded above by that clamp so it could never hand back
-  more than the guest was carrying.
+At a club that has not switched the discount on, an edit does not move by a cent.
 
-  **Both halves of that paragraph are history now (#3031, #4317, INV-MOD-028).**
-  A night with no recoverable stored price is neither credited at today's rate
-  nor clamped: it is credited at its `valueStrandNights` value, so the strand's
-  credits add up to its stored total. The clamp is deleted, because clamping a
-  credit against a derived total is itself a valuation taken by arithmetic.
-  #2771 is closed as superseded by epic #2797, and epic #4302 answers it with
-  that rule.
+**Written-back amounts are each night's real rate (#2744).** A kept night keeps
+its stored price and a newly bought night takes its own season rate; that list
+is what `BookingGuestNight.priceCents` receives. The amounts sum to the guest's
+total exactly in integer cents, remainder spread one cent at a time, including
+for a negative total, so Xero's invoice lines multiply back out (INV-MONEY-001,
+INV-MONEY-003). A guest left holding no nights — removed before their stay began
+— lands on zero if their rows account for their total, and otherwise keeps the
+drift.
 
-**A night the guest KEEPS is valued from the post-edit pass in BOTH windows**, and
-that is the property that makes a party-aware discount safe on live bookings, not
-a detail of it. It cancels to nothing across the difference exactly as the locked
-prices do, so nothing already bought moves — not for a guest whose rows record
-what they paid, whose price is locked anyway, and **not for a legacy guest with no
-recoverable price either**. Valuing the two windows against their own parties
-instead would re-rate that guest's already-slept nights every time an edit pushed
-the party across the minimum: an add would CREDIT the rest of the party for nights
-they had already had, and a removal would CHARGE them for the same nights
-(INV-MOD-005). The pass is bounded below by the earliest night the edit actually
-prices, so it demands a season rate for no night that nobody is repricing, and
-reaches back below the edit window only for the #2029 check-out-day night the
-plan can genuinely buy there.
+**Money direction.** Against the pre-#2743 answer nothing moves up: every
+difference is a member paying less or a refused edit. Against the pre-#2736
+arithmetic, on drifted data (a stored `stayEnd` claiming more nights than the
+rows), an envelope drifted to or before the check-out lands back on the
+pre-#2736 answer, and one drifted past it loses the phantom refund for nights
+never bought (delta zero), each pinned by its own case in
+`booking-edit-guest-ranges-sparse.test.ts`. A refund on a stay whose season rate
+has changed is what the club charged. `in-progress-edit-sold-price-census.test.ts`
+stops a loader selecting night rows without their price.
 
-**A night below a guest's OWN first priced night is in that pass for the party
-COUNT only, and is carried only when its price is locked.** The floor is party-wide,
-so in #2029's shape it can sit below one guest's own future window and reach back
-over one of their earlier nights. Nobody reads that night's price. Asking the season
-table for it anyway turned an edit that previously succeeded into a thrown
-"No rate found" whenever the booking's night rows had drifted past its own check-out
-(INV-DATE-012) and the covering season had no row for that guest's tier and rate
-type — no season gap required. A locked night short-circuits the rate lookup, so it
-joins the count and cannot fail; an unlocked one is dropped, which costs at most the
-count on that one night — the pre-#2756 answer for it, able to withhold a discount
-but never to invent one. Refusing the edit is the worse outcome. The apply path now
-maps a plan failure to the same 400 the quote route already returned, so preview and
-apply agree on the refusal as well as on the price.
+A guest **added** during an in-progress edit is admitted for
+`[editableFrom, newCheckOut)`, overriding any per-guest range or night set the
+request carried, materialised as a night list so every consumer reads one shape.
 
-The 960-case contiguous equivalence matrix is
-untouched by every bit of this, and not by luck: it configures no discount and
-prices every guest on their own membership type's rows, so the substitution can
-reach no case in it and the same buckets still hold, per variant and in total. An
-edit at a club that has not switched the discount on does not move by a cent.
-**History is not repriced:** the discount binds
-edits from here on, nothing already charged, refunded or invoiced is recalculated,
-and a correction to a member charged the undiscounted rate by an earlier
-in-progress edit is a separate, audited adjustment — the same treatment #2744 and
-#2736 had, and the decision recorded on **#2756**.
+**History is not repriced.** A booking already edited under the envelope
+arithmetic, a today's-rate refund, averaged per-night rows or without the
+edit-time discount keeps its rows and price, and a guest already below zero is
+left as found, neither driven deeper nor repaired. These rules bind edits from
+here on; any correction is an owner decision and a separate, audited adjustment
+(#2745, #2756).
 
-**What #2756 did NOT build, stated here rather than left to be discovered.** The
-owner's decision on that issue added a scope item to D1: an admin-controlled option
-on the group-discount setup for *whether bookings edited later receive the
-discount*, governing every edit path uniformly, defaulting to ON. This change
-implements the D1 behaviour — which is that default — but not the switch, so a club
-cannot yet turn edit-time discounting off. That is a new club-facing setting with a
-schema column, an admin section, settings-census registration and both-state tests,
-and it is filed as **#2770**. Until that lands, edit-time discounting is always on for
-a club whose discount is enabled, which is the documented default and no club's
-current correct behaviour changes because of the switch's absence.
-
-**The per-night amounts written back are each night's real rate (#2744), not an
-average.** A kept night keeps its stored price, a newly bought night takes its
-own season rate, and the list is what `BookingGuestNight.priceCents` receives —
-which is what the NEXT edit will be told the member paid. Where a guest's stored
-rows cannot account for their stored total — no night rows at all (pre-#713, or
-a booking created by approving a booking request, which still writes none,
-#2739), or a stored total that has drifted from the rows — the amounts fall back
-to the even split this always used, over the whole guest, because a distribution
-invented from numbers that disagree is a guess dressed as a rate. Either way the
-per-night amounts sum to the guest's total EXACTLY, in integer cents with any
-remainder spread one cent at a time including for a negative total, so the runs
-Xero rebuilds its invoice lines from still multiply back out and no phantom
-balance can appear (INV-MONEY-001, INV-MONEY-003). The one shape that cannot sum
-is a guest left holding no nights at all — removed before their stay began —
-where there is nothing to distribute across: a guest whose rows account for their
-total lands on exactly zero, and a guest whose total has drifted keeps the drift,
-neither invented nor erased. The degradation is deliberate and is the same one
-INV-MOD-005 already names for a legacy guest: with no stored price there is
-nothing to recover, and that night is valued at today's rate.
-
-**No edit leaves a guest owing less than nothing (#2744).** Valuing a night at
-today's rate is a degradation, not a licence: after a rate rise it can credit
-back more than the club ever charged, which is how a guest who genuinely slept at
-the lodge finished with a negative stored price and negative night rows. The
-credit on the old-price window is therefore capped at what the guest is actually
-carrying — their stored price plus whatever this edit charges them for the nights
-they keep — so their price lands at worst on zero. The cap cannot bind on a guest
-whose nights cost no more than they paid, which is every healthy booking and
-every case in the contiguous equivalence matrix. Symmetrically, a **negative**
-stored `BookingGuestNight.priceCents` is refused as a sold price and treated as
-no recoverable price at all: the column is a bare `Int`, the pre-fix arithmetic
-could write negative rows, and honouring one would invert the edit so that giving
-a night back CHARGED the member. **History is not repriced by either rule.** A
-guest already below zero is left exactly as found — not driven deeper, not
-repaired — because correcting what the old arithmetic wrote is an owner decision
-with its own audit. **#2745** carries it, and its scope includes rows that are
-negative, not only rows that are averaged.
-
-The **contiguous equivalence** above survives this unchanged, and is still proven
-rather than asserted: the matrix runs every ordinary edit four ways — rows
-carrying today's rate as their stored price (the ordinary live booking, whose
-rate has not moved), that same guest with a stored total that has drifted from
-the rows, rows arriving without their price, and no rows at all — and all four
-agree with the pre-#2736 arithmetic to the cent. Rows arriving without a price is
-a thinner `select`, not a state the database can hold (`BookingGuestNight.
-priceCents` is NOT NULL); it is in the matrix because the plan cannot tell it
-from a guest who was never priced, and
-`in-progress-edit-sold-price-census.test.ts` is what stops a loader producing it.
-What moves, deliberately, is a refund on a stay whose season rate HAS changed
-since it was made: it is now what the club charged rather than what it would
-charge today.
-
-**Nothing on this path is left frozen as a money shape.** #2736 carried three,
-each pinned by a test in
-`booking-edit-guest-ranges-sparse.test.ts` that had to be rewritten rather than
-deleted: a guest whose stay had already ended was re-admitted and charged, a
-refund was valued at today's rate, and the per-night amounts written back were an
-even split. #2743 answered the first and #2744 the other two, and all three pins
-were rewritten into the corrected assertion. The fourth was a stated gap rather
-than a frozen shape — this plan priced each guest alone, so nights an in-progress
-edit newly BOUGHT carried no group discount — and **#2756** answered it, on the
-same terms: the behaviour is corrected forward, its pin is a mutation-probed suite
-rather than a claim, and history is not repriced. What is left is the two
-disclosures recorded above, which are about what the officer is shown rather than
-about what anybody is charged.
-
-**Money direction, stated with its scope.** Against the answer this plan gave
-*before* #2743, nothing moves up: the bound only ever removes nights from the
-added leg, so every difference is a member paying **less** or an edit being
-refused. That is measured over the 960-case matrix rather than asserted here
-(400 identical, 540 cheaper, 20 refused, landing identically in each of the four
-stored-price row variants #2744 added — 200/270/10 in each pair of them), and it
-is the direction that matters for live bookings.
-
-Against the **pre-#2736** envelope arithmetic the claim needs a scope, and the
-scope is drifted data — a guest whose stored `stayEnd` claims more nights than
-their rows do. Two configurations, and they differ:
-
-- Envelope drifted to **at or before** the booking's check-out. #2736 charged the
-  nights the envelope had imagined; #2743 stops selling them because they are not
-  past the check-out, and the money lands back on the pre-#2736 answer by an
-  honest route — the guest keeps the nights their rows record and buys only what
-  the extension adds.
-- Envelope drifted **past** the booking's check-out. The pre-#2736 arithmetic
-  compared a wide old window against a narrower new one and produced a **refund
-  for nights the member never bought**. #2736 removed that phantom refund
-  deliberately and #2743 does not put it back: nothing here is sold, so the delta
-  is zero — which is *above* the legacy refund. So a shape does exist in which
-  the answer sits higher than the pre-#2736 one. It is drifted data only, it is a
-  phantom refund disappearing rather than a charge appearing, and the 960-case
-  matrix can never reach it because it derives every envelope from the rows the
-  way the writer does. Both configurations are pinned by their own case in
-  `booking-edit-guest-ranges-sparse.test.ts`.
-
-A guest ADDED during an in-progress edit is a deliberate exception in one
-respect only: they are admitted for the booking's remaining future nights,
-`[editableFrom, newCheckOut)`, and this plan still overrides whatever per-guest
-range or night set the request carried. That window is contiguous by
-construction, so there is no sparse input to preserve; it is materialised as a
-night list anyway so every consumer reads one shape.
+History, measurements and rejected alternatives: #2736, #2743, #2744 and #2756
+(and #2770, #4317).
 
 ## INV-MOD-020
 

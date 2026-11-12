@@ -1059,252 +1059,151 @@ nobody told.
 
 **Every automatic refund of a late capture on a cancelled booking leaves a
 `ManualRefundTask`, and that row is visible on the operator surface rather than
-only in the database** (#2750, extended by #2760 — owner decision 10 Aug 2026,
-taken deliberately over the narrower recommendation — and by #2773, an
-**orchestrator** decision the owner has not ruled on; reversible. The authority
-line under `INV-ADDPAY-039` covers every #2773 / #2774 clause in this file).
+only in the database** (#2750, extended by #2760 — owner decision 10 Aug 2026).
+Extended again by #2773, an **orchestrator** decision the owner has not ruled on;
+reversible. The authority line under `INV-ADDPAY-039` covers every #2773 / #2774
+clause in this file.
 
-**BOTH LATE-CAPTURE PATHS, SINCE #2773 — AND THE SCOPING CLAUSE THAT USED TO SIT
-HERE IS GONE BECAUSE THE CODE EARNED IT, NOT BECAUSE THE CLAIM WAS WIDENED.**
-There are two handlers in `stripe-webhook-service.ts`:
-`handleCancelledBookingAdditionalPaymentSucceeded` for a payment for a *change* to
-a booking, and `handleCancelledBookingPaymentSucceeded` for the booking's OWN
-payment. Until #2773 only the first recorded anything; the second refunded with the
-same `cancelled_booking_late_capture` reason, wrote the same
-`booking.payment.refunded_after_cancellation` audit entry, and left no
-`ManualRefundTask` and no unmuteable mail — so an operator holding a
-`refunded_after_cancellation` entry with no card row had to know which handler wrote
-it before they could tell whether the card was broken. **Both now route through one
-shared epilogue** (`finishAutomaticLateCaptureRefund`,
-`src/lib/late-capture-record-recovery.ts`): one record writer, one `deletedAt`
-re-read, one alert decision.
-
-**WHAT "EVERY ORDERING" MEANS ON THE PRIMARY PATH, checked rather than assumed.**
+**Both late-capture handlers record it.** In `stripe-webhook-service.ts`,
+`handleCancelledBookingAdditionalPaymentSucceeded` (a payment for a *change* to a
+booking) and `handleCancelledBookingPaymentSucceeded` (the booking's OWN payment)
+route through one epilogue, `finishAutomaticLateCaptureRefund`
+(`src/lib/late-capture-record-recovery.ts`): one record writer, one `deletedAt`
+re-read, one alert decision. The writer,
+`recordAutomaticCancelledBookingRefundTask`, writes the row itself, already
+`DISMISSED`, whenever its `OPEN`-fenced close claims nothing, for both
+populations: a booking the club deleted, and one cancelled but still on file
+(#1350's refund fires on `Booking.status === "CANCELLED"`, not on `deletedAt`).
 Only the confirm-modification-payment route raises an `OPEN` task under these
-`reason` sentences, for modification intents (#3639's approval task has its own),
-so the close arm is unreachable there and the
-CREATE arm is the only one that fires. First delivery creates the row; a Stripe
-redelivery finds this writer's own row and creates nothing; a deletion landing
-between two deliveries resolves to the one row, because every lookup matches all
-four `reason` sentences; and `booking-cancel.ts`'s cash-settlement task on the same
-booking and payment carries a different `reason`, so it neither blocks the create
-nor is mistaken for this row. The two named exceptions below are the only gaps, and
-they are the same two on both paths.
+`reason` sentences, for modification intents (#3639's approval task has its
+own), so on the primary path only the create arm fires. Outside the two named
+exceptions below, every ordering on either path leaves exactly one row: a Stripe
+redelivery finds the writer's own row and creates nothing, a deletion between two
+deliveries resolves to the same row, and `booking-cancel.ts`'s cash-settlement
+task on the same booking and payment carries a different `reason`, so it neither
+blocks the create nor is mistaken for this row. Only the card is bounded, to
+thirty days; the row and the `booking.payment.refunded_after_cancellation` audit
+entry are permanent.
 
-**FOUR `reason` SENTENCES, ONE PER (capture kind, population).** The kind decides
-"a booking modification payment" versus "the booking's own payment" and the
-population decides "already deleted" versus "already cancelled". The sentence is
-STORED on the row and PRINTED on the finance card, so reusing the modification
-wording for a primary capture would print an operator-facing falsehood. Every
-sentence is frozen once written, for the reason the deleted-population one always
-was: `reason` is the idempotency key.
-`INV-ADDPAY-036`'s consequence — that on a healthy webhook the member is refunded
-automatically and the task is a record rather than a decision — was only half
-delivered: the webhook's own close moved the row out of the `OPEN` list, which is
-the only list the finance queue showed, so that durable record of a money movement
-nobody authorised appeared on no screen at all. "A human is told" was true of the
-database and false of every human.
+**Four `reason` sentences, one per (capture kind, population).** The kind is "a
+booking modification payment" or "the booking's own payment"; the population is
+"already deleted" or "already cancelled". The sentence is stored on the row and
+printed on the finance card, so a primary capture never reuses the modification
+wording.
 
-**THE RECORD IS COMPLETE ON BOTH PATHS, AND #2760 THEN #2773 ARE WHAT MADE IT SO —
-WITH TWO NAMED EXCEPTIONS AND NOT ONE MORE.** As #2750 shipped it, a
-row existed only where the confirm-modification-payment endpoint had raised one —
-one of four orderings — so a webhook-first refund (the ordinary healthy case), a
-member who closes the tab after paying, and the interleaved ordering the raise's
-refund fence declines all moved money with no row at all. The #1350 refund also
-fires on `Booking.status === "CANCELLED"` rather than on `deletedAt`, and the raise
-only fires on `deletedAt`, so a late capture on a cancelled-but-live booking
-produced nothing either. **The webhook now writes the row itself** —
-`recordAutomaticCancelledBookingRefundTask`, already `DISMISSED`, whenever its
-OPEN-fenced close claims nothing — **for both populations, and since #2773 from
-both handlers.** The qualification that used to sit here, and the "this card does
-not catch every one" copy that went with it, are lifted; so is the
-booking-change scoping clause #2760 added, because the primary handler now produces
-a row in every ordering it can reach. What remains bounded is the CARD's thirty-day
-window, not the record: the row and the
-`booking.payment.refunded_after_cancellation` audit entry stay permanent.
+**The two exceptions**, stated here, on the card and in `docs/guides/payments.md`:
 
-The two exceptions are stated here, on the card and in
-`docs/guides/payments.md`, because a completeness claim with an undisclosed hole
-is worse than the partial claim it replaced:
-
-- **An operator who resolved the confirm route's `OPEN` task BY HAND before
-  Stripe's refund landed.** That row is already non-`OPEN` and carries the
-  operator's own note and `completedByMemberId`, so it matches neither the
-  `OPEN`-fenced close nor `automaticallyRefundedManualRefundTaskFilter`, and the
-  automatic refund reaches no card. The writer deliberately does NOT write a
-  second row — one `ManualRefundTask` per capture is the property every lookup on
-  this path protects, and widening the card's filter to admit actor-bearing rows
-  would reintroduce #2750's defect of presenting a hand dismissal as an automatic
-  refund. It returns `alreadyRecorded: "hand-resolved"` and logs at **WARN** with
-  the row's status, which is the only place that ordering is named.
-
-  **KEEPING THIS CARVE-OUT IS #2774 D1 — the orchestrator's call, not the owner's,
-  and the owner has not ruled** (authority line under `INV-ADDPAY-039`; reversible).
-  Writing a second row was rejected here on the reasoning
-  above: one `ManualRefundTask` per capture is the property every lookup here
-  protects, and two rows for one capture would put the same money on the hand-back
-  queue and the record card at once. It applies to a **`DISMISSED`** hand
-  resolution — settled another way, no allocation written, nobody paid twice. The
-  **`COMPLETED`** variant of the same ordering is a different matter entirely and is
-  now `INV-ADDPAY-039`: it means the club has already paid the member back, and it
-  is fenced.
-- **The record write itself failing.** Since #4149 the delivery still writes the
+- **An operator resolved the confirm route's `OPEN` task by hand before Stripe's
+  refund landed.** That row carries the operator's note and
+  `completedByMemberId`, so it matches neither the `OPEN`-fenced close nor
+  `automaticallyRefundedManualRefundTaskFilter`, and the automatic refund reaches
+  no card. The writer writes no second row (one `ManualRefundTask` per capture),
+  the card's filter is never widened to admit actor-bearing rows (that would
+  present a hand dismissal as an automatic refund), and the writer returns
+  `alreadyRecorded: "hand-resolved"` and logs at **WARN** with the row's status.
+  This carve-out is #2774 D1, the orchestrator's call; the owner has not ruled,
+  and it is reversible. It covers a **`DISMISSED`** hand resolution; the
+  **`COMPLETED`** variant is fenced by `INV-ADDPAY-039`.
+- **The record write itself failing.** The delivery still writes the
   `refunded_after_cancellation` entry (`recordLost`) and the alert, then answers
-  500; a replay never refunds again, so the redelivery or the nightly self-heal
-  writes the missing row once, with a `booking.payment.auto_refund_record_recovered`
-  entry and the alert again (`late-capture-record-recovery.ts`). Meanwhile the
-  writer adds
-  `booking.payment.auto_refund_record_failed` (`severity: "critical"`,
+  500 (#4149); a replay never refunds again, so the redelivery or the nightly
+  self-heal writes the missing row once, with a
+  `booking.payment.auto_refund_record_recovered` entry and the alert again. The
+  writer adds `booking.payment.auto_refund_record_failed` (`severity: "critical"`,
   `outcome: "failure"`, `category: "payment"`, carrying the booking and the
-  payment intent). **That audit row is the recovery surface** while the row is
-  missing: it is the one place a finance operator can find an automatic refund
-  the card does not hold. Removing it, or downgrading it to a log line, breaks
-  this rule.
+  payment intent). While the row is missing that audit row is the recovery
+  surface; removing it, or downgrading it to a log line, breaks this rule.
 
 **The writer's obligations, none of them optional:**
 
-- **Already `DISMISSED`, never `OPEN`.** An `OPEN` row is work an operator is asked
-  to do, and there is none — Stripe returned the money before anybody saw the
-  capture. Worse, completing such a task throws out of
-  `applyLocalRefundAllocation` ("Refund amount exceeds captured payments"), so it
-  would look unresolvable as well as being wrong. `COMPLETED` is equally forbidden
-  and for the reason given below: it writes a second refund allocation for one
-  refund. No allocation is written, no operator is queued, and the refund's amount
-  and timing are untouched — this is a bookkeeping row for a decision #1350
-  already made.
-- **Idempotent on the payment intent, across both populations.** The key is
-  `bookingId + paymentId + reason`, and every lookup matches BOTH population
-  sentences (`automaticCancelledBookingRefundTaskReasons`). That is not
-  belt-and-braces: a booking can be deleted BETWEEN two Stripe deliveries of one
-  capture, so a per-population key would let the second delivery write a second row
-  for a single refund. The confirm route's raise matches the same pair, so a
-  webhook-written row of either kind stops it raising a duplicate `OPEN` task.
-- **The deleted population's `reason` bytes are frozen.** `reason` IS the
-  idempotency key, so rewording it would leave any `OPEN` task raised before a
-  deploy unmatchable — the webhook would create a second DISMISSED row and leave
-  the OPEN one in the hand-back queue asking an operator to hand back money Stripe
-  had already returned. The merely-cancelled population therefore got its own NEW
-  sentence (`cancelledBookingModificationRefundReason`) rather than the existing one
-  being generalised, and each row stores the sentence that was true when it was
-  written.
-- **Under `pg_advisory_xact_lock(1)`, and that is a change from #2750.** The close
-  alone was a single status-fenced `updateMany`, atomic on its own and holding no
-  lock. Close-or-create is a find-then-write: two deliveries of one capture, or a
-  delivery racing the raise, would each find no row and each write one. It takes
-  the same canonical global key the raise takes — the cohort `booking-cancel.ts` is
-  already in when IT creates a `ManualRefundTask` — and nothing else, holding it
-  across an `updateMany`, a `findFirst` and at most one `create`. No provider call
-  happens inside it; the refund that triggers it has already returned.
-- **Budgeted `{ maxWait: 5_000, timeout: 10_000 }`, not left on Prisma's
-  defaults, and NOT given the admin precedent either.** The advisory wait counts
-  against the interactive-transaction budget, and the longest-lived holder of
-  `lock(1)` in the tree — `assignBedRange`, up to 366 nights — runs on
-  `{ maxWait: 10_000, timeout: 30_000 }`, so on the 2s/5s default an admin
-  assigning a bed range concurrently with a Stripe delivery blows this
-  transaction with a `P2028` and the row waits for Stripe's redelivery (see the
-  second exception above). Copying the 30s admin precedent into a webhook is the
-  opposite error: Stripe's delivery timeout is the ceiling on a handler, so it
-  would trade a lost row for a lost delivery. This is the `lock(1)` cohort's only
-  webhook-triggered participant, and `docs/CONCURRENCY_AND_LOCKING.md` records it
-  as such. Changing either number is a decision about which failure the club
-  prefers, not a tuning detail.
-- **Never flips an existing row.** A row in any non-`OPEN` state — written by this
-  writer, dismissed by an operator, or `COMPLETED` because a human handed money
-  back first — is left exactly as it is, not re-dated, re-noted or duplicated.
+- **Already `DISMISSED`, never `OPEN`** (there is no work, and completing such a
+  task throws from `applyLocalRefundAllocation`) **and never `COMPLETED`** (a
+  second refund allocation for one refund). No allocation is written, no
+  operator is queued, and the refund's amount and timing are untouched.
+- **Idempotent on the payment intent.** The key is
+  `bookingId + paymentId + reason`, and every lookup matches all four sentences,
+  both populations included (`automaticCancelledBookingRefundTaskReasons`),
+  because a booking can be deleted between two deliveries of one capture. The
+  confirm route's raise matches the same set, so a webhook-written row of either
+  kind stops it raising a duplicate `OPEN` task.
+- **Every `reason` sentence is frozen once written**, because `reason` is the
+  idempotency key: rewording the deleted population's sentence would leave an
+  `OPEN` task raised before a deploy unmatchable. The merely-cancelled population
+  has its own sentence (`cancelledBookingModificationRefundReason`) rather than a
+  generalised one, and each row stores the sentence true when it was written.
+- **Under `pg_advisory_xact_lock(1)`**, because close-or-create is a
+  find-then-write: the same canonical global key the raise and `booking-cancel.ts`
+  take when they create a `ManualRefundTask`, and nothing else, held across an
+  `updateMany`, a `findFirst` and at most one `create`. No provider call happens
+  inside it.
+- **Budgeted `{ maxWait: 5_000, timeout: 10_000 }`**: not Prisma's 2s/5s
+  default, against which the advisory wait counts while `assignBedRange` holds
+  `lock(1)` for up to 30s, and not that 30s admin precedent, which Stripe's
+  delivery timeout rules out for a webhook. It is the `lock(1)` cohort's only
+  webhook-triggered participant, recorded as such in
+  `docs/CONCURRENCY_AND_LOCKING.md`. Changing either number is a decision about
+  which failure the club prefers, not a tuning detail.
+- **Never flips an existing row.** A non-`OPEN` row — this writer's, an
+  operator's dismissal, or `COMPLETED` by a human hand-back — is left exactly as
+  it is, not re-dated, re-noted or duplicated.
 
-Five further obligations, on the surface:
+**One notification per event; do not build a second.** The epilogue sends one of
+three: the auto-refund alert, which the change-payment handler has always sent,
+naming the member, the stay, the amount, the payment intent, that the capture was
+auto-refunded and that the supplementary Xero invoice was not released, and which
+since #2773 the primary handler sends in place of the generic muteable mail; the
+withheld-refund alert when `INV-ADDPAY-039`'s fence fires, which returns before
+the ordinary path; or the possible-double-payment alert when a hand-completion is
+found after the refund. Two exceptions (#4149): a lost record re-sends the
+ordinary alert (#2761: a duplicate, never a silence), and a hand-completion found
+only later raises the double-payment alert after it, once. Read `INV-ADDPAY-038` before adding an alert. No pending count reaches
+these rows (every one counts `status: "OPEN"`), and #2761's owner decision left
+badges and the digest alone.
 
-**One notification for this event, and it already exists — do not build a
-second.** `handleCancelledBookingAdditionalPaymentSucceeded` has always mailed the
-club at the moment it happens, naming the member, the stay, the amount, the payment
-intent, and the fact that the capture was auto-refunded and the supplementary Xero
-invoice was not released; since #2773 the primary handler sends the same mail in
-place of the generic muteable one it used to send. **"One" is per EVENT, of three
-kinds:** the ordinary auto-refund alert, the withheld-refund alert when
-`INV-ADDPAY-039`'s fence fires, and the possible-double-payment alert when a
-hand-completion is found after the refund. The epilogue picks one, and the fenced
-path returns before the ordinary one. Two deliberate exceptions (#4149): a lost
-record re-sends the ordinary alert (#2761: a duplicate, never a silence), and a
-hand-completion found only later raises the double-payment alert after it, once.
-What was missing was somewhere to look afterwards, which is what this rule adds.
-Read `INV-ADDPAY-038` before adding an alert: #2761 rewrote that mail rather than
-joining it, because a second notification is noise. No pending count anywhere reaches these rows either —
-every one of them counts `status: "OPEN"`, and #2761's owner decision explicitly
-left badges and the digest alone.
+**The surface:**
 
-- **The finance queue on `/admin/payments` renders those rows** as a second,
-  read-only card beneath the hand-back queue. It renders **even when no `OPEN`
-  task exists**, which is the ordinary case for a healthy webhook and the exact
-  case the pre-#2750 component could not display: that component returned `null`
-  on an empty `OPEN` list. It is bounded by `completedAt` to
-  `AUTOMATIC_REFUND_NOTICE_WINDOW_DAYS`, because an unbounded list of long-settled
-  rows is the state that makes an operator stop reading a card; the row itself and
-  the `booking.payment.refunded_after_cancellation` audit entry stay permanent.
-  **The card says on screen what it covers** — every automatic refund of a late
-  payment from the last thirty days, **with the one hand-resolved exception named in
-  the copy** — and names the audit entry as the permanent record beyond that window.
-  It must not claim more (it is bounded, and the hand-resolved ordering is real) and
-  must not go back to claiming less (#2750's "this card does not catch every one" is
-  false since #2760, and its booking-change scoping is false since #2773;
-  reinstating either would tell an operator to distrust a list that is now
-  complete). The exception is one clause, not a paragraph: a footnote an operator
-  can read in passing keeps the claim true, while the old partial-list paragraph
-  invited them to stop trusting the card altogether.
-  **It groups the two populations**, deleted first: widening to every cancelled
-  booking added rows for what is usually normal operation — cancel a booking
-  somebody is part-way through paying for and this is the expected outcome — and in
-  one flat list those would bury the case that needs a person, a refund on a
-  booking the club DELETED where remaking it means charging the member again. Each
-  group says which it is and what to do about it. No row carries a **View booking**
-  link, unlike the hand-back queue beside it: a deleted booking's detail page 404s
-  for anybody who is not a Full Admin, and a merely cancelled booking's page is
-  gated on `bookings:view` while this card is gated on `finance:view` — which a
-  Finance Viewer holds with no bookings access at all — so the link is a dead end
-  for part of this card's audience either way. The identifiers are printed as text
-  instead; **widening who may open a deleted booking to make a link work is not an
-  acceptable fix** and would need its own owner decision.
-- **Which rows those are is defined once**, in
-  `automaticallyRefundedManualRefundTaskFilter`, and every reader uses that export
-  rather than restating its conditions. It requires **both** the automatic close's
-  note prefix **and** `completedByMemberId: null`, and neither condition may be
-  dropped as redundant. `ManualRefundTask.completedBy` is
-  `onDelete: SetNull`, so deleting the member who dismissed a task by hand NULLs
-  the column that said who did it; on the null check alone, that operator's
-  deliberate dismissal would then be presented as an automatic refund the club
-  never made. On the note alone, a future writer of the same sentence *with* an
-  acting member would be admitted.
-- **The note prefix is stored data, not display copy.** Writer and reader share the
-  constant, so they cannot drift from each other — but `startsWith` is evaluated
-  against text already written to rows, so rewording the constant would keep every
-  test that derives its expectation from it green while making every historical
-  automatic refund invisible: #2750's own defect, arriving through the back door.
-  One assertion in
-  `src/lib/__tests__/deleted-booking-refund-visibility.test.ts` therefore pins the
-  exact bytes as a golden string. Changing them needs a migration that rewrites the
-  stored notes (or a reader that accepts the old prefix as well), in the same commit
-  as the new string.
-- **A failed read never reads as a clean slate.** The notices query is caught on its
-  own so it cannot reject the batch carrying the OPEN hand-back queue — money the
-  club still owes members must not leave the screen because an informational list
-  timed out — and the route answers `autoRefundedUnavailable: true` beside the empty
-  list. The surface prints a line saying it could not look, for that case and for a
-  whole failed load, because an empty card asserts that no money was refunded
-  automatically and a query that failed has not earned that.
-- **The card carries no controls, and says what is still owed in work rather than
-  in money.** There is no decision left — Stripe returned the money before anybody
-  saw the capture — and a control would claim otherwise, while "Mark paid back" on
-  such a row writes a second refund allocation for one refund. The copy states the
-  one thing an operator may still have to do: if the **deletion** rather than the
-  payment was the mistake, the booking has to be made again and the member charged
+- **`/admin/payments` renders the rows** as a read-only card beneath the
+  hand-back queue, **even when no `OPEN` task exists**, bounded by `completedAt`
+  to `AUTOMATIC_REFUND_NOTICE_WINDOW_DAYS`. Its copy says it covers every
+  automatic refund of a late payment from the last thirty days, **names the
+  hand-resolved exception in one clause**, and names the audit entry as the
+  permanent record beyond that window. It must not claim more, and must not
+  claim less: neither #2750's "this card does not catch every one" nor a
+  booking-change scoping returns. **It groups the two populations, deleted
+  first**, each group saying which it is and what to do. No row carries a **View
+  booking** link (a deleted booking's page is Full-Admin-only, a cancelled one's
+  needs `bookings:view`, the card needs `finance:view`); identifiers are printed
+  as text, and **widening who may open a deleted booking is not an acceptable
+  fix** without its own owner decision.
+- **Which rows qualify is defined once**, in
+  `automaticallyRefundedManualRefundTaskFilter`, which every reader uses rather
+  than restating it. It requires **both** the automatic close's note prefix
+  **and** `completedByMemberId: null`, neither redundant:
+  `ManualRefundTask.completedBy` is `onDelete: SetNull`, so the null check alone
+  would admit a deleted member's hand dismissal, and the note alone a future
+  writer of that note with an actor.
+- **The note prefix is stored data.** Writer and reader share the constant, and
+  `deleted-booking-refund-visibility.test.ts` pins its exact bytes as a golden
+  string. Changing them needs a migration that rewrites the stored notes (or a
+  reader that also accepts the old prefix), in the same commit.
+- **A failed read never reads as a clean slate.** The notices query is caught on
+  its own, so it cannot reject the batch carrying the `OPEN` hand-back queue; the
+  route answers `autoRefundedUnavailable: true` beside the empty list, and the
+  surface prints a could-not-look line for that and for a whole failed load.
+- **No controls.** There is no decision left, and "Mark paid back" would write a
+  second refund allocation. The copy names the one task that may remain: if the
+  **deletion** was the mistake, the booking is made again and the member charged
   again, because the refund has already gone out.
 
-**The refund is NOT gated by default, and that is the decision this rule
-records.** Holding #1350's automatic refund leaves a member's money with the club
-until somebody acts, and the money returning is the safe direction when nobody is
-watching, so visibility was added instead. **Do not gate it as a side effect of
-work in this area.** The one gate is the club's own choice: owner decision 26 Sep
-2026 ([#3639](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3639#issuecomment-5845224249))
+**The refund is NOT gated by default.** Visibility was added instead, because
+the money returning is the safe direction when nobody is watching. **Do not gate
+it as a side effect of work in this area.** The one gate is the club's own
+choice: owner decision 26 Sep 2026
+([#3639](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3639#issuecomment-5845224249))
 made treasurer approval a club setting, off by default, stated in `INV-PAY-106`.
+
+History, measurements and rejected alternatives: #2750, #2760 and #2773 (and
+#2774, #4149).
 
 ### INV-ADDPAY-038
 
@@ -1417,143 +1316,95 @@ written and the club is told the money did **not** go out, so a person reconcile
 (#2774 D2).
 
 > **WHO DECIDED THIS — THE ORCHESTRATOR, NOT THE OWNER. This is the authority line
-> every #2773 / #2774 citation in the tree points at, and it is stated at this
-> length once because an invariant is the permanent record and a future agent will
-> cite it as authority.**
+> every #2773 / #2774 citation in the tree points at.**
 >
 > Every direction attributed to **#2773** or **#2774** anywhere in this repository —
 > this rule, `INV-ADDPAY-037`'s lifted scoping clause and its `DISMISSED` carve-out
 > (#2774 D1), and `INV-ADDPAY-038`'s extension to both handlers — was chosen by the
 > **orchestrator**, taking each issue's own **Recommended** option under the owner's
 > standing instruction to work the backlog down. **The owner has not ruled on #2773
-> or #2774.** At the time of writing both issues still carry `needs-decision`, no
-> option is ticked, and neither thread records an answer.
+> or #2774.** Cite it as an orchestrator decision: attributing #2773 or #2774 to the
+> owner is false, as the first version of this branch did in eighteen places
+> (#2713). The #2760 and #2761 citations, dated 10 Aug 2026, are real owner
+> decisions; check the thread before repeating any citation of this kind.
 >
-> **So cite it as an orchestrator decision. Attributing #2773 or #2774 to the owner
-> is false**, and that is not a hypothetical: the first version of this branch
-> attributed both to the owner, with a date, in eighteen places — including this
-> file, this invariant's own rule text, and a comment beside operator-facing copy.
-> Two review lenses caught it and the owner held the branch (see the comment threads
-> on #2773 and #2774, and #2713). Nothing in the repository can tell an owner's
-> decision from an agent's, because every agent drives `gh` as the owner's account —
-> so the only defence is that an attribution is written accurately in the first
-> place.
->
-> **The neighbouring #2760 and #2761 citations, dated 10 Aug 2026, are by contrast
-> real** — each of those threads carries the owner's own "ready to action" comment.
-> Check the thread before you repeat any citation of this kind: deleting a true one
-> is as damaging as inventing a false one, and one sat next to the other here.
->
-> **It is reversible, and the reversal is small in each part.** #2774 D2 (this rule)
-> is one read — `findCompletedHandBackForLateCapture`; drop the call and the refund
-> goes out as it did before, with nothing to migrate, because the fence writes no
-> state of its own beyond an audit row and an alert. #2774 D1 (the carve-out) is the
-> `DISMISSED` branch of `recordAutomaticCancelledBookingRefundTask`, whose
-> alternative — write a second row — is still open. #2773 is the `captureKind`
-> argument threaded from the primary handler; the `reason` sentences it selects are
-> frozen either way (they are the idempotency key), so a reversal stops writing the
-> primary sentences rather than editing them.
->
-> **#2774 D2 is the one to put to the owner first.** #2774 says in its own words
-> that it changes a Critical money path and needs its own review, and it offers
-> "Leave it" as an option. The fence ships ahead of that answer because refunding a
-> member twice is the worse failure while the question is open — not because the
-> question is closed.
+> **It is reversible.** #2774 D2 (this rule) is one read,
+> `findCompletedHandBackForLateCapture`: drop the call and the refund goes out as
+> before, with nothing to migrate. #2774 D1 is the `DISMISSED` branch of
+> `recordAutomaticCancelledBookingRefundTask`. #2773 is the `captureKind` argument
+> threaded from the primary handler; its `reason` sentences stay frozen, so a
+> reversal stops writing them rather than editing them. **#2774 D2 is the one to
+> put to the owner first**; the fence ships ahead of that answer because refunding
+> a member twice is the worse failure while the question is open.
 
-**THE MONEY BUG THIS CLOSES.** `resolveManualRefundTask` writes
-`applyLocalRefundAllocation` on — and only on — the `COMPLETED` resolution. That
-allocation is the ledger saying the money went back. So a `COMPLETED` row for a
-capture means the club has already paid the member, in cash or by bank transfer,
-out of its own funds; Stripe's refund on top of it is a **second payment for one
-capture**. The task can sit `OPEN` for hours or days while the webhook is delayed or
-disabled, and resolving it by hand is exactly what it is for — so this was not a
-narrow race. It is pre-existing: #2760 did not introduce it and deliberately did
-not change it.
+**Why `COMPLETED` means paid.** `resolveManualRefundTask` writes
+`applyLocalRefundAllocation` on, and only on, the `COMPLETED` resolution, so a
+`COMPLETED` row means the club has already paid the member out of its own funds,
+and Stripe's refund on top is a **second payment for one capture**.
 
-**IT IS NOT THE GATING THIS FILE RULES OUT, and the difference is the whole
-justification.** `INV-ADDPAY-037` forbids suppressing #1350's automatic refund as a
-side effect of work in this area, because that would leave the club holding a
-member's money until somebody acted. This withholds a **second copy** of a refund
-the member has already had. Nothing the member is owed is held back, and the amount,
-the timing and the decision of every refund that still happens are untouched.
+**It is not the gating `INV-ADDPAY-037` rules out.** It withholds a **second
+copy** of a refund the member has already had; nothing the member is owed is held
+back, and the amount, timing and decision of every refund that still happens are
+untouched.
 
-**`COMPLETED` AND NOTHING ELSE MAY BLOCK.** A `DISMISSED` row means "settled another
-way" and writes NO allocation, so fencing on it would leave the club holding a
-member's captured funds while the audit log claimed the matter was closed — the
-symmetrical money bug, and the one a "simplify this to any non-OPEN row" change
-would introduce. An `OPEN` row is the confirm route's unanswered question and the
-refund is the answer.
+**`COMPLETED` and nothing else may block.** A `DISMISSED` row writes no
+allocation, so fencing on it would leave the club holding the member's captured
+funds; never simplify the check to "any non-`OPEN` row". An `OPEN` row is the
+confirm route's unanswered question, and the refund is the answer.
 
-**KEYED ON THIS CAPTURE, NOT ON THE BOOKING AND PAYMENT ALONE.**
-`booking-cancel.ts` raises its own `ManualRefundTask` on the same booking and
-payment when a CASH-settled booking is cancelled, for the cancellation policy's
-share of the ORIGINAL payment — a different sum about different money. The fence
-matches only rows carrying one of this payment intent's four `reason` sentences, so
-completing that task cannot refuse a member's late capture.
+**Keyed on this capture.** The fence matches only rows carrying one of this
+payment intent's four `reason` sentences, so `booking-cancel.ts`'s own task on
+the same booking and payment (the cancellation policy's share of a CASH-settled
+booking's original payment) cannot refuse a late capture's refund.
 
-**A FENCE THAT CANNOT ANSWER GIVES NEITHER ANSWER, and this is the deliberate
-choice between two bad failures.** Refunding anyway can pay a member twice;
-refusing anyway can leave the club holding their money for good, because a webhook
-that answers 200 is never redelivered. So the read is **not** wrapped in a catch:
-the rejection propagates, the handler's outer catch answers 500, the
-processed-event marker is cleared, and Stripe redelivers with backoff against the
-same idempotent refund keys — so a redelivery that reaches a working database
-refunds exactly once. The fence therefore sits BEFORE the refund and AFTER the
-capture is recorded: before, because afterwards no check can help; after, because
-withholding the refund must not also lose the record that Stripe holds the money.
+**A fence that cannot answer gives neither answer.** The read is **not** wrapped
+in a catch: the rejection propagates, the handler's outer catch answers 500, the
+processed-event marker is cleared, and Stripe redelivers against the same
+idempotent refund keys, so a redelivery reaching a working database refunds
+exactly once. The fence sits BEFORE the refund, because afterwards no check can
+help, and AFTER the capture is recorded, so withholding the refund never loses the
+record that Stripe holds the money.
 
-**WHAT THE FENCE DOES NOT CLOSE, STATED RATHER THAN IMPLIED.** A hand-completion
-that commits after the fence read but during the Stripe refund is not caught by it.
-`resolveManualRefundTask` takes no advisory lock for this kind, and closing the window would mean
-holding `pg_advisory_xact_lock(1)` across a provider round trip, which
-`docs/CONCURRENCY_AND_LOCKING.md` forbids outright. The fence shrinks
-the exposure from "any time in the hours or days the task sits `OPEN`" to "the
-duration of one Stripe refund call". **The residue is DETECTED rather than left
-silent:** the record writer re-reads the row under the lock and returns
-`existingStatus: COMPLETED`, and the caller escalates that to a `critical`
-`booking.payment.late_capture_double_refund_suspected` audit row and an alert saying
-the member may have been paid twice.
+**What the fence does not close.** A hand-completion committing after the fence
+read but during the Stripe refund is not caught: `resolveManualRefundTask` takes
+no advisory lock for this kind, and holding `pg_advisory_xact_lock(1)` across a
+provider round trip is forbidden (`docs/CONCURRENCY_AND_LOCKING.md`). It is
+**detected**: the record writer re-reads the row under the lock and returns
+`existingStatus: COMPLETED`, and the caller escalates to a `critical`
+`booking.payment.late_capture_double_refund_suspected` audit row and an alert
+saying the member may have been paid twice.
 
-**THE AUDIT ROW AND THE ALERT MUST BOTH SAY WHICH WAY THE MONEY WENT.**
+**The audit row and the alert both say which way the money went.**
 
 - The fenced path writes `booking.payment.late_capture_refund_withheld`
-  (`severity: "critical"`, `outcome: "blocked"` — a guard refused an action, nothing
-  failed), carrying the capture's amount, the hand-back task's id and amount, who
-  completed it and when, and `refundSent: false` **spelled out in the row**. It must
-  NOT write `booking.payment.refunded_after_cancellation`: that action is the club's
-  permanent record of an automatic refund, named as such by the finance card and
-  `docs/guides/payments.md`, and writing it would put a money movement that did not
-  happen into the permanent record.
+  (`severity: "critical"`, `outcome: "blocked"`: a guard refused an action),
+  carrying the capture's amount, the hand-back task's id and amount, who
+  completed it and when, and `refundSent: false` in the row. It must NOT write
+  `booking.payment.refunded_after_cancellation`, the permanent record of an
+  automatic refund named by the finance card and `docs/guides/payments.md`.
 - The detected path writes
   `booking.payment.late_capture_double_refund_suspected` with `refundSent: true`.
-- The alert is `admin-late-capture-hand-back-conflict`, its own registry entry and
-  its own template with two subjects — "Automatic refund withheld — already paid
-  back by hand" and "Payment may have been refunded TWICE — reconcile". It is NOT a
-  flag on `admin-late-capture-auto-refund`: that template's heading and body assert
-  the money went back and there is nothing to pay back, which is false on the
-  withheld arm and the opposite of the truth on the other, and one editable body
-  cannot be correct about a refund that happened AND one that did not. Delivery-
-  locked and unmuteable on the same grounds as `INV-ADDPAY-038`, and more so.
-- **The direction survives an admin rewriting the subject, in both directions of
-  editing.** A stored subject override REPLACES the sender's computed subject whole, so
-  the direction rides in the subject as the `{{handBackConflictLabel}}` token and the
-  saved copy is refused if it **drops** that token (`REQUIRED_SUBJECT_TEMPLATE_TOKENS`)
-  **or if it states a direction beside it in its own words**
-  (`FORBIDDEN_SUBJECT_PHRASES`, derived from the sender's own two labels so the two
-  cannot drift). Both halves are needed and neither implies the other: a subject that
-  keeps the token and prepends "Automatic refund withheld" renders the wrong claim in
-  the leading words an inbox truncates to, which is the part an operator triages on. A
-  free-text subject cannot be made paraphrase-proof, and is not claimed to be — the
-  guarantee that holds whatever the admin writes is the BODY, which states the
-  direction in its heading, its alert box, its required `{{handBackConflictNote}}`
-  paragraph and an explicit "Automatic refund sent: Yes / No" row.
+- The alert is `admin-late-capture-hand-back-conflict`, its own registry entry
+  and template with two subjects — "Automatic refund withheld — already paid back
+  by hand" and "Payment may have been refunded TWICE — reconcile" — and NOT a flag
+  on `admin-late-capture-auto-refund`, whose body asserts the money went back.
+  It is delivery-locked and unmuteable, as in `INV-ADDPAY-038`.
+- **The direction survives an admin's subject override**, which replaces the
+  computed subject whole: it rides as the `{{handBackConflictLabel}}` token, and
+  saved copy is refused if it **drops** that token
+  (`REQUIRED_SUBJECT_TEMPLATE_TOKENS`) **or states a direction beside it**
+  (`FORBIDDEN_SUBJECT_PHRASES`, derived from the sender's own two labels). Both
+  checks are required. A free-text subject is not claimed paraphrase-proof; the
+  guarantee is the BODY, which states the direction in its heading, its alert
+  box, its required `{{handBackConflictNote}}` paragraph and an explicit
+  "Automatic refund sent: Yes / No" row.
 
-**NO ROW IS WRITTEN AND NO PARTIAL TOP-UP IS REFUNDED on the fenced path.** The
-operator's `COMPLETED` row already IS the record of that capture, and a second row
-for one capture is the property every lookup here protects. The hand-back's amount
-is carried into the audit row and the mail so a person can see whether it covered
-the whole capture, but nothing computes or sends a difference: that is a new money
-decision and would need its own owner decision.
+**No row is written and no partial top-up is refunded on the fenced path.** The
+operator's `COMPLETED` row is the record of that capture. The hand-back's amount
+is carried into the audit row and the mail, but nothing computes or sends a
+difference: that would be a new money decision needing its own owner decision.
+
+History, measurements and rejected alternatives: #2774 (and #2773, #2713).
 
 ### INV-ADDPAY-040
 
