@@ -1,4 +1,5 @@
 import type { Lodge, Prisma, PrismaClient } from "@prisma/client";
+import { asciiSlug } from "./ascii-slug";
 
 // Callers pass their own Prisma client/transaction so this module stays free
 // of the app prisma singleton and safe to import from prisma/seed.ts.
@@ -140,13 +141,7 @@ export function normalizeLodgeText(value: string | null | undefined) {
 }
 
 export function slugifyLodgeName(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug || "lodge";
+  return asciiSlug(name, "lodge");
 }
 
 export async function buildUniqueLodgeSlug(

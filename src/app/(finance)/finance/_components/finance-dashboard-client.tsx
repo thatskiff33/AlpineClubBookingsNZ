@@ -23,6 +23,7 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { KpiStatCard } from "@/components/finance/charts/kpi-stat-card";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
+import { useClubIdentity } from "@/components/club-identity-provider";
 import { useClubTime } from "@/components/club-time-provider";
 
 // Charts load on demand (#1147): recharts is ~139kB gz, so the chart
@@ -124,6 +125,7 @@ export function FinanceDashboardClient({
 }: FinanceDashboardClientProps) {
   const router = useRouter();
   const clubTime = useClubTime();
+  const clubIdentity = useClubIdentity();
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const reportRef = useRef<HTMLDivElement>(null);
   // Ratios picks its range client-side; sync health has no time window.
@@ -154,6 +156,7 @@ export function FinanceDashboardClient({
         clubTime,
         {
           title: `Finance - ${model.selectionLabels.view}`,
+          clubShortName: clubIdentity.shortName,
         },
       );
     } catch (error) {

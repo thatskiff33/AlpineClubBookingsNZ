@@ -30,10 +30,11 @@ export function DataExportButton() {
       const disposition = res.headers.get("Content-Disposition") || "";
       // The captured name is the condition: the group is mandatory, so it is
       // present exactly when the header matched, and the default name already
-      // answered its absence (#2801).
+      // answered its absence (#2801). The fallback carries no club name: the
+      // server's header is what names the file after the club.
       const [, matchedFilename] =
         disposition.match(/filename="(.+?)"/) ?? [];
-      const filename = matchedFilename ?? "tac-my-data.json";
+      const filename = matchedFilename ?? "my-data.json";
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

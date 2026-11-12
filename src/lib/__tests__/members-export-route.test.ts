@@ -11,6 +11,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findMany: vi.fn() },
     clubTimeSettings: { findUnique: vi.fn() },
+    clubIdentitySettings: { findUnique: vi.fn() },
   },
 }));
 
@@ -307,6 +308,14 @@ describe("members export — the persisted club timezone, not the environment (C
     ).not.toBe("2026-06-30");
 
     vi.mocked(prisma.member.findMany).mockResolvedValue([] as never);
+    // INV-CONFIG-001 (#4932): the file is named after the club's SAVED short
+    // name, never the reference club's initials.
+    vi.mocked(prisma.clubIdentitySettings.findUnique).mockResolvedValue({
+      name: "Mt Hutt Ski Club",
+      shortName: "MHSC",
+      hutLeaderLabel: null,
+      facebookUrl: null,
+    } as never);
 
     const res = await exportRequest();
 
@@ -314,7 +323,7 @@ describe("members export — the persisted club timezone, not the environment (C
     // and still the EVENING OF 30 JUNE in Denver. A club there must not have
     // yesterday's export named for tomorrow.
     expect(res.headers.get("Content-Disposition")).toBe(
-      'attachment; filename="tac-members-2026-06-30.csv"',
+      'attachment; filename="mhsc-members-2026-06-30.csv"',
     );
   });
 });

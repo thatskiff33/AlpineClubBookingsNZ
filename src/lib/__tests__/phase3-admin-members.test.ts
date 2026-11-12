@@ -1440,7 +1440,7 @@ describe("Phase 3: Admin Member Management", () => {
       expect(res.status).toBe(200);
       expect(res.headers.get("Content-Type")).toBe("text/csv; charset=utf-8");
       const disposition = res.headers.get("Content-Disposition")!;
-      expect(disposition).toMatch(/tac-members-\d{4}-\d{2}-\d{2}\.csv/);
+      expect(disposition).toMatch(/filename="emc-members-\d{4}-\d{2}-\d{2}\.csv"/);
 
       const csv = await res.text();
       const lines = csv.split("\r\n");
