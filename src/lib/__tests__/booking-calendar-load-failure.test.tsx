@@ -210,9 +210,14 @@ describe("a month whose availability fails to load says so and offers Retry (#49
 
   it("clears a failure when the lodge changes, and never shows one lodge's failure on another", async () => {
     // Lodge B's request never answers, so nothing about lodge B can clear the
-    // alert: only the lodge change itself may.
+    // alert: only the lodge change itself may. Nor does lodge A's second one.
+    let pendingLodgeA = false;
     serve((month, lodgeId) =>
-      lodgeId === "lodge-b" ? "pending" : month === requestMonth(1) ? "refused" : "ok",
+      lodgeId === "lodge-b" || pendingLodgeA
+        ? "pending"
+        : month === requestMonth(1)
+          ? "refused"
+          : "ok",
     );
     const { rerender } = render(<BookingCalendar onDateSelect={vi.fn()} lodgeId="lodge-a" />);
     await goToMonth(1);
@@ -221,6 +226,12 @@ describe("a month whose availability fails to load says so and offers Retry (#49
     rerender(<BookingCalendar onDateSelect={vi.fn()} lodgeId="lodge-b" />);
     expect(failureAlert()).toBeNull();
     expect(dayButton(DAY).getAttribute("aria-label")).toContain("availability not loaded");
+
+    // Back on lodge A, whose fresh request has not answered yet: the failure
+    // recorded before the switch was cleared with it, so no alert stands.
+    pendingLodgeA = true;
+    rerender(<BookingCalendar onDateSelect={vi.fn()} lodgeId="lodge-a" />);
+    expect(failureAlert()).toBeNull();
   });
 
   it("the legend explains the ? a night shows while its availability is unknown", async () => {
