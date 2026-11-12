@@ -119,6 +119,79 @@ describe("BookingPaymentWrapper", () => {
     });
   });
 
+  const creditElection = {
+    requestedCents: 10000, appliedCents: 4000, shortfallCents: 6000,
+    shortfallReason: "balance", availableBalanceCents: 4000, fullyCovered: false,
+  };
+  function renderCreditPayment(onPaymentComplete = vi.fn()) {
+    return render(<BookingPaymentWrapper bookingId="booking-credit" amountCents={30000}
+      paymentMode="payment" returnUrl="http://localhost/bookings/booking-credit"
+      onPaymentComplete={onPaymentComplete} />);
+  }
+
+  it.each([
+    ["balance", "you no longer hold that much credit"],
+    ["price", "the booking no longer costs that much"],
+    ["balance_and_price", "you no longer hold that much credit and the booking no longer costs that much"],
+  ])("discloses a %s shortfall on a card response", async (shortfallReason, reason) => {
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({
+      clientSecret: "cs_test", chargedAmountCents: 26000,
+      creditElection: { ...creditElection, shortfallReason },
+    }) });
+    renderCreditPayment();
+    const notice = await screen.findByRole("status", { name: "Saved account credit" });
+    expect(notice).toHaveTextContent(`You asked to use $100.00 credit. $40.00 was applied because ${reason}.`);
+    expect(notice).toHaveTextContent("Any unused credit stays on your account.");
+    expect(notice).toHaveTextContent("Your card will be charged $260.00 today.");
+    expect(screen.getByTestId("charged-amount")).toHaveTextContent("26000");
+  });
+
+  it("discloses a full election on a reused intent", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({
+      clientSecret: "cs_reused", chargedAmountCents: 20000,
+      creditElection: { ...creditElection, appliedCents: 10000, shortfallCents: 0,
+        shortfallReason: "none", availableBalanceCents: 10000 },
+    }) });
+    renderCreditPayment();
+    expect(await screen.findByRole("status", { name: "Saved account credit" })).toHaveTextContent("Your credit of $100.00 was applied. Your card will be charged $200.00 today.");
+  });
+
+  it.each([null, undefined, { ...creditElection, appliedCents: 1.5 },
+    { ...creditElection, shortfallReason: "unknown" }, { ...creditElection, shortfallCents: -1 }])(
+    "does not invent a credit outcome for absent or invalid response data %j", async (outcome) => {
+      fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ clientSecret: "cs_test", creditElection: outcome }) });
+      renderCreditPayment();
+      await screen.findByText("payment-form");
+      expect(screen.queryByRole("status", { name: "Saved account credit" })).toBeNull();
+    },
+  );
+
+  it("lets the member read that credit covered the booking before continuing", async () => {
+    const complete = vi.fn();
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ alreadyPaid: true,
+      creditElection: { ...creditElection, fullyCovered: true },
+    }) });
+    renderCreditPayment(complete);
+    expect(await screen.findByRole("status", { name: "Saved account credit" })).toHaveTextContent("Your credit covered it all. No card payment is needed.");
+    expect(screen.queryByText("payment-form")).toBeNull();
+    expect(screen.queryByText(/Unable to initialize/)).toBeNull();
+    expect(complete).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([PAYMENT_PROCESSING_BODY, SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY,
+    BELOW_STRIPE_MINIMUM_MEMBER_BODY])("discloses consumed credit on a 409 recovery %j", async (body) => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 409,
+      json: async () => ({ ...body, creditElection }) });
+    renderCreditPayment();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("$40.00 was applied");
+    expect(alert).toHaveTextContent("you no longer hold that much credit");
+    expect(alert).not.toHaveTextContent("Your card will be charged");
+    expect(screen.queryByText("payment-form")).toBeNull();
+  });
+
   it("keeps the payment form mounted after a recoverable payment error", async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,

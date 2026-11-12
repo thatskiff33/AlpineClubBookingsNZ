@@ -86,6 +86,13 @@ Screen: Booking detail and its payment action.
 
 Journey: Open the booking, inspect what is owed and choose an available payment method. Read the resulting status before leaving; bank payments can remain pending while settlement is checked.
 
+The card form and success message use the intent's server `chargedAmountCents`,
+including for non-split bookings. `creditElection` on fresh, reused, already-paid
+and recovery responses explains the amount applied and any balance/price
+shortfall. Credit-only completion waits for **Continue**, so both the wizard
+and booking page let the member read the outcome before moving on. Recovery
+messages disclose credit already applied without promising another card charge.
+
 [Guide](user-guide/paying-for-your-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Guest consent

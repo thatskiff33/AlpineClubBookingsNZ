@@ -52,17 +52,9 @@ export default function PaymentForm({
   const [isProcessing, setIsProcessing] = useState(false);
   const [isPaid, setIsPaid] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  // #1976 — a split booking charges only the member portion today; show that
-  // server figure. A non-split booking has no deferred portion, so it keeps the
-  // exact original "Total: {amountCents}" display, byte-for-byte.
-  //
-  // The server's `isSplit` verdict wins when the route provides it; direct
-  // PaymentForm consumers that don't pass it fall back to deriving the split
-  // from the deferred amount. Either way the split DISPLAY additionally requires
-  // both the server charge figure (the "Charged today" headline) and the
-  // deferred guest portion (the secondary line) — a degenerate response
-  // (isSplit=true but a missing amount) falls back to the exact non-split
-  // "Total" display rather than render an undefined amount.
+  // #4943: the intent amount is authoritative for every booking, including
+  // saved credit and server repricing. Split metadata controls only the label
+  // and deferred-guest line; other consumers retain the amountCents fallback.
   const derivedSplit =
     deferredGuestAmountCents != null && deferredGuestAmountCents > 0;
   const splitRequested = typeof isSplit === "boolean" ? isSplit : derivedSplit;
@@ -71,7 +63,7 @@ export default function PaymentForm({
     chargedAmountCents != null &&
     deferredGuestAmountCents != null;
   const chargedToday =
-    isSplitDisplay && chargedAmountCents != null
+    typeof chargedAmountCents === "number"
       ? chargedAmountCents
       : amountCents;
   const formattedAmount = formatCents(chargedToday, format);
