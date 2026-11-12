@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { parseJsonRequestBody } from "@/lib/api-json";
+import { getAppVersion } from "@/lib/app-version";
 import { createAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { buildConfigExport } from "@/lib/config-transfer/export";
@@ -41,7 +42,7 @@ export async function POST(request: Request) {
       db: prisma,
       categories: parsed.data.categories,
       includeDoorCodes: parsed.data.includeDoorCodes,
-      appVersion: process.env.npm_package_version ?? "unknown",
+      appVersion: getAppVersion(),
       prismaMigration: null,
       generatedAt: new Date().toISOString(),
     });

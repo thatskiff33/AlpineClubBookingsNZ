@@ -1,3 +1,4 @@
+import { getAppVersion } from "@/lib/app-version";
 import {
   readEnvironmentRoleDeclaration,
   type EnvironmentRoleDeclaration,
@@ -260,7 +261,7 @@ async function checkPaymentRecoveryQueue(): Promise<CheckResult> {
 
 function getBaseMetadata() {
   return {
-    version: process.env.npm_package_version || "0.1.0",
+    version: getAppVersion(),
     uptime: Math.floor((Date.now() - processStartTime) / 1000),
   };
 }

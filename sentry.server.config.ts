@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { getAppVersion } from "@/lib/app-version";
 import { isBreachedPasswordRangeUrl } from "@/lib/breached-password-endpoint";
 import {
   redactSensitiveJson,
@@ -17,7 +18,7 @@ Sentry.init({
   dsn: process.env.SENTRY_DSN || "",
 
   environment: process.env.NODE_ENV || "development",
-  release: process.env.npm_package_version || "0.1.0",
+  release: getAppVersion(),
 
   // OBS-10: Performance tracing
   tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,

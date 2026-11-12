@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getAppVersion } from "@/lib/app-version";
 import { requireAdmin } from "@/lib/session-guards";
 import { getDetailedHealthReport } from "@/lib/health-check";
 import { prisma } from "@/lib/prisma";
@@ -213,7 +214,7 @@ export async function GET() {
     // System info
     const memUsage = process.memoryUsage();
     const systemInfo = {
-      version: process.env.npm_package_version || "0.1.0",
+      version: getAppVersion(),
       nodeVersion: process.version,
       uptime: Math.floor(process.uptime()),
       memoryMb: {

@@ -79,6 +79,7 @@ import {
   getAdminCronJobDefinitions,
 } from "@/lib/admin-cron-health";
 import { getCronRunsForAdminHealth } from "@/lib/admin-cron-runs";
+import { getAppVersion } from "@/lib/app-version";
 import {
   getDiagnosticsReadiness,
   readDiagnosticsModuleFlag,
@@ -244,7 +245,7 @@ export async function readDiagnosticsDeploymentEvidence(
         : commitSha
           ? "commit-sha"
           : "unset",
-      app_version: process.env.npm_package_version?.trim() || "unknown",
+      app_version: getAppVersion(),
       node_version: process.version,
       runtime_role: process.env.APP_RUNTIME_ROLE?.trim() || "unknown",
       // `Math.round` so the value is an integer scalar rather than a float that
