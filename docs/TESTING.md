@@ -17,6 +17,12 @@ the full local gate.
 ## Accessibility lint ratchets (#4466)
 
 The full `eslint-plugin-jsx-a11y` recommended configuration applies to JSX/TSX.
+The component mapping covers TableRow, TableCell, TableHead and Button. Because
+jsx-a11y treats native table rows as interactive, the local
+`accessibility/no-mouse-only-table-row` rule also requires a button or link
+inside a clickable row (#4970); a link with its own `onClick` is a separate
+action and does not count. Keep the row's mouse shortcut and put keyboard
+activation on that control.
 The local `accessibility/minimum-text-size` rule rejects static sizes below 12px
 in Tailwind classes, inline `fontSize` properties, CSS declarations and CSS
 `@apply` classes. Absolute CSS units (including `pt`) are converted to pixels;

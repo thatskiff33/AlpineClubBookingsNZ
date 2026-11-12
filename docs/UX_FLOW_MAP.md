@@ -84,7 +84,7 @@ Journey: Find a stay and open its detail. Review status, guests and amounts befo
 
 Screen: Booking detail and its payment action.
 
-Journey: Open the booking, inspect what is owed and choose an available payment method. Read the resulting status before leaving; bank payments can remain pending while settlement is checked.
+Journey: Open the booking, inspect what is owed and choose an available payment method. Switching an unpaid card booking to internet banking asks for confirmation first, because the member cannot switch back to card. Read the resulting status before leaving; bank payments can remain pending while settlement is checked.
 
 The card form and success message use the intent's server `chargedAmountCents`,
 including for non-split bookings. `creditElection` on fresh, reused, already-paid
