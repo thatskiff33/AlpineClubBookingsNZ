@@ -10,7 +10,10 @@
  *     From a clean checkout of a freshly fetched `origin/main`: works out the
  *     next version from origin's tags, creates `release/v<version>`, bumps
  *     `package.json`, folds `changelog.d/` into `CHANGELOG.md` with
- *     `compile-changelog.mjs`, and commits. It never pushes.
+ *     `compile-changelog.mjs`, folds `docs/UPGRADING.md`'s `## Unreleased`
+ *     steps into `## v<previous> → v<version>` (#4979), and commits. It never
+ *     pushes. It refuses while the upgrade documents break the rules in
+ *     `upgrade-docs.mjs`.
  *
  *   pnpm run release:cut prepare --amend [--execute]
  *     When fragments merged while the release-prep pull request was open: from
@@ -53,6 +56,21 @@ import {
   releaseDateToday,
 } from "./compile-changelog.mjs";
 import { isMainModule } from "../lib/is-main-module.mjs";
+import {
+  compareReleaseParts as compareParts,
+  formatReleaseParts as formatParts,
+  parseReleaseTag,
+} from "./release-version.mjs";
+import {
+  foldUpgradingUnreleased,
+  RUNBOOK_PATH,
+  UNRELEASED_HEADING,
+  unreleasedBlock,
+  UPGRADE_CHECKLIST_HEADING,
+  upgradeDocsProblems,
+  UPGRADING_PATH,
+  upgradingReleaseHeading,
+} from "./upgrade-docs.mjs";
 
 const REPO_ROOT = path.resolve(path.join(import.meta.dirname, "..", ".."));
 
@@ -66,7 +84,6 @@ export const FEATURE_FRAGMENT_SUFFIX = ".feature.md";
  */
 export const MAX_RELEASE_NOTES_CHARS = 120_000;
 
-const RELEASE_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const BUMPS = ["patch", "minor", "major"];
 const [REMOTE, MAIN_BRANCH] = MAIN_REF.split("/");
 const MAIN_TRACKING_REF = `refs/remotes/${MAIN_REF}`;
@@ -78,21 +95,6 @@ export class ReleaseCutError extends Error {
     this.name = "ReleaseCutError";
     this.recovery = recovery;
   }
-}
-
-/** `{ major, minor, patch }` for a strict `vX.Y.Z` tag, or `null`. */
-export function parseReleaseTag(tag) {
-  const match = RELEASE_TAG.exec(String(tag).trim());
-  if (!match) return null;
-  return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]) };
-}
-
-function compareParts(a, b) {
-  return a.major - b.major || a.minor - b.minor || a.patch - b.patch;
-}
-
-function formatParts({ major, minor, patch }) {
-  return `${major}.${minor}.${patch}`;
 }
 
 /** The highest strict `vX.Y.Z` tag in `tags` by version (not by date), or `null`. */
@@ -399,6 +401,57 @@ function requireFreshMainCheckout(cmd) {
   return main;
 }
 
+/** A repository file's text, or `null` when the file does not exist. */
+function readOptional(repoRoot, relative) {
+  const file = path.join(repoRoot, relative);
+  return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+}
+
+/**
+ * Refuse while the upgrade documents are not ready for a release (#4979): the
+ * guide's layout is broken, or the runbook names a release older than
+ * `releasedVersion`. The rules are `upgrade-docs.mjs`'s, shared with the census.
+ */
+function refuseUnreadyUpgradeDocs(upgradeDocs, releasedVersion) {
+  const problems = upgradeDocsProblems({ ...upgradeDocs, releasedVersion });
+  if (problems.length > 0) {
+    throw new ReleaseCutError(
+      `The upgrade documents are not ready for a release:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`,
+      `Fix them in a pull request to ${MAIN_BRANCH} (docs/MAINTENANCE.md, "Public Reference Release Checklist"), then re-run.`,
+    );
+  }
+}
+
+/** The guide folded for the release, or a refusal when its heading already exists. */
+function foldUpgradingInto(text, fromVersion, toVersion) {
+  try {
+    return foldUpgradingUnreleased(text, { fromVersion, toVersion });
+  } catch (error) {
+    throw new ReleaseCutError(
+      `Cannot fold ${UPGRADING_PATH}: ${error.message} Its "${UNRELEASED_HEADING}" steps would have nowhere to go.`,
+      `Move the steps under "${UNRELEASED_HEADING}" into "${upgradingReleaseHeading(fromVersion, toVersion)}" in a pull request to ${MAIN_BRANCH}, then re-run.`,
+    );
+  }
+}
+
+/** The by-hand upgrade-document steps that follow the release-prep commit (#4979). */
+function upgradeDocsSteps({ unreleasedUpgrade, foldUpgrading, upgradingHeading, previousTag, plan }) {
+  if (foldUpgrading) {
+    return [
+      `Check "${upgradingHeading}" in ${UPGRADING_PATH} opens with "${UPGRADE_CHECKLIST_HEADING}"` +
+        (unreleasedUpgrade.opensWithChecklist ? "" : " (it does NOT yet: write one)") +
+        ` and that its in-window steps reach every windowed ledger row added since ${previousTag}.`,
+    ];
+  }
+  if (unreleasedUpgrade?.hasSteps) {
+    return [
+      `${UPGRADING_PATH} has steps under "${UNRELEASED_HEADING}" this phase does not fold; ` +
+        `move the ones that belong to ${plan.tag} into its section by hand and commit.`,
+    ];
+  }
+  return [];
+}
+
 /**
  * Phase 1: build the release-prep commit locally (or, with `amend`, the
  * late-fragment fold into a prepared, untagged release).
@@ -422,6 +475,11 @@ export function prepareRelease({
   const packageText = fs.readFileSync(packagePath, "utf8");
   const packageVersion = JSON.parse(packageText).version;
   const changelogText = fs.readFileSync(path.join(repoRoot, "CHANGELOG.md"), "utf8");
+  const upgradeDocs = {
+    upgradingText: readOptional(repoRoot, UPGRADING_PATH),
+    runbookText: readOptional(repoRoot, RUNBOOK_PATH),
+  };
+  const unreleasedUpgrade = upgradeDocs.upgradingText === null ? null : unreleasedBlock(upgradeDocs.upgradingText);
   const latest = latestReleaseTag(remoteTags);
   const packageParts = parseReleaseTag(`v${packageVersion}`);
   // A release prepared and merged but not yet tagged: package.json is ahead of
@@ -492,6 +550,15 @@ export function prepareRelease({
       log(`  Note: package.json says ${packageVersion}, not the latest tag's ${plan.previousTag.slice(1)}.`);
     }
   }
+  refuseUnreadyUpgradeDocs(upgradeDocs, latest?.version ?? null);
+  // A fresh prepare folds the guide's "## Unreleased" steps into the release's
+  // own heading, as the compiler folds the changelog. Late steps on --amend, or
+  // a first release with no previous tag to name, are folded by hand.
+  const upgradingHeading = latest === null ? null : upgradingReleaseHeading(latest.version, plan.version);
+  const foldUpgrading = !amend && upgradingHeading !== null && unreleasedUpgrade?.hasSteps === true;
+  const nextUpgradingText = foldUpgrading
+    ? foldUpgradingInto(upgradeDocs.upgradingText, latest.version, plan.version)
+    : null;
   if (localTagCommit(cmd, plan.tag) !== null) {
     throw new ReleaseCutError(
       `This clone has a tag ${plan.tag} that ${REMOTE} does not; it would collide with the release.`,
@@ -511,9 +578,13 @@ export function prepareRelease({
   }
 
   // Stage deletions too: the compiler removes consumed fragments and spent allowances.
-  const stagePaths = ["CHANGELOG.md", "package.json", FRAGMENTS_DIRNAME, ALLOWANCE_DIR].filter((relative) =>
-    fs.existsSync(path.join(repoRoot, relative)),
-  );
+  const stagePaths = [
+    "CHANGELOG.md",
+    "package.json",
+    FRAGMENTS_DIRNAME,
+    ALLOWANCE_DIR,
+    ...(foldUpgrading ? [UPGRADING_PATH] : []),
+  ].filter((relative) => fs.existsSync(path.join(repoRoot, relative)));
   const message = amend ? `release: fold late fragments into ${plan.tag}` : `release: cut ${plan.tag}`;
   const steps = [
     `git switch -c ${plan.branch}`,
@@ -521,6 +592,7 @@ export function prepareRelease({
     amend
       ? `node scripts/release/compile-changelog.mjs ${plan.version} --append`
       : `node scripts/release/compile-changelog.mjs ${plan.version} ${date}`,
+    ...(foldUpgrading ? [`fold ${UPGRADING_PATH} "${UNRELEASED_HEADING}" into "${upgradingHeading}", leaving an empty "${UNRELEASED_HEADING}"`] : []),
     `git add --all -- ${stagePaths.join(" ")}`,
     `git commit -m "${message}"`,
   ];
@@ -528,6 +600,7 @@ export function prepareRelease({
   steps.forEach((step, index) => log(`  ${index + 1}. ${step}`));
   const next = [
     `Read "${plan.heading}" end to end; edit it for order and duplication and commit.`,
+    ...upgradeDocsSteps({ unreleasedUpgrade, foldUpgrading, upgradingHeading, previousTag: latest?.tag ?? null, plan }),
     `git push -u ${REMOTE} ${plan.branch}, then open its pull request (body checked with pnpm run pr:check).`,
     `After it merges: pnpm run release:cut publish (dry run), then pnpm run release:cut publish --execute.`,
   ];
@@ -548,6 +621,7 @@ export function prepareRelease({
   try {
     if (nextPackageText !== null) fs.writeFileSync(packagePath, nextPackageText);
     compile({ repoRoot, version: plan.version, date, dryRun: false, append: amend, log });
+    if (nextUpgradingText !== null) fs.writeFileSync(path.join(repoRoot, UPGRADING_PATH), nextUpgradingText);
   } catch (error) {
     throw new ReleaseCutError(`Release prep failed: ${error.message}`, recovery);
   }
