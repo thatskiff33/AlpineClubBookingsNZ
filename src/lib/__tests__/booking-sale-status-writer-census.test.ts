@@ -10,8 +10,19 @@
  * value and count; a new one fails until someone decides which it is. A raw
  * SQL `UPDATE "Booking"` that sets the status is refused outright.
  *
- * `POSTS` names the posting call the file makes, and the census checks the
- * file still makes it. There is no third kind for a sale that posts nothing:
+ * `POSTS` names the posting call, and the census holds EACH write under that
+ * entry to it, per site (#4928): the write's own enclosing function (its
+ * nearest function-like ancestor) must call it by name. A call elsewhere in the
+ * file, in a sibling function, in a closure nested under the write's function,
+ * or inside a helper the function calls does not count; a failure names the
+ * write's `file:line`. A writer that posts through a helper names that helper
+ * as its `call`, reviewed with the entry (group cancel and group settle do,
+ * each helper a poster in its own right); there is no exception list. The pairing is by function, not by branch: a
+ * computed-status site whose post runs only on its PAID branch passes, as does
+ * a function that posts on a path the write is not on. So it proves no write
+ * forgot its function's post; it does not prove every run of the write posts.
+ *
+ * There is no third kind for a sale that posts nothing:
  * #4660 made the credit-covered create and the pay-step credit settle post,
  * and #4738 the zero-price doors (draft, waitlist offer, pending-guest and
  * cron confirms, officer force-confirm). A new writer must post or be shown
@@ -24,6 +35,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { RELEASE_ADMIN_CAPACITY_HOLD_UPDATE, RELEASE_WHOLE_LODGE_HOLD_UPDATE } from "@/lib/booking-status";
 import { compareOrdinal } from "@/lib/ordinal-order";
+import { callsInOwnBody, enclosingFunction } from "./support/function-scope";
 import { productionSourceFiles } from "./support/prisma-delegate-read-scan";
 import { stripComments } from "./support/strip-comments";
 
@@ -363,10 +375,16 @@ function argsSites(node: ts.Expression, scanned: Scanned, depth: number): string
   return opaque;
 }
 
-/** Every classified site in one file's source, as `value` strings (one per occurrence). */
-function bookingSaleStatusSites(text: string, file: string): string[] {
+/** One classified site: its `value` string and the booking write call it came from. */
+interface Site {
+  value: string;
+  write: ts.CallExpression;
+}
+
+/** Every classified site in one file's source (one per occurrence). */
+function bookingSaleStatusSites(text: string, file: string): Site[] {
   const { source, checker } = bind(text, file);
-  const sites: string[] = [];
+  const sites: Site[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && WRITE_METHODS.has(node.expression.name.text)) {
       const delegate = unwrap(node.expression.expression);
@@ -374,7 +392,8 @@ function bookingSaleStatusSites(text: string, file: string): string[] {
         || (ts.isElementAccessExpression(delegate) && ts.isStringLiteralLike(delegate.argumentExpression) && delegate.argumentExpression.text === "booking");
       if (isBooking) {
         const [argument] = node.arguments;
-        sites.push(...(argument ? argsSites(argument, { source, checker, site: node }, 0) : ["payload:none{?}"]));
+        const values = argument ? argsSites(argument, { source, checker, site: node }, 0) : ["payload:none{?}"];
+        sites.push(...values.map((value) => ({ value, write: node })));
       }
     }
     ts.forEachChild(node, visit);
@@ -397,30 +416,55 @@ const RAW_STATUS_UPDATE = new RegExp(
 
 const scanned = productionSourceFiles(ROOT).filter((file) => !file.startsWith("prisma/"));
 
-function census(): Record<string, number> {
+/** A write's place, as the failure names it: `file:line`. */
+const placeOf = (file: string, write: ts.Node): string =>
+  `${file}:${write.getSourceFile().getLineAndCharacterOfPosition(write.getStart()).line + 1}`;
+
+/**
+ * THE POSTS PAIRING, PER SITE (#4928): each write whose classification names a
+ * posting call must make that call in its OWN enclosing function, the nearest
+ * function-like ancestor of the write. A call anywhere else in the file, in a
+ * sibling function, or in a closure nested under the write's function (which
+ * may never run) does not count. `postFor` gives the call a site's value must
+ * make, or undefined for a site that need not post. Returns each unpaired
+ * write as `file:line value: call`.
+ */
+function unpairedWrites(file: string, sites: readonly Site[], postFor: (value: string) => string | undefined): string[] {
+  return sites.flatMap(({ value, write }) => {
+    const call = postFor(value);
+    if (call === undefined || callsInOwnBody(enclosingFunction(write), call)) return [];
+    return [`${placeOf(file, write)} ${value}: no ${call}(...) in its enclosing function`];
+  });
+}
+
+function census(): { found: Record<string, number>; unpaired: string[] } {
   const found: Record<string, number> = {};
+  const perFile: [string, Site[]][] = [];
   for (const file of scanned) {
     const text = readFileSync(join(ROOT, file), "utf8");
     if (!/\bbooking\b/.test(text)) continue;
-    for (const site of bookingSaleStatusSites(text, file)) found[`${file}|${site}`] = (found[`${file}|${site}`] ?? 0) + 1;
+    const sites = bookingSaleStatusSites(text, file);
+    for (const { value } of sites) found[`${file}|${value}`] = (found[`${file}|${value}`] ?? 0) + 1;
+    perFile.push([file, sites]);
   }
-  return found;
+  // Keyed by the file's full count, as REVIEWED is: an unlisted key is the first test's failure, not this one's.
+  const unpaired = perFile.flatMap(([file, sites]) => unpairedWrites(file, sites, (value) => {
+    const classification = REVIEWED[`${file}|${value}|${found[`${file}|${value}`]}`];
+    return classification?.kind === "POSTS" ? classification.call : undefined;
+  }));
+  return { found, unpaired };
 }
 
 describe("every booking PAID/CANCELLED writer is classified (#4628)", () => {
-  const found = census();
+  const { found, unpaired } = census();
 
   it("finds exactly the reviewed writers, by file, value and count", () => {
     const actual = Object.entries(found).map(([site, count]) => `${site}|${count}`).sort();
     expect(actual, "a writer that sets a booking PAID or CANCELLED (or a status the scan cannot read) is unclassified").toEqual(Object.keys(REVIEWED).sort());
   });
 
-  it("holds each POSTS writer to the posting call it names", () => {
-    for (const [site, classification] of Object.entries(REVIEWED)) {
-      if (classification.kind !== "POSTS") continue;
-      const file = site.split("|")[0]!;
-      expect(stripComments(readFileSync(join(ROOT, file), "utf8")), `${file} no longer calls ${classification.call}`).toMatch(new RegExp(`\\b${classification.call}\\(`));
-    }
+  it("holds each POSTS write to its posting call, in the write's own function", () => {
+    expect(unpaired, "a PAID/CANCELLED write must post its journal event in the same function").toEqual([]);
   });
 
   it("refuses a raw SQL status write to a booking", () => {
@@ -450,8 +494,32 @@ describe("every booking PAID/CANCELLED writer is classified (#4628)", () => {
     for (const [name, value] of Object.entries(STATUS_FREE_CONSTANTS)) expect(Object.keys(value), name).not.toContain("status");
   });
 
+  it("pairs each write with its post in the write's own function (fixture proof)", () => {
+    const unpaired = (code: string) =>
+      unpairedWrites("fixture.ts", bookingSaleStatusSites(code, "fixture.ts"), (value) => (value === "CANCELLED" ? "postCancel" : undefined));
+    const CANCEL = "await tx.booking.update({ where, data: { status: BookingStatus.CANCELLED } });";
+    expect(unpaired(`async function f(tx) {\n  ${CANCEL}\n  if (bound) await postCancel(tx);\n}`), "a write and its post in one function").toEqual([]);
+    expect(unpaired(`async function f(tx) {\n  ${CANCEL}\n}\nasync function g(tx) {\n  await postCancel(tx);\n}`), "a post in a sibling function")
+      .toEqual(["fixture.ts:2 CANCELLED: no postCancel(...) in its enclosing function"]);
+    // Decided (#4928): a closure under the write's function may never run, so its post is not the write's.
+    expect(unpaired(`async function f(tx) {\n  ${CANCEL}\n  const later = async () => { await postCancel(tx); };\n}`), "a post in a nested closure")
+      .toEqual(["fixture.ts:2 CANCELLED: no postCancel(...) in its enclosing function"]);
+    // The write's own function is the nearest one: a write in a callback pairs with a post in that callback.
+    expect(unpaired(`async function f() {\n  await prisma.$transaction(async (tx) => {\n    ${CANCEL}\n  });\n  await postCancel();\n}`), "a post outside the write's callback")
+      .toEqual(["fixture.ts:3 CANCELLED: no postCancel(...) in its enclosing function"]);
+    expect(unpaired(`async function f() {\n  await prisma.$transaction(async (tx) => {\n    ${CANCEL}\n    await postCancel(tx);\n  });\n}`)).toEqual([]);
+    // Only a direct call by name: a same-named method, or a helper that may post, is not the named call.
+    expect(unpaired(`async function f(tx) {\n  ${CANCEL}\n  await ledger.postCancel(tx);\n}`)).toHaveLength(1);
+    expect(unpaired(`async function f(tx) {\n  ${CANCEL}\n  await cancelAndPost(tx);\n}`)).toHaveLength(1);
+    // Each write is held to its own post: a second write in a function that does not post fails on its own line.
+    expect(unpaired(`async function f(tx) {\n  ${CANCEL}\n  await postCancel(tx);\n}\nasync function g(tx) {\n  ${CANCEL}\n}`))
+      .toEqual(["fixture.ts:6 CANCELLED: no postCancel(...) in its enclosing function"]);
+    // A site that need not post is not held to one.
+    expect(unpaired("async function f(tx) { await tx.booking.update({ where, data: { status: BookingStatus.PAID } }); }")).toEqual([]);
+  });
+
   it("sees every form a status write can take (fixture proof)", () => {
-    const sites = (code: string) => bookingSaleStatusSites(code, "fixture.ts");
+    const sites = (code: string) => bookingSaleStatusSites(code, "fixture.ts").map(({ value }) => value);
     expect(sites("await tx.booking.update({ where, data: { status: BookingStatus.PAID } });")).toEqual(["PAID"]);
     expect(sites('await prisma.booking.updateMany({ where, data: { status: "CANCELLED", x: 1 } });')).toEqual(["CANCELLED"]);
     expect(sites("await db.booking.create({ data: { status: BookingStatus.CONFIRMED } });")).toEqual([]);
