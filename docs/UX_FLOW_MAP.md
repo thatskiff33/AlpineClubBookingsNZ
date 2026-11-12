@@ -392,7 +392,7 @@ Screen: `/admin/member-applications`.
 
 Shows: Applications, nomination progress and officer decisions.
 
-Journey: Open an application, review its details and nominations, and use the available decision actions.
+Journey: Review an application and its nominations, then approve or decline. Action failures take focus and scroll into view; successes are announced and brought into view.
 
 [Guide](guides/member-applications.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -412,7 +412,7 @@ Screen: `/admin/members`.
 
 Shows: A searchable member list and individual membership records.
 
-Journey: Search or filter members, open a profile, and use its permitted membership actions.
+Journey: Search or filter members, open a profile, and use its permitted membership actions. Merge preview and execution failures take focus and scroll into view.
 
 [Guide](guides/members.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -974,7 +974,7 @@ Screen: `/admin/setup`.
 
 Shows: The installation setup hub and configuration cards.
 
-Journey: Open the setup card for the configuration task you need.
+Journey: Open a setup card or run a readiness check. Failed actions take focus and scroll into view; finishing setup announces completion.
 
 [Guide](guides/setup.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

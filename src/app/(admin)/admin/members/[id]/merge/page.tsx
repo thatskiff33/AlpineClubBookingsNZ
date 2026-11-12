@@ -1,4 +1,5 @@
 "use client";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { use, useCallback, useEffect, useMemo, useState } from "react";
@@ -98,6 +99,7 @@ export default function MemberMergePage({
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [error, setError] = useState("");
+  const [errorAttentionKey, setErrorAttentionKey] = useState(0);
 
   // Load the master member.
   useEffect(() => {
@@ -186,6 +188,7 @@ export default function MemberMergePage({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.error || "Failed to build the merge preview.");
+        setErrorAttentionKey((key) => key + 1);
         setPreview(null);
         return;
       }
@@ -212,6 +215,7 @@ export default function MemberMergePage({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.error || "The merge could not be completed.");
+        setErrorAttentionKey((key) => key + 1);
         return;
       }
       toast.success("Members merged. The duplicate has been deleted.");
@@ -349,11 +353,12 @@ export default function MemberMergePage({
         </Button>
       )}
 
-      {error && (
-        <div className="mt-4 rounded-lg border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11">
-          {error}
-        </div>
-      )}
+      <FocusedActionError
+        id="member-merge-error"
+        error={error}
+        attentionKey={errorAttentionKey}
+        className="mt-4"
+      />
 
       {/* Preview panel */}
       {preview && (

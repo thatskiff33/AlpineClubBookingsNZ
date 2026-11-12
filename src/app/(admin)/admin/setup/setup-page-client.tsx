@@ -1,7 +1,9 @@
 "use client";
 
+import { FocusedActionError } from "@/components/focused-action-error";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BadgeCheck,
   Bell,
@@ -263,7 +265,22 @@ export function SetupPageClient({
   const [readiness, setReadiness] = useState<SetupReadiness | null>(null);
   const [progress, setProgress] = useState<SetupProgressState | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setErrorMessage] = useState("");
+  const [errorAttentionKey, setErrorAttentionKey] = useState(0);
+  const [loadError, setLoadError] = useState("");
+  const [finishMessage, setFinishMessage] = useState("");
+  const successRef = useRef<HTMLDivElement>(null);
+  // Only action failures request attention; background loads use loadError.
+  function setError(value: string) {
+    setErrorMessage(value);
+    if (value) setErrorAttentionKey((key) => key + 1);
+  }
+  useActionAttention({
+    error,
+    errorTarget: null, // FocusedActionError owns failure focus.
+    success: finishMessage,
+    successTarget: successRef,
+  });
   const [savingStep, setSavingStep] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
   const [runningProvider, setRunningProvider] = useState<Provider | null>(null);
@@ -271,7 +288,7 @@ export function SetupPageClient({
 
   async function loadSetup() {
     setLoading(true);
-    setError("");
+    setLoadError("");
 
     try {
       const response = await fetch("/api/admin/setup", {
@@ -283,8 +300,9 @@ export function SetupPageClient({
       }
       setReadiness(body.readiness);
       setProgress(body.progress);
+      return body;
     } catch (loadError) {
-      setError(
+      setLoadError(
         loadError instanceof Error
           ? loadError.message
           : "Failed to load setup readiness",
@@ -348,6 +366,7 @@ export function SetupPageClient({
   async function finishSetup() {
     setFinishing(true);
     setError("");
+    setFinishMessage("");
     try {
       const response = await fetch("/api/admin/setup/progress", {
         method: "PATCH",
@@ -359,7 +378,10 @@ export function SetupPageClient({
       if (!response.ok) {
         throw new Error(apiErrorMessageFromBody(body, "Failed to finish setup"));
       }
-      await loadSetup();
+      const updated = await loadSetup();
+      if (updated?.progress.completedAt) {
+        setFinishMessage("Setup has been marked complete.");
+      }
     } catch (finishError) {
       setError(
         finishError instanceof Error ? finishError.message : "Failed to finish setup",
@@ -388,31 +410,22 @@ export function SetupPageClient({
         [provider]: body,
       }));
       await loadSetup();
+      if (!body.ok) setError(body.message);
     } catch (providerError) {
+      const message = providerError instanceof Error ? providerError.message : "Provider test failed";
+      setError(message);
       setProviderResults((current) => ({
         ...current,
         [provider]: {
           ok: false,
           provider,
           checkedAt: new Date().toISOString(),
-          message:
-            providerError instanceof Error
-              ? providerError.message
-              : "Provider test failed",
+          message,
         },
       }));
     } finally {
       setRunningProvider(null);
     }
-  }
-
-  if (loading && !readiness) {
-    return (
-      <div className="flex min-h-[320px] items-center justify-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Loading setup readiness
-      </div>
-    );
   }
 
   return (
@@ -446,15 +459,26 @@ export function SetupPageClient({
         </div>
       </div>
 
-      {error ? (
-        <div className="rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11">
-          {error}
-        </div>
-      ) : null}
-
-      {setupCompleted ? (
-        <div className="rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11">
-          Setup has been marked complete.
+      <FocusedActionError id="setup-error" error={error} attentionKey={errorAttentionKey} />
+      <div
+        role="alert"
+        aria-atomic="true"
+        className={loadError ? "rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11" : "sr-only"}
+      >
+        {loadError}
+      </div>
+      <div
+        ref={successRef}
+        role="status"
+        aria-atomic="true"
+        className={setupCompleted ? "rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11" : "sr-only"}
+      >
+        {setupCompleted ? "Setup has been marked complete." : ""}
+      </div>
+      {loading && !readiness ? (
+        <div className="flex min-h-[320px] items-center justify-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading setup readiness
         </div>
       ) : null}
 
