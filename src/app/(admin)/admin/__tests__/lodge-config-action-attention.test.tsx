@@ -87,12 +87,17 @@ beforeEach(() => {
   document.body.append(scrollHost);
   vi.stubGlobal(
     "fetch",
+    // A bare object rather than a `Response`: its body resolves on a microtask,
+    // so a refused action settles inside one React batch — the fast failure in
+    // which clearing the old message and setting the same one again never
+    // commit apart, and only the attention key can re-take focus.
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const { status, body } = respond(String(input), init?.method ?? "GET");
-      return new Response(JSON.stringify(body), {
+      return {
+        ok: status >= 200 && status < 300,
         status,
-        headers: { "content-type": "application/json" },
-      });
+        json: async () => body,
+      } as unknown as Response;
     }),
   );
 });
@@ -312,6 +317,26 @@ describe("Lodges action attention", () => {
 
     refocus(deactivate);
     fireEvent.click(deactivate);
+    await expectRecoveryAlertToHoldFocus(alert);
+  });
+
+  it("re-focuses a refused save that repeats with nothing cleared in between", async () => {
+    // The name check fails before anything is sent, so the second refusal sets
+    // the SAME message straight over the first: only the attention key can
+    // make it an arrival.
+    handler = () => undefined;
+    render(<AdminLodgesPage />, { container: scrollHost });
+    fireEvent.click(await screen.findByRole("button", { name: /^Edit$/ }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: " " } });
+    const save = screen.getByRole("button", { name: /^Save$/ });
+
+    fireEvent.click(save);
+    const alert = actionAlert("lodges-page-error");
+    expect(alert).toHaveTextContent("Lodge name is required.");
+    await expectRecoveryAlertToHoldFocus(alert);
+
+    refocus(save);
+    fireEvent.click(save);
     await expectRecoveryAlertToHoldFocus(alert);
   });
 
