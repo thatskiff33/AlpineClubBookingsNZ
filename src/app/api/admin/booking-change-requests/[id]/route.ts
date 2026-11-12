@@ -11,6 +11,7 @@ import {
   includeRequestDetail,
 } from "@/lib/booking-change-request-admin-decision";
 import { acknowledgedKeptNightsRecord } from "@/lib/booking-change-request-stored";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const reviewSchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"]),
@@ -69,6 +70,8 @@ export async function PATCH(
   const session = guard.session;
 
   const { id } = await params;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   const body = await req.json();
   const parsed = reviewSchema.safeParse(body);
   if (!parsed.success) {

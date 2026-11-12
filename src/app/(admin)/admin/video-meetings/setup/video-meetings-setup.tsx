@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useCallback, useState } from "react";
 import { useSession } from "next-auth/react";
@@ -203,7 +204,7 @@ export function VideoMeetingsSetup({
   const section = useSectionEditState<MirotalkSettingsDraft>({
     initial: initialSettings,
     save: async (draft) => {
-      const res = await fetch(SETTINGS_ENDPOINT, {
+      const res = await fetchWithRecentAuth(SETTINGS_ENDPOINT, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(draft),
@@ -273,7 +274,7 @@ export function VideoMeetingsSetup({
     setBusySecret(key);
     setSecretMessage(null);
     try {
-      const res = await fetch(CREDENTIALS_ENDPOINT, {
+      const res = await fetchWithRecentAuth(CREDENTIALS_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -310,7 +311,7 @@ export function VideoMeetingsSetup({
     setBusySecret(key);
     setSecretMessage(null);
     try {
-      const res = await fetch(
+      const res = await fetchWithRecentAuth(
         `${CREDENTIALS_ENDPOINT}?key=${encodeURIComponent(key)}&version=${encodeURIComponent(stored.version)}`,
         { method: "DELETE" },
       );

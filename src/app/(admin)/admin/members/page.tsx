@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { useSession } from "next-auth/react"
 import { isFullAdmin, sessionPrivilegeInput } from "@/lib/access-roles"
-import { Download, RefreshCw, Upload } from "lucide-react"
+import { RefreshCw, Upload } from "lucide-react"
 import { Alert } from "@/components/ui/alert"
 import { FocusedActionError } from "@/components/focused-action-error"
 import { Button } from "@/components/ui/button"
@@ -42,6 +42,7 @@ import { MemberBulkActionBar } from "./_components/member-bulk-action-bar"
 import { MemberBulkDialog } from "./_components/member-bulk-dialog"
 import { MemberBulkMembershipDialog } from "./_components/member-bulk-membership-dialog"
 import { MemberEditorDialog } from "./_components/member-editor-dialog"
+import { MemberExportControl } from "./_components/member-export-control"
 import { MemberFilterToolbar } from "./_components/member-filter-toolbar"
 import { MemberImportDialog } from "./_components/member-import-dialog"
 import { MemberPagination } from "./_components/member-pagination"
@@ -441,12 +442,7 @@ export default function MembersPage() {
                   {refreshingXeroGroups ? "Refreshing Xero Groups..." : "Refresh Xero Groups"}
                 </ViewOnlyActionButton>
               )}
-              <Button asChild variant="outline" size="sm">
-                <a href={exportUrl}>
-                  <Download className="h-4 w-4 mr-1" />
-                  Export CSV
-                </a>
-              </Button>
+              <MemberExportControl href={exportUrl} />
               <ViewOnlyActionButton
                 canEdit={canEditMembership}
                 describeReason={false}

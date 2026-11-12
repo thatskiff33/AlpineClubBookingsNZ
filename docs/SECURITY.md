@@ -500,6 +500,13 @@ carries, and `auth()` answers no session. The setting is read on every
 refresh, so a change applies to people already signed in on their next
 request.
 
+**Once per request, not once per call (#4938).** `auth()` and the module
+flags it reads are memoised with React `cache()`, so a page's layout, guard
+and page share one refresh: the member, module-settings and login-security rows
+are read once per page render. The memo ends with the render, so every change
+above still reaches the next request. Route handlers and server actions are not
+renders: each `auth()` there refreshes, as before.
+
 **What the person sees.** The same as any ended session: the next page load
 goes to sign-in with the page as the return path, and an API call answers 401.
 Signing in again starts a new clock.
@@ -549,12 +556,13 @@ Audience: Operator, Developer.
 five minutes or five days after sign-in. Nothing could ask "is this still you?"
 before a destructive action.
 
-**What an officer sees.** Nothing yet: no route asks. When one does (#4619), a
-confirmation older than five minutes gets a small dialog. They enter the code
-from their authenticator app, their passkey, or their password if they have
-neither an app nor a passkey. An emailed code is never accepted, and nor is a
-recovery code. The dialog then sends the original request once more, with the
-same body.
+**What an officer sees.** The listed routes call the check. Nothing changes
+for officers until #4620 turns it on: the dialog stays off, and the five
+minutes is still not a setting. When it is on, a confirmation older than five
+minutes gets a small dialog. They enter the code from their authenticator
+app, their passkey, or their password if they have neither an app nor a
+passkey. An emailed code is never accepted, and nor is a recovery code. The
+dialog then sends the original request once more, with the same body.
 
 **What is stored.** The session token carries `lastAuthenticatedAt`. A password
 sign-in writes it only when no authenticator factor is still owed (an email
