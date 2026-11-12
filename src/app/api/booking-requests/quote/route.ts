@@ -9,16 +9,12 @@ import {
 } from "@/lib/booking-request";
 import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
-import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-});
-
 const quoteSchema = z.object({
-  checkIn: dateOnlyString.transform(parseDateOnly),
-  checkOut: dateOnlyString.transform(parseDateOnly),
+  checkIn: parsedDateOnlySchema,
+  checkOut: parsedDateOnlySchema,
   // Lodge the stay is requested at; omitted prices the club's default lodge.
   lodgeId: z.string().min(1).optional(),
   guests: z.array(bookingRequestGuestSchema).min(1).max(200),

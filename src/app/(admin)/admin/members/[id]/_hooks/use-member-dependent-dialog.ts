@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { toast } from "sonner";
@@ -229,7 +230,7 @@ export function useMemberDependentDialog({
     setDependentFormError("");
 
     try {
-      const res = await fetch("/api/admin/members", {
+      const res = await fetchWithRecentAuth("/api/admin/members", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

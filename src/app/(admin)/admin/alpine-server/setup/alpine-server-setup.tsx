@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
@@ -227,7 +228,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
     setBusy("baseUrl");
     setMessage(null);
     try {
-      const res = await fetch("/api/admin/alpine-server/settings", {
+      const res = await fetchWithRecentAuth("/api/admin/alpine-server/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ baseUrl }),
@@ -253,7 +254,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
     setBusy("apiKey");
     setMessage(null);
     try {
-      const res = await fetch("/api/admin/integrations/credentials", {
+      const res = await fetchWithRecentAuth("/api/admin/integrations/credentials", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -293,7 +294,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
     setMessage(null);
     const next = !enabled;
     try {
-      const res = await fetch("/api/admin/alpine-server/settings", {
+      const res = await fetchWithRecentAuth("/api/admin/alpine-server/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ otherLodgesEnabled: next }),

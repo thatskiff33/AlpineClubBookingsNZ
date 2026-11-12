@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { adminHref } from "@/lib/admin-hubs";
 import Link from "next/link";
@@ -235,7 +236,7 @@ export function BookingChangeRequestsPanel({
       // id is never sent for one.
       const executes = status === "APPROVED" && request.executesOnApproval === true;
       const trimmedModificationId = executes ? "" : draft.linkedModificationId.trim();
-      const response = await fetch(`/api/admin/booking-change-requests/${request.id}`, {
+      const response = await fetchWithRecentAuth(`/api/admin/booking-change-requests/${request.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

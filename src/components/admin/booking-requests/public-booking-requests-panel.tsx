@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { adminHref } from "@/lib/admin-hubs";
 import Link from "next/link";
@@ -1108,7 +1109,7 @@ export function PublicBookingRequestsPanel({
     setActioningId(request.id);
     setError("");
     try {
-      const response = await fetch(
+      const response = await fetchWithRecentAuth(
         `/api/admin/booking-requests/${request.id}/release-hold`,
         { method: "POST" }
       );
@@ -1401,7 +1402,7 @@ export function PublicBookingRequestsPanel({
     setError("");
     try {
       const reason = declineReasons[request.id]?.trim();
-      const response = await fetch(`/api/admin/booking-requests/${request.id}/decline`, {
+      const response = await fetchWithRecentAuth(`/api/admin/booking-requests/${request.id}/decline`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
