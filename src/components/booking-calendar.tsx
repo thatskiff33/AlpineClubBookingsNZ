@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { useClubTime } from "@/components/club-time-provider";
 import {
@@ -172,6 +173,38 @@ const EMPTY_AVAILABILITY: LodgeAvailabilityState = {
   capacity: null,
 };
 
+/**
+ * The months whose availability request FAILED, for one lodge (#4954).
+ *
+ * An unknown night renders honestly as `?` (#2930), but a night alone cannot
+ * say whether its month is still loading or failed to load, so the grid had
+ * nothing to hang an error message or a Retry on. The fetch's outcome is
+ * recorded here instead. Keys are the `yyyy-MM` prefix the season merge uses;
+ * tagged with the lodge for the same reason `LodgeAvailabilityState` is, so one
+ * lodge's failure is never shown against another lodge.
+ */
+interface FailedMonthsState {
+  lodgeId: string | null;
+  months: ReadonlySet<string>;
+}
+
+/** The `yyyy-MM` key of a month; `month` is 0-based, as in `currentMonth`. */
+function monthKey(year: number, month: number): string {
+  return formatCalendarDayOnly(year, month, 1).slice(0, "yyyy-MM".length);
+}
+
+function withMonth(
+  current: FailedMonthsState,
+  lodgeId: string | null,
+  key: string,
+  failed: boolean,
+): FailedMonthsState {
+  const months = new Set(current.lodgeId === lodgeId ? current.months : []);
+  if (failed) months.add(key);
+  else months.delete(key);
+  return { lodgeId, months };
+}
+
 export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOut, lodgeId, allowPastDates = false, allowFullDates = false, lodgeSettingsHref }: BookingCalendarProps) {
   /**
    * The month the calendar opens on, and the day it treats as "today", both come
@@ -194,6 +227,13 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     lodgeId: lodgeId ?? null,
   });
   const [seasons, setSeasons] = useState<Record<string, SeasonInfo>>({});
+  const [failedMonths, setFailedMonths] = useState<FailedMonthsState>({
+    lodgeId: lodgeId ?? null,
+    months: new Set(),
+  });
+  // Bumped by Retry so the load effect runs again for the month on screen.
+  const [reloadToken, setReloadToken] = useState(0);
+  const monthHeadingRef = useRef<HTMLHeadingElement>(null);
   const [selecting, setSelecting] = useState<"checkIn" | "checkOut">("checkIn");
   const [checkIn, setCheckIn] = useState<string | null>(selectedCheckIn ?? null);
   const [checkOut, setCheckOut] = useState<string | null>(selectedCheckOut ?? null);
@@ -202,6 +242,17 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     let cancelled = false;
 
     const requestedLodgeId = lodgeId ?? null;
+    const requestedMonth = monthKey(currentMonth.year, currentMonth.month);
+
+    // Only a run that is still current may record its outcome: a late answer
+    // for a month or lodge the member has left must not raise or clear the
+    // alert for the one on screen (#4954).
+    function recordOutcome(failed: boolean) {
+      if (cancelled) return;
+      setFailedMonths((current) =>
+        withMonth(current, requestedLodgeId, requestedMonth, failed),
+      );
+    }
 
     async function loadAvailability() {
       const res = await fetch(
@@ -209,16 +260,19 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
           lodgeId ? `&lodgeId=${encodeURIComponent(lodgeId)}` : ""
         }`
       );
-      if (!res.ok || cancelled) {
-        // A refused or abandoned month leaves its nights UNLOADED, which is now
-        // a state the grid renders honestly. Before #2930 it left them absent
-        // from a map whose reader defaulted absent to zero occupancy, so a
-        // failed fetch drew an empty lodge.
+      if (cancelled) return;
+      if (!res.ok) {
+        // A refused month leaves its nights UNLOADED, which is a state the grid
+        // renders honestly. Before #2930 it left them absent from a map whose
+        // reader defaulted absent to zero occupancy, so a failed fetch drew an
+        // empty lodge. The failure itself is now recorded too (#4954).
+        recordOutcome(true);
         return;
       }
 
       const data = await res.json();
       if (cancelled) return;
+      recordOutcome(false);
 
       const loadedNights: Record<string, number> =
         data.availability && typeof data.availability === "object"
@@ -255,11 +309,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
       // dropped before the fresh answer is merged, which makes the refetch
       // authoritative for the month it asked about and leaves every other month
       // standing.
-      const monthPrefix = formatCalendarDayOnly(
-        currentMonth.year,
-        currentMonth.month,
-        1,
-      ).slice(0, "yyyy-MM-".length);
+      const monthPrefix = `${requestedMonth}-`;
       const loadedSeasons: Record<string, SeasonInfo> =
         data.seasons && typeof data.seasons === "object" ? data.seasons : {};
       setSeasons((current) => {
@@ -271,12 +321,14 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
       });
     }
 
-    void loadAvailability();
+    // A rejected fetch (no network) or an unreadable body is a failed month
+    // too, rather than an unhandled rejection the member never hears about.
+    loadAvailability().catch(() => recordOutcome(true));
 
     return () => {
       cancelled = true;
     };
-  }, [currentMonth.month, currentMonth.year, lodgeId]);
+  }, [currentMonth.month, currentMonth.year, lodgeId, reloadToken]);
 
   /**
    * Everything accumulated belongs to the lodge it was counted for, so changing
@@ -296,6 +348,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
   useEffect(() => {
     setSeasons({});
     setAvailability({ ...EMPTY_AVAILABILITY, lodgeId: lodgeId ?? null });
+    setFailedMonths({ lodgeId: lodgeId ?? null, months: new Set() });
   }, [lodgeId]);
 
   // The grid's two facts are calendar-day facts, so the kernel answers both and
@@ -466,6 +519,26 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     clubTime.format,
   );
 
+  const visibleMonthFailed =
+    !lodgeNotSetUp &&
+    failedMonths.lodgeId === (lodgeId ?? null) &&
+    failedMonths.months.has(monthKey(currentMonth.year, currentMonth.month));
+
+  function retryVisibleMonth() {
+    setFailedMonths((current) =>
+      withMonth(
+        current,
+        lodgeId ?? null,
+        monthKey(currentMonth.year, currentMonth.month),
+        false,
+      ),
+    );
+    setReloadToken((token) => token + 1);
+    // The Retry button unmounts with the alert; keep keyboard focus in the
+    // calendar rather than letting it fall back to the top of the page.
+    monthHeadingRef.current?.focus();
+  }
+
   // Unique seasons visible in the current month for the legend
   const uniqueSeasons = [...new Map(Object.values(seasons).map((s) => [s.name, s])).values()];
 
@@ -475,7 +548,9 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
         <Button variant="outline" size="sm" onClick={prevMonth}>
           &lsaquo; Prev
         </Button>
-        <h3 className="text-lg font-semibold">{monthName}</h3>
+        <h3 ref={monthHeadingRef} tabIndex={-1} className="text-lg font-semibold focus:outline-none">
+          {monthName}
+        </h3>
         <Button variant="outline" size="sm" onClick={nextMonth}>
           Next &rsaquo;
         </Button>
@@ -486,6 +561,17 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
       </div>
 
       <LodgeNotSetUpNotice show={lodgeNotSetUp} settingsHref={lodgeSettingsHref} />
+
+      {visibleMonthFailed ? (
+        <Alert variant="error" title={`Bed availability for ${monthName} could not be loaded`}>
+          <p className="mb-3">
+            Days marked ? may already be full. Nothing has been booked or charged.
+          </p>
+          <Button variant="outline" onClick={retryVisibleMonth}>
+            Try again
+          </Button>
+        </Alert>
+      ) : null}
 
       <div className="grid grid-cols-7 justify-items-center gap-1 text-center">
         {formatClubWeekdayHeaders(clubTime.format).map((d) => (
@@ -657,6 +743,15 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
         <span className="flex items-center gap-1">
           <span className="h-3 w-3 rounded bg-danger-muted" />{" "}
           {allowFullDates ? "Full" : "Full — waitlist only"}
+        </span>
+        <span className="flex items-center gap-1">
+          <span
+            aria-hidden="true"
+            className="flex h-3 w-3 items-center justify-center rounded bg-muted text-xs font-semibold leading-none"
+          >
+            ?
+          </span>{" "}
+          Availability not loaded
         </span>
       </div>
       )}
