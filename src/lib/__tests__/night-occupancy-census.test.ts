@@ -111,6 +111,7 @@ const TERM_SYMBOLS = [
   "isNightWholeLodgeHeld",
   "getCountedGuestsForNightFromIndex",
   "getOccupiedBedsForNight",
+  "getOccupiedBedsForNights",
 ] as const;
 
 /** Modules that DEFINE an occupancy term (and so must name its symbols). */
@@ -157,8 +158,8 @@ const NON_OCCUPANCY_READERS: Array<{
   },
   {
     file: "src/app/api/admin/reports/route.ts",
-    why: "utilisation reporting: measures how much the lodge was BOOKED, so it deliberately counts the bookings term ONLY — no custodian, no reservation, no hold pin (docs/CAPACITY_MODEL.md; pinned by custodian-write-path-contract.test.ts)",
-    allowedTermSymbols: ["getOccupiedBedsForNight"],
+    why: "utilisation reporting: measures how much the lodge was BOOKED, so it deliberately counts the bookings term ONLY — no custodian, no reservation, no hold pin (docs/CAPACITY_MODEL.md; pinned by custodian-write-path-contract.test.ts). Reads it for the whole range through getOccupiedBedsForNights, one index per request (#4937)",
+    allowedTermSymbols: ["getOccupiedBedsForNights"],
   },
   {
     file: "src/lib/exclusive-hold-occupancy.ts",
