@@ -3152,7 +3152,9 @@ phases print their whole plan and change nothing without `--execute`.
      was waiting, the new section says the release has no manual upgrade
      steps, so every tag has a section. Text above `## Unreleased` and every
      released section are left untouched. It refuses a guide with no
-     `## Unreleased`, or one that already has the version's section.
+     `## Unreleased`, one that already has the version's section, one with a
+     `## ` line inside a code block, or one with a step added to a released
+     section since the previous tag.
    - `docs/releases/v<version>.md`: a notes stub linking the version's
      changelog and upgrade-guide sections. It carries an unfinished marker
      (`<!-- release-notes:unfinished -->`) that `publish` refuses.
@@ -3243,6 +3245,10 @@ phases print their whole plan and change nothing without `--execute`.
      untagged version's section (and rolls the guide if prep never did).
      `--carry-late-fragments` does **not** carry upgrade steps, because a
      step a club never sees under its release is the harm this check stops;
+   - `docs/UPGRADING.md` has a `### ` step under an already-released section
+     that the previous tag did not have — a late pull request merged its step
+     into the wrong section. `prepare` refuses this too. Move the step under
+     `## Unreleased` in a pull request, then fold it with `--amend`;
    - `docs/releases/v<version>.md` is missing, or still carries the unfinished
      marker. Write the page through a pull request, then publish.
 

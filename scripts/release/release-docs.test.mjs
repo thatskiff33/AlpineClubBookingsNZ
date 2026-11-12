@@ -10,6 +10,7 @@ import {
   planReleaseDocs,
   RELEASE_NOTES_UNFINISHED_MARKER,
   releaseNotesStub,
+  stepsAddedToReleasedSections,
   unreleasedUpgradeSteps,
   upgradeGuideHeading,
   writeReleaseDocs,
@@ -125,6 +126,30 @@ describe("upgrade-guide heading roll (#4983)", () => {
     expect(() => fileUpgradeSteps({ guide: late, heading: "## v0.13.1 → v0.13.2", amend: true })).toThrow(
       /not the section directly below "## Unreleased"/,
     );
+  });
+});
+
+describe("guarding released sections and odd guides (#4983)", () => {
+  it("finds a step that landed in a released section, ignoring the untagged one and reworded prose", () => {
+    const rolled = fileUpgradeSteps({ guide: FULL, heading: HEADING }).guide;
+    expect(stepsAddedToReleasedSections({ guide: rolled, releasedGuide: FULL, untaggedHeading: HEADING })).toEqual([]);
+    const reworded = rolled.replace("Already shipped; never rewritten.", "Already shipped.");
+    expect(stepsAddedToReleasedSections({ guide: reworded, releasedGuide: FULL, untaggedHeading: HEADING })).toEqual([]);
+    const merged = rolled.replace("Already shipped; never rewritten.\n", "Already shipped; never rewritten.\n\n### Late (#4800)\n\nDo it.\n");
+    expect(stepsAddedToReleasedSections({ guide: merged, releasedGuide: FULL, untaggedHeading: HEADING })).toEqual(["### Late (#4800)"]);
+  });
+
+  it("refuses a guide with a ## line inside a code block rather than splitting the block", () => {
+    const fenced = FULL.replace("Open Admin → Xero and reconnect.", "```md\n## Example heading\n```");
+    expect(() => fileUpgradeSteps({ guide: fenced, heading: HEADING })).toThrow(/docs\/UPGRADING\.md:\d+ has a "## " line inside a code block/);
+  });
+
+  it("recognises the no-steps line even after someone reflows it", () => {
+    const empty = fileUpgradeSteps({ guide: EMPTY, heading: HEADING }).guide;
+    const reflowed = empty.replace(NO_UPGRADE_STEPS, NO_UPGRADE_STEPS.replace(": ", ":\n"));
+    const late = reflowed.replace("## Unreleased\n\n", "## Unreleased\n\n### Late (#4800)\n\nDo it.\n\n");
+    const { guide } = fileUpgradeSteps({ guide: late, heading: HEADING, amend: true });
+    expect(sectionBody(guide, HEADING)).toBe("### Late (#4800)\n\nDo it.");
   });
 });
 

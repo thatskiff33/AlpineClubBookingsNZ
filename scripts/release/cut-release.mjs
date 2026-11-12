@@ -62,7 +62,10 @@ import { isMainModule } from "../lib/is-main-module.mjs";
 import {
   hasUpgradeSection,
   planReleaseDocs,
+  PUBLISHED_NOTES_HEADING,
+  refuseStepsInReleasedSections,
   RELEASE_NOTES_DIR,
+  RELEASE_NOTES_INDEX_PATH,
   RELEASE_NOTES_UNFINISHED_MARKER,
   releaseNotesPath,
   unreleasedUpgradeSteps,
@@ -318,6 +321,18 @@ function remoteTagCommit(cmd, tag) {
   return (peeled ?? lines[0]).split(/\s+/)[0];
 }
 
+/**
+ * The upgrade guide as origin's `tag` released it, or `null` when there is no
+ * such tag or its commit has no guide. Read by commit, since tags are never
+ * fetched; a release tag is on main, so its commit is here.
+ */
+function upgradeGuideAtTag(cmd, tag) {
+  const commit = tag ? remoteTagCommit(cmd, tag) : null;
+  if (commit === null) return null;
+  const result = cmd.run("git", ["show", `${commit}:${UPGRADE_GUIDE_PATH}`]);
+  return result.status === 0 ? result.stdout : null;
+}
+
 /** The commit this clone's `tag` points at, or `null`. */
 function localTagCommit(cmd, tag) {
   return cmd.gitOk(["rev-parse", "-q", "--verify", `refs/tags/${tag}`])
@@ -532,6 +547,7 @@ export function prepareRelease({
       date: plan.date,
       bump: plan.bump,
       changelogHeading: plan.heading,
+      releasedGuide: upgradeGuideAtTag(cmd, plan.previousTag),
       amend,
     });
   } catch (error) {
@@ -632,6 +648,7 @@ function upgradeGuideRecovery(tag) {
     `File them under ${tag} (prepare --amend rolls or folds ${UPGRADE_GUIDE_PATH}), then publish the fold's merge commit:`,
     `  git switch --detach ${MAIN_REF} && pnpm run release:cut prepare --amend --execute`,
     `  push release/${tag}-late, merge its pull request, then pnpm run release:cut publish --execute`,
+    `Or, when --amend refuses (a late feature in a patch release), move them under ${tag}'s heading by hand in a pull request.`,
     `--carry-late-fragments does not carry upgrade steps: a step a club never sees under ${tag} is the harm this check stops.`,
   ].join("\n");
 }
@@ -651,6 +668,18 @@ function refuseUnfiledReleaseDocs(cmd, { target, tag, version, previousTag }) {
   };
   const guide = show(UPGRADE_GUIDE_PATH) ?? "";
   const heading = upgradeGuideHeading(previousTag, version);
+  try {
+    refuseStepsInReleasedSections({ guide, releasedGuide: upgradeGuideAtTag(cmd, previousTag), untaggedHeading: heading, previousTag });
+  } catch (error) {
+    throw new ReleaseCutError(
+      `At ${at}: ${error.message}`,
+      [
+        `Move them under "## Unreleased" with a pull request, then file them under ${tag}:`,
+        `  git switch --detach ${MAIN_REF} && pnpm run release:cut prepare --amend --execute`,
+        `  push release/${tag}-late, merge its pull request, then pnpm run release:cut publish --execute`,
+      ].join("\n"),
+    );
+  }
   if (!hasUpgradeSection(guide, heading)) {
     throw new ReleaseCutError(
       `${UPGRADE_GUIDE_PATH} at ${at} has no "${heading}" section, so a club upgrading to ${tag} would find no steps for it.`,
@@ -673,7 +702,7 @@ function refuseUnfiledReleaseDocs(cmd, { target, tag, version, previousTag }) {
     throw new ReleaseCutError(
       `${notesPath} is missing at ${at}: ${tag} has no release-notes page.`,
       [
-        `Write it through a pull request, linked first under "Published release notes" in ${RELEASE_NOTES_DIR}/README.md,`,
+        `Write it through a pull request, linked first under "${PUBLISHED_NOTES_HEADING.slice(3)}" in ${RELEASE_NOTES_INDEX_PATH},`,
         `  or let prepare write the stub: git switch --detach ${MAIN_REF} && pnpm run release:cut prepare --amend --execute`,
         `Finish the page and delete its unfinished marker, merge it, then run pnpm run release:cut publish --execute`,
       ].join("\n"),

@@ -754,13 +754,40 @@ describe("release documents: the upgrade guide and notes page (#4983)", () => {
   it("refuses to publish when the upgrade guide has no section for the release", () => {
     const { repo } = mergedReleaseFixture();
     mergeToMain(repo, "Merge pull request #4612", (dir) =>
-      editUpgrading(dir, (text) => text.replace("## v0.13.2 → v0.13.3", "## v0.13.2 to v0.13.3")),
+      editUpgrading(dir, (text) => text.replace("## v0.13.2 → v0.13.3", "## Next release")),
     );
     const error = expectRefusal(
       () => publishRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
       /docs\/UPGRADING\.md at [0-9a-f]{12} has no "## v0\.13\.2 → v0\.13\.3" section/,
     );
     expect(error.recovery).toContain("pnpm run release:cut prepare --amend --execute");
+  });
+
+  const addStepToReleased = (repo) =>
+    editUpgrading(repo, (text) => text.replace("Already shipped.\n", "Already shipped.\n\n### Merged into a released section (#4620)\n\nDo it.\n"));
+
+  it("refuses a prepare when a step was added to a section origin's latest tag already released", () => {
+    const { repo } = makeFixture();
+    mergeToMain(repo, "Merge pull request #4620", addStepToReleased);
+    expectRefusal(
+      () => prepareRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
+      /docs\/UPGRADING\.md has upgrade step\(s\) in a section already released, which v0\.13\.2 did not have \(### Merged into a released section \(#4620\)\)/,
+    );
+  });
+
+  it("refuses to publish when a step merged into a released section instead of the release's own", () => {
+    const { repo } = mergedReleaseFixture();
+    mergeToMain(repo, "Merge pull request #4620", addStepToReleased);
+    const error = expectRefusal(
+      () => publishRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
+      /At [0-9a-f]{12}: docs\/UPGRADING\.md has upgrade step\(s\) in a section already released/,
+    );
+    expect(error.recovery).toContain('Move them under "## Unreleased" with a pull request');
+    // Reworded prose in a released section is not a new step.
+    mergeToMain(repo, "Merge pull request #4621", (dir) =>
+      editUpgrading(dir, (text) => text.replace("### Merged into a released section (#4620)\n\nDo it.\n", "").replace("Already shipped.", "Shipped.")),
+    );
+    expect(publishRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() })).toMatchObject({ tag: "v0.13.3" });
   });
 
   it("refuses late upgrade steps, even with --carry-late-fragments, until --amend files them under the release", () => {

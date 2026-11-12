@@ -24,9 +24,9 @@ import { githubHeadingAnchor, locateSection, stripBlankEdges, UNRELEASED_HEADING
 export const UPGRADE_GUIDE_PATH = "docs/UPGRADING.md";
 /** One notes page per release, indexed by `RELEASE_NOTES_INDEX_PATH`. */
 export const RELEASE_NOTES_DIR = "docs/releases";
-const RELEASE_NOTES_INDEX_PATH = `${RELEASE_NOTES_DIR}/README.md`;
+export const RELEASE_NOTES_INDEX_PATH = `${RELEASE_NOTES_DIR}/README.md`;
 /** The index section that lists published notes, newest first. */
-const PUBLISHED_NOTES_HEADING = "## Published release notes";
+export const PUBLISHED_NOTES_HEADING = "## Published release notes";
 
 /**
  * The body a release's upgrade section gets when nothing was filed under
@@ -43,6 +43,10 @@ export const RELEASE_NOTES_UNFINISHED_MARKER = "<!-- release-notes:unfinished --
 
 /** A horizontal rule; the upgrade guide closes each release section with one. */
 const SECTION_RULE = /^---[ \t]*$/;
+/** A release's upgrade section: `## v0.13.1 → v0.13.2`, or `## v0.1.0` for the first. */
+const RELEASE_SECTION_HEADING = /^## v\d/;
+/** A fenced code block's opening or closing line. */
+const FENCE = /^\s*(```|~~~)/;
 
 /** The upgrade-guide heading for the step from `previousTag` to `version`. */
 export function upgradeGuideHeading(previousTag, version) {
@@ -72,6 +76,52 @@ function emitSection(heading, steps, ruled) {
 }
 
 const countSteps = (steps) => steps.filter((line) => line.startsWith("### ")).length;
+
+/** Whether `steps` is only the `NO_UPGRADE_STEPS` line, however it was reflowed. */
+const isNoStepsBody = (steps) => steps.join(" ").replace(/\s+/g, " ").trim() === NO_UPGRADE_STEPS;
+
+/**
+ * The section reader splits on every `## ` line, so one inside a code block
+ * would be taken for a heading and steps filed into the middle of the block.
+ */
+function refuseFencedHeadings(lines) {
+  let fenced = false;
+  lines.forEach((line, index) => {
+    if (FENCE.test(line)) fenced = !fenced;
+    else if (fenced && line.startsWith("## ")) {
+      throw new Error(
+        `${UPGRADE_GUIDE_PATH}:${index + 1} has a "## " line inside a code block, which would be read as a section heading; indent or reword it.`,
+      );
+    }
+  });
+}
+
+/**
+ * The `### ` step titles in the guide's released sections: every `## v…`
+ * section except `untaggedHeading`'s.
+ */
+export function releasedStepTitles(guide, untaggedHeading = null) {
+  const titles = [];
+  let released = false;
+  for (const line of toLines(guide)) {
+    if (line.startsWith("## ")) released = RELEASE_SECTION_HEADING.test(line) && line.trimEnd() !== untaggedHeading;
+    else if (released && line.startsWith("### ")) titles.push(line.trimEnd());
+  }
+  return titles;
+}
+
+/**
+ * Steps in `guide`'s released sections that the guide at the latest release
+ * tag (`releasedGuide`) did not have. A pull request opened before a cut that
+ * appends its step at the end of `## Unreleased` merges cleanly after the
+ * roll, landing in the section just released: its code ships in the next
+ * release, but a club upgrading to it would never see the step. Reworded
+ * prose in a released section is not a new step and passes.
+ */
+export function stepsAddedToReleasedSections({ guide, releasedGuide, untaggedHeading }) {
+  const before = new Set(releasedStepTitles(releasedGuide));
+  return releasedStepTitles(guide, untaggedHeading).filter((title) => !before.has(title));
+}
 
 /**
  * The steps waiting under the upgrade guide's `## Unreleased` (blank edges
@@ -105,6 +155,7 @@ export function hasUpgradeSection(guide, heading) {
  */
 export function fileUpgradeSteps({ guide, heading, amend = false }) {
   const lines = toLines(guide);
+  refuseFencedHeadings(lines);
   const unreleased = locateSection(lines, (line) => UNRELEASED_HEADING.test(line));
   const exists = hasUpgradeSection(guide, heading);
   if (exists && !amend) {
@@ -140,7 +191,7 @@ export function fileUpgradeSteps({ guide, heading, amend = false }) {
   }
   const targetEnd = unreleased.end + locateSection(lines.slice(unreleased.end), () => true).end;
   const filed = splitBody(lines.slice(unreleased.end + 1, targetEnd));
-  const kept = filed.steps.length === 1 && filed.steps[0] === NO_UPGRADE_STEPS ? [] : filed.steps;
+  const kept = isNoStepsBody(filed.steps) ? [] : filed.steps;
   const merged = kept.length > 0 ? [...kept, "", ...waiting.steps] : waiting.steps;
   return {
     guide: [...head, ...fresh, ...emitSection(heading, merged, filed.ruled), ...lines.slice(targetEnd)].join("\n"),
@@ -206,20 +257,39 @@ export function addReleaseNotesIndexLine({ index, version, date, bump }) {
 }
 
 /**
- * Read the release documents in `repoRoot` and work out what the release-prep
- * commit changes in them. Returns `{ upgradeHeading, upgrade, notesPath,
- * notesCreated, files, describe }`: `files` lists `{ relative, text, created }`
- * to write (empty when nothing changes), `describe` the plan as printable lines.
- * Throws, writing nothing, on any document it cannot file safely.
+ * Refuse steps added to a released section since the latest tag (see
+ * `stepsAddedToReleasedSections`), naming them and the way out.
  */
-export function planReleaseDocs({ repoRoot, version, previousTag, date, bump, changelogHeading, amend = false }) {
+export function refuseStepsInReleasedSections({ guide, releasedGuide, untaggedHeading, previousTag }) {
+  const added = releasedGuide === null ? [] : stepsAddedToReleasedSections({ guide, releasedGuide, untaggedHeading });
+  if (added.length > 0) {
+    throw new Error(
+      `${UPGRADE_GUIDE_PATH} has upgrade step(s) in a section already released, which ${previousTag} did not have ` +
+        `(${added.slice(0, 3).join("; ")}${added.length > 3 ? "; …" : ""}). Their changes ship in the next release, ` +
+        `so move them under "## Unreleased" with a pull request.`,
+    );
+  }
+}
+
+/**
+ * Read the release documents in `repoRoot` and work out what the release-prep
+ * commit changes in them. `releasedGuide` is the upgrade guide at
+ * `previousTag` (`null` when there is none to compare). Returns
+ * `{ upgradeHeading, upgrade, notesPath, notesCreated, files, describe }`:
+ * `files` lists `{ relative, text, created }` to write (empty when nothing
+ * changes), `describe` the plan as printable lines. Throws, writing nothing, on
+ * any document it cannot file safely.
+ */
+export function planReleaseDocs({ repoRoot, version, previousTag, date, bump, changelogHeading, releasedGuide = null, amend = false }) {
   const read = (relative) => {
     const file = path.join(repoRoot, relative);
     if (!fs.existsSync(file)) throw new Error(`${relative} is missing; the release documents cannot be filed.`);
     return fs.readFileSync(file, "utf8");
   };
   const upgradeHeading = upgradeGuideHeading(previousTag, version);
-  const upgrade = fileUpgradeSteps({ guide: read(UPGRADE_GUIDE_PATH), heading: upgradeHeading, amend });
+  const guide = read(UPGRADE_GUIDE_PATH);
+  refuseStepsInReleasedSections({ guide, releasedGuide, untaggedHeading: upgradeHeading, previousTag });
+  const upgrade = fileUpgradeSteps({ guide, heading: upgradeHeading, amend });
   const files = [];
   const describe = [];
   if (upgrade.action === "roll") {
