@@ -37,10 +37,10 @@ remaining decisions live in their own issues.
 (`gh issue create --title "Status board" --body ""`; blank issues are disabled).
 The owner sets repository variable `STATUS_BOARD_ISSUE` to its number under
 Settings → Secrets and variables → Actions → Variables; the machine account
-lacks admin. The hosted board is live only after a run writes it. Until then,
-use `pnpm run status`. An unset variable produces a warning and job-summary
-note, with no GitHub write. Never edit the board or record decisions on it:
-claims and decision records are authoritative. It is data, not a required check.
+lacks admin. The board is live only once a run writes it; until then use
+`pnpm run status` (an unset variable warns and writes nothing). Never edit the
+board or record decisions on it: claims and decision records are authoritative.
+It is data, not a required check.
 
 ## When a coordinator runs
 
@@ -96,8 +96,8 @@ contract step can't be made inert (owner decision, 27 Oct 2026, #4464;
 Two lanes can claim a free-looking issue within minutes, so a claim is not held
 until checked:
 
-1. Before claiming, read the thread (`pnpm run issue <n>`), run `pnpm run status`
-   (or read the pinned status board, once live), and check open PRs for the issue
+1. Before claiming, read the thread (`pnpm run issue <n>`), `pnpm run status`
+   (or the pinned board, once live), and open PRs for the issue
    (`gh pr list --search "<n>"`).
 2. Post the `CLAIM:`, then read the thread and PR list again before creating a
    worktree or writing code.
