@@ -175,8 +175,9 @@ const CAPTURES: Capture[] = [
   { name: "admin-site-content", route: "/admin/site-content", area: "admin" },
   { name: "admin-page-content", route: "/admin/page-content", area: "admin" },
   { name: "admin-site-banners", route: "/admin/site-banners", area: "admin" },
-  // mountain-conditions is gated by the `skifieldConditions` flag, which the
-  // demo seed defaults ON (prisma/schema.prisma) — so it captures normally.
+  // mountain-conditions is gated by the `skifieldWhakapapa` flag, which a fresh
+  // install leaves OFF; the E2E prepare step (e2e/setup/enable-e2e-modules.ts)
+  // turns it on, so it captures normally.
   { name: "admin-mountain-conditions", route: "/admin/mountain-conditions", area: "admin" },
   { name: "admin-image-manager", route: "/admin/image-manager", area: "admin" },
   // Comms — the Notifications & Email hub, its sub-pages, and deliverability.

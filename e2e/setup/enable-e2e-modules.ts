@@ -8,6 +8,8 @@
 //   - kiosk + chores    → /lodge/* and /lodge/roster (LODGE role boundary)
 //   - financeDashboard  → /finance (FINANCE_USER/FINANCE_ADMIN boundary)
 //   - bedAllocation     → /admin/bed-allocation, /admin/rooms-beds (#1300)
+//   - skifieldWhakapapa → /admin/mountain-conditions, /api/skifield-whakapapa
+//                         (#4932; the screenshot tool captures the admin page)
 //
 // internetBankingPayments and xeroIntegration stay OFF here; the internet-
 // banking spec (e2e/internet-banking.spec.ts) and the Xero setup wizard spec
@@ -27,6 +29,7 @@ const MODULES = {
   chores: true,
   financeDashboard: true,
   bedAllocation: true,
+  skifieldWhakapapa: true,
 } as const;
 
 async function main() {

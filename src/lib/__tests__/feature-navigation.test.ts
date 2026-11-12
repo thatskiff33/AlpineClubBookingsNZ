@@ -140,7 +140,7 @@ describe("feature-aware navigation", () => {
     const items = getVisibleAdminNavSections(CLUB_DAY, {
       ...allOn,
       chores: false,
-      skifieldConditions: false,
+      skifieldWhakapapa: false,
       xeroIntegration: false,
     })
       .find((section) => section.label === "Setup & Configuration")

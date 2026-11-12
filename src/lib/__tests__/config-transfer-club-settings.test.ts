@@ -80,6 +80,7 @@ const MODULES = {
   induction: true, workParties: true, promoCodes: true, hutLeaders: true,
   communications: true, memberNotices: true, eventsCalendar: true,
   skifieldConditions: true,
+  skifieldWhakapapa: true,
   twoFactor: false, analytics: false,
   // Every travelling module flag is a non-null Boolean; the #2200 dry-run
   // `constraints.required` audit rejects a projected null, so the fixture must

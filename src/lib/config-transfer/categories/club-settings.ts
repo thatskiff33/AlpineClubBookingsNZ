@@ -212,6 +212,9 @@ export const SINGLETONS: SingletonSpec[] = [
       "bedAllocation", "internetBankingPayments", "addressAutocomplete",
       "groupBookings", "lockers", "induction", "workParties", "promoCodes",
       "hutLeaders", "communications", "memberNotices", "skifieldConditions",
+      // skifieldWhakapapa SHOULD-TRAVEL (#4932): which ski field's report a
+      // club shows is a plain capability choice, like skifieldConditions.
+      "skifieldWhakapapa",
       "twoFactor", "analytics", "lobbyDisplay",
       // eventsCalendar SHOULD-TRAVEL (#2241): "does this club run an events
       // calendar?" is a plain club capability decision like communications or
@@ -346,6 +349,7 @@ export const SINGLETONS: SingletonSpec[] = [
       memberNotices: { required: true },
       eventsCalendar: { required: true },
       skifieldConditions: { required: true },
+      skifieldWhakapapa: { required: true },
       twoFactor: { required: true },
       analytics: { required: true },
       lobbyDisplay: { required: true },

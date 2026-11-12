@@ -156,6 +156,7 @@ const MODULE_FLAGS = {
   hutLeaders: false,
   communications: false,
   skifieldConditions: false,
+  skifieldWhakapapa: false,
   twoFactor: false,
   analytics: false,
 };

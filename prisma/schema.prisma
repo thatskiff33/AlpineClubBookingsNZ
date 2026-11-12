@@ -5300,6 +5300,14 @@ model ClubModuleSettings {
   // cut-over. Safe to add as a defaulted column because every read narrows to
   // CLUB_MODULE_SETTINGS_COLUMN_SELECT.
   multiPromoCodes         Boolean  @default(false)
+  // Whakapapa (Mt Ruapehu) conditions report (#4932): the /api/skifield-whakapapa
+  // feed, its admin cache and the admin Mountain Conditions page, split out of
+  // skifieldConditions, which keeps only the generic widget. Default OFF so a new
+  // install opts in; migration 20261212010000_add_skifield_whakapapa_module
+  // copies each existing install's skifieldConditions value across. Safe to add
+  // as a defaulted column because every read narrows to
+  // CLUB_MODULE_SETTINGS_COLUMN_SELECT.
+  skifieldWhakapapa       Boolean  @default(false)
   updatedByMemberId       String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @default(now()) @updatedAt

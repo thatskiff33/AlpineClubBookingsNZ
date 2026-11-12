@@ -60,7 +60,7 @@ export const WEBSITE_HUB = defineHub({
       label: "Mountain Conditions",
       oldPath: "/admin/mountain-conditions",
       area: "content",
-      flags: ["skifieldConditions"],
+      flags: ["skifieldWhakapapa"],
       moved: true,
     },
   ],

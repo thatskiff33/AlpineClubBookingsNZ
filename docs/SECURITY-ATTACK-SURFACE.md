@@ -2680,11 +2680,12 @@ there the whole point is that the URL gives no signal at all. That is why both
 The goal recorded on #2465 was that *one anonymous request cannot reveal whether
 a module runs*. Stated that broadly it is not achievable, and pretending
 otherwise would leave the next reviewer trusting a claim this file cannot
-support. Four modules have endpoints whose whole job is to answer an anonymous
+support. Five modules have endpoints whose whole job is to answer an anonymous
 caller with real data — `lobbyDisplay` (a wall-mounted screen pairs and polls
 with no human session), `addressAutocomplete` (the address lookup runs on the
-public join and booking forms), `skifieldConditions` (the mountain report is
-public content) and `groupBookings` (the school/group enquiry form is a public
+public join and booking forms), `skifieldConditions` and `skifieldWhakapapa`
+(the Snow.nz widget and the Whakapapa report are public content) and
+`groupBookings` (the school/group enquiry form is a public
 page). Those endpoints answer differently when the module is on because
 answering is the point.
 

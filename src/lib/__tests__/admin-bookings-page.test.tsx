@@ -113,6 +113,7 @@ const effectiveModulesOn = {
   hutLeaders: false,
   communications: false,
   skifieldConditions: false,
+  skifieldWhakapapa: false,
   twoFactor: false,
   magicLink: false,
   googleLogin: false,
