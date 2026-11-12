@@ -484,6 +484,7 @@ jobs:
       # the clock moved. `E2E_EXCLUDE_SPECS` is already in this step's
       # environment and reaches playwright.config.ts through the stack script.
       - name: Run the browser suite under the shifted clock
+        id: browser-suite
         run: |
           set -euo pipefail
           mapfile -t ARGS < <(cat "$ARGS_FILE")
@@ -514,9 +515,10 @@ jobs:
           date -u --iso-8601=seconds
 
       # Only the real run uses the JSON reporter; the earlier --list probes
-      # override it with --reporter=list and never invoke this summariser.
+      # override it with --reporter=list and never invoke this summariser. It
+      # runs only once that suite ran, so an earlier failure stays the only error.
       - name: Summarise flaky Playwright tests
-        if: always()
+        if: always() && steps.browser-suite.outcome != 'skipped'
         run: node scripts/ci/summarise-playwright-flaky.mjs .artifacts/playwright-results.json
 
       - name: Upload Playwright report

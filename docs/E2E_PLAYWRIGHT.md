@@ -577,9 +577,10 @@ and total attempts. Each also emits a warning annotation. A clean run says
 **No flaky tests**.
 
 The policy is **warn on any flaky test, with no failure threshold**. Retries and
-the required `Playwright E2E` test verdict stay unchanged. Missing, unreadable
-or malformed JSON fails the reporting step; absence of evidence is not a clean
-run. The CI-only JSON reporter writes `.artifacts/playwright-results.json`,
+the required `Playwright E2E` test verdict stay unchanged. Once Playwright has
+run, missing, unreadable or malformed JSON fails the reporting step; absence of
+evidence is not a clean run. A job that failed before Playwright started skips
+the step. The CI-only JSON reporter writes `.artifacts/playwright-results.json`,
 separate from the HTML report and test attachments. Rollover `--list` probes
 use only the list reporter and are not summarised.
 

@@ -91,12 +91,15 @@ runs:
       run: bash scripts/e2e-stack.sh prepare
 
     - name: Run Playwright
+      id: playwright
       if: inputs.needed != 'false'
       shell: bash
       run: bash scripts/e2e-stack.sh run ${{ inputs.playwright-args }}
 
+    # Only once Playwright ran: an earlier failure leaves no results file, and
+    # a second "cannot summarise" error would hide the real cause.
     - name: Summarise flaky Playwright tests
-      if: always() && inputs.needed != 'false'
+      if: always() && steps.playwright.outcome != 'skipped' && inputs.needed != 'false'
       shell: bash
       run: node scripts/ci/summarise-playwright-flaky.mjs .artifacts/playwright-results.json
 
