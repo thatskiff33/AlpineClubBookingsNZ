@@ -3,10 +3,13 @@
  * Every status must have a unique colour within its category.
  */
 
-import { CHIP_TONE_CLASSES } from "@/lib/chip-tones";
+import type { BookingStatus } from "@prisma/client";
+import {
+  CHIP_TONE_CLASSES,
+  CHIP_TONE_SWATCH_CLASSES,
+  type ChipTone,
+} from "@/lib/chip-tones";
 
-// test seam
-//
 // #2188 P2 — migrated off raw Tailwind colour utilities onto the signed-off
 // scale vocabulary (M1-M10, #2181) via CHIP_TONE_CLASSES, which renders the
 // `bg-<scale>-3 text-<scale>-11` step pattern (G2b-guaranteed AA, theme-following).
@@ -20,19 +23,40 @@ import { CHIP_TONE_CLASSES } from "@/lib/chip-tones";
 // booking column's sixth distinguisher and retired the last --hue-* pair; verified
 // distinct: step-11 accent text ΔE2000 ≥ 14.8 from every sibling). Meaning is
 // always carried by icon + label, never colour alone.
-export const bookingStatusClasses: Record<string, string> = {
-  DRAFT:            CHIP_TONE_CLASSES.neutral,
-  PENDING:          CHIP_TONE_CLASSES.cat5,
-  PAYMENT_PENDING:  CHIP_TONE_CLASSES.warning,
-  CONFIRMED:        CHIP_TONE_CLASSES.success,
-  AWAITING_REVIEW:  CHIP_TONE_CLASSES.cat2,
-  PAID:             CHIP_TONE_CLASSES.info,
-  COMPLETED:        CHIP_TONE_CLASSES.cat3,
-  CANCELLED:        CHIP_TONE_CLASSES.danger,
-  BUMPED:           CHIP_TONE_CLASSES.cat4,
-  WAITLISTED:       CHIP_TONE_CLASSES.cat1,
-  WAITLIST_OFFERED: CHIP_TONE_CLASSES.cat6,
+//
+// This is the ONLY booking status -> colour definition (INV-SSOT-001, ALP-572):
+// the bookings list's chips, the admin calendar's pills and bars (step-3/step-11
+// chip pair) and its text-free step-9 swatches all derive from it, so a status
+// looks the same everywhere. Typed by the enum, so a new status fails typecheck
+// until it has a tone.
+const BOOKING_STATUS_TONES: Record<BookingStatus, ChipTone> = {
+  DRAFT:            "neutral",
+  PENDING:          "cat5",
+  PAYMENT_PENDING:  "warning",
+  CONFIRMED:        "success",
+  AWAITING_REVIEW:  "cat2",
+  PAID:             "info",
+  COMPLETED:        "cat3",
+  CANCELLED:        "danger",
+  BUMPED:           "cat4",
+  WAITLISTED:       "cat1",
+  WAITLIST_OFFERED: "cat6",
 };
+
+function mapBookingStatusTones(
+  toneClasses: Record<ChipTone, string>,
+): Record<BookingStatus, string> {
+  return Object.fromEntries(
+    Object.entries(BOOKING_STATUS_TONES).map(([status, tone]) => [status, toneClasses[tone]]),
+  ) as Record<BookingStatus, string>;
+}
+
+// test seam
+/** Booking status -> chip classes (step-3 tint, step-11 text) for anything that carries text. */
+export const bookingStatusClasses = mapBookingStatusTones(CHIP_TONE_CLASSES);
+
+/** Booking status -> solid step-9 fill, for text-free swatches, stripes and dots only. */
+const bookingStatusSwatchClasses = mapBookingStatusTones(CHIP_TONE_SWATCH_CLASSES);
 
 // test seam
 export const bookingStatusLabels: Record<string, string> = {
@@ -61,8 +85,19 @@ export const paymentStatusClasses: Record<string, string> = {
   PARTIALLY_REFUNDED: CHIP_TONE_CLASSES.cat4,
 };
 
+function isKnownBookingStatus(status: string): status is BookingStatus {
+  return Object.hasOwn(BOOKING_STATUS_TONES, status);
+}
+
 export function bookingStatusClass(status: string): string {
-  return bookingStatusClasses[status] ?? CHIP_TONE_CLASSES.neutral;
+  return isKnownBookingStatus(status) ? bookingStatusClasses[status] : CHIP_TONE_CLASSES.neutral;
+}
+
+/** The text-free step-9 swatch for a booking status; an unknown status gets the neutral swatch. */
+export function bookingStatusSwatchClass(status: string): string {
+  return isKnownBookingStatus(status)
+    ? bookingStatusSwatchClasses[status]
+    : CHIP_TONE_SWATCH_CLASSES.neutral;
 }
 
 export function bookingStatusLabel(status: string): string {

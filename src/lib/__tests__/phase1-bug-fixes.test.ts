@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
-import { STATUS_COLORS } from "@/components/admin-booking-calendar";
+import { bookingStatusSwatchClass } from "@/lib/status-colors";
 
 // --- P1.1: canModify logic tests ---
 
@@ -61,23 +61,15 @@ describe("P1.1: Admin canModify override", () => {
   });
 });
 
-// --- P1.4: Calendar STATUS_COLORS tests ---
+// --- P1.4: Calendar status swatch tests ---
 
-// These assertions run against the REAL exported map in
-// `admin-booking-calendar.tsx`, not a local fixture copy (#2137). The previous
-// local literal constrained nothing: it would have kept passing even if the
-// calendar itself lost or collided its waitlist swatches.
+// The calendar's swatches come from the shared booking-status tones in
+// `status-colors.ts` (ALP-572), so these run against that real source.
 describe("P1.4: Admin calendar status colors include waitlist statuses", () => {
-  it("has WAITLISTED color", () => {
-    expect(STATUS_COLORS.WAITLISTED).toBeDefined();
-  });
-
-  it("has WAITLIST_OFFERED color", () => {
-    expect(STATUS_COLORS.WAITLIST_OFFERED).toBeDefined();
-  });
-
   it("WAITLISTED and WAITLIST_OFFERED have different colors", () => {
-    expect(STATUS_COLORS.WAITLISTED).not.toBe(STATUS_COLORS.WAITLIST_OFFERED);
+    expect(bookingStatusSwatchClass("WAITLISTED")).not.toBe(
+      bookingStatusSwatchClass("WAITLIST_OFFERED"),
+    );
   });
 });
 
