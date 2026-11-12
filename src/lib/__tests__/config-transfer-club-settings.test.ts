@@ -1792,10 +1792,14 @@ describe("privacy hosting config portability (#4918)", () => {
     const files = new Map([["club-settings/privacy-hosting-settings.json", strToU8(JSON.stringify({
       hostingProvider: "  Example Host  ", dataLocation: "  ", futureField: true,
     }))]]);
-    const { tx, delegates } = stubTx({});
-    await clubSettingsImporter.apply(applyCtx(tx, files, "merge"));
-    expect(delegates.privacyHostingSettings.upsert).toHaveBeenCalledWith(expect.objectContaining({
+    const fresh = stubTx({});
+    await clubSettingsImporter.apply(applyCtx(fresh.tx, files, "merge"));
+    expect(fresh.delegates.privacyHostingSettings.upsert).toHaveBeenCalledWith(expect.objectContaining({
       create: { id: "default", hostingProvider: "Example Host", dataLocation: null },
+    }));
+    const existing = stubTx({ privacyHostingSettings: { hostingProvider: "Old Host", dataLocation: "Old Place" } });
+    await clubSettingsImporter.apply(applyCtx(existing.tx, files, "overwrite"));
+    expect(existing.delegates.privacyHostingSettings.upsert).toHaveBeenCalledWith(expect.objectContaining({
       update: { hostingProvider: "Example Host", dataLocation: null },
     }));
   });

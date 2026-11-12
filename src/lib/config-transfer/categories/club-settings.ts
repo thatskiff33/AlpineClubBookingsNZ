@@ -583,18 +583,20 @@ export const SINGLETONS: SingletonSpec[] = [
     delegate: "privacyHostingSettings",
     fields: ["hostingProvider", "dataLocation"],
     defaults: () => ({ ...PRIVACY_HOSTING_DEFAULTS }),
-    constraints: Object.fromEntries(Object.keys(PRIVACY_HOSTING_DEFAULTS).map(field => [field, {
-      validate: (value: unknown) => privacyHostingSchema.shape.hostingProvider.safeParse(value).success
-        ? null : "Use at most 120 characters on one line",
+    // Each field is checked and normalised by its own admin-route schema.
+    constraints: Object.fromEntries(Object.entries(privacyHostingSchema.shape).map(([field, schema]) => [field, {
+      validate: (value: unknown) => schema.safeParse(value).success ? null : "Use at most 120 characters on one line",
     }])),
+    // Trim and blank-to-null like the admin save; a value that fails is left as
+    // found so the constraint above refuses it.
     reconcile: incoming => {
-      // Unknown bundle keys are ignored by the importer. Normalize each known
-      // field independently so an extra key cannot bypass trimming/blank nulls.
-      return Object.fromEntries(Object.entries(incoming).map(([field, value]) => {
-        if (!(field in PRIVACY_HOSTING_DEFAULTS)) return [field, value];
-        const parsed = privacyHostingSchema.shape.hostingProvider.safeParse(value);
-        return [field, parsed.success ? parsed.data : value];
-      }));
+      const normalized = { ...incoming };
+      for (const [field, schema] of Object.entries(privacyHostingSchema.shape)) {
+        if (!(field in incoming)) continue;
+        const parsed = schema.safeParse(incoming[field]);
+        if (parsed.success) normalized[field] = parsed.data;
+      }
+      return normalized;
     },
   },
   {
