@@ -128,12 +128,14 @@ const appliedCredit = vi.hoisted(() => ({
   deriveBookingAppliedCreditCents: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 0),
 }));
 // #4516 (M4b): the receipt hook runs on PostgreSQL (`member-money-receipts.realdb.test.ts`), not on this fake store.
-const receiptDoors = vi.hoisted(() => ({ postBookingReceipts: vi.fn(async () => 0), postRefundObligation: vi.fn(async () => null) }));
+const receiptDoors = vi.hoisted(() => ({ postBookingReceipts: vi.fn(async () => 0), postRefundObligation: vi.fn(async () => null), postHandBackObligation: vi.fn(async () => null) }));
 vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postBookingReceipts: receiptDoors.postBookingReceipts,
   // #4516 (M4c): R05 posts on PostgreSQL (`member-money-refunds.realdb.test.ts`); here, that the claim asks for it.
   postRefundObligation: receiptDoors.postRefundObligation,
+  // #4516 (M4d): a hand-back's R05, likewise asked for by the claim.
+  postHandBackObligation: receiptDoors.postHandBackObligation,
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {

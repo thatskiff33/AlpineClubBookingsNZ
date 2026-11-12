@@ -131,13 +131,12 @@ export async function raiseEditRefundHandBackIfOwed(
     ],
     skipDuplicates: true,
   });
-  const task = await tx.manualRefundTask.findUnique({ where: { occurrenceKey: editRefundHandBackOccurrenceKey(bookingModificationId) }, select: { id: true, amountCents: true } });
-  if (payee === "organiser") {
-    if (!task) throw new Error(`The edit refund hand-back for modification ${bookingModificationId} was not written.`);
-    await bindOrganiserExtraRefundToHandBack(tx, { bookingId, handBackTaskId: task.id });
-  }
+  // The task is read only when something needs its id: the organiser binding, or the journal's R05.
+  if (payee !== "organiser" && !params.journal) return true;
+  const task = await tx.manualRefundTask.findUniqueOrThrow({ where: { occurrenceKey: editRefundHandBackOccurrenceKey(bookingModificationId) }, select: { id: true, amountCents: true } });
+  if (payee === "organiser") await bindOrganiserExtraRefundToHandBack(tx, { bookingId, handBackTaskId: task.id });
   // Replay posts nothing more: the obligation's key is already live.
-  if (params.journal && task?.amountCents) {
+  if (params.journal && task.amountCents) {
     await postHandBackObligation(tx, params.journal, { bookingId, taskId: task.id, amountCents: task.amountCents, origin: "APP", actorMemberId: params.actorMemberId ?? null, debtorRead: "booking-row" });
   }
   return true;
@@ -195,9 +194,12 @@ export async function raiseRefundRequestHandBack(
     ],
     skipDuplicates: true,
   });
-  const task = await tx.manualRefundTask.findUnique({ where: { occurrenceKey: refundRequestHandBackOccurrenceKey(refundRequestId) }, select: { id: true, amountCents: true } });
-  if (params.journal && task?.amountCents) {
-    await postHandBackObligation(tx, params.journal, { bookingId, taskId: task.id, amountCents: task.amountCents, origin: "OFFICER", actorMemberId: params.actorMemberId ?? null, debtorRead: "booking-row" });
+  // The journal's R05 for the bank part; a replay posts nothing more (its key is already live).
+  if (params.journal) {
+    const task = await tx.manualRefundTask.findUniqueOrThrow({ where: { occurrenceKey: refundRequestHandBackOccurrenceKey(refundRequestId) }, select: { id: true, amountCents: true } });
+    if (task.amountCents) {
+      await postHandBackObligation(tx, params.journal, { bookingId, taskId: task.id, amountCents: task.amountCents, origin: "OFFICER", actorMemberId: params.actorMemberId ?? null, debtorRead: "booking-row" });
+    }
   }
   return raised.count;
 }

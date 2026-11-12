@@ -511,12 +511,11 @@ export async function repriceBookingAfterGuestAcceptance(
   // D-3813-6 (`INV-PAY-117`): the cash share of a reduction on a booking paid
   // by internet banking or by hand is the treasurer's to send back.
   await raiseEditRefundHandBackIfOwed(tx, {
-    bookingId,
+    bookingId, journal, // #4516 (M4d): the hand-back's R05 posts with the task
     paymentId: booking.payment?.id ?? null,
     bookingModificationId: bookingModification.id,
     adjusted: paymentImpact,
     editLabel: "guest's acceptance re-price", booking, // #3949: booking names the payee (a group organiser who paid by bank transfer)
-    journal,
   });
   // #3954: a smaller re-issued ask, and a billed offset's note, are durable from this commit.
   await queueEditAskFollowUps(tx, { bookingId, paymentId: booking.payment?.id ?? null, bookingModificationId: bookingModification.id, door: "guestAcceptanceReprice", settled: paymentImpact });

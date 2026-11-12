@@ -54,7 +54,7 @@ const mocks = vi.hoisted(() => ({
   bookingUpdateMany: vi.fn(),
   bookingModificationCreate: vi.fn(),
   memberCreditFindUnique: vi.fn(),
-  applyLocalRefundAllocation: vi.fn(),
+  applyLocalRefundAllocation: vi.fn(async () => [] as { transactionId: string; cents: number }[]), // #4516 (M4d): the receipts it consumed
   planStripeRefundAllocation: vi.fn(),
   refundPaymentTransactions: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
@@ -97,6 +97,8 @@ vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postRefundObligation: vi.fn(async () => null),
   withdrawRefundObligation: vi.fn(async () => false),
+  // #4516 (M4d): a hand-back's R14 writes the journal, not this fake store.
+  postHandBackPayment: vi.fn(async () => 0),
 }));
 
 vi.mock("@/lib/booking-ledger-modification-sync", () => ({

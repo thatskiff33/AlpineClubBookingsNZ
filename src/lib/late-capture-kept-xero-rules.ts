@@ -168,10 +168,11 @@ export function keptCaptureBilledCentsFromReading(input: {
   if (input.firstCut === "kept-invoice") return 0;
   if (input.hasLiveKeptReceipt || input.hasReceiptOperation) return amount;
   if (input.changeRoute === "receipt" || input.changeRoute === "change-invoice") return amount;
-  const recorded = input.elsewhere === "all" || input.elsewhere >= amount;
+  const elsewhere = input.elsewhere === "all" ? amount : input.elsewhere;
+  const recorded = elsewhere >= amount;
   if (input.changeRoute === "change-unknown") return recorded ? amount : 0;
   if (recorded) return amount;
-  return input.elsewhere > 0 ? input.elsewhere : 0;
+  return elsewhere > 0 ? elsewhere : 0;
 }
 
 /**

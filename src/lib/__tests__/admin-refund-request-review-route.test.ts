@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => ({
   manualRefundTaskAggregate: vi.fn(),
   manualRefundTaskCreateMany: vi.fn(),
   manualRefundTaskDeleteMany: vi.fn(),
+  manualRefundTaskFindUniqueOrThrow: vi.fn(async () => ({ id: "hand-back-1", amountCents: 0 })),
+  manualRefundTaskFindFirst: vi.fn(async () => null),
   memberCreditAggregate: vi.fn(),
   transaction: vi.fn(),
   processRefund: vi.fn(),
@@ -47,6 +49,8 @@ vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postRefundObligation: vi.fn(async () => null),
   withdrawRefundObligation: vi.fn(async () => false),
+  // #4516 (M4d): the bank part's hand-back R05, likewise.
+  postHandBackObligation: vi.fn(async () => null),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -201,6 +205,9 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
           aggregate: mocks.manualRefundTaskAggregate,
           createMany: mocks.manualRefundTaskCreateMany,
           deleteMany: mocks.manualRefundTaskDeleteMany,
+          // #4516 (M4d): the bank part's task, read for its R05, and the open one a release withdraws.
+          findUniqueOrThrow: mocks.manualRefundTaskFindUniqueOrThrow,
+          findFirst: mocks.manualRefundTaskFindFirst,
         },
         refundRequest: {
           findUnique: mocks.lockedRefundRequestFindUnique,
@@ -734,6 +741,8 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
             aggregate: mocks.manualRefundTaskAggregate,
             createMany: mocks.manualRefundTaskCreateMany,
             deleteMany: mocks.manualRefundTaskDeleteMany,
+            // #4516 (M4d): a skipped insert means the row already stands; its R05 read finds it.
+            findUniqueOrThrow: mocks.manualRefundTaskFindUniqueOrThrow,
           },
           refundRequest: { findUnique: mocks.lockedRefundRequestFindUnique, updateMany: mocks.refundRequestUpdateMany },
           memberCredit: { aggregate: mocks.memberCreditAggregate },

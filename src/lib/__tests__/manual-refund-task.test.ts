@@ -35,7 +35,7 @@ const mocks = vi.hoisted(() => ({
   bookingFindUnique: vi.fn(),
   bookingUpdateMany: vi.fn(),
   bookingModificationCreate: vi.fn(),
-  applyLocalRefundAllocation: vi.fn(),
+  applyLocalRefundAllocation: vi.fn(async () => [] as { transactionId: string; cents: number }[]), // #4516 (M4d): the receipts it consumed
   createAuditLog: vi.fn(),
   recordBookingEvent: vi.fn(),
   // #3032: the two canonical settlement paths a confirmed review amount is
@@ -116,6 +116,10 @@ vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   postRefundObligation: vi.fn(async () => null),
   withdrawRefundObligation: vi.fn(async () => false),
   closeKeptCaptureReturn: vi.fn(async () => false),
+  // #4516 (M4d): R14 and the keep's reversal write the journal, not this fake store.
+  postHandBackPayment: vi.fn(async () => 0),
+  postKeptCapture: vi.fn(async () => false),
+  reverseKeptCapture: vi.fn(async () => false),
 }));
 
 vi.mock("@/lib/booking-ledger-modification-sync", () => ({
@@ -151,6 +155,8 @@ vi.mock("@/lib/late-capture-kept-xero", () => ({
     mocks.planKeptLateCaptureXeroRecord(...a),
   finishKeptLateCaptureXeroRecord: (...a: unknown[]) =>
     mocks.finishKeptLateCaptureXeroRecord(...a),
+  // #4516 (M4d): what of the keep a document already bills (`kept-capture-billed-cents.test.ts`).
+  keptCaptureBilledCents: vi.fn(async () => 0),
 }));
 vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({
   settleKeptLateCaptureRecordOnApproval: (...a: unknown[]) =>
@@ -215,6 +221,8 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
     mocks.enqueueXeroRefundCreditNoteOperation(...a),
   kickQueuedXeroOutboxOperationsIfConnected: (...a: unknown[]) =>
     mocks.kickQueuedXeroOutboxOperationsIfConnected(...a),
+  // #4516 (M4d): a keep takes its change anchor before it posts.
+  lockSupplementaryInvoiceAnchor: vi.fn(async () => undefined),
 }));
 vi.mock("@/lib/bank-hand-back-refund-note", () => ({
   cancellationHandBackNotedOnItsOwnRecord: (...a: unknown[]) => mocks.cancellationHandBackNotedOnItsOwnRecord(...a),
@@ -287,7 +295,7 @@ vi.mock("@/lib/member-credit", () => {
 });
 
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
-import { closeKeptCaptureReturn, postRefundObligation } from "@/lib/member-money/doors";
+import { closeKeptCaptureReturn, postRefundObligation, withdrawRefundObligation } from "@/lib/member-money/doors";
 import { EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE } from "@/lib/manual-refund-task-settlement-rules";
 import { editRefundHandBackDismissAfterCancelMessage } from "@/lib/manual-refund-task-copy";
 import { GROUP_MIRROR_HAND_BACK_EXCEEDS_CASH_MESSAGE } from "@/lib/edit-financial-review-refund-refusals";
@@ -2359,8 +2367,11 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       officerMemberId: "admin-1",
       store: tx,
     });
-    // #3582: a hand-back posts no closure lines and takes no global lock.
-    expect(mocks.executeRaw).not.toHaveBeenCalled();
+    // #3582: a hand-back posts no closure lines. #4516 (M4d): a journal hand-back takes lock(1),
+    // then its booking row, before its claim, so its R14 posts against the owner read under that row.
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(2);
+    expect(String((mocks.executeRaw.mock.calls[0]![0] as TemplateStringsArray).join(""))).toContain("pg_advisory_xact_lock(1)");
+    expect((mocks.executeRaw.mock.calls[1]![0] as unknown as string[]).join("?")).toMatch(/FROM "Booking" WHERE "id" = \? FOR NO KEY UPDATE/);
     expect(vi.mocked(postReviewClosureLedgerLines)).not.toHaveBeenCalled();
   });
 
@@ -2504,7 +2515,9 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     // #3827 (`INV-PAY-117`): it takes lock(1) FIRST, before the task is read for
     // its money and before the claim, so its completion cannot commit between
     // an edit's read of `refundedAmountCents` and its read of the open tasks.
-    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+    // #4516 (M4d): then its booking row, so its R14 reads the owner under that row.
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(2);
+    expect((mocks.executeRaw.mock.calls[1]![0] as unknown as string[]).join("?")).toMatch(/FROM "Booking" WHERE "id" = \? FOR NO KEY UPDATE/);
     expect(String((mocks.executeRaw.mock.calls[0]![0] as TemplateStringsArray).join(""))).toContain(
       "pg_advisory_xact_lock(1)",
     );
@@ -2563,7 +2576,9 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         status: 409,
         message: EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE,
       });
-      expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+      // lock(1), then (#4516 M4d) the booking row; refused before any claim.
+      expect(mocks.executeRaw).toHaveBeenCalledTimes(2);
+      expect(String((mocks.executeRaw.mock.calls[0]![0] as TemplateStringsArray).join(""))).toContain("pg_advisory_xact_lock(1)");
       expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
     });
 
@@ -2739,8 +2754,10 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       expect(vi.mocked(postHandBackLedgerLine)).toHaveBeenCalledWith(
         expect.objectContaining({ manualRefundTaskId: "task-9", amountCents: 2000, paymentSource: "STRIPE", cardShortfall: true }),
       );
-      // A cancellation's own hand-back: no lock(1), as the cash cancel's.
-      expect(mocks.executeRaw).not.toHaveBeenCalled();
+      // #4516 (M4d): a cancellation's own hand-back takes lock(1), then its booking row, then (mocked) its Payment row.
+      expect(mocks.executeRaw).toHaveBeenCalledTimes(2);
+      expect(String((mocks.executeRaw.mock.calls[0]![0] as TemplateStringsArray).join(""))).toContain("pg_advisory_xact_lock(1)");
+      expect((mocks.executeRaw.mock.calls[1]![0] as unknown as string[]).join("?")).toMatch(/FROM "Booking" WHERE "id" = \? FOR NO KEY UPDATE/);
       expect(mocks.recordBookingEvent).toHaveBeenCalledWith(expect.objectContaining({ type: BookingEventType.REFUNDED, amountCents: 2000 }));
       expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledTimes(1);
       expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("payment-1", 2000, {
@@ -3034,11 +3051,13 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
       expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
       expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
-      expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+      // lock(1), then (#4516 M4d) the booking row, both before the claim.
+      expect(mocks.executeRaw).toHaveBeenCalledTimes(2);
       expect(String((mocks.executeRaw.mock.calls[0]![0] as TemplateStringsArray).join(""))).toContain(
         "pg_advisory_xact_lock(1)",
       );
-      expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      expect((mocks.executeRaw.mock.calls[1]![0] as unknown as string[]).join("?")).toMatch(/FROM "Booking" WHERE "id" = \? FOR NO KEY UPDATE/);
+      expect(mocks.executeRaw.mock.invocationCallOrder[1]).toBeLessThan(
         mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!,
       );
     });
@@ -3098,7 +3117,14 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         recordedNightPrices: null,
       }, CLUB_FORMAT_TEST);
 
-      expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+      // lock(1), then (#4516 M4d) the booking row; the dismissal withdraws the hand-back's debt.
+      expect(mocks.executeRaw).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledWith(tx, expect.anything(),
+        expect.objectContaining({ scope: "hand-back", bookingId: "booking-1" }));
+      expect(vi.mocked(withdrawRefundObligation).mock.invocationCallOrder[0]).toBeGreaterThan(
+        mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!,
+      );
+      expect((mocks.executeRaw.mock.calls[1]![0] as unknown as string[]).join("?")).toMatch(/FROM "Booking" WHERE "id" = \? FOR NO KEY UPDATE/);
       expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ status: ManualRefundTaskStatus.DISMISSED }) }),
       );
@@ -3378,6 +3404,11 @@ describe("recording per-night amounts while settling (#3191)", () => {
       "kind",
       "occurrenceKey",
       "bookingId",
+      // #4516 (M4d): what decides whether a late-capture approval or a journal hand-back takes lock(1) and the
+      // booking row. Each is written at creation and never updated.
+      "lateCaptureApprovalIntentId",
+      "partPaymentReviewPaymentId",
+      "reason",
     ]);
     expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.manualRefundTaskFindUnique.mock.invocationCallOrder[1]!,
@@ -4762,10 +4793,10 @@ describe("#3639 - approving a held late-capture refund", () => {
       idempotencyKeyPrefix: "late_cancel_refund_booking-1_pi_late",
       obligation: { scope: "capture-return", id: "pi_late" }, // #4516: the R05 the completion posted
     });
-    // MUTATION (#4516, M4c probe 10): that R05, posted in the claim beside the debt, its owner read without the
-    // booking row (this claim holds no `lock(1)` until M4d), before Stripe is asked.
+    // MUTATION (#4516, M4c probe 10): that R05, posted in the claim beside the debt, before Stripe is asked.
+    // M4d: the claim now holds lock(1) and the booking row, so the owner is read under that row.
     expect(vi.mocked(postRefundObligation)).toHaveBeenCalledWith(tx, expect.anything(), { bookingId: "booking-1", scope: "capture-return",
-      id: "pi_late", amountCents: 2500, origin: "OFFICER", actorMemberId: "treasurer-1", debtorRead: "plain" });
+      id: "pi_late", amountCents: 2500, origin: "OFFICER", actorMemberId: "treasurer-1", debtorRead: "booking-row" });
     expect(vi.mocked(postRefundObligation).mock.invocationCallOrder[0]).toBeLessThan(mocks.refundPaymentTransactions.mock.invocationCallOrder[0]!);
     // #4516 review F2: the Payment row before the approval's claim; an approval closes no debt.
     expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!);

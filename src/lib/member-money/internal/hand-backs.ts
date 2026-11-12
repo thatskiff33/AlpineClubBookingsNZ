@@ -4,7 +4,8 @@ import { lockMemberMoneyPayment, readMemberMoneyApplicationState } from "./appli
 import { memberMoneyApplicationTotals } from "./application-state";
 import { keptCaptureIdentity } from "./booking-charges";
 import { eventPosted, readBookingLiveChargeCents } from "./booking-journal-read";
-import { bookingReceiptEventKey, chargeObligation, lineDebtor, ownedBy } from "./booking-receipts";
+import { CAPTURE_KINDS } from "../../booking-ledger-capture-kinds";
+import { bookingReceiptEventKey, bookingReceiptRow, chargeObligation, lineDebtor, ownedBy } from "./booking-receipts";
 import { isBookingJournalInactive, type BookingJournalContext } from "./journal-activity";
 import { memberMoneyApplicationKeys, memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
 import { MemberMoneyPlanError, type MemberMoneyApplicationPlan } from "./plan";
@@ -62,22 +63,31 @@ async function liveHandBackDebt(tx: Db, taskId: string): Promise<MemberMoneyEven
     ?? (await refundObligationChain(tx, "review", taskId)).live;
 }
 
-/** The receipt credit of one allocated transaction: its card capture, else the bank or cash receipt anchored on it. */
+/**
+ * The receipt credit of one allocated transaction: its card capture, else the bank or cash receipt anchored on it.
+ * A receipt's settlement line names its charge by `anchorId`, the pairing `bookingReceiptRow` makes for every receipt.
+ */
 async function receiptOfTransaction(tx: Db, transactionId: string) {
   const row = await tx.paymentTransaction.findUnique({
     where: { id: transactionId },
-    select: { id: true, stripePaymentIntentId: true, settlementLineId: true },
+    select: { id: true, stripePaymentIntentId: true, reason: true },
   });
   if (!row) return null;
   if (row.stripePaymentIntentId) {
     const line = await cardReceiptLine(tx, row.stripePaymentIntentId);
     if (line) return { transactionId, line };
   }
-  if (!row.settlementLineId) return null;
-  const settlement = await tx.bookingLedgerLine.findUnique({ where: { id: row.settlementLineId }, select: { id: true, kind: true } });
-  if (!settlement) return null;
-  const line = await receiptCreditLine(tx, bookingReceiptEventKey(row, settlement));
-  return line ? { transactionId, line } : null;
+  const settlements = await tx.bookingLedgerLine.findMany({
+    where: { anchorId: transactionId, side: "SETTLEMENT", kind: { in: [...CAPTURE_KINDS] } },
+    select: { id: true, kind: true, anchorId: true, reversesLineId: true, amountCents: true },
+    orderBy: [{ postedAt: "asc" }, { id: "asc" }],
+  });
+  for (const settlement of settlements) {
+    if (!bookingReceiptRow(settlement, [row])) continue;
+    const line = await receiptCreditLine(tx, bookingReceiptEventKey(row, settlement));
+    if (line) return { transactionId, line };
+  }
+  return null;
 }
 
 /**

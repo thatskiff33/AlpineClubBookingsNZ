@@ -67,8 +67,8 @@ export function receiptFactContext(context: MemberMoneyPostingContext, at: Date)
 
 /** The id of a debtor, member or organisation; one rule for receipts and refunds (`INV-SSOT`). */
 export const debtorId = (debtor: MemberMoneyDebtor) => (debtor.kind === "MEMBER" ? debtor.memberId : debtor.organisationId);
-/** Whether an obligation (or a line) names this debtor. */
-export const ownedBy = (obligation: Pick<ApplicationObligation, "debtorKind" | "memberId" | "organisationId">, debtor: MemberMoneyDebtor) =>
+/** Whether an obligation (or a line) names this debtor. A line whose debtor kind is unset names nobody. */
+export const ownedBy = (obligation: Pick<ApplicationObligation, "memberId" | "organisationId"> & { debtorKind: string | null }, debtor: MemberMoneyDebtor) =>
   obligation.debtorKind === debtor.kind && (obligation.memberId ?? obligation.organisationId) === debtorId(debtor);
 const succeeded = (state: ApplicationState, obligation: ApplicationObligation) =>
   state.obligations.some((o) => memberMoneyApplicationKeys.succeeds(o.key, obligation.key));
