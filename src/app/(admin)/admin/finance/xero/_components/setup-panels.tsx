@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useConfirm } from "@/components/confirm-dialog"
+import { FocusedActionError } from "@/components/focused-action-error"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
+import { useActionFailure } from "@/hooks/use-action-failure"
 import { loadAdminXeroContactGroups } from "@/lib/admin-xero-contact-groups"
 import { fetchJson, postJson, type ActionResponse } from "./api"
 import { SectionCard, type ToggleSection } from "./shared"
@@ -67,7 +69,11 @@ export function SetupPanels({
   const [duplicates, setDuplicates] = useState<DuplicateResult | null>(null)
   const [scanningDuplicates, setScanningDuplicates] = useState(false)
   const [creatingFamilyGroup, setCreatingFamilyGroup] = useState<string | null>(null)
-  const [error, setError] = useState("")
+  // Loading the contact groups and scanning for duplicates only read, so their
+  // failures are a passive notice; an import, repair or family-group write
+  // takes focus when it fails (#4975).
+  const [loadError, setLoadError] = useState("")
+  const { actionError, attentionKey, failAction, clearActionError } = useActionFailure()
   // #4161: a link repair that ran but could not heal every refund note.
   const [warning, setWarning] = useState("")
 
@@ -79,7 +85,7 @@ export function SetupPanels({
     }) => {
       if (options?.refreshFromXero) setRefreshingGroups(true)
       else setLoadingGroups(true)
-      setError("")
+      setLoadError("")
       try {
         const result = await loadAdminXeroContactGroups({
           refreshFromXero: options?.refreshFromXero,
@@ -102,7 +108,7 @@ export function SetupPanels({
         )
         onRefreshDiagnostics()
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load Xero contact groups")
+        setLoadError(err instanceof Error ? err.message : "Failed to load Xero contact groups")
       } finally {
         setLoadingGroups(false)
         setRefreshingGroups(false)
@@ -193,7 +199,7 @@ export function SetupPanels({
   const importMembers = async () => {
     const selectedMappings = groupMappings.filter(isGroupMapped)
     if (selectedMappings.length === 0) {
-      setError("Please fully map at least one group to import")
+      failAction("Please fully map at least one group to import")
       return
     }
     const groupNames = selectedMappings.map((mapping) => mapping.groupName).join(", ")
@@ -205,7 +211,7 @@ export function SetupPanels({
     if (!confirmed) return
     setSyncing("import")
     setSyncResult(null)
-    setError("")
+    clearActionError()
     try {
       const data = await postJson<SyncResult>(
         "/api/admin/xero/import-members",
@@ -219,7 +225,7 @@ export function SetupPanels({
       setSyncResult(data)
       onRefreshDiagnostics()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Member import failed")
+      failAction(err instanceof Error ? err.message : "Member import failed")
     } finally {
       setSyncing(null)
     }
@@ -227,7 +233,7 @@ export function SetupPanels({
 
   const repairXeroLinks = async () => {
     setRepairingXeroLinks(true)
-    setError("")
+    clearActionError()
     setWarning("")
     onMessage("")
     try {
@@ -238,7 +244,7 @@ export function SetupPanels({
       onRefreshDiagnostics()
       onRefreshOperations()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to repair Xero link ledger")
+      failAction(err instanceof Error ? err.message : "Failed to repair Xero link ledger")
     } finally {
       setRepairingXeroLinks(false)
     }
@@ -247,11 +253,11 @@ export function SetupPanels({
   const scanDuplicates = async () => {
     setScanningDuplicates(true)
     setDuplicates(null)
-    setError("")
+    setLoadError("")
     try {
       setDuplicates(await fetchJson<DuplicateResult>("/api/admin/xero/duplicate-contacts", undefined, "Duplicate scan failed"))
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Duplicate scan failed")
+      setLoadError(err instanceof Error ? err.message : "Duplicate scan failed")
     } finally {
       setScanningDuplicates(false)
     }
@@ -260,7 +266,7 @@ export function SetupPanels({
   const createFamilyGroup = async (group: DuplicateGroup) => {
     const name = group.suggestedGroupName || `Family (${group.email})`
     setCreatingFamilyGroup(group.email)
-    setError("")
+    clearActionError()
     try {
       await postJson<{ id?: string }>("/api/admin/family-groups", { name, memberIds: group.eligibleMemberIds }, "Failed to create family group")
       setDuplicates((prev) =>
@@ -273,7 +279,7 @@ export function SetupPanels({
           : prev
       )
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create family group")
+      failAction(err instanceof Error ? err.message : "Failed to create family group")
     } finally {
       setCreatingFamilyGroup(null)
     }
@@ -298,7 +304,8 @@ export function SetupPanels({
     >
       <div className="space-y-6">
         {confirmDialog}
-        {error ? <p className="text-sm text-danger">{error}</p> : null}
+        {loadError ? <p className="text-sm text-danger">{loadError}</p> : null}
+        <FocusedActionError id="xero-setup-action-error" error={actionError} attentionKey={attentionKey} />
         {warning ? <p className="text-sm text-warning" role="status">{warning}</p> : null}
         <div className="space-y-4">
           <div className="space-y-1">

@@ -2,6 +2,7 @@
 import { fetchWithRecentAuth } from "@/components/confirm-its-you"
 
 import { useCallback, useEffect, useState } from "react"
+import { useActionFailure } from "@/hooks/use-action-failure"
 import { revealEditor } from "@/hooks/use-scroll-to-feedback"
 import { toSafeXeroOAuthCallbackMessage } from "@/lib/xero-oauth-callback-messages"
 import { SECTION_DEFAULTS, SECTION_STORAGE_KEY, xeroSectionId, type SectionKey, type XeroStatus } from "../_components/types"
@@ -9,7 +10,16 @@ import { SECTION_DEFAULTS, SECTION_STORAGE_KEY, xeroSectionId, type SectionKey, 
 export function useXeroConnection() {
   const [status, setStatus] = useState<XeroStatus | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState("")
+  // A failed status read and the OAuth callback's `?error=` both arrive with the
+  // page rather than from a press on it, so they stay a passive notice. A failed
+  // disconnect is an action the admin just took, so it takes focus (#4975).
+  const [loadError, setLoadError] = useState("")
+  const {
+    actionError,
+    attentionKey: actionAttentionKey,
+    failAction,
+    clearActionError,
+  } = useActionFailure()
   const [connectSuccess, setConnectSuccess] = useState(false)
   const [sectionOpen, setSectionOpen] = useState<Record<SectionKey, boolean>>(SECTION_DEFAULTS)
   const [sectionsHydrated, setSectionsHydrated] = useState(false)
@@ -26,7 +36,7 @@ export function useXeroConnection() {
       const data: XeroStatus = await res.json()
       setStatus(data)
     } catch {
-      setError("Failed to load Xero connection status")
+      setLoadError("Failed to load Xero connection status")
     } finally {
       setLoading(false)
     }
@@ -52,14 +62,15 @@ export function useXeroConnection() {
 
   const handleDisconnect = useCallback(async () => {
     if (!confirm("Are you sure you want to disconnect Xero? This will remove all stored tokens.")) return
+    clearActionError()
     try {
       const res = await fetchWithRecentAuth("/api/admin/xero/disconnect", { method: "POST" })
       if (!res.ok) throw new Error("Failed to disconnect")
       setStatus({ connected: false, needsReentry: false, tenantId: null, tokenExpiresAt: null })
     } catch {
-      setError("Failed to disconnect Xero")
+      failAction("Failed to disconnect Xero")
     }
-  }, [])
+  }, [clearActionError, failAction])
 
   useEffect(() => {
     void fetchStatus()
@@ -101,14 +112,17 @@ export function useXeroConnection() {
     // percent-decoded, so the old extra `decodeURIComponent` was both redundant
     // and a `URIError` waiting for a malformed escape.
     const safeError = toSafeXeroOAuthCallbackMessage(params.get("error"))
-    if (safeError) setError(safeError)
+    if (safeError) setLoadError(safeError)
   }, [fetchStatus])
 
   return {
     status,
     loading,
-    error,
-    setError,
+    loadError,
+    setLoadError,
+    actionError,
+    actionAttentionKey,
+    clearActionError,
     connectSuccess,
     setConnectSuccess,
     sectionOpen,

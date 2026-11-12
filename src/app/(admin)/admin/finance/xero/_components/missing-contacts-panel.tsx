@@ -31,9 +31,11 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import { useConfirm } from "@/components/confirm-dialog"
+import { FocusedActionError } from "@/components/focused-action-error"
 import { Badge } from "@/components/ui/badge"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { buildXeroContactUrl } from "@/lib/xero-links"
+import { useActionFailure } from "@/hooks/use-action-failure"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import type {
   MissingContactAmbiguity,
@@ -229,7 +231,10 @@ export function MissingContactsPanel({
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [notReady, setNotReady] = useState("")
   const [busy, setBusy] = useState<"dry-run" | "run" | null>(null)
-  const [error, setError] = useState("")
+  // The dry run only reads, so its failure is a passive notice; the batch run
+  // writes to Xero, so its failure takes focus (#4975).
+  const [dryRunError, setDryRunError] = useState("")
+  const { actionError, attentionKey, failAction, clearActionError } = useActionFailure()
   const [result, setResult] = useState<RunResult | null>(null)
 
   /*
@@ -243,7 +248,7 @@ export function MissingContactsPanel({
   */
   const runDryRun = async (options?: { keepResult?: boolean }) => {
     setBusy("dry-run")
-    setError("")
+    setDryRunError("")
     if (!options?.keepResult) setResult(null)
     try {
       const data = await fetchJson<{ snapshot: Snapshot; notReadyMessage: string | null }>(
@@ -254,7 +259,7 @@ export function MissingContactsPanel({
       setSnapshot(data.snapshot)
       setNotReady(data.notReadyMessage ?? "")
     } catch (err) {
-      setError(err instanceof Error ? err.message : "The dry run could not be completed")
+      setDryRunError(err instanceof Error ? err.message : "The dry run could not be completed")
     } finally {
       setBusy(null)
     }
@@ -293,7 +298,7 @@ export function MissingContactsPanel({
     if (!confirmed) return
 
     setBusy("run")
-    setError("")
+    clearActionError()
     try {
       const data = await postJson<{ result: RunResult }>(
         "/api/admin/xero/missing-contacts",
@@ -320,7 +325,7 @@ export function MissingContactsPanel({
       // while KEEPING the report of what this run just did.
       await runDryRun({ keepResult: true })
     } catch (err) {
-      setError(err instanceof Error ? err.message : "The contacts could not be created")
+      failAction(err instanceof Error ? err.message : "The contacts could not be created")
     } finally {
       setBusy(null)
     }
@@ -394,7 +399,8 @@ export function MissingContactsPanel({
           </p>
         ) : null}
 
-        {error ? <p className="text-sm text-danger">{error}</p> : null}
+        {dryRunError ? <p className="text-sm text-danger">{dryRunError}</p> : null}
+        <FocusedActionError id="xero-missing-contacts-action-error" error={actionError} attentionKey={attentionKey} />
         {notReady ? (
           <p className="flex items-start gap-2 text-sm text-warning">
             <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />
