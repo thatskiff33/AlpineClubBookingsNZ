@@ -118,10 +118,12 @@ turned off, so you never miss news about a stay you have booked.
 
 The **Privacy & Data** section gives you two rights:
 
-- **Download My Data** — a machine-readable (JSON) copy of the data the system
-  holds about you, limited to a few downloads per day. It includes any
-  dietary/allergy information you have recorded, even if the club has since
-  turned that field off.
+- **Download My Data** — a machine-readable (JSON) copy of your profile,
+  bookings, credits and other personal records, limited to a few downloads per
+  day. It includes any dietary/allergy information you have recorded, even if
+  the club has since turned that field off. The file lists anything it leaves
+  out and why; ask the club's privacy officer for those, or for a dependant's
+  record.
 - **Request Account Deletion** — asks the club to permanently delete your
   account. This is **irreversible** and an admin reviews it first; on approval
   you are anonymised, your future bookings are cancelled, and your login is
