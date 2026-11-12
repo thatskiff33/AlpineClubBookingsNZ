@@ -177,6 +177,8 @@ describe("module graph census (#4930, INV-SSOT-007)", () => {
       ["a type import", `import type { Metadata } from "@/app/layout";`],
       ["a relative import", `import Page from "../app/page";`],
       ["the route root", `import "@/app";`],
+      ["a re-export", `export { default } from "@/app/page";`],
+      ["a dynamic import", `const page = () => import("@/app/page");`],
     ])("reports %s from a component into a route folder", (_label, spelling) => {
       const file = "src/components/edit-booking-panel.tsx";
       const before = componentAppImports(graph).length;

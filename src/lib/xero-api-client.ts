@@ -16,8 +16,10 @@
 /**
  * `import "server-only"` makes the production build REFUSE this module in a
  * browser bundle, at any depth (`INV-OPS-013`, #2850). It moved here from the
- * retired `@/lib/xero` facade (#4930): every Xero service reaches the provider
- * through this transport, so it is the Xero root the facade used to be.
+ * retired `@/lib/xero` facade (#4930): every Xero service that calls the
+ * provider does so through this transport, so it is the Xero root the facade
+ * used to be. The token store, OAuth and mapping modules do not import it; they
+ * are server-only through `@/lib/prisma`, which carries the same marker.
  * Operator CLIs reach it under plain Node, where that marker would throw at
  * import, so every `tsx` invocation that reaches it runs with
  * `--conditions=react-server` — which resolves `server-only` to an empty

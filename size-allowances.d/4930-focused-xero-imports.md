@@ -1,5 +1,5 @@
 file: src/lib/xero-api-client.ts
-lines: 803
+lines: 805
 reason: The retired facade's server-only marker belongs at the transport used
   by all focused services. Splitting the transport is unrelated to replacing
   that guard and would widen this behavior-preserving import refactor.
