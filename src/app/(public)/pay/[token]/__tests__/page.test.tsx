@@ -1228,6 +1228,14 @@ describe("#4955: Stripe returns to the payment link", () => {
     expect(screen.queryByRole("button", { name: "Pay by card" })).toBeNull();
   });
 
+  it("still discloses a financial review beside that answer", async () => {
+    window.history.replaceState(null, "", "?payment_intent=pi_test&redirect_status=processing");
+    installIntentSequence([stillProcessing], [{ ...payableContext, payable: null, canRequestFreshLink: true, financialReviewPending: true }]);
+    render(<PayByLinkPage />);
+    expect(await screen.findByText("Payment being processed")).toBeInTheDocument();
+    expect(document.body.textContent).toContain(FINANCIAL_REVIEW_WORKING_IT_OUT);
+  });
+
   it("uses the refreshed amount for a fresh form even if the mount fetch arrives last", async () => {
     window.history.replaceState(null, "", "?payment_intent=pi_test&redirect_status=succeeded");
     let finishMount!: (response: Response) => void;

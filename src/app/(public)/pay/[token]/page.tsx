@@ -322,7 +322,8 @@ export default function PayByLinkPage() {
     #4955: a redirect return reads a fresh context, which may no longer be
     payable - the link expired while the payer was at their bank, say. The
     answer about the payment just made still comes first: not "email me a new
-    link", and never the pay buttons.
+    link", and never the pay buttons. #3194: a booking under review still says
+    so, as on every branch.
   */
   if (paymentRecovery && (context.canRequestFreshLink || !context.payable)) {
     return (
@@ -330,7 +331,12 @@ export default function PayByLinkPage() {
         <CardHeader>
           <CardTitle>Your Payment</CardTitle>
         </CardHeader>
-        <CardContent>{recoveryNotice}</CardContent>
+        <CardContent className="space-y-3">
+          {recoveryNotice}
+          {financialReviewPending ? (
+            <FinancialReviewNotice note={financialReviewNote({ moneyAlreadyMoved: false })} />
+          ) : null}
+        </CardContent>
       </Card>
     );
   }
