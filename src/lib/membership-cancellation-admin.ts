@@ -52,6 +52,7 @@ import {
   serializeMember,
 } from "@/lib/member-serialization";
 import { prisma } from "@/lib/prisma";
+import { adminListPage, adminQueueCreatedOrder } from "@/lib/admin-list-page";
 import { queueApprovedMembershipCancellationXeroOperations } from "@/lib/xero-operation-outbox";
 
 const REVIEWABLE_REQUEST_STATUSES: readonly MembershipCancellationRequestStatus[] = [
@@ -621,12 +622,16 @@ export async function getAdminMembershipCancellationRequests({
       : {
           status,
         };
+  // The pending queue reads oldest first (INV-OPS-017).
+  const direction = adminQueueCreatedOrder(
+    status === MembershipCancellationRequestStatus.REQUESTED,
+  );
 
   const [requests, total, pendingCount] = await Promise.all([
     prisma.membershipCancellationRequest.findMany({
       where,
       include: adminCancellationRequestInclude,
-      orderBy: { submittedAt: "desc" },
+      orderBy: [{ submittedAt: direction }, { id: direction }],
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
@@ -689,10 +694,7 @@ export async function getAdminMembershipCancellationRequests({
       }),
     ),
     pendingCount,
-    total,
-    page,
-    pageSize,
-    totalPages: Math.ceil(total / pageSize),
+    ...adminListPage({ page, pageSize, total }),
   };
 }
 

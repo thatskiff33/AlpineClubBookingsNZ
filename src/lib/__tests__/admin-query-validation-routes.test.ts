@@ -257,10 +257,12 @@ describe("admin query validation and pagination", () => {
       expect(response.status).toBe(200);
       expect(body.data).toHaveLength(25);
       expect(body.data.length).toBeLessThanOrEqual(body.pageSize);
-      expect(body).toMatchObject({ page: 1, pageSize: 25, total: 30 });
+      expect(body).toMatchObject({ page: 1, pageSize: 25, total: 30, totalPages: 2 });
       expect(mocks.refundRequestFindMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { status: "PENDING" },
+          // INV-OPS-017: the pending queue reads oldest first.
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
           take: 25,
           skip: 0,
         })
@@ -284,6 +286,7 @@ describe("admin query validation and pagination", () => {
       expect(mocks.refundRequestFindMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { status: "APPROVED" },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           take: 10,
           skip: 10,
         })
@@ -432,10 +435,10 @@ describe("admin query validation and pagination", () => {
       expect(response.status).toBe(200);
       expect(body.applications).toHaveLength(25);
       expect(body.applications.length).toBeLessThanOrEqual(body.pageSize);
-      expect(body).toMatchObject({ page: 1, pageSize: 25, total: 30 });
+      expect(body).toMatchObject({ page: 1, pageSize: 25, total: 30, totalPages: 2 });
       expect(mocks.memberApplicationFindMany).toHaveBeenCalledWith({
         where: undefined,
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take: 25,
         skip: 0,
       });
@@ -458,13 +461,26 @@ describe("admin query validation and pagination", () => {
         applicantEmail: "jane@example.com",
         status: "APPROVED",
       });
-      expect(body).toMatchObject({ page: 2, pageSize: 10, total: 1 });
+      expect(body).toMatchObject({ page: 2, pageSize: 10, total: 1, totalPages: 1 });
       expect(mocks.memberApplicationFindMany).toHaveBeenCalledWith({
         where: { status: "APPROVED" },
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take: 10,
         skip: 10,
       });
+    });
+
+    it("reads the pending-admin queue oldest first (INV-OPS-017)", async () => {
+      await getMemberApplications(
+        request("/api/admin/member-applications?status=PENDING_ADMIN")
+      );
+
+      expect(mocks.memberApplicationFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { status: "PENDING_ADMIN" },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        })
+      );
     });
   });
 

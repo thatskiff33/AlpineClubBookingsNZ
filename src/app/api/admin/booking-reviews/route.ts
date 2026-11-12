@@ -1,16 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   bookingReviewReasonCodes,
   bookingReviewReasonSentences,
 } from "@/lib/booking-review";
+import {
+  ADMIN_LIST_DEFAULT_PAGE_SIZE,
+  ADMIN_LIST_MAX_PAGE_SIZE,
+  adminListPage,
+  adminQueueCreatedOrder,
+} from "@/lib/admin-list-page";
 
 const querySchema = z.object({
   status: z.enum(["PENDING", "APPROVED", "REJECTED", "ALL"]).optional().default("PENDING"),
   page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+  pageSize: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(ADMIN_LIST_MAX_PAGE_SIZE)
+    .optional()
+    .default(ADMIN_LIST_DEFAULT_PAGE_SIZE),
+  // A focused deep link (`?bookingId=`) reads its one booking, inside the same
+  // review scope, so the panel can pin it when it is not on the page
+  // (INV-OPS-017).
+  bookingId: z.string().trim().min(1).max(64).optional(),
 });
 
 export async function GET(req: NextRequest) {
@@ -25,32 +42,82 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const { status, page, pageSize } = parsed.data;
-  const where = {
-    deletedAt: null,
-    ...(status === "ALL" ? { adminReviewStatus: { not: null } } : { adminReviewStatus: status }),
+  const { status, page, pageSize, bookingId } = parsed.data;
+  const skip = (page - 1) * pageSize;
+  const include = {
+    member: {
+      select: { id: true, firstName: true, lastName: true, email: true },
+    },
+    adminReviewedBy: {
+      select: { id: true, firstName: true, lastName: true },
+    },
+    guests: {
+      select: { id: true, firstName: true, lastName: true, ageTier: true, isMember: true },
+    },
   } as const;
+  const idFilter = bookingId ? { id: bookingId } : {};
 
-  const [rows, total] = await Promise.all([
-    prisma.booking.findMany({
-      where,
-      include: {
-        member: {
-          select: { id: true, firstName: true, lastName: true, email: true },
-        },
-        adminReviewedBy: {
-          select: { id: true, firstName: true, lastName: true },
-        },
-        guests: {
-          select: { id: true, firstName: true, lastName: true, ageTier: true, isMember: true },
-        },
-      },
-      orderBy: [{ adminReviewStatus: "asc" }, { createdAt: "desc" }],
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-    }),
-    prisma.booking.count({ where }),
-  ]);
+  /*
+    INV-OPS-017: PENDING reads oldest first so the longest wait is on page 1.
+    ALL keeps every PENDING row ahead of the decided ones — PENDING oldest
+    first, then APPROVED/REJECTED newest first — by reading the two groups
+    separately and slicing the one page across them.
+  */
+  let rows;
+  let total: number;
+  if (status === "ALL") {
+    const pendingWhere: Prisma.BookingWhereInput = {
+      deletedAt: null,
+      adminReviewStatus: "PENDING",
+      ...idFilter,
+    };
+    const decidedWhere: Prisma.BookingWhereInput = {
+      deletedAt: null,
+      adminReviewStatus: { in: ["APPROVED", "REJECTED"] },
+      ...idFilter,
+    };
+    const [pendingTotal, decidedTotal] = await Promise.all([
+      prisma.booking.count({ where: pendingWhere }),
+      prisma.booking.count({ where: decidedWhere }),
+    ]);
+    total = pendingTotal + decidedTotal;
+    const pendingTake = Math.max(0, Math.min(pageSize, pendingTotal - skip));
+    const decidedTake = pageSize - pendingTake;
+    const [pendingRows, decidedRows] = await Promise.all([
+      pendingTake > 0
+        ? prisma.booking.findMany({
+            where: pendingWhere,
+            include,
+            orderBy: [{ createdAt: adminQueueCreatedOrder(true) }, { id: adminQueueCreatedOrder(true) }],
+            skip,
+            take: pendingTake,
+          })
+        : Promise.resolve([]),
+      decidedTake > 0 && skip + pendingTake < total
+        ? prisma.booking.findMany({
+            where: decidedWhere,
+            include,
+            orderBy: [{ createdAt: adminQueueCreatedOrder(false) }, { id: adminQueueCreatedOrder(false) }],
+            skip: Math.max(0, skip - pendingTotal),
+            take: decidedTake,
+          })
+        : Promise.resolve([]),
+    ]);
+    rows = [...pendingRows, ...decidedRows];
+  } else {
+    const where = { deletedAt: null, adminReviewStatus: status, ...idFilter } as const;
+    const direction = adminQueueCreatedOrder(status === "PENDING");
+    [rows, total] = await Promise.all([
+      prisma.booking.findMany({
+        where,
+        include,
+        orderBy: [{ createdAt: direction }, { id: direction }],
+        skip,
+        take: pageSize,
+      }),
+      prisma.booking.count({ where }),
+    ]);
+  }
 
   /*
     #2364: a booking can carry two review hazards at once — the minors-only rule
@@ -75,8 +142,6 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  return NextResponse.json({
-    data,
-    pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
-  });
+  const pagination = adminListPage({ page, pageSize, total });
+  return NextResponse.json({ data, ...pagination, pagination });
 }

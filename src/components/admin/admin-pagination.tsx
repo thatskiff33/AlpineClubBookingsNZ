@@ -50,6 +50,11 @@ export interface PaginationProps {
    * node to customise (e.g. include a total count).
    */
   summary?: React.ReactNode
+  /**
+   * Render the summary even when everything fits on one page, so a capped
+   * list always states its total (INV-OPS-017).
+   */
+  showSummaryOnSinglePage?: boolean
 
   /** Wrapper element. Defaults to "nav". */
   as?: "nav" | "div"
@@ -66,7 +71,8 @@ export interface PaginationProps {
  * can render it directly; callback mode only mounts inside a client page.
  *
  * Renders nothing when there is a single page (or none) and no page-size
- * selector — matching the long-standing behaviour of the admin lists.
+ * selector — matching the long-standing behaviour of the admin lists — unless
+ * `showSummaryOnSinglePage` asks for the summary line alone.
  */
 export function Pagination({
   page,
@@ -78,6 +84,7 @@ export function Pagination({
   pageSize,
   pageSizeOptions = DEFAULT_PAGE_SIZE_OPTIONS,
   summary,
+  showSummaryOnSinglePage = false,
   as = "nav",
   "aria-label": ariaLabel = "Pagination",
   className,
@@ -86,7 +93,7 @@ export function Pagination({
     pageSize !== undefined &&
     (hrefForPageSize !== undefined || onPageSizeChange !== undefined)
 
-  if (totalPages <= 1 && !showPageSize) return null
+  if (totalPages <= 1 && !showPageSize && !showSummaryOnSinglePage) return null
 
   const atFirst = page <= 1
   const atLast = page >= totalPages

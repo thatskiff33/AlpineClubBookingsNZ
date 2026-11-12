@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
+import { adminListPage, type AdminListPage } from "@/lib/admin-list-page";
 import { addDaysDateOnly, parseDateOnly, formatDateOnly } from "@/lib/date-only";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { normalizeGuestStayRange } from "@/lib/booking-guest-stay-range-input";
@@ -2148,19 +2149,14 @@ function summaryFromRequestedChanges(value: unknown): string | null {
  * age-ordered list. Rows are fetched per source (bounded), mapped to a common
  * shape, merge-sorted newest-first, then paged in memory — correct across two
  * tables, which a single SQL OFFSET cannot be. Returns the same
- * `{ data, page, pageSize, total }` envelope as the existing change-request
- * queue so the officer UI reads one shape.
+ * `adminListPage` envelope as the other officer queues (INV-OPS-017) so the
+ * officer UI reads one shape.
  */
 export async function readUnifiedExceptionQueue(input: {
   status: ExceptionQueueStatusFilter;
   page: number;
   pageSize: number;
-}): Promise<{
-  data: UnifiedExceptionQueueItem[];
-  page: number;
-  pageSize: number;
-  total: number;
-}> {
+}): Promise<{ data: UnifiedExceptionQueueItem[] } & AdminListPage> {
   const statusWhere =
     input.status === "ALL" ? {} : { status: input.status };
 
@@ -2258,7 +2254,10 @@ export async function readUnifiedExceptionQueue(input: {
   const start = (input.page - 1) * input.pageSize;
   const data = items.slice(start, start + input.pageSize);
 
-  return { data, page: input.page, pageSize: input.pageSize, total };
+  return {
+    data,
+    ...adminListPage({ page: input.page, pageSize: input.pageSize, total }),
+  };
 }
 
 // ---------------------------------------------------------------------------

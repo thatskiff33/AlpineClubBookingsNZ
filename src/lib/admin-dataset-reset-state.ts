@@ -172,6 +172,7 @@ export function buildBookingRequestDatasetPath({
   defaultStatus,
   recordKey,
   recordId,
+  page = 1,
 }: {
   basePath: string
   currentSearch: string
@@ -180,14 +181,18 @@ export function buildBookingRequestDatasetPath({
   defaultStatus: string
   recordKey: "bookingId" | "requestId"
   recordId: string | null
+  /** The queue page (INV-OPS-017); page 1 leaves `page` out of the URL. */
+  page?: number
 }): string {
   const params = new URLSearchParams(currentSearch)
   params.delete("status")
+  params.delete("page")
   for (const [key, value] of Object.entries(fixedSearchParams)) {
     params.set(key, value)
   }
   if (recordId) params.set(recordKey, recordId)
   if (status !== defaultStatus) params.set("status", status)
+  if (page > 1) params.set("page", String(page))
 
   const query = params.toString()
   return query ? `${basePath}?${query}` : basePath
