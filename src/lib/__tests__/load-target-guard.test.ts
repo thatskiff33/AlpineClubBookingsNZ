@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   assertSafeDatabaseTarget,
@@ -116,4 +118,39 @@ describe("assertSafeTarget", () => {
       /LOAD_TEST_CONFIRM_TARGET/,
     );
   });
+});
+
+describe("the volume seeder entry point (prisma/load-volume-seed.ts)", () => {
+  // The guard above is only as good as its call site: run the real entry point
+  // with an unsafe target and require the guard's refusal, not a connection
+  // error from a client that already dialled out. No database is reachable at
+  // these addresses, so a seeder that skipped the guard fails differently.
+  const repo = path.resolve(__dirname, "..", "..", "..");
+  const runSeeder = (DATABASE_URL: string) =>
+    spawnSync(
+      path.join(repo, "node_modules", ".bin", "tsx"),
+      ["--conditions=react-server", "prisma/load-volume-seed.ts"],
+      {
+        cwd: repo,
+        encoding: "utf8",
+        env: {
+          PATH: process.env.PATH,
+          NODE_ENV: "test",
+          DATABASE_URL,
+          LOAD_TEST_CONFIRM_TARGET: "1",
+          ALLOW_DEMO_SEED: "1",
+        },
+        timeout: 60_000,
+      },
+    );
+
+  it.each([
+    ["port 5432", "postgresql://u:p@localhost:5432/db", /:5432/],
+    ["a non-local host", "postgresql://u:p@db.example.com:5433/db", /not on the local allowlist/],
+  ])("refuses %s before it opens a connection", (_label, url, reason) => {
+    const run = runSeeder(url);
+    expect(run.status, run.stderr).toBe(1);
+    expect(run.stderr).toMatch(/LOAD TEST TARGET REFUSED: DATABASE_URL/);
+    expect(run.stderr).toMatch(reason);
+  }, 60_000);
 });
