@@ -105,12 +105,48 @@ describe("school booking form adult rows (#4957)", () => {
     expect(new Set(ids).size).toBe(6);
   });
 
-  it("makes each label the control's label, so clicking it reaches that input", () => {
+  it("associates row 2's first-name label with its input", () => {
     renderWithTwoAdults();
     const secondRow = screen.getByRole("group", { name: "Adult 2" });
 
-    const label = within(secondRow).getByText("Last name") as HTMLLabelElement;
-    expect(label.control).toBe(within(secondRow).getByLabelText("Last name"));
+    const label = within(secondRow).getByText("First name") as HTMLLabelElement;
+    expect(label.control).toBe(within(secondRow).getByLabelText("First name"));
+  });
+
+  it("keeps surviving fields labelled after removing a middle row and adding another", () => {
+    const { container } = renderWithTwoAdults();
+    fireEvent.click(screen.getByRole("button", { name: "+ Add adult" }));
+
+    for (const [index, name] of ["Aroha", "Ben", "Mere"].entries()) {
+      const row = screen.getByRole("group", { name: `Adult ${index + 1}` });
+      type(within(row).getByLabelText("First name"), name);
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove adult 2" }));
+    expect(screen.getAllByLabelText("First name").map((input) =>
+      (input as HTMLInputElement).value,
+    )).toEqual(["Aroha", "Mere"]);
+    expect(screen.queryByRole("group", { name: "Adult 3" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Add adult" }));
+    for (const [index, name] of ["Aroha", "Mere", ""].entries()) {
+      const row = screen.getByRole("group", { name: `Adult ${index + 1}` });
+      expect(within(row).getByLabelText("First name")).toHaveValue(name);
+      for (const label of ["First name", "Last name", "Email (optional)"]) {
+        const element = within(row).getByText(label) as HTMLLabelElement;
+        expect(element.control).toBe(within(row).getByLabelText(label));
+      }
+    }
+    const ids = Array.from(container.querySelectorAll("[id]"), (el) => el.id);
+    expect(new Set(ids).size).toBe(ids.length);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove adult 3" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove adult 2" }));
+    const remove = screen.getByRole("button", { name: "Remove adult 1" });
+    expect(remove).toBeDisabled();
+    fireEvent.click(remove);
+    expect(screen.getAllByRole("group", { name: /^Adult / })).toHaveLength(1);
+    expect(screen.getByLabelText("First name")).toHaveValue("Aroha");
   });
 
   it("names each Remove button after its row", () => {
