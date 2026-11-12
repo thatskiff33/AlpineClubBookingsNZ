@@ -78,7 +78,15 @@ const CONCURRENCY_CONSTRUCTS = [
   {
     name: "database write",
     pattern:
-      /\.(?:create|createMany|createManyAndReturn|update|updateMany|updateManyAndReturn|upsert|delete|deleteMany)\s*\(/,
+      /\.(?:create|createMany|createManyAndReturn|update|updateMany|updateManyAndReturn|upsert|delete|deleteMany)\s*\(|\[\s*["'`](?:create|update|upsert|delete)\w*["'`]\s*\]/,
+  },
+  {
+    // A provider or network call reached through a client handed in as a
+    // parameter (`s.paymentIntents.cancel(id)`): no import shows the writer, so
+    // the call shape itself must. Wide on purpose.
+    name: "provider call",
+    pattern:
+      /\bfetch\s*\(|\.(?:paymentIntents|refunds|charges|checkout|customers|accountingApi|invoices|payments|creditNotes|contacts)\b|\.(?:capture|cancel|refund|confirm|send)\w*\s*\(/,
   },
   {
     name: "raw SQL",
@@ -159,13 +167,16 @@ export function isConcurrencySensitiveChange(file, contentsOf = null) {
 
 // Runtime (non-`type`) imports, re-exports and dynamic imports, by specifier.
 const RUNTIME_IMPORT =
-  /^[^\S\r\n]*(?:import|export)\s+(?!type\b)[^;]*?\bfrom\s*["']([^"']+)["']|^[^\S\r\n]*import\s*["']([^"']+)["']|\bimport\s*\(\s*["'`]([^"'`]+)/gm;
+  // Not anchored to a line start and not stopped by `;`: a comment before
+  // `import`, or a `;` inside the braces, must not hide an import. Over-matching
+  // (an import-shaped comment) only resolves to a file or fails closed.
+  /\b(?:import|export)\s+(?!type\s+(?!from\b))[\s\S]{0,4000}?\bfrom\s*["']([^"']+)["']|\bimport\s*["']([^"']+)["']|\bimport\s*\(\s*["'`]([^"'`]+)|\brequire\s*\(\s*["'`]([^"'`]+)/g;
 const RESOLVE_SUFFIXES = ["", ".ts", ".tsx", ".js", ".mjs", ".cjs", "/index.ts", "/index.tsx", "/index.js"];
 
 /** Local runtime import specifiers in `content` (`@/…` and relative); packages are skipped. */
 export function localRuntimeImports(content) {
   return [...content.matchAll(RUNTIME_IMPORT)]
-    .map((match) => match[1] ?? match[2] ?? match[3])
+    .map((match) => match[1] ?? match[2] ?? match[3] ?? match[4])
     .filter((spec) => spec.startsWith("@/") || spec.startsWith("."));
 }
 

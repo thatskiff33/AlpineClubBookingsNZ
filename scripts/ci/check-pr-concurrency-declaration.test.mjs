@@ -804,6 +804,10 @@ describe("PR concurrency declaration gate: import graph (#5038)", () => {
     ["an alias import", 'import { settleBooking } from "@/lib/booking-settle";\nexport const go = (id) => void settleBooking(id);\n'],
     ["a side-effect import", 'import "./booking-settle";\nexport const x = 1;\n'],
     ["a re-export one hop away", 'import { go } from "./relay";\nexport const run = go;\n'],
+    ["a comment before the import", '/* x */ import { settleBooking } from "./booking-settle";\nexport const go = settleBooking;\n'],
+    ["a semicolon inside the braces", 'import { settleBooking /* ; */ } from "./booking-settle";\nexport const go = settleBooking;\n'],
+    ["a default import named type", 'import type from "./booking-settle";\nexport const go = type;\n'],
+    ["require()", 'const { settleBooking } = require("./booking-settle");\nexport const go = settleBooking;\n'],
   ])("treats a file reaching a writer through %s as sensitive", (_label, text) => {
     const contentsOf = graph({
       [FILE]: text,
@@ -814,6 +818,15 @@ describe("PR concurrency declaration gate: import graph (#5038)", () => {
     expect(() => validateConcurrencyDeclaration(naBody, [FILE], { contentsOf })).toThrow(
       /cannot use N\/A/,
     );
+  });
+
+  it.each([
+    ["a provider client handed in", "export function c(s, id) { return s.paymentIntents.cancel(id); }\n"],
+    ["a bracketed write", 'export const u = (db) => db.booking["update"]({});\n'],
+    ["a network call", 'export const k = () => fetch("/api/x");\n'],
+  ])("treats %s as sensitive with no import at all", (_label, text) => {
+    expect(concurrencyConstructsIn(text).length).toBeGreaterThan(0);
+    expect(isConcurrencySensitiveChange(FILE, graph({ [FILE]: text }))).toBe(true);
   });
 
   it("exempts a file whose whole local import graph is clean, cycles included", () => {
