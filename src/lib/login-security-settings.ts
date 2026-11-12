@@ -1,4 +1,7 @@
-import { clampOfficerTwoFactorGraceDays } from "@/lib/officer-two-factor-grace";
+import {
+  clampOfficerTwoFactorGraceDays,
+  OFFICER_TWO_FACTOR_GRACE_DEFAULT_DAYS,
+} from "@/lib/officer-two-factor-grace";
 import { prisma } from "@/lib/prisma";
 import {
   normalizeLoginSecurityPolicy,
@@ -52,23 +55,15 @@ export async function loadLoginSecuritySettings(): Promise<LoginSecuritySettings
 }
 
 /**
- * The club's maximum session age in hours (#4611, `INV-AUTH-007`), normalised
- * exactly as the full policy is: an absent row reads as the 7-day default and
- * a stray stored value is clamped into 8..720. Read by the `jwt` callback in
- * `auth.ts` on every session refresh, so a change applies to existing sessions
- * on their next refresh. One column of the one-row table. A failed read
- * throws, so the refresh fails closed: the session endpoint clears the
- * cookie, as for a failed member read, and a bare `auth()` reads no session.
- * It never extends a session.
- */
-export async function loadClubSessionMaxAgeHours(): Promise<number> {
-  return (await loadLoginSecurityRefresh()).sessionMaxAgeHours;
-}
-
-/**
- * Session age and the officer two-factor policy, one read, for the token
- * refresh. An absent row is policy on and 14 days, matching the column
- * defaults. A stored grace value is clamped into 0–60. A failed read throws.
+ * The club's maximum session age in hours (#4611, `INV-AUTH-007`) and the
+ * officer two-factor policy (#4618), one read, for the `jwt` callback in
+ * `auth.ts` on every session refresh. Session age is normalised exactly as the
+ * full policy is: an absent row reads as the 7-day default and a stray stored
+ * value is clamped into 8..720, so a change applies to existing sessions on
+ * their next refresh and never extends one. An absent row is policy on and 14
+ * days, matching the column defaults; a stored grace value is clamped into
+ * 0–60. A failed read throws, so the refresh fails closed: the session
+ * endpoint clears the cookie, as for a failed member read.
  */
 export async function loadLoginSecurityRefresh(): Promise<{
   sessionMaxAgeHours: number;
@@ -87,7 +82,7 @@ export async function loadLoginSecurityRefresh(): Promise<{
     sessionMaxAgeHours: normalizeLoginSecurityPolicy(record).sessionMaxAgeHours,
     officerTwoFactorPolicy: record?.officerTwoFactorPolicy ?? true,
     officerTwoFactorGraceDays: clampOfficerTwoFactorGraceDays(
-      record?.officerTwoFactorGraceDays ?? 14,
+      record?.officerTwoFactorGraceDays ?? OFFICER_TWO_FACTOR_GRACE_DEFAULT_DAYS,
     ),
   };
 }

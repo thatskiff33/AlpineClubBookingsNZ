@@ -25,6 +25,7 @@ import {
   formatOfficerGraceDeadline,
   officerGraceClosedByReset,
   officerGraceDeadlineDate,
+  OFFICER_TWO_FACTOR_GRACE_DEFAULT_DAYS,
   officerTwoFactorGraceEnd,
 } from "@/lib/officer-two-factor-grace";
 import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
@@ -176,7 +177,7 @@ export async function loadOfficerTwoFactorReport(): Promise<
   ]);
   const policyEnabled = policy?.officerTwoFactorPolicy ?? true;
   const graceDays = clampOfficerTwoFactorGraceDays(
-    policy?.officerTwoFactorGraceDays ?? 14,
+    policy?.officerTwoFactorGraceDays ?? OFFICER_TWO_FACTOR_GRACE_DEFAULT_DAYS,
   );
   if (!policyEnabled) return [];
 
