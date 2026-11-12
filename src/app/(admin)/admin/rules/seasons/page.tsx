@@ -227,6 +227,7 @@ export default function SeasonsPage() {
     if (!lodgeScopeReady) return
     const requestedScope = scopedLodgeId
     if (!confirm("Are you sure you want to delete this season?")) return
+    setError("")
     try {
       const res = await fetch(`/api/admin/seasons/${id}`, { method: "DELETE" })
       if (!res.ok) {
@@ -242,6 +243,7 @@ export default function SeasonsPage() {
   async function handleToggleActive(season: Season) {
     if (!lodgeScopeReady) return
     const requestedScope = scopedLodgeId
+    setError("")
     try {
       const res = await fetch(`/api/admin/seasons/${season.id}`, {
         method: "PUT",

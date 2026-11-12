@@ -64,7 +64,7 @@ const HTML_502 = () =>
     headers: { "content-type": "text/html" },
   });
 
-let mutationResponse: () => Response;
+let mutationResponse: () => Response | Promise<Response>;
 let listFetches = 0;
 
 beforeEach(() => {
@@ -130,6 +130,23 @@ describe("Seasons page: a refused delete or toggle is readable (#4976)", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Failed to update");
     expect(alert).not.toHaveTextContent(/JSON/);
+  });
+
+  it("drops the earlier refusal when the officer tries again", async () => {
+    // A retry that hits the same refusal must reach the officer as a new
+    // message, not as the old text left standing where it was.
+    mutationResponse = () => Response.json({ error: "Season not found" }, { status: 404 });
+    renderPage();
+    await click("Delete Winter 2026");
+    await screen.findByRole("alert");
+
+    let answer: (response: Response) => void = () => {};
+    mutationResponse = () => new Promise<Response>((resolve) => (answer = resolve));
+    await click("Delete Winter 2026");
+
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    answer(Response.json({ error: "Season not found" }, { status: 404 }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Season not found");
   });
 
   it("refreshes the list after a successful delete", async () => {
