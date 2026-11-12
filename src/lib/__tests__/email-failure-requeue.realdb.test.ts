@@ -287,6 +287,25 @@ let recordSesEmailFeedback: (typeof import("@/lib/email-suppression"))["recordSe
     await expect(press(row.id)).rejects.toMatchObject({ status: 409 });
   });
 
+  it("is not offered for a booking email with no booking, which the cron would only retire again (#2258)", async () => {
+    // Retired on sight by the cron, which keeps the body: a body alone does not
+    // make the row requeueable.
+    const row = await exhaustedBookingEmail({ bookingId: null, bookingRecipientMemberId: null });
+    const account = await exhausted(`account@${P}.test`);
+
+    const queue = await review.getExhaustedEmailFailureReviewQueue();
+    const recoveryOf = (id: string) => queue.failures.find((failure) => failure.id === id)?.recovery;
+    expect(recoveryOf(row.id)).toBe("retired");
+    // NULL bookingId on a non-booking template stays requeueable.
+    expect(recoveryOf(account.id)).toBe("retry");
+
+    await expect(press(row.id)).rejects.toMatchObject({ status: 409 });
+    expect(await read(row.id)).toEqual(expect.objectContaining({ attempts: 3 }));
+    expect(await requeueAudits(row.id)).toHaveLength(0);
+    await press(account.id);
+    expect(await read(account.id)).toEqual(expect.objectContaining({ attempts: 2 }));
+  });
+
   it("is withheld, never sent, when its booking's No emails switch is on", async () => {
     await booking(true);
     const row = await exhaustedBookingEmail();

@@ -3972,14 +3972,18 @@ message from there (or from Token Email Recovery for its three templates).
 
 An exhausted `FAILED` row that still holds a body can be handed back to the
 cron with **Try again** (#4963): one status-guarded `updateMany` (id, `FAILED`,
-`attempts >= 3`, `RETAINS_REPLAYABLE_EMAIL_BODY`) sets `attempts = 2` and dates
-`lastAttemptAt` past the backoff, then writes an `email.failure.requeued` audit
-row. A press that matches nothing (another press won, the cron sent it, or no
-body is left) is refused with 409 and writes no audit row. The route never
+`attempts >= 3`, `RETAINS_REPLAYABLE_EMAIL_BODY`, and not a booking-scoped
+template with no `bookingId`, which the cron retires on sight with its body kept,
+#2258) sets `attempts = 2` and dates `lastAttemptAt` past the backoff, then
+writes an `email.failure.requeued` audit row. A press that matches nothing
+(another press won, the cron sent it, or no requeueable body is left) is refused
+with 409 and writes no audit row. The route never
 sends: the cron's next run selects the row and re-runs its suppression, No-emails
 and authority checks before its guarded claim. `deliveryBlockReason` is left for
 that run's terminal write to clear. Archive and Try again are both audit rows,
-and the newer of the two decides whether the row shows as archived. Pinned by
+and the newer of the two decides whether the row shows as archived; an archive
+older than the row's `lastAttemptAt` (one that raced a Try again and lost to the
+cron's next failure) does not count. Pinned by
 `email-failure-requeue.test.ts` and, against a real database,
 `email-failure-requeue.realdb.test.ts`.
 A copy that has explicitly declared a capture mailbox transmits into it normally

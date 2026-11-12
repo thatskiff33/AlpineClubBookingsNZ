@@ -73,14 +73,18 @@ What you can do next depends on whether the system kept a copy of the message:
    the list.
 2. **The row says it can't be resent from here.** The message held a sign-in
    link, a door code or a payment link, so no copy was kept, or its copy was
-   cleared when it was retired. Use **Open booking** or **Open member** to send
+   cleared when it was retired. A booking email saved before the club's
+   per-booking **No emails** switch existed is treated the same way: it records
+   no booking, so the retry job could never check it and would only retire it
+   again. Use **Open booking** or **Open member** to send
    the member a fresh message, or, where the row says so, reissue it from
    **Token Email Recovery**. Then choose **Archive**.
 
 **Archive and Try again together.** Both are recorded in the audit log, and
 the newer of the two decides where a row shows. A row you archived and then
 tried again shows as active if it fails again; a row tried again and then
-archived stays archived.
+archived stays archived — unless the email failed again after you archived
+it, in which case it is active again.
 
 **Totals.** **Total exhausted** counts every exhausted failure. The list itself
 reads only the newest 200; when there are more, a note says so, and the active

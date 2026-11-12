@@ -188,6 +188,18 @@ describe("getExhaustedEmailFailureReviewQueue (#4963)", () => {
     expect(queue.recentlyReviewed[0]?.reviewNote).toBe("handled");
   });
 
+  it("keeps a row active when an archive that raced Try again lands before the next failure", async () => {
+    // Archive's check passed, Try again committed (requeue at 200), the archive's
+    // audit row landed after it (250), then the cron's attempt failed (300).
+    store.emails.push(exhausted("raced", 300));
+    store.audits.push(audit("requeue", "raced", 200), audit("archive", "raced", 250));
+
+    const queue = await getExhaustedEmailFailureReviewQueue();
+
+    expect(queue.failures.map((failure) => failure.id)).toEqual(["raced"]);
+    expect(queue.recentlyReviewed).toEqual([]);
+  });
+
   it("resolves booking links in one batched lookup and marks a deleted booking", async () => {
     store.bookingIds.add("booking-live");
     store.emails.push(
@@ -227,11 +239,19 @@ describe("getExhaustedEmailFailureReviewQueue (#4963)", () => {
 
   it("offers Try again only for rows that still hold a body, and says where else to act", async () => {
     store.emails.push(
-      exhausted("html", 60),
-      exhausted("booking-body", 50, { htmlBody: null, bookingRetryHtmlBody: "<p>b</p>" }),
+      exhausted("html", 60, { bookingId: "booking-1" }),
+      exhausted("booking-body", 50, {
+        bookingId: "booking-1",
+        htmlBody: null,
+        bookingRetryHtmlBody: "<p>b</p>",
+      }),
+      exhausted("account", 45, { templateName: "member-welcome" }),
       exhausted("token", 40, { templateName: "member-setup-invite", htmlBody: null }),
       exhausted("sensitive", 30, { templateName: "booking-confirmed", htmlBody: null }),
       exhausted("retired", 20, { htmlBody: null }),
+      // A booking email with no booking keeps its body, but the cron retires it
+      // on sight (#2258), so Try again would only loop it back here.
+      exhausted("no-booking", 10),
     );
 
     const queue = await getExhaustedEmailFailureReviewQueue();
@@ -241,9 +261,11 @@ describe("getExhaustedEmailFailureReviewQueue (#4963)", () => {
     ).toEqual({
       html: "retry",
       "booking-body": "retry",
+      account: "retry",
       token: "token_reissue",
       sensitive: "sensitive",
       retired: "retired",
+      "no-booking": "retired",
     });
   });
 

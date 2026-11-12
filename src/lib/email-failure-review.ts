@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
+import { ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES } from "@/lib/booking-email-suppression";
 import { SENSITIVE_EMAIL_LOG_TEMPLATES } from "@/lib/email/internal";
 import {
   EMAIL_RETRY_BACKOFF_MS,
@@ -17,6 +18,20 @@ const MAX_EXHAUSTED_FAILURE_SCAN = 200;
 const EXHAUSTED_EMAIL_FAILURE_WHERE = {
   status: "FAILED",
   attempts: { gte: EMAIL_FAILURE_MAX_ATTEMPTS },
+} satisfies Prisma.EmailLogWhereInput;
+
+/**
+ * Which exhausted rows **Try again** may hand back to the retry cron: a retained
+ * body, and not a booking email with no booking. The cron retires that second
+ * kind on sight (#2258: it cannot be checked against the booking's "No emails"
+ * switch) and keeps its body, so a requeue would only loop it back here.
+ */
+const REQUEUEABLE_EMAIL_FAILURE_WHERE = {
+  ...RETAINS_REPLAYABLE_EMAIL_BODY,
+  NOT: {
+    bookingId: null,
+    templateName: { in: [...ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES] },
+  },
 } satisfies Prisma.EmailLogWhereInput;
 
 /**
@@ -151,10 +166,10 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
               metadata: true,
             },
           }),
-          // Which rows still hold a body, asked as a filter so no body text is
+          // Which rows Try again can take, asked as a filter so no body text is
           // ever read into this process, let alone returned to a browser.
           prisma.emailLog.findMany({
-            where: { id: { in: failureIds }, ...RETAINS_REPLAYABLE_EMAIL_BODY },
+            where: { id: { in: failureIds }, ...REQUEUEABLE_EMAIL_FAILURE_WHERE },
             select: { id: true },
           }),
           // `EmailLog.bookingId` has no foreign key: a hard-deleted booking
@@ -170,7 +185,10 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
   const replayableIds = new Set(replayable.map((row) => row.id));
   const existingBookingIds = new Set(existingBookings.map((booking) => booking.id));
   // The newest of Archive and Try again decides the row: a row requeued and
-  // then exhausted again is active, even though an older archive exists.
+  // then exhausted again is active, even though an older archive exists. An
+  // archive also counts only if it is no older than the row's last attempt:
+  // one whose check passed just before a racing Try again lands after the
+  // requeue's audit row, but the cron's next failure is newer still.
   const latestActionByEmailLogId = new Map<string, (typeof reviews)[number]>();
 
   for (const review of reviews) {
@@ -182,7 +200,10 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
   const decorated: ExhaustedEmailFailure[] = failures.map((failure) => {
     const latest = latestActionByEmailLogId.get(failure.id);
     const review =
-      latest?.action === EMAIL_FAILURE_REVIEW_ACTION ? latest : undefined;
+      latest?.action === EMAIL_FAILURE_REVIEW_ACTION &&
+      latest.createdAt >= failure.lastAttemptAt
+        ? latest
+        : undefined;
 
     return {
       id: failure.id,
@@ -321,7 +342,7 @@ export async function requeueExhaustedEmailFailure(
       where: {
         id: emailLog.id,
         ...EXHAUSTED_EMAIL_FAILURE_WHERE,
-        ...RETAINS_REPLAYABLE_EMAIL_BODY,
+        ...REQUEUEABLE_EMAIL_FAILURE_WHERE,
       },
       data: {
         attempts: EMAIL_FAILURE_MAX_ATTEMPTS - 1,

@@ -19,6 +19,7 @@ type Row = {
   lastAttemptAt: Date | null;
   htmlBody: string | null;
   bookingRetryHtmlBody: string | null;
+  bookingId: string | null;
   deliveryBlockReason: string | null;
 };
 
@@ -67,6 +68,7 @@ function exhausted(id: string, overrides: Partial<Row> = {}): Row {
     lastAttemptAt: EXHAUSTED_AT,
     htmlBody: "<p>retained</p>",
     bookingRetryHtmlBody: null,
+    bookingId: "booking-1",
     deliveryBlockReason: null,
     ...overrides,
   };
@@ -131,6 +133,14 @@ describe("requeueExhaustedEmailFailure (#4963)", () => {
     expect(row("booking").attempts).toBe(2);
   });
 
+  it("requeues a body-holding email that is not about a booking, with no booking", async () => {
+    store.rows = [exhausted("account", { templateName: "member-welcome", bookingId: null })];
+
+    await requeueExhaustedEmailFailure("account", { requestedByMemberId: "admin-1" });
+
+    expect(row("account").attempts).toBe(2);
+  });
+
   it("leaves an environment block reason for the cron's next terminal write to clear", async () => {
     store.rows = [
       exhausted("withheld", { deliveryBlockReason: "ENVIRONMENT_DECLARATION_MISSING" }),
@@ -146,6 +156,8 @@ describe("requeueExhaustedEmailFailure (#4963)", () => {
     ["was sent", { status: "SENT" }],
     ["is still below the retry ceiling", { attempts: 2 }],
     ["keeps no copy of its message", { htmlBody: null, bookingRetryHtmlBody: null }],
+    // The cron retires a booking email with no booking on sight (#2258).
+    ["is a booking email with no booking", { bookingId: null }],
   ])("refuses with 409 and writes no audit row when the row %s", async (_label, overrides) => {
     const before = exhausted("target", overrides);
     store.rows = [{ ...before }];
