@@ -20,6 +20,7 @@ import {
 } from "@/lib/mirotalk-settings-shared";
 import { describeMirotalkJwtKeyWeakness } from "@/lib/mirotalk-token";
 import logger from "@/lib/logger";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 /**
  * The three MiroTalk secrets (#2940) — write-only, Full Admin.
@@ -128,6 +129,8 @@ export async function POST(request: Request) {
   const guard = await requireFullAdmin("store");
   if (!guard.ok) return guard.response;
 
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
   const parsed = setBodySchema.safeParse(json.body);
@@ -196,6 +199,8 @@ export async function DELETE(request: Request) {
   if (!guard.ok) return guard.response;
 
   const url = new URL(request.url);
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   const key = url.searchParams.get("key") ?? "";
   const version = url.searchParams.get("version") ?? "";
   if (!isMirotalkCredentialKey(key)) {

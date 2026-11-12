@@ -11,6 +11,7 @@ import {
   MANUAL_PAYMENT_NOTE_MAX,
   reopenManualRefundTask,
 } from "@/lib/manual-refund-task-reopen";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 /**
  * POST /api/admin/payments/manual-refund-tasks/[id]/reopen
@@ -49,6 +50,8 @@ export async function POST(
   const { id } = await params;
 
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await request.json();
   } catch {

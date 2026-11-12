@@ -16,14 +16,12 @@
  * only ever be sent with one body, whichever code sends it, and no clock or
  * deploy date is consulted.
  *
- * Read first, write later. Every reader here accepts both shapes, but a new
- * attempt still mints the ORIGINAL key ({@link mintedSavedCardChargeKey}). The
- * release before #4646 recognises only that key as an attempt row; were this
- * release to mint `_v2` keys while the old web colour still serves the charge
- * routes during a deploy (the cron leader moves first), or after a rollback,
- * the old code would read a `_v2` row as no attempt and mint a fresh one: a
- * second charge if the first POST executed. #4682 flips the mint once this
- * release, which reads `_v2`, is the oldest one that can run.
+ * Both shapes are read. A new attempt mints the `_v2` key
+ * ({@link mintedSavedCardChargeKey}, #4682), whose sends name the row. An
+ * original-key row written by an earlier release is re-sent under its stored
+ * key, unchanged. The release before #4646 cannot read a `_v2` row; a rollback
+ * past it, while such a row is PENDING with no intent, would mint a second
+ * charge. That rollback is no longer planned.
  */
 
 /**
@@ -41,7 +39,8 @@ const ATTEMPT_ID_IN_METADATA_KEY_SUFFIX = "_v2";
 /**
  * The original attempt key (#3267): the booking id for the operator reading the
  * Stripe dashboard and the attempt row's own id for uniqueness. Its sends carry
- * no attempt id. Every release can read it, so it is the one minted until #4682.
+ * no attempt id. Earlier releases minted it; this one still reads a row that
+ * stores it and re-sends that row under it, unchanged.
  */
 function originalSavedCardChargeKey(bookingId: string, attemptRowId: string): string {
   return `${SAVED_CARD_CHARGE_KEY_PREFIX}${bookingId}_${attemptRowId}`;
@@ -49,8 +48,8 @@ function originalSavedCardChargeKey(bookingId: string, attemptRowId: string): st
 
 /**
  * The `_v2` attempt key: the original key plus the ending that says its
- * metadata names the row (#4646). This release reads and adopts it; nothing
- * mints it until #4682 flips {@link mintedSavedCardChargeKey} to it.
+ * metadata names the row (#4646). {@link mintedSavedCardChargeKey} returns it
+ * for a new attempt (#4682).
  */
 export function savedCardChargeIdempotencyKey(bookingId: string, attemptRowId: string): string {
   return `${originalSavedCardChargeKey(bookingId, attemptRowId)}${ATTEMPT_ID_IN_METADATA_KEY_SUFFIX}`;
@@ -64,17 +63,13 @@ export function savedCardChargeIdempotencyKey(bookingId: string, attemptRowId: s
  * (`Stripe.Event.request.idempotency_key`) when the POST's own response was
  * lost.
  *
- * It returns the ORIGINAL key, whose sends carry no attempt id, because the
- * release before #4646 recognises only that key as an attempt row: a `_v2` row
- * minted while an old web colour still serves (the cron leader moves to the new
- * release before cutover) or left behind by a rollback would read to it as no
- * attempt, and it would mint a second charge beside it. #4682 returns
- * {@link savedCardChargeIdempotencyKey} here once every release that can run
- * reads `_v2`. Until then an asynchronous capture whose answer was lost is not
- * adopted by metadata; it is alerted as unmatched (`INV-INT-033`).
+ * It returns the `_v2` key ({@link savedCardChargeIdempotencyKey}, #4682),
+ * whose sends name the row, so an asynchronous capture whose answer was lost
+ * is adopted by that id. An original-key row already stored is never rebuilt:
+ * a replay re-sends the row's own `reference`.
  */
 export function mintedSavedCardChargeKey(bookingId: string, attemptRowId: string): string {
-  return originalSavedCardChargeKey(bookingId, attemptRowId);
+  return savedCardChargeIdempotencyKey(bookingId, attemptRowId);
 }
 
 /**
@@ -115,9 +110,10 @@ export const SAVED_CARD_ATTEMPT_ID_METADATA_KEY = "savedCardAttemptId";
  *
  * #4646: an attempt whose key is `names_attempt` also carries its row's id
  * under {@link SAVED_CARD_ATTEMPT_ID_METADATA_KEY}, which is how the webhook
- * adopts the row when the event carries no key. A `no_attempt_id` key — every
- * key minted until #4682, or any key that is not this row's, which no caller
- * sends — gets the old body, so a re-send is byte for byte its first send.
+ * adopts the row when the event carries no key. A `no_attempt_id` key — an
+ * original-key row from an earlier release, or any key that is not this row's,
+ * which no caller sends — gets the old body, so a re-send is byte for byte its
+ * first send.
  *
  * `chargeSavedCardAttempt` builds it itself from the attempt it is handed, so
  * no caller can pass a different shape; exported so the tests can pin it.
