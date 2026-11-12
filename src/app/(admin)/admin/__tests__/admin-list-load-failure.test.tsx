@@ -39,7 +39,7 @@ vi.mock("@/app/(admin)/admin/hut-leaders/_components/assignment-form", () => ({
 // Keep page query state real; only replace Radix's portal/selection machinery.
 vi.mock("@/components/ui/select", async () => {
   const { createContext, useContext } = await import("react");
-  const Context = createContext({ value: "", onValueChange: (_value: string) => {} });
+  const Context = createContext<{ value: string; onValueChange: (value: string) => void }>({ value: "", onValueChange: () => {} });
   return {
     Select: ({ value, onValueChange, children }: { value: string; onValueChange: (value: string) => void; children: ReactNode }) =>
       <Context.Provider value={{ value, onValueChange }}>{children}</Context.Provider>,
