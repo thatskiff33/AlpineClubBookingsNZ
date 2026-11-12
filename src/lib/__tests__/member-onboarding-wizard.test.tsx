@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { createContext, useContext, useEffect, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
 import { MEMBER_ONBOARDING_CONFIRMED_EVENT } from "@/lib/member-onboarding-events";
@@ -30,47 +30,21 @@ vi.mock("@/app/(authenticated)/profile/family-group-section", () => ({
   FamilyGroupSection: () => <div data-testid="family-group-section" />,
 }));
 
-// Mirrors Radix's close path: a document-level Escape asks the content's
-// onEscapeKeyDown first, and only an unprevented event reaches the root's
-// onOpenChange(false).
-const DialogOpenChange = createContext<((open: boolean) => void) | undefined>(
-  undefined
-);
-
+// Test the wizard's Escape cancellation directly. Radix also prevents the
+// native event during dismissal, which would mask a missing wizard handler.
 vi.mock("@/components/ui/dialog", () => ({
-  Dialog: ({
-    children,
-    open,
-    onOpenChange,
-  }: {
-    children: ReactNode;
-    open?: boolean;
-    onOpenChange?: (open: boolean) => void;
-  }) =>
-    open ? (
-      <DialogOpenChange.Provider value={onOpenChange}>
-        {children}
-      </DialogOpenChange.Provider>
-    ) : null,
-  DialogContent: function DialogContent({
-    children,
-    onEscapeKeyDown,
-  }: {
+  Dialog: ({ children, open }: { children: ReactNode; open?: boolean }) =>
+    open ? <div role="dialog">{children}</div> : null,
+  DialogContent: ({ children, onEscapeKeyDown }: {
     children: ReactNode;
     onEscapeKeyDown?: (event: KeyboardEvent) => void;
-  }) {
-    const onOpenChange = useContext(DialogOpenChange);
-    useEffect(() => {
-      const onKeyDown = (event: KeyboardEvent) => {
-        if (event.key !== "Escape") return;
-        onEscapeKeyDown?.(event);
-        if (!event.defaultPrevented) onOpenChange?.(false);
-      };
-      document.addEventListener("keydown", onKeyDown);
-      return () => document.removeEventListener("keydown", onKeyDown);
-    }, [onEscapeKeyDown, onOpenChange]);
-    return <div role="dialog">{children}</div>;
-  },
+  }) => (
+    <div onKeyDown={(event) => {
+      if (event.key === "Escape") onEscapeKeyDown?.(event.nativeEvent);
+    }}>
+      {children}
+    </div>
+  ),
   DialogDescription: ({ children }: { children: ReactNode }) => <p>{children}</p>,
   DialogFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -349,7 +323,14 @@ describe("MemberOnboardingWizard", () => {
     const confirm = await screen.findByRole("button", {
       name: "Confirm details are correct",
     });
-    fireEvent.keyDown(confirm, { key: "Escape" });
+    const escape = new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(confirm, escape);
+
+    expect(escape.defaultPrevented).toBe(true);
 
     expect(screen.getByRole("dialog")).toBeTruthy();
   });
