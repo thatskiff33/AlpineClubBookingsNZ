@@ -72,7 +72,7 @@ The dashboard has no settings — it is read-only. The cards it can show:
 
 | Card | Appears when | Opens |
 | --- | --- | --- |
-| Pending Review Queue | Refund appeals or manual credit approvals are waiting | [Refunds & Credits](refund-requests.md) |
+| Refunds & Credits: pending review | Refund appeals or manual credit approvals are waiting | [Refunds & Credits](refund-requests.md) |
 | Booking Requests | New booking reviews or change requests are waiting | [Booking Requests](booking-requests.md) |
 | Unpaid Finished Stays | A stay ended but is still payment-pending | [Bookings](bookings.md) (pre-filtered) |
 | Finished Stays With Unpaid Additions | A settled past stay has an upward change still uncollected | [Bookings](bookings.md) (pre-filtered) |

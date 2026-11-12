@@ -6,8 +6,8 @@ Audience: Operator
 
 The installation and configuration hub: a **readiness checklist** that grades
 your club's setup (with live provider tests for Stripe, SMTP, Sentry, and Xero)
-plus a grid of **hub cards** that jump into each configuration area — initial
-setup, finance, booking rules, integrations, membership, cancellation, and
+plus a grid of **hub cards** that jump into each configuration area — foundations,
+finance, booking rules, integrations, membership, cancellation, and
 notifications. Find it at **Admin → Setup & Configuration → Setup**
 (`/admin/setup`).
 
@@ -45,9 +45,9 @@ enough — every sub-page is captured and detailed where it lives.
    booking behavior changed before the guard existed. Follow its link to
    [Membership Types](membership-types.md), reactivate the type, and restore the
    expected booking behavior if prompted.
-3. Use the **hub cards** to open a configuration area: Initial Setup, Finance,
-   Bookings Setup, Integration Readiness, Membership & Members, Membership
-   Cancellations, or Email Messages / Notifications. Booking Rules, Operational
+3. Use the **hub cards** to open a configuration area: Foundations Setup,
+   Finance Setup, Bookings Setup, Integration Readiness, Membership & Members,
+   Cancellation Requests, or Email Messages / Notifications. Booking Rules, Operational
    Integrations and Cancellation were drill-downs of their own until #4796
    merged each into the page it linked to; their old addresses still work.
 
@@ -58,12 +58,12 @@ the areas it links to:
 
 | Hub card | Opens | Its permission area |
 | --- | --- | --- |
-| Initial Setup | Install checklist, club identity, modules, lodge records, health (`/admin/setup/foundations`) | support |
-| Finance | Finance reporting, Xero setup, sync tools, report mappings — collapsed by default (`/admin/setup/finance`) | finance |
+| Foundations Setup | Club identity, modules, lodge records, health (`/admin/setup/foundations`); its back link returns here | support |
+| Finance Setup | Finance reporting, Xero setup, sync tools, report mappings — collapsed by default (`/admin/setup/finance`) | finance |
 | Bookings Setup | Booking policy, seasons, age groups, promos, inventory, copy ([bookings-setup](bookings-setup.md)) | bookings; each of its cards shows only to an admin who can open it |
 | Integration Readiness | Xero connection, modules, delivery health: a section of System Health ([health](health.md#integration-readiness)) | support; its Xero cards need finance |
 | Membership & Members | Membership types, member fields, subscription lockout ([membership-setup](membership-setup.md)) | membership |
-| Membership Cancellations | Cancellation settings and the request queue: the Settings tab of [Cancellation Requests](membership-cancellations.md) | membership |
+| Cancellation Requests | Cancellation settings and the request queue: the Settings tab of [Cancellation Requests](membership-cancellations.md) | membership |
 | Email Messages / Notifications | Delivery rules, recipients, templates, member copy ([notifications](notifications.md)) | support |
 
 Provider tests cover Stripe, SMTP (email), Sentry, and Xero. Each check is

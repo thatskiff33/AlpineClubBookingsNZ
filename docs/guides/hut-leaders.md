@@ -392,7 +392,7 @@ away.
 
 - Back to the [documentation hub](../README.md).
 - Sibling guides: [Lodge Kiosk](lodge.md), [Chore Roster](roster.md),
-  [Chore Templates](chores.md), [Lodges](lodges.md),
+  [Chores](chores.md), [Lodges](lodges.md),
   [Bed Allocation](bed-allocation.md).
 - Reference: [Admin and Lodge](../ARCHITECTURE.md#admin-and-lodge) and the
   `hut-leader-auto-assign` job in [Cron Jobs](../ARCHITECTURE.md#cron-jobs).

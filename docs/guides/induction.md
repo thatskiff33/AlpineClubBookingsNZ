@@ -4,7 +4,7 @@ Audience: Operator
 
 ## What it is
 
-The **Induction Register**: where you start and track lodge-induction workflows
+The **Induction** page, the induction register: where you start and track lodge-induction workflows
 for members — new-member, hut-leader, youth-to-full, and re-induction — against
 a versioned checklist template, assign the people who sign them off, and record
 each sign-off. A separate **Induction Settings** page controls the nomination
@@ -37,7 +37,7 @@ change settings and templates.
 1. Go to **Admin → Members → Induction**. The **Start an induction** card sits
    above the **Induction register** table.
 
-   ![Induction Register: the Start an induction card and the register table with Member, Type, Status, Sign-offs, Signers, Completed, and Actions columns](../images/admin/admin-induction.png)
+   ![Induction: the Start an induction card and the register table with Member, Type, Status, Sign-offs, Signers, Completed, and Actions columns](../images/admin/admin-induction.png)
 
 2. In **Find member**, type a name or email and click **Search**, then pick the
    member. Choose a **Type** (New member, Hut Leader Induction, Youth → full

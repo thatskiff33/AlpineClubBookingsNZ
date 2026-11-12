@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { adminHref } from "@/lib/admin-hubs";
+import { adminHref, getAdminPage } from "@/lib/admin-hubs";
 import {
   Card,
   CardDescription,
@@ -18,14 +18,14 @@ import {
 const sections = [
   {
     href: adminHref("booking-policies-cancellation"),
-    title: "Default Cancellation Policy",
+    title: getAdminPage("booking-policies-cancellation").label,
     description:
       "Refund rules applied to all bookings unless a period overrides them.",
     icon: XCircle,
   },
   {
     href: adminHref("booking-policies-periods"),
-    title: "Date-Specific Periods",
+    title: getAdminPage("booking-policies-periods").label,
     description:
       "Override the default cancellation policy for specific date ranges.",
     icon: CalendarRange,
@@ -39,7 +39,7 @@ const sections = [
   },
   {
     href: adminHref("booking-policies-minimum-stay"),
-    title: "Minimum Night Stay",
+    title: getAdminPage("booking-policies-minimum-stay").label,
     description:
       "Require minimum nights when a booking touches certain days of the week.",
     icon: CalendarClock,

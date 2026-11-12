@@ -39,7 +39,7 @@ parts you can change.
    current-season subscription is not paid tries to book — and offers three
    answers. Pick one:
 
-   ![Subscription lockout settings: the Booking lockout, Financial year, Paid-subscription detection, and Age tiers cards](../images/admin/admin-subscription-lockout.png)
+   ![Subscription Lockout: the Booking lockout, Financial year, Paid-subscription detection, and Age tiers cards](../images/admin/admin-subscription-lockout.png)
 
    - **Let them book normally.** No subscription check at booking. Members book
      at member rates whether or not their subscription is paid, and the

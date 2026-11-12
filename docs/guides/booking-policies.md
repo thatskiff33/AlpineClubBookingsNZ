@@ -7,13 +7,13 @@ Audience: Operator
 The hub for the rules that shape how bookings are priced, held, and refunded.
 Five sub-pages sit under it:
 
-- **Default Cancellation Policy** — the club-wide refund schedule and the
+- **Cancellation Policy** — the club-wide refund schedule and the
   "Members First" non-member hold.
-- **Date-Specific Periods** — override the cancellation policy for named date
+- **Booking Periods** — override the cancellation policy for named date
   ranges (for example school holidays).
 - **Group Discount** — charge everyone at member rates once a booking is big
   enough.
-- **Minimum Night Stay** — require a minimum number of nights when a booking
+- **Minimum Stay** — require a minimum number of nights when a booking
   touches certain days.
 - **Public Booking Requests** — control indicative pricing and quote timing on
   the public request form.
@@ -44,7 +44,7 @@ rules — see
 1. Go to **Admin → Rates & Policies → Booking Policies**. Pick one of the five
    cards.
 
-   ![Booking Policies hub: five cards — Default Cancellation Policy, Date-Specific Periods, Group Discount, Minimum Night Stay, Public Booking Requests](../images/admin/admin-booking-policies.png)
+   ![Booking Policies hub: five cards — Cancellation Policy, Booking Periods, Group Discount, Minimum Stay, Public Booking Requests](../images/admin/admin-booking-policies.png)
 
    <!--
      The hub now carries a sixth card, Adult Member Hosting. Its own page is
@@ -54,11 +54,11 @@ rules — see
    -->
 
 
-### Default Cancellation Policy
+### Cancellation Policy
 
-1. Open **Default Cancellation Policy** and click **Edit**.
+1. Open **Cancellation Policy** and click **Edit**.
 
-   ![Default Cancellation Policy: the Members First toggle, non-member confirmation threshold, and the cancellation refund rules table with a plain-English preview](../images/admin/admin-booking-policies-cancellation.png)
+   ![Cancellation Policy: the Members First toggle, non-member confirmation threshold, and the cancellation refund rules table with a plain-English preview](../images/admin/admin-booking-policies-cancellation.png)
 
 2. Set the **Members First booking policy** toggle. When on, non-member guests
    outside the threshold are held provisionally; when off, mixed bookings run as
@@ -75,11 +75,11 @@ rules — see
    is available straight away so you can commit the starting rules once.
    **Cancel** puts every field back exactly as it was saved.
 
-### Date-Specific Periods
+### Booking Periods
 
-1. Open **Date-Specific Periods** and click **Add Period**.
+1. Open **Booking Periods** and click **Add Period**.
 
-   ![Date-Specific Periods: the empty state explaining the default policy applies to all bookings, with an Add Period button](../images/admin/admin-booking-policies-periods.png)
+   ![Booking Periods: the empty state explaining the default policy applies to all bookings, with an Add Period button](../images/admin/admin-booking-policies-periods.png)
 
 2. Give the period a name, start and end dates, its own hold setting, and its
    own refund rules, then click **Create Period**. Any booking whose check-in
@@ -115,11 +115,11 @@ rules — see
    night they have already paid for, and never changes a booking that is not
    being edited.
 
-### Minimum Night Stay
+### Minimum Stay
 
-1. Open **Minimum Night Stay** and click **Add Policy**.
+1. Open **Minimum Stay** and click **Add Policy**.
 
-   ![Minimum Night Stay: the empty state and Add Policy button for weekday minimum-stay rules](../images/admin/admin-booking-policies-minimum-stay.png)
+   ![Minimum Stay: the empty state and Add Policy button for weekday minimum-stay rules](../images/admin/admin-booking-policies-minimum-stay.png)
 
 2. Name the policy, set the minimum nights, the date range, and which
    **Trigger Days** (Sun–Sat) activate it. Choose **Exception capacity

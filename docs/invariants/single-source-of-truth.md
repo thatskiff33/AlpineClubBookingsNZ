@@ -567,3 +567,25 @@ case-sensitive default. #4146, #4165, #4190.
 - **Scope the query as well where an indexed column allows.** An exact prefix
   still matches a longer id beginning with the same id and delimiter; the
   duplicate-capture lookup also scopes by `bookingId`.
+
+## INV-SSOT-007
+An admin page's heading is its menu name: the registry label,
+`getAdminPage(id).label` from `src/lib/admin-hubs`, which the sidebar, the
+command palette and contextual help already show. A page reads the label rather
+than restating it. A retired page name stays findable as a `keywords` entry on
+the page's registry definition, never as a second heading. #4968.
+
+- **A census holds it.** `admin-page-headings.test.ts` parses each registry
+  page's file as TSX and reads every `<h1>` and the `title` of a component that
+  renders one, following a server wrapper into the components it renders. A
+  heading must be a string literal equal to the label or
+  `getAdminPage("<id>").label`. Any other expression fails until the page is
+  excluded.
+- **Its exclusions live with it.** The census lists the pages it skips, each
+  with its reason (a club-configured label, a mode-dependent editor title), and
+  the pages it compares without case, because #4968 left case out of scope. A
+  test fails if any listed id stops being a registry page.
+- **Setup does not link to itself.** No Setup hub card opens `/admin/setup`, and
+  each Setup sub-hub returns by `adminLink("setup")`.
+  `admin-setup-hubs.test.tsx` checks the card arrays in `setup/hub-cards.ts` and
+  the rendered page.

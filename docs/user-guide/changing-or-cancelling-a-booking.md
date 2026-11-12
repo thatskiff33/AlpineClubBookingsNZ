@@ -235,7 +235,7 @@ what you owe on a future booking — see
 [Paying for your stay](paying-for-your-stay.md#use-account-credit). The exact
 tiers (how many days before check-in return what percentage) are a club policy;
 your booking's dialog shows the schedule that applies to you, and operators set
-it in the [Booking Policies](../guides/booking-policies.md#default-cancellation-policy)
+it in the [Booking Policies](../guides/booking-policies.md#cancellation-policy)
 guide.
 
 ## What to expect

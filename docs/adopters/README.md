@@ -148,7 +148,7 @@ per-route index if you would rather start from a URL.
 - [Rooms & Beds](../guides/rooms-beds.md) — the room/bed inventory, the
   capacity it derives, and the lodge's auto-allocation preferences
   (lodge-scoped).
-- [Chore Templates](../guides/chores.md) — the chore library the roster draws
+- [Chores](../guides/chores.md) — the chore library the roster draws
   from (lodge-scoped).
 - [Chore Roster](../guides/roster.md) — the daily chore board: generate,
   confirm, print, and email.

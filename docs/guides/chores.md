@@ -1,4 +1,4 @@
-# Chore Templates
+# Chores
 
 Audience: Operator
 
@@ -33,7 +33,7 @@ module is on.
    — with each chore's people count, age rule, frequency, whether it is essential,
    and its active status.
 
-   ![Chore Templates page showing Morning, Evening, and Anytime chore groups with people counts, age rules, frequency, essential, and status columns](../images/admin/admin-chores.png)
+   ![Chores page showing Morning, Evening, and Anytime chore groups with people counts, age rules, frequency, essential, and status columns](../images/admin/admin-chores.png)
 
 2. If the club runs more than one lodge, use the lodge selector to switch which
    lodge's chores you see.
