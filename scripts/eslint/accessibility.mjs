@@ -127,5 +127,61 @@ const noNestedInteractive = {
   },
 };
 
-const accessibility = { rules: { "minimum-text-size": minimumTextSize, "no-nested-interactive": noNestedInteractive } };
+// aria-query classifies a row as interactive, so jsx-a11y's click/key rule
+// exempts <tr>, including mapped TableRow. Keep the native row semantics and
+// require a real control for the row's action instead of a second tab stop.
+const noMouseOnlyTableRow = {
+  meta: {
+    type: "problem",
+    schema: [],
+    messages: { control: "A clickable table row needs a button or link for keyboard users (#4970)." },
+  },
+  create(context) {
+    const components = context.settings["jsx-a11y"]?.components ?? {};
+    const links = new Set(["a"]);
+    const buttons = new Set(["button"]);
+    function tag(node) {
+      if (node.name.type !== "JSXIdentifier") return null;
+      return components[node.name.name] ?? node.name.name;
+    }
+    function hasControl(node) {
+      if (node.type === "JSXElement") {
+        const opening = node.openingElement;
+        const name = opening.name.type === "JSXIdentifier" ? opening.name.name : "";
+        if (buttons.has(name)) return true;
+        // A link with its own onClick (usually stopping propagation) is a
+        // separate action, not a keyboard route to the row's action.
+        const hasAttr = (attrName) => opening.attributes.some((attr) => attr.name?.name === attrName);
+        if (links.has(name) && hasAttr("href") && !hasAttr("onClick")) return true;
+      }
+      return (context.sourceCode.visitorKeys[node.type] ?? []).some((key) => {
+        // A control passed as a prop does not necessarily render in this row.
+        if (node.type === "JSXAttribute") return false;
+        const value = node[key];
+        return Array.isArray(value)
+          ? value.some((child) => child && hasControl(child))
+          : value && typeof value === "object" && hasControl(value);
+      });
+    }
+    return {
+      ImportDeclaration(node) {
+        for (const spec of node.specifiers) {
+          if (node.source.value === "@/components/ui/button" && spec.imported?.name === "Button") buttons.add(spec.local.name);
+          if (node.source.value === "next/link" && spec.type === "ImportDefaultSpecifier") links.add(spec.local.name);
+        }
+      },
+      JSXElement(node) {
+        const opening = node.openingElement;
+        if (tag(opening) !== "tr" || !opening.attributes.some((attr) => attr.name?.name === "onClick")) return;
+        if (!node.children.some(hasControl)) context.report({ node: opening, messageId: "control" });
+      },
+    };
+  },
+};
+
+const accessibility = { rules: {
+  "minimum-text-size": minimumTextSize,
+  "no-nested-interactive": noNestedInteractive,
+  "no-mouse-only-table-row": noMouseOnlyTableRow,
+} };
 export default accessibility;
