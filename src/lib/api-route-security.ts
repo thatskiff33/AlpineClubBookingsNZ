@@ -13,6 +13,10 @@ export type ApiRouteSecurityMetadata = {
 };
 
 export const explicitPublicApiRoutes = {
+  "src/app/api/observability/browser-config/route.ts": {
+    boundary: "public",
+    reason: "Anonymous browsers need their deployment's browser Sentry destination; no-store, no server DSN or upload credentials, no database/provider calls.",
+  },
   "src/app/api/privacy/replay/route.ts": {
     boundary: "public",
     reason: "Anonymous browsers need the non-personal Replay opt-in before recording; rate limited and briefly cached.",

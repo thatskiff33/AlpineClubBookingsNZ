@@ -1849,17 +1849,19 @@ function buildSentryCheck(
       id: "sentry",
       title: "Sentry",
       description:
-        "Server, edge, browser error reporting, and source-map configuration.",
+        "Server, edge, browser error reporting, and source-map configuration. Both DSNs are read at runtime.",
       status: missing.length === 0 ? "complete" : "warning",
       required: false,
       message:
         missing.length === 0
           ? "Sentry variables are present."
           : "Sentry can stay disabled, but production diagnostics will be limited.",
-      details:
-        missing.length === 0
-          ? ["Sentry DSN/project variables are set; values are not displayed."]
-          : missing.map((name) => `${name} is missing`),
+      details: [
+        hasEnv(env, "NEXT_PUBLIC_SENTRY_DSN")
+          ? "Browser Sentry is configured at runtime; new pages use this deployment's browser DSN."
+          : "Browser Sentry is off: NEXT_PUBLIC_SENTRY_DSN is missing or blank at runtime.",
+        ...missing.map((name) => `${name} is missing`),
+      ],
       href: adminHref("health"),
       action: {
         type: "provider-test",

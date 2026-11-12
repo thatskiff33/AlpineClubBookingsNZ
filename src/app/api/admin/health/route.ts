@@ -1,3 +1,4 @@
+import { getBrowserSentryDsn } from "@/lib/observability/browser-sentry-config";
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { getDetailedHealthReport } from "@/lib/health-check";
@@ -49,13 +50,19 @@ function buildSentryDashboardInfo() {
       ? `https://sentry.io/organizations/${encodeURIComponent(org)}/issues/?project=${encodeURIComponent(project)}`
       : null;
 
+  const warnings = [
+    ...(missingFields.length > 0
+      ? [`${missingFields.join(", ")} ${missingFields.length === 1 ? "is" : "are"} not configured; admin health cannot link directly to Sentry.`]
+      : []),
+    ...(!getBrowserSentryDsn()
+      ? ["Browser Sentry is off: NEXT_PUBLIC_SENTRY_DSN is missing or blank at runtime."]
+      : []),
+  ];
+
   return {
     sentryConfigured: Boolean(dsn),
     sentryDashboardUrl,
-    sentryConfigWarning:
-      missingFields.length > 0
-        ? `${missingFields.join(", ")} ${missingFields.length === 1 ? "is" : "are"} not configured; admin health cannot link directly to Sentry.`
-        : null,
+    sentryConfigWarning: warnings.length > 0 ? warnings.join(" ") : null,
   };
 }
 

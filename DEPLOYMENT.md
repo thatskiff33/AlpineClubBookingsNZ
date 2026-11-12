@@ -772,11 +772,22 @@ Minimum production categories:
   is not reachable from web containers at
   `http://app:3000/api/deploy/runtime-status`
 - Observability: `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_ORG`,
-  `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN`
+  `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN`. Both DSNs are read at runtime from
+  `.env`; changing them needs a restart/redeploy, not a rebuild. Browser Sentry
+  stays off if `NEXT_PUBLIC_SENTRY_DSN` is blank or runtime configuration cannot
+  be fetched. Source-map upload credentials remain build-time settings.
 
 Do not commit `.env` files or production secrets.
 
 ## GitHub Container Registry
+
+Published images contain no browser Sentry destination. Before upgrading to
+runtime browser Sentry, every operator, including the upstream maintainer,
+must set `NEXT_PUBLIC_SENTRY_DSN` in the deployment's `.env` if browser error
+reports are wanted. It works identically with published images and host builds
+(`--build-and-push-images`). Leaving it blank disables browser reporting;
+replay additionally requires the club's privacy opt-in. See
+[`CONFIGURATION.md`](CONFIGURATION.md#sentry).
 
 GitHub Actions publishes production images after CI passes on `main`:
 

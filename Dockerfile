@@ -69,10 +69,7 @@ ENV DATABASE_URL=postgresql://tac:password@postgres:5432/tacbookings
 
 # Stripe publishable key is delivered at runtime from the encrypted DB store
 # (#2082), never inlined at build time — so no NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
-# build ARG/ENV here.
-
-ARG NEXT_PUBLIC_SENTRY_DSN
-ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
+# build ARG/ENV here. Browser Sentry also resolves its destination at runtime.
 
 # Deployed-code knowledge bundle (AID-3, #2372). Generated here in the builder,
 # where the dependencies exist (a plain `docker compose build` on a club's

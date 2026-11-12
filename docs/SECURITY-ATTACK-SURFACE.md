@@ -283,6 +283,7 @@ These family rules are enforced by automated tests (issue #1132):
 - `src/app/api/auth/verify-email/route.ts`
 - `src/app/api/chores/[token]/route.ts`
 - `src/app/api/committee/route.ts`
+- `src/app/api/observability/browser-config/route.ts` — public, dynamic GET returns only the trimmed runtime browser DSN or null, with `Cache-Control: no-store`. No server DSN, upload credentials, session, database or provider calls. The proxy excludes this API path. Browser reporting initializes only after a successful non-empty response; replay waits for that initialization and the separate club opt-in. CSP still permits the existing `*.ingest.sentry.io` hosts; custom/self-hosted hosts require the same CSP changes as before.
 - `src/app/api/privacy/replay/route.ts` — public GET returns only the Replay opt-in, with the shared API rate limiter before any policy read. Concurrent reads share an in-process 15-second cache; settings failures return OFF, and local saves invalidate the cache. Open tabs re-check every 30 seconds, so switching Replay off reaches every instance and tab within about 45 seconds. Responses remain `no-store`.
 - `src/app/api/contact/route.ts`
 - `src/app/api/display/**/route.ts`

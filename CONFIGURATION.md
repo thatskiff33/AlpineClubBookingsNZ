@@ -2766,13 +2766,28 @@ rate-limited, or temporarily unavailable.
 
 | Variable                                  | Description                                                                                                      |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `SENTRY_DSN`                              | Server/edge Sentry DSN.                                                                                          |
-| `NEXT_PUBLIC_SENTRY_DSN`                  | Browser Sentry DSN.                                                                                              |
+| `SENTRY_DSN`                              | Server/edge Sentry DSN, read at runtime.                                                                                          |
+| `NEXT_PUBLIC_SENTRY_DSN`                  | Browser Sentry DSN, read at runtime through a public no-store endpoint; blank disables browser reporting.                                                                                              |
 | `SENTRY_ORG`                              | Sentry organization slug for source map uploads.                                                                 |
 | `SENTRY_PROJECT`                          | Sentry project slug for source map uploads.                                                                      |
 | `SENTRY_AUTH_TOKEN`                       | Sentry auth token for source map uploads during build.                                                           |
 | `OBSERVABILITY_SENTRY_DEDUP_COOLDOWN_MS` | Optional in-process cooldown for Sentry event deduplication, shared by the cron/webhook bridge and the auth-bounce anomaly alert (#1669); defaults to 300000 ms. |
 | `AUTH_BOUNCE_AUDIT_MAX_WRITES_PER_MINUTE` | Optional per-process cap on durable auth-bounce `AuditLog` rows per minute (#1669); suppressed rows are tallied onto the next written row. Defaults to 10. |
+
+Both DSNs belong in the deployment's `.env`, including when using published
+images or `--build-and-push-images`. Restart/redeploy after changing them; no
+image rebuild is needed. New page loads fetch only `NEXT_PUBLIC_SENTRY_DSN`
+from `/api/observability/browser-config` before initializing browser reporting.
+Failed or empty configuration leaves reporting and replay off. Errors before
+that fetch completes are not reported. Replay still needs the separate club
+privacy opt-in; its default remains off.
+
+**Upgrade action:** before deploying the first release with runtime browser
+Sentry, set `NEXT_PUBLIC_SENTRY_DSN` in `.env` if browser reports are wanted.
+This applies to the maintainer's deployment too: published images no longer
+supply the upstream destination. Leaving it blank deliberately disables browser
+reports. Sentry DSNs are environment settings, not in-app credentials; upload
+credentials remain build-time settings.
 
 ## Cron, Waitlist, And Backups
 
