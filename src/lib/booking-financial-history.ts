@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 
 import { APPEND_ONLY_RELATIONS } from "@/lib/database-roles";
-import { bookingIdsNamedByJournal } from "@/lib/member-money";
+import { bookingIdsNamedByExportManifest, bookingIdsNamedByJournal } from "@/lib/member-money";
 
 /**
  * FINANCIAL HISTORY OUTLIVES ITS BOOKING (#4514, Ledger M2; owner decision D1 on
@@ -37,6 +37,7 @@ type FinancialHistoryStore = Pick<
   Prisma.TransactionClient,
   | "bookingLedgerLine"
   | "memberMoneyLine"
+  | "memberMoneyExportManifest"
   | "memberCredit"
   | "payment"
   | "refundRequest"
@@ -56,6 +57,8 @@ const FINANCIAL_HISTORY_READERS = {
       distinct: ["bookingId"],
     })).map((row) => row.bookingId),
   "MemberMoneyLine.bookingId": (db, ids) => bookingIdsNamedByJournal(db, ids),
+  // #4525 (M13): the record of what the booking's Xero invoice covered.
+  "MemberMoneyExportManifest.bookingId": (db, ids) => bookingIdsNamedByExportManifest(db, ids),
   // Insert-only credit rows (INV-MONEY-035): their booking links never blank.
   "MemberCredit.sourceBookingId": async (db, ids) =>
     (await db.memberCredit.findMany({

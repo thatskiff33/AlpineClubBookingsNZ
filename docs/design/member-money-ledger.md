@@ -550,6 +550,21 @@ record. A replacement after a genuine void is a new explicit render revision;
 retrying a lost response always uses the original manifest and key. Never derive
 a retry key from the current refund watermark or current set of voids.
 
+M13 (#4525) ships the first role, `PRIMARY_BOOKING_INVOICE`, as an observer.
+`createXeroInvoiceForBooking` still sends its own lines; the pure
+`planPrimaryBookingInvoice` builds the same lines with the same builders and
+compares them in cents with the booking's posted charge legs. Stay lines must
+equal the stay component's live gross, the change-fee line the live fee
+components', and the total what is covered; otherwise the manifest records
+`CONFLICT` (`STAY_CENTS`, `FEE_CENTS` or `COMPONENT_UNUSABLE`) and covers
+nothing. The manifest is written after the invoice link, in its own short
+transaction, under the invoice's existing correlation key
+(`buildXeroBookingInvoiceCorrelationKey`): the first row
+wins, and a failure is logged without changing the send or its operation. A
+replay records it from the operation's stored lines. The frozen mapping keeps
+the Xero tax type and the journal's tax codes side by side, untranslated. No
+delivery record or dispatcher exists yet.
+
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |
 | Primary, supplementary or combined group invoice | Exact issued charge components, including fee coverage assigned once. Combined invoices consume child charge coverage; individual child invoices cannot consume it again. Pending bank-transfer obligations already have R01 postings. |
