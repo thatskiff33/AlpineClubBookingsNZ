@@ -136,6 +136,16 @@ access. If a page depends on Stripe, Xero, SES, or finance data that is not
 configured in staging, record the dependency and use seeded or demo data instead
 of production credentials.
 
+### Dialogs at high zoom
+
+Every dialog caps its height to the viewport and scrolls inside, because the
+page behind it is locked (#4967). At 400% browser zoom (about 320 × 256 CSS
+pixels), open a long confirmation and the manual-refund completion dialog,
+scroll to the final button and activate it. Scroll back to the top to reach the
+close button, and check that dropdowns open fully and dialogs with their own
+height cap still fit. `pnpm run test:e2e:a11y-fixture` checks the shared dialog
+at 320 × 256 without a database.
+
 ## Shared Staging Notes
 
 When promoting this target from local staging to a shared host:
@@ -164,12 +174,6 @@ the PR #1102 Radix conversion. The full manual pass described above remains
 outstanding.
 
 ## Manual Staging Pass (2026-07-04)
-
-- Dialogs now cap their height to the viewport and scroll inside while the page
-  behind is locked (#4967). At 400% browser zoom (about 320 × 256 CSS pixels),
-  open a long confirmation or manual-refund completion dialog, scroll to its
-  final button and activate it. Scroll back to the top to check the close button;
-  check that dropdowns open fully and existing capped dialogs still fit.
 
 Run against the local staging compose stack at latest `main` (post-#1123):
 axe-core (WCAG 2.1 AA + best-practice) across 17 pages — public (`/`,
