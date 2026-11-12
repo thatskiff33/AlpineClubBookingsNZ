@@ -1691,6 +1691,13 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // and an ordinary rejection. See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Approve, reject and release of one `DeletionRequest`".
   "src/lib/deletion-request-decision.ts": 1,
+  // #4618: `lockMemberFactorRow`, one `SELECT 1 FROM "Member" … FOR UPDATE` on the
+  // member whose second factors are written. Taken first by the officer factor
+  // reset (route and break-glass command), by every enrolment writer
+  // (`assertEnrolmentNotSuperseded`) and by `deletePasskey`, then re-read. No
+  // advisory key, never after another row lock in those transactions. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> "Second-factor member row".
+  "src/lib/officer-factor-reset.ts": 1,
   // #3640 (delta review, D1): `lockPaymentForRefundedTotal` takes the Payment
   // row `FOR NO KEY UPDATE` FIRST in every writer of the transaction refund
   // mirror - the card-refund writer, `applyLocalRefundAllocation`, and the

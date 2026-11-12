@@ -782,6 +782,17 @@ export const SINGLETONS: SingletonSpec[] = [
       breachedPasswordCheck: { required: true },
       sessionMaxAgeHours: { required: true },
     },
+    // #4618: the officer two-factor rule does not travel. Turning it off or
+    // lengthening grace weakens who must prove themselves, so it changes only on
+    // its own Full Admin card, with its own audit row, never inside an import.
+    excluded: {
+      officerTwoFactorPolicy:
+        "officer two-factor switch (INV-AUTH-011); a Full Admin changes it on " +
+        "Login & Security only, so an import cannot turn the requirement off",
+      officerTwoFactorGraceDays:
+        "officer two-factor grace length (INV-AUTH-011); changed beside the " +
+        "switch on Login & Security only, never by an import",
+    },
     defaults: () => ({ ...DEFAULT_LOGIN_SECURITY_POLICY }),
   },
   {

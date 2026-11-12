@@ -58,6 +58,7 @@ const SECTION_EDIT_ADOPTERS = [
   "src/components/admin/member-guest-settings-card.tsx",
   "src/components/admin/roster-editor.tsx",
   "src/components/admin/school-hut-leader-kinds-card.tsx",
+  "src/components/admin/security/officer-two-factor-card.tsx",
   "src/components/admin/security/password-policy-card.tsx",
 ];
 

@@ -749,7 +749,10 @@ export const AUDIT_CENSUS_TOTALS = {
   // `booking-payment.card-refund.try-card-again`, the treasurer closing a dead card refund
   // a later Stripe refund covers and putting one back to try the card, each awaited on its
   // own transaction (`card-refund-dead-row-actions.ts`), both `payment`. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 538,
+  // 538 -> 539 (#4618): `LOGIN_SECURITY_OFFICER_TWO_FACTOR_UPDATED`, the officer
+  // two-factor policy save, `tx.auditLog.create` in the route's transaction like the
+  // password-policy writer beside it, `security`. RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 539,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -1012,7 +1015,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 77 -> 75 (#52): the two removed other-lodges writers above.
     // 75 -> 76 (#58): the Other lodges hide of a row the central server does
     // not list, in the same form as the registry's update.
-    "auditLog.create": { total: 76, uncategorised: 0 },
+    // 76 -> 77 (#4618): the officer two-factor policy save, in its route's
+    // transaction, the same form as the password-policy writer.
+    "auditLog.create": { total: 77, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -1404,7 +1409,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // through that same one site, so no site is added and the support:view
     // total does not move. Each names the member and carries booleans and, for
     // a retirement, the COUNT of codes retired, never a secret or a code.
-    security: 25,
+    // 25 -> 26 (#4618): the officer two-factor policy save. A club security
+    // setting, so `security`, readable with `support:view` alone like the
+    // password-policy save: the weakest-gate total moves 141 -> 142, a deliberate
+    // widening of one site. The row carries the policy flag and grace days only.
+    security: 26,
     // 16 -> 18 (#2595): the two reviewed-move writes. `lodge` is the category
     // every other bed-allocation write already uses, and it is not one of the
     // three (`admin`, `security`, `system`) readable with support:view alone —
