@@ -393,6 +393,7 @@ const WAIT_SAVEPOINT = {
   rollBack: Prisma.sql`ROLLBACK TO SAVEPOINT member_merge_participant_wait`,
   release: Prisma.sql`RELEASE SAVEPOINT member_merge_participant_wait`,
 } as const;
+
 /**
  * Wait for one busy participant row, holding none of the others (#4855), for at
  * most `milliseconds`. The row is taken `FOR UPDATE` — the strength merge needs,
