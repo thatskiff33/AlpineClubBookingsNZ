@@ -66,7 +66,12 @@ export function isFragmentName(name) {
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/;
 export const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-const UNRELEASED_HEADING = /^## Unreleased[ \t]*$/;
+/**
+ * The pending-changes heading. `CHANGELOG.md` and `docs/UPGRADING.md` both
+ * collect the next release's material under it; `release-docs.mjs` reads the
+ * upgrade guide's with this same pattern.
+ */
+export const UNRELEASED_HEADING = /^## Unreleased[ \t]*$/;
 const ANY_HEADING = /^## /;
 /** A top-level changelog entry bullet. Continuation paragraphs are indented. */
 const ENTRY_BULLET = /^- /;
@@ -116,11 +121,21 @@ export function releaseHeading(version, date) {
  * `{ start, end }` of the first `## ` section whose heading line passes
  * `isHeading`: `start` is the heading, `end` the next `## ` heading or EOF.
  */
-function locateSection(lines, isHeading) {
+export function locateSection(lines, isHeading) {
   const start = lines.findIndex(isHeading);
   if (start < 0) return null;
   const nextOffset = lines.slice(start + 1).findIndex((line) => ANY_HEADING.test(line));
   return { start, end: nextOffset >= 0 ? start + 1 + nextOffset : lines.length };
+}
+
+/** The anchor GitHub gives a Markdown heading (lower case, punctuation dropped, spaces to hyphens). */
+export function githubHeadingAnchor(heading) {
+  return heading
+    .replace(/^#+\s*/, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+    .replace(/\s/g, "-");
 }
 
 const isVersionHeading = (version) => (line) => line.startsWith(`## ${version} `);
@@ -274,7 +289,8 @@ export function retiredAllowancePaths(repoRoot) {
   return paths.sort((a, b) => compareFragmentNames(path.basename(a), path.basename(b)));
 }
 
-function stripBlankEdges(lines) {
+/** `lines` without leading and trailing blank lines. */
+export function stripBlankEdges(lines) {
   let start = 0;
   let end = lines.length;
   while (start < end && lines[start].trim() === "") start += 1;

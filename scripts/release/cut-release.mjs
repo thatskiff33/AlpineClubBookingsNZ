@@ -10,18 +10,23 @@
  *     From a clean checkout of a freshly fetched `origin/main`: works out the
  *     next version from origin's tags, creates `release/v<version>`, bumps
  *     `package.json`, folds `changelog.d/` into `CHANGELOG.md` with
- *     `compile-changelog.mjs`, and commits. It never pushes.
+ *     `compile-changelog.mjs`, files the upgrade guide's `## Unreleased` steps
+ *     under `## v<previous> → v<version>` and writes a `docs/releases/` notes
+ *     stub with its index line (`release-docs.mjs`, #4983), and commits. It
+ *     never pushes.
  *
  *   pnpm run release:cut prepare --amend [--execute]
- *     When fragments merged while the release-prep pull request was open: from
- *     a fresh `origin/main`, creates `release/v<version>-late` and appends them
- *     to the existing, untagged `## <version>` section.
+ *     When fragments or upgrade steps merged while the release-prep pull
+ *     request was open: from a fresh `origin/main`, creates
+ *     `release/v<version>-late` and appends them to the existing, untagged
+ *     `## <version>` changelog and upgrade-guide sections.
  *
  *   pnpm run release:cut publish [--commit <sha>] [--carry-late-fragments] [--execute]
  *     After the pull request merges: tags the merged commit (default
  *     `origin/main`, always one CI built an image for), pushes the tag, and
- *     publishes the GitHub release on the repository `origin` names. A re-run
- *     after a partial failure resumes where it stopped.
+ *     publishes the GitHub release on the repository `origin` names. It
+ *     refuses a commit whose upgrade guide or notes page does not record the
+ *     release. A re-run after a partial failure resumes where it stopped.
  *
  * Both phases print the whole plan and change nothing unless `--execute` is
  * given. With `--execute`, local steps run first and remote ones (tag push,
@@ -45,6 +50,7 @@ import {
   compileChangelog,
   DATE_PATTERN,
   FRAGMENTS_DIRNAME,
+  githubHeadingAnchor,
   isFragmentName,
   MAIN_REF,
   readFragments,
@@ -53,6 +59,17 @@ import {
   releaseDateToday,
 } from "./compile-changelog.mjs";
 import { isMainModule } from "../lib/is-main-module.mjs";
+import {
+  hasUpgradeSection,
+  planReleaseDocs,
+  RELEASE_NOTES_DIR,
+  RELEASE_NOTES_UNFINISHED_MARKER,
+  releaseNotesPath,
+  unreleasedUpgradeSteps,
+  UPGRADE_GUIDE_PATH,
+  upgradeGuideHeading,
+  writeReleaseDocs,
+} from "./release-docs.mjs";
 
 const REPO_ROOT = path.resolve(path.join(import.meta.dirname, "..", ".."));
 
@@ -172,16 +189,6 @@ export function parseGitHubRemote(url) {
 /** `url` with any `user:password@` / `token@` credentials replaced, safe to print. */
 export function redactUrl(url) {
   return String(url ?? "").replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]*@/i, "$1***@");
-}
-
-/** The anchor GitHub gives a Markdown heading (lower case, punctuation dropped, spaces to hyphens). */
-export function githubHeadingAnchor(heading) {
-  return heading
-    .replace(/^#+\s*/, "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s_-]/gu, "")
-    .replace(/\s/g, "-");
 }
 
 /**
@@ -462,7 +469,15 @@ export function prepareRelease({
         ].join("\n"),
       );
     }
-    plan = { version: packageVersion, tag, branch: `release/${tag}-late`, heading: section.heading };
+    plan = {
+      version: packageVersion,
+      tag,
+      branch: `release/${tag}-late`,
+      heading: section.heading,
+      previousTag: latest?.tag ?? null,
+      bump: preparedBump,
+      date: section.heading.slice(`## ${packageVersion} - `.length),
+    };
     log(`Late-fragment fold into ${tag} (${execute ? "EXECUTE" : "dry run — nothing is changed"})`);
     log(`  Base: ${MAIN_REF} ${main.slice(0, 12)}; appending to "${section.heading}"`);
   } else {
@@ -478,6 +493,7 @@ export function prepareRelease({
     }
     plan = computeRelease({ tags: remoteTags, fragmentNames, override: bump });
     plan.heading = releaseHeading(plan.version, date);
+    plan.date = date;
     nextPackageText = bumpPackageJson(packageText, plan.version);
     log(`Release prep for ${plan.tag} (${execute ? "EXECUTE" : "dry run — nothing is changed"})`);
     log(`  Base: ${MAIN_REF} ${main.slice(0, 12)}; latest release tag on ${REMOTE}: ${plan.previousTag ?? "none (starting from 0.0.0)"}`);
@@ -502,17 +518,37 @@ export function prepareRelease({
 
   // The compiler's own dry run validates the CHANGELOG and prints what it would fold.
   const preview = compile({ repoRoot, version: plan.version, date, dryRun: true, append: amend, log });
-  if (preview.fragments.length === 0 && !preview.foldedLegacyEntries) {
+  const changelogWork = preview.fragments.length > 0 || preview.foldedLegacyEntries;
+  if (!amend && !changelogWork) {
+    throw new ReleaseCutError("Nothing to release: changelog.d/ is empty and \"## Unreleased\" has no entries.");
+  }
+  // The upgrade guide and notes page record the same release boundary (#4983).
+  let docs;
+  try {
+    docs = planReleaseDocs({
+      repoRoot,
+      version: plan.version,
+      previousTag: plan.previousTag,
+      date: plan.date,
+      bump: plan.bump,
+      changelogHeading: plan.heading,
+      amend,
+    });
+  } catch (error) {
+    throw new ReleaseCutError(`Release documents: ${error.message}`, "Nothing was changed. Fix the named file on main, then re-run.");
+  }
+  if (amend && !changelogWork && docs.files.length === 0) {
     throw new ReleaseCutError(
-      amend
-        ? "Nothing to fold: changelog.d/ is empty and \"## Unreleased\" has no entries."
-        : "Nothing to release: changelog.d/ is empty and \"## Unreleased\" has no entries.",
+      `Nothing to fold: changelog.d/ is empty, neither CHANGELOG.md nor ${UPGRADE_GUIDE_PATH} has entries under "## Unreleased", and ${docs.notesPath} exists.`,
     );
   }
+  log("Release documents:");
+  if (docs.describe.length === 0) log("  - nothing to change");
+  docs.describe.forEach((line) => log(`  - ${line}`));
 
   // Stage deletions too: the compiler removes consumed fragments and spent allowances.
-  const stagePaths = ["CHANGELOG.md", "package.json", FRAGMENTS_DIRNAME, ALLOWANCE_DIR].filter((relative) =>
-    fs.existsSync(path.join(repoRoot, relative)),
+  const stagePaths = ["CHANGELOG.md", "package.json", FRAGMENTS_DIRNAME, ALLOWANCE_DIR, UPGRADE_GUIDE_PATH, RELEASE_NOTES_DIR].filter(
+    (relative) => fs.existsSync(path.join(repoRoot, relative)),
   );
   const message = amend ? `release: fold late fragments into ${plan.tag}` : `release: cut ${plan.tag}`;
   const steps = [
@@ -521,6 +557,7 @@ export function prepareRelease({
     amend
       ? `node scripts/release/compile-changelog.mjs ${plan.version} --append`
       : `node scripts/release/compile-changelog.mjs ${plan.version} ${date}`,
+    ...(docs.files.length > 0 ? [`write ${docs.files.map((file) => file.relative).join(", ")}`] : []),
     `git add --all -- ${stagePaths.join(" ")}`,
     `git commit -m "${message}"`,
   ];
@@ -528,6 +565,8 @@ export function prepareRelease({
   steps.forEach((step, index) => log(`  ${index + 1}. ${step}`));
   const next = [
     `Read "${plan.heading}" end to end; edit it for order and duplication and commit.`,
+    `Read "${docs.upgradeHeading}" in ${UPGRADE_GUIDE_PATH}: drop steps that no longer apply and commit.`,
+    `Finish ${docs.notesPath} and delete its unfinished marker before merging; publish refuses while it is there.`,
     `git push -u ${REMOTE} ${plan.branch}, then open its pull request (body checked with pnpm run pr:check).`,
     `After it merges: pnpm run release:cut publish (dry run), then pnpm run release:cut publish --execute.`,
   ];
@@ -544,10 +583,12 @@ export function prepareRelease({
     `You are on ${plan.branch}, which may hold part of the change.`,
     `Inspect it with: git status`,
     `To abandon it and start again: git switch --discard-changes --detach ${main} && git branch -D ${plan.branch}`,
+    ...(docs.notesCreated ? [`  and delete the new, untracked notes page: rm -f ${docs.notesPath}`] : []),
   ].join("\n");
   try {
     if (nextPackageText !== null) fs.writeFileSync(packagePath, nextPackageText);
-    compile({ repoRoot, version: plan.version, date, dryRun: false, append: amend, log });
+    if (changelogWork) compile({ repoRoot, version: plan.version, date, dryRun: false, append: amend, log });
+    writeReleaseDocs(repoRoot, docs.files);
   } catch (error) {
     throw new ReleaseCutError(`Release prep failed: ${error.message}`, recovery);
   }
@@ -583,6 +624,68 @@ function lateFragmentRecovery(tag) {
     `Or publish ${tag} without them; they are carried into the next release:`,
     `  pnpm run release:cut publish --carry-late-fragments --execute`,
   ].join("\n");
+}
+
+/** Recovery for upgrade-guide steps that are not filed under the release. */
+function upgradeGuideRecovery(tag) {
+  return [
+    `File them under ${tag} (prepare --amend rolls or folds ${UPGRADE_GUIDE_PATH}), then publish the fold's merge commit:`,
+    `  git switch --detach ${MAIN_REF} && pnpm run release:cut prepare --amend --execute`,
+    `  push release/${tag}-late, merge its pull request, then pnpm run release:cut publish --execute`,
+    `--carry-late-fragments does not carry upgrade steps: a step a club never sees under ${tag} is the harm this check stops.`,
+  ].join("\n");
+}
+
+/**
+ * Refuse a target commit whose upgrade guide or notes page does not record the
+ * release (#4983): every tag needs its own upgrade section, nothing may still
+ * wait under `## Unreleased` (it would ship in this tag but read as the next
+ * release's), and the notes page must exist and be finished. Returns what
+ * was checked, for the plan.
+ */
+function refuseUnfiledReleaseDocs(cmd, { target, tag, version, previousTag }) {
+  const at = target.slice(0, 12);
+  const show = (relative) => {
+    const result = cmd.run("git", ["show", `${target}:${relative}`]);
+    return result.status === 0 ? result.stdout : null;
+  };
+  const guide = show(UPGRADE_GUIDE_PATH) ?? "";
+  const heading = upgradeGuideHeading(previousTag, version);
+  if (!hasUpgradeSection(guide, heading)) {
+    throw new ReleaseCutError(
+      `${UPGRADE_GUIDE_PATH} at ${at} has no "${heading}" section, so a club upgrading to ${tag} would find no steps for it.`,
+      upgradeGuideRecovery(tag),
+    );
+  }
+  const waiting = unreleasedUpgradeSteps(guide) ?? [];
+  if (waiting.length > 0) {
+    const titles = waiting.filter((line) => line.startsWith("### "));
+    throw new ReleaseCutError(
+      `${UPGRADE_GUIDE_PATH} at ${at} still has upgrade steps under "## Unreleased"` +
+        (titles.length > 0 ? ` (${titles.slice(0, 3).join("; ")}${titles.length > 3 ? "; …" : ""})` : "") +
+        `; they would ship in ${tag} but read as the next release's.`,
+      upgradeGuideRecovery(tag),
+    );
+  }
+  const notesPath = releaseNotesPath(version);
+  const notes = show(notesPath);
+  if (notes === null) {
+    throw new ReleaseCutError(
+      `${notesPath} is missing at ${at}: ${tag} has no release-notes page.`,
+      [
+        `Write it through a pull request, linked first under "Published release notes" in ${RELEASE_NOTES_DIR}/README.md,`,
+        `  or let prepare write the stub: git switch --detach ${MAIN_REF} && pnpm run release:cut prepare --amend --execute`,
+        `Then merge it and run pnpm run release:cut publish --execute`,
+      ].join("\n"),
+    );
+  }
+  if (notes.includes(RELEASE_NOTES_UNFINISHED_MARKER)) {
+    throw new ReleaseCutError(
+      `${notesPath} at ${at} is still the unfinished stub (it carries ${RELEASE_NOTES_UNFINISHED_MARKER}).`,
+      `Write the page, delete the marker line, merge that pull request, then run pnpm run release:cut publish --execute`,
+    );
+  }
+  return `"${heading}" in ${UPGRADE_GUIDE_PATH}, and ${notesPath}`;
 }
 
 /**
@@ -681,6 +784,7 @@ export function publishRelease({
     .filter(isFragmentName);
   // Pushed is past the point of no return: the checks below already passed
   // when that tag was created. A local tag has not left this clone yet.
+  let filedDocs = null;
   if (state !== "pushed") {
     if (previous && compareParts(parseReleaseTag(tag), previous.parts) <= 0) {
       throw new ReleaseCutError(
@@ -703,6 +807,7 @@ export function publishRelease({
         lateFragmentRecovery(tag),
       );
     }
+    filedDocs = refuseUnfiledReleaseDocs(cmd, { target, tag, version, previousTag: previous?.tag ?? null });
   }
 
   const body = releaseBody({ section, tag, repo });
@@ -712,6 +817,7 @@ export function publishRelease({
   log(`Publish ${tag} (${execute ? "EXECUTE" : "dry run — nothing is changed"})`);
   log(`  Commit: ${target} (on ${MAIN_REF}'s first-parent chain); latest release tag on ${REMOTE}: ${previous?.tag ?? "none"}`);
   log(`  Repository: ${repo.slug} (from ${REMOTE})`);
+  if (filedDocs) log(`  Release documents: ${filedDocs}.`);
   log(
     body.kind === "full"
       ? `  Release body: the "${section.heading}" section, ${section.body.length} characters.`

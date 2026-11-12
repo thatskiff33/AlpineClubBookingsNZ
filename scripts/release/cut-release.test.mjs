@@ -9,7 +9,6 @@ import {
   computeRelease,
   FEATURE_FRAGMENT_SUFFIX,
   fragmentBump,
-  githubHeadingAnchor,
   latestReleaseTag,
   main,
   MAX_RELEASE_NOTES_CHARS,
@@ -20,7 +19,8 @@ import {
   releaseBody,
   ReleaseCutError,
 } from "./cut-release.mjs";
-import { releaseSection } from "./compile-changelog.mjs";
+import { githubHeadingAnchor, releaseSection } from "./compile-changelog.mjs";
+import { NO_UPGRADE_STEPS, RELEASE_NOTES_UNFINISHED_MARKER, unreleasedUpgradeSteps } from "./release-docs.mjs";
 
 // Every test runs against a throwaway fixture: a bare "origin" and a clone of
 // it. The clone's origin URL is a GitHub URL that git's `insteadOf` rewrites to
@@ -52,6 +52,12 @@ const CHANGELOG = [
   "",
 ].join("\n");
 
+/** An upgrade guide with one step waiting under `## Unreleased` above a released section. */
+const UPGRADE_STEP = "### Reconnect Xero once (#4400)\n\nOpen Admin → Xero and reconnect.";
+const RELEASED_UPGRADE_SECTION = "## v0.13.1 → v0.13.2\n\n### An older step (#1234)\n\nAlready shipped.\n";
+const UPGRADING = `# Upgrading\n\nIntroduction.\n\n---\n\n## Unreleased\n\n${UPGRADE_STEP}\n\n---\n\n${RELEASED_UPGRADE_SECTION}`;
+const RELEASES_INDEX = "# Release notes\n\n## Published release notes\n\n- [v0.13.2](v0.13.2.md) — 2026-07-23 patch public reference release.\n";
+
 const PACKAGE_JSON = `{\n  "name": "fixture-club-app",\n  "version": "0.13.2",\n  "private": true,\n  "scripts": {\n    "x": "node -e \\"1\\""\n  }\n}\n`;
 
 const tempRoots = [];
@@ -80,7 +86,12 @@ function configure(cwd) {
  * A bare origin holding one release-tagged commit plus pending fragments, and a
  * clean clone of it. Returns `{ origin, repo }`.
  */
-function makeFixture({ fragments = { "4400-a-fix.md": "- **A fix (#4400).** Body.\n" }, tags = ["v0.13.2"], changelog = CHANGELOG } = {}) {
+function makeFixture({
+  fragments = { "4400-a-fix.md": "- **A fix (#4400).** Body.\n" },
+  tags = ["v0.13.2"],
+  changelog = CHANGELOG,
+  upgrading = UPGRADING,
+} = {}) {
   const origin = path.join(tempDir("release-cut-origin-"), "origin.git");
   execFileSync("git", ["init", "-q", "--bare", "-b", "main", origin]);
   const seed = tempDir("release-cut-seed-");
@@ -93,6 +104,10 @@ function makeFixture({ fragments = { "4400-a-fix.md": "- **A fix (#4400).** Body
   fs.mkdirSync(path.join(seed, "size-allowances.d"));
   fs.writeFileSync(path.join(seed, "size-allowances.d", "README.md"), "# Allowances\n");
   fs.writeFileSync(path.join(seed, "size-allowances.d", "4300-spent.md"), "lines: 900\n");
+  fs.mkdirSync(path.join(seed, "docs", "releases"), { recursive: true });
+  fs.writeFileSync(path.join(seed, "docs", "UPGRADING.md"), upgrading);
+  fs.writeFileSync(path.join(seed, "docs", "releases", "README.md"), RELEASES_INDEX);
+  fs.writeFileSync(path.join(seed, "docs", "releases", "v0.13.2.md"), "# Release v0.13.2\n");
   git(seed, "add", "--all");
   git(seed, "commit", "-qm", "released base");
   for (const tag of tags) git(seed, "tag", "-a", tag, "-m", tag);
@@ -157,6 +172,9 @@ function snapshot(repo) {
     changelog: fs.readFileSync(path.join(repo, "CHANGELOG.md"), "utf8"),
     packageJson: fs.readFileSync(path.join(repo, "package.json"), "utf8"),
     fragments: fs.readdirSync(path.join(repo, "changelog.d")).sort(),
+    upgrading: fs.readFileSync(path.join(repo, "docs", "UPGRADING.md"), "utf8"),
+    releaseNotes: fs.readdirSync(path.join(repo, "docs", "releases")).sort(),
+    releasesIndex: fs.readFileSync(path.join(repo, "docs", "releases", "README.md"), "utf8"),
   };
 }
 
@@ -349,8 +367,15 @@ describe("release:cut prepare on a fixture repository", () => {
     expect(text).toContain("1. git switch -c release/v0.14.0");
     expect(text).toContain('2. set package.json "version" 0.13.2 -> 0.14.0');
     expect(text).toContain("3. node scripts/release/compile-changelog.mjs 0.14.0 2026-10-31");
-    expect(text).toContain("4. git add --all -- CHANGELOG.md package.json changelog.d size-allowances.d");
-    expect(text).toContain('5. git commit -m "release: cut v0.14.0"');
+    expect(text).toContain(
+      'docs/UPGRADING.md: rename "## Unreleased" to "## v0.13.2 → v0.14.0" (1 step(s)), with a fresh empty "## Unreleased" above it',
+    );
+    expect(text).toContain("docs/releases/v0.14.0.md: new notes stub, marked unfinished until it is written");
+    expect(text).toContain('docs/releases/README.md: list v0.14.0 first under "Published release notes"');
+    expect(text).toContain("4. write docs/UPGRADING.md, docs/releases/v0.14.0.md, docs/releases/README.md");
+    expect(text).toContain("5. git add --all -- CHANGELOG.md package.json changelog.d size-allowances.d docs/UPGRADING.md docs/releases");
+    expect(text).toContain('6. git commit -m "release: cut v0.14.0"');
+    expect(text).toContain("Finish docs/releases/v0.14.0.md and delete its unfinished marker before merging");
     expect(text).toContain("this phase never pushes");
     expect(text).toContain("Dry run: nothing was changed");
     expect(snapshot(repo)).toEqual(before);
@@ -375,11 +400,22 @@ describe("release:cut prepare on a fixture repository", () => {
     const changelog = fs.readFileSync(path.join(repo, "CHANGELOG.md"), "utf8");
     expect(releaseSection(changelog, "0.13.3")).toEqual({ heading: "## 0.13.3 - 2026-10-31", body: "- **A fix (#4400).** Body." });
     expect(git(repo, "show", "--name-status", "--format=", "HEAD").split("\n").sort()).toEqual([
+      "A\tdocs/releases/v0.13.3.md",
       "D\tchangelog.d/4400-a-fix.md",
       "D\tsize-allowances.d/4300-spent.md",
       "M\tCHANGELOG.md",
+      "M\tdocs/UPGRADING.md",
+      "M\tdocs/releases/README.md",
       "M\tpackage.json",
     ]);
+    const upgrading = fs.readFileSync(path.join(repo, "docs", "UPGRADING.md"), "utf8");
+    expect(upgrading).toBe(
+      `# Upgrading\n\nIntroduction.\n\n---\n\n## Unreleased\n\n---\n\n## v0.13.2 → v0.13.3\n\n${UPGRADE_STEP}\n\n---\n\n${RELEASED_UPGRADE_SECTION}`,
+    );
+    expect(fs.readFileSync(path.join(repo, "docs", "releases", "v0.13.3.md"), "utf8")).toContain(RELEASE_NOTES_UNFINISHED_MARKER);
+    expect(fs.readFileSync(path.join(repo, "docs", "releases", "README.md"), "utf8")).toContain(
+      "## Published release notes\n\n- [v0.13.3](v0.13.3.md) — 2026-10-31 patch public reference release.\n- [v0.13.2]",
+    );
     expect(run.calls.some((call) => call.startsWith("git push") || call.startsWith("gh "))).toBe(false);
     expect(git(origin, "branch", "--list")).toBe("* main");
   });
@@ -485,10 +521,18 @@ describe("release:cut prepare on a fixture repository", () => {
   });
 });
 
-/** A fixture whose release-prep commit has merged to origin/main (fast-forward). */
+/** Stands in for the maintainer writing the notes stub on the release-prep branch. */
+function finishNotes(repo, version) {
+  const file = path.join(repo, "docs", "releases", `v${version}.md`);
+  fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(`${RELEASE_NOTES_UNFINISHED_MARKER}\n`, ""));
+  git(repo, "commit", "-qam", `docs: write the v${version} release notes`);
+}
+
+/** A fixture whose release-prep pull request (notes written) has merged to origin/main (fast-forward). */
 function mergedReleaseFixture(options) {
   const fixture = makeFixture(options);
-  prepareRelease({ repoRoot: fixture.repo, execute: true, date: "2026-10-31", run: fixtureRunner(fixture.repo), log: silentLog() });
+  const plan = prepareRelease({ repoRoot: fixture.repo, execute: true, date: "2026-10-31", run: fixtureRunner(fixture.repo), log: silentLog() });
+  finishNotes(fixture.repo, plan.version);
   git(fixture.repo, "push", "-q", "origin", "HEAD:main"); // stands in for merging the release-prep PR
   return { ...fixture, merged: git(fixture.repo, "rev-parse", "HEAD") };
 }
@@ -501,6 +545,7 @@ function mergedReleaseFixture(options) {
 function lateFragmentFixture({ lateName = "4500-late.md", bump = null } = {}) {
   const fixture = makeFixture();
   const plan = prepareRelease({ repoRoot: fixture.repo, execute: true, bump, date: "2026-10-31", run: fixtureRunner(fixture.repo), log: silentLog() });
+  finishNotes(fixture.repo, plan.version);
   const prep = git(fixture.repo, "rev-parse", "HEAD");
   git(fixture.repo, "switch", "-q", "--detach", "origin/main");
   fs.writeFileSync(path.join(fixture.repo, "changelog.d", lateName), "- **Late (#4500).**\n");
@@ -652,6 +697,101 @@ describe("late fragments: release:cut prepare --amend and publish --carry-late-f
   });
 });
 
+describe("release documents: the upgrade guide and notes page (#4983)", () => {
+  /** Commit `edit(repo)` straight to origin/main, as a merged pull request. */
+  function mergeToMain(repo, message, edit) {
+    git(repo, "switch", "-q", "--detach", "origin/main");
+    edit(repo);
+    git(repo, "add", "--all");
+    git(repo, "commit", "-qm", message);
+    git(repo, "push", "-q", "origin", "HEAD:main");
+  }
+  const upgradingPath = (repo) => path.join(repo, "docs", "UPGRADING.md");
+  const editUpgrading = (repo, change) => fs.writeFileSync(upgradingPath(repo), change(fs.readFileSync(upgradingPath(repo), "utf8")));
+  const LATE_STEP = "### Run the pre-deploy check (#4610)\n\nRun it before deploying.";
+  const addLateStep = (repo) => editUpgrading(repo, (text) => text.replace("## Unreleased\n\n", `## Unreleased\n\n${LATE_STEP}\n\n`));
+
+  it("gives a release with no waiting upgrade steps a section that says so", () => {
+    const { repo } = makeFixture({ upgrading: UPGRADING.replace(`${UPGRADE_STEP}\n\n`, "") });
+    prepareRelease({ repoRoot: repo, execute: true, date: "2026-10-31", run: fixtureRunner(repo), log: silentLog() });
+    expect(fs.readFileSync(upgradingPath(repo), "utf8")).toContain(`## v0.13.2 → v0.13.3\n\n${NO_UPGRADE_STEPS}\n\n---\n\n${RELEASED_UPGRADE_SECTION}`);
+  });
+
+  it("refuses a prepare whose upgrade guide has no Unreleased heading, changing nothing", () => {
+    const { repo } = makeFixture({ upgrading: UPGRADING.replace("## Unreleased", "## Next") });
+    const before = snapshot(repo);
+    const error = expectRefusal(
+      () => prepareRelease({ repoRoot: repo, execute: true, run: fixtureRunner(repo), log: silentLog() }),
+      /Release documents: docs\/UPGRADING\.md has no "## Unreleased" heading/,
+    );
+    expect(error.recovery).toContain("Nothing was changed");
+    expect(snapshot(repo)).toEqual(before);
+  });
+
+  it("refuses to publish while the notes page is still the unfinished stub", () => {
+    const { repo } = makeFixture();
+    prepareRelease({ repoRoot: repo, execute: true, date: "2026-10-31", run: fixtureRunner(repo), log: silentLog() });
+    git(repo, "push", "-q", "origin", "HEAD:main");
+    const run = fixtureRunner(repo);
+    const error = expectRefusal(
+      () => publishRelease({ repoRoot: repo, execute: true, run, writeNotes: notesWriter(), log: silentLog() }),
+      /docs\/releases\/v0\.13\.3\.md at [0-9a-f]{12} is still the unfinished stub/,
+    );
+    expect(error.recovery).toContain("delete the marker line");
+    expect(run.sideEffects()).toEqual([]);
+  });
+
+  it("refuses to publish when the notes page is missing", () => {
+    const { repo } = mergedReleaseFixture();
+    mergeToMain(repo, "Merge pull request #4611", (dir) => fs.rmSync(path.join(dir, "docs", "releases", "v0.13.3.md")));
+    const error = expectRefusal(
+      () => publishRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
+      /docs\/releases\/v0\.13\.3\.md is missing at [0-9a-f]{12}: v0\.13\.3 has no release-notes page/,
+    );
+    expect(error.recovery).toContain("pnpm run release:cut prepare --amend --execute");
+  });
+
+  it("refuses to publish when the upgrade guide has no section for the release", () => {
+    const { repo } = mergedReleaseFixture();
+    mergeToMain(repo, "Merge pull request #4612", (dir) =>
+      editUpgrading(dir, (text) => text.replace("## v0.13.2 → v0.13.3", "## v0.13.2 to v0.13.3")),
+    );
+    const error = expectRefusal(
+      () => publishRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
+      /docs\/UPGRADING\.md at [0-9a-f]{12} has no "## v0\.13\.2 → v0\.13\.3" section/,
+    );
+    expect(error.recovery).toContain("pnpm run release:cut prepare --amend --execute");
+  });
+
+  it("refuses late upgrade steps, even with --carry-late-fragments, until --amend files them under the release", () => {
+    const { repo } = mergedReleaseFixture();
+    mergeToMain(repo, "Merge pull request #4610", addLateStep);
+
+    const error = expectRefusal(
+      () => publishRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
+      /docs\/UPGRADING\.md at [0-9a-f]{12} still has upgrade steps under "## Unreleased" \(### Run the pre-deploy check \(#4610\)\)/,
+    );
+    expect(error.recovery).toContain("pnpm run release:cut prepare --amend --execute");
+    expect(error.recovery).toContain("--carry-late-fragments does not carry upgrade steps");
+    expectRefusal(
+      () => publishRelease({ repoRoot: repo, carryLateFragments: true, run: fixtureRunner(repo), log: silentLog() }),
+      /still has upgrade steps under "## Unreleased"/,
+    );
+
+    const dry = silentLog();
+    prepareRelease({ repoRoot: repo, amend: true, run: fixtureRunner(repo), log: dry });
+    expect(dry.text()).toContain('docs/UPGRADING.md: move 1 late step(s) from "## Unreleased" into "## v0.13.2 → v0.13.3"');
+    prepareRelease({ repoRoot: repo, amend: true, execute: true, run: fixtureRunner(repo), log: silentLog() });
+    expect(git(repo, "show", "--name-status", "--format=", "HEAD")).toBe("M\tdocs/UPGRADING.md");
+    const upgrading = fs.readFileSync(upgradingPath(repo), "utf8");
+    expect(unreleasedUpgradeSteps(upgrading)).toEqual([]);
+    expect(upgrading).toContain(`## v0.13.2 → v0.13.3\n\n${UPGRADE_STEP}\n\n${LATE_STEP}\n\n---\n\n${RELEASED_UPGRADE_SECTION}`);
+
+    git(repo, "push", "-q", "origin", "HEAD:main"); // the fold's pull request merges
+    expect(publishRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() })).toMatchObject({ tag: "v0.13.3" });
+  });
+});
+
 describe("release:cut publish on a fixture repository", () => {
   it("prints the plan in a dry run, checks gh read-only, and creates nothing", () => {
     const { repo, merged } = mergedReleaseFixture();
@@ -666,6 +806,7 @@ describe("release:cut publish on a fixture repository", () => {
     expect(text).toContain("Publish v0.13.3 (dry run");
     expect(text).toContain(`Commit: ${merged} (on origin/main's first-parent chain); latest release tag on origin: v0.13.2`);
     expect(text).toContain("Repository: fixture-owner/fixture-repo (from origin)");
+    expect(text).toContain('Release documents: "## v0.13.2 → v0.13.3" in docs/UPGRADING.md, and docs/releases/v0.13.3.md.');
     expect(text).toContain('Release body: the "## 0.13.3 - 2026-10-31" section, 26 characters.');
     expect(text).toContain("4. git push origin refs/tags/v0.13.3");
     expect(text).toContain("5. gh release create v0.13.3 --repo fixture-owner/fixture-repo --verify-tag --title v0.13.3 --notes-file <body>");
