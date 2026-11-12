@@ -35,10 +35,17 @@ describe("saved credit outcome copy", () => {
     expect(message).not.toContain("Your card will be charged");
   });
 
+  it("explains zero application when the member's ledger balance is negative", () => {
+    const parsed = parseCreditElectionOutcome({ ...outcome, appliedCents: 0,
+      shortfallCents: 10000, shortfallReason: "balance", availableBalanceCents: -2500 });
+    expect(creditElectionOutcomeCopy(parsed, format)).toBe(
+      "You asked to use $100.00 credit. $0.00 was applied because you no longer hold that much credit. Any unused credit stays on your account.",
+    );
+  });
+
   it.each([null, undefined, "credit", {}, { ...outcome, appliedCents: -1 },
     { ...outcome, requestedCents: 10000.5 }, { ...outcome, appliedCents: NaN },
-    { ...outcome, availableBalanceCents: Number.MAX_SAFE_INTEGER + 1 },
-    { ...outcome, availableBalanceCents: 0 }, { ...outcome, appliedCents: 10001 },
+    { ...outcome, shortfallCents: Number.MAX_SAFE_INTEGER + 1 }, { ...outcome, appliedCents: 10001 },
     { ...outcome, shortfallCents: 5000 }, { ...outcome, shortfallReason: "other" },
     { ...outcome, shortfallReason: "none" }, { ...outcome, fullyCovered: "true" },
   ])("ignores invalid payload %j", (value) => {
