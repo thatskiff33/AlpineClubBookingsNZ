@@ -44,7 +44,7 @@ import {
   BOOKING_PARTY_GUESTS_MAX, BookingGuestStayRangeValidationError, guestRequestSchemaError,
   guestStayFieldsSchema, type NormalizedBookingGuestStayRange, normalizeGuestStayRanges,
 } from "@/lib/booking-guest-stay-range-input";
-import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { refuseOnBehalfUnlessBookingOfficer } from "@/lib/on-behalf-booking";
 import {
@@ -59,13 +59,9 @@ import {
 } from "@/lib/member-guest-probe-guard";
 import { clubFormatValues } from "@/lib/club-format-server";
 
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-});
-
 const quoteSchema = z.object({
-  checkIn: dateOnlyString.transform(parseDateOnly),
-  checkOut: dateOnlyString.transform(parseDateOnly),
+  checkIn: parsedDateOnlySchema,
+  checkOut: parsedDateOnlySchema,
   lodgeId: z.string().min(1).optional(),
   guests: z.array(
     z.object({
