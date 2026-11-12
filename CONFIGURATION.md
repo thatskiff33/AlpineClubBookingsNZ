@@ -1927,7 +1927,7 @@ action; scoped admins cannot merge.
 | `APP_RUNTIME_ROLE`                 | Runtime label used by health/status reporting, usually set by Compose (`web-blue`, `web-green`, `cron-leader`, `staging`). Names which container **slot** this is. **Never read to decide whether this installation is production** — that is `APP_ENVIRONMENT_ROLE` above (`INV-CONFIG-003`). |
 | `NODE_ENV`                         | Runtime mode set by Node/Next.                                                                       |
 | `NEXT_RUNTIME`                     | Runtime marker set by Next.js instrumentation.                                                       |
-| `npm_package_version`              | Package version exposed by npm scripts.                                                              |
+| `APP_VERSION`                      | **Not a runtime variable; do not set it (#4985).** The app's version is stamped at build time from `package.json` by `next.config.ts`, so changing it means building a new image. Health checks, **Admin → System → Health**, config-transfer exports, support-evidence packs and server Sentry events all report it. It replaces `npm_package_version`, which only a package manager sets and which the production image (`node server.js`) never had, so every release used to report "0.1.0". |
 
 ## Environment Role
 
