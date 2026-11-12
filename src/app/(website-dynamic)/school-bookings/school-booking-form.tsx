@@ -1,7 +1,7 @@
 "use client";
 
 import type { AgeTier } from "@prisma/client";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -69,6 +69,10 @@ export function SchoolBookingForm({ club }: { club: ClubIdentity }) {
     every deployment today; only the authority moved.
   */
   const clubTime = useClubTime();
+  // Prefix for the per-row adult field ids (#4957): the form can render twice
+  // on one page (dedicated page plus a `{{school-bookings}}` token), so the
+  // index alone would not keep ids unique.
+  const adultIdPrefix = useId();
   const [schoolName, setSchoolName] = useState("");
   const [contactFirstName, setContactFirstName] = useState("");
   const [contactLastName, setContactLastName] = useState("");
@@ -431,47 +435,68 @@ export function SchoolBookingForm({ club }: { club: ClubIdentity }) {
               no email is given, the PIN goes to the contact email above.
             </p>
 
-            {teachers.map((teacher, index) => (
-              <div key={index} className="grid gap-3 rounded-lg border p-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
-                <div className="space-y-1">
-                  <Label>First name</Label>
-                  <Input
-                    value={teacher.firstName}
-                    onChange={(e) => updateTeacher(index, "firstName", e.target.value)}
-                    maxLength={100}
-                  />
+            {/*
+              #4957: each repeated row needs its own ids, or the visible labels
+              cannot point at their inputs and a screen reader hears three
+              unnamed text boxes per adult. Ids are the row index under a
+              `useId` prefix; they shift when a row is removed, which is fine
+              because nothing outside this render refers to them.
+            */}
+            {teachers.map((teacher, index) => {
+              const adultLabel = `Adult ${index + 1}`;
+              const fieldId = (field: keyof TeacherInput) =>
+                `${adultIdPrefix}-adult-${index}-${field}`;
+              return (
+                <div
+                  key={index}
+                  role="group"
+                  aria-label={adultLabel}
+                  className="grid gap-3 rounded-lg border p-3 sm:grid-cols-[1fr_1fr_1fr_auto]"
+                >
+                  <div className="space-y-1">
+                    <Label htmlFor={fieldId("firstName")}>First name</Label>
+                    <Input
+                      id={fieldId("firstName")}
+                      value={teacher.firstName}
+                      onChange={(e) => updateTeacher(index, "firstName", e.target.value)}
+                      maxLength={100}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor={fieldId("lastName")}>Last name</Label>
+                    <Input
+                      id={fieldId("lastName")}
+                      value={teacher.lastName}
+                      onChange={(e) => updateTeacher(index, "lastName", e.target.value)}
+                      maxLength={100}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor={fieldId("email")}>Email (optional)</Label>
+                    <Input
+                      id={fieldId("email")}
+                      type="email"
+                      value={teacher.email}
+                      onChange={(e) => updateTeacher(index, "email", e.target.value)}
+                      maxLength={200}
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeTeacher(index)}
+                      disabled={teachers.length <= 1}
+                      aria-label={`Remove adult ${index + 1}`}
+                      className="text-danger-11 hover:text-danger-11"
+                    >
+                      Remove
+                    </Button>
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <Label>Last name</Label>
-                  <Input
-                    value={teacher.lastName}
-                    onChange={(e) => updateTeacher(index, "lastName", e.target.value)}
-                    maxLength={100}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label>Email (optional)</Label>
-                  <Input
-                    type="email"
-                    value={teacher.email}
-                    onChange={(e) => updateTeacher(index, "email", e.target.value)}
-                    maxLength={200}
-                  />
-                </div>
-                <div className="flex items-end">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => removeTeacher(index)}
-                    disabled={teachers.length <= 1}
-                    className="text-danger-11 hover:text-danger-11"
-                  >
-                    Remove
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="space-y-3">
