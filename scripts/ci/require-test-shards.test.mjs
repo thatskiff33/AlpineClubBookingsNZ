@@ -4,6 +4,7 @@ import path from "node:path";
 import { BaseSequencer } from "vitest/node";
 
 import { parseWorkflowYaml } from "./check-workflow-suite-checkout-depth.mjs";
+import { escapeRegex } from "./escape-regex.mjs";
 import { parseArtifactWaitArgs } from "./wait-for-run-artifacts.mjs";
 import {
   EXPECTED_SHARD_COUNT,
@@ -125,7 +126,7 @@ describe("verify's typecheck, lint and build jobs (#4425)", () => {
 
   it("gates exactly these jobs, by the names GitHub reports them under", () => {
     const options = parseShardGateArgs(splitArgs(verifyGateStep().run.slice(GATE.length)));
-    expect(options.required.toSorted()).toEqual(SPLIT_JOBS.map(({ id }) => workflow.jobs[id].name).toSorted());
+    expect(options.required.toSorted()).toEqual([...SPLIT_JOBS.map(({ id }) => workflow.jobs[id].name), workflow.jobs["realdb-all"].name].toSorted());
   });
 
   it.each(SPLIT_JOBS)("$id has no needs/if/continue-on-error, verify's env, and runs `$command` unconditionally, not in verify", ({ id, command }) => {
@@ -191,6 +192,49 @@ describe("verify's typecheck, lint and build jobs (#4425)", () => {
       loadJobs: async () => [shard(1, "in_progress", null), lint("completed", "failure")],
       sleep: async () => { throw new Error("waited instead of failing"); },
     })).rejects.toThrow(/Required job "Lint" completed as failure/);
+  });
+});
+
+// #4907 (owner decision, 11 Nov 2026, option B): every real-PostgreSQL suite
+// reaches the merge gate through `verify`'s poll, by the job's display name.
+// `realdb-ci-coverage-census.test.ts` pins that name and the job's wiring.
+describe("verify's real-database gate (#4907)", () => {
+  const options = () => parseShardGateArgs(splitArgs(verifyGateStep().run.slice(GATE.length)));
+  const name = workflow.jobs["realdb-all"].name;
+  const realdb = (conclusion = "success", status = "completed") => ({ name, status, conclusion });
+  const otherJobs = () => [...passed(), ...["typecheck", "lint", "build"].map((id) => ({
+    name: workflow.jobs[id].name, status: "completed", conclusion: "success",
+  }))];
+
+  it("polls the real-database job by the name GitHub reports it under", () => {
+    expect(options().required).toContain(name);
+  });
+
+  it.each(["failure", "cancelled", "timed_out", "skipped", null])(
+    "fails verify at once when the real-database result is %s",
+    async (conclusion) => {
+      await expect(requireTestShards({
+        ...options(),
+        loadJobs: async () => [...otherJobs(), realdb(conclusion)],
+        sleep: async () => { throw new Error("waited instead of failing"); },
+      })).rejects.toThrow(new RegExp(`Required job "${escapeRegex(name)}" completed as`));
+    },
+  );
+
+  it("fails verify when this attempt has no real-database result", async () => {
+    await expect(requireTestShards({
+      ...options(), loadJobs: async () => otherJobs(), maxWaitMs: 0,
+    })).rejects.toThrow(new RegExp(`Timed out.*missing "${escapeRegex(name)}"`));
+  });
+
+  it("waits for the real-database job, then accepts its success", async () => {
+    let calls = 0;
+    await expect(requireTestShards({
+      ...options(),
+      loadJobs: async () => [...otherJobs(), ++calls === 1 ? realdb(null, "in_progress") : realdb()],
+      sleep: async () => {},
+    })).resolves.toBeUndefined();
+    expect(calls).toBe(2);
   });
 });
 

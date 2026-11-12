@@ -759,12 +759,13 @@ describe("deployment image contracts", () => {
       // none of them may have acquired a condition of its own on the way out.
       // #3431 moves the suite itself to independent shard jobs, and #4425 does
       // the same for lint, typecheck and build; each keeps its fail-closed
-      // bridge as a step in this required job, which names every one of them.
+      // bridge as a step in this required job, which names every one of them
+      // (and, since #4907, the real-PostgreSQL job too).
       for (const step of [
         "run: pnpm run quality:budget",
         "run: pnpm run db:generate",
         "run: pnpm exec knip",
-        'run: node scripts/ci/require-test-shards.mjs --job Typecheck --job Lint --job "Production build"',
+        'run: node scripts/ci/require-test-shards.mjs --job Typecheck --job Lint --job "Production build" --job "Real-PostgreSQL suites (all)"',
       ]) {
         expect(verify, `verify no longer runs \`${step}\``).toContain(step);
       }
