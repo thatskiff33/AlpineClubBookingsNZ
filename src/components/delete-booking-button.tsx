@@ -26,6 +26,8 @@ export function DeleteBookingButton({
   const router = useRouter();
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // A repeat of the same refusal must still take focus, so it is read again.
+  const [attempt, setAttempt] = useState(0);
   const [blockers, setBlockers] = useState<
     Array<{ code: string; label: string; count: number }>
   >([]);
@@ -36,6 +38,7 @@ export function DeleteBookingButton({
   async function handleDelete() {
     setError(null);
     setBlockers([]);
+    setAttempt((n) => n + 1);
 
     if (requiresReason && reason.trim().length < 3) {
       setError("Enter a deletion reason.");
@@ -98,7 +101,11 @@ export function DeleteBookingButton({
         </div>
       ) : null}
 
-      <FocusedActionError id={`delete-booking-${bookingId}-error`} error={error ?? ""} />
+      <FocusedActionError
+        id={`delete-booking-${bookingId}-error`}
+        error={error ?? ""}
+        attentionKey={attempt}
+      />
       {blockers.length > 0 ? (
         <ul className="space-y-1 text-sm text-danger-11">
           {blockers.map((blocker) => (

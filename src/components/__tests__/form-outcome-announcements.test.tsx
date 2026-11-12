@@ -96,6 +96,19 @@ describe("password and sign-in failures land in a recovery alert that takes focu
     expect(fetchMock).not.toHaveBeenCalledWith("/api/auth/change-password", expect.anything());
   });
 
+  it("change password, the same refusal twice still takes focus again", async () => {
+    installFetch({ ok: true, body: {} });
+    render(<ChangePasswordPage />);
+    type(/Current Password/, "old-password-123");
+    type(/^New Password$/, "new-password-1234");
+    type(/Confirm New Password/, "different-password");
+    await press(/Change Password/);
+    await expectFailureAnnounced("change-password-error", "Passwords do not match.");
+
+    await press(/Change Password/);
+    await expectFailureAnnounced("change-password-error", "Passwords do not match.");
+  });
+
   it("reset password, refused by the server", async () => {
     nav.search = "token=reset-token";
     installFetch({ ok: false, body: { error: FAILURE } });

@@ -19,11 +19,14 @@ export default function ChangePasswordPage() {
     confirmPassword: "",
   });
   const [error, setError] = useState("");
+  // A repeat of the same refusal must still take focus, so it is read again.
+  const [attempt, setAttempt] = useState(0);
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setAttempt((n) => n + 1);
 
     if (form.newPassword.length < policy.minPasswordLength) {
       setError(
@@ -132,7 +135,7 @@ export default function ChangePasswordPage() {
               />
             </div>
 
-            <FocusedActionError id="change-password-error" error={error} />
+            <FocusedActionError id="change-password-error" error={error} attentionKey={attempt} />
 
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Changing..." : "Change Password"}
