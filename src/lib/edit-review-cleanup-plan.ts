@@ -3,14 +3,16 @@ import { ManualRefundTaskDirection } from "@prisma/client";
 import type { CalendarDate } from "@/lib/club-time";
 import { isCalendarDate } from "@/lib/club-time";
 import {
-  editFinancialReviewGuestsRemovedSinceRaised,
-  editFinancialReviewRemovedByItsOwnEdit,
   editFinancialReviewStrandMovesNights,
   editFinancialReviewStrandRecords,
   isNonNegativeIntegerCents,
   parseEditFinancialReviewContext,
   type EditFinancialReviewStrandRecord,
 } from "@/lib/edit-financial-review-context";
+import {
+  editFinancialReviewGuestsRemovedSinceRaised,
+  editFinancialReviewRemovedByItsOwnEdit,
+} from "@/lib/edit-review-guest-removed-since-raised";
 import { valueStrandNights } from "@/lib/strand-night-valuation";
 
 /**

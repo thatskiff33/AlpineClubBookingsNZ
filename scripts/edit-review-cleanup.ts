@@ -37,7 +37,8 @@ import { clubToday } from "../src/lib/club-time";
 import { clubFormatValues } from "../src/lib/club-format-server";
 import { runEditReviewCleanup } from "../src/lib/edit-review-cleanup";
 import { formatEditReviewCleanupReport } from "../src/lib/edit-review-cleanup-report";
-import { resolveBookingDoorClock } from "../src/lib/member-money/doors";
+// #4627 census: a context resolver names the doors entry by its alias only.
+import { resolveBookingDoorClock } from "@/lib/member-money/doors";
 import { prisma } from "../src/lib/prisma";
 
 function printUsage() {
@@ -101,7 +102,8 @@ function parseArgs(argv: string[]) {
 }
 
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
+  // pnpm 11 passes the `--` in `pnpm run bookings:edit-review-cleanup -- --apply` through.
+  const args = parseArgs(process.argv.slice(2).filter((arg) => arg !== "--"));
   if (!process.env.DATABASE_URL) {
     throw new Error("DATABASE_URL is not set. Name the database this run should read.");
   }

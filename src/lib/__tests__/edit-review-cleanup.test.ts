@@ -33,10 +33,10 @@ import { ManualRefundTaskDirection } from "@prisma/client";
 import { requireCalendarDate } from "@/lib/club-time";
 import {
   applyOpenEditReviews,
-  editReviewHeadlineRebase,
   planEditReviewCleanup,
   type LoadedEditReview,
 } from "@/lib/edit-review-cleanup";
+import { editReviewHeadlineRebase } from "@/lib/edit-review-cleanup-headline";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 

@@ -2,11 +2,7 @@ import "server-only";
 
 import { ManualRefundTaskKind, type Prisma, type PrismaClient } from "@prisma/client";
 
-import { hasIssuedPrimaryXeroInvoice, hasCapturedPayment } from "@/lib/booking-payment-state";
-import {
-  rebaseDivergesFromIssuedInvoice,
-  type BookingPriceRebase,
-} from "@/lib/booking-review-price-rebase";
+import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { calculateModificationChangeFee } from "@/lib/booking-modify-plan";
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import { censusBookingMoneyReconciliation } from "@/lib/booking-money-reconciliation-store";
@@ -26,7 +22,6 @@ import type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolu
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { prisma } from "@/lib/prisma";
 import { withReadOnlySnapshot } from "@/lib/read-only-snapshot";
-import { recordReviewClosurePricing } from "@/lib/stored-night-price-repair-store";
 import { rerunnableOperationWhere } from "@/lib/xero-active-operation-statuses";
 import type { BookingJournalContext } from "@/lib/member-money/doors";
 import type { LedgerNightValueCensus } from "@/lib/ledger-night-value-census";
@@ -45,13 +40,14 @@ import {
   type OpenEditReviewDecision,
   type OpenEditReviewInput,
 } from "@/lib/edit-review-cleanup-plan";
+import { editReviewHeadlineRebase, moneyColumns, type HeadlinePassResult } from "@/lib/edit-review-cleanup-headline";
 
 /**
  * Wave B (#4343): settle or close every still-OPEN edit review, and re-base
  * frozen headlines. The owner runs it; nothing here runs itself.
  *
  * Money for an OPEN review goes through `resolveManualRefundTask` only. The
- * headline pass calls `recordReviewClosurePricing` with an empty repair list,
+ * headline pass (`edit-review-cleanup-headline.ts`) calls `recordReviewClosurePricing` with an empty repair list,
  * which is the closure's re-base (`rebaseBookingPriceFromStrands`) and its
  * ledger poster. A second apply finds nothing left to do.
  */
@@ -87,29 +83,6 @@ export type CleanupGate = {
   xeroOutstandingOrFailed: number;
 };
 
-export type HeadlinePassResult =
-  | { kind: "unchanged"; bookingId: string; before: CleanupMoneyColumns }
-  | {
-      kind: "declined";
-      bookingId: string;
-      before: CleanupMoneyColumns;
-      message: string;
-    }
-  | {
-      kind: "raced";
-      bookingId: string;
-      message: string;
-    }
-  | {
-      kind: "rebased";
-      bookingId: string;
-      before: CleanupMoneyColumns;
-      after: CleanupMoneyColumns;
-      invoiceDiverged: boolean;
-      /** False when the closure poster wrote no line for the new history row. */
-      ledgerPosted: boolean;
-    };
-
 export type LeftOpenRow = {
   bookingId: string;
   taskId: string;
@@ -130,25 +103,6 @@ export type EditReviewCleanupReport = {
   ledgerNightValues: LedgerNightValueCensus;
   gate: CleanupGate;
 };
-
-const HEADLINE_NOTE =
-  "Wave B cleanup: re-set the booking's headline to the sum of its guests' stored totals. No money was moved.";
-
-class HeadlineDryRun extends Error {
-  constructor(readonly result: HeadlinePassResult) {
-    super("edit-review headline dry-run");
-    this.name = "HeadlineDryRun";
-  }
-}
-
-function moneyColumns(booking: CleanupMoneyColumns): CleanupMoneyColumns {
-  return {
-    totalPriceCents: booking.totalPriceCents,
-    discountCents: booking.discountCents,
-    promoAdjustmentCents: booking.promoAdjustmentCents,
-    finalPriceCents: booking.finalPriceCents,
-  };
-}
 
 /** One loaded review as the pure decision sees it. */
 export function toOpenEditReviewInput(row: LoadedEditReview): OpenEditReviewInput {
@@ -459,168 +413,6 @@ export async function applyOpenEditReviews({
 function anchorTaskId(rows: readonly LoadedEditReview[], bookingId: string): string | null {
   const reviews = rows.filter((row) => row.bookingId === bookingId && row.status !== "OPEN");
   return reviews.length === 0 ? null : reviews[reviews.length - 1]!.id;
-}
-
-/**
- * Re-base one frozen headline. `commit: false` runs the same writes and rolls
- * them back, so the report shows the figures apply would store.
- *
- * `editReviewHeadlineRebase#1`: global settlement key first (`INV-LOCK-001`).
- * The booking is re-read under that key. The closure poster compare-and-sets
- * the four money columns; a miss rolls this booking back.
- */
-export async function editReviewHeadlineRebase({
-  bookingId,
-  anchorTaskId: taskId,
-  actingMemberId,
-  todayAtClub,
-  format,
-  journal,
-  commit,
-  client = prisma,
-}: {
-  bookingId: string;
-  anchorTaskId: string;
-  actingMemberId: string;
-  todayAtClub: CalendarDate;
-  format: ClubFormat;
-  journal: BookingJournalContext;
-  commit: boolean;
-  client?: Pick<PrismaClient, "$transaction">;
-}): Promise<HeadlinePassResult> {
-  try {
-    return await client.$transaction(async (tx) => {
-      // editReviewHeadlineRebase#1 (INV-LOCK-001): settlement-money authority,
-      // taken first. No lodge key: this pass does not admit capacity.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-      const booking = await tx.booking.findUnique({
-        where: { id: bookingId },
-        select: {
-          id: true,
-          status: true,
-          lodgeId: true,
-          memberId: true,
-          totalPriceCents: true,
-          discountCents: true,
-          promoAdjustmentCents: true,
-          finalPriceCents: true,
-          guests: { select: { id: true, priceCents: true } },
-          payment: { select: { id: true, xeroInvoiceId: true } },
-        },
-      });
-      if (booking === null) {
-        return { kind: "raced", bookingId, message: "The booking was not there when the re-base ran." };
-      }
-      const reviews = await tx.manualRefundTask.findMany({
-        where: { bookingId, kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW },
-        select: { id: true, bookingId: true, status: true },
-      });
-      const before = moneyColumns(booking);
-      const candidate: CleanupBooking = {
-        ...before,
-        id: booking.id,
-        guests: booking.guests.map((guest) => ({ id: guest.id, priceCents: guest.priceCents })),
-      };
-      if (!isFrozenEditReviewHeadline(candidate, reviews)) {
-        return { kind: "unchanged", bookingId, before };
-      }
-      const historyBefore = await tx.bookingModification.count({
-        where: { bookingId, modificationType: "PRICE_REBASE" },
-      });
-      await recordReviewClosurePricing({
-        plans: [],
-        task: {
-          id: taskId,
-          bookingId,
-          booking: { memberId: booking.memberId, lodgeId: booking.lodgeId },
-        },
-        actingMemberId,
-        resolution: "dismissed",
-        note: HEADLINE_NOTE,
-        todayAtClub,
-        hasIssuedXeroInvoice: hasIssuedPrimaryXeroInvoice(booking),
-        paymentLinkRead: booking.payment,
-        settlementRoute: null,
-        settlementAmountCents: null,
-        settlementDirection: null,
-        settleAgainstRebase: null,
-        store: tx,
-        format,
-        journal,
-      });
-      const afterRow = await tx.booking.findUnique({
-        where: { id: bookingId },
-        select: {
-          totalPriceCents: true,
-          discountCents: true,
-          promoAdjustmentCents: true,
-          finalPriceCents: true,
-        },
-      });
-      if (afterRow === null) {
-        return { kind: "raced", bookingId, message: "The booking disappeared during the re-base." };
-      }
-      const after = moneyColumns(afterRow);
-      if (
-        after.totalPriceCents === before.totalPriceCents &&
-        after.discountCents === before.discountCents &&
-        after.promoAdjustmentCents === before.promoAdjustmentCents &&
-        after.finalPriceCents === before.finalPriceCents
-      ) {
-        const declined: HeadlinePassResult = {
-          kind: "declined",
-          bookingId,
-          before,
-          message: "The re-base left the headline as it was.",
-        };
-        if (!commit) throw new HeadlineDryRun(declined);
-        return declined;
-      }
-      const history = await tx.bookingModification.findFirst({
-        where: { bookingId, modificationType: "PRICE_REBASE" },
-        orderBy: { createdAt: "desc" },
-        select: { id: true },
-      });
-      const historyCount = await tx.bookingModification.count({
-        where: { bookingId, modificationType: "PRICE_REBASE" },
-      });
-      const createdId = historyCount > historyBefore ? (history?.id ?? null) : null;
-      const ledgerPosted =
-        createdId !== null &&
-        (await tx.bookingLedgerLine.count({ where: { anchorId: createdId } })) > 0;
-      const rebase: BookingPriceRebase = {
-        previousTotalPriceCents: before.totalPriceCents,
-        previousDiscountCents: before.discountCents,
-        previousPromoAdjustmentCents: before.promoAdjustmentCents,
-        previousFinalPriceCents: before.finalPriceCents,
-        newTotalPriceCents: after.totalPriceCents,
-        newDiscountCents: after.discountCents,
-        newPromoAdjustmentCents: after.promoAdjustmentCents,
-        newFinalPriceCents: after.finalPriceCents,
-        promoRemoved: false,
-      };
-      const rebased: HeadlinePassResult = {
-        kind: "rebased",
-        bookingId,
-        before,
-        after,
-        invoiceDiverged: rebaseDivergesFromIssuedInvoice({
-          rebase,
-          hasIssuedXeroInvoice: hasIssuedPrimaryXeroInvoice(booking),
-          settlement: { issuesXeroDocument: false },
-        }),
-        ledgerPosted,
-      };
-      if (!commit) throw new HeadlineDryRun(rebased);
-      return rebased;
-    });
-  } catch (error) {
-    if (error instanceof HeadlineDryRun) return error.result;
-    if (error instanceof ManualBookingPaymentError) {
-      return { kind: "raced", bookingId, message: error.message };
-    }
-    throw error;
-  }
 }
 
 export async function runEditReviewCleanup({
