@@ -10,7 +10,6 @@ export {
   assertBookingModifiable,
   assertBookingNotQuotePriced,
   BookingModifyReviewJustificationRequiredError,
-  EDIT_DOOR_BOOKING_INCLUDE,
   GUEST_MEMBER_LINK_IN_PROGRESS_MESSAGE,
   GUEST_MEMBER_LINK_MEMBER_WHOLE_LODGE_ONLY_MESSAGE,
   hasOutstandingAdditionalPayment,
@@ -23,7 +22,6 @@ export {
   type BookingModificationSettlementMethod,
   type LoadedBookingForLifecycle,
   type LoadedBookingForModify,
-  type LoadedPromoRedemption,
   type ResolvedTargetDates,
 } from "@/lib/booking-modify-validation";
 export {

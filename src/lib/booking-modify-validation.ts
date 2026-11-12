@@ -263,8 +263,6 @@ export type LoadedBookingForModify = Omit<LoadedBookingForLifecycle, "payment"> 
   payment: Payment | null;
 };
 
-export type LoadedPromoRedemption = LoadedBookingForLifecycle["promoRedemptions"][number];
-
 type BookingGuestNameEditPayment = Pick<
   Payment,
   "status" | "amountCents" | "additionalAmountCents" | "additionalPaymentStatus"

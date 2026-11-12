@@ -22,10 +22,11 @@ import {
 } from "@/lib/booking-modification-settlement";
 import {
   applyLifecycleTransitions,
-  EDIT_DOOR_BOOKING_INCLUDE,
   applyPaymentAdjustments,
   isQuotePricedBooking,
 } from "@/lib/booking-modify";
+// Imported directly, not through the barrel: route tests mock the barrel whole.
+import { EDIT_DOOR_BOOKING_INCLUDE } from "@/lib/booking-modify-validation";
 import { bookingOwner } from "@/lib/booking-owner";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import {

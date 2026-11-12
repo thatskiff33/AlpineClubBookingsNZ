@@ -21,7 +21,6 @@ import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
 import {
   applyChoreCleanup,
-  EDIT_DOOR_BOOKING_INCLUDE,
   applyGuestChanges,
   applyLifecycleTransitions,
   applyPaymentAdjustments,
@@ -46,6 +45,8 @@ import {
   GUEST_MEMBER_LINK_MEMBER_WHOLE_LODGE_ONLY_MESSAGE,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
 } from "@/lib/booking-modify";
+// Imported directly, not through the barrel: route tests mock the barrel whole.
+import { EDIT_DOOR_BOOKING_INCLUDE } from "@/lib/booking-modify-validation";
 // Pure readers of the request, imported from their home rather than the barrel
 // so a test that stubs the barrel's pipeline still reads the request for real.
 import {
