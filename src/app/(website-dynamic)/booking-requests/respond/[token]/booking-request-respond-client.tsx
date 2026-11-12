@@ -86,6 +86,9 @@ function formatQuoteExpiry(value: string, club: BoundClubTime): string {
   }
 }
 
+// Shown on the accepted panel and spoken by the status region (#4949).
+const QUOTE_ACCEPTED = "Your quote has been accepted.";
+
 export function BookingRequestRespondClient({ token }: { token: string }) {
   const format = useClubFormat();
   /*
@@ -207,7 +210,7 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
           declineReason: null,
           declinedAt: null,
         } : current);
-        setAnnouncement("Your quote has been accepted.");
+        setAnnouncement(QUOTE_ACCEPTED);
       } else {
         const outcome =
           data.outcome === "cancelled"
@@ -269,7 +272,7 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
             <div className="flex gap-3 text-success-11">
               <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
               <div>
-                <p className="font-medium">{context.declinedAfterAcceptance ? "The booking team could not approve this request." : "Your quote has been accepted."}</p>
+                <p className="font-medium">{context.declinedAfterAcceptance ? "The booking team could not approve this request." : QUOTE_ACCEPTED}</p>
                 <p className="text-sm text-muted-foreground">{context.declinedAfterAcceptance ? context.declineReason || "Please contact the club if you would like to discuss other dates." : "The booking team will review it before confirming your stay. Your places remain held while they review it."}</p>
                 {context.declinedAfterAcceptance && context.declinedAt ? (
                   <p className="text-sm text-muted-foreground">Declined {formatQuoteExpiry(context.declinedAt, clubTime)}</p>
