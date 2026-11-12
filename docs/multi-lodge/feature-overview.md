@@ -51,7 +51,10 @@ not to a lodge.
 
 Nothing changes for the member. Multi-lodge is core (ADR-005 — no module
 flag), but with a single lodge no lodge dimension appears in the
-member-facing UI: no selector, no lodge names in emails or screens. The
+member-facing UI: no selector, and no lodge names in emails or booking
+lists. The screens where a member checks or pays for one booking — the
+booking wizard's review step, the booking page and the payment link — are
+the exception: they always name the lodge (#2701, `INV-CAP-039`). The
 Lodges admin page exists (a one-item list with **Add lodge**), but until a
 second active lodge exists members see exactly what a single-lodge club
 always saw. This is the permanent default for upstream and every
@@ -73,6 +76,12 @@ single-lodge fork, not a transition state.
   the booking flow's payment choices and the group screens alike — all
   name the lodge that booking is actually at rather than the club's
   default one.
+- Before paying, the booking page's Stay Details card and the payment
+  link's card name the booking's lodge, and the arrival card is titled
+  with it. My Bookings and the dashboard's Next Stay, draft and Recent
+  Bookings rows show the lodge under each booking's dates
+  (`INV-CAP-039`); a booking still at an archived lodge is labelled even
+  after the club is back to one active lodge.
 - If the committee restricts a lodge (for example, one lodge is
   reserved for a section of the club), ineligible members simply do not
   see it offered. By default every member can book every lodge.

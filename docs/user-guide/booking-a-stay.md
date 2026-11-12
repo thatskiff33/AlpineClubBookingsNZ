@@ -176,7 +176,10 @@ Paying by card versus by internet banking is covered in
 ### After you book: My Bookings
 
 Your bookings live at **My Bookings** (`/bookings`), sortable by start date and
-filterable by status.
+filterable by status. If your club has more than one lodge, each booking shows
+its lodge under the dates, as the dashboard's Next Stay, draft and Recent
+Bookings rows do; in a one-lodge club the lists look as before. The booking's
+own page always names its lodge.
 
 Emails about one of your bookings take you straight to that booking's detail
 page when you are signed in and allowed to open it. If an email is sent to a

@@ -60,7 +60,7 @@ Journey: Fill in personal details and nominators, submit the application, and fo
 
 Screen: `/dashboard`.
 
-Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay. The Lodge Kiosk card offers Open Kiosk and, while the roster module is on, Who's at the lodge.
+Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay. With more than one active lodge, Next Stay, draft and Recent Bookings rows name each booking's lodge (`INV-CAP-039`). The Lodge Kiosk card offers Open Kiosk and, while the roster module is on, Who's at the lodge.
 
 [Guide](user-guide/README.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -76,15 +76,15 @@ Journey: Choose lodge and nights, add guests, review the price and rules, then c
 
 Screen: `/bookings`, `/bookings/[id]`.
 
-Journey: Find a stay and open its detail. Review status, guests and amounts before paying, requesting a change or cancelling. Pending consent appears on the booking for an eligible invited member.
+Journey: Find a stay and open its detail. Review lodge, status, guests and amounts before paying, requesting a change or cancelling. Stay Details always names the lodge; list rows do once a second lodge is active (`INV-CAP-039`). Pending consent appears on the booking for an eligible invited member.
 
 [Guide](user-guide/changing-or-cancelling-a-booking.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Payment and booking outcome
 
-Screen: Booking detail and its payment action.
+Screen: Booking detail and its payment action, or an emailed payment link.
 
-Journey: Open the booking, inspect what is owed and choose an available payment method. Read the resulting status before leaving; bank payments can remain pending while settlement is checked.
+Journey: Open the booking, check the lodge it names (`INV-CAP-039`), inspect what is owed and choose an available payment method. Read the resulting status before leaving; bank payments can remain pending while settlement is checked.
 
 [Guide](user-guide/paying-for-your-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

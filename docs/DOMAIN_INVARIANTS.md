@@ -175,6 +175,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-DATE-017` | Two check-out boundaries coexist: completion `<` today, queues `<=` today |
 | `INV-DATE-018` | Base Reports uses lodge nights, one positive cohort, cents-exact allocation |
 | `INV-CAP-001` | Capacity is per lodge; no path may sum beds across lodges |
+| `INV-CAP-039` | Screens reviewing or paying for a booking name its own lodge |
 | `INV-CAP-002` | `lodgeId` is NOT NULL on six tables via a default-lodge column default |
 | `INV-CAP-003` | `getLodgeCapacityStatus` resolves capacity; an explicit capacity caps beds |
 | `INV-CAP-004` | `capacityHoldingBookingFilter()` decides which bookings consume beds |
