@@ -54,10 +54,8 @@ import {
   requestedPromoCodeChange,
 } from "@/lib/booking-modify-promo-request";
 import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
-import {
-  requestCarriesOtherLodgeElection,
-  requestIsOtherLodgeRateElectionOnly,
-} from "@/lib/booking-other-lodge-rate";
+import { requestIsOtherLodgeRateElectionOnly } from "@/lib/booking-other-lodge-rate";
+import { classifyModificationRequest } from "@/lib/booking-edit-price-class";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import {
   assertNoPendingEditFinancialReview,
@@ -1102,28 +1100,14 @@ export async function modifyBookingBatch({
     // Identity-only requests (guest name fixes, nothing structural) never
     // reprice (#1099), so they are allowed on quote-priced bookings: the
     // negotiated basis cannot be disturbed by an edit that skips the pricing
-    // engine entirely.
-    const requestedStructuralChange = Boolean(
-      input.checkIn ||
-        input.checkOut ||
-        input.addGuests?.length ||
-        input.removeGuestIds?.length ||
-        input.guestStayRanges?.length ||
-        // #2337: a link re-rates a guest, so it is structural — it must never take
-        // the identity-only price-preserving echo (that would skip the re-rate).
-        input.linkGuestToMember?.length ||
-        requestChangesPromoCodes(input),
-    );
-    const requestIsIdentityOnly =
-      !requestedStructuralChange && Boolean(input.guestUpdates?.length);
-    // #2266: a credit election with nothing structural is price-preserving by
-    // construction — it only writes Booking.creditElectionCents (#2265) — so
-    // it must not run the pricing engine (a season-rate change would silently
-    // reprice an untouched booking) and is safe on quote-priced bookings.
-    const requestIsCreditElectionOnly =
-      !requestedStructuralChange &&
-      !input.guestUpdates?.length &&
-      input.applyCreditCents !== undefined;
+    // engine entirely. #2266: a credit election with nothing structural is
+    // price-preserving by construction — it only writes
+    // Booking.creditElectionCents (#2265). ALP-573: the classification is the
+    // one `modify-quote` makes, from the same function, so the preview and the
+    // save cannot disagree about whether an edit moves money.
+    const priceClass = classifyModificationRequest(input);
+    const requestIsIdentityOnly = priceClass.identityOnly;
+    const requestIsCreditElectionOnly = priceClass.creditElectionOnly;
     // #2337: the placeholder→member link. The synchronous gate (admin,
     // whole-lodge, placeholder-only) runs inside `prepareGuestPlan`; the
     // member-ORIGIN fence runs here, where the DB is in hand. A SCHOOL whole-lodge
@@ -1338,13 +1322,19 @@ export async function modifyBookingBatch({
         ];
       }),
     );
-    const identityOnlyModification =
-      guestNameUpdates.length > 0 && !requestedStructuralChange;
+    // ALP-573: the REQUEST's classification, not "did a name actually change".
+    // This read `guestNameUpdates.length > 0`, so a rename resending the stored
+    // names was identity-only to the preview (which echoed the stored money)
+    // and structural here (which repriced at today's rates) — the save settled
+    // a difference the member was never shown.
+    const identityOnlyModification = requestIsIdentityOnly;
     // A fully-paid, non-quoted booking whose name edit cleared the typo guard
     // (#1386): flag it so the audit row is queryable and the price-preserving
-    // path is provably taken (it never reprices or rechecks capacity).
+    // path is provably taken (it never reprices or rechecks capacity). A
+    // rename that changed no name corrected no typo.
     const paidNameTypoFix =
       identityOnlyModification &&
+      guestNameUpdates.length > 0 &&
       !quotePriced &&
       isBookingFullyPaidForGuestNameEdits(booking);
 
@@ -1362,15 +1352,11 @@ export async function modifyBookingBatch({
     // which writes the per-guest flag from the election while leaving every
     // locked night exactly as it was — the officer sees the tick land and the
     // total never moves, and the row then reads "(Other Club Member)" beside a
-    // fee that says otherwise. Same reasoning as `linkGuestToMember` in
-    // `requestedStructuralChange` above: a re-rate has to reach the rate
-    // resolver. Kept out HERE rather than added to `requestedStructuralChange`
-    // deliberately, so the quote-priced exemptions above keep the meaning
-    // `modify-quote` gives them and the preview and the save still agree about
-    // what is allowed.
-    const pricePreservingModification =
-      (identityOnlyModification || requestIsCreditElectionOnly) &&
-      !requestCarriesOtherLodgeElection(input);
+    // fee that says otherwise. Same reasoning as `linkGuestToMember`: a re-rate
+    // has to reach the rate resolver. `classifyModificationRequest` folds it in
+    // at `pricePreserving` only, so the quote-priced exemptions above keep the
+    // meaning `modify-quote` gives them.
+    const pricePreservingModification = priceClass.pricePreserving;
 
     // #3032 (epic #2797): refuse a second money-affecting edit while this
     // booking's last one is still under financial review. Taken here - under both
@@ -1512,10 +1498,21 @@ export async function modifyBookingBatch({
     // #4317: every edit is priced (`INV-MOD-028`), so the booking's new total
     // is always the pricing pass's.
     const newTotalPriceCents = pricingResult.newTotalPriceCents;
-    const newFinalPriceCents = bookingFinalPriceCents({
-      totalPriceCents: newTotalPriceCents,
-      promoAdjustmentCents: promo.newPromoAdjustmentCents,
-    });
+    // ALP-573: EXCEPT the final price of a price-preserving edit, which is the
+    // stored one, exactly as `modify-quote`'s echo reports it. The echo hands
+    // back the stored total and promotion, so re-deriving here is a no-op on
+    // a coherent row — and on a row whose stored final price has drifted from
+    // its total plus promotion (a data fault), it would settle that drift as
+    // the "difference" of a name fix the member was shown as $0. A name fix
+    // or a credit election moves no money; repairing a damaged row is an
+    // audited decision of its own (#2745), not a side effect of a spelling
+    // correction.
+    const newFinalPriceCents = pricePreservingModification
+      ? booking.finalPriceCents
+      : bookingFinalPriceCents({
+          totalPriceCents: newTotalPriceCents,
+          promoAdjustmentCents: promo.newPromoAdjustmentCents,
+        });
     const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
 
     // #3750: the owner's fee rule for a finished-stay correction, decided from

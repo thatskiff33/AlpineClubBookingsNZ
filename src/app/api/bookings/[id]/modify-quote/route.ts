@@ -176,6 +176,7 @@ import { getMemberCreditBalance } from "@/lib/member-credit";
 import { previewPaidReductionCreditGiveBackCents } from "@/lib/booking-modify-credit-give-back";
 import logger from "@/lib/logger";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { classifyModificationRequest } from "@/lib/booking-edit-price-class";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
@@ -556,32 +557,29 @@ export async function POST(
   }
   // Quote-priced bookings are blocked at preview time too (#1032) — except
   // for identity-only requests (#1099), which never touch the pricing engine
-  // and therefore cannot disturb the negotiated basis.
-  const requestedStructuralChange = Boolean(
-    newCheckInStr ||
-      newCheckOutStr ||
-      addGuests?.length ||
-      removeGuestIds?.length ||
-      guestStayRanges?.length ||
-      // #2337: a link re-rates a guest — structural, so the preview prices it
-      // rather than echoing the stored totals.
-      linkGuestToMember?.length ||
-      // The other-lodge rate election re-rates guests for the same reason.
-      requestedOtherLodgeId !== undefined ||
-      otherLodgeMemberGuestIds !== undefined ||
-      promoChangeRequested,
-  );
-  const requestIsIdentityOnly =
-    !requestedStructuralChange && Boolean(guestUpdates?.length);
-  // #2266: a credit election with nothing structural is price-preserving by the
-  // same argument as an identity-only name fix — the apply route only writes
-  // Booking.creditElectionCents (#2265) and touches neither price nor capacity,
-  // so the preview must echo the stored money rather than reprice at current
-  // rates (a season-rate change would otherwise surface a phantom price diff).
-  const requestIsCreditElectionOnly =
-    !requestedStructuralChange &&
-    !guestUpdates?.length &&
-    applyCreditCents !== undefined;
+  // and therefore cannot disturb the negotiated basis. #2266: a credit election
+  // with nothing structural is price-preserving by the same argument — the
+  // apply route only writes Booking.creditElectionCents (#2265) — so the
+  // preview echoes the stored money rather than reprice at current rates.
+  //
+  // ALP-573: the classification is `modifyBookingBatch`'s own, from the same
+  // function. This route used to spell it out separately, and a rename that
+  // resent the stored names was identity-only here and structural there: the
+  // preview echoed $0 and the save repriced.
+  const priceClass = classifyModificationRequest({
+    checkIn: newCheckInStr,
+    checkOut: newCheckOutStr,
+    addGuests,
+    removeGuestIds,
+    guestStayRanges,
+    linkGuestToMember,
+    otherLodgeId: requestedOtherLodgeId,
+    otherLodgeMemberGuestIds,
+    ...promoRequest,
+    guestUpdates,
+    applyCreditCents,
+  });
+  const requestIsIdentityOnly = priceClass.identityOnly;
   // #2337: mirror the apply path's member-link gate exactly. The member-ORIGIN
   // fence keeps a SCHOOL whole-lodge booking's students out of the re-rate, and a
   // member-whole-lodge link-only request is exempt from the quote-priced block
@@ -638,7 +636,7 @@ export async function POST(
   const quotePriced = await isQuotePricedBooking(prisma, bookingId);
   if (
     !requestIsIdentityOnly &&
-    !requestIsCreditElectionOnly &&
+    !priceClass.creditElectionOnly &&
     !requestIsMemberLinkExempt &&
     !requestIsOtherLodgeRateExempt &&
     quotePriced
@@ -660,19 +658,14 @@ export async function POST(
    * exemptions exist to prevent (owner decision, 21 Aug 2026: "two
    * hand-maintained lists drift; one cannot").
    *
-   * THE PREDICATE IS THE SAME ONE, arrived at through this route's own names.
-   * `requestIsIdentityOnly` already requires `!requestedStructuralChange`, and
-   * THIS route's `requestedStructuralChange` includes the other-lodge fields — so
-   * `requestIsIdentityOnly || requestIsCreditElectionOnly` here is exactly the
-   * save path's `pricePreservingModification`. The pair is checked by the fence
-   * tests on both sides rather than by agreement between two comments.
+   * THE PREDICATE IS THE SAME ONE: `priceClass.pricePreserving` is the save
+   * path's `pricePreservingModification`, from `classifyModificationRequest`.
    *
    * Read on the module client rather than a transaction because a preview opens
    * none and writes nothing: a race with a completing review costs a stale quote,
    * which the save then refuses under its own locks.
    */
-  const previewIsPricePreserving =
-    requestIsIdentityOnly || requestIsCreditElectionOnly;
+  const previewIsPricePreserving = priceClass.pricePreserving;
   if (!previewIsPricePreserving) {
     const pendingReview = await findOpenEditFinancialReviewTask(
       bookingId,
@@ -852,8 +845,10 @@ export async function POST(
   // Identity-only preview (#1099): a name fix never reprices, so the quote is
   // the stored state with zero deltas — no pricing engine, no capacity check,
   // safe for quoted and legacy bookings alike. #2266 routes a credit-only
-  // election through the same echo for the same reason.
-  if (requestIsIdentityOnly || requestIsCreditElectionOnly) {
+  // election through the same echo for the same reason. The save holds the
+  // stored final price on exactly these edits (ALP-573), so the zeros below
+  // are what it settles.
+  if (previewIsPricePreserving) {
     const refused = await dependantIdentityResponse([], new Set());
     if (refused) return refused;
     return NextResponse.json({
