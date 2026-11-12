@@ -1,3 +1,5 @@
+import type { ExhaustedEmailFailureRecovery } from "@/lib/email-failure-review";
+
 export interface HealthCheck {
   status: "ok" | "error";
   latencyMs: number;
@@ -95,6 +97,10 @@ interface ExhaustedEmailFailure {
   lastAttemptAt: string;
   errorMessage: string | null;
   createdAt: string;
+  bookingId: string | null;
+  bookingExists: boolean;
+  bookingRecipientMemberId: string | null;
+  recovery: ExhaustedEmailFailureRecovery;
   reviewedAt: string | null;
   reviewedById: string | null;
   reviewNote: string | null;
@@ -154,6 +160,9 @@ export interface HealthData {
       activeCount: number;
       reviewedCount: number;
       scannedCount: number;
+      totalExhaustedCount: number;
+      scanLimit: number;
+      scanCapped: boolean;
       maxAttempts: number;
     };
     failures: ExhaustedEmailFailure[];

@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Mail, CheckCircle } from "lucide-react";
+import Link from "next/link";
+import { Mail, CheckCircle, RotateCcw } from "lucide-react";
 import { useConfirm } from "@/components/confirm-dialog";
 import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
 import {
@@ -9,8 +10,58 @@ import {
   useAdminAreaEditAccess,
 } from "@/hooks/use-admin-area-edit-access";
 import { useClubTime } from "@/components/club-time-provider";
+import { adminHref } from "@/lib/admin-hubs";
+import { buildBookingDetailPath } from "@/lib/booking-email-contract";
 import { StatusBadge, formatDate } from "./shared";
 import type { HealthData } from "./types";
+
+type ExhaustedEmailFailure = HealthData["emailFailures"]["failures"][number];
+
+/**
+ * Why a row without **Try again** cannot be resent from this screen, and where
+ * to act instead. Only rows that still hold a copy of their message can be
+ * handed back to the retry job (#4963).
+ */
+const NO_RESEND_GUIDANCE: Record<
+  Exclude<ExhaustedEmailFailure["recovery"], "retry">,
+  string
+> = {
+  token_reissue:
+    "No copy of this message was kept because it held a single-use link, so it can't be resent from here. Reissue it from Token Email Recovery above.",
+  sensitive:
+    "No copy of this message was kept because it held a sign-in link, door code or payment link, so it can't be resent from here. Contact the member directly, using the booking or member link where one is shown.",
+  retired:
+    "No copy of this message was kept (it was retired for safety, or its recipient was hidden in the log), so it can't be resent from here. Follow the failure reason, and contact the member directly if they still need it.",
+};
+
+function EmailFailureLinks({ failure }: { failure: ExhaustedEmailFailure }) {
+  if (!failure.bookingId && !failure.bookingRecipientMemberId) return null;
+
+  return (
+    <p className="col-span-full flex flex-wrap gap-x-4 gap-y-1 text-xs">
+      {failure.bookingId ? (
+        failure.bookingExists ? (
+          <Link
+            href={buildBookingDetailPath(failure.bookingId)}
+            className="text-primary hover:underline"
+          >
+            Open booking
+          </Link>
+        ) : (
+          <span className="text-muted-foreground">Booking no longer exists</span>
+        )
+      ) : null}
+      {failure.bookingRecipientMemberId ? (
+        <Link
+          href={adminHref("member-detail", { id: failure.bookingRecipientMemberId })}
+          className="text-primary hover:underline"
+        >
+          Open member
+        </Link>
+      ) : null}
+    </p>
+  );
+}
 
 export function EmailDeliverabilitySection({
   emailDeliverability,
@@ -30,11 +81,12 @@ export function EmailDeliverabilitySection({
   // Bounce, failure and escalation stamps are real INSTANTS, shown in the
   // club's persisted zone (CT-4, #2870; INV-CONFIG-002).
   const clubTime = useClubTime();
-  // Clear-suppression, reissue, and archive write support-area email routes; a
+  // Clear-suppression, reissue, retry and archive write support-area email routes; a
   // view-only support admin browses deliverability but cannot act (#1997).
   const canEdit = useAdminAreaEditAccess("support");
   const [clearingSuppressionId, setClearingSuppressionId] = useState<string | null>(null);
   const [reviewingEmailFailureId, setReviewingEmailFailureId] = useState<string | null>(null);
+  const [requeueingEmailFailureId, setRequeueingEmailFailureId] = useState<string | null>(null);
   const [reissuingTokenEmailId, setReissuingTokenEmailId] = useState<string | null>(null);
   const { confirm, prompt, confirmDialog } = useConfirm();
 
@@ -88,6 +140,36 @@ export function EmailDeliverabilitySection({
     }
   }
 
+  async function requeueEmailFailure(id: string, to: string) {
+    if (!canEdit) return;
+    if (
+      !(await confirm({
+        title: `Try sending the email to ${to} again?`,
+        description:
+          "It is handed back to the email retry job and goes out on its next run, usually within 30 minutes. The job checks the recipient, the suppression list and the booking's No emails setting again before it sends.",
+        confirmLabel: "Try again",
+      }))
+    ) {
+      return;
+    }
+
+    setRequeueingEmailFailureId(id);
+    try {
+      const res = await fetch(`/api/admin/email-failures/${id}/retry`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to hand the email back to the retry job");
+      }
+      await onRefresh();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setRequeueingEmailFailureId(null);
+    }
+  }
+
   async function reissueTokenEmail(id: string, to: string) {
     if (!canEdit) return;
     if (
@@ -125,7 +207,7 @@ export function EmailDeliverabilitySection({
       {!canEdit && (
         <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view email deliverability but cannot clear
-          suppressions, reissue, or archive failed emails.
+          suppressions, reissue, retry, or archive failed emails.
         </AdminViewOnlyNotice>
       )}
       {/* Email Deliverability */}
@@ -294,7 +376,13 @@ export function EmailDeliverabilitySection({
           <Mail className="h-5 w-5" />
           Exhausted Email Failures
         </h2>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-4">
+          <div className="bg-card border rounded-lg p-4">
+            <p className="text-sm text-muted-foreground">Total exhausted</p>
+            <p className="text-2xl font-bold text-foreground">
+              {emailFailures.summary.totalExhaustedCount}
+            </p>
+          </div>
           <div className="bg-card border rounded-lg p-4">
             <p className="text-sm text-muted-foreground">Active failures</p>
             <p className="text-2xl font-bold text-danger-11">
@@ -320,6 +408,13 @@ export function EmailDeliverabilitySection({
             </p>
           </div>
         </div>
+        {emailFailures.summary.scanCapped ? (
+          <p role="note" className="mb-4 text-sm text-muted-foreground">
+            This list shows only the newest {emailFailures.summary.scanLimit} of{" "}
+            {emailFailures.summary.totalExhaustedCount} exhausted failures. Older
+            failures are not included in the active and archived counts.
+          </p>
+        ) : null}
 
         {emailFailures.failures.length === 0 ? (
           <div className="bg-card border rounded-lg p-4 text-muted-foreground">
@@ -327,8 +422,8 @@ export function EmailDeliverabilitySection({
           </div>
         ) : (
           <div className="bg-card border rounded-lg overflow-x-auto">
-            <div className="min-w-[900px]">
-              <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.5fr)_140px_90px_140px_88px] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground bg-muted border-b">
+            <div className="min-w-[1000px]">
+              <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.5fr)_140px_90px_140px_184px] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground bg-muted border-b">
                 <span>Recipient</span>
                 <span>Subject</span>
                 <span>Template</span>
@@ -342,7 +437,7 @@ export function EmailDeliverabilitySection({
                     key={failure.id}
                     role="group"
                     aria-label={`Email failure for ${failure.to}`}
-                    className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.5fr)_140px_90px_140px_88px] gap-3 px-4 py-3 text-sm items-center"
+                    className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.5fr)_140px_90px_140px_184px] gap-3 px-4 py-3 text-sm items-center"
                   >
                     <span className="font-medium text-foreground truncate">
                       {failure.to}
@@ -357,15 +452,34 @@ export function EmailDeliverabilitySection({
                     <span className="text-muted-foreground">
                       {formatDate(clubTime, failure.lastAttemptAt)}
                     </span>
-                    <button
-                      onClick={() => archiveEmailFailure(failure.id, failure.to)}
-                      disabled={reviewingEmailFailureId === failure.id || !canEdit}
-                      title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
-                      className="inline-flex justify-self-end items-center gap-1.5 px-2.5 py-1.5 text-xs bg-muted hover:bg-accent rounded-md transition-colors disabled:opacity-50"
-                    >
-                      <CheckCircle className="h-3.5 w-3.5" />
-                      Archive
-                    </button>
+                    <div className="flex justify-self-end items-center gap-2">
+                      {failure.recovery === "retry" ? (
+                        <button
+                          onClick={() => requeueEmailFailure(failure.id, failure.to)}
+                          disabled={requeueingEmailFailureId === failure.id || !canEdit}
+                          title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-muted hover:bg-accent rounded-md transition-colors disabled:opacity-50"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                          Try again
+                        </button>
+                      ) : null}
+                      <button
+                        onClick={() => archiveEmailFailure(failure.id, failure.to)}
+                        disabled={reviewingEmailFailureId === failure.id || !canEdit}
+                        title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-muted hover:bg-accent rounded-md transition-colors disabled:opacity-50"
+                      >
+                        <CheckCircle className="h-3.5 w-3.5" />
+                        Archive
+                      </button>
+                    </div>
+                    <EmailFailureLinks failure={failure} />
+                    {failure.recovery !== "retry" ? (
+                      <p className="col-span-full text-xs text-muted-foreground">
+                        {NO_RESEND_GUIDANCE[failure.recovery]}
+                      </p>
+                    ) : null}
                     {failure.errorMessage ? (
                       <p className="col-span-full text-xs text-muted-foreground">
                         <span className="font-medium text-foreground">
