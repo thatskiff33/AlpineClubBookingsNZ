@@ -38,6 +38,7 @@ import {
   SameOwnerCoverageOverrideRequiredError,
 } from "@/lib/adult-member-hosting-same-owner";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 /**
  * #2526 — the Booking Officer's DECISION endpoint for a booking-policy exception
@@ -359,6 +360,8 @@ export async function PATCH(
   const { id } = await params;
 
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await req.json();
   } catch {

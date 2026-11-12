@@ -278,6 +278,10 @@ export default function ReportsPage() {
       setData(json);
     } catch (err) {
       if (seq !== fetchSeq.current) return;
+      // The refused query's message replaces the figures, rather than sitting
+      // above a previous range's (#4937: a range over the API's limit is the
+      // common case, and the inputs already show the new dates).
+      setData(null);
       setError(err instanceof Error ? err.message : "Failed to fetch reports");
     } finally {
       if (seq === fetchSeq.current) setLoading(false);
@@ -539,7 +543,7 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      {error ? <div className="rounded-lg bg-danger-3 p-4 text-danger-11">{error}</div> : null}
+      {error ? <div role="alert" className="rounded-lg bg-danger-3 p-4 text-danger-11">{error}</div> : null}
 
       {data ? (
         <div ref={reportRef} className="reports-print-root space-y-6 print:space-y-4">

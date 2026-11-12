@@ -6,6 +6,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import { CardRefundPaidTwiceError, resolveCardRefundPaidTwice } from "@/lib/card-refund-paid-twice";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 /** A confirmed body with the treasurer's note on how it was sorted out, and the card figure they saw. */
 const bodySchema = z
@@ -40,6 +41,8 @@ export async function POST(
   const { id } = await params;
 
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await request.json();
   } catch {
