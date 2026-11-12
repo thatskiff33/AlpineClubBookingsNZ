@@ -20,6 +20,11 @@
   not go unnoticed. The member's own downloads are now recorded in their
   activity as well.
 
+  Records filed by an address shared with another member are withheld for
+  manual review, including for a member who can sign in. The file includes the
+  person's induction signer assignments, sign-offs and guest chore duties.
+  Activity follows the same subject and visibility rules as their own timeline.
+
   The starter privacy policy's access section is updated to match. A club whose
   policy still has the original starter text gets the new wording; a policy the
   club has edited is left alone. The personal-data retention guide has a new

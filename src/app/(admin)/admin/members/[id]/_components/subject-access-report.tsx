@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import type { SubjectAccessSubject } from "@/lib/subject-access-export";
 import { Download } from "lucide-react";
 
 import { fetchWithRecentAuth } from "@/components/confirm-its-you";
@@ -14,7 +15,7 @@ import { saveResponseAsFile } from "@/lib/save-response-as-file";
 
 const REPORT_PATH = "/api/admin/members/subject-access";
 
-type Lookup = { memberId: string } | { email: string } | { guestId: string };
+type Lookup = SubjectAccessSubject;
 
 type GuestMatch = {
   id: string;
@@ -22,8 +23,6 @@ type GuestMatch = {
   /** Lodge nights as `YYYY-MM-DD`. */
   stayStart: string;
   stayEnd: string;
-  lodge: string;
-  bookedBy: string | null;
 };
 
 /**
@@ -158,9 +157,7 @@ export function SubjectAccessReport({ memberId, className }: { memberId: string;
                     <span className="font-medium">{guest.name}</span>
                     {" · "}
                     {formatStayDateOrNull(guest.stayStart, format) ?? guest.stayStart} to{" "}
-                    {formatStayDateOrNull(guest.stayEnd, format) ?? guest.stayEnd},{" "}
-                    {guest.lodge}
-                    {guest.bookedBy && <> · booked by {guest.bookedBy}</>}
+                    {formatStayDateOrNull(guest.stayEnd, format) ?? guest.stayEnd}
                   </span>
                   <Button
                     variant="outline"

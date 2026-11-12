@@ -11,6 +11,7 @@
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { stripComments } from "./support/strip-comments";
 import { describe, expect, it } from "vitest";
 
 import { PRIVACY_RETENTION_CLASSIFICATION } from "@/lib/privacy-retention-classification";
@@ -35,12 +36,12 @@ function coverageGaps(coverage: Record<string, unknown>) {
 }
 
 const builderSource = ["src/lib/subject-access-export.ts", "src/lib/subject-access-export-sections.ts"]
-  .map((file) => readFileSync(path.join(process.cwd(), file), "utf8"))
+  .map((file) => stripComments(readFileSync(path.join(process.cwd(), file), "utf8")))
   .join("\n");
-const additionalSource = readFileSync(
+const additionalSource = stripComments(readFileSync(
   path.join(process.cwd(), "src/lib/subject-access-export-additional.ts"),
   "utf8",
-);
+));
 
 describe("subject access export coverage census", () => {
   it("places exactly the models the privacy-retention classification marks personal", () => {

@@ -898,8 +898,7 @@ differ. Decided on
   prices. Dietary values follow `INV-PRIV-022`.
 - **An address is a key only when the subject owns it.** Records filed by email
   (email log, applications, booking requests) are withheld, and the file says
-  so, when the address belongs to another member record too and the subject is
-  not its login holder.
+  so, when the address belongs to another member record too.
 - **Nothing is cut silently.** Every activity entry the subject may see is
   read, with no ceiling, and `auditLogTotal` states the count.
 - **The report is Full Admin only**, re-checked against the database, behind

@@ -50,7 +50,7 @@ describe("subject access guest finder", () => {
     expect(args.take).toBe(20);
   });
 
-  it("returns the row id with its stay, lodge and booker, and nothing else", async () => {
+  it("returns the row id with its name and stay dates, and nothing else", async () => {
     mocks.guestFindMany.mockResolvedValue([{
       id: "g-1", firstName: "Ana", lastName: "Smith",
       stayStart: new Date("2026-08-01T00:00:00.000Z"), stayEnd: new Date("2026-08-03T00:00:00.000Z"),
@@ -58,9 +58,9 @@ describe("subject access guest finder", () => {
         organisation: { name: "Valley School" } },
     }]);
     const body = await (await get("name=Ana")).json();
+    expect(mocks.guestFindMany.mock.calls[0]![0].select).not.toHaveProperty("booking");
     expect(body).toEqual({ guests: [{
-      id: "g-1", name: "Ana Smith", stayStart: "2026-08-01", stayEnd: "2026-08-03", lodge: "Top Hut",
-      bookedBy: "Valley School",
+      id: "g-1", name: "Ana Smith", stayStart: "2026-08-01", stayEnd: "2026-08-03",
     }] });
   });
 });

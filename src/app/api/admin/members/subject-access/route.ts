@@ -23,7 +23,7 @@ import logger from "@/lib/logger";
 
 const FULL_ADMIN_REQUIRED = { error: "Only a Full Admin can produce a subject access report." };
 
-type Lookup = { memberId: string } | { email: string } | { guestId: string };
+type Lookup = SubjectAccessSubject;
 
 function readLookup(params: URLSearchParams): Lookup | null {
   const memberId = params.get("memberId")?.trim();

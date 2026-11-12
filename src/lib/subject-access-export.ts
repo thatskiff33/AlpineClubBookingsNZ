@@ -5,6 +5,7 @@ import { formatDateOnly } from "@/lib/date-only";
 import { clubTime } from "@/lib/club-time/server";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { seasonSelectLabel } from "@/lib/season-label";
+import { buildMemberVisibleAuditLogWhere } from "@/lib/audit-query";
 import { readDeclaredMemberText } from "@/lib/audit-member-disclosure";
 import { readSubjectAccessGuestDietary, readMemberDietaryRequirements, readOwnBookingGuestDietaryForExport, type DietaryAccessGrant } from "@/lib/member-dietary";
 import { buildSubjectAccessSections } from "@/lib/subject-access-export-sections";
@@ -43,6 +44,7 @@ export async function buildSubjectAccessExport(
       subjectKind: "non-member" as const,
       ...EMPTY_MEMBER_RECORDS,
       ...sections,
+      choreAssignments: "guestId" in subject ? await readGuestChores({ id: subject.guestId, memberId: null }) : [],
       guestDietaryRequirements: await readSubjectAccessGuestDietary(exportGrant),
     };
   }
@@ -208,25 +210,7 @@ async function readMemberRecords(memberId: string, exportGrant: DietaryAccessGra
   });
 
   // Also get chore assignments linked to this member's guest appearances
-  const guestChoreAssignments = await prisma.choreAssignment.findMany({
-    where: {
-      bookingGuest: { memberId: memberId },
-      booking: { deletedAt: null },
-    },
-    select: {
-      date: true,
-      status: true,
-      completedAt: true,
-      createdAt: true,
-      choreTemplate: {
-        select: { name: true, description: true },
-      },
-      bookingGuest: {
-        select: { firstName: true, lastName: true },
-      },
-    },
-    orderBy: { date: "desc" },
-  });
+  const guestChoreAssignments = await readGuestChores({ memberId });
 
   // Subscriptions
   const subscriptions = await prisma.memberSubscription.findMany({
@@ -240,14 +224,9 @@ async function readMemberRecords(memberId: string, exportGrant: DietaryAccessGra
     },
   });
 
-  // Audit log entries where member is actor or target
+  // The same subject-scoped, member-visible activity as their own timeline.
   const auditEntries = await prisma.auditLog.findMany({
-    where: {
-      OR: [
-        { memberId: memberId },
-        { targetId: memberId },
-      ],
-    },
+    where: buildMemberVisibleAuditLogWhere(memberId),
     orderBy: { createdAt: "desc" },
     select: {
       action: true,
@@ -353,17 +332,7 @@ async function readMemberRecords(memberId: string, exportGrant: DietaryAccessGra
         completedAt: c.completedAt ? c.completedAt.toISOString() : null,
         createdAt: c.createdAt.toISOString(),
       })),
-      ...guestChoreAssignments.map((c) => ({
-        date: formatDateOnly(c.date),
-        choreName: c.choreTemplate.name,
-        choreDescription: c.choreTemplate.description ?? null,
-        assignedTo: c.bookingGuest
-          ? `${c.bookingGuest.firstName} ${c.bookingGuest.lastName}`
-          : "You",
-        status: c.status,
-        completedAt: c.completedAt ? c.completedAt.toISOString() : null,
-        createdAt: c.createdAt.toISOString(),
-      })),
+      ...guestChoreAssignments,
     ],
     subscriptions: subscriptions.map((s) => ({
       seasonYear: s.seasonYear,
@@ -423,4 +392,34 @@ function memberExportPromoDiscount(
         }
       : {}),
   };
+}
+
+async function readGuestChores(guestWhere: { memberId: string } | { id: string; memberId: null }) {
+  const rows = await prisma.choreAssignment.findMany({
+    where: {
+      bookingGuest: guestWhere,
+    },
+    select: {
+      date: true,
+      status: true,
+      completedAt: true,
+      createdAt: true,
+      choreTemplate: {
+        select: { name: true, description: true },
+      },
+      bookingGuest: {
+        select: { firstName: true, lastName: true },
+      },
+    },
+    orderBy: { date: "desc" },
+  });
+  return rows.map((c) => ({
+    date: formatDateOnly(c.date),
+    choreName: c.choreTemplate.name,
+    choreDescription: c.choreTemplate.description ?? null,
+    assignedTo: c.bookingGuest ? `${c.bookingGuest.firstName} ${c.bookingGuest.lastName}` : "You",
+    status: c.status,
+    completedAt: c.completedAt ? c.completedAt.toISOString() : null,
+    createdAt: c.createdAt.toISOString(),
+  }));
 }

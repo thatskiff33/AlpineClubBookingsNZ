@@ -65,7 +65,7 @@ The card finds the person three ways:
    dependant, say), the report is refused: open the right member's page instead.
 3. **A non-member guest, by name.** Guest records hold no email address, so a
    guest cannot be found by email. Search their name, pick the stay they
-   describe (dates, lodge and who booked it), and download that row's report.
+   describe (name and dates), and download that row's report.
    Each stay is its own guest record, so a guest who stayed several times needs
    one report per stay.
 
@@ -85,8 +85,8 @@ What the file contains, and what it leaves out:
 - Only the person's own rows. On a booking someone else made, the file shows the
   person's own guest row, never the other guests or the booker.
 - Records filed by email address (email log, applications, booking requests)
-  are withheld when the address belongs to another member record as well and
-  the person is not the one who signs in with it. The file says
+  are withheld when the address belongs to another member record as well. The
+  file says
   `emailKeyedRecords: withheld`; check those records by hand with the address's
   owner in mind.
 - Money is in integer cents, labelled with the currency.

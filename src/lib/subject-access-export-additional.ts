@@ -18,7 +18,7 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     HostingCoverageReevaluation, FinanceSyncRun, AiAssistantUsageEvent, NoticeAudience, NoticeReadReceipt,
     BookingModification, NewBookingPolicyExceptionRequest, MemberLodgeAccess, FamilyGroupJoinRequest,
     DeletionRequest, AdminCreditAdjustmentRequest, CommitteeAssignment, OrganisationContact,
-    SchoolMemberClassification, MemberMoneyObligation,
+    SchoolMemberClassification, MemberMoneyObligation, MemberInductionAssignedSigner, MemberInductionSignOff,
   ] = await Promise.all([
     prisma.membershipSubscriptionChargeCoverage.findMany({ where: own, select: { chargeId: true, releasedAt: true, createdAt: true } }),
     prisma.membershipBillingException.findMany({ where: own, select: { seasonYear: true, code: true, firstSeenAt: true, resolvedAt: true } }),
@@ -57,6 +57,13 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     prisma.organisationContact.findMany({ where: own, select: { createdAt: true, organisation: { select: { name: true } } } }),
     prisma.schoolMemberClassification.findMany({ where: own, select: { decidedAt: true } }),
     prisma.memberMoneyObligation.findMany({ where: own, select: { faceCents: true } }),
+    prisma.memberInductionAssignedSigner.findMany({
+      where: own, select: { inductionId: true, emailSentAt: true, createdAt: true },
+    }),
+    prisma.memberInductionSignOff.findMany({
+      where: { signerMemberId: memberId },
+      select: { inductionId: true, signerName: true, signerRole: true, signedAt: true, declarationAccepted: true },
+    }),
   ]);
   return {
     MembershipSubscriptionChargeCoverage, MembershipBillingException, SeasonalMembershipAssignment,
@@ -64,6 +71,6 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     HostingCoverageReevaluation, FinanceSyncRun, AiAssistantUsageEvent, NoticeAudience, NoticeReadReceipt,
     BookingModification, NewBookingPolicyExceptionRequest, MemberLodgeAccess, FamilyGroupJoinRequest,
     DeletionRequest, AdminCreditAdjustmentRequest, CommitteeAssignment, OrganisationContact,
-    SchoolMemberClassification, MemberMoneyObligation,
+    SchoolMemberClassification, MemberMoneyObligation, MemberInductionAssignedSigner, MemberInductionSignOff,
   } satisfies Record<AdditionalRecordModel, unknown>;
 }

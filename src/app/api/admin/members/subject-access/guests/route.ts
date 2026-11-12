@@ -5,7 +5,7 @@
  * Non-member guest rows hold no email address, so a privacy officer answering
  * a guest's request finds the exact row by name and stay instead, and passes
  * its id to the report. Full Admins only; returns at most 20 rows with only
- * what tells them apart (name, stay, lodge, booker).
+ * the guest names and stay dates.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
@@ -13,7 +13,6 @@ import { isFullAdmin } from "@/lib/access-roles";
 import { prisma } from "@/lib/prisma";
 import { exactContains } from "@/lib/prisma-exact-prefix";
 import { formatDateOnly } from "@/lib/date-only";
-import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 
 const MAX_GUESTS = 20;
@@ -43,29 +42,15 @@ export async function GET(request: NextRequest) {
       take: MAX_GUESTS,
       select: {
         id: true, firstName: true, lastName: true, stayStart: true, stayEnd: true,
-        booking: {
-          select: {
-            lodge: { select: { name: true } },
-            memberId: true,
-            organisationId: true,
-            member: { select: { firstName: true, lastName: true } },
-            organisation: { select: { name: true } },
-          },
-        },
       },
     });
     return NextResponse.json({
-      guests: rows.map((row) => {
-        const booker = bookingOwner(row.booking).member;
-        return {
-          id: row.id,
-          name: `${row.firstName} ${row.lastName}`.trim(),
-          stayStart: formatDateOnly(row.stayStart),
-          stayEnd: formatDateOnly(row.stayEnd),
-          lodge: row.booking.lodge.name,
-          bookedBy: booker ? `${booker.firstName} ${booker.lastName}`.trim() : null,
-        };
-      }),
+      guests: rows.map((row) => ({
+        id: row.id,
+        name: `${row.firstName} ${row.lastName}`.trim(),
+        stayStart: formatDateOnly(row.stayStart),
+        stayEnd: formatDateOnly(row.stayEnd),
+      })),
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
     logger.error({ err }, "Subject access guest search failed");

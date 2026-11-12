@@ -52,6 +52,9 @@ let dietary: typeof import("@/lib/member-dietary");
 const night = (day: number) => new Date(Date.UTC(2026, 7, day));
 
 async function teardown() {
+  await prisma.auditLog.deleteMany({ where: { action: { startsWith: P } } });
+  await prisma.memberInduction.deleteMany({ where: { memberId: { startsWith: P } } });
+  await prisma.inductionChecklistTemplate.deleteMany({ where: { id: P } });
   await prisma.emailLog.deleteMany({ where: { to: { startsWith: P } } });
   await prisma.memberApplication.deleteMany({ where: { applicantEmail: { startsWith: P } } });
   await prisma.bookingRequest.deleteMany({ where: { contactEmail: { startsWith: P } } });
@@ -60,6 +63,7 @@ async function teardown() {
   await prisma.familyGroup.deleteMany({ where: { id: FAMILY } });
   await prisma.bookingGuest.deleteMany({ where: { bookingId: BOOKING } });
   await prisma.booking.deleteMany({ where: { id: BOOKING } });
+  await prisma.choreTemplate.deleteMany({ where: { id: P } });
   await prisma.memberAccessRole.deleteMany({ where: { memberId: { startsWith: P } } });
   await prisma.member.deleteMany({ where: { id: { in: [DEPENDANT] } } });
   await prisma.member.deleteMany({ where: { id: { startsWith: P } } });
@@ -93,6 +97,24 @@ async function teardown() {
     });
     await prisma.memberAccessRole.create({ data: { memberId: OFFICER, role: "ADMIN" } });
 
+    await prisma.inductionChecklistTemplate.create({ data: { id: P, name: "Test induction", version: "1" } });
+    const induction = await prisma.memberInduction.create({
+      data: { memberId: BOOKER, templateId: P },
+    });
+    await prisma.memberInductionSignOff.createMany({ data: [
+      { inductionId: induction.id, signerMemberId: SUBJECT, signerName: "Subjecta Own", signerRole: "HUT_LEADER", declarationAccepted: true },
+      { inductionId: induction.id, signerMemberId: OFFICER, signerName: "Privacy Officer", signerRole: "ADMIN" },
+    ] });
+    await prisma.auditLog.createMany({ data: [
+      { action: `${P}.own`, category: "privacy", memberId: OFFICER, subjectMemberId: SUBJECT, targetId: BOOKING,
+        metadata: { memberFacingText: "Subject's own activity" } },
+      { action: `${P}.other`, category: "privacy", memberId: SUBJECT, subjectMemberId: BOOKER,
+        metadata: { memberFacingText: "Another subject's private message" } },
+      { action: `${P}.internal`, category: "admin", memberId: SUBJECT, subjectMemberId: SUBJECT },
+    ] });
+    await prisma.memberInductionAssignedSigner.createMany({
+      data: [{ inductionId: induction.id, memberId: SUBJECT }, { inductionId: induction.id, memberId: OFFICER }],
+    });
     await prisma.memberCredit.createMany({
       data: [
         { memberId: SUBJECT, amountCents: 12000, type: "ADMIN_ADJUSTMENT", description: "Weather cancellation" },
@@ -123,6 +145,7 @@ async function teardown() {
       data: { id: BOOKING, memberId: BOOKER, lodgeId: LODGE, checkIn: night(1), checkOut: night(3),
         status: "CONFIRMED", totalPriceCents: 40000, finalPriceCents: 40000 },
     });
+    await prisma.choreTemplate.create({ data: { id: P, name: "Guest duty", lodgeId: LODGE } });
     await prisma.bookingGuest.createMany({
       data: [
         { id: SUBJECT_GUEST, bookingId: BOOKING, memberId: SUBJECT, firstName: "Subjecta", lastName: "Own",
@@ -131,6 +154,10 @@ async function teardown() {
           stayStart: night(1), stayEnd: night(3), priceCents: 20000, dietaryRequirements: CO_GUEST_DIETARY },
       ],
     });
+    await prisma.choreAssignment.createMany({ data: [
+      { choreTemplateId: P, bookingId: BOOKING, bookingGuestId: CO_GUEST, date: night(1) },
+      { choreTemplateId: P, bookingId: BOOKING, bookingGuestId: SUBJECT_GUEST, date: night(2) },
+    ] });
   });
 
   afterAll(async () => {
@@ -191,11 +218,44 @@ async function teardown() {
     expect(text).not.toContain("Booker's private receipt");
   });
 
+  it("withholds address-filed records even from a login holder sharing an address", async () => {
+    const { file } = await officerFile({ memberId: BOOKER });
+    expect(file.emailKeyedRecords).toMatch(/^withheld/);
+    expect(file.emailLog).toEqual([]);
+  });
+
+  it("includes only the subject's assigned induction signer rows", async () => {
+    const { file } = await ownFile();
+    expect(file.additionalRecords?.MemberInductionAssignedSigner).toEqual([
+      { inductionId: expect.any(String), emailSentAt: null, createdAt: expect.any(Date) },
+    ]);
+  });
+
+  it("includes the subject's sign-offs on other people's inductions", async () => {
+    const { file } = await ownFile();
+    expect(file.additionalRecords?.MemberInductionSignOff).toEqual([
+      { inductionId: expect.any(String), signerName: "Subjecta Own", signerRole: "HUT_LEADER",
+        signedAt: expect.any(Date), declarationAccepted: true },
+    ]);
+  });
+
+  it("exports subject-visible activity without other subjects' messages or internal events", async () => {
+    const { file, text } = await ownFile();
+    expect(file.auditLog).toEqual([
+      { action: `${P}.own`, details: "Subject's own activity", createdAt: expect.any(String) },
+    ]);
+    expect(file.auditLogTotal).toBe(1);
+    expect(text).not.toContain("Another subject's private message");
+  });
+
   it("produces a non-member guest's file from their exact guest row, with their own dietary note only", async () => {
     const { file, text } = await officerFile({ guestId: CO_GUEST });
     expect(file.subjectKind).toBe("non-member");
     expect(file.guestAppearances).toEqual([expect.objectContaining({ firstName: CO_GUEST_NAME })]);
     expect(file.guestDietaryRequirements).toBe(CO_GUEST_DIETARY);
+    expect(file.choreAssignments).toEqual([expect.objectContaining({
+      assignedTo: `${CO_GUEST_NAME} Other`, choreName: "Guest duty", date: "2026-08-01",
+    })]);
     expect(text).not.toContain("Subjecta");
     expect(text).not.toContain(BOOKER_EMAIL);
   });

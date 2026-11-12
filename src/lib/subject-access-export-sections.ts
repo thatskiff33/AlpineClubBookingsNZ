@@ -26,7 +26,7 @@ export async function buildSubjectAccessSections(key: SubjectAccessKey) {
   const memberId = "memberId" in key ? key.memberId : null;
   // Records filed only by address (applications, requests sent signed out, the
   // email log, suppressions) are a member's only when the address is theirs
-  // alone or they hold its login: member emails are not unique, and a
+  // alone: member emails are not unique, and a
   // dependant sharing a parent's address must not receive the parent's mail.
   const keyEmail = "email" in key ? key.email : null;
   const emailKeyedRecords = memberId && keyEmail && !(await memberOwnsEmailAddress(memberId, keyEmail))
@@ -106,10 +106,9 @@ export async function buildSubjectAccessSections(key: SubjectAccessKey) {
 async function memberOwnsEmailAddress(memberId: string, email: string): Promise<boolean> {
   const holders = await prisma.member.findMany({
     where: { email: { equals: email, mode: "insensitive" } },
-    select: { id: true, canLogin: true },
+    select: { id: true },
   });
-  return holders.every((holder) => holder.id === memberId) ||
-    holders.some((holder) => holder.id === memberId && holder.canLogin);
+  return holders.length === 1 && holders[0]!.id === memberId;
 }
 
 async function readGuestAppearances(where: { memberId: string } | { id: string; memberId: null } | null) {
