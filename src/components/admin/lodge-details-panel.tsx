@@ -11,6 +11,15 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import {
+  LodgeBankAndGstFields,
+  LodgePostalAddressField,
+} from "@/components/admin/lodge-invoice-details-fields";
+import type { LodgeInvoiceDetailField } from "@/lib/lodges";
+import {
+  NZ_BANK_ACCOUNT_INVALID_MESSAGE,
+  nzBankAccountNumberForSave,
+} from "@/lib/nz-bank-account";
 
 type Lodge = {
   id: string;
@@ -18,6 +27,11 @@ type Lodge = {
   address: string | null;
   travelNote: string | null;
   doorCode: string | null;
+  // Invoice details (fork #115), optional; printed on the generated invoice.
+  postalAddress: string | null;
+  bankAccountName: string | null;
+  bankAccountDetails: string | null;
+  gstNumber: string | null;
 };
 
 /**
@@ -37,7 +51,15 @@ type Lodge = {
  */
 function hasLodgeDetailFields(row: unknown): row is Lodge {
   if (typeof row !== "object" || row === null) return false;
-  return "address" in row && "travelNote" in row && "doorCode" in row;
+  return (
+    "address" in row &&
+    "travelNote" in row &&
+    "doorCode" in row &&
+    "postalAddress" in row &&
+    "bankAccountName" in row &&
+    "bankAccountDetails" in row &&
+    "gstNumber" in row
+  );
 }
 
 // Single-lodge editing surface (E3 #1929). Multi-lodge clubs manage lodges under
@@ -139,7 +161,8 @@ export function LodgeDetailsPanel() {
     return (
       <p className="text-sm text-muted-foreground">
         This club has more than one lodge. Manage each lodge&apos;s name,
-        address, travel note, and door code under Admin &gt; Setup &gt; Lodges.
+        address, travel note, door code and invoice details under Admin &gt;
+        Setup &gt; Lodges.
       </p>
     );
   if (!lodge)
@@ -152,6 +175,11 @@ export function LodgeDetailsPanel() {
 
   async function save() {
     if (!lodge) return;
+    const bankAccountNumber = nzBankAccountNumberForSave(lodge.bankAccountDetails);
+    if (bankAccountNumber.kind === "INVALID") {
+      toast.error(NZ_BANK_ACCOUNT_INVALID_MESSAGE);
+      return;
+    }
     setSaving(true);
     try {
       const response = await fetch(`/api/admin/lodges/${lodge.id}`, {
@@ -162,6 +190,10 @@ export function LodgeDetailsPanel() {
           address: lodge.address ?? null,
           travelNote: lodge.travelNote ?? null,
           doorCode: lodge.doorCode ?? null,
+          postalAddress: lodge.postalAddress ?? null,
+          bankAccountName: lodge.bankAccountName ?? null,
+          bankAccountDetails: bankAccountNumber.value,
+          gstNumber: lodge.gstNumber ?? null,
         }),
       });
       if (!response.ok) throw new Error();
@@ -174,6 +206,15 @@ export function LodgeDetailsPanel() {
     }
   }
 
+  const invoiceFieldProps = {
+    idPrefix: "lodge-details",
+    values: lodge,
+    disabled: !canEdit,
+    describedBy: !canEdit ? viewOnlyReasonId : undefined,
+    onChange: (field: LodgeInvoiceDetailField, value: string) =>
+      setLodge({ ...lodge, [field]: value }),
+  };
+
   return (
     <div>
       {viewOnlyBanner}
@@ -181,7 +222,9 @@ export function LodgeDetailsPanel() {
       <p className="text-sm text-muted-foreground">
         The lodge name and address appear on the public site (contact page and
         the {"{{lodge-name}}"} / {"{{lodge-address}}"} content tokens). The door
-        code is only shared in confirmation emails.
+        code is only shared in confirmation emails. The postal address, bank
+        details and GST number are optional and are printed only on the invoice
+        a booker can download from their booking.
       </p>
       <div className="space-y-1.5">
         <Label htmlFor="lodge-details-name">Lodge name</Label>
@@ -193,19 +236,22 @@ export function LodgeDetailsPanel() {
           onChange={(event) => setLodge({ ...lodge, name: event.target.value })}
         />
       </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="lodge-details-address">Address</Label>
-        <Textarea
-          id="lodge-details-address"
-          value={lodge.address ?? ""}
-          rows={2}
-          placeholder="Optional — shown on the public contact page when set"
-          disabled={!canEdit}
-          aria-describedby={!canEdit ? viewOnlyReasonId : undefined}
-          onChange={(event) =>
-            setLodge({ ...lodge, address: event.target.value })
-          }
-        />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label htmlFor="lodge-details-address">Address</Label>
+          <Textarea
+            id="lodge-details-address"
+            value={lodge.address ?? ""}
+            rows={2}
+            placeholder="Optional — shown on the public contact page when set"
+            disabled={!canEdit}
+            aria-describedby={!canEdit ? viewOnlyReasonId : undefined}
+            onChange={(event) =>
+              setLodge({ ...lodge, address: event.target.value })
+            }
+          />
+        </div>
+        <LodgePostalAddressField {...invoiceFieldProps} />
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="lodge-details-travel">Travel note</Label>
@@ -232,6 +278,7 @@ export function LodgeDetailsPanel() {
           }
         />
       </div>
+      <LodgeBankAndGstFields {...invoiceFieldProps} />
       <ViewOnlyActionButton canEdit={canEdit} describeReason={false} disabled={saving} onClick={save}>
         {saving ? "Saving…" : "Save lodge details"}
       </ViewOnlyActionButton>

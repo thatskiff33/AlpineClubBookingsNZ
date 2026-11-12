@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EditBookingPanel } from "@/components/edit-booking-panel";
+import { DownloadInvoiceButton } from "@/components/download-invoice-button";
 import { bookingOwner } from "@/lib/booking-owner";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
@@ -221,12 +222,15 @@ export function BookingEditor({
   booking,
   canModify,
   canAdminOverride = false,
+  canDownloadInvoice = false,
 }: {
   booking: BookingEditorData;
   canModify: boolean;
   // Issue #1668: admin override lets an admin open the editor even for a
   // fully-past booking that renders no self-service editor at all.
   canAdminOverride?: boolean;
+  // Fork #115: the page's `canDownloadBookingInvoice` answer.
+  canDownloadInvoice?: boolean;
 }) {
   const format = useClubFormat();
   // #3828: one row per code, or the one combined row — the email's own answer.
@@ -311,6 +315,7 @@ export function BookingEditor({
                   Edit Booking
                 </Button>
               )}
+              {canDownloadInvoice && <DownloadInvoiceButton bookingId={booking.id} />}
             </div>
             <Badge variant="secondary" className={bookingStatusClass(booking.status)}>
               {bookingStatusLabel(booking.status)}

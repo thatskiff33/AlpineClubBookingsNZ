@@ -3,6 +3,7 @@
 import type { AgeTier } from "@prisma/client";
 import { useEffect, useState } from "react";
 import type { MembershipTypeAgeExemption } from "@/lib/membership-types";
+import { formatAgeTierName } from "@/lib/age-tier-name";
 
 export type AgeTierOption = {
   tier: AgeTier;
@@ -63,17 +64,8 @@ export function useAgeTierOptions(): AgeTierOption[] {
   return options;
 }
 
-/**
- * Static display name for a tier, independent of the configurable
- * AgeTierSetting labels. NOT_APPLICABLE is the organisation/school tier
- * (#1440); it never has a settings row, so it always renders as "N/A".
- */
-export function formatAgeTierName(tier: AgeTier | string): string {
-  if (tier === "NOT_APPLICABLE") {
-    return "N/A";
-  }
-  return tier.charAt(0) + tier.slice(1).toLowerCase();
-}
+// The static tier name lives in a plain module so server code can use it too.
+export { formatAgeTierName };
 
 export function getAgeTierLabel(
   options: AgeTierOption[],

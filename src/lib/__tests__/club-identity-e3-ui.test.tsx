@@ -214,6 +214,132 @@ describe("Lodges page — a narrowed record cannot wipe a door code (#2925)", ()
   });
 });
 
+describe("Lodges page — invoice details on the edit form (fork #123)", () => {
+  const FULL_LODGE = {
+    id: "lodge-2",
+    name: "West Peak Lodge",
+    slug: "west-peak-lodge",
+    active: true,
+    address: "12 Alpine Road",
+    doorCode: "1234",
+    travelNote: null,
+    postalAddress: "PO Box 9, Ohakune",
+    bankAccountName: "West Peak Club",
+    bankAccountDetails: "01-2345-0123456-00",
+    gstNumber: "123-456-789",
+  };
+
+  function stubFetch(lodges: Array<Record<string, unknown>>) {
+    const writes: Array<{ method: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        if (init?.method === "PATCH" || init?.method === "POST") {
+          writes.push({ method: init.method, body: JSON.parse(String(init.body)) });
+          return { ok: true, status: 200, json: async () => ({ lodge: { id: "new-lodge" } }) };
+        }
+        return { ok: true, status: 200, json: async () => ({ lodges }) };
+      }),
+    );
+    return writes;
+  }
+
+  it("shows the four fields when editing and saves them, a cleared one as null", async () => {
+    const writes = stubFetch([FULL_LODGE]);
+    render(<AdminLodgesPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /Edit/i }));
+
+    expect(screen.getByLabelText("Postal address")).toHaveValue("PO Box 9, Ohakune");
+    expect(screen.getByRole("group", { name: "Bank details for bookings" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Account name")).toHaveValue("West Peak Club");
+    // The account number is four parts, loaded from the stored hyphenated form.
+    const account = screen.getByRole("group", { name: "Account number" });
+    expect(account).toBeInTheDocument();
+    expect(screen.getByLabelText("Bank")).toHaveValue("01");
+    expect(screen.getByLabelText("Branch")).toHaveValue("2345");
+    expect(screen.getByLabelText("Account")).toHaveValue("0123456");
+    expect(screen.getByLabelText("Suffix")).toHaveValue("00");
+    // Digits only; a three-digit suffix is allowed.
+    fireEvent.change(screen.getByLabelText("Bank"), { target: { value: "0x2" } });
+    fireEvent.change(screen.getByLabelText("Suffix"), { target: { value: "001" } });
+    fireEvent.change(screen.getByLabelText("GST number"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual({
+      method: "PATCH",
+      body: {
+        name: "West Peak Lodge",
+        address: "12 Alpine Road",
+        doorCode: "1234",
+        travelNote: null,
+        postalAddress: "PO Box 9, Ohakune",
+        bankAccountName: "West Peak Club",
+        bankAccountDetails: "02-2345-0123456-001",
+        gstNumber: null,
+      },
+    });
+  });
+
+  it("fills all four account parts from a pasted number", async () => {
+    stubFetch([{ ...FULL_LODGE, bankAccountDetails: null }]);
+    render(<AdminLodgesPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /Edit/i }));
+    fireEvent.paste(screen.getByLabelText("Bank"), {
+      clipboardData: { getData: () => "12 3456 7890123 000" },
+    });
+    expect(screen.getByLabelText("Bank")).toHaveValue("12");
+    expect(screen.getByLabelText("Branch")).toHaveValue("3456");
+    expect(screen.getByLabelText("Account")).toHaveValue("7890123");
+    expect(screen.getByLabelText("Suffix")).toHaveValue("000");
+  });
+
+  it("refuses to save a partly entered account number", async () => {
+    const writes = stubFetch([{ ...FULL_LODGE, bankAccountDetails: null }]);
+    render(<AdminLodgesPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /Edit/i }));
+    fireEvent.change(screen.getByLabelText("Bank"), { target: { value: "12" } });
+    fireEvent.change(screen.getByLabelText("Branch"), { target: { value: "345" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/BB-bbbb-AAAAAAA-SSS/);
+    expect(writes).toHaveLength(0);
+  });
+
+  it("leaves them off the create form and out of the create payload", async () => {
+    // POST /api/admin/lodges is strict and does not accept them.
+    const writes = stubFetch([]);
+    render(<AdminLodgesPage />);
+    const addLodge = await screen.findByRole("button", { name: /Add lodge/i });
+    await waitFor(() => expect(addLodge).toBeEnabled());
+    fireEvent.click(addLodge);
+
+    expect(screen.queryByLabelText("Postal address")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("GST number")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New Lodge" } });
+    fireEvent.change(screen.getByLabelText("Capacity (maximum guests)"), {
+      target: { value: "16" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0].method).toBe("POST");
+    expect(Object.keys(writes[0].body).sort()).toEqual(
+      ["address", "capacity", "doorCode", "name", "travelNote"].sort(),
+    );
+  });
+
+  it("gives a view-only admin no way into the edit form", async () => {
+    mocks.canEdit.mockReturnValue(false);
+    stubFetch([FULL_LODGE]);
+    render(<AdminLodgesPage />);
+    const edit = await screen.findByRole("button", { name: /Edit/i });
+    expect(edit).toBeDisabled();
+    fireEvent.click(edit);
+    expect(screen.queryByLabelText("Postal address")).not.toBeInTheDocument();
+  });
+});
+
 describe("LodgeDetailsPanel — cross-area denial (E3 #1929)", () => {
   it("renders a read-only notice on a 403 instead of a raw failure", async () => {
     vi.stubGlobal(
@@ -289,6 +415,11 @@ describe("LodgeDetailsPanel — cross-area denial (E3 #1929)", () => {
               address: null,
               doorCode: null,
               travelNote: null,
+              // fork #115: the invoice details are detail fields too.
+              postalAddress: null,
+              bankAccountName: null,
+              bankAccountDetails: null,
+              gstNumber: null,
             },
           ],
         }),

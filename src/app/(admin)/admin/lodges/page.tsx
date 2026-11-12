@@ -23,89 +23,24 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import {
+  LodgeBankAndGstFields,
+  LodgePostalAddressField,
+} from "@/components/admin/lodge-invoice-details-fields";
+import {
   NEW_LODGE_CAPACITY_REQUIRED_MESSAGE,
   parseConfiguredLodgeCapacity,
 } from "@/lib/lodge-effective-capacity";
 import { AddLodgeCapacityField } from "./_components/add-lodge-capacity-field";
 import { OtherLodgesPanel } from "./_components/other-lodges-panel";
-
-/**
- * The three lodge DETAIL fields, which `GET /api/admin/lodges` omits for a
- * caller holding no `lodge:view` (#2925).
- */
-const LODGE_DETAIL_FIELDS = ["address", "doorCode", "travelNote"] as const;
-type LodgeDetailField = (typeof LODGE_DETAIL_FIELDS)[number];
-
-type LodgeRecord = {
-  id: string;
-  name: string;
-  slug: string;
-  active: boolean;
-  // Optional since #2925: a narrowed payload carries none of the three.
-  address?: string | null;
-  doorCode?: string | null;
-  travelNote?: string | null;
-};
-
-type LodgeFormState = {
-  name: string;
-  address: string;
-  doorCode: string;
-  travelNote: string;
-  /** Maximum guests, as typed. Sent on create only (#3407). */
-  capacity: string;
-  /**
-   * Which detail fields the record this form was seeded from actually carried
-   * (#2925). A field missing here is OMITTED from the PATCH body rather than
-   * sent as an empty string, because the PATCH route treats an absent key as
-   * "leave unchanged" and a `null` as "clear it" — so seeding a form from a
-   * narrowed record and saving it would otherwise WIPE the door code.
-   *
-   * BELT-AND-BRACES, and worth knowing which: the wipe is already impossible at
-   * the server. The PATCH needs `lodge:edit`, the list narrows below
-   * `lodge:view`, and `edit` outranks `view` in `LEVEL_RANK` — so any caller who
-   * can write here was served the full record. This is kept because it is a few
-   * lines and directly tested; it is deliberately not replicated in the lodge
-   * setup wizard, where a second copy bought no reachable safety and made the
-   * page reject any lodge fixture that omitted `doorCode`.
-   */
-  detailFields: readonly LodgeDetailField[];
-};
-
-const emptyForm: LodgeFormState = {
-  name: "",
-  address: "",
-  doorCode: "",
-  travelNote: "",
-  capacity: "",
-  // A create starts from a blank form the admin filled in themselves, so all
-  // three values are theirs to send.
-  detailFields: LODGE_DETAIL_FIELDS,
-};
-
-function formFromLodge(lodge: LodgeRecord): LodgeFormState {
-  return {
-    name: lodge.name,
-    address: lodge.address ?? "",
-    doorCode: lodge.doorCode ?? "",
-    travelNote: lodge.travelNote ?? "",
-    capacity: "",
-    detailFields: LODGE_DETAIL_FIELDS.filter((field) => field in lodge),
-  };
-}
-
-function formPayload(form: LodgeFormState) {
-  const payload: {
-    name: string;
-    address?: string | null;
-    doorCode?: string | null;
-    travelNote?: string | null;
-  } = { name: form.name.trim() };
-  for (const field of form.detailFields) {
-    payload[field] = form[field].trim() || null;
-  }
-  return payload;
-}
+import {
+  emptyForm,
+  formFromLodge,
+  formPayload,
+  lodgeFormBankAccountError,
+  type LodgeDetailField,
+  type LodgeFormState,
+  type LodgeRecord,
+} from "./_components/lodge-form";
 
 export default function AdminLodgesPage() {
   const router = useRouter();
@@ -166,6 +101,11 @@ export default function AdminLodgesPage() {
   async function submitForm() {
     if (!form.name.trim()) {
       setError("Lodge name is required.");
+      return;
+    }
+    const bankAccountError = lodgeFormBankAccountError(form);
+    if (bankAccountError) {
+      setError(bankAccountError);
       return;
     }
     // Required on create only (#3407): an existing lodge's capacity is edited
@@ -282,6 +222,14 @@ export default function AdminLodgesPage() {
   }
 
   const showForm = creating || editingId !== null;
+  // The invoice details (fork #115), shown on the edit form only (fork #123).
+  const invoiceFieldProps = {
+    idPrefix: "lodge",
+    values: form,
+    disabled: !canEdit,
+    onChange: (field: LodgeDetailField, value: string) =>
+      setForm((prev) => ({ ...prev, [field]: value })),
+  };
 
   /*
     #2160: the view-only explanation lives here, once, at the top of the section —
@@ -331,6 +279,9 @@ export default function AdminLodgesPage() {
               The address feeds the public {"{{lodge-address}}"} content token.
               The door code and travel note appear in booking and pre-arrival
               emails for this lodge.
+              {creating
+                ? null
+                : " The postal address, bank details and GST number are printed only on the invoice a booker can download from their booking."}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -353,18 +304,21 @@ export default function AdminLodgesPage() {
                 errorId="lodges-page-error"
               />
             ) : null}
-            <div className="space-y-2">
-              <Label htmlFor="lodge-address">Address</Label>
-              <Textarea
-                id="lodge-address"
-                value={form.address}
-                maxLength={300}
-                rows={2}
-                placeholder="Optional — feeds the public {{lodge-address}} token"
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, address: event.target.value }))
-                }
-              />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className={creating ? "space-y-2 sm:col-span-2" : "space-y-2"}>
+                <Label htmlFor="lodge-address">Address</Label>
+                <Textarea
+                  id="lodge-address"
+                  value={form.address}
+                  maxLength={300}
+                  rows={2}
+                  placeholder="Optional — feeds the public {{lodge-address}} token"
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, address: event.target.value }))
+                  }
+                />
+              </div>
+              {creating ? null : <LodgePostalAddressField {...invoiceFieldProps} />}
             </div>
             <div className="space-y-2">
               <Label htmlFor="lodge-door-code">Door code</Label>
@@ -392,6 +346,7 @@ export default function AdminLodgesPage() {
                 }
               />
             </div>
+            {creating ? null : <LodgeBankAndGstFields {...invoiceFieldProps} />}
             <div className="flex gap-2">
               <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={() => void submitForm()} disabled={saving}>
                 {saving ? "Saving..." : "Save"}

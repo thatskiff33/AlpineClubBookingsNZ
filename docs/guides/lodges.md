@@ -73,6 +73,15 @@ same **lodge edit** permission as the properties above.
    **Travel note**, then **Save**. The address feeds the public
    `{{lodge-address}}` content token; the door code and travel note appear in that
    lodge's booking and pre-arrival emails.
+2. The same form, when editing, also has the lodge's optional invoice details:
+   a **Postal address** (beside **Address**), **Bank details for bookings** (**Account name** and a
+   New Zealand **Account number** in four parts, `BB-bbbb-AAAAAAA-SSS`) and a
+   **GST number**. They are printed only on the
+   invoice a booker or officer downloads from a booking at this lodge with no
+   Xero invoice, never on the public site or in emails; a blank field saves as
+   empty. Add the lodge first: the **Add lodge** form does not show them. A
+   single-lodge club can also edit them under **Club Identity → Lodge details**
+   ([Appearance](appearance.md)); both screens edit the same lodge record.
 
 ### Configure a lodge
 

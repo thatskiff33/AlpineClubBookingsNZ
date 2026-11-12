@@ -75,11 +75,9 @@ import {
 } from "@/lib/organisation-xero-contacts";
 import { formatDateOnly } from "@/lib/date-only";
 import {
-  evenlySplitCents,
-  ONE_DAY_MS,
-  splitNightsIntoPriceRuns,
-  type NightPriceRun,
-} from "@/lib/night-price-runs";
+  buildGuestInvoiceLines,
+  type GuestInvoiceRun,
+} from "@/lib/booking-guest-invoice-lines";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { requireContainedXeroContactForInvoiceOperation } from "@/lib/xero-contact-containment-proof";
@@ -182,7 +180,7 @@ export function buildInvoiceLineItems(
     });
 
   const runToLineItem = (
-    run: NightPriceRun,
+    run: GuestInvoiceRun,
     guest: {
       firstName: string;
       lastName: string;
@@ -210,73 +208,12 @@ export function buildInvoiceLineItems(
     }, guest);
   };
 
-  return guests.flatMap((guest) => {
-    const loadedNights = guest.nights ?? [];
-    /**
-     * #3170: the nights this guest's rows can actually price.
-     *
-     * A `null` night is one a PARKED edit committed without valuing (epic
-     * #2797): the structural change landed and the money is held as an OPEN
-     * `EDIT_FINANCIAL_REVIEW` task for a person to price.
-     *
-     * DROPPING SUCH A NIGHT FROM THE RUNS WOULD LOSE MONEY, silently. The runs
-     * reconcile to `guest.priceCents` only because they partition every night
-     * the guest holds; omitting one emits an invoice SHORT by that night's
-     * share, which is a real under-charge on a live Xero document
-     * (INV-MONEY-003). So an unknown night disqualifies the per-night detail
-     * for this guest ENTIRELY, and the guest falls to the whole-range legacy
-     * branch below — which bills `guest.priceCents`, a real stored number, over
-     * the booking's own range. That is the same treatment a pre-#713 or
-     * quoted guest with no night rows already gets, and it invents nothing:
-     * the even split below is a LINE-SPLITTING presentation that sums to the
-     * stored total exactly and is never written back to any row.
-     */
-    const guestNights = loadedNights.every(
-      (night): night is { stayDate: Date; priceCents: number } =>
-        typeof night.priceCents === "number",
-    )
-      ? loadedNights
-      : [];
-
-    // No per-night detail: bill the whole booking range (legacy path). Split
-    // the flat total into an exact per-night cent vector and run it through the
-    // same price-run splitter, so the emitted lines reconcile to guest.priceCents
-    // by construction (#1163). With no remainder this collapses to one line,
-    // byte-identical to the pre-#1163 behaviour.
-    if (guestNights.length === 0) {
-      if (nights <= 0) {
-        // Degenerate range: keep the single legacy line (quantity 0) rather
-        // than dividing by zero in the even split.
-        const description = [
-          `${guest.firstName} ${guest.lastName}`,
-          // #2543 — same rate-driven label as `runToLineItem`.
-          `(${guest.ageTier}, ${describeGuestRateMembershipLabel(itemCodeResolver, guest)})`,
-          `${nights} night${nights !== 1 ? "s" : ""}`,
-          `${formatDateOnly(checkIn)} - ${formatDateOnly(checkOut)}`,
-        ].join(" - ");
-        return [applyCodes({
-          description,
-          quantity: nights,
-          unitAmount: guest.priceCents / 100, // Xero uses dollars, not cents
-          taxType: "OUTPUT2", // GST on Income (NZ)
-        }, guest)];
-      }
-      const syntheticNights = evenlySplitCents(guest.priceCents, nights).map(
-        (priceCents, i) => ({
-          stayDate: new Date(checkIn.getTime() + i * ONE_DAY_MS),
-          priceCents,
-        })
-      );
-      return splitNightsIntoPriceRuns(syntheticNights).map((run) =>
-        runToLineItem(run, guest)
-      );
-    }
-
-    // One line item per price-homogeneous contiguous run of nights.
-    return splitNightsIntoPriceRuns(guestNights).map((run) =>
-      runToLineItem(run, guest)
-    );
-  });
+  // The per-guest runs are the shared, provider-neutral builder's (fork #115),
+  // so the generated booking invoice PDF bills exactly these cents; this
+  // function only words and codes them for Xero.
+  return buildGuestInvoiceLines(guests, checkIn, checkOut, nights).map((line) =>
+    runToLineItem(line.run, line.guest),
+  );
 }
 
 /**

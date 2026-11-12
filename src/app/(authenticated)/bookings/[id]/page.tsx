@@ -1,3 +1,4 @@
+import { canDownloadBookingInvoice } from "@/lib/booking-invoice-access";
 import { Suspense } from "react";
 import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
@@ -359,6 +360,7 @@ export default async function BookingDetailPage({
           booking={editorData}
           canModify={canModify}
           canAdminOverride={canAdminOverride}
+          canDownloadInvoice={canDownloadBookingInvoice(viewer, booking)}
         />
       </section>
 
