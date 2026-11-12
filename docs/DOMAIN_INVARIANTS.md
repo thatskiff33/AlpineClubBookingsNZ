@@ -976,6 +976,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-004` | Production data, backups, live providers and webhooks are not test inputs |
 | `INV-OPS-015` | A money seam is never mocked in a test asserting its money |
 | `INV-OPS-016` | Member journal grants and database guards forbid mutation |
+| `INV-OPS-017` | First Bootstrap provisions restricted roles and a separate data key |
 
 ## Product Configuration
 

@@ -742,3 +742,15 @@ grant check is not applicable; the check that no grantee but the owner, PUBLIC
 included, holds a right that changes a row always runs. It does not prove
 historical parity, writer-cohort coverage or accounting policy; those activate
 in later milestones.
+
+## INV-OPS-017
+
+First Bootstrap sets `DATA_ENCRYPTION_KEYS` before the app first starts. It runs
+the first migrations as the operator, provisions least-privilege database roles,
+then sets the application user, migration user and audit-retention URL together
+before starting web slots and the cron leader. No credential is saved before
+these steps. Existing deployments retain their compatibility defaults and use
+the separate switch-over and key-rollout runbooks in
+[`DEPLOYMENT.md`](../../DEPLOYMENT.md#first-bootstrap). The database-role readiness
+check reads server privileges, including superuser membership, and only warns;
+it never blocks an existing installation.
