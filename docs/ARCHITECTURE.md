@@ -1876,6 +1876,18 @@ shape, `member-lifecycle-actions` owns archive/delete request handling, and
 `membership-cancellation-*` owns the cancellation request, confirmation,
 approval, Xero, settings, and status-label flow.
 
+Officer two-factor (#4618) sits on the same layer. `/admin/security` adds
+`officer-two-factor-card`, a staged-edit section with its own
+`useSectionEditState` and its own `PUT /api/admin/security/officer-two-factor`,
+so it shares no whole-object PUT with a sibling. Non-Full-Admins see it
+view-only, with the section banner. The member detail page adds a Full Admin
+reset button that posts to `/api/admin/security/two-factor-reset/[memberId]`.
+Both writes go through `fetchWithRecentAuth` and are in `STEP_UP_ROUTES`. The
+rule lives in `second-factor-enrolment.ts`; the session claims in
+`officer-two-factor-claims.ts`; the gate in `two-factor-gate.ts`; the reset in
+`officer-factor-reset.ts`. All of it is inert while `OFFICER_SIGN_IN_ENFORCED`
+is false.
+
 Browser-facing API routes treat an unexpected exception as operator-only
 diagnostic data: the complete error is sent to the structured logger, while the
 JSON response uses a fixed route-specific message. Validation and domain

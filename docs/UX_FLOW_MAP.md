@@ -966,6 +966,12 @@ Shows: Sign-in and account-security configuration.
 
 Journey: Inspect authentication controls and use the permitted security settings.
 
+Once #4620 switches officer sign-in on, the page also shows the **Officer
+two-factor** card (policy and grace days; Full Admin saves after confirming
+it is them) and, to a Full Admin, who has not set one up. A gated officer is
+sent to `/login/enroll`; during grace a banner names the deadline. A Full
+Admin resets a lost factor from the member's page.
+
 [Guide](guides/security.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Setup — setup
