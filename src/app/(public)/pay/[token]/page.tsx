@@ -200,7 +200,7 @@ export default function PayByLinkPage() {
   if (loading) {
     return (
       <Card className="w-full max-w-lg">
-        <CardContent className="py-8 text-center text-muted-foreground">Loading...</CardContent>
+        <CardContent role="status" className="py-8 text-center text-muted-foreground">Loading...</CardContent>
       </Card>
     );
   }
@@ -295,23 +295,23 @@ export default function PayByLinkPage() {
   if (context.canRequestFreshLink) {
     return (
       <NarrativeCard narrative={context.narrative} tone="info">
-        {refreshState === "sent" ? (
-          <div className="flex items-start gap-2 rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
-            <CheckCircle2 className="h-5 w-5 shrink-0" />
-            <p>We&apos;ve emailed you a fresh payment link. Please check your inbox.</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <Button onClick={requestFreshLink} disabled={refreshState === "sending"}>
-              {refreshState === "sending" ? "Sending..." : "Email me a new link"}
-            </Button>
-            {refreshError ? (
-              <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {refreshError}
+        {/* #4949: both outcomes land in regions mounted before the request. */}
+        <div className="space-y-2">
+          <div role="status">
+            {refreshState === "sent" ? (
+              <div className="flex items-start gap-2 rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
+                <CheckCircle2 aria-hidden className="h-5 w-5 shrink-0" />
+                <p>We&apos;ve emailed you a fresh payment link. Please check your inbox.</p>
               </div>
             ) : null}
           </div>
-        )}
+          {refreshState === "sent" ? null : (
+            <Button onClick={requestFreshLink} disabled={refreshState === "sending"}>
+              {refreshState === "sending" ? "Sending..." : "Email me a new link"}
+            </Button>
+          )}
+          <FocusedActionError id="payment-link-refresh-error" error={refreshError ?? ""} />
+        </div>
       </NarrativeCard>
     );
   }
@@ -417,6 +417,9 @@ export default function PayByLinkPage() {
         />
 
         <PreviousPaymentRefundingNotice show={!paymentRecovery && previousPaymentRefunding} />
+        <p id="payment-link-check-status" role="status" className={checkingPayment ? "text-sm text-muted-foreground" : "sr-only"}>
+          {checkingPayment ? "Checking your payment..." : null}
+        </p>
         {paymentRecovery ? null : clientSecret ? (
           <StripeProvider key={clientSecret} clientSecret={clientSecret}>
             <PaymentForm
@@ -431,9 +434,7 @@ export default function PayByLinkPage() {
               onError={() => undefined}
             />
           </StripeProvider>
-        ) : checkingPayment ? (
-          <p className="text-sm text-muted-foreground">Checking your payment...</p>
-        ) : (
+        ) : checkingPayment ? null : (
           <div className="space-y-3">
             {payable.cardPaymentAvailable !== false ? (
               <Button onClick={startCardPayment} disabled={intentLoading}>
@@ -442,11 +443,7 @@ export default function PayByLinkPage() {
             ) : (
               <CardPaymentUnavailableNotice />
             )}
-            {intentError ? (
-              <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {intentError}
-              </div>
-            ) : null}
+            <FocusedActionError id="payment-link-intent-error" error={intentError ?? ""} />
 
             {payable.internetBankingReference ? (
               <div className="rounded-md border border-border p-3 text-sm">

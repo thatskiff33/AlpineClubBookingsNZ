@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import {
   PaymentElement,
   useStripe,
   useElements,
 } from "@stripe/react-stripe-js";
+import { FocusedActionError } from "@/components/focused-action-error";
 
 interface SetupFormProps {
   onSuccess: (setupIntentId: string) => void;
@@ -27,6 +28,7 @@ export default function SetupForm({
   const elements = useElements();
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const errorId = `setup-form-${useId()}-error`;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,11 +79,7 @@ export default function SetupForm({
         />
       </div>
 
-      {errorMessage && (
-        <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">
-          {errorMessage}
-        </div>
-      )}
+      <FocusedActionError id={errorId} error={errorMessage ?? ""} />
 
       <button
         type="submit"
