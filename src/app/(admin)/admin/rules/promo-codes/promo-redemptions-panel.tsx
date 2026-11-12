@@ -33,6 +33,7 @@ import { formatCents } from "@/lib/utils";
 import { useLodgeOptions } from "@/components/lodge-select";
 import { buildPromoRedemptionsCsvContent } from "@/lib/promo-redemptions-csv";
 import { buildBookingDetailPath } from "@/lib/booking-email-contract";
+import { adminListPage, formatAdminListRange } from "@/lib/admin-list-page";
 
 /**
  * A redemption's "Redeemed" stamp — a real INSTANT, read in the club's
@@ -326,9 +327,7 @@ export function PromoRedemptionsPanel({
   // its own tiles, never as the subtitle of an application count.
   const capUsage = data?.code.capUsage;
   const total = data?.pagination.total ?? 0;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const resultStart = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
-  const resultEnd = Math.min(page * PAGE_SIZE, total);
+  const totalPages = Math.max(1, adminListPage({ page, pageSize: PAGE_SIZE, total }).totalPages);
 
   const filterActive = Boolean(from || to || lodgeId);
 
@@ -632,7 +631,7 @@ export function PromoRedemptionsPanel({
       ) : (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Showing {resultStart}-{resultEnd} of {total}
+            {formatAdminListRange({ page, pageSize: PAGE_SIZE, total })}
           </p>
           <AdminDataTable>
             <TableHeader>

@@ -133,7 +133,7 @@ describe("AuditTimeline", () => {
 
     expect(await screen.findByText("Payment confirmed")).toBeTruthy();
     expect(screen.getByText("Booking cancelled")).toBeTruthy();
-    expect(screen.getByText("1-2 of 3")).toBeTruthy();
+    expect(screen.getByText("Showing 1–2 of 3")).toBeTruthy();
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
       "/api/member/audit-log?page=1&pageSize=2"

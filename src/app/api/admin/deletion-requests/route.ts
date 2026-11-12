@@ -8,12 +8,16 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { OPEN_DELETION_REQUEST_STATUSES } from "@/lib/deletion-request-decision";
+import {
+  adminListPage,
+  adminListPageQueryFields,
+  adminQueueCreatedOrder,
+} from "@/lib/admin-list-page";
 import { z } from "zod";
 
 const querySchema = z.object({
   status: z.enum(["PENDING", "APPROVED", "REJECTED", "ALL"]).optional().default("PENDING"),
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+  ...adminListPageQueryFields,
 });
 
 export async function GET(request: NextRequest) {
@@ -45,7 +49,12 @@ export async function GET(request: NextRequest) {
     const [requests, total] = await Promise.all([
       prisma.deletionRequest.findMany({
         where,
-        orderBy: { createdAt: "desc" },
+        // INV-OPS-017: the pending queue reads oldest first, so the request
+        // that has waited longest is on page 1; id breaks createdAt ties.
+        orderBy: [
+          { createdAt: adminQueueCreatedOrder(status === "PENDING") },
+          { id: adminQueueCreatedOrder(status === "PENDING") },
+        ],
         skip: (page - 1) * pageSize,
         take: pageSize,
         include: {
@@ -78,10 +87,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       data,
       requests: data,
-      total,
-      page,
-      pageSize,
-      totalPages: Math.ceil(total / pageSize),
+      ...adminListPage({ page, pageSize, total }),
     });
   } catch (err) {
     logger.error({ err }, "Failed to list deletion requests");

@@ -768,9 +768,9 @@ describe("AdminBookingsPage", () => {
     });
     const html = renderToStaticMarkup(element);
 
-    // Accessible pagination nav with the current-of-total position.
+    // Accessible pagination nav stating the shared range text (INV-OPS-017).
     expect(html).toContain('aria-label="Bookings pagination"');
-    expect(html).toContain("Page 2 of 2");
+    expect(html).toContain("Showing 101–101 of 101");
     expect(html).toContain("101 bookings found");
     // Sort-header links keep the current page (sort reorders the same set).
     expect(html).toContain("sortBy=member");
@@ -791,7 +791,7 @@ describe("AdminBookingsPage", () => {
     // Service clamps page 99 → 2; the page must render the clamped position and
     // every generated link (sort headers + pagination) must carry the clamped
     // page, never the raw out-of-range 99.
-    expect(html).toContain("Page 2 of 2");
+    expect(html).toContain("Showing 101–101 of 101");
     expect(html).toContain("page=2");
     expect(html).not.toContain("page=99");
   });

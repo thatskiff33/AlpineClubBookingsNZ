@@ -32,7 +32,10 @@ to read the queues and membership **edit** to approve or reject.
 1. Go to **Admin → Monitoring & Support → Deletion Requests**. The page shows
    **Member self-service requests** and **Admin-initiated deletion requests**,
    sharing one status selector (**Pending**, **Approved**, **Rejected**, **All**).
-   **Reset** restores Pending and page 1 in both queues together.
+   **Reset** restores Pending and page 1 in both queues together. Each queue
+   shows a total line such as "Showing 1–25 of 40" and pages 25 at a time;
+   **Pending** lists the oldest request first, so the one waiting longest is at
+   the top, while **Approved**, **Rejected** and **All** list the newest first.
 
    ![Deletion Requests page: the status selector, the Member self-service requests card, and the Admin-initiated deletion requests card](../images/admin/admin-deletion-requests.png)
 

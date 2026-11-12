@@ -54,6 +54,11 @@ import {
   type BoundClubTime,
 } from "@/lib/club-time";
 import { adminHref } from "@/lib/admin-hubs";
+import {
+  formatAdminListRange,
+  parseAdminListPageParam,
+  setAdminListPageParam,
+} from "@/lib/admin-list-page";
 
 type AuditFacets = {
   eventTypes: string[];
@@ -140,11 +145,6 @@ function sortedUnique(values: string[]) {
   return Array.from(new Set(values.filter(Boolean))).sort((a, b) =>
     a.localeCompare(b)
   );
-}
-
-function parsePositivePage(value: string | null) {
-  const page = Number(value);
-  return Number.isInteger(page) && page > 0 ? page : 1;
 }
 
 // Shown while the id has not (yet) been turned into a readable label, and kept
@@ -388,7 +388,7 @@ export default function AuditLogPage() {
   const [severity, setSeverity] = useState(searchParams.get("severity") || "all");
   const [entityType, setEntityType] = useState(searchParams.get("entityType") || "all");
   const [search, setSearch] = useState(searchParams.get("q") || "");
-  const [page, setPage] = useState(() => parsePositivePage(searchParams.get("page")));
+  const [page, setPage] = useState(() => parseAdminListPageParam(searchParams.get("page")));
   const [pageSize] = useState(25);
   const [entries, setEntries] = useState<AuditTimelineEntry[]>([]);
   const [total, setTotal] = useState(0);
@@ -438,7 +438,7 @@ export default function AuditLogPage() {
     if (severity !== "all") params.set("severity", severity);
     if (entityType !== "all") params.set("entityType", entityType);
     if (search.trim()) params.set("q", search.trim());
-    if (page > 1) params.set("page", String(page));
+    setAdminListPageParam(params, page);
     return params;
   }, [
     category,
@@ -622,9 +622,7 @@ export default function AuditLogPage() {
     if (total === 0) {
       return "No records";
     }
-    const start = (page - 1) * pageSize + 1;
-    const end = Math.min(page * pageSize, total);
-    return `${start}-${end} of ${total}`;
+    return formatAdminListRange({ page, pageSize, total });
   }, [page, pageSize, total]);
 
   const eventTypeOptions = sortedUnique(facets.eventTypes);

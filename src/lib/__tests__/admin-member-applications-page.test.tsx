@@ -25,6 +25,13 @@ vi.mock("next-auth/react", () => ({
   }),
 }));
 
+// #4960: the page mirrors its filter and page into the URL.
+const navigation = vi.hoisted(() => ({ search: "", replace: vi.fn() }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: navigation.replace, push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(navigation.search),
+}));
+
 import MemberApplicationsPage from "@/app/(admin)/admin/member-applications/page";
 
 const fetchMock = vi.fn();
@@ -93,6 +100,7 @@ function listResponse() {
 describe("MemberApplicationsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    navigation.search = "";
     global.fetch = fetchMock as typeof fetch;
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
       if (init?.method === "PUT") {
@@ -280,5 +288,94 @@ describe("MemberApplicationsPage", () => {
         { decision: "REJECT" }
       );
     });
+  });
+});
+
+/*
+  #4960 / INV-OPS-017: the route returns 25 applications a page. The worked
+  example: 40 pending applications after an open day. The list says so, and
+  the next page holds the other 15.
+*/
+describe("MemberApplicationsPage paging (#4960)", () => {
+  let listUrls: URL[];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    navigation.search = "";
+    listUrls = [];
+    global.fetch = fetchMock as typeof fetch;
+    fetchMock.mockImplementation((input: string) => {
+      const url = new URL(input, "http://localhost");
+      if (url.pathname === "/api/admin/member-applications") {
+        listUrls.push(url);
+        const page = Number(url.searchParams.get("page"));
+        const pageRows = page === 1 ? 25 : 15;
+        const applications = Array.from({ length: pageRows }, (_, index) =>
+          baseApplication({
+            id: `app-${page}-${index}`,
+            applicantFirstName: `Applicant${page}x${index}`,
+            status: "PENDING_ADMIN",
+          }),
+        );
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            data: applications,
+            applications,
+            pendingCount: 40,
+            page,
+            pageSize: 25,
+            total: 40,
+            totalPages: 2,
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+  });
+
+  it("shows 25 of 40, reaches the other 15, and restarts at page 1 on a filter change", async () => {
+    render(<MemberApplicationsPage />);
+
+    expect(await screen.findByText("Showing 1–25 of 40")).toBeTruthy();
+    expect(listUrls[0].searchParams.get("status")).toBe("PENDING_ADMIN");
+    expect(listUrls[0].searchParams.get("page")).toBe("1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("Showing 26–40 of 40")).toBeTruthy();
+    expect(listUrls.at(-1)!.searchParams.get("page")).toBe("2");
+    expect(screen.getAllByText(/Applicant2x14/).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(/Applicant1x0/)).toHaveLength(0);
+    await waitFor(() =>
+      expect(navigation.replace).toHaveBeenLastCalledWith(
+        "/admin/member-applications?page=2",
+        { scroll: false },
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    expect(await screen.findByText("Showing 1–25 of 40")).toBeTruthy();
+    expect(listUrls.at(-1)!.searchParams.get("page")).toBe("1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await screen.findByText("Showing 26–40 of 40");
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    await waitFor(() => expect(listUrls.at(-1)!.searchParams.has("status")).toBe(false));
+    expect(listUrls.at(-1)!.searchParams.get("page")).toBe("1");
+    await waitFor(() =>
+      expect(navigation.replace).toHaveBeenLastCalledWith(
+        "/admin/member-applications?status=ALL",
+        { scroll: false },
+      ),
+    );
+  });
+
+  it("opens on the filter and page the URL names", async () => {
+    navigation.search = "status=APPROVED&page=2";
+    render(<MemberApplicationsPage />);
+
+    expect(await screen.findByText("Showing 26–40 of 40")).toBeTruthy();
+    expect(listUrls[0].searchParams.get("status")).toBe("APPROVED");
+    expect(listUrls[0].searchParams.get("page")).toBe("2");
   });
 });

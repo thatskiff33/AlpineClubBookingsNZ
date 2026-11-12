@@ -39,6 +39,7 @@ import type { XeroOperation } from "./types"
 import { useClubFormat } from "@/components/club-format-provider"
 import { XeroFailureExplanation } from "@/components/admin/xero-failure-explanation"
 import { useResolveOperation } from "./use-resolve-operation"
+import { formatAdminListRange, parseAdminListPageParam, setAdminListPageParam } from "@/lib/admin-list-page"
 
 export function OperationsPanel({
   connected,
@@ -102,10 +103,7 @@ export function OperationsPanel({
   const [resourceIdFilter, setResourceIdFilter] = useState(searchParams.get("opResourceId") || "")
   const [createdFrom, setCreatedFrom] = useState(searchParams.get("opCreatedFrom") || "")
   const [createdTo, setCreatedTo] = useState(searchParams.get("opCreatedTo") || "")
-  const [page, setPage] = useState(() => {
-    const requested = Number(searchParams.get("opPage") || "1")
-    return Number.isInteger(requested) && requested > 0 ? requested : 1
-  })
+  const [page, setPage] = useState(() => parseAdminListPageParam(searchParams.get("opPage")))
   const [total, setTotal] = useState(0)
   const [hiddenFailedCount, setHiddenFailedCount] = useState(0)
   // #4220: set by "Show them"; see FailedViewNotice.
@@ -141,7 +139,7 @@ export function OperationsPanel({
     setOrDelete("opResourceId", resourceIdFilter)
     setOrDelete("opCreatedFrom", createdFrom)
     setOrDelete("opCreatedTo", createdTo)
-    setOrDelete("opPage", page > 1 ? String(page) : "")
+    setAdminListPageParam(params, page, "opPage")
 
     const query = params.toString()
     const nextPath = query ? `${pathname}?${query}` : pathname
@@ -496,7 +494,7 @@ export function OperationsPanel({
         {total > pageSize ? (
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">
-              Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, total)} of {total}
+              {formatAdminListRange({ page, pageSize, total })}
             </p>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => { setUrlSyncEnabled(true); setPage((value) => value - 1) }}>Previous</Button>

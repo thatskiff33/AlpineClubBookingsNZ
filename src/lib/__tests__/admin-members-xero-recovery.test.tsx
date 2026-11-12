@@ -158,9 +158,6 @@ vi.mock("@/app/(admin)/admin/members/_components/member-filter-toolbar", () => (
 vi.mock("@/app/(admin)/admin/members/_components/member-import-dialog", () => ({
   MemberImportDialog: () => null,
 }));
-vi.mock("@/app/(admin)/admin/members/_components/member-pagination", () => ({
-  MemberPagination: () => null,
-}));
 vi.mock("@/app/(admin)/admin/members/_components/member-password-action-dialog", () => ({
   MemberPasswordActionDialog: () => null,
 }));

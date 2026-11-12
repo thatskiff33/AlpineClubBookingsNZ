@@ -9,6 +9,8 @@ import { Alert } from "@/components/ui/alert"
 import { FocusedActionError } from "@/components/focused-action-error"
 import { Button } from "@/components/ui/button"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
+import { Pagination } from "@/components/admin/admin-pagination"
+import { formatAdminListRange } from "@/lib/admin-list-page"
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -45,7 +47,6 @@ import { MemberEditorDialog } from "./_components/member-editor-dialog"
 import { MemberExportControl } from "./_components/member-export-control"
 import { MemberFilterToolbar } from "./_components/member-filter-toolbar"
 import { MemberImportDialog } from "./_components/member-import-dialog"
-import { MemberPagination } from "./_components/member-pagination"
 import { MemberPasswordActionDialog } from "./_components/member-password-action-dialog"
 import { MemberTable } from "./_components/member-table"
 import { XeroGroupsRefreshHint } from "./_components/xero-groups-refresh-hint"
@@ -548,10 +549,13 @@ export default function MembersPage() {
           onToggleSort={toggleSort}
           onOpenPasswordActionDialog={openPasswordActionDialog}
         />
-        <MemberPagination
+        <Pagination
+          as="div"
+          aria-label="Members pagination"
           page={page}
           totalPages={totalPages}
           onPageChange={setPage}
+          summary={formatAdminListRange({ page, pageSize, total })}
         />
       </div>
 

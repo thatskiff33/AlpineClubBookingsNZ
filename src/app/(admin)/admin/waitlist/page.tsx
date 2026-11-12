@@ -46,6 +46,12 @@ import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 import { useClubFormat } from "@/components/club-format-provider";
 import { buildBookingDetailPath } from "@/lib/booking-email-contract";
 import { adminHref } from "@/lib/admin-hubs";
+import {
+  adminListPage,
+  formatAdminListRange,
+  parseAdminListPageParam,
+  setAdminListPageParam,
+} from "@/lib/admin-list-page";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
@@ -259,7 +265,7 @@ export default function AdminWaitlistPage() {
   // Memoized so the React Compiler treats the derived string as immutable
   // when it is passed to helpers and used as a loadEntries dependency.
   const queryString = useMemo(() => searchParams.toString(), [searchParams]);
-  const queryPage = parsePositiveInteger(searchParams.get("page"), 1);
+  const queryPage = parseAdminListPageParam(searchParams.get("page"));
   const queryPageSize = parsePageSize(searchParams.get("pageSize"));
   const fromParam = searchParams.get("from") ?? "";
   const toParam = searchParams.get("to") ?? "";
@@ -347,10 +353,7 @@ export default function AdminWaitlistPage() {
   }
   usePublishDiagnosticsViewState(publishedView);
 
-  const totalPages = Math.max(1, Math.ceil(pagination.total / pagination.pageSize));
-  const resultStart =
-    pagination.total === 0 ? 0 : (pagination.page - 1) * pagination.pageSize + 1;
-  const resultEnd = Math.min(pagination.page * pagination.pageSize, pagination.total);
+  const totalPages = Math.max(1, adminListPage(pagination).totalPages);
 
   useEffect(() => {
     setFrom(fromParam);
@@ -444,7 +447,7 @@ export default function AdminWaitlistPage() {
         params.delete("to");
       }
 
-      params.set("page", "1");
+      setAdminListPageParam(params, 1);
       params.set("pageSize", String(pagination.pageSize));
     });
   }
@@ -468,14 +471,14 @@ export default function AdminWaitlistPage() {
 
   function handlePageSizeChange(nextPageSize: string) {
     updateQuery((params) => {
-      params.set("page", "1");
+      setAdminListPageParam(params, 1);
       params.set("pageSize", nextPageSize);
     });
   }
 
   function handlePageChange(nextPage: number) {
     updateQuery((params) => {
-      params.set("page", String(Math.max(1, Math.min(totalPages, nextPage))));
+      setAdminListPageParam(params, Math.max(1, Math.min(totalPages, nextPage)));
       params.set("pageSize", String(pagination.pageSize));
     });
   }
@@ -834,7 +837,7 @@ export default function AdminWaitlistPage() {
       ) : (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Showing {resultStart}-{resultEnd} of {pagination.total}
+            {formatAdminListRange(pagination)}
           </p>
           <AdminDataTable>
             <TableHeader>

@@ -14,6 +14,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
+import { Pagination } from "@/components/admin/admin-pagination";
+import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
 import {
   Dialog,
   DialogContent,
@@ -152,8 +154,12 @@ export default function DeletionRequestsClient({
     ? isFullAdmin(session.user)
     : false;
   const [statusFilter, setStatusFilter] = useState("PENDING");
-  const [page, setPage] = useState(1);
-  const [adminInitiatedPage, setAdminInitiatedPage] = useState(1);
+  // INV-OPS-017: each list pages through the shared hook, so a status change
+  // returns both to page 1 and a slower read for a page left behind never
+  // replaces the one shown. The page stays in memory, as the filter does.
+  const requestsPage = useAdminQueuePage({ filterKey: statusFilter });
+  const { page, setPage, receive, beginLoad } = requestsPage;
+  const adminInitiatedPage = useAdminQueuePage({ filterKey: statusFilter });
   const [data, setData] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -180,6 +186,7 @@ export default function DeletionRequestsClient({
   const [submitting, setSubmitting] = useState(false);
 
   const fetchRequests = useCallback(async () => {
+    const isCurrent = beginLoad();
     setLoading(true);
     setError(null);
     try {
@@ -189,15 +196,19 @@ export default function DeletionRequestsClient({
       });
       const res = await fetch(`/api/admin/deletion-requests?${params}`);
       if (!res.ok) throw new Error("Failed to load");
-      setData(await res.json());
+      const body = (await res.json()) as ApiResponse;
+      if (!isCurrent()) return true; // a newer read owns the list
+      setData(body);
+      receive(body, Array.isArray(body?.requests) ? body.requests.length : 0);
       return true;
     } catch {
+      if (!isCurrent()) return true;
       setError("Failed to load deletion requests.");
       return false;
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [statusFilter, page]);
+  }, [beginLoad, receive, statusFilter, page]);
 
   useEffect(() => {
     fetchRequests();
@@ -630,11 +641,7 @@ export default function DeletionRequestsClient({
             <div className="flex items-center gap-2">
               <Select
                 value={statusFilter}
-                onValueChange={(v) => {
-                  setStatusFilter(v);
-                  setPage(1);
-                  setAdminInitiatedPage(1);
-                }}
+                onValueChange={setStatusFilter}
               >
                 <SelectTrigger className="w-36" aria-label="Filter by status">
                   <SelectValue />
@@ -650,12 +657,12 @@ export default function DeletionRequestsClient({
                 disabled={
                   statusFilter === "PENDING" &&
                   page === 1 &&
-                  adminInitiatedPage === 1
+                  adminInitiatedPage.page === 1
                 }
                 onReset={() => {
                   setStatusFilter("PENDING");
                   setPage(1);
-                  setAdminInitiatedPage(1);
+                  adminInitiatedPage.setPage(1);
                 }}
               />
             </div>
@@ -900,30 +907,12 @@ export default function DeletionRequestsClient({
             </div>
           )}
 
-          {/* Pagination */}
-          {data && data.totalPages > 1 && (
-            <div className="flex items-center justify-between pt-4 border-t">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => p - 1)}
-              >
-                Previous
-              </Button>
-              <span className="text-sm text-muted-foreground">
-                Page {page} of {data.totalPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page >= data.totalPages}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Next
-              </Button>
-            </div>
-          )}
+          {requestsPage.pagination ? (
+            <Pagination
+              {...requestsPage.pagination}
+              aria-label="Self-service deletion request pages"
+            />
+          ) : null}
         </CardContent>
       </Card>
 
@@ -931,8 +920,7 @@ export default function DeletionRequestsClient({
         sessionMemberId={sessionMemberId}
         statusFilter={statusFilter}
         statusBadge={statusBadge}
-        page={adminInitiatedPage}
-        setPage={setAdminInitiatedPage}
+        queuePage={adminInitiatedPage}
       />
 
       {/* Review Dialog (self-service) */}
@@ -1121,15 +1109,15 @@ function AdminInitiatedDeletionSection({
   sessionMemberId,
   statusFilter,
   statusBadge,
-  page,
-  setPage,
+  queuePage,
 }: {
   sessionMemberId: string;
   statusFilter: string;
   statusBadge: (status: string) => React.ReactNode;
-  page: number;
-  setPage: React.Dispatch<React.SetStateAction<number>>;
+  /** Owned by the parent, whose status filter and Reset drive it. */
+  queuePage: ReturnType<typeof useAdminQueuePage>;
 }) {
+  const { page, receive, beginLoad } = queuePage;
   const clubTime = useClubTime();
   const canEdit = useAdminAreaEditAccess("membership");
   const [data, setData] = useState<LifecycleApiResponse | null>(null);
@@ -1148,13 +1136,8 @@ function AdminInitiatedDeletionSection({
     string | null
   >(null);
 
-  // The status filter lives in the parent card header; when it changes, jump
-  // back to page 1 so a deep page from the previous filter is never shown.
-  useEffect(() => {
-    setPage(1);
-  }, [setPage, statusFilter]);
-
   const fetchRequests = useCallback(async () => {
+    const isCurrent = beginLoad();
     setLoading(true);
     setError(null);
     try {
@@ -1167,13 +1150,17 @@ function AdminInitiatedDeletionSection({
         `/api/admin/member-lifecycle-action-requests?${params}`
       );
       if (!res.ok) throw new Error("Failed to load");
-      setData(await res.json());
+      const body = (await res.json()) as LifecycleApiResponse;
+      if (!isCurrent()) return; // a newer read owns the list
+      setData(body);
+      receive(body, Array.isArray(body?.requests) ? body.requests.length : 0);
     } catch {
+      if (!isCurrent()) return;
       setError("Failed to load admin-initiated deletion requests.");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [statusFilter, page]);
+  }, [beginLoad, receive, statusFilter, page]);
 
   useEffect(() => {
     fetchRequests();
@@ -1395,30 +1382,12 @@ function AdminInitiatedDeletionSection({
           </div>
         )}
 
-        {/* Pagination */}
-        {data && data.totalPages > 1 && (
-          <div className="flex items-center justify-between pt-4 border-t">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => p - 1)}
-            >
-              Previous
-            </Button>
-            <span className="text-sm text-muted-foreground">
-              Page {page} of {data.totalPages}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={page >= data.totalPages}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              Next
-            </Button>
-          </div>
-        )}
+        {queuePage.pagination ? (
+          <Pagination
+            {...queuePage.pagination}
+            aria-label="Admin-initiated deletion request pages"
+          />
+        ) : null}
       </CardContent>
 
       <Dialog

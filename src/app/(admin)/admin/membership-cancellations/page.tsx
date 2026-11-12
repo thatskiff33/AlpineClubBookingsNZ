@@ -3,10 +3,15 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Archive, CheckCircle2, RefreshCw, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
+import { Pagination } from "@/components/admin/admin-pagination";
+import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
+import { adminTabHref } from "@/lib/admin-hubs";
+import { parseAdminListPageParam, setAdminListPageParam } from "@/lib/admin-list-page";
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -193,6 +198,13 @@ const filters: Array<{ value: RequestFilter; label: string }> = [
 
 const currentPath = "/admin/membership-cancellations";
 
+function isRequestFilter(value: string | null): value is RequestFilter {
+  return filters.some((option) => option.value === value);
+}
+
+/** The queue's URL keys, dropped when the Settings tab is opened. */
+const QUEUE_SEARCH_KEYS = ["status", "page", "archivePage"] as const;
+
 // Real INSTANTS, shown in the club's persisted zone rather than the viewer's
 // or the build's (CT-4, #2870; INV-CONFIG-002). `parseInstant` is stricter
 // than the `new Date()` it replaces: an offset-less ISO string names a
@@ -342,6 +354,7 @@ export default function MembershipCancellationsPage() {
       page="membership-cancellations"
       title="Membership Cancellations"
       description="Review member cancellation and archive requests, and set the cancellation copy and Xero handling they use."
+      clearOnChange={QUEUE_SEARCH_KEYS}
       tabs={[
         { value: "requests", label: "Requests", content: <MembershipCancellationRequests /> },
         { value: "settings", label: "Settings", content: <MembershipCancellationSettingsTab /> },
@@ -357,7 +370,24 @@ function MembershipCancellationRequests() {
   // Participant/archive review writes membership-area routes; a view-only
   // membership admin browses the queues but cannot act (#1997).
   const canEditMembership = useAdminAreaEditAccess("membership");
-  const [filter, setFilter] = useState<RequestFilter>("REQUESTED");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const initialStatus = searchParams.get("status");
+  const [filter, setFilter] = useState<RequestFilter>(
+    isRequestFilter(initialStatus) ? initialStatus : "REQUESTED",
+  );
+  // INV-OPS-017: both queues are capped per page by their routes. Each pages
+  // on its own, and both pages ride in the URL beside the filter.
+  const cancellationPage = useAdminQueuePage({
+    filterKey: filter,
+    initialPage: parseAdminListPageParam(searchParams.get("page")),
+  });
+  const archivePage = useAdminQueuePage({
+    filterKey: "REQUESTED",
+    initialPage: parseAdminListPageParam(searchParams.get("archivePage")),
+  });
+  const { page, setPage, receive } = cancellationPage;
+  const { page: archivePageNumber, receive: receiveArchive } = archivePage;
   const [data, setData] = useState<CancellationResponse | null>(null);
   const [archiveData, setArchiveData] = useState<ArchiveResponse | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -413,12 +443,25 @@ function MembershipCancellationRequests() {
    * to set an error of its own has to know it is overwriting one (#2392 review,
    * residual 5).
    */
+  const queueParams = new URLSearchParams(searchParams.toString());
+  for (const key of QUEUE_SEARCH_KEYS) queueParams.delete(key);
+  if (filter !== "REQUESTED") queueParams.set("status", filter);
+  setAdminListPageParam(queueParams, page);
+  setAdminListPageParam(queueParams, archivePageNumber, "archivePage");
+  const queueQuery = queueParams.toString();
+  const requestsHref = adminTabHref("membership-cancellations", "requests");
+  const queueHref = queueQuery ? `${requestsHref}?${queueQuery}` : requestsHref;
+
+  useEffect(() => {
+    router.replace(queueHref, { scroll: false });
+  }, [queueHref, router]);
+
   const loadRequests = useCallback(async (): Promise<string | null> => {
     setLoading(true);
     setError("");
 
     try {
-      const params = new URLSearchParams({ status: filter });
+      const params = new URLSearchParams({ status: filter, page: String(page) });
       const response = await fetch(
         `/api/admin/membership-cancellation-requests?${params.toString()}`,
       );
@@ -427,6 +470,7 @@ function MembershipCancellationRequests() {
         throw new Error(body.error || "Could not load cancellation requests.");
       }
       setData(body);
+      receive(body, Array.isArray(body?.requests) ? body.requests.length : 0);
       return null;
     } catch (err) {
       const failure =
@@ -438,7 +482,7 @@ function MembershipCancellationRequests() {
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [filter, page, receive]);
 
   const loadArchiveRequests = useCallback(async () => {
     setArchiveLoading(true);
@@ -448,6 +492,7 @@ function MembershipCancellationRequests() {
       const params = new URLSearchParams({
         action: "ARCHIVE",
         status: "REQUESTED",
+        page: String(archivePageNumber),
       });
       const response = await fetch(
         `/api/admin/member-lifecycle-action-requests?${params.toString()}`,
@@ -457,6 +502,7 @@ function MembershipCancellationRequests() {
         throw new Error(body.error || "Could not load archive requests.");
       }
       setArchiveData(body);
+      receiveArchive(body, Array.isArray(body?.requests) ? body.requests.length : 0);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not load archive requests.",
@@ -464,7 +510,7 @@ function MembershipCancellationRequests() {
     } finally {
       setArchiveLoading(false);
     }
-  }, []);
+  }, [archivePageNumber, receiveArchive]);
 
   const refreshQueues = useCallback(async () => {
     await Promise.all([loadRequests(), loadArchiveRequests()]);
@@ -667,8 +713,8 @@ function MembershipCancellationRequests() {
             </SelectContent>
           </Select>
           <DatasetResetButton
-            disabled={filter === "REQUESTED"}
-            onReset={() => setFilter("REQUESTED")}
+            disabled={filter === "REQUESTED" && page === 1}
+            onReset={() => { setFilter("REQUESTED"); setPage(1); }}
           />
           <Button
             variant="outline"
@@ -888,6 +934,12 @@ function MembershipCancellationRequests() {
               })}
             </div>
           )}
+          {!archiveLoading && archivePage.pagination ? (
+            <Pagination
+              {...archivePage.pagination}
+              aria-label="Archive request pages"
+            />
+          ) : null}
         </CardContent>
       </Card>
 
@@ -1175,6 +1227,12 @@ function MembershipCancellationRequests() {
               })}
             </div>
           )}
+          {!loading && cancellationPage.pagination ? (
+            <Pagination
+              {...cancellationPage.pagination}
+              aria-label="Cancellation request pages"
+            />
+          ) : null}
         </CardContent>
       </Card>
 
