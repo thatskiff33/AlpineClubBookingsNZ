@@ -41,8 +41,15 @@ import {
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
+import type { EditQuotedFigures } from "@/lib/booking-modify-quote-request";
 
 export type BatchModifyInput = {
+  /**
+   * #4924 (`INV-MOD-062`): the preview's figures the member approved. Present,
+   * the save refuses `EditPriceChangedError` when its own differ; absent (an
+   * older client), it saves as before.
+   */
+  quotedFigures?: EditQuotedFigures;
   checkIn?: string;
   checkOut?: string;
   addGuests?: Array<{

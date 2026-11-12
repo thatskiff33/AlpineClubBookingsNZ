@@ -1,3 +1,4 @@
+import { assertEditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
@@ -1634,6 +1635,17 @@ export async function modifyBookingBatch({
       reduction,
       db: tx,
       todayAtClub: moneyTierDay,
+    });
+    // #4924 (`INV-MOD-062`): the save settles only the figures the member was
+    // shown. Compared on the post-lock re-read, after every figure is final and
+    // before the first write, so a refusal rolls the transaction back with no
+    // side effect. `netChargeCents` is the pre-offset figure, as the preview
+    // reports it under that name.
+    assertEditQuotedFigures(input.quotedFigures, {
+      newFinalPriceCents,
+      priceDiffCents,
+      changeFeeCents,
+      netChargeCents: priceDiffCents + changeFeeCents,
     });
     if (settlementOptions?.requiresSettlementMethod && !input.settlementMethod) {
       throw new BookingModificationSettlementMethodRequiredError();

@@ -801,6 +801,11 @@ import "./xero-account-credit-note-stamp.realdb.test";
 // line under the edit at the settle. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
 // it owns and cleans its own `race-4661-` fixtures.
 import "./unpaid-edit-change-fee-owed.realdb.test";
+// #4924 reuses it to prove a save carrying figures its preview showed before the
+// club day crossed a change-fee band is refused with the fresh figures and writes
+// nothing. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its
+// own `race-4924-` fixtures.
+import "./edit-quoted-figures.realdb.test";
 // #4456 reuses it to prove a credential written under a data-encryption ring key
 // survives an AUTH_SECRET rotation and goes through the store's version-guarded
 // claim like any other: a re-key of a legacy row, a write that lost to a row

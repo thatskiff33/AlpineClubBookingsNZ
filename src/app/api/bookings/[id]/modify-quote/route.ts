@@ -8,6 +8,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { buildShiftPreviewResponse } from "@/lib/booking-shift-preview";
+import { unchangedPriceQuotedFigures } from "@/lib/edit-quoted-figures";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import {
@@ -89,7 +90,8 @@ import {
 import { selectedIndexesForStoredGuestTargets } from "@/lib/promo-stored-guest-targets";
 import {
   modifyQuoteSchema,
-  OVERRIDE_DATE_ONLY_QUOTE_FIELDS,
+  isDateOnlyOverrideViolation,
+  type EditQuotedFigures,
   type NormalizedAddGuest,
 } from "@/lib/booking-modify-quote-request";
 import {
@@ -460,17 +462,7 @@ export async function POST(
   }
   if (
     adminOverride &&
-    (OVERRIDE_DATE_ONLY_QUOTE_FIELDS.some((field) => {
-      const value = parsed.data[field];
-      return Array.isArray(value) ? value.length > 0 : Boolean(value);
-    }) ||
-      // #2266: checked explicitly — `Boolean(0)` is false, so a credit
-      // election of 0 cents would otherwise slip past the date-only contract.
-      applyCreditCents !== undefined ||
-      // Same trap, same fix: `otherLodgeId: null` CLEARS the election and is
-      // falsy, so the list membership above would let it through a date-only
-      // override.
-      requestedOtherLodgeId !== undefined)
+    isDateOnlyOverrideViolation(parsed.data)
   ) {
     return NextResponse.json(
       { error: "Admin override edits change dates only" },
@@ -869,6 +861,8 @@ export async function POST(
       priceDiffCents: 0,
       changeFeeCents: 0,
       netChargeCents: 0,
+      // #4924 (`INV-MOD-062`): what the save compares; this edit moves no money.
+      quotedFigures: unchangedPriceQuotedFigures(booking.finalPriceCents),
       settlementOptions: null,
       capacityAvailable: true,
       minimumStayValid: true,
@@ -2328,6 +2322,10 @@ export async function POST(
   });
 
   return NextResponse.json({
+    // #4924 (`INV-MOD-062`): the figures the panel sends back on Save, where the
+    // save refuses 409 `EDIT_PRICE_CHANGED` if its own differ. The same values
+    // as the fields below; `netChargeCents` is before the unpaid-ask offset.
+    quotedFigures: { newFinalPriceCents, priceDiffCents, changeFeeCents, netChargeCents } satisfies EditQuotedFigures,
     newTotalPriceCents,
     newDiscountCents,
     newPromoAdjustmentCents,

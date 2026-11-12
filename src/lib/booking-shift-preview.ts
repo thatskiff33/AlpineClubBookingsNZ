@@ -14,6 +14,7 @@ import { overCapacityNights } from "@/lib/over-capacity-confirmation";
 import { prisma } from "@/lib/prisma";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { getClubFormat } from "@/lib/club-format-settings";
+import { unchangedPriceQuotedFigures } from "@/lib/edit-quoted-figures";
 
 // Split verbatim out of `src/app/api/bookings/[id]/modify-quote/route.ts`
 // (#3128), which was nine times its 250-line route budget. This branch of the
@@ -198,6 +199,8 @@ export async function buildShiftPreviewResponse({
     priceDiffCents: 0,
     changeFeeCents: 0,
     netChargeCents: 0,
+    // #4924 (`INV-MOD-062`): what `adminShiftBookingDates` compares before it writes.
+    quotedFigures: unchangedPriceQuotedFigures(booking.finalPriceCents),
     settlementOptions: null,
     capacityAvailable: capacity.available,
     minimumStayValid: true,
