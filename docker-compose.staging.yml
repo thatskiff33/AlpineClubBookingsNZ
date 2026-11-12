@@ -127,6 +127,14 @@ services:
     environment:
       APP_ENVIRONMENT_ROLE: non-production
 
+  # The one-shot first-install seed (#4977) imports application code, so a
+  # staging stack declares its role literally here for the reason the app
+  # services above do: `run --rm seed` against this file must never read the
+  # live deployment's ${APP_ENVIRONMENT_ROLE}.
+  seed:
+    environment:
+      APP_ENVIRONMENT_ROLE: non-production
+
   caddy:
     profiles: ["production-caddy"]
     environment:
