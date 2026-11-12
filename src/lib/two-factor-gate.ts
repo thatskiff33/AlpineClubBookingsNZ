@@ -68,7 +68,6 @@ export function isOfficerEnrolmentPathAllowed(
   if (path === "/login/enroll" || path === "/login/verify" || path === "/profile") {
     return true;
   }
-  if (path.startsWith("/profile/")) return true;
   if (path === "/api/auth/signout") {
     return (method ?? "POST").toUpperCase() === "POST";
   }

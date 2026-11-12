@@ -12,9 +12,8 @@ import { requireAdmin } from "@/lib/session-guards";
 /**
  * A Full Admin resets another member's lost authenticator and passkeys (#4618).
  *
- * #4619 owns the closed step-up route list. This route calls
- * `requireRecentAuth` itself either way. When that list exists, add
- * `POST /api/admin/security/two-factor-reset/[memberId]` to it.
+ * Listed in `STEP_UP_ROUTES` (#4619). Order: switch, Full Admin, fresh proof,
+ * not yourself, then the write.
  */
 export async function POST(
   request: Request,

@@ -136,9 +136,10 @@ export async function POST() {
     );
   });
 
-  it("requires the factor-reset POST once that file exists", () => {
+  it("requires the factor-reset POST while that file exists", () => {
+    expect(runStepUpCensus().factorReset).toBeNull();
     const result = runStepUpCensus({
-      overlay: new Map([[FACTOR_RESET_ROUTE.file, "export async function POST() { return null; }\n"]]),
+      routes: STEP_UP_ROUTES.filter((route) => route.file !== FACTOR_RESET_ROUTE.file),
     });
     expect(result.factorReset).toContain(FACTOR_RESET_ROUTE.file);
   });

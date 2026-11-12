@@ -1,6 +1,7 @@
 "use client";
 
 import { Loader2, ShieldCheck } from "lucide-react";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -54,7 +55,7 @@ export function OfficerTwoFactorCard({ canEdit }: { canEdit: boolean }) {
       };
     },
     save: async (draft) => {
-      const response = await fetch("/api/admin/security/officer-two-factor", {
+      const response = await fetchWithRecentAuth("/api/admin/security/officer-two-factor", {
         method: "PUT",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },

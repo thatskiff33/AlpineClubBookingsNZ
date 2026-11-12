@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 import { Button } from "@/components/ui/button";
 import { REAUTH_REQUIRED_CODE } from "@/lib/recent-auth";
 
@@ -20,7 +21,7 @@ export function OfficerFactorResetButton({ memberId }: { memberId: string }) {
     setPending(true);
     setMessage("");
     try {
-      const response = await fetch(
+      const response = await fetchWithRecentAuth(
         `/api/admin/security/two-factor-reset/${memberId}`,
         { method: "POST", credentials: "same-origin" },
       );
@@ -31,7 +32,7 @@ export function OfficerFactorResetButton({ memberId }: { memberId: string }) {
       if (!response.ok) {
         setMessage(
           body?.code === REAUTH_REQUIRED_CODE
-            ? "Confirm it's you, then try the reset again."
+            ? "The reset needs you to confirm it's you first."
             : (body?.error ?? "The reset did not run."),
         );
         return;

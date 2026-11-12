@@ -16,6 +16,7 @@ import {
   OFFICER_TWO_FACTOR_GRACE_MIN_DAYS,
 } from "@/lib/officer-two-factor-grace";
 import { prisma } from "@/lib/prisma";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 import { requireAdmin } from "@/lib/session-guards";
 
 const AREA = "support" as const;
@@ -53,6 +54,8 @@ export async function PUT(request: Request) {
   if (!isFullAdmin(guard.session.user)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
 
   let body: unknown;
   try {
