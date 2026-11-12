@@ -15,8 +15,8 @@ import { Label } from "@/components/ui/label";
   hint only describes them.
 
   #4947 — the row's error works the same way: one message under the row, which
-  all three boxes point at and all three mark invalid, whichever box the
-  browser or the server refused.
+  all three boxes point at and all three mark invalid. It names the box it is
+  about, since a bare "at most 5 character(s)" fits two of them.
 */
 const PHONE_HINT_ID = "join-apply-phone-hint";
 const PHONE_ERROR_ID = "join-apply-phone-error";
@@ -35,14 +35,15 @@ const PHONE_BOXES: ReadonlyArray<{
 
 export function JoinApplyPhoneRow({
   values,
-  error,
+  errors,
   onFieldChange,
 }: {
   values: Readonly<Record<PhoneField, string>>;
-  /** The first message any of the three boxes has, if any. */
-  error: string | undefined;
+  errors: Readonly<Partial<Record<PhoneField, string>>>;
   onFieldChange: (field: PhoneField) => (event: ChangeEvent<HTMLInputElement>) => void;
 }) {
+  const failing = PHONE_BOXES.find(({ field }) => errors[field]);
+  const error = failing && `${failing.label}: ${errors[failing.field]}`;
   const describedBy = describedByFieldHint(PHONE_HINT_ID, error && PHONE_ERROR_ID);
   return (
     <div className="space-y-2">

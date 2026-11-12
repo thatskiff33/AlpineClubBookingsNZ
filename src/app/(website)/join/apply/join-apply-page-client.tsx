@@ -21,9 +21,9 @@ import {
 import type { ClubIdentity } from "@/config/club-identity-types";
 import { readValidationDetails } from "@/lib/format-validation-errors";
 import {
-  JOIN_APPLY_ADDRESS_ID_PREFIX,
   JoinApplyErrorSummary,
   clientSummaryEntries,
+  familyMemberInputId,
   serverSummaryEntries,
   type JoinApplySummaryEntry,
 } from "./join-apply-error-summary";
@@ -481,11 +481,7 @@ export function JoinApplyPageClient({
 
                   <JoinApplyPhoneRow
                     values={form}
-                    error={
-                      fieldErrors.phoneCountryCode ??
-                      fieldErrors.phoneAreaCode ??
-                      fieldErrors.phoneNumber
-                    }
+                    errors={fieldErrors}
                     onFieldChange={updateField}
                   />
                 </div>
@@ -493,7 +489,7 @@ export function JoinApplyPageClient({
                 <MemberAddressFields
                   className="pt-2"
                   collapsible
-                  idPrefix={JOIN_APPLY_ADDRESS_ID_PREFIX}
+                  idPrefix="join-apply"
                   onSameAsPhysicalChange={setSameAsPhysical}
                   onValuesChange={updateAddressFields}
                   sameAsPhysical={sameAsPhysical}
@@ -546,11 +542,11 @@ export function JoinApplyPageClient({
 
                           <div className="grid gap-4 sm:grid-cols-2">
                             <div className="space-y-2">
-                              <Label htmlFor={`family-first-name-${index}`}>
+                              <Label htmlFor={familyMemberInputId(index, "firstName")}>
                                 First name
                               </Label>
                               <Input
-                                id={`family-first-name-${index}`}
+                                id={familyMemberInputId(index, "firstName")}
                                 value={familyMember.firstName}
                                 onChange={(event) =>
                                   updateFamilyMember(
@@ -568,7 +564,7 @@ export function JoinApplyPageClient({
                                   fieldErrors[
                                     `familyMembers.${index}.firstName`
                                   ]
-                                    ? `family-first-name-${index}-error`
+                                    ? `${familyMemberInputId(index, "firstName")}-error`
                                     : undefined
                                 }
                               />
@@ -576,7 +572,7 @@ export function JoinApplyPageClient({
                                 `familyMembers.${index}.firstName`
                               ] && (
                                 <p
-                                  id={`family-first-name-${index}-error`}
+                                  id={`${familyMemberInputId(index, "firstName")}-error`}
                                   className="text-xs text-destructive"
                                 >
                                   {
@@ -589,11 +585,11 @@ export function JoinApplyPageClient({
                             </div>
 
                             <div className="space-y-2">
-                              <Label htmlFor={`family-last-name-${index}`}>
+                              <Label htmlFor={familyMemberInputId(index, "lastName")}>
                                 Last name
                               </Label>
                               <Input
-                                id={`family-last-name-${index}`}
+                                id={familyMemberInputId(index, "lastName")}
                                 value={familyMember.lastName}
                                 onChange={(event) =>
                                   updateFamilyMember(
@@ -611,7 +607,7 @@ export function JoinApplyPageClient({
                                   fieldErrors[
                                     `familyMembers.${index}.lastName`
                                   ]
-                                    ? `family-last-name-${index}-error`
+                                    ? `${familyMemberInputId(index, "lastName")}-error`
                                     : undefined
                                 }
                               />
@@ -619,7 +615,7 @@ export function JoinApplyPageClient({
                                 `familyMembers.${index}.lastName`
                               ] && (
                                 <p
-                                  id={`family-last-name-${index}-error`}
+                                  id={`${familyMemberInputId(index, "lastName")}-error`}
                                   className="text-xs text-destructive"
                                 >
                                   {
@@ -633,11 +629,11 @@ export function JoinApplyPageClient({
                           </div>
 
                           <div className="space-y-2">
-                            <Label htmlFor={`family-dob-${index}`}>
+                            <Label htmlFor={familyMemberInputId(index, "dateOfBirth")}>
                               Date of birth
                             </Label>
                             <Input
-                              id={`family-dob-${index}`}
+                              id={familyMemberInputId(index, "dateOfBirth")}
                               type="date"
                               value={familyMember.dateOfBirth}
                               onChange={(event) =>
@@ -656,7 +652,7 @@ export function JoinApplyPageClient({
                                 fieldErrors[
                                   `familyMembers.${index}.dateOfBirth`
                                 ]
-                                  ? `family-dob-${index}-error`
+                                  ? `${familyMemberInputId(index, "dateOfBirth")}-error`
                                   : undefined
                               }
                             />
@@ -664,7 +660,7 @@ export function JoinApplyPageClient({
                               `familyMembers.${index}.dateOfBirth`
                             ] && (
                               <p
-                                id={`family-dob-${index}-error`}
+                                id={`${familyMemberInputId(index, "dateOfBirth")}-error`}
                                 className="text-xs text-destructive"
                               >
                                 {

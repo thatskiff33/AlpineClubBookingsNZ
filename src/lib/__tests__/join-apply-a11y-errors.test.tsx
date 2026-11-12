@@ -126,7 +126,7 @@ describe("JoinApplyPageClient error accessibility (F30, #1889)", () => {
     submitForm();
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("Applications are closed right now.");
+    await waitFor(() => expect(alert.textContent).toContain("Applications are closed right now."));
   });
 
   it("puts the route's field details on the field, read through the shared reader (#4580)", async () => {
@@ -161,7 +161,7 @@ describe("JoinApplyPageClient error accessibility (F30, #1889)", () => {
     submitForm();
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("Something about the nominators");
+    await waitFor(() => expect(alert.textContent).toContain("Something about the nominators"));
   });
 
   // #4947 — a failed submit always lands on one focused form-level message.
@@ -231,7 +231,7 @@ describe("JoinApplyPageClient error accessibility (F30, #1889)", () => {
         const describedBy = (box.getAttribute("aria-describedby") ?? "").split(" ");
         const rowError = describedBy
           .map((id) => document.getElementById(id)?.textContent)
-          .find((text) => text === "String must contain at most 20 character(s)");
+          .find((text) => text === "Phone number: String must contain at most 20 character(s)");
         expect(rowError).toBeTruthy();
       }
     });
@@ -249,6 +249,22 @@ describe("JoinApplyPageClient error accessibility (F30, #1889)", () => {
       );
       expect(summaryLinkNames()).toEqual([]);
       await expectRecoveryAlertToHoldFocus(alert);
+    });
+
+    it("lists an address refusal without a link, since a closed address section has no input", async () => {
+      refuseWith({ postalAddressLine1: ["String must contain at most 200 character(s)"] });
+      render(<JoinApplyPageClient club={club} showHero={false} />);
+      fillValidApplicant();
+
+      submitForm();
+
+      const alert = await screen.findByRole("alert");
+      await waitFor(() =>
+        expect(alert.textContent).toContain(
+          "Postal address line 1: String must contain at most 200 character(s)",
+        ),
+      );
+      expect(summaryLinkNames()).toEqual([]);
     });
 
     it("puts a field the page can show both on the field and in the summary", async () => {
@@ -283,6 +299,22 @@ describe("JoinApplyPageClient error accessibility (F30, #1889)", () => {
       screen.getByLabelText("First name").focus();
       submitForm();
       await expectRecoveryAlertToHoldFocus(alert);
+    });
+
+    it("takes focus back for a second, identical browser-side failure", async () => {
+      render(<JoinApplyPageClient club={club} showHero={false} />);
+
+      submitForm();
+      const alert = await screen.findByRole("alert");
+      await waitFor(() => expect(alert.textContent).toContain("fields need attention."));
+      await expectRecoveryAlertToHoldFocus(alert);
+      const announced = alert.textContent;
+
+      screen.getByLabelText("Email").focus();
+      submitForm();
+
+      await expectRecoveryAlertToHoldFocus(alert);
+      expect(alert.textContent).toBe(announced);
     });
 
     it("never changes its text or takes focus while the person types", async () => {

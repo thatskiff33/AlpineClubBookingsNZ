@@ -3,10 +3,6 @@
 import { FocusedActionError } from "@/components/focused-action-error";
 import { focusAndKeepInView } from "@/hooks/use-scroll-to-feedback";
 import { labelFieldMessages } from "@/lib/format-validation-errors";
-import {
-  POSTAL_ADDRESS_FIELDS,
-  STREET_ADDRESS_FIELDS,
-} from "@/lib/member-address";
 
 /*
   #4947 — the membership application's one form-level message. A failed submit
@@ -18,16 +14,15 @@ import {
   The server's keys need not match the page's slots: `flatten()` files every
   household problem under a bare `familyMembers`, and the phone row had no
   slot at all. So EVERY server message is listed here, with a link only when
-  its key names an input on the page. Nothing a server says is dropped.
+  its key names an input that is always on the page. Nothing a server says is
+  dropped. The address inputs sit in an accordion that unmounts a closed
+  section, so an address message is listed without a link.
 
   The entries are a snapshot taken at the submit and never change while the
   person types: the region is atomic, and any change would be re-announced.
 */
 
 const JOIN_APPLY_ERROR_ID = "join-apply-error";
-
-/** The address widget's inputs, as `MemberAddressFields` ids them here. */
-export const JOIN_APPLY_ADDRESS_ID_PREFIX = "join-apply";
 
 export type JoinApplySummaryEntry = { fieldId?: string; text: string };
 
@@ -44,24 +39,30 @@ const SELF_ID_FIELDS = new Set([
   "nominator2Email",
 ]);
 
-const ADDRESS_FIELDS = new Set<string>([
-  ...STREET_ADDRESS_FIELDS,
-  ...POSTAL_ADDRESS_FIELDS,
-]);
-
-const FAMILY_FIELD_ID_PREFIXES: Record<string, string> = {
+const FAMILY_FIELD_ID_PREFIXES = {
   firstName: "family-first-name",
   lastName: "family-last-name",
   dateOfBirth: "family-dob",
-};
+} as const;
+
+type FamilyField = keyof typeof FAMILY_FIELD_ID_PREFIXES;
+
+/** The id of a household member's input; the page and the links share it. */
+export function familyMemberInputId(index: number, field: FamilyField) {
+  return `${FAMILY_FIELD_ID_PREFIXES[field]}-${index}`;
+}
+
+function isFamilyField(field: string): field is FamilyField {
+  return Object.hasOwn(FAMILY_FIELD_ID_PREFIXES, field);
+}
 
 /** The id of the input a field key names, or `undefined` when none does. */
 function joinApplyInputId(key: string): string | undefined {
   if (SELF_ID_FIELDS.has(key)) return key;
-  if (ADDRESS_FIELDS.has(key)) return `${JOIN_APPLY_ADDRESS_ID_PREFIX}-${key}`;
   const [, row, field] = /^familyMembers\.(\d+)\.(\w+)$/.exec(key) ?? [];
-  const prefix = field ? FAMILY_FIELD_ID_PREFIXES[field] : undefined;
-  return prefix ? `${prefix}-${row}` : undefined;
+  return row && field && isFamilyField(field)
+    ? familyMemberInputId(Number(row), field)
+    : undefined;
 }
 
 /** The browser's own checks, in the order the map holds them (form order). */
