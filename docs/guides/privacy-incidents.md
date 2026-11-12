@@ -219,7 +219,7 @@ for further work in the private incident record.
 
 Keep the public disclosure accurate. Open **Admin → Setup & Configuration →
 Site Appearance & Content → Club Identity**
-(`/admin/website/appearance/identity`), section **Where members' data is held**.
+(`/admin/appearance/identity`), section **Where members' data is held**.
 With content edit access, set **Hosting provider** and **Where your data is
 held**, naming both locations if database and backups differ; keep them current
 when hosting changes. These are public plain-text disclosures, never credentials.

@@ -91,7 +91,8 @@ describe("privacy recipient register census", () => {
       }
     }
     expect(unclassified).toEqual([]);
-  });
+    // Parses every server-capable file under src/; measured at 6-8s locally.
+  }, 30_000);
 
   it("sees a new outbound host, including template URLs, and ignores prose comments", () => {
     expect([...outboundHosts('fetch("https://new-recipient.invalid/send");')]).toEqual(["new-recipient.invalid"]);
