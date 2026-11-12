@@ -69,7 +69,9 @@ describe("password hashing (#4934)", { timeout: 30_000 }, () => {
     const pending = verifyPassword("wrong", DUMMY_PASSWORD_HASH).finally(() => { settled = true; });
     try {
       await setImmediate();
-      expect(realElapsedMs(start)).toBeLessThan(20);
+      // A main-thread cost-13 compare takes hundreds of ms; 100 ms leaves
+      // headroom for a loaded CI shard without hiding a blocking call.
+      expect(realElapsedMs(start)).toBeLessThan(100);
       expect(settled).toBe(false);
     } finally {
       await pending;
