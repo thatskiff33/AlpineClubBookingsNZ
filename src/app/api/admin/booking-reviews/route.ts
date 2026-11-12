@@ -135,6 +135,5 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  const pagination = adminListPage({ page, pageSize, total });
-  return NextResponse.json({ data, ...pagination, pagination });
+  return NextResponse.json({ data, ...adminListPage({ page, pageSize, total }) });
 }

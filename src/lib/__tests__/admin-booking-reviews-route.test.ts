@@ -75,8 +75,7 @@ describe("GET /api/admin/booking-reviews paging and order", () => {
       }),
     );
     expect(body).toMatchObject({ page: 1, pageSize: 25, total: 40, totalPages: 2 });
-    // The old nested key stays for back-compat.
-    expect(body.pagination).toEqual({ page: 1, pageSize: 25, total: 40, totalPages: 2 });
+    expect(body).not.toHaveProperty("pagination");
   });
 
   it("reads a decided filter newest first", async () => {

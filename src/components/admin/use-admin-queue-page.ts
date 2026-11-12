@@ -67,15 +67,8 @@ export function useAdminQueuePage({
   const receive = useCallback(
     (body: unknown, rowCount: number): boolean => {
       const record = (body ?? {}) as Record<string, unknown>
-      const nested = (record.pagination ?? {}) as Record<string, unknown>
-      const pageSize =
-        readNumber(record.pageSize) ??
-        readNumber(nested.pageSize) ??
-        ADMIN_LIST_DEFAULT_PAGE_SIZE
-      const total =
-        readNumber(record.total) ??
-        readNumber(nested.total) ??
-        (page - 1) * pageSize + rowCount
+      const pageSize = readNumber(record.pageSize) ?? ADMIN_LIST_DEFAULT_PAGE_SIZE
+      const total = readNumber(record.total) ?? (page - 1) * pageSize + rowCount
       setReceived({ filterKey, pageSize, total })
       if (rowCount === 0 && page > 1) {
         const lastPage = Math.max(1, adminListPage({ page, pageSize, total }).totalPages)
