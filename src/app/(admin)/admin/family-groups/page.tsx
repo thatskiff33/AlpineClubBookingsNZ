@@ -29,6 +29,7 @@ import {
 import { useClubTime } from "@/components/club-time-provider";
 import { formatPayloadInstantDate } from "../_lib/payload-instant";
 import { useRevealAttention } from "@/hooks/use-scroll-to-feedback";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 type PartnerInvite = {
   id: string;
@@ -329,6 +330,7 @@ function FamilyGroupsTab() {
       return;
     }
     setSubmitting(true);
+    const fallback = "Failed to save";
 
     try {
       const payload = {
@@ -349,13 +351,14 @@ function FamilyGroupsTab() {
           });
 
       if (!res.ok) {
-        const data = await res.json();
-        setError(data.error || "Failed to save");
+        setError(await apiErrorMessageFromResponse(res, fallback));
         return;
       }
 
       closeForm();
       fetchData();
+    } catch {
+      setError(fallback);
     } finally {
       setSubmitting(false);
     }
