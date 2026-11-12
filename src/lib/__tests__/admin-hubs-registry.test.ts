@@ -1831,7 +1831,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/system/health/_components/integration-readiness-section.tsx":
       "S1: its cards link with adminHref; its id is the registry's anchor",
     "src/app/(admin)/admin/setup/setup-page-client.tsx":
-      "S1: the cards for the merged setup pages link with adminHref; C8: and the Notifications & Email card",
+      "S1: the cards for the merged setup pages link with adminHref; C8: and the Notifications & Email card; " +
+      "#4968: its heading is the registry label",
     "src/app/(admin)/admin/messages/notifications/page.tsx":
       "S1: the cancellation settings card links the Settings tab; C8: its other cards link with adminHref; " +
       "#4878: the Delivery Rules and Recipients titles are the registry labels",
@@ -1875,7 +1876,7 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/website/mountain-conditions/page.tsx":
       "C4: its back link is adminLink",
     "src/app/(admin)/admin/setup/foundations/page.tsx":
-      "C4: the Club Identity card links with adminHref; C7: and the System Health card",
+      "#4968: its title is the registry label and its back link adminLink; its cards moved to setup/hub-cards.ts",
     "src/app/(admin)/admin/rules/booking-policies/cancellation/page.tsx":
       "C4: the public-pages link is adminHref; C6: its back link is adminLink",
     "src/lib/analytics-privacy-policy.ts": "C4: the privacy-policy editor link is adminHref",
@@ -1903,7 +1904,7 @@ describe("the registry is inert", () => {
       "C5: the Xero setup card is adminHref; C7: and the backup setup and AI assistant cards",
     "src/app/(admin)/admin/modules/page.tsx": "C5: the Xero module setup link is adminHref",
     "src/app/(admin)/admin/setup/finance/page.tsx":
-      "C5: the Xero cards are adminHref and the mappings card adminAnchorHref",
+      "#4968: its heading is the registry label and its back link adminLink; its cards moved to setup/hub-cards.ts",
     "src/app/(admin)/admin/stripe/setup/page.tsx": "C5: the payments link is adminHref",
     "src/components/admin/booking-requests/booking-approvals-panel.tsx":
       "C5: the refunds link is adminHref",
@@ -2020,6 +2021,29 @@ describe("the registry is inert", () => {
       "C8: saving and cancelling return to Member Notices at its adminHref",
     "src/components/admin/club-posts/club-posts-admin.tsx":
       "C8: the Message Board's tab links and search form address it at its adminHref",
+    "src/lib/__tests__/admin-page-headings.test.ts":
+      "#4968: every page heading is its registry label",
+    "src/lib/__tests__/admin-setup-hubs.test.tsx":
+      "#4968: no setup card links to the page it is shown on",
+    "src/app/(admin)/admin/setup/hub-cards.ts":
+      "#4968: the setup cards, titled with registry labels and linked with adminHref",
+    "src/app/(admin)/admin/alpine-server/setup/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/bookings/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/chores/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/config-transfer/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/display/builder/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/display/layouts/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/display/reference/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/display/setup/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/induction/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/member-applications/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/membership-cancellations/page.tsx":
+      "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/roster/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/rules/age-tier-settings/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/subscription-lockout/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/system/backups/setup/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/video-meetings/setup/page.tsx": "#4968: its heading is the registry label",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;

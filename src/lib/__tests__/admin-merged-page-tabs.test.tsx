@@ -147,7 +147,7 @@ describe("Family Groups' Suggestions tab", () => {
   });
 });
 
-describe("Membership Cancellations' Settings tab", () => {
+describe("Cancellation Requests' Settings tab", () => {
   beforeEach(() => {
     stubFetchRoutes({
       "/api/admin/membership-cancellation-settings": {
@@ -168,7 +168,7 @@ describe("Membership Cancellations' Settings tab", () => {
     render(<MembershipCancellationsPage />);
 
     expect(await screen.findByRole("heading", { level: 2, name: "Requests" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1, name: "Membership Cancellations" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Cancellation Requests" })).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Save Cancellation Settings/i }),
     ).not.toBeInTheDocument();
