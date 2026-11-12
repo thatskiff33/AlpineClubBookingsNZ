@@ -8,6 +8,9 @@ const NOW = new Date("2026-07-01T00:00:00.000Z");
 const PREFIX = "race-4916-";
 let db: PrismaClient;
 let previous: PrivacyRetentionSettings | null;
+// Audit rows take the database clock, so scope them by the ids present before the run.
+let priorAuditIds: string[] = [];
+const AUDIT_ACTION = "privacy.retention.booking_dietary_cleared";
 let run: typeof import("@/lib/privacy-retention-jobs").runBookingDietaryClearJob;
 
 (RUN ? describe : describe.skip)("after-stay dietary retention in PostgreSQL", () => {
@@ -17,6 +20,7 @@ let run: typeof import("@/lib/privacy-retention-jobs").runBookingDietaryClearJob
     ({ prisma: db } = await import("@/lib/prisma"));
     ({ runBookingDietaryClearJob: run } = await import("@/lib/privacy-retention-jobs"));
     previous = await db.privacyRetentionSettings.findUnique({ where: { id: "default" } });
+    priorAuditIds = (await db.auditLog.findMany({ where: { action: AUDIT_ACTION }, select: { id: true } })).map(row => row.id);
     const { DEFAULT_PRIVACY_RETENTION_SETTINGS } = await import("@/lib/privacy-retention-shared");
     await db.privacyRetentionSettings.upsert({
       where: { id: "default" },
@@ -51,7 +55,7 @@ let run: typeof import("@/lib/privacy-retention-jobs").runBookingDietaryClearJob
   }, 30_000);
   afterAll(async () => {
     if (!db) return;
-    await db.auditLog.deleteMany({ where: { action: "privacy.retention.booking_dietary_cleared", createdAt: NOW } });
+    await db.auditLog.deleteMany({ where: { action: AUDIT_ACTION, id: { notIn: priorAuditIds } } });
     await db.bookingGuest.deleteMany({ where: { id: { startsWith: PREFIX } } });
     await db.booking.deleteMany({ where: { id: { startsWith: PREFIX } } });
     await db.member.deleteMany({ where: { id: PREFIX + "member" } });
@@ -73,7 +77,7 @@ let run: typeof import("@/lib/privacy-retention-jobs").runBookingDietaryClearJob
     expect(await db.member.findUnique({ where: { id: PREFIX + "member" }, select: { dietaryRequirements: true } }))
       .toEqual({ dietaryRequirements: "Profile fixture" });
     expect(await run({ db, now: NOW })).toMatchObject({ clearedBookingDietary: 0 });
-    const audits = await db.auditLog.findMany({ where: { action: "privacy.retention.booking_dietary_cleared" }, orderBy: { createdAt: "asc" } });
+    const audits = await db.auditLog.findMany({ where: { action: AUDIT_ACTION, id: { notIn: priorAuditIds } }, orderBy: { createdAt: "asc" } });
     expect(audits).toHaveLength(2);
     expect(audits.every(row => row.category === "privacy")).toBe(true);
     expect(audits.map(row => row.metadata)).toEqual(expect.arrayContaining([{ count: 4 }, { count: 0 }]));
