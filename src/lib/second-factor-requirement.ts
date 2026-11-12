@@ -8,6 +8,7 @@
 
 import "server-only";
 
+import type { Prisma } from "@prisma/client";
 import { MEMBER_PRIVILEGE_CHECK_SELECT } from "@/lib/access-role-definitions";
 import { officerAssignmentsFromMember } from "@/lib/officer-two-factor";
 import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
@@ -23,10 +24,13 @@ export class LastOfficerFactorError extends Error {
   }
 }
 
-export async function assertLastFactorRemovable(memberId: string): Promise<void> {
+export async function assertLastFactorRemovable(
+  memberId: string,
+  db: Pick<Prisma.TransactionClient, "member" | "loginSecuritySetting"> = prisma,
+): Promise<void> {
   if (!OFFICER_SIGN_IN_ENFORCED) return;
   const [member, policy] = await Promise.all([
-    prisma.member.findUnique({
+    db.member.findUnique({
       where: { id: memberId },
       select: {
         role: true,
@@ -34,7 +38,7 @@ export async function assertLastFactorRemovable(memberId: string): Promise<void>
         ...MEMBER_PRIVILEGE_CHECK_SELECT,
       },
     }),
-    prisma.loginSecuritySetting.findUnique({
+    db.loginSecuritySetting.findUnique({
       where: { id: LOGIN_SECURITY_SETTINGS_ID },
       select: { officerTwoFactorPolicy: true },
     }),

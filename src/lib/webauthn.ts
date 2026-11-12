@@ -456,7 +456,7 @@ export async function deletePasskey(input: {
         twoFactorMethod: member?.twoFactorMethod,
         hasPasskey: remaining > 0,
       });
-      if (!stillOfficerFactor) await assertLastFactorRemovable(input.memberId);
+      if (!stillOfficerFactor) await assertLastFactorRemovable(input.memberId, tx);
 
       const result = await tx.webAuthnCredential.deleteMany({
         where: { id: credential.id, memberId: input.memberId },

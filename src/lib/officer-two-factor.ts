@@ -24,7 +24,7 @@ import {
   clampOfficerTwoFactorGraceDays,
   formatOfficerGraceDeadline,
   officerGraceClosedByReset,
-  officerGraceDeadlineDate,
+  officerGraceHasEnded,
   OFFICER_TWO_FACTOR_GRACE_DEFAULT_DAYS,
   officerTwoFactorGraceEnd,
 } from "@/lib/officer-two-factor-grace";
@@ -200,6 +200,7 @@ export async function loadOfficerTwoFactorReport(): Promise<
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
   });
 
+  const now = new Date();
   const rows: OfficerTwoFactorReportRow[] = [];
   for (const member of members) {
     const hasPasskey = member.webAuthnCredentials.length > 0;
@@ -224,7 +225,7 @@ export async function loadOfficerTwoFactorReport(): Promise<
       memberId: member.id,
       name: `${member.firstName} ${member.lastName}`.trim(),
       email: member.email,
-      grace: reportGrace(member, graceDays, zone, format),
+      grace: reportGrace(member, graceDays, zone, format, now),
     });
   }
   return rows;
@@ -238,6 +239,7 @@ function reportGrace(
   graceDays: number,
   zone: ClubTimeZone,
   format: { locale: string },
+  now: Date,
 ): OfficerTwoFactorReportRow["grace"] {
   if (
     officerGraceClosedByReset({
@@ -248,16 +250,11 @@ function reportGrace(
     return "ended";
   }
   if (!(member.twoFactorGraceStartedAt instanceof Date)) return "not-started";
-  const deadline = officerGraceDeadlineDate({
-    startedAt: member.twoFactorGraceStartedAt,
-    graceDays,
-    zone,
-  });
-  if (!deadline) return "ended";
   const end = officerTwoFactorGraceEnd({
     startedAt: member.twoFactorGraceStartedAt,
     graceDays,
     zone,
   });
+  if (officerGraceHasEnded(now, end)) return "ended";
   return formatOfficerGraceDeadline(end, zone, format) ?? "ended";
 }
