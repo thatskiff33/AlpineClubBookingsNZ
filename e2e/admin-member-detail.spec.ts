@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "./helpers/accessibility";
+import { adminHref, adminUrlPattern } from "./helpers/admin-url";
 import { loginPersona } from "./helpers/auth";
 import { ROLE_PERSONAS } from "./helpers/fixtures";
 import { personas } from "./helpers/personas";
@@ -25,7 +26,7 @@ async function openMemberDetail(page: Page, name: string) {
     .first();
   await expect(memberLink).toBeVisible({ timeout: 30_000 });
   await memberLink.click();
-  await expect(page).toHaveURL(/\/admin\/members\/(?!$)[^/?#]+/);
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("members"), { child: true }));
 }
 
 test("member directory Open action lands read-only and keeps the name link", async ({
@@ -45,7 +46,9 @@ test("member directory Open action lands read-only and keeps the name link", asy
   await openLink.focus();
   await expect(openLink).toBeFocused();
   await openLink.press("Enter");
-  await expect(page).toHaveURL(/\/admin\/members\/(?!$)[^/?#]+\?returnTo=/);
+  await expect(page).toHaveURL(
+    adminUrlPattern(adminHref("members"), { child: true, requiredParam: "returnTo" }),
+  );
   await expect(page.getByText("First Name", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Save Changes" })).toHaveCount(0);
 });
