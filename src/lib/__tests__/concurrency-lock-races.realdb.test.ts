@@ -663,6 +663,13 @@ import "./saved-card-charge-worth.realdb.test";
 // for one row have one winner. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4646-` fixtures.
 import "./saved-card-async-capture-adopt.realdb.test";
+// #4993 (`INV-PAY-055`) reuses it to prove a saved-card claim stranded
+// CONFIRMED by an interrupted charge is handed back to PENDING once, its hold
+// the claim marker and its attempt row untouched; a young claim and a captured
+// one are left; and recovery racing the capture's adoption resolves either way
+// with one row, no refund and the booking settled once. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4993-` fixtures.
+import "./saved-card-claim-recovery.realdb.test";
 // #4265 reuses it to prove a refund-note row covers only its own live,
 // non-request note: a refund request's note resolved by hand through the real
 // outbox and resolve route covers nothing, live or voided, so the bank-void
