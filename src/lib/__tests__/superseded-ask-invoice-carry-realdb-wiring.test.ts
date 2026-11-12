@@ -46,6 +46,7 @@ describe("INV-PAY-140: the superseded-invoice carry proof stays wired into CI (#
       "the ask first: A's invoice comes back and records A; B's own invoice records only B's own amount, and an officer is told once that B paid A's change again",
       "a carrier with no invoice of its own whose receipt is still queued: the primary has room, so the receipt records the whole capture",
       "the same carrier when the primary has no room: A's invoice is recorded and the rest is left for an officer",
+      "H2: B's own paying invoice queued after the move names B too - it records B's part and the receipt records A's, once each",
       "#4422: a declined ask's stale-tab capture racing its cancel, the carrier already paid and released",
       "the %s claims A first: one superseded refund, both invoices stay on B, nothing recorded for A",
       "#4442: A captures after B is sized; B is withheld and recovery asks only for B's own change",

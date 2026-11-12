@@ -1271,8 +1271,10 @@ function deferred() {
        * before B's receipt is picked up. The receipt records A's invoice up to
        * its room, then whatever of B's capture is left on the primary when the
        * primary has room (#4434). `primaryAmountDue` is Xero's AmountDue in dollars.
+       * `ownInvoiceAfterMove` queues B's own change invoice after the move, while
+       * B's receipt is still waiting (H2): it names B's capture and records a payment.
        */
-      async function carrierReceipt(primaryAmountDue: number) {
+      async function carrierReceipt(primaryAmountDue: number, options: { ownInvoiceAfterMove?: boolean } = {}) {
         await seedPaidBooking();
         const a = await priceIncrease(MOD_A, A_CENTS);
         stripe.failCancels = 1;
@@ -1285,6 +1287,12 @@ function deferred() {
         await drainCancels();
         const invoiceA = await invoiceFor(MOD_A);
         expect(invoiceA).toMatchObject({ status: "PENDING", waitsOn: b, parkedFrom: a, recordPayment: false });
+        const ownCents = options.ownInvoiceAfterMove ? B_CENTS : 0;
+        if (options.ownInvoiceAfterMove) {
+          await editXeroLeg(MOD_B, B_CENTS, b);
+          // Newer than A's moved invoice, naming B's capture, and paying.
+          expect(await invoiceFor(MOD_B)).toMatchObject({ waitsOn: b, cents: B_CENTS, recordPayment: true });
+        }
         // Unpaid, it is never B's recorder: B's receipt does not stand down to it.
         const { readCaptureRecorder } = await import("@/lib/additional-capture-recorder");
         const recorder = await readCaptureRecorder({ bookingId: BOOKING_ID, primaryInvoiceId: "inv_race_3403_primary", paymentIntentId: b, bookingModificationId: MOD_B });
@@ -1294,6 +1302,7 @@ function deferred() {
             { kind: "CHANGE_INVOICE", operation: { id: invoiceA.id } },
             { kind: "PRIMARY_INVOICE" },
           ],
+          alreadyRecordedCents: ownCents,
         });
 
         // A's invoice reaches Xero (the outbox's create, a seeded fact here), then the receipt
@@ -1329,7 +1338,7 @@ function deferred() {
         );
 
         expect(await captured(b)).toBe(A_CENTS + B_CENTS);
-        expect(await recordersOf(b)).toEqual({ invoicedCents: 0, receipts: 1 });
+        expect(await recordersOf(b)).toEqual({ invoicedCents: ownCents, receipts: 1 });
         const done = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: receipt!.id }, select: { status: true, responsePayload: true } });
         return { sent, done };
       }
@@ -1363,6 +1372,23 @@ function deferred() {
           expect(sent).toEqual([{ invoiceId: "inv_race_3403_mod_a", amountCents: A_CENTS }]);
           expect(done).toMatchObject({ status: "SUCCEEDED", responsePayload: { unrecordedCents: B_CENTS } });
           expect(unrecordedAlerts(alert)).toHaveLength(1);
+        } finally {
+          alert.mockRestore();
+        }
+      });
+
+      it("H2: B's own paying invoice queued after the move names B too - it records B's part and the receipt records A's, once each", async () => {
+        const email = await import("@/lib/email");
+        const alert = vi.spyOn(email, "sendAdminXeroSyncErrorAlert").mockResolvedValue({ deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0 } as never);
+        try {
+          // Before #4434 the newest invoice naming B decided: B's paying invoice, so the receipt stood down and A's part was recorded nowhere.
+          const { sent, done } = await carrierReceipt(1_000, { ownInvoiceAfterMove: true });
+          expect(sent).toEqual([{ invoiceId: "inv_race_3403_mod_a", amountCents: A_CENTS }]);
+          expect(done).toMatchObject({ status: "SUCCEEDED", responsePayload: { unrecordedCents: 0 } });
+          // The receipt's legs and the paying invoice's billed cents add up to the capture.
+          const legs = (done.responsePayload as { plan: { legs: Array<{ amountCents: number }> } }).plan.legs;
+          expect(legs.reduce((sum, leg) => sum + leg.amountCents, 0) + B_CENTS).toBe(A_CENTS + B_CENTS);
+          expect(unrecordedAlerts(alert)).toEqual([]);
         } finally {
           alert.mockRestore();
         }
