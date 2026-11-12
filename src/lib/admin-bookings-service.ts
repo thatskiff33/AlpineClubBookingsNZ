@@ -20,6 +20,7 @@ import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle
 import {
   bookingStatusLifecycleRank,
   capacityHoldingBookingFilter,
+  isBookingStatus,
   UPCOMING_CHECK_IN_BOOKING_STATUSES,
 } from "@/lib/booking-status";
 import { bookingsOverlap, sameLodgeNullTolerant } from "@/lib/capacity";
@@ -81,8 +82,6 @@ const bookingSortColumns = new Set<BookingSortBy>([
   "total",
   "status",
 ]);
-
-const validBookingStatuses = new Set<BookingStatus>(Object.values(BookingStatus));
 
 export const adminBookingsQuerySchema = z.object({
   status: z.string().optional(),
@@ -377,9 +376,7 @@ function appliedBookingStatuses(
   return statusFilter
     .split(",")
     .map((status) => status.trim())
-    .filter((status): status is BookingStatus =>
-      validBookingStatuses.has(status as BookingStatus)
-    );
+    .filter(isBookingStatus);
 }
 
 function bookingStatusWhere(statusFilter: string | undefined): Prisma.BookingWhereInput["status"] {
