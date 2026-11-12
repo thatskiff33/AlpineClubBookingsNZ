@@ -102,6 +102,7 @@ import {
 } from "@/lib/xero-primary-invoice-fee-gap";
 import { PRIMARY_INVOICE_NOTHING_LEFT_DUE_REASON } from "@/lib/xero-primary-invoice-fee-at-link";
 import { readBookingForPrimaryInvoice } from "@/lib/xero-primary-invoice-read";
+import { planPrimaryInvoiceManifest, recordPrimaryInvoiceManifest } from "@/lib/member-money/doors";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export interface CreateXeroBookingInvoiceOptions
@@ -215,6 +216,25 @@ async function enrichClaimedOperationMoneyReconciliation(
   });
 }
 
+/**
+ * The lines the claimed operation sent, from its stored request (#4525), or
+ * null where it stored none. A read failure is null too: the manifest waits.
+ */
+async function readStoredPrimaryInvoiceLines(syncOperationId: string): Promise<LineItem[] | null> {
+  try {
+    const operation = await prisma.xeroSyncOperation.findUnique({
+      where: { id: syncOperationId },
+      select: { requestPayload: true },
+    });
+    const invoices = asRecord(operation?.requestPayload)?.invoices;
+    const lines = Array.isArray(invoices) ? asRecord(invoices[0])?.lineItems : undefined;
+    return Array.isArray(lines) ? (lines as LineItem[]) : null;
+  } catch (error) {
+    logger.error({ err: error, syncOperationId }, "Could not read the stored primary invoice lines");
+    return null;
+  }
+}
+
 export async function createXeroInvoiceForBooking(
   bookingId: string,
   options?: CreateXeroBookingInvoiceOptions
@@ -247,6 +267,14 @@ export async function createXeroInvoiceForBooking(
       xeroObjectUrl: buildXeroInvoiceUrl(booking.payment.xeroInvoiceId),
       role: "PRIMARY_INVOICE",
     });
+    // #4525 (Ledger M13): a run that linked the invoice but recorded no manifest
+    // records it here from the lines its operation stored. Nothing is rebuilt.
+    if (options?.syncOperation) {
+      await recordPrimaryInvoiceManifest(
+        { kind: "REPLAY", bookingId, storedLines: await readStoredPrimaryInvoiceLines(options.syncOperation.id) },
+        booking.payment.xeroInvoiceId,
+      );
+    }
     // #3955 review X4 (round 3), #3980: a prior run that persisted the link but
     // died before or inside its gap check re-runs it here, from what the invoice
     // billed and the booking's worth as recorded with the link. Idempotent.
@@ -443,16 +471,17 @@ export async function createXeroInvoiceForBooking(
   const bookingSeasonType = await getHutFeeSeasonType(checkIn, booking.lodgeId);
 
   // Build line items with per-guest item codes
+  const invoiceGuests = booking.guests.map((g) => ({
+    firstName: g.firstName,
+    lastName: g.lastName,
+    ageTier: g.ageTier,
+    isMember: g.isMember,
+    rateMembershipTypeId: g.rateMembershipTypeId,
+    priceCents: g.priceCents,
+    nights: (g.nights ?? []).map((n) => ({ stayDate: n.stayDate, priceCents: n.priceCents })),
+  }));
   const lineItems = buildInvoiceLineItems(
-    booking.guests.map((g) => ({
-      firstName: g.firstName,
-      lastName: g.lastName,
-      ageTier: g.ageTier,
-      isMember: g.isMember,
-      rateMembershipTypeId: g.rateMembershipTypeId,
-      priceCents: g.priceCents,
-      nights: (g.nights ?? []).map((n) => ({ stayDate: n.stayDate, priceCents: n.priceCents })),
-    })),
+    invoiceGuests,
     checkIn,
     checkOut,
     nights,
@@ -496,6 +525,25 @@ export async function createXeroInvoiceForBooking(
   // the reasoning is on the helper.
   const feeOwedCents = recordedChangeFeeCents(booking.payment);
   if (feeOwedCents > 0) lineItems.push(changeFeeLineItem(feeOwedCents, hutFeeMapping));
+  // #4525 (Ledger M13): the same builders, planned against the journal's components.
+  // Kept aside for the manifest once the link is stored; these lines are still what is sent.
+  const manifestPlan = await planPrimaryInvoiceManifest({
+    bookingId,
+    guests: invoiceGuests,
+    checkIn,
+    checkOut,
+    nights,
+    hutFeeMapping,
+    hutFeeItemCodeMap,
+    seasonType: bookingSeasonType,
+    promo: {
+      aggregateCents: xeroPromoAdjustmentCents,
+      redemptions: booking.promoRedemptions,
+      adjustmentRows: booking.nightAdjustments,
+      firstGuest: booking.guests[0] ?? null,
+    },
+    changeFeeCents: feeOwedCents,
+  });
   // #3980: the worth this read gives and what its lines bill, stored with the link.
   const builtFrom = {
     worthCents: bookingWorthCents({ finalPriceCents: booking.finalPriceCents, changeFeeCents: booking.payment.changeFeeCents }),
@@ -1028,6 +1076,8 @@ export async function createXeroInvoiceForBooking(
       primaryInvoiceCashCents,
       primaryInvoiceAttemptedCashCents: shouldRecordStripeInvoicePayment ? invoicePaymentCents : 0,
     });
+    // #4525 (Ledger M13): the manifest, in its own transaction after the link. Never throws.
+    await recordPrimaryInvoiceManifest({ kind: "BUILT", bookingId, plan: manifestPlan }, createdInvoice.invoiceID);
     await prisma.paymentTransaction.updateMany({
       where: {
         paymentId: booking.payment.id,

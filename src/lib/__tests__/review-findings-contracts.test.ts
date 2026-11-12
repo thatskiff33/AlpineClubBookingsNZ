@@ -1464,6 +1464,22 @@ describe("review finding source/schema contracts", () => {
     expect(suite).toContain("open_reservation_without_funding");
   });
 
+  it("proves the member-money export manifest against a real PostgreSQL in a required job (#4525)", () => {
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    const proofStep = workflow.indexOf("name: Prove the member-money export manifest against dedicated PostgreSQL");
+    expect(proofStep).toBeGreaterThan(workflow.indexOf("name: Prove the member-money application engine against dedicated PostgreSQL"));
+    expect(proofStep).toBeLessThan(workflow.indexOf("\n  data-migration-verification:\n"));
+    const step = workflow.slice(proofStep, workflow.indexOf("\n      - name:", proofStep + 1));
+    expect(step).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
+    expect(step).toContain("pnpm exec vitest run src/lib/__tests__/member-money-export-manifest.realdb.test.ts");
+    expect(step).not.toContain("continue-on-error");
+    expect(step).not.toMatch(/\n\s+if:/);
+    const suite = readRepoFile("src/lib/__tests__/member-money-export-manifest.realdb.test.ts");
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    expect(suite).toContain("coverage_total_mismatch");
+    expect(suite).toContain("conflict_with_coverage");
+  });
+
   it("executes the email-override annotation strip against a real PostgreSQL in CI (#2269, #2418)", () => {
     // The audit half of that migration was pinned by string-matching the SQL
     // only: mutating `) AS found ON TRUE` to `... WHERE FALSE` wrote zero audit
