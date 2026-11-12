@@ -41,9 +41,13 @@ export function readStripeReturn(search: string): StripeReturn {
   return INTENT_ID.test(intentId) ? { kind: "check", intentId, confirmation: status } : { kind: "none" };
 }
 
-/** `href` as the `return_url` of a confirmation made on `surface`. */
+/**
+ * `href` as the `return_url` of a confirmation made on `surface`, less any
+ * earlier return still in it, so Stripe's parameters are the only ones there.
+ */
 export function stripeReturnUrl(surface: StripeReturnSurface, href: string): string {
   const url = new URL(href);
+  for (const name of RETURN_PARAMS) url.searchParams.delete(name);
   url.searchParams.set(SURFACE_PARAM, surface);
   return url.toString();
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useEffectEvent, useState } from "react";
+import { CHECKING_PAYMENT_MESSAGE } from "@/lib/payment-recovery-contract";
 import { stripeReturnUrl, takeStripeReturn } from "@/lib/stripe-return";
 
 /*
@@ -46,6 +47,6 @@ export function SettlementPaymentStatus({ processingMessage }: { processingMessa
       {processingMessage}
     </p>
   ) : (
-    <p className="text-sm text-muted-foreground">Checking your payment...</p>
+    <p className="text-sm text-muted-foreground">{CHECKING_PAYMENT_MESSAGE}</p>
   );
 }

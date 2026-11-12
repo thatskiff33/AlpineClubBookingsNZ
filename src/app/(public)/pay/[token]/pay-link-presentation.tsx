@@ -31,12 +31,14 @@ import {
   type BoundClubTime,
 } from "@/lib/club-time";
 import {
+  CHECKING_PAYMENT_MESSAGE,
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
   isExistingCardTransactionStatusUnconfirmed,
   isPaymentProcessing,
   isPaymentReceivedFinalisationPending,
   isPaymentReceivedStatusUnconfirmed,
   isSupersededCardPaymentRefunding,
+  PAYMENT_PROCESSING_HEADING,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
   SUPERSEDED_CARD_PAYMENT_REFUNDING_LINK_MESSAGE,
 } from "@/lib/payment-recovery-contract";
@@ -247,7 +249,7 @@ export function CardPaymentUnavailableNotice() {
 export function CheckingPaymentCard() {
   return (
     <Card className="w-full max-w-lg">
-      <CardContent className="py-8 text-center text-muted-foreground">Checking your payment...</CardContent>
+      <CardContent className="py-8 text-center text-muted-foreground">{CHECKING_PAYMENT_MESSAGE}</CardContent>
     </Card>
   );
 }
@@ -285,7 +287,7 @@ export function paymentRecoveryForRefusal(data: Record<string, unknown>): Paymen
   if (isExistingCardTransactionStatusUnconfirmed(data)) {
     return { heading: "Card transaction found - check payment status", message: EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE };
   }
-  if (isPaymentProcessing(data)) return { heading: "Payment being processed", message: data.error };
+  if (isPaymentProcessing(data)) return { heading: PAYMENT_PROCESSING_HEADING, message: data.error };
   if (isSupersededCardPaymentRefunding(data)) {
     return { heading: "Card payment being returned", message: SUPERSEDED_CARD_PAYMENT_REFUNDING_LINK_MESSAGE };
   }

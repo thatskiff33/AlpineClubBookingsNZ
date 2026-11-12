@@ -3,7 +3,6 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { render } from "@/lib/__tests__/support/club-time-render";
-import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import BookingPaymentWrapper from "@/components/stripe/BookingPaymentWrapper";
 import { PAYMENT_PROCESSING_MESSAGE } from "@/lib/payment-recovery-contract";
@@ -42,10 +41,10 @@ function returnTo(status: string, surface = "booking") {
 }
 
 function renderWrapper(onPaymentComplete = vi.fn(), paymentMode: "payment" | "setup" = "payment") {
+  // React strict mode runs the mount effect twice: the return is still asked about once.
   render(
-    <StrictMode>
-      <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode={paymentMode} onPaymentComplete={onPaymentComplete} />
-    </StrictMode>,
+    <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode={paymentMode} onPaymentComplete={onPaymentComplete} />,
+    { reactStrictMode: true },
   );
   return onPaymentComplete;
 }
@@ -81,11 +80,40 @@ describe("BookingPaymentWrapper Stripe redirect return (ALP-569)", () => {
     expect(window.location.search).toBe("");
   });
 
-  it("shows a recovery, not completion, when the confirm route refuses a succeeded return", async () => {
+  it("never calls a refused succeeded return received: the door offers the form again", async () => {
     returnTo("succeeded");
-    fetchMock.mockResolvedValue({ ok: false, status: 400, json: async () => ({ error: "no" }) });
+    fetchMock.mockImplementation(async (url: string) =>
+      url.endsWith("/confirm-payment")
+        ? { ok: false, status: 400, json: async () => ({ error: "Payment has not succeeded" }) }
+        : { ok: true, json: async () => ({ clientSecret: "cs_test", paymentIntentId: "pi_ret" }) },
+    );
     const onPaymentComplete = renderWrapper();
-    expect(await screen.findByText("Payment received - check booking status")).toBeInTheDocument();
+    expect(await screen.findByText("payment-form")).toBeInTheDocument();
+    expect(screen.queryByText("Payment received - check booking status")).toBeNull();
+    expect(screen.queryByText("Payment being processed")).toBeNull();
+    expect(onPaymentComplete).not.toHaveBeenCalled();
+  });
+
+  it("asks the door when the confirm route gives no answer, and completes on its already-paid", async () => {
+    returnTo("succeeded");
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith("/confirm-payment")) throw new Error("network");
+      return { ok: true, json: async () => ({ alreadyPaid: true }) };
+    });
+    const onPaymentComplete = renderWrapper();
+    await waitFor(() => expect(onPaymentComplete).toHaveBeenCalledTimes(1));
+    expect(confirmCalls()).toHaveLength(1);
+  });
+
+  it("shows a recovery answer to a succeeded return in place of the check", async () => {
+    returnTo("succeeded");
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: "x", status: "CANCELLED", refunded: false }),
+    });
+    const onPaymentComplete = renderWrapper();
+    expect(await screen.findByText("Booking cancelled - refund needs attention")).toBeInTheDocument();
     expect(screen.queryByText("Checking your payment...")).toBeNull();
     expect(onPaymentComplete).not.toHaveBeenCalled();
   });

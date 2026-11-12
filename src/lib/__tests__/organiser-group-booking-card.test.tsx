@@ -681,8 +681,11 @@ describe("OrganiserGroupBookingCard Stripe redirect return", () => {
   it("asks the settle route about a returned card payment and shows its answer", async () => {
     returnTo("succeeded");
     const fetchMock = stubFetch({ settleBody: { outcome: "already_settled" } });
-    render(<OrganiserGroupBookingCard bookingId="booking-1" canOpenGroup={false} group={group()} />);
+    render(<OrganiserGroupBookingCard bookingId="booking-1" canOpenGroup={false} group={group()} />, {
+      reactStrictMode: true,
+    });
     expect(await screen.findByText(/Everyone in your group is confirmed/)).toBeDefined();
+    expect(settleCalls(fetchMock)).toHaveLength(1);
     expect(JSON.parse((settleCalls(fetchMock)[0][1] as { body: string }).body).paymentMethod).toBe("stripe");
     expect(window.location.search).toBe("");
   });

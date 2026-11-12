@@ -2,7 +2,6 @@
 
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
-import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
@@ -40,7 +39,8 @@ function returnTo(status: string, surface = "additional-payment") {
 }
 
 function renderCard() {
-  render(<StrictMode><AdditionalPaymentCard bookingId="b1" additionalAmountCents={5000} /></StrictMode>);
+  // React strict mode runs the mount effect twice: the return is still asked about once.
+  render(<AdditionalPaymentCard bookingId="b1" additionalAmountCents={5000} />, { reactStrictMode: true });
 }
 
 describe("AdditionalPaymentCard Stripe redirect return (ALP-569)", () => {
@@ -70,6 +70,7 @@ describe("AdditionalPaymentCard Stripe redirect return (ALP-569)", () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ success: true }) });
     renderCard();
     expect(await screen.findByText("Payment successful!")).toBeInTheDocument();
+    expect(calls("/confirm-modification-payment")).toHaveLength(1);
     expect(JSON.parse(calls("/confirm-modification-payment")[0][1].body)).toEqual({ paymentIntentId: "pi_ret" });
     expect(calls("/additional-payment-secret")).toHaveLength(0);
     expect(window.location.search).toBe("");

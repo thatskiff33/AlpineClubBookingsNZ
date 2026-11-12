@@ -31,6 +31,12 @@ export const PAYMENT_PROCESSING_CODE = "PAYMENT_PROCESSING" as const;
 export const PAYMENT_PROCESSING_MESSAGE =
   "This payment is being processed. Refresh the page in a minute to see it confirmed.";
 
+/** ALP-569: the heading over `PAYMENT_PROCESSING_MESSAGE` on every card surface. */
+export const PAYMENT_PROCESSING_HEADING = "Payment being processed";
+
+/** #4955 / ALP-569: shown while a card surface asks the server what a payment did. */
+export const CHECKING_PAYMENT_MESSAGE = "Checking your payment...";
+
 export const PAYMENT_PROCESSING_BODY = Object.freeze({
   code: PAYMENT_PROCESSING_CODE,
   error: PAYMENT_PROCESSING_MESSAGE,

@@ -11,6 +11,7 @@ import { RedirectFailedNotice } from "@/components/stripe/redirect-failed-notice
 import { stripeReturnUrl, takeStripeReturn, type StripeReturn } from "@/lib/stripe-return";
 import { useClubFormat } from "@/components/club-format-provider";
 import {
+  CHECKING_PAYMENT_MESSAGE,
   isAdditionalPaymentAlreadyMade,
   isPaymentProcessing,
 } from "@/lib/payment-recovery-contract";
@@ -68,6 +69,8 @@ export function AdditionalPaymentCard({
   // ALP-569: a redirect method's return to this card (`takeStripeReturn`), taken
   // once per mount; a ref, so React strict mode's second effect run sees it.
   const stripeReturn = useRef<StripeReturn | null>(null);
+  // The confirm request for that return, shared by strict mode's second run.
+  const returnConfirmation = useRef<Promise<boolean> | null>(null);
   const [checkingPayment, setCheckingPayment] = useState(false);
   const [redirectFailed, setRedirectFailed] = useState(false);
   // Bumped when an in-page confirmation resolves `processing`: ask the door again.
@@ -112,7 +115,7 @@ export function AdditionalPaymentCard({
         if (
           returned.kind === "check" &&
           returned.confirmation === "succeeded" &&
-          (await confirmedReturn(returned.intentId))
+          (await (returnConfirmation.current ??= confirmedReturn(returned.intentId)))
         ) {
           if (active) completeReturnedPayment();
           return;
@@ -159,6 +162,7 @@ export function AdditionalPaymentCard({
           setLoading(false);
           setCheckingPayment(false);
           stripeReturn.current = { kind: "none" };
+          returnConfirmation.current = null;
         }
       }
     }
@@ -268,7 +272,7 @@ export function AdditionalPaymentCard({
             {loading && (
               <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-warning-7 border-t-transparent" />
-                {checkingPayment ? "Checking your payment..." : "Loading payment details..."}
+                {checkingPayment ? CHECKING_PAYMENT_MESSAGE : "Loading payment details..."}
               </div>
             )}
 

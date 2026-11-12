@@ -29,6 +29,13 @@ describe("stripe-return (#4955, ALP-569)", () => {
     expect(url.hash).toBe("#pay");
   });
 
+  it("drops an earlier return left in the page address from a new return_url", () => {
+    const url = new URL(
+      stripeReturnUrl("group-settlement", "http://localhost/bookings/b1?stripe_return=booking&payment_intent=pi_old&payment_intent_client_secret=s&redirect_status=failed"),
+    );
+    expect(url.search).toBe("?stripe_return=group-settlement");
+  });
+
   it("gives a named return only to its surface and cleans the address bar", () => {
     at(`/bookings/b1?tab=group&stripe_return=additional-payment&${RETURN}#pay`);
     expect(hasStripeReturn("booking")).toBe(false);
