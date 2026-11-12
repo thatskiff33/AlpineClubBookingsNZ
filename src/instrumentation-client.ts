@@ -39,8 +39,6 @@ void initializeBrowserSentry(dsn => {
 
     // Scrub sensitive data from Sentry payloads
     beforeSend(event) {
-      if (!dsn) return null;
-
       if (event.message) {
         event.message = redactSensitiveText(event.message);
       }
