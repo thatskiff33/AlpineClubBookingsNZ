@@ -53,10 +53,10 @@ run = "pnpm install --frozen-lockfile --prefer-offline && env AUTH_SECRET=ci-aut
 run = "pnpm install --frozen-lockfile --prefer-offline && bash scripts/ci/kept-change-realdb.sh"
 
 # CI parity (owner decision, 12 Nov 2026): the production half of `typecheck`
-# only; tsconfig.test.json runs this sandbox out of memory, so CI keeps the test
-# and e2e projects.
+# only, and only on runners with 6 GiB or more; it skips with a message on 4 GB
+# platform compute (see the script). CI keeps the full typecheck.
 [jobs.typecheck]
-run = "pnpm install --frozen-lockfile --prefer-offline && pnpm run typecheck:src"
+run = "pnpm install --frozen-lockfile --prefer-offline && bash scripts/ci/sekreton-typecheck.sh"
 
 # The disk-reading censuses plus docs:indexcheck and the file-size ratchet
 # (quality:budget), both judged against origin/main, so fetch it first.

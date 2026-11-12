@@ -67,6 +67,7 @@ export DATA_MIGRATION_VERIFICATION_DATABASE_URL="$DATABASE_URL"
 files=(
   src/lib/__tests__/data-migration-verification.realdb.test.ts
   src/lib/__tests__/school-organisation-backfill-fail-closed.realdb.test.ts
+  src/lib/__tests__/school-pending-adult-resolution.realdb.test.ts
 )
 # One path per `vitest run`, as CI does: a multi-path run silently drops a path
 # that matches nothing. Each report is then checked for skips.

@@ -272,8 +272,8 @@ suite must pass and none may skip. `migrations` runs
 `bash scripts/ci/sekreton-migration-checks.sh`: the data-migration coverage gate
 always, then, when the change can move CI's migration jobs, drift and the
 data-migration suites with the same no-skip check (its header has the rule).
-`typecheck` runs `pnpm run typecheck:src`, the production project only; the
-test and e2e projects exceed the sandbox's memory and stay with PR CI.
+`typecheck` runs `scripts/ci/sekreton-typecheck.sh` (production project only,
+skipped under 6 GiB); PR CI keeps the rest.
 `fast-censuses` runs `pnpm run ci:fast-censuses` against a fetched `origin/main`.
 The `realdb-all` job on GitHub remains advisory, so cite its actual result
 separately before making the PR ready.
