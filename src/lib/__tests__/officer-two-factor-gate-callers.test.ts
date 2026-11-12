@@ -17,21 +17,55 @@ function walk(dir: string): string[] {
 }
 
 describe("officer enrolment gate callers (#4618)", () => {
-  it("consults the officer gate wherever the club-wide challenge is consulted", () => {
-    const offenders: string[] = [];
+  // Every guard that once called the club-wide check now calls the combined
+  // gate. A direct call elsewhere would skip the officer rule.
+  const GATE_CALLERS = [
+    "src/app/(authenticated)/layout.tsx",
+    "src/app/(lodge)/layout.tsx",
+    "src/app/api/finance/legacy-dashboard/auth/route.ts",
+    "src/lib/admin-layout-guard.ts",
+    "src/lib/finance-api-auth.ts",
+    "src/lib/finance-auth.ts",
+    "src/lib/session-guards.ts",
+  ];
+
+  it("calls the club-wide check only through the combined gate", () => {
+    const direct: string[] = [];
+    const combined: string[] = [];
     for (const file of walk(join(process.cwd(), "src"))) {
       if (file.endsWith(`${join("lib", "two-factor-gate.ts")}`)) continue;
       const source = readFileSync(file, "utf8");
-      if (!source.includes("isTwoFactorSessionBlocked(")) continue;
-      if (
-        source.includes("factorGateRedirect(") ||
-        source.includes("isOfficerEnrolmentSessionBlocked(")
-      ) {
-        continue;
-      }
-      offenders.push(file.slice(process.cwd().length + 1));
+      const relative = file.slice(process.cwd().length + 1).split("\\").join("/");
+      if (source.includes("isTwoFactorSessionBlocked(")) direct.push(relative);
+      if (source.includes("factorGateRedirect(")) combined.push(relative);
     }
-    expect(offenders).toEqual([]);
+    expect(direct).toEqual([]);
+    expect(combined.sort()).toEqual([...GATE_CALLERS].sort());
+  });
+
+  it("refuses a gated officer whatever path the request claims, with no path", () => {
+    const gated = {
+      officerTwoFactorRequired: true,
+      twoFactorSatisfiesOfficer: false,
+      officerTwoFactorGraceEndsAt: Date.parse("2026-07-01T00:00:00.000Z"),
+    };
+    expect(
+      factorGateRedirect({
+        sessionUser: gated,
+        now: new Date("2026-07-01T00:00:01.000Z"),
+      }),
+    ).not.toBeNull();
+  });
+
+  it("never lets an API guard pass a caller-supplied path to the gate", () => {
+    for (const file of ["src/lib/session-guards.ts", "src/lib/finance-api-auth.ts"]) {
+      const source = readFileSync(join(process.cwd(), file), "utf8");
+      const calls = source.split("factorGateRedirect(").slice(1);
+      for (const call of calls) {
+        const args = call.slice(0, call.indexOf(")"));
+        expect(args, file).not.toMatch(/pathname,|pathname:\s*pathname|method,/);
+      }
+    }
   });
 
   it("lets a gated officer through an enrolment path and nowhere else", () => {
@@ -94,6 +128,30 @@ describe("authenticator enrolment for a required officer (#4618)", () => {
         twoFactorSatisfiesOfficer: false,
         twoFactorEnabled: true,
         twoFactorMethod: "EMAIL",
+      }),
+    ).toBeNull();
+  });
+
+  it("refuses to replace an enrolled factor before the module challenge is passed", () => {
+    expect(
+      authenticatorEnrolmentBlock({
+        twoFactorRequired: true,
+        twoFactorVerified: false,
+        officerTwoFactorRequired: true,
+        twoFactorSatisfiesOfficer: false,
+        twoFactorEnabled: true,
+        twoFactorMethod: "EMAIL",
+      })?.status,
+    ).toBe(403);
+    // Not yet enrolled: the module asks them to enrol, so they may.
+    expect(
+      authenticatorEnrolmentBlock({
+        twoFactorRequired: true,
+        twoFactorVerified: false,
+        officerTwoFactorRequired: true,
+        twoFactorSatisfiesOfficer: false,
+        twoFactorEnabled: false,
+        twoFactorMethod: null,
       }),
     ).toBeNull();
   });

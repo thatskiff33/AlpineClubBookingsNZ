@@ -177,30 +177,21 @@ function twoFactorRequiredResponse() {
 
 /**
  * The club-wide challenge and the officer enrolment gate, as one answer.
- * The request path lets an allowlisted enrolment route through after grace.
- * A missing path fails closed for a gated officer.
+ * No path is passed: none of the allowlisted enrolment routes call these
+ * guards, and the path header is caller-supplied on API routes the proxy does
+ * not run on. A gated officer is therefore refused on every guarded API route.
  */
-async function factorGateResponse(params: {
+function factorGateResponse(params: {
   sessionUser?: TwoFactorSessionUser | null;
   member?: TwoFactorGateMember | null;
   allowForcePasswordChange?: boolean;
-}): Promise<NextResponse | null> {
-  let pathname: string | null = null;
-  let method: string | null = null;
-  try {
-    const requestHeaders = await headers();
-    pathname = requestHeaders.get(REQUEST_PATH_HEADER);
-    method = requestHeaders.get(REQUEST_METHOD_HEADER);
-  } catch {
-    pathname = null;
-  }
+}): NextResponse | null {
   const destination = factorGateRedirect({
     sessionUser: params.sessionUser,
     member: params.member,
     allowForcePasswordChange: params.allowForcePasswordChange,
-    pathname,
-    method,
-    callbackPath: pathname,
+    pathname: null,
+    callbackPath: null,
   });
   return destination ? twoFactorRequiredResponse() : null;
 }
@@ -304,7 +295,7 @@ export async function requireAdmin(
     };
   }
 
-  const factorGate = await factorGateResponse({
+  const factorGate = factorGateResponse({
     sessionUser: session.user,
     member,
   });
@@ -409,7 +400,7 @@ export async function requireActiveSessionUser(
 
   const sessionUser = options.sessionUser ?? (await auth())?.user;
   if (sessionUser?.id === userId) {
-    const factorGate = await factorGateResponse({
+    const factorGate = factorGateResponse({
       sessionUser,
       member,
       allowForcePasswordChange: options.allowForcePasswordChange,

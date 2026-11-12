@@ -115,8 +115,22 @@ export function authenticatorEnrolmentBlock(input: {
   twoFactorMethod?: string | null;
   /** Setup refuses a session that has already finished the module challenge. */
   refuseVerifiedModuleSession?: boolean;
-}): { status: 400 | 409; error: string } | null {
-  if (officerMayEnrolAuthenticatorApp(input)) return null;
+}): { status: 400 | 403 | 409; error: string } | null {
+  if (officerMayEnrolAuthenticatorApp(input)) {
+    // An enrolled factor still owed at sign-in must be passed first, or a
+    // password alone could replace it (as passkey registration refuses).
+    if (
+      input.twoFactorRequired === true &&
+      input.twoFactorVerified !== true &&
+      input.twoFactorEnabled === true
+    ) {
+      return {
+        status: 403,
+        error: "Finish signing in before changing your authenticator.",
+      };
+    }
+    return null;
+  }
   if (input.twoFactorRequired !== true) {
     if (
       input.officerTwoFactorRequired === true &&

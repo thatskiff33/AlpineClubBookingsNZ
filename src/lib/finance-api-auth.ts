@@ -1,10 +1,5 @@
 import { NextResponse } from "next/server";
-import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
-import {
-  REQUEST_METHOD_HEADER,
-  REQUEST_PATH_HEADER,
-} from "@/lib/internal-return-path";
 import {
   hasFinanceManagerAccess,
   hasFinanceViewerAccess,
@@ -71,24 +66,8 @@ async function requireFinanceApiAccess(input: {
     };
   }
 
-  let pathname: string | null = null;
-  let method: string | null = null;
-  try {
-    const requestHeaders = await headers();
-    pathname = requestHeaders.get(REQUEST_PATH_HEADER);
-    method = requestHeaders.get(REQUEST_METHOD_HEADER);
-  } catch {
-    pathname = null;
-  }
-  if (
-    factorGateRedirect({
-      sessionUser: session.user,
-      member,
-      pathname,
-      method,
-      callbackPath: pathname,
-    })
-  ) {
+  // No path: no finance route is on the officer enrolment allowlist.
+  if (factorGateRedirect({ sessionUser: session.user, member })) {
     return {
       ok: false,
       response: NextResponse.json(
