@@ -536,6 +536,11 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "A refund to your card for your group booking — {{CLUB_NAME}}",
     "defaultBody": "Refund to Your Card\n\nHi {{firstName}},\n\n{{refundSentence}}\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nIf you have questions, contact the club at {{SUPPORT_EMAIL}}."
   },
+  // #4299 (`INV-PAY-142`): a joiner's place the organiser paid for by internet banking now costs more.
+  "group-organiser-extra-invoice": {
+    "defaultSubject": "An extra invoice for your group booking — {{CLUB_NAME}}",
+    "defaultBody": "An Extra Invoice for Your Group Booking\n\nHi {{firstName}},\n\n{{extraInvoiceSentence}}\n\nPlace: {{joinerName}}\nChange: {{changeSummary}}\nInvoice: {{invoiceNumber}}\nAmount: {{amount}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nIf you have questions, contact the club at {{SUPPORT_EMAIL}}."
+  },
   "group-join-settled": {
     "defaultSubject": "Your spot is confirmed — {{CLUB_NAME}}",
     "defaultBody": "Your Spot Is Confirmed\n\nHi {{firstName}}, {{organiserName}} has settled the cost of your stay at {{CLUB_NAME}}'s lodge as part of their group booking. Your spot is confirmed and there is nothing for you to pay.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nIf you have any questions about your stay, contact the club at {{SUPPORT_EMAIL}}."

@@ -52,6 +52,7 @@ import {
   resolveModificationDocumentLineItems,
 } from "@/lib/xero-modification-line-items";
 import type { ClubFormat } from "@/lib/club-format";
+import { createXeroOrganiserExtraInvoice, findOrganiserExtraForChange } from "@/lib/xero-organiser-extra-invoice";
 
 export async function createXeroSupplementaryInvoice(params: {
   bookingId: string;
@@ -124,6 +125,16 @@ export async function createXeroSupplementaryInvoice(params: {
     throw new Error(
       "Supplementary invoice requires a bookingModificationId for a distinct Xero idempotency key"
     );
+  }
+
+  // #4299 (`INV-PAY-142`): a change billed to the group organiser is raised to
+  // the organiser, from its own row - on every route here (outbox, Retry), so
+  // no route can raise a joiner-addressed invoice for it.
+  if (!shortfallReviewTaskId) {
+    const organiserExtra = await findOrganiserExtraForChange(bookingModificationId);
+    if (organiserExtra) {
+      return createXeroOrganiserExtraInvoice({ extra: organiserExtra, createdByMemberId, repairExistingLink, syncOperationId, format: params.format });
+    }
   }
 
   // A supplementary invoice only exists to bill a positive NET (#1356): the

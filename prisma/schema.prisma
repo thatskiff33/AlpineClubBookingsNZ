@@ -6190,6 +6190,8 @@ model BookingModification {
   creditsFromModification MemberCredit[]         @relation("CreditSourceModification")
   /// #3402: the single-flight lease on this edit's ONE review-charge request.
   reviewChargeRaiseClaim  EditReviewChargeRaiseClaim?
+  /// #4299 (`INV-PAY-142`): the group organiser's extra invoice for this change, when it raised the price of a place the organiser paid for by Internet Banking.
+  organiserExtraInvoice   OrganiserExtraInvoice?
 
   @@index([bookingId])
   @@index([memberId])
@@ -6220,6 +6222,53 @@ model EditReviewChargeRaiseClaim {
   updatedAt             DateTime  @updatedAt
 
   bookingModification BookingModification @relation(fields: [bookingModificationId], references: [id], onDelete: Cascade)
+}
+
+/// #4299 (`INV-PAY-142`, owner decisions 25 Oct 2026): THE GROUP ORGANISER'S
+/// EXTRA INVOICE for one change that raised the price of a joiner's place the
+/// organiser paid for by Internet Banking. One row per change (the anchor), so
+/// the change is billed exactly once, by the edit's own door or by the
+/// back-bill repair. Its Xero invoice is the change's supplementary invoice,
+/// addressed to the organiser and naming the group's combined invoice.
+///
+/// THE COUNTERS ARE THE NETTING (decisions N1-N3). `paidCents` is what Xero
+/// reported paid on it, already added to the place's payment mirror;
+/// `reducedCents` is what later cuts or a cancel took off its unpaid part
+/// (credited or voided, untiered); `refundedCents` is the paid part a later
+/// refund to the organiser gave back (credited against it). Unpaid is
+/// `billedCents - paidCents - reducedCents`. Every write to them holds
+/// `lock(1)` (`INV-LOCK-001`).
+///
+/// FK-less to the booking and the settlement by design: it is a snapshot of
+/// who was billed for what, read by booking id; the change is its anchor.
+model OrganiserExtraInvoice {
+  id                    String    @id @default(cuid())
+  bookingModificationId String    @unique
+  bookingId             String
+  groupSettlementId     String
+  /// The group's combined invoice this extra names, as it stood at the change.
+  combinedInvoiceId     String
+  combinedInvoiceNumber String?
+  priceDiffCents        Int
+  changeFeeCents        Int
+  /// priceDiffCents + changeFeeCents: what the invoice bills. Always positive.
+  billedCents           Int
+  paidCents             Int       @default(0)
+  reducedCents          Int       @default(0)
+  refundedCents         Int       @default(0)
+  /// EDIT (the change's own door) or BACK_BILL (the repair, for a change made before #4299).
+  source                String
+  xeroInvoiceId         String?
+  xeroInvoiceNumber     String?
+  /// Claimed once, before the organiser's email is sent (at most once per change).
+  organiserNotifiedAt   DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  bookingModification BookingModification @relation(fields: [bookingModificationId], references: [id], onDelete: Restrict)
+
+  @@index([bookingId])
+  @@index([groupSettlementId])
 }
 
 // Booking Change Requests (locked same-day/past-night edits needing admin review)

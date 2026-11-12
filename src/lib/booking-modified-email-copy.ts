@@ -346,3 +346,26 @@ export function refundRequestApprovedRefundSentence(
   }
   return `${ownCardRefundPlannedClause(formatAmount(cardCents))}, and ${bankTransferRefundClause(`the remaining ${formatAmount(bankTransferCents)}`)}.`;
 }
+
+/**
+ * #4299 (`INV-PAY-142`, decision 2): the organiser's sentence when a joiner's
+ * place they paid for by Internet Banking costs more - billed to them on an
+ * extra invoice that names the group's combined invoice.
+ */
+export function organiserExtraInvoiceSentence(input: {
+  amount: string;
+  joinerName: string;
+  invoiceNumber: string;
+  combinedInvoiceNumber: string | null;
+}): string {
+  const combined = input.combinedInvoiceNumber ? ` It is separate from the group's invoice ${input.combinedInvoiceNumber}.` : "";
+  return `${input.joinerName}'s place in your group booking was changed and now costs more. Because you paid for their place, the club has invoiced you ${input.amount} for the extra on invoice ${input.invoiceNumber}, including any late-change fee.${combined} Please pay it by bank transfer, as you paid the group's invoice.`;
+}
+
+/**
+ * #4299 (`INV-PAY-142`): the joiner's sentence for the same change - the
+ * extra is the organiser's to pay, so the joiner is asked for nothing.
+ */
+export function organiserBilledForChangeSentence(amount: string): string {
+  return `The extra ${amount} for this change is billed to the group organiser, who paid for this place, so there is nothing for you to pay.`;
+}

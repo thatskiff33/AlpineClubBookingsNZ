@@ -6,11 +6,12 @@ import {
   groupJoinPaySelfTemplate,
   groupJoinReleasedTemplate,
   groupJoinSettledTemplate,
+  groupOrganiserExtraInvoiceTemplate,
   groupOrganiserJoinerRefundTemplate,
   groupSettlementExpiredTemplate,
   groupSettlementReceiptTemplate,
 } from "@/lib/email-templates/groups";
-import { organiserJoinerAppealRefundSentence } from "@/lib/booking-modified-email-copy";
+import { organiserExtraInvoiceSentence, organiserJoinerAppealRefundSentence } from "@/lib/booking-modified-email-copy";
 import { CLUB_NAME } from "@/config/club-identity";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { sendEmail } from "./core";
@@ -314,6 +315,59 @@ export async function sendGroupOrganiserJoinerRefundEmail(params: {
       joinerName: params.joinerName,
       amount,
       refundSentence: organiserJoinerAppealRefundSentence(amount, params.joinerName),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
+    },
+  });
+}
+
+/**
+ * #4299 (`INV-PAY-142`, decision 2): the organiser's notice of an extra invoice
+ * for a joiner's place they paid for by Internet Banking. Scoped to the
+ * organiser's own booking, so its "No emails" switch withholds it.
+ */
+export async function sendGroupOrganiserExtraInvoiceEmail(params: {
+  bookingContext: BookingEmailSourceContext;
+  email: string;
+  firstName: string;
+  joinerName: string;
+  amountCents: number;
+  invoiceNumber: string;
+  combinedInvoiceNumber: string | null;
+  changeSummary: string;
+  checkIn: Date;
+  checkOut: Date;
+},
+  format: ClubFormat,
+) {
+  const amount = formatMoneyCents(params.amountCents, format);
+  await sendEmail({
+    to: params.email,
+    subject: `An extra invoice for your group booking — ${CLUB_NAME}`,
+    html: await renderEmailHtml(() => groupOrganiserExtraInvoiceTemplate({
+      firstName: params.firstName,
+      joinerName: params.joinerName,
+      amountCents: params.amountCents,
+      invoiceNumber: params.invoiceNumber,
+      combinedInvoiceNumber: params.combinedInvoiceNumber,
+      changeSummary: params.changeSummary,
+      checkIn: params.checkIn,
+      checkOut: params.checkOut,
+    }, format)),
+    bookingContext: classifyBookingOwnerContext(params.bookingContext),
+    templateName: "group-organiser-extra-invoice",
+    templateData: {
+      firstName: params.firstName,
+      joinerName: params.joinerName,
+      amount,
+      invoiceNumber: params.invoiceNumber,
+      changeSummary: params.changeSummary,
+      extraInvoiceSentence: organiserExtraInvoiceSentence({
+        amount,
+        joinerName: params.joinerName,
+        invoiceNumber: params.invoiceNumber,
+        combinedInvoiceNumber: params.combinedInvoiceNumber,
+      }),
       checkIn: emailCalendarDay(params.checkIn),
       checkOut: emailCalendarDay(params.checkOut),
     },

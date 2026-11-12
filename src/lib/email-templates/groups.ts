@@ -17,7 +17,7 @@ import {
 import { CLUB_NAME } from "@/config/club-identity";
 import { emailCalendarDay } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
-import { organiserJoinerAppealRefundSentence } from "@/lib/booking-modified-email-copy";
+import { organiserExtraInvoiceSentence, organiserJoinerAppealRefundSentence } from "@/lib/booking-modified-email-copy";
 
 export function groupSettlementReceiptTemplate(data: {
   firstName: string;
@@ -166,6 +166,44 @@ export function groupOrganiserJoinerRefundTemplate(data: {
     ${paragraph("Hi " + escapeHtml(data.firstName) + ",")}
     ${paragraph(escapeHtml(organiserJoinerAppealRefundSentence(formatCents(data.amountCents, format), data.joinerName)))}
     ${infoTable([
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
+    ])}
+    ${supportContactSentence("If you have questions, contact the club at ")}
+  `);
+}
+
+/**
+ * #4299 (`INV-PAY-142`, decision 2): the organiser's notice that a joiner's
+ * place they paid for by Internet Banking now costs more, and the extra
+ * invoice it is billed on.
+ */
+export function groupOrganiserExtraInvoiceTemplate(data: {
+  firstName: string;
+  joinerName: string;
+  amountCents: number;
+  invoiceNumber: string;
+  combinedInvoiceNumber: string | null;
+  changeSummary: string;
+  checkIn: Date;
+  checkOut: Date;
+},
+  format: ClubFormat,
+): string {
+  return layout(`
+    ${heading("An Extra Invoice for Your Group Booking")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ",")}
+    ${paragraph(escapeHtml(organiserExtraInvoiceSentence({
+      amount: formatCents(data.amountCents, format),
+      joinerName: data.joinerName,
+      invoiceNumber: data.invoiceNumber,
+      combinedInvoiceNumber: data.combinedInvoiceNumber,
+    })))}
+    ${infoTable([
+      { label: "Place", value: escapeHtml(data.joinerName) },
+      { label: "Change", value: escapeHtml(data.changeSummary) },
+      { label: "Invoice", value: escapeHtml(data.invoiceNumber) },
+      { label: "Amount", value: formatCents(data.amountCents, format) },
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
     ])}

@@ -41,10 +41,10 @@ import {
   sendXeroInvoiceEmail,
 } from "@/lib/xero-invoice-email";
 import {
-  findOrCreateXeroContact,
   retryXeroWriteWithContactRepair,
   type FindOrCreateXeroContactOptions,
 } from "./xero-contacts";
+import { findOrCreateOrganiserXeroContact } from "@/lib/group-organiser-billing-target";
 import {
   buildGroupSettlementInvoiceLines,
   releaseUninvoiceableGroupSettlement,
@@ -297,7 +297,9 @@ export async function createXeroInvoiceForGroupSettlement(
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   // #3036 review P1-12: reuse the client built above rather than rebuilding one.
-  const contactId = await findOrCreateXeroContact(organiserMemberId, { ...options, xero, tenantId });
+  // #4299 (`INV-SSOT-001`): the organiser's contact, through the one helper the
+  // organiser's extra invoices (and #4292's notes) share.
+  const contactId = await findOrCreateOrganiserXeroContact(organiserMemberId, { ...options, xero, tenantId });
 
   // Two dates, two different kinds of value, so two different derivations. The
   // whole reasoning — and the #2834 defect that a "simplification" here brings

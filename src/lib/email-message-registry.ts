@@ -29,6 +29,7 @@ import {
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { BOOKING_URL_TEMPLATE_NAMES } from "@/lib/booking-email-template-contract";
 import {
+  organiserExtraInvoiceSentence,
   organiserJoinerAppealRefundSentence,
   refundRequestApprovedRefundSentence,
 } from "@/lib/booking-modified-email-copy";
@@ -437,6 +438,8 @@ export const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, strin
   "refund-request-approved": ["adminNotes", "amount"],
   // #3956: the parts the composed {{refundSentence}} is made of, for an override.
   "group-organiser-joiner-refund": ["amount", "joinerName"],
+  // #4299: the parts the composed {{extraInvoiceSentence}} is made of, for an override.
+  "group-organiser-extra-invoice": ["amount", "joinerName", "invoiceNumber"],
   "refund-request-declined": ["adminNotes"],
   "age-up-invitation": ["resetUrl", "targetAgeTier", "targetAgeTierMinAge"],
   "age-up-parent-email-handoff": ["targetAgeTier", "targetAgeTierMinAge"],
@@ -516,6 +519,8 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "refund-request-approved": ["refundSentence"],
   // #3956: the sentence that says whose card the money goes to, and for whom.
   "group-organiser-joiner-refund": ["refundSentence"],
+  // #4299: the sentence that names the joiner, the amount and the invoice.
+  "group-organiser-extra-invoice": ["extraInvoiceSentence"],
   "password-reset": ["token"],
   "admin-password-reset": ["token"],
   "member-setup-invite": ["token"],
@@ -1234,6 +1239,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     frequency:
       "Once per approved appeal, beside the joiner's approval email; withheld when the admin chose not to notify, or the organiser is the joiner",
   },
+  "group-organiser-extra-invoice": {
+    triggerSummary:
+      "A change raised the price of a joiner's place the organiser paid for by internet banking, so the extra is billed to the organiser on an invoice of its own (#4299)",
+    frequency:
+      "Once per change, after its extra invoice is raised in Xero; withheld by the organiser booking's No emails switch",
+  },
   "group-join-settled": {
     triggerSummary:
       "Organiser settled a joiner's spot as part of a combined group payment",
@@ -1798,6 +1809,10 @@ const TEMPLATE_SAMPLE_VALUE_OVERRIDES: Partial<
   // {{refundSentence}} sample previews.
   "group-organiser-joiner-refund": {
     refundSentence: organiserJoinerAppealRefundSentence("$123.45", "Sam Joiner"),
+  },
+  // #4299: the organiser's sentence, with a sample invoice.
+  "group-organiser-extra-invoice": {
+    extraInvoiceSentence: organiserExtraInvoiceSentence({ amount: "$80.00", joinerName: "Sam Joiner", invoiceNumber: "INV-0102", combinedInvoiceNumber: "INV-0042" }),
   },
 };
 
