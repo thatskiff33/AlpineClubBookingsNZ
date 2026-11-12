@@ -59,6 +59,16 @@ async function name(relation: BookingFinancialHistoryRelation, bookingId: string
       })));
       return;
     }
+    case "MemberMoneyExportManifest.bookingId":
+      // #4525 (M13): a CONFLICT carries no coverage; the teardown removes it.
+      await prisma.memberMoneyExportManifest.create({
+        data: {
+          documentRole: "PRIMARY_BOOKING_INVOICE", legacyKey: `booking:${bookingId}:invoice:v1`, renderRevision: 1, bookingId, outcome: "CONFLICT",
+          reason: "STAY_CENTS", payloadHash: "a".repeat(64), frozenMapping: { source: "BUILT" }, lineTotalCents: 100,
+          providerInvoiceId: `INV-${bookingId}`,
+        },
+      });
+      return;
     case "MemberCredit.sourceBookingId":
       await prisma.memberCredit.create({
         data: { memberId: MEMBER_ID, amountCents: 100, type: "CANCELLATION_REFUND", description: "race 4514", sourceBookingId: bookingId },
@@ -174,6 +184,7 @@ async function clean(bookingIds: string[]): Promise<void> {
     await releaseBookingFinancialHistoryForTeardown(prisma, [
       bookingFor("BookingLedgerLine.bookingId"),
       bookingFor("MemberMoneyLine.bookingId"),
+      bookingFor("MemberMoneyExportManifest.bookingId"),
       bookingFor("MemberCredit.sourceBookingId"),
       bookingFor("MemberCredit.appliedToBookingId"),
       bookingFor("MemberCredit.sourceBookingModificationId"),
