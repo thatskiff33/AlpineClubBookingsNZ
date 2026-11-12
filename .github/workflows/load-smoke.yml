@@ -36,7 +36,7 @@ jobs:
           sudo apt-get install -y k6
       - name: Prepare isolated stack and five seasons of volume
         run: |
-          cp .env.staging.example .env.load-smoke
+          bash scripts/ci/write-e2e-staging-env.sh .env.load-smoke
           bash scripts/load-stack.sh prepare
       - name: Run all scenarios at 10 VUs, then dashboard and mixed writes with cron
         run: pnpm run load:smoke

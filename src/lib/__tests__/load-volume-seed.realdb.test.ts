@@ -27,7 +27,9 @@ const SCRATCH = `concurrency_race_1881_loadvolume_${randomBytes(4).toString("hex
 let admin: Client;
 let scratchUrl = "";
 
-function scratchEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+type EnvOverrides = Readonly<Record<string, string>>;
+
+function scratchEnv(extra: EnvOverrides = {}): NodeJS.ProcessEnv {
   return {
     ...process.env,
     DATABASE_URL: scratchUrl,
@@ -38,7 +40,7 @@ function scratchEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
 }
 
-function tsx(script: string, extra: NodeJS.ProcessEnv = {}): string {
+function tsx(script: string, extra: EnvOverrides = {}): string {
   return execFileSync("pnpm", ["exec", "tsx", "--conditions=react-server", script], {
     cwd: process.cwd(),
     env: scratchEnv(extra),

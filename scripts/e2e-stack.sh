@@ -63,12 +63,16 @@ HOST_DATABASE_URL="postgresql://tac:${DB_PASSWORD}@localhost:${STAGING_POSTGRES_
 export E2E_DATABASE_URL="$HOST_DATABASE_URL"
 
 compose() {
-  local overlays=()
+  # scripts/load-stack.sh sets E2E_LOAD_STUB=1 so this stack also knows its
+  # Stripe stub (#4940). Each branch names its whole file list on one line:
+  # env-delivery-census.test.ts reads the combinations from these lines.
   if [[ "${E2E_LOAD_STUB:-}" == "1" ]]; then
-    overlays+=(-f load/compose.stripe-stub.yml)
+    docker compose --env-file "$ENV_FILE" -p "$COMPOSE_PROJECT" \
+      -f docker-compose.yml -f docker-compose.staging.yml -f load/compose.stripe-stub.yml "$@"
+  else
+    docker compose --env-file "$ENV_FILE" -p "$COMPOSE_PROJECT" \
+      -f docker-compose.yml -f docker-compose.staging.yml "$@"
   fi
-  docker compose --env-file "$ENV_FILE" -p "$COMPOSE_PROJECT" \
-    -f docker-compose.yml -f docker-compose.staging.yml "${overlays[@]}" "$@"
 }
 
 # Postgres up, the schema empty, and this host's Prisma client generated.

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { requireCalendarDate } from "@/lib/club-time";
 import { DEMO_SEED_DOMAIN } from "@/lib/demo-seed-guard";
 import { planLoadVolume } from "../../../prisma/load-volume-plan";
 import {
@@ -17,14 +18,14 @@ describe("load volume users (#4940)", () => {
       seed: 1,
       memberCount: 3,
       seasonsBack: 1,
-      today: "2026-07-01",
+      today: requireCalendarDate("2026-07-01"),
       lodges: [],
       targetOccupancy: 0.5,
       maxNights: 2,
       maxPartySize: 2,
       cancelRate: 0,
       internetBankingRate: 0,
-    } as Parameters<typeof planLoadVolume>[0]);
+    });
     expect(plan.members.map((member) => member.local)).toEqual(
       volumeUserPool(3, DEMO_SEED_DOMAIN).map((email) => email.split("@")[0]),
     );
