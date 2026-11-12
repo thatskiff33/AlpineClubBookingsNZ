@@ -33,7 +33,7 @@ import {
   reportWithheldLateCaptureRefund,
 } from "@/lib/cancelled-booking-late-capture";
 import { CANCELLED_BOOKING_LATE_CAPTURE_REASON } from "@/lib/cancellation-settled-money";
-import { holdLateCaptureForTreasurerIfRequired, holdLateCaptureRefusedByStripe, holdLateCaptureReservationRefused } from "@/lib/late-capture-refund-hold";
+import { holdLateCaptureDisputeRefused, holdLateCaptureForTreasurerIfRequired, holdLateCaptureRefusedByStripe, holdLateCaptureReservationRefused } from "@/lib/late-capture-refund-hold";
 import { queueLateCaptureRefundCreditNote } from "@/lib/late-capture-refund-credit-note";
 import {
   describeLateCaptureFromBooking,
@@ -72,6 +72,7 @@ import { adoptSavedCardChargeAttemptForIntent } from "@/lib/saved-card-charge-se
 import { GROUP_SETTLEMENT_INTENT_TYPE, appPaymentIntentRoute } from "@/lib/stripe-app-intent-metadata";
 import { recordUnmatchedAppStripePayment, recordUnrecognisedStripePayment } from "@/lib/unrecognised-stripe-payment";
 import { recordStripeDispute } from "@/lib/stripe-dispute";
+import { disputedCaptureRefusal } from "@/lib/stripe-dispute-hold";
 import { STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES } from "@/lib/stripe-webhook-lease";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { isCapturedTransactionStatus, isRefusedRefundStatus } from "@/lib/payment-transaction-status";
@@ -1595,6 +1596,11 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
       obligation: { scope: "capture-return", id: paymentIntent.id, ensureFaceCents: paymentIntent.amount },
     });
   } catch (error) {
+    // #4911: nor is a refund of a capture the cardholder disputes.
+    if (disputedCaptureRefusal(error)) {
+      await holdLateCaptureDisputeRefused(lateCapture);
+      return;
+    }
     // #4516: a refused reservation is never re-thrown for Stripe's redelivery, which would be refused the same way.
     if (!isCardRefundReservationRefusal(error)) throw error;
     await holdLateCaptureReservationRefused(lateCapture);
@@ -1774,9 +1780,10 @@ async function handleCancelledBookingPaymentSucceeded(
   if (await holdLateCaptureForTreasurerIfRequired(lateCapture)) return;
 
   // #4131 (`INV-PAY-106`): from the capture's OWN charge only, capped at what it holds.
-  const { refunds, audit, reservationRefused } = await refundLateCaptureFromOwnCharge({ format, bookingId: booking.id, paymentId: booking.payment.id, paymentIntentId: paymentIntent.id, amountCents: paymentIntent.amount });
+  const { refunds, audit, reservationRefused, disputeRefused } = await refundLateCaptureFromOwnCharge({ format, bookingId: booking.id, paymentId: booking.payment.id, paymentIntentId: paymentIntent.id, amountCents: paymentIntent.amount });
   // #4516: refused by the journal before Stripe was asked; held for a treasurer, never redelivered.
   if (reservationRefused) return holdLateCaptureReservationRefused(lateCapture);
+  if (disputeRefused) return holdLateCaptureDisputeRefused(lateCapture); // #4911
   if (await holdLateCaptureRefusedByStripe(lateCapture, refunds)) {
     // #4103: the one slice on the capture's own charge was refused, so it made nothing; the note still answers the capture's own earlier refunds.
     await queueLateCaptureRefundCreditNote({ paymentId: booking.payment.id, paymentIntentId: paymentIntent.id });

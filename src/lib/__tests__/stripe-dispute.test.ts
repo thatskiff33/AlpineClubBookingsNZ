@@ -21,6 +21,7 @@ const state = vi.hoisted(() => ({
   heldKeys: new Map<string, Date>(),
   transactions: new Map<string, { id: string; paymentId: string; payment: { bookingId: string } }>(),
   payments: new Map<string, { id: string; bookingId: string }>(),
+  settlements: new Map<string, { groupBooking: { organiserBookingId: string } }>(),
   bookings: new Map<string, { member: { firstName: string; lastName: string } | null; organisation: { name: string } | null }>(),
   /** How many coming stamp writes fail. */
   stampFailures: 0,
@@ -88,6 +89,10 @@ vi.mock("@/lib/prisma", () => {
     payment: {
       findFirst: async ({ where }: { where: { stripePaymentIntentId: string } }) =>
         state.payments.get(where.stripePaymentIntentId) ?? null,
+    },
+    groupBookingSettlement: {
+      findUnique: async ({ where }: { where: { stripePaymentIntentId: string } }) =>
+        state.settlements.get(where.stripePaymentIntentId) ?? null,
     },
     booking: {
       findUnique: async ({ where }: { where: { id: string } }) => state.bookings.get(where.id) ?? null,
@@ -221,6 +226,7 @@ function reset() {
   state.heldKeys.clear();
   state.transactions.clear();
   state.payments.clear();
+  state.settlements.clear();
   state.bookings.clear();
   state.stampFailures = 0;
   state.beforeClaim = null;
@@ -301,6 +307,16 @@ describe("recordStripeDispute (#4911)", () => {
 
     expect(stored()).toEqual(expect.objectContaining({ paymentTransactionId: null, paymentId: "payment_old", bookingId: "booking_org" }));
     expect(sentAlerts()[0]).toEqual(expect.objectContaining({ bookingId: "booking_org", bookingOwner: "Ski School" }));
+  });
+
+  it("matches a group organiser's settlement by its intent and names the organiser's booking", async () => {
+    state.settlements.set("pi_1", { groupBooking: { organiserBookingId: "booking_organiser" } });
+    state.bookings.set("booking_organiser", { member: { firstName: "Olive", lastName: "Organiser" }, organisation: null });
+
+    await recordStripeDispute(dispute(), event("charge.dispute.created"), CLUB_FORMAT_TEST);
+
+    expect(stored()).toEqual(expect.objectContaining({ paymentTransactionId: null, paymentId: null, bookingId: "booking_organiser" }));
+    expect(sentAlerts()[0]).toEqual(expect.objectContaining({ bookingId: "booking_organiser", bookingOwner: "Olive Organiser" }));
   });
 
   it("records a dispute on a charge the app does not know with no booking, still alerts, and does not throw", async () => {

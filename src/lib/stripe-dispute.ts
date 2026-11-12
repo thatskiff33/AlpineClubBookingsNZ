@@ -14,8 +14,8 @@
  *   (`mergeDisputeSnapshot`): a closed dispute never reads open again, an older
  *   event never overwrites a newer one, and a replay changes nothing;
  * - the capture is matched by `stripePaymentIntentId` to its payment
- *   transaction, so the row names the booking; an unknown charge is recorded
- *   with no booking and still alerts.
+ *   transaction (or a group organiser's settlement), so the row names the
+ *   booking; an unknown charge is recorded with no booking and still alerts.
  *
  * Two unmuteable Finance-editor alerts, each once ever per dispute: one when it
  * opens (raised by whichever event first records it) and one when it closes.
@@ -181,7 +181,11 @@ async function resolvePaymentIntentId(dispute: Stripe.Dispute): Promise<string |
   return getChargePaymentIntentId(chargeId, STRIPE_DISPUTE_CHARGE_READ_TIMEOUT_MS);
 }
 
-/** The app's capture for this intent, read only: its transaction, else a pre-ledger payment. */
+/**
+ * The app's capture for this intent, read only: its transaction, else a
+ * pre-ledger payment, else a group organiser's settlement, which names the
+ * organiser's booking (its payment is the settlement, not a `Payment`).
+ */
 async function matchCapture(
   paymentIntentId: string | null,
 ): Promise<{ paymentTransactionId: string | null; paymentId: string | null; bookingId: string | null }> {
@@ -202,7 +206,12 @@ async function matchCapture(
     where: { stripePaymentIntentId: paymentIntentId },
     select: { id: true, bookingId: true },
   });
-  return payment ? { paymentTransactionId: null, paymentId: payment.id, bookingId: payment.bookingId } : none;
+  if (payment) return { paymentTransactionId: null, paymentId: payment.id, bookingId: payment.bookingId };
+  const settlement = await prisma.groupBookingSettlement.findUnique({
+    where: { stripePaymentIntentId: paymentIntentId },
+    select: { groupBooking: { select: { organiserBookingId: true } } },
+  });
+  return settlement ? { ...none, bookingId: settlement.groupBooking.organiserBookingId } : none;
 }
 
 /** The stored row for this dispute: the existing one, or the one this delivery inserts. */

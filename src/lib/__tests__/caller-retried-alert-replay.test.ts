@@ -151,6 +151,7 @@ vi.mock("@/lib/prisma", () => {
     },
     paymentTransaction: { findUnique: async () => null },
     payment: { findFirst: async () => null },
+    groupBookingSettlement: { findUnique: async () => null },
     booking: { findUnique: async () => null },
     $executeRaw: async () => 1,
     alertCooldown: {

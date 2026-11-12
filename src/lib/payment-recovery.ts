@@ -31,6 +31,7 @@ import { loadPersistedClubFormatSettings } from "@/lib/club-format-settings";
 import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
 import { prisma } from "@/lib/prisma";
 import { cancelPaymentIntentIfCancellableWithResult, getPaymentIntent, processRefund } from "@/lib/stripe";
+import { assertCaptureNotDisputed } from "@/lib/stripe-dispute-hold";
 import { isPaymentIntentCancelConfirmed } from "@/lib/card-intent-retirement";
 import {
   findPaymentTransactionByIntentId,
@@ -2050,6 +2051,8 @@ async function processRefundSupersededPaymentOperation(
           planAttemptKeys: plan.map((slice) => refundSliceStripeIdempotencyKey(operation.idempotencyKey, slice)),
         });
       }
+      // #4911 (`INV-PAY-151`): a disputed capture is refused before anything is reserved, as `refundPaymentTransactions` does.
+      await assertCaptureNotDisputed(operation.paymentIntentId);
       // #4516 (M4c): this row's one request is reserved under its own key, as a slice is (plan section 5).
       const journal = await resolveBookingMoneyPostingContext();
       if (obligation) {
