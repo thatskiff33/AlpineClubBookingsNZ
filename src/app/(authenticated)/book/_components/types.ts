@@ -108,7 +108,6 @@ export interface CreatedBooking {
   id: string;
   status: string;
   amountCents: number;
-  returnUrl: string;
 }
 
 export interface AvailablePromoCode {

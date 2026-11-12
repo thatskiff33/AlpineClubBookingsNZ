@@ -130,7 +130,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />
     );
@@ -159,7 +158,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />
     );
@@ -206,7 +204,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -235,7 +232,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -261,7 +257,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -297,7 +292,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={onPaymentComplete}
       />,
     );
@@ -341,7 +335,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -380,7 +373,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -407,7 +399,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -434,7 +425,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={32}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -465,7 +455,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -494,7 +483,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -533,7 +521,6 @@ describe("BookingPaymentWrapper", () => {
           bookingId="booking-1"
           amountCents={12500}
           paymentMode="payment"
-          returnUrl="http://localhost/bookings/booking-1"
           onPaymentComplete={vi.fn()}
         />,
       );
@@ -571,7 +558,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -602,7 +588,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={20000}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />
     );
@@ -629,7 +614,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />
     );
@@ -658,7 +642,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={onPaymentComplete}
       />
     );
@@ -702,7 +685,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={onPaymentComplete}
       />
     );
@@ -749,7 +731,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={onPaymentComplete}
       />,
     );
@@ -792,7 +773,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={onPaymentComplete}
       />,
     );
@@ -832,7 +812,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={onPaymentComplete}
       />,
     );
@@ -861,7 +840,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -880,7 +858,7 @@ describe("BookingPaymentWrapper", () => {
     try {
       fetchMock.mockResolvedValueOnce({ ok: false, status: 409, json: async () => SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY });
       render(
-        <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode="payment" returnUrl="http://localhost/book" onPaymentComplete={vi.fn()} />,
+        <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode="payment" onPaymentComplete={vi.fn()} />,
       );
       fireEvent.click(await screen.findByRole("button", { name: "Reload booking", hidden: true }));
       expect(assign).toHaveBeenCalledWith("/bookings/booking-1");
@@ -892,7 +870,7 @@ describe("BookingPaymentWrapper", () => {
   it("#4300: the pay step's going-back notice is shown beside the fresh form", async () => {
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ clientSecret: "cs_test", previousPaymentRefunding: true }) });
     render(
-      <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode="payment" returnUrl="http://localhost/bookings/booking-1" onPaymentComplete={vi.fn()} />,
+      <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode="payment" onPaymentComplete={vi.fn()} />,
     );
     expect(await screen.findByText(PREVIOUS_PAYMENT_REFUNDING_NOTICE)).not.toBeNull();
     expect(screen.getByText("trigger-success")).not.toBeNull();
@@ -904,7 +882,7 @@ describe("BookingPaymentWrapper", () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ({ clientSecret: "cs_test" }) })
       .mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ error: "PaymentIntent does not match booking" }) });
     render(
-      <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode="payment" returnUrl="http://localhost/bookings/booking-1" onPaymentComplete={onPaymentComplete} />,
+      <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode="payment" onPaymentComplete={onPaymentComplete} />,
     );
     fireEvent.click(await screen.findByText("trigger-success"));
     const alert = screen.getByRole("alert", { hidden: true });
@@ -940,7 +918,6 @@ describe("BookingPaymentWrapper", () => {
           bookingId="booking-1"
           amountCents={12500}
           paymentMode="payment"
-          returnUrl="http://localhost/bookings/booking-1"
           onPaymentComplete={onPaymentComplete}
         />,
       );
@@ -989,7 +966,6 @@ describe("BookingPaymentWrapper", () => {
           bookingId="booking-1"
           amountCents={12500}
           paymentMode="payment"
-          returnUrl="http://localhost/bookings/booking-1"
           onPaymentComplete={onPaymentComplete}
         />,
       );

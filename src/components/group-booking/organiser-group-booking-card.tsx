@@ -18,6 +18,13 @@ import { Label } from "@/components/ui/label";
 import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
 import StripeProvider from "@/components/stripe/StripeProvider";
 import PaymentForm from "@/components/stripe/PaymentForm";
+import { RedirectFailedNotice } from "@/components/stripe/redirect-failed-notice";
+import { isPaymentProcessing } from "@/lib/payment-recovery-contract";
+import {
+  SettlementPaymentStatus,
+  settlementReturnUrl,
+  useSettlementPaymentCheck,
+} from "@/components/group-booking/settlement-payment-check";
 import {
   renderClientBookingMessage,
   type BookingMessageClubTokens,
@@ -162,6 +169,8 @@ export function OrganiserGroupBookingCard({
   const [settleAmountCents, setSettleAmountCents] = useState<number | null>(null);
   const [settleMessage, setSettleMessage] = useState("");
   const [settleComplete, setSettleComplete] = useState(false);
+  // ALP-569: the settle route's "still processing" answer to a card payment.
+  const [settleProcessing, setSettleProcessing] = useState("");
   const [internetBankingEnabled, setInternetBankingEnabled] = useState(false);
   const [settleMethod, setSettleMethod] = useState<SettlePaymentMethod>("stripe");
   const [settleReference, setSettleReference] = useState<string | null>(null);
@@ -262,12 +271,13 @@ export function OrganiserGroupBookingCard({
 
   async function startSettle(methodOverride?: SettlePaymentMethod) {
     if (!group) return;
-    const usingInternetBanking =
-      methodOverride === "internet_banking" ||
-      (internetBankingEnabled && settleMethod === "internet_banking");
+    const usingInternetBanking = methodOverride
+      ? methodOverride === "internet_banking"
+      : internetBankingEnabled && settleMethod === "internet_banking";
     setSettleBusy(true);
     setSettleError("");
     setSettleMessage("");
+    setSettleProcessing("");
     try {
       const res = await fetch(
         `/api/group-bookings/${encodeURIComponent(group.code)}/settle`,
@@ -280,6 +290,11 @@ export function OrganiserGroupBookingCard({
         }
       );
       const data = await res.json().catch(() => ({}));
+      // #3635: a card payment Stripe is still processing is a wait, not a fault.
+      if (res.status === 409 && isPaymentProcessing(data)) {
+        setSettleProcessing(data.error);
+        return;
+      }
       if (!res.ok) {
         throw new Error(data.error || "Unable to start settlement right now.");
       }
@@ -310,6 +325,9 @@ export function OrganiserGroupBookingCard({
       setSettleBusy(false);
     }
   }
+
+  const { checkingPayment, redirectFailed, checkSettlementPayment } =
+    useSettlementPaymentCheck(startSettle, () => setSettleClientSecret(null));
 
   // ---- No group yet: offer to open one (owner + eligible booking only) ----
   if (!group) {
@@ -596,15 +614,19 @@ export function OrganiserGroupBookingCard({
                   <StripeProvider clientSecret={settleClientSecret}>
                     <PaymentForm
                       amountCents={settleAmountCents}
-                      returnUrl={typeof window !== "undefined" ? window.location.href : ""}
+                      returnUrl={settlementReturnUrl()}
                       onSuccess={() => setSettleComplete(true)}
+                      onProcessing={() => void checkSettlementPayment()}
                       onError={(msg) => setSettleError(msg)}
                     />
                   </StripeProvider>
                 )}
               </div>
+            ) : checkingPayment || settleProcessing ? (
+              <SettlementPaymentStatus processingMessage={checkingPayment ? "" : settleProcessing} />
             ) : (
               <>
+                {redirectFailed ? <RedirectFailedNotice /> : null}
                 {group.settlement?.invoiceBlocked ? <InvoiceBlockedNotice /> : null}
                 <p className="text-sm text-muted-foreground">
                   Pay for every joiner&apos;s beds in one combined payment. Their spots are

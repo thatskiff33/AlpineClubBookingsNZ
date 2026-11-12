@@ -11,7 +11,12 @@ vi.mock("@/components/stripe/StripeProvider", () => ({
   ),
 }));
 vi.mock("@/components/stripe/PaymentForm", () => ({
-  default: () => <div data-testid="payment-form">Card form</div>,
+  default: ({ returnUrl, onProcessing }: { returnUrl: string; onProcessing?: (id: string) => void }) => (
+    <div data-testid="payment-form" data-return-url={returnUrl}>
+      Card form
+      <button type="button" onClick={() => onProcessing?.("pi_inpage")}>trigger-processing</button>
+    </div>
+  ),
 }));
 
 import { OrganiserGroupBookingCard } from "@/components/group-booking/organiser-group-booking-card";
@@ -653,5 +658,75 @@ describe("OrganiserGroupBookingCard joiner money verdicts (#3278)", () => {
     expect(
       await screen.findByText(/\$45\.00.*recorded amount needs review/)
     ).toBeTruthy();
+  });
+});
+
+// ALP-569: a card payment's result comes back to the settle route, never decided here.
+describe("OrganiserGroupBookingCard Stripe redirect return", () => {
+  const processingBody = { code: "PAYMENT_PROCESSING", error: "This payment is being processed." };
+  const settleCalls = (fetchMock: ReturnType<typeof stubFetch>) =>
+    fetchMock.mock.calls.filter(([url, init]) => String(url).includes("/settle") && init?.method === "POST");
+
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  function returnTo(status: string, surface = "group-settlement") {
+    window.history.replaceState(
+      null,
+      "",
+      `/bookings/booking-1?stripe_return=${surface}&payment_intent=pi_ret&payment_intent_client_secret=s&redirect_status=${status}`,
+    );
+  }
+
+  it("asks the settle route about a returned card payment and shows its answer", async () => {
+    returnTo("succeeded");
+    const fetchMock = stubFetch({ settleBody: { outcome: "already_settled" } });
+    render(<OrganiserGroupBookingCard bookingId="booking-1" canOpenGroup={false} group={group()} />);
+    expect(await screen.findByText(/Everyone in your group is confirmed/)).toBeDefined();
+    expect(JSON.parse((settleCalls(fetchMock)[0][1] as { body: string }).body).paymentMethod).toBe("stripe");
+    expect(window.location.search).toBe("");
+  });
+
+  it("says a processing payment is being processed, not paid and not failed", async () => {
+    returnTo("processing");
+    stubFetch({ settleOk: false, settleBody: processingBody });
+    // The settle route answers 409 for a processing intent.
+    const fetchMock = vi.mocked(fetch);
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url, init) => {
+      const res = await base(url as string, init as { method?: string });
+      return String(url).includes("/settle") ? ({ ...res, status: 409 } as Response) : res;
+    });
+    render(<OrganiserGroupBookingCard bookingId="booking-1" canOpenGroup={false} group={group()} />);
+    expect(await screen.findByRole("status")).toHaveProperty("textContent", processingBody.error);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByTestId("payment-form")).toBeNull();
+  });
+
+  it("re-asks the settle route when an in-page confirmation resolves processing", async () => {
+    const fetchMock = stubFetch({ settleBody: { outcome: "ready", clientSecret: "cs_1", amountCents: 4500 } });
+    render(<OrganiserGroupBookingCard bookingId="booking-1" canOpenGroup={false} group={group()} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Pay .* by card|Settle/ }));
+    const form = await screen.findByTestId("payment-form");
+    expect(form.getAttribute("data-return-url")).toBe("http://localhost:3000/?stripe_return=group-settlement");
+    fireEvent.click(screen.getByText("trigger-processing"));
+    await waitFor(() => expect(settleCalls(fetchMock)).toHaveLength(2));
+  });
+
+  it("offers the settle again with a notice after a failed return", async () => {
+    returnTo("failed");
+    const fetchMock = stubFetch({});
+    render(<OrganiserGroupBookingCard bookingId="booking-1" canOpenGroup={false} group={group()} />);
+    expect(await screen.findByText(/Your payment did not go through/)).toBeDefined();
+    expect(settleCalls(fetchMock)).toHaveLength(0);
+  });
+
+  it("leaves another surface's return alone", async () => {
+    returnTo("succeeded", "booking");
+    const fetchMock = stubFetch({});
+    render(<OrganiserGroupBookingCard bookingId="booking-1" canOpenGroup={false} group={group()} />);
+    await screen.findByText(/Settle the group/);
+    expect(settleCalls(fetchMock)).toHaveLength(0);
+    expect(window.location.search).toContain("stripe_return=booking");
   });
 });

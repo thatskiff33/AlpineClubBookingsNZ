@@ -159,10 +159,9 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `processing` answers `PAYMENT_PROCESSING` in its own words.
 - **Retired** (`isCardIntentRetired`, through the doors' check) once the
   machinery owns it.
-- **The `/pay` link asks the server what a card success did**
-  (`checkCardSuccess`) at both exits: the resolved confirmation (`succeeded`
-  or `processing`) and the redirect return (#4955). It never shows the pay
-  buttons meanwhile; unsettled `processing` reads "being processed".
+- **Every card surface asks the server what a card success did**, resolved
+  in the page or by redirect return (#4955), never showing the pay buttons
+  meanwhile; unsettled `processing` reads "being processed".
 - Proven on PostgreSQL by `superseded-intent-card-doors.realdb.test.ts`, and
   by `superseded-capture-ownership.test.ts`, `payment-recovery.test.ts`,
   `issue-1992-duplicate-capture-refund.test.ts` and the door suites.

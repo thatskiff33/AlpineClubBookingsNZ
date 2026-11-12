@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useEffectEvent, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import * as Sentry from "@sentry/nextjs";
 import { type BookingPaymentMode } from "@/lib/booking-payment-flow";
 import StripeProvider from "./StripeProvider";
 import PaymentForm from "./PaymentForm";
 import SetupForm from "./SetupForm";
+import { RedirectFailedNotice } from "./redirect-failed-notice";
+import { stripeReturnUrl, takeStripeReturn, type StripeReturn } from "@/lib/stripe-return";
 import { capacityCancellationRecovery } from "@/lib/booking-card-refund-copy";
 import { useClubFormat } from "@/components/club-format-provider";
 import { FocusedActionError } from "@/components/focused-action-error";
@@ -21,6 +23,7 @@ import {
   isRefundedCardTransactionRepaymentRequired,
   isSupersededCardPaymentRefunding,
   isSwitchedToInternetBanking,
+  PAYMENT_PROCESSING_MESSAGE,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
   REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_MESSAGE,
   SUPERSEDED_CARD_PAYMENT_REFUNDING_MESSAGE,
@@ -54,7 +57,6 @@ interface BookingPaymentWrapperProps {
   bookingId: string;
   amountCents: number;
   paymentMode: BookingPaymentMode;
-  returnUrl: string;
   onPaymentComplete: () => void;
 }
 
@@ -62,12 +64,16 @@ interface BookingPaymentWrapperProps {
  * Renders the Stripe flow for a persisted booking state.
  * Booking status is the source of truth for whether this page should charge now
  * or only save a payment method for later.
+ *
+ * ALP-569: a redirect method returns the payer to the booking's own page, where
+ * this component reads the return (`takeStripeReturn("booking")`) whether the
+ * payment began there or in the booking wizard. The return URL is built here,
+ * not by callers, so it always names the page that reads it.
  */
 export default function BookingPaymentWrapper({
   bookingId,
   amountCents,
   paymentMode,
-  returnUrl,
   onPaymentComplete,
 }: BookingPaymentWrapperProps) {
   const format = useClubFormat();
@@ -97,14 +103,42 @@ export default function BookingPaymentWrapper({
   const [paymentFormClosed, setPaymentFormClosed] = useState(false);
   const [previousPaymentRefunding, setPreviousPaymentRefunding] = useState(false);
   const [loading, setLoading] = useState(true);
+  // ALP-569: the server is being asked what a payment just made did; never the
+  // form meanwhile. A recovery answer replaces this; a paid one leaves the page.
+  const [checkingPayment, setCheckingPayment] = useState(false);
+  const [redirectFailed, setRedirectFailed] = useState(false);
+  // An in-page confirmation that resolved `processing` (#4955's `onProcessing`).
+  const [processingIntentId, setProcessingIntentId] = useState<string | null>(null);
+  // Taken once per mount; a ref, so React strict mode's second effect run sees it.
+  const stripeReturn = useRef<StripeReturn | null>(null);
   const handleAlreadyComplete = useEffectEvent(() => onPaymentComplete());
+  const confirmReturnedPayment = useEffectEvent((paymentIntentId: string) => handlePaymentSuccess(paymentIntentId));
 
   useEffect(() => {
     if (amountCents === 0) return; // No Stripe initialization needed for zero-dollar bookings
 
+    // Only a payment's return: a saved card (setup) never confirms an intent here.
+    stripeReturn.current ??= paymentMode === "payment" ? takeStripeReturn("booking") : { kind: "none" };
+    const returned = stripeReturn.current;
+    if (returned.kind === "failed") setRedirectFailed(true);
+    // A redirect return that succeeded takes the in-page success path: the
+    // confirm route asks Stripe, settles, or answers a recovery.
+    if (returned.kind === "check" && returned.confirmation === "succeeded") {
+      setLoading(false);
+      setCheckingPayment(true);
+      void confirmReturnedPayment(returned.intentId);
+      return;
+    }
+    // A `processing` one (returned or in-page) asks the pay door, which hands
+    // the same intent back while it is unsettled - said as "being processed".
+    const awaitedIntentId =
+      processingIntentId ?? (returned.kind === "check" ? returned.intentId : null);
+
     const initializePayment = async () => {
+      let paid = false;
       try {
         setLoading(true);
+        setCheckingPayment(awaitedIntentId !== null);
         setInitFailed(false);
         setInitRecoveryError("");
         setConfirmationError("");
@@ -209,7 +243,15 @@ export default function BookingPaymentWrapper({
         }
 
         if (data.alreadyPaid || data.alreadySaved) {
+          paid = true;
           handleAlreadyComplete();
+          return;
+        }
+
+        if (awaitedIntentId !== null && data.paymentIntentId === awaitedIntentId) {
+          setRecoveryHeading("Payment being processed");
+          setInitRecoveryError(PAYMENT_PROCESSING_MESSAGE);
+          setPaymentFormClosed(true);
           return;
         }
 
@@ -233,11 +275,13 @@ export default function BookingPaymentWrapper({
         setInitFailed(true);
       } finally {
         setLoading(false);
+        // Paid: keep saying so until the page moves on, not "unable to initialize".
+        if (!paid) setCheckingPayment(false);
       }
     };
 
     initializePayment();
-  }, [bookingId, paymentMode, amountCents, format]);
+  }, [bookingId, paymentMode, amountCents, format, processingIntentId]);
 
   // Zero-dollar booking: no payment is required
   if (amountCents === 0) {
@@ -250,6 +294,14 @@ export default function BookingPaymentWrapper({
   }
 
   async function handlePaymentSuccess(paymentIntentId: string) {
+    // A recovery answer is shown in place of "Checking your payment..." (ALP-569).
+    const settled = await confirmPayment(paymentIntentId);
+    if (settled) onPaymentComplete();
+    else setCheckingPayment(false);
+  }
+
+  /** Whether the booking may be treated as complete; false once a recovery is shown. */
+  async function confirmPayment(paymentIntentId: string): Promise<boolean> {
     try {
       setConfirmationError("");
       setRecoveryHeading("");
@@ -267,7 +319,7 @@ export default function BookingPaymentWrapper({
         if (cancellationRecovery) {
           setRecoveryHeading(cancellationRecovery.heading);
           setConfirmationError(cancellationRecovery.message);
-          return;
+          return false;
         }
         const safeHostingMessage =
           typeof data.error === "string"
@@ -281,26 +333,26 @@ export default function BookingPaymentWrapper({
           setConfirmationError(
             `${safeHostingMessage} Your card payment was received, but booking finalisation is still pending.`,
           );
-          return;
+          return false;
         }
         if (isPaymentReceivedStatusUnconfirmed(data)) {
           setRecoveryHeading("Payment received - check booking status");
           setConfirmationError(PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE);
-          return;
+          return false;
         }
         if (isExistingCardTransactionStatusUnconfirmed(data)) {
           setRecoveryHeading("Card transaction found - check payment status");
           setConfirmationError(
             EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
           );
-          return;
+          return false;
         }
         if (isRefundedCardTransactionRepaymentRequired(data)) {
           setRecoveryHeading("Previous card payment refunded");
           setConfirmationError(
             REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_MESSAGE,
           );
-          return;
+          return false;
         }
         // #4300: the payment was on an intent an edit superseded; it is going
         // back and the booking still owes. The fixed message, never data.error,
@@ -309,7 +361,7 @@ export default function BookingPaymentWrapper({
           setRecoveryHeading("Card payment being returned");
           setConfirmationError(SUPERSEDED_CARD_PAYMENT_REFUNDING_MESSAGE);
           setPaymentFormClosed(true);
-          return;
+          return false;
         }
       }
       // #4300: a refusal that is not a recovery 409 (a 400 for an intent the
@@ -320,18 +372,18 @@ export default function BookingPaymentWrapper({
         setRecoveryHeading("Payment received - check booking status");
         setConfirmationError(PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE);
         setPaymentFormClosed(true);
-        return;
+        return false;
       }
     } catch {
       // Non-fatal: the Stripe webhook will still reconcile the booking state.
     }
 
-    onPaymentComplete();
+    return true;
   }
 
   const initializationError = initFailed
     ? "We couldn't start the card payment. Your booking is saved - you can pay later from your booking page."
-    : !loading && !clientSecret && !initRecoveryError
+    : !loading && !checkingPayment && !clientSecret && !initRecoveryError
       ? "Unable to initialize payment. Please try again."
       : "";
   const visibleError =
@@ -341,6 +393,9 @@ export default function BookingPaymentWrapper({
   const suppressPaymentContent = Boolean(
     initFailed || initRecoveryError || paymentFormClosed || (!loading && !clientSecret),
   );
+  // The booking's own page, where a redirect method returns the payer (ALP-569).
+  const bookingPageUrl =
+    typeof window !== "undefined" ? `${window.location.origin}/bookings/${bookingId}` : "";
 
   return (
     <>
@@ -360,13 +415,19 @@ export default function BookingPaymentWrapper({
           ) : undefined
         }
       />
-      {loading ? (
+      {checkingPayment ? (
+        <div className="flex items-center justify-center p-8">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-info-7 border-t-transparent" />
+          <span className="ml-3 text-muted-foreground">Checking your payment...</span>
+        </div>
+      ) : loading ? (
         <div className="flex items-center justify-center p-8">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-info-7 border-t-transparent" />
           <span className="ml-3 text-muted-foreground">Preparing payment...</span>
         </div>
       ) : suppressPaymentContent ? null : (
         <>
+        {redirectFailed ? <div className="mb-4"><RedirectFailedNotice /></div> : null}
         <PreviousPaymentRefundingNotice show={previousPaymentRefunding} className="mb-4" />
         <StripeProvider clientSecret={clientSecret!}>
           {paymentMode === "payment" ? (
@@ -375,13 +436,18 @@ export default function BookingPaymentWrapper({
               chargedAmountCents={chargedAmountCents}
               isSplit={isSplit}
               deferredGuestAmountCents={deferredGuestAmountCents}
-              returnUrl={returnUrl}
+              returnUrl={bookingPageUrl && stripeReturnUrl("booking", bookingPageUrl)}
               onSuccess={handlePaymentSuccess}
+              onProcessing={(paymentIntentId) => {
+                setClientSecret(null);
+                setCheckingPayment(true);
+                setProcessingIntentId(paymentIntentId);
+              }}
               onError={() => undefined}
             />
           ) : (
             <SetupForm
-              returnUrl={returnUrl}
+              returnUrl={bookingPageUrl}
               onSuccess={() => onPaymentComplete()}
               onError={() => undefined}
             />

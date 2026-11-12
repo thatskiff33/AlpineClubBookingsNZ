@@ -27,7 +27,6 @@ export function PayStep({
           bookingId={createdBooking.id}
           amountCents={createdBooking.amountCents}
           paymentMode={getBookingPaymentMode(createdBooking.status)}
-          returnUrl={createdBooking.returnUrl}
           onPaymentComplete={() =>
             router.push(`/bookings/${createdBooking.id}`)
           }

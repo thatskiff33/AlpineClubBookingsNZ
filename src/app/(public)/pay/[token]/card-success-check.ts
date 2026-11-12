@@ -26,10 +26,8 @@ import {
   PAYMENT_PROCESSING_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
 } from "@/lib/payment-recovery-contract";
+import type { CardConfirmation } from "@/lib/stripe-return";
 import { paymentRecoveryForRefusal, type PaymentLinkContext, type PaymentRecovery } from "./pay-link-presentation";
-
-/** How the Stripe confirmation resolved: the page asks the server either way. */
-export type CardConfirmation = "succeeded" | "processing";
 
 export type CardSuccessOutcome =
   | { kind: "paid"; context: PaymentLinkContext | null }

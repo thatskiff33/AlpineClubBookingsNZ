@@ -29,14 +29,14 @@ import {
   internetBankingHeading,
   NarrativeCard,
   paymentRecoveryForRefusal,
-  RedirectFailedNotice,
   toneForState,
   type Narrative,
   type PaymentLinkContext,
   type PaymentRecovery,
 } from "./pay-link-presentation";
-import { checkCardSuccess, type CardConfirmation } from "./card-success-check";
-import { takeStripeReturn } from "./stripe-return";
+import { checkCardSuccess } from "./card-success-check";
+import { takeStripeReturn, type CardConfirmation } from "@/lib/stripe-return";
+import { RedirectFailedNotice } from "@/components/stripe/redirect-failed-notice";
 import { PreviousPaymentRefundingNotice } from "@/components/previous-payment-refunding-notice";
 /*
   #3194 (epic #2797): the sentences a member reads when their saved change is
