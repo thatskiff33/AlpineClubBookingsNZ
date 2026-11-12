@@ -26,7 +26,7 @@ type CardSettlePayment = Parameters<typeof cardSettleAppliedCreditCents>[1];
 type XeroClient = Awaited<ReturnType<AdditionalCaptureReceiptProviders["getAuthenticatedXeroClient"]>>;
 
 /** Another writer that now records the capture. */
-type OtherRecorder = { kind: string; operationId: string | null; changeId: string | null };
+export type OtherRecorder = { kind: string; operationId: string | null; changeId: string | null };
 
 export async function sendAdditionalCaptureReceiptLegs(input: {
   plan: AdditionalCaptureReceiptPlan;

@@ -81,7 +81,7 @@ import {
   lateCaptureStillKept,
 } from "@/lib/kept-late-capture-change-receipt";
 import { amountDueOn, ownPaymentPending, type InvoiceRead } from "@/lib/additional-capture-receipt-invoice-read";
-import { completeRecordedReceipt, findReceiptLegPayment, sendAdditionalCaptureReceiptLegs } from "@/lib/additional-capture-receipt-send";
+import { completeRecordedReceipt, findReceiptLegPayment, sendAdditionalCaptureReceiptLegs, type OtherRecorder } from "@/lib/additional-capture-receipt-send";
 import {
   buildStoredReceiptPlan,
   everyPlannedLegLinked,
@@ -103,9 +103,6 @@ type CardSettlePayment = Parameters<typeof cardSettleAppliedCreditCents>[1];
 /** Stamped on a row the worker refused: an officer checks Xero and records it by hand, or retries. */
 export const ADDITIONAL_CAPTURE_RECEIPT_REFUSED_CODE = "ADDITIONAL_CAPTURE_RECEIPT_REFUSED";
 
-
-/** Another writer that now records the capture, and the change the capture pays for. */
-type OtherRecorder = { kind: string; operationId: string | null; changeId: string | null };
 
 /** The outbox row's key: one per capture. */
 export function additionalCaptureReceiptKey(paymentIntentId: string): string {
