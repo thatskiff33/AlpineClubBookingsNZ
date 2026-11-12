@@ -669,6 +669,7 @@ describe("markBookingPaymentSucceeded", () => {
       data: {
         status: BookingStatus.PAID,
         draftExpiresAt: null,
+        savedCardClaimAt: null,
       },
     });
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
@@ -778,6 +779,7 @@ describe("markBookingPaymentSucceeded", () => {
       data: {
         status: BookingStatus.PAID,
         draftExpiresAt: null,
+        savedCardClaimAt: null,
       },
     });
   });
@@ -1463,6 +1465,7 @@ describe("markBookingPaymentSucceeded", () => {
       data: {
         status: BookingStatus.PAID,
         draftExpiresAt: null,
+        savedCardClaimAt: null,
       },
     });
     // Never cancelled, never refunded.
