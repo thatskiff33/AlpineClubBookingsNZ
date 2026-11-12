@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 import type { AgeTier, Prisma, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { bookingFinalPriceCents } from "../src/lib/booking-final-price";
 import { PASSWORD_BCRYPT_COST } from "../src/lib/password-hashing";
 import { DEMO_SEED_DOMAIN } from "../src/lib/demo-seed-guard";
 import { ensureMemberAccessRolesFromCompatibilityFields } from "../src/lib/member-access-role-writes";
@@ -47,13 +48,22 @@ export function demoNightsBetween(checkIn: string, checkOut: string): string[] {
   return out;
 }
 
-/** Booking shell used by demo fixtures and the capacity-planned volume history. */
+/**
+ * Booking shell used by demo fixtures and the capacity-planned volume history.
+ * The headline is derived, never passed in (INV-MONEY-031).
+ */
 export function createDemoBooking(
   db: PrismaClient,
-  data: Omit<Prisma.BookingUncheckedCreateInput, "finalPriceCents"> & { finalPriceCents?: number },
+  data: Omit<Prisma.BookingUncheckedCreateInput, "finalPriceCents">,
 ) {
+  const { totalPriceCents, promoAdjustmentCents = 0, ...rest } = data;
   return db.booking.create({
-    data: { ...data, finalPriceCents: data.finalPriceCents ?? data.totalPriceCents },
+    data: {
+      ...rest,
+      totalPriceCents,
+      promoAdjustmentCents,
+      finalPriceCents: bookingFinalPriceCents({ totalPriceCents, promoAdjustmentCents }),
+    },
   });
 }
 

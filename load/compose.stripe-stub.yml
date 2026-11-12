@@ -19,6 +19,11 @@ services:
       # A copy by construction; hard-coded, never read from an env file
       # (ENV-SAFETY 1 #3034). See docker-compose.staging.yml.
       APP_ENVIRONMENT_ROLE: non-production
+      # The staging override's capture declaration, copied with the host it
+      # names (INV-CONFIG-004): a block pointing at mailpit declares capture.
+      USE_AWS_SES: "false"
+      USE_SMTP_RELAY: "false"
+      USE_LOCAL_CAPTURE: "true"
       EMAIL_SERVER_HOST: mailpit
       EMAIL_SERVER_PORT: "1025"
       EMAIL_SERVER_SECURE: "false"
