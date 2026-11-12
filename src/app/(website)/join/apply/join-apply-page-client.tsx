@@ -12,7 +12,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { FieldHint, describedByFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -21,18 +20,14 @@ import {
 } from "@/lib/member-address";
 import type { ClubIdentity } from "@/config/club-identity-types";
 import { readValidationDetails } from "@/lib/format-validation-errors";
-
-/*
-  #2264 — the phone row is three boxes sharing ONE example. Greyed "64", "27"
-  and "123 4567" inside them read as a number the application already carries.
-  A grouped micro-input row gets a single hint that all three boxes point at,
-  which is `describedByFieldHint` rather than `useFieldHint`: one hook owes
-  exactly one `fieldProps` spread, and this row needs the same id three times.
-  The boxes keep their `aria-label`s — those are their accessible NAME, and the
-  hint only describes them.
-*/
-const PHONE_HINT_ID = "join-apply-phone-hint";
-const PHONE_DESCRIBED_BY = describedByFieldHint(PHONE_HINT_ID);
+import {
+  JOIN_APPLY_ADDRESS_ID_PREFIX,
+  JoinApplyErrorSummary,
+  clientSummaryEntries,
+  serverSummaryEntries,
+  type JoinApplySummaryEntry,
+} from "./join-apply-error-summary";
+import { JoinApplyPhoneRow } from "./join-apply-phone-row";
 
 type FamilyMemberForm = {
   id: string;
@@ -110,7 +105,12 @@ export function JoinApplyPageClient({
   });
   const [sameAsPhysical, setSameAsPhysical] = useState(true);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
-  const [error, setError] = useState("");
+  // Set only by a submit, never by typing (#4947): see the summary's comment.
+  const [failure, setFailure] = useState<{
+    message: string;
+    entries: JoinApplySummaryEntry[];
+    attentionKey: number;
+  }>({ message: "", entries: [], attentionKey: 0 });
   const [warnings, setWarnings] = useState<string[]>([]);
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -122,6 +122,10 @@ export function JoinApplyPageClient({
       setForm((prev) => ({ ...prev, [field]: event.target.value }));
       setFieldErrors((prev) => ({ ...prev, [field]: undefined }));
     };
+  }
+
+  function fail(message: string, entries: JoinApplySummaryEntry[] = []) {
+    setFailure((prev) => ({ message, entries, attentionKey: prev.attentionKey + 1 }));
   }
 
   function updateAddressFields(patch: Partial<MemberAddressValues>) {
@@ -185,6 +189,21 @@ export function JoinApplyPageClient({
     if (!form.applicantDateOfBirth) {
       nextErrors.applicantDateOfBirth = "Date of birth is required";
     }
+    form.familyMembers.forEach((familyMember, index) => {
+      if (!familyMember.firstName.trim()) {
+        nextErrors[`familyMembers.${index}.firstName`] =
+          `Household member ${index + 1} first name is required`;
+      }
+      if (!familyMember.lastName.trim()) {
+        nextErrors[`familyMembers.${index}.lastName`] =
+          `Household member ${index + 1} last name is required`;
+      }
+      if (!familyMember.dateOfBirth) {
+        nextErrors[`familyMembers.${index}.dateOfBirth`] =
+          `Household member ${index + 1} date of birth is required`;
+      }
+    });
+
     if (!form.nominator1Email.trim()) {
       nextErrors.nominator1Email = "First nominator email is required";
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.nominator1Email)) {
@@ -204,31 +223,19 @@ export function JoinApplyPageClient({
       nextErrors.nominator2Email = "Please provide two different nominators";
     }
 
-    form.familyMembers.forEach((familyMember, index) => {
-      if (!familyMember.firstName.trim()) {
-        nextErrors[`familyMembers.${index}.firstName`] =
-          "Household member first name is required";
-      }
-      if (!familyMember.lastName.trim()) {
-        nextErrors[`familyMembers.${index}.lastName`] =
-          "Household member last name is required";
-      }
-      if (!familyMember.dateOfBirth) {
-        nextErrors[`familyMembers.${index}.dateOfBirth`] =
-          "Household member date of birth is required";
-      }
-    });
-
+    // Keys are added in form order, which the summary lists them in.
     setFieldErrors(nextErrors);
-    return Object.keys(nextErrors).length === 0;
+    return nextErrors;
   }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    setError("");
+    setFailure((prev) => ({ ...prev, message: "", entries: [] }));
     setWarnings([]);
 
-    if (!validateForm()) {
+    const clientEntries = clientSummaryEntries(validateForm());
+    if (clientEntries.length > 0) {
+      fail("", clientEntries);
       return;
     }
 
@@ -277,10 +284,9 @@ export function JoinApplyPageClient({
         const details = readValidationDetails(data)?.fieldErrors ?? [];
         if (details.length > 0) {
           setFieldErrors(Object.fromEntries(details.map(([field, messages]) => [field, messages[0]])));
+          fail("", serverSummaryEntries(details));
         } else {
-          setError(
-            data.error || "Could not submit your application right now.",
-          );
+          fail(data.error || "Could not submit your application right now.");
         }
         return;
       }
@@ -288,7 +294,7 @@ export function JoinApplyPageClient({
       setWarnings(Array.isArray(data.warnings) ? data.warnings : []);
       setSubmitted(true);
     } catch {
-      setError("Something went wrong while submitting your application.");
+      fail("Something went wrong while submitting your application.");
     } finally {
       setLoading(false);
     }
@@ -473,41 +479,21 @@ export function JoinApplyPageClient({
                     )}
                   </div>
 
-                  <div className="space-y-2">
-                    <Label>Phone</Label>
-                    <div className="flex gap-2">
-                      <Input
-                        className="w-20"
-                        value={form.phoneCountryCode}
-                        onChange={updateField("phoneCountryCode")}
-                        aria-label="Phone country code"
-                        aria-describedby={PHONE_DESCRIBED_BY}
-                      />
-                      <Input
-                        className="w-20"
-                        value={form.phoneAreaCode}
-                        onChange={updateField("phoneAreaCode")}
-                        aria-label="Phone area code"
-                        aria-describedby={PHONE_DESCRIBED_BY}
-                      />
-                      <Input
-                        className="flex-1"
-                        value={form.phoneNumber}
-                        onChange={updateField("phoneNumber")}
-                        aria-label="Phone number"
-                        aria-describedby={PHONE_DESCRIBED_BY}
-                      />
-                    </div>
-                    <FieldHint id={PHONE_HINT_ID}>
-                      Country code, area code, and number. Example: 64 27 123 4567
-                    </FieldHint>
-                  </div>
+                  <JoinApplyPhoneRow
+                    values={form}
+                    error={
+                      fieldErrors.phoneCountryCode ??
+                      fieldErrors.phoneAreaCode ??
+                      fieldErrors.phoneNumber
+                    }
+                    onFieldChange={updateField}
+                  />
                 </div>
 
                 <MemberAddressFields
                   className="pt-2"
                   collapsible
-                  idPrefix="join-apply"
+                  idPrefix={JOIN_APPLY_ADDRESS_ID_PREFIX}
                   onSameAsPhysicalChange={setSameAsPhysical}
                   onValuesChange={updateAddressFields}
                   sameAsPhysical={sameAsPhysical}
@@ -762,14 +748,7 @@ export function JoinApplyPageClient({
               </CardContent>
 
               <CardFooter className="flex flex-col gap-4">
-                {error && (
-                  <div
-                    role="alert"
-                    className="w-full rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive"
-                  >
-                    {error}
-                  </div>
-                )}
+                <JoinApplyErrorSummary {...failure} />
 
                 <Button type="submit" className="w-full" disabled={loading}>
                   {loading
