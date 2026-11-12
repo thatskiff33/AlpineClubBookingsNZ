@@ -394,7 +394,8 @@ export async function readTwoFactorClearEvidence(
 /**
  * Record the clear of a second factor read beforehand as `before`, on the
  * transaction that clears it. A member with no second factor has nothing
- * cleared and gets no row.
+ * cleared and gets no row, unless `recordWhenEmpty`: an officer reset still
+ * ends sessions and grace, so it always leaves a row (#4618).
  */
 export async function recordTwoFactorClear(
   tx: AuditLogClient,
@@ -403,17 +404,18 @@ export async function recordTwoFactorClear(
     actor: Exclude<TwoFactorActor, { kind: "member" }>;
     subjectMemberId: string;
     request?: TwoFactorRequestContext;
+    recordWhenEmpty?: boolean;
   },
 ): Promise<void> {
   const { before } = params;
-  if (!before || clearEvidenceIsEmpty(before)) return;
+  if (!params.recordWhenEmpty && (!before || clearEvidenceIsEmpty(before))) return;
   await recordTwoFactorMutation(tx, {
     action: TWO_FACTOR_AUDIT_ACTIONS.cleared,
     actor: params.actor,
     subjectMemberId: params.subjectMemberId,
-    method: before.twoFactorMethod,
-    authenticatorApp: before.authenticatorApp,
-    passkeyCount: before.passkeyCount,
+    method: before?.twoFactorMethod ?? null,
+    authenticatorApp: before?.authenticatorApp ?? false,
+    passkeyCount: before?.passkeyCount,
     request: params.request,
   });
 }

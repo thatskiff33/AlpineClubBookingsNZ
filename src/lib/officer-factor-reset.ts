@@ -71,8 +71,8 @@ export type ClearMemberSecondFactorsResult =
 /**
  * Clear every factor a lost phone could still use, and end the member's
  * sessions, in one transaction. Email is the caller's job, after commit.
- * An empty factor still stamps the reset and the revocation; the audit row
- * is omitted when there was nothing to clear. A lost claim writes neither.
+ * An empty factor still stamps the reset and the revocation, and still
+ * records the audit row. A lost claim writes neither.
  */
 export async function clearMemberSecondFactors(params: {
   memberId: string;
@@ -133,6 +133,7 @@ export async function clearMemberSecondFactors(params: {
       actor: params.actor,
       subjectMemberId: params.memberId,
       request: params.request,
+      recordWhenEmpty: true,
     });
     const stamped = await tx.member.findUnique({
       where: { id: params.memberId },
