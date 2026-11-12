@@ -6,7 +6,8 @@ import {
   ALLOWED_IMAGE_EXTS,
   ensureImagesRootForRead,
   imagePublicUrl,
-  resolveInImagesRoot,
+  resolveAlbumPathInImagesRoot,
+  removeImageDerivatives,
 } from "@/lib/image-storage";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
 
@@ -18,7 +19,9 @@ export async function GET(request: NextRequest) {
   if (!guard.ok) return guard.response;
 
   const dir = request.nextUrl.searchParams.get("dir") ?? "";
-  const absDir = resolveInImagesRoot(dir);
+  // The website-sized copies folder (#4935) is never listed: its files are
+  // managed through their originals only.
+  const absDir = resolveAlbumPathInImagesRoot(dir);
   if (!absDir) {
     return NextResponse.json({ error: "Invalid directory" }, { status: 400 });
   }
@@ -95,7 +98,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "Not an image file" }, { status: 400 });
   }
 
-  const absDir = resolveInImagesRoot(dir);
+  const absDir = resolveAlbumPathInImagesRoot(dir);
   if (!absDir) {
     return NextResponse.json({ error: "Invalid directory" }, { status: 400 });
   }
@@ -119,17 +122,42 @@ export async function DELETE(request: NextRequest) {
 
   try {
     await fs.unlink(filePath);
-    // #2352 slice-1 review, and the DELETE case is the one that matters most: the
-    // photo-gallery embeds resolve their file list SERVER-side, so a stored CMS page
-    // kept rendering a deleted photo's URL — a broken image, and a takedown that was
-    // not actually effective on the public page — until the 300-second backstop
-    // lapsed. The gallery component has no failed-image fallback.
-    revalidatePublicSite();
-    return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json(
       { error: "Failed to delete image" },
       { status: 500 },
     );
   }
+
+  // Its website-sized copies go with it (#4935): a copy left behind would keep
+  // the photo downloadable after the takedown. Attempted only once the
+  // original is gone, and reported rather than swallowed if it fails.
+  let copiesRemoved = true;
+  try {
+    await removeImageDerivatives(absDir, filename);
+  } catch (err) {
+    copiesRemoved = false;
+    console.error(
+      "image-manager: deleted an image but not its website copies:",
+      filePath,
+      (err as NodeJS.ErrnoException).code,
+    );
+  }
+
+  // #2352 slice-1 review, and the DELETE case is the one that matters most: the
+  // photo-gallery embeds resolve their file list SERVER-side, so a stored CMS page
+  // kept rendering a deleted photo's URL — a broken image, and a takedown that was
+  // not actually effective on the public page — until the 300-second backstop
+  // lapsed. The gallery component has no failed-image fallback.
+  revalidatePublicSite();
+  if (!copiesRemoved) {
+    return NextResponse.json(
+      {
+        error:
+          "The image was deleted, but its resized website copies could not be removed. Check the image storage volume is writable by the app.",
+      },
+      { status: 500 },
+    );
+  }
+  return NextResponse.json({ ok: true });
 }

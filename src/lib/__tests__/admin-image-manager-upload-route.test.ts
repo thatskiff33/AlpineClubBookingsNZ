@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import path from "path";
 
 vi.mock("server-only", () => ({}));
 
@@ -18,6 +19,9 @@ const mocks = vi.hoisted(() => ({
   requireActiveSessionUser: vi.fn(),
   mkdir: vi.fn(),
   writeFile: vi.fn(),
+  rename: vi.fn(),
+  unlink: vi.fn(),
+  writeImageDerivatives: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -35,12 +39,26 @@ vi.mock("@/lib/session-guards", async () => ({
 // (a pure path computation under process.cwd()), exercising the containment
 // path exactly as production would.
 vi.mock("fs/promises", () => ({
-  default: { mkdir: mocks.mkdir, writeFile: mocks.writeFile },
+  default: {
+    mkdir: mocks.mkdir,
+    writeFile: mocks.writeFile,
+    rename: mocks.rename,
+    unlink: mocks.unlink,
+  },
   mkdir: mocks.mkdir,
   writeFile: mocks.writeFile,
+  rename: mocks.rename,
+  unlink: mocks.unlink,
+}));
+
+// The copy writer has its own suite (image-derivatives.test.ts) against real
+// sharp and a real directory; here only the route's call into it is pinned.
+vi.mock("@/lib/image-derivatives", () => ({
+  writeImageDerivatives: mocks.writeImageDerivatives,
 }));
 
 import { POST } from "@/app/api/admin/image-manager/upload/route";
+import { IMAGES_ROOT } from "@/lib/image-storage";
 
 const adminSession = {
   user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
@@ -156,6 +174,9 @@ describe("POST /api/admin/image-manager/upload", () => {
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.mkdir.mockResolvedValue(undefined);
     mocks.writeFile.mockResolvedValue(undefined);
+    mocks.rename.mockResolvedValue(undefined);
+    mocks.unlink.mockResolvedValue(undefined);
+    mocks.writeImageDerivatives.mockResolvedValue([400, 800]);
   });
 
   it("requires an admin (content:edit) session", async () => {
@@ -278,5 +299,61 @@ describe("POST /api/admin/image-manager/upload", () => {
     expect(body.results[0].ok).toBe(true);
     const written = Buffer.from(mocks.writeFile.mock.calls[0][1] as Buffer);
     expect(written.equals(unsniffable)).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // #4935: website-sized copies, and an atomic replace of the original.
+  // -------------------------------------------------------------------------
+  it("writes the original under a temporary name and renames it into place", async () => {
+    const response = await POST(uploadRequest([pngFile("lodge.png")], "gallery"));
+    expect(response.status).toBe(200);
+
+    const [partPath] = mocks.writeFile.mock.calls[0] as [string];
+    const [from, to] = mocks.rename.mock.calls[0] as [string, string];
+    expect(from).toBe(partPath);
+    expect(path.basename(partPath)).toMatch(/^\.lodge\.png\..+\.part$/);
+    expect(to).toBe(path.join(IMAGES_ROOT, "gallery", "lodge.png"));
+  });
+
+  it("makes website copies from the stored (EXIF-stripped) bytes, in the upload's folder", async () => {
+    const file = new File([new Uint8Array(EXIF_JPEG_WITH_EOI)], "holiday.jpg", {
+      type: "image/jpeg",
+    });
+    await POST(uploadRequest([file], "gallery"));
+
+    expect(mocks.writeImageDerivatives).toHaveBeenCalledTimes(1);
+    const [bytes, absDir, fileName] = mocks.writeImageDerivatives.mock
+      .calls[0] as [Buffer, string, string];
+    expect(bytes.includes(GPS_MARKER)).toBe(false);
+    expect(bytes.equals(Buffer.from(mocks.writeFile.mock.calls[0][1]))).toBe(true);
+    expect(absDir).toBe(path.join(IMAGES_ROOT, "gallery"));
+    expect(fileName).toBe("holiday.jpg");
+  });
+
+  it("still succeeds when no copy could be made (fail-open)", async () => {
+    mocks.writeImageDerivatives.mockResolvedValue([]);
+    const response = await POST(uploadRequest([pngFile("a.png")]));
+    const body = await response.json();
+    expect(body.results[0].ok).toBe(true);
+  });
+
+  it("removes the temporary file and reports a failure when the rename fails", async () => {
+    mocks.rename.mockRejectedValue(
+      Object.assign(new Error("read-only"), { code: "EROFS" }),
+    );
+    const response = await POST(uploadRequest([pngFile("a.png")]));
+    const body = await response.json();
+
+    expect(body.results[0].ok).toBe(false);
+    expect(mocks.unlink).toHaveBeenCalledWith(mocks.writeFile.mock.calls[0][0]);
+    expect(mocks.writeImageDerivatives).not.toHaveBeenCalled();
+  });
+
+  it("refuses to upload into a copies folder", async () => {
+    const response = await POST(
+      uploadRequest([pngFile("a.png")], "gallery/.sizes"),
+    );
+    expect(response.status).toBe(400);
+    expect(mocks.writeFile).not.toHaveBeenCalled();
   });
 });

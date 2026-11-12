@@ -6,9 +6,10 @@ import path from "path";
 import {
   IMAGES_ROOT,
   ensureImagesRootForRead,
+  isDerivativeDirectoryName,
   isSafeDirectoryName,
   isStorageUnavailableCode,
-  resolveInImagesRoot,
+  resolveAlbumPathInImagesRoot,
   storageUnavailableMessage,
 } from "@/lib/image-storage";
 
@@ -39,7 +40,7 @@ async function collectDirs(absDir: string, relBase: string): Promise<string[]> {
   }
   const result: string[] = [];
   for (const entry of entries) {
-    if (entry.isDirectory()) {
+    if (entry.isDirectory() && !isDerivativeDirectoryName(entry.name)) {
       const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
       result.push(rel);
       // absDir is contained under IMAGES_ROOT; entry.name comes from readdir of
@@ -88,7 +89,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const parentAbs = resolveInImagesRoot(parent);
+  const parentAbs = resolveAlbumPathInImagesRoot(parent);
   if (!parentAbs) {
     return NextResponse.json({ error: "Invalid parent path" }, { status: 400 });
   }
@@ -179,7 +180,7 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-  const oldAbs = resolveInImagesRoot(rel);
+  const oldAbs = resolveAlbumPathInImagesRoot(rel);
   if (!oldAbs || oldAbs === IMAGES_ROOT) {
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   }
@@ -231,7 +232,7 @@ export async function DELETE(request: NextRequest) {
     );
   }
 
-  const absPath = resolveInImagesRoot(rel);
+  const absPath = resolveAlbumPathInImagesRoot(rel);
   if (!absPath || absPath === IMAGES_ROOT) {
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   }

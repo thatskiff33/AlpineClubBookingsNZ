@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
+import { randomUUID } from "crypto";
 import fs from "fs/promises";
 import path from "path";
 import {
   ALLOWED_IMAGE_EXTS,
   ALLOWED_IMAGE_MIME,
-  resolveInImagesRoot,
+  resolveAlbumPathInImagesRoot,
   storageUnavailableMessage,
 } from "@/lib/image-storage";
+import { writeImageDerivatives } from "@/lib/image-derivatives";
 import { readCappedMultipartFormData } from "@/lib/capped-multipart";
 import {
   detectImageContentType,
@@ -80,7 +82,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "No files provided" }, { status: 400 });
   }
 
-  const absDir = resolveInImagesRoot(dir);
+  // A copies folder is written only by the copy writer (#4935), never by hand.
+  const absDir = resolveAlbumPathInImagesRoot(dir);
   if (!absDir) {
     return NextResponse.json({ error: "Invalid directory" }, { status: 400 });
   }
@@ -176,7 +179,23 @@ export async function POST(request: NextRequest) {
         detectImageContentType(buffer),
         { source: "image-manager upload", filename: safeName },
       );
-      await fs.writeFile(filePath, storable);
+      // Write-then-rename (#4935): replacing `lodge.jpg` swaps the file
+      // atomically, so a visitor mid-download keeps the old bytes and the
+      // streamed length still matches the Content-Length the serving route
+      // sent. The `.part` name is hidden and has no image extension, so no
+      // listing or the serving route ever sees it.
+      const partPath = `${absDir}${path.sep}.${safeName}.${randomUUID()}.part`;
+      try {
+        await fs.writeFile(partPath, storable);
+        await fs.rename(partPath, filePath);
+      } catch (err) {
+        await fs.unlink(partPath).catch(() => undefined);
+        throw err;
+      }
+      // Website-sized WebP copies for the gallery (#4935, INV-PUB-004), made
+      // from the bytes as stored. Fail-open: a photo that cannot be copied is
+      // still a successful upload, served as the original.
+      await writeImageDerivatives(storable, absDir, safeName);
       results.push({ filename: safeName, ok: true });
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
