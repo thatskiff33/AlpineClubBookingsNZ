@@ -39,7 +39,7 @@ vi.mock("@/components/ui/dialog", () => ({
     children: ReactNode;
     onEscapeKeyDown?: (event: KeyboardEvent) => void;
   }) => (
-    <div onKeyDown={(event) => {
+    <div role="presentation" onKeyDown={(event) => {
       if (event.key === "Escape") onEscapeKeyDown?.(event.nativeEvent);
     }}>
       {children}
@@ -304,9 +304,11 @@ describe("MemberOnboardingWizard", () => {
 
     render(<MemberOnboardingWizard initialShouldShow />);
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Confirm details are correct" })
-    );
+    const confirm = await screen.findByRole("button", {
+      name: "Confirm details are correct",
+    });
+    expect(screen.getByRole("button", { name: "Log out" })).toBeTruthy();
+    fireEvent.click(confirm);
     expect(screen.getByRole("button", { name: /Confirm and finish/ })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Log out" }));
     expect(signOutMock).toHaveBeenCalledWith({ callbackUrl: "/login" });
