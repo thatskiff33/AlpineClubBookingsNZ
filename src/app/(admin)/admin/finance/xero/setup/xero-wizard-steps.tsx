@@ -19,7 +19,7 @@ import { parseInstant, requireInstant, type BoundClubTime } from "@/lib/club-tim
 import { ConnectionStatusPanel } from "../_components/connection-status-panel";
 import { useXeroConnection } from "../_hooks/use-xero-connection";
 import { FocusedActionError } from "@/components/focused-action-error";
-import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
+import { scrollToTop } from "@/hooks/use-scroll-to-feedback";
 import { useActionFailure } from "@/hooks/use-action-failure";
 import type {
   XeroOrgReadError,
@@ -493,19 +493,16 @@ export function ConnectStep({
   // failure box, unmounting the button under the operator's focus and dropping
   // it to <body> after all. So a press that clears the failure hands focus to
   // the confirmation it produced, which is the next thing worth reading. Armed
-  // only by an actual click, so nothing steals focus on an ordinary load. Each
-  // cleared retry bumps the count, and the shared attention primitive moves
-  // focus on the change (#4975).
+  // only by an actual click, so nothing steals focus on an ordinary load. The
+  // focus goes through the shared success primitive (#4975).
   const retryPressedRef = useRef(false);
   const confirmationRef = useRef<HTMLDivElement | null>(null);
-  const [retriesConfirmed, setRetriesConfirmed] = useState(0);
   useEffect(() => {
     if (!retryPressedRef.current) return;
     if (context.orgError !== null || context.orgLoading) return;
     retryPressedRef.current = false;
-    setRetriesConfirmed((count) => count + 1);
+    scrollToTop(confirmationRef);
   }, [context.orgError, context.orgLoading]);
-  useActionAttention({ success: retriesConfirmed, successTarget: confirmationRef });
 
   const onConnect = () => {
     window.location.href = `/api/admin/xero/connect?return=${encodeURIComponent(
