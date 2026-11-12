@@ -46,7 +46,6 @@ import {
 import { clubTime } from "@/lib/club-time/server";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import {
-  isDashboardPaymentOwed,
   loadDashboardPaymentSnapshots,
   summarizeMemberPaymentOwed,
 } from "@/lib/member-dashboard";
@@ -343,7 +342,6 @@ export default async function DashboardPage() {
             status: true,
             additionalAmountCents: true,
             additionalPaymentStatus: true,
-            // #4944: what the booking owes includes a recorded change fee.
             changeFeeCents: true,
           },
         },
@@ -389,21 +387,16 @@ export default async function DashboardPage() {
     }
   }
 
-  // #4944: the total, the count and the single-booking link all read the same
-  // snapshots, each booking's figure from the booking page's own read.
-  const paymentOwedSnapshots =
-    await loadDashboardPaymentSnapshots(paymentOwedBookings);
-  const paymentOwed = summarizeMemberPaymentOwed(paymentOwedSnapshots);
-  const paymentOwedBookingIds = paymentOwedSnapshots
-    .filter(isDashboardPaymentOwed)
-    .map((booking) => booking.id);
+  const paymentOwed = summarizeMemberPaymentOwed(
+    await loadDashboardPaymentSnapshots(paymentOwedBookings),
+  );
   const nextStayHref = nextStay
     ? buildHrefWithReturnTo(`/bookings/${nextStay.id}`, "/dashboard")
     : "/book";
   const paymentOwedHref =
-    paymentOwed.bookingCount === 1 && paymentOwedBookingIds.length === 1
+    paymentOwed.bookingIds.length === 1
       ? buildHrefWithReturnTo(
-          `/bookings/${paymentOwedBookingIds[0]}`,
+          `/bookings/${paymentOwed.bookingIds[0]}`,
           "/dashboard",
         )
       : "/bookings";
@@ -627,7 +620,7 @@ export default async function DashboardPage() {
           </div>
           <p className="text-xs text-muted-foreground mt-1">
             {paymentOwed.totalCents > 0
-              ? `${paymentOwed.bookingCount} booking${paymentOwed.bookingCount !== 1 ? "s" : ""} need payment`
+              ? `${paymentOwed.bookingIds.length} booking${paymentOwed.bookingIds.length !== 1 ? "s" : ""} need payment`
               : "No payment due"}
           </p>
         </SummaryLinkCard>

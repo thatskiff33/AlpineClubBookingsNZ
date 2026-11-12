@@ -30,7 +30,8 @@ export interface DashboardPaymentSnapshot {
 }
 
 export interface DashboardPaymentSummary {
-  bookingCount: number;
+  /** The bookings that owe something, so the card's count and link agree. */
+  bookingIds: string[];
   totalCents: number;
 }
 
@@ -85,10 +86,6 @@ export function getDashboardPaymentOwedCents(booking: DashboardPaymentSnapshot) 
   return owedCents;
 }
 
-export function isDashboardPaymentOwed(booking: DashboardPaymentSnapshot) {
-  return getDashboardPaymentOwedCents(booking) > 0;
-}
-
 export function summarizeMemberPaymentOwed(
   bookings: DashboardPaymentSnapshot[],
 ): DashboardPaymentSummary {
@@ -97,12 +94,12 @@ export function summarizeMemberPaymentOwed(
       const owedCents = getDashboardPaymentOwedCents(booking);
 
       if (owedCents > 0) {
-        summary.bookingCount += 1;
+        summary.bookingIds.push(booking.id);
         summary.totalCents += owedCents;
       }
 
       return summary;
     },
-    { bookingCount: 0, totalCents: 0 },
+    { bookingIds: [], totalCents: 0 },
   );
 }

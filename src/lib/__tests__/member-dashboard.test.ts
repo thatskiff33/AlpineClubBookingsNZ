@@ -6,7 +6,6 @@ const { readBookingAmountOwed } = vi.hoisted(() => ({
 vi.mock("@/lib/booking-amount-owed", () => ({ readBookingAmountOwed }));
 
 import {
-  isDashboardPaymentOwed,
   loadDashboardPaymentSnapshots,
   summarizeMemberPaymentOwed,
   type DashboardPaymentRow,
@@ -44,7 +43,7 @@ describe("summarizeMemberPaymentOwed", () => {
     ]);
 
     expect(summary).toEqual({
-      bookingCount: 3,
+      bookingIds: ["booking-1", "booking-2", "booking-3"],
       totalCents: 24000,
     });
   });
@@ -84,37 +83,29 @@ describe("summarizeMemberPaymentOwed", () => {
     ]);
 
     expect(summary).toEqual({
-      bookingCount: 0,
+      bookingIds: [],
       totalCents: 0,
     });
   });
 
-  it("identifies the singular booking that should receive payment attention", () => {
-    expect(
-      isDashboardPaymentOwed({
-        id: "booking-owed",
-        status: "PAID",
-        amountDueCents: 0,
-        payment: {
-          status: "SUCCEEDED",
-          additionalAmountCents: 3500,
-          additionalPaymentStatus: "PENDING",
-        },
-      }),
-    ).toBe(true);
+  it("names the booking an outstanding additional ask leaves owing, and not a settled one", () => {
+    const ask = (id: string, additionalPaymentStatus: string) => ({
+      id,
+      status: "PAID",
+      amountDueCents: 0,
+      payment: {
+        status: "SUCCEEDED",
+        additionalAmountCents: 3500,
+        additionalPaymentStatus,
+      },
+    });
 
     expect(
-      isDashboardPaymentOwed({
-        id: "booking-settled",
-        status: "PAID",
-        amountDueCents: 0,
-        payment: {
-          status: "SUCCEEDED",
-          additionalAmountCents: 3500,
-          additionalPaymentStatus: "SUCCEEDED",
-        },
-      }),
-    ).toBe(false);
+      summarizeMemberPaymentOwed([
+        ask("booking-owed", "PENDING"),
+        ask("booking-settled", "SUCCEEDED"),
+      ]).bookingIds,
+    ).toEqual(["booking-owed"]);
   });
 
   it("does not treat zero-dollar unpaid bookings as payment-owed targets", () => {
@@ -125,9 +116,8 @@ describe("summarizeMemberPaymentOwed", () => {
       payment: null,
     };
 
-    expect(isDashboardPaymentOwed(booking)).toBe(false);
     expect(summarizeMemberPaymentOwed([booking])).toEqual({
-      bookingCount: 0,
+      bookingIds: [],
       totalCents: 0,
     });
   });
@@ -160,7 +150,7 @@ describe("loadDashboardPaymentSnapshots", () => {
 
     expect(readBookingAmountOwed).toHaveBeenCalledWith(row);
     expect(summarizeMemberPaymentOwed(snapshots)).toEqual({
-      bookingCount: 1,
+      bookingIds: ["booking-1"],
       totalCents: 20000,
     });
   });
@@ -200,10 +190,9 @@ describe("loadDashboardPaymentSnapshots", () => {
     ]);
 
     expect(summarizeMemberPaymentOwed(snapshots)).toEqual({
-      bookingCount: 1,
+      bookingIds: ["owing"],
       totalCents: 10000,
     });
-    expect(snapshots.filter(isDashboardPaymentOwed).map((s) => s.id)).toEqual(["owing"]);
     // Floored: a negative figure would cancel an additional ask on the same booking.
     expect(snapshots.map((s) => s.amountDueCents)).toEqual([0, 10000]);
   });
@@ -223,7 +212,7 @@ describe("loadDashboardPaymentSnapshots", () => {
 
     expect(readBookingAmountOwed).not.toHaveBeenCalled();
     expect(summarizeMemberPaymentOwed(snapshots)).toEqual({
-      bookingCount: 1,
+      bookingIds: ["booking-1"],
       totalCents: 4000,
     });
   });
@@ -243,7 +232,7 @@ describe("loadDashboardPaymentSnapshots", () => {
 
     expect(readBookingAmountOwed).not.toHaveBeenCalled();
     expect(summarizeMemberPaymentOwed(snapshots)).toEqual({
-      bookingCount: 0,
+      bookingIds: [],
       totalCents: 0,
     });
   });
