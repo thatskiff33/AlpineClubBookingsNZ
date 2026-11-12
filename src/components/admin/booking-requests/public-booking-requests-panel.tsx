@@ -11,6 +11,11 @@ import { pluralHutLeaderLabel } from "@/config/hut-leader-label";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
+import {
+  DEFAULT_PUBLIC_BOOKING_REQUEST_FILTER,
+  readPublicBookingRequestFilter,
+  type PublicBookingRequestFilter,
+} from "@/lib/admin-booking-requests-path";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -125,43 +130,6 @@ function storedDataNeedsAttention(request: {
 function parseCount(value: string): number {
   const parsed = Math.floor(Number(value));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-}
-
-type PublicRequestFilter =
-  | "QUEUE"
-  | "NEW"
-  | "VERIFIED"
-  | "PRICED"
-  | "QUOTED"
-  | "QUOTE_SENT"
-  | "QUERY_PENDING"
-  | "MODIFICATION_REQUESTED"
-  | "ACCEPTED"
-  | "APPROVED"
-  | "DECLINED"
-  | "CANCELLED"
-  | "CONVERTED"
-  | "ALL";
-
-const publicRequestFilters = new Set<PublicRequestFilter>([
-  "QUEUE",
-  "NEW",
-  "VERIFIED",
-  "PRICED",
-  "QUOTED",
-  "QUOTE_SENT",
-  "QUERY_PENDING",
-  "MODIFICATION_REQUESTED",
-  "ACCEPTED",
-  "APPROVED",
-  "DECLINED",
-  "CANCELLED",
-  "CONVERTED",
-  "ALL",
-]);
-
-function isPublicRequestFilter(value: string | null): value is PublicRequestFilter {
-  return publicRequestFilters.has(value as PublicRequestFilter);
 }
 
 interface PublicBookingRequestData {
@@ -389,7 +357,7 @@ interface PublicBookingRequestsPanelProps {
 
 const EMPTY_SEARCH_PARAMS: Record<string, string> = {};
 
-const FILTER_LABELS: Record<PublicRequestFilter, string> = {
+const FILTER_LABELS: Record<PublicBookingRequestFilter, string> = {
   QUEUE: "Queue",
   NEW: "Awaiting verification",
   VERIFIED: "Verified",
@@ -410,7 +378,7 @@ function buildPublicRequestsPath(
   basePath: string,
   currentSearch: string,
   fixedSearchParams: Record<string, string>,
-  status: PublicRequestFilter,
+  status: PublicBookingRequestFilter,
   requestId: string | null,
 ) {
   return buildBookingRequestDatasetPath({
@@ -418,7 +386,7 @@ function buildPublicRequestsPath(
     currentSearch,
     fixedSearchParams,
     status,
-    defaultStatus: "QUEUE",
+    defaultStatus: DEFAULT_PUBLIC_BOOKING_REQUEST_FILTER,
     recordKey: "requestId",
     recordId: requestId,
   });
@@ -443,7 +411,6 @@ export function PublicBookingRequestsPanel({
   const { hutLeaderLabel } = useClubIdentity();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const initialFilter = searchParams.get("status");
   const requestId = searchParams.get("requestId");
   /*
     #2887: the lodge badge follows `request.lodgeName` and nothing else.
@@ -466,8 +433,8 @@ export function PublicBookingRequestsPanel({
   */
   const [memberChoosesPayment, setMemberChoosesPayment] = useState(false);
   const [requests, setRequests] = useState<PublicBookingRequestData[]>([]);
-  const [filter, setFilter] = useState<PublicRequestFilter>(
-    isPublicRequestFilter(initialFilter) ? initialFilter : "QUEUE"
+  const [filter, setFilter] = useState<PublicBookingRequestFilter>(() =>
+    readPublicBookingRequestFilter(searchParams),
   );
   const [loading, setLoading] = useState(true);
   const [actioningId, setActioningId] = useState<string | null>(null);
@@ -1521,7 +1488,7 @@ export function PublicBookingRequestsPanel({
 
 
       <div className="flex flex-wrap gap-2">
-        {(Object.keys(FILTER_LABELS) as PublicRequestFilter[]).map((status) => (
+        {(Object.keys(FILTER_LABELS) as PublicBookingRequestFilter[]).map((status) => (
           <Button
             key={status}
             variant={filter === status ? "default" : "outline"}
