@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
@@ -553,14 +554,16 @@ export function AdminBookingCalendar() {
             const lastDayStr = cellDateStr(seg.row * 7 + seg.colEnd);
             const isPastSeg = lastDayStr !== "" && lastDayStr < todayStr;
 
+            const label = `${booking.memberName} (${booking.status}) — ${booking.checkIn} to ${booking.checkOut}, ${booking.guestCount} guest(s)`;
+
             return (
-              <div
+              <Link
                 key={`${booking.id}-${seg.row}`}
                 data-booking-id={booking.id}
                 data-row-index={seg.row}
                 data-row-top={rowTop}
                 data-row-height={rowHeight}
-                className={`absolute rounded pointer-events-auto cursor-pointer hover:brightness-110 transition-all flex items-center overflow-hidden ${
+                className={`absolute rounded pointer-events-auto cursor-pointer focus-visible:ring-2 focus-visible:ring-ring hover:brightness-110 transition-all flex items-center overflow-hidden ${
                   isPastSeg
                     ? "bg-muted text-muted-foreground"
                     : CHIP_TONE_CLASSES[STATUS_CHIP_TONES[booking.status] ?? "neutral"]
@@ -571,8 +574,9 @@ export function AdminBookingCalendar() {
                   top: `${top}px`,
                   height: `${BAR_HEIGHT}px`,
                 }}
-                title={`${booking.memberName} (${booking.status}) — ${booking.checkIn} to ${booking.checkOut}, ${booking.guestCount} guest(s)`}
-                onClick={() => router.push(buildHrefWithReturnTo(`/bookings/${booking.id}`, currentBookingsPath))}
+                title={label}
+                aria-label={label}
+                href={buildHrefWithReturnTo(`/bookings/${booking.id}`, currentBookingsPath)}
               >
                 <span
                   aria-hidden="true"
@@ -584,7 +588,7 @@ export function AdminBookingCalendar() {
                     {seg.spanDays > 2 && ` · ${booking.guestCount}g`}
                   </span>
                 )}
-              </div>
+              </Link>
             );
           })}
 
