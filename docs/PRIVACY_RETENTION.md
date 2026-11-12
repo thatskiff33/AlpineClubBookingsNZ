@@ -213,6 +213,8 @@ see [backups](guides/backups.md), the
 | `MemberMoneyRefundReservation` | Reserved refund amounts linked to financial obligations and captures | Kept for financial records | Keep |
 | `MemberMoneyRefundReservationRelease` | Release evidence for reserved refund amounts | Kept for financial records | Keep |
 | `MemberMoneySourcePosting` | Exact financial source and journal-line coverage | Kept for financial records | Keep |
+| `MemberMoneyExportManifest` | Booking, sent Xero invoice id and what its lines cover | Kept for financial records | Keep |
+| `MemberMoneyExportCoverage` | Journal components a sent invoice bills | Kept for financial records | Keep |
 
 ## Maintaining coverage
 
