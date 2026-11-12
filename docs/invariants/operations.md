@@ -238,6 +238,31 @@ rules first written here. #2765 extended it with the measured-audience half.
   inside a client-taking helper to pass that client on - so a new
   in-transaction call site is a CI failure rather than the next audit's finding.
 
+## INV-LOCK-005
+
+- **A transaction that waits for the global key states the shared lock(1)
+  budget and answers contention as retryable (#4933).** Prisma counts the wait
+  for `pg_advisory_xact_lock(1)` against an interactive transaction's `maxWait`
+  and `timeout`, and its defaults (2 s / 5 s) lose to any legitimate holder that
+  runs longer. So a writer that opens such a transaction passes
+  `LOCK1_HOLDER_TRANSACTION_BUDGET` (`src/lib/db-transaction.ts`), the one
+  definition of the lock(1) holders' budget, and never writes the numbers out.
+  Leaving the defaults is a silent choice to lose to every long holder. A writer
+  joined to a caller's transaction passes nothing: the opener's budget governs.
+  When the budget does run out, Prisma answers P2028 (P2034 for a lost write
+  conflict), nothing is committed, and the remedy is "again shortly", not
+  "differently". The route therefore answers a 503, with `Retry-After` where the
+  caller can retry, and decides that through `isTransactionContention` alone,
+  never through a code check of its own; the raw Prisma message stays in the log
+  (#1888). The trade-off is pool pressure: a waiter keeps its pooled connection
+  while it waits, so a wider budget swaps opaque failures for a fuller pool -
+  `docs/CONCURRENCY_AND_LOCKING.md` -> "The lock(1) transaction budget" states
+  it against `DEPLOYMENT.md` -> "Connection pool sizing". A writer with a harder
+  ceiling of its own, such as a provider delivery timeout, may run tighter and
+  says why at the site. Booking create, the linked date move, bed-range
+  assignment and group settlement use the constant; other lock(1) writers still
+  on the defaults are a known gap tracked for follow-up, not a licence.
+
 ## INV-OPS-014
 
 - **The statement handed to a raw `Unsafe` call is visibly static at the call
