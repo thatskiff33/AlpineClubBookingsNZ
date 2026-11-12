@@ -12,14 +12,9 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { Pagination } from "@/components/admin/admin-pagination";
-import {
-  fetchFocusedQueueRecord,
-  useAdminQueuePage,
-} from "@/components/admin/use-admin-queue-page";
-import {
-  PINNED_QUEUE_RECORD_NOTE,
-  parseAdminListPageParam,
-} from "@/lib/admin-list-page";
+import { fetchOffPageQueueRecord, useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
+import { PinnedQueueRecordNote } from "@/components/admin/pinned-queue-record-note";
+import { parseAdminListPageParam } from "@/lib/admin-list-page";
 import { bookingOwner } from "@/lib/booking-owner";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -201,13 +196,7 @@ export function BookingApprovalsPanel({
       setBookings(rows);
       receive(data, rows.length);
       setPinnedBooking(
-        focusedBookingId && !rows.some((booking) => booking.id === focusedBookingId)
-          ? await fetchFocusedQueueRecord<BookingReviewData>(
-              "/api/admin/booking-reviews",
-              "bookingId",
-              focusedBookingId,
-            )
-          : null,
+        await fetchOffPageQueueRecord("/api/admin/booking-reviews", "bookingId", focusedBookingId, rows),
       );
       return true;
     } catch (err) {
@@ -478,11 +467,7 @@ export function BookingApprovalsPanel({
                 className={highlighted ? "border-warning-6" : undefined}
               >
                 <CardHeader>
-                  {pinned ? (
-                    <p className="text-sm font-medium text-warning-11">
-                      {PINNED_QUEUE_RECORD_NOTE}
-                    </p>
-                  ) : null}
+                  {pinned ? <PinnedQueueRecordNote /> : null}
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <CardTitle className="text-lg">

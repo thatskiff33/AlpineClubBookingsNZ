@@ -3,10 +3,9 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import {
-  ADMIN_LIST_DEFAULT_PAGE_SIZE,
-  ADMIN_LIST_MAX_PAGE_SIZE,
   adminListPage,
   adminQueueCreatedOrder,
+  adminListPageQueryFields,
 } from "@/lib/admin-list-page";
 import { OPEN_HAND_BACKS_FOR_REFUND_APPEAL_SELECT, refundAppealCeilingParts } from "@/lib/manual-refund-task-settlement-rules";
 import { netCollectedCardRefundSelect } from "@/lib/additional-ledger-gap";
@@ -15,14 +14,7 @@ import { readApprovedAppealOutcomes } from "@/lib/refund-appeal-outcome";
 
 const querySchema = z.object({
   status: z.enum(["PENDING", "APPROVED", "REJECTED", "ALL"]).optional().default("PENDING"),
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce
-    .number()
-    .int()
-    .min(1)
-    .max(ADMIN_LIST_MAX_PAGE_SIZE)
-    .optional()
-    .default(ADMIN_LIST_DEFAULT_PAGE_SIZE),
+  ...adminListPageQueryFields,
 });
 
 export async function GET(req: NextRequest) {

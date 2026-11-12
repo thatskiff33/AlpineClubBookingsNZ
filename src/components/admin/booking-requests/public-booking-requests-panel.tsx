@@ -11,14 +11,9 @@ import { pluralHutLeaderLabel } from "@/config/hut-leader-label";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { Pagination } from "@/components/admin/admin-pagination";
-import {
-  fetchFocusedQueueRecord,
-  useAdminQueuePage,
-} from "@/components/admin/use-admin-queue-page";
-import {
-  PINNED_QUEUE_RECORD_NOTE,
-  parseAdminListPageParam,
-} from "@/lib/admin-list-page";
+import { fetchOffPageQueueRecord, useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
+import { PinnedQueueRecordNote } from "@/components/admin/pinned-queue-record-note";
+import { parseAdminListPageParam } from "@/lib/admin-list-page";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -606,13 +601,7 @@ export function PublicBookingRequestsPanel({
       setRequests(rows);
       receive(data, rows.length);
       setPinnedRequest(
-        requestId && !rows.some((request) => request.id === requestId)
-          ? await fetchFocusedQueueRecord<PublicBookingRequestData>(
-              "/api/admin/booking-requests",
-              "requestId",
-              requestId,
-            )
-          : null,
+        await fetchOffPageQueueRecord("/api/admin/booking-requests", "requestId", requestId, rows),
       );
       setMemberChoosesPayment(data.memberWholeLodgeChoosesPaymentMethod === true);
       return true;
@@ -1618,11 +1607,7 @@ export function PublicBookingRequestsPanel({
                 className={request.id === requestId ? "border-warning-6" : undefined}
               >
                 <CardHeader>
-                  {request === pinnedRequest ? (
-                    <p className="text-sm font-medium text-warning-11">
-                      {PINNED_QUEUE_RECORD_NOTE}
-                    </p>
-                  ) : null}
+                  {request === pinnedRequest ? <PinnedQueueRecordNote /> : null}
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <CardTitle className="text-lg">

@@ -6,9 +6,28 @@
  * client reads the same four keys, and the client renders the total through
  * `formatAdminListRange`. Pure: safe in route handlers and client components.
  */
+import { z } from "zod"
 
 export const ADMIN_LIST_DEFAULT_PAGE_SIZE = 25
 export const ADMIN_LIST_MAX_PAGE_SIZE = 100
+
+/** The `page` / `pageSize` query fields each capped route spreads into its schema. */
+export const adminListPageQueryFields = {
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(ADMIN_LIST_MAX_PAGE_SIZE)
+    .optional()
+    .default(ADMIN_LIST_DEFAULT_PAGE_SIZE),
+}
+
+/**
+ * A focused deep link's record id (`?requestId=` / `?bookingId=`): the route
+ * reads that one record so the panel can pin it when it is off the page.
+ */
+export const adminQueueFocusIdField = z.string().trim().min(1).max(64).optional()
 
 export interface AdminListPage {
   page: number

@@ -4,8 +4,7 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { readUnifiedExceptionQueue } from "@/lib/booking-exception-request-service";
 import {
-  ADMIN_LIST_DEFAULT_PAGE_SIZE,
-  ADMIN_LIST_MAX_PAGE_SIZE,
+  adminListPageQueryFields,
 } from "@/lib/admin-list-page";
 
 const querySchema = z.object({
@@ -25,14 +24,7 @@ const querySchema = z.object({
     ])
     .optional()
     .default("REQUESTED"),
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce
-    .number()
-    .int()
-    .min(1)
-    .max(ADMIN_LIST_MAX_PAGE_SIZE)
-    .optional()
-    .default(ADMIN_LIST_DEFAULT_PAGE_SIZE),
+  ...adminListPageQueryFields,
 });
 
 /**

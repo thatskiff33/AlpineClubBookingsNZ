@@ -15,25 +15,16 @@ import { loadMemberGuestFindGate } from "@/lib/member-guest-find-service";
 import { carriedPromoCodes } from "@/lib/booking-change-request-promo";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import {
-  ADMIN_LIST_DEFAULT_PAGE_SIZE,
-  ADMIN_LIST_MAX_PAGE_SIZE,
   adminListPage,
   adminQueueCreatedOrder,
+  adminListPageQueryFields,
+  adminQueueFocusIdField,
 } from "@/lib/admin-list-page";
 
 const querySchema = z.object({
   status: z.enum(["REQUESTED", "APPROVED", "REJECTED", "ALL"]).optional().default("REQUESTED"),
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce
-    .number()
-    .int()
-    .min(1)
-    .max(ADMIN_LIST_MAX_PAGE_SIZE)
-    .optional()
-    .default(ADMIN_LIST_DEFAULT_PAGE_SIZE),
-  // A focused deep link (`?requestId=`) reads its one request so the panel can
-  // pin it when it is not on the page (INV-OPS-017).
-  requestId: z.string().trim().min(1).max(64).optional(),
+  ...adminListPageQueryFields,
+  requestId: adminQueueFocusIdField,
 });
 
 export async function GET(req: NextRequest) {

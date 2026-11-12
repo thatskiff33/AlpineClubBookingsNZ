@@ -8,26 +8,19 @@ import {
   bookingReviewReasonSentences,
 } from "@/lib/booking-review";
 import {
-  ADMIN_LIST_DEFAULT_PAGE_SIZE,
-  ADMIN_LIST_MAX_PAGE_SIZE,
   adminListPage,
   adminQueueCreatedOrder,
+  adminListPageQueryFields,
+  adminQueueFocusIdField,
 } from "@/lib/admin-list-page";
 
 const querySchema = z.object({
   status: z.enum(["PENDING", "APPROVED", "REJECTED", "ALL"]).optional().default("PENDING"),
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce
-    .number()
-    .int()
-    .min(1)
-    .max(ADMIN_LIST_MAX_PAGE_SIZE)
-    .optional()
-    .default(ADMIN_LIST_DEFAULT_PAGE_SIZE),
+  ...adminListPageQueryFields,
   // A focused deep link (`?bookingId=`) reads its one booking, inside the same
   // review scope, so the panel can pin it when it is not on the page
   // (INV-OPS-017).
-  bookingId: z.string().trim().min(1).max(64).optional(),
+  bookingId: adminQueueFocusIdField,
 });
 
 export async function GET(req: NextRequest) {

@@ -18,32 +18,14 @@ import { loadSchoolGroupSoftCap } from "@/lib/lodge-settings";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
-import {
-  ADMIN_LIST_DEFAULT_PAGE_SIZE,
-  ADMIN_LIST_MAX_PAGE_SIZE,
-  adminListPage,
-  adminQueueCreatedOrder,
-} from "@/lib/admin-list-page";
+import { adminListPage, adminListPageQueryFields, adminQueueCreatedOrder, adminQueueFocusIdField } from "@/lib/admin-list-page";
 
-const statusFilterValues = [
-  ...Object.values(BookingRequestStatus),
-  "QUEUE",
-  "ALL",
-] as const;
+const statusFilterValues = [...Object.values(BookingRequestStatus), "QUEUE", "ALL"] as const;
 
 const querySchema = z.object({
   status: z.enum(statusFilterValues).optional().default("QUEUE"),
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce
-    .number()
-    .int()
-    .min(1)
-    .max(ADMIN_LIST_MAX_PAGE_SIZE)
-    .optional()
-    .default(ADMIN_LIST_DEFAULT_PAGE_SIZE),
-  // A focused deep link (`?requestId=`) reads its one request so the panel can
-  // pin it when it is not on the page (INV-OPS-017).
-  requestId: z.string().trim().min(1).max(64).optional(),
+  ...adminListPageQueryFields,
+  requestId: adminQueueFocusIdField,
 });
 
 export async function GET(req: NextRequest) {
@@ -261,8 +243,7 @@ export async function GET(req: NextRequest) {
   });
 
   return NextResponse.json({
-    data,
-    ...adminListPage({ page, pageSize, total }),
+    data, ...adminListPage({ page, pageSize, total }),
     memberWholeLodgeChoosesPaymentMethod: memberWholeLodgeChoosesPaymentMethod(await loadEffectiveModuleFlags()),
   });
 }

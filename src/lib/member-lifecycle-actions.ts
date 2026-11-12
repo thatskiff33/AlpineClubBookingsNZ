@@ -731,9 +731,7 @@ export async function getAdminMemberLifecycleRequests({
           status,
         };
   // The pending queue reads oldest first (INV-OPS-017).
-  const direction = adminQueueCreatedOrder(
-    status === MemberLifecycleActionRequestStatus.REQUESTED,
-  );
+  const direction = adminQueueCreatedOrder(status === MemberLifecycleActionRequestStatus.REQUESTED);
 
   const [requests, total, pendingCount] = await Promise.all([
     prisma.memberLifecycleActionRequest.findMany({

@@ -9,14 +9,9 @@ import { toast } from "sonner";
 import { Button, type ButtonProps } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { Pagination } from "@/components/admin/admin-pagination";
-import {
-  fetchFocusedQueueRecord,
-  useAdminQueuePage,
-} from "@/components/admin/use-admin-queue-page";
-import {
-  PINNED_QUEUE_RECORD_NOTE,
-  parseAdminListPageParam,
-} from "@/lib/admin-list-page";
+import { fetchOffPageQueueRecord, useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
+import { PinnedQueueRecordNote } from "@/components/admin/pinned-queue-record-note";
+import { parseAdminListPageParam } from "@/lib/admin-list-page";
 import { bookingOwner } from "@/lib/booking-owner";
 import { ChangeRequestPaymentLine } from "@/components/admin/booking-requests/change-request-payment-line";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
@@ -132,14 +127,11 @@ export function BookingChangeRequestsPanel({
   const [filter, setFilter] = useState<RequestFilter>(
     isRequestFilter(initialFilter) ? initialFilter : defaultFilter
   );
-  const queuePage = useAdminQueuePage({
-    filterKey: filter,
-    initialPage: parseAdminListPageParam(searchParams.get("page")),
-  });
-  const { page, receive } = queuePage;
-  // INV-OPS-017: a deep-linked request that is not on the loaded page is read
-  // by id and pinned above it, so the link always lands on its request.
+  const pageParam = parseAdminListPageParam(searchParams.get("page"));
+  const { page, receive, pagination } = useAdminQueuePage({ filterKey: filter, initialPage: pageParam });
+  // INV-OPS-017: a deep-linked request off the loaded page is pinned above it.
   const [pinnedRequest, setPinnedRequest] = useState<BookingChangeRequestData | null>(null);
+  const shownRequests = pinnedRequest ? [pinnedRequest, ...requests] : requests;
   const [loading, setLoading] = useState(true);
   /**
    * Every open decision draft, keyed by the request it belongs to.
@@ -213,9 +205,7 @@ export function BookingChangeRequestsPanel({
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(
-        `/api/admin/booking-change-requests?status=${filter}&page=${page}`,
-      );
+      const response = await fetch(`/api/admin/booking-change-requests?status=${filter}&page=${page}`);
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || "Failed to load booking change requests");
@@ -223,15 +213,7 @@ export function BookingChangeRequestsPanel({
       const rows: BookingChangeRequestData[] = Array.isArray(data?.data) ? data.data : [];
       setRequests(rows);
       receive(data, rows.length);
-      setPinnedRequest(
-        requestId && !rows.some((request) => request.id === requestId)
-          ? await fetchFocusedQueueRecord<BookingChangeRequestData>(
-              "/api/admin/booking-change-requests",
-              "requestId",
-              requestId,
-            )
-          : null,
-      );
+      setPinnedRequest(await fetchOffPageQueueRecord("/api/admin/booking-change-requests", "requestId", requestId, rows));
       setMemberGuestFind(data?.memberGuestFind ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load booking change requests");
@@ -340,8 +322,6 @@ export function BookingChangeRequestsPanel({
     }
   }
 
-  const shownRequests = pinnedRequest ? [pinnedRequest, ...requests] : requests;
-
   /*
     #2160: the view-only explanation lives here, once, at the top of the section —
     announced on arrival and ahead of the controls it explains — instead of on
@@ -438,11 +418,7 @@ export function BookingChangeRequestsPanel({
                 className={request.id === requestId ? "border-warning-6" : undefined}
               >
                 <CardHeader>
-                  {request === pinnedRequest ? (
-                    <p className="text-sm font-medium text-warning-11">
-                      {PINNED_QUEUE_RECORD_NOTE}
-                    </p>
-                  ) : null}
+                  {request === pinnedRequest ? <PinnedQueueRecordNote /> : null}
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <CardTitle className="text-lg">{owner.firstName} {owner.lastName}</CardTitle>
@@ -717,9 +693,7 @@ export function BookingChangeRequestsPanel({
           })}
         </div>
       )}
-      {!loading && queuePage.pagination ? (
-        <Pagination {...queuePage.pagination} aria-label="Booking change request pages" />
-      ) : null}
+      {!loading && pagination ? <Pagination {...pagination} aria-label="Booking change request pages" /> : null}
       </div>
     </div>
   );
