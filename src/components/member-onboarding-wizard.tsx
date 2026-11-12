@@ -6,6 +6,7 @@ import {
   CircleAlert,
   Clock,
   Loader2,
+  LogOut,
   RefreshCw,
   UserCheck,
   Users,
@@ -24,6 +25,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { emitMemberOnboardingConfirmed } from "@/lib/member-onboarding-events";
+import { signOutToLogin } from "@/lib/sign-out";
 
 interface MissingField {
   key: string;
@@ -276,6 +278,23 @@ export function MemberOnboardingWizard({
             Please complete these required details before continuing. We use them for membership records, bookings, and Xero sync.
           </DialogDescription>
         </DialogHeader>
+
+        {/* Outside the state branches below so no state can lose it: the gate
+            blocks Escape, outside clicks and the nav bar, so this is the only
+            way out, and signing out leaves onboarding incomplete (#4953). */}
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted px-3 py-2 text-sm text-muted-foreground">
+          <p>You can log out and finish this next time you sign in.</p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => void signOutToLogin()}
+            disabled={confirming}
+          >
+            <LogOut className="h-4 w-4" />
+            Log out
+          </Button>
+        </div>
 
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">

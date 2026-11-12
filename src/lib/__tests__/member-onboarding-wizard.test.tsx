@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
 import { MEMBER_ONBOARDING_CONFIRMED_EVENT } from "@/lib/member-onboarding-events";
 
 const fetchMock = vi.fn();
+const signOutMock = vi.hoisted(() => vi.fn());
+
+vi.mock("next-auth/react", () => ({ signOut: signOutMock }));
 
 vi.mock("sonner", () => ({
   toast: {
@@ -27,10 +30,47 @@ vi.mock("@/app/(authenticated)/profile/family-group-section", () => ({
   FamilyGroupSection: () => <div data-testid="family-group-section" />,
 }));
 
+// Mirrors Radix's close path: a document-level Escape asks the content's
+// onEscapeKeyDown first, and only an unprevented event reaches the root's
+// onOpenChange(false).
+const DialogOpenChange = createContext<((open: boolean) => void) | undefined>(
+  undefined
+);
+
 vi.mock("@/components/ui/dialog", () => ({
-  Dialog: ({ children, open }: { children: ReactNode; open?: boolean }) =>
-    open ? <div role="dialog">{children}</div> : null,
-  DialogContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  Dialog: ({
+    children,
+    open,
+    onOpenChange,
+  }: {
+    children: ReactNode;
+    open?: boolean;
+    onOpenChange?: (open: boolean) => void;
+  }) =>
+    open ? (
+      <DialogOpenChange.Provider value={onOpenChange}>
+        {children}
+      </DialogOpenChange.Provider>
+    ) : null,
+  DialogContent: function DialogContent({
+    children,
+    onEscapeKeyDown,
+  }: {
+    children: ReactNode;
+    onEscapeKeyDown?: (event: KeyboardEvent) => void;
+  }) {
+    const onOpenChange = useContext(DialogOpenChange);
+    useEffect(() => {
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key !== "Escape") return;
+        onEscapeKeyDown?.(event);
+        if (!event.defaultPrevented) onOpenChange?.(false);
+      };
+      document.addEventListener("keydown", onKeyDown);
+      return () => document.removeEventListener("keydown", onKeyDown);
+    }, [onEscapeKeyDown, onOpenChange]);
+    return <div role="dialog">{children}</div>;
+  },
   DialogDescription: ({ children }: { children: ReactNode }) => <p>{children}</p>,
   DialogFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -225,5 +265,92 @@ describe("MemberOnboardingWizard", () => {
     } finally {
       window.removeEventListener(MEMBER_ONBOARDING_CONFIRMED_EVENT, onConfirmed);
     }
+  });
+
+  it("offers Log out while the onboarding payload is still loading", () => {
+    fetchMock.mockReturnValueOnce(new Promise(() => {}));
+
+    render(<MemberOnboardingWizard initialShouldShow />);
+
+    expect(screen.getByText("Loading member details")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+    expect(signOutMock).toHaveBeenCalledWith({ callbackUrl: "/login" });
+  });
+
+  it.each([
+    ["the fetch rejects", () => fetchMock.mockRejectedValueOnce(new Error("offline"))],
+    [
+      "the response is not OK",
+      () =>
+        fetchMock.mockResolvedValueOnce({
+          ok: false,
+          json: async () => ({ error: "Could not load onboarding" }),
+        }),
+    ],
+  ])("offers Log out after a failed load when %s", async (_case, failLoad) => {
+    failLoad();
+
+    render(<MemberOnboardingWizard initialShouldShow />);
+
+    expect(await screen.findByRole("button", { name: "Try again" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+    expect(signOutMock).toHaveBeenCalledWith({ callbackUrl: "/login" });
+  });
+
+  it("offers Log out on the profile step without confirming onboarding", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ...onboardingData,
+        currentMember: {
+          ...onboardingData.currentMember,
+          status: { ...baseStatus, isProfileComplete: false },
+        },
+      }),
+    });
+
+    render(<MemberOnboardingWizard initialShouldShow />);
+
+    expect(await screen.findByRole("button", { name: "save-profile" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+
+    expect(signOutMock).toHaveBeenCalledWith({ callbackUrl: "/login" });
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/member/onboarding/confirm",
+      expect.anything()
+    );
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("keeps Log out reachable on the confirm and family steps", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => onboardingData,
+    });
+
+    render(<MemberOnboardingWizard initialShouldShow />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Confirm details are correct" })
+    );
+    expect(screen.getByRole("button", { name: /Confirm and finish/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+    expect(signOutMock).toHaveBeenCalledWith({ callbackUrl: "/login" });
+  });
+
+  it("stays open when Escape is pressed", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => onboardingData,
+    });
+
+    render(<MemberOnboardingWizard initialShouldShow />);
+
+    const confirm = await screen.findByRole("button", {
+      name: "Confirm details are correct",
+    });
+    fireEvent.keyDown(confirm, { key: "Escape" });
+
+    expect(screen.getByRole("dialog")).toBeTruthy();
   });
 });

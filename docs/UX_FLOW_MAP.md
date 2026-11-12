@@ -44,7 +44,7 @@ rules belong in the linked references. See the [budget register](invariants/WORD
 
 Screen: `/`, `/login`.
 
-Journey: Browse club information, sign in, or follow account recovery. After sign-in, complete any required security or profile steps before opening the dashboard. When a passkey is saved, the second step can be that passkey beside the app or email code.
+Journey: Browse club information, sign in, or follow account recovery. After sign-in, complete any required security or profile steps before opening the dashboard. When a passkey is saved, the second step can be that passkey beside the app or email code. The required profile step is the **Confirm member details** pop-up: nothing dismisses it, but its **Log out** works in every state and leaves the step for the next sign-in.
 
 [Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
