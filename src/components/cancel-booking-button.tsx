@@ -12,6 +12,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice";
+import { CancelBookingSuccessPanel, type CancelResult } from "@/components/cancel-booking-success-panel";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { focusAndKeepInView } from "@/hooks/use-scroll-to-feedback";
 import { HostingCoverageOverridePrompt } from "@/components/hosting-coverage-override-prompt";
 import {
   hostingCoverageMutationSignature,
@@ -19,9 +22,8 @@ import {
   type HostingCoverageOverridePromptData,
 } from "@/lib/hosting-coverage-override-client";
 import { formatCents } from "@/lib/utils";
-import type { OrganiserRefundMethod, OwnCardRefundMethod } from "@/lib/booking-modified-email-copy";
 import { useClubFormat } from "@/components/club-format-provider";
-import { CardRefundShortfallRows, CardRefundShortfallSentence, cardShortfallOptionLabel, ForcedRefundNote, NoRefundablePaymentNote, OrganiserRefundConfirmation, OwnCardRefundConfirmation } from "@/components/cancel-booking-payment-notes";
+import { CardRefundShortfallRows, CardRefundShortfallSentence, cardShortfallOptionLabel, ForcedRefundNote, NoRefundablePaymentNote } from "@/components/cancel-booking-payment-notes";
 import type { CancelCardRefundSplit } from "@/lib/cancel-card-refund-shortfall";
 
 interface CancelPreview {
@@ -96,7 +98,7 @@ export function CancelBookingButton({
   const format = useClubFormat();
   const [step, setStep] = useState<"idle" | "loading" | "preview" | "cancelling" | "success" | "error">("idle");
   const [preview, setPreview] = useState<CancelPreview | null>(null);
-  const [result, setResult] = useState<{ refundAmountCents: number; refundMethod: string; creditAmountCents?: number; creditRestoredCents?: number; organiserRefund?: { method: OrganiserRefundMethod; amountCents: number }; ownCardRefund?: { method: OwnCardRefundMethod; amountCents: number; byHandCents?: number; toCheckCents?: number } } | null>(null);
+  const [result, setResult] = useState<CancelResult | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [refundMethod, setRefundMethod] = useState<"card" | "credit">("card");
   // Issue #1705: the admin's explicit email choice dialog, and the choice that
@@ -164,8 +166,41 @@ export function CancelBookingButton({
     setStep("idle");
   }
 
+  // #4949: every step renders inside one frame, so the status region below is
+  // mounted before it is filled and focus has somewhere to go when a step's
+  // own controls unmount. Each step's focus target, moved after the step
+  // commits (a passive effect, so a closing notify dialog has already let go):
+  // the status region while loading or cancelling, the heading of the preview
+  // or success panel, the trigger again on the way back to idle. The error step
+  // is focused by its `FocusedActionError` itself.
+  const idPrefix = `cancel-booking-${bookingId}`;
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const statusRef = useRef<HTMLDivElement>(null);
+  const previewHeadingRef = useRef<HTMLParagraphElement>(null);
+  const successHeadingRef = useRef<HTMLParagraphElement>(null);
+  const focusedStepRef = useRef(step);
+  useEffect(() => {
+    if (focusedStepRef.current === step) return;
+    focusedStepRef.current = step;
+    const target = {
+      idle: triggerRef,
+      loading: statusRef,
+      cancelling: statusRef,
+      preview: previewHeadingRef,
+      success: successHeadingRef,
+      error: null,
+    }[step];
+    if (target) focusAndKeepInView(target.current);
+  }, [step]);
+
   function renderWithHostingOverrideRegion(content: ReactNode) {
     const busy = step === "loading" || step === "cancelling";
+    const statusText =
+      step === "loading"
+        ? "Loading cancellation details..."
+        : step === "cancelling"
+          ? "Cancelling booking..."
+          : "";
     return (
       <div className="space-y-3">
         <HostingCoverageOverridePrompt
@@ -178,9 +213,34 @@ export function CancelBookingButton({
           reason={hostingOverrideReason}
           disabled={busy}
           busy={busy}
-          idPrefix={`cancel-booking-${bookingId}-hosting-override`}
+          idPrefix={`${idPrefix}-hosting-override`}
           onConfirmedChange={setHostingOverrideConfirmed}
           onReasonChange={setHostingOverrideReason}
+        />
+        <div
+          ref={statusRef}
+          id={`${idPrefix}-status`}
+          role="status"
+          tabIndex={-1}
+          className={
+            statusText
+              ? "rounded-md border border-border bg-card p-4 outline-none"
+              : "sr-only"
+          }
+        >
+          {statusText ? (
+            <p className="text-sm text-muted-foreground">{statusText}</p>
+          ) : null}
+        </div>
+        <FocusedActionError
+          id={`${idPrefix}-error`}
+          error={step === "error" ? errorMsg : ""}
+          action={
+            <Button variant="outline" size="sm" onClick={keepBooking}>
+              Try Again
+            </Button>
+          }
+          className="p-4"
         />
         {content}
       </div>
@@ -313,97 +373,23 @@ export function CancelBookingButton({
 
   if (step === "idle") {
     return renderWithHostingOverrideRegion(
-      <Button variant="destructive" onClick={handleShowPreview}>
+      <Button ref={triggerRef} variant="destructive" onClick={handleShowPreview}>
         {onBehalfOfMember ? "Cancel on behalf of member" : "Cancel Booking"}
       </Button>,
     );
   }
 
-  if (step === "loading") {
-    return renderWithHostingOverrideRegion(
-      <div className="rounded-md border border-border bg-card p-4">
-        <p className="text-sm text-muted-foreground">Loading cancellation details...</p>
-      </div>,
-    );
-  }
-
   if (step === "success") {
-    const refund = result?.refundAmountCents || 0;
-    const isCredit = result?.refundMethod === "credit";
-    // Issue #1705: when the admin chose "Cancel without emailing", the standard
-    // email-promise copy would be untrue — state the recorded choice instead.
-    //
-    // #2259: the switch has to count here too. Since H1 the suppressed path
-    // sends NO choice (so the mailer records the withhold), which leaves
-    // `notifiedMember` null — and null used to mean "emails normally". Without
-    // this disjunct the panel would promise a confirmation email for the one
-    // booking guaranteed not to get one.
-    const emailSuppressed = notifiedMember === false || noEmailsSuppressesChoice;
-    const emailNote = emailSuppressed ? "" : onBehalfOfMember ? " They will receive a confirmation email shortly." : " You will receive a confirmation email shortly.";
     return renderWithHostingOverrideRegion(
-      <div className="rounded-md border border-success-6 bg-success-3 p-4 space-y-1">
-        <p className="text-sm font-medium text-success-11">
-          {onBehalfOfMember
-            ? "Booking cancelled on behalf of the member"
-            : "Booking cancelled successfully"}
-        </p>
-        {result?.creditRestoredCents && result.creditRestoredCents > 0 && (
-          <p className="text-sm text-success-11">
-            {formatCents(result.creditRestoredCents, format)} of previously applied credit has been returned to {onBehalfOfMember ? "the member's" : "your"} account.
-          </p>
-        )}
-        {/* B5 (#2262): a manual (cash / off-Xero) settlement has no card to
-            refund to and mints no account credit — the club hands the money
-            back directly. The plan-forbidden sentence ("processed to your
-            original payment method") must never render for this outcome. */}
-        {refund > 0 && result?.refundMethod === "manual" && !result.organiserRefund ? (
-          <p className="text-sm text-success-11">
-            {onBehalfOfMember
-              ? `The club will arrange the member's refund of ${formatCents(refund, format)} directly — they'll hear from the club about how it will be paid back.`
-              : `The club will arrange your refund of ${formatCents(refund, format)} directly — you'll hear from them about how it will be paid back.`}
-          </p>
-        ) : result?.organiserRefund ? (
-          <OrganiserRefundConfirmation organiserRefund={result.organiserRefund} format={format} emailNote={emailNote} />
-        ) : refund > 0 && isCredit ? (
-          <p className="text-sm text-success-11">
-            A credit of {formatCents(refund, format)} has been added to {onBehalfOfMember ? "the member's" : "your"} account for future bookings.
-          </p>
-        ) : refund > 0 ? (
-          <OwnCardRefundConfirmation amountCents={result?.ownCardRefund?.amountCents ?? refund} byHandCents={result?.ownCardRefund?.byHandCents} toCheckCents={result?.ownCardRefund?.toCheckCents} pending={result?.ownCardRefund?.method === "card_pending"} format={format} emailNote={emailNote} onBehalfOfMember={onBehalfOfMember} />
-        ) : emailSuppressed ? null : (
-          <p className="text-sm text-success-11">
-            {onBehalfOfMember
-              ? "The member will receive a confirmation email shortly."
-              : "You will receive a confirmation email shortly."}
-          </p>
-        )}
-        {/*
-          #2259: with the switch on there was no choice to record — the send was
-          attempted and withheld — so pointing at "your choice in the audit log"
-          would send the officer looking for an entry that does not exist. This
-          is the most consequential message in the flow: the member has just
-          lost a booking and will hear nothing, so point at the list that names
-          the withheld notice instead.
-        */}
-        {emailSuppressed && (
-          <p className="text-sm text-success-11">
-            {noEmailsSuppressesChoice
-              ? "The member was not emailed: emails are off for this booking. The withheld cancellation notice is listed on the booking — tell the member yourself."
-              : "The member was not emailed about this cancellation — your choice is recorded in the audit log."}
-          </p>
-        )}
-      </div>,
-    );
-  }
-
-  if (step === "error") {
-    return renderWithHostingOverrideRegion(
-      <div className="rounded-md border border-danger-6 bg-danger-3 p-4 space-y-2">
-        <p className="text-sm text-danger-11">{errorMsg}</p>
-        <Button variant="outline" size="sm" onClick={keepBooking}>
-          Try Again
-        </Button>
-      </div>,
+      <CancelBookingSuccessPanel
+        idPrefix={idPrefix}
+        headingRef={successHeadingRef}
+        result={result}
+        onBehalfOfMember={onBehalfOfMember}
+        notifiedMember={notifiedMember}
+        noEmailsSuppressesChoice={noEmailsSuppressesChoice}
+        format={format}
+      />,
     );
   }
 
@@ -420,7 +406,11 @@ export function CancelBookingButton({
 
     return renderWithHostingOverrideRegion(
       <div className="rounded-md border border-danger-6 bg-danger-3 p-4 space-y-3">
-        <p className="text-sm font-medium text-danger-11">
+        <p
+          ref={previewHeadingRef}
+          tabIndex={-1}
+          className="text-sm font-medium text-danger-11 outline-none"
+        >
           {onBehalfOfMember
             ? "Cancel on behalf of member"
             : "Cancellation Summary"}
@@ -691,10 +681,7 @@ export function CancelBookingButton({
     );
   }
 
-  // Cancelling state
-  return renderWithHostingOverrideRegion(
-    <div className="rounded-md border border-border bg-card p-4">
-      <p className="text-sm text-muted-foreground">Cancelling booking...</p>
-    </div>,
-  );
+  // Loading, cancelling and error: the frame's status region or recovery alert
+  // carries the step.
+  return renderWithHostingOverrideRegion(null);
 }

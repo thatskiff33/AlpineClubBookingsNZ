@@ -235,6 +235,16 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
     return calls;
   }
 
+  // The frame also mounts the flow's own recovery alert (#4949); these tests
+  // are about the hosting-override prompt's alert, so they pick that one.
+  function hostingOverrideAlert() {
+    const alerts = screen
+      .getAllByRole("alert")
+      .filter((alert) => alert.id !== "cancel-booking-bk_1-error");
+    expect(alerts).toHaveLength(1);
+    return alerts[0];
+  }
+
   it("keeps one empty alert mounted through the pending request before announcing the 409", async () => {
     let completeCancel!: (response: Response) => void;
     const pendingCancel = new Promise<Response>((resolve) => {
@@ -259,7 +269,7 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
       />,
     );
 
-    const alert = screen.getByRole("alert");
+    const alert = hostingOverrideAlert();
     expect(alert.textContent).toBe("");
     fireEvent.click(
       screen.getByRole("button", { name: "Cancel on behalf of member" }),
@@ -272,7 +282,7 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
     );
 
     await screen.findByText("Cancelling booking...");
-    expect(screen.getByRole("alert")).toBe(alert);
+    expect(hostingOverrideAlert()).toBe(alert);
     expect(alert.textContent).toBe("");
     expect(alert.getAttribute("aria-busy")).toBe("true");
 
@@ -282,7 +292,7 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
       );
     });
     expect(await screen.findByText("ACB-OLD")).toBeTruthy();
-    expect(screen.getByRole("alert")).toBe(alert);
+    expect(hostingOverrideAlert()).toBe(alert);
     expect(alert.getAttribute("aria-busy")).toBe("false");
   });
 
@@ -296,7 +306,7 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
         canOverrideHostingCoverage
       />,
     );
-    const alert = screen.getByRole("alert");
+    const alert = hostingOverrideAlert();
     fireEvent.click(
       screen.getByRole("button", { name: "Cancel on behalf of member" }),
     );
@@ -315,7 +325,7 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Keep Booking" }));
-    expect(screen.getByRole("alert")).toBe(alert);
+    expect(hostingOverrideAlert()).toBe(alert);
     expect(alert.textContent).toBe("");
     expect(screen.queryByLabelText(/Private hosting override reason/i)).toBeNull();
 
