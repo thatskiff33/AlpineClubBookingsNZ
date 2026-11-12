@@ -1463,16 +1463,21 @@ a consent-authority removal is exempt.
 ## INV-MOD-042
 
 **No door parks, so none freezes the money** (#4317). Every edit re-prices,
-recalculates the promotion (bar a stay under way, `INV-MOD-043`), charges the change fee its policy sets (owner
-decision D8), computes the settlement options, moves the booking's stored totals
-and each strand's `BookingGuest.priceCents`, and records the rate-type snapshot,
-as a priced edit always did. The capacity check is unchanged. No
-`EDIT_FINANCIAL_REVIEW` task is raised and no `NULL` is written. A fee on a
-booking with a payment row and nothing captured goes on its amount owed
-(`INV-PAY-119`, #4661), as does one on a card booking still at its pay step
-with no row yet, which the fee opens (#4735) - never a free one awaiting
-payment, where a row would read as a finished waitlist confirm
-(`hasStrandedWaitlistConfirmShape`).
+recalculates the promotion (bar a stay under way, `INV-MOD-043`), computes the
+settlement options, moves the booking's stored totals and each strand's
+`BookingGuest.priceCents`, and records the rate-type snapshot, as a priced edit
+always did. The capacity check is unchanged. No `EDIT_FINANCIAL_REVIEW` task is
+raised and no `NULL` is written.
+
+**The late-notice change fee applies once the booking is paid** (owner decision
+D8, narrowed 10 Nov 2026). Paid means a paid-like status (`PAID` or
+`COMPLETED`), including a booking paid entirely with credit or a promotion, or
+a payment already captured. An edit of a booking that has not been paid still
+reprices, and records no late-notice fee on the quote, the history, the
+payment, the amount owed, the invoice, or either ledger. #4661 and #4735, which
+added that fee to an unpaid booking, are withdrawn for every new edit. A fee
+already stored that way is left as it is. A finished stay's removal retention
+is not this fee (`INV-PAY-119`).
 
 **A promotion change asked for in the same request is applied.** A parked edit
 used to drop a `promoCode`, `promoCodes` or `removePromoCode` and say so in one
