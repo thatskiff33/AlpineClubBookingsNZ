@@ -4171,6 +4171,11 @@ supplementary invoice WAITING_PAYMENT on a card ask's intent (INV-PAY-104;
      row on the anchor it holds; while a supersede's cancel of that intent is still in
      flight the reaper keeps it, and the cancel's last step moves it, #4665)
 inbound webhook/event recorded -> reconciliation worker processes event
+  its WEBHOOK_RECONCILE row is this attempt's own (INV-INT-038): an INBOUND
+  row left RUNNING past the stale threshold by a dead attempt is re-claimed
+  in place under a fresh startedAt (one guarded write, one winner; the dead
+  attempt's late outcome refused); a live one fails this attempt as in
+  flight -> event FAILED, retried after its backoff
 failure -> retry/backoff/admin visibility
 FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
   never retried, requeued or re-minted beside (INV-INT-025)
