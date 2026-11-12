@@ -12,8 +12,9 @@ member money. It changes no code, schema, migration, money policy or deployed
 behaviour. Implementation children below are proposals for owner approval;
 none is filed by this document.
 
-The settled contract is all member money, optional Xero, two-way sync, and the
-ledger switch before individual mirror-drift fixes. Sources are the owner
+The settled contract is all member money, optional Xero and two-way sync.
+Individual Xero and payment fixes no longer wait for the ledger switch
+([section 11](#11-proposed-children-in-shipping-order), #4898). Sources are the owner
 records on [#4450](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4450)
 and [#4461's bank-transfer decision](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4461#issuecomment-6415213385).
 Without Xero, the app shows configured club bank details and a unique payment
@@ -553,7 +554,7 @@ a retry key from the current refund watermark or current set of voids.
 | --- | --- |
 | Primary, supplementary or combined group invoice | Exact issued charge components, including fee coverage assigned once. Combined invoices consume child charge coverage; individual child invoices cannot consume it again. Pending bank-transfer obligations already have R01 postings. |
 | Reduction, cancellation or clearing credit note | Exact negative charge components; clearing an unpaid invoice carries no payment. A clearing note is a rendering of R04, not a refund event. |
-| Account-credit note and allocation | Original R09/R11 grant/restore lot and R10 applications, subject to the existing restore/noteless policy. Approval of a manual grant creates one note; later spend uses that note. An already-exported grant cannot become a second expense at spend. |
+| Account-credit note and allocation | Original R09/R11 grant/restore lot and R10 applications, subject to the existing restore/noteless policy. This patch queues the note on today's credit row when a manual grant is approved. The ledger render replaces that queue, adopts `xeroCreditNoteId` and the `ADMIN_GRANT_CREDIT_NOTE` link, and does not raise another note. An already-exported grant cannot become a second expense at spend. |
 | Refund note and its payment | Charge reversal/entitlement plus R12/R14 cash slice, linked separately so a composite note cannot double-count the price reduction. Never one invoice-applied edit credit plus another full credit for that same reduction. A note can remain outstanding before hand-back; only the cash slice creates its payment. |
 | Capture receipt, including late/change capture | R06 applications across the invoices actually billing those obligations. A capture of 8000 with only 5000 room on one invoice is fully recorded through valid remaining targets; unexplained room is a task/unapplied receipt, never silently clipped. No invented second revenue charge to fit the cash. |
 | Failed-later refund reversal | R13, rendered using #4361: full reversal invoice coded like its credit note, paid into Stripe, never emailed/allocated. Date is the failure day or first open day after Xero's lock; reference retains the actual failure day. Its void raises one task and never automatically recreates it. |
@@ -675,7 +676,7 @@ reconstruction tool, prove it with post-switch events and parity. After H a
 schema rollback alone does not restore money. Never restore a production backup
 as an automatic downgrade and lose intervening events.
 
-## 9. Parked-bug acceptance matrix
+## 9. Bug-scenario acceptance matrix
 
 Every original triage scenario remains an executable acceptance requirement,
 even if a narrow fix has since shipped. This table is the complete 33-row list
@@ -714,7 +715,7 @@ rendering are active and its test passes; this design closes no bug by itself.
 | #4383 | Refund note for 8000-cent capture with 5000 recorded never exceeds recorded slice | R12 and section 7: source-specific 5000 coverage cap; remaining receipt/refund pair requires its own proved export |
 | #4391 | Voided request note reverses once and asks the treasurer once | R23: unique reversal of provider-owned application/legacy fact and unique conflict task; independent cash is not silently reversed (section 10) |
 | #4413 | Repaired invoice for unpaid supplementary request reaches Xero unpaid | R02/R25/R07: charge exists, receipt does not; rendering cannot infer payment from booking status |
-| #4431 | Manual credit has one note at approval and spend uses it | R11 then R10: grant event and funding-note identity, no delayed second grant at consumption |
+| #4431 | Manual credit has one note at approval and spend uses it | This patch queues that note on today's `MemberCredit` row. The ledger render replaces the queue, adopts `xeroCreditNoteId` and the `ADMIN_GRANT_CREDIT_NOTE` link, and does not raise another note. |
 | #4434 | 8000-cent capture with only 5000 room is recorded fully across correct invoices | R06 plus section 7: applications/coverage sum to 8000; 3000 cannot disappear into an AmountDue clamp |
 | #4435 | Crash retry records its own receipt despite sweep using same reference | R06/R07: capture/payment source id and manifest identity, not shared invoice reference/amount |
 | #4444 | Card refunded display retains earlier edit credit after any later Xero event | R12/R23: compatibility display sums distinct cash and application components; later snapshot cannot overwrite another source's posting |
@@ -956,9 +957,12 @@ M12 is the existing explicitly multi-PR reader programme; M13 and M15 likewise
 split by complete document/decision cohorts when filed. Each PR must have one
 bounded owner-approved issue scope, independently useful output and its own
 rollback. The ordering does not authorise parallel writers on a shared financial
-invariant. #4451 group-1 harm fixes continue under their own authority; parked
-bugs close only when their section 9 scenarios actually pass through the real
-new writers, PostgreSQL and #4460 fakes.
+invariant. No bug waits for the ledger. The owner decision of 11 Nov 2026,
+recorded on [#4898](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4898):
+"every formerly parked Xero and payment bug is released. Each may be fixed now,
+ordered by harm, ahead of the ledger steps." Section 9's scenarios remain
+acceptance tests the new writers must pass through PostgreSQL and the #4460
+fakes.
 
 ## 12. Related references
 

@@ -20,11 +20,21 @@ import logger from "@/lib/logger";
 import { formatCents } from "@/lib/utils";
 import { clubFormatValues } from "@/lib/club-format-server";
 import type { ClubFormat } from "@/lib/club-format";
+import {
+  adminCreditGrantAuditClause,
+  GRANT_ACCOUNT_MISSING_MESSAGE,
+  type AdminCreditGrantAccount,
+} from "@/lib/admin-credit-grant-account";
+import {
+  assertDeductionLeavesNotedCreditUntouched,
+  enqueueAdminGrantCreditNote,
+} from "@/lib/admin-grant-credit-note";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 import { XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
 import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
 import {
+  assertGrantAccountMatchesAmount,
   assertMatchingIdempotentAdjustmentRequest,
   calculateAppliedCreditAmount,
   calculateRestoredCreditAmount,
@@ -44,6 +54,7 @@ const adminAdjustmentRequestSelect = {
   memberId: true,
   amountCents: true,
   description: true,
+  grantAccount: true,
   idempotencyKey: true,
   status: true,
   requestedById: true,
@@ -72,6 +83,7 @@ const adminAdjustmentRequestListSelect = {
   memberId: true,
   amountCents: true,
   description: true,
+  grantAccount: true,
   status: true,
   requestedById: true,
   reviewedById: true,
@@ -829,9 +841,12 @@ export async function createAdminAdjustmentRequest(
   description: string,
   adminId: string,
   idempotencyKey: string,
+  grantAccount: AdminCreditGrantAccount | null,
   ipAddress?: string
 ) {
   validateAdjustmentAmount(amountCents);
+  assertGrantAccountMatchesAmount(amountCents, grantAccount);
+  const storedGrantAccount = amountCents > 0 ? grantAccount : null;
 
   const existingRequest = await findAdminAdjustmentRequestByIdempotencyKey(
     adminId,
@@ -844,6 +859,7 @@ export async function createAdminAdjustmentRequest(
       amountCents,
       description,
       requestedById: adminId,
+      grantAccount: storedGrantAccount,
     });
 
     logger.info(
@@ -870,11 +886,15 @@ export async function createAdminAdjustmentRequest(
 
   try {
     const request = await prisma.$transaction(async (tx) => {
+      await lockMemberCreditLedger(memberId, tx);
+      await assertDeductionLeavesNotedCreditUntouched(memberId, amountCents, tx);
+
       const createdRequest = await tx.adminCreditAdjustmentRequest.create({
         data: {
           memberId,
           amountCents,
           description,
+          grantAccount: storedGrantAccount,
           idempotencyKey,
           requestedById: adminId,
         },
@@ -891,7 +911,7 @@ export async function createAdminAdjustmentRequest(
           entityId: createdRequest.id,
           memberId: adminId,
           targetId: memberId,
-          details: `Requested admin credit adjustment ${createdRequest.id}: ${formatAdjustmentAmount(amountCents, format)}. Reason: ${description}`,
+          details: `Requested admin credit adjustment ${createdRequest.id}: ${formatAdjustmentAmount(amountCents, format)}. Reason: ${description}.${adminCreditGrantAuditClause(storedGrantAccount)}`,
           ipAddress,
         },
         tx
@@ -922,6 +942,7 @@ export async function createAdminAdjustmentRequest(
           amountCents,
           description,
           requestedById: adminId,
+          grantAccount: storedGrantAccount,
         });
 
         logger.info(
@@ -980,7 +1001,12 @@ export async function reviewAdminAdjustmentRequest(
       throw new MemberCreditValidationError("A different admin must approve this adjustment");
     }
 
+    if (decision === "APPROVE" && request.amountCents > 0 && !request.grantAccount) {
+      throw new MemberCreditValidationError(GRANT_ACCOUNT_MISSING_MESSAGE);
+    }
+
     if (decision === "APPROVE") {
+      await assertDeductionLeavesNotedCreditUntouched(request.memberId, request.amountCents, tx);
       validateAdjustmentAmount(request.amountCents);
       await validateNegativeAdjustmentBalance(
         request.memberId,
@@ -1020,7 +1046,7 @@ export async function reviewAdminAdjustmentRequest(
           entityId: request.id,
           memberId: adminId,
           targetId: memberId,
-          details: `Rejected admin credit adjustment ${request.id}: ${formatAdjustmentAmount(request.amountCents, format)}. Requested by ${request.requestedById}. Reason: ${request.description}`,
+          details: `Rejected admin credit adjustment ${request.id}: ${formatAdjustmentAmount(request.amountCents, format)}. Requested by ${request.requestedById}. Reason: ${request.description}.${adminCreditGrantAuditClause(request.grantAccount)}`,
           ipAddress,
         },
         tx
@@ -1045,6 +1071,14 @@ export async function reviewAdminAdjustmentRequest(
       },
     });
 
+    if (request.amountCents > 0 && request.grantAccount) {
+      await enqueueAdminGrantCreditNote(tx, {
+        id: credit.id,
+        amountCents: request.amountCents,
+        grantAccount: request.grantAccount,
+      });
+    }
+
     await createAuditLog(
       {
         action: "member.credit.adjustment.approve",
@@ -1053,7 +1087,7 @@ export async function reviewAdminAdjustmentRequest(
         entityId: request.id,
         memberId: adminId,
         targetId: memberId,
-        details: `Approved admin credit adjustment ${request.id} as credit ${credit.id}: ${formatAdjustmentAmount(request.amountCents, format)}. Requested by ${request.requestedById}. Reason: ${request.description}`,
+        details: `Approved admin credit adjustment ${request.id} as credit ${credit.id}: ${formatAdjustmentAmount(request.amountCents, format)}. Requested by ${request.requestedById}. Reason: ${request.description}.${adminCreditGrantAuditClause(request.grantAccount)}`,
         // #2695 (`INV-PRIV-018`) — DECLARED MEMBER-FACING, owner decision of
         // 9 August 2026. The only explanation a member ever gets for why their
         // credit balance moved, which is why both fixes the issue originally
@@ -1102,6 +1136,17 @@ export async function reviewAdminAdjustmentRequest(
       ? "Admin credit adjustment approved"
       : "Admin credit adjustment rejected"
   );
+
+  if (result.decision === "APPROVE" && result.request.amountCents > 0 && result.credit) {
+    void import("@/lib/xero-operation-outbox")
+      .then(({ kickQueuedXeroOutboxOperationsIfConnected }) => kickQueuedXeroOutboxOperationsIfConnected())
+      .catch((error: unknown) => {
+        logger.error(
+          { err: error, memberId, requestId },
+          "Failed to kick the Xero outbox after approving an admin credit grant",
+        );
+      });
+  }
 
   return result;
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import type { AdminCreditGrantAccount } from "@/lib/admin-credit-grant-account";
 import { parseSignedDecimalDollarsToCents } from "@/lib/money-input";
 import type {
   CreditHistoryItem,
@@ -48,7 +49,7 @@ export function useMemberCredits(id: string) {
     }
   };
 
-  const handleAdjustmentSubmit = async () => {
+  const handleAdjustmentSubmit = async (grantAccount: AdminCreditGrantAccount | null) => {
     /*
       #2685: the exact parser, and the SIGNED one — a credit adjustment can be a
       debit, so "-25.00" is a real amount here. `parseFloat` used to accept a
@@ -71,6 +72,10 @@ export function useMemberCredits(id: string) {
       setAdjustmentError("Description is required");
       return;
     }
+    if (cents > 0 && !grantAccount) {
+      setAdjustmentError("Choose which account this credit belongs to.");
+      return;
+    }
     const idempotencyKey = adjustmentIdempotencyKey ?? crypto.randomUUID();
     if (!adjustmentIdempotencyKey) {
       setAdjustmentIdempotencyKey(idempotencyKey);
@@ -85,6 +90,7 @@ export function useMemberCredits(id: string) {
           amountCents: cents,
           description: adjustmentDescription.trim(),
           idempotencyKey,
+          ...(cents > 0 ? { grantAccount } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));

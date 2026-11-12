@@ -391,6 +391,7 @@ import "./primary-invoice-edit-race.realdb.test";
 // queueing behind the change's supplementary-invoice anchor lock. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3953-` fixtures.
 import "./additional-capture-receipt.realdb.test";
+import "./additional-capture-receipt-sweep-retry.realdb.test";
 // #3953 round 7: a change capture whose ledger row carries no change stamp - a
 // review charge (read to its change by its reason) or an older member ask (the
 // booking's lock, taken before the anchor's) - still has one recorder. Skipped
@@ -656,11 +657,10 @@ import "./credit-release-merge-into-edit.realdb.test";
 import "./saved-card-charge-worth.realdb.test";
 // #4646 reuses it to prove a saved-card charge whose answer was lost and whose
 // capture was asynchronous (`payment_intent.succeeded` with `request: null`) is
-// adopted by the attempt id a `_v2` attempt's metadata carries: the booking
-// settles once, a redelivery adds nothing, the key and metadata adoptions racing
-// for one row have one winner, and nothing is called unmatched; and that a fresh
-// attempt still mints the original key, so until #4682 its asynchronous capture
-// is alerted as unmatched. Skipped unless
+// adopted by the attempt id a `_v2` attempt's metadata carries: the lost POST
+// mints `_v2` and the asynchronous capture settles the booking once, with no
+// alert; a redelivery adds nothing, and the key and metadata adoptions racing
+// for one row have one winner. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4646-` fixtures.
 import "./saved-card-async-capture-adopt.realdb.test";
 // #4265 reuses it to prove a refund-note row covers only its own live,
@@ -759,6 +759,10 @@ import "./login-throttle.realdb.test";
 // claim does not. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
 // cleans its own `race-4616-` member.
 import "./session-reauth.realdb.test";
+// #4617 reuses it to prove one of two concurrent passkey challenge claims
+// succeeds, and one of two concurrent counter updates. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4617-` member.
+import "./webauthn.realdb.test";
 // #4445 reuses it to prove two writers merging metadata onto one Xero link
 // (an existing row, or a missing one both create) both keep their keys, and
 // that the one-statement merge writes what the old spread wrote. Skipped

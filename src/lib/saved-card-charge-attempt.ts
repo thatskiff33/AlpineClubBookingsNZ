@@ -85,12 +85,13 @@
  * stamps on the event or, when the event carries none (an asynchronous
  * capture: `Event.request` is null on it and on every redelivery), by the
  * attempt id a `_v2` key's metadata carries (#4646,
- * `adoptSavedCardChargeAttemptForIntent`). Until #4682 every new attempt mints
- * the original key, which sends no attempt id (`mintedSavedCardChargeKey`), so
- * its asynchronous capture is adopted by neither, and a redelivery does not
- * change that: it ends here, the capture is alerted as unmatched
- * (`INV-INT-033`) and a person matches it. Refusing is still right — the
- * alternative is a charge with no local witness.
+ * `adoptSavedCardChargeAttemptForIntent`). A new attempt mints that key
+ * (`mintedSavedCardChargeKey`, #4682), so its asynchronous capture is adopted
+ * by the attempt id. An original-key row from an earlier release sends no
+ * attempt id, so its asynchronous capture is adopted by neither, and a
+ * redelivery does not change that: it ends here, the capture is alerted as
+ * unmatched (`INV-INT-033`) and a person matches it. Refusing is still right —
+ * the alternative is a charge with no local witness.
  *
  * What the ledger rows now mean, so nobody "tidies" them: a PRIMARY Stripe row
  * whose `reference` is a key built from ITS OWN id for this booking, in either
@@ -646,8 +647,8 @@ export async function beginSavedCardChargeAttempt(
     },
     select: { id: true },
   });
-  // #4646: the one switch for the shape a new attempt mints — the original key
-  // until #4682, so the release before #4646 still recognises this row.
+  // #4682: the one switch for the shape a new attempt mints — the `_v2` key,
+  // whose metadata names this row. A replay re-sends the row's stored key.
   const idempotencyKey = mintedSavedCardChargeKey(bookingId, created.id);
   await tx.paymentTransaction.update({
     where: { id: created.id },

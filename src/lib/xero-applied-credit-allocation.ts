@@ -53,6 +53,7 @@ import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import logger from "@/lib/logger";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { formatCents } from "@/lib/utils";
+import { assertMintSlicesWaitForAdminGrantNotes } from "./admin-grant-credit-note";
 import {
   assertNoAppliedCreditDeallocationFence,
 } from "./xero-applied-credit-operation-serialization";
@@ -432,6 +433,9 @@ export async function allocateAppliedCreditForBooking(
     await completeSkip(syncOperation, settledSkipReason);
     return;
   }
+
+  // A grant queued at approval is not minted again, even before its note id lands.
+  await assertMintSlicesWaitForAdminGrantNotes(plan.mintSlices);
 
   // 2) Allocate each existing floating note against the invoice (idempotent per
   // join row via its completion link).

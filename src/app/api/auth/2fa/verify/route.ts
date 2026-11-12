@@ -80,6 +80,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid code" }, { status: 400 });
   }
 
-  await markTwoFactorSessionVerified();
+  await markTwoFactorSessionVerified(method);
   return NextResponse.json({ ok: true });
 }
