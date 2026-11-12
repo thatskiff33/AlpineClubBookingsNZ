@@ -551,6 +551,48 @@ const REVIEWED_PERMISSION_DIVERGENCES: Divergence[] = [
     why: "WIDER than the map for a finance holder and NARROWER for a membership one. It computes a fee from fee configuration, so it is gated on the area that owns fees rather than on the member record the path runs through; it persists nothing.",
   },
   {
+    pathname: "/api/admin/menu-role",
+    method: "GET",
+    gate: "any admitted admin",
+    why: "The menu preference is not an area (C14 #4811). Any admitted officer may reach the route; a non-POST verb then answers 405. The path falls through to the overview catch-all, which is not the gate. While hubs are off every verb answers 404 before this check.",
+  },
+  {
+    pathname: "/api/admin/menu-role",
+    method: "POST",
+    gate: "any admitted admin",
+    why: "The menu preference is not an area (C14 #4811). Any admitted officer may set or clear their own role menu; the path falls through to the overview catch-all, which is not the gate. While hubs are off the handler answers 404 before this check.",
+  },
+  {
+    pathname: "/api/admin/menu-role",
+    method: "PUT",
+    gate: "any admitted admin",
+    why: "The menu preference is not an area (C14 #4811). Any admitted officer may reach the route; a non-POST verb then answers 405. The path falls through to the overview catch-all, which is not the gate. While hubs are off every verb answers 404 before this check.",
+  },
+  {
+    pathname: "/api/admin/menu-role",
+    method: "PATCH",
+    gate: "any admitted admin",
+    why: "The menu preference is not an area (C14 #4811). Any admitted officer may reach the route; a non-POST verb then answers 405. The path falls through to the overview catch-all, which is not the gate. While hubs are off every verb answers 404 before this check.",
+  },
+  {
+    pathname: "/api/admin/menu-role",
+    method: "DELETE",
+    gate: "any admitted admin",
+    why: "The menu preference is not an area (C14 #4811). Any admitted officer may reach the route; a non-POST verb then answers 405. The path falls through to the overview catch-all, which is not the gate. While hubs are off every verb answers 404 before this check.",
+  },
+  {
+    pathname: "/api/admin/menu-role",
+    method: "HEAD",
+    gate: "any admitted admin",
+    why: "The menu preference is not an area (C14 #4811). Any admitted officer may reach the route; a non-POST verb then answers 405. The path falls through to the overview catch-all, which is not the gate. While hubs are off every verb answers 404 before this check.",
+  },
+  {
+    pathname: "/api/admin/menu-role",
+    method: "OPTIONS",
+    gate: "any admitted admin",
+    why: "The menu preference is not an area (C14 #4811). Any admitted officer may reach the route; a non-POST verb then answers 405. The path falls through to the overview catch-all, which is not the gate. While hubs are off every verb answers 404 before this check.",
+  },
+  {
     pathname: "/api/admin/xero/member-grouping",
     method: "POST",
     gate: "finance:view",
@@ -1047,6 +1089,14 @@ const FINANCE_ONLY_NON_FINANCE_ADMISSIONS = [
   // a named member's resolved joining fee, and the previous version of this
   // sweep asserted the opposite while the route answered 200.
   "POST /api/admin/members/x123/joining-fee/preview",
+  // The menu preference is not an area (C14 #4811). Any admitted officer,
+  // including one whose only area is finance, may set or clear their own role
+  // menu. The cookie changes the sidebar and nothing they can open.
+  "GET /api/admin/menu-role",
+  "POST /api/admin/menu-role",
+  "PUT /api/admin/menu-role",
+  "PATCH /api/admin/menu-role",
+  "DELETE /api/admin/menu-role",
   // NOT here, deliberately: `POST /api/admin/bookings/x123/additional-payment/
   // withdraw` (#3528) is gated finance:EDIT under a bookings path, so this
   // view-only grid is refused it, exactly as the sweep expects; the divergence

@@ -507,7 +507,7 @@ export function scanDietaryAccessSource(file: string, source: string): Finding[]
 
   if (
     file !== MERGE_ENGINE_MODULE &&
-    MERGE_ENGINE_ENTRY.test(code) &&
+    MERGE_ENGINE_ENTRY.test(blankLiterals(code)) &&
     !(file in MERGE_ENGINE_CALLERS)
   ) {
     findings.push({
@@ -825,7 +825,7 @@ describe(`member dietary access census (${INVARIANT_ID})`, () => {
         (file) =>
           file !== MERGE_ENGINE_MODULE &&
           MERGE_ENGINE_ENTRY.test(
-            stripComments(readFileSync(path.join(REPO_ROOT, file), "utf8")),
+            blankLiterals(stripComments(readFileSync(path.join(REPO_ROOT, file), "utf8"))),
           ),
       )
       .sort();
@@ -1091,6 +1091,9 @@ describe(`member dietary access census scanner (${INVARIANT_ID}) — mutation pr
     expect(rulesOf(source)).toContain("merge-caller");
     expect(
       rulesOf(`await executeMemberMerge({})`, "src/app/api/admin/members/[id]/merge/route.ts"),
+    ).not.toContain("merge-caller");
+    expect(
+      rulesOf(`exportName: "executeMemberMerge"`, "src/lib/step-up-routes.ts"),
     ).not.toContain("merge-caller");
   });
 

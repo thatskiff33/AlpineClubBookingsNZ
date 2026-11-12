@@ -1,13 +1,13 @@
--- Reverse 20261210100000_add_subscription_category_and_widen_charge_type_shape.
+-- Reverse 20261214010000_add_subscription_category_and_widen_charge_type_shape.
 --
--- THIS SCRIPT RUNS SECOND. The window applied 20261128010000 then
--- 20261128020000, so the reverse runs
--- 20261128020000/rollback.sql FIRST (it drops the CHECK and the
+-- THIS SCRIPT RUNS SECOND. The window applied 20261214010000 then
+-- 20261214020000, so the reverse runs
+-- 20261214020000/rollback.sql FIRST (it drops the CHECK and the
 -- category-axis partial unique index) and this one after. Run in the other
 -- order and the guard below refuses, loudly and without changing anything.
 --
 -- THAT GUARD IS STRUCTURAL: "MembershipCharge_type_xor_category" is added by
--- 20261128020000 and dropped by its reverse, so while it exists that
+-- 20261214020000 and dropped by its reverse, so while it exists that
 -- reverse has not run and this script must not either — this holds
 -- regardless of whether any category charge actually exists yet.
 --
@@ -33,7 +33,7 @@ BEGIN
           AND conrelid = '"MembershipSubscriptionCharge"'::regclass
     ) THEN
         RAISE EXCEPTION 'subscription_category_reverse_wrong_order'
-            USING HINT = 'Run prisma/migrations/20261210110000_route_category_charges_and_enforce_axis_exclusivity/rollback.sql first.';
+            USING HINT = 'Run prisma/migrations/20261214020000_route_category_charges_and_enforce_axis_exclusivity/rollback.sql first.';
     END IF;
 END;
 $wrong_order$;

@@ -21,6 +21,7 @@ import {
   XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
+import { XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE } from "@/lib/admin-grant-credit-note-payload";
 import { getModificationNetAmountCents } from "@/lib/xero-booking-repair-analysis";
 import type { Prisma, XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -525,6 +526,20 @@ export function refuseRetryIfResolvedInXero(operation: ResolvedMarkReadable): vo
  * only the shape the requeue arm handles - a Payment allocation, ALLOCATE for
  * the allocation and UPDATE for the deallocation.
  */
+function isAdminGrantCreditNoteRetry(
+  operation: Pick<RetryableOperation, "entityType" | "operationType" | "localModel" | "requestPayload"> & {
+    queueType?: string | null;
+  },
+): boolean {
+  const queueType = operation.queueType ?? readQueueType(operation.requestPayload);
+  return (
+    queueType === XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE &&
+    operation.entityType === "CREDIT_NOTE" &&
+    operation.operationType === "CREATE" &&
+    operation.localModel === "MemberCredit"
+  );
+}
+
 function appliedCreditRequeueType(
   operation: Pick<RetryableOperation, "entityType" | "localModel" | "operationType" | "requestPayload"> & {
     queueType?: string | null;
@@ -1064,6 +1079,12 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     return { supported: true, reason: null };
   }
   if (
+    isAdminGrantCreditNoteRetry(operation) &&
+    (operation.status === "FAILED" || operation.status === "PARTIAL")
+  ) {
+    return { supported: true, reason: null };
+  }
+  if (
     operation.localModel === "ManualRefundTask" &&
     (operation.queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE ||
       readQueuedOutboxPayload(operation.requestPayload)?.queueType ===
@@ -1432,6 +1453,11 @@ export async function retryXeroSyncOperation(
           ? "Queued applied-credit allocation retry."
           : "Queued applied-credit deallocation retry.",
     };
+  }
+
+  if (isAdminGrantCreditNoteRetry(operation)) {
+    await requeueOutboxRowForRetry(operation, null, ["FAILED", "PARTIAL"], "admin grant credit note");
+    return { message: "Queued admin grant credit note retry." };
   }
 
   // #3635: the kept late capture's invoice and #3642's group invoice rows go

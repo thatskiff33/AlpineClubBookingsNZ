@@ -17,6 +17,12 @@ the full local gate.
 ## Accessibility lint ratchets (#4466)
 
 The full `eslint-plugin-jsx-a11y` recommended configuration applies to JSX/TSX.
+The component mapping covers TableRow, TableCell, TableHead and Button. Because
+jsx-a11y treats native table rows as interactive, the local
+`accessibility/no-mouse-only-table-row` rule also requires a button or link
+inside a clickable row (#4970); a link with its own `onClick` is a separate
+action and does not count. Keep the row's mouse shortcut and put keyboard
+activation on that control.
 The local `accessibility/minimum-text-size` rule rejects static sizes below 12px
 in Tailwind classes, inline `fontSize` properties, CSS declarations and CSS
 `@apply` classes. Absolute CSS units (including `pt`) are converted to pixels;
@@ -53,7 +59,8 @@ Five local rules in `scripts/eslint/design-system.mjs` report what bypasses the
 primitives in `src/components/ui/`, each naming the one to use:
 `design-system/no-raw-button`, `no-raw-input`, `no-raw-select` and
 `no-raw-table` for the intrinsic JSX element, and `no-native-confirm` for the
-browser's confirm box: called through `window`, `globalThis`, `self`, `top` or
+browser's confirm box. A radio is `Radio` from `src/components/ui/radio.tsx`.
+The confirm rule covers a call through `window`, `globalThis`, `self`, `top` or
 `parent`, destructured from one of them, or called bare when the name resolves
 to the global. A `confirm` from `useConfirm()` is the sanctioned one.
 Today's usages are recorded in `eslint-suppressions.json` with the debt above,

@@ -1,9 +1,9 @@
--- Reverse 20261210110000_route_category_charges_and_enforce_axis_exclusivity.
+-- Reverse 20261214020000_route_category_charges_and_enforce_axis_exclusivity.
 --
--- THIS SCRIPT RUNS FIRST. The window applied 20261128010000 then
--- 20261128020000, so the reverse runs this script first (it drops the CHECK
+-- THIS SCRIPT RUNS FIRST. The window applied 20261214010000 then
+-- 20261214020000, so the reverse runs this script first (it drops the CHECK
 -- and the category-axis partial unique index, giving
--- 20261128010000/rollback.sql's SET NOT NULL statements a chance to
+-- 20261214010000/rollback.sql's SET NOT NULL statements a chance to
 -- succeed) and that one second.
 --
 -- Use this script only while every old and new app process, worker,
@@ -15,7 +15,7 @@
 -- does not undo the charge — it only makes the column shape loose again.
 -- Recovering from a confirmed category charge needs owner-led data
 -- decisions, not this script, and the next statement in
--- 20261128010000/rollback.sql will refuse until every such row's
+-- 20261214010000/rollback.sql will refuse until every such row's
 -- membershipTypeId/Key/Name is resolved by hand.
 --
 -- Maintainer review: that "next statement" guard lived only in the OTHER
@@ -23,7 +23,7 @@
 -- script's own DROPs always committed regardless of what the next one
 -- found — so a confirmed category charge left the CHECK and the category
 -- partial-unique index gone (this script succeeded) while
--- 20261128010000/rollback.sql's SET NOT NULL then failed and rolled back
+-- 20261214010000/rollback.sql's SET NOT NULL then failed and rolled back
 -- ONLY ITSELF, leaving a restarted app free to insert a second live
 -- category charge for the same family/year with nothing to stop it. The
 -- guard below makes the two scripts fail together, before either commits

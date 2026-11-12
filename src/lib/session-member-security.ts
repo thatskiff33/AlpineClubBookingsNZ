@@ -24,6 +24,9 @@ const SESSION_MEMBER_SECURITY_SELECT = {
   passwordHash: true,
   twoFactorEnabled: true,
   twoFactorMethod: true,
+  // #4617: a passkey enrols without flipping twoFactorEnabled. The id only;
+  // the public key never enters the session.
+  webAuthnCredentials: { select: { id: true }, take: 1 },
   // Post-login landing preference (#2090), refreshed per request alongside the
   // security fields so a profile toggle change takes effect on the next request.
   postLoginLanding: true,
@@ -39,10 +42,16 @@ const SESSION_MEMBER_SECURITY_SELECT = {
 } as const;
 
 export async function loadSessionMemberSecurity(userId: string) {
-  return prisma.member.findUnique({
+  const row = await prisma.member.findUnique({
     where: { id: userId },
     select: SESSION_MEMBER_SECURITY_SELECT,
   });
+  if (!row) return null;
+  const { webAuthnCredentials, ...member } = row;
+  return {
+    ...member,
+    hasPasskey: Array.isArray(webAuthnCredentials) && webAuthnCredentials.length > 0,
+  };
 }
 
 /**

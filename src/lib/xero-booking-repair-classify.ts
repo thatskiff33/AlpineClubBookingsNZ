@@ -21,7 +21,8 @@ import {
   getOutstandingCapturedRefundAmountCents,
   getOutstandingRepairTransactions,
   hasCapturedRepairPayment,
-  planEditReviewChargeInvoicePayment,
+  missingSupplementaryInvoiceManualReviewSummary,
+  planSupplementaryInvoicePayment,
 } from "./xero-booking-repair-payments";
 import {
   getBlockingOperation,
@@ -693,26 +694,24 @@ export function classifyBookingContext(
             const manualAction = addAction(actionMap, buildManualReviewAction(booking.id, FOLDED_INCREASE_INVOICE_MISSING_SUMMARY));
             addFinding(findings, { code: "MISSING_SUPPLEMENTARY_INVOICE", severity: "manual_review", summary: FOLDED_INCREASE_INVOICE_MISSING_SUMMARY, safeToAutoApply: false, details: { modificationId: modification.id, netAmountCents }, actionKeys: [manualAction.key] });
           } else if (foldedRepair !== "accounted") {
-          // #3187: a review-priced ask must not be queued as if the member had
-          // already paid it. `planEditReviewChargeInvoicePayment` states why in
-          // full; the short version is that the enqueue's `recordPayment`
-          // default is TRUE, and on the internet-banking route that would record
-          // a Stripe payment for money nobody has sent. The ordinary
-          // price-increase arm keeps the behaviour it has always had, because a
-          // modification with no review contributes no plan.
-          const editReviewPaymentPlan =
-            editReviewChargeCents > 0
-              ? planEditReviewChargeInvoicePayment({
-                  payment,
-                  bookingModificationId: modification.id,
-                  expectedNetAmountCents: netAmountCents,
-                  hasOpenIntentMintRecovery:
-                    context.openEditReviewChargeIntentRecoveryModificationIds.has(
-                      modification.id
-                    ),
-                })
-              : null;
-          if (editReviewPaymentPlan?.outcome === "withdrawn") {
+          // #4413: every missing supplementary invoice carries an explicit
+          // payment plan. The enqueue's `recordPayment` default is TRUE, which
+          // would book a Stripe receipt for an unpaid ask. A review-priced edit
+          // reads its review charge and that recovery set; an ordinary edit
+          // reads the request attributed to it and the ordinary recovery set.
+          const chargeKind = editReviewChargeCents > 0 ? "review" : "ordinary";
+          const editReviewPaymentPlan = planSupplementaryInvoicePayment({
+            payment,
+            bookingModificationId: modification.id,
+            expectedNetAmountCents: netAmountCents,
+            hasOpenIntentMintRecovery: (
+              chargeKind === "review"
+                ? context.openEditReviewChargeIntentRecoveryModificationIds
+                : context.openAdditionalIntentRecoveryModificationIds
+            ).has(modification.id),
+            chargeKind,
+          });
+          if (editReviewPaymentPlan.outcome === "withdrawn") {
             // #3528 (`INV-ADDPAY-040`): an officer withdrew this edit's request
             // while it was unpaid, so the money is no longer asked for and no
             // invoice is missing. Nothing is queued and nothing is flagged -
@@ -720,16 +719,16 @@ export function classifyBookingContext(
             // reading, "a request exists with an intent, park an invoice on
             // it", would hold a fresh supplementary invoice against an intent
             // the withdrawal cancelled, until the reaper retired it.
-          } else if (editReviewPaymentPlan?.outcome === "manual-review") {
+          } else if (editReviewPaymentPlan.outcome === "manual-review") {
             // The invoice IS missing, but the tool must not raise it: doing so
             // would either assert money the club does not hold, or claim the
             // anchor the intent-mint recovery is about to use. Same finding
             // code, no queue action, and NOT safe to auto-apply - the arm a
             // person sizes, exactly as the credit-note arm does above.
-            const summary =
-              editReviewPaymentPlan.reason === "capture-short-of-ask"
-                ? "A completed financial review priced this booking edit above what the member's card actually took, and no supplementary Xero invoice exists - the difference is owed outside any invoice, so raise it by hand."
-                : "A completed financial review priced this booking edit as money owed, but its card request has not been raised yet and its recovery is still owed - no supplementary Xero invoice can be raised until that replay runs.";
+            const summary = missingSupplementaryInvoiceManualReviewSummary(
+              editReviewPaymentPlan.reason,
+              chargeKind,
+            );
             // Two parked edits share one manual-review action: the key is the booking and the reason, and each edit still has its own finding (#3187).
             const manualAction = addAction(
               actionMap,
@@ -778,14 +777,13 @@ export function classifyBookingContext(
                 changeFeeCents: expectedAsk.changeFeeCents,
                 // Named one by one rather than spread, so the plan's own
                 // discriminant never rides along into the queued payload.
-                ...(editReviewPaymentPlan
-                  ? {
-                      recordPayment: editReviewPaymentPlan.recordPayment,
-                      waitForConfirmedAdditionalPayment:
-                        editReviewPaymentPlan.waitForConfirmedAdditionalPayment,
-                      paymentIntentId: editReviewPaymentPlan.paymentIntentId,
-                    }
-                  : {}),
+                // `chargeKind` is for the post-enqueue re-read only; apply does
+                // not pass it to the outbox.
+                recordPayment: editReviewPaymentPlan.recordPayment,
+                waitForConfirmedAdditionalPayment:
+                  editReviewPaymentPlan.waitForConfirmedAdditionalPayment,
+                paymentIntentId: editReviewPaymentPlan.paymentIntentId,
+                chargeKind,
                 // #3953 (`INV-PAY-139`): a capture of this change its own receipt records is never recorded again here.
                 ...(context.additionalCaptureReceipts?.receiptModificationIds.has(modification.id) ? { recordPayment: false } : {}),
               },

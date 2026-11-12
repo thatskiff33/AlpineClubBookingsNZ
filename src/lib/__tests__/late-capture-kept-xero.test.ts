@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   linkFindFirst: vi.fn(),
   operationFindFirst: vi.fn(),
   operationFindMany: vi.fn(),
+  operationUpdateMany: vi.fn(),
+  transactionFindMany: vi.fn(),
   modificationFindUnique: vi.fn(),
   executeRaw: vi.fn(),
   lockKeptLateCaptureTask: vi.fn(),
@@ -45,19 +47,25 @@ vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({
   keptLateCaptureDocumentDate: () => "2026-06-10",
   lockKeptLateCaptureTask: (...a: unknown[]) => mocks.lockKeptLateCaptureTask(...a),
 }));
-vi.mock("@/lib/xero-operation-outbox", () => ({
-  kickQueuedXeroOutboxOperationsIfConnected: (...a: unknown[]) =>
-    mocks.kickQueuedXeroOutboxOperationsIfConnected(...a),
-  lockSupplementaryInvoiceAnchor: (...a: unknown[]) => mocks.lockSupplementaryInvoiceAnchor(...a),
-}));
+vi.mock("@/lib/xero-operation-outbox", async () => {
+  // The real revival reads this constant; the rest of the outbox stays mocked.
+  const { OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES } = await import("@/lib/xero-supplementary-invoice-statuses");
+  return {
+    kickQueuedXeroOutboxOperationsIfConnected: (...a: unknown[]) =>
+      mocks.kickQueuedXeroOutboxOperationsIfConnected(...a),
+    lockSupplementaryInvoiceAnchor: (...a: unknown[]) => mocks.lockSupplementaryInvoiceAnchor(...a),
+    OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES,
+  };
+});
 // The REAL retired codes: a copy here would let the constant drift unseen.
-vi.mock("@/lib/xero-supplementary-invoice-late-capture", async (importOriginal) => ({
-  RETIRED_CODES_ANSWERING_CAPTURE: (
-    (await importOriginal()) as typeof import("@/lib/xero-supplementary-invoice-late-capture")
-  ).RETIRED_CODES_ANSWERING_CAPTURE,
-  releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: (...a: unknown[]) =>
-    mocks.releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(...a),
-}));
+vi.mock("@/lib/xero-supplementary-invoice-late-capture", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-supplementary-invoice-late-capture");
+  return {
+    ...actual,
+    releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: (...a: unknown[]) =>
+      mocks.releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(...a),
+  };
+});
 vi.mock("@/lib/kept-late-capture-receipt-rows", () => ({
   findLiveKeptReceiptRow: (...a: unknown[]) => mocks.findLiveKeptReceiptRow(...a),
 }));
@@ -102,7 +110,10 @@ import { supplementaryInvoicesMovedOffIntentWhere } from "@/lib/supplementary-in
  * `xero-kept-late-capture-ledger.test.ts`'s.
  */
 const store = {
-  paymentTransaction: { findUnique: (...a: unknown[]) => mocks.transactionFindUnique(...a) },
+  paymentTransaction: {
+    findUnique: (...a: unknown[]) => mocks.transactionFindUnique(...a),
+    findMany: (...a: unknown[]) => mocks.transactionFindMany(...a),
+  },
   manualRefundTask: { findUnique: (...a: unknown[]) => mocks.taskFindUnique(...a) },
   payment: { findUnique: (...a: unknown[]) => mocks.paymentFindUnique(...a) },
   // The payment's active PRIMARY_INVOICE links (`bookingHasPrimaryXeroInvoice`).
@@ -113,6 +124,7 @@ const store = {
   xeroSyncOperation: {
     findFirst: (...a: unknown[]) => mocks.operationFindFirst(...a),
     findMany: (...a: unknown[]) => mocks.operationFindMany(...a),
+    updateMany: (...a: unknown[]) => mocks.operationUpdateMany(...a),
   },
   bookingModification: { findUnique: (...a: unknown[]) => mocks.modificationFindUnique(...a) },
   $executeRaw: (...a: unknown[]) => mocks.executeRaw(...a),
@@ -143,6 +155,8 @@ beforeEach(() => {
   mocks.linkFindFirst.mockResolvedValue(null);
   mocks.operationFindFirst.mockResolvedValue(null);
   mocks.operationFindMany.mockReset().mockResolvedValue([]);
+  mocks.operationUpdateMany.mockReset().mockResolvedValue({ count: 1 });
+  mocks.transactionFindMany.mockReset().mockResolvedValue([]);
   mocks.modificationFindUnique.mockResolvedValue({ newData: {} });
   mocks.findLiveKeptReceiptRow.mockResolvedValue(null);
   mocks.readCreditReleaseCaptureShare.mockResolvedValue({ ownCents: 0, held: false });
@@ -696,13 +710,80 @@ describe("#4324: a kept change capture on an invoiced booking", () => {
       await expect(plan()).resolves.toEqual({ kind: "change-payment", paymentIntentId: "pi_late" });
       expect(mocks.enqueueAdditionalCaptureReceiptOperation).not.toHaveBeenCalled();
       expect(mocks.enqueueXeroKeptLateCaptureInvoiceOperation).not.toHaveBeenCalled();
+      expect(mocks.operationUpdateMany).not.toHaveBeenCalled();
     });
 
-    for (const code of ["STALE_WAITING_PAYMENT", "STALE_WAITING_PAYMENT_CAPTURED", "STALE_WAITING_PAYMENT_COVERED"]) {
-      it(`MUTATION: a change invoice the reaper retired (${code}) still answers it, though every change row is CANCELLED - never a kept invoice`, async () => {
-        const retired = { status: "CANCELLED", lastErrorCode: code, requestPayload: {} };
-        mocks.operationFindMany.mockResolvedValueOnce([retired]).mockResolvedValueOnce([retired]);
+    /** A change invoice the keep can see, with a bill the $80 capture covers. */
+    const changeInvoice = (status: string, lastErrorCode: string | null, priceDiffCents = 8000) => ({
+      id: "op_retired",
+      status,
+      lastErrorCode,
+      localModel: "BookingModification",
+      localId: "mod_change",
+      createdAt: new Date("2026-06-01T00:00:00.000Z"),
+      requestPayload: {
+        queueType: "SUPPLEMENTARY_INVOICE",
+        bookingId: "booking-1",
+        bookingModificationId: "mod_change",
+        priceDiffCents,
+        changeFeeCents: 0,
+        paymentIntentId: "pi_late",
+      },
+    });
+    /** Evidence reads return the row; the revival's CANCELLED read returns it only while it is still retired with a code the release revives. */
+    const answerWith = (row: ReturnType<typeof changeInvoice>) => {
+      mocks.operationFindMany.mockImplementation(async ({ where }: { where?: { status?: unknown; localId?: unknown; lastErrorCode?: { in?: string[] } } } = {}) => {
+        if (where?.status === "CANCELLED") {
+          const codes = where.lastErrorCode?.in ?? [];
+          return row.status === "CANCELLED" && row.lastErrorCode !== null && codes.includes(row.lastErrorCode) && where.localId === row.localId
+            ? [row]
+            : [];
+        }
+        if (where?.status && typeof where.status === "object") return [];
+        return [row];
+      });
+    };
+
+    it("MUTATION #4382: a STALE_WAITING_PAYMENT change invoice is re-queued on the keep's transaction, guarded, and a row already PENDING is not written again", async () => {
+      const retired = changeInvoice("CANCELLED", "STALE_WAITING_PAYMENT");
+      answerWith(retired);
+      await expect(plan()).resolves.toEqual({ kind: "change-payment", paymentIntentId: "pi_late" });
+      expect(mocks.enqueueXeroKeptLateCaptureInvoiceOperation).not.toHaveBeenCalled();
+      expect(mocks.enqueueAdditionalCaptureReceiptOperation).not.toHaveBeenCalled();
+      expect(mocks.operationUpdateMany).toHaveBeenCalledTimes(1);
+      expect(mocks.operationUpdateMany).toHaveBeenCalledWith({
+        where: { id: "op_retired", status: "CANCELLED", lastErrorCode: "STALE_WAITING_PAYMENT" },
+        data: {
+          status: "PENDING",
+          startedAt: null,
+          completedAt: null,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+        },
+      });
+      // Dropping either guard from that where, or reviving a row that is no longer retired, writes it again.
+      retired.status = "PENDING";
+      retired.lastErrorCode = null;
+      mocks.operationUpdateMany.mockClear();
+      await expect(plan()).resolves.toEqual({ kind: "change-payment", paymentIntentId: "pi_late" });
+      expect(mocks.operationUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.enqueueXeroKeptLateCaptureInvoiceOperation).not.toHaveBeenCalled();
+      expect(mocks.enqueueAdditionalCaptureReceiptOperation).not.toHaveBeenCalled();
+    });
+
+    it("a retired change invoice the capture does not cover is left for the after-commit release: no stamp inside the keep", async () => {
+      answerWith(changeInvoice("CANCELLED", "STALE_WAITING_PAYMENT", 20_000));
+      await expect(plan()).resolves.toEqual({ kind: "change-payment", paymentIntentId: "pi_late" });
+      expect(mocks.operationUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.enqueueXeroKeptLateCaptureInvoiceOperation).not.toHaveBeenCalled();
+      expect(mocks.enqueueAdditionalCaptureReceiptOperation).not.toHaveBeenCalled();
+    });
+
+    for (const code of ["STALE_WAITING_PAYMENT_CAPTURED", "STALE_WAITING_PAYMENT_COVERED"]) {
+      it(`MUTATION: a change invoice the reaper retired (${code}) still answers it, and is not revived`, async () => {
+        answerWith(changeInvoice("CANCELLED", code));
         await expect(plan()).resolves.toEqual({ kind: "change-payment", paymentIntentId: "pi_late" });
+        expect(mocks.operationUpdateMany).not.toHaveBeenCalled();
         expect(mocks.enqueueXeroKeptLateCaptureInvoiceOperation).not.toHaveBeenCalled();
         expect(mocks.enqueueAdditionalCaptureReceiptOperation).not.toHaveBeenCalled();
       });

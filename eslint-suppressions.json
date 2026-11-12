@@ -1,4 +1,40 @@
 {
+  "src/app/(admin)/admin/system/ai-diagnostics/_components/diagnostics-budget-card.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/system/audit-log/page.tsx": {
+    "accessibility/minimum-text-size": {
+      "count": 2
+    },
+    "design-system/no-raw-button": {
+      "count": 2
+    }
+  },
+  "src/app/(admin)/admin/system/background-jobs/page.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/system/backups/backups-client.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/system/backups/local-backup-card.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/system/backups/setup/backup-wizard-steps.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
   "src/app/(admin)/admin/bed-allocation/_components/allocation-chip.tsx": {
     "accessibility/minimum-text-size": {
       "count": 4
@@ -49,6 +85,11 @@
       "count": 1
     },
     "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/messages/communications/page.tsx": {
+    "design-system/no-raw-table": {
       "count": 1
     }
   },
@@ -108,6 +149,11 @@
       "count": 4
     }
   },
+  "src/app/(admin)/admin/system/email-deliverability/page.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
   "src/app/(admin)/admin/family-groups/page.tsx": {
     "design-system/no-native-confirm": {
       "count": 2
@@ -122,99 +168,29 @@
       "count": 2
     }
   },
-  "src/app/(admin)/admin/finance/payments/page.tsx": {
-    "design-system/no-raw-button": {
-      "count": 3
-    }
-  },
-  "src/app/(admin)/admin/finance/refund-requests/page.tsx": {
-    "design-system/no-raw-button": {
+  "src/app/(admin)/admin/rules/fees/_components/finance-fees-sections.tsx": {
+    "design-system/no-raw-input": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/finance/reports/page.tsx": {
+  "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 1
+    },
+    "design-system/no-raw-input": {
+      "count": 1
+    },
     "design-system/no-raw-select": {
-      "count": 2
-    }
-  },
-  "src/app/(admin)/admin/finance/subscriptions/_components/subscription-billing-panel.tsx": {
-    "jsx-a11y/no-autofocus": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/finance/xero/_components/contact-sync-panel.tsx": {
-    "accessibility/minimum-text-size": {
-      "count": 2
-    },
-    "design-system/no-raw-button": {
-      "count": 2
-    }
-  },
-  "src/app/(admin)/admin/finance/xero/_components/erased-member-contacts-panel.tsx": {
-    "accessibility/minimum-text-size": {
-      "count": 1
-    }
-  },
-  "src/app/(admin)/admin/finance/xero/_components/failed-view-notice.tsx": {
-    "design-system/no-raw-button": {
-      "count": 1
-    }
-  },
-  "src/app/(admin)/admin/finance/xero/_components/inbound-events-panel.tsx": {
-    "accessibility/minimum-text-size": {
-      "count": 1
-    }
-  },
-  "src/app/(admin)/admin/finance/xero/_components/mappings-panel.tsx": {
-    "design-system/no-raw-table": {
-      "count": 2
-    }
-  },
-  "src/app/(admin)/admin/finance/xero/_components/message.tsx": {
-    "design-system/no-raw-button": {
-      "count": 1
-    }
-  },
-  "src/app/(admin)/admin/finance/xero/_components/operations-panel.tsx": {
-    "accessibility/minimum-text-size": {
-      "count": 2
-    },
-    "design-system/no-raw-button": {
-      "count": 1
-    }
-  },
-  "src/app/(admin)/admin/finance/xero/_components/setup-panels.tsx": {
-    "design-system/no-raw-input": {
-      "count": 2
-    }
-  },
-  "src/app/(admin)/admin/finance/xero/_components/shared.tsx": {
-    "accessibility/minimum-text-size": {
-      "count": 2
-    },
+  "src/app/(admin)/admin/system/health/_components/email-deliverability-section.tsx": {
     "design-system/no-raw-button": {
       "count": 3
-    },
-    "jsx-a11y/click-events-have-key-events": {
-      "count": 1
-    },
-    "jsx-a11y/no-static-element-interactions": {
-      "count": 1
     }
   },
-  "src/app/(admin)/admin/finance/xero/_hooks/use-xero-connection.ts": {
-    "design-system/no-native-confirm": {
-      "count": 1
-    }
-  },
-  "src/app/(admin)/admin/finance/xero/member-grouping/page.tsx": {
-    "design-system/no-native-confirm": {
-      "count": 2
-    },
-    "design-system/no-raw-input": {
-      "count": 2
-    },
-    "jsx-a11y/label-has-associated-control": {
+  "src/app/(admin)/admin/system/health/_components/shared.tsx": {
+    "design-system/no-raw-button": {
       "count": 1
     }
   },
@@ -228,6 +204,17 @@
   },
   "src/app/(admin)/admin/hut-leaders/page.tsx": {
     "design-system/no-native-confirm": {
+      "count": 2
+    }
+  },
+  "src/app/(admin)/admin/website/image-manager/image-manager-client.tsx": {
+    "accessibility/minimum-text-size": {
+      "count": 1
+    },
+    "design-system/no-raw-button": {
+      "count": 2
+    },
+    "jsx-a11y/no-autofocus": {
       "count": 2
     }
   },
@@ -380,40 +367,18 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/messages/communications/page.tsx": {
-    "design-system/no-raw-table": {
+  "src/app/(admin)/admin/website/mountain-conditions/_components/mountain-conditions-panel.tsx": {
+    "design-system/no-raw-button": {
       "count": 1
+    }
+  },
+  "src/app/(admin)/admin/finance/payments/page.tsx": {
+    "design-system/no-raw-button": {
+      "count": 3
     }
   },
   "src/app/(admin)/admin/privacy-retention/privacy-retention-client.tsx": {
     "design-system/no-raw-input": {
-      "count": 1
-    }
-  },
-  "src/app/(admin)/admin/roster/[date]/print/page.tsx": {
-    "design-system/no-raw-button": {
-      "count": 1
-    },
-    "design-system/no-raw-table": {
-      "count": 1
-    }
-  },
-  "src/app/(admin)/admin/roster/page.tsx": {
-    "design-system/no-native-confirm": {
-      "count": 3
-    },
-    "design-system/no-raw-input": {
-      "count": 1
-    }
-  },
-  "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx": {
-    "design-system/no-native-confirm": {
-      "count": 1
-    },
-    "design-system/no-raw-input": {
-      "count": 1
-    },
-    "design-system/no-raw-select": {
       "count": 1
     }
   },
@@ -442,6 +407,32 @@
       "count": 1
     }
   },
+  "src/app/(admin)/admin/finance/refund-requests/page.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/finance/reports/page.tsx": {
+    "design-system/no-raw-select": {
+      "count": 2
+    }
+  },
+  "src/app/(admin)/admin/roster/[date]/print/page.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
+    "design-system/no-raw-table": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/roster/page.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 3
+    },
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
   "src/app/(admin)/admin/rules/seasons/page.tsx": {
     "design-system/no-native-confirm": {
       "count": 1
@@ -453,87 +444,19 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/system/ai-diagnostics/_components/diagnostics-budget-card.tsx": {
-    "design-system/no-raw-button": {
-      "count": 1
-    }
-  },
-  "src/app/(admin)/admin/system/audit-log/page.tsx": {
-    "accessibility/minimum-text-size": {
-      "count": 2
-    },
-    "design-system/no-raw-button": {
-      "count": 2
-    }
-  },
-  "src/app/(admin)/admin/system/background-jobs/page.tsx": {
-    "design-system/no-raw-button": {
-      "count": 1
-    }
-  },
-  "src/app/(admin)/admin/system/backups/backups-client.tsx": {
-    "design-system/no-raw-input": {
-      "count": 1
-    }
-  },
-  "src/app/(admin)/admin/system/backups/local-backup-card.tsx": {
-    "design-system/no-raw-input": {
-      "count": 1
-    },
-    "design-system/no-raw-select": {
-      "count": 1
-    }
-  },
-  "src/app/(admin)/admin/system/backups/setup/backup-wizard-steps.tsx": {
-    "design-system/no-raw-input": {
-      "count": 1
-    }
-  },
-  "src/app/(admin)/admin/system/email-deliverability/page.tsx": {
-    "design-system/no-raw-button": {
-      "count": 1
-    }
-  },
-  "src/app/(admin)/admin/system/health/_components/email-deliverability-section.tsx": {
+  "src/app/(admin)/admin/website/site-style/site-style-wizard.tsx": {
     "design-system/no-raw-button": {
       "count": 3
     }
   },
-  "src/app/(admin)/admin/system/health/_components/shared.tsx": {
-    "design-system/no-raw-button": {
+  "src/app/(admin)/admin/finance/subscriptions/_components/subscription-billing-panel.tsx": {
+    "jsx-a11y/no-autofocus": {
       "count": 1
     }
   },
   "src/app/(admin)/admin/waitlist/page.tsx": {
     "design-system/no-raw-select": {
       "count": 1
-    }
-  },
-  "src/app/(admin)/admin/website/image-manager/image-manager-client.tsx": {
-    "accessibility/minimum-text-size": {
-      "count": 1
-    },
-    "design-system/no-raw-button": {
-      "count": 4
-    },
-    "jsx-a11y/click-events-have-key-events": {
-      "count": 1
-    },
-    "jsx-a11y/no-autofocus": {
-      "count": 2
-    },
-    "jsx-a11y/no-static-element-interactions": {
-      "count": 1
-    }
-  },
-  "src/app/(admin)/admin/website/mountain-conditions/_components/mountain-conditions-panel.tsx": {
-    "design-system/no-raw-button": {
-      "count": 1
-    }
-  },
-  "src/app/(admin)/admin/website/site-style/site-style-wizard.tsx": {
-    "design-system/no-raw-button": {
-      "count": 3
     }
   },
   "src/app/(admin)/admin/work-parties/page.tsx": {
@@ -544,6 +467,82 @@
       "count": 1
     },
     "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/finance/xero/_components/contact-sync-panel.tsx": {
+    "accessibility/minimum-text-size": {
+      "count": 2
+    },
+    "design-system/no-raw-button": {
+      "count": 2
+    }
+  },
+  "src/app/(admin)/admin/finance/xero/_components/erased-member-contacts-panel.tsx": {
+    "accessibility/minimum-text-size": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/finance/xero/_components/failed-view-notice.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/finance/xero/_components/inbound-events-panel.tsx": {
+    "accessibility/minimum-text-size": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/finance/xero/_components/mappings-panel.tsx": {
+    "design-system/no-raw-table": {
+      "count": 2
+    }
+  },
+  "src/app/(admin)/admin/finance/xero/_components/message.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/finance/xero/_components/operations-panel.tsx": {
+    "accessibility/minimum-text-size": {
+      "count": 2
+    },
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/finance/xero/_components/setup-panels.tsx": {
+    "design-system/no-raw-input": {
+      "count": 2
+    }
+  },
+  "src/app/(admin)/admin/finance/xero/_components/shared.tsx": {
+    "accessibility/minimum-text-size": {
+      "count": 2
+    },
+    "design-system/no-raw-button": {
+      "count": 3
+    },
+    "jsx-a11y/click-events-have-key-events": {
+      "count": 1
+    },
+    "jsx-a11y/no-static-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/finance/xero/_hooks/use-xero-connection.ts": {
+    "design-system/no-native-confirm": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/finance/xero/member-grouping/page.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 2
+    },
+    "design-system/no-raw-input": {
+      "count": 2
+    },
+    "jsx-a11y/label-has-associated-control": {
       "count": 1
     }
   },
@@ -680,20 +679,14 @@
     },
     "design-system/no-raw-button": {
       "count": 3
-    },
-    "jsx-a11y/click-events-have-key-events": {
-      "count": 1
-    },
-    "jsx-a11y/no-static-element-interactions": {
-      "count": 1
     }
   },
   "src/components/admin-sidebar.tsx": {
     "accessibility/minimum-text-size": {
-      "count": 4
+      "count": 3
     },
     "design-system/no-raw-button": {
-      "count": 2
+      "count": 1
     }
   },
   "src/components/admin/__tests__/display-token-textarea.test.tsx": {

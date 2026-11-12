@@ -273,6 +273,10 @@ describe("no admin active-state check compares raw hrefs", () => {
       kind: "sidebar",
       why: "the active link: activeAdminHref compares in canonical form (the test above)",
     },
+    "src/components/admin-sidebar-controls.tsx": {
+      kind: "sidebar",
+      why: "C14 hub-menu highlight. The href is hubRoot, and HubMenuLinks mounts only while ADMIN_HUBS_LIVE, when the hub path is the one being served",
+    },
     "src/components/help-widget/help-widget.tsx": {
       kind: "normalised-by-surface",
       why: "help content, the chat request and diagnostics; help-widget-admin.tsx passes canonicalAdminPathname, and the other surfaces never render under /admin",

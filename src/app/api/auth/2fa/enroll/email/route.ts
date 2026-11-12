@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
     actor: { kind: "member", memberId: guard.member.id },
     request: getAuditRequestContext(request),
   });
-  await markTwoFactorSessionVerified();
+  await markTwoFactorSessionVerified("EMAIL");
 
   return NextResponse.json({ ok: true, recoveryCodes });
 }

@@ -4434,3 +4434,64 @@ describe("PARTIAL repairs claim the original before they write or call Xero (#42
     });
   });
 });
+
+describe("admin grant credit note retry (#4431)", () => {
+  const grant = (overrides: Record<string, unknown> = {}) =>
+    makeOperation({
+      status: "FAILED",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "MemberCredit",
+      localId: "credit_1",
+      queueType: "ADMIN_GRANT_CREDIT_NOTE",
+      requestPayload: {
+        queueType: "ADMIN_GRANT_CREDIT_NOTE",
+        amountCents: 2500,
+        mappingKey: "hutFeeRefunds",
+        memberCreditId: "credit_1",
+      },
+      ...overrides,
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.findFirstOperation.mockResolvedValue(null);
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+  });
+
+  it("requeues the same failed row and does not call the payment credit-note creator", async () => {
+    expect(getXeroOperationRetryMeta(grant())).toEqual({ supported: true, reason: null });
+    expect(getXeroOperationRetryMeta(grant({ status: "PARTIAL" })).supported).toBe(true);
+    expect(
+      getXeroOperationRetryMeta(
+        makeOperation({
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          localModel: "MemberCredit",
+          localId: "credit_1",
+        }),
+      ).supported,
+    ).toBe(false);
+
+    mocks.findUniqueOperation.mockResolvedValue(grant());
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+      message: "Queued admin grant credit note retry.",
+    });
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "op_123", status: { in: ["FAILED", "PARTIAL"] } }),
+        data: expect.objectContaining({
+          status: "PENDING",
+          startedAt: null,
+          completedAt: null,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+        }),
+      }),
+    );
+    expect(mocks.updateManyOperation.mock.calls[0][0].data.requestPayload).toBeUndefined();
+    expect(mocks.createXeroCreditNote).not.toHaveBeenCalled();
+    expect(mocks.createUnappliedXeroCreditNote).not.toHaveBeenCalled();
+    expect(mocks.createXeroCreditNoteForModification).not.toHaveBeenCalled();
+  });
+});

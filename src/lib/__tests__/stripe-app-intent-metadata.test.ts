@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type * as StripeModule from "@/lib/stripe";
 import { relativeSource, sourceFiles } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments";
-import { buildSavedCardChargeMetadata, mintedSavedCardChargeKey, savedCardChargeIdempotencyKey } from "@/lib/saved-card-charge-key";
+import { buildSavedCardChargeMetadata, mintedSavedCardChargeKey } from "@/lib/saved-card-charge-key";
 import {
   GROUP_SETTLEMENT_INTENT_TYPE,
   appPaymentIntentRoute,
@@ -29,13 +29,13 @@ describe("isAppCreatedPaymentIntent (#4532)", () => {
       { bookingId: "bk_1", type: "additional_modification", reason: "r", reissuedAskKey: "k" },
       // group organiser settlement
       { type: GROUP_SETTLEMENT_INTENT_TYPE, groupBookingId: "g_1", organiserMemberId: "m_1" },
-      // saved-card off-session charges, from the real builder: the original key
-      // this release mints sends no attempt id, member-owned or not; a `_v2`
-      // key (minted from #4682) also names its row (#4646)
+      // saved-card off-session charges, from the real builder: a new attempt's
+      // `_v2` key names its row, member-owned or not (#4682). An original-key
+      // row from an earlier release does not; that builder is not exported, so
+      // the key is spelled out beside the minted body.
       buildSavedCardChargeMetadata("bk_1", "m_1", { attemptRowId: "txn_1", idempotencyKey: mintedSavedCardChargeKey("bk_1", "txn_1") }),
       buildSavedCardChargeMetadata("bk_1", null, { attemptRowId: "txn_1", idempotencyKey: mintedSavedCardChargeKey("bk_1", "txn_1") }),
-      buildSavedCardChargeMetadata("bk_1", "m_1", { attemptRowId: "txn_1", idempotencyKey: savedCardChargeIdempotencyKey("bk_1", "txn_1") }),
-      buildSavedCardChargeMetadata("bk_1", null, { attemptRowId: "txn_1", idempotencyKey: savedCardChargeIdempotencyKey("bk_1", "txn_1") }),
+      buildSavedCardChargeMetadata("bk_1", "m_1", { attemptRowId: "txn_1", idempotencyKey: "pending_charge_bk_1_txn_1" }),
     ];
     for (const metadata of shapes) expect(isAppCreatedPaymentIntent(metadata), JSON.stringify(metadata)).toBe(true);
   });

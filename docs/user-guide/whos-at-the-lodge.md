@@ -6,7 +6,8 @@ Audience: Member
 
 A list of everyone staying at the lodge over the next 30 nights, so you can see
 whether the place will be busy, and whether people you know will be there. You
-find it at **Who's at the lodge** (`/lodge-roster`).
+find it with the **Who's at the lodge** button on your dashboard's Lodge
+Kiosk card (`/lodge-roster`).
 
 It shows **names and nights, and nothing else**. No phone numbers, no email
 addresses, no prices, and nothing about anybody's booking beyond the nights
@@ -27,7 +28,8 @@ turn it on.
 
 ## Step-by-step
 
-1. Sign in and choose **Who's at the lodge** from the menu.
+1. Sign in, and on your **Dashboard** choose **Who's at the lodge** on the
+   Lodge Kiosk card.
 2. Each lodge you can book has its own card, with the people staying listed
    underneath it. A card may show only a reserved row, when the whole lodge is
    privately booked.

@@ -1,4 +1,5 @@
 "use client"
+import { fetchWithRecentAuth } from "@/components/confirm-its-you"
 
 import { useCallback, useEffect, useState } from "react"
 import { revealEditor } from "@/hooks/use-scroll-to-feedback"
@@ -52,7 +53,7 @@ export function useXeroConnection() {
   const handleDisconnect = useCallback(async () => {
     if (!confirm("Are you sure you want to disconnect Xero? This will remove all stored tokens.")) return
     try {
-      const res = await fetch("/api/admin/xero/disconnect", { method: "POST" })
+      const res = await fetchWithRecentAuth("/api/admin/xero/disconnect", { method: "POST" })
       if (!res.ok) throw new Error("Failed to disconnect")
       setStatus({ connected: false, needsReentry: false, tenantId: null, tokenExpiresAt: null })
     } catch {

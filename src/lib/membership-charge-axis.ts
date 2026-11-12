@@ -5,7 +5,7 @@
  * display name (INV-SSOT-007, INV-MONEY-046).
  *
  * Both axes widened/added to nullable across a windowed migration pair
- * (20261128010000/20261128020000) precisely because the currently-deployed
+ * (20261214010000/20261214020000) precisely because the currently-deployed
  * app's own un-null-checked reads of these columns are the hazard this
  * module exists to close: TypeScript does not flag a `null` interpolated
  * into a template literal (`` `${x}` `` typechecks for any `x`), so a raw

@@ -6,7 +6,7 @@ This is a one-time runbook for one specific situation: a production database
 already ran the ORIGINAL two subscription-category migrations before the
 upstream PR review requested the schema be reworked (see
 `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv` for the redesigned pair,
-`20261128010000`/`20261128020000`, and their own migration-file headers for
+`20261214010000`/`20261214020000`, and their own migration-file headers for
 why they are `windowed` rather than an ordinary rolling expand). It does not
 apply to a deployment that has never run any subscription-category migration
 at all — that one just runs `prisma migrate deploy` normally and never needs
@@ -94,7 +94,7 @@ container, run the steps below, start it again.
 
 5. **Run `prisma migrate deploy` normally.** This now applies, in one pass:
    every migration from `origin/main` this production database has never
-   seen, plus the redesigned `20261128010000`/`20261128020000` pair (pending
+   seen, plus the redesigned `20261214010000`/`20261214020000` pair (pending
    again, since step 4 removed the conflicting old ledger rows and schema
    artifacts). Because that pair is declared `windowed`, set the
    acknowledgement environment variables per

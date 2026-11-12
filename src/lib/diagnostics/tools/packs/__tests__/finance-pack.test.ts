@@ -697,11 +697,10 @@ describe("AID-6C finance pack: the grant allowlist matches the SQL (#2377)", () 
   });
 
   it("never names a credential-bearing relation anywhere in the pack", () => {
-    // ADR-007 §1. `XeroToken` and `IntegrationCredential` both hold encrypted OAuth
-    // tokens or provider secrets (#3454); neither is granted,
-    // and neither is named in any pack module — including the server-owned source,
-    // which runs on the application's own full-privilege connection where a grant
-    // would not stop it.
+    // ADR-007 §1. `IntegrationCredential` holds encrypted provider secrets and the
+    // Xero OAuth token set (#3454) and stays permanently out of scope. `XeroToken`
+    // is gone; naming it again is still a failure, including in the server-owned
+    // source, which runs on the application's own full-privilege connection.
     for (const name of FINANCE_PACK_MODULES) {
       const source = packSource(name);
       for (const relation of ["XeroToken", "IntegrationCredential"]) {

@@ -3,7 +3,7 @@ BEGIN;
 -- Subscription-category decoupling, step 2 of 2 (close the window). Adds the
 -- category-axis live-charge partial unique index and the CHECK that makes
 -- "every charge bills on exactly one axis" true. Paired with
--- 20261128010000, which this follows; never applied apart — see that
+-- 20261214010000, which this follows; never applied apart — see that
 -- migration's header for why.
 --
 -- NO BACKFILL DML. Unlike the Booking.memberId/organisationId precedent,
@@ -14,7 +14,7 @@ BEGIN;
 -- migration's whole job is closing the gap the first half left open, not
 -- moving any row's meaning.
 --
--- WINDOWED, for the reason given in 20261128010000's header: between the
+-- WINDOWED, for the reason given in 20261214010000's header: between the
 -- two halves, a writer could insert a category-only row (membershipTypeId
 -- NULL) that the currently-deployed app's own un-null-checked reads of that
 -- column would then silently mishandle. Required deploy acknowledgements:
@@ -23,7 +23,7 @@ BEGIN;
 -- BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1, set only once the old app and
 -- every worker/scheduler/queue consumer are stopped and verified via
 -- pg_stat_activity. Take and verify a fresh backup immediately before
--- running (shared with 20261128010000 — one backup covers the whole
+-- running (shared with 20261214010000 — one backup covers the whole
 -- window, taken once, before the first of the pair).
 --
 -- The pre-existing #4110 "at most one LIVE family charge" partial unique

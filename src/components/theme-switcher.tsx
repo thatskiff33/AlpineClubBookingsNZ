@@ -3,6 +3,10 @@
 import { Laptop, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
+import {
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 
 export const UI_THEME_STORAGE_KEY = "alpine-ui-theme";
@@ -15,15 +19,10 @@ const themeOptions = [
 
 type ThemeOption = (typeof themeOptions)[number]["value"];
 
-interface ThemeSwitcherProps {
-  className?: string;
-  label?: string;
-}
-
-export function ThemeSwitcher({
-  className,
-  label = "Theme",
-}: ThemeSwitcherProps) {
+function useActiveTheme(): {
+  activeTheme: ThemeOption;
+  setTheme: (value: string) => void;
+} {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const activeTheme: ThemeOption =
@@ -34,6 +33,20 @@ export function ThemeSwitcher({
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  return { activeTheme, setTheme };
+}
+
+interface ThemeSwitcherProps {
+  className?: string;
+  label?: string;
+}
+
+export function ThemeSwitcher({
+  className,
+  label = "Theme",
+}: ThemeSwitcherProps) {
+  const { activeTheme, setTheme } = useActiveTheme();
 
   return (
     <div className={cn("space-y-2", className)}>
@@ -67,5 +80,23 @@ export function ThemeSwitcher({
         })}
       </div>
     </div>
+  );
+}
+
+/**
+ * Theme choices for a menu. A menu may contain menuitemradio, not a nested
+ * radiogroup, so the desktop user menu uses this instead of {@link ThemeSwitcher}.
+ */
+export function ThemeMenuItems() {
+  const { activeTheme, setTheme } = useActiveTheme();
+
+  return (
+    <DropdownMenuRadioGroup value={activeTheme} onValueChange={setTheme}>
+      {themeOptions.map(({ value, label: optionLabel }) => (
+        <DropdownMenuRadioItem key={value} value={value}>
+          {optionLabel}
+        </DropdownMenuRadioItem>
+      ))}
+    </DropdownMenuRadioGroup>
   );
 }

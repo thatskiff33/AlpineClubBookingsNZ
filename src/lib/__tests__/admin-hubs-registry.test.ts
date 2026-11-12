@@ -1804,6 +1804,8 @@ describe("the registry is inert", () => {
       "C3: the active link is the registry's activeAdminHref; S2: the palette index is ADMIN_MENU_DESTINATIONS; " +
       "C7: the Help & system links and the Issue Reports badge are adminLink and adminHref; " +
       "C8: the Messages & email links are adminLink",
+    "src/components/admin-sidebar-controls.tsx":
+      "C14: the role menu lists one link per hub, in registry order, at the hub root",
     "src/lib/admin-page-revalidation.ts": "C3: revalidateAdminPage revalidates a page's file path",
     "src/components/help-widget/help-widget-admin.tsx":
       "C3: admin help reads the pathname through canonicalAdminPathname",
@@ -1849,7 +1851,19 @@ describe("the registry is inert", () => {
     "src/lib/__tests__/next-config-admin-hub-urls.test.ts":
       "S1: walks each retired page's redirect through the real config",
     "src/app/(admin)/layout.tsx": "C4: the site-style banner links with adminHref",
-    "src/app/(admin)/admin/website/appearance/page.tsx": "C4: its cards link and title with adminLink",
+    "src/app/(admin)/admin/website/appearance/page.tsx": "C4: its title is the registry label",
+    "src/lib/admin-appearance-pages.ts":
+      "#108: the Website hub's cards and the Content sidebar menu, linked with adminHref",
+    "src/lib/admin-nav-panels.ts":
+      "#108: the role menus name their pages by registry id, matched in old-path form",
+    "src/lib/admin-menu-role.ts":
+      "C14: the role switcher decides which hubs to list from the registry's menu destinations",
+    "src/app/api/admin/menu-role/route.ts":
+      "C14: the save route 404s while ADMIN_HUBS_LIVE is off, before authentication",
+    "src/lib/__tests__/admin-menu-role.test.ts":
+      "C14: the seeded menu table is the registry's hub labels",
+    "src/lib/__tests__/admin-nav-panels.test.tsx":
+      "#108: every page a role menu names is a sidebar page, at its adminHref",
     "src/app/(admin)/admin/website/appearance/identity/page.tsx":
       "C4: its back link is adminLink",
     "src/app/(admin)/admin/website/site-style/page.tsx":

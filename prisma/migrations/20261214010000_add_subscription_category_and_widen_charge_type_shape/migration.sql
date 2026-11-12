@@ -8,7 +8,7 @@ BEGIN;
 -- and nothing here stops a NEW writer from inserting a category-only row
 -- with those three NULL the moment this migration lands. The CHECK that
 -- makes "exactly one axis" true is added by the second half,
--- 20261128020000, once every writer that could violate it is reviewed
+-- 20261214020000, once every writer that could violate it is reviewed
 -- together with that CHECK in place. They are never applied apart.
 --
 -- WINDOWED BY PAIRING, like this repo's own precedent for widening a
@@ -16,7 +16,7 @@ BEGIN;
 -- (Booking.memberId / organisationId, 20260928020000 + 20260928030000,
 -- INV-SSOT-005). On its own this half is close to old-code compatible — it
 -- only ADD COLUMNs and three DROP NOT NULLs that no existing row trips — but
--- declaring it `yes` would invite applying it without 20261128020000 in the
+-- declaring it `yes` would invite applying it without 20261214020000 in the
 -- same window, and between the two the currently-deployed app (which still
 -- reads membershipTypeId/Key/Name as always-present, e.g. the family-charge
 -- dedup key built as a raw template literal before this change) could read a
