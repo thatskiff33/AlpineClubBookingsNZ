@@ -284,18 +284,56 @@ export function changedFilesSinceBase(
   }
 }
 
+/**
+ * One file's bytes on the base ref, or null when it did not exist there.
+ *
+ * `git show` fails for a path that does not exist in that tree, which is the
+ * ordinary new-file case rather than an error worth reporting. Shared with the
+ * function-length ratchet (#4927), which measures the base text rather than
+ * counting its lines.
+ */
+export function baseContentOf(
+  root: string,
+  baseSha: string,
+  file: string,
+): Buffer | null {
+  try {
+    return gitBuffer(root, ["show", `${baseSha}:${file}`]);
+  } catch {
+    return null;
+  }
+}
+
 /** One file's length on the base ref. `absent` means it is new there. */
 export function baseSizeOf(
   root: string,
   baseSha: string,
   file: string,
 ): BaseSize {
+  const content = baseContentOf(root, baseSha, file);
+  return content === null
+    ? { kind: "absent" }
+    : { kind: "existed", lines: countLinesOfBuffer(content) };
+}
+
+/**
+ * Files present on the base and gone from the working tree.
+ *
+ * The file-size ratchet has no use for these — a deleted file cannot have
+ * grown — but the function-length ratchet does: a function moved out of a file
+ * that this change then deleted keeps its base length as its ceiling, and that
+ * length can only be read from where it used to live.
+ */
+export function deletedFilesSinceBase(
+  root: string,
+  baseSha: string,
+): { ok: true; deleted: string[] } | { ok: false; error: string } {
   try {
-    return { kind: "existed", lines: countLinesOfBuffer(gitBuffer(root, ["show", `${baseSha}:${file}`])) };
-  } catch {
-    // `git show` fails for a path that does not exist in that tree, which is the
-    // ordinary new-file case rather than an error worth reporting.
-    return { kind: "absent" };
+    const raw = git(root, ["diff", "-M", "--name-only", "-z", "--diff-filter=D", baseSha]);
+    return { ok: true, deleted: raw.split("\0").filter(Boolean) };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message.split("\n")[0] : String(error);
+    return { ok: false, error: `Could not read the diff against ${baseSha}: ${detail}` };
   }
 }
 

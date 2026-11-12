@@ -68,40 +68,84 @@ export type SizeAllowance = {
   reason: string;
 };
 
+/**
+ * The same escape for the function-length ratchet (#4927): one function, not a
+ * whole file, may grow past its base-ref length. Written in the same fragment
+ * files, as `function: <path>#<name>` in place of `file: <path>`, so there is
+ * one allowance directory and one format rather than two.
+ */
+export type FunctionAllowance = {
+  source: string;
+  /** The production file the function lives in. */
+  file: string;
+  /** The function's name as the ratchet reports it, e.g. `Class.method`. */
+  name: string;
+  /** `<file>#<name>`, the key the ratchet matches on. */
+  key: string;
+  lines: number;
+  reason: string;
+};
+
 export type AllowanceProblem = { source: string; problem: string };
 
 export type AllowanceRead = {
   allowances: SizeAllowance[];
+  functionAllowances: FunctionAllowance[];
   /** Malformed input. A gate must not guess at what its input meant. */
   problems: AllowanceProblem[];
 };
 
-const FIELD = /^(file|lines|reason):(.*)$/;
+const FIELD = /^(file|function|lines|reason):(.*)$/;
 
-type Draft = { file?: string; lines?: string; reason?: string; started: number };
+type Key = "file" | "function" | "lines" | "reason";
+
+type Draft = {
+  /** Which key opened the entry: a whole file, or one function in one. */
+  subject: "file" | "function";
+  file?: string;
+  function?: string;
+  lines?: string;
+  reason?: string;
+  started: number;
+};
 
 function finishDraft(
   draft: Draft,
   source: string,
-  out: SizeAllowance[],
-  problems: AllowanceProblem[],
+  out: AllowanceRead,
 ): void {
+  const { problems } = out;
   const where = `${source} (entry starting at line ${draft.started})`;
-  const file = draft.file?.trim() ?? "";
+  const subject = draft[draft.subject]?.trim() ?? "";
   const lines = draft.lines?.trim() ?? "";
   const reason = draft.reason?.replace(/\s+/g, " ").trim() ?? "";
 
   const missing = [
-    file ? null : "file",
+    subject ? null : draft.subject,
     lines ? null : "lines",
     reason ? null : "reason",
   ].filter(Boolean);
   if (missing.length > 0) {
     problems.push({
       source,
-      problem: `${where} is missing ${missing.join(", ")} — every entry needs all three, so a reviewer can see which file, how long, and why`,
+      problem: `${where} is missing ${missing.join(", ")} — every entry needs all three, so a reviewer can see which ${draft.subject}, how long, and why`,
     });
     return;
+  }
+
+  let file = subject;
+  let name = "";
+  if (draft.subject === "function") {
+    const hash = subject.indexOf("#");
+    file = hash === -1 ? "" : subject.slice(0, hash).trim();
+    name = hash === -1 ? "" : subject.slice(hash + 1).trim();
+    if (!file || !name) {
+      problems.push({
+        source,
+        problem: `${where} names \`function: ${subject}\`; write \`function: <path>#<name>\`, the path and the name the check printed`,
+      });
+      return;
+    }
   }
 
   if (file.includes("\\") || file.startsWith("/") || file.includes("..")) {
@@ -126,7 +170,18 @@ function finishDraft(
     return;
   }
 
-  out.push({ source, file, lines: Number(lines), reason });
+  if (draft.subject === "function") {
+    out.functionAllowances.push({
+      source,
+      file,
+      name,
+      key: `${file}#${name}`,
+      lines: Number(lines),
+      reason,
+    });
+    return;
+  }
+  out.allowances.push({ source, file, lines: Number(lines), reason });
 }
 
 /**
@@ -140,12 +195,12 @@ function parseAllowanceFile(
   source: string,
   text: string,
 ): AllowanceRead {
-  const allowances: SizeAllowance[] = [];
-  const problems: AllowanceProblem[] = [];
+  const out: AllowanceRead = { allowances: [], functionAllowances: [], problems: [] };
+  const { problems } = out;
   const lines = text.replace(/\r\n/g, "\n").split("\n");
 
   let draft: Draft | null = null;
-  let lastKey: "file" | "lines" | "reason" | null = null;
+  let lastKey: Key | null = null;
 
   lines.forEach((raw, index) => {
     const lineNumber = index + 1;
@@ -161,18 +216,18 @@ function parseAllowanceFile(
       // encouraged; only the three keys are read.
       return;
     }
-    const key = match[1] as "file" | "lines" | "reason";
+    const key = match[1] as Key;
     const value = match[2] ?? "";
-    if (key === "file") {
-      if (draft) finishDraft(draft, source, allowances, problems);
-      draft = { file: value, started: lineNumber };
-      lastKey = "file";
+    if (key === "file" || key === "function") {
+      if (draft) finishDraft(draft, source, out);
+      draft = { subject: key, [key]: value, started: lineNumber };
+      lastKey = key;
       return;
     }
     if (!draft) {
       problems.push({
         source,
-        problem: `line ${lineNumber} sets \`${key}:\` before any \`file:\`; each entry starts with the file it is about`,
+        problem: `line ${lineNumber} sets \`${key}:\` before any \`file:\` or \`function:\`; each entry starts with what it is about`,
       });
       return;
     }
@@ -187,8 +242,8 @@ function parseAllowanceFile(
     lastKey = key;
   });
 
-  if (draft) finishDraft(draft, source, allowances, problems);
-  return { allowances, problems };
+  if (draft) finishDraft(draft, source, out);
+  return out;
 }
 
 /**
@@ -213,9 +268,12 @@ export function readSizeAllowances(root: string): AllowanceRead {
       .sort();
   } catch (error) {
     const code = (error as NodeJS.ErrnoException)?.code;
-    if (code === "ENOENT") return { allowances: [], problems: [] };
+    if (code === "ENOENT") {
+      return { allowances: [], functionAllowances: [], problems: [] };
+    }
     return {
       allowances: [],
+      functionAllowances: [],
       problems: [
         {
           source: ALLOWANCE_DIR,
@@ -226,6 +284,7 @@ export function readSizeAllowances(root: string): AllowanceRead {
   }
 
   const allowances: SizeAllowance[] = [];
+  const functionAllowances: FunctionAllowance[] = [];
   const problems: AllowanceProblem[] = [];
   for (const name of names) {
     const source = `${ALLOWANCE_DIR}/${name}`;
@@ -242,6 +301,7 @@ export function readSizeAllowances(root: string): AllowanceRead {
     }
     const parsed = parseAllowanceFile(source, text);
     allowances.push(...parsed.allowances);
+    functionAllowances.push(...parsed.functionAllowances);
     problems.push(...parsed.problems);
   }
 
@@ -265,27 +325,31 @@ export function readSizeAllowances(root: string): AllowanceRead {
   // which is the case the rule is actually about. Two entries in one file need
   // no liveness to judge — nobody writes them by accident in different changes —
   // so they stay here, where the parse already is.
-  for (const [source, entries] of groupBySource(allowances)) {
+  const subjects = [
+    ...allowances.map((a) => ({ source: a.source, subject: a.file, unit: "file" })),
+    ...functionAllowances.map((a) => ({ source: a.source, subject: a.key, unit: "function" })),
+  ];
+  for (const [source, entries] of groupBySource(subjects)) {
     const seen = new Set<string>();
-    for (const allowance of entries) {
-      if (seen.has(allowance.file)) {
+    for (const { subject, unit } of entries) {
+      if (seen.has(subject)) {
         problems.push({
           source,
-          problem: `${allowance.file} already has an allowance in ${source}; one file, one allowance`,
+          problem: `${subject} already has an allowance in ${source}; one ${unit}, one allowance`,
         });
         continue;
       }
-      seen.add(allowance.file);
+      seen.add(subject);
     }
   }
 
-  return { allowances, problems };
+  return { allowances, functionAllowances, problems };
 }
 
-function groupBySource(
-  allowances: readonly SizeAllowance[],
-): Map<string, SizeAllowance[]> {
-  const bySource = new Map<string, SizeAllowance[]>();
+function groupBySource<T extends { source: string }>(
+  allowances: readonly T[],
+): Map<string, T[]> {
+  const bySource = new Map<string, T[]>();
   for (const allowance of allowances) {
     const existing = bySource.get(allowance.source);
     if (existing) existing.push(allowance);
