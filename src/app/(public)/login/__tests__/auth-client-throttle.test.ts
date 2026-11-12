@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import { signIn } from "next-auth/react";
-import { authRateLimitedResponse, rateLimitedResponse } from "@/lib/rate-limit";
+import { rateLimitedResponse } from "@/lib/rate-limit";
+import { authRateLimitedResponse } from "@/lib/auth-rate-limit";
 import { ADDRESS_THROTTLED_CODE } from "@/lib/login-throttle-policy";
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));

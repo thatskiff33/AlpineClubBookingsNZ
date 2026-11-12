@@ -1,6 +1,7 @@
 import { handlers } from "@/lib/auth";
 import { NextRequest } from "next/server";
-import { applyRateLimit, authRateLimitedResponse, AUTH_RATE_LIMIT_EXEMPT_ACTIONS, rateLimiters } from "@/lib/rate-limit";
+import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { AUTH_RATE_LIMIT_EXEMPT_ACTIONS, authRateLimitedResponse } from "@/lib/auth-rate-limit";
 
 export const { GET } = handlers;
 
