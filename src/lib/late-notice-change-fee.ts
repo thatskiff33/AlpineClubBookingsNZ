@@ -26,7 +26,7 @@ import { calculateChangeFee } from "@/lib/change-fee";
 /** Whether a date edit of this booking can incur a late-notice change fee. */
 export function lateNoticeChangeFeeApplies(booking: {
   status: string;
-  payment?: BookingPaymentState | null;
+  payment: BookingPaymentState | null;
 }): boolean {
   return isPaidLikeBookingStatus(booking.status) || hasCapturedPayment(booking.payment);
 }
@@ -41,7 +41,7 @@ export async function lateNoticeChangeFee(input: {
     status: string;
     checkIn: Date;
     finalPriceCents: number;
-    payment?: BookingPaymentState | null;
+    payment: BookingPaymentState | null;
   };
   lodgeId: string | null;
   newCheckIn: Date;
