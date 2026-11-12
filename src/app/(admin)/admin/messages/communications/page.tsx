@@ -18,6 +18,12 @@ import { requireInstant } from "@/lib/club-time";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Radio } from "@/components/ui/radio";
+import {
+  BULK_EMAIL_CATEGORIES,
+  BULK_EMAIL_CATEGORY_LABELS,
+  type BulkEmailCategory,
+} from "@/lib/email/bulk-audience";
 import {
   Select,
   SelectContent,
@@ -37,6 +43,29 @@ interface HistoryEntry {
   sentAt: string;
 }
 
+interface RecipientCounts {
+  totalRecipients: number;
+  eligibleRecipients: number;
+  optedOut: number;
+  neverOptedIn: number;
+}
+
+/**
+ * #4987: "opted out" is only said of members who turned the category off; a
+ * member with no saved preferences "never opted in". Shared by the pre-send
+ * preview and the post-send confirmation so the two always read alike.
+ */
+function describeExcluded({ optedOut, neverOptedIn }: RecipientCounts) {
+  const parts: string[] = [];
+  if (optedOut > 0) parts.push(`${optedOut} opted out`);
+  if (neverOptedIn > 0) parts.push(`${neverOptedIn} never opted in`);
+  return parts.length > 0 ? ` (${parts.join(", ")})` : "";
+}
+
+function recipientNoun(count: number) {
+  return count === 1 ? "member" : "members";
+}
+
 export default function CommunicationsPage() {
   // When a communication was sent — real INSTANTS, projected through the club's persisted zone rather
   // than the viewer's or the build's (CT-4, #2870; INV-CONFIG-002).
@@ -47,6 +76,11 @@ export default function CommunicationsPage() {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [recipientFilter, setRecipientFilter] = useState("all");
+  // #4987: no default — the sender chooses club notice or newsletter for every
+  // message, because the two reach different members.
+  const [category, setCategory] = useState<BulkEmailCategory | null>(null);
+  const [preview, setPreview] = useState<RecipientCounts | null>(null);
+  const [previewError, setPreviewError] = useState(false);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<{
     success: boolean;
@@ -60,6 +94,28 @@ export default function CommunicationsPage() {
     fetchRateLimit();
     fetchHistory();
   }, []);
+
+  useEffect(() => {
+    if (!category) return;
+    let stale = false;
+    setPreview(null);
+    setPreviewError(false);
+    const params = new URLSearchParams({ recipientFilter, category });
+    fetch(`/api/admin/communications/preview?${params}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error("preview failed");
+        return (await res.json()) as RecipientCounts;
+      })
+      .then((counts) => {
+        if (!stale) setPreview(counts);
+      })
+      .catch(() => {
+        if (!stale) setPreviewError(true);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [recipientFilter, category]);
 
   async function fetchRateLimit() {
     try {
@@ -90,7 +146,7 @@ export default function CommunicationsPage() {
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
-    if (!canEdit) return;
+    if (!canEdit || !category) return;
     setSending(true);
     setResult(null);
 
@@ -98,7 +154,7 @@ export default function CommunicationsPage() {
       const res = await fetch("/api/admin/communications/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject, body, recipientFilter }),
+        body: JSON.stringify({ subject, body, recipientFilter, category }),
       });
 
       const data = await res.json();
@@ -106,7 +162,7 @@ export default function CommunicationsPage() {
       if (res.ok) {
         setResult({
           success: true,
-          message: `Sent to ${data.eligibleRecipients} recipients (${data.filteredByPreference} opted out).`,
+          message: `Sent to ${data.eligibleRecipients} ${recipientNoun(data.eligibleRecipients)}${describeExcluded(data)}.`,
         });
         setSubject("");
         setBody("");
@@ -147,7 +203,8 @@ export default function CommunicationsPage() {
       <div>
         <h1 className="text-2xl font-bold text-foreground">Communications</h1>
         <p className="text-sm text-muted-foreground">
-          Send bulk emails to club members. Respects notification preferences.
+          Send club notices or newsletters to members. Respects each member&apos;s
+          notification preferences.
         </p>
       </div>
 
@@ -156,8 +213,8 @@ export default function CommunicationsPage() {
         <CardHeader>
           <CardTitle>Compose Message</CardTitle>
           <CardDescription>
-            Only members who have opted in to marketing emails will receive this
-            message. Rate limited to {bulkSendLimit} send
+            Choose whether this is a club notice or a newsletter: each reaches
+            different members. Rate limited to {bulkSendLimit} send
             {bulkSendLimit === 1 ? "" : "s"} per hour.
           </CardDescription>
         </CardHeader>
@@ -195,6 +252,48 @@ export default function CommunicationsPage() {
               </Select>
             </div>
 
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium">Kind of message</legend>
+              {BULK_EMAIL_CATEGORIES.map((option) => (
+                <label
+                  key={option}
+                  htmlFor={`category-${option}`}
+                  className="flex items-start gap-2 text-sm"
+                >
+                  <Radio
+                    id={`category-${option}`}
+                    name="category"
+                    className="mt-0.5"
+                    value={option}
+                    checked={category === option}
+                    onChange={() => setCategory(option)}
+                  />
+                  <span>
+                    <span className="font-medium">
+                      {BULK_EMAIL_CATEGORY_LABELS[option].label}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      {BULK_EMAIL_CATEGORY_LABELS[option].description}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+
+            <p
+              className="text-sm text-muted-foreground"
+              data-testid="communications-recipient-preview"
+              aria-live="polite"
+            >
+              {!category
+                ? "Choose the kind of message to see who will receive it."
+                : previewError
+                  ? "Could not count recipients. The send still applies each member's preferences."
+                  : preview
+                    ? `Will be sent to ${preview.eligibleRecipients} of ${preview.totalRecipients} ${recipientNoun(preview.totalRecipients)}${describeExcluded(preview)}.`
+                    : "Counting recipients..."}
+            </p>
+
             <div>
               <Label htmlFor="body">Message Body</Label>
               <Textarea
@@ -228,7 +327,7 @@ export default function CommunicationsPage() {
               canEdit={canEdit}
               describeReason={false}
               type="submit"
-              disabled={sending || !subject || !body}
+              disabled={sending || !subject || !body || !category}
             >
               {sending ? "Sending..." : "Send to Members"}
             </ViewOnlyActionButton>
