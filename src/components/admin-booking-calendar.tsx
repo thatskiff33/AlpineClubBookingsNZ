@@ -61,8 +61,6 @@ const ALL_STATUSES = [
   "WAITLIST_OFFERED",
 ] as const satisfies readonly BookingStatus[];
 
-
-
 // CELL_HEIGHT is the MINIMUM week-row height. Rows grow past it when a busy week
 // stacks more lanes than fit (issue #2088); quiet months keep the original 80px.
 const CELL_HEIGHT = 80;
