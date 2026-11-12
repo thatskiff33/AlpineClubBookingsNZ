@@ -87,6 +87,7 @@ describe("subscription invoice retry race DB safety guard (#3971)", () => {
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let retry: typeof import("@/lib/xero-operation-retry");
 let payloads: typeof import("@/lib/xero-operation-outbox-payload");
+let priorXeroModule: { xeroIntegration: boolean } | null = null;
 
 (RUN ? describe : describe.skip)(
   "membership subscription invoice retry — real PostgreSQL (#3971)",
@@ -169,6 +170,15 @@ let payloads: typeof import("@/lib/xero-operation-outbox-payload");
       ({ prisma } = await import("@/lib/prisma"));
       retry = await import("@/lib/xero-operation-retry");
       payloads = await import("@/lib/xero-operation-outbox-payload");
+      // #4986 (INV-INT-038): subscription invoicing refuses while Xero is off,
+      // and the module defaults to off. Switch it on for this suite; restored after.
+      priorXeroModule = await prisma.clubModuleSettings.findUnique({ where: { id: "default" }, select: { xeroIntegration: true } });
+      await prisma.clubModuleSettings.upsert({
+        where: { id: "default" },
+        create: { id: "default", xeroIntegration: true },
+        update: { xeroIntegration: true },
+        select: { id: true },
+      });
       await clearFixtures();
     });
 
@@ -177,7 +187,10 @@ let payloads: typeof import("@/lib/xero-operation-outbox-payload");
     });
 
     afterAll(async () => {
-      if (prisma) await clearFixtures();
+      if (!prisma) return;
+      await clearFixtures();
+      if (priorXeroModule) await prisma.clubModuleSettings.update({ where: { id: "default" }, data: priorXeroModule, select: { id: true } });
+      else await prisma.clubModuleSettings.deleteMany({ where: { id: "default" } });
     });
 
     it("requeues a pre-fix FAILED row as its bare queue type, same row and key, and the outbox reads the charge from localId", async () => {

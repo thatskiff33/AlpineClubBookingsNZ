@@ -27,6 +27,10 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
 vi.mock("@/lib/membership-subscription-billing", () => ({
   queueApprovedMembershipSubscriptionCharges: vi.fn(),
 }));
+// #4986: approval reads the Xero module; Xero on, so these pin the usual path.
+vi.mock("@/lib/xero-invoicing-guard", () =>
+  import("@/lib/__tests__/helpers/xero-invoicing-guard-mock"),
+);
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/induction", () => ({ createMemberInduction: vi.fn() }));
 vi.mock("@/lib/logger", () => ({
