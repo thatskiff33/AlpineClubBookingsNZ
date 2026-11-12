@@ -22,16 +22,17 @@ const verification: DataMigrationVerification = {
       name: "a least-privilege install whose default privileges give the application full table rights",
       seed: `
         CREATE ROLE ${ROLE} NOLOGIN;
-        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${ROLE};
-        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT TRUNCATE ON TABLES TO PUBLIC;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE, TRIGGER, REFERENCES ON TABLES TO ${ROLE};
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT TRUNCATE, TRIGGER, REFERENCES ON TABLES TO PUBLIC;
         GRANT SELECT, INSERT, UPDATE, DELETE ON "BookingLedgerLine" TO ${ROLE};
       `,
       expectations: [
         {
-          claim: "the application role keeps SELECT and INSERT, and loses UPDATE and DELETE, on the evidence table",
+          claim: "the application role keeps SELECT and INSERT, and loses UPDATE, DELETE, TRIGGER and REFERENCES, on the evidence table",
           sql: `SELECT ${right(`'${ROLE}'`, EVIDENCE, "SELECT")} AS "select", ${right(`'${ROLE}'`, EVIDENCE, "INSERT")} AS "insert",
-              ${right(`'${ROLE}'`, EVIDENCE, "UPDATE")} AS "update", ${right(`'${ROLE}'`, EVIDENCE, "DELETE")} AS "delete"`,
-          rows: [{ select: true, insert: true, update: false, delete: false }],
+              ${right(`'${ROLE}'`, EVIDENCE, "UPDATE")} AS "update", ${right(`'${ROLE}'`, EVIDENCE, "DELETE")} AS "delete",
+              ${right(`'${ROLE}'`, EVIDENCE, "TRIGGER")} AS "trigger", ${right(`'${ROLE}'`, EVIDENCE, "REFERENCES")} AS "references"`,
+          rows: [{ select: true, insert: true, update: false, delete: false, trigger: false, references: false }],
         },
         {
           claim: "PUBLIC keeps no right on the evidence table that could change a row",
