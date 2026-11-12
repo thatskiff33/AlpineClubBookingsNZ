@@ -77,6 +77,7 @@ export function BookingPaymentCards({
     paymentRequiredDescription,
     internetBankingPendingDescription,
     switchToInternetBankingDescription,
+    switchToInternetBankingConfirmDescription,
   } = messages;
   return (
     <>
@@ -353,6 +354,7 @@ export function BookingPaymentCards({
                 <SwitchToInternetBankingButton
                   bookingId={booking.id}
                   description={switchToInternetBankingDescription}
+                  confirmDescription={switchToInternetBankingConfirmDescription}
                 />
               </>
             )}
