@@ -2,7 +2,7 @@
 
 **Audience: agent.**
 
-Last reviewed **28 Oct 2026**. Owner decisions: #4429 and #4452; the parallel level comes from #4404.
+Last reviewed **12 Nov 2026**. Owner decisions: #4429, #4452 and #4898; the parallel level comes from #4404.
 
 This page is for any agent (Claude Code, Codex, or a fresh session) acting as the
 orchestrator for the Sekreton lane on `thatskiff33/AlpineClubBookingsNZ`.
@@ -58,27 +58,25 @@ record. Only #4404's parallel level still applies.
 - A claim with no `LANE-SYNC:` or push for 72 hours is released automatically
   (owner decision, 28 Oct 2026, #4452). Run `pnpm run lanes:stale` on every pass
   and post the `RELEASE:` comments it lists.
-- The bugs `parked-by-ledger` (#4451 group 2) stay parked until #4461's ledger work
-  removes them, unless the owner overrides one by name.
+- No bug is parked: "every formerly parked Xero and payment bug is released"
+  (owner, 11 Nov 2026, #4898).
+- "One orchestrator drives the Sekreton project, the cloud session. The local lane
+  stops starting or merging Sekreton tasks" (owner, 11 Nov 2026, #4898, #4480).
 
 ## Where it runs
 
-On the owner's WSL host, as systemd user timers. They run outside the repository, so no
-tracked file holds credentials. Each timer runs `claude -p` headless under `flock`:
+**The claude.ai cloud session is the one orchestrator** (#4898, above). Routines fire
+into it at :07 and :37, plus the digest. Each Routine's prompt names this page and says
+to run "One pass" exactly as written; it never lists its own focus issues, since
+priorities belong on this page and in the issues. There, the handoff and log are a
+signed `LANE-SYNC:` on #4450 rather than `state/`.
 
-- `sekreton-pass.timer` runs a pass at :07 and :37 past every hour;
-- `sekreton-digest.timer` runs the digest at 05:45 and 20:45.
-
-The runner, its prompts and its `state/` folder (`HANDOFF.md`, `log.md`, the
-`task_changes` cursor) live in `~/src/sekreton-orchestrator/`. An empty `state/PAUSE`
-file skips every run until it is removed. Another host can run the same loop with any
-scheduler. The contract is this page.
-
-A claude.ai cloud session can run it instead, with Routines firing into that session
-at :07 and :37, plus the digest. There, the handoff is a signed `LANE-SYNC:` on #4450
-rather than `state/HANDOFF.md`. Each Routine's prompt names this page and says to run
-"One pass" exactly as written. The prompt never lists its own focus issues: priorities
-belong on this page and in the issues.
+Another host runs this loop only if the owner moves the orchestrator there. The
+original runner shows the shape: systemd user timers on the owner's WSL host, outside
+the repository so no tracked file holds credentials, each running `claude -p` under
+`flock` (passes at :07 and :37, the digest at 05:45 and 20:45). Its `state/` folder
+(`HANDOFF.md`, `log.md`, the `task_changes` cursor) lives in
+`~/src/sekreton-orchestrator/`; an empty `state/PAUSE` file skips every run.
 
 ## One pass (runs every 30 minutes; a lock prevents overlap)
 
@@ -148,7 +146,7 @@ events.
 ### Skip only for
 
 An open issue is not started this pass only when one of these is true:
-- it carries `parked-by-ledger`, or the owner has reserved it by name;
+- the owner has reserved it by name;
 - an owner decision on it is pending;
 - another lane holds a live claim (under 72 hours);
 - a recorded predecessor hasn't merged;

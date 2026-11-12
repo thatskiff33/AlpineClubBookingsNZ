@@ -675,7 +675,7 @@ reconstruction tool, prove it with post-switch events and parity. After H a
 schema rollback alone does not restore money. Never restore a production backup
 as an automatic downgrade and lose intervening events.
 
-## 9. Parked-bug acceptance matrix
+## 9. Bug-scenario acceptance matrix
 
 Every original triage scenario remains an executable acceptance requirement,
 even if a narrow fix has since shipped. This table is the complete 33-row list
@@ -956,9 +956,12 @@ M12 is the existing explicitly multi-PR reader programme; M13 and M15 likewise
 split by complete document/decision cohorts when filed. Each PR must have one
 bounded owner-approved issue scope, independently useful output and its own
 rollback. The ordering does not authorise parallel writers on a shared financial
-invariant. #4451 group-1 harm fixes continue under their own authority; parked
-bugs close only when their section 9 scenarios actually pass through the real
-new writers, PostgreSQL and #4460 fakes.
+invariant. No bug waits for the ledger. The owner decision of 11 Nov 2026,
+recorded on [#4898](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4898):
+"every formerly parked Xero and payment bug is released. Each may be fixed now,
+ordered by harm, ahead of the ledger steps." Section 9's scenarios remain
+acceptance tests the new writers must pass through PostgreSQL and the #4460
+fakes.
 
 ## 12. Related references
 
