@@ -23,17 +23,20 @@ import { useClubFormat } from "@/components/club-format-provider";
 // file's header for why an allowance was not the answer.
 import {
   CardPaymentUnavailableNotice,
+  CheckingPaymentCard,
   FinancialReviewNotice,
   formatLinkExpiry,
   internetBankingHeading,
   NarrativeCard,
   paymentRecoveryForRefusal,
+  RedirectFailedNotice,
   toneForState,
   type Narrative,
   type PaymentLinkContext,
   type PaymentRecovery,
 } from "./pay-link-presentation";
 import { checkCardSuccess } from "./card-success-check";
+import { takeStripeReturn } from "./stripe-return";
 import { PreviousPaymentRefundingNotice } from "@/components/previous-payment-refunding-notice";
 /*
   #3194 (epic #2797): the sentences a member reads when their saved change is
@@ -69,6 +72,7 @@ export default function PayByLinkPage() {
   const [paymentComplete, setPaymentComplete] = useState(false);
   const [previousPaymentRefunding, setPreviousPaymentRefunding] = useState(false); // #4300
   const [checkingPayment, setCheckingPayment] = useState(false); // #4300: never the pay buttons after a success
+  const [redirectFailed, setRedirectFailed] = useState(false); // #4955: the provider declined or was cancelled
   const [refreshState, setRefreshState] = useState<"idle" | "sending" | "sent">(
     "idle"
   );
@@ -90,7 +94,8 @@ export default function PayByLinkPage() {
         if (!res.ok) {
           setLoadError(data.error || "This payment link is not valid.");
         } else {
-          setContext(data);
+          // #4955: a return check that has already read the context wins.
+          setContext((current) => current ?? data);
         }
       })
       .catch(() => {
@@ -104,6 +109,15 @@ export default function PayByLinkPage() {
       cancelled = true;
     };
   }, [token]);
+
+  // #4955: the redirect exit of a Stripe confirmation. Declared after the
+  // context fetch, so that fetch is already in flight when the check starts.
+  useEffect(() => {
+    const stripeReturn = takeStripeReturn();
+    if (stripeReturn.kind === "check") void afterCardSuccess(stripeReturn.intentId);
+    else if (stripeReturn.kind === "failed") setRedirectFailed(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per page load; the URL is read and cleared
+  }, []);
 
   useEffect(() => {
     fetch("/api/booking-messages")
@@ -150,6 +164,7 @@ export default function PayByLinkPage() {
   }
 
   // #4300: after a card success, ask the server what it did (`checkCardSuccess`).
+  // #4955: also a `processing` result and a redirect return - both exits.
   async function afterCardSuccess(paidIntentId: string) {
     setCheckingPayment(true);
     const outcome = await checkCardSuccess(token, paidIntentId);
@@ -196,6 +211,8 @@ export default function PayByLinkPage() {
       );
     }
   }
+
+  if (checkingPayment) return <CheckingPaymentCard />;
 
   if (loading) {
     return (
@@ -352,6 +369,10 @@ export default function PayByLinkPage() {
   }
 
   const payable = context.payable;
+  const confirmed = (paidIntentId: string) => {
+    setClientSecret(null);
+    void afterCardSuccess(paidIntentId);
+  };
 
   return (
     <Card className="w-full max-w-lg">
@@ -424,17 +445,14 @@ export default function PayByLinkPage() {
               returnUrl={typeof window !== "undefined" ? window.location.href : ""}
               // #4300: the server says what the payment did - settled, or (an
               // intent an edit superseded) going back with a fresh one to pay.
-              onSuccess={(paidIntentId) => {
-                setClientSecret(null);
-                void afterCardSuccess(paidIntentId);
-              }}
+              onSuccess={confirmed}
+              onProcessing={confirmed}
               onError={() => undefined}
             />
           </StripeProvider>
-        ) : checkingPayment ? (
-          <p className="text-sm text-muted-foreground">Checking your payment...</p>
         ) : (
           <div className="space-y-3">
+            {redirectFailed ? <RedirectFailedNotice /> : null}
             {payable.cardPaymentAvailable !== false ? (
               <Button onClick={startCardPayment} disabled={intentLoading}>
                 {intentLoading ? "Preparing..." : "Pay by card"}
