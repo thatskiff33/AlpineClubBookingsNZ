@@ -424,7 +424,8 @@ const FIGURES = {
    * 377 -> 378 (#4162): the stuck-states page's "Record the answer" on a voided
    * bank refund note. MEASURED by re-running this census.
    */
-  callSites: 388, // 386 -> 388 (#4368): Stuck States' "Try the card again" and "Nothing left owed", under the dead card refund panel's own banner. MEASURED. // #4457 adds privacy retention Edit/Save to #4555’s Xero actions. 378/373 -> 381 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #58's one are disjoint from upstream's. MEASURED by re-running this census on the merged tree.
+  // 12 Nov 2026, #4971: 388 -> 393. Setup gates its five support write controls. MEASURED by running this census.
+  callSites: 393, // 386 -> 388 (#4368): Stuck States' "Try the card again" and "Nothing left owed", under the dead card refund panel's own banner. MEASURED. // #4457 adds privacy retention Edit/Save to #4555’s Xero actions. 378/373 -> 381 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #58's one are disjoint from upstream's. MEASURED by re-running this census on the merged tree.
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -481,7 +482,8 @@ const FIGURES = {
    */
   // 315 -> 317 (#62): the Central lodge card's two, static opt-outs (below).
   // 317 -> 318 (#58): the Other lodges panel's Hide, a vouched opt-out.
-  optOuts: 333, // 331 -> 333 (#4368): the same two, static opt-outs. MEASURED. // #4457 adds two section-banner opt-outs. 323/318 -> 326 (central-server lane, 20 Oct 2026). MEASURED.
+  // 12 Nov 2026, #4971: 333 -> 338. The five Setup controls use their support section banner. MEASURED by running this census.
+  optOuts: 338, // 331 -> 333 (#4368): the same two, static opt-outs. MEASURED. // #4457 adds two section-banner opt-outs. 323/318 -> 326 (central-server lane, 20 Oct 2026). MEASURED.
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -572,7 +574,8 @@ const FIGURES = {
    * 286 -> 287 (#4162): "Record the answer" sits beside the voided bank refund
    * notes panel's own banner. MEASURED by re-running this census.
    */
-  staticOptOuts: 295, // 293 -> 295 (#4368): the dead card refund panel's "Try the card again" and "Nothing left owed", under its own banner. MEASURED. // 294 -> 293 (#4467): the committee role form's Save Role moved to its own file and is render-site vouched by the committee page. MEASURED. // #4457 adds two local-banner opt-outs. 287/283 -> 289 (central-server lane, 20 Oct 2026): the Central lodge card's two. MEASURED.
+  // 12 Nov 2026, #4971: 295 -> 300. The Setup controls and support banner share one file. MEASURED by running this census.
+  staticOptOuts: 300, // 293 -> 295 (#4368): the dead card refund panel's "Try the card again" and "Nothing left owed", under its own banner. MEASURED. // 294 -> 293 (#4467): the committee role form's Save Role moved to its own file and is render-site vouched by the committee page. MEASURED. // #4457 adds two local-banner opt-outs. 287/283 -> 289 (central-server lane, 20 Oct 2026): the Central lodge card's two. MEASURED.
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -667,7 +670,8 @@ const FIGURES = {
    * 99 -> 100 (#4162): the stuck-states page's voided bank refund notes panel,
    * finance-gated inside a support page for the same reason.
    */
-  bannerComponents: 105, // 104 -> 105 (#4368): "Card refunds paid back twice" moved out of the dead card refund panel into its own file, banner and all. MEASURED. // #4457 adds the retention banner alongside #4555’s Xero banners. 100/99 -> 101 (central-server lane, 20 Oct 2026): the Central lodge card. MEASURED.
+  // 12 Nov 2026, #4971: 105 -> 106. Setup adds its support section banner; the lodge card keeps its own. MEASURED by running this census.
+  bannerComponents: 106, // 104 -> 105 (#4368): "Card refunds paid back twice" moved out of the dead card refund panel into its own file, banner and all. MEASURED. // #4457 adds the retention banner alongside #4555’s Xero banners. 100/99 -> 101 (central-server lane, 20 Oct 2026): the Central lodge card. MEASURED.
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older
@@ -2921,7 +2925,7 @@ describe("view-only section banner coverage (#2160)", () => {
     ).toEqual([]);
   });
 
-  it("never nests one banner-bearing component inside another", () => {
+  it("never nests banners covering the same permission area", () => {
     /*
       The coverage rule above is asserted per FILE by text presence, so it is
       blind BY CONSTRUCTION to the opposite defect: two banners covering the
@@ -2935,6 +2939,11 @@ describe("view-only section banner coverage (#2160)", () => {
       is exactly where a reader needs to see it. EVERY render site of the child
       is checked, not just the first, so a second copy added below a compliant
       one can not ride on it.
+
+      #4971: Setup embeds LodgeCapacityCard, whose banner covers lodge rather
+      than support. Both must remain: support edit does not imply lodge edit
+      (or the reverse). The sole cross-area exception below checks each hook
+      binding and every banner/button gate; it never suppresses either banner.
 
       Two tabs of one `<AdminPageTabs>` are not nested: only the open tab is
       mounted. A child rendered only as a tab's `content`, in a file whose
@@ -2989,6 +2998,25 @@ describe("view-only section banner coverage (#2160)", () => {
           // The file has a banner somewhere; only THIS export matters.
           const childSource = stripComments(readFileSync(target, "utf8"));
           if (!componentRendersBanner(childSource, spec)) continue;
+
+          if (
+            parent.rel === "app/(admin)/admin/setup/setup-page-client.tsx" &&
+            relative(SRC, target).split(sep).join("/") === "components/admin/lodge-capacity-card.tsx" &&
+            spec === "LodgeCapacityCard"
+          ) {
+            // Separate areas, not duplicate explanations. Fail if either scope
+            // or any banner/control binding changes, rather than silently
+            // allowing a new same-area nesting through this exception.
+            for (const [source, area] of [[parent.source, "support"], [childSource, "lodge"]]) {
+              expect(source).toContain(`const canEdit = useAdminAreaEditAccess("${area}")`);
+              for (const name of ["AdminViewOnlySectionBanner", "ViewOnlyActionButton"]) {
+                const gates = openingTags(source, name);
+                expect(gates.length).toBeGreaterThan(0);
+                for (const gate of gates) expect(gate).toMatch(/canEdit=\{canEdit\}/);
+              }
+            }
+            continue;
+          }
 
           offenders.push(
             `${parent.rel} renders <${spec}> from ${relative(SRC, target).split(sep).join("/")} ` +

@@ -1,0 +1,1 @@
+- **Setup explains view-only access before an officer tries to make a change (#4971).** Officers without support edit access now see a view-only banner and disabled checklist, provider-test and completion buttons. Refresh and permitted setup links remain available.
