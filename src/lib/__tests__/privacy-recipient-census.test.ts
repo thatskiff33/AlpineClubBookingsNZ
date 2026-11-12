@@ -76,8 +76,8 @@ describe("privacy recipient register census", () => {
   });
 
   it("classifies literal HTTPS hosts in every server-capable source file", () => {
-    const registered = new Set(Object.values(PRIVACY_RECIPIENTS).flatMap((entry) => [...entry.hosts]));
-    const exceptions = new Set(Object.keys(NON_RECIPIENT_HTTPS_HOSTS));
+    const registered = new Set<string>(Object.values(PRIVACY_RECIPIENTS).flatMap((entry) => [...entry.hosts]));
+    const exceptions = new Set<string>(Object.keys(NON_RECIPIENT_HTTPS_HOSTS));
     for (const [host, reason] of Object.entries(NON_RECIPIENT_HTTPS_HOSTS)) {
       expect(reason.trim(), host).not.toBe("");
       expect(registered.has(host), `${host} must have one classification`).toBe(false);

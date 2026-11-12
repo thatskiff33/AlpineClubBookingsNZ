@@ -269,9 +269,9 @@ describe("moving credentials (#4456 PR 2)", () => {
 
   it("leaves an unreadable row, a vanished row and one already moved alone", async () => {
     mocks.credentialRows = [
-      { provider: "a", key: "unreadable" },
-      { provider: "a", key: "gone" },
-      { provider: "a", key: "moved-meanwhile" },
+      { provider: "google", key: "unreadable" },
+      { provider: "google", key: "gone" },
+      { provider: "google", key: "moved-meanwhile" },
     ];
     mocks.readIntegrationCredentialRow
       .mockResolvedValueOnce({ status: "needs_reentry", reason: "r", version: "v" })
@@ -286,9 +286,17 @@ describe("moving credentials (#4456 PR 2)", () => {
   });
 
   it("lets any other error stop the run", async () => {
-    mocks.credentialRows = [{ provider: "a", key: "b" }];
+    mocks.credentialRows = [{ provider: "google", key: "b" }];
     mocks.setIntegrationCredentialInTransaction.mockRejectedValueOnce(new Error("database went away"));
     await expect(run()).rejects.toThrow("database went away");
+  });
+
+  it.each([false, true])("refuses a row in an unregistered namespace rather than leaving it on the old key (dry run %s, #4918)", async (dryRun) => {
+    mocks.credentialRows = [{ provider: "retired-provider", key: "api_key" }];
+    await expect(run({ dryRun })).rejects.toThrow(ReencryptRefusedError);
+    await expect(run({ dryRun })).rejects.toThrow('unregistered namespace "retired-provider"');
+    expect(mocks.readIntegrationCredentialRow).not.toHaveBeenCalled();
+    expect(mocks.setIntegrationCredentialInTransaction).not.toHaveBeenCalled();
   });
 });
 
@@ -389,7 +397,7 @@ describe("a dry run writes nothing (#4456 PR 2)", () => {
   it("reads, counts what would move, and claims, fences, re-wraps and retires nothing", async () => {
     mocks.credentialRows = [
       { provider: "xero-oauth", key: "token-set" },
-      { provider: "a", key: "dead" },
+      { provider: "google", key: "dead" },
     ];
     mocks.readIntegrationCredentialRow
       .mockResolvedValueOnce(configured())

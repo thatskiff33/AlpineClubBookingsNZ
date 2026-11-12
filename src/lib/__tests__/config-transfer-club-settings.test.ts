@@ -1765,12 +1765,18 @@ describe("a pre-#2543 bundle's `enabled` key still imports to the right mode (#2
   });
 });
 
-
-describe("privacy hosting config portability", () => {
+describe("privacy hosting config portability (#4918)", () => {
   it("exports and imports both disclosure values", async () => {
     const values = { hostingProvider: "Example Host", dataLocation: "New Zealand" };
     const db = stubDb({ privacyHostingSettings: values });
-    const exported = await buildConfigExport({ db, categories: ["club-settings"], format: CLUB_FORMAT_TEST });
+    const exported = await buildConfigExport({
+      db,
+      categories: ["club-settings"],
+      includeDoorCodes: false,
+      appVersion: "0.10.1",
+      prismaMigration: null,
+      generatedAt: "2026-07-08T00:00:00.000Z",
+    });
     const { files } = readBundle(exported.zip);
     expect(JSON.parse(strFromU8(files.get("club-settings/privacy-hosting-settings.json")!))).toEqual(values);
     const { tx, delegates } = stubTx({});
