@@ -165,6 +165,12 @@ outstanding.
 
 ## Manual Staging Pass (2026-07-04)
 
+- Dialogs now cap their height to the viewport and scroll inside while the page
+  behind is locked (#4967). At 400% browser zoom (about 320 × 256 CSS pixels),
+  open a long confirmation or manual-refund completion dialog, scroll to its
+  final button and activate it. Scroll back to the top to check the close button;
+  check that dropdowns open fully and existing capped dialogs still fit.
+
 Run against the local staging compose stack at latest `main` (post-#1123):
 axe-core (WCAG 2.1 AA + best-practice) across 17 pages — public (`/`,
 `/login`, `/register`, `/forgot-password`, `/booking-requests`), the
