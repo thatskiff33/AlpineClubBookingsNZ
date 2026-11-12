@@ -5,7 +5,7 @@ import { starterPageContent } from "../../../prisma/starter-page-content";
 
 describe("privacy hosting disclosure", () => {
   it.each([
-    [null, null, "The company that hosts this System and its database. Ask our Privacy Officer which company this is and in which country your information is held."],
+    [null, null, "A hosting company runs this System and its database. Ask our Privacy Officer which company this is and in which country your information is held."],
     ["Example Hosting", null, "Example Hosting hosts this System and its database. Ask our Privacy Officer in which country your information is held."],
     [null, "New Zealand", "The company that hosts this System and its database holds your information in New Zealand. Ask our Privacy Officer which company this is."],
     ["Example Hosting", "New Zealand", "Example Hosting hosts this System and its database; your information is held in New Zealand."],

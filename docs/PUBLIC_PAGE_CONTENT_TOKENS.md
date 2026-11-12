@@ -179,7 +179,7 @@ and the site footer (they render an escaped string in place, not a block):
   | set | set | "*Provider* hosts this System and its database; your information is held in *place*." |
   | set | blank | "*Provider* hosts this System and its database. Ask our Privacy Officer in which country your information is held." |
   | blank | set | "The company that hosts this System and its database holds your information in *place*. Ask our Privacy Officer which company this is." |
-  | blank | blank | "The company that hosts this System and its database. Ask our Privacy Officer which company this is and in which country your information is held." |
+  | blank | blank | "A hosting company runs this System and its database. Ask our Privacy Officer which company this is and in which country your information is held." |
 
   An app release that does not know a token leaves it as typed, so an older
   release shows the raw `{{data-hosting}}` braces, not a blank. The starter

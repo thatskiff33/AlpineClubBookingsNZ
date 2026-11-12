@@ -17,7 +17,7 @@ import {
 } from "@/components/admin/view-only-action";
 import {
   PRIVACY_HOSTING_TEXT_LIMIT,
-  privacyHostingSchema,
+  privacyHostingTextSchema,
   type PrivacyHostingValues,
 } from "@/lib/privacy-hosting";
 
@@ -52,7 +52,7 @@ function toDraft(settings: PrivacyHostingValues): Draft {
 
 /** One field's value as the route would store it, or `undefined` when the route would refuse it. */
 function stored(value: string): string | null | undefined {
-  const parsed = privacyHostingSchema.shape.hostingProvider.safeParse(value);
+  const parsed = privacyHostingTextSchema.safeParse(value);
   return parsed.success ? parsed.data : undefined;
 }
 

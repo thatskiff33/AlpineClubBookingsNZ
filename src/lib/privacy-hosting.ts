@@ -1,8 +1,11 @@
 import { z } from "zod";
 
 export const PRIVACY_HOSTING_TEXT_LIMIT = 120;
-// Check before trimming: a newline at either end must not be silently accepted.
-const disclosureText = z.string()
+/**
+ * One disclosure field: what the admin route stores, or a refusal. Checked
+ * before trimming, so a newline at either end is refused, not silently dropped.
+ */
+export const privacyHostingTextSchema = z.string()
   .refine(value => !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(value), "Use one line without control characters")
   .transform(value => value.trim())
   .pipe(z.string().max(PRIVACY_HOSTING_TEXT_LIMIT))
@@ -10,8 +13,8 @@ const disclosureText = z.string()
   .nullable();
 
 export const privacyHostingSchema = z.object({
-  hostingProvider: disclosureText,
-  dataLocation: disclosureText,
+  hostingProvider: privacyHostingTextSchema,
+  dataLocation: privacyHostingTextSchema,
 }).strict();
 
 export type PrivacyHostingValues = z.infer<typeof privacyHostingSchema>;
@@ -30,5 +33,5 @@ export function dataHostingSentence({ hostingProvider, dataLocation }: PrivacyHo
   if (dataLocation) {
     return `The company that hosts this System and its database holds your information in ${dataLocation}. Ask our Privacy Officer which company this is.`;
   }
-  return "The company that hosts this System and its database. Ask our Privacy Officer which company this is and in which country your information is held.";
+  return "A hosting company runs this System and its database. Ask our Privacy Officer which company this is and in which country your information is held.";
 }
