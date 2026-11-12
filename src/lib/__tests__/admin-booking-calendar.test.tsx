@@ -87,6 +87,12 @@ const calendarResponse = {
   availability: {},
 };
 
+const reviewBooking = {
+  id: "booking-review", memberName: "School Quote",
+  checkIn: isoDay(5), checkOut: isoDay(7),
+  status: "AWAITING_REVIEW", guestCount: 20,
+};
+
 describe("AdminBookingCalendar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -104,6 +110,63 @@ describe("AdminBookingCalendar", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     window.localStorage.clear();
+  });
+
+  it.each([false, true])("shows Awaiting Review with legacy preference=%s", async (legacy) => {
+    if (legacy) window.localStorage.setItem("admin-calendar-enabled-statuses", '["CANCELLED"]');
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({ ...calendarResponse, bookings: [...calendarResponse.bookings, reviewBooking] }),
+    } as Response);
+    render(<AdminBookingCalendar />);
+    await screen.findByText(/School Quote/);
+    expect(screen.getAllByTitle(/School Quote/)[0]!.className).toContain("bg-cat2-3");
+    expect(screen.getByRole("button", { name: "Awaiting Review" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getAllByText("Awaiting Review")).toHaveLength(2);
+    if (legacy) {
+      expect(screen.queryByText(/Paula Paid/)).toBeNull();
+      expect(screen.getByText(/Casey Cancelled/)).toBeTruthy();
+      expect(window.localStorage.getItem("admin-calendar-enabled-statuses")).toBeNull();
+      expect(JSON.parse(window.localStorage.getItem("admin-calendar-hidden-statuses")!)).toContain("PAID");
+    }
+  });
+
+  it("keeps Awaiting Review in the overflow day's booking list", async () => {
+    const busy = concurrentResponse(6);
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({ ...busy, bookings: [...busy.bookings, reviewBooking] }),
+    } as Response);
+    render(<AdminBookingCalendar />);
+    const more = await screen.findAllByRole("button", { name: /more/ });
+    fireEvent.click(more[0]!);
+    expect(within(screen.getByRole("dialog")).getByText(/School Quote/)).toBeTruthy();
+  });
+
+  it("falls back to the defaults when an old preference holds no known status", async () => {
+    window.localStorage.setItem("admin-calendar-enabled-statuses", '["NOT_A_STATUS"]');
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({ ...calendarResponse, bookings: [...calendarResponse.bookings, reviewBooking] }),
+    } as Response);
+    render(<AdminBookingCalendar />);
+    await screen.findByText(/Paula Paid/);
+    expect(screen.getByText(/School Quote/)).toBeTruthy();
+    expect(screen.queryByText(/Casey Cancelled/)).toBeNull();
+    expect(JSON.parse(window.localStorage.getItem("admin-calendar-hidden-statuses")!)).toEqual(["CANCELLED"]);
+  });
+
+  it("restores hidden choices and ignores unknown stored statuses", async () => {
+    window.localStorage.setItem("admin-calendar-hidden-statuses", '["AWAITING_REVIEW","NOT_A_STATUS",42]');
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({ ...calendarResponse, bookings: [...calendarResponse.bookings, reviewBooking] }),
+    } as Response);
+    render(<AdminBookingCalendar />);
+    await screen.findByText(/Paula Paid/);
+    expect(screen.queryByText(/School Quote/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Awaiting Review" }).getAttribute("aria-pressed")).toBe("false");
+    expect(JSON.parse(window.localStorage.getItem("admin-calendar-hidden-statuses")!)).toEqual(["AWAITING_REVIEW"]);
   });
 
   it("hides cancelled bookings by default with the Cancelled pill off", async () => {
