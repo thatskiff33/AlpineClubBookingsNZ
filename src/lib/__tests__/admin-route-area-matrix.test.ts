@@ -286,6 +286,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/display/templates": "lodge",
   "/api/admin/display/templates/[id]": "lodge",
   "/api/admin/email-failures/[id]/reissue-token": "support",
+  "/api/admin/email-failures/[id]/retry": "support",
   "/api/admin/email-failures/[id]/review": "support",
   "/api/admin/email-settings": "support",
   "/api/admin/email-suppressions": "support",

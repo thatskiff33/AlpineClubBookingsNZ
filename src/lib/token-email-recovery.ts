@@ -56,7 +56,7 @@ interface TokenEmailRecoveryQueueItem {
   reissuedById: string | null;
 }
 
-function isTokenRecoveryTemplate(
+export function isTokenRecoveryTemplate(
   templateName: string,
 ): templateName is TokenEmailRecoveryTemplate {
   return TOKEN_EMAIL_RECOVERY_TEMPLATE_SET.has(templateName);

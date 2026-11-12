@@ -14,3 +14,11 @@ import type { Prisma } from "@prisma/client";
 export const RETAINS_REPLAYABLE_EMAIL_BODY = {
   OR: [{ htmlBody: { not: null } }, { bookingRetryHtmlBody: { not: null } }],
 } satisfies Prisma.EmailLogWhereInput;
+
+/**
+ * How long the email retry cron waits after a row's last attempt before it
+ * selects the row again. The operator's "Try again" on an exhausted failure
+ * (`requeueExhaustedEmailFailure`) dates the row back past it, so the next run
+ * admits the row; both read this one value so they cannot drift apart.
+ */
+export const EMAIL_RETRY_BACKOFF_MS = 15 * 60 * 1000;
