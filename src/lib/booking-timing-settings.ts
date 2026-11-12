@@ -1,5 +1,5 @@
-import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
 import { prisma } from "@/lib/prisma";
+import { bookingTimingsFrom, type BookingTimings } from "@/lib/booking-timings";
 
 /**
  * Three timings a club may set (#4932, `INV-CONFIG-001`), all on the
@@ -15,12 +15,6 @@ import { prisma } from "@/lib/prisma";
  *   stamped then and never rewritten (`INV-EXCEPT`); a later change to this
  *   setting moves no existing request.
  */
-export interface BookingTimingSettings {
-  preArrivalReminderDays: number;
-  additionalPaymentReminderDays: number;
-  policyExceptionHoldDays: number;
-}
-
 const BOOKING_TIMING_SELECT = {
   preArrivalReminderDays: true,
   additionalPaymentReminderDays: true,
@@ -28,18 +22,10 @@ const BOOKING_TIMING_SELECT = {
 } as const;
 
 /** Reads the three timings; a club that never saved the row gets the defaults. */
-export async function getBookingTimingSettings(): Promise<BookingTimingSettings> {
+export async function getBookingTimingSettings(): Promise<BookingTimings> {
   const row = await prisma.bookingDefaults.findUnique({
     where: { id: "default" },
     select: BOOKING_TIMING_SELECT,
   });
-  return {
-    preArrivalReminderDays:
-      row?.preArrivalReminderDays ?? DEFAULT_BOOKING_DEFAULTS.preArrivalReminderDays,
-    additionalPaymentReminderDays:
-      row?.additionalPaymentReminderDays ??
-      DEFAULT_BOOKING_DEFAULTS.additionalPaymentReminderDays,
-    policyExceptionHoldDays:
-      row?.policyExceptionHoldDays ?? DEFAULT_BOOKING_DEFAULTS.policyExceptionHoldDays,
-  };
+  return bookingTimingsFrom(row);
 }

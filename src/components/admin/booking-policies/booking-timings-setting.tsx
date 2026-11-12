@@ -3,17 +3,10 @@
 import {
   BOOKING_TIMING_DAYS_MAX,
   BOOKING_TIMING_DAYS_MIN,
-  DEFAULT_BOOKING_DEFAULTS,
 } from "@/config/club-settings-defaults"
+import { BOOKING_TIMING_KEYS, type BookingTimings } from "@/lib/booking-timings"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-
-/** The club's three booking timings, in days (#4932). */
-export interface BookingTimings {
-  preArrivalReminderDays: number
-  additionalPaymentReminderDays: number
-  policyExceptionHoldDays: number
-}
 
 const TIMING_ROWS: ReadonlyArray<{
   key: keyof BookingTimings
@@ -41,30 +34,8 @@ const TIMING_ROWS: ReadonlyArray<{
   },
 ]
 
-const TIMING_KEYS = [
-  "preArrivalReminderDays",
-  "additionalPaymentReminderDays",
-  "policyExceptionHoldDays",
-] as const satisfies ReadonlyArray<keyof BookingTimings>
-
-/**
- * The timings from a GET or PUT echo, or just the timings of a larger draft for
- * the save body; a value it lacks is the shipped default.
- */
-export function bookingTimingsFrom(data: Partial<BookingTimings>): BookingTimings {
-  return {
-    preArrivalReminderDays:
-      data.preArrivalReminderDays ?? DEFAULT_BOOKING_DEFAULTS.preArrivalReminderDays,
-    additionalPaymentReminderDays:
-      data.additionalPaymentReminderDays ??
-      DEFAULT_BOOKING_DEFAULTS.additionalPaymentReminderDays,
-    policyExceptionHoldDays:
-      data.policyExceptionHoldDays ?? DEFAULT_BOOKING_DEFAULTS.policyExceptionHoldDays,
-  }
-}
-
 export function bookingTimingsDiffer(a: BookingTimings, b: BookingTimings): boolean {
-  return TIMING_KEYS.some((key) => a[key] !== b[key])
+  return BOOKING_TIMING_KEYS.some((key) => a[key] !== b[key])
 }
 
 function clampDays(value: string, fallback: number): number {

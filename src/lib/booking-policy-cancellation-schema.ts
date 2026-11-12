@@ -5,6 +5,7 @@ import {
   BOOKING_TIMING_DAYS_MIN,
   DEFAULT_BOOKING_DEFAULTS,
 } from "@/config/club-settings-defaults"
+import { bookingTimingsFrom } from "@/lib/booking-timings"
 
 /**
  * The Cancellation policy page's request shape and its club-wide defaults echo,
@@ -95,12 +96,6 @@ export function clubWideDefaults(defaults: Partial<BookingDefaults> | null) {
     lateCaptureRefundNeedsApproval:
       defaults?.lateCaptureRefundNeedsApproval ??
       DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
-    preArrivalReminderDays:
-      defaults?.preArrivalReminderDays ?? DEFAULT_BOOKING_DEFAULTS.preArrivalReminderDays,
-    additionalPaymentReminderDays:
-      defaults?.additionalPaymentReminderDays ??
-      DEFAULT_BOOKING_DEFAULTS.additionalPaymentReminderDays,
-    policyExceptionHoldDays:
-      defaults?.policyExceptionHoldDays ?? DEFAULT_BOOKING_DEFAULTS.policyExceptionHoldDays,
+    ...bookingTimingsFrom(defaults),
   }
 }

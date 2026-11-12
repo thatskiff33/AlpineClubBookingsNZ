@@ -14,10 +14,9 @@ import { LateCaptureRefundSetting } from "@/components/admin/booking-policies/la
 import { LinkedMoveFeesSetting } from "@/components/admin/booking-policies/linked-move-fees-setting"
 import {
   bookingTimingsDiffer,
-  bookingTimingsFrom,
   BookingTimingsSetting,
-  type BookingTimings,
 } from "@/components/admin/booking-policies/booking-timings-setting"
+import { bookingTimingsFrom, type BookingTimings } from "@/lib/booking-timings"
 import { Label } from "@/components/ui/label"
 import { CancellationRulesEditor } from "./cancellation-rules-editor"
 import { PolicyPreview } from "./policy-preview"
