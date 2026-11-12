@@ -43,7 +43,7 @@ export function BookingStayPreferences({
       {showArrivalTime && (
         <Card id="arrival" className="scroll-mt-20">
           <CardHeader>
-            <CardTitle>Expected Arrival Time</CardTitle>
+            <CardTitle headingLevel={2}>Expected Arrival Time</CardTitle>
           </CardHeader>
           <CardContent>
             <ArrivalTimeEditor
@@ -58,7 +58,7 @@ export function BookingStayPreferences({
       {showRequestedRoom && (
         <Card id="room-request" className="scroll-mt-20">
           <CardHeader>
-            <CardTitle>Room Request</CardTitle>
+            <CardTitle headingLevel={2}>Room Request</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {canEditRequestedRoom && !canSeeAdminTools ? (
@@ -122,7 +122,7 @@ export function BookingStayPreferences({
       {memberArrivalInstructions ? (
         <Card id="directions" className="scroll-mt-20">
           <CardHeader>
-            <CardTitle>How to Get to the Lodge</CardTitle>
+            <CardTitle headingLevel={2}>How to Get to the Lodge</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <p className="whitespace-pre-wrap">

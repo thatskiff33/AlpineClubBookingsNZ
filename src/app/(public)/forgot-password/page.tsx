@@ -49,7 +49,7 @@ export default function ForgotPasswordPage() {
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
           <h1 className="sr-only">Reset your password</h1>
-          <CardTitle className="text-2xl font-bold text-center">Check your email</CardTitle>
+          <CardTitle headingLevel={2} className="text-2xl font-bold text-center">Check your email</CardTitle>
           <CardDescription className="text-center">
             If an account exists for <strong>{email}</strong>, we&apos;ve sent a password
             reset link. The link expires in 1 hour.
@@ -68,7 +68,7 @@ export default function ForgotPasswordPage() {
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1">
         <h1 className="sr-only">Reset your password</h1>
-        <CardTitle className="text-2xl font-bold text-center">Forgot your password?</CardTitle>
+        <CardTitle headingLevel={2} className="text-2xl font-bold text-center">Forgot your password?</CardTitle>
         <CardDescription className="text-center">
           Enter your email address and we&apos;ll send you a reset link.
         </CardDescription>

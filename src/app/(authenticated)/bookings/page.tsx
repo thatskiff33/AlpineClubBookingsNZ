@@ -16,6 +16,11 @@ import {
 } from "@/lib/booking-money-reconciliation-store";
 import { bookingMoneyReconciliationForViewer } from "@/lib/booking-money-reconciliation-audience";
 import { canSeeBookingAdminTools } from "@/lib/admin-permissions";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "My bookings",
+};
 
 export default async function MyBookingsPage() {
   const session = await auth();

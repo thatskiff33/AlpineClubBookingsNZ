@@ -125,6 +125,9 @@ export function LodgeMaintenanceReportClient() {
   if (state.kind === "loading") {
     return (
       <Card className="w-full max-w-xl">
+        {/* No visible title while loading; the page still needs its one h1 in
+            every render state (#4951). */}
+        <h1 className="sr-only">Report a maintenance issue</h1>
         <CardContent className="py-10 text-center text-sm text-muted-foreground">
           Loading the form...
         </CardContent>
@@ -136,7 +139,7 @@ export function LodgeMaintenanceReportClient() {
     return (
       <Card className="w-full max-w-xl">
         <CardHeader>
-          <CardTitle>This code is not working</CardTitle>
+          <CardTitle headingLevel={1}>This code is not working</CardTitle>
           <CardDescription>
             The sign you scanned is not accepting reports at the moment. Please tell
             somebody at the club, or ask a member to report it from their account.
@@ -150,7 +153,7 @@ export function LodgeMaintenanceReportClient() {
     return (
       <Card className="w-full max-w-xl">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
+          <CardTitle headingLevel={1} className="flex items-center gap-2">
             <CheckCircle2 className="h-5 w-5 text-primary" aria-hidden="true" />
             Thank you — that has been sent
           </CardTitle>
@@ -177,7 +180,7 @@ export function LodgeMaintenanceReportClient() {
   return (
     <Card className="w-full max-w-xl">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
+        <CardTitle headingLevel={1} className="flex items-center gap-2">
           <Wrench className="h-5 w-5" aria-hidden="true" />
           Report a maintenance issue
         </CardTitle>

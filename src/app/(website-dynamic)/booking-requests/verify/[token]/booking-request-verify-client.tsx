@@ -59,7 +59,7 @@ export function BookingRequestVerifyClient({
   return (
     <Card className="w-full max-w-lg">
       <CardHeader>
-        <CardTitle>Booking Request Confirmation</CardTitle>
+        <CardTitle headingLevel={1}>Booking Request Confirmation</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {result.outcome === "loading" ? (

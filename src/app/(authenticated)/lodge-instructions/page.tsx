@@ -105,7 +105,10 @@ export default function LodgeInstructionsPage() {
     return (
       <Card className="mx-auto max-w-2xl">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
+          {/* This "not assigned" card is the page's whole content with no h1
+              anywhere in the tree — the loaded state's h1 is a separate
+              branch that never renders alongside this one. */}
+          <CardTitle headingLevel={1} className="flex items-center gap-2">
             <ShieldAlert className="h-5 w-5 text-warning-11" />
             Lodge Instructions
           </CardTitle>

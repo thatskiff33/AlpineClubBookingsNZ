@@ -102,7 +102,7 @@ export function BookingReviewNotices({
       {booking.changeRequests.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Change Requests</CardTitle>
+            <CardTitle headingLevel={2}>Change Requests</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {booking.changeRequests.map((request) => {

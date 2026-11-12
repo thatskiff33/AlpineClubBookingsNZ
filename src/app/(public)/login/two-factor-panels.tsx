@@ -51,7 +51,11 @@ function RecoveryCodes({
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1">
         <h1 className="sr-only">Save your recovery codes</h1>
-        <CardTitle>Save your recovery codes</CardTitle>
+        {/* The sr-only h1 above is already this panel's one heading — an
+            identical-text CardTitle would double it in the heading list, and
+            e2e/two-factor-email.spec.ts and two-factor-navigation.spec.ts
+            assert a single "Save your recovery codes" heading. */}
+        <CardTitle headingLevel="none">Save your recovery codes</CardTitle>
         <CardDescription>
           Each code works once if your usual two-factor method is unavailable.
         </CardDescription>
@@ -183,7 +187,9 @@ export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1">
         <h1 className="sr-only">Set up two-factor authentication</h1>
-        <CardTitle>Set up two-factor authentication</CardTitle>
+        {/* Same reasoning as RecoveryCodes above: the sr-only h1 is already
+            this panel's one heading with identical text. */}
+        <CardTitle headingLevel="none">Set up two-factor authentication</CardTitle>
         <CardDescription>
           Choose how you want to verify future sign-ins.
         </CardDescription>
@@ -382,7 +388,9 @@ export function TwoFactorVerifyPanel({
   return (
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1">
-        <CardTitle>Verify your sign-in</CardTitle>
+        {/* /login/verify/page.tsx renders only this panel, with no h1
+            anywhere in the tree — this card is the page's whole content. */}
+        <CardTitle headingLevel={1}>Verify your sign-in</CardTitle>
         <CardDescription>
           {enrolledMethod
             ? "Enter a two-factor code to continue."

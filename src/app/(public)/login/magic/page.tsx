@@ -145,7 +145,7 @@ function MagicSignIn() {
     return (
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
-          <CardTitle className="text-center text-2xl font-bold">
+          <CardTitle headingLevel={1} className="text-center text-2xl font-bold">
             Signing you in…
           </CardTitle>
           <CardDescription className="text-center">
@@ -160,7 +160,7 @@ function MagicSignIn() {
     return (
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
-          <CardTitle className="text-center text-2xl font-bold">
+          <CardTitle headingLevel={1} className="text-center text-2xl font-bold">
             Set a new password to continue
           </CardTitle>
           <CardDescription className="text-center">
@@ -180,7 +180,7 @@ function MagicSignIn() {
   return (
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1">
-        <CardTitle className="text-center text-2xl font-bold">
+        <CardTitle headingLevel={1} className="text-center text-2xl font-bold">
           This sign-in link didn&apos;t work
         </CardTitle>
         <CardDescription className="text-center">
@@ -207,7 +207,7 @@ export default function MagicLinkPage() {
         fallback={
           <Card className="w-full max-w-md">
             <CardHeader>
-              <CardTitle className="text-center">Loading…</CardTitle>
+              <CardTitle headingLevel={1} className="text-center">Loading…</CardTitle>
             </CardHeader>
           </Card>
         }

@@ -49,7 +49,7 @@ export default async function NoticesPage() {
       ) : (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Recent News</CardTitle>
+            <CardTitle headingLevel={2} className="text-lg">Recent News</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <ul className="divide-y divide-border">

@@ -190,7 +190,9 @@ export function NarrativeCard({
   return (
     <Card className="w-full max-w-lg">
       <CardHeader>
-        <CardTitle>{narrative.headline}</CardTitle>
+        {/* The narrative card is the whole /pay/[token] page in every state
+            that renders it, so its title is the page's one h1. */}
+        <CardTitle headingLevel={1}>{narrative.headline}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className={`flex items-start gap-2 ${wrap}`}>

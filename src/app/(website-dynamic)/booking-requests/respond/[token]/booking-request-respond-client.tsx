@@ -219,7 +219,7 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
   return (
     <Card className="w-full max-w-2xl">
       <CardHeader>
-        <CardTitle>Booking Quote</CardTitle>
+        <CardTitle headingLevel={1}>Booking Quote</CardTitle>
       </CardHeader>
       <CardContent className="space-y-5">
         {state === "loading" ? (

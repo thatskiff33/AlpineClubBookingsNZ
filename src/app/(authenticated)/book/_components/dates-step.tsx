@@ -47,7 +47,7 @@ export function DatesStep({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Select Your Dates</CardTitle>
+        <CardTitle headingLevel={2}>Select Your Dates</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {subscriptionUnpaid ? (

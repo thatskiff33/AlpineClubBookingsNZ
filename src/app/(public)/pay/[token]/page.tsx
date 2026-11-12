@@ -200,6 +200,9 @@ export default function PayByLinkPage() {
   if (loading) {
     return (
       <Card className="w-full max-w-lg">
+        {/* No visible title while loading, but every render state of this page
+            still needs its one h1 (#4951) — same sr-only spelling as #1242. */}
+        <h1 className="sr-only">Payment Link</h1>
         <CardContent className="py-8 text-center text-muted-foreground">Loading...</CardContent>
       </Card>
     );
@@ -209,7 +212,7 @@ export default function PayByLinkPage() {
     return (
       <Card className="w-full max-w-lg">
         <CardHeader>
-          <CardTitle>Payment Link</CardTitle>
+          <CardTitle headingLevel={1}>Payment Link</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-start gap-2 text-warning-11">
@@ -356,7 +359,7 @@ export default function PayByLinkPage() {
   return (
     <Card className="w-full max-w-lg">
       <CardHeader>
-        <CardTitle>Complete Your Payment</CardTitle>
+        <CardTitle headingLevel={1}>Complete Your Payment</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">

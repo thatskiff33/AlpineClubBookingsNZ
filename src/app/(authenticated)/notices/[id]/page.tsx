@@ -14,6 +14,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import type { Metadata } from "next";
+
+// A fixed title rather than the notice's own: reading it here would be a second
+// audience check to keep in step with the page's, for a title that lands in
+// browser history.
+export const metadata: Metadata = {
+  title: "Notice",
+};
 
 export default async function NoticeDetailPage({
   params,
@@ -67,7 +75,7 @@ export default async function NoticeDetailPage({
             {notice.pinned ? (
               <Pin className="h-4 w-4 text-muted-foreground" aria-label="Pinned" />
             ) : null}
-            <CardTitle className="text-2xl">{notice.title}</CardTitle>
+            <CardTitle headingLevel={1} className="text-2xl">{notice.title}</CardTitle>
           </div>
           {notice.publishedAt ? (
             <p className="text-sm text-muted-foreground">

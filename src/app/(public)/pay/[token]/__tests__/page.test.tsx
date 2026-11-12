@@ -1125,3 +1125,74 @@ describe("public payment page discloses money held for review", () => {
     );
   });
 });
+
+describe("the /pay link has exactly one h1 in every state (#4951)", () => {
+  // Reached from a booking email, this page is one card; its title is the
+  // page's only heading. Before #4951 a screen reader's heading list here was
+  // empty, and the loading state had no title at all.
+  function expectOneLevelOneHeading(name: string) {
+    const headings = screen.getAllByRole("heading", { level: 1 });
+    expect(headings).toHaveLength(1);
+    expect(headings[0]).toHaveAccessibleName(name);
+  }
+
+  function installContext(response: { ok: boolean; body: Record<string, unknown> }) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/api/pay/public-token") {
+          return { ok: response.ok, json: async () => response.body } as Response;
+        }
+        if (url === "/api/booking-messages") {
+          return { ok: true, json: async () => ({ messages: {} }) } as Response;
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      }) as typeof fetch,
+    );
+  }
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("loading", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})) as typeof fetch);
+    render(<PayByLinkPage />);
+    expectOneLevelOneHeading("Payment Link");
+  });
+
+  it("a link that will not load", async () => {
+    installContext({ ok: false, body: { error: "This payment link is not valid." } });
+    render(<PayByLinkPage />);
+    await screen.findByText("This payment link is not valid.");
+    expectOneLevelOneHeading("Payment Link");
+  });
+
+  it("payable", async () => {
+    installContext({ ok: true, body: payableContext });
+    render(<PayByLinkPage />);
+    await screen.findByRole("button", { name: "Pay by card" });
+    expectOneLevelOneHeading("Complete Your Payment");
+  });
+
+  it("a narrative state (paid)", async () => {
+    installContext({
+      ok: true,
+      body: {
+        ...payableContext,
+        state: "paid",
+        narrative: {
+          state: "paid",
+          headline: "Payment received",
+          message: "Thanks.",
+          nextStep: "Nothing more to do.",
+        },
+        payable: undefined,
+      },
+    });
+    render(<PayByLinkPage />);
+    await screen.findByText("Nothing more to do.");
+    expectOneLevelOneHeading("Payment received");
+  });
+});

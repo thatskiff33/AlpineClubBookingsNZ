@@ -346,7 +346,7 @@ export default async function ProfilePage({
         {/* Profile photo */}
         <Card id="profile-photo" className="scroll-mt-20">
           <CardHeader>
-            <CardTitle>Profile Photo</CardTitle>
+            <CardTitle headingLevel={2}>Profile Photo</CardTitle>
             <CardDescription>
               Add a photo of yourself. Committee members&apos; photos appear on
               the public committee page.
@@ -371,7 +371,7 @@ export default async function ProfilePage({
           <CardHeader>
             <div className="flex items-start justify-between">
               <div>
-                <CardTitle>Account Information</CardTitle>
+                <CardTitle headingLevel={2}>Account Information</CardTitle>
                 <CardDescription>
                   Your membership details and status
                 </CardDescription>
@@ -423,7 +423,7 @@ export default async function ProfilePage({
         {/* Security */}
         <Card id="security" className="scroll-mt-20">
           <CardHeader>
-            <CardTitle>Security</CardTitle>
+            <CardTitle headingLevel={2}>Security</CardTitle>
             <CardDescription>
               Manage your password and account security
             </CardDescription>
@@ -635,7 +635,7 @@ export default async function ProfilePage({
         {/* Change Email */}
         <Card id="change-email" className="scroll-mt-20">
           <CardHeader>
-            <CardTitle>Change Email</CardTitle>
+            <CardTitle headingLevel={2}>Change Email</CardTitle>
             <CardDescription>
               Update your email address. You will need to verify the new
               address.
@@ -675,7 +675,7 @@ export default async function ProfilePage({
         {/* Privacy & Data */}
         <Card id="privacy-data" className="scroll-mt-20">
           <CardHeader>
-            <CardTitle>Privacy &amp; Data</CardTitle>
+            <CardTitle headingLevel={2}>Privacy &amp; Data</CardTitle>
             <CardDescription>
               Download a copy of your data or request account deletion
             </CardDescription>

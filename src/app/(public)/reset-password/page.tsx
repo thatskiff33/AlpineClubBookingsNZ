@@ -26,7 +26,7 @@ function ResetPasswordForm() {
     return (
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">Invalid link</CardTitle>
+          <CardTitle headingLevel={1} className="text-2xl font-bold text-center">Invalid link</CardTitle>
           <CardDescription className="text-center">
             This password reset link is missing a token. Please request a new one.
           </CardDescription>
@@ -44,7 +44,7 @@ function ResetPasswordForm() {
     return (
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">Password updated</CardTitle>
+          <CardTitle headingLevel={1} className="text-2xl font-bold text-center">Password updated</CardTitle>
           <CardDescription className="text-center">
             Your password has been reset successfully. You can now sign in with your new
             password.
@@ -111,7 +111,7 @@ function ResetPasswordForm() {
   return (
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1">
-        <CardTitle className="text-2xl font-bold text-center">Reset your password</CardTitle>
+        <CardTitle headingLevel={1} className="text-2xl font-bold text-center">Reset your password</CardTitle>
         <CardDescription className="text-center">
           Enter a new password for your account.
         </CardDescription>
@@ -199,7 +199,7 @@ export default function ResetPasswordPage() {
       fallback={
         <Card className="w-full max-w-md">
           <CardHeader>
-            <CardTitle className="text-center">Loading…</CardTitle>
+            <CardTitle headingLevel={1} className="text-center">Loading…</CardTitle>
           </CardHeader>
         </Card>
       }

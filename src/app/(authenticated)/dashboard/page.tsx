@@ -68,6 +68,11 @@ import {
   PAYMENT_OWED_BOOKING_STATUSES,
 } from "@/lib/booking-status";
 import { checkCapacity } from "@/lib/capacity";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Dashboard",
+};
 
 /*
   The three tightest slots on this page — the upcoming-events list (a fixed-width
@@ -139,7 +144,7 @@ function SummaryLinkCard({
     >
       <Card className="h-full transition-colors group-hover:border-ring group-hover:bg-accent group-focus-visible:border-ring group-focus-visible:bg-accent">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">{title}</CardTitle>
+          <CardTitle headingLevel={2} className="text-sm font-medium">{title}</CardTitle>
           <span className="flex items-center gap-1 text-muted-foreground transition-colors group-hover:text-foreground group-focus-visible:text-foreground">
             {icon}
             <ChevronRight
@@ -695,7 +700,7 @@ export default async function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Quick Book</CardTitle>
+            <CardTitle headingLevel={2} className="text-sm font-medium">Quick Book</CardTitle>
             <Mountain className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -711,7 +716,7 @@ export default async function DashboardPage() {
         {modules.induction && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
+              <CardTitle headingLevel={2} className="text-sm font-medium">
                 Lodge Induction
               </CardTitle>
               <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
@@ -740,7 +745,7 @@ export default async function DashboardPage() {
         {modules.maintenanceReports && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
+              <CardTitle headingLevel={2} className="text-sm font-medium">
                 Lodge Maintenance Issue
               </CardTitle>
               <Wrench className="h-4 w-4 text-muted-foreground" />
@@ -760,7 +765,7 @@ export default async function DashboardPage() {
         {modules.lockers && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Lockers</CardTitle>
+              <CardTitle headingLevel={2} className="text-sm font-medium">Lockers</CardTitle>
               <House className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -787,7 +792,7 @@ export default async function DashboardPage() {
         {modules.commsPortal && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
+              <CardTitle headingLevel={2} className="text-sm font-medium">
                 Message Board
               </CardTitle>
               <MessageSquare className="h-4 w-4 text-muted-foreground" />

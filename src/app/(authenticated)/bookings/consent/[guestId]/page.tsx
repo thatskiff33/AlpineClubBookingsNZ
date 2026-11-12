@@ -72,7 +72,7 @@ export default async function DelegateConsentPage({
       {state.kind === "NOT_FOUND" ? (
         <Card>
           <CardHeader>
-            <CardTitle>There is nothing here for you to answer</CardTitle>
+            <CardTitle headingLevel={2}>There is nothing here for you to answer</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <p>
@@ -89,7 +89,7 @@ export default async function DelegateConsentPage({
       ) : state.kind === "MODULE_OFF" ? (
         <Card>
           <CardHeader>
-            <CardTitle>This request can no longer be answered here</CardTitle>
+            <CardTitle headingLevel={2}>This request can no longer be answered here</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <p>
@@ -105,7 +105,7 @@ export default async function DelegateConsentPage({
       ) : state.kind === "ALREADY_ANSWERED" ? (
         <Card>
           <CardHeader>
-            <CardTitle>This request has already been answered</CardTitle>
+            <CardTitle headingLevel={2}>This request has already been answered</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <p>
@@ -129,7 +129,7 @@ export default async function DelegateConsentPage({
       ) : state.kind === "LAPSED" ? (
         <Card>
           <CardHeader>
-            <CardTitle>This request has lapsed</CardTitle>
+            <CardTitle headingLevel={2}>This request has lapsed</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <p>

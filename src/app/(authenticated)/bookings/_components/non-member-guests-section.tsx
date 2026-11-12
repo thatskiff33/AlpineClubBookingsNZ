@@ -57,7 +57,7 @@ export function NonMemberGuestsSection({
   return (
     <Card className="border-info-6">
       <CardHeader>
-        <CardTitle className="text-info-11">
+        <CardTitle headingLevel={2} className="text-info-11">
           {nonOwnerAdminViewer
             ? "The member's non-member guests"
             : "Your non-member guests"}

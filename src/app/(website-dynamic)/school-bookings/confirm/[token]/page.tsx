@@ -38,7 +38,8 @@ export default async function SchoolAttendeeConfirmationPage({
     <div className="mx-auto flex w-full max-w-3xl justify-center px-4 py-12 sm:py-16">
       <Card className="w-full max-w-2xl">
       <CardHeader>
-        <CardTitle>Confirm Your Attendee List</CardTitle>
+        {/* This page has no h1 of its own — the card is the whole page. */}
+        <CardTitle headingLevel={1}>Confirm Your Attendee List</CardTitle>
         {details.request?.schoolName ? (
           <CardDescription>{details.request.schoolName}</CardDescription>
         ) : null}

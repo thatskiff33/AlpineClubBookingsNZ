@@ -150,7 +150,7 @@ export function BookingPaymentCards({
       {isWaitlisted && (
         <Card className="border-cat1-6 bg-cat1-3">
           <CardHeader>
-            <CardTitle className="text-cat1-11">On the Waitlist</CardTitle>
+            <CardTitle headingLevel={2} className="text-cat1-11">On the Waitlist</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             {booking.waitlistPosition && (
@@ -193,7 +193,7 @@ export function BookingPaymentCards({
         internetBankingPayment.status !== "SUCCEEDED" && (
           <Card className="border-warning-6 bg-warning-3">
             <CardHeader>
-              <CardTitle className="text-warning-11">Internet Banking Payment</CardTitle>
+              <CardTitle headingLevel={2} className="text-warning-11">Internet Banking Payment</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm text-warning-11">
               <p>
@@ -239,7 +239,7 @@ export function BookingPaymentCards({
       {showGuestPaymentLinkStandalone && (
         <Card className="border-warning-6 bg-warning-3">
           <CardHeader>
-            <CardTitle className="text-warning-11">
+            <CardTitle headingLevel={2} className="text-warning-11">
               Your guests still need paying for
             </CardTitle>
           </CardHeader>
@@ -263,7 +263,7 @@ export function BookingPaymentCards({
       {showPaymentOnHoldNotice && (
         <Card className="border-info-6 bg-info-3">
           <CardHeader>
-            <CardTitle className="text-info-11">Payment on hold</CardTitle>
+            <CardTitle headingLevel={2} className="text-info-11">Payment on hold</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-info-11">
@@ -365,7 +365,7 @@ export function BookingPaymentCards({
       {showSavePaymentMethodCard && (
         <Card>
           <CardHeader>
-            <CardTitle>Save Payment Method</CardTitle>
+            <CardTitle headingLevel={2}>Save Payment Method</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-muted-foreground mb-4">
