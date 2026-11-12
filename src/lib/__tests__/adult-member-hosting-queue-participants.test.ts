@@ -28,13 +28,12 @@ import {
   isHostingCoverageParticipantRetry,
   lockActiveBookingRequestLinkedMembers,
   lockHostingCoverageMemberLifecycleTarget,
-  lockCapturedLoserOwnedBookings,
   lockMemberMergeHostingCoverageParticipants,
-  MemberMergeBookingOwnershipDriftError,
   MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS,
   withMemberMergeParticipantRows,
   type HostingCoverageQueueParticipantProof,
 } from "@/lib/adult-member-hosting-queue-participants";
+import { lockCapturedLoserOwnedBookings, MemberMergeBookingOwnershipDriftError } from "@/lib/member-merge-booking-lock";
 
 const SOURCE = {
   bookingId: "booking-1",

@@ -2,6 +2,12 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { isPostgresLockNotAvailable } from "@/lib/prisma-errors";
+import {
+  MemberMergeBookingOwnershipDriftError,
+  MemberMergeBookingRowBusyError,
+  setTransactionLockTimeout,
+  waitForOneBookingRow,
+} from "@/lib/member-merge-booking-lock";
 import { ApiError } from "@/lib/api-error";
 import type { HostingCoverageReevaluationInput } from "@/lib/adult-member-hosting-coverage-queue";
 
@@ -368,30 +374,6 @@ export function assertHostingCoverageQueueParticipantsLocked(
  */
 export const MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS = 10_000;
 
-/**
- * Bound one statement's lock wait, for the current transaction only.
- *
- * `set_config(..., is_local => true)` rather than `SET LOCAL` because the value
- * is then an ordinary bound parameter instead of interpolated SQL — `SET` takes
- * no placeholders. It runs through `$executeRaw` for the same reason every other
- * raw statement in this module does: nothing reads the returned row, only that
- * the statement succeeded.
- *
- * Only ever called inside a savepoint that is then rolled back, which restores
- * the value in force before it exactly — a database- or role-level bound
- * included (#2623 F4). So there is no undo to get wrong: not `0`, which means
- * "wait forever", and not `RESET`, which is session-scoped and survives the
- * commit on a pooled connection (both measured on real PostgreSQL in #2623).
- */
-async function setTransactionLockTimeout(
-  db: Pick<PrismaClient, "$executeRaw">,
-  milliseconds: number,
-): Promise<void> {
-  await db.$executeRaw(
-    Prisma.sql`SELECT set_config('lock_timeout', ${String(milliseconds)}, true)`,
-  );
-}
-
 type MemberMergeParticipantDb = Pick<PrismaClient, "$executeRaw" | "member">;
 
 /**
@@ -411,40 +393,6 @@ const WAIT_SAVEPOINT = {
   rollBack: Prisma.sql`ROLLBACK TO SAVEPOINT member_merge_participant_wait`,
   release: Prisma.sql`RELEASE SAVEPOINT member_merge_participant_wait`,
 } as const;
-/** Apart from the attempt and from the Member wait, so neither can release the other (#4860). */
-const BOOKING_WAIT_SAVEPOINT = {
-  open: Prisma.sql`SAVEPOINT member_merge_booking_wait`,
-  rollBack: Prisma.sql`ROLLBACK TO SAVEPOINT member_merge_booking_wait`,
-  release: Prisma.sql`RELEASE SAVEPOINT member_merge_booking_wait`,
-} as const;
-
-/**
- * The captured booking another transaction holds. Thrown from inside the
- * attempt; the wrapper rolls the attempt back before it waits (#4860).
- */
-export class MemberMergeBookingRowBusyError extends Error {
-  readonly bookingId: string;
-
-  constructor(bookingId: string) {
-    super("A booking this merge must re-point is locked by another writer.");
-    this.name = "MemberMergeBookingRowBusyError";
-    this.bookingId = bookingId;
-  }
-}
-
-/**
- * The single-booking wait found the row gone, or the shared budget ran out.
- * Merge converts this into the existing booking-ownership 409. Not a retry.
- */
-export class MemberMergeBookingOwnershipDriftError extends Error {
-  constructor() {
-    super(
-      "Booking ownership changed while the merge was running. Nothing was saved. Re-run the preview and try again.",
-    );
-    this.name = "MemberMergeBookingOwnershipDriftError";
-  }
-}
-
 /**
  * Wait for one busy participant row, holding none of the others (#4855), for at
  * most `milliseconds`. The row is taken `FOR UPDATE` — the strength merge needs,
@@ -476,88 +424,6 @@ async function waitForOneParticipantRow(
   await db.$executeRaw(WAIT_SAVEPOINT.rollBack);
   await db.$executeRaw(WAIT_SAVEPOINT.release);
   return outcome;
-}
-
-/**
- * Wait for one busy booking, holding none of the others (#4860), for at most
- * `milliseconds`. Same shape as {@link waitForOneParticipantRow}, on `"Booking"`,
- * under its own savepoint. The rollback releases the row and the `lock_timeout`.
- */
-async function waitForOneBookingRow(
-  db: Pick<PrismaClient, "$executeRaw">,
-  bookingId: string,
-  milliseconds: number,
-): Promise<"free" | "missing" | "timedOut"> {
-  await db.$executeRaw(BOOKING_WAIT_SAVEPOINT.open);
-  let outcome: "free" | "missing" | "timedOut";
-  try {
-    await setTransactionLockTimeout(db, milliseconds);
-    const locked = await db.$executeRaw(Prisma.sql`
-      SELECT 1
-      FROM "Booking"
-      WHERE "id" = ${bookingId}
-      FOR UPDATE
-    `);
-    outcome = locked === 1 ? "free" : "missing";
-  } catch (error) {
-    if (!isPostgresLockNotAvailable(error)) throw error;
-    outcome = "timedOut";
-  }
-  await db.$executeRaw(BOOKING_WAIT_SAVEPOINT.rollBack);
-  await db.$executeRaw(BOOKING_WAIT_SAVEPOINT.release);
-  return outcome;
-}
-
-/**
- * The first captured booking this attempt could not lock. A row the attempt
- * already holds counts 1; a row another transaction holds, or one that is gone,
- * counts 0. The id sort only makes "first" stable. It does not have to match
- * any other writer.
- */
-async function firstSkippedBookingRow(
-  db: Pick<PrismaClient, "$executeRaw">,
-  ids: readonly string[],
-): Promise<string | undefined> {
-  for (const id of ids) {
-    const locked = await db.$executeRaw(Prisma.sql`
-      SELECT 1
-      FROM "Booking"
-      WHERE "id" = ${id}
-      FOR UPDATE SKIP LOCKED
-    `);
-    if (locked !== 1) return id;
-  }
-  return undefined;
-}
-
-/**
- * Take every captured loser-owned booking, or none of them (#4860).
- *
- * Called at the `Booking.member` arm, before that `updateMany`, and only for
- * the ids the preview captured. An empty set issues no statement (`IN ()` is
- * invalid, and there is no row to wait for). Otherwise one counted
- * `SELECT 1 … ORDER BY "id" FOR UPDATE SKIP LOCKED` (`INV-OPS-001`). Uncontended,
- * the count equals the captured length and this transaction holds every row, so
- * the `updateMany` re-points `memberId` without waiting. A short count throws
- * {@link MemberMergeBookingRowBusyError} for the first skipped id and does not
- * wait: the attempt wrapper rolls back, then waits for that one booking alone.
- */
-export async function lockCapturedLoserOwnedBookings(
-  db: Pick<PrismaClient, "$executeRaw">,
-  capturedIds: readonly string[],
-): Promise<void> {
-  if (capturedIds.length === 0) return;
-  const ids = [...capturedIds].sort();
-  const locked = await db.$executeRaw(Prisma.sql`
-    SELECT 1
-    FROM "Booking"
-    WHERE "id" IN (${Prisma.join(ids)})
-    ORDER BY "id"
-    FOR UPDATE SKIP LOCKED
-  `);
-  if (locked === ids.length) return;
-  const busy = await firstSkippedBookingRow(db, ids);
-  if (busy !== undefined) throw new MemberMergeBookingRowBusyError(busy);
 }
 
 /**

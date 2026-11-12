@@ -32,12 +32,11 @@ import { lockHostingCoverageOwners } from "@/lib/adult-member-hosting-coverage-l
 import { buildMemberMergeHostingCoveragePlan, enqueueMemberMergeHostingCoveragePlan, memberMergeHostingCoveragePlanFingerprint } from "@/lib/adult-member-hosting-merge-coverage-plan";
 import {
   HostingCoverageParticipantRetryError,
-  lockCapturedLoserOwnedBookings,
-  MemberMergeBookingOwnershipDriftError,
   proveMemberMergeHostingCoverageParticipants,
   withMemberMergeParticipantRows,
   type HostingCoverageQueueParticipantProof,
 } from "@/lib/adult-member-hosting-queue-participants";
+import { lockCapturedLoserOwnedBookings, MemberMergeBookingOwnershipDriftError } from "@/lib/member-merge-booking-lock";
 import {
   acquireMemberMergePartnerSharedLodgeLocks,
   lockPartnerShareLodgesAppearedSincePrefix,

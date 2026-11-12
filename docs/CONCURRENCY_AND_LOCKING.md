@@ -3741,7 +3741,9 @@ the captured owned set: once that set is held entirely, or not held at all,
 those writers cannot close this cycle. A cycle through a booking the duplicate
 does not own is a different issue. No new advisory key (`INV-LOCK-001`);
 advisory order is unchanged (`INV-LOCK-002`); the site is the existing merge
-transaction (`INV-LOCK-003`). Proved against real PostgreSQL by
+transaction (`INV-LOCK-003`). The try-lock and the one-booking wait are in
+`member-merge-booking-lock.ts`; the attempt wrapper that calls them stays in
+`adult-member-hosting-queue-participants.ts`. Proved against real PostgreSQL by
 `member-merge-booking-row-races.realdb.test.ts`. The cost is the one #4855
 accepted for Member rows: a contended merge redoes its moves inside the same
 10 seconds, so a heavy merge against a busy booking refuses sooner, and the
