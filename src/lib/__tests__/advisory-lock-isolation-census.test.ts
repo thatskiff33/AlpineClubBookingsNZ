@@ -22,7 +22,7 @@ describe("advisory lock transaction isolation (INV-LOCK-005)", () => {
     const violations = incompatibleLockTransactions(files);
     expect(violations.filter(site => !ALLOWED[site]), "INV-LOCK-005: snapshot isolation hides commits made while waiting on advisory locks").toEqual([]);
     expect(Object.keys(ALLOWED).filter(site => !violations.includes(site)), "stale isolation exceptions").toEqual([]);
-  });
+  }, 15_000);
 
   it.each(["Serializable", "RepeatableRead"])("finds %s with inline locks, helpers, aliases and wrappers", level => {
     const result = incompatibleLockTransactions([
@@ -33,6 +33,43 @@ describe("advisory lock transaction isolation (INV-LOCK-005)", () => {
         db.$transaction(async tx => { await tx.$executeRaw\`SELECT pg_try_advisory_xact_lock(1)\`; }, { isolationLevel: Prisma.TransactionIsolationLevel.${level} });` },
     ]);
     expect(result).toHaveLength(2);
+  });
+
+  it("shares inventory masking for SQL bindings and ignores comments in query calls", () => {
+    expect(incompatibleLockTransactions([{ file: "queries.ts", text: `
+      async function takeLock(tx) {
+        const sql = "SELECT pg_advisory_xact_lock(1)";
+        await tx.$executeRawUnsafe(sql);
+      }
+      db.$transaction(async tx => { await takeLock(tx); }, { isolationLevel: 'Serializable' });
+      db.$transaction(async tx => {
+        await tx.$executeRaw(/* pg_advisory_xact_lock(1) */ sql);
+      }, { isolationLevel: 'Serializable' });
+    ` }])).toEqual(["queries.ts:6"]);
+  });
+
+  it.each(["Serializable", "RepeatableRead"])("resolves local %s options and shorthand bindings", level => {
+    expect(incompatibleLockTransactions([{ file: "options.ts", text: `
+      const isolationLevel = Prisma.TransactionIsolationLevel.${level};
+      const options = { isolationLevel } as const;
+      const alias = options;
+      async function takeLock(tx) { await tx.$executeRaw\`SELECT pg_advisory_xact_lock(1)\`; }
+      db.$transaction(takeLock, alias);
+      db.$transaction(takeLock, { isolationLevel });
+      db.$transaction(takeLock, { isolationLevel: isolationLevel });
+    ` }])).toEqual(["options.ts:6", "options.ts:7", "options.ts:8"]);
+  });
+
+  it("resolves local options in their declaring scope", () => {
+    expect(incompatibleLockTransactions([{ file: "scopes.ts", text: `
+      const isolationLevel = 'ReadCommitted';
+      async function takeLock(tx) { await tx.$executeRaw\`SELECT pg_advisory_xact_lock(1)\`; }
+      {
+        const isolationLevel = 'Serializable';
+        db.$transaction(takeLock, { isolationLevel });
+      }
+      db.$transaction(takeLock, { isolationLevel });
+    ` }])).toEqual(["scopes.ts:6"]);
   });
 
   it("allows unrelated snapshot transactions and READ COMMITTED lock writers", () => {
