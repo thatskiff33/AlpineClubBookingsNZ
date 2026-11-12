@@ -68,9 +68,14 @@ on:
 permissions:
   contents: read
 
+# Pull-request runs share a group per ref and cancel superseded runs. Each push
+# run gets a group of its own, keyed on the commit: GitHub replaces a PENDING run
+# in a shared group even without cancel-in-progress, and every push commit must
+# finish its run. Why: INV-OPS-017 (docs/invariants/operations.md, #4989).
+# Pinned by scripts/ci/main-push-runs-complete.test.mjs.
 concurrency:
-  group: money-coverage-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: money-coverage-${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   coverage-shard:

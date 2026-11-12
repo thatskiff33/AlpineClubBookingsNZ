@@ -5,8 +5,9 @@ Audience: Developer, Agent.
 Prefixes defined in this file: **`INV-OPS`** — raw SQL result shapes, raw SQL
 construction and row locking, the client/server bundle boundary, production
 deployment including the worked windowed column drop, changing what values
-already stored in a column mean, what may be used as test input, and which money
-seams a test may mock (`INV-OPS-015`) — and
+already stored in a column mean, what may be used as test input, which money
+seams a test may mock (`INV-OPS-015`), and which CI runs must finish and what a
+release may tag (`INV-OPS-017`) — and
 **`INV-LOCK`** (#2722), the two-tier advisory-lock protocol: which tier a writer
 takes, the order it takes them in, and the registration every global site
 carries. `INV-LOCK` sits here because advisory locking is the sibling of the row
@@ -22,8 +23,9 @@ Read this file when you are writing raw SQL, taking a row lock or an advisory
 lock, adding an import to a `"use client"` module, dropping a column, changing
 the meaning of a stored value (an audit `category`, a status string) so that the
 rows already written no longer match the code, deploying to production,
-choosing credentials or data for CI and local validation, or mocking a money
-seam in a test that asserts money.
+choosing credentials or data for CI and local validation, mocking a money
+seam in a test that asserts money, or changing a workflow's `concurrency` block
+or what `release:cut` checks before tagging.
 
 A Prisma `startsWith` is SQL `LIKE` too, and Prisma does not escape it: a
 prefix carrying an id or typed text goes through `exactPrefix`
@@ -742,3 +744,28 @@ grant check is not applicable; the check that no grantee but the owner, PUBLIC
 included, holds a right that changes a row always runs. It does not prove
 historical parity, writer-cohort coverage or accounting policy; those activate
 in later milestones.
+
+## INV-OPS-017
+
+Every push run of `ci.yml`, `e2e.yml` and `money-coverage.yml` runs to
+completion. A newer push never cancels it or replaces it while pending. Each
+push run's concurrency group is keyed on its commit, because GitHub replaces
+an older pending run in a shared group even with `cancel-in-progress: false`.
+Pull-request runs keep one group per ref and cancel superseded runs. This holds
+for `epic/**` pushes too, which use the same `github.event.before` gates.
+
+A release tags only a commit whose `ci.yml` push run on `main` had a
+successful `Publish GHCR images` job. `release:cut publish` asks GitHub for
+that job's result, not git history, on the commit it would tag (on a resume,
+the tagged commit). It refuses before any tag or release when the job did not
+succeed, when no run exists, or when GitHub's answer cannot be read.
+
+- Why: one shared group cancelled about half of `main`'s runs on a busy day
+  (#4989). A cancelled run publishes no images, so a release tag on it could not
+  be deployed. The push-only gates (file-size ratchet, migration-safety ledger,
+  doc index) never judged its change. And a red `main` could not be traced to
+  the merge that caused it. Being on `main`'s first-parent chain proved none of
+  this.
+- Enforced by `scripts/ci/main-push-runs-complete.test.mjs`, which evaluates
+  each workflow's group for a push and a pull request, and by the
+  `requirePublishedImages` cases in `scripts/release/cut-release.test.mjs`.
