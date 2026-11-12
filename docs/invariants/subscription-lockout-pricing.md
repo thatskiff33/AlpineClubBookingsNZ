@@ -626,8 +626,8 @@ a non-ADMIN caller. A recalculate override that moves money still respects the
 admin's choice. The same
 per-action choice covers the standalone **guest-removal** route
 (`DELETE /api/bookings/[id]/guests/[guestId]`) and **cancellation**
-(`POST /api/bookings/[id]/cancel`, "Cancel and email member" / "Cancel without
-emailing", the suppression also covering the linked provisional split children
+(`POST /api/bookings/[id]/cancel`, "Cancel booking and email member" / "Cancel
+booking, no email", the suppression also covering the linked provisional split children
 cancelled with the parent) (#1705). Both routes 403 the flag from any
 non-(booking-management)-ADMIN caller, force notify for non-admin actors,
 default to notify when the flag is absent, and record a suppressed

@@ -11,14 +11,7 @@ import {
 } from "@/components/admin/view-only-action"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { HeartHandshake, Trash2 } from "lucide-react"
@@ -352,46 +345,39 @@ export function MemberPartnerLinkCard({
           pattern. Shown only when an email would otherwise be sent (assign
           always; remove only for a CONFIRMED link). Both choices complete the
           action; the choice itself is recorded in the audit log. */}
-      <Dialog
+      <NotifyChoiceDialog
         open={notifyDialogOpen}
-        onOpenChange={(open) => {
-          if (!open && !saving && removingId === null) setNotifyDialogOpen(false)
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {notifyChoice?.kind === "remove"
-                ? "Email the members about this removal?"
-                : "Email the members about this partnership?"}
-            </DialogTitle>
-            <DialogDescription>
-              {notifyChoice?.kind === "remove"
-                ? "The partnership is removed either way. Choose whether the members receive the standard partner-relationship removal email — your choice is recorded in the audit log."
-                : "The partnership is recorded either way. Choose whether the members receive the standard partner-relationship email — your choice is recorded in the audit log."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              disabled={saving || removingId !== null}
-              onClick={() => confirmNotify(false)}
-            >
-              {notifyChoice?.kind === "remove"
+        onOpenChange={setNotifyDialogOpen}
+        submitting={saving || removingId !== null}
+        title={
+          notifyChoice?.kind === "remove"
+            ? "Email the members about this removal?"
+            : "Email the members about this partnership?"
+        }
+        description={
+          notifyChoice?.kind === "remove"
+            ? "The partnership is removed either way. Choose whether the members receive the standard partner-relationship removal email — your choice is recorded in the audit log."
+            : "The partnership is recorded either way. Choose whether the members receive the standard partner-relationship email — your choice is recorded in the audit log."
+        }
+        actions={{
+          kind: "choice",
+          withoutEmail: {
+            label:
+              notifyChoice?.kind === "remove"
                 ? "Remove without emailing"
-                : "Assign without emailing"}
-            </Button>
-            <Button
-              disabled={saving || removingId !== null}
-              onClick={() => confirmNotify(true)}
-            >
-              {notifyChoice?.kind === "remove"
+                : "Assign without emailing",
+            variant: "outline",
+            onSelect: () => confirmNotify(false),
+          },
+          withEmail: {
+            label:
+              notifyChoice?.kind === "remove"
                 ? "Remove and email members"
-                : "Assign and email members"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+                : "Assign and email members",
+            onSelect: () => confirmNotify(true),
+          },
+        }}
+      />
     </Card>
   )
 }

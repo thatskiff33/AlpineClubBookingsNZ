@@ -3,20 +3,12 @@
 import Link from "next/link"
 import { useState } from "react"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import {
   ViewOnlyActionButton,
   type AncestorViewOnlyBannerProps,
 } from "@/components/admin/view-only-action"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog"
 import { Label } from "@/components/ui/label"
 import { Archive } from "lucide-react"
 import { useClubTime } from "@/components/club-time-provider"
@@ -329,47 +321,40 @@ export function MemberLifecycleCard({
           both choices complete the review and the choice is recorded in the
           audit log. Archive approve and reject are handled identically — only
           the wording changes. */}
-      <Dialog
+      <NotifyChoiceDialog
         open={notifyDialogOpen}
-        onOpenChange={(open) => {
-          if (!open && !isReviewing) setNotifyDialogOpen(false)
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {notifyChoice?.action === "approve"
-                ? "Email the member about this archive?"
-                : "Email the member about this decision?"}
-            </DialogTitle>
-            <DialogDescription>
-              {notifyChoice?.action === "approve"
-                ? "The member is archived either way. Choose whether they receive the standard archive-completed email — your choice is recorded in the audit log."
-                : "The archive request is rejected either way. Choose whether the member receives the standard rejection email — your choice is recorded in the audit log."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              disabled={isReviewing}
-              onClick={() => confirmNotify(false)}
-            >
-              {notifyChoice?.action === "approve"
+        onOpenChange={setNotifyDialogOpen}
+        submitting={isReviewing}
+        title={
+          notifyChoice?.action === "approve"
+            ? "Email the member about this archive?"
+            : "Email the member about this decision?"
+        }
+        description={
+          notifyChoice?.action === "approve"
+            ? "The member is archived either way. Choose whether they receive the standard archive-completed email — your choice is recorded in the audit log."
+            : "The archive request is rejected either way. Choose whether the member receives the standard rejection email — your choice is recorded in the audit log."
+        }
+        actions={{
+          kind: "choice",
+          withoutEmail: {
+            label:
+              notifyChoice?.action === "approve"
                 ? "Archive without emailing"
-                : "Reject without emailing"}
-            </Button>
-            <Button
-              variant={notifyChoice?.action === "approve" ? "destructive" : "default"}
-              disabled={isReviewing}
-              onClick={() => confirmNotify(true)}
-            >
-              {notifyChoice?.action === "approve"
+                : "Reject without emailing",
+            variant: "outline",
+            onSelect: () => confirmNotify(false),
+          },
+          withEmail: {
+            label:
+              notifyChoice?.action === "approve"
                 ? "Archive and email member"
-                : "Reject and email member"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+                : "Reject and email member",
+            variant: notifyChoice?.action === "approve" ? "destructive" : "default",
+            onSelect: () => confirmNotify(true),
+          },
+        }}
+      />
     </Card>
   )
 }
