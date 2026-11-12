@@ -32,7 +32,7 @@ function violations(file: string, source: string): string[] {
     if (first && ts.isVariableStatement(first)) {
       const discovery = text(first);
       const keyOnly = /select:\s*\{\s*(?:lodgeId:\s*true|id:\s*true|room:\s*\{\s*select:\s*\{\s*lodgeId:\s*true\s*\}\s*\})\s*\}/;
-      if (!keyOnly.test(discovery) && !/await futurePartnerShareAllocationLodgeIds\(/.test(discovery)) return fail();
+      if (!keyOnly.test(discovery) && !/await (?:futurePartnerShareAllocationLodgeIds|resolveBedLodgeIdForLock)\(/.test(discovery)) return fail();
       first = statements.shift();
     }
     if (!first || (!ts.isIfStatement(first) && !ts.isForOfStatement(first))) return fail();

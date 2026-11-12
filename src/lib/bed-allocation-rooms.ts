@@ -1,5 +1,3 @@
-import { assertGlobalLockHeld } from "@/lib/global-lock-held";
-import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 /**
  * Room inventory for bed allocation: list, configure, seed, edit, delete
  * (#2688).
@@ -28,6 +26,8 @@ import {
   type BedAllocationDb,
 } from "@/lib/bed-allocation-admin-contract";
 import type { DashboardRoom } from "@/lib/bed-allocation-board-payload";
+import { assertGlobalLockHeld } from "@/lib/global-lock-held";
+import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 
 export interface RoomsAndBedsConfigurationPayload {
   rooms: DashboardRoom[];

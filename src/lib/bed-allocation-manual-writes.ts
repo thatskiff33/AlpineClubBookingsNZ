@@ -1,5 +1,3 @@
-import { assertGlobalLockHeld } from "@/lib/global-lock-held";
-import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 /**
  * The board's manual allocation writers (#2688).
  *
@@ -34,6 +32,8 @@ import {
   guestIsStayingOn,
   resolveBedLodgeIdForLock,
 } from "@/lib/bed-allocation-placement";
+import { assertGlobalLockHeld } from "@/lib/global-lock-held";
+import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 
 interface ManualAllocationInput {
   bookingGuestId: string;
@@ -45,8 +45,8 @@ export async function manuallyAllocateBedWithLocksHeld(
   input: ManualAllocationInput & { db: BedAllocationDb },
 ): Promise<{ allocation: BedAllocation; promotedPartner: BedAllocation | null }> {
   await assertGlobalLockHeld(input.db, "manuallyAllocateBedWithLocksHeld");
-  const lockKey = await input.db.lodgeBed.findUnique({ where: { id: input.bedId }, select: { room: { select: { lodgeId: true } } } });
-  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey.room.lodgeId, "manuallyAllocateBedWithLocksHeld");
+  const lockKey = await resolveBedLodgeIdForLock(input.bedId, input.db);
+  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey, "manuallyAllocateBedWithLocksHeld");
 
   if (!isDateOnlyString(input.stayDate)) {
     throw new BedAllocationAdminError("Invalid stay date", 400);
@@ -131,8 +131,8 @@ export async function moveBedAllocationsSameDateWithLocksHeld(
   input: SameDateAllocationMoveInput & { db: BedAllocationDb },
 ): Promise<SameDateAllocationMoveResult> {
   await assertGlobalLockHeld(input.db, "moveBedAllocationsSameDateWithLocksHeld");
-  const lockKey = await input.db.lodgeBed.findUnique({ where: { id: input.bedId }, select: { room: { select: { lodgeId: true } } } });
-  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey.room.lodgeId, "moveBedAllocationsSameDateWithLocksHeld");
+  const lockKey = await resolveBedLodgeIdForLock(input.bedId, input.db);
+  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey, "moveBedAllocationsSameDateWithLocksHeld");
 
   const allocationIds = [...new Set(input.allocationIds)];
   if (allocationIds.length === 0) {
@@ -359,8 +359,8 @@ export async function manuallyAllocateBedForNightsWithLocksHeld(
   input: BulkAllocationInput & { db: BedAllocationDb },
 ): Promise<BulkAllocationResult> {
   await assertGlobalLockHeld(input.db, "manuallyAllocateBedForNightsWithLocksHeld");
-  const lockKey = await input.db.lodgeBed.findUnique({ where: { id: input.bedId }, select: { room: { select: { lodgeId: true } } } });
-  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey.room.lodgeId, "manuallyAllocateBedForNightsWithLocksHeld");
+  const lockKey = await resolveBedLodgeIdForLock(input.bedId, input.db);
+  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey, "manuallyAllocateBedForNightsWithLocksHeld");
 
   if (input.stayDates.length === 0) {
     throw new BedAllocationAdminError(

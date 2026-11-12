@@ -1,5 +1,3 @@
-import { assertGlobalLockHeld } from "@/lib/global-lock-held";
-import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 import { BookingStatus, Prisma, type BedAllocation } from "@prisma/client";
 
 import { isSchoolGroupBooking } from "@/lib/school-group-booking";
@@ -39,6 +37,8 @@ import logger from "@/lib/logger";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
 import { prisma } from "@/lib/prisma";
 import { resolveEffectiveBedAllocationSettings } from "@/lib/bed-allocation-settings";
+import { assertGlobalLockHeld } from "@/lib/global-lock-held";
+import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 
 type BedAllocationLifecycleDb = Prisma.TransactionClient | typeof prisma;
 

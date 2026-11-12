@@ -1,5 +1,3 @@
-import { assertGlobalLockHeld } from "@/lib/global-lock-held";
-import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 /**
  * Bed inventory for bed allocation: create, edit, retire, delete (#2688).
  *
@@ -29,6 +27,9 @@ import {
   lockRoomForBunkGroup,
   normalizeBunkGroup,
 } from "@/lib/bed-allocation-bunk-pairing";
+import { resolveBedLodgeIdForLock } from "@/lib/bed-allocation-placement";
+import { assertGlobalLockHeld } from "@/lib/global-lock-held";
+import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 
 // The bed CREATE path never looks the room up (the route validates roomId only
 // as a non-empty string), so any bogus or stale roomId — most commonly a room
@@ -170,8 +171,8 @@ export async function updateBedAllocationBedWithLocksHeld(input: {
   today: Date;
 }): Promise<LodgeBed> {
   await assertGlobalLockHeld(input.db, "updateBedAllocationBedWithLocksHeld");
-  const lockKey = await input.db.lodgeBed.findUnique({ where: { id: input.id }, select: { room: { select: { lodgeId: true } } } });
-  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey.room.lodgeId, "updateBedAllocationBedWithLocksHeld");
+  const lockKey = await resolveBedLodgeIdForLock(input.id, input.db);
+  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey, "updateBedAllocationBedWithLocksHeld");
 
   const touchesBunk =
     input.bedType !== undefined || input.bunkGroup !== undefined;
@@ -434,8 +435,8 @@ export async function deleteBedAllocationBedWithLocksHeld(input: {
   db: BedAllocationDb;
 }) {
   await assertGlobalLockHeld(input.db, "deleteBedAllocationBedWithLocksHeld");
-  const lockKey = await input.db.lodgeBed.findUnique({ where: { id: input.id }, select: { room: { select: { lodgeId: true } } } });
-  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey.room.lodgeId, "deleteBedAllocationBedWithLocksHeld");
+  const lockKey = await resolveBedLodgeIdForLock(input.id, input.db);
+  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey, "deleteBedAllocationBedWithLocksHeld");
 
   const db = input.db;
   await assertNoFutureBedAllocations({

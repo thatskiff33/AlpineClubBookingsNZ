@@ -1,5 +1,3 @@
-import { assertGlobalLockHeld } from "@/lib/global-lock-held";
-import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 /**
  * Range assignment: "put this guest in this bed from X to Y" (#2251, extracted
  * #2688).
@@ -49,6 +47,8 @@ import {
   type ParsedBedAssignRange,
 } from "@/lib/bed-allocation-range-report";
 import { recordRangeAssignAudit } from "@/lib/bed-allocation-range-audit";
+import { assertGlobalLockHeld } from "@/lib/global-lock-held";
+import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 
 /*
  * Range assignment (#2251)
@@ -592,8 +592,8 @@ export async function assignBedRangeWithLocksHeld(
   input: AssignBedRangeInput & { db: BedAllocationDb },
 ): Promise<AssignBedRangeResult> {
   await assertGlobalLockHeld(input.db, "assignBedRangeWithLocksHeld");
-  const lockKey = await input.db.lodgeBed.findUnique({ where: { id: input.bedId }, select: { room: { select: { lodgeId: true } } } });
-  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey.room.lodgeId, "assignBedRangeWithLocksHeld");
+  const lockKey = await resolveBedLodgeIdForLock(input.bedId, input.db);
+  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey, "assignBedRangeWithLocksHeld");
 
   const range = parseBedAssignRange({ from: input.from, to: input.to });
   const consentedNights = input.nights

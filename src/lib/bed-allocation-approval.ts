@@ -1,5 +1,3 @@
-import { assertGlobalLockHeld } from "@/lib/global-lock-held";
-import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 /**
  * Approving bed allocations, and the booking lock that follows from it
  * (#2688).
@@ -20,6 +18,8 @@ import {
   type BedAllocationDb,
 } from "@/lib/bed-allocation-admin-contract";
 import type { BedAllocationDateRange } from "@/lib/bed-allocation-date-range";
+import { assertGlobalLockHeld } from "@/lib/global-lock-held";
+import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 
 /**
  * Whether an admin has confirmed (locked) the bed allocation for a booking.

@@ -1,4 +1,3 @@
-export { assertLodgeCapacityLockHeld, LodgeCapacityLockNotHeldError } from "@/lib/lodge-capacity-lock";
 import { prisma } from "./prisma";
 import {
   ACTIVE_BOOKING_STATUSES,

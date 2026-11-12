@@ -1,5 +1,3 @@
-import { assertGlobalLockHeld } from "@/lib/global-lock-held";
-import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 /**
  * The shared write chokepoint every manual bed placement passes through
  * (#2688).
@@ -47,6 +45,8 @@ import {
   type BedAllocationDb,
 } from "@/lib/bed-allocation-admin-contract";
 import { overlapsDateRange } from "@/lib/bed-allocation-date-range";
+import { assertGlobalLockHeld } from "@/lib/global-lock-held";
+import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 
 export async function assertGuestAndBedForAllocation(input: {
   bookingGuestId: string;
