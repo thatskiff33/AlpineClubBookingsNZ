@@ -130,12 +130,13 @@ describe("Setup support edit access (#4971)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
+  type WriteCase = [label: string, url: string, payload: Record<string, string>];
+  it.each<WriteCase>([
     ["Acknowledge", "/api/admin/setup/progress", { action: "complete", stepId: "stripe" }],
     ["Skip", "/api/admin/setup/progress", { action: "skip", stepId: "stripe" }],
     ["Reopen", "/api/admin/setup/progress", { action: "reopen", stepId: "reviewed" }],
     ["Mark Setup Complete", "/api/admin/setup/progress", { action: "finish" }],
-    ...providers.map((provider) => [`Test ${provider}`, "/api/admin/setup/provider-test", { provider }] as const),
+    ...providers.map((provider): WriteCase => [`Test ${provider}`, "/api/admin/setup/provider-test", { provider }]),
   ])("lets editors use %s and keeps its pending state", async (label, url, payload) => {
     mocks.canEdit = true;
     let settle!: (value: Response) => void;
