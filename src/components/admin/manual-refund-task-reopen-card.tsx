@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useState } from "react";
 import { toast } from "sonner";
@@ -106,7 +107,7 @@ export function ManualRefundTaskReopenCard({
     if (!target) return;
     setSubmitting(true);
     try {
-      const response = await fetch(
+      const response = await fetchWithRecentAuth(
         `/api/admin/payments/manual-refund-tasks/${target.id}/reopen`,
         {
           method: "POST",

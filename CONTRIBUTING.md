@@ -437,6 +437,30 @@ An unknown diff keeps the section required. The size check
 counting files `.gitattributes` marks `linguist-generated`, with no `large-pr:`
 line. `pnpm run pr:check` reports that check as `WARN`.
 
+**The concurrency declaration is owed for what a file is, not only its name**
+(#5038). `verify` and `pnpm run pr:check` require a complete
+`## Concurrency And Lock Impact` section, and refuse a ticked `N/A`, when the
+pull request changes `prisma/schema.prisma`, anything under
+`prisma/migrations/`, or a non-test file under `src/lib` or `src/app/api` whose
+path names a sensitive area (booking, capacity, payment, refund, credit,
+settlement, waitlist, webhook, cron, Xero, Stripe, membership, member lifecycle)
+and which could take part in a race. Such a file is exempt only when its whole
+text, at the pull request's head and at its merge base, is synchronous and
+holds no transaction, database write, raw SQL, lock or lock-helper call,
+database client or re-export, and every local module it imports at runtime,
+followed through the whole import graph at the head, holds none either.
+Message wording, constants, types and pure calculations are exempt. An `async`
+route that only calls a writer in another module is not, and nor is a
+synchronous file that forwards to one (`return settleBooking(id)`).
+
+The gate reads the whole file, never the changed lines, and reads it from git
+rather than the working tree. It fails closed: a deleted or renamed-away file, a
+file it cannot read and a diff it cannot resolve all count as sensitive. The one
+definition is `isConcurrencySensitiveChange` in
+`scripts/ci/check-pr-concurrency-declaration.mjs`. Its patterns over-match on
+purpose, so widen them freely and narrow one only with a measured list of the
+files that become exempt.
+
 **Adding a required context is a three-step sequence, and doing it out of
 order breaks every open pull request** — whenever a job producing a required
 context is added or renamed. A branch predating the merge produces none of the

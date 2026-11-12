@@ -1,4 +1,5 @@
 "use client"
+import { fetchWithRecentAuth } from "@/components/confirm-its-you"
 
 import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
@@ -332,7 +333,7 @@ export default function RefundRequestsPage() {
         body.approvedAmountCents = cents
       }
 
-      const res = await fetch(`/api/admin/refund-requests/${id}`, {
+      const res = await fetchWithRecentAuth(`/api/admin/refund-requests/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
