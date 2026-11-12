@@ -24,6 +24,7 @@ import {
   validateMirotalkBaseUrl,
   validateMirotalkTokenLifetime,
 } from "@/lib/mirotalk-settings-shared";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 /**
  * The NON-SECRET half of the club's MiroTalk configuration (#2940).
@@ -134,6 +135,8 @@ export async function PUT(request: Request) {
     );
   }
 
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
   const parsed = bodySchema.safeParse(json.body);

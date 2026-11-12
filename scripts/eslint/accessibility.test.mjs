@@ -1,4 +1,5 @@
-import { RuleTester } from "eslint";
+import { ESLint, RuleTester } from "eslint";
+import { expect, it } from "vitest";
 import css from "@eslint/css";
 import accessibility from "./accessibility.mjs";
 
@@ -64,4 +65,35 @@ tester.run("no-nested-interactive", accessibility.rules["no-nested-interactive"]
     { code: `${LINK}const a = <Button asChild><Link href="/x"><Button>Go</Button></Link></Button>;`, errors: [{ messageId: "nested" }] },
     { code: 'import NextLink from "next/link";\nimport { Button as UiButton } from "../ui/button";\nconst a = <NextLink href="/x"><UiButton>Go</UiButton></NextLink>;', errors: [{ messageId: "nested" }] },
   ],
+});
+
+const tableRowTester = new RuleTester({
+  languageOptions: { ecmaVersion: 2022, parserOptions: { ecmaFeatures: { jsx: true } } },
+  settings: { "jsx-a11y": { components: { TableRow: "tr" } } },
+});
+tableRowTester.run("no-mouse-only-table-row", accessibility.rules["no-mouse-only-table-row"], {
+  valid: [
+    '<TableRow><td>Read only</td></TableRow>',
+    '<tr onClick={toggle}><td><button onClick={toggle}>Show details</button></td></tr>',
+    `${LINK}const a = <TableRow onClick={toggle}><td>{expandable ? <Button onClick={toggle}>Show details</Button> : null}</td></TableRow>;`,
+    `${LINK}const a = <TableRow onClick={open}><td><Link href="/booking">Booking</Link></td></TableRow>;`,
+  ],
+  invalid: [
+    { code: '<TableRow onClick={toggle}><td>Details</td></TableRow>', errors: [{ messageId: "control" }] },
+    { code: '<tr onClick={toggle}><td><span>Show details</span></td></tr>', errors: [{ messageId: "control" }] },
+    { code: '<TableRow onClick={open}><td><a>Booking</a></td></TableRow>', errors: [{ messageId: "control" }] },
+    { code: '<TableRow onClick={toggle}><Cell control={<button>Details</button>} /></TableRow>', errors: [{ messageId: "control" }] },
+    { code: `${LINK}const a = <TableRow onClick={toggle}><td><Link href="/member" onClick={(event) => event.stopPropagation()}>Member</Link></td></TableRow>;`, errors: [{ messageId: "control" }] },
+  ],
+});
+
+// Each probe only fails when the jsx-a11y components mapping tells the rule
+// which native element the design-system component renders (#4970).
+it.each([
+  ['import { TableRow } from "@/components/ui/table"; export const Probe = () => <TableRow onClick={() => {}}>Details</TableRow>;', "accessibility/no-mouse-only-table-row"],
+  ['import { TableCell } from "@/components/ui/table"; export const Probe = () => <TableCell scope="col">Details</TableCell>;', "jsx-a11y/scope"],
+  ['import { Button } from "@/components/ui/button"; export const Probe = () => <Button role="listitem">Details</Button>;', "jsx-a11y/no-interactive-element-to-noninteractive-role"],
+])("maps design-system components to native elements: %s", async (source, ruleId) => {
+  const [result] = await new ESLint().lintText(source, { filePath: "src/components/keyboard-probe.tsx" });
+  expect(result.messages.map((message) => message.ruleId)).toContain(ruleId);
 });

@@ -75,6 +75,10 @@
      onto the following line reads as EMPTY and fails the gate; continuation
      lines after that first line are fine. Do not reword the heading or the
      labels — they are matched exactly.
+     `N/A` is refused when the diff changes the Prisma schema, a migration, or a
+     file under `src/lib` or `src/app/api` named for a sensitive area that is
+     asynchronous or holds a transaction, write, raw SQL, lock, database client
+     or re-export, or imports a module that does (CONTRIBUTING.md → "Branch protection").
      Check before pushing:  pnpm run pr:check <body-file>  -->
 
 - [ ] N/A — no transaction, lifecycle, capacity, settlement, credit, webhook,

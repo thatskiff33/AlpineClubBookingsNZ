@@ -57,7 +57,6 @@ import {
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { resolveOrganiserBillingForNet } from "@/lib/organiser-billing";
 import { writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
-import { changeFeeGoesOnAmountOwed, recordFeeOnNewPayment } from "@/lib/change-fee-owed";
 import {
   OrganiserChildRefundRefusedError,
   planOrganiserChildModificationRefund,
@@ -108,7 +107,12 @@ export type PaymentAdjustmentResult = {
   foldedWaitingAsks: FoldedWaitingAsks;
   /** #3980: read no invoice link and claimed it (`writeEditOnPayment`); the door marks its history row. */
   settledAgainstPrimaryInvoice: boolean;
-  /** #4661: the fee this edit added to an unpaid booking's amount owed (`changeFeeGoesOnAmountOwed`), 0 for none; the door marks its history row. */
+  /**
+   * Always 0. An ordinary edit no longer adds a late-notice fee to an unpaid
+   * booking's amount owed (owner decision, 10 Nov 2026). The field stays so
+   * the doors' history marker, which #4661 rows already carry, writes nothing
+   * for a new edit.
+   */
   changeFeeAddedToAmountOwedCents: number;
   /**
    * #4299 (`INV-PAY-148`): the increase invoiced to the group organiser of an
@@ -233,9 +237,6 @@ export async function applyPaymentAdjustments(
   // #4299: the one home's answer, or the organiser's combined invoice standing for it.
   const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking) || organiserBilling !== null;
   let feeRecordedHereCents = 0; // written with the payment's claim below (#3980)
-  // #4661 (`INV-MOD-042`): with no settled arm to collect it, a booking still to be paid owes the fee with its price.
-  const feeAddedToAmountOwed = changeFeeCents > 0 && !changeFeeRecordedByCaller && !hasSettledPayment &&
-    !zeroDollarCardIncrease && changeFeeGoesOnAmountOwed(booking);
   // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
   const remainingRefundableCents = await refundableCashForModification(tx, booking.payment, reduction);
 
@@ -295,7 +296,7 @@ export async function applyPaymentAdjustments(
     changeFeeCents,
     hasSettledPayment,
     hasIssuedXeroInvoice,
-    changeFeeRecordedByCaller: changeFeeRecordedByCaller || feeAddedToAmountOwed, // recorded once, below
+    changeFeeRecordedByCaller, // a caller that records the fee itself (a finished-stay correction) did so once
   });
   if (reissuedAsk.amountCents > 0) {
     additionalAsk = reissuedAsk;
@@ -375,11 +376,13 @@ export async function applyPaymentAdjustments(
     }
 
     // #3954 x #3750: once - a caller that records it on the amount owed did.
+    // A paid booking's fee, including a credit-paid booking's fee-only
+    // increase, is recorded here. An unpaid booking never arrives with a fee:
+    // `lateNoticeChangeFee` returned zero.
     if (changeFeeCents > 0 && !changeFeeRecordedByCaller) feeRecordedHereCents = changeFeeCents;
   } else if (xeroAdditionalAmountCents > 0) {
     additionalAmountCents = xeroAdditionalAmountCents - billedToOrganiserCents;
   }
-  if (feeAddedToAmountOwed) feeRecordedHereCents = changeFeeCents;
 
   if (reduction.organiserExtras) {
     // #4299 S2: the edit's own tier, frozen even with no options (a cut wholly against the unpaid extra).
@@ -390,10 +393,6 @@ export async function applyPaymentAdjustments(
     });
   }
 
-  // #4735: a card booking edited before its pay step has no row to claim; the fee opens one.
-  if (feeAddedToAmountOwed && !booking.payment) {
-    await recordFeeOnNewPayment(tx, { bookingId: booking.id, changeFeeCents });
-  }
   // #3980 (`INV-PAY-136`): the fee, and the claim on an unlinked invoice (409 if it moved).
   const settledAgainstPrimaryInvoice = await writeEditOnPayment(tx, {
     payment: booking.payment,
@@ -430,7 +429,7 @@ export async function applyPaymentAdjustments(
     organiserChildRefund,
     foldedWaitingAsks,
     settledAgainstPrimaryInvoice,
-    changeFeeAddedToAmountOwedCents: feeAddedToAmountOwed ? changeFeeCents : 0,
+    changeFeeAddedToAmountOwedCents: 0,
     billedToOrganiserCents,
     ...unpaidAskSettlement,
   };

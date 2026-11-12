@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useCallback, useEffect, useState } from "react";
 import { Lock, Pencil, Plus, Trash2, Users } from "lucide-react";
@@ -151,7 +152,7 @@ export function AccessRoleManager({
     setSaving(true);
     setFormError("");
     try {
-      const response = await fetch(
+      const response = await fetchWithRecentAuth(
         editingRole
           ? `/api/admin/access-roles/${editingRole.id}`
           : "/api/admin/access-roles",
@@ -188,7 +189,7 @@ export function AccessRoleManager({
     setDeleting(true);
     setDeleteError("");
     try {
-      const response = await fetch(
+      const response = await fetchWithRecentAuth(
         `/api/admin/access-roles/${deletingRole.id}`,
         { method: "DELETE" },
       );

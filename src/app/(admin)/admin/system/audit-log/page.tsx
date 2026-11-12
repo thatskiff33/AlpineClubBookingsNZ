@@ -900,11 +900,23 @@ export default function AuditLogPage() {
                       >
                         <TableCell>
                           {expandable ? (
-                            expanded ? (
-                              <ChevronUp className="h-4 w-4" />
-                            ) : (
-                              <ChevronDown className="h-4 w-4" />
-                            )
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              aria-expanded={expanded}
+                              aria-label={expanded ? "Hide details" : "Show details"}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setExpandedId(expanded ? null : entry.id);
+                              }}
+                            >
+                              {expanded ? (
+                                <ChevronUp aria-hidden="true" className="h-4 w-4" />
+                              ) : (
+                                <ChevronDown aria-hidden="true" className="h-4 w-4" />
+                              )}
+                            </Button>
                           ) : null}
                         </TableCell>
                         <TableCell className="align-top text-xs text-muted-foreground">

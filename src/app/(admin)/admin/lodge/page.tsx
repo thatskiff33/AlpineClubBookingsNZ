@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -338,7 +339,7 @@ export default function AdminLodgePage() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/admin/lodge");
+      const res = await fetchWithRecentAuth("/api/admin/lodge");
       if (!res.ok) throw new Error("Failed to load lodge account");
       const data = await res.json();
       setAccounts(data.accounts ?? (data.lodge ? [data.lodge] : []));
@@ -358,7 +359,7 @@ export default function AdminLodgePage() {
     setCreating(true);
     setCreateMessage(null);
     try {
-      const res = await fetch("/api/admin/lodge", {
+      const res = await fetchWithRecentAuth("/api/admin/lodge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

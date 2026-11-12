@@ -25,12 +25,21 @@ next so the pilot club has something stable to install from.
 
 The risk: Goal 1's finish line is "zero open issues", and each sweep repeats
 "until clean". Anything filed along the way counts, so the finish line can keep
-moving — and Goals 2 and 3 wait on it.
+moving. Goals 2 and 3 therefore do not wait on it.
+
+**The release gate** (owner decision, 11 Nov 2026, recorded on
+[#4898](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4898)): "The
+next tagged release ships once no open issue is classed 'harms members now' or
+'blocks a release', and the upgrade from v0.13.2 has been rehearsed on the
+staging copy. Everything else stays open and is ordered after the release.
+Zero open issues remains the finish line for Goal 1, but no longer holds up
+Goals 2 and 3." #4898 is the ordered plan to that release.
 
 ## Goal 1: Robustness
 
 **Done when:** there are zero open issues, full stop — including anything
-filed along the way.
+filed along the way. This finish line does not hold up the release; see
+[the release gate](#order-and-its-risk).
 
 ### First move: find where bugs come back
 
@@ -132,6 +141,8 @@ The flow:
 3. **A tagged release** that clubs install and upgrade from.
 
 `main` stays the development branch, and clubs don't install from it.
+
+**Ships when:** [the release gate](#order-and-its-risk) is met.
 
 **Done when:** a new tested release is published and the
 [adopter guide](adopters/README.md) points to it. The last release was

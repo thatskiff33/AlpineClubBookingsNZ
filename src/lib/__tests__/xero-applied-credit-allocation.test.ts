@@ -23,6 +23,11 @@ const h = vi.hoisted(() => {
     memberId: string;
     amountCents: number;
     xeroCreditNoteId: string | null;
+    type?: string;
+  }
+  interface GrantOperation {
+    localId: string;
+    status: string;
   }
   interface Link {
     localModel: string;
@@ -39,6 +44,7 @@ const h = vi.hoisted(() => {
     links: [] as Link[],
     allocCalls: 0,
     deallocationFence: null as { id: string; status: string } | null,
+    grantOperations: [] as GrantOperation[],
   };
 
   const matchesApplied = (
@@ -51,9 +57,18 @@ const h = vi.hoisted(() => {
 
   const prismaStub = {
     xeroSyncOperation: {
-      findMany: async () => state.deallocationFence
-        ? [{ ...state.deallocationFence, requestPayload: { ledgerSnapshot: {} } }]
-        : [],
+      findMany: async (args?: { where?: { queueType?: string; localId?: { in?: string[] } } }) => {
+        const where = args?.where;
+        if (where?.queueType === "ADMIN_GRANT_CREDIT_NOTE") {
+          const ids = where.localId?.in ?? [];
+          return state.grantOperations.filter(
+            (operation) => ids.includes(operation.localId) && operation.status !== "CANCELLED",
+          );
+        }
+        return state.deallocationFence
+          ? [{ ...state.deallocationFence, requestPayload: { ledgerSnapshot: {} } }]
+          : [];
+      },
     },
     booking: {
       findUnique: async () => ({
@@ -89,6 +104,7 @@ const h = vi.hoisted(() => {
             id: l.id,
             memberId: l.memberId,
             amountCents: l.amountCents,
+            type: l.type ?? "ADMIN_ADJUSTMENT",
             xeroCreditNoteId: l.xeroCreditNoteId,
           })),
       updateMany: async ({
@@ -205,7 +221,18 @@ const h = vi.hoisted(() => {
   return { state, prismaStub };
 });
 
+const xeroClient = vi.hoisted(() => ({
+  getAuthenticatedXeroClient: vi.fn(async () => {
+    throw new Error("mint reached Xero");
+  }),
+  callXeroApi: vi.fn(),
+}));
+
 vi.mock("@/lib/prisma", () => ({ prisma: h.prismaStub }));
+vi.mock("@/lib/xero-api-client", () => ({
+  getAuthenticatedXeroClient: xeroClient.getAuthenticatedXeroClient,
+  callXeroApi: xeroClient.callXeroApi,
+}));
 vi.mock("@/lib/member-credit", () => ({ lockMemberCreditLedger: vi.fn() }));
 vi.mock("@/lib/xero-credit-notes", () => ({ allocateCreditNoteToInvoice: vi.fn() }));
 // #4219: the converge routine is proved against real PostgreSQL; here only whether the worker calls it.
@@ -232,6 +259,11 @@ import {
   assertPlanKeepsCommittedSlices,
 } from "@/lib/xero-applied-credit-plan";
 import { allocateCreditNoteToInvoice } from "@/lib/xero-credit-notes";
+import { ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE } from "@/lib/xero-operation-error-codes";
+import {
+  needsOperatorXeroRetry,
+  XeroAppliedCreditOperationBusyError,
+} from "@/lib/xero-applied-credit-operation-serialization";
 import { convergedForNamedFailure } from "@/lib/xero-applied-credit-spent-outside-app";
 import { CreditNoteSpentOutsideAppError } from "@/lib/xero-credit-note-spent-outside-app";
 import { completeXeroSyncOperation } from "@/lib/xero-sync";
@@ -326,6 +358,22 @@ describe("planAppliedCreditAllocation (#1620 allocate-existing)", () => {
       },
     ]);
     expect(plan.mintTotalCents).toBe(4000);
+  });
+
+  it("allocates a stamped admin grant and still mints a noteless legacy adjustment (#4431)", () => {
+    const stamped: AppliedCreditLot = {
+      memberCreditId: "grant",
+      creditType: CreditType.ADMIN_ADJUSTMENT,
+      xeroCreditNoteId: "cn-grant",
+      remainingCents: 2000,
+    };
+    const plan = planAppliedCreditAllocation([stamped, adminLot("legacy", 1000)], 3000);
+    expect(plan.noteAllocations).toEqual([
+      { memberCreditId: "grant", xeroCreditNoteId: "cn-grant", amountCents: 2000 },
+    ]);
+    expect(plan.mintSlices).toEqual([
+      { memberCreditId: "legacy", creditType: CreditType.ADMIN_ADJUSTMENT, amountCents: 1000 },
+    ]);
   });
 
   it("skips fully-consumed lots (zero remaining)", () => {
@@ -484,6 +532,7 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
     h.state.links = [];
     h.state.allocCalls = 0;
     h.state.deallocationFence = null;
+    h.state.grantOperations = [];
     h.state.appliedRows = [
       {
         appliedToBookingId: "b1",
@@ -568,6 +617,55 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
     ).rejects.toThrow("dealloc-1 is RUNNING");
     expect(h.state.joinRows).toHaveLength(0);
     expect(allocateCreditNoteToInvoice).not.toHaveBeenCalled();
+  });
+
+  function notelessGrantLot() {
+    h.state.lots = [{ id: "c1", memberId: "m1", amountCents: 3000, xeroCreditNoteId: null, type: "ADMIN_ADJUSTMENT" }];
+    h.state.appliedRows = [{ appliedToBookingId: "b1", type: "BOOKING_APPLIED", amountCents: -3000, xeroCreditNoteId: null }];
+  }
+
+  it("a noteless legacy adjustment with no grant note still starts the remainder mint (#4431)", async () => {
+    notelessGrantLot();
+    await expect(allocateAppliedCreditForBooking("b1", { syncOperation: xeroClaim("op1") })).rejects.toThrow(
+      "mint reached Xero",
+    );
+    expect(xeroClient.getAuthenticatedXeroClient).toHaveBeenCalled();
+  });
+
+  it.each([
+    ["PENDING", null, false],
+    ["RUNNING", null, false],
+    ["FAILED", ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE, true],
+    ["PARTIAL", ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE, true],
+  ] as const)(
+    "MUTATION: a mint slice whose grant note is %s waits and does not raise a remainder note",
+    async (status, waitCode, operatorRetry) => {
+      notelessGrantLot();
+      h.state.grantOperations = [{ localId: "c1", status }];
+
+      let error: unknown;
+      try {
+        await allocateAppliedCreditForBooking("b1", { syncOperation: xeroClaim("op1") });
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).toBeInstanceOf(XeroAppliedCreditOperationBusyError);
+      expect(error).toMatchObject({ waitCode, fenceStatus: operatorRetry ? status : null });
+      expect(needsOperatorXeroRetry(error as XeroAppliedCreditOperationBusyError)).toBe(operatorRetry);
+      if (status === "FAILED") {
+        expect((error as Error).message).toMatch(/Retry the admin grant credit note/);
+      }
+      expect(xeroClient.getAuthenticatedXeroClient).not.toHaveBeenCalled();
+      expect(allocateCreditNoteToInvoice).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a cancelled grant note does not fence the legacy mint", async () => {
+    notelessGrantLot();
+    h.state.grantOperations = [{ localId: "c1", status: "CANCELLED" }];
+    await expect(allocateAppliedCreditForBooking("b1", { syncOperation: xeroClaim("op1") })).rejects.toThrow(
+      "mint reached Xero",
+    );
   });
 
   it("is a no-op skip when replayed after a fully-completed allocation", async () => {

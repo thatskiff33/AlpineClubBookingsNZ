@@ -2,6 +2,7 @@ import {
   getCancellationSettlementBreakdown,
   type CancellationCreditEntry,
 } from "@/lib/payment-status-display";
+import { XERO_ACTIVE_OPERATION_STATUSES } from "@/lib/xero-active-operation-statuses";
 
 export const paymentSourceFilters = ["all", "STRIPE", "INTERNET_BANKING", "NONE"] as const;
 export type PaymentSourceFilter = (typeof paymentSourceFilters)[number];
@@ -58,21 +59,38 @@ export function emptyXeroActivitySummary(): XeroActivitySummary {
   };
 }
 
+/**
+ * The operation statuses each activity count tallies, keyed by the Xero state
+ * that count decides — the one spelling of which statuses are "failed",
+ * "partial" and "pending". `summarizeXeroActivity` counts with it, and the admin
+ * bookings list's SQL pre-filter (#4939) narrows to records holding one of them,
+ * so the two cannot drift apart.
+ */
+export const XERO_ACTIVITY_STATUSES = {
+  operationFailed: ["FAILED"],
+  operationPartial: ["PARTIAL"],
+  // The active population, imported rather than copied (INV-SSOT-001).
+  operationPending: XERO_ACTIVE_OPERATION_STATUSES,
+} as const satisfies Record<
+  Extract<XeroState, "operationFailed" | "operationPartial" | "operationPending">,
+  readonly string[]
+>;
+
+function isActivityStatus(statuses: readonly string[], status: string): boolean {
+  return statuses.includes(status);
+}
+
 function summarizeXeroActivity(
   operations: XeroActivityOperationLike[]
 ): XeroActivitySummary {
   const summary = emptyXeroActivitySummary();
 
   for (const operation of operations) {
-    if (operation.status === "FAILED") {
+    if (isActivityStatus(XERO_ACTIVITY_STATUSES.operationFailed, operation.status)) {
       summary.failed += 1;
-    } else if (operation.status === "PARTIAL") {
+    } else if (isActivityStatus(XERO_ACTIVITY_STATUSES.operationPartial, operation.status)) {
       summary.partial += 1;
-    } else if (
-      operation.status === "PENDING" ||
-      operation.status === "RUNNING" ||
-      operation.status === "WAITING_PAYMENT"
-    ) {
+    } else if (isActivityStatus(XERO_ACTIVITY_STATUSES.operationPending, operation.status)) {
       summary.pending += 1;
     }
 
@@ -148,8 +166,11 @@ export function mergeXeroActivitySummaries(
  * invoice is minted against money that moved. A booking-lifecycle expectation is
  * a different and wider question, and the diagnostics pack asks it separately
  * with `isSettledBookingStatus` rather than by widening this.
+ *
+ * Exported for the admin bookings list's SQL pre-filter (#4939), which narrows
+ * an `invoiceMissing` scan to payments in these statuses.
  */
-const XERO_INVOICE_EXPECTED_PAYMENT_STATUSES = [
+export const XERO_INVOICE_EXPECTED_PAYMENT_STATUSES = [
   "SUCCEEDED",
   "REFUNDED",
   "PARTIALLY_REFUNDED",

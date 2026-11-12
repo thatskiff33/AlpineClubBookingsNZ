@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useId, useRef, useState } from "react";
 import Link from "next/link";
@@ -225,7 +226,7 @@ export function DeadCardRefundsPanel({
     setBusy(true);
     setError("");
     try {
-      const res = await fetch(
+      const res = await fetchWithRecentAuth(
         `/api/admin/payments/card-refunds/${target.operationId}/paid-another-way`,
         {
           method: "POST",

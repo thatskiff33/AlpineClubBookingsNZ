@@ -10,6 +10,7 @@ import {
 import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { formatCentsPlain } from "@/lib/utils";
+import { isAdminCreditGrantAccount } from "@/lib/admin-credit-grant-account";
 import {
   ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT,
   MemberCreditValidationError,
@@ -46,11 +47,29 @@ export async function GET(
   }
 }
 
-const adjustmentSchema = z.object({
-  amountCents: z.number().int().refine((v) => v !== 0, "Amount cannot be zero"),
-  description: z.string().min(1, "Description is required").max(500),
-  idempotencyKey: z.string().uuid("Idempotency key must be a UUID"),
-});
+const adjustmentSchema = z
+  .object({
+    amountCents: z.number().int().refine((v) => v !== 0, "Amount cannot be zero"),
+    description: z.string().min(1, "Description is required").max(500),
+    idempotencyKey: z.string().uuid("Idempotency key must be a UUID"),
+    grantAccount: z.enum(["MEMBER_OWN_MONEY", "GOODWILL"]).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.amountCents > 0 && !value.grantAccount) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["grantAccount"],
+        message: "Choose which account this credit belongs to.",
+      });
+    }
+    if (value.amountCents < 0 && value.grantAccount) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["grantAccount"],
+        message: "A deduction does not choose a Xero account.",
+      });
+    }
+  });
 
 /**
  * POST /api/admin/members/[id]/credits
@@ -77,12 +96,14 @@ export async function POST(
       );
     }
 
+    const grantAccount = parsed.data.grantAccount ?? null;
     const result = await createAdminAdjustmentRequest(
       id,
       parsed.data.amountCents,
       parsed.data.description,
       session.user.id,
       parsed.data.idempotencyKey,
+      grantAccount && isAdminCreditGrantAccount(grantAccount) ? grantAccount : null,
       getClientIp(request)
     );
 

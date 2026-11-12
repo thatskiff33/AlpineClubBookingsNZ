@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useState } from "react";
 import { AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react";
@@ -56,7 +57,7 @@ function SetStatus({ set, setAt }: { set: boolean; setAt: string | null }) {
 }
 
 async function writeCredential(key: StripeCredentialKey, value: string): Promise<void> {
-  const res = await fetch(CREDENTIALS_ENDPOINT, {
+  const res = await fetchWithRecentAuth(CREDENTIALS_ENDPOINT, {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },

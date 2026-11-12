@@ -55,6 +55,7 @@ Each row of the Template dropdown is one editable message. The main ones:
 | Booking Detail | Payment required | On a booking that still needs payment |
 | Booking Detail | Internet Banking pending | On a pending Internet Banking booking awaiting reconciliation |
 | Booking Detail | Switch to Internet Banking | Beside the button that switches an unpaid card booking to Internet Banking |
+| Booking Detail | Confirm switch to Internet Banking | In the dialog that asks the member to confirm that switch; the default says an invoice will be emailed and they cannot switch back to card from the booking page. An approved whole-lodge booking uses its own version, which says the booking stays confirmed |
 | Payment Link | Internet Banking payment link | On public payment links when Internet Banking is available |
 | Payment Link | Bank transfer details for a payment request | In the email that asks a member to pay for account credit used elsewhere in the club's accounts; empty means card payment only |
 | Cancellation & Refund Appeal | Refund appeal | Near member cancellation / refund-appeal controls |

@@ -10,6 +10,7 @@ import {
   grantMembershipAdminDietaryAccess,
   isDietaryFieldEnabled,
 } from "@/lib/member-dietary";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const paramsSchema = z.object({
   id: z.string().min(1),
@@ -71,6 +72,8 @@ export async function PUT(
   });
   if (!guard.ok) return guard.response;
 
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   const parsedParams = paramsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json(

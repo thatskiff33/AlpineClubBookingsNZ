@@ -1,11 +1,30 @@
 import {
   addDaysDateOnly,
   addMonthsDateOnly,
+  countNightsDateOnly,
   dateOnlyFromParts,
   formatDateOnly,
 } from "@/lib/date-only";
 
 export const CUSTOM_DATE_RANGE_KEY = "custom";
+
+/**
+ * The longest range Admin → Finance → Reports will compute, in days counted
+ * inclusive of both ends (#4937). The presets stop at a year but the From/To
+ * boxes take any dates, and the daily occupancy series is built on the request
+ * thread, so a many-year range stalled the site for everyone. Two years either
+ * side of a leap day is 731 days; the extra day lets a same-date-to-same-date
+ * range (1 July to 1 July two years on) through. The API refuses anything
+ * longer with a 400 carrying `reportRangeLimitError`'s message.
+ */
+export const MAX_REPORT_RANGE_DAYS = 732;
+
+/** The refusal for a Reports range over the limit, or null when it fits. */
+export function reportRangeLimitError(from: Date, to: Date): string | null {
+  const days = countNightsDateOnly(from, to) + 1;
+  if (days <= MAX_REPORT_RANGE_DAYS) return null;
+  return `Reports cover at most ${MAX_REPORT_RANGE_DAYS} days (about two years); this range is ${days} days. Choose a shorter range.`;
+}
 
 export interface DateRangeValues {
   from: string;

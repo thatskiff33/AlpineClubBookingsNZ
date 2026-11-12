@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useId, useState } from "react";
 import Link from "next/link";
@@ -131,7 +132,7 @@ export function BankRefundVoidsToAnswerPanel({
     setError("");
     try {
       const pick = target.mode === "pick";
-      const res = await fetch(`/api/admin/payments/bank-refund-voids/${target.row.linkId}/${pick ? "pick" : "answered"}`, {
+      const res = await fetchWithRecentAuth(`/api/admin/payments/bank-refund-voids/${target.row.linkId}/${pick ? "pick" : "answered"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(pick ? { lineId: pickedLineId, confirmed: true } : { note, confirmed: true }),

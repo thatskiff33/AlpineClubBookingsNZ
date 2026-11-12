@@ -295,7 +295,12 @@ const DEFAULT_GUESTS = [
  */
 function bookingWith(
   guests: ReturnType<typeof liveGuest>[],
-  overrides: { status?: string; checkIn?: string; checkOut?: string } = {},
+  overrides: {
+    status?: string;
+    checkIn?: string;
+    checkOut?: string;
+    payment?: { status: string; amountCents: number; source?: string } | null;
+  } = {},
 ) {
   const totalPriceCents = guests.reduce((sum, g) => sum + g.priceCents, 0);
   return {
@@ -316,7 +321,7 @@ function bookingWith(
     discountCents: 0,
     promoAdjustmentCents: 0,
     finalPriceCents: totalPriceCents,
-    payment: null,
+    payment: overrides.payment ?? null,
     promoRedemption: null,
     guests,
   };
@@ -1417,8 +1422,13 @@ describe("#4197 re-rates, fees and rate recalculations add up too", () => {
   });
 
   it("with a change fee, the lines add up to the net charge", async () => {
+    // The default fixture is unpaid, so a mocked fee would be dropped. A paid
+    // booking is what still shows the line.
     h.calculateChangeFee.mockReturnValue({ feeCents: 1_500 });
-    const route = await runRoute({ checkIn: "2026-09-02", checkOut: "2026-09-05" });
+    const route = await runRoute({ checkIn: "2026-09-02", checkOut: "2026-09-05" }, DEFAULT_GUESTS, {
+      status: "PAID",
+      payment: { status: "SUCCEEDED", amountCents: 12_600, source: "STRIPE" },
+    });
     expect(route.status).toBe(200);
     expect(route.body.itemizedChanges).toContainEqual({
       label: "Late-notice change fee",
@@ -1426,6 +1436,16 @@ describe("#4197 re-rates, fees and rate recalculations add up too", () => {
     });
     expect(route.body.netChargeCents).toBe((route.body.priceDiffCents as number) + 1_500);
     expect(sumOfLines(route.body)).toBe(route.body.netChargeCents);
+  });
+
+  it("an unpaid booking quotes no late-notice fee, even when the tier math would charge one", async () => {
+    h.calculateChangeFee.mockReturnValue({ feeCents: 1_500 });
+    const route = await runRoute({ checkIn: "2026-09-02", checkOut: "2026-09-05" });
+    expect(route.status).toBe(200);
+    expect(route.body.itemizedChanges).not.toContainEqual(
+      expect.objectContaining({ label: "Late-notice change fee" }),
+    );
+    expect(route.body.netChargeCents).toBe(route.body.priceDiffCents);
   });
 });
 

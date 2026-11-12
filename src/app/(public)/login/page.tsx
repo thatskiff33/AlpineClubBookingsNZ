@@ -12,6 +12,7 @@ import {
 } from "@/lib/family-invite-return-address";
 import { resolvePostLoginLandingPath } from "@/lib/post-login-landing";
 import { googleCredentialsConfigured } from "@/lib/google-oauth";
+import { isSecondFactorEnrolled } from "@/lib/second-factor-enrolment";
 import { getCachedEffectiveModuleFlags } from "@/lib/public-layout-config";
 import { LoginForm } from "./login-form";
 
@@ -84,7 +85,11 @@ export default async function LoginPage({
       appendFamilyInviteReturnParam(query, familyInviteReturnNonce);
       const suffix = query.toString() ? `?${query.toString()}` : "";
       redirect(
-        session.user.twoFactorEnrolled && session.user.twoFactorMethod
+        isSecondFactorEnrolled({
+          twoFactorEnabled: false,
+          hasPasskey: session.user.hasPasskey === true,
+          sessionEnrolled: session.user.twoFactorEnrolled === true,
+        })
           ? `/login/verify${suffix}`
           : `/login/enroll${suffix}`,
       );

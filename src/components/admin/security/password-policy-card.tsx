@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { KeyRound, Loader2, RefreshCw, Save } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -119,7 +120,7 @@ export function PasswordPolicyCard() {
       return toDraft(body.policy);
     },
     save: async (draft) => {
-      const response = await fetch("/api/admin/security/password-policy", {
+      const response = await fetchWithRecentAuth("/api/admin/security/password-policy", {
         method: "PUT",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },

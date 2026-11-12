@@ -9,6 +9,7 @@ import {
 } from "@/lib/booking-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { getClientIp } from "@/lib/rate-limit";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const declineSchema = z.object({
   reason: z.string().max(2000).optional().nullable(),
@@ -29,6 +30,8 @@ export async function POST(
 
   const { id } = await params;
   let body: unknown = {};
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await req.json();
   } catch {

@@ -23,9 +23,8 @@ import {
 import {
   addDaysDateOnly,
   formatDateOnly,
-  isDateOnlyString,
-  parseDateOnly,
 } from "@/lib/date-only";
+import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 
 type WorkPartyDbClient = typeof prisma | Prisma.TransactionClient;
 
@@ -251,17 +250,13 @@ export async function resolveWorkPartyEventPromoForBooking(
   return { ok: true, promoCodeStr: event.promoCode.code, eventName: event.name };
 }
 
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-});
-
 // Shared by the admin work-parties create and update routes.
 export const workPartyEventSchema = z
   .object({
     name: z.string().trim().min(1).max(200),
     description: z.string().trim().max(1000).optional().nullable(),
-    startDate: dateOnlyString.transform(parseDateOnly),
-    endDate: dateOnlyString.transform(parseDateOnly),
+    startDate: parsedDateOnlySchema,
+    endDate: parsedDateOnlySchema,
     discountPercent: z.number().int().min(1).max(100).default(100),
     active: z.boolean().default(true),
     // Lodge the working bee is held at; null/omitted = club-wide event.

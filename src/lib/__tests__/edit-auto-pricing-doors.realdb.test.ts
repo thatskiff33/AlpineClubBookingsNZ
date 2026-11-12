@@ -10,7 +10,8 @@
  *    companion with blank rows (T8), with the ledger posting the reversal;
  *  - the date change (`modifyBookingDates`): a shortening that keeps a blank
  *    night at its valued share (T7/T8), and a whole-stay move that buys every
- *    night fresh and is charged the ordinary change fee (T5, D8);
+ *    night fresh, with no late-notice fee, because it has not been paid
+ *    (T5; owner decision, 10 Nov 2026);
  *  - the batch edit (`modifyBookingBatch`): a guest added beside an existing
  *    guest with no usable rows (T1/T8), an extension of that guest (T4), and an
  *    in-progress shortening of a strand whose rows reach past its stored
@@ -603,7 +604,7 @@ async function removeGuest(guestId: string) {
       await noReviewRaised();
     });
 
-    it("date change T5/D8: a whole-stay move buys every night fresh and is charged the ordinary change fee", async () => {
+    it("date change T5: a whole-stay move buys every night fresh and, unpaid, records no late-notice fee", async () => {
       await seed({
         checkIn: "2026-08-10",
         checkOut: "2026-08-13",
@@ -635,9 +636,9 @@ async function removeGuest(guestId: string) {
         ["2026-08-21", RATE, "SOLD"],
         ["2026-08-22", RATE, "SOLD"],
       ]);
-      // 40 days out to 50 days out crosses into the 100% tier: half the
-      // original $130 is the fee, charged as on any edit (D8).
-      expect(result.changeFeeCents).toBe(6_500);
+      // 40 days out to 50 days out would be a late-notice fee on a paid
+      // booking. This one is still at its pay step, so none is recorded.
+      expect(result.changeFeeCents).toBe(0);
       await noReviewRaised();
     });
 

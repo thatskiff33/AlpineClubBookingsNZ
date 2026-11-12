@@ -1,4 +1,5 @@
 import type { EntranceFeeCategory } from "@prisma/client";
+import { readAdminGrantCreditNotePayload, XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE, type AdminGrantCreditNotePayload } from "@/lib/admin-grant-credit-note-payload";
 import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, type OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 import {
@@ -17,10 +18,7 @@ export const XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE = "SUPPLEMENTARY_INVOICE";
 export const XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE = "MODIFICATION_CREDIT_NOTE";
 export const XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE = "MODIFICATION_ACCOUNT_CREDIT_NOTE";
 export const XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE = "CREDIT_NOTE_ALLOCATION";
-// #1620 — orchestration op: on IB invoice raise, allocate the member's existing
-// floating credit notes against the booking's invoice (allocate-existing applied
-// credit). The handler does the local lot math + enqueues the per-note
-// CREDIT_NOTE_ALLOCATION ops; it is NOT itself a single Xero call.
+// #1620: allocate the member's existing notes; this row is not itself one Xero call.
 export const XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE = "APPLIED_CREDIT_ALLOCATION";
 export const XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE = "APPLIED_CREDIT_DEALLOCATION";
 export const XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE = "MEMBERSHIP_CANCELLATION_CREDIT_NOTE";
@@ -33,15 +31,7 @@ export const XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE = "MEMBERSHIP_SUBSCRIPTION_IN
 // approval task (`xero-kept-late-capture-invoice.ts`).
 export const XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE = "KEPT_LATE_CAPTURE_INVOICE";
 
-/**
- * The complete set of outbox queue types the pending scan dispatches (#1272,
- * item 4 of #1208). Single source of truth: the pending-outbox scan
- * (`processQueuedXeroOutboxOperations`) filters `queueType IN (...)` on this
- * list, and the canonical per-type parse switch in `readQueuedOutboxPayload`
- * covers exactly these members. Ordered to mirror the historical scan
- * predicate for an obvious 1:1 audit, later types appended. REQUEUE/BACKFILL/
- * inbound rows carry no queueType and are intentionally excluded.
- */
+/** Pending-scan queue types (#1272). Later types are appended. REQUEUE, BACKFILL and inbound rows have none. */
 export const XERO_OUTBOX_QUEUE_TYPES = [
   XERO_OUTBOX_ENTRANCE_FEE_TYPE,
   XERO_OUTBOX_BOOKING_INVOICE_TYPE,
@@ -62,6 +52,7 @@ export const XERO_OUTBOX_QUEUE_TYPES = [
   XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
   XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
   XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, // #4299 (`INV-PAY-148`)
+  XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE, // #4431
 ] as const;
 
 interface QueuedEntranceFeeOutboxPayload {
@@ -264,7 +255,8 @@ export type QueuedOutboxPayload =
   | QueuedGroupSettlementInvoiceVoidOutboxPayload
   | QueuedSubscriptionInvoiceOutboxPayload
   | QueuedKeptLateCaptureInvoiceOutboxPayload
-  | QueuedAdditionalCaptureReceiptOutboxPayload;
+  | QueuedAdditionalCaptureReceiptOutboxPayload
+  | AdminGrantCreditNotePayload;
 
 export interface QueuedOutboxExpectedOperation {
   entityType: "INVOICE" | "CREDIT_NOTE" | "ALLOCATION" | "CONTACT" | "PAYMENT";
@@ -284,6 +276,7 @@ export interface QueuedOutboxExpectedOperation {
     // row is skipped on every pass and never sent.
     | "ManualRefundTask"
     | "PaymentTransaction"
+    | "MemberCredit"
   >;
 }
 
@@ -319,6 +312,7 @@ export function readQueuedOutboxPayload(
   }
 
   if (queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE) return readOrganiserExtraAdjustmentPayload(value);
+  if (queueType === XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE) return readAdminGrantCreditNotePayload(value);
   if (queueType === XERO_OUTBOX_BOOKING_INVOICE_TYPE) {
     const bookingId = readString(payload.bookingId);
     return bookingId ? { queueType, bookingId } : null;
@@ -606,6 +600,7 @@ export function getQueuedOutboxExpectedOperation(
   }
 
   if (queueType === XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE) return { entityType: "PAYMENT", operationType: "CREATE", localModels: ["PaymentTransaction"] };
+  if (queueType === XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE) return { entityType: "CREDIT_NOTE", operationType: "CREATE", localModels: ["MemberCredit"] };
   if (queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE) {
     return {
       entityType: "INVOICE",

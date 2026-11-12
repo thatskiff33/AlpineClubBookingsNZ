@@ -18,7 +18,6 @@ import {
 import { promoCodeListRefusal } from "@/lib/promo-code-list-rules";
 import {
   AdminReviewStatus,
-  BookingStatus,
   type AgeTier,
   type BookingGuest,
   type BookingGuestNightPriceSource,
@@ -61,12 +60,8 @@ import {
   cleanupChoreAssignmentsForDateChange,
   cleanupChoreAssignmentsForGuestStayRanges,
 } from "@/lib/chore-cleanup";
-import {
-  daysUntilDate,
-  loadCancellationPolicy,
-  type CancellationPolicyDb,
-} from "@/lib/cancellation";
-import { calculateChangeFee } from "@/lib/change-fee";
+import { type CancellationPolicyDb } from "@/lib/cancellation";
+import { lateNoticeChangeFee } from "@/lib/late-notice-change-fee";
 import {
   checkCapacityForGuestRanges,
   checkCapacityForPartnerSharedAdmission,
@@ -2403,22 +2398,15 @@ export async function calculateModificationChangeFee({
   if (skipBookingLifecycleRules || !checkInChanged) {
     return 0;
   }
-  // #2266: no change fee on a DRAFT — nothing has been committed to, exactly
-  // like moving the dates in the wizard before saving. Member draft edits do
-  // not take the admin skip above, so the guard must be explicit.
-  if (booking.status === BookingStatus.DRAFT) {
-    return 0;
-  }
-  const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, db);
-  const feeResult = calculateChangeFee({
-    // #3123 — one club day for both operands, so the old and new day-counts
-    // cannot be measured from two different todays.
-    daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, todayAtClub),
-    daysUntilNewCheckIn: daysUntilDate(newCheckIn, todayAtClub),
-    originalFinalPriceCents: booking.finalPriceCents,
-    policyRules: policy,
+  // Unpaid bookings, drafts included, are zero inside `lateNoticeChangeFee`
+  // (owner decision, 10 Nov 2026). A draft has had nothing paid.
+  return lateNoticeChangeFee({
+    booking,
+    lodgeId: booking.lodgeId,
+    newCheckIn,
+    db,
+    todayAtClub,
   });
-  return feeResult.feeCents;
 }
 
 /**

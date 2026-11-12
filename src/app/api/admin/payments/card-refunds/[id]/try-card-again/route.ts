@@ -5,6 +5,7 @@ import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
 import { DeadCardRefundActionError, tryDeadCardRefundAgain } from "@/lib/card-refund-dead-row-actions";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 /** The confirm dialog's yes, and the owed figure it showed (a moved one is a 409). */
 const bodySchema = z
@@ -36,6 +37,8 @@ export async function POST(
   const { id } = await params;
 
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await request.json();
   } catch {

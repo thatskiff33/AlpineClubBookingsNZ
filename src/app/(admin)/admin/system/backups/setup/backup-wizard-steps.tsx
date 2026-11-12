@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useState } from "react";
 import Link from "next/link";
@@ -40,7 +41,7 @@ function formatBytes(bytes: number): string {
 
 /** Write a write-only secret through the shared C1 credentials route (Full Admin). */
 async function writeCredential(key: string, value: string): Promise<void> {
-  const res = await fetch(CREDENTIALS_ENDPOINT, {
+  const res = await fetchWithRecentAuth(CREDENTIALS_ENDPOINT, {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
@@ -51,7 +52,7 @@ async function writeCredential(key: string, value: string): Promise<void> {
 
 /** Write non-secret backup configuration through the backups config route. */
 async function writeConfig(payload: Record<string, unknown>): Promise<void> {
-  const res = await fetch(CONFIG_ENDPOINT, {
+  const res = await fetchWithRecentAuth(CONFIG_ENDPOINT, {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },

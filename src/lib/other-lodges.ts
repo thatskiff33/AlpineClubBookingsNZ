@@ -1,6 +1,7 @@
 import type { OtherLodge, OtherLodgeRoomType, Prisma } from "@prisma/client";
 import { z } from "zod";
-import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import { isHttpUrl } from "@/lib/http-url";
 import type { ServerVersionStatus } from "@/lib/servernz-api-version";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
@@ -330,16 +331,12 @@ const optionalEmail = z.preprocess(
   boundedText(OTHER_LODGE_BOUNDS.bookingOfficerEmail).email().nullable().optional(),
 );
 
-// A real calendar date as `YYYY-MM-DD`: the kernel's check refuses `2026-02-30`,
-// which a bare pattern would pass and `Date.parse` would roll into March.
+// A real calendar date as `YYYY-MM-DD`, trimmed first: the kernel's check
+// refuses `2026-02-30`, which a bare pattern would pass and `Date.parse` would
+// roll into March.
 const dateOnlyField = z.preprocess(
   blankToNull,
-  z
-    .string()
-    .trim()
-    .refine(isDateOnlyString, "Use a real calendar date as YYYY-MM-DD")
-    .nullable()
-    .optional(),
+  z.string().trim().pipe(dateOnlyStringSchema).nullable().optional(),
 );
 
 const amenityInputSchema = z

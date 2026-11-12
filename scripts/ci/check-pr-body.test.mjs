@@ -191,7 +191,11 @@ describe("pr:check offline gate runner", () => {
   });
 
   it("fails the same sectionless body once the diff touches a sensitive path", () => {
-    root = makeRepo({ "src/lib/booking-capacity.ts": "export const beds = 1;\n" });
+    // The file must HOLD a writer, not just be named like one (#5038).
+    root = makeRepo({
+      "src/lib/booking-capacity.ts":
+        "export const claim = (db) => db.booking.updateMany({ where: {}, data: {} });\n",
+    });
     const { status, output } = runGate(root, DEPENDABOT_BODY);
     expect(output).toContain("FAIL  Concurrency declaration");
     expect(output).toContain("src/lib/booking-capacity.ts");
@@ -296,5 +300,63 @@ describe("pr:check offline gate runner", () => {
     expect(result.output).toContain("PASS  PR size");
     expect(result.output).not.toContain("warning(s)");
     expect(result.status).toBe(0);
+  });
+
+  /*
+    #5038: one definition of "sensitive", reached by both runners. The offline
+    runner and the `verify` entrypoint each turn a git range into paths and a
+    content reader on their own, so the place they could come apart is that
+    wiring, not the validator. Each row is one repository and one body, judged
+    by both; the verdicts must be the same and must be the stated one.
+  */
+  const ciGate = join(repoRoot, "scripts", "ci", "check-pr-concurrency-declaration.mjs");
+  const NA_BODY = BODY_WITHOUT_FRAGMENT;
+  const WORDING = 'export const BOOKING_MESSAGES = { confirmed: "Your booking is confirmed." };\n';
+
+  function runCiGate(repo, body) {
+    const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+    const result = spawnSync(process.execPath, [ciGate], {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PR_BODY: body,
+        PR_BASE_SHA: git("rev-parse", "base"),
+        PR_HEAD_SHA: git("rev-parse", "HEAD"),
+        PR_NUMBER: "",
+        GITHUB_TOKEN: "",
+        GH_TOKEN: "",
+        GITHUB_REPOSITORY: "",
+      },
+    });
+    return { ...result, output: `${result.stdout ?? ""}${result.stderr ?? ""}` };
+  }
+
+  it.each([
+    ["a wording-only file on a sensitive path", { "src/lib/booking-message-definitions.ts": WORDING }, "PASS"],
+    [
+      "a file holding a transaction",
+      { "src/lib/booking-message-definitions.ts": `${WORDING}export const run = (db) => db.$transaction([]);\n` },
+      "FAIL",
+    ],
+    [
+      "an async route that only calls a writer elsewhere",
+      { "src/app/api/bookings/[id]/cancel/route.ts": "export async function POST() { return cancelBooking(); }\n" },
+      "FAIL",
+    ],
+    ["a migration", { "prisma/migrations/20260101000000_x/migration.sql": "-- no-op\n" }, "FAIL"],
+    ["a file that never matched by name", { "src/lib/thing.ts": "export const a = async () => 1;\n" }, "PASS"],
+  ])("pr:check and the CI gate agree on %s", (_label, files, verdict) => {
+    root = makeRepo(files);
+    const offline = runGate(root, NA_BODY);
+    const ci = runCiGate(root, NA_BODY);
+    expect(offline.output).toContain(`${verdict}  Concurrency declaration`);
+    expect(ci.status).toBe(verdict === "PASS" ? 0 : 1);
+    if (verdict === "FAIL") {
+      // Same reason, same file named, in both.
+      const [file] = Object.keys(files);
+      expect(offline.output).toContain(`cannot use N/A for sensitive paths: ${file}`);
+      expect(ci.output).toContain(`cannot use N/A for sensitive paths: ${file}`);
+    }
   });
 });

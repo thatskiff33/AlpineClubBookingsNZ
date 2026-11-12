@@ -13,7 +13,7 @@ import {
   rateLimitedResponse,
   rateLimiters,
 } from "@/lib/rate-limit";
-import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { requireActiveSession } from "@/lib/session-guards";
 import logger from "@/lib/logger";
@@ -48,15 +48,11 @@ import logger from "@/lib/logger";
  *      shape of their own payload — never from the state of the calendar.
  */
 
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-});
-
 const noCrlf = (value: string) => !/[\r\n]/.test(value);
 
 const wholeLodgeRequestSchema = z.object({
-  checkIn: dateOnlyString.transform(parseDateOnly),
-  checkOut: dateOnlyString.transform(parseDateOnly),
+  checkIn: parsedDateOnlySchema,
+  checkOut: parsedDateOnlySchema,
   // Approximate party size. Bounded against the lodge's configured capacity
   // below; there is no availability check of any kind.
   headcount: z.number().int().min(1).max(500),

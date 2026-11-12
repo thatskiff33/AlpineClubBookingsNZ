@@ -10,6 +10,7 @@ import {
   reauthFactorsFor,
   type ReauthMember,
 } from "@/lib/session-reauth";
+import { createPasskeyAuthenticationOptions } from "@/lib/webauthn";
 
 const MEMBER_SELECT = {
   id: true,
@@ -73,7 +74,14 @@ export async function GET(request: NextRequest) {
   const loaded = await loadMember(session.user.id);
   if (!loaded.ok) return loaded.response;
 
-  return NextResponse.json({ factors: reauthFactorsFor(loaded.member) });
+  const factors = await reauthFactorsFor(loaded.member);
+  const passkeyOptions = factors.includes("PASSKEY")
+    ? await createPasskeyAuthenticationOptions(loaded.member.id)
+    : null;
+  return NextResponse.json({
+    factors,
+    ...(passkeyOptions ? { passkeyOptions } : {}),
+  });
 }
 
 export async function POST(request: NextRequest) {

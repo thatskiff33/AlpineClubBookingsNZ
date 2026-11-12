@@ -34,9 +34,10 @@ const MINT_SLICE_MAPPING_KEY_ORDER: readonly MintSliceMappingKey[] = [
 /**
  * Which Xero mapping ONE noteless slice posts to (#2717; owner, 10 Aug 2026).
  *
- * `ADMIN_ADJUSTMENT` is the discretionary case and the only one the owner's
- * decision is about: a club chose to grant credit it was never owed, so revenue
- * stays at what was billed and the grant shows as its own EXPENSE line.
+ * A noteless legacy `ADMIN_ADJUSTMENT` is the discretionary case this mint
+ * still covers. A grant approved after #4431 already carries its own note, so
+ * spend allocates that note and this function is not asked. Revenue stays at
+ * what was billed and the legacy grant shows as its own EXPENSE line.
  *
  * EVERY OTHER TYPE IS THE MEMBER'S OWN MONEY and stays on `hutFeeRefunds`,
  * which is exactly where it went before #2717:

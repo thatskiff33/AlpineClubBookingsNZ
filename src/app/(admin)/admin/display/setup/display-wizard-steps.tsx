@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -280,7 +281,7 @@ export function ModuleStep({ context, helpers }: StepProps) {
       return;
     }
 
-    const response = await fetch("/api/admin/modules", {
+    const response = await fetchWithRecentAuth("/api/admin/modules", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ settings: { ...settings, lobbyDisplay: true } }),

@@ -192,6 +192,21 @@ describe("LoginPage authenticated self-heal", () => {
     ).rejects.toThrow("redirect:/login/verify?callbackUrl=%2Fbookings");
   });
 
+  it("sends a passkey-only session to /login/verify", async () => {
+    mockAuth.mockResolvedValue(
+      sessionUser({
+        twoFactorRequired: true,
+        twoFactorEnrolled: false,
+        twoFactorMethod: null,
+        hasPasskey: true,
+      }),
+    );
+
+    await expect(runLoginPage({ callbackUrl: "/bookings" })).rejects.toThrow(
+      "redirect:/login/verify?callbackUrl=%2Fbookings",
+    );
+  });
+
   it("sends an unverified unenrolled session to /login/enroll with the callbackUrl", async () => {
     mockAuth.mockResolvedValue(
       sessionUser({ twoFactorRequired: true, twoFactorEnrolled: false })

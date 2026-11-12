@@ -304,6 +304,7 @@ describe("xero operation outbox payload parsing", () => {
       "KEPT_LATE_CAPTURE_INVOICE",
       "ADDITIONAL_CAPTURE_RECEIPT",
       "ORGANISER_EXTRA_ADJUSTMENT",
+      "ADMIN_GRANT_CREDIT_NOTE",
     ]);
     expect(new Set(XERO_OUTBOX_QUEUE_TYPES).size).toBe(
       XERO_OUTBOX_QUEUE_TYPES.length
@@ -416,12 +417,36 @@ describe("xero operation outbox payload parsing", () => {
       ["MEMBERSHIP_SUBSCRIPTION_INVOICE", "INVOICE"],
       ["KEPT_LATE_CAPTURE_INVOICE", "INVOICE"],
       ["ADDITIONAL_CAPTURE_RECEIPT", "PAYMENT"],
+      ["ADMIN_GRANT_CREDIT_NOTE", "CREDIT_NOTE"],
     ]);
     for (const queueType of XERO_OUTBOX_QUEUE_TYPES) {
       expect(getQueuedOutboxExpectedOperation(queueType).entityType).toBe(
         expectedEntityTypes.get(queueType)
       );
     }
+  });
+});
+
+describe("admin grant credit note payload (#4431)", () => {
+  it("parses the queue type and expects a credit-note create on the credit row", () => {
+    const queued = {
+      queueType: "ADMIN_GRANT_CREDIT_NOTE" as const,
+      amountCents: 2500,
+      mappingKey: "hutFeeRefunds" as const,
+      memberCreditId: "credit_1",
+    };
+    expect(readQueuedOutboxPayload(queued)).toEqual(queued);
+    expect(readQueuedOutboxPayload({ ...queued, mappingKey: "goodwillWriteOffs" })).toEqual({
+      ...queued,
+      mappingKey: "goodwillWriteOffs",
+    });
+    expect(readQueuedOutboxPayload({ ...queued, amountCents: 0 })).toBeNull();
+    expect(readQueuedOutboxPayload({ ...queued, mappingKey: "somethingElse" })).toBeNull();
+    expect(getQueuedOutboxExpectedOperation("ADMIN_GRANT_CREDIT_NOTE")).toEqual({
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModels: ["MemberCredit"],
+    });
   });
 });
 

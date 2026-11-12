@@ -5,17 +5,14 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { endOfClubDayInclusive, requireCalendarDate, startOfClubDay } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
-import { formatDateOnly, isDateOnlyString } from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import type { Prisma } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
 import {
   BENEFICIAL_PROMO_ALLOCATION_FILTER,
   isBeneficialPromoAllocation,
 } from "@/lib/promo-usage-counts";
-
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-});
 
 // Hard upper bound on rows returned by a single `?export=1` request. Keeps a
 // full-filtered export bounded (mirroring the member-import cap convention of a
@@ -27,8 +24,8 @@ const EXPORT_MAX_ROWS = 10_000;
 // admin route. Filtering never changes the all-time totals — those always cover
 // every redemption of the code.
 const redemptionsQuerySchema = z.object({
-  from: dateOnlyString.optional(),
-  to: dateOnlyString.optional(),
+  from: dateOnlyStringSchema.optional(),
+  to: dateOnlyStringSchema.optional(),
   lodgeId: z.string().min(1).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(50),

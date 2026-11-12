@@ -1582,7 +1582,7 @@ _Legacy: settles tasks raised before #4317._
   cancel triggers cannot put the ask back. A FAILED row still projects as owed
   (a declined card is retried), so FAILED alone cannot mean
   withdrawn. `findEditReviewChargeRequest`, this door and the repair pass's
-  `planEditReviewChargeInvoicePayment` (`withdrawn` outcome) read
+  `planSupplementaryInvoicePayment` (`withdrawn` outcome) read
   past it too, so no fresh invoice is parked on a cancelled intent.
 - **Only a review-raised request, and only its own money** (D-3528-2): an
   ordinary price-increase ask is the price itself (`INV-PAY-047`), and so is

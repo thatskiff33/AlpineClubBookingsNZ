@@ -9,6 +9,7 @@ import { isFullAdmin } from "@/lib/access-roles";
 import { createAuditLog } from "@/lib/audit";
 import { validateCentralServerBaseUrl } from "@/lib/servernz-settings";
 import { saveServerNzConnectionSettings } from "@/lib/servernz-config";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 // POST /api/admin/alpine-server/settings — save the NON-secret ServerNZ
 // connection settings (base URL and per-shared-item enable flags). The API key
@@ -31,6 +32,8 @@ export async function POST(request: Request) {
   });
   if (!guard.ok) return guard.response;
 
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
   const parsed = bodySchema.safeParse(json.body);

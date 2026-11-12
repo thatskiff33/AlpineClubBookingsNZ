@@ -3204,6 +3204,11 @@ const eslintConfig = defineConfig([
   },
   {
     files: ["**/*.{jsx,tsx}"],
+    settings: {
+      "jsx-a11y": {
+        components: { TableRow: "tr", TableCell: "td", TableHead: "th", Button: "button" },
+      },
+    },
     rules: jsxA11y.flatConfigs.recommended.rules,
   },
   {
@@ -3212,6 +3217,7 @@ const eslintConfig = defineConfig([
     rules: {
       "accessibility/minimum-text-size": "error",
       "accessibility/no-nested-interactive": "error",
+      "accessibility/no-mouse-only-table-row": "error",
     },
   },
   {

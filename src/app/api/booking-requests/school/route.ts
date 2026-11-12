@@ -13,14 +13,10 @@ import {
 } from "@/lib/school-booking-request";
 import { generateSchoolGuests } from "@/lib/school-booking-constants";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
-import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { nameField } from "@/lib/zod-helpers";
 import logger from "@/lib/logger";
-
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-});
 
 const noCrlf = (value: string) => !/[\r\n]/.test(value);
 
@@ -39,8 +35,8 @@ const schoolBookingRequestSchema = z.object({
     .refine(noCrlf, "Phone number cannot contain line breaks")
     .optional()
     .nullable(),
-  checkIn: dateOnlyString.transform(parseDateOnly),
-  checkOut: dateOnlyString.transform(parseDateOnly),
+  checkIn: parsedDateOnlySchema,
+  checkOut: parsedDateOnlySchema,
   // Lodge the stay is requested at; omitted means the club's default lodge.
   lodgeId: z.string().min(1).optional(),
   cateringPreference: z

@@ -793,6 +793,9 @@ for a change that did not happen, and a change cannot happen without its entry.
 | `integration.credential.set` on `xero-oauth:token-set` | Xero is connected (`cause: oauth-connect`), or its access token is refreshed automatically (`cause: token-refresh`) | The connecting administrator, or **System** with `systemActor: xero-token-refresh` |
 | `integration.credential.deleted` on `xero-oauth:token-set` | Xero is disconnected (`cause: oauth-disconnect`), or the tokens are destroyed because somebody saved a new Xero client id or secret (`cause: verify-reset`) | The administrator |
 | `security.two_factor.enrolled` | A member turns on two-factor sign-in | The member themself |
+| `security.two_factor.passkey_registered` | A member saves a passkey | The member themself. Metadata is the name and credential id, never the public key |
+| `security.two_factor.passkey_removed` | A member removes a passkey | The member themself. Metadata is the name and credential id |
+| `security.two_factor.passkey_counter_regressed` | A passkey reports a counter that went backwards, or a counter update lost the compare-and-set | The member themself. Metadata is the credential id and the two counters |
 | `security.two_factor.recovery_codes_replaced` | A member replaces their recovery codes, which invalidates every unused one | The member themself |
 | `security.two_factor.cleared` | An account erasure, or the former-member retention job (#4457), clears a member's second factor | The administrator who approved the erasure, or **System** with `systemActor: former-member-anonymisation` |
 | `security.two_factor.secret_rewrapped` | `pnpm run data-keys:reencrypt` re-encrypts the member's authenticator secret, unchanged, under the current data-encryption key (#4456); their app keeps working | **System** with `systemActor: data-key-reencrypt` |

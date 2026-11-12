@@ -37,6 +37,9 @@ Image Manager is edited under the **content** permission area.
    change where uploads save, and **Refresh** to reload the current directory's
    listing. Uploaded images can then be inserted from the content editors' Image
    button.
+4. With a keyboard, Tab to a folder and press Enter or Space to select it.
+   Rename and Delete appear beside the folder while it has keyboard focus or
+   the pointer is over it. On touch screens these actions stay visible.
 
 ## Settings reference
 

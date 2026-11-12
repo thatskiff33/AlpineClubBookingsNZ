@@ -25,7 +25,10 @@
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
-import { validateConcurrencyDeclaration } from "./check-pr-concurrency-declaration.mjs";
+import {
+  gitContentsReader,
+  validateConcurrencyDeclaration,
+} from "./check-pr-concurrency-declaration.mjs";
 import { validateChangelogFragment } from "./check-pr-changelog-fragment.mjs";
 import { planDeviationVerdict } from "./check-pr-plan-deviation.mjs";
 import { measurePrSize, prSizeVerdict } from "./check-pr-size.mjs";
@@ -112,8 +115,8 @@ try {
 
 const changes = changesAgainst(base);
 const diffKnown = changes !== null;
-// The concurrency gate keys on paths alone; the changelog gate needs the status
-// as well. `parseNameStatus` expands a rename into its delete + add pair, so the
+// The concurrency gate takes paths (and reads their content itself, #5038); the
+// changelog gate needs the status as well. `parseNameStatus` expands a rename into its delete + add pair, so the
 // path list is deduped before the concurrency gate counts or matches it.
 //
 // `null` is passed straight through when the diff could not be resolved: that is
@@ -122,13 +125,20 @@ const diffKnown = changes !== null;
 // does not have. This is the SAME verdict CI reaches in the same state —
 // `PR_BASE_SHA` and `PR_HEAD_SHA` missing makes the CI entrypoint pass `null` too.
 const changedFiles = diffKnown ? [...new Set(changes.map((change) => change.path))] : null;
+// #5038: the same reader the CI entrypoint builds, over the same range this
+// runner diffs (`merge-base(HEAD, base)...HEAD`), so a name-matched file is
+// judged sensitive or exempt here exactly as `verify` judges it.
+const contentsOf = gitContentsReader({ base, head: "HEAD" });
 const diffSummary = diffKnown
   ? `${changedFiles.length} changed file(s) vs ${base}`
   : `an unresolved diff vs ${base}, so no diff context`;
 const failures = [];
 
 for (const [label, run] of [
-  ["Concurrency declaration", () => validateConcurrencyDeclaration(body, changedFiles)],
+  [
+    "Concurrency declaration",
+    () => validateConcurrencyDeclaration(body, changedFiles, { contentsOf }),
+  ],
   [
     "Changelog fragment",
     () => {

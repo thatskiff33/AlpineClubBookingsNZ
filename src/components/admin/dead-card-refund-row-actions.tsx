@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -57,7 +58,7 @@ function useConfirmedAction(failure: string) {
     setBusy(true);
     setError("");
     try {
-      const res = await fetch(url, {
+      const res = await fetchWithRecentAuth(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...body, confirmed: true }),

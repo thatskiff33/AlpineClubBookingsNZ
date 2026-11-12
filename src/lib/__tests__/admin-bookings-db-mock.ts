@@ -20,6 +20,12 @@ import { matchesWhere as evaluateWhere } from "@/lib/__tests__/support/prisma-wh
  *
  * Every other `where` key is deliberately ignored — fixtures are pre-filtered
  * by the tests, matching the previous naive-mock behavior.
+ *
+ * `{ where: "full" }` instead evaluates the WHOLE `where` with the shared
+ * evaluator (#4939), for suites whose claim is about what the SQL clause keeps —
+ * the derived-filter pre-filter's superset proof. Its fixtures must then carry
+ * every column and relation the clause names; the evaluator throws on one they
+ * lack rather than reading it as a match.
  */
 
 type FixtureRow = Record<string, any>;
@@ -46,8 +52,13 @@ interface FindManyArgsLike {
 /** The `where` keys this mock emulates; every other key is dropped, per the contract above. */
 const EMULATED_WHERE_KEYS = ["id", "payment"] as const;
 
-function matchesWhere(row: FixtureRow, where?: WhereLike) {
+type WhereMode = "emulated" | "full";
+
+function matchesWhere(row: FixtureRow, where?: WhereLike, mode: WhereMode = "emulated") {
   if (!where) return true;
+  if (mode === "full") {
+    return evaluateWhere(row, where, { label: "admin-bookings db mock (full where)" });
+  }
   const emulated: Record<string, unknown> = {};
   for (const key of EMULATED_WHERE_KEYS) {
     if (key in where) emulated[key] = where[key];
@@ -82,8 +93,12 @@ function orderRows(rows: FixtureRow[], orderBy: OrderByClause | OrderByClause[])
   });
 }
 
-function runFindMany(fixtures: FixtureRow[], args: FindManyArgsLike = {}) {
-  let rows = fixtures.filter((row) => matchesWhere(row, args.where));
+function runFindMany(
+  fixtures: FixtureRow[],
+  args: FindManyArgsLike = {},
+  mode: WhereMode = "emulated"
+) {
+  let rows = fixtures.filter((row) => matchesWhere(row, args.where, mode));
   if (args.orderBy) rows = orderRows(rows, args.orderBy);
   if (args.cursor?.id != null) {
     const index = rows.findIndex((row) => row.id === args.cursor?.id);
@@ -95,11 +110,15 @@ function runFindMany(fixtures: FixtureRow[], args: FindManyArgsLike = {}) {
   return rows;
 }
 
-export function installAdminBookingsDbMock(fixtures: FixtureRow[]) {
+export function installAdminBookingsDbMock(
+  fixtures: FixtureRow[],
+  options: { where?: WhereMode } = {}
+) {
+  const mode = options.where ?? "emulated";
   vi.mocked(prisma.booking.findMany).mockImplementation((async (
     args?: FindManyArgsLike
-  ) => runFindMany(fixtures, args)) as never);
+  ) => runFindMany(fixtures, args, mode)) as never);
   vi.mocked(prisma.booking.count).mockImplementation((async (args?: {
     where?: WhereLike;
-  }) => fixtures.filter((row) => matchesWhere(row, args?.where)).length) as never);
+  }) => fixtures.filter((row) => matchesWhere(row, args?.where, mode)).length) as never);
 }

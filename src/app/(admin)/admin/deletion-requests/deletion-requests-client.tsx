@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import Link from "next/link";
 import { useSession } from "next-auth/react";
@@ -278,7 +279,7 @@ export default function DeletionRequestsClient({
     try {
       let res: Response;
       try {
-        res = await fetch(
+        res = await fetchWithRecentAuth(
           `/api/admin/deletion-requests/${reviewDialog.request.id}`,
           {
             method: "POST",

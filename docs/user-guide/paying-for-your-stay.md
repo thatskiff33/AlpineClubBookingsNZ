@@ -60,6 +60,12 @@ the club's lead-time cutoff, you can choose **Internet Banking** instead of card
 2. Pay the invoice by bank transfer using the reference on it. Your bed is held
    under the club's internet-banking lead-time rules while the transfer clears.
 
+An unpaid card booking can also be switched later: tap **Pay by internet
+banking instead** under the card form on your booking page. A dialog asks you
+to confirm first, because once switched you cannot go back to paying by card
+from the booking page. Choose **Keep paying by card** if you tapped it by
+mistake; nothing changes.
+
 Operators manage the bed-hold and lead-time settings with the
 [Internet Banking](../guides/internet-banking.md) guide.
 

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth, updateSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { isSecondFactorEnrolled } from "@/lib/second-factor-enrolment";
+import { memberHasStoredPasskey } from "@/lib/webauthn";
 import {
   clearTwoFactorLockout,
   createTwoFactorSessionChallenge,
@@ -124,14 +126,20 @@ export function twoFactorLockoutResponse(member: TwoFactorApiMember) {
   );
 }
 
-export function getTwoFactorStatusPayload(
+export async function getTwoFactorStatusPayload(
   session: NonNullable<TwoFactorApiSession>,
   member: TwoFactorApiMember,
 ) {
+  const hasPasskey = await memberHasStoredPasskey(member.id);
   return {
     required: session.user.twoFactorRequired,
     verified: session.user.twoFactorVerified,
-    enrolled: member.twoFactorEnabled,
+    enrolled: isSecondFactorEnrolled({
+      twoFactorEnabled: member.twoFactorEnabled,
+      hasPasskey,
+      sessionEnrolled: session.user.twoFactorEnrolled,
+    }),
+    hasPasskey,
     method: member.twoFactorMethod,
     email: member.email,
     forcePasswordChange: member.forcePasswordChange,

@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useCallback, useMemo, useState } from "react";
 import {
@@ -145,7 +146,7 @@ export function LocalBackupCard({
       if (!saved || draft.localPath !== saved.localPath) {
         payload.localPath = draft.localPath;
       }
-      const res = await fetch(CONFIG_URL, {
+      const res = await fetchWithRecentAuth(CONFIG_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -211,7 +212,7 @@ export function LocalBackupCard({
     setRestoreMessage("");
     setRestoring(true);
     try {
-      const res = await fetch(RESTORE_URL, {
+      const res = await fetchWithRecentAuth(RESTORE_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filename: selectedFilename, confirm: "RESTORE" }),

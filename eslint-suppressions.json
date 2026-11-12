@@ -212,16 +212,10 @@
       "count": 1
     },
     "design-system/no-raw-button": {
-      "count": 4
-    },
-    "jsx-a11y/click-events-have-key-events": {
-      "count": 1
+      "count": 2
     },
     "jsx-a11y/no-autofocus": {
       "count": 2
-    },
-    "jsx-a11y/no-static-element-interactions": {
-      "count": 1
     }
   },
   "src/app/(admin)/admin/induction/[id]/print/page.tsx": {
@@ -685,12 +679,6 @@
     },
     "design-system/no-raw-button": {
       "count": 3
-    },
-    "jsx-a11y/click-events-have-key-events": {
-      "count": 1
-    },
-    "jsx-a11y/no-static-element-interactions": {
-      "count": 1
     }
   },
   "src/components/admin-sidebar.tsx": {

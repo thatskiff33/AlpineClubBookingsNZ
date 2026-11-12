@@ -19,6 +19,7 @@ import {
 } from "@/lib/access-role-definition-routes";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const createSchema = z
   .object({
@@ -64,6 +65,8 @@ export async function POST(request: Request) {
   }
 
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await request.json();
   } catch {

@@ -31,6 +31,7 @@ import {
   importedMemberRecovery,
   xeroPartialSuccessBody,
 } from "@/lib/xero-partial-success";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const importMemberContactSchema = z.object({
   xeroContactId: z.string().trim().min(1),
@@ -65,6 +66,8 @@ export async function POST(request: NextRequest) {
   if (!guard.ok) return guard.response;
   const session = guard.session;
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await request.json();
   } catch {

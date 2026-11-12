@@ -160,6 +160,22 @@ export function getOccupiedBedsForNight(
   return getCountedGuestsForNightFromIndex(night, buildOccupancyIndex(bookings)).length;
 }
 
+/**
+ * The bookings term for each night of a range, in the order given, from ONE
+ * occupancy index (#4937). Looping `getOccupiedBedsForNight` rebuilt the index
+ * per night — the per-pair cost #1146 removed — so range callers come here.
+ */
+export function getOccupiedBedsForNights(
+  nights: readonly Date[],
+  bookings: OccupancyBooking[]
+): Array<{ night: Date; occupiedBeds: number }> {
+  const index = buildOccupancyIndex(bookings);
+  return nights.map((night) => ({
+    night,
+    occupiedBeds: getCountedGuestsForNightFromIndex(night, index).length,
+  }));
+}
+
 type WholeLodgeHoldBooking = {
   checkIn?: Date | null;
   checkOut?: Date | null;

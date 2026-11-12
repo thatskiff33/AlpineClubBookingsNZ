@@ -31,6 +31,9 @@ const mockPrisma = vi.hoisted(() => ({
     findUnique: vi.fn(),
     update: vi.fn().mockResolvedValue({ id: "member-1" }),
   },
+  webAuthnCredential: {
+    findFirst: vi.fn().mockResolvedValue(null),
+  },
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));

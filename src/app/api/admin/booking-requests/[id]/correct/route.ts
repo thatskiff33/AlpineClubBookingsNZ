@@ -5,7 +5,7 @@ import { BookingRequestError, bookingRequestGuestSchema, serializeBookingRequest
 import { BookingRequestCorrectionCommittedError } from "@/lib/booking-request-correction-hold";
 import { correctBookingRequest } from "@/lib/booking-request-corrections";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
-import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { prisma } from "@/lib/prisma";
 import { getClientIp } from "@/lib/rate-limit";
 import {
@@ -15,6 +15,7 @@ import {
 import { schoolChildCountsSchema, schoolTeacherSchema } from "@/lib/school-booking-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { nameField } from "@/lib/zod-helpers";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 /**
  * POST /api/admin/booking-requests/[id]/correct — #2936.
@@ -28,10 +29,6 @@ import { nameField } from "@/lib/zod-helpers";
  * `/api/admin/booking-requests` is `{ area: "bookings", level: "edit" }`, the
  * same gate price, hold, approve and decline sit behind.
  */
-
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-});
 
 const noCrlf = (value: string) => !/[\r\n]/.test(value);
 
@@ -49,8 +46,8 @@ const correctionSchema = z.object({
     .min(1, "Record why you are correcting this request")
     .max(500)
     .refine(noCrlf, "The reason cannot contain line breaks"),
-  checkIn: dateOnlyString.transform(parseDateOnly),
-  checkOut: dateOnlyString.transform(parseDateOnly),
+  checkIn: parsedDateOnlySchema,
+  checkOut: parsedDateOnlySchema,
   contactFirstName: nameField(),
   contactLastName: nameField(),
   contactEmail: z.string().email("Invalid email address").max(200),
@@ -91,6 +88,8 @@ export async function POST(
 
   const { id } = await params;
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await req.json();
   } catch {

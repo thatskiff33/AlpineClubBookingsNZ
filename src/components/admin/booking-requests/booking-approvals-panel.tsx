@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { adminHref } from "@/lib/admin-hubs";
 
@@ -260,7 +261,7 @@ export function BookingApprovalsPanel({
     setReviewingId(bookingId);
     setError("");
     try {
-      const response = await fetch(`/api/admin/bookings/${bookingId}/review`, {
+      const response = await fetchWithRecentAuth(`/api/admin/bookings/${bookingId}/review`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

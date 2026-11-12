@@ -74,6 +74,10 @@ const h = vi.hoisted(() => {
     xeroObjectLink: {
       findFirst: async () => null,
     },
+    // #4431: a mint asks whether a lot is waiting on its grant note. None here.
+    xeroSyncOperation: {
+      findMany: async () => [],
+    },
     $transaction: async <T>(cb: (tx: unknown) => Promise<T>): Promise<T> =>
       cb(prismaStub),
   };

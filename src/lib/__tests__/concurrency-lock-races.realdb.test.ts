@@ -759,6 +759,10 @@ import "./login-throttle.realdb.test";
 // claim does not. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
 // cleans its own `race-4616-` member.
 import "./session-reauth.realdb.test";
+// #4617 reuses it to prove one of two concurrent passkey challenge claims
+// succeeds, and one of two concurrent counter updates. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4617-` member.
+import "./webauthn.realdb.test";
 // #4445 reuses it to prove two writers merging metadata onto one Xero link
 // (an existing row, or a missing one both create) both keep their keys, and
 // that the one-statement merge writes what the old spread wrote. Skipped

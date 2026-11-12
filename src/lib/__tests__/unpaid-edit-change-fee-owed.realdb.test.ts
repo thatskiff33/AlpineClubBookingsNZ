@@ -1,28 +1,11 @@
 /**
- * Real-PostgreSQL proof for #4661 (`INV-MOD-042`, `INV-PAY-119`): a change fee
- * an edit charges on an Internet Banking booking still to be paid is recorded
- * once, on its payment, and reaches the invoice and both ledgers through the
- * one fee planner ("Add fee to amount owed", #3750).
+ * Real-PostgreSQL proof (owner decision, 10 Nov 2026; `INV-MOD-042`,
+ * `INV-PAY-119`): moving the dates of a booking that has not been paid
+ * reprices it and records no late-notice fee. A booking that has been paid
+ * still records the policy fee once.
  *
- * THE EDIT IS THE REAL DOOR: `modifyBookingBatch`, under its real `lock(1)`,
- * lodge key and post-lock re-read, through `applyPaymentAdjustments` and its
- * claim on the Payment row. The settle is the real one too
- * (`syncInternetBankingPaymentsForPaidInvoice`), entered after its Xero read.
- *
- *  1. No invoice yet: moving the stay out of the late-notice tier records the
- *     fee on the payment and marks the edit's history row; the confirmation
- *     plan (which the journal's pending charge stands on) carries one
- *     CHANGE_FEE line under the edit's key, and the invoice paid at price plus
- *     fee settles to PAID with that line posted once.
- *  2. Invoice already issued: the fee is recorded on the payment once, and the
- *     edit's settlement queues a supplementary invoice for it.
- *  3. The date door (`modifyBookingDates`) on a card booking still to be paid:
- *     the fee is recorded the same way, and the open intent at the bare price
- *     is superseded, since it no longer pays what the booking owes.
- *  4. #4735, a card booking edited before its pay step opened: with no payment
- *     row, the edit opens one carrying only the fee, and the pay page that
- *     opens next asks for price plus fee once, keeping the fee as it attaches
- *     its intent.
+ * THE EDIT IS THE REAL DOOR: `modifyBookingBatch` and `modifyBookingDates`,
+ * under the real locks and post-lock re-read.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -30,7 +13,6 @@
  * uniquely-namespaced `race-4661-` fixtures.
  */
 import { Role, type PrismaClient } from "@prisma/client";
-import type { Invoice } from "xero-node";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
@@ -53,11 +35,14 @@ const INVOICE_ID = "race-4661-xero-invoice";
 const CHECK_IN = new Date("2026-07-10T00:00:00.000Z");
 const NIGHT_2 = new Date("2026-07-11T00:00:00.000Z");
 const CHECK_OUT = new Date("2026-07-12T00:00:00.000Z");
-// Nineteen days out: the full-refund tier, so the move charges the difference.
+// Nineteen days out: the full-refund tier, so a paid booking is charged the gap.
 const MOVED = { checkIn: "2026-07-20", checkOut: "2026-07-22" };
+// The same tier move, one night longer, so the price itself changes.
+const MOVED_LONGER = { checkIn: "2026-07-20", checkOut: "2026-07-23" };
 const NIGHT_CENTS = 5_000;
 const PRICE_CENTS = 2 * NIGHT_CENTS;
-/** (100% - 50%) of the price: the fee the policy sets for the move. */
+const NEW_PRICE_CENTS = 3 * NIGHT_CENTS;
+/** (100% - 50%) of the original price: the fee the policy sets for the move. */
 const FEE_CENTS = PRICE_CENTS / 2;
 
 let prisma: PrismaClient;
@@ -65,10 +50,8 @@ let batchService: typeof import("@/lib/booking-batch-modification-service");
 let dateService: typeof import("@/lib/booking-date-modification-service");
 let clubTimeServer: typeof import("@/lib/club-time/server");
 let confirmationSync: typeof import("@/lib/booking-ledger-confirmation-sync");
-let paidEffects: typeof import("@/lib/xero-inbound/invoice-paid-effects");
 let editSettlement: typeof import("@/lib/xero-booking-edit-settlement");
 let amountOwed: typeof import("@/lib/booking-amount-owed");
-let cardIntentAttach: typeof import("@/lib/card-intent-attach");
 const pendingXeroWork: Promise<unknown>[] = [];
 const queuedForThisBooking: Array<Parameters<typeof import("@/lib/xero-booking-edit-settlement").queueXeroBookingEditSettlement>[0]> = [];
 let restoreXeroQueue: (() => void) | undefined;
@@ -188,28 +171,20 @@ async function raiseInvoice(): Promise<void> {
 }
 
 /** The officer's date move through the real batch door. */
-async function moveStay() {
+async function moveStay(input: { checkIn: string; checkOut: string } = MOVED) {
   return batchService.modifyBookingBatch({
     bookingId: BOOKING_ID,
     actor: { id: OFFICER_ID, role: Role.ADMIN },
-    input: MOVED as never,
+    input: input as never,
     ipAddress: "127.0.0.1",
     todayAtClub: (await clubTimeServer.clubTime()).today(),
     format: CLUB_FORMAT_TEST,
   });
 }
 
-/** The real settle, after its read of a PAID invoice carrying `cashCents` of bank cash. */
-async function settle(cashCents: number) {
-  const invoice = {
-    invoiceID: INVOICE_ID,
-    invoiceNumber: "INV-4661",
-    status: "PAID",
-    amountPaid: cashCents / 100,
-    total: cashCents / 100,
-    payments: [{ paymentID: "race-4661-xpay", amount: cashCents / 100, status: "AUTHORISED" }],
-  } as unknown as Invoice;
-  return paidEffects.syncInternetBankingPaymentsForPaidInvoice(invoice, [PAYMENT_ID], CLUB_FORMAT_TEST);
+async function dropPayment(): Promise<void> {
+  await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
+  await prisma.payment.delete({ where: { id: PAYMENT_ID } });
 }
 
 async function theEdit() {
@@ -221,7 +196,7 @@ async function theEdit() {
   return rows[0];
 }
 
-(RUN ? describe : describe.skip)("an edit's change fee on a booking still to be paid, on PostgreSQL (#4661)", () => {
+(RUN ? describe : describe.skip)("a late-notice fee is charged only once the booking is paid, on PostgreSQL", () => {
   beforeAll(async () => {
     assertSafeRaceDbUrl(RACE_DB_URL, "Unpaid edit change fee");
     process.env.DATABASE_URL = RACE_DB_URL;
@@ -230,10 +205,8 @@ async function theEdit() {
     dateService = await import("@/lib/booking-date-modification-service");
     clubTimeServer = await import("@/lib/club-time/server");
     confirmationSync = await import("@/lib/booking-ledger-confirmation-sync");
-    paidEffects = await import("@/lib/xero-inbound/invoice-paid-effects");
     editSettlement = await import("@/lib/xero-booking-edit-settlement");
     amountOwed = await import("@/lib/booking-amount-owed");
-    cardIntentAttach = await import("@/lib/card-intent-attach");
     const queue = editSettlement.queueXeroBookingEditSettlement;
     // Pass-through: the harness imports every suite into one process.
     const spy = vi.spyOn(editSettlement, "queueXeroBookingEditSettlement").mockImplementation((input) => {
@@ -322,65 +295,63 @@ async function theEdit() {
     }
   });
 
-  it("before its invoice: the fee goes on the payment once, the plan carries it under the edit, and the settle at price plus fee posts it", async () => {
-    await moveStay();
+  async function owedCents(): Promise<number> {
+    return (
+      await amountOwed.readBookingAmountOwed(
+        await prisma.booking.findUniqueOrThrow({
+          where: { id: BOOKING_ID },
+          select: { id: true, finalPriceCents: true, payment: { select: { changeFeeCents: true } } },
+        }),
+      )
+    ).owedCents;
+  }
+
+  it("before its invoice: the price changes and no late-notice fee is recorded", async () => {
+    await moveStay(MOVED_LONGER);
 
     const edit = await theEdit();
-    expect(edit.changeFeeCents).toBe(FEE_CENTS);
-    expect(edit.newData).toMatchObject({ changeFeeAddedToAmountOwed: true });
-    const recorded = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { changeFeeCents: true } });
-    expect(recorded.changeFeeCents).toBe(FEE_CENTS);
+    expect(edit.changeFeeCents).toBe(0);
+    expect(edit.newData).not.toHaveProperty("changeFeeAddedToAmountOwed");
+    expect(
+      await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { changeFeeCents: true } }),
+    ).toEqual({ changeFeeCents: 0 });
+    expect(
+      (await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { finalPriceCents: true } })).finalPriceCents,
+    ).toBe(NEW_PRICE_CENTS);
+    expect(await owedCents()).toBe(NEW_PRICE_CENTS);
 
-    // The one plan the legacy confirmation writes and the journal's pending charge re-states.
     const planned = await prisma.$transaction(async (tx) =>
       confirmationSync.planConfirmationPostings(tx, await confirmationSync.readConfirmationBooking(tx, BOOKING_ID), "pending charge"),
     );
-    expect(planned.filter((posting) => posting.kind === "CHANGE_FEE")).toEqual([
-      expect.objectContaining({ anchorKind: "MODIFICATION", anchorId: edit.id, unitCents: FEE_CENTS, sign: 1 }),
-    ]);
-
-    await drainXeroWork();
-    await raiseInvoice();
-    await settle(PRICE_CENTS + FEE_CENTS);
-
-    expect(await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { amountCents: true, status: true, changeFeeCents: true } }))
-      .toEqual({ amountCents: PRICE_CENTS + FEE_CENTS, status: "SUCCEEDED", changeFeeCents: FEE_CENTS });
-    expect((await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { status: true } })).status).toBe("PAID");
-    const feeLines = await prisma.bookingLedgerLine.findMany({
-      where: { bookingId: BOOKING_ID, kind: "CHANGE_FEE" },
-      select: { amountCents: true, anchorId: true },
-    });
-    expect(feeLines).toEqual([{ amountCents: FEE_CENTS, anchorId: edit.id }]);
-
-    // A replay of the same PAID invoice posts nothing again.
-    await settle(PRICE_CENTS + FEE_CENTS);
-    expect(await prisma.bookingLedgerLine.count({ where: { bookingId: BOOKING_ID, kind: "CHANGE_FEE" } })).toBe(1);
+    expect(planned.filter((posting) => posting.kind === "CHANGE_FEE")).toEqual([]);
   }, 60_000);
 
-  it("after its invoice: the fee goes on the payment once and on the edit's own supplementary invoice", async () => {
+  it("after its invoice: a price increase is invoiced without a fee", async () => {
     await raiseInvoice();
-
-    await moveStay();
+    await moveStay(MOVED_LONGER);
     await drainXeroWork();
 
     const edit = await theEdit();
-    expect(edit.changeFeeCents).toBe(FEE_CENTS);
-    expect(edit.newData).toMatchObject({ changeFeeAddedToAmountOwed: true });
-    const recorded = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { changeFeeCents: true } });
-    expect(recorded.changeFeeCents).toBe(FEE_CENTS);
+    expect(edit.changeFeeCents).toBe(0);
+    expect(edit.newData).not.toHaveProperty("changeFeeAddedToAmountOwed");
+    expect(
+      await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { changeFeeCents: true } }),
+    ).toEqual({ changeFeeCents: 0 });
 
     expect(queuedForThisBooking).toHaveLength(1);
     expect(editSettlement.classifyXeroBookingEditSettlement(queuedForThisBooking[0]).financialAction).toMatchObject({
       type: "supplementary-invoice",
-      priceDiffCents: 0,
-      changeFeeCents: FEE_CENTS,
+      priceDiffCents: NIGHT_CENTS,
+      changeFeeCents: 0,
     });
   }, 60_000);
 
-  it("through the date door: the fee goes on a card booking's payment once and its intent at the bare price is superseded", async () => {
-    // The card booking awaiting payment: its PRIMARY row an open intent at the price.
+  it("a card booking still at its pay step gains no fee", async () => {
     await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAYMENT_PENDING" } });
-    await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { source: "STRIPE", reference: null, internetBankingHoldSlots: false } });
+    await prisma.payment.update({
+      where: { id: PAYMENT_ID },
+      data: { source: "STRIPE", reference: null, internetBankingHoldSlots: false },
+    });
     await prisma.paymentTransaction.update({
       where: { id: PRIMARY_ID },
       data: { source: "STRIPE", reference: null, reason: null, stripePaymentIntentId: "pi_race4661" },
@@ -394,62 +365,84 @@ async function theEdit() {
     });
 
     const edit = await theEdit();
-    expect(edit.changeFeeCents).toBe(FEE_CENTS);
-    expect(edit.newData).toMatchObject({ changeFeeAddedToAmountOwed: true });
-    const recorded = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { changeFeeCents: true } });
-    expect(recorded.changeFeeCents).toBe(FEE_CENTS);
-
-    // #4661 review F1: the intent at the bare price would leave the fee unpaid.
+    expect(edit.changeFeeCents).toBe(0);
+    expect(edit.newData).not.toHaveProperty("changeFeeAddedToAmountOwed");
     expect(
-      await prisma.paymentRecoveryOperation.findMany({
-        where: { bookingId: BOOKING_ID, type: "CANCEL_PAYMENT_INTENT" },
-        select: { paymentTransactionId: true, amountCents: true },
-      }),
-    ).toEqual([{ paymentTransactionId: PRIMARY_ID, amountCents: PRICE_CENTS }]);
+      await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { changeFeeCents: true } }),
+    ).toEqual({ changeFeeCents: 0 });
+    expect(await owedCents()).toBe(PRICE_CENTS);
   }, 60_000);
 
-  it("before a card booking's pay step: the edit opens a payment carrying the fee, and the pay page collects it once", async () => {
-    // A card booking awaiting payment as `booking-create.ts` leaves it: no payment row until an intent is asked for.
-    await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
-    await prisma.payment.delete({ where: { id: PAYMENT_ID } });
+  it("before a card booking's pay step: no fee-only payment row is opened", async () => {
+    await dropPayment();
     await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAYMENT_PENDING" } });
 
     await moveStay();
 
     const edit = await theEdit();
-    expect(edit.changeFeeCents).toBe(FEE_CENTS);
-    expect(edit.newData).toMatchObject({ changeFeeAddedToAmountOwed: true });
-    const opened = await prisma.payment.findUniqueOrThrow({
-      where: { bookingId: BOOKING_ID },
-      select: { amountCents: true, changeFeeCents: true, source: true, status: true, stripePaymentIntentId: true },
+    expect(edit.changeFeeCents).toBe(0);
+    expect(edit.newData).not.toHaveProperty("changeFeeAddedToAmountOwed");
+    expect(await prisma.payment.findUnique({ where: { bookingId: BOOKING_ID } })).toBeNull();
+    expect(await owedCents()).toBe(PRICE_CENTS);
+  }, 60_000);
+
+  it("an unpaid whole-lodge booking keeps no payment row and no fee", async () => {
+    await dropPayment();
+    await prisma.booking.update({
+      where: { id: BOOKING_ID },
+      data: { status: "CONFIRMED", wholeLodgeHold: true },
     });
-    expect(opened).toEqual({ amountCents: 0, changeFeeCents: FEE_CENTS, source: "STRIPE", status: "PENDING", stripePaymentIntentId: null });
 
-    // The pay page, as `create-payment-intent` does it: the one read, then the attach under lock(1).
-    const readOwed = async () =>
-      (await amountOwed.readBookingAmountOwed(
-        await prisma.booking.findUniqueOrThrow({
-          where: { id: BOOKING_ID },
-          select: { id: true, finalPriceCents: true, payment: { select: { changeFeeCents: true } } },
-        }),
-      )).owedCents;
-    const owedCents = await readOwed();
-    expect(owedCents).toBe(PRICE_CENTS + FEE_CENTS);
-    await expect(
-      cardIntentAttach.attachMintedCardIntent({
-        bookingId: BOOKING_ID,
-        paymentIntentId: "pi_race4735",
-        payableStatuses: ["PAYMENT_PENDING"],
-        paymentCreate: { amountCents: owedCents, creditAppliedCents: 0, stripeCustomerId: "cus_race4735" },
-        paymentUpdate: { amountCents: owedCents, creditAppliedCents: 0, stripeCustomerId: "cus_race4735" },
-        transaction: { amountCents: owedCents, reason: "primary_booking_payment", stripeCustomerId: "cus_race4735" },
-      }),
-    ).resolves.toBe("attached");
+    await moveStay();
 
-    // The fee stays recorded once: a second opening of the page asks the same.
+    const edit = await theEdit();
+    expect(edit.changeFeeCents).toBe(0);
+    expect(edit.newData).not.toHaveProperty("changeFeeAddedToAmountOwed");
+    expect(await prisma.payment.findUnique({ where: { bookingId: BOOKING_ID } })).toBeNull();
+  }, 60_000);
+
+  it("a paid booking still records the policy fee once", async () => {
+    await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAID" } });
+    await prisma.payment.update({
+      where: { id: PAYMENT_ID },
+      data: { status: "SUCCEEDED", amountCents: PRICE_CENTS },
+    });
+    await prisma.paymentTransaction.update({ where: { id: PRIMARY_ID }, data: { status: "SUCCEEDED" } });
+
+    await moveStay();
+
+    const edit = await theEdit();
+    expect(edit.changeFeeCents).toBe(FEE_CENTS);
+    expect(edit.newData).not.toHaveProperty("changeFeeAddedToAmountOwed");
     expect(
-      await prisma.payment.findUniqueOrThrow({ where: { bookingId: BOOKING_ID }, select: { amountCents: true, changeFeeCents: true } }),
-    ).toEqual({ amountCents: PRICE_CENTS + FEE_CENTS, changeFeeCents: FEE_CENTS });
-    expect(await readOwed()).toBe(PRICE_CENTS + FEE_CENTS);
+      await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { changeFeeCents: true } }),
+    ).toEqual({ changeFeeCents: FEE_CENTS });
+  }, 60_000);
+
+  it("a credit-paid booking is charged the fee", async () => {
+    await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAID" } });
+    await prisma.payment.update({
+      where: { id: PAYMENT_ID },
+      data: {
+        status: "SUCCEEDED",
+        amountCents: 0,
+        source: "STRIPE",
+        creditAppliedCents: PRICE_CENTS,
+        reference: null,
+        internetBankingHoldSlots: false,
+      },
+    });
+    await prisma.paymentTransaction.update({
+      where: { id: PRIMARY_ID },
+      data: { status: "SUCCEEDED", amountCents: 0, source: "STRIPE", reference: null },
+    });
+
+    await moveStay();
+
+    const edit = await theEdit();
+    expect(edit.changeFeeCents).toBe(FEE_CENTS);
+    expect(
+      await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { changeFeeCents: true } }),
+    ).toEqual({ changeFeeCents: FEE_CENTS });
   }, 60_000);
 });

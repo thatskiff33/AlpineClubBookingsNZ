@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useCallback, useEffect, useId, useState } from "react";
 import Link from "next/link";
@@ -1420,7 +1421,7 @@ export function ManualRefundTaskQueue() {
     setSubmitting(true);
     setUnverified(null);
     try {
-      const response = await fetch(
+      const response = await fetchWithRecentAuth(
         `/api/admin/payments/manual-refund-tasks/${target.task.id}`,
         {
           method: "POST",

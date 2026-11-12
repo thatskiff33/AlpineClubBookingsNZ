@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
@@ -132,7 +133,7 @@ export function CredentialsStep({
     context.credentials.client_id.set && context.credentials.client_secret.set;
 
   async function writeField(key: string, value: string): Promise<void> {
-    const res = await fetch(CREDENTIALS_ENDPOINT, {
+    const res = await fetchWithRecentAuth(CREDENTIALS_ENDPOINT, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },

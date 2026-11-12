@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { Loader2, Save } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
@@ -70,7 +71,7 @@ interface MagicLinkDraft {
 }
 
 async function putJson(url: string, body: unknown, failMessage: string) {
-  const res = await fetch(url, {
+  const res = await fetchWithRecentAuth(url, {
     method: "PUT",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },

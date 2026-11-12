@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Copy, KeyRound, Loader2, Mail, ShieldCheck } from "lucide-react";
+import { startAuthentication } from "@simplewebauthn/browser";
+import { Copy, Fingerprint, KeyRound, Loader2, Mail, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -286,14 +287,17 @@ export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
 export function TwoFactorVerifyPanel({
   callbackUrl,
   enrolledMethod,
+  hasPasskey = false,
   recoveryCodesRetired = false,
 }: {
   callbackUrl: string;
-  enrolledMethod: "TOTP" | "EMAIL";
+  enrolledMethod: "TOTP" | "EMAIL" | null;
+  /** A passkey is saved. It sits beside the app or email code. */
+  hasPasskey?: boolean;
   /** The member's saved recovery codes were retired by a key change (#4456). */
   recoveryCodesRetired?: boolean;
 }) {
-  const [method, setMethod] = useState<VerifyMethod>(enrolledMethod);
+  const [method, setMethod] = useState<VerifyMethod>(enrolledMethod ?? "RECOVERY");
   const [code, setCode] = useState("");
   const [emailSent, setEmailSent] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -339,12 +343,50 @@ export function TwoFactorVerifyPanel({
     }
   }
 
+  async function signInWithPasskey() {
+    setLoading(true);
+    setError("");
+    try {
+      const optionsResponse = await fetch("/api/auth/2fa/webauthn/authenticate/options", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      if (!optionsResponse.ok) {
+        throw new Error(
+          await apiErrorMessageFromResponse(optionsResponse, "That passkey didn't work. Try again."),
+        );
+      }
+      const optionsJSON: unknown = await optionsResponse.json();
+      const assertion = await startAuthentication({
+        optionsJSON: optionsJSON as Parameters<typeof startAuthentication>[0]["optionsJSON"],
+      });
+      const verifyResponse = await fetch("/api/auth/2fa/webauthn/authenticate/verify", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ response: assertion }),
+      });
+      if (!verifyResponse.ok) {
+        throw new Error(
+          await apiErrorMessageFromResponse(verifyResponse, "That passkey didn't work. Try again."),
+        );
+      }
+      completeTwoFactorSignIn(callbackUrl);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "That passkey didn't work. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1">
         <CardTitle>Verify your sign-in</CardTitle>
         <CardDescription>
-          Enter a two-factor code to continue.
+          {enrolledMethod
+            ? "Enter a two-factor code to continue."
+            : "Use your passkey to continue."}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -362,29 +404,44 @@ export function TwoFactorVerifyPanel({
         ) : null}
 
         <div className="grid grid-cols-2 gap-2">
-          <Button
-            type="button"
-            variant={method === enrolledMethod ? "default" : "outline"}
-            onClick={() => setMethod(enrolledMethod)}
-          >
-            {enrolledMethod === "EMAIL" ? (
-              <Mail className="h-4 w-4" />
-            ) : (
-              <KeyRound className="h-4 w-4" />
-            )}
-            {enrolledMethod === "EMAIL" ? "Email" : "App"}
-          </Button>
-          <Button
-            type="button"
-            variant={method === "RECOVERY" ? "default" : "outline"}
-            onClick={() => setMethod("RECOVERY")}
-          >
-            <ShieldCheck className="h-4 w-4" />
-            Recovery
-          </Button>
+          {enrolledMethod ? (
+            <Button
+              type="button"
+              variant={method === enrolledMethod ? "default" : "outline"}
+              onClick={() => setMethod(enrolledMethod)}
+            >
+              {enrolledMethod === "EMAIL" ? (
+                <Mail className="h-4 w-4" />
+              ) : (
+                <KeyRound className="h-4 w-4" />
+              )}
+              {enrolledMethod === "EMAIL" ? "Email" : "App"}
+            </Button>
+          ) : null}
+          {enrolledMethod ? (
+            <Button
+              type="button"
+              variant={method === "RECOVERY" ? "default" : "outline"}
+              onClick={() => setMethod("RECOVERY")}
+            >
+              <ShieldCheck className="h-4 w-4" />
+              Recovery
+            </Button>
+          ) : null}
+          {hasPasskey ? (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={loading}
+              onClick={() => void signInWithPasskey()}
+            >
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Fingerprint className="h-4 w-4" />}
+              Use your passkey
+            </Button>
+          ) : null}
         </div>
 
-        {method === "EMAIL" ? (
+        {enrolledMethod && method === "EMAIL" ? (
           <Button
             type="button"
             variant="outline"
@@ -396,19 +453,22 @@ export function TwoFactorVerifyPanel({
           </Button>
         ) : null}
 
-        <div className="space-y-2">
-          <Label htmlFor="two-factor-code">
-            {method === "RECOVERY" ? "Recovery code" : "Two-factor code"}
-          </Label>
-          <Input
-            autoComplete={method === "RECOVERY" ? "off" : "one-time-code"}
-            id="two-factor-code"
-            inputMode={method === "RECOVERY" ? "text" : "numeric"}
-            value={code}
-            onChange={(event) => setCode(event.target.value)}
-          />
-        </div>
+        {enrolledMethod ? (
+          <div className="space-y-2">
+            <Label htmlFor="two-factor-code">
+              {method === "RECOVERY" ? "Recovery code" : "Two-factor code"}
+            </Label>
+            <Input
+              autoComplete={method === "RECOVERY" ? "off" : "one-time-code"}
+              id="two-factor-code"
+              inputMode={method === "RECOVERY" ? "text" : "numeric"}
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+            />
+          </div>
+        ) : null}
       </CardContent>
+      {enrolledMethod ? (
       <CardFooter>
         <Button
           className="w-full"
@@ -420,6 +480,7 @@ export function TwoFactorVerifyPanel({
           Verify
         </Button>
       </CardFooter>
+      ) : null}
     </Card>
   );
 }

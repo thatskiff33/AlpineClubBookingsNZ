@@ -108,10 +108,16 @@ export function renderBookingDetailMessages({
   // #4019: an approved whole-lodge booking is already CONFIRMED and held, so
   // the ordinary sentence's promise to confirm it after the transfer would be
   // untrue; the club edits that case's wording under its own key.
+  const isConfirmedWholeLodge = booking.wholeLodgeHold && booking.status === "CONFIRMED";
   const switchToInternetBankingDescription = renderBookingMessage(
-    booking.wholeLodgeHold && booking.status === "CONFIRMED"
+    isConfirmedWholeLodge
       ? "booking.detail.switchToInternetBankingWholeLodge"
       : "booking.detail.switchToInternetBanking",
+  );
+  const switchToInternetBankingConfirmDescription = renderBookingMessage(
+    isConfirmedWholeLodge
+      ? "booking.detail.switchToInternetBankingConfirmWholeLodge"
+      : "booking.detail.switchToInternetBankingConfirm",
   );
   /*
     #3033: the club's own explanation, beneath the banner's structural sentences.
@@ -139,6 +145,7 @@ export function renderBookingDetailMessages({
     paymentRequiredDescription,
     internetBankingPendingDescription,
     switchToInternetBankingDescription,
+    switchToInternetBankingConfirmDescription,
     financialReviewPendingDescription,
     refundAppealDescription,
   };

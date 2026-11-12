@@ -4,17 +4,14 @@ import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
-import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { parseDateOnly } from "@/lib/date-only";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import {
   hasDuplicateCancellationThresholds,
   normalizeCancellationRules,
   normalizeStoredCancellationRules,
 } from "@/lib/cancellation-rules";
 import { logAudit } from "@/lib/audit";
-
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-});
 
 const cancellationRuleSchema = z.object({
   daysBeforeStay: z.number().int().min(0),
@@ -26,8 +23,8 @@ const cancellationRuleSchema = z.object({
 
 const updateSchema = z.object({
   name: z.string().min(1).max(200).optional(),
-  startDate: dateOnlyString.optional(),
-  endDate: dateOnlyString.optional(),
+  startDate: dateOnlyStringSchema.optional(),
+  endDate: dateOnlyStringSchema.optional(),
   nonMemberHoldEnabled: z.boolean().optional(),
   nonMemberHoldDays: z.number().int().min(1).max(365).optional(),
   cancellationRules: z.array(cancellationRuleSchema).min(1).optional(),

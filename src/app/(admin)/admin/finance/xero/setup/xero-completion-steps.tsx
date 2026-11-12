@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { adminHref } from "@/lib/admin-hubs";
 
@@ -101,7 +102,7 @@ export function WebhooksStep({
     setError("");
     setNotice("");
     try {
-      const res = await fetch(CREDENTIALS_ENDPOINT, {
+      const res = await fetchWithRecentAuth(CREDENTIALS_ENDPOINT, {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },

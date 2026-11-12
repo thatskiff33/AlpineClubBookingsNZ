@@ -1918,7 +1918,7 @@ establishes:
   page. `bookings-pagination.tsx` / `member-pagination.tsx` are thin wrappers
   over the shared `Pagination`.
 - **Design-system controls (#4467):** outside `src/components/ui/`, use
-  `Button`, `Input`, `Checkbox`, `Select` and `Table` (or `AdminDataTable`),
+  `Button`, `Input`, `Checkbox`, `Radio`, `Select` and `Table` (or `AdminDataTable`),
   never a raw `<button>`, `<input>`, `<select>` or `<table>`, and `useConfirm()`
   rather than the browser's confirm box. Lint reports each one, naming the
   primitive to use; the existing usages sit on a count ratchet that only falls.
