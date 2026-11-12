@@ -269,6 +269,9 @@ one button that reaches Xero at all only asks it a question.
 
 1. Open **Xero Setup** (`/admin/xero/setup`, back-linked from **Integrations**) to
    configure account and item **mappings** and run one-time import/link tools.
+   The **Xero Mappings** shortcuts in Finance Setup and the setup checklist open
+   its **Account mapping** step (`?step=mapping`); if an earlier step is still
+   unfinished, the wizard opens that step first.
 2. **Import Members from Xero** maps each contact group to an age tier and can send
    invite emails; **Repair Canonical Links** and **Scan for Duplicates & Family
    Groups** clean up the link ledger.

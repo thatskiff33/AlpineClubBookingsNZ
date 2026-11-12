@@ -253,6 +253,16 @@ describe("setup-readiness", () => {
     expect(report).not.toContain("accounting.reports.read");
   });
 
+  it.each([true, false])("links Xero Mappings to the wizard mapping step (database checked: %s)", (checked) => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: checked ? completeDatabase : undefined,
+      now: new Date("2026-07-01T00:00:00.000Z"),
+    });
+    expect(findStep(readiness, "xero-mappings")?.href).toBe("/admin/xero/setup?step=mapping");
+  });
+
   it("names a Xero mapping that is unset and falling back (#2717)", () => {
     // The upgrading-club case the owner's decision is about. Every existing
     // mapping is configured, so the row count says "configured" and would have

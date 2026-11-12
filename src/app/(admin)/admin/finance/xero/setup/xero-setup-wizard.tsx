@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { XERO_MAPPING_STEP_ID } from "@/lib/admin-hubs/xero-setup";
 import { IntegrationWizard } from "@/components/admin/integration-wizard";
 import type { WizardStepConfig } from "@/components/admin/integration-wizard";
 import {
@@ -79,7 +80,7 @@ export function XeroSetupWizard({
         render: (ctx, helpers) => <WebhooksStep context={ctx} helpers={helpers} />,
       },
       {
-        id: "mapping",
+        id: XERO_MAPPING_STEP_ID,
         title: "Account mapping",
         summary: "Map accounts & item codes",
         // Configuration step — sensible defaults apply when left unset, so it

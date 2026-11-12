@@ -1,3 +1,4 @@
+import ts from "typescript";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -60,7 +61,6 @@ import {
   adminHubOwnedPaths,
 } from "@/lib/admin-hubs/security-map";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
-import { xeroSectionId } from "@/app/(admin)/admin/finance/xero/_components/types";
 import { BANK_REFUND_VOIDS_ANCHOR } from "@/components/admin/bank-refund-voids-to-answer-panel";
 
 // ---------------------------------------------------------------------------
@@ -1023,14 +1023,6 @@ describe("tabs and anchors", () => {
     expect(adminAnchorHref("health", "integration-readiness")).toBe(
       "/admin/health#integration-readiness",
     );
-    expect(adminAnchorHref("xero", "xero-section-mappings")).toBe("/admin/xero#xero-section-mappings");
-  });
-
-  it("declares Xero's mappings anchor as the id its card is given (C5 #4802)", () => {
-    // The card writes `id={xeroSectionId("mappings")}`; the links go through the
-    // registry. One spelling, or a renamed section would leave every link short.
-    expect(xeroSectionId("mappings")).toBe("xero-section-mappings");
-    expect(getAdminPage("xero").anchors).toEqual([xeroSectionId("mappings")]);
   });
 
   it("reads a tab, falling back to the first for anything it does not declare", () => {
@@ -1055,7 +1047,6 @@ describe("tabs and anchors", () => {
       ADMIN_PAGES.filter((page) => page.tabs.length > 0 || page.anchors.length > 0)
         .map((page) => [page.id, [...page.tabs], [...page.anchors]]),
     ).toEqual([
-      ["xero", [], ["xero-section-mappings"]],
       ["membership-cancellations", ["requests", "settings"], []],
       ["family-groups", ["groups", "suggestions"], []],
       ["health", [], ["integration-readiness"]],
@@ -1063,20 +1054,46 @@ describe("tabs and anchors", () => {
     ]);
   });
 
-  /** The page's own file, and everything beside it in its directory's `_components`. */
+  /**
+   * Follow static value imports/re-exports within the page's directory, including
+   * relative and @/ paths and index barrels. An unimported sibling is not page
+   * source. This proves import reachability, not conditional rendering; shared
+   * components outside this directory still need COMPONENT_ANCHORS below.
+   */
   function pageSources(page: AdminHubPage): string {
-    const file = PAGE_FILE_BY_PATH.get(diskPath(page))!;
-    const dir = path.join(process.cwd(), path.dirname(file));
-    const components = path.join(dir, "_components");
-    const besides = fs.existsSync(components)
-      ? fs.readdirSync(components)
-          .filter((name) => /\.tsx?$/.test(name))
-          .map((name) => path.join(components, name))
-      : [];
-    return [path.join(dir, path.basename(file)), ...besides]
-      .map((abs) => stripComments(fs.readFileSync(abs, "utf8")))
-      .join("\n");
+    const file = path.resolve(PAGE_FILE_BY_PATH.get(diskPath(page))!);
+    const dir = path.dirname(file);
+    const sources = new Map<string, string>();
+    function visit(file: string) {
+      if (sources.has(file)) return;
+      const source = stripComments(fs.readFileSync(file, "utf8"));
+      sources.set(file, source);
+      const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+      for (const node of parsed.statements) {
+        if (!(ts.isImportDeclaration(node) || ts.isExportDeclaration(node))) continue;
+        if (ts.isImportDeclaration(node) ? node.importClause?.isTypeOnly : node.isTypeOnly) continue;
+        const specifier = node.moduleSpecifier;
+        if (!specifier || !ts.isStringLiteral(specifier)) continue;
+        const name = specifier.text;
+        const base = name.startsWith("@/")
+          ? path.resolve("src", name.slice(2))
+          : name.startsWith(".") ? path.resolve(path.dirname(file), name) : null;
+        if (!base || !base.startsWith(dir + path.sep)) continue;
+        const resolved = [base, base + ".ts", base + ".tsx", path.join(base, "index.ts"), path.join(base, "index.tsx")]
+          .find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
+        if (resolved) visit(resolved);
+      }
+    }
+    visit(file);
+    return [...sources.values()].join("\n");
   }
+
+  it("excludes the mappings element in Xero Sync's unimported sibling component", () => {
+    const element = 'id={xeroSectionId("mappings")}';
+    const sibling = fs.readFileSync("src/app/(admin)/admin/finance/xero/_components/mappings-panel.tsx", "utf8");
+    expect(sibling).toContain(element);
+    expect(pageSources(getAdminPage("xero"))).not.toContain(element);
+  });
 
   it("has each tabbed page render the shared tab shell for itself, with every tab", () => {
     // `AdminPageTabs` reads `?tab=` through `parseAdminPageTab`; the tabs a page
@@ -1092,14 +1109,6 @@ describe("tabs and anchors", () => {
     });
     expect(drift).toEqual([]);
   });
-
-  /**
-   * An anchor whose element id is minted by a helper, not written out: the
-   * expression the page must render instead, pinned equal to the anchor above.
-   */
-  const MINTED_ANCHORS: Record<string, string> = {
-    "xero-section-mappings": 'id={xeroSectionId("mappings")}',
-  };
 
   /**
    * An anchor whose element is a shared component's, outside the page's
@@ -1126,9 +1135,7 @@ describe("tabs and anchors", () => {
       const own = stripComments(fs.readFileSync(path.join(process.cwd(), component.file), "utf8"));
       return own.includes(component.id) ? null : `${page.id}: ${component.file} has no ${component.id}`;
     }
-    const minted = MINTED_ANCHORS[anchor];
-    const found = minted === undefined ? source.includes(`"${anchor}"`) : source.includes(minted);
-    return found ? null : `${page.id}: no "${anchor}"`;
+    return source.includes(`"${anchor}"`) ? null : `${page.id}: no "${anchor}"`;
   }
 
   it("has each anchored page render every anchor as an element id", () => {
@@ -1785,6 +1792,8 @@ describe("the registry is inert", () => {
   const REGISTRY_DIR = "src/lib/admin-hubs/";
   /** Every file outside the registry that may import it, and why. */
   const IMPORTERS: Record<string, string> = {
+    "src/app/(admin)/admin/bed-allocation/page.tsx": "#4972: the empty-lodge alert links to Lodges",
+    "src/app/(admin)/admin/finance/xero/setup/xero-setup-wizard.tsx": "#4972: shares the mapping step id with shortcuts",
     "src/lib/admin-permissions.ts":
       "C2: the route map's page half, the admission paths and the landing page are generated",
     "src/config/feature-routes.ts": "C2: the admin page module gates are generated",

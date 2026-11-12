@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { isHttpUrl } from "@/lib/http-url";
-import { adminAnchorHref, adminHref, adminTabHref, getAdminPage } from "@/lib/admin-hubs";
+import { adminHref, adminTabHref, getAdminPage } from "@/lib/admin-hubs";
+import { xeroMappingHref } from "@/lib/admin-hubs/xero-setup";
 import {
   CLUB_TIME_ZONE_FALLBACK,
   CLUB_TIME_ZONE_MAX_LENGTH,
@@ -40,10 +41,7 @@ import {
   type AdminModuleSettingsSnapshot,
 } from "./admin-modules";
 import { resolveEmailDeliveryConfigFromEnv } from "@/lib/email-delivery";
-import {
-  XERO_REQUIRED_REPORT_OAUTH_SCOPES,
-  detectLegacyProviderEnv,
-} from "@/lib/xero-config";
+import { XERO_REQUIRED_REPORT_OAUTH_SCOPES, detectLegacyProviderEnv } from "@/lib/xero-config";
 import { authSecretWeaknessReason } from "@/lib/integration-crypto";
 import { DATA_ENCRYPTION_KEYS_ENV, DATA_ENCRYPTION_LEGACY_KEY_ENV } from "@/lib/data-encryption-key-material";
 import { buildDataEncryptionKeyCheck, type DataKeyRingSource, type DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
@@ -2073,8 +2071,8 @@ function buildXeroMappingCheck(
         status: "warning",
         required: false,
         message: "Xero mapping database state was not checked.",
-        details: [`Review mappings on ${getAdminPage("xero").label} after connecting Xero.`],
-        href: adminAnchorHref("xero", "xero-section-mappings"),
+        details: [`Review mappings in ${getAdminPage("xero-setup").label} after connecting Xero.`],
+        href: xeroMappingHref(),
       },
       progress,
     );
@@ -2129,7 +2127,7 @@ function buildXeroMappingCheck(
         `Hut fee item mappings: ${hutFeeMappings}`,
         `Joining fee mappings: ${entranceFeeMappings}`,
       ],
-      href: adminAnchorHref("xero", "xero-section-mappings"),
+      href: xeroMappingHref(),
     },
     progress,
   );
