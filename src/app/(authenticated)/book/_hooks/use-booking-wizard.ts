@@ -175,6 +175,10 @@ function clearGuestNights(guestList: GuestData[]): GuestData[] {
 // shell: the same 51 useState, 9 useEffect (identical bodies, deps, and order),
 // and handlers. The page renders the _components step views with this hook's
 // return. The BookErrorPaymentTarget type is referenced via state below.
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
 export function useBookingWizard() {
   const format = useClubFormat();
   const router = useRouter();
@@ -294,6 +298,24 @@ export function useBookingWizard() {
   // (#2474), never a local-midnight `Date`.
   const [checkIn, setCheckIn] = useState<string | null>(null);
   const [checkOut, setCheckOut] = useState<string | null>(null);
+  /**
+   * #4946: the club's current cancellation schedule rows for the selection the
+   * policy check answered, shown on the review step before the member commits.
+   * Stored WITH that selection and read back only while it is still the one on
+   * screen (`cancellationSchedule` below), so a schedule for earlier dates or
+   * another lodge is never shown, even for the render before a clear lands.
+   */
+  const [cancellationScheduleState, setCancellationScheduleState] = useState<{
+    lodgeId: string;
+    checkIn: string;
+    rows: string[];
+  } | null>(null);
+  const cancellationSchedule =
+    cancellationScheduleState &&
+    cancellationScheduleState.lodgeId === scopedLodgeId &&
+    cancellationScheduleState.checkIn === checkIn
+      ? cancellationScheduleState.rows
+      : null;
   const [guests, setGuests] = useState<GuestData[]>([]);
   const [notes, setNotes] = useState("");
   const [priceQuote, setPriceQuote] = useState<PriceQuote | null>(null);
@@ -506,6 +528,7 @@ export function useBookingWizard() {
     setStep("dates");
     setCheckIn(null);
     setCheckOut(null);
+    setCancellationScheduleState(null);
     setError("");
     setGuestProfileBlocks([]);
     setAppliedPromos([]);
@@ -1362,6 +1385,7 @@ export function useBookingWizard() {
     };
     setCheckIn(ci);
     setCheckOut(co);
+    setCancellationScheduleState(null);
     setError("");
     setGuestProfileBlocks([]);
     setMemberNightConflicts([]);
@@ -1412,6 +1436,11 @@ export function useBookingWizard() {
       if (policyRes.ok) {
         const policyData = await policyRes.json();
         if (lostSelectionOwnership()) return;
+        setCancellationScheduleState(
+          isStringArray(policyData.cancellationSchedule)
+            ? { lodgeId: requestedLodgeId, checkIn: ci, rows: policyData.cancellationSchedule }
+            : null,
+        );
         if (!policyData.valid) {
         // #2562: the date precheck must not strand a member before they can
         // describe the party that the officer would review. Reuse the ONE
@@ -2328,6 +2357,7 @@ export function useBookingWizard() {
     handleLodgeChange,
     selectedLodge,
     lodgeLabel,
+    cancellationSchedule,
     waitlistAlternateLodgeIds,
     setWaitlistAlternateLodgeIds,
   };

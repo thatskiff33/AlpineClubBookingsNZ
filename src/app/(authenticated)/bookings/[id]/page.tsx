@@ -30,8 +30,7 @@ import { resolveBookingDetailLinkedParty } from "./_lib/booking-detail-linked-pa
 import { buildBookingDetailEditorData } from "./_lib/booking-detail-editor-data";
 import { renderBookingDetailMessages } from "./_lib/booking-detail-messages";
 import { loadBookingDetailAdminTools } from "./_lib/booking-detail-admin-tools";
-import { loadCancellationPolicy } from "@/lib/cancellation";
-import { describeCancellationSchedule } from "@/lib/cancellation-schedule";
+import { CancellationScheduleBlock } from "@/components/booking/cancellation-schedule-block";
 import {
   calendarDateOfDateOnlyInstant,
   countClubNights,
@@ -50,6 +49,7 @@ import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 // compiler and break the guard.
 import { isOperationallyPresentConsent } from "@/lib/member-guest-consent";
 import { loadBookingDetailGuestDietary } from "./_lib/booking-detail-guest-dietary";
+import { loadBookingDetailCancellation } from "./_lib/booking-detail-cancellation";
 
 // Candidate anchors for this long, mostly-conditional page. SectionNav prunes
 // any whose target id is absent from the DOM after mount, so listing the full
@@ -179,7 +179,6 @@ export default async function BookingDetailPage({
   const {
     isDraft,
     isDeleted,
-    canCancel,
     canModify,
     canAdminOverride,
     showBedAllocationPanel,
@@ -252,7 +251,6 @@ export default async function BookingDetailPage({
       ? resolvedPayment
       : // #4124: its cap nets this child's card refunds in its own headroom, so no "still being refunded" line.
         { ...resolvedPayment, maxRefundableCents: organiserCardAppeal.ceilingCents, appealCardRefundOwedCents: 0 };
-  const { originalPaymentCaptured } = payment;
   const messages = renderBookingDetailMessages({
     booking,
     club,
@@ -277,21 +275,13 @@ export default async function BookingDetailPage({
     history,
   });
 
-  // Surface the applicable cancellation refund schedule to the member up front
-  // (#1371 F28): the exact per-booking amount already shows inside the cancel
-  // flow, but the full tier schedule previously lived only in the admin policy
-  // preview, so members first learned the refund consequences at cancel time.
-  //
-  // Only show the refund schedule when a payment has actually been captured —
-  // otherwise the tier percentages imply a refund the member will never get.
-  // For an unpaid-but-cancellable booking, say so plainly instead (owner review
-  // of PR #1389).
-  const showCancellationInfo = canCancel && !isDeleted;
-  const cancellationSchedule =
-    showCancellationInfo && originalPaymentCaptured
-      ? describeCancellationSchedule(await loadCancellationPolicy(booking.checkIn), money.format)
-      : undefined;
-  const cancellationHasNoPayment = showCancellationInfo && !originalPaymentCaptured;
+  const { cancellationSchedule, cancellationHasNoPayment } =
+    await loadBookingDetailCancellation({
+      booking,
+      access,
+      payment,
+      format: money.format,
+    });
 
   return (
     <div className="lg:flex lg:gap-8">
@@ -408,6 +398,16 @@ export default async function BookingDetailPage({
         payment={payment}
         messages={messages}
       />
+
+      {/* #4946: a paid, cancellable booking shows its own lodge's schedule on
+          the page, beside the Cancel action, not only in the help widget. An
+          unpaid one keeps the widget's "no payment, no refund" line alone. */}
+      {cancellationSchedule && cancellationSchedule.length > 0 ? (
+        <CancellationScheduleBlock
+          rows={cancellationSchedule.map((row) => row.description)}
+          lead="If you cancel, the club's current cancellation schedule refunds what you have paid as follows:"
+        />
+      ) : null}
 
       <BookingLifecycleActions
         booking={booking}

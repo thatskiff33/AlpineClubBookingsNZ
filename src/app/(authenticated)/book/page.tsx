@@ -148,6 +148,7 @@ export default function BookPage() {
     handleLodgeChange,
     selectedLodge,
     lodgeLabel,
+    cancellationSchedule,
     waitlistAlternateLodgeIds,
     setWaitlistAlternateLodgeIds,
   } = useBookingWizard();
@@ -628,6 +629,7 @@ export default function BookPage() {
           priceQuote={priceQuote}
           lodgeId={lodgeId}
           selectedLodge={selectedLodge}
+          cancellationSchedule={cancellationSchedule}
           reviewGuestPayload={reviewGuestPayload}
           bookingDateStrings={bookingDateStrings}
           perGuestDatesEnabled={perGuestDatesEnabled}
