@@ -201,10 +201,11 @@ export function BookingApprovalsPanel({
       setPinnedBooking(pinned);
       return true;
     } catch (err) {
+      if (!isCurrent()) return true;
       setError(err instanceof Error ? err.message : "Failed to load booking reviews");
       return false;
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.

@@ -214,9 +214,10 @@ export function BookingChangeRequestsPanel({
       setPinnedRequest(pinned);
       setMemberGuestFind(data?.memberGuestFind ?? null);
     } catch (err) {
+      if (!isCurrent()) return;
       setError(err instanceof Error ? err.message : "Failed to load booking change requests");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.

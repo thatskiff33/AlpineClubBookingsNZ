@@ -349,6 +349,32 @@ describe("BookingApprovalsPanel paging", () => {
     expect(screen.getByText(/Riley Chen/)).toBeInTheDocument();
     expect(screen.getByText("Showing 1–25 of 40")).toBeInTheDocument();
   });
+
+  it("never lets a slower failed read for a filter it has left show its error", async () => {
+    const slow: { release?: () => void } = {};
+    global.fetch = vi.fn(async (input: unknown) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.searchParams.get("status") === "APPROVED") {
+        await new Promise<void>((resolve) => {
+          slow.release = resolve;
+        });
+        return jsonResponse({ error: "Stale read failed" }, 500);
+      }
+      return jsonResponse(envelope([booking], 1, 40));
+    }) as unknown as typeof fetch;
+    render(<BookingApprovalsPanel />);
+    await screen.findByText("Showing 1–25 of 40");
+
+    fireEvent.click(screen.getByRole("button", { name: "Approved" }));
+    await waitFor(() => expect(slow.release).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "Pending" }));
+    expect(await screen.findByText("Showing 1–25 of 40")).toBeInTheDocument();
+
+    slow.release!();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText("Stale read failed")).not.toBeInTheDocument();
+    expect(screen.getByText(/Riley Chen/)).toBeInTheDocument();
+  });
 });
 
 describe("BookingChangeRequestsPanel paging", () => {
