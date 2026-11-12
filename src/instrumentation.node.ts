@@ -632,9 +632,7 @@ export async function register() {
         );
 
         try {
-          const { runXeroCronTasks } = await import(
-            "./lib/xero-cron-runner"
-          );
+          const { runXeroCronTasks } = await import("./lib/xero-cron-runner");
           const result = await runXeroCronTasks("report");
           logger.info(
             { job: XERO_CRON_JOB_NAMES.report, result: result.reconciliationReport },

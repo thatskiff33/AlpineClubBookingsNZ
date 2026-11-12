@@ -9,10 +9,7 @@
  * product (`INV-CONFIG-001`). The caller resolves the zone and passes it in;
  * this module states no zone of its own.
  */
-import {
-  FINANCE_SYNC_CRON_JOB_NAME,
-  FINANCE_SYNC_CRON_SCHEDULE,
-} from "@/lib/finance-sync-cron-config";
+import { FINANCE_SYNC_CRON_JOB_NAME, FINANCE_SYNC_CRON_SCHEDULE } from "@/lib/finance-sync-cron-config";
 import {
   FORMER_MEMBER_ANONYMISATION_JOB_NAME,
   PRIVACY_DATA_PRUNE_JOB_NAME,

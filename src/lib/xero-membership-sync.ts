@@ -24,10 +24,7 @@ import {
   getAuthenticatedXeroClient,
   XeroDailyLimitError,
 } from "./xero-api-client";
-import {
-  getResolvedAccountMapping,
-  getSubscriptionItemCodes,
-} from "./xero-mappings";
+import { getResolvedAccountMapping, getSubscriptionItemCodes } from "./xero-mappings";
 import {
   seasonStartMonthOf,
   seasonYearOfCalendarDate,
