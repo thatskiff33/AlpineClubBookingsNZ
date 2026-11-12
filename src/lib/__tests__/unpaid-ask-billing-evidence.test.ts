@@ -42,6 +42,33 @@ const reduction = (invoiceCents: number) => ({
 });
 
 describe("classifyUnpaidAskBilling", () => {
+  it.each(["mod_a", "mod_b"])("counts nested folded invoices once when only %s is parked", (anchor) => {
+    const entry = (modificationId: string, cents: number) => ({
+      modificationId, askCents: cents, invoiceCents: cents,
+      invoiceUnsure: false, hadIssuedXeroInvoice: true,
+    });
+    const modifications = [
+      { ...increase, id: "mod_a", priceDiffCents: 3_000 },
+      { ...increase, id: "mod_b", priceDiffCents: 2_000, newData: {
+        foldedReissuedAskCents: 3_000, foldedReissuedAskInvoiceCents: 3_000,
+        foldedIncreaseAsks: [entry("mod_a", 3_000)],
+      } },
+      { ...increase, id: "mod_c", priceDiffCents: 1_000, newData: {
+        foldedReissuedAskCents: 5_000, foldedReissuedAskInvoiceCents: 5_000,
+        foldedIncreaseAsks: [entry("mod_b", 5_000)],
+      } },
+    ];
+    expect(classifyUnpaidAskBilling({
+      rows: [row({ amountCents: 6_000, carriedAskCents: 5_000, bookingModificationId: "mod_c" })],
+      retired: {
+        invoicedCents: anchor === "mod_a" ? 3_000 : 2_000,
+        parkedOps: [{ intentId: "pi_ask", anchorId: anchor }],
+        invoiceEvidenceUnknown: false,
+      },
+      modifications, intentMinters: NO_MINTERS,
+    })).toEqual({ supplementaryInvoicedCents: 6_000, established: true });
+  });
+
   it("MUTATION: an increase whose door stamped 'invoice issued' is a supplementary invoice's to bill, parked or not yet", () => {
     expect(
       classifyUnpaidAskBilling({ rows: [row()], retired: NOTHING_RETIRED, modifications: [increase], intentMinters: NO_MINTERS }),
@@ -109,6 +136,35 @@ describe("classifyUnpaidAskBilling", () => {
     ).toBe(false);
   });
 
+  it("a folded increase's parked invoice does not cover the later edit's own money", () => {
+    const later = {
+      ...increase,
+      id: "mod_later",
+      priceDiffCents: 1_000,
+      newData: {
+        foldedReissuedAskCents: 5_000,
+        foldedReissuedAskInvoiceCents: 5_000,
+        foldedIncreaseAsks: [
+          {
+            modificationId: "mod_increase",
+            askCents: 5_000,
+            invoiceCents: 5_000,
+            invoiceUnsure: false,
+            hadIssuedXeroInvoice: true,
+          },
+        ],
+      },
+    };
+    expect(
+      classifyUnpaidAskBilling({
+        rows: [row({ amountCents: 6_000, carriedAskCents: 5_000, bookingModificationId: "mod_later" })],
+        retired: { invoicedCents: 5_000, parkedOps: [{ intentId: "pi_ask", anchorId: "mod_increase" }], invoiceEvidenceUnknown: false },
+        modifications: [increase, later],
+        intentMinters: NO_MINTERS,
+      }),
+    ).toEqual({ supplementaryInvoicedCents: 6_000, established: true });
+  });
+
   it("a parked invoice covers its row: counted once, by the retire", () => {
     expect(
       classifyUnpaidAskBilling({
@@ -151,7 +207,7 @@ describe("classifyUnpaidAskBilling", () => {
     const folding = {
       ...increase,
       priceDiffCents: 1_000,
-      newData: { foldedReissuedAskCents: 3_000, foldedReissuedAskModificationIds: ["mod_reduction"] },
+      newData: { foldedReissuedAskCents: 3_000, foldedReissuedAskInvoiceCents: 1_000, foldedReissuedAskModificationIds: ["mod_reduction"] },
     };
     const folded = row({ amountCents: 4_000, carriedAskCents: 3_000 });
     expect(
@@ -198,7 +254,7 @@ describe("classifyUnpaidAskBilling", () => {
     const folding = {
       ...increase,
       priceDiffCents: 1_000,
-      newData: { foldedReissuedAskCents: 3_000, foldedReissuedAskModificationIds: ["mod_reduction"] },
+      newData: { foldedReissuedAskCents: 3_000, foldedReissuedAskInvoiceCents: 1_000, foldedReissuedAskModificationIds: ["mod_reduction"] },
     };
     const unsure = { ...reduction(1_000), newData: { reissuedAskInvoiceCents: 1_000, reissuedAskInvoiceUnsureCents: 500 } };
     expect(

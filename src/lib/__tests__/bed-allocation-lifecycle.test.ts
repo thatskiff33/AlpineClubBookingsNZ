@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   acquireFuturePartnerSharedAllocationLocks,
   acquireMemberMergePartnerSharedLodgeLocks,
+  lockPartnerShareLodgesAppearedSincePrefix,
   BED_ALLOCATABLE_BOOKING_STATUSES,
   describePartnerSharedSweepReason,
   partnerShareSweepCounterpartNames,
@@ -194,6 +195,54 @@ describe("member-merge partner-share lodge prefix (#2595)", () => {
       "discover-guest-night-lodges",
       "lodge-future-only",
     ]);
+  });
+
+  it("try-locks only lodges that appeared after the prefix, in sorted order", async () => {
+    const { tx, events } = makeMergeLockTx({
+      allocationLodgeIds: ["lodge-z"],
+      guestNightLodgeIds: ["lodge-a", "lodge-m"],
+    });
+    const tried: string[] = [];
+    tx.$queryRaw = vi.fn(async (_strings: TemplateStringsArray, ...values: unknown[]) => {
+      tried.push(String(values[0]));
+      return [{ acquired: true }];
+    });
+
+    const locked = await lockPartnerShareLodgesAppearedSincePrefix(
+      tx,
+      ["member-1", "member-2"],
+      CLUB_TODAY_DATE_ONLY,
+      ["lodge-m"],
+    );
+
+    expect(locked).toEqual(["lodge-a", "lodge-m", "lodge-z"]);
+    expect(tried).toEqual(["lodge-a", "lodge-z"]);
+    expect(events).toEqual([
+      "discover-allocation-lodges",
+      "discover-guest-night-lodges",
+    ]);
+  });
+
+  it("refuses every missing lodge when a new one is busy, and does not wait", async () => {
+    const { tx } = makeMergeLockTx({
+      allocationLodgeIds: [],
+      guestNightLodgeIds: ["lodge-b", "lodge-a"],
+    });
+    const tried: string[] = [];
+    tx.$queryRaw = vi.fn(async (_strings: TemplateStringsArray, ...values: unknown[]) => {
+      tried.push(String(values[0]));
+      return [{ acquired: values[0] !== "lodge-b" }];
+    });
+
+    await expect(
+      lockPartnerShareLodgesAppearedSincePrefix(
+        tx,
+        ["member-1"],
+        CLUB_TODAY_DATE_ONLY,
+        [],
+      ),
+    ).rejects.toMatchObject({ name: "UnlockedPartnerShareLodgeError", lodgeIds: ["lodge-a", "lodge-b"] });
+    expect(tried).toEqual(["lodge-a", "lodge-b"]);
   });
 
   it("takes nothing at all for an empty member set", async () => {

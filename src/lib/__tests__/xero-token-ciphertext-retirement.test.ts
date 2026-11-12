@@ -1,36 +1,16 @@
-// #3806 R2 — no production code reads or writes `XeroToken.accessToken` or
-// `XeroToken.refreshToken` any more.
+// #3806 — the `XeroToken` table is gone. The tokens live only in the credential
+// store, and the connection facts and the refresh lease in `XeroConnection`.
 //
-// Since R2 the Xero tokens live only in the credential store, and the connection
-// facts and the refresh lease in `XeroConnection`. The two ciphertext columns stay
-// in the database only because the previous release (#3454) can still run beside
-// this one, and R3 drops the table. Until then, a write to them would plant a
-// token the previous release reads as the newer copy, and a read would mean this
-// release still depends on a copy it no longer keeps current.
+//   * THE SCHEMA has no `model XeroToken`, so the generated client has no
+//     `Prisma.XeroTokenScalarFieldEnum`;
+//   * no production source under `src`, `scripts` or `e2e` calls the
+//     `xeroToken` delegate;
+//   * raw SQL may quote `"XeroToken"` only in this release's drop
+//     (`migration.sql` and `rollback.sql`) and in history at or before R2.
+//     `"FinanceXeroToken"` does not match, because the quotes sit before Finance.
 //
-// THREE LAYERS, each covering what the one before cannot:
-//
-//   * THE SCHEMA marks both fields `@ignore`, with the '' default the R2
-//     migration gives the columns;
-//   * THE GENERATED CLIENT therefore has no such fields: no call shape can put
-//     them in a SELECT, an INSERT column list, a RETURNING or a WHERE (INV-OPS-005).
-//     A `select`/`data` naming one still compiles and fails at runtime
-//     (INV-OPS-006), so the delegate calls are scanned as well;
-//   * RAW SQL is plain text the compiler cannot see. PostgreSQL folds an unquoted
-//     identifier to lower case, so a statement can only reach this camel-case
-//     table by QUOTING it. A statement can read the ciphertext without naming a
-//     column (`SELECT *`, `t.*`, `row_to_json(t)`), so a production file that
-//     names the quoted table at all is refused, unless it is on the short
-//     allowlist below, each entry with its reason. (The token store itself uses
-//     the generated client, so it needs no entry.)
-//
-// And `XeroConnection`, the table that replaces it, has exactly the six
-// non-secret fields: a token column there would hold a secret the credential
-// store never attributed (INV-PRIV-020).
-//
-// Migration history up to and including R2's own migration, and the fixtures
-// that verify those migrations, may name the columns; R3's drop names the table,
-// not the columns.
+// `XeroConnection` has exactly the six non-secret fields: a token column there
+// would hold a secret the credential store never attributed (INV-PRIV-020).
 import fs from "node:fs";
 import path from "node:path";
 
@@ -45,12 +25,14 @@ const SCAN_DIRS = ["src", "scripts", "e2e", "prisma"].map((dir) => path.join(REP
 const SOURCE_EXTENSIONS = /\.(ts|tsx|mts|mjs|js|sh|sql)$/;
 const R2_MIGRATION = "20261124010000_add_xero_connection";
 const R2_PREFIX = R2_MIGRATION.slice(0, 14);
+const DROP_MIGRATION = "prisma/migrations/20261210100000_contract_drop_xero_token";
+/** This release's drop is the only non-history SQL that may quote the table. */
+const QUOTED_TABLE_ALLOWLIST = [
+  `${DROP_MIGRATION}/migration.sql`,
+  `${DROP_MIGRATION}/rollback.sql`,
+];
 const CIPHERTEXT_COLUMNS = ["accessToken", "refreshToken"] as const;
-/** Production files that may name the quoted table, each with its reason. */
-const QUOTED_TABLE_ALLOWLIST: Record<string, string> = {
-  "scripts/audit/credential-actor-census.ts":
-    "a comment explaining how the census matches the table's name",
-};
+const DELEGATE_SCAN_DIRS = ["src", "scripts", "e2e"];
 const XERO_CONNECTION_FIELDS = [
   "id",
   "tenantId",
@@ -60,9 +42,8 @@ const XERO_CONNECTION_FIELDS = [
   "updatedAt",
 ];
 const FAILURE =
-  "#3806 R2: production code must not read or write XeroToken.accessToken or " +
-  "XeroToken.refreshToken. The tokens live in the credential store (xero-token-store.ts); " +
-  "the connection and the lease live in XeroConnection.";
+  "#3806: the XeroToken table is gone. Tokens live in the credential store " +
+  "(xero-token-store.ts); the connection and the lease live in XeroConnection.";
 
 function walk(dir: string, files: string[] = []): string[] {
   if (!fs.existsSync(dir)) return files;
@@ -121,56 +102,29 @@ function productionSources(): { rel: string; text: string }[] {
     .map(({ rel, file }) => ({ rel, text: fs.readFileSync(file, "utf8") }));
 }
 
-describe("XeroToken ciphertext retirement (#3806 R2)", () => {
-  it("the schema ignores both ciphertext columns, with the migration's '' default", () => {
+describe("XeroToken retirement (#3806)", () => {
+  it("the schema has no XeroToken model", () => {
     const schema = fs.readFileSync(path.join(REPO_ROOT, "prisma", "schema.prisma"), "utf8");
-    const model = /model XeroToken \{([\s\S]*?)\n\}/.exec(schema)?.[1] ?? "";
-    expect(model, FAILURE).not.toBe("");
-    for (const column of CIPHERTEXT_COLUMNS) {
-      expect(model, FAILURE).toMatch(
-        new RegExp(`\\n\\s*${column}\\s+String\\s+@default\\(""\\)\\s+@ignore\\s*\\n`),
-      );
-    }
-    const migration = fs.readFileSync(
-      path.join(REPO_ROOT, "prisma", "migrations", R2_MIGRATION, "migration.sql"),
-      "utf8",
-    );
-    for (const column of CIPHERTEXT_COLUMNS) {
-      expect(migration).toContain(`ALTER COLUMN "${column}" SET DEFAULT ''`);
-    }
+    expect(schema, FAILURE).not.toMatch(/\bmodel XeroToken\b/);
   });
 
-  it("the generated client has no field for either column", () => {
-    const fields = Object.keys(Prisma.XeroTokenScalarFieldEnum);
-    for (const column of CIPHERTEXT_COLUMNS) {
-      expect(fields, FAILURE).not.toContain(column);
-    }
-    // The client is not vacuous: the columns it does read are still there.
-    expect(fields).toEqual(expect.arrayContaining(["id", "tenantId", "expiresAt"]));
+  it("the generated client has no XeroToken scalar enum", () => {
+    expect("XeroTokenScalarFieldEnum" in Prisma, FAILURE).toBe(false);
   });
 
-  it("no production delegate call names either column", () => {
+  it("no production source under src, scripts or e2e calls the xeroToken delegate", () => {
     const offenders: string[] = [];
-    let calls = 0;
     for (const { rel, text } of productionSources()) {
-      for (const args of xeroTokenDelegateCalls(text)) {
-        calls += 1;
-        if (delegateCallNamesCiphertext(args)) offenders.push(rel);
-      }
+      if (!DELEGATE_SCAN_DIRS.some((dir) => rel.startsWith(`${dir}/`))) continue;
+      if (xeroTokenDelegateCalls(text).length > 0) offenders.push(rel);
     }
     expect(offenders, FAILURE).toEqual([]);
-    // The walk found the token store's own calls, so a clean result means something.
-    expect(calls).toBeGreaterThanOrEqual(5);
   });
 
-  it("no production raw SQL names the table outside the allowlist", () => {
+  it("raw SQL quotes the table only in this drop and in history", () => {
     const sources = productionSources();
     const naming = sources.filter(({ text }) => rawSqlNamesTable(text)).map(({ rel }) => rel);
-    const offenders = naming.filter((rel) => !(rel in QUOTED_TABLE_ALLOWLIST));
-    expect(offenders, FAILURE).toEqual([]);
-    // Every allowlist entry still earns its place.
-    const unused = Object.keys(QUOTED_TABLE_ALLOWLIST).filter((rel) => !naming.includes(rel));
-    expect(unused, "a stale allowlist entry hides nothing; delete it").toEqual([]);
+    expect(naming.sort(), FAILURE).toEqual([...QUOTED_TABLE_ALLOWLIST].sort());
     expect(sources.length).toBeGreaterThan(1000);
   });
 

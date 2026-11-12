@@ -92,11 +92,40 @@ administrator would do next. A role change takes effect on the very next lookup,
 removing an area mid-conversation stops the evidence immediately. Full detail in
 [`docs/ai-diagnostics/tool-pack-support.md`](../ai-diagnostics/tool-pack-support.md).
 
+**Areas also decide which admin menu someone sees.** The admin sidebar shows
+a menu for the work each role does, worked out from that role's areas, never
+from its name (so custom roles follow the same rule):
+
+| Menu | Which roles get it | What it shows |
+| --- | --- | --- |
+| Admin | A role with Edit on every area (Full Admin); a view-only role that spans several menus (Read-only Admin); a role that edits Support & System, or only views Admin Overview or Support & System | The full admin menu |
+| Bookings | A role that edits Bookings & Beds or Lodge Operations, or views only those (Booking Officer) | Bookings & Beds, Bookings Setup, Rates & Policies, Finance, Lodge Operations, and the booking-request, unpaid-stay and hut-leader alerts |
+| Membership | A role that edits Membership, or views only that (Membership Officer) | The Members section, Membership & Members setup, and the application, family, cancellation and deletion alerts |
+| Content | A role that edits Content, or views only that (Content Manager) | The Site Appearance & Content pages |
+| Finance | A role that views Finance and nothing else, without editing it (Finance Viewer) | Finance Dashboard and the Finance section |
+| Treasurer | A role that edits Finance (Treasurer) | The Finance menu, plus Subscriptions, Integrations, and the refund and unpaid-stay alerts |
+
+Someone with more than one menu sees a selector at the top of the sidebar, one
+button per menu, and opens on the first. Each role a person holds counts on its
+own, so a Full Admin sees only Admin unless they also hold another role. The
+sidebar remembers the last choice in that browser. The Admin Dashboard and the
+Member Dashboard are not in the sidebar: use **Admin** and **Dashboard** in the
+top bar. The menus are display only: a page left out of a menu can still be
+opened from the search (Ctrl K) or a direct link if the role allows it, and a
+page the role cannot open appears in neither. On staff pages (`/admin` and the
+`/finance` workspace) the top bar also leaves out Book and My Bookings. An
+account whose User Type is **Admin** and that is not also a club member never
+sees My Bookings in the top bar: its holder books from their own member login.
+An Admin who is also a club member keeps it. **Who's at the lodge** is not in
+the top bar for anyone; it is a button under **Open Kiosk** on the member
+dashboard's Lodge Kiosk card.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | No Access Roles entry in the sidebar | You are not a Full Admin | Only Full Admins can manage roles; ask one |
+| A page is missing from the sidebar | It belongs to a menu your roles don't give you | Search with Ctrl K, or pick another menu at the top of the sidebar if you have one |
 | A role won't delete | Members still hold it | Reassign those members first, then delete |
 | A member still can't reach an area | Their role's level for it is None/View, or the change hasn't taken effect | Adjust the role; changes apply on the member's next request |
 | A system role can't be edited | It is a protected built-in role | Create a custom role instead |

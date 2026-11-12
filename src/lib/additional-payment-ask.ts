@@ -171,18 +171,19 @@ class AdditionalAskValue {
   readonly #paymentBalanceCents: number | null;
 
   /**
-   * #3954: this ask RE-ISSUES, smaller, an unpaid ask a price reduction retired
-   * (`reissueUnpaidAdditionalAsk`). The member's card was already asked for it,
-   * so the minter may mint it on a credit-paid ($0) booking whose reduction
-   * captured nothing - the one place the minter reads this.
+   * #3954: a smaller re-issue of a retired unpaid ask. The minter may mint it
+   * on a credit-paid booking. #4744: this increase folded a waiting retry, so
+   * the edit wrote that recovery and the door's mint completes it.
    */
   readonly #reissuesUnpaidAsk: boolean;
+  readonly #completesFoldedRecovery: boolean;
 
-  constructor(params: { ownCents: number; carriedCents: number; reissuesUnpaidAsk?: boolean; sizedOn?: AdditionalAskPayment | null }) {
+  constructor(params: { ownCents: number; carriedCents: number; reissuesUnpaidAsk?: boolean; completesFoldedRecovery?: boolean; sizedOn?: AdditionalAskPayment | null }) {
     this.amountCents = params.ownCents + params.carriedCents;
     this.#paymentBalanceCents = askSizedOnBalanceCents(params.sizedOn);
     this.#carriedCents = params.carriedCents;
     this.#reissuesUnpaidAsk = params.reissuesUnpaidAsk ?? false;
+    this.#completesFoldedRecovery = params.completesFoldedRecovery ?? false;
   }
 
   get carriedCents(): number {
@@ -192,9 +193,8 @@ class AdditionalAskValue {
   get paymentBalanceCents(): number | null { return this.#paymentBalanceCents; }
 
   /** Private for the reason `#carriedCents` is: a spread cannot carry it. */
-  get reissuesUnpaidAsk(): boolean {
-    return this.#reissuesUnpaidAsk;
-  }
+  get reissuesUnpaidAsk(): boolean { return this.#reissuesUnpaidAsk; }
+  get completesFoldedRecovery(): boolean { return this.#completesFoldedRecovery; }
 }
 
 /**
@@ -236,24 +236,23 @@ export function sizeAdditionalAsk({
   priceDiffCents,
   changeFeeCents,
   payment,
-  waitingReissuedAskCents = 0,
+  foldedWaitingAskCents = 0,
 }: {
   priceDiffCents: number;
   changeFeeCents: number;
   payment: AdditionalAskPayment | null | undefined;
   /**
-   * #3954 review round 4: a reduction's smaller re-issued ask still waiting on
-   * its mint, which this increase folds in and closes
-   * (`foldWaitingReissuedAsks`) - carried like the `Payment`'s live ask, since
-   * this mint is what asks for it now. The edit doors pass what they folded;
-   * an increase's recovery replay passes what its edit's history recorded it
-   * folded (`sizeRecoveryReplayAsk`, round 6), since its fold closed them.
+   * #3954, #4744: waiting re-issues and increase retries this edit folds in
+   * (`foldWaitingAsks`) — carried like the `Payment`'s live ask, since this
+   * mint asks for them now. Doors pass what they folded; a replay passes what
+   * its history recorded (`sizeRecoveryReplayAsk`), the fold having closed them.
    */
-  waitingReissuedAskCents?: number;
+  foldedWaitingAskCents?: number;
 }): AdditionalAsk {
   return buildAdditionalAsk({
     ownCents: priceDiffCents + changeFeeCents,
-    carriedCents: outstandingAdditionalAskCents(payment) + Math.max(0, waitingReissuedAskCents),
+    carriedCents: outstandingAdditionalAskCents(payment) + Math.max(0, foldedWaitingAskCents),
+    completesFoldedRecovery: foldedWaitingAskCents > 0,
     sizedOn: payment ?? null,
   });
 }

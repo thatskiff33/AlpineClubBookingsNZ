@@ -64,6 +64,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     $executeRaw: vi.fn(),
     payment: { findUnique: mocks.sizingRead },
+    paymentRecoveryOperation: { findUnique: async () => null },
     paymentTransaction: {
       findMany: mocks.supersedeRead,
       // #3954 round 7: the door re-reads its new intent's row before queueing

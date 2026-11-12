@@ -65,7 +65,7 @@ export class CarriedAskChangedError extends Error {
  * a new ask minted meanwhile would be superseded without being carried - and
  * rolls the whole queue back: the minted intent was never offered, and the
  * durable recovery re-plans from the `Payment` as it then stands. Folded
- * waiting re-issues are not part of this live balance and stay owed. An ask
+ * waiting asks are not part of this live balance and stay owed. An ask
  * that carries no live ask (`paymentBalanceCents` null) has nothing to check.
  * The recovery runner's frozen replay, which is no `AdditionalAsk`, passes the
  * balance its own pre-mint read saw.

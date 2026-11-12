@@ -358,7 +358,7 @@ legitimately depend on being offered an out-of-service lodge.
   `src/lib/xero-account-mapping-keys.ts`, the one registry the picker, API
   allowlist, resolver and seed derive from; `accountsForMappingKey` is a
   picker's only filter.
-- **NOT structural: the stored code, and this rule says so.** Judging it needs
+- **NOT structural: the stored code.** Judging it needs
   the org's chart, so config transfer and the API are TRUSTED for the value.
   `mappingWriteViolation` refuses only what the registry sees: unknown key,
   account code on an item-only key, item code on a key reading none, blank code.
@@ -372,9 +372,10 @@ legitimately depend on being offered an out-of-service lodge.
 - **The prompt is in TWO places**, the mapping row and the `xero-mappings` setup
   step: the mappings section is collapsed by default.
 - **`goodwillWriteOffs` is the first instance**: whole EXPENSE class, falling
-  back to `hutFeeRefunds`, reclassifying nothing. Only an `ADMIN_ADJUSTMENT` lot
-  routes to it; a member's own money stays on `hutFeeRefunds` even with no note
-  yet (`INV-PAY-023`). Pinned by `xero-account-mapping-registry.test.ts`,
+  back to `hutFeeRefunds`, reclassifying nothing. Only a noteless legacy
+  `ADMIN_ADJUSTMENT` mint, or a Goodwill grant while unset, routes to it.
+  Member's own money stays on `hutFeeRefunds` (`INV-PAY-023`). Pinned by
+  `xero-account-mapping-registry.test.ts`,
   `goodwill-write-off-account.test.ts`.
 
 ## Bulk person-contact seeding (#2939)
@@ -618,6 +619,27 @@ Pinned by `xero-account-credit-note-stamp.test.ts`,
 `xero-operation-retry.test.ts`, `booking-cancel.test.ts`,
 `xero-inbound-reconciliation.test.ts`, `xero-booking-repair.test.ts` and,
 against real PostgreSQL, `xero-account-credit-note-stamp.realdb.test.ts`.
+
+## A manual credit grant's Xero note (#4431)
+
+### INV-INT-037
+
+An approved positive manual grant queues one `ADMIN_GRANT_CREDIT_NOTE` on that
+credit. The worker stamps that row and no other, and a replay does not create a
+second note.
+
+- **Queued with the credit.** Approval writes the `MemberCredit` row and the
+  outbox row in the same transaction. The note's Xero id does not exist yet, so
+  approval does not call Xero. The account is the one the requester chose.
+- **The stamp is that row.** One update, matching the credit's id, type and
+  amount, and only while `xeroCreditNoteId` is null. The same note id is
+  success. A different id fails and is not overwritten. The link role is
+  `ADMIN_GRANT_CREDIT_NOTE`.
+- **No new lock.** The stamp moves no balance (`INV-LOCK-001`). It uses no new
+  key or order (`INV-LOCK-002`) and no new site (`INV-LOCK-003`).
+
+Pinned by `xero-admin-grant-credit-note.test.ts`, `member-credit.test.ts` and
+`xero-operation-outbox-payload.test.ts`.
 
 ## One outcome per Xero operation row (#4356)
 

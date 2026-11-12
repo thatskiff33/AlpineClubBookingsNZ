@@ -19,13 +19,12 @@ import {
   sizeRecoveryReplayAsk,
 } from "@/lib/additional-ask-recovery-replay";
 import logger from "@/lib/logger";
+import { foldedAskInvoiceParts } from "@/lib/folded-ask-invoice-parts";
 import {
   bookingModificationIdForAdditionalIntentRecoveryKey,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
 } from "@/lib/payment-recovery-keys";
 import {
-  recordedFoldedReissuedAskInvoiceCents,
-  recordedFoldedReissuedAskModificationIds,
   recordedReissuedAskInvoiceCents,
   recordedReissuedAskInvoiceUnsureCents,
 } from "@/lib/unpaid-ask-offset-marker";
@@ -93,6 +92,10 @@ export function pendingAskRecoveries(
     const claimed = operation.status === PaymentRecoveryOperationStatus.PROCESSING;
     const settled = isRecoveryReplaySettled(replay, operation, transactions);
     if (settled && !claimed) continue;
+    const folded = !settled && replay.kind === "increase"
+      ? foldedAskInvoiceParts(modification?.newData, modifications)
+      : { parts: [], unsure: false };
+    const foldedInvoices = folded.parts;
     pending.push({
       id: operation.id,
       bookingModificationId,
@@ -107,25 +110,34 @@ export function pendingAskRecoveries(
         : replay.kind === "reissue"
           ? recordedReissuedAskInvoiceCents(modification?.newData)
           : operation.hadIssuedXeroInvoice === true
-            ? askCents - replay.foldedCents
+            ? askCents - (replay.kind === "increase" ? replay.foldedCents : 0)
             : 0,
-      foldedInvoiceCents:
-        settled || replay.kind !== "increase" ? 0 : recordedFoldedReissuedAskInvoiceCents(modification?.newData),
+      foldedInvoiceCents: foldedInvoices.reduce((sum, part) => sum + part.invoiceCents, 0),
+      foldedInvoices,
       // Round 8: a re-issue whose reduction was unsure of its invoice is no
-      // surer for being retired; nor is an increase's fold of one.
+      // surer for being retired; nor is an increase's fold of one. #4744: nor a folded increase retry.
       invoiceUnknown:
         !settled &&
         (replay.kind === "increase"
           ? operation.hadIssuedXeroInvoice === null
           : recordedReissuedAskInvoiceUnsureCents(modification?.newData) > 0),
-      foldedInvoiceUnknown:
-        !settled &&
-        replay.kind === "increase" &&
-        recordedFoldedReissuedAskModificationIds(modification?.newData).some(
-          (reductionId) =>
-            recordedReissuedAskInvoiceUnsureCents(modifications.find((row) => row.id === reductionId)?.newData) > 0,
-        ),
+      foldedInvoiceUnknown: folded.unsure,
     });
   }
   return pending;
+}
+
+/**
+ * Folded invoices a reduction has not already counted from a parked operation.
+ * A legacy invoice waiting on a folded increase is in the parked total; the
+ * rest of the fold is not queued until the increase mints.
+ */
+export function foldedInvoiceCentsNotParked(
+  recoveries: readonly { foldedInvoiceCents: number; foldedInvoices: readonly { modificationId: string; invoiceCents: number }[] }[],
+  parkedAnchors: ReadonlySet<string>,
+): number {
+  return recoveries.reduce((sum, recovery) => {
+    if (recovery.foldedInvoices.length === 0) return sum + recovery.foldedInvoiceCents;
+    return sum + recovery.foldedInvoices.reduce((partSum, part) => partSum + (parkedAnchors.has(part.modificationId) ? 0 : part.invoiceCents), 0);
+  }, 0);
 }

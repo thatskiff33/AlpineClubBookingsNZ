@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { use, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -199,7 +200,7 @@ export default function MemberMergePage({
     setExecuting(true);
     setError("");
     try {
-      const res = await fetch(`/api/admin/members/${masterId}/merge`, {
+      const res = await fetchWithRecentAuth(`/api/admin/members/${masterId}/merge`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({

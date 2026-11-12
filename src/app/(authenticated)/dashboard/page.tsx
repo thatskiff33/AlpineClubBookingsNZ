@@ -3,6 +3,8 @@ import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { loadSignedInMember } from "@/lib/signed-in-member";
+import { LodgeKioskCard } from "@/components/dashboard/lodge-kiosk-card";
 import {
   Card,
   CardContent,
@@ -28,7 +30,6 @@ import {
   ChevronRight,
   Wrench,
   MessageSquare,
-  Users,
 } from "lucide-react";
 import { clubFormat } from "@/lib/club-format-server";
 import type { BoundClubFormat } from "@/lib/club-format-bound";
@@ -409,23 +410,21 @@ export default async function DashboardPage() {
   );
   const firstPromoCode = availablePromoCodes[0] ?? null;
 
-  // Lodge induction status for the member-portal card.
-  const inductionInfo = await prisma.member.findUnique({
-    where: { id: memberId },
-    select: {
-      requiresInduction: true,
-      inductions: {
-        orderBy: { createdAt: "desc" },
-        take: 1,
-        select: {
-          status: true,
-          requiredSignOffs: true,
-          _count: { select: { signOffs: true } },
-        },
+  // Lodge induction status for the member-portal card. The flag comes from
+  // the member row the layout already read this render (#4938); the latest
+  // induction is its own table, keyed by the member.
+  const [signedInMember, latestInduction] = await Promise.all([
+    loadSignedInMember(memberId),
+    prisma.memberInduction.findFirst({
+      where: { memberId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        status: true,
+        requiredSignOffs: true,
+        _count: { select: { signOffs: true } },
       },
-    },
-  });
-  const latestInduction = inductionInfo?.inductions[0] ?? null;
+    }),
+  ]);
   const inductionComplete = latestInduction?.status === "COMPLETED";
   const inductionStatusText = inductionComplete
     ? "Complete"
@@ -433,7 +432,7 @@ export default async function DashboardPage() {
       ? `In progress · ${latestInduction._count.signOffs}/${latestInduction.requiredSignOffs} signed`
       : "Not started";
   const inductionNeedsAction =
-    Boolean(inductionInfo?.requiresInduction) && !inductionComplete;
+    Boolean(signedInMember?.requiresInduction) && !inductionComplete;
 
   const modules = await loadEffectiveModuleFlags();
 
@@ -804,27 +803,16 @@ export default async function DashboardPage() {
           </Card>
         )}
 
-        {/* Kiosk tile. `/lodge` is feature-routed on `kiosk`, hence the gate.
-            Deliberately NOT gated on kiosk access tier: a member with no tier
-            gets the read-only lodge view rather than a refusal, which is the
-            "who is in the lodge" this card offers. */}
-        {modules.kiosk && (
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Lodge Kiosk</CardTitle>
-              <Users className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-lg font-semibold">Who is in the lodge</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                The lodge kiosk will show you who is arriving and leaving the
-                lodge.
-              </p>
-              <Button asChild size="sm" variant="outline" className="mt-4 w-full">
-                <Link href="/lodge/kiosk">Open Kiosk</Link>
-              </Button>
-            </CardContent>
-          </Card>
+        {/* Kiosk tile: Open Kiosk (`/lodge` is feature-routed on `kiosk`)
+            and the roster's only entrance (`memberLodgeRoster`), so it shows
+            while either module is on. Deliberately NOT gated on kiosk access
+            tier: a member with no tier gets the read-only lodge view rather
+            than a refusal, which is the "who is in the lodge" this card offers. */}
+        {(modules.kiosk || modules.memberLodgeRoster) && (
+          <LodgeKioskCard
+            showKiosk={modules.kiosk}
+            showRoster={modules.memberLodgeRoster}
+          />
         )}
       </div>
 

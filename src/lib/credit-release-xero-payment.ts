@@ -387,6 +387,26 @@ async function recordOne({
 }
 
 /**
+ * #4493 (`INV-ADDPAY-046`): the booking invoice a credit-release capture was
+ * recorded against. The newest active `CREDIT_RELEASE_PAYMENT` link the sweep
+ * wrote for this intent, the same link {@link gapPaymentOverlapsCreditRelease}
+ * reads. Null when the sweep has not recorded the capture. Reads only.
+ */
+export async function readCreditReleaseReceiptInvoiceId(paymentIntentId: string): Promise<string | null> {
+  const link = await prisma.xeroObjectLink.findFirst({
+    where: {
+      role: CREDIT_RELEASE_PAYMENT_ROLE,
+      active: true,
+      metadata: { path: ["paymentIntentId"], equals: paymentIntentId },
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { metadata: true },
+  });
+  const invoiceId = asRecord(link?.metadata)?.invoiceId;
+  return typeof invoiceId === "string" && invoiceId.length > 0 ? invoiceId : null;
+}
+
+/**
  * #4494 (`INV-ADDPAY-046`, `INV-PAY-139`): THE GAP INVOICE'S SEND-TIME CHECK.
  * Asked just before a #3980 gap invoice's Stripe payment is sent - by the
  * outbox's send and by an officer's Retry - for a payload queued before the fix

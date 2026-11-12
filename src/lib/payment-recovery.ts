@@ -58,7 +58,7 @@ import {
 } from "@/lib/xero-operation-outbox";
 import { attachRecoveredIntentToWaitingSupplementaryInvoice } from "@/lib/xero-supplementary-invoice-late-capture";
 import { followSupersededAskInvoicesSafely } from "@/lib/superseded-ask-invoice-carry";
-import { queueFoldedReissuedAskInvoices, queueReissuedAskSupplementaryInvoice } from "@/lib/reissued-ask-invoice";
+import { queueFoldedAskInvoices, queueReissuedAskSupplementaryInvoice } from "@/lib/reissued-ask-invoice";
 import {
   mintedIntentCustomerId,
   mintReissuedAskIntent,
@@ -2995,7 +2995,7 @@ async function processCreateAdditionalPaymentIntentOperation(
         });
         // #3954 round 6: the re-issues this increase folded in are asked for on
         // this intent, so their own invoices wait on it.
-        await queueFoldedReissuedAskInvoices({
+        await queueFoldedAskInvoices({
           bookingId: operation.bookingId,
           increaseModificationId: bookingModificationId,
           paymentIntentId,

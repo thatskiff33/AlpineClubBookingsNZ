@@ -16,7 +16,7 @@ import {
 import { bookingPromoCodeLabel } from "@/lib/booking-promo-redemptions";
 import { bookingOwner } from "@/lib/booking-owner";
 import { readReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
-import { queueReductionAskFollowUps } from "@/lib/unpaid-ask-billed-offset-note";
+import { queueEditAskFollowUps } from "@/lib/unpaid-ask-billed-offset-note";
 import { logAudit } from "@/lib/audit";
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
@@ -1571,8 +1571,8 @@ export async function modifyBookingBatch({
           })
         : 0;
     // #3232 D2: what this move WOULD attract, before the club's waiver is applied.
-    // #4317 (D8): every edit is priced, so every edit is charged the ordinary
-    // change fee its policy tier sets. #3750: an add-only finished-stay
+    // The late-notice fee is charged only once the booking has been paid
+    // (owner decision, 10 Nov 2026, narrowing D8). #3750: an add-only finished-stay
     // correction owes no change fee by owner decision — not a waiver of one.
     // #3750 (owner, 7 Oct 2026, "Same-day fee on removed nights"): a finished-
     // stay correction is charged ONLY the same-day retention on what it removes
@@ -1747,7 +1747,7 @@ export async function modifyBookingBatch({
       bookingId,
       newCheckIn: dates.newCheckIn,
       newFinalPriceCents,
-      // #3955 review F1, #4661: the fee just recorded (a correction's, or the settle's) is owed with the price.
+      // A finished-stay correction's fee is owed with the price. An ordinary edit adds none to the amount owed.
       feeRecordedByThisEditCents: feeAddedToAmountOwed ? changeFeeCents : payments.changeFeeAddedToAmountOwedCents,
       format,
       guestsForPricing: guestPlan.guestsForPricing,
@@ -1987,7 +1987,7 @@ export async function modifyBookingBatch({
           // #3954: what an unpaid ask took of this reduction, for the Xero repair pass.
           ...unpaidAskOffsetHistory(payments),
           ...primaryInvoiceSettlementHistory(payments), // #3980: the gap's anchor
-          ...changeFeeAddedToAmountOwedHistory(payments.changeFeeAddedToAmountOwedCents), // #4661: the settle's fee line
+          ...changeFeeAddedToAmountOwedHistory(payments.changeFeeAddedToAmountOwedCents), // empty: a new ordinary edit adds no fee to the amount owed
           // #2266: what this edit did to the stored credit election (#2265),
           // recorded whenever the request carried a credit input — the
           // member's booking history reads it back.
@@ -2069,12 +2069,12 @@ export async function modifyBookingBatch({
       adjusted: payments,
       editLabel: "booking change", booking, // #3949: booking names the payee (a group organiser who paid by bank transfer)
     });
-    // #3954: a smaller re-issued ask, and the note for an offset Xero had
-    // already billed, are durable from this commit, not from after it.
-    await queueReductionAskFollowUps(tx, {
+    // #3954, #4744: the re-issue, a folded increase's ask, and a billed-offset note are durable from this commit.
+    await queueEditAskFollowUps(tx, {
       bookingId,
       paymentId: booking.payment?.id ?? null,
       bookingModificationId: bookingModification.id,
+      door: "batchModify",
       settled: payments,
     });
 

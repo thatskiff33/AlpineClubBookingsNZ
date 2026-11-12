@@ -572,7 +572,16 @@ function reading(status: string, updatedAt: string, payments: Array<Record<strin
       await withFakeXero(async () => ({ body: { creditNotes: [reading("AUTHORISED", EARLY, payments, ALLOCATED)] } }), () => reconcileXeroCreditNote(NOTE));
       expect(await state(kase)).toMatchObject({ active: true, status: "PAID", providerUpdatedAt: LATE });
       expect(await allocationLinks()).toEqual([
-        { role: "CREDIT_NOTE_ALLOCATION", active: true, metadata: { creditNoteId: NOTE, invoiceId: `inv-${P}-bt`, amountCents: 10_000 } },
+        {
+          role: "CREDIT_NOTE_ALLOCATION",
+          active: true,
+          metadata: expect.objectContaining({
+            creditNoteId: NOTE,
+            invoiceId: `inv-${P}-bt`,
+            amountCents: 10_000,
+            providerUpdatedAt: EARLY,
+          }),
+        },
       ]);
       expect(await prisma.xeroObjectLink.count({ where: { localId: BT, role: "REFUND_PAYMENT", xeroObjectId: `xero-pay-${P}-kept` } })).toBe(1);
     });
@@ -583,7 +592,16 @@ function reading(status: string, updatedAt: string, payments: Array<Record<strin
       const { reconcileXeroCreditNote } = await import("@/lib/xero-inbound/credit-note");
       await withFakeXero(async () => ({ body: { creditNotes: [reading("PAID", LATE, [], ALLOCATED)] } }), () => reconcileXeroCreditNote(NOTE));
       expect(await allocationLinks()).toEqual([
-        { role: "CREDIT_NOTE_ALLOCATION", active: true, metadata: { creditNoteId: NOTE, invoiceId: `inv-${P}-bt`, amountCents: 10_000 } },
+        {
+          role: "CREDIT_NOTE_ALLOCATION",
+          active: true,
+          metadata: expect.objectContaining({
+            creditNoteId: NOTE,
+            invoiceId: `inv-${P}-bt`,
+            amountCents: 10_000,
+            providerUpdatedAt: LATE,
+          }),
+        },
       ]);
     });
 

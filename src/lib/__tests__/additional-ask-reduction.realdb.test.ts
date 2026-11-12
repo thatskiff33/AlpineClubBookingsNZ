@@ -176,7 +176,7 @@ let webhookClient: PrismaClient;
       shape: "card" | "credit",
       leavingNightCents: number,
       refundPercentage = 100,
-      ask: "minted" | "awaiting-retry" = "minted",
+      ask: "minted" | "awaiting-retry" | "mint-in-flight" = "minted",
       /**
        * Round 7: which invoice billed the ask is the asking edit's own answer,
        * stamped on its row (or its recovery's, for a row a recovery minted).
@@ -259,6 +259,8 @@ let webhookClient: PrismaClient;
       await prisma.bookingModification.create({
         data: { id: INCREASE_MOD_ID, bookingId: BOOKING_ID, memberId: MEMBER_ID, modificationType: "GUEST_ADD", previousData: {}, newData: {}, priceDiffCents: 5_000 },
       });
+      // The edit committed, but its provider call has not failed or queued a retry yet.
+      if (ask === "mint-in-flight") return;
       if (ask === "awaiting-retry") {
         // #3954 "retry nets it off": the mint failed at the provider, so the ask
         // is a recovery row the cron will retry, not yet a ledger row or mirror.
@@ -1043,12 +1045,12 @@ let webhookClient: PrismaClient;
       const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
       expect(await runPaymentRecoveryOperationNow(reissue.id, CLUB_FORMAT_TEST)).toBe("not-claimed");
 
-      const [{ writeReissuedAskUnderRecovery, readReissuedAskRecovery }, { upsertPaymentIntentTransaction }] = await Promise.all([
+      const [{ writeAskUnderDoorRecovery, readReissuedAskRecovery }, { upsertPaymentIntentTransaction }] = await Promise.all([
         import("@/lib/additional-ask-reissue"),
         import("@/lib/payment-transactions"),
       ]);
       const read = (await readReissuedAskRecovery(result.bookingModificationId!))!;
-      const wrote = await writeReissuedAskUnderRecovery(read, "pi_race_3954_reissued", (store) =>
+      const wrote = await writeAskUnderDoorRecovery(read, "pi_race_3954_reissued", (store) =>
         upsertPaymentIntentTransaction({
           paymentId: PAYMENT_ID, kind: "ADDITIONAL", paymentIntentId: "pi_race_3954_reissued", amountCents: 3_000,
           carriedAskCents: 3_000, status: "PENDING", store,
@@ -1064,7 +1066,7 @@ let webhookClient: PrismaClient;
     it("ROUND 4 (item 4): a runner that claimed the re-issue first leaves the door's mint writing nothing", async () => {
       await grownBooking("card", 1_000);
       const result = await removeLeavingGuest();
-      const { writeReissuedAskUnderRecovery, readReissuedAskRecovery } = await import("@/lib/additional-ask-reissue");
+      const { writeAskUnderDoorRecovery, readReissuedAskRecovery } = await import("@/lib/additional-ask-reissue");
       const read = (await readReissuedAskRecovery(result.bookingModificationId!))!;
       // The grace passed and the runner claimed it (`claimPaymentRecoveryOperation`'s write).
       await webhookClient.paymentRecoveryOperation.update({
@@ -1072,7 +1074,7 @@ let webhookClient: PrismaClient;
         data: { status: "PROCESSING", attempts: { increment: 1 }, processingStartedAt: new Date() },
       });
       let wrote = false;
-      const outcome = await writeReissuedAskUnderRecovery(read, "pi_race_3954_reissued", async () => {
+      const outcome = await writeAskUnderDoorRecovery(read, "pi_race_3954_reissued", async () => {
         wrote = true;
       });
       expect(outcome).toBeNull();
@@ -1167,9 +1169,9 @@ let webhookClient: PrismaClient;
 
         // Replays: the door's follow-ups again, then the repair pass's enqueue
         // while it is pending, and again once it has landed in Xero.
-        const { queueReductionAskFollowUps } = await import("@/lib/unpaid-ask-billed-offset-note");
+        const { queueEditAskFollowUps } = await import("@/lib/unpaid-ask-billed-offset-note");
         await prisma.$transaction((tx) =>
-          queueReductionAskFollowUps(tx, {
+          queueEditAskFollowUps(tx, {
             bookingId: BOOKING_ID,
             paymentId: PAYMENT_ID,
             bookingModificationId: reductionId,
@@ -1385,14 +1387,14 @@ let webhookClient: PrismaClient;
     // (`closeWaitingAskRecoveries`, through its real writers) - a reduction
     // netting it off, or an increase folding it into its own ask.
     async function closeWaitingReissue(by: "netted" | "folded") {
-      const [{ readUnpaidPriceAsk, retireUnpaidAskChain }, { foldWaitingReissuedAsks }] = await Promise.all([
+      const [{ readUnpaidPriceAsk, retireUnpaidAskChain }, { foldWaitingAsks }] = await Promise.all([
         import("@/lib/additional-ask-reduction"),
         import("@/lib/additional-ask-reissue"),
       ]);
       await webhookClient.$transaction(async (tx) => {
         const booking = await tx.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, include: { payment: true } });
         if (by === "folded") {
-          expect((await foldWaitingReissuedAsks(tx as never, booking as never)).cents).toBe(3_000);
+          expect((await foldWaitingAsks(tx as never, booking as never)).cents).toBe(3_000);
           return;
         }
         const ask = await readUnpaidPriceAsk(tx as never, booking as never);
@@ -1976,16 +1978,16 @@ let webhookClient: PrismaClient;
         import("@/lib/payment-recovery-keys"),
         import("@/lib/payment-transactions"),
       ]);
+      // A legacy folding door has not queued its failed mint yet when E4 saves.
+      const later = await increaseBy(500);
       const operation = await enqueueAdditionalPaymentIntentRecovery({
         bookingId: BOOKING_ID, paymentId: PAYMENT_ID, idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey(folding.id),
         amountCents: 4_000, stripeIdempotencyKey: `mod_guest_${BOOKING_ID}_${folding.id}`, hadIssuedXeroInvoice: true,
         nextRetryAt: new Date("2026-06-30T00:00:00.000Z"),
       });
-      // The failed mint was queued before E4's ask was written (the frozen
+      // Backdate the legacy failure before E4's ask was written (the frozen
       // clock would otherwise stamp both the same instant).
       await prisma.paymentRecoveryOperation.update({ where: { id: operation.id }, data: { createdAt: new Date("2026-06-30T00:00:00.000Z") } });
-      // E4 +500, sized off the Payment, which shows neither E3 nor what it folded: its door mints 500.
-      const later = await increaseBy(500);
       expect(later.adjusted.additionalAsk.amountCents).toBe(500);
       await upsertPaymentIntentTransaction({
         paymentId: PAYMENT_ID, kind: "ADDITIONAL", paymentIntentId: "pi_race_3954_later", amountCents: 500,
@@ -2055,11 +2057,9 @@ let webhookClient: PrismaClient;
         return operation.id;
       }
 
-      /** E1's own failed mint (+5000, from `grownBooking`), queued before anything later. */
-      async function e1WaitingOnRetry() {
-        await grownBooking("card", 1_000, 100, "awaiting-retry");
-        await prisma.paymentRecoveryOperation.update({ where: { id: RECOVERY_ID }, data: { createdAt: QUEUED_EARLY } });
-        return RECOVERY_ID;
+      /** E1's door is still minting when E2 commits; no recovery exists to fold yet. */
+      async function e1DoorStillInFlight() {
+        await grownBooking("card", 1_000, 100, "mint-in-flight");
       }
 
       async function replay(operationId: string) {
@@ -2077,9 +2077,38 @@ let webhookClient: PrismaClient;
           select: { paymentIntentId: true },
         });
 
+      it("#4744: a folding edit survives losing its door and asks once for both increases", async () => {
+        await grownBooking("card", 1_000, 100, "awaiting-retry");
+        const later = await ordinaryIncrease(2_000);
+        expect(later.adjusted.additionalAsk.amountCents).toBe(7_000);
+        expect(await recoveryStatus(RECOVERY_ID)).toBe("SUCCEEDED");
+        const { buildAdditionalIntentRecoveryIdempotencyKey } = await import("@/lib/payment-recovery-keys");
+        const recovery = await prisma.paymentRecoveryOperation.findUniqueOrThrow({
+          where: { idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey(later.id) },
+        });
+        expect(recovery).toMatchObject({ status: "PENDING", amountCents: 7_000 });
+        const history = (await prisma.bookingModification.findUniqueOrThrow({ where: { id: later.id } })).newData;
+        expect(history).toMatchObject({ foldedIncreaseAsks: [expect.objectContaining({ modificationId: INCREASE_MOD_ID, askCents: 5_000 })] });
+        // No after-commit door mint: the recovery persisted with the fold owns all $70.
+        const stripe = fakeStripe();
+        expect(await replay(recovery.id)).toBe("succeeded");
+        const [intent] = [...stripe.intents.values()];
+        expect(intent?.amount).toBe(7_000);
+        const { upsertPaymentIntentTransaction } = await import("@/lib/payment-transactions");
+        await upsertPaymentIntentTransaction({
+          paymentId: PAYMENT_ID, kind: "ADDITIONAL", paymentIntentId: intent!.id,
+          amountCents: 7_000, status: "SUCCEEDED", store: prisma,
+        });
+        expect(await replay(RECOVERY_ID)).toBe("not-claimed");
+        expect(await replay(recovery.id)).toBe("not-claimed");
+        expect(stripe.intents.size).toBe(1);
+        expect((await payment()).additionalPaymentStatus).toBe("SUCCEEDED");
+      });
+
       it("CASE 1: two increase retries pending, E2's replays first - E1's replay still asks its own 5000 plus E2's 2000, superseding it", async () => {
-        const e1 = await e1WaitingOnRetry();
+        await e1DoorStillInFlight();
         const e2 = await increaseBy(2_000);
+        const e1 = await failedMint(INCREASE_MOD_ID, 5_000, QUEUED_EARLY);
         expect(e2.adjusted.additionalAsk.amountCents).toBe(2_000);
         const e2Recovery = await failedMint(e2.id, 2_000, QUEUED_EARLY);
         const stripe = fakeStripe();
@@ -2100,8 +2129,9 @@ let webhookClient: PrismaClient;
       });
 
       it("CASE 1, the other order: E1's replays first - E2's replay asks its own 2000 plus E1's 5000, superseding it", async () => {
-        const e1 = await e1WaitingOnRetry();
+        await e1DoorStillInFlight();
         const e2 = await increaseBy(2_000);
+        const e1 = await failedMint(INCREASE_MOD_ID, 5_000, QUEUED_EARLY);
         const e2Recovery = await failedMint(e2.id, 2_000, QUEUED_EARLY);
         const stripe = fakeStripe();
 
@@ -2120,8 +2150,9 @@ let webhookClient: PrismaClient;
       });
 
       it("CASE 1, RACE: both replays mint before either writes - the global key serialises their writes, the loser's sizing fence refuses, and its retry carries the winner's ask", async () => {
-        const e1 = await e1WaitingOnRetry();
+        await e1DoorStillInFlight();
         const e2 = await increaseBy(2_000);
+        const e1 = await failedMint(INCREASE_MOD_ID, 5_000, QUEUED_EARLY);
         const e2Recovery = await failedMint(e2.id, 2_000, QUEUED_EARLY);
         const stripe = fakeStripe();
         const cancelled: string[] = [];
@@ -2184,8 +2215,9 @@ let webhookClient: PrismaClient;
       });
 
       it("CASE 2: E2's door mints while E1 waits - E1's replay asks its own 5000 plus E2's 2000, superseding E2's ask", async () => {
-        const e1 = await e1WaitingOnRetry();
+        await e1DoorStillInFlight();
         const e2 = await increaseBy(2_000);
+        const e1 = await failedMint(INCREASE_MOD_ID, 5_000, QUEUED_EARLY);
         // E2's door mint, sized off a Payment that never showed E1.
         expect(e2.adjusted.additionalAsk.amountCents).toBe(2_000);
         const { upsertPaymentIntentTransaction } = await import("@/lib/payment-transactions");
@@ -2213,9 +2245,10 @@ let webhookClient: PrismaClient;
         // E3 +1000 folds the waiting 3000 re-issue in; its own mint fails.
         const e3 = await increaseBy(1_000);
         expect(e3.adjusted.additionalAsk.amountCents).toBe(4_000);
-        const e3Recovery = await failedMint(e3.id, 4_000, QUEUED_EARLY);
         // E4 +500, sized off a Payment that shows neither E3 nor what it folded; its mint fails too.
         const e4 = await increaseBy(500);
+        // Legacy folding door: enqueue only after E4 saved, before commit-durable folds.
+        const e3Recovery = await failedMint(e3.id, 4_000, QUEUED_EARLY);
         expect(e4.adjusted.additionalAsk.amountCents).toBe(500);
         const e4Recovery = await failedMint(e4.id, 500, QUEUED_LATER);
         const stripe = fakeStripe();
@@ -2254,8 +2287,9 @@ let webhookClient: PrismaClient;
       }
 
       it("CASE 3, negative: a re-issue's write started while the retry's hold is open blocks on the queue key, and its fresh ask is never in the set the retry cancels", async () => {
-        const e1 = await e1WaitingOnRetry();
+        await e1DoorStillInFlight();
         const e2 = await increaseBy(2_000);
+        const e1 = await failedMint(INCREASE_MOD_ID, 5_000, QUEUED_EARLY);
         const { upsertPaymentIntentTransaction } = await import("@/lib/payment-transactions");
         await upsertPaymentIntentTransaction({
           paymentId: PAYMENT_ID, kind: "ADDITIONAL", paymentIntentId: "pi_race_4015_e2_door", amountCents: 2_000,
@@ -2274,7 +2308,7 @@ let webhookClient: PrismaClient;
         });
         fakeStripe();
         const FRESH = "pi_race_4015_fresh_reissue";
-        const { writeReissuedAskUnderRecovery } = await import("@/lib/additional-ask-reissue");
+        const { writeAskUnderDoorRecovery } = await import("@/lib/additional-ask-reissue");
 
         // #4015 review C3: started from a hook BEFORE the retry's hold. The webhook
         // connection holds the Payment row, so the hold takes the queue key and then
@@ -2304,7 +2338,7 @@ let webhookClient: PrismaClient;
             try {
               // The hold: past the queue key, waiting on the Payment row.
               await untilLockWaiters(1);
-              write = writeReissuedAskUnderRecovery(reissue, FRESH, async (store) => {
+              write = writeAskUnderDoorRecovery(reissue, FRESH, async (store) => {
                 await store.paymentTransaction.create({
                   data: { paymentId: PAYMENT_ID, kind: "ADDITIONAL", source: "STRIPE", stripePaymentIntentId: FRESH, status: "PENDING", amountCents: 3_000, reason: "guest_removal_reissued_ask" },
                 });
@@ -2359,8 +2393,9 @@ let webhookClient: PrismaClient;
       }
 
       it("REVIEW C1: the later ask E1's replay would carry is being paid at Stripe - the replay waits, attempt handed back, superseding nothing, and once the capture lands asks only its own 5000", async () => {
-        const e1 = await e1WaitingOnRetry();
+        await e1DoorStillInFlight();
         const e2 = await increaseBy(2_000);
+        const e1 = await failedMint(INCREASE_MOD_ID, 5_000, QUEUED_EARLY);
         const stripe = fakeStripe();
         const e2Intent = await doorAsk(stripe, e2.id, { amountCents: 2_000, carriedCents: 0 });
         // The member confirmed E2's ask; Stripe took the money, and the webhook is not in yet.
@@ -2392,10 +2427,11 @@ let webhookClient: PrismaClient;
       });
 
       it("REVIEW items 1, L-2: an old recovery waits for a payment that has just begun, and stops - one alert telling an officer what to do - once that payment too is past the cap", async () => {
-        const e1 = await e1WaitingOnRetry();
-        // Queued a month before the frozen today: far past the cap on its own.
-        await prisma.paymentRecoveryOperation.update({ where: { id: e1 }, data: { createdAt: new Date("2026-06-01T00:00:00.000Z") } });
+        await e1DoorStillInFlight();
+        // E2 saves before E1 fails, so there is no recovery to fold.
         const e2 = await increaseBy(2_000);
+        const e1 = await failedMint(INCREASE_MOD_ID, 5_000, QUEUED_EARLY);
+        await prisma.paymentRecoveryOperation.update({ where: { id: e1 }, data: { createdAt: new Date("2026-06-01T00:00:00.000Z") } });
         const stripe = fakeStripe();
         const e2Intent = await doorAsk(stripe, e2.id, { amountCents: 2_000, carriedCents: 0 });
         e2Intent.status = "processing";
@@ -2464,11 +2500,12 @@ let webhookClient: PrismaClient;
       });
 
       it("REVIEW L6 (INV-PAY-140): with the edit's invoice answer true, the superseded later ask's waiting invoice follows to the replay's intent, and the replay raises only E1's own", async () => {
-        const e1 = await e1WaitingOnRetry();
+        await e1DoorStillInFlight();
         // Both edits saw the booking's primary invoice, so each bills through a supplementary one.
         await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { xeroInvoiceId: PRIMARY_INVOICE_ID } });
-        await prisma.paymentRecoveryOperation.update({ where: { id: e1 }, data: { hadIssuedXeroInvoice: true } });
         const e2 = await increaseBy(2_000);
+        const e1 = await failedMint(INCREASE_MOD_ID, 5_000, QUEUED_EARLY);
+        await prisma.paymentRecoveryOperation.update({ where: { id: e1 }, data: { hadIssuedXeroInvoice: true } });
         const stripe = fakeStripe();
         const e2Intent = await doorAsk(stripe, e2.id, { amountCents: 2_000, carriedCents: 0 }, true);
         // E2's door queued its own supplementary invoice, waiting on its intent.
@@ -2656,6 +2693,11 @@ let webhookClient: PrismaClient;
         });
         const row = await tx.bookingModification.create({
           data: { bookingId: BOOKING_ID, memberId: MEMBER_ID, modificationType: "GUEST_ADD", previousData: {}, newData: unpaidAskOffsetHistory(adjusted), priceDiffCents: cents },
+        });
+        const { queueFoldingAskRecovery } = await import("@/lib/additional-ask-reissue");
+        await queueFoldingAskRecovery(tx, {
+          bookingId: BOOKING_ID, paymentId: PAYMENT_ID, bookingModificationId: row.id,
+          door: "guestAdd", settled: adjusted,
         });
         return { adjusted, id: row.id };
       }, { maxWait: 10_000, timeout: 20_000 });
@@ -2949,6 +2991,9 @@ let webhookClient: PrismaClient;
       // another customer, and that intent was cancelled since.
       const x = await ordinaryIncrease(1_000);
       expect(x.adjusted.additionalAsk.amountCents).toBe(6_000);
+      // Y saves while X is still minting; X has no recovery to fold yet.
+      const y = await ordinaryIncrease(1_000);
+      expect(y.adjusted.additionalAsk.amountCents).toBe(6_000);
       failDoor();
       expect((await mintIncreaseAtDoor(x)).additionalPaymentIntentId).toBeUndefined();
       const xOld = await stripe.create({
@@ -2957,8 +3002,6 @@ let webhookClient: PrismaClient;
       });
       xOld.status = "canceled";
       // Y: the same figure. Its door failed too, or has yet to mint.
-      const y = await ordinaryIncrease(1_000);
-      expect(y.adjusted.additionalAsk.amountCents).toBe(6_000);
       if (yDoorFails) expect((await mintIncreaseAtDoor(y)).additionalPaymentIntentId).toBeUndefined();
       stripeRaceHooks.create = stripe.create as never;
       return { stripe, x, y, xRecovery: await recoveryOf(x.id), yRecovery: yDoorFails ? await recoveryOf(y.id) : null, recoveryOf };

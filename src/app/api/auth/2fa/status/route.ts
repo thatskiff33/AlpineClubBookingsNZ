@@ -9,6 +9,6 @@ export async function GET() {
   if (!guard.ok) return guard.response;
 
   return NextResponse.json(
-    getTwoFactorStatusPayload(guard.session, guard.member),
+    await getTwoFactorStatusPayload(guard.session, guard.member),
   );
 }

@@ -9,6 +9,7 @@ import { tryOrganiserChildCardRefundAgain } from "@/lib/card-refund-group-try-ag
 import { DeadCardRefundActionError, tryDeadCardRefundAgain } from "@/lib/card-refund-dead-row-actions";
 import { isGroupSettlementRefundRecoveryKey, isOrganiserChildRefundKey } from "@/lib/payment-recovery-keys";
 import { prisma } from "@/lib/prisma";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 /** The confirm dialog's yes, and the owed figure it showed (a moved one is a 409). */
 const bodySchema = z
@@ -40,6 +41,8 @@ export async function POST(
   const { id } = await params;
 
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await request.json();
   } catch {

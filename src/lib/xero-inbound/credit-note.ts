@@ -7,6 +7,7 @@ import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { type XeroObjectLinkInput, upsertXeroObjectLink } from "@/lib/xero-sync";
 import { buildCreditNoteAllocationTargets, buildSyntheticAllocationLinkId, buildXeroPaymentDisplayNumber, getCreditNoteAmountCents } from "./amounts";
+import { creditNoteAllocationSnapshotStamp, readStoredCreditNoteSnapshots, retireUnlistedCreditNoteAllocations, writeCurrentCreditNoteAllocation } from "./retire-unlisted-credit-note-allocations";
 import { dedupeResolvedXeroObjectLinks, dedupeXeroObjectLinks, findActiveXeroObjectLinks, findPaymentIdsWithCancelledRefundNoteMirror, getDerivedInboundAllocationRole, isDeletedXeroPaymentStatus, recoverBookingScopedLinksFromOutboundOperations } from "./object-links";
 import { creditNotePaymentsForAbsence, retireDeletedPaymentLinksAbsentFromPayload } from "./deleted-payment-links";
 import { writeXeroInboundAuditLogs } from "./audit";
@@ -141,6 +142,10 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
           }) satisfies XeroObjectLinkInput
       ),
   ]);
+
+  // #4447: snapshots as stored, before this event's writes replace a modification
+  // note's. The retire below refuses a reading one of these already beat.
+  const priorCreditNoteSnapshots = await readStoredCreditNoteSnapshots(creditNote.creditNoteID!);
 
   // #4220: what Xero sent about the note's spend, kept with its links for the early warning.
   // Advisory only: a failure leaves the previous reading (or none) and never fails the event.
@@ -304,12 +309,14 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   // `CLEARING_ALLOCATION_LINK_WHERE`, #4786); the read-only hold under-clear
   // audit counts its refund note's, the newest per note and invoice
   // (`distinctClearingAllocations`); and a REFUND_PAYMENT reader asks only
-  // whether one names the note. An older allocation link can so stay active
-  // beside a newer one.
+  // whether one names the note. An older amount on an invoice this reading
+  // still lists can so stay active beside the newer one. An invoice it no
+  // longer lists is turned off in this same pass (#4447).
   const withoutVoidedRefundNoteRows = async (links: XeroObjectLinkInput[]) =>
     isIncludedRefundCreditNoteStatus(creditNote.status) ? withoutVoidedRefundNoteLinks(creditNote.creditNoteID!, links, prisma) : links;
   const allocationSourceLinks = await withoutVoidedRefundNoteRows(resolvedCreditNoteLinks);
 
+  const allocationStamp = creditNoteAllocationSnapshotStamp(creditNote);
   const allocationLinks = dedupeXeroObjectLinks(
     allocationTargets.flatMap(({ invoiceId, amountCents }) => {
       return allocationSourceLinks.map(
@@ -329,15 +336,28 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
               creditNoteId: creditNote.creditNoteID,
               invoiceId,
               amountCents,
+              ...allocationStamp,
             },
           }) satisfies XeroObjectLinkInput
       );
     })
   );
 
+  // #4447: a newer stamp already on the row wins, so an older reading cannot
+  // turn a removed allocation back on by listing its invoice again.
   for (const link of allocationLinks) {
-    await upsertXeroObjectLink(link);
+    await writeCurrentCreditNoteAllocation(link);
   }
+  // #4447: the invoices this reading no longer lists, in the same pass as the
+  // writes above and before the recount. A stored snapshot that refuses the
+  // reading turns nothing off.
+  await retireUnlistedCreditNoteAllocations({
+    creditNoteId: creditNote.creditNoteID!,
+    status: creditNote.status,
+    readingMetadata: xeroCreditNoteSnapshotMetadata(creditNote),
+    priorSnapshots: priorCreditNoteSnapshots,
+    listedInvoiceIds: new Set(allocationTargets.map((target) => target.invoiceId)),
+  });
 
   const resolveCurrentModificationRefunds = () =>
     resolveModificationRefundAmountsByPaymentId({

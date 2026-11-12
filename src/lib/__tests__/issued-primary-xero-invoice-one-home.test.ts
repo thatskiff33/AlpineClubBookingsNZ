@@ -610,14 +610,14 @@ describe("no edit door states the rule a second time", () => {
     expect(
       sizers.filter(
         (file) =>
-          !/foldedReissuedAsks = await foldWaitingReissuedAsks\(/.test(read(file)) ||
-          !/waitingReissuedAskCents:\s*foldedReissuedAsks\.cents/.test(read(file)),
+          !/foldedWaitingAsks = await foldWaitingAsks\(/.test(read(file)) ||
+          !/foldedWaitingAskCents:\s*foldedWaitingAsks\.cents/.test(read(file)),
       ),
-      "INV-PAY-120: fold with foldedReissuedAsks = await foldWaitingReissuedAsks(tx, booking) and pass waitingReissuedAskCents: foldedReissuedAsks.cents, or the increase's mint overtakes a waiting re-issue and its money is lost.",
+      "INV-PAY-120: fold with foldedWaitingAsks = await foldWaitingAsks(tx, booking) and pass foldedWaitingAskCents: foldedWaitingAsks.cents, or the increase's mint overtakes a waiting re-issue or increase retry and its money is lost.",
     ).toEqual([]);
     // ...and records what it folded on its history row, or its replay loses it.
     expect(
-      sizers.filter((file) => !/\bunpaidAskOffsetHistory\(|\bfoldedReissuedAsks,/.test(read(file))),
+      sizers.filter((file) => !/\bunpaidAskOffsetHistory\(|\bfoldedWaitingAsks,/.test(read(file))),
       "INV-PAY-120 (round 6): record the fold on the increase's history (unpaidAskOffsetHistory), or a failed mint's replay asks without the re-issue.",
     ).toEqual([]);
   });
@@ -631,8 +631,8 @@ describe("no edit door states the rule a second time", () => {
     ).filter((file) => /\bunpaidAskOffsetHistory\((?!\{\s*\.\.\.NO_UNPAID_ASK_SETTLEMENT)/.test(read(file)));
     expect(recorders.length).toBeGreaterThan(0);
     expect(
-      recorders.filter((file) => (read(file).match(/\bqueueReductionAskFollowUps\(/g) ?? []).length !== 1),
-      "INV-PAY-120: call queueReductionAskFollowUps once, after the BookingModification row exists, or a process dying after commit loses the re-issued ask or the credit note for an offset the primary invoice had billed.",
+      recorders.filter((file) => (read(file).match(/\bqueueEditAskFollowUps\(/g) ?? []).length !== 1),
+      "INV-PAY-120: call queueEditAskFollowUps once, after the BookingModification row exists, or a process dying after commit loses the re-issued ask, a folded increase, or the credit note for an offset the primary invoice had billed.",
     ).toEqual([]);
   });
 });

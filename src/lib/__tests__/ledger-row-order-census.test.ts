@@ -84,7 +84,7 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
     "the ids of the rows the officer settle is about to write, a set the receipt hook selects by membership (`includes`).",
   "src/lib/xero-inbound/invoice-paid-effects.ts > syncInternetBankingPaymentsForPaidInvoice":
     "the ids of the PRIMARY bank rows this delivery moves to captured, a set the receipt hook selects by membership (`includes`).",
-  "src/lib/additional-ask-reissue.ts > foldWaitingReissuedAsks":
+  "src/lib/additional-ask-reissue.ts > foldWaitingAsks":
     "hands the ADDITIONAL rows to isRecoveryReplaySettled, which asks only whether SOME row carries an " +
     "intent or was written after the recovery (`.some`), never which row comes first.",
   "src/lib/additional-ledger-gap.ts > netCollectedPaymentSelect":

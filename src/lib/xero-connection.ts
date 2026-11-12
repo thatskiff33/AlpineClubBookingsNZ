@@ -3,22 +3,17 @@
  * (#3806). The token store still decides whether the stored tokens are usable
  * (`getXeroTokenReadability`).
  *
- * Since #3806 R2 the connection's non-secret facts live in `XeroConnection`, a
+ * Since #3806 the connection's non-secret facts live in `XeroConnection`, a
  * one-row table with no token, ciphertext or key in it. Every reader that used to
  * pick a `XeroToken` row for its `tenantId` or `expiresAt` — the token store's
  * `isXeroConnected`, the health check, the setup provider test, setup readiness,
  * the stored financial-year resolution, config transfer's tenant stamp and the
  * admin cache's tenant key — reads it here, so they cannot disagree.
  *
- * While `XeroToken` still exists, a statement trigger on it keeps this row in
- * step with whatever the previous release (#3454) writes there, and the token
- * store writes both. So this row is current whichever release last connected,
- * refreshed or disconnected.
- *
- * Dependency-free on purpose, like `xero-token-row-order.ts` was: none of those
- * readers should pull in the token store, its credential store or its crypto to
- * learn a tenant id. It takes a client so a caller inside a bounded read-only
- * transaction reads inside that transaction's snapshot and statement timeout.
+ * Dependency-free on purpose: none of those readers should pull in the token
+ * store, its credential store or its crypto to learn a tenant id. It takes a
+ * client so a caller inside a bounded read-only transaction reads inside that
+ * transaction's snapshot and statement timeout.
  */
 
 import type { PrismaClient } from "@prisma/client";

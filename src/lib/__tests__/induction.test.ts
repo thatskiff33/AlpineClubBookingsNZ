@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -259,4 +261,18 @@ describe("reassignInductionSigners", () => {
       skipDuplicates: true,
     });
   });
+});
+
+it("completes a hut-leader sign-off by inserting the sign-off, then the member, then the induction (#4876)", () => {
+  const source = readFileSync(path.join(process.cwd(), "src/lib/induction.ts"), "utf8");
+  const body = source.slice(
+    source.indexOf("export async function addSignOff"),
+    source.indexOf("export async function overrideCompleteInduction"),
+  );
+  const inserted = body.indexOf("memberInductionSignOff.create");
+  const member = body.indexOf("applyCompletionSideEffects");
+  const induction = body.indexOf("memberInduction.update");
+  expect(inserted).toBeGreaterThan(-1);
+  expect(member).toBeGreaterThan(inserted);
+  expect(induction).toBeGreaterThan(member);
 });

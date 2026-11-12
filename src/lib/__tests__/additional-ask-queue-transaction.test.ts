@@ -126,7 +126,7 @@ describe("additional ask queue's sizing fence (#4442)", () => {
   });
 
   it("keeps folded waiting re-issues separate from the live balance", async () => {
-    const ask = sizeAdditionalAsk({ priceDiffCents: 3000, changeFeeCents: 0, payment: unpaid, waitingReissuedAskCents: 2500 });
+    const ask = sizeAdditionalAsk({ priceDiffCents: 3000, changeFeeCents: 0, payment: unpaid, foldedWaitingAskCents: 2500 });
     const write = vi.fn().mockResolvedValue("queued");
     await expect(withAdditionalAskQueueTransaction("payment", ask, write)).resolves.toBe("queued");
     expect(ask.amountCents).toBe(12500);

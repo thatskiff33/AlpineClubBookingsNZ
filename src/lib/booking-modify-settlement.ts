@@ -23,7 +23,7 @@ import {
 } from "@/lib/additional-ask-reduction";
 import {
   assertOptionsSizedAfterUnpaidAsk,
-  foldWaitingReissuedAsks,
+  foldWaitingAsks,
   settleReductionAgainstUnpaidAsk,
   type UnpaidAskSettlement,
 } from "@/lib/additional-ask-reissue";
@@ -32,7 +32,7 @@ import type { CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
 import { giveBackPaidReductionCredit } from "@/lib/booking-modify-credit-give-back";
 import type { PaidReductionCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
-import { NO_FOLDED_REISSUED_ASKS, type FoldedReissuedAsks } from "@/lib/unpaid-ask-offset-marker";
+import { NO_FOLDED_WAITING_ASKS, type FoldedWaitingAsks } from "@/lib/unpaid-ask-offset-marker";
 import { getNonMemberHoldPolicy } from "@/lib/cancellation";
 import {
   queueSupersededPrimaryIntentCancellations,
@@ -57,7 +57,6 @@ import {
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { resolveOrganiserBillingForNet } from "@/lib/organiser-billing";
 import { writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
-import { changeFeeGoesOnAmountOwed, recordFeeOnNewPayment } from "@/lib/change-fee-owed";
 import {
   OrganiserChildRefundRefusedError,
   planOrganiserChildModificationRefund,
@@ -104,11 +103,16 @@ export type PaymentAdjustmentResult = {
    * `BookingModification` row exists; null for every other booking.
    */
   organiserChildRefund: { settlement: CombinedCardSettlement; amountCents: number } | null;
-  /** #3954 round 6: the waiting re-issues this increase folded into its ask, for its history (`unpaidAskOffsetHistory`). */
-  foldedReissuedAsks: FoldedReissuedAsks;
+  /** #3954, #4744: the waiting asks this increase folded in, for its history (`unpaidAskOffsetHistory`). */
+  foldedWaitingAsks: FoldedWaitingAsks;
   /** #3980: read no invoice link and claimed it (`writeEditOnPayment`); the door marks its history row. */
   settledAgainstPrimaryInvoice: boolean;
-  /** #4661: the fee this edit added to an unpaid booking's amount owed (`changeFeeGoesOnAmountOwed`), 0 for none; the door marks its history row. */
+  /**
+   * Always 0. An ordinary edit no longer adds a late-notice fee to an unpaid
+   * booking's amount owed (owner decision, 10 Nov 2026). The field stays so
+   * the doors' history marker, which #4661 rows already carry, writes nothing
+   * for a new edit.
+   */
   changeFeeAddedToAmountOwedCents: number;
   /**
    * #4299 (`INV-PAY-148`): the increase invoiced to the group organiser of an
@@ -233,9 +237,6 @@ export async function applyPaymentAdjustments(
   // #4299: the one home's answer, or the organiser's combined invoice standing for it.
   const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking) || organiserBilling !== null;
   let feeRecordedHereCents = 0; // written with the payment's claim below (#3980)
-  // #4661 (`INV-MOD-042`): with no settled arm to collect it, a booking still to be paid owes the fee with its price.
-  const feeAddedToAmountOwed = changeFeeCents > 0 && !changeFeeRecordedByCaller && !hasSettledPayment &&
-    !zeroDollarCardIncrease && changeFeeGoesOnAmountOwed(booking);
   // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
   const remainingRefundableCents = await refundableCashForModification(tx, booking.payment, reduction);
 
@@ -286,7 +287,7 @@ export async function applyPaymentAdjustments(
   // #3371: zero until a card arm builds one. `NO_ADDITIONAL_ASK` never mints, so
   // every non-card ending is safe by construction rather than by remembering.
   let additionalAsk: AdditionalAsk = NO_ADDITIONAL_ASK;
-  let foldedReissuedAsks: FoldedReissuedAsks = NO_FOLDED_REISSUED_ASKS;
+  let foldedWaitingAsks: FoldedWaitingAsks = NO_FOLDED_WAITING_ASKS;
   let pendingRefundAmountCents = 0;
   // #3954: retire the unpaid ask; what is left of it is re-issued after commit.
   const { reissuedAsk, ...unpaidAskSettlement } = await settleReductionAgainstUnpaidAsk(tx, {
@@ -295,7 +296,7 @@ export async function applyPaymentAdjustments(
     changeFeeCents,
     hasSettledPayment,
     hasIssuedXeroInvoice,
-    changeFeeRecordedByCaller: changeFeeRecordedByCaller || feeAddedToAmountOwed, // recorded once, below
+    changeFeeRecordedByCaller, // a caller that records the fee itself (a finished-stay correction) did so once
   });
   if (reissuedAsk.amountCents > 0) {
     additionalAsk = reissuedAsk;
@@ -360,14 +361,13 @@ export async function applyPaymentAdjustments(
         // refunds. Refused before the edit commits.
         throw new OrganiserChildRefundRefusedError(organiserChargeRefusal);
       } else if (hasSucceededPayment) {
-        // #3954: a waiting re-issue joins this ask, its recovery closed and the
-        // fold recorded on this edit's history so its replay asks again.
-        foldedReissuedAsks = await foldWaitingReissuedAsks(tx, booking);
+        // #3954, #4744: a waiting re-issue or increase retry joins this ask.
+        foldedWaitingAsks = await foldWaitingAsks(tx, booking);
         additionalAsk = sizeAdditionalAsk({
           priceDiffCents,
           changeFeeCents,
           payment: booking.payment,
-          waitingReissuedAskCents: foldedReissuedAsks.cents,
+          foldedWaitingAskCents: foldedWaitingAsks.cents,
         });
         additionalAmountCents = additionalAsk.amountCents;
       } else {
@@ -376,11 +376,13 @@ export async function applyPaymentAdjustments(
     }
 
     // #3954 x #3750: once - a caller that records it on the amount owed did.
+    // A paid booking's fee, including a credit-paid booking's fee-only
+    // increase, is recorded here. An unpaid booking never arrives with a fee:
+    // `lateNoticeChangeFee` returned zero.
     if (changeFeeCents > 0 && !changeFeeRecordedByCaller) feeRecordedHereCents = changeFeeCents;
   } else if (xeroAdditionalAmountCents > 0) {
     additionalAmountCents = xeroAdditionalAmountCents - billedToOrganiserCents;
   }
-  if (feeAddedToAmountOwed) feeRecordedHereCents = changeFeeCents;
 
   if (reduction.organiserExtras) {
     // #4299 S2: the edit's own tier, frozen even with no options (a cut wholly against the unpaid extra).
@@ -391,10 +393,6 @@ export async function applyPaymentAdjustments(
     });
   }
 
-  // #4735: a card booking edited before its pay step has no row to claim; the fee opens one.
-  if (feeAddedToAmountOwed && !booking.payment) {
-    await recordFeeOnNewPayment(tx, { bookingId: booking.id, changeFeeCents });
-  }
   // #3980 (`INV-PAY-136`): the fee, and the claim on an unlinked invoice (409 if it moved).
   const settledAgainstPrimaryInvoice = await writeEditOnPayment(tx, {
     payment: booking.payment,
@@ -429,9 +427,9 @@ export async function applyPaymentAdjustments(
     appliedCreditGivenBackCents: creditGiveBack?.givenBackCents ?? 0,
     appliedCreditGiveBack: creditGiveBack,
     organiserChildRefund,
-    foldedReissuedAsks,
+    foldedWaitingAsks,
     settledAgainstPrimaryInvoice,
-    changeFeeAddedToAmountOwedCents: feeAddedToAmountOwed ? changeFeeCents : 0,
+    changeFeeAddedToAmountOwedCents: 0,
     billedToOrganiserCents,
     ...unpaidAskSettlement,
   };

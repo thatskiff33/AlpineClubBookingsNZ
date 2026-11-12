@@ -32,12 +32,13 @@ import { lockHostingCoverageOwners } from "@/lib/adult-member-hosting-coverage-l
 import { buildMemberMergeHostingCoveragePlan, enqueueMemberMergeHostingCoveragePlan, memberMergeHostingCoveragePlanFingerprint } from "@/lib/adult-member-hosting-merge-coverage-plan";
 import {
   HostingCoverageParticipantRetryError,
-  lockMemberMergeHostingCoverageParticipants,
   proveMemberMergeHostingCoverageParticipants,
+  withMemberMergeParticipantRows,
   type HostingCoverageQueueParticipantProof,
 } from "@/lib/adult-member-hosting-queue-participants";
 import {
   acquireMemberMergePartnerSharedLodgeLocks,
+  lockPartnerShareLodgesAppearedSincePrefix,
   describePartnerSharedSweepReason,
   partnerShareSweepCounterpartNames,
   partnerShareSweepNights,
@@ -59,7 +60,7 @@ import {
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { MEMBER_MERGE_RELATION_SPECS, mergeDelegate } from "@/lib/member-merge-relations";
 import { MEMBER_MERGE_PAYMENT_ATTRIBUTION_SPEC, moveMergedPaymentAttributionLast } from "@/lib/member-merge-payment-attribution";
-import { findMemberMergeResidualReferences } from "@/lib/member-merge-residual-references";
+import { captureMemberMergeMoveRowIds, findMemberMergeResidualReferences } from "@/lib/member-merge-residual-references";
 import {
   diffFieldMergePatches,
   mergeMemberFields,
@@ -1556,6 +1557,16 @@ async function refuseMergeOrRethrow(
   throw error;
 }
 
+/** The #2672 refusal: a lodge this merge does not hold the capacity key for. */
+function partnerShareLodgeDrift(lodgeIds: readonly string[]): MemberMergeError {
+  return new MemberMergeError(
+    "A lodge booking for one of these members changed while the merge was running. Nothing was merged — please try again.",
+    409,
+    "partner_share_lodge_drift",
+    { lodgeIds: [...lodgeIds] },
+  );
+}
+
 export async function executeMemberMerge(params: {
   masterId: string;
   loserId: string;
@@ -1665,19 +1676,21 @@ export async function executeMemberMerge(params: {
     // guest row stop being a guest row at that lodge.
     //
     // The one thing the derivation alone cannot promise is that its set does
-    // not GROW, so step 3b re-derives it under the `Member … FOR UPDATE` taken
-    // below — the point after which no INSERT or re-point of a `BookingGuest`
-    // naming these members can commit, because that FK write needs
-    // `FOR KEY SHARE` on the member row — and 409s if a lodge appeared. That
-    // pair is what turns the argument into a fence rather than an observation.
+    // not GROW. Every attempt try-locks lodges that appeared after the opening
+    // prefix before it moves anything. A miss 409s and does not wait. The
+    // first attempt does not adopt those ids, so a guest that committed while
+    // the member-lifecycle keys were being taken stays
+    // partner_share_lodge_drift (#2672). A retry after a rolled-back attempt
+    // does adopt them (#4876). Step 3b re-derives under the Member rows and
+    // 409s if a lodge appeared after the set that attempt hands it.
     //
     // Deriving the lodge set here also needs BOTH identities: the helper reads
     // the two members' own future allocations and guest-nights, so it must run
     // while the loser's guest rows still name the loser.
     //
-    // The returned set is carried to step 3b, which REFUSES the whole merge
-    // rather than judge a bed-night in a lodge this prefix did not cover.
-    const partnerShareLodgeIds = await acquireMemberMergePartnerSharedLodgeLocks(
+    // Step 3b is handed the set the successful attempt holds, and refuses
+    // rather than judge a bed-night in a lodge that set does not cover.
+    let coveredPartnerShareLodgeIds = await acquireMemberMergePartnerSharedLodgeLocks(
       tx,
       [masterId, loserId],
       clubTodayForMerge,
@@ -1843,70 +1856,96 @@ export async function executeMemberMerge(params: {
 
     // Collect a bounded moved-id sample BEFORE mutating.
     const movedIdSample = await collectMovedIdSample(tx, masterId, loserId);
+    // Before the attempt loop. A retry re-runs the moves; only these ids may
+    // be re-pointed. A row that starts naming the duplicate during the wait
+    // stays, and the residual check refuses the merge (#4855, #4876).
+    const capturedMoveRowIds = await captureMemberMergeMoveRowIds(tx, loserId);
     const loserOwnedBookingIds = (await tx.booking.findMany({
       where: { memberId: loserId },
       select: { id: true },
     })).map((booking) => booking.id);
 
-    // 1) Null master self-relation cycles first — value-conditionally: a
-    // pointer that moved since the snapshot refuses here with the family-link
-    // drift 409 (#2437) instead of being overwritten. On success the master's
-    // row lock is held to commit.
-    const selfRelationNulls = await nullSelfRelationCycles(tx, masterFull, loserId);
-
-    // 2) Resolve collisions.
-    const resolveResults = await resolveAllCollisions(tx, masterId, loserId);
-
-    // 3) Moves — self-relation sweeps bounded to the ids captured by the token
-    // re-derivation above, so a family link that landed since then is never
-    // absorbed unvetted; it stays pointing at the duplicate and the step-5
-    // inbound re-check refuses the merge (#2437).
-    const relationMoves = await applyMoves(
-      tx,
-      masterId,
-      loserId,
-      relationPreview.selfRelationRefs,
-      loserOwnedBookingIds,
-    );
-    const bookingOwnerMove = relationMoves.find(
-      (move) => move.model === "Booking.member",
-    );
-    if ((bookingOwnerMove?.count ?? 0) !== loserOwnedBookingIds.length) {
-      throw new MemberMergeError(
-        "Booking ownership changed while the merge was running. Nothing was saved. Re-run the preview and try again.",
-        409,
-        "merge_drift_in_transaction",
-        { driftFields: ["Booking.member"] },
-      );
-    }
-
-    // #2597: relation moves make the survivor's exact attendance and captured
-    // loser-owned booking fan-out authoritative. Plan it now, then acquire ONE
-    // sorted Member FOR UPDATE set containing master, loser and every ancillary
-    // queue owner. A guest/booking/owner that lands while the statement waits is
-    // visible to the under-lock re-plan and produces a safe 409, never a late row
-    // acquisition or a queue write against an unprotected identity.
-    const hostingPlan = await buildMemberMergeHostingCoveragePlan(
-      {
-        masterId,
-        capturedLoserOwnedBookingIds: loserOwnedBookingIds,
-        today: clubTodayForMerge,
-      },
-      tx,
-    );
-    let refreshedHostingPlan: Awaited<
-      ReturnType<typeof buildMemberMergeHostingCoveragePlan>
-    >;
+    // #4876: nulls, collision resolvers, relation moves, the booking-owner
+    // check and the hosting plan run in the same savepoint as the participant
+    // lock (`withMemberMergeParticipantRows`). They only write through `tx`.
+    // If a Member row is busy the savepoint rolls back, so merge waits for that
+    // row holding none of the rows it just wrote, then tries the whole attempt
+    // again. Counts and the plan below are the successful attempt's only.
+    // 1) Null self-relation cycles value-conditionally (#2437). 2) Resolve
+    // collisions. 3) Moves, self-relations bounded to the token's ids (#2437)
+    // and never the master's own row (#2445). The plan's owners join the lock.
+    let selfRelationNulls: Awaited<ReturnType<typeof nullSelfRelationCycles>>;
+    let resolveResults: Awaited<ReturnType<typeof resolveAllCollisions>>;
+    let relationMoves: Awaited<ReturnType<typeof applyMoves>>;
+    let hostingPlan: Awaited<ReturnType<typeof buildMemberMergeHostingCoveragePlan>>;
+    let lockedHostingParticipants: readonly string[];
+    let refreshedHostingPlan: Awaited<ReturnType<typeof buildMemberMergeHostingCoveragePlan>>;
     let hostingParticipantProof: HostingCoverageQueueParticipantProof;
     try {
-      const lockedHostingParticipants =
-        await lockMemberMergeHostingCoverageParticipants(tx, {
+      let participantAttempt = 0;
+      const prepared = await withMemberMergeParticipantRows(tx, async () => {
+        participantAttempt += 1;
+        // Try-lock on every attempt: the officer-race cases need that read
+        // on the first one. Only a retry adopts the new ids. The first
+        // attempt keeps the opening prefix, so a guest committed while the
+        // lifecycle keys were taken is still drift at step 3b (#2672).
+        let lodgeIdsThisAttempt = coveredPartnerShareLodgeIds;
+        try {
+          const widened = await lockPartnerShareLodgesAppearedSincePrefix(
+            tx,
+            [masterId, loserId],
+            clubTodayForMerge,
+            coveredPartnerShareLodgeIds,
+          );
+          if (participantAttempt > 1) lodgeIdsThisAttempt = widened;
+        } catch (error) {
+          if (error instanceof UnlockedPartnerShareLodgeError) {
+            throw partnerShareLodgeDrift(error.lodgeIds);
+          }
+          throw error;
+        }
+        const nulled = await nullSelfRelationCycles(tx, masterFull, loserId);
+        const resolved = await resolveAllCollisions(tx, masterId, loserId);
+        const moves = await applyMoves(
+          tx,
           masterId,
           loserId,
-          ownerMemberIds: hostingPlan.sources.map(
-            (source) => source.ownerMemberId,
-          ),
-        });
+          relationPreview.selfRelationRefs,
+          loserOwnedBookingIds,
+          capturedMoveRowIds,
+        );
+        const bookingOwnerMove = moves.find((move) => move.model === "Booking.member");
+        if ((bookingOwnerMove?.count ?? 0) !== loserOwnedBookingIds.length) {
+          throw new MemberMergeError(
+            "Booking ownership changed while the merge was running. Nothing was saved. Re-run the preview and try again.",
+            409,
+            "merge_drift_in_transaction",
+            { driftFields: ["Booking.member"] },
+          );
+        }
+        const plan = await buildMemberMergeHostingCoveragePlan(
+          {
+            masterId,
+            capturedLoserOwnedBookingIds: loserOwnedBookingIds,
+            today: clubTodayForMerge,
+          },
+          tx,
+        );
+        return {
+          participantIds: [
+            masterId,
+            loserId,
+            ...plan.sources.map((source) => source.ownerMemberId),
+          ],
+          result: { nulled, resolved, moves, plan, lodgeIds: lodgeIdsThisAttempt },
+        };
+      });
+      coveredPartnerShareLodgeIds = prepared.result.lodgeIds;
+      selfRelationNulls = prepared.result.nulled;
+      resolveResults = prepared.result.resolved;
+      relationMoves = prepared.result.moves;
+      hostingPlan = prepared.result.plan;
+      lockedHostingParticipants = prepared.lockedMemberIds;
       refreshedHostingPlan = await buildMemberMergeHostingCoveragePlan(
         {
           masterId,
@@ -2039,7 +2078,7 @@ export async function executeMemberMerge(params: {
     try {
       sweptShares = await sweepUnbackedFutureSharedDoublesWithLocksHeld({
         memberIds: [masterId, loserId],
-        lockedLodgeIds: partnerShareLodgeIds,
+        lockedLodgeIds: coveredPartnerShareLodgeIds,
         reason: "members_merged",
         db: tx,
         // The same day the lodge prefix above was derived from, so the set
@@ -2048,12 +2087,7 @@ export async function executeMemberMerge(params: {
       });
     } catch (sweepError) {
       if (sweepError instanceof UnlockedPartnerShareLodgeError) {
-        throw new MemberMergeError(
-          "A lodge booking for one of these members changed while the merge was running. Nothing was merged — please try again.",
-          409,
-          "partner_share_lodge_drift",
-          { lodgeIds: sweepError.lodgeIds },
-        );
+        throw partnerShareLodgeDrift(sweepError.lodgeIds);
       }
       throw sweepError;
     }
@@ -2623,6 +2657,7 @@ async function applyMoves(
   loserId: string,
   selfRelationRefs: Record<string, readonly string[]>,
   loserOwnedBookingIds: readonly string[],
+  capturedMoveRowIds: ReadonlyMap<string, readonly string[]>,
 ): Promise<{ model: string; count: number }[]> {
   const moves: { model: string; count: number }[] = [];
   for (const s of MEMBER_MERGE_RELATION_SPECS) {
@@ -2661,7 +2696,7 @@ async function applyMoves(
           }
         : s.key === "Booking.member"
           ? { [s.column]: loserId, id: { in: [...loserOwnedBookingIds] } }
-          : { [s.column]: loserId },
+          : { [s.column]: loserId, id: { in: [...(capturedMoveRowIds.get(s.key) ?? [])] } },
       data: { [s.column]: masterId },
     });
     if (res.count > 0) moves.push({ model: s.key, count: res.count });

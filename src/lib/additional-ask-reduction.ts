@@ -26,7 +26,7 @@
  *   retired, and the `Payment` mirror is reconciled. A smaller ask, when one is
  *   left, is made durable in the same transaction (`queueReissuedAskRecovery`)
  *   and minted after commit (`writeReissuedAskUnderRecovery`).
- * - `foldWaitingReissuedAsks` - a later increase asks for a waiting re-issue too.
+ * - `foldWaitingAsks` - a later increase asks for a waiting re-issue or increase retry too.
  *
  * And the after-commit half, `cancelRetiredAdditionalAsksNow`, which the minter
  * runs before minting anything.
@@ -63,7 +63,7 @@ import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { readOrganiserExtraReduction, organiserExtraUnpaidCents, type OrganiserExtraReduction } from "@/lib/organiser-extra-state";
 import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
 import { reductionLeftAfterUnpaidAskCents, setReductionAgainstUnpaidAsk } from "@/lib/additional-payment-ask";
-import { pendingAskRecoveries, type AskRecoveryOperation } from "@/lib/additional-ask-pending-recoveries";
+import { foldedInvoiceCentsNotParked, pendingAskRecoveries, type AskRecoveryOperation } from "@/lib/additional-ask-pending-recoveries";
 import {
   AdditionalAskChangedDuringReductionError,
   isWriteConflictOrDeadlock,
@@ -140,6 +140,11 @@ export type PendingAskRecovery = {
    * increase mints, so never parked anywhere yet; 0 for a re-issue.
    */
   foldedInvoiceCents: number;
+  /**
+   * #4744: each folded ask's invoice, by the edit it bills, so a reduction that
+   * retires this recovery does not count a legacy parked invoice twice.
+   */
+  foldedInvoices: readonly { modificationId: string; invoiceCents: number }[];
   /**
    * #3954 round 6: an increase's recovery that recorded no answer to whether
    * the primary invoice existed when it was saved (`hadIssuedXeroInvoice`
@@ -560,8 +565,10 @@ async function retireUnpaidAskChainUnderLocks(
         ...intentIds.map((intentId) => ({
           requestPayload: { path: ["paymentIntentId"], equals: intentId },
         })),
-        ...ask.recoveries.map((recovery) =>
-          waitingSupplementaryInvoiceOperationsWhere(recovery.bookingModificationId),
+        ...ask.recoveries.flatMap((recovery) =>
+          [recovery.bookingModificationId, ...recovery.foldedInvoices.map((part) => part.modificationId)].map((id) =>
+            waitingSupplementaryInvoiceOperationsWhere(id),
+          ),
         ),
       ],
     } satisfies Prisma.XeroSyncOperationWhereInput;
@@ -605,8 +612,8 @@ async function retireUnpaidAskChainUnderLocks(
     ask.recoveries
       .filter((recovery) => !parkedAnchors.has(recovery.bookingModificationId))
       .reduce((sum, recovery) => sum + recovery.invoiceCents, 0) +
-    // Round 6: a folded re-issue's invoice is queued only once its increase mints.
-    ask.recoveries.reduce((sum, recovery) => sum + recovery.foldedInvoiceCents, 0);
+    // A folded ask's invoice is queued only once its increase mints, except a legacy one already parked.
+    foldedInvoiceCentsNotParked(ask.recoveries, parkedAnchors);
   return {
     retired,
     invoicedCents: parkedInvoicedCents + unparkedInvoicedCents,

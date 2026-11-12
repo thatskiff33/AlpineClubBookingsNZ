@@ -40,9 +40,12 @@ import { SUPERSEDED_ASK_TRANSACTION_REASON } from "@/lib/payment-transaction-sta
 import { prisma } from "@/lib/prisma";
 import { intentCancellationQueuedWhere } from "@/lib/queued-intent-cancellation";
 import { getPaymentIntent } from "@/lib/stripe";
+import { buildAdditionalIntentRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
 import {
+  recordedFoldedIncreaseAsks,
   recordedFoldedReissuedAskModificationIds,
   recordedReissuedAskInvoiceCents,
+  type FoldedIncreaseAsk,
 } from "@/lib/unpaid-ask-offset-marker";
 import { enqueueXeroSupplementaryInvoiceOperation } from "@/lib/xero-operation-outbox";
 
@@ -150,17 +153,15 @@ async function queueReissuedAskInvoice({
 }
 
 /**
- * #3954 review round 6: THE RE-ISSUES AN INCREASE FOLDED IN KEEP THEIR OWN
- * INVOICES. A later increase that folded a waiting re-issue into its own ask
- * (`foldWaitingReissuedAsks`) closed that re-issue's recovery, so the
- * re-issue's own mint - which queues its decision-A invoice - never runs. Once
- * the increase's ask is minted, by its door or its recovery's replay, each
- * folded reduction's invoice is queued here instead, anchored on that
- * reduction as before and waiting on the INCREASE's intent, which now asks for
- * that money. The per-anchor lock keeps a second call (door and replay) to one.
- * Returns whether the increase's intent is still the live ask (round 7).
+ * #3954 review round 6, widened by #4744 (`INV-PAY-140`): THE ASKS AN INCREASE
+ * FOLDED IN KEEP THEIR OWN INVOICES. Folding closed their recoveries, so their
+ * own mints never queue the invoices. Once the increase's ask is minted, each
+ * folded re-issue's invoice and each folded increase's deferred invoice wait
+ * on this intent. Nested folds are walked the same way. The per-anchor lock
+ * keeps a second call (door and replay) to one invoice. Returns whether the
+ * increase's intent is still the live ask.
  */
-export async function queueFoldedReissuedAskInvoices({
+export async function queueFoldedAskInvoices({
   bookingId,
   increaseModificationId,
   paymentIntentId,
@@ -168,26 +169,108 @@ export async function queueFoldedReissuedAskInvoices({
   bookingId: string;
   /** The increase whose history records what it folded in. */
   increaseModificationId: string;
-  /** Its minted intent, which collects the folded re-issues' money. */
+  /** Its minted intent, which collects the folded asks' money. */
   paymentIntentId: string;
 }): Promise<boolean> {
   if (!(await askStillLive(bookingId, paymentIntentId))) return false;
-  let folded: string[];
+  await queueFoldedAsksFrom({ bookingId, increaseModificationId, paymentIntentId, seen: new Set() });
+  return true;
+}
+
+async function queueFoldedAsksFrom({
+  bookingId,
+  increaseModificationId,
+  paymentIntentId,
+  seen,
+}: {
+  bookingId: string;
+  increaseModificationId: string;
+  paymentIntentId: string;
+  seen: Set<string>;
+}): Promise<void> {
+  if (seen.has(increaseModificationId)) return;
+  seen.add(increaseModificationId);
+  let newData: unknown;
   try {
     const increase = await prisma.bookingModification.findUnique({
       where: { id: increaseModificationId },
       select: { newData: true },
     });
-    folded = recordedFoldedReissuedAskModificationIds(increase?.newData);
+    newData = increase?.newData;
   } catch (err) {
     logger.error(
       { err, bookingId, increaseModificationId, paymentIntentId },
-      "Failed to read the re-issues an increase folded in (#3954); the booking-vs-Xero repair pass reports their invoices",
+      "Failed to read the asks an increase folded in (#4744); the booking-vs-Xero repair pass reports their invoices",
     );
-    return true;
+    return;
   }
-  for (const bookingModificationId of folded) {
+  for (const bookingModificationId of recordedFoldedReissuedAskModificationIds(newData)) {
     await queueReissuedAskInvoice({ bookingId, bookingModificationId, paymentIntentId });
   }
-  return true;
+  for (const entry of recordedFoldedIncreaseAsks(newData).entries) {
+    await queueFoldedIncreaseInvoice({ bookingId, entry, paymentIntentId });
+    await queueFoldedAsksFrom({
+      bookingId,
+      increaseModificationId: entry.modificationId,
+      paymentIntentId,
+      seen,
+    });
+  }
+}
+
+/** Move one folded increase's deferred invoice onto the folding intent. */
+async function queueFoldedIncreaseInvoice({
+  bookingId,
+  entry,
+  paymentIntentId,
+}: {
+  bookingId: string;
+  entry: FoldedIncreaseAsk;
+  paymentIntentId: string;
+}): Promise<void> {
+  try {
+    const { attachRecoveredIntentToWaitingSupplementaryInvoice } = await import(
+      "@/lib/xero-supplementary-invoice-late-capture"
+    );
+    const recovery = await prisma.paymentRecoveryOperation.findUnique({
+      where: { idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey(entry.modificationId) },
+      select: { id: true },
+    });
+    await attachRecoveredIntentToWaitingSupplementaryInvoice({
+      bookingModificationId: entry.modificationId,
+      paymentIntentId,
+      recoveryOperationId: recovery?.id ?? entry.modificationId,
+    });
+    if (entry.hadIssuedXeroInvoice === null) {
+      logger.warn(
+        { bookingId, bookingModificationId: entry.modificationId, paymentIntentId },
+        "A folded increase carries no record of whether its edit had an issued Xero invoice; no invoice queued, and the repair pass reports it (#4744)",
+      );
+      return;
+    }
+    const modification = await prisma.bookingModification.findUnique({
+      where: { id: entry.modificationId },
+      select: {
+        priceDiffCents: true,
+        changeFeeCents: true,
+        booking: { select: { payment: { select: { status: true } } } },
+      },
+    });
+    if (!modification) return;
+    const { completeDeferredXeroSupplementaryInvoice } = await import("@/lib/xero-booking-edit-settlement");
+    await completeDeferredXeroSupplementaryInvoice({
+      bookingId,
+      bookingModificationId: entry.modificationId,
+      paymentIntentId,
+      priceDiffCents: modification.priceDiffCents,
+      changeFeeCents: modification.changeFeeCents,
+      hasIssuedXeroInvoice: entry.hadIssuedXeroInvoice,
+      originalPaymentStatus: modification.booking.payment?.status ?? null,
+    });
+  } catch (err) {
+    logger.error(
+      { err, bookingId, bookingModificationId: entry.modificationId, paymentIntentId },
+      "Failed to move a folded increase's deferred Xero invoice onto the folding card request (#4744); the repair pass reports it",
+    );
+  }
 }

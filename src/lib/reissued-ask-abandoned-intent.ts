@@ -78,7 +78,7 @@ import { PaymentRecoveryOperationStatus } from "@prisma/client";
 
 import {
   readReissuedAskRecovery,
-  reissueClosedUnminted,
+  askClosedUnminted,
   type ReissuedAskRecovery,
 } from "@/lib/additional-ask-reissue";
 import logger from "@/lib/logger";
@@ -141,7 +141,7 @@ export function closedWithoutIntent(
 export function recoveryEndedBy(moved: Pick<ReissuedAskRecovery, "status" | "lastError" | "attempts">): ClosedBy | null {
   if (isPaymentRecoveryOperationExhausted(moved)) return "failed-for-good";
   if (moved.status !== PaymentRecoveryOperationStatus.SUCCEEDED) return null;
-  return reissueClosedUnminted(moved) ?? "minted-elsewhere";
+  return askClosedUnminted(moved) ?? "minted-elsewhere";
 }
 
 /**
@@ -227,7 +227,7 @@ export async function runClaimHoldSettlingIntent<T>(
   return held;
 }
 
-type ClosedBy = NonNullable<ReturnType<typeof reissueClosedUnminted>> | "minted-elsewhere" | "failed-for-good";
+type ClosedBy = NonNullable<ReturnType<typeof askClosedUnminted>> | "minted-elsewhere" | "failed-for-good";
 
 /**
  * The owner check - no payment row and no recovery names the intent - then the

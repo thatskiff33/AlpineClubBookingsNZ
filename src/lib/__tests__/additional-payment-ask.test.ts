@@ -129,6 +129,25 @@ describe("sizeAdditionalAsk", () => {
       }).amountCents,
     ).toBe(15500);
   });
+
+  it("marks only an increase that folded a waiting retry as completing that recovery", () => {
+    const ordinary = sizeAdditionalAsk({
+      priceDiffCents: 7000,
+      changeFeeCents: 0,
+      payment: askPayment(0, null),
+    });
+    const folded = sizeAdditionalAsk({
+      priceDiffCents: 7000,
+      changeFeeCents: 0,
+      payment: askPayment(0, null),
+      foldedWaitingAskCents: 2500,
+    });
+    expect(ordinary.completesFoldedRecovery).toBe(false);
+    expect(ordinary.amountCents).toBe(7000);
+    expect(folded.completesFoldedRecovery).toBe(true);
+    expect(folded.amountCents).toBe(9500);
+    expect(folded.reissuesUnpaidAsk).toBe(false);
+  });
 });
 
 describe("#3371 - a review charge is the SAME rule with a different own figure", () => {

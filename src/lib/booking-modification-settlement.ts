@@ -1,27 +1,20 @@
-import { assertAdditionalAskSizingCurrent, withAdditionalAskQueueTransaction } from "@/lib/additional-ask-queue-transaction";
+import { withAdditionalAskQueueTransaction } from "@/lib/additional-ask-queue-transaction";
 import type { ModificationLine } from "@/lib/booking-modification-lines";
 import { PaymentRecoveryOperationStatus, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 
 import type { AdditionalAsk } from "@/lib/additional-payment-ask";
 import type { RetiredAdditionalAsk } from "@/lib/additional-ask-reduction";
 import {
+  askClosedUnminted,
   cancelRetiredAdditionalAsksNow,
   readReissuedAskRecovery,
-  reissueClosedUnminted,
   type ReissuedAskRecovery,
-  writeReissuedAskUnderRecovery,
 } from "@/lib/additional-ask-reissue";
 import { asksMemberCard } from "@/lib/additional-ask-email-terms";
-import { settleLostReissuedAskFence } from "@/lib/reissued-ask-abandoned-intent";
+import { mintAskUnderItsDoorRecovery } from "@/lib/ask-door-recovery-mint";
 import { sweepAskRecoveriesClosedByEdit } from "@/lib/abandoned-ask-intent-sweep";
-import { queueFoldedReissuedAskInvoices, queueReissuedAskSupplementaryInvoice } from "@/lib/reissued-ask-invoice";
-import {
-  mintedIntentCustomerId,
-  mintReissuedAskIntent,
-  planReissuedAskMint,
-  readAskMintPayment,
-  resolveAskCustomerId,
-} from "@/lib/reissued-ask-mint";
+import { queueFoldedAskInvoices } from "@/lib/reissued-ask-invoice";
+import { readAskMintPayment, resolveAskCustomerId } from "@/lib/reissued-ask-mint";
 import { mintOrdinaryAskIntent } from "@/lib/ordinary-ask-mint";
 import {
   ADDITIONAL_ASK_INTENT_TYPE,
@@ -328,7 +321,7 @@ const ASK_RETIRED_UNMINTED: ModificationAdditionalAskMint = { ...NOTHING_MINTED,
 function reissueNotMinted(
   recovery: Pick<ReissuedAskRecovery, "status" | "lastError"> | null,
 ): ModificationAdditionalAskMint {
-  return reissueClosedUnminted(recovery) === "netted" ? ASK_RETIRED_UNMINTED : NOTHING_MINTED;
+  return askClosedUnminted(recovery) === "netted" ? ASK_RETIRED_UNMINTED : NOTHING_MINTED;
 }
 
 function mintedAsk(pi: { id: string; client_secret: string | null }, live: boolean): ModificationAdditionalAskMint {
@@ -448,22 +441,25 @@ async function mintModificationAdditionalAsk(
   // #4316: a booking ended since the edit committed is asked nothing, and owes nothing.
   if (await bookingEndedBeforeAskMint(bookingId, result.bookingModificationId)) return ASK_RETIRED_UNMINTED;
 
-  // #3954 review round 4: a RE-ISSUED ask's recovery was written in the edit's
-  // own transaction (`queueReissuedAskRecovery`). This mint runs under that
-  // row's Stripe key and completes the row with its own write - unless a later
-  // reduction netted it off or the runner claimed it after its grace, in which
-  // case whoever moved it owns the ask and this mints nothing.
-  const reissueRecovery = result.additionalAsk.reissuesUnpaidAsk
-    ? await readReissuedAskRecovery(result.bookingModificationId)
-    : null;
-  if (reissueRecovery && reissueRecovery.status !== PaymentRecoveryOperationStatus.PENDING) {
+  // #3954, #4744: a re-issue, or an increase that folded a waiting retry, wrote
+  // its recovery in the edit's transaction. This mint runs under that row's
+  // Stripe key and completes it — unless a later edit or the runner moved it.
+  // An ordinary increase wrote no such row; looking one up would ask the store
+  // for a recovery that does not exist and is not this mint's to complete.
+  const wroteDoorRecovery =
+    result.additionalAsk.reissuesUnpaidAsk || result.additionalAsk.completesFoldedRecovery;
+  const doorRecovery =
+    params.reviewCharge || !wroteDoorRecovery
+      ? null
+      : await readReissuedAskRecovery(result.bookingModificationId);
+  if (doorRecovery && doorRecovery.status !== PaymentRecoveryOperationStatus.PENDING) {
     logger.info(
-      { bookingId, bookingModificationId: result.bookingModificationId, operationId: reissueRecovery.id, status: reissueRecovery.status },
-      "A re-issued additional ask's recovery has moved on since the edit committed; the door's mint leaves it to the recovery (#3954)",
+      { bookingId, bookingModificationId: result.bookingModificationId, operationId: doorRecovery.id, status: doorRecovery.status },
+      "An additional ask's recovery has moved on since the edit committed; the door's mint leaves it to whoever moved it (#3954, #4744)",
     );
-    return reissueNotMinted(reissueRecovery);
+    return reissueNotMinted(doorRecovery);
   }
-  const stripeIdempotencyKey = reissueRecovery?.paymentIntentId ?? idempotencyKey;
+  const stripeIdempotencyKey = doorRecovery?.paymentIntentId ?? idempotencyKey;
 
   // Durable retry (#1096): a price increase with no instrument to collect it
   // must never be lost. One spelling for both ways a mint can fail below.
@@ -495,75 +491,22 @@ async function mintModificationAdditionalAsk(
   }
 
   try {
-    if (reissueRecovery) {
-      // #3954 round 6: the ONE request both of a re-issue's minters send
-      // (`planReissuedAskMint`) - sized on the outstanding ask as it stands
-      // now, exactly as the recovery's replay sizes it, so an ask minted since
-      // the reduction (an officer's review charge, say) is carried rather than
-      // superseded away, and the two never answer each other with an
-      // `idempotency_error`. The row, the recovery's completion and the
-      // supersede's durable rows commit together, or not at all (see above).
-      const current = await readAskMintPayment(paymentId);
-      // Round 7: the customer resolved exactly as the recovery runner resolves
-      // it, so the two minters of this key send one request.
-      const customerId = await resolveAskCustomerId(current);
-      const plan = planReissuedAskMint({
-        bookingId,
-        recovery: { amountCents: reissueRecovery.amountCents, stripeKey: reissueRecovery.paymentIntentId },
-        payment: current,
-      });
-      const pi = await mintReissuedAskIntent({
+    if (doorRecovery) {
+      // #3954, #4744: one request, written only while the recovery is still the
+      // state this mint read (`mintAskUnderItsDoorRecovery`).
+      const minted = await mintAskUnderItsDoorRecovery({
         format,
-        plan,
-        customerId,
-        recoveryCreatedAt: reissueRecovery.createdAt,
-      });
-      const superseded = await writeReissuedAskUnderRecovery(reissueRecovery, pi.id, async (store) => {
-        await assertAdditionalAskSizingCurrent(store, paymentId, plan.ask);
-        await upsertPaymentIntentTransaction({
-          paymentId,
-          kind: PaymentTransactionKind.ADDITIONAL,
-          paymentIntentId: pi.id,
-          amountCents: plan.ask.amountCents,
-          carriedAskCents: plan.ask.carriedCents,
-          status: PaymentStatus.PENDING,
-          reason: plan.reason,
-          stripeCustomerId: mintedIntentCustomerId(pi, customerId),
-          // #3954 round 8: the reducing edit whose re-issue this is, so a later
-          // reduction that retires it names this edit.
-          bookingModificationId: result.bookingModificationId,
-          store,
-        });
-        return queueSupersededAdditionalIntentCancellationRows({
-          bookingId,
-          paymentId,
-          newPaymentIntentId: pi.id,
-          store,
-        });
-      });
-      if (superseded === null) {
-        logger.warn(
-          { bookingId, bookingModificationId: result.bookingModificationId, paymentIntentId: pi.id },
-          "A re-issued additional ask's recovery moved while the door minted it (#3954); nothing written - the recovery's owner asks the member",
-        );
-        // Final review: whoever moved it decides whether it is still owed. A
-        // failed re-read names it, as before. #4052: an intent this mint left
-        // with no owner is cancelled at Stripe, outside any transaction.
-        return reissueNotMinted(await settleLostReissuedAskFence({ bookingId, bookingModificationId: result.bookingModificationId, paymentIntentId: pi.id, stripeKey: reissueRecovery.paymentIntentId }));
-      }
-      await cancelSupersededAdditionalIntentsNow({ format, bookingId, paymentId, queued: superseded, newPaymentIntentId: pi.id });
-      // #4316: a cancel that committed while this minted could not see it.
-      if (await retireAskOnEndedBooking({ format, bookingId, paymentId, paymentIntentId: pi.id })) return ASK_RETIRED_UNMINTED;
-      // Decision A (#3954): the smaller ask's own invoice, waiting on it - only
-      // while it is still live (round 7): a reduction may have retired it during
-      // the cancels above, and named this edit for it. Round 8: only the secret
-      // is withheld then; the minted intent's id is still returned.
-      const live = await queueReissuedAskSupplementaryInvoice({
         bookingId,
+        paymentId,
         bookingModificationId: result.bookingModificationId,
-        paymentIntentId: pi.id,
+        hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
+        recovery: doorRecovery,
+        ask: result.additionalAsk,
+        reason,
       });
-      return mintedAsk(pi, live);
+      if (minted.outcome === "retired") return ASK_RETIRED_UNMINTED;
+      if (minted.outcome === "left") return reissueNotMinted(minted.recovery);
+      return mintedAsk({ id: minted.intentId, client_secret: minted.clientSecret }, minted.live);
     }
 
     let customerId: string | undefined;
@@ -677,7 +620,7 @@ async function mintModificationAdditionalAsk(
     // raising it unpaid; the reduction named this edit when it retired the row.
     const live = recoveryIdempotencyKey
       ? true
-      : await queueFoldedReissuedAskInvoices({
+      : await queueFoldedAskInvoices({
           bookingId,
           increaseModificationId: result.bookingModificationId,
           paymentIntentId: pi.id,

@@ -39,6 +39,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     $executeRaw: vi.fn(),
     payment: { findUnique: mocks.paymentFindUnique },
+    paymentRecoveryOperation: { findUnique: async () => null },
     paymentTransaction: {
       // No other live ask for the supersede to retire.
       findMany: async () => [],
@@ -59,7 +60,7 @@ vi.mock("@/lib/superseded-ask-invoice-carry", () => ({
 }));
 // The door folds no waiting re-issue in here; its invoice step answers "live".
 vi.mock("@/lib/reissued-ask-invoice", () => ({
-  queueFoldedReissuedAskInvoices: async () => true,
+  queueFoldedAskInvoices: async () => true,
   queueReissuedAskSupplementaryInvoice: async () => true,
 }));
 

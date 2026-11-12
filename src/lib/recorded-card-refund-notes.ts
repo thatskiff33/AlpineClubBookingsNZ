@@ -1,7 +1,6 @@
 /** The note routing shared by charge.refunded and the recovery preflight. */
 import type { Payment } from "@prisma/client";
-import { findAdditionalCaptureReceiptInvoiceId } from "@/lib/additional-capture-receipt-link";
-import { queueWebhookCardRefundNotes } from "@/lib/card-refund-own-note";
+import { invoiceACardRefundCredits, queueWebhookCardRefundNotes } from "@/lib/card-refund-own-note";
 import { queueLateCaptureRefundCreditNote } from "@/lib/late-capture-refund-credit-note";
 import { readUnrecordedLateCaptureRefund } from "@/lib/late-capture-unrecorded-refunds";
 import { findLateCapturePaymentIntents } from "@/lib/late-capture-xero-receipt";
@@ -32,7 +31,8 @@ export async function queueRecordedCardRefundNotes(params: {
     refunds: params.refunds,
   })) !== "none") return { queueOperationId: null };
   try {
-    const creditsInvoiceId = await findAdditionalCaptureReceiptInvoiceId(params.paymentIntentId);
+    // #4493: the capture's own receipt, else the invoice the sweep recorded (`invoiceACardRefundCredits`).
+    const creditsInvoiceId = await invoiceACardRefundCredits(params.paymentIntentId);
     return await queueWebhookCardRefundNotes({
       payment: params.payment,
       deltaCents: params.deltaCents,

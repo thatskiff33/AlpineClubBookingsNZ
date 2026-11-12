@@ -56,7 +56,7 @@ import {
 } from "@prisma/client";
 import type Stripe from "stripe";
 
-import { reissueClosedUnminted } from "@/lib/additional-ask-reissue";
+import { askClosedUnminted } from "@/lib/additional-ask-reissue";
 import { creditReleaseIdForAskRecoveryKey } from "@/lib/credit-release-ask-keys";
 import logger from "@/lib/logger";
 import { ADDITIONAL_ASK_INTENT_TYPE, ASK_RECOVERY_METADATA_KEY } from "@/lib/ordinary-ask-request";
@@ -80,7 +80,7 @@ import {
 import { MINTED_INTENT_LOOKBACK_MS, REISSUED_ASK_KEY_METADATA } from "@/lib/reissued-ask-mint";
 import { listRecentPaymentIntentsMatching } from "@/lib/stripe";
 import {
-  recordedFoldedReissuedAskModificationIds,
+  recordedFoldedAskModificationIds,
   recordedRetiredAskModificationIds,
 } from "@/lib/unpaid-ask-offset-marker";
 
@@ -198,7 +198,7 @@ export async function sweepAskRecoveriesClosedByEdit({
   try {
     const edit = await prisma.bookingModification.findUnique({ where: { id: bookingModificationId }, select: { newData: true } });
     const editIds = [
-      ...new Set([...recordedRetiredAskModificationIds(edit?.newData), ...recordedFoldedReissuedAskModificationIds(edit?.newData)]),
+      ...new Set([...recordedRetiredAskModificationIds(edit?.newData), ...recordedFoldedAskModificationIds(edit?.newData)]),
     ];
     if (editIds.length === 0) return;
     const rows = await prisma.paymentRecoveryOperation.findMany({
@@ -213,7 +213,7 @@ export async function sweepAskRecoveriesClosedByEdit({
       },
       select: { id: true, status: true, lastError: true },
     });
-    closedIds = rows.filter((row) => reissueClosedUnminted(row) !== null).map((row) => row.id);
+    closedIds = rows.filter((row) => askClosedUnminted(row) !== null).map((row) => row.id);
   } catch (err) {
     logger.error(
       { err, bookingId, bookingModificationId, event: ABANDONED_REISSUE_INTENT_LOG_EVENT, outcome: "sweep-failed" },

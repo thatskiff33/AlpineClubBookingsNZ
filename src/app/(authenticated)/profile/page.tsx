@@ -260,8 +260,13 @@ export default async function ProfilePage({
     { enabled: memberFieldsFlags.showDietaryRequirements },
   );
   const modules = await loadEffectiveModuleFlags();
+  const passkeyRows = await prisma.webAuthnCredential.findMany({
+    where: { memberId: member.id },
+    select: { id: true, name: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+  });
   const showTwoFactorSecurityCard =
-    modules.twoFactor || member.twoFactorEnabled;
+    modules.twoFactor || member.twoFactorEnabled || passkeyRows.length > 0;
   // #4456: codes retired by a key change; the card tells the member to replace them.
   const recoveryCodesRetired =
     member.twoFactorEnabled && (await memberHoldsRetiredRecoveryCodes(member.id));
@@ -447,6 +452,11 @@ export default async function ProfilePage({
                 enabled={member.twoFactorEnabled}
                 method={member.twoFactorMethod}
                 moduleEnabled={modules.twoFactor}
+                passkeys={passkeyRows.map((row) => ({
+                  id: row.id,
+                  name: row.name,
+                  createdAtLabel: club.instantDate(row.createdAt),
+                }))}
                 recoveryCodesRetired={recoveryCodesRetired}
               />
             ) : null}

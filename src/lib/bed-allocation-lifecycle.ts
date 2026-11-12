@@ -22,6 +22,7 @@ import {
 } from "@/lib/date-only";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { tryAcquireLodgeCapacityLock } from "@/lib/lodge-capacity-lock";
 import {
   custodianOccupiedBedNightsForPlanner,
   findCustodianBedHolds,
@@ -1878,8 +1879,11 @@ async function partnerShareGuestRowLodgeIds(
     where: { memberId: { in: uniqueMemberIds } },
     select: { booking: { select: { lodgeId: true } } },
   });
+  // A guest whose booking relation is absent names no lodge. Reading
+  // `lodgeId` off that missing booking threw before the residual-reference
+  // refusal could run.
   return guestRows
-    .map((guest) => guest.booking.lodgeId)
+    .map((guest) => guest.booking?.lodgeId)
     .filter((lodgeId): lodgeId is string => Boolean(lodgeId));
 }
 
@@ -1887,7 +1891,7 @@ async function partnerShareGuestRowLodgeIds(
  * Turn merge's lodge derivation from an argument into a proof (#2672).
  *
  * Call this from inside the merge transaction AFTER merge's sorted
- * `Member … FOR UPDATE` statement (`lockMemberMergeHostingCoverageParticipants`)
+ * `Member … FOR UPDATE` statement (`withMemberMergeParticipantRows`)
  * and while the lodge prefix is still held. It re-runs
  * {@link partnerShareGuestRowLodgeIds} and refuses the whole merge if the set
  * has grown past the lodges the prefix actually locked.
@@ -1926,9 +1930,12 @@ async function partnerShareGuestRowLodgeIds(
  * deliberate"). The escape is fenced, not merely observed.
  *
  * A refusal here means a guest row for one of these members landed at a lodge
- * they had never booked, between the prefix derivation at the top of the merge
- * and the `FOR UPDATE`. Nothing is written, the admin is told the booking
- * picture changed, and a retry derives the wider set. Deliberately checked
+ * they had never booked, after the successful attempt re-derived its lodge set
+ * (the opening prefix, extended by
+ * {@link lockPartnerShareLodgesAppearedSincePrefix} when a booking committed
+ * between attempts) and before or under the `FOR UPDATE`. Nothing is written,
+ * the admin is told the booking picture changed, and a retry derives the wider
+ * set. Deliberately checked
  * BEFORE any candidate read, and regardless of whether the sweep would find
  * anything to remove: the hazard is a lodge that has no shared double YET.
  */
@@ -1994,6 +2001,34 @@ export async function acquireFuturePartnerSharedAllocationLocks(
 }
 
 /**
+ * Lodges a member-merge partner-share sweep must cover: future allocations
+ * plus every guest-row booking, sorted and de-duplicated.
+ *
+ * The opening prefix and each attempt's re-lock both use this list. A second
+ * copy would let a retry cover a different set from the one a fresh merge
+ * locks at the top. The two reads stay sequential because they share one
+ * interactive transaction client. An empty member set reads nothing.
+ */
+async function partnerShareAffectedLodgeIds(
+  tx: Prisma.TransactionClient,
+  memberIds: readonly string[],
+  today: Date,
+): Promise<string[]> {
+  const uniqueMemberIds = [...new Set(memberIds.filter(Boolean))];
+  if (uniqueMemberIds.length === 0) return [];
+  const allocationLodgeIds = await futurePartnerShareAllocationLodgeIds(
+    tx,
+    uniqueMemberIds,
+    today,
+  );
+  const guestNightLodgeIds = await partnerShareGuestRowLodgeIds(
+    tx,
+    uniqueMemberIds,
+  );
+  return [...new Set([...allocationLodgeIds, ...guestNightLodgeIds])].sort();
+}
+
+/**
  * Member merge's partner-share prefix (#2595): every affected lodge capacity
  * key in sorted order and NOTHING ELSE — no global cohort `lock(1)`.
  *
@@ -2043,26 +2078,53 @@ export async function acquireMemberMergePartnerSharedLodgeLocks(
   memberIds: readonly string[],
   today: Date,
 ): Promise<string[]> {
-  const uniqueMemberIds = [...new Set(memberIds.filter(Boolean))];
-  if (uniqueMemberIds.length === 0) return [];
-
-  // Sequential on purpose: both reads share one interactive transaction client.
-  const allocationLodgeIds = await futurePartnerShareAllocationLodgeIds(
-    tx,
-    uniqueMemberIds,
-    today,
-  );
-  const guestNightLodgeIds = await partnerShareGuestRowLodgeIds(
-    tx,
-    uniqueMemberIds,
-  );
-  const lodgeIds = [
-    ...new Set([...allocationLodgeIds, ...guestNightLodgeIds]),
-  ].sort();
+  const lodgeIds = await partnerShareAffectedLodgeIds(tx, memberIds, today);
   for (const lodgeId of lodgeIds) {
     await acquireLodgeCapacityLock(tx, lodgeId);
   }
   return lodgeIds;
+}
+
+/**
+ * Lock lodges these members gained after the opening prefix, without waiting.
+ *
+ * A participant attempt that cannot take every Member row rolls its savepoint
+ * back, releasing every row it wrote, and only then waits (#4876). A booking
+ * writer can commit in that gap — an approval that links one of these members
+ * as a guest at a lodge the prefix never saw. The next attempt re-runs the
+ * same two reads and try-locks each new lodge before it moves anything. The
+ * try-lock is inside the attempt's savepoint: a rolled-back attempt releases
+ * it, and a successful one keeps it until the merge commits.
+ *
+ * It does not wait. This transaction already holds member-lifecycle keys, and
+ * waiting for a lodge key after those would invert lodge → member. A miss
+ * throws {@link UnlockedPartnerShareLodgeError} for every lodge this call
+ * still needed; the merge refuses, and the operator's retry takes the wider
+ * set at the top of a new transaction, in order.
+ *
+ * `alreadyLockedLodgeIds` is the prefix this transaction already holds. Those
+ * keys are not requested again: a second acquisition inside this savepoint
+ * would be released with the attempt and could drop the prefix hold. The
+ * return value is the union, which is the set the coverage proof must be
+ * handed: a lodge that appears after this call is still drift.
+ */
+export async function lockPartnerShareLodgesAppearedSincePrefix(
+  tx: Prisma.TransactionClient,
+  memberIds: readonly string[],
+  today: Date,
+  alreadyLockedLodgeIds: readonly string[],
+): Promise<string[]> {
+  const held = new Set(alreadyLockedLodgeIds);
+  const missing = (await partnerShareAffectedLodgeIds(tx, memberIds, today)).filter(
+    (lodgeId) => !held.has(lodgeId),
+  );
+  for (const lodgeId of missing) {
+    if (!(await tryAcquireLodgeCapacityLock(tx, lodgeId))) {
+      throw new UnlockedPartnerShareLodgeError(missing);
+    }
+    held.add(lodgeId);
+  }
+  return [...held].sort();
 }
 
 /**

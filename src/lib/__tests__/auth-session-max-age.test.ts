@@ -100,9 +100,13 @@ vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: mockLoadEffectiveModuleFlags,
 }));
 
-vi.mock("@/lib/two-factor", () => ({
-  consumeTwoFactorSessionChallenge: mockConsumeTwoFactorSessionChallenge,
-}));
+vi.mock("@/lib/two-factor", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/two-factor");
+  return {
+    consumeTwoFactorSessionChallenge: mockConsumeTwoFactorSessionChallenge,
+    twoFactorChallengeProofKind: actual.twoFactorChallengeProofKind,
+  };
+});
 
 vi.mock("@/lib/google-config", () => ({
   getGoogleOAuthConfig: vi.fn().mockResolvedValue(null),

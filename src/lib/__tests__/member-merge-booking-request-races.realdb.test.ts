@@ -17,8 +17,9 @@
  * them.
  *
  * The merge-first case parks merge at its `Member … FOR UPDATE` behind another
- * session's key share on the duplicate (whose id sorts before the survivor's),
- * so merge holds the booking while it waits. The approval-first cases pause the
+ * session's key share on the duplicate (whose id sorts before the survivor's).
+ * Since #4876 that wait holds none of the rows merge re-points, so the approval
+ * does not queue behind a booking row. The approval-first cases pause the
  * approval after its claim, at `buildApprovalGuestCreates`, or just before its
  * booking-row lock. The choreography and its waits, each matched to the
  * backend it waits on (`pg_blocking_pids`), are shared with the other merge
@@ -207,13 +208,16 @@ async function bookingState() {
     return { loser, master };
   }
 
-  it("MUTATION: a merge holding the held booking and waiting for the Member rows makes the approval wait at the booking row before it links the survivor; both commit", async () => {
+  it("MUTATION: a merge waiting for the Member rows holds no booking row, so the approval commits without waiting on one", async () => {
     const { loser, master } = await mergePair("merge-first");
     await seed(loser, master);
     const runMerge = await previewMerge(master, loser, OFFICER_ID);
-    const { merged, written: approved } = await writerArrivingWhileMergeIsParked(prisma, keyShareOnMember(loser), runMerge, approve);
-    // Before #4857 the approval had linked the survivor (a key share) by here, so the merge's
-    // `Member … FOR UPDATE` waited on it while it waited on the booking: one side died with 40P01.
+    const { merged, written: approved, writerFirst } = await writerArrivingWhileMergeIsParked(
+      prisma, keyShareOnMember(loser), runMerge, approve, { writer: "queuesOrFinishes" },
+    );
+    // Before #4857 the approval had linked the survivor and waited on the booking while merge
+    // waited on the survivor. Since #4876 merge does not hold the booking through the wait.
+    expect(writerFirst, "the approval waited on the merge").toBe("settled");
     expectFulfilled(merged);
     expect(approved).toMatchObject({ status: "fulfilled", value: { type: "approved", bookingId: BOOKING_ID } });
     expect(await requestState()).toMatchObject({ reviewedByMemberId: OFFICER_ID, convertedBookingId: BOOKING_ID });

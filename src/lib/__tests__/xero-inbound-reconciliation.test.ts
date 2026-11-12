@@ -180,7 +180,33 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: mocks.memberCreditNoteAllocationFindFirst,
     },
     xeroObjectLink: {
-      findMany: mocks.linkFindMany,
+      // #4447: the snapshot read and the unlisted-allocation retire are new
+      // reads. They answer [] here, without taking a slot from the ordered
+      // `linkFindMany` queue the cases below already set up. A live note still
+      // writes each allocation it lists through `writeCurrentCreditNoteAllocation`.
+      findMany: (args: { where?: Record<string, unknown>; select?: Record<string, unknown> }) => {
+        const where = args?.where ?? {};
+        const select = args?.select ?? {};
+        const whereKeys = Object.keys(where);
+        const selectKeys = Object.keys(select);
+        const roleIn = (where.role as { in?: unknown } | undefined)?.in;
+        const roles = Array.isArray(roleIn) ? roleIn : [];
+        const snapshotRead =
+          where.xeroObjectType === "CREDIT_NOTE" &&
+          typeof where.xeroObjectId === "string" &&
+          whereKeys.length === 2 &&
+          selectKeys.length === 1 &&
+          select.metadata === true;
+        const unlistedAllocationRead =
+          where.xeroObjectType === "ALLOCATION" &&
+          where.active === true &&
+          where.localModel === undefined &&
+          roles.includes("MODIFICATION_CREDIT_NOTE_ALLOCATION") &&
+          roles.includes("CREDIT_NOTE_ALLOCATION") &&
+          where.metadata != null;
+        if (snapshotRead || unlistedAllocationRead) return Promise.resolve([]);
+        return mocks.linkFindMany(args);
+      },
       // #3642: the group-settlement arm looks up an abandoned invoice's link.
       findFirst: mocks.linkFindFirst,
       // #4531: the retire of a payment link Xero confirmed deleted.
@@ -537,6 +563,10 @@ describe("processStoredXeroInboundEvents", () => {
         },
         xeroObjectLink: {
           findMany: mocks.txLinkFindMany,
+          // #4447: the allocation write reserves its row, locks it, and skips a
+          // newer stamp before the mocked link funnel runs.
+          findUnique: vi.fn(async () => null),
+          createMany: vi.fn(async () => ({ count: 0 })),
         },
         // #3581: the paid-invoice path now posts its receipt to the booking
         // ledger inside this transaction.
@@ -7244,13 +7274,15 @@ describe("processStoredXeroInboundEvents", () => {
         role: "MODIFICATION_CREDIT_NOTE",
       })
     );
+    // #4447: the allocation is written inside the row lock, on that transaction.
     expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(
       expect.objectContaining({
         localModel: "BookingModification",
         localId: "mod_recover_1",
         xeroObjectType: "ALLOCATION",
         role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
-      })
+      }),
+      { store: expect.anything() },
     );
     expect(mocks.paymentUpdate).toHaveBeenCalledWith({
       where: { id: "pay_mod_recover_1" },

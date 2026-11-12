@@ -1277,6 +1277,16 @@ jobs:
         env:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-merge-loser-officer-races.realdb.test.ts
+      # #4876: member merge rolls back every row it has re-pointed before it
+      # waits for a Member row, so a writer that already holds a participant's
+      # key share and then needs one of those rows cannot deadlock it. Only
+      # this suite shows that on PostgreSQL. It self-skips without the env vars
+      # (same #1881 harness and database), so `review-findings-contracts.test.ts`
+      # fails if this step goes missing.
+      - name: Test member-merge moved-row races against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-merge-moved-row-races.realdb.test.ts
 
       # #3583: the booking ledger's cut-over gate, run the way the owner runs it
       # (docs/MAINTENANCE.md) over a seeded history: booking histories made by
