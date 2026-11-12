@@ -53,6 +53,14 @@ import {
   KioskGroupTripOrganiserLine,
 } from "./_components/kiosk-group-trip-card";
 import type { KioskAdultCoverSource } from "@/lib/kiosk-adult-cover";
+// #4965: send the wanted state (by the server's "here now" rule); one busy/error surface per row.
+import { isGuestHereNow } from "@/lib/lodge-attendance";
+import {
+  KIOSK_ROW_BUSY_LABEL,
+  KioskAttendanceButton,
+  KioskRowError,
+  useKioskRowActions,
+} from "./_components/kiosk-row-actions";
 import type {
   KioskGroupTripLabel,
   KioskGroupTripOrganiser,
@@ -261,7 +269,7 @@ export default function KioskPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const rowActions = useKioskRowActions();
   const [failCount, setFailCount] = useState(0);
   const [showPinForm, setShowPinForm] = useState(false);
   const [pin, setPin] = useState("");
@@ -396,6 +404,10 @@ export default function KioskPage() {
     setLoading(true);
     fetchData();
   }, [fetchData]);
+
+  // A failure belongs to the day it happened on (#4965).
+  const { clearErrors: clearRowErrors } = rowActions;
+  useEffect(() => clearRowErrors(), [date, clearRowErrors]);
 
   // Auto-refresh: backs off to 5 min after 3 consecutive failures
   useEffect(() => {
@@ -579,11 +591,6 @@ export default function KioskPage() {
     setView("week");
   };
 
-  const showActionError = (message: string) => {
-    setActionError(message);
-    setTimeout(() => setActionError(null), 3000);
-  };
-
   const submitPin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setPinError(null);
@@ -623,7 +630,7 @@ export default function KioskPage() {
 
     THE FAILURE IS RAISED AFTER THE REFETCH, AND IT DOES NOT TIME OUT, and both
     halves of that are corrections to the first version of this code. It used
-    `showActionError`, a three-second toast, raised BEFORE the round trip — and
+    the page's three-second toast (gone since #4965), raised BEFORE the round trip — and
     `dropHutLeaderView` then puts the page on its full-screen loading state,
     where the toast is not rendered at all. On a slow link the three seconds
     elapsed behind the loading screen, so the one message somebody must not miss
@@ -649,19 +656,16 @@ export default function KioskPage() {
     }
   };
 
-  const toggleChore = async (assignmentId: string, currentStatus: string) => {
+  const toggleChore = (assignmentId: string, currentStatus: string) => {
     if (!canCompleteChores) return;
     const action = currentStatus === "COMPLETED" ? "uncomplete" : "complete";
-    try {
+    return rowActions.run(assignmentId, "chore", "Failed to update chore", async () => {
       const res = await fetch(`/api/lodge/roster/${date}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, assignmentId }),
       });
-      if (!res.ok) {
-        showActionError("Failed to update chore");
-        return;
-      }
+      if (!res.ok) return "Failed to update chore";
       setAssignments((prev) =>
         prev.map((a) =>
           a.id === assignmentId
@@ -674,18 +678,20 @@ export default function KioskPage() {
             : a
         )
       );
-    } catch {
-      showActionError("Failed to update chore");
-    }
+      return null;
+    });
   };
 
-  const toggleArrival = async (guestId: string) => {
+  // #4965: both attendance writes send the state wanted, read from the row as
+  // drawn when it was tapped, so a repeat is a no-op at the server.
+  const toggleArrival = (guest: Guest) => {
     if (!canMarkAttendance) return;
-    try {
+    const arrived = !isGuestHereNow(guest);
+    return rowActions.run(guest.id, "arrive", "Failed to update arrival", async () => {
       const res = await fetch(`/api/lodge/guests/${date}/arrive`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bookingGuestId: guestId }),
+        body: JSON.stringify({ bookingGuestId: guest.id, arrived }),
       });
       if (!res.ok) {
         // #2737: one refusal here is actionable and the rest are not. A 409
@@ -698,21 +704,18 @@ export default function KioskPage() {
         const refusal = await res
           .json()
           .catch(() => null as { code?: string; error?: string } | null);
-        showActionError(
-          res.status === 409 &&
-            refusal?.code === "GUEST_NOT_BOOKED_THIS_NIGHT" &&
-            typeof refusal.error === "string"
-            ? refusal.error
-            : "Failed to update arrival"
-        );
-        return;
+        return res.status === 409 &&
+          refusal?.code === "GUEST_NOT_BOOKED_THIS_NIGHT" &&
+          typeof refusal.error === "string"
+          ? refusal.error
+          : "Failed to update arrival";
       }
       const data = await res.json();
       setBookings((prev) =>
         prev.map((b) => ({
           ...b,
           guests: b.guests.map((g) =>
-            g.id === guestId
+            g.id === guest.id
               ? {
                   ...g,
                   arrivedAt: data.arrivedAt,
@@ -728,35 +731,33 @@ export default function KioskPage() {
           ),
         }))
       );
-    } catch {
-      showActionError("Failed to update arrival");
-    }
+      return null;
+    });
   };
 
-  const toggleDeparture = async (guestId: string) => {
+  const toggleDeparture = (guest: Guest) => {
     if (!canMarkAttendance) return;
-    try {
+    // A stale Departed card from an earlier segment sends `false` first, which
+    // clears it; the next tap records the real departure.
+    const departed = !guest.departedAt;
+    return rowActions.run(guest.id, "depart", "Failed to update departure", async () => {
       const res = await fetch(`/api/lodge/guests/${date}/depart`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bookingGuestId: guestId }),
+        body: JSON.stringify({ bookingGuestId: guest.id, departed }),
       });
-      if (!res.ok) {
-        showActionError("Failed to update departure");
-        return;
-      }
+      if (!res.ok) return "Failed to update departure";
       const data = await res.json();
       setBookings((prev) =>
         prev.map((b) => ({
           ...b,
           guests: b.guests.map((g) =>
-            g.id === guestId ? { ...g, departedAt: data.departedAt } : g
+            g.id === guest.id ? { ...g, departedAt: data.departedAt } : g
           ),
         }))
       );
-    } catch {
-      showActionError("Failed to update departure");
-    }
+      return null;
+    });
   };
 
   const totalGuests = bookings.reduce((sum, b) => sum + b.guests.length, 0);
@@ -833,11 +834,6 @@ export default function KioskPage() {
           PREVIEW — {access?.lodgeName ?? "Default lodge"} kiosk
           {access?.previewAccountEmail ? ` (account ${access.previewAccountEmail})` : ""}
           {" · read-only, no changes are saved"}
-        </div>
-      )}
-      {actionError && (
-        <div className="bg-kiosk-danger-solid text-kiosk-danger-solid-fg text-center py-2 text-sm font-medium">
-          {actionError}
         </div>
       )}
 
@@ -1165,93 +1161,86 @@ export default function KioskPage() {
                           />
                           <div className="space-y-2">
                             {booking.guests.map((guest) => (
-                              <div
-                                key={guest.id}
-                                className={`flex items-center justify-between rounded-lg px-4 py-3 min-h-[56px] ${
-                                  // Dashed + a "Departed" chip = gone (#4594: never faded). A guest
-                                  // checking back in tonight is not gone, though `departedAt` still
-                                  // holds their previous segment's check-out (#2628).
-                                  guest.departedAt && !guest.canMarkArrived
-                                    ? "bg-kiosk-inset border border-dashed border-kiosk-border"
-                                    : guest.arrivedAt && !guest.departedAt
-                                      ? "bg-kiosk-success-bg border border-kiosk-success-border"
-                                      : "bg-kiosk-inset"
-                                }`}
-                              >
-                                <div>
-                                  <div className="flex items-center gap-3 flex-wrap">
-                                    <span className="text-lg font-medium">
-                                      {guest.firstName} {guest.lastName}
-                                    </span>
-                                    <span className="text-sm text-kiosk-muted-fg">
-                                      {guest.ageTier}
-                                    </span>
+                              <div key={guest.id}>
+                                <div
+                                  className={`flex items-center justify-between rounded-lg px-4 py-3 min-h-[56px] ${
+                                    // Dashed + a "Departed" chip = gone (#4594: never faded). A guest
+                                    // checking back in tonight is not gone, though `departedAt` still
+                                    // holds their previous segment's check-out (#2628).
+                                    guest.departedAt && !guest.canMarkArrived
+                                      ? "bg-kiosk-inset border border-dashed border-kiosk-border"
+                                      : isGuestHereNow(guest)
+                                        ? "bg-kiosk-success-bg border border-kiosk-success-border"
+                                        : "bg-kiosk-inset"
+                                  }`}
+                                >
+                                  <div>
+                                    <div className="flex items-center gap-3 flex-wrap">
+                                      <span className="text-lg font-medium">
+                                        {guest.firstName} {guest.lastName}
+                                      </span>
+                                      <span className="text-sm text-kiosk-muted-fg">
+                                        {guest.ageTier}
+                                      </span>
+                                    </div>
+                                    {guest.ageTier === "ADULT" && (
+                                      <p className="text-sm text-kiosk-muted-fg mt-1">
+                                        {guest.phone
+                                          ? `Phone ${guest.phone}`
+                                          : "Phone not available"}
+                                      </p>
+                                    )}
+                                    {showDietary && guest.dietaryRequirements && (
+                                      <p className="text-sm mt-1 whitespace-pre-wrap">
+                                        <span className="font-medium">
+                                          {DIETARY_REQUIREMENTS_LABEL}:
+                                        </span>{" "}
+                                        {guest.dietaryRequirements}
+                                      </p>
+                                    )}
                                   </div>
-                                  {guest.ageTier === "ADULT" && (
-                                    <p className="text-sm text-kiosk-muted-fg mt-1">
-                                      {guest.phone
-                                        ? `Phone ${guest.phone}`
-                                        : "Phone not available"}
-                                    </p>
-                                  )}
-                                  {showDietary && guest.dietaryRequirements && (
-                                    <p className="text-sm mt-1 whitespace-pre-wrap">
-                                      <span className="font-medium">
-                                        {DIETARY_REQUIREMENTS_LABEL}:
-                                      </span>{" "}
-                                      {guest.dietaryRequirements}
-                                    </p>
-                                  )}
+                                  <div className="flex gap-2 items-center">
+                                    {guest.isArriving && (
+                                      <span className="bg-kiosk-success-solid text-kiosk-success-solid-fg text-sm font-medium px-3 py-1 rounded-full">
+                                        Arriving
+                                      </span>
+                                    )}
+                                    {guest.isDeparting && (
+                                      <span className="bg-kiosk-warning-solid text-kiosk-warning-solid-fg text-sm font-medium px-3 py-1 rounded-full">
+                                        Departing
+                                      </span>
+                                    )}
+                                    {!guest.isMember && (
+                                      <span className="bg-kiosk-chip text-kiosk-fg text-sm px-3 py-1 rounded-full">
+                                        Non-member
+                                      </span>
+                                    )}
+                                    {guest.departedAt && !guest.canMarkArrived && !(canMarkAttendance && guest.canMarkDeparted && !booking.blockedFromCheckin) && (
+                                      <span className="bg-kiosk-chip text-kiosk-fg text-sm px-3 py-1 rounded-full">Departed</span>
+                                    )}
+                                    {canMarkAttendance && guest.canMarkArrived && !booking.blockedFromCheckin && (
+                                      <KioskAttendanceButton
+                                        label={isGuestHereNow(guest) ? "Arrived" : "Mark Arrived"}
+                                        // "Arrived" means HERE NOW (#2628).
+                                        doneClassName={isGuestHereNow(guest) ? "bg-kiosk-success-solid text-kiosk-success-solid-fg" : null}
+                                        busy={rowActions.isPending(guest.id, "arrive")}
+                                        onClick={() => toggleArrival(guest)}
+                                      />
+                                    )}
+                                    {canMarkAttendance && guest.canMarkDeparted && !booking.blockedFromCheckin && (
+                                      <KioskAttendanceButton
+                                        label={guest.departedAt ? "Departed" : "Mark Departed"}
+                                        doneClassName={guest.departedAt ? "bg-kiosk-warning-solid text-kiosk-warning-solid-fg" : null}
+                                        busy={rowActions.isPending(guest.id, "depart")}
+                                        onClick={() => toggleDeparture(guest)}
+                                      />
+                                    )}
+                                  </div>
                                 </div>
-                                <div className="flex gap-2 items-center">
-                                  {guest.isArriving && (
-                                    <span className="bg-kiosk-success-solid text-kiosk-success-solid-fg text-sm font-medium px-3 py-1 rounded-full">
-                                      Arriving
-                                    </span>
-                                  )}
-                                  {guest.isDeparting && (
-                                    <span className="bg-kiosk-warning-solid text-kiosk-warning-solid-fg text-sm font-medium px-3 py-1 rounded-full">
-                                      Departing
-                                    </span>
-                                  )}
-                                  {!guest.isMember && (
-                                    <span className="bg-kiosk-chip text-kiosk-fg text-sm px-3 py-1 rounded-full">
-                                      Non-member
-                                    </span>
-                                  )}
-                                  {guest.departedAt && !guest.canMarkArrived && !(canMarkAttendance && guest.canMarkDeparted && !booking.blockedFromCheckin) && (
-                                    <span className="bg-kiosk-chip text-kiosk-fg text-sm px-3 py-1 rounded-full">Departed</span>
-                                  )}
-                                  {canMarkAttendance && guest.canMarkArrived && !booking.blockedFromCheckin && (
-                                    <button
-                                      onClick={() => toggleArrival(guest.id)}
-                                      className={`text-sm font-medium px-4 py-2 rounded-lg min-h-[44px] transition-colors ${
-                                        // "Arrived" means HERE NOW, so a stale
-                                        // `arrivedAt` left over from an earlier
-                                        // segment of a stay with a gap in it
-                                        // does not count until the return is
-                                        // recorded (#2628).
-                                        guest.arrivedAt && !guest.departedAt
-                                          ? "bg-kiosk-success-solid text-kiosk-success-solid-fg"
-                                          : "bg-kiosk-accent text-kiosk-accent-fg hover:bg-kiosk-accent-hover active:bg-kiosk-accent-active"
-                                      }`}
-                                    >
-                                      {guest.arrivedAt && !guest.departedAt ? "Arrived" : "Mark Arrived"}
-                                    </button>
-                                  )}
-                                  {canMarkAttendance && guest.canMarkDeparted && !booking.blockedFromCheckin && (
-                                    <button
-                                      onClick={() => toggleDeparture(guest.id)}
-                                      className={`text-sm font-medium px-4 py-2 rounded-lg min-h-[44px] transition-colors ${
-                                        guest.departedAt
-                                          ? "bg-kiosk-warning-solid text-kiosk-warning-solid-fg"
-                                          : "bg-kiosk-accent text-kiosk-accent-fg hover:bg-kiosk-accent-hover active:bg-kiosk-accent-active"
-                                      }`}
-                                    >
-                                      {guest.departedAt ? "Departed" : "Mark Departed"}
-                                    </button>
-                                  )}
-                                </div>
+                                <KioskRowError
+                                  message={rowActions.errorFor(guest.id)}
+                                  onDismiss={() => rowActions.dismissError(guest.id)}
+                                />
                               </div>
                             ))}
                           </div>
@@ -1330,42 +1319,52 @@ export default function KioskPage() {
                           <div className="space-y-1">
                             {chore.assignments.map((a) =>
                               canCompleteChores ? (
-                                <button
-                                  key={a.id}
-                                  onClick={() => toggleChore(a.id, a.status)}
-                                  className={`w-full flex items-center gap-3 rounded-lg px-4 py-3 min-h-[56px] text-left transition-colors ${
-                                    a.status === "COMPLETED"
-                                      ? "bg-kiosk-success-bg text-kiosk-success-fg"
-                                      : "bg-kiosk-inset hover:bg-kiosk-hover active:bg-kiosk-hover"
-                                  }`}
-                                >
-                                  <div
-                                    className={`w-8 h-8 rounded-lg border-2 flex items-center justify-center flex-shrink-0 ${
+                                <div key={a.id}>
+                                  <button
+                                    onClick={() => toggleChore(a.id, a.status)}
+                                    disabled={rowActions.isPending(a.id, "chore")}
+                                    aria-busy={rowActions.isPending(a.id, "chore")}
+                                    className={`w-full flex items-center gap-3 rounded-lg px-4 py-3 min-h-[56px] text-left transition-colors disabled:cursor-wait ${
                                       a.status === "COMPLETED"
-                                        ? "border-kiosk-success-solid bg-kiosk-success-solid"
-                                        : "border-kiosk-border"
+                                        ? "bg-kiosk-success-bg text-kiosk-success-fg"
+                                        : "bg-kiosk-inset hover:bg-kiosk-hover active:bg-kiosk-hover"
                                     }`}
                                   >
-                                    {a.status === "COMPLETED" && (
-                                      <svg
-                                        className="w-5 h-5 text-kiosk-success-solid-fg"
-                                        fill="none"
-                                        viewBox="0 0 24 24"
-                                        stroke="currentColor"
-                                        strokeWidth={3}
-                                      >
-                                        <path
-                                          strokeLinecap="round"
-                                          strokeLinejoin="round"
-                                          d="M5 13l4 4L19 7"
-                                        />
-                                      </svg>
+                                    <div
+                                      className={`w-8 h-8 rounded-lg border-2 flex items-center justify-center flex-shrink-0 ${
+                                        a.status === "COMPLETED"
+                                          ? "border-kiosk-success-solid bg-kiosk-success-solid"
+                                          : "border-kiosk-border"
+                                      }`}
+                                    >
+                                      {a.status === "COMPLETED" && (
+                                        <svg
+                                          className="w-5 h-5 text-kiosk-success-solid-fg"
+                                          fill="none"
+                                          viewBox="0 0 24 24"
+                                          stroke="currentColor"
+                                          strokeWidth={3}
+                                        >
+                                          <path
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                            d="M5 13l4 4L19 7"
+                                          />
+                                        </svg>
+                                      )}
+                                    </div>
+                                    <span className="text-lg">
+                                      {a.guestName ?? "Unassigned"}
+                                    </span>
+                                    {rowActions.isPending(a.id, "chore") && (
+                                      <span className="ml-auto text-sm">{KIOSK_ROW_BUSY_LABEL}</span>
                                     )}
-                                  </div>
-                                  <span className="text-lg">
-                                    {a.guestName ?? "Unassigned"}
-                                  </span>
-                                </button>
+                                  </button>
+                                  <KioskRowError
+                                    message={rowActions.errorFor(a.id)}
+                                    onDismiss={() => rowActions.dismissError(a.id)}
+                                  />
+                                </div>
                               ) : (
                                 <div
                                   key={a.id}

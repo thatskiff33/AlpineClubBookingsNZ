@@ -3,6 +3,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { checkLodgeAuth, getLodgeAuthActorMemberId, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
 import { findLodgeGuestDepartingOnDate } from "@/lib/lodge-date-scoping";
 import { getNextGuestBedNightAfter } from "@/lib/booking-guest-stay-ranges";
+import { decideDeparture } from "@/lib/lodge-attendance";
 import { parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
@@ -15,23 +16,33 @@ import { acquireLodgeCapacityLock } from "@/lib/capacity";
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const bodySchema = z.object({
   bookingGuestId: z.string().min(1),
+  // #4965: the state the hut leader wants. Optional so a kiosk page opened
+  // before this shipped, which sends only the id, keeps its old toggle.
+  departed: z.boolean().optional(),
 });
 
 /**
  * PUT /api/lodge/guests/[date]/depart
- * Mark a guest as departed (sets departedAt timestamp).
- * Sending again toggles off (clears departedAt).
+ * Record or clear a guest's departure (`departedAt`).
  * Requires tier >= lodge (staying-guest cannot mark departures).
+ *
+ * THE CALLER SENDS THE STATE IT WANTS (#4965). `departed: true` records a
+ * departure and `departed: false` clears one; asking for the state the row
+ * already holds is a no-op — no write, no roster lock, no chore sweep, no audit
+ * row — so a double tap or a retry can never undo a check-out. A body with no
+ * `departed` keeps the old toggle (sending again clears `departedAt`), for a
+ * kiosk page that was already open across the deploy. The rules live in
+ * `decideDeparture` (`@/lib/lodge-attendance`).
  *
  * ONE ATTENDANCE PAIR PER STAY, NOT A LOG (#2628). `departedAt` means "this
  * person has left and has not come back", not "these are the check-outs that
  * happened". A sparse stay leaves once per SEGMENT and the endpoint now accepts
  * every one of them, so the pair is kept honest from the other side: marking the
  * RETURN arrival clears the superseded departure (see the arrive route), which
- * is what leaves this toggle free to record the next check-out. Skip the return
+ * is what leaves this endpoint free to record the next check-out. Skip the return
  * arrival and the row still reads "Departed" on the later morning — pressing the
- * button clears that stale state first and a second press records the real
- * departure. Nothing is lost, because there was only ever one state to hold.
+ * button sends `departed: false`, which clears that stale state, and a second
+ * press sends `departed: true` and records the real departure. Nothing is lost, because there was only ever one state to hold.
  */
 export async function PUT(
   req: NextRequest,
@@ -87,8 +98,17 @@ export async function PUT(
       );
       if (!guest) return { notFound: true as const };
 
-      // Toggle from the post-lock row, never from the pre-transaction display.
-      const departedAt = guest.departedAt ? null : new Date();
+      // Decide from the post-lock row, never from the pre-transaction display:
+      // the request supplies only the intent.
+      const decision = decideDeparture({
+        guest,
+        wanted: parsed.data.departed,
+        now: new Date(),
+      });
+      // A repeat of the stored state stops here, before the roster keys, the
+      // write and the sweep (#4965). Only a newly recorded departure sweeps.
+      if (!decision.changed) return { unchanged: true as const, guest };
+      const { departedAt } = decision;
       // THE SWEEP IS BOUNDED BY THE SEGMENT, NOT BY "AFTER TODAY" (#2628).
       // Checking a guest out clears the suggested chores they can no longer do.
       // Until this issue the endpoint only ever accepted the morning after the
@@ -145,6 +165,12 @@ export async function PUT(
         { error: "Guest not found for this date" },
         { status: 404 }
       );
+    }
+    if ("unchanged" in updateResult) {
+      return NextResponse.json({
+        success: true,
+        departedAt: updateResult.guest.departedAt?.toISOString() ?? null,
+      });
     }
     const { guest, departedAt } = updateResult;
 

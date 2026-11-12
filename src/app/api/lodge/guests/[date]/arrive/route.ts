@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { bookingOwner } from "@/lib/booking-owner";
 import { checkLodgeAuth, getLodgeAuthActorMemberId, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
 import { findLodgeGuestForDate } from "@/lib/lodge-date-scoping";
-import { isGuestReturningOnDay } from "@/lib/booking-guest-stay-ranges";
+import { decideArrival } from "@/lib/lodge-attendance";
 import { parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
@@ -12,13 +12,23 @@ import { logAudit, getAuditRequestContext } from "@/lib/audit";
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const bodySchema = z.object({
   bookingGuestId: z.string().min(1),
+  // #4965: the state the hut leader wants. Optional so a kiosk page opened
+  // before this shipped, which sends only the id, keeps its old toggle.
+  arrived: z.boolean().optional(),
 });
 
 /**
  * PUT /api/lodge/guests/[date]/arrive
- * Mark a guest as arrived (sets arrivedAt timestamp).
- * Sending again toggles off (clears arrivedAt).
+ * Record or clear a guest's arrival (`arrivedAt`).
  * Requires tier >= lodge (staying-guest cannot mark arrivals).
+ *
+ * THE CALLER SENDS THE STATE IT WANTS (#4965). `arrived: true` records an
+ * arrival and `arrived: false` clears one; asking for the state the row already
+ * holds is a no-op — no write, no audit row, 200 with the stored values — so a
+ * double tap or a retry can never undo a check-in. A body with no `arrived`
+ * keeps the old toggle (sending again clears `arrivedAt`), for a kiosk page that
+ * was already open across the deploy. The rules live in `decideArrival`
+ * (`@/lib/lodge-attendance`).
  *
  * ONE ATTENDANCE PAIR PER STAY, NOT A LOG (#2628). `arrivedAt`/`departedAt`
  * answers "where is this person now", and a sparse stay arrives more than once:
@@ -27,8 +37,9 @@ const bodySchema = z.object({
  * segment (so a plain toggle would UN-arrive them) and `departedAt` from the
  * 12th (so the kiosk would grey the row and the next check-out would clear the
  * first one instead of recording the second). So a return is not a toggle: it
- * always marks arrived, and it clears the superseded departure. Everything else
- * is the toggle it has always been, and a contiguous stay can never be a return
+ * always marks arrived (unless the caller explicitly asks for `arrived: false`),
+ * and it clears the superseded departure. Everything else follows the wanted
+ * state above, and a contiguous stay can never be a return
  * (`isGuestReturningOnDay` is false for every day of one), so the ordinary path
  * is untouched.
  *
@@ -109,13 +120,27 @@ export async function PUT(
     }
     const guest = lookup.guest;
 
-    // A RETURN supersedes the stay's stale attendance pair; anything else is
-    // the plain toggle. See the header — this is only ever true on a sparse
-    // stay's second or later segment.
-    const isReturn =
-      Boolean(guest.departedAt) &&
-      isGuestReturningOnDay(guest, date, guest.booking);
-    const arrivedAt = isReturn || !guest.arrivedAt ? new Date() : null;
+    // A RETURN supersedes the stay's stale attendance pair; anything else
+    // follows the wanted state, or the legacy toggle when none was sent. See
+    // the header — a return is only ever true on a sparse stay's second or
+    // later segment.
+    const decision = decideArrival({
+      guest,
+      day: date,
+      booking: guest.booking,
+      wanted: parsed.data.arrived,
+      now: new Date(),
+    });
+    if (!decision.changed) {
+      // Already in the wanted state: a repeat changes nothing and records
+      // nothing, so a double tap leaves no misleading "cleared" row behind.
+      return NextResponse.json({
+        success: true,
+        arrivedAt: guest.arrivedAt?.toISOString() ?? null,
+        departedAt: guest.departedAt?.toISOString() ?? null,
+      });
+    }
+    const { arrivedAt, clearsDeparture: isReturn } = decision;
 
     await prisma.bookingGuest.update({
       where: { id: parsed.data.bookingGuestId },
