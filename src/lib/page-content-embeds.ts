@@ -413,8 +413,11 @@ function normaliseGalleryDirectoryInput(value: string): string {
 // Every format's dimensions sit in its header: a JPEG's frame header follows
 // its metadata segments, at most a few tens of KB into a stripped file. This
 // bounds what a gallery render reads per photo (#4935), where it used to read
-// every original whole. A header past the bound gets the gallery's defaults.
+// every original whole. Only a JPEG can push its frame header later — one
+// uploaded before metadata stripping, whose EXIF segment alone may approach
+// 64 KB — so a JPEG not resolved in the first read gets one wider read.
 const IMAGE_HEADER_READ_BYTES = 64 * 1024;
+const JPEG_HEADER_RETRY_READ_BYTES = 1024 * 1024;
 
 async function readImageFileDimensions(absPath: string) {
   const contentType = imageContentTypeForExt(
@@ -423,10 +426,24 @@ async function readImageFileDimensions(absPath: string) {
   if (!contentType) return null;
   let handle;
   try {
-    handle = await fs.open(absPath, "r");
-    const buffer = Buffer.alloc(IMAGE_HEADER_READ_BYTES);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    return extractImageDimensions(buffer.subarray(0, bytesRead), contentType);
+    const opened = await fs.open(absPath, "r");
+    handle = opened;
+    const readHeader = async (length: number) => {
+      const buffer = Buffer.alloc(length);
+      const { bytesRead } = await opened.read(buffer, 0, length, 0);
+      return {
+        dimensions: extractImageDimensions(
+          buffer.subarray(0, bytesRead),
+          contentType,
+        ),
+        filled: bytesRead === length,
+      };
+    };
+    const first = await readHeader(IMAGE_HEADER_READ_BYTES);
+    if (first.dimensions || !first.filled || contentType !== "image/jpeg") {
+      return first.dimensions;
+    }
+    return (await readHeader(JPEG_HEADER_RETRY_READ_BYTES)).dimensions;
   } catch {
     return null;
   } finally {

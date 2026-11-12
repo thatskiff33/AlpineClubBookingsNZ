@@ -588,6 +588,33 @@ describe("{{photo-gallery: <folder>}} website-sized copies (#4935)", () => {
     expect(open).toHaveBeenCalledTimes(4);
   });
 
+  it("still reads a JPEG whose frame header sits past the first 64 KB", async () => {
+    // An upload from before metadata stripping: a large APP segment (here a
+    // 65,000-byte APP1 plus a second one) ahead of the frame header.
+    const bytes = await sharp({
+      create: { width: 900, height: 1200, channels: 3, background: "#335577" },
+    })
+      .jpeg()
+      .toBuffer();
+    const app = (marker: number) => {
+      const segment = Buffer.alloc(2 + 2 + 65_000);
+      segment.writeUInt8(0xff, 0);
+      segment.writeUInt8(marker, 1);
+      segment.writeUInt16BE(2 + 65_000, 2);
+      return segment;
+    };
+    const padded = Buffer.concat([
+      bytes.subarray(0, 2),
+      app(0xe1),
+      app(0xed),
+      bytes.subarray(2),
+    ]);
+    await fs.writeFile(path.join(absDir, "old.jpg"), padded);
+
+    const [image] = await galleryImages();
+    expect(image).toMatchObject({ width: 900, height: 1200 });
+  });
+
   it("does not open the copies folder as a gallery", async () => {
     const bytes = await store("lodge.jpg", 2000, 1500);
     await writeImageDerivatives(bytes, absDir, "lodge.jpg");

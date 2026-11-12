@@ -19,11 +19,12 @@ const SLIDESHOW_IMAGE_SIZES = "(min-width: 1024px) 80vw, 100vw";
 
 /**
  * A URL as one `srcset` candidate. Uploaded file names may hold spaces and
- * commas, which a `srcset` parser reads as separators, so both are escaped;
- * the serving route decodes them back.
+ * commas, which a `srcset` parser reads as separators, and `#`, which would
+ * cut the URL at a fragment, so all are escaped; the serving route decodes
+ * them back.
  */
 function srcsetUrl(src: string): string {
-  return encodeURI(src).replace(/,/g, "%2C");
+  return encodeURI(src).replace(/[,#]/g, encodeURIComponent);
 }
 
 /**

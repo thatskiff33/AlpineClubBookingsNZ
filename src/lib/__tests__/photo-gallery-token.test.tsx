@@ -213,6 +213,20 @@ describe("PhotoGalleryToken", () => {
     expect(container.innerHTML).not.toContain(`${base}/Ruapehu, summit.jpg"`);
   });
 
+  it("escapes a # in a copy's srcset URL so the browser does not cut it at a fragment", () => {
+    const copy = { src: `${base}/.sizes/hut#2.jpg.400.webp`, width: 400, height: 300 };
+    const { container } = render(
+      <PhotoGalleryToken
+        galleryId="g"
+        variant="gallery"
+        images={[{ src: `${base}/hut#2.jpg`, alt: "Hut", width: 800, height: 600, copies: [copy] }]}
+      />,
+    );
+    expect(container.querySelector("img")!.getAttribute("srcset")).toBe(
+      `${base}/.sizes/hut%232.jpg.400.webp 400w`,
+    );
+  });
+
   it("renders a photo with no copies exactly as before: the original, no srcset", () => {
     const { container } = render(
       <PhotoGalleryToken
