@@ -36,66 +36,17 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import {
+  createEmptyDraft,
+  draftFromCategory,
+  draftPayload,
+  validateDraft,
+  type DraftSubscriptionCategory,
+  type EditorTarget,
+  type SubscriptionCategoriesResponse,
+  type SubscriptionCategory,
+} from "./_components/subscription-category-draft";
 
-interface SubscriptionCategory {
-  id: string;
-  key: string;
-  name: string;
-  description: string | null;
-  isActive: boolean;
-  isBuiltIn: boolean;
-  sortOrder: number;
-  assignmentCount: number;
-  feeCount: number;
-}
-
-interface SubscriptionCategoriesResponse {
-  subscriptionCategories: SubscriptionCategory[];
-}
-
-interface DraftSubscriptionCategory {
-  name: string;
-  description: string;
-  isActive: boolean;
-  sortOrder: string;
-}
-
-type EditorTarget =
-  | { mode: "new" }
-  | { mode: "edit"; subscriptionCategoryId: string };
-
-function createEmptyDraft(): DraftSubscriptionCategory {
-  return { name: "", description: "", isActive: true, sortOrder: "" };
-}
-
-function draftFromCategory(category: SubscriptionCategory): DraftSubscriptionCategory {
-  return {
-    name: category.name,
-    description: category.description ?? "",
-    isActive: category.isActive,
-    sortOrder: String(category.sortOrder),
-  };
-}
-
-function validateDraft(draft: DraftSubscriptionCategory): string | null {
-  if (draft.name.trim().length === 0) {
-    return "Enter a subscription category name.";
-  }
-  if (draft.sortOrder.trim().length > 0 && !/^\d+$/.test(draft.sortOrder.trim())) {
-    return "Sort order must be a whole number.";
-  }
-  return null;
-}
-
-function draftPayload(draft: DraftSubscriptionCategory) {
-  const trimmedSortOrder = draft.sortOrder.trim();
-  return {
-    name: draft.name,
-    description: draft.description,
-    isActive: draft.isActive,
-    ...(trimmedSortOrder.length > 0 ? { sortOrder: Number(trimmedSortOrder) } : {}),
-  };
-}
 
 export default function AdminSubscriptionCategoriesPage() {
   const canEdit = useAdminAreaEditAccess("membership");

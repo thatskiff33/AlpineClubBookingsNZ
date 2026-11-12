@@ -107,8 +107,20 @@ export function validateFeeComponents(input: {
     }
     return;
   }
+  validateInvoiceableFeeComponents(components, amountCents, "An invoiceable membership fee must have at least one component.", format);
+}
+
+// The invoiceable half of the component lifecycle invariant, shared by the
+// membership annual fee and the subscription-category fee so the label,
+// cent-range and sum-to-total rules cannot drift between them (#4496 review).
+function validateInvoiceableFeeComponents(
+  components: FeeComponentInput[],
+  amountCents: number,
+  emptyMessage: string,
+  format: ClubFormat,
+) {
   if (components.length === 0) {
-    throw new FeeScheduleValidationError("An invoiceable membership fee must have at least one component.");
+    throw new FeeScheduleValidationError(emptyMessage);
   }
   for (const component of components) {
     if (!component.label.trim()) {
@@ -127,34 +139,21 @@ export function validateFeeComponents(input: {
 }
 
 // Subscription-category decoupling: the component-lifecycle invariant for a
-// SubscriptionCategoryFee — a sibling of validateFeeComponents, not a reuse of
-// it, because a category fee has no billingBasis/NO_INVOICE concept at all
-// (every category fee is always invoiced, so it always carries >=1 component
-// summing exactly to the amount; there is no zero-component branch to take).
+// SubscriptionCategoryFee. A category fee has no billingBasis/NO_INVOICE
+// concept (it is always invoiced), so it skips straight to the shared
+// invoiceable rules validateFeeComponents also applies.
 export function validateSubscriptionCategoryFeeComponents(input: {
   components: FeeComponentInput[];
   amountCents: number;
 },
   format: ClubFormat,
 ) {
-  const { components, amountCents } = input;
-  if (components.length === 0) {
-    throw new FeeScheduleValidationError("An invoiceable subscription category fee must have at least one component.");
-  }
-  for (const component of components) {
-    if (!component.label.trim()) {
-      throw new FeeScheduleValidationError("Each fee component must have a label.");
-    }
-    if (!Number.isSafeInteger(component.amountCents) || component.amountCents < 0 || component.amountCents > 2_147_483_647) {
-      throw new FeeScheduleValidationError("Each fee component amount must be a non-negative integer number of cents.");
-    }
-  }
-  const sum = components.reduce((total, component) => total + component.amountCents, 0);
-  if (sum !== amountCents) {
-    throw new FeeScheduleValidationError(
-      `Fee components must sum to the fee amount (${formatCents(amountCents, format)}); the supplied components sum to ${formatCents(sum, format)}.`,
-    );
-  }
+  validateInvoiceableFeeComponents(
+    input.components,
+    input.amountCents,
+    "An invoiceable subscription category fee must have at least one component.",
+    format,
+  );
 }
 
 export function scheduleOverlapWhere(input: {

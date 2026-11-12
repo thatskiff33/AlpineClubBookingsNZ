@@ -368,18 +368,13 @@ export function buildComponentLineDescription(input: {
   isSoleComponent: boolean;
   yearEndMonth: number;
 }) {
-  const base = `${input.membershipTypeName} membership `
-    + `${seasonYearsLabel(input.seasonYear, input.yearEndMonth)}`
-    + ` (${input.coveredMonths} month${input.coveredMonths === 1 ? "" : "s"})`;
-  return input.isSoleComponent ? base : `${base} — ${input.label}`;
+  return componentLineDescription({ ...input, lead: input.membershipTypeName + " membership" });
 }
 
-// Subscription-category decoupling: the category-axis sibling of
-// buildComponentLineDescription, deliberately a separate function rather than
-// an overload of it — that one carries a frozen-column contract note (#3116)
-// about changing what it writes, so a category-flavoured branch stays out of
-// its way entirely. "subscription" replaces "membership" in the line text
-// since a category charge is independent of any MembershipType.
+// The category-axis sibling: "subscription" replaces "membership" because a
+// category charge is independent of any MembershipType. Both axes share one
+// formatter (`componentLineDescription`) so the season label, month count and
+// component suffix cannot drift between them (#4496 review, shared helpers).
 export function buildCategoryComponentLineDescription(input: {
   subscriptionCategoryName: string;
   seasonYear: number;
@@ -388,7 +383,18 @@ export function buildCategoryComponentLineDescription(input: {
   isSoleComponent: boolean;
   yearEndMonth: number;
 }) {
-  const base = `${input.subscriptionCategoryName} subscription `
+  return componentLineDescription({ ...input, lead: input.subscriptionCategoryName + " subscription" });
+}
+
+function componentLineDescription(input: {
+  lead: string;
+  seasonYear: number;
+  coveredMonths: number;
+  label: string;
+  isSoleComponent: boolean;
+  yearEndMonth: number;
+}) {
+  const base = `${input.lead} `
     + `${seasonYearsLabel(input.seasonYear, input.yearEndMonth)}`
     + ` (${input.coveredMonths} month${input.coveredMonths === 1 ? "" : "s"})`;
   return input.isSoleComponent ? base : `${base} — ${input.label}`;
@@ -1149,6 +1155,15 @@ export async function buildSubscriptionBillingPreview(input: {
   ): Promise<MembershipFeeBillingBasis | null> => {
     const membershipType = resolveMemberMembershipType(holder);
     if (!membershipType || membershipType.subscriptionBehavior === "NOT_REQUIRED") return null;
+    // A holder on an active subscription category is billed through the
+    // category, and every category charge is PER_FAMILY (there is no
+    // per-member category fee). Their membership type's own fee basis is
+    // irrelevant: reading it would let a category holder whose type fee is
+    // PER_MEMBER pass as "their own personal invoice", so a bare invoice that
+    // is really the category family's would neither hold the family nor
+    // raise the rebill-beside-an-invoice warning (#4496 review, billing
+    // defect 3).
+    if (resolveMemberSubscriptionCategory(holder)) return "PER_FAMILY";
     let feeTier: AgeTier | null;
     if (membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER") {
       const ageTierSettings = await getAgeTierSettingsMemoized();
@@ -1309,12 +1324,11 @@ export async function buildSubscriptionBillingPreview(input: {
     // billing must not disagree with booking-access about who is exempt, so
     // it does NOT override a type's own exemption the way an earlier design
     // did — a category assignment no longer forces a charge on a member the
-    // booking gates would treat as exempt. The check a few lines below routes
-    // through `resolveMemberSubscriptionSettlement`
-    // (`src/lib/subscription-lockout-facts.ts`), the SAME function
-    // `NON_MEMBER_PRICING` repricing and the member-guest gate already trust
-    // (`INV-LOCKOUT-020`) — not a fourth, independently-invented exemption
-    // rule.
+    // booking gates would treat as exempt. The check a few lines below uses
+    // `resolveSubscriptionTierExemption`, the SAME gate the type axis uses
+    // further down, so a member's liability cannot differ between the two
+    // billing axes (owner decision, #4554, 11 Nov 2026: the type exemption
+    // wins).
     const subscriptionCategory = assignment?.subscriptionCategory;
     // Review finding: an ARCHIVED category on a live assignment used to fall
     // through to type billing with no trace — a member re-priced (often

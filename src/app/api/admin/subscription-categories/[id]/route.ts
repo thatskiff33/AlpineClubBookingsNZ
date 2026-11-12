@@ -9,22 +9,12 @@ import {
 import {
   normalizeSubscriptionCategoryText,
   serializeSubscriptionCategory,
+  subscriptionCategoryAuditActionForUpdate,
+  subscriptionCategoryChangedFields,
+  subscriptionCategorySelect,
 } from "@/lib/subscription-categories";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-
-const subscriptionCategorySelect = {
-  id: true,
-  key: true,
-  name: true,
-  description: true,
-  isActive: true,
-  isBuiltIn: true,
-  sortOrder: true,
-  createdAt: true,
-  updatedAt: true,
-  _count: { select: { assignments: true, fees: true } },
-} satisfies Prisma.SubscriptionCategorySelect;
 
 const paramsSchema = z.object({
   id: z.string().min(1),
@@ -38,35 +28,6 @@ const patchSchema = z
     sortOrder: z.number().int().min(0).max(100000).optional(),
   })
   .strict();
-
-function changedFields(
-  before: Record<string, unknown>,
-  after: Record<string, unknown>,
-) {
-  return Object.keys(after).filter((key) => before[key] !== after[key]);
-}
-
-function auditActionForUpdate(
-  before: { isActive: boolean },
-  data: { isActive?: boolean },
-) {
-  if (data.isActive === false && before.isActive) {
-    return {
-      action: "SUBSCRIPTION_CATEGORY_ARCHIVED",
-      summary: "Subscription category archived",
-    };
-  }
-  if (data.isActive === true && !before.isActive) {
-    return {
-      action: "SUBSCRIPTION_CATEGORY_REACTIVATED",
-      summary: "Subscription category reactivated",
-    };
-  }
-  return {
-    action: "SUBSCRIPTION_CATEGORY_UPDATED",
-    summary: "Subscription category updated",
-  };
-}
 
 export async function PATCH(
   request: Request,
@@ -162,7 +123,7 @@ export async function PATCH(
     data.sortOrder = parsed.data.sortOrder;
   }
 
-  const auditAction = auditActionForUpdate(existing, parsed.data);
+  const auditAction = subscriptionCategoryAuditActionForUpdate(existing, parsed.data);
   const updated = await prisma.$transaction(async (tx) => {
     const subscriptionCategory = await tx.subscriptionCategory.update({
       where: { id: existing.id },
@@ -180,7 +141,7 @@ export async function PATCH(
         outcome: "success",
         summary: auditAction.summary,
         metadata: {
-          changedFields: changedFields(existing, data as Record<string, unknown>),
+          changedFields: subscriptionCategoryChangedFields(existing, data as Record<string, unknown>),
           previousSubscriptionCategory: serializeSubscriptionCategory(existing),
           newSubscriptionCategory: serializeSubscriptionCategory(subscriptionCategory),
         },

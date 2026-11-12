@@ -39,6 +39,7 @@ import type {
   SubscriptionCategorySummary,
 } from "../_types";
 import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import { MemberSubscriptionCategoryField } from "./member-subscription-category-field";
 import { useClubFormat } from "@/components/club-format-provider";
 
 type BookingBehavior = "MEMBER_RATE" | "NON_MEMBER_RATE" | "BLOCK_BOOKING";
@@ -46,21 +47,6 @@ type SubscriptionBehavior = "REQUIRED" | "NOT_REQUIRED" | "BASED_ON_AGE_TIER";
 
 interface MembershipTypesResponse {
   membershipTypes: MembershipTypeSummary[];
-}
-
-// The full admin CRUD shape from /api/admin/subscription-categories — a
-// superset of the slim SubscriptionCategorySummary embedded on an assignment
-// (which carries only what the preview/save flow needs).
-interface SubscriptionCategoryOption {
-  id: string;
-  key: string;
-  name: string;
-  isActive: boolean;
-  isBuiltIn: boolean;
-}
-
-interface SubscriptionCategoriesResponse {
-  subscriptionCategories: SubscriptionCategoryOption[];
 }
 
 interface PreviewBookingSummary {
@@ -216,9 +202,6 @@ export function MemberSeasonalMembershipCard({
   const [membershipTypes, setMembershipTypes] = useState<
     MembershipTypeSummary[]
   >([]);
-  const [subscriptionCategories, setSubscriptionCategories] = useState<
-    SubscriptionCategoryOption[]
-  >([]);
   // The club's season, from the zone the SERVER read and handed to the provider
   // (CT-4 group F1, #2870). Before this it went through a helper that read a
   // `Date`'s host-local components, so the fallback answered from whatever zone
@@ -231,7 +214,6 @@ export function MemberSeasonalMembershipCard({
   const seasonalAssignments =
     member.seasonalMembershipAssignments ?? EMPTY_SEASONAL_ASSIGNMENTS;
   const [typesLoading, setTypesLoading] = useState(true);
-  const [categoriesLoading, setCategoriesLoading] = useState(true);
   const [seasonYear, setSeasonYear] = useState(effectiveCurrentSeasonYear);
   const [selectedMembershipTypeId, setSelectedMembershipTypeId] = useState("");
   // Subscription-category decoupling: "" means Individual (null on the wire)
@@ -289,35 +271,8 @@ export function MemberSeasonalMembershipCard({
     }
   }
 
-  async function loadSubscriptionCategories() {
-    setCategoriesLoading(true);
-    try {
-      const response = await fetch("/api/admin/subscription-categories", {
-        credentials: "same-origin",
-      });
-      const body = (await response.json()) as
-        | SubscriptionCategoriesResponse
-        | { error?: string };
-      if (!response.ok || !("subscriptionCategories" in body)) {
-        throw new Error(
-          apiErrorMessageFromBody(body, "Failed to load subscription categories"),
-        );
-      }
-      setSubscriptionCategories(body.subscriptionCategories);
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Failed to load subscription categories",
-      );
-    } finally {
-      setCategoriesLoading(false);
-    }
-  }
-
   useEffect(() => {
     void loadMembershipTypes();
-    void loadSubscriptionCategories();
   }, []);
 
   useEffect(() => {
@@ -547,47 +502,12 @@ export function MemberSeasonalMembershipCard({
           </ViewOnlyActionButton>
         </div>
 
-        {/*
-          Subscription-category decoupling: an independent billing axis, never
-          affecting booking rights/rate (those are decided by Membership Type
-          above). "Individual" (the empty-string sentinel below) is the
-          default — unchanged per-type billing.
-        */}
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)]">
-          <div className="space-y-2">
-            <Label htmlFor="seasonal-membership-subscription-category">Subscription Category</Label>
-            <Select
-              value={selectedSubscriptionCategoryId || "individual"}
-              onValueChange={(value) =>
-                setSelectedSubscriptionCategoryId(value === "individual" ? "" : value)
-              }
-              disabled={categoriesLoading}
-            >
-              <SelectTrigger id="seasonal-membership-subscription-category">
-                <SelectValue placeholder="Individual" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="individual">Individual</SelectItem>
-                {subscriptionCategories
-                  .filter((category) => !category.isBuiltIn)
-                  .map((category) => (
-                    <SelectItem
-                      key={category.id}
-                      value={category.id}
-                      disabled={!category.isActive && category.id !== currentAssignment?.subscriptionCategoryId}
-                    >
-                      {category.name}
-                      {!category.isActive ? " (archived)" : ""}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Decides only how this member&apos;s subscription is billed — never their
-              booking rights or rate. Set the flat amount on the Fees page.
-            </p>
-          </div>
-        </div>
+        <MemberSubscriptionCategoryField
+          value={selectedSubscriptionCategoryId}
+          onChange={setSelectedSubscriptionCategoryId}
+          currentCategoryId={currentAssignment?.subscriptionCategoryId ?? null}
+          onLoadError={setError}
+        />
 
         <div className="grid gap-3 md:grid-cols-2">
           <div className="rounded-md border border-border p-3 text-sm">

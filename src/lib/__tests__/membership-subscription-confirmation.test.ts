@@ -585,6 +585,54 @@ describe("membership subscription confirmation", () => {
       }]);
     });
 
+    // #4496 review, billing defect 1: the warning and the entry must key the
+    // same way on the category axis, or membership approval invoices the full
+    // flat fee for a family that should be held for Finance.
+    it("membership approval withholds a partly-reversed closed CATEGORY family: no charge, the warning OPEN for Finance", async () => {
+      const familyMembership = { familyGroupId: "family-1", familyGroup: { billingMembership: {
+        familyGroupId: "family-1",
+        member: { id: "parent-1", firstName: "Parent", lastName: "Member", email: "parent@example.test", active: true, archivedAt: null },
+      } } };
+      mocks.memberFindMany.mockResolvedValue([{
+        id: "member-1", firstName: "Kid", lastName: "Member", email: "kid@example.test",
+        role: "USER",
+        seasonalMembershipAssignments: [{
+          membershipType: { id: "type-1", key: "FULL", name: "Full", subscriptionBehavior: "REQUIRED" },
+          subscriptionCategory: { id: "cat-1", key: "couple", name: "Couple", isActive: true },
+        }],
+        familyGroupMemberships: [familyMembership],
+      }]);
+      const coverageRow = (memberId: string, memberName: string, status: string) => ({
+        memberName, subscriptionStatusAtClose: "PAID",
+        subscription: { memberId, status, member: { billingFamilyGroupId: null, familyGroupMemberships: [{ familyGroupId: "family-1" }] } },
+      });
+      mocks.chargeFindMany.mockResolvedValue([{
+        id: "charge-closed", createdAt: new Date("2026-06-01T00:00:00.000Z"),
+        familyGroupId: "family-1", membershipTypeId: null, subscriptionCategoryId: "cat-1",
+        billingBasis: "PER_FAMILY", status: "NOT_REQUIRED",
+        coverage: [coverageRow("parent-1", "Parent Member", "PAID"), coverageRow("member-1", "Kid Member", "NOT_INVOICED")],
+      }]);
+
+      const result = await queueApprovedMembershipSubscriptionCharges({
+        memberIds: ["member-1"],
+        approvedByMemberId: "approver-1",
+        decisionDate: new Date("2026-07-13T00:00:00.000Z"),
+      });
+
+      expect(mocks.chargeUpsert).not.toHaveBeenCalled();
+      expect(mocks.operationCreate).not.toHaveBeenCalled();
+      expect(mocks.exceptionUpsert).toHaveBeenCalledTimes(1);
+      const upsert = mocks.exceptionUpsert.mock.calls[0]![0] as {
+        create: { code: string; source: string; familyGroupId: string; subscriptionCategoryId: string | null; message: string };
+      };
+      expect(upsert.create).toMatchObject({
+        code: "CLOSED_FAMILY_PARTLY_REVERSED", source: "NEW_MEMBER_APPROVAL",
+        familyGroupId: "family-1", subscriptionCategoryId: "cat-1",
+      });
+      expect(upsert.create.message).toContain("This family's Couple charge");
+      expect(result).toEqual({ chargeIds: [], exceptionCount: 1 });
+    });
+
     it("mints a charge on the category axis with membershipType* null and subscriptionCategory* populated", async () => {
       const preview = await buildSubscriptionBillingPreview({
         seasonYear: 2026,

@@ -137,6 +137,34 @@ describe("Admin subscription categories API", () => {
     );
   });
 
+  // #4496 review (recommended): category writes need membership EDIT; a
+  // view-only admin can read the list but every write is refused.
+  it("refuses every category write to a view-only admin, but lets them read", async () => {
+    mocks.auth.mockResolvedValue({
+      user: { id: "readonly-1", role: "ADMIN", accessRoles: [{ role: "ADMIN_READONLY" }] },
+    });
+    mocks.subscriptionCategoryFindMany.mockResolvedValue([]);
+    expect((await getSubscriptionCategories()).status).toBe(200);
+
+    const post = await createSubscriptionCategory(new NextRequest("http://localhost/api/admin/subscription-categories", {
+      method: "POST", body: JSON.stringify({ name: "Couple" }),
+    }));
+    const patch = await updateSubscriptionCategory(
+      new NextRequest("http://localhost/api/admin/subscription-categories/cat-2", {
+        method: "PATCH", body: JSON.stringify({ name: "Couples" }),
+      }),
+      { params: Promise.resolve({ id: "cat-2" }) },
+    );
+    const del = await deleteSubscriptionCategory(
+      new NextRequest("http://localhost/api/admin/subscription-categories/cat-2", { method: "DELETE" }),
+      { params: Promise.resolve({ id: "cat-2" }) },
+    );
+    expect([post.status, patch.status, del.status]).toEqual([403, 403, 403]);
+    expect(mocks.subscriptionCategoryCreate).not.toHaveBeenCalled();
+    expect(mocks.subscriptionCategoryUpdate).not.toHaveBeenCalled();
+    expect(mocks.subscriptionCategoryDelete).not.toHaveBeenCalled();
+  });
+
   it("prevents non-admin users from reading subscription categories", async () => {
     mocks.auth.mockResolvedValue(memberSession);
 

@@ -13,9 +13,11 @@
  * which category it actually is. TypeScript does not flag this: `${x}`
  * typechecks for any `x`, including `null`.
  *
- * Scoped to the two files that ever construct this kind of key — the
- * billing engine and its closed-family vocabulary module — rather than a
- * repo-wide scan, since nothing else in the tree has a reason to build one.
+ * Scoped to the files that build these keys or render a charge's axis — the
+ * billing engine, its closed-family vocabulary module, the Xero invoice
+ * builder and the billing panel — rather than a repo-wide scan. Three shapes
+ * are refused: a type id interpolated into a family key, any hand-built
+ * family key, and a raw axis-column read with no fallback.
  *
  * Uses `stripComments`, not `stripCommentsAndStrings`: the hazard this
  * guards IS the literal text of a template literal (the `:family:` text
@@ -37,10 +39,15 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
 /** The one file allowed to build this shape of key. */
 const ACCESSOR = "src/lib/membership-charge-axis.ts";
 
-/** Every other file that has ever had a reason to build one. */
+/**
+ * Every file that builds a charge key, renders a charge's axis, or reads a
+ * charge back for an invoice or the billing panel.
+ */
 const SCANNED_FILES = [
   "src/lib/membership-subscription-billing.ts",
   "src/lib/subscription-charge-already-paid.ts",
+  "src/lib/xero-subscription-invoices.ts",
+  "src/app/(admin)/admin/finance/subscriptions/_components/subscription-billing-panel.tsx",
 ];
 
 /**
@@ -55,6 +62,26 @@ const SCANNED_FILES = [
 const RAW_FAMILY_KEY =
   /\$\{[^}]*membershipTypeId[^}]*\}\s*:\s*family\s*:|membershipTypeId\s*\}\s*:\s*family\s*:/;
 
+/**
+ * Any hand-built family key: `...}:family:` or `:family:${...`. Catches the
+ * category id, a bare variable, or a key built from a different column, not
+ * only a `membershipTypeId` interpolation (#4496 review: the first census
+ * matched one template shape only).
+ */
+const ANY_FAMILY_KEY = /\}\s*:\s*family\s*:|:\s*family\s*:\s*\$\{/;
+
+/**
+ * A charge or entry's axis column interpolated straight into text, with no
+ * `??` fallback: `${entry.membershipTypeName}`, `${charge.subscriptionCategoryId}`.
+ * On the other axis the column is null and renders as "null" (the review's
+ * "This family's null charge" warning). Use `chargeAxisDisplayName` for a
+ * name and `chargeFamilyAxisKey` for a key.
+ */
+const RAW_AXIS_READ =
+  /\$\{\s*[\w.?]*\.(?:membershipType(?:Id|Key|Name)|subscriptionCategory(?:Id|Key|Name))\s*\}/;
+
+const PATTERNS = [RAW_FAMILY_KEY, ANY_FAMILY_KEY, RAW_AXIS_READ];
+
 type Hit = { file: string; line: number; text: string };
 
 function scan(): Hit[] {
@@ -62,7 +89,7 @@ function scan(): Hit[] {
   for (const file of SCANNED_FILES) {
     const source = stripComments(readFileSync(file, "utf8"));
     source.split("\n").forEach((text, index) => {
-      if (RAW_FAMILY_KEY.test(text)) {
+      if (PATTERNS.some((pattern) => pattern.test(text))) {
         hits.push({ file, line: index + 1, text: text.trim() });
       }
     });
@@ -93,6 +120,30 @@ describe("a membership-charge family-dedup key is built in one place", () => {
     ];
     for (const line of injected) {
       expect(RAW_FAMILY_KEY.test(line), `no hit for: ${line}`).toBe(true);
+    }
+  });
+
+  it("FAILS on a hand-built category key or a raw axis-name read (fixture proof)", () => {
+    const injected: Array<[RegExp, string]> = [
+      [ANY_FAMILY_KEY, "const key = `${seasonYear}:category:${charge.subscriptionCategoryId}:family:${familyGroupId}`;"],
+      [ANY_FAMILY_KEY, "const key = `${categoryId}:family:${familyGroupId}`;"],
+      [RAW_AXIS_READ, "message: `This family's ${entry.membershipTypeName} charge was closed`,"],
+      [RAW_AXIS_READ, "label: `${charge.subscriptionCategoryName} fee`,"],
+      [RAW_AXIS_READ, "const id = `${charge?.membershipTypeId}`;"],
+    ];
+    for (const [pattern, line] of injected) {
+      expect(pattern.test(line), `no hit for: ${line}`).toBe(true);
+    }
+  });
+
+  it("does NOT fire on a display name resolved through the accessor or a fallback", () => {
+    const routed = [
+      "const name = chargeAxisDisplayName({ membershipTypeName: entry.membershipTypeName, subscriptionCategoryName: entry.subscriptionCategoryName ?? null });",
+      "message: `${subscriptionCategory.name} has no effective subscription fee`,",
+      "message: `for ${entry.membershipTypeName ?? entry.subscriptionCategoryName} `,",
+    ];
+    for (const line of routed) {
+      expect(PATTERNS.some((pattern) => pattern.test(line)), `false hit for: ${line}`).toBe(false);
     }
   });
 

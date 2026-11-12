@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
-import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -11,22 +10,10 @@ import {
   normalizeSubscriptionCategoryText,
   serializeSubscriptionCategory,
   subscriptionCategoryOrderBy,
+  subscriptionCategorySelect,
 } from "@/lib/subscription-categories";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-
-const subscriptionCategorySelect = {
-  id: true,
-  key: true,
-  name: true,
-  description: true,
-  isActive: true,
-  isBuiltIn: true,
-  sortOrder: true,
-  createdAt: true,
-  updatedAt: true,
-  _count: { select: { assignments: true, fees: true } },
-} satisfies Prisma.SubscriptionCategorySelect;
 
 const createSchema = z
   .object({

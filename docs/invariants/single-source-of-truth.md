@@ -583,11 +583,11 @@ by `chargeFamilyAxisKey()` / `chargeAxisDisplayName()` in
   charge for a family onto one dedup key regardless of which category it
   actually is, with no compiler error anywhere in the chain.
 - **A census keeps it one.** `membership-charge-axis-census.test.ts` reads
-  `membership-subscription-billing.ts` and `subscription-charge-already-paid.ts`
-  from disk (via `stripComments`, `INV-SSOT-004`) and fails the build on a new
-  raw family-key template literal outside the accessor; it also carries a
-  fixture-proof test confirming the regex actually catches the hazard it
-  exists to catch.
+  the billing engine, `subscription-charge-already-paid.ts`, the Xero invoice
+  builder and the billing panel from disk (via `stripComments`,
+  `INV-SSOT-004`). It fails the build on a hand-built family key or a raw
+  axis-column read with no fallback, and fixture tests prove each pattern
+  fires.
 - **The same accessor pair serves both the closed-family reversal engine
   (#4110) and display.** Folding category charges into the existing
   `billedFamilyTypes`/`resolveClosedFamilyDecision` machinery (rather than a

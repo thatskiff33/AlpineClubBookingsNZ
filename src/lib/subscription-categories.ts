@@ -1,6 +1,51 @@
 import type { Prisma } from "@prisma/client";
 
-const SUBSCRIPTION_CATEGORY_KEY_MAX_LENGTH = 80;
+import { buildUniqueCatalogueKey, normalizeCatalogueText } from "@/lib/catalogue-key";
+
+/** The one row shape both admin category routes read and serialise. */
+export const subscriptionCategorySelect = {
+  id: true,
+  key: true,
+  name: true,
+  description: true,
+  isActive: true,
+  isBuiltIn: true,
+  sortOrder: true,
+  createdAt: true,
+  updatedAt: true,
+  _count: { select: { assignments: true, fees: true } },
+} satisfies Prisma.SubscriptionCategorySelect;
+
+/** The fields a PATCH actually changed, for the audit row. */
+export function subscriptionCategoryChangedFields(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+) {
+  return Object.keys(after).filter((key) => before[key] !== after[key]);
+}
+
+/** Which audit action a PATCH records: archive, reactivate or plain update. */
+export function subscriptionCategoryAuditActionForUpdate(
+  before: { isActive: boolean },
+  data: { isActive?: boolean },
+) {
+  if (data.isActive === false && before.isActive) {
+    return {
+      action: "SUBSCRIPTION_CATEGORY_ARCHIVED",
+      summary: "Subscription category archived",
+    };
+  }
+  if (data.isActive === true && !before.isActive) {
+    return {
+      action: "SUBSCRIPTION_CATEGORY_REACTIVATED",
+      summary: "Subscription category reactivated",
+    };
+  }
+  return {
+    action: "SUBSCRIPTION_CATEGORY_UPDATED",
+    summary: "Subscription category updated",
+  };
+}
 
 type SubscriptionCategoryWithCounts = {
   id: string;
@@ -34,21 +79,10 @@ export function serializeSubscriptionCategory(category: SubscriptionCategoryWith
 export function normalizeSubscriptionCategoryText(
   value: string | null | undefined,
 ): string | null {
-  const trimmed = value?.trim() ?? "";
-  return trimmed.length > 0 ? trimmed : null;
+  return normalizeCatalogueText(value);
 }
 
-// test seam
-export function normalizeSubscriptionCategoryKey(name: string): string {
-  const normalized = name
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, SUBSCRIPTION_CATEGORY_KEY_MAX_LENGTH);
-  return normalized || "CUSTOM";
-}
-
+// One key rule for every admin catalogue (src/lib/catalogue-key.ts).
 export async function buildUniqueSubscriptionCategoryKey(
   db: {
     subscriptionCategory: {
@@ -60,25 +94,8 @@ export async function buildUniqueSubscriptionCategoryKey(
   },
   name: string,
 ): Promise<string> {
-  const base = normalizeSubscriptionCategoryKey(name);
-  let candidate = base;
-  let suffix = 2;
-
-  while (
-    await db.subscriptionCategory.findUnique({
-      where: { key: candidate },
-      select: { id: true },
-    })
-  ) {
-    const suffixText = `_${suffix}`;
-    candidate = `${base.slice(
-      0,
-      SUBSCRIPTION_CATEGORY_KEY_MAX_LENGTH - suffixText.length,
-    )}${suffixText}`;
-    suffix += 1;
-  }
-
-  return candidate;
+  return buildUniqueCatalogueKey(name, async (key) =>
+    Boolean(await db.subscriptionCategory.findUnique({ where: { key }, select: { id: true } })));
 }
 
 export function subscriptionCategoryOrderBy(): Prisma.SubscriptionCategoryOrderByWithRelationInput[] {

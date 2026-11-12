@@ -2883,6 +2883,76 @@ describe("membership subscription billing", () => {
       ]);
     });
 
+    // #4496 review, billing defect 3: a category holder's own membership-type
+    // fee basis must not decide whether their bare invoice holds the family.
+    // Category charges are always PER_FAMILY, so a PER_MEMBER type fee used
+    // to let the bare invoice pass as "their own personal invoice": no hold,
+    // no rebill warning, and approval would invoice the full flat fee beside it.
+    it("treats a category holder as PER_FAMILY even when their membership-type fee is PER_MEMBER", async () => {
+      mocks.effectiveFee.mockResolvedValue(fee({ id: "fee-member", billingBasis: "PER_MEMBER", prorationRule: "NONE" }));
+      mocks.familyGroupMembers.findMany.mockResolvedValue([
+        {
+          familyGroupId: "family-1",
+          memberId: "cub-1",
+          member: {
+            firstName: "Cub", lastName: "One", role: "USER", dateOfBirth: null, ageTier: "ADULT",
+            seasonalMembershipAssignments: [{
+              membershipType: { id: "type-1", key: "FULL", name: "Full", subscriptionBehavior: "REQUIRED" },
+              subscriptionCategory: { id: "cat-1", isActive: true },
+            }],
+            subscriptions: [{
+              xeroInvoiceId: "xi-difference", xeroInvoiceNumber: "INV-DIFF", status: "UNPAID", chargeCoverage: [],
+            }],
+          },
+        },
+      ]);
+      mocks.charges.findMany.mockResolvedValue([
+        familyCharge("NOT_REQUIRED", [["Bill Member", "NOT_INVOICED", "PAID"], ["cub-1", "UNPAID", "NOT_REQUIRED"]], {
+          id: "closed-category-charge", membershipTypeId: null, subscriptionCategoryId: "cat-1",
+        }),
+      ]);
+      mocks.members.findMany.mockResolvedValue([
+        categoryMember("re-billable", {}, { familyGroupMemberships: [familyMembership()] }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+      expect(preview.entries.map((entry) => entry.key)).toEqual(["2026:category:cat-1:family:family-1"]);
+      expect(preview.exceptions).toEqual([
+        expect.objectContaining({
+          code: "CLOSED_FAMILY_REBILL_BESIDE_INVOICE",
+          subscriptionCategoryId: "cat-1",
+          context: { invoiceHolders: [{ memberName: "Cub One", invoice: "INV-DIFF" }] },
+        }),
+      ]);
+    });
+
+    it("holds a category family behind a category holder's bare invoice even when their membership-type fee is PER_MEMBER", async () => {
+      mocks.effectiveFee.mockResolvedValue(fee({ id: "fee-member", billingBasis: "PER_MEMBER", prorationRule: "NONE" }));
+      mocks.familyGroupMembers.findMany.mockResolvedValue([
+        {
+          familyGroupId: "family-1",
+          memberId: "cub-1",
+          member: {
+            firstName: "Cub", lastName: "One", role: "USER", dateOfBirth: null, ageTier: "ADULT",
+            seasonalMembershipAssignments: [{
+              membershipType: { id: "type-1", key: "FULL", name: "Full", subscriptionBehavior: "REQUIRED" },
+              subscriptionCategory: { id: "cat-1", isActive: true },
+            }],
+            subscriptions: [{
+              xeroInvoiceId: "xi-legacy", xeroInvoiceNumber: "INV-LEGACY", status: "UNPAID", chargeCoverage: [],
+            }],
+          },
+        },
+      ]);
+      mocks.members.findMany.mockResolvedValue([
+        categoryMember("re-billable", {}, { familyGroupMemberships: [familyMembership()] }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+      expect(preview.entries).toEqual([]);
+      expect(preview.alreadyInvoicedFamilies).toEqual([
+        expect.objectContaining({ familyGroupId: "family-1", holderMemberId: "cub-1", xeroInvoiceNumber: "INV-LEGACY" }),
+      ]);
+    });
+
     // Maintainer review (billing, "one related gap"): category exemption used
     // to route through `loadMemberSubscriptionSettlements` — a resolver built
     // for the BOOKING-lockout gate — which applies the age-tier liability

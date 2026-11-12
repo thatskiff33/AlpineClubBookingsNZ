@@ -65,6 +65,6 @@ catalog of categories a club has defined.
 | Symptom | Likely cause | What to do |
 | --- | --- | --- |
 | "Subscription categories with member assignments cannot be deleted" | The category still has members assigned to it | Re-assign those members to a different category (or Individual), then delete — or archive it instead if you want to keep it unassignable but not lose the history |
-| "Subscription categories with fee history cannot be deleted" | The category has billed at least one charge in the past | Archive the category instead — deleting would orphan that billing history |
+| "Subscription categories with fee history cannot be deleted" | The category has at least one fee row on the Fees page, current or past | Archive the category instead — deleting would orphan that fee history |
 | "The built-in Individual category cannot be archived/deleted" | You tried to change the seeded default category | This is expected — the Individual category is not configurable |
 | You can see the page but every button is disabled | You have membership-area view access but not edit access | Ask an officer with membership edit access to make the change, or request that access |
