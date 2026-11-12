@@ -2,8 +2,8 @@
 
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor, ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
-import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { StrictMode, type ReactNode } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import PayByLinkPage from "../page";
 import {
@@ -55,9 +55,10 @@ vi.mock("@/components/stripe/StripeProvider", () => ({
 }));
 
 vi.mock("@/components/stripe/PaymentForm", () => ({
-  default: ({ onSuccess }: { onSuccess?: (paymentIntentId: string) => void }) => (
+  default: ({ onSuccess, onProcessing }: { onSuccess?: (paymentIntentId: string) => void; onProcessing?: (paymentIntentId: string) => void }) => (
     <>
       <div>card-entry-form</div>
+      <button type="button" onClick={() => onProcessing?.("pi_processing")}>trigger-card-processing</button>
       <button type="button" onClick={() => onSuccess?.("pi_paid")}>
         trigger-card-success
       </button>
@@ -1123,5 +1124,152 @@ describe("public payment page discloses money held for review", () => {
     expect(document.body.textContent).toContain(
       FINANCIAL_REVIEW_WORKING_IT_OUT,
     );
+  });
+});
+
+
+describe("#4955: Stripe returns to the payment link", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  });
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  it.each(["succeeded", "processing"])("checks a %s return once under StrictMode, hiding pay options until the server answers", async (status) => {
+    window.history.replaceState({ keep: true }, "", `/pay/public-token?keep=yes&payment_intent=pi_test&redirect_status=${status}&payment_intent_client_secret=private_secret#details`);
+    let finish!: (response: Response) => void;
+    const fetchMock = installIntentSequence([]);
+    fetchMock.mockImplementation(async (input, init) => {
+      if (init?.method === "POST") return new Promise<Response>((resolve) => { finish = resolve; });
+      return { ok: true, json: async () => String(input).endsWith("booking-messages") ? {} : payableContext } as Response;
+    });
+    render(<StrictMode><PayByLinkPage /></StrictMode>);
+    expect(screen.getByText("Checking your payment...")).toBeInTheDocument();
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    expect(screen.queryByRole("button", { name: "Pay by card" })).toBeNull();
+    expect(screen.queryByText(/Amount due/)).toBeNull();
+    expect(document.body.textContent).not.toContain("private_secret");
+    expect(window.location.search).toBe("?keep=yes");
+    expect(window.location.hash).toBe("#details");
+    expect(window.history.state).toEqual({ keep: true });
+    finish({ ok: true, json: async () => ({ alreadyPaid: true }) } as Response);
+    expect(await screen.findByText(/your payment is complete/i)).toBeInTheDocument();
+    const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(JSON.parse(String(posts[0]![1]!.body))).toEqual({ paidPaymentIntentId: "pi_test" });
+  });
+
+  it("shows failed or cancelled payments beside the normal pay options without checking", async () => {
+    window.history.replaceState(null, "", "?payment_intent=pi_test&redirect_status=failed&payment_intent_client_secret=private_secret");
+    const fetchMock = installIntentSequence([]);
+    render(<PayByLinkPage />);
+    expect(await screen.findByRole("button", { name: "Pay by card" })).toBeInTheDocument();
+    expect(screen.getByText(/Your payment did not go through/)).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+    expect(window.location.search).toBe("");
+  });
+
+  it.each(["", "bad", "pi_", "pi_%3Cscript%3E", "pi_bad%2Fpath"])("ignores an absent or malformed intent id (%s)", async (id) => {
+    window.history.replaceState(null, "", `?redirect_status=succeeded&payment_intent=${id}&payment_intent_client_secret=private_secret`);
+    const fetchMock = installIntentSequence([]);
+    render(<PayByLinkPage />);
+    expect(await screen.findByRole("button", { name: "Pay by card" })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+    expect(document.body.textContent).not.toContain("private_secret");
+    expect(window.location.search).toBe("");
+  });
+
+  // The server's real answer for a current intent still processing: the same
+  // intent handed back unpaid (it refuses with PAYMENT_PROCESSING only for a
+  // superseded or old-currency one).
+  const stillProcessing = { status: 200, body: { clientSecret: "secret_test", paymentIntentId: "pi_test" } };
+
+  it("says a processing return is being processed - not received, and not paid", async () => {
+    window.history.replaceState(null, "", "?payment_intent=pi_test&redirect_status=processing");
+    installIntentSequence([stillProcessing]);
+    render(<PayByLinkPage />);
+    expect(await screen.findByText("Payment being processed")).toBeInTheDocument();
+    expect(screen.queryByText(/Payment received/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Pay by card" })).toBeNull();
+    expect(screen.queryByText(/payment is complete/i)).toBeNull();
+  });
+
+  it("keeps the #4300 wording when a succeeded return is handed back unpaid", async () => {
+    window.history.replaceState(null, "", "?payment_intent=pi_test&redirect_status=succeeded");
+    installIntentSequence([stillProcessing]);
+    render(<PayByLinkPage />);
+    expect(await screen.findByText("Payment received - check booking status")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pay by card" })).toBeNull();
+  });
+
+  it("shows the paid page even when the page's own load of the link failed", async () => {
+    window.history.replaceState(null, "", "?payment_intent=pi_test&redirect_status=succeeded");
+    const fetchMock = installIntentSequence([{ status: 200, body: { alreadyPaid: true } }]);
+    const implementation = fetchMock.getMockImplementation()!;
+    let first = true;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input) === "/api/pay/public-token" && !init?.method && first) {
+        first = false;
+        return { ok: false, status: 429, json: async () => ({ error: "Too many requests" }) } as Response;
+      }
+      return implementation(input, init);
+    });
+    render(<PayByLinkPage />);
+    expect(await screen.findByText(/your payment is complete/i)).toBeInTheDocument();
+    expect(screen.queryByText("Too many requests")).toBeNull();
+  });
+
+  it("answers about the payment before offering a new link when the link expired meanwhile", async () => {
+    window.history.replaceState(null, "", "?payment_intent=pi_test&redirect_status=processing");
+    installIntentSequence([stillProcessing], [{ ...payableContext, payable: null, canRequestFreshLink: true }]);
+    render(<PayByLinkPage />);
+    expect(await screen.findByText("Payment being processed")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Email me a new link" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Pay by card" })).toBeNull();
+  });
+
+  it("still discloses a financial review beside that answer", async () => {
+    window.history.replaceState(null, "", "?payment_intent=pi_test&redirect_status=processing");
+    installIntentSequence([stillProcessing], [{ ...payableContext, payable: null, canRequestFreshLink: true, financialReviewPending: true }]);
+    render(<PayByLinkPage />);
+    expect(await screen.findByText("Payment being processed")).toBeInTheDocument();
+    expect(document.body.textContent).toContain(FINANCIAL_REVIEW_WORKING_IT_OUT);
+  });
+
+  it("uses the refreshed amount for a fresh form even if the mount fetch arrives last", async () => {
+    window.history.replaceState(null, "", "?payment_intent=pi_test&redirect_status=succeeded");
+    let finishMount!: (response: Response) => void;
+    const fetchMock = installIntentSequence([{ status: 200, body: { clientSecret: "secret_new", paymentIntentId: "pi_new", previousPaymentRefunding: true } }],
+      [{ ...payableContext, payable: { ...payableContext.payable, amountCents: 15000 } }]);
+    const implementation = fetchMock.getMockImplementation()!;
+    let first = true;
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input) === "/api/pay/public-token" && first) {
+        first = false;
+        return new Promise<Response>((resolve) => { finishMount = resolve; });
+      }
+      return implementation(input, init);
+    });
+    render(<PayByLinkPage />);
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));
+    finishMount({ ok: true, json: async () => payableContext } as Response);
+    expect(await screen.findByText("Amount due: $150.00")).toBeInTheDocument();
+    expect(await screen.findByText(PREVIOUS_PAYMENT_REFUNDING_NOTICE)).toBeInTheDocument();
+    expect(screen.getByTestId("stripe-provider")).toHaveAttribute("data-client-secret", "secret_new");
+    expect(screen.queryByText(/payment is complete/i)).toBeNull();
+  });
+
+  it("checks an in-page processing result through the same server path", async () => {
+    installIntentSequence([
+      { status: 200, body: { clientSecret: "secret_pending", paymentIntentId: "pi_processing" } },
+      { status: 200, body: { clientSecret: "secret_pending", paymentIntentId: "pi_processing" } },
+    ]);
+    render(<PayByLinkPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pay by card" }));
+    fireEvent.click(await screen.findByRole("button", { name: "trigger-card-processing" }));
+    expect(await screen.findByText("Payment being processed")).toBeInTheDocument();
+    expect(screen.queryByText(/Payment received/)).toBeNull();
+    expect(screen.queryByText("card-entry-form")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Pay by card" })).toBeNull();
   });
 });
