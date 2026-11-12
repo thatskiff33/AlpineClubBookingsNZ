@@ -64,8 +64,10 @@ import {
 const cfg = loadConfig(__ENV); // init-context guard: aborts unsafe targets
 requireCredentials(cfg);
 
-// 409 is the app's normal "full" or "conflicting change" answer here.
-http.setResponseCallback(http.expectedStatuses(200, 201, 302, 409));
+// 409 is the app's normal "full" or "conflicting change" answer to a write.
+// Set per write rather than globally, so cron-overlap's imported dashboard
+// reads still count a 409 as a failure.
+const WRITE_STATUSES = http.expectedStatuses(200, 201, 302, 409);
 
 const IP = SCENARIO_IP_OFFSETS.mixedWrites;
 
@@ -178,6 +180,7 @@ function post(path, body) {
     headers: jsonHeaders(IP),
     tags: { flow: "mixed_writes" },
     timeout: "60s",
+    responseCallback: WRITE_STATUSES,
   });
 }
 
@@ -241,6 +244,7 @@ export default function mixedWrites(data) {
         headers: jsonHeaders(IP),
         tags: { flow: "mixed_writes" },
         timeout: "60s",
+        responseCallback: WRITE_STATUSES,
       }
     );
     if (modifyRes.status === 200) modified.add(1);

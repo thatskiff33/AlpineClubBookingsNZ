@@ -11,7 +11,7 @@ import exec from "k6/execution";
 import { Rate, Counter } from "k6/metrics";
 import { loadConfig, requireCredentials } from "../lib/config.js";
 import { assertSafeTarget } from "../lib/target-guard.js";
-import { clearSession, ensureLoggedIn, SCENARIO_IP_OFFSETS } from "../lib/session.js";
+import { clearSession, ensureLoggedIn, login, SCENARIO_IP_OFFSETS, vuHeaders } from "../lib/session.js";
 import { bookableLodgeIds, jsonHeaders, selfGuest } from "../lib/app-api.js";
 import { addDaysIso, paymentStay, utcDayOf } from "../lib/stay-window.js";
 
@@ -37,6 +37,7 @@ export const options = {
 export function setup() {
   assertSafeTarget(__ENV);
   if (cfg.volumeUsers.length < cfg.peakVus) throw new Error("Seed LOAD_VOLUME_USERS >= PEAK_VUS");
+  if (!cfg.adminPassword) throw new Error("LOAD_ADMIN_PASSWORD or LOAD_USER_PASSWORD is required");
   const health = http.get(cfg.stripeStubUrl + "/control/health");
   if (health.status !== 200 || health.json("service") !== "load-stripe-stub") {
     throw new Error("The local Stripe stub is required; run scripts/load-stack.sh prepare");
@@ -51,6 +52,23 @@ export function setup() {
 }
 const state = { loggedIn: false, loginAttempted: false };
 let guest = null;
+// Members have no booking-status read API, so each VU holds a second, admin
+// session in its own cookie jar and reads the booking through the admin search.
+let adminJar = null;
+function adminStatusOf(bookingId) {
+  if (!adminJar) {
+    const jar = new http.CookieJar();
+    if (!login(cfg, cfg.adminEmail, cfg.adminPassword, IP, jar)) return null;
+    adminJar = jar;
+  }
+  const res = http.get(cfg.baseUrl + "/api/admin/bookings/search?limit=1&q=" +
+    encodeURIComponent(bookingId), {
+    headers: vuHeaders(IP), tags: { flow: "payment_path" }, jar: adminJar, redirects: 0,
+  });
+  if (res.status !== 200) return null;
+  const row = (res.json("bookings") || []).find(function (b) { return b.id === bookingId; });
+  return row ? row.status : null;
+}
 function post(path, body) {
   return http.post(cfg.baseUrl + path, JSON.stringify(body), {
     headers: jsonHeaders(IP), tags: { flow: "payment_path" }, timeout: "60s",
@@ -86,14 +104,9 @@ export default function paymentPath(data) {
     delivered = delivered && res.status === 200;
     check(res, { "signed webhook accepted, including replay": function (r) { return r.status === 200; } });
   }
-  // The member's own booking list proves the webhook changed the booking,
+  // The booking's stored status proves the webhook changed the booking,
   // rather than treating a webhook's HTTP acknowledgement as settlement.
-  const bookings = http.get(cfg.baseUrl + "/api/bookings", {
-    headers: jsonHeaders(IP), tags: { flow: "payment_path" },
-  });
-  const body = bookings.status === 200 ? bookings.json() : null;
-  const rows = Array.isArray(body) ? body : (body && body.bookings) || [];
-  const confirmed = rows.some(function (b) { return b.id === id && b.status === "PAID"; });
+  const confirmed = adminStatusOf(id) === "PAID";
   success.add(delivered && confirmed);
   if (delivered && confirmed) settled.add(1);
   sleep(cfg.thinkTime);

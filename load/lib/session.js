@@ -61,9 +61,12 @@ export function vuHeaders(offset) {
   return { "X-Forwarded-For": syntheticClientIp(offset) };
 }
 
-/** True if this VU's cookie jar already holds a session cookie. */
-export function hasSession(baseUrl) {
-  const cookies = http.cookieJar().cookiesForURL(baseUrl + "/");
+/**
+ * True if this VU's cookie jar (or the given `jar`) already holds a session
+ * cookie.
+ */
+export function hasSession(baseUrl, jar) {
+  const cookies = (jar || http.cookieJar()).cookiesForURL(baseUrl + "/");
   return SESSION_COOKIE_NAMES.some(function (name) {
     return cookies[name] && cookies[name].length > 0;
   });
@@ -72,14 +75,17 @@ export function hasSession(baseUrl) {
 /**
  * Log this VU in with email + password. Returns true on success.
  * Tags requests `flow:login` so latency can be thresholded separately.
+ * Pass a `jar` (an `http.CookieJar`) to hold a second session alongside the
+ * VU's default one.
  */
-export function login(cfg, email, password, ipOffset) {
+export function login(cfg, email, password, ipOffset, jar) {
   const headers = vuHeaders(ipOffset);
   const tags = { flow: "login" };
 
   const csrfRes = http.get(cfg.baseUrl + "/api/auth/csrf", {
     headers: headers,
     tags: tags,
+    jar: jar,
   });
   const csrfOk = check(csrfRes, {
     "csrf endpoint returned 200": function (r) {
@@ -107,12 +113,12 @@ export function login(cfg, email, password, ipOffset) {
       password: password,
       callbackUrl: cfg.baseUrl + "/",
     },
-    { headers: headers, tags: tags }
+    { headers: headers, tags: tags, jar: jar }
   );
 
   return check(loginRes, {
     "login established a session cookie": function () {
-      return hasSession(cfg.baseUrl);
+      return hasSession(cfg.baseUrl, jar);
     },
     "login response not a rate-limit or server error": function (r) {
       return r.status < 429;

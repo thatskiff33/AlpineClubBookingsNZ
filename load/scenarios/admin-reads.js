@@ -32,7 +32,7 @@ export default function adminReads(data) {
   if (first) loggedIn.add(ok);
   if (!ok) return;
   const paths = [
-    "/api/admin/bookings?page=1&limit=25",
+    "/api/admin/bookings?calendarMonth=" + data.today.slice(0, 7),
     "/api/admin/reports?from=" + data.reportFrom + "&to=" + data.today,
     "/api/admin/bed-allocation?from=" + data.today + "&to=" + addDaysIso(data.today, 6),
   ];
