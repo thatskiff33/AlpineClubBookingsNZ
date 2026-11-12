@@ -1618,7 +1618,7 @@ describe("view-only section banner coverage (#2160)", () => {
                commit rather than left as a hole in the chain: #2597 ADDED a
                control — the "Resume approval" button, which finishes a deletion
                approval that started and did not finish, in
-               `app/(admin)/admin/deletion-requests/deletion-requests-client.tsx`.
+               `app/(admin)/admin/membership/deletion-requests/deletion-requests-client.tsx`.
                It is a `describeReason={false}` static opt-out in the same file
                as that page's own unconditional banner, so callSites
                310 -> 311, optOuts 261 -> 262 and staticOptOuts 234 -> 235,
@@ -1848,15 +1848,15 @@ describe("view-only section banner coverage (#2160)", () => {
       "member-parent-links-card",
       "member-partner-link-card",
       "member-seasonal-membership-card",
-    ].map((name) => `app/(admin)/admin/members/[id]/_components/${name}.tsx`);
+    ].map((name) => `app/(admin)/admin/membership/members/[id]/_components/${name}.tsx`);
 
     // Controls inside a dialog, sheet, popover, or dropdown menu — a separate
     // accessibility container that a banner in the page body does not reach.
     const SEPARATE_A11Y_CONTAINER = [
       "app/(admin)/admin/bookings/page.tsx",
       "app/(admin)/admin/system/issue-reports/page.tsx",
-      "app/(admin)/admin/member-applications/_components/approval-mapping-panel.tsx",
-      "app/(admin)/admin/membership-types/page.tsx",
+      "app/(admin)/admin/membership/member-applications/_components/approval-mapping-panel.tsx",
+      "app/(admin)/admin/membership/membership-types/page.tsx",
       "components/admin/bed-allocation-move-dialog.tsx",
     ];
 

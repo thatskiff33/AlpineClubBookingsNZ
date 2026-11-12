@@ -910,3 +910,126 @@ describe("the Messages & email hub keeps each page's own admission (C8 #4805)", 
     expect(getRequiredFeaturesForPath(pathname)).toEqual([...flags]);
   });
 });
+
+/**
+ * C9 (#4806): the Members hub is one permission area, with the induction module
+ * on three of its pages and on nothing else. Moving the pages under
+ * `/admin/membership` must not give that root a rule of its own — a prefix
+ * without the trailing slash would swallow `membership-cancellations`,
+ * `membership-setup` and `membership-types` — and must not put the induction
+ * gate on the members list. Each page answers at its hub path exactly as at
+ * its old path. The `/api/admin` routes these pages call stay where they are.
+ */
+describe("the Members hub keeps each page's own admission (C9 #4806)", () => {
+  type Row = readonly [
+    id: string,
+    oldPath: string,
+    hubPath: string,
+    flags: readonly FeatureFlagKey[],
+  ];
+  const MEMBERS: readonly Row[] = [
+    ["members", "/admin/members", "/admin/membership/members", []],
+    ["member-detail", "/admin/members/[id]", "/admin/membership/members/[id]", []],
+    ["member-merge", "/admin/members/[id]/merge", "/admin/membership/members/[id]/merge", []],
+    ["member-applications", "/admin/member-applications", "/admin/membership/member-applications", []],
+    [
+      "membership-cancellations",
+      "/admin/membership-cancellations",
+      "/admin/membership/membership-cancellations",
+      [],
+    ],
+    ["family-groups", "/admin/family-groups", "/admin/membership/family-groups", []],
+    ["induction", "/admin/induction", "/admin/membership/induction", ["induction"]],
+    ["induction-print", "/admin/induction/[id]/print", "/admin/membership/induction/[id]/print", ["induction"]],
+    ["induction-settings", "/admin/induction/settings", "/admin/membership/induction/settings", ["induction"]],
+    ["deletion-requests", "/admin/deletion-requests", "/admin/membership/deletion-requests", []],
+    ["committee", "/admin/committee", "/admin/membership/committee", []],
+    ["membership-setup", "/admin/membership-setup", "/admin/membership/membership-setup", []],
+    ["membership-types", "/admin/membership-types", "/admin/membership/membership-types", []],
+    ["member-fields", "/admin/member-fields", "/admin/membership/member-fields", []],
+    ["subscription-lockout", "/admin/subscription-lockout", "/admin/membership/subscription-lockout", []],
+  ];
+
+  const only = (area: AdminPermissionArea, level: "view" | "edit"): AdminPermissionInput => ({
+    canLogin: true,
+    accessRoles: [],
+    adminPermissionMatrix: {
+      ...(Object.fromEntries(
+        ADMIN_PERMISSION_AREAS.map((entry) => [entry.key, "none"]),
+      ) as AdminPermissionMatrix),
+      [area]: level,
+    },
+  });
+
+  it("names every page of the hub, each moved, on ordinary membership admission", () => {
+    expect(ADMIN_PAGES.filter((page) => page.hub === "members")).toHaveLength(15);
+    expect(
+      ADMIN_PAGES.filter((page) => page.hub === "members").map((page) => [
+        page.id,
+        page.oldPath,
+        page.hubPath,
+        page.flags,
+      ]),
+    ).toEqual(MEMBERS);
+    for (const page of ADMIN_PAGES.filter((candidate) => candidate.hub === "members")) {
+      expect(page.moved, page.id).toBe(true);
+      expect(page.admission, page.id).toBe("area");
+      expect(page.area, page.id).toBe("membership");
+    }
+  });
+
+  it.each(MEMBERS)("%s answers at %s and at %s as main did at the old path", (id, oldPath, hubPath, flags) => {
+    for (const pathname of [oldPath, hubPath].map(concrete)) {
+      expect(getAdminRouteRequirement(pathname, "GET"), pathname).toEqual({
+        area: "membership",
+        level: "view",
+      });
+      expect(getAdminRouteRequirement(pathname, "POST"), pathname).toEqual({
+        area: "membership",
+        level: "edit",
+      });
+      expect(getRequiredFeaturesForPath(pathname), pathname).toEqual([...flags]);
+      expect(differences(id, actualAnswer(pathname), oracleAnswer(concrete(oldPath)))).toEqual([]);
+      expect(canOpenAdminPath(only("membership", "view"), pathname), pathname).toBe(true);
+      expect(canOpenAdminPath(only("support", "edit"), pathname), pathname).toBe(false);
+      expect(canOpenAdminPath(only("overview", "edit"), pathname), pathname).toBe(false);
+    }
+  });
+
+  it("gives the hub's root no rule, and keeps the induction gate on induction alone", () => {
+    expect(ADMIN_ROUTE_MAP.map(({ prefix }) => prefix)).not.toContain("/admin/membership");
+    expect(firstMatch("/admin/membership")?.prefix).toBe("/admin");
+    expect(getRequiredFeaturesForPath("/admin/membership")).toEqual([]);
+    expect(getRequiredFeaturesForPath("/admin/membership/induction")).toEqual(["induction"]);
+    expect(getRequiredFeaturesForPath("/admin/membership/members")).toEqual([]);
+    // The matcher is slash-anchored. A prefix `/admin/membership` without that
+    // slash would swallow these three old paths.
+    for (const pathname of [
+      "/admin/membership-cancellations",
+      "/admin/membership-setup",
+      "/admin/membership-types",
+    ]) {
+      expect(firstMatch(pathname)?.prefix, pathname).toBe(pathname);
+    }
+    for (const [id, oldPath, hubPath] of MEMBERS) {
+      const entry = firstMatch(concrete(hubPath));
+      expect(entry && nestsUnder(entry.prefix, "/admin/membership") && entry.prefix !== "/admin/membership", id).toBe(
+        true,
+      );
+      expect(entry?.area, id).toBe("membership");
+      expect(entry?.prefix, id).toBe(firstMatch(concrete(oldPath))!.prefix.replace(/^\/admin/, "/admin/membership"));
+    }
+  });
+
+  it.each([
+    ["/api/admin/members", "membership", []],
+    ["/api/admin/family-groups", "membership", []],
+    ["/api/admin/deletion-requests", "membership", []],
+    ["/api/admin/membership-types", "membership", []],
+    ["/api/admin/membership-lockout-settings", "membership", []],
+  ] as const)("leaves the API %s on %s", (pathname, area, flags) => {
+    expect(getAdminRouteRequirement(pathname, "GET")).toEqual({ area, level: "view" });
+    expect(getAdminRouteRequirement(pathname, "POST")).toEqual({ area, level: "edit" });
+    expect(getRequiredFeaturesForPath(pathname)).toEqual([...flags]);
+  });
+});

@@ -11,7 +11,7 @@ reason: one import line, so the member link on a booking comes from the hub
   not shrink this hunk.
 
 file: src/app/(admin)/admin/membership/deletion-requests/deletion-requests-client.tsx
-lines: 1494
+lines: 1495
 reason: one import line, so the member link on a deletion request comes from
   the hub registry. The link sits beside the request it opens.
 
@@ -27,7 +27,7 @@ reason: one import line, so this member page's own links come from the hub
   shrink this hunk.
 
 file: src/app/(admin)/admin/membership/members/page.tsx
-lines: 605
+lines: 601
 reason: one import line, so the member list links come from the hub registry.
   Splitting the member list is a refactor of its own and would not shrink
   this hunk.
@@ -43,7 +43,7 @@ reason: one import line, so the member link on a redemption comes from the
   hub registry. The link sits beside the redemption it explains.
 
 file: src/components/admin/booking-requests/policy-exception-requests-panel.tsx
-lines: 1015
+lines: 1016
 reason: one import line, so the member link on an exception request comes
   from the hub registry. Splitting the exception queue is a refactor of its
   own and would not shrink this hunk.
