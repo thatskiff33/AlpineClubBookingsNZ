@@ -178,7 +178,7 @@ export default function CommunicationsPage() {
       setSendPhase("confirming");
       const confirmed = await confirm({
         title: `Send this email to ${peopleCount(eligible)}?`,
-        description: `Audience: ${audience.label} (${audience.description}) Subject: "${message.subject}". Only people who opted in to marketing email are counted. Sending cannot be undone, and you can send ${bulkSendLimit} bulk email${bulkSendLimit === 1 ? "" : "s"} per hour.`,
+        description: `Audience: ${audience.label}. ${audience.description} Subject: "${message.subject}". Only people who opted in to marketing email are counted. Sending cannot be undone, and you can send ${bulkSendLimit} bulk email${bulkSendLimit === 1 ? "" : "s"} per hour.`,
         confirmLabel: `Send to ${peopleCount(eligible)}`,
       });
       if (!confirmed) return;
