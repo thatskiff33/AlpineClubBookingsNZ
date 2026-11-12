@@ -10,9 +10,11 @@
  * secret Stripe adds is never read, only removed from the address bar.
  */
 
+import type { CardConfirmation } from "./card-success-check";
+
 export type StripeReturn =
   | { kind: "none" }
-  | { kind: "check"; intentId: string }
+  | { kind: "check"; intentId: string; confirmation: CardConfirmation }
   | { kind: "failed" };
 
 const RETURN_PARAMS = ["payment_intent", "payment_intent_client_secret", "redirect_status"] as const;
@@ -26,7 +28,7 @@ export function readStripeReturn(search: string): StripeReturn {
   if (status && FAILED_STATUSES.has(status)) return { kind: "failed" };
   if (status !== "succeeded" && status !== "processing") return { kind: "none" };
   const intentId = params.get("payment_intent") ?? "";
-  return INTENT_ID.test(intentId) ? { kind: "check", intentId } : { kind: "none" };
+  return INTENT_ID.test(intentId) ? { kind: "check", intentId, confirmation: status } : { kind: "none" };
 }
 
 /**

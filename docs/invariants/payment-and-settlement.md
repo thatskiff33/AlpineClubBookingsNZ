@@ -162,7 +162,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - **The `/pay` link asks the server what a card success did**
   (`checkCardSuccess`) at both exits: the resolved confirmation (`succeeded`
   or `processing`) and the redirect return (#4955). It never shows the pay
-  buttons meanwhile.
+  buttons meanwhile; unsettled `processing` reads "being processed".
 - Proven on PostgreSQL by `superseded-intent-card-doors.realdb.test.ts`, and
   by `superseded-capture-ownership.test.ts`, `payment-recovery.test.ts`,
   `issue-1992-duplicate-capture-refund.test.ts` and the door suites.

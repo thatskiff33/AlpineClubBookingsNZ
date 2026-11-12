@@ -35,7 +35,7 @@ import {
   type PaymentLinkContext,
   type PaymentRecovery,
 } from "./pay-link-presentation";
-import { checkCardSuccess } from "./card-success-check";
+import { checkCardSuccess, type CardConfirmation } from "./card-success-check";
 import { takeStripeReturn } from "./stripe-return";
 import { PreviousPaymentRefundingNotice } from "@/components/previous-payment-refunding-notice";
 /*
@@ -114,7 +114,7 @@ export default function PayByLinkPage() {
   // context fetch, so that fetch is already in flight when the check starts.
   useEffect(() => {
     const stripeReturn = takeStripeReturn();
-    if (stripeReturn.kind === "check") void afterCardSuccess(stripeReturn.intentId);
+    if (stripeReturn.kind === "check") void afterCardSuccess(stripeReturn.intentId, stripeReturn.confirmation);
     else if (stripeReturn.kind === "failed") setRedirectFailed(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per page load; the URL is read and cleared
   }, []);
@@ -165,9 +165,9 @@ export default function PayByLinkPage() {
 
   // #4300: after a card success, ask the server what it did (`checkCardSuccess`).
   // #4955: also a `processing` result and a redirect return - both exits.
-  async function afterCardSuccess(paidIntentId: string) {
+  async function afterCardSuccess(paidIntentId: string, confirmation: CardConfirmation) {
     setCheckingPayment(true);
-    const outcome = await checkCardSuccess(token, paidIntentId);
+    const outcome = await checkCardSuccess(token, paidIntentId, confirmation);
     if (outcome.kind === "paid") {
       if (outcome.context) setContext(outcome.context);
       setPaymentComplete(true);
@@ -222,7 +222,8 @@ export default function PayByLinkPage() {
     );
   }
 
-  if (loadError) {
+  // #4955: a context the return check read outranks a failed page-load fetch.
+  if (loadError && !context) {
     return (
       <Card className="w-full max-w-lg">
         <CardHeader>
@@ -252,6 +253,23 @@ export default function PayByLinkPage() {
     this page that can reach a member without telling them.
   */
   const financialReviewPending = context.financialReviewPending === true;
+
+  // #4300 / #4955: what a payment just made did, when the server says it is not
+  // (yet) settled. Never answered with another payment.
+  const recoveryNotice = (
+    <FocusedActionError
+      id="payment-link-recovery-error"
+      error={paymentRecovery?.message ?? ""}
+      heading={paymentRecovery?.heading}
+      action={
+        paymentRecovery ? (
+          <Button variant="outline" onClick={() => window.location.reload()}>
+            Reload payment status
+          </Button>
+        ) : undefined
+      }
+    />
+  );
 
   // A completed card payment lands here before the page is re-fetched.
   if (paymentComplete || context.state === "paid") {
@@ -297,6 +315,23 @@ export default function PayByLinkPage() {
           />
         ) : null}
       </NarrativeCard>
+    );
+  }
+
+  /*
+    #4955: a redirect return reads a fresh context, which may no longer be
+    payable - the link expired while the payer was at their bank, say. The
+    answer about the payment just made still comes first: not "email me a new
+    link", and never the pay buttons.
+  */
+  if (paymentRecovery && (context.canRequestFreshLink || !context.payable)) {
+    return (
+      <Card className="w-full max-w-lg">
+        <CardHeader>
+          <CardTitle>Your Payment</CardTitle>
+        </CardHeader>
+        <CardContent>{recoveryNotice}</CardContent>
+      </Card>
     );
   }
 
@@ -369,9 +404,9 @@ export default function PayByLinkPage() {
   }
 
   const payable = context.payable;
-  const confirmed = (paidIntentId: string) => {
+  const confirmed = (confirmation: CardConfirmation) => (paidIntentId: string) => {
     setClientSecret(null);
-    void afterCardSuccess(paidIntentId);
+    void afterCardSuccess(paidIntentId, confirmation);
   };
 
   return (
@@ -424,18 +459,7 @@ export default function PayByLinkPage() {
           />
         ) : null}
 
-        <FocusedActionError
-          id="payment-link-recovery-error"
-          error={paymentRecovery?.message ?? ""}
-          heading={paymentRecovery?.heading}
-          action={
-            paymentRecovery ? (
-              <Button variant="outline" onClick={() => window.location.reload()}>
-                Reload payment status
-              </Button>
-            ) : undefined
-          }
-        />
+        {recoveryNotice}
 
         <PreviousPaymentRefundingNotice show={!paymentRecovery && previousPaymentRefunding} />
         {paymentRecovery ? null : clientSecret ? (
@@ -445,8 +469,8 @@ export default function PayByLinkPage() {
               returnUrl={typeof window !== "undefined" ? window.location.href : ""}
               // #4300: the server says what the payment did - settled, or (an
               // intent an edit superseded) going back with a fresh one to pay.
-              onSuccess={confirmed}
-              onProcessing={confirmed}
+              onSuccess={confirmed("succeeded")}
+              onProcessing={confirmed("processing")}
               onError={() => undefined}
             />
           </StripeProvider>
