@@ -1262,7 +1262,6 @@ export async function enqueueXeroAccountCreditNoteOperation(
 // #3502: moved to its own leaf; re-exported so no importer moved.
 export { OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES };
 
-
 /**
  * Whether any supplementary-invoice outbox operation tied to this
  * PaymentIntent has left WAITING_PAYMENT (was released, is running, already
@@ -1340,16 +1339,8 @@ export async function releaseWaitingSupplementaryInvoiceOperations(
   return { released: updateResult.count, queueOperationIds };
 }
 
-/**
- * Point a modification's WAITING_PAYMENT supplementary-invoice operations at
- * a recovered additional PaymentIntent (#1096). The operation was enqueued
- * while intent creation was failing, so its payload carries a null
- * paymentIntentId that the payment-succeeded release could never match.
- */
-
 // The waiting-anchor filter moved to `xero-supplementary-invoice-statuses.ts`
 // (#3954), so a price reduction can retire an unminted ask's parked invoice.
-
 
 /**
  * IS THIS BOOKING CHANGE'S INVOICE STILL WAITING ON THIS EXACT ASK? (#3220 fix
@@ -1386,6 +1377,12 @@ export async function findWaitingSupplementaryInvoiceOperationForPaymentIntent({
   return null;
 }
 
+/**
+ * Point a modification's WAITING_PAYMENT supplementary-invoice operations at
+ * a recovered additional PaymentIntent (#1096). The operation was enqueued
+ * while intent creation was failing, so its payload carries a null
+ * paymentIntentId that the payment-succeeded release could never match.
+ */
 export async function attachPaymentIntentToWaitingSupplementaryInvoiceOperations({
   bookingModificationId,
   paymentIntentId,
@@ -2702,5 +2699,3 @@ export async function processQueuedXeroOutboxOperations(options?: {
 
   return result;
 }
-
-

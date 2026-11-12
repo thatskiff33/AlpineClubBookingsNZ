@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Disposable, loopback-only PostgreSQL proof for #4324 and #3403 in Sekreton.
+# Disposable, loopback-only PostgreSQL proof for #4324, #3403 and #4930 in Sekreton.
 set -euo pipefail
 
 # Distribution packages install server tools outside PATH (the major varies).
@@ -55,6 +55,11 @@ files=(
   src/lib/__tests__/additional-capture-receipt.realdb.test.ts
   src/lib/__tests__/primary-invoice-edit-race.realdb.test.ts
   src/lib/__tests__/unpaid-edit-change-fee-owed.realdb.test.ts
+  # #4930: exercise reconciliation, cancellation and group settlement after
+  # moving their shared imports; a skipped suite is rejected below.
+  src/lib/__tests__/capacity-race-refund-shortfall-task.realdb.test.ts
+  src/lib/__tests__/booking-ledger-cancellation.realdb.test.ts
+  src/lib/__tests__/booking-ledger-group-settlement.realdb.test.ts
 )
 # An explicit report plus the existing validator rejects green describe.skip.
 pnpm exec vitest run --maxWorkers=1 --reporter=json --outputFile="$race_dir/report.json" "${files[@]}"
