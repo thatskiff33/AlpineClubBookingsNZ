@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { XERO_MAPPING_STEP_ID } from "@/lib/admin-hubs/xero-setup";
+import { XERO_MAPPING_STEP_ID, XERO_SETUP_STEP_PARAM } from "@/lib/admin-hubs/xero-setup";
 import { IntegrationWizard } from "@/components/admin/integration-wizard";
 import type { WizardStepConfig } from "@/components/admin/integration-wizard";
 import {
@@ -102,7 +102,7 @@ export function XeroSetupWizard({
   // Deep-link support: a readiness "blocked" link or the modules "Set up" CTA can
   // target a step via ?step=; the shell clamps it to the furthest reachable step.
   const searchParams = useSearchParams();
-  const initialStepId = searchParams.get("step") ?? undefined;
+  const initialStepId = searchParams.get(XERO_SETUP_STEP_PARAM) ?? undefined;
 
   return (
     <IntegrationWizard<XeroWizardContext>
