@@ -18,6 +18,7 @@ import {
   SESSION_MAX_AGE_MAX_HOURS,
   SESSION_MAX_AGE_MIN_HOURS,
 } from "@/lib/session-max-age";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 // Admin API for the club password-complexity policy (epic #2030, child #2033).
 // The Login & Security page's password-policy card reads GET and writes PUT.
@@ -71,6 +72,8 @@ export async function PUT(request: Request) {
   if (!guard.ok) return guard.response;
 
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await request.json();
   } catch {

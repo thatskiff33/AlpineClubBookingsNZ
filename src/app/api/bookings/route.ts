@@ -126,11 +126,8 @@ import {
   normalizeGuestStayRanges,
 } from "@/lib/booking-guest-stay-range-input";
 import { parseJsonRequestBody } from "@/lib/api-json";
-import {
-  addDaysDateOnly,
-  isDateOnlyString,
-  parseDateOnly,
-} from "@/lib/date-only";
+import { addDaysDateOnly } from "@/lib/date-only";
+import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
@@ -147,13 +144,9 @@ import { clubFormatValues } from "@/lib/club-format-server";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-});
-
 const createBookingSchema = z.object({
-  checkIn: dateOnlyString.transform(parseDateOnly),
-  checkOut: dateOnlyString.transform(parseDateOnly),
+  checkIn: parsedDateOnlySchema,
+  checkOut: parsedDateOnlySchema,
   guests: z
     .array(
       z.object({

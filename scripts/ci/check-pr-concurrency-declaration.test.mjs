@@ -6,6 +6,10 @@ import { dirname, join, resolve } from "node:path";
 
 import {
   REQUIRED_FIELDS,
+  concurrencyConstructsIn,
+  gitContentsReader,
+  isConcurrencySensitiveChange,
+  isConcurrencySensitivePath,
   validateConcurrencyDeclaration,
 } from "./check-pr-concurrency-declaration.mjs";
 // `selectPrBody` moved to the shared PR-body module when the changelog fragment
@@ -441,5 +445,419 @@ describe("PR concurrency declaration gate", () => {
     for (const field of REQUIRED_FIELDS) {
       expect(template).toContain(`- ${field}:`);
     }
+  });
+});
+
+/*
+  #5038. A name alone used to decide "sensitive", so two lines of message wording
+  in `src/lib/booking-message-definitions.ts` demanded five declaration fields
+  that all said "nothing changed". The gate now also reads the file: a
+  name-matched file is exempt only when its whole text, at the head and at the
+  merge base, is synchronous and holds no transaction, write, raw SQL, lock,
+  database client or re-export.
+
+  The risk of this change is failing OPEN, so most of what follows pins the
+  other direction: every construct still obliges the declaration, and every way
+  of not being able to look does too.
+*/
+describe("PR concurrency declaration gate: content narrowing (#5038)", () => {
+  const naBody = `${heading}\n\n- [x] N/A — wording only.\n`;
+  const WORDING = [
+    'import type { BookingStatus } from "@prisma/client";',
+    "",
+    "// Shown when a booking is blocked by a clock-in. No lock is taken here.",
+    "export const BOOKING_MESSAGES = {",
+    '  confirmed: "Your booking is confirmed.",',
+    '  cancelled: "Your booking was cancelled and any credit returned.",',
+    "} satisfies Partial<Record<BookingStatus, string>>;",
+    "",
+    "export function bookingMessage(status: BookingStatus): string {",
+    '  return BOOKING_MESSAGES[status] ?? "";',
+    "}",
+    "",
+  ].join("\n");
+  const FILE = "src/lib/booking-message-definitions.ts";
+
+  /** A `contentsOf` reader over a fixed `{ path: text | [head, base] }` map. */
+  const reading = (map) => (file) => {
+    if (!(file in map)) throw new Error(`ENOENT: ${file}`);
+    return [map[file]].flat();
+  };
+
+  it("exempts a wording-only file on a sensitive path, so N/A passes", () => {
+    const contentsOf = reading({ [FILE]: WORDING });
+    expect(concurrencyConstructsIn(WORDING)).toEqual([]);
+    expect(isConcurrencySensitiveChange(FILE, contentsOf)).toBe(false);
+    expect(validateConcurrencyDeclaration(naBody, [FILE], { contentsOf })).toEqual({
+      outcome: "declared-n-a",
+    });
+    // And the #2726 waiver follows the same definition: no section is owed.
+    expect(validateConcurrencyDeclaration("no headings here", [FILE], { contentsOf })).toEqual({
+      outcome: "no-sensitive-paths",
+    });
+  });
+
+  /*
+    One case per construct. Each fixture is the wording file plus ONE line, so a
+    pattern that stops matching turns exactly its own row red. The mutation
+    probe for this gate is "make `concurrencyConstructsIn` return []": every row
+    here fails under it.
+  */
+  it.each([
+    ["an interactive transaction", "transaction", "export const run = (db) => db.$transaction((inner) => inner);"],
+    ["a transaction client type", "transaction", "export type Db = Prisma.TransactionClient;"],
+    ["a transaction client parameter", "transaction", "export const read = (tx) => tx.booking.findMany();"],
+    ["a suffixed transaction client", "transaction", "export const read = (dbTx) => dbTx.booking.findMany();"],
+    ["create", "database write", "export const w = (db) => db.booking.create({ data: {} });"],
+    ["createMany", "database write", "export const w = (db) => db.booking.createMany({ data: [] });"],
+    ["update", "database write", "export const w = (db) => db.booking.update({ where: {}, data: {} });"],
+    ["updateMany", "database write", "export const w = (db) => db.booking.updateMany({ where: {}, data: {} });"],
+    ["upsert", "database write", "export const w = (db) => db.booking.upsert({ where: {}, create: {}, update: {} });"],
+    ["delete", "database write", "export const w = (db) => db.booking.delete({ where: {} });"],
+    ["deleteMany", "database write", "export const w = (db) => db.booking.deleteMany({ where: {} });"],
+    ["$executeRaw", "raw SQL", "export const w = (db) => db.$executeRaw`VACUUM`;"],
+    ["$executeRawUnsafe", "raw SQL", 'export const w = (db) => db.$executeRawUnsafe("VACUUM");'],
+    ["$queryRaw", "raw SQL", "export const r = (db) => db.$queryRaw`VALUES (1)`;"],
+    ["$queryRawUnsafe", "raw SQL", 'export const r = (db) => db.$queryRawUnsafe("VALUES (1)");'],
+    ["a Prisma.sql fragment", "raw SQL", "export const fragment = Prisma.sql`now()`;"],
+    ["a SQL string held for another module to run", "raw SQL", 'export const SEARCH_SQL = `SELECT b."id" FROM public."Booking" b`;'],
+    ["an advisory lock", "lock", 'export const KEY = "pg_advisory_xact_lock";'],
+    ["a row lock", "lock", 'export const SUFFIX = "FOR UPDATE";'],
+    ["a row lock in lower case", "lock", 'export const SUFFIX = "for no key update";'],
+    ["SKIP LOCKED", "lock", 'export const SUFFIX = "SKIP LOCKED";'],
+    ["the lodge capacity lock helper", "lock helper", "export const hold = (db, id) => acquireLodgeCapacityLock(db, id);"],
+    ["a lock-prefixed helper", "lock helper", "export const hold = (db, id) => lockMemberCreditLedger(db, id);"],
+    ["a lock-held helper", "lock helper", "export const go = (db) => reconcileBedAllocationsForBookingWithLodgeLockHeld(db);"],
+    ["an async function that only calls a writer elsewhere", "asynchronous code", "export async function POST() { return cancelBooking(); }"],
+    ["an awaited call", "asynchronous code", "export const POST = route(() => { await cancelBooking(); });"],
+    ["a promise chain", "asynchronous code", "export const go = () => cancelBooking().then(() => null);"],
+    ["a declared promise", "asynchronous code", "export function go(): Promise<void> { return cancelBooking(); }"],
+    ["the database client import", "database client", 'import { prisma } from "@/lib/prisma";'],
+    ["a database client passed on", "database client", "export const deps = { prisma };"],
+    ["a re-exported module", "re-export", 'export { cancelBooking } from "./booking-cancel";'],
+    ["a star re-export", "re-export", 'export * from "./booking-cancel";'],
+    ["a multi-line re-export", "re-export", 'export {\n  cancelBooking,\n  refundBooking,\n} from "./booking-cancel";'],
+  ])("keeps a file with %s sensitive", (_label, construct, line) => {
+    const content = `${WORDING}${line}\n`;
+    const contentsOf = reading({ [FILE]: content });
+    expect(concurrencyConstructsIn(content)).toContain(construct);
+    expect(isConcurrencySensitiveChange(FILE, contentsOf)).toBe(true);
+    expect(() => validateConcurrencyDeclaration(naBody, [FILE], { contentsOf })).toThrow(
+      /cannot use N\/A for sensitive paths: src\/lib\/booking-message-definitions\.ts/,
+    );
+    expect(() => validateConcurrencyDeclaration("no headings here", [FILE], { contentsOf })).toThrow(
+      /concurrency-sensitive files: src\/lib\/booking-message-definitions\.ts/,
+    );
+  });
+
+  it("does not take words that merely contain lock, tx or prisma for a construct", () => {
+    // Guards the wording file's exemption, not the gate's safety: without it a
+    // pattern widened to `/lock/i` would quietly turn the narrowing off.
+    const prose = [
+      'import { BookingStatus } from "@prisma/client";',
+      "export const NOTE = `Blocked by the clock(): unlock the txn context.`;",
+      "export const html = multilineBlock(NOTE) + clock(1) + String(BookingStatus.PAID);",
+      "",
+    ].join("\n");
+    expect(concurrencyConstructsIn(prose)).toEqual([]);
+  });
+
+  it("reads BOTH sides: a change that removes the lock is still sensitive", () => {
+    const base = `${WORDING}export const hold = (db, id) => acquireLodgeCapacityLock(db, id);\n`;
+    const contentsOf = reading({ [FILE]: [WORDING, base] });
+    expect(isConcurrencySensitiveChange(FILE, contentsOf)).toBe(true);
+    expect(() => validateConcurrencyDeclaration(naBody, [FILE], { contentsOf })).toThrow(
+      /cannot use N\/A/,
+    );
+  });
+
+  it("names only the files that still need the declaration", () => {
+    const writer = "src/lib/booking-cancel.ts";
+    const contentsOf = reading({
+      [FILE]: WORDING,
+      [writer]: "export const w = (db) => db.booking.update({ where: {}, data: {} });\n",
+    });
+    let message = "";
+    try {
+      validateConcurrencyDeclaration(naBody, [FILE, writer, "docs/README.md"], { contentsOf });
+    } catch (error) {
+      message = error.message;
+    }
+    expect(message).toContain("sensitive paths: src/lib/booking-cancel.ts.");
+    expect(message).not.toContain(FILE);
+  });
+
+  it("never lets content exempt the schema or a migration", () => {
+    const clean = () => ["-- nothing to see\n"];
+    for (const file of ["prisma/schema.prisma", "prisma/migrations/20260101000000_x/migration.sql"]) {
+      expect(isConcurrencySensitiveChange(file, clean)).toBe(true);
+      expect(() => validateConcurrencyDeclaration(naBody, [file], { contentsOf: clean })).toThrow(
+        /cannot use N\/A/,
+      );
+    }
+  });
+
+  it("still ignores test files and paths that never matched by name", () => {
+    const throws = () => {
+      throw new Error("must not be read");
+    };
+    expect(isConcurrencySensitiveChange("src/lib/__tests__/booking-cancel.test.ts", throws)).toBe(false);
+    expect(isConcurrencySensitiveChange("src/lib/thing.ts", throws)).toBe(false);
+    expect(isConcurrencySensitiveChange("docs/README.md", throws)).toBe(false);
+  });
+
+  /*
+    Fail closed. Each row is a way of NOT having read the file; none may exempt.
+  */
+  it.each([
+    ["no reader at all", undefined],
+    ["a reader that is not a function", "src/lib"],
+    ["a reader that throws (unreadable, deleted or renamed away)", () => { throw new Error("ENOENT"); }],
+    ["a reader that returns no content", () => []],
+    ["a reader that returns undefined", () => undefined],
+    ["a reader that returns a bare string rather than a list", () => WORDING],
+    ["a reader with a non-text side", () => [WORDING, null]],
+    ["a reader with a binary side", () => [Buffer.from(WORDING)]],
+  ])("treats a name-matched file as sensitive with %s", (_label, contentsOf) => {
+    expect(isConcurrencySensitivePath(FILE)).toBe(true);
+    expect(isConcurrencySensitiveChange(FILE, contentsOf)).toBe(true);
+    expect(() => validateConcurrencyDeclaration(naBody, [FILE], { contentsOf })).toThrow(
+      /cannot use N\/A for sensitive paths/,
+    );
+  });
+
+  it("still refuses N/A on an unresolved diff, whatever the reader says", () => {
+    const contentsOf = reading({ [FILE]: WORDING });
+    expect(() => validateConcurrencyDeclaration(naBody, null, { contentsOf })).toThrow(
+      /the PR diff could not be resolved/,
+    );
+    expect(() => validateConcurrencyDeclaration("no headings here", null, { contentsOf })).toThrow(
+      /PR body must include ## Concurrency And Lock Impact/,
+    );
+  });
+
+  /*
+    The real entrypoint over real git, the way `verify` runs it. Unit-calling the
+    validator with a hand-built reader cannot see whether the gate reads the
+    HEAD's content, finds the base side, or copes with a path git has dropped.
+  */
+  describe("through the CI entrypoint", () => {
+    let root;
+    afterEach(() => {
+      if (root) rmSync(root, { recursive: true, force: true });
+      root = undefined;
+    });
+
+    /** A repo whose base commit holds `baseFiles`; `change(git, root)` makes the head commit. */
+    function makeRange(baseFiles, change) {
+      root = mkdtempSync(join(tmpdir(), "content-gate-"));
+      const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
+      git("init", "--quiet");
+      git("config", "user.email", "gate-test@example.invalid");
+      git("config", "user.name", "Gate Test");
+      git("config", "commit.gpgsign", "false");
+      git("config", "core.autocrlf", "false");
+      const write = (relPath, contents) => {
+        mkdirSync(join(root, dirname(relPath)), { recursive: true });
+        writeFileSync(join(root, relPath), contents);
+      };
+      write("seed.txt", "seed\n");
+      for (const [relPath, contents] of Object.entries(baseFiles)) write(relPath, contents);
+      git("add", "-A");
+      git("commit", "--quiet", "-m", "base");
+      const base = git("rev-parse", "HEAD").trim();
+      change({ git, write });
+      git("add", "-A");
+      git("commit", "--quiet", "-m", "head");
+      return { base, head: git("rev-parse", "HEAD").trim() };
+    }
+
+    const LONG_WORDING = `${WORDING}${Array.from({ length: 60 }, (_, i) => `export const line${i} = "Message ${i}.";`).join("\n")}\n`;
+
+    it("passes N/A for an edited wording-only file", () => {
+      const range = makeRange({ [FILE]: WORDING }, ({ write }) =>
+        write(FILE, `${WORDING}export const EXTRA = "One more line of wording.";\n`),
+      );
+      const { status, output } = runGateEntrypoint(root, { body: naBody, ...range });
+      expect(output).toContain("the PR body declares N/A and no concurrency-sensitive file changed");
+      expect(status).toBe(0);
+    });
+
+    it("passes N/A for a new wording-only file under a bracketed route folder", () => {
+      // `[id]` is a glob to a pathspec; the base-side lookup must take it literally.
+      const file = "src/app/api/bookings/[id]/copy.ts";
+      const range = makeRange({ "src/app/api/bookings/1/copy.ts": "export const run = (db) => db.$transaction([]);\n" }, ({ write }) =>
+        write(file, WORDING),
+      );
+      const { status, output } = runGateEntrypoint(root, { body: naBody, ...range });
+      expect(output).toContain("declares N/A");
+      expect(status).toBe(0);
+    });
+
+    it("refuses N/A for an edited file that holds a writer the diff never touched", () => {
+      const writer = `${WORDING}export const w = (db) => db.booking.update({ where: {}, data: {} });\n`;
+      const range = makeRange({ [FILE]: writer }, ({ write }) =>
+        write(FILE, writer.replace("Your booking is confirmed.", "Your booking is now confirmed.")),
+      );
+      const { status, output } = runGateEntrypoint(root, { body: naBody, ...range });
+      expect(output).toContain(`cannot use N/A for sensitive paths: ${FILE}`);
+      expect(status).toBe(1);
+    });
+
+    it("refuses N/A when the head removed the only lock the base held", () => {
+      const range = makeRange(
+        { [FILE]: `${WORDING}export const hold = (db, id) => acquireLodgeCapacityLock(db, id);\n` },
+        ({ write }) => write(FILE, WORDING),
+      );
+      const { status, output } = runGateEntrypoint(root, { body: naBody, ...range });
+      expect(output).toContain(`cannot use N/A for sensitive paths: ${FILE}`);
+      expect(status).toBe(1);
+    });
+
+    it("refuses N/A for a deleted name-matched file, even a wording-only one", () => {
+      const range = makeRange({ [FILE]: WORDING }, ({ git }) => git("rm", "--quiet", FILE));
+      const { status, output } = runGateEntrypoint(root, { body: naBody, ...range });
+      expect(output).toContain(`cannot use N/A for sensitive paths: ${FILE}`);
+      expect(status).toBe(1);
+    });
+
+    it("refuses N/A for a name-matched file renamed away, even a wording-only one", () => {
+      const range = makeRange({ [FILE]: LONG_WORDING }, ({ git }) =>
+        git("mv", FILE, "src/lib/message-definitions.ts"),
+      );
+      expect(gitDiffChangedFiles(range.base, range.head, { cwd: root })).toMatch(/^R\d*\t/m);
+      const { status, output } = runGateEntrypoint(root, { body: naBody, ...range });
+      expect(output).toContain(`cannot use N/A for sensitive paths: ${FILE}`);
+      expect(status).toBe(1);
+    });
+
+    it("refuses N/A for a synchronous file that forwards to a writer it imports", () => {
+      const forwarder = [
+        'import { settleBooking } from "./booking-settle";',
+        "export function settle(id: string) {",
+        "  return settleBooking(id);",
+        "}",
+        "",
+      ].join("\n");
+      const range = makeRange(
+        {
+          "src/lib/booking-settle.ts":
+            "export async function settleBooking(id) { await db.booking.update({ where: { id } }); }\n",
+          [FILE]: forwarder,
+        },
+        ({ write }) => write(FILE, `${forwarder}// edited\n`),
+      );
+      const { status, output } = runGateEntrypoint(root, { body: naBody, ...range });
+      expect(output).toContain(`cannot use N/A for sensitive paths: ${FILE}`);
+      expect(status).toBe(1);
+    });
+
+    it("lets N/A pass for a file whose imports are all clean at the head", () => {
+      const user = `import { CLUB_COPY } from "@/lib/club-copy";\n${WORDING}`;
+      const range = makeRange(
+        { "src/lib/club-copy.ts": 'export const CLUB_COPY = "Kia ora";\n', [FILE]: user },
+        ({ write }) => write(FILE, `${user}// edited\n`),
+      );
+      const { status, output } = runGateEntrypoint(root, { body: naBody, ...range });
+      expect(output).toContain("PR concurrency declaration check passed");
+      expect(status).toBe(0);
+    });
+
+    it("the git reader throws for a path the head lacks and returns both sides otherwise", () => {
+      const range = makeRange({ [FILE]: WORDING, "src/lib/booking-old.ts": WORDING }, ({ git, write }) => {
+        write(FILE, `${WORDING}// edited\n`);
+        write("src/lib/booking-new.ts", WORDING);
+        git("rm", "--quiet", "src/lib/booking-old.ts");
+      });
+      const contentsOf = gitContentsReader({ ...range, cwd: root });
+      expect(contentsOf(FILE)).toEqual([`${WORDING}// edited\n`, WORDING]);
+      expect(contentsOf("src/lib/booking-new.ts")).toEqual([WORDING]);
+      expect(() => contentsOf("src/lib/booking-old.ts")).toThrow();
+      expect(() => gitContentsReader({ base: "no-such-ref", head: range.head, cwd: root })(FILE)).toThrow();
+    });
+  });
+});
+
+/*
+  #5038 follow-through: a synchronous file can forward to a writer it imports
+  (`return settleBooking(id)`) without naming any construct itself. The gate
+  follows local runtime imports at the head and exempts only a clean graph.
+*/
+describe("PR concurrency declaration gate: import graph (#5038)", () => {
+  const FILE = "src/lib/booking-message-definitions.ts";
+  const naBody = "## Concurrency And Lock Impact\n\n- [x] N/A — wording only.\n";
+  const WRITER = "export async function settleBooking(id) { await db.booking.update({ where: { id } }); }\n";
+  const CLEAN = 'export const CLUB_COPY = "Kia ora";\n';
+
+  /** A reader over `{ path: text }` whose `atHead` answers `null` for an absent path. */
+  const graph = (map) => {
+    const reader = (file) => {
+      if (!(file in map)) throw new Error(`ENOENT: ${file}`);
+      return [map[file]];
+    };
+    reader.atHead = (file) => (file in map ? map[file] : null);
+    return reader;
+  };
+
+  it.each([
+    ["a named import", 'import { settleBooking } from "./booking-settle";\nexport const go = (id) => settleBooking(id);\n'],
+    ["an alias import", 'import { settleBooking } from "@/lib/booking-settle";\nexport const go = (id) => void settleBooking(id);\n'],
+    ["a side-effect import", 'import "./booking-settle";\nexport const x = 1;\n'],
+    ["a re-export one hop away", 'import { go } from "./relay";\nexport const run = go;\n'],
+    ["a comment before the import", '/* x */ import { settleBooking } from "./booking-settle";\nexport const go = settleBooking;\n'],
+    ["a semicolon inside the braces", 'import { settleBooking /* ; */ } from "./booking-settle";\nexport const go = settleBooking;\n'],
+    ["a default import named type", 'import type from "./booking-settle";\nexport const go = type;\n'],
+    ["require()", 'const { settleBooking } = require("./booking-settle");\nexport const go = settleBooking;\n'],
+  ])("treats a file reaching a writer through %s as sensitive", (_label, text) => {
+    const contentsOf = graph({
+      [FILE]: text,
+      "src/lib/booking-settle.ts": WRITER,
+      "src/lib/relay.ts": 'import { settleBooking } from "./booking-settle";\nexport const go = settleBooking;\n',
+    });
+    expect(isConcurrencySensitiveChange(FILE, contentsOf)).toBe(true);
+    expect(() => validateConcurrencyDeclaration(naBody, [FILE], { contentsOf })).toThrow(
+      /cannot use N\/A/,
+    );
+  });
+
+  it.each([
+    ["a provider client handed in", "export function c(s, id) { return s.paymentIntents.cancel(id); }\n"],
+    ["a bracketed write", 'export const u = (db) => db.booking["update"]({});\n'],
+    ["a network call", 'export const k = () => fetch("/api/x");\n'],
+  ])("treats %s as sensitive with no import at all", (_label, text) => {
+    expect(concurrencyConstructsIn(text).length).toBeGreaterThan(0);
+    expect(isConcurrencySensitiveChange(FILE, graph({ [FILE]: text }))).toBe(true);
+  });
+
+  it("exempts a file whose whole local import graph is clean, cycles included", () => {
+    const contentsOf = graph({
+      [FILE]: 'import { CLUB_COPY } from "@/lib/club-copy";\nimport type { X } from "./booking-settle";\nexport const m = CLUB_COPY;\n',
+      "src/lib/club-copy.ts": `import { m } from "./booking-message-definitions";\n${CLEAN}`,
+      "src/lib/booking-settle.ts": WRITER,
+    });
+    expect(isConcurrencySensitiveChange(FILE, contentsOf)).toBe(false);
+    expect(validateConcurrencyDeclaration(naBody, [FILE], { contentsOf })).toEqual({ outcome: "declared-n-a" });
+  });
+
+  it("fails closed on an unresolvable import or a reader that cannot follow imports", () => {
+    const text = 'import { gone } from "./nowhere";\nexport const x = gone;\n';
+    expect(isConcurrencySensitiveChange(FILE, graph({ [FILE]: text }))).toBe(true);
+    const noAtHead = (file) => [file === FILE ? 'import { CLUB_COPY } from "./club-copy";\n' : CLEAN];
+    expect(isConcurrencySensitiveChange(FILE, noAtHead)).toBe(true);
+    const throwing = graph({ [FILE]: 'import { a } from "./club-copy";\n' });
+    throwing.atHead = () => {
+      throw new Error("git failed");
+    };
+    expect(isConcurrencySensitiveChange(FILE, throwing)).toBe(true);
+  });
+
+  it("mutation probe: a graph walk that always answers clean fails the forwarding case", () => {
+    // Simulates the mutation by handing the gate a reader whose imports all look
+    // clean; the real reader on the same source must disagree.
+    const forwarder = 'import { settleBooking } from "./booking-settle";\nexport const go = (id) => settleBooking(id);\n';
+    const real = graph({ [FILE]: forwarder, "src/lib/booking-settle.ts": WRITER });
+    const lying = graph({ [FILE]: forwarder, "src/lib/booking-settle.ts": CLEAN });
+    expect(isConcurrencySensitiveChange(FILE, lying)).toBe(false);
+    expect(isConcurrencySensitiveChange(FILE, real)).toBe(true);
   });
 });
