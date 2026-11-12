@@ -159,6 +159,11 @@ const DECLARED_JAVASCRIPT_MODULES = [
     load: () => import("../../../scripts/ci/server-only-boundary-selftest.mjs"),
   },
   {
+    module: "scripts/ci/summarise-playwright-flaky.mjs",
+    declaration: "scripts/ci/summarise-playwright-flaky.d.mts",
+    load: () => import("../../../scripts/ci/summarise-playwright-flaky.mjs"),
+  },
+  {
     module: "scripts/sync-user-guide-wiki.mjs",
     declaration: "scripts/sync-user-guide-wiki.d.mts",
     load: () => import("../../../scripts/sync-user-guide-wiki.mjs"),

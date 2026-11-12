@@ -5,20 +5,26 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { collectFlakyTests, renderFlakySummary } from "./summarise-playwright-flaky.mjs";
 
-const roots = [];
+type Attempt = "passed" | "failed" | "timedOut" | "interrupted" | "skipped";
+type Outcome = "expected" | "unexpected" | "skipped" | "flaky";
+type Spec = { file: string; title: string; tests: ReturnType<typeof test>[] };
+type Suite = { title: string; file: string; specs: Spec[]; suites?: Suite[] };
+type Report = { config?: { rootDir: string }; suites: Suite[] };
+
+const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
-const test = (status, statuses, projectName = "chromium") => ({
+const test = (status: Outcome, statuses: Attempt[], projectName = "chromium") => ({
   projectName, status, expectedStatus: "passed",
   results: statuses.map((status, retry) => ({ status, retry })),
 });
-const report = (...tests) => ({ suites: [{ title: "waitlist.spec.ts", file: "waitlist.spec.ts", specs: [], suites: [{
+const report = (...tests: ReturnType<typeof test>[]): Report => ({ suites: [{ title: "waitlist.spec.ts", file: "waitlist.spec.ts", specs: [], suites: [{
   title: "offer journey", file: "waitlist.spec.ts", specs: [{
     file: "waitlist.spec.ts", title: "accepts offer", tests,
   }],
 }] }] });
 
-function run(contents) {
+function run(contents: string | undefined) {
   const root = mkdtempSync(path.join(tmpdir(), "playwright-flaky-"));
   roots.push(root);
   const file = path.join(root, "results.json");
@@ -47,7 +53,7 @@ describe("Playwright flaky reporting", () => {
   it("resolves JSON testDir paths relative to the checkout for warning annotations", () => {
     const input = report(test("flaky", ["failed", "passed"]));
     input.config = { rootDir: path.resolve("e2e") };
-    expect(collectFlakyTests(input)[0].file).toBe("e2e/waitlist.spec.ts");
+    expect(collectFlakyTests(input)[0]?.file).toBe("e2e/waitlist.spec.ts");
     expect(run(JSON.stringify(input)).stdout).toContain("::warning file=e2e/waitlist.spec.ts::");
   });
 
@@ -81,7 +87,8 @@ describe("Playwright flaky reporting", () => {
 
   it("escapes table cells and workflow commands so titles cannot inject output", () => {
     const input = report(test("flaky", ["failed", "passed"]));
-    const spec = input.suites[0].suites[0].specs[0];
+    const spec = input.suites[0]?.suites?.[0]?.specs[0];
+    if (!spec) throw new Error("fixture has no nested spec");
     spec.title = "<b>a|b</b>\n::error::injected%";
     spec.file = "spec,name.ts\n::error::file";
     const flaky = collectFlakyTests(input);
