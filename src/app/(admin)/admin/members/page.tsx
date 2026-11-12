@@ -570,6 +570,9 @@ export default function MembersPage() {
         open={bulkDialogOpen}
         action={bulkAction}
         selectedIds={selectedIds}
+        selectedMembers={[...memberNames]
+          .filter(([id]) => selectedIds.has(id))
+          .map(([id, name]) => ({ id, name }))}
         onOpenChange={setBulkDialogOpen}
         onUpdated={handleBulkUpdated}
         onError={setError}

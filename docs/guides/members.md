@@ -85,7 +85,12 @@ cents; dates are NZ date-only.
 
 1. Select members (editors only) and use the bulk bar to **Deactivate**,
    **Reactivate**, **Change Access** (pick a new access role), or send login
-   emails to the selection. Confirm the dialog to apply.
+   emails to the selection. The dialog names the selected members (the first
+   ten, then "and N more") and says what the action does: **Deactivate** sets
+   each leaving date to today and clears future shared-room bed placements,
+   which **Reactivate** does not restore; **Reactivate** clears the leaving
+   date; **Change Access** replaces every access role each member holds with
+   the one you pick. Confirm the dialog to apply.
 2. **Set Membership Type** applies one seasonal membership type to the whole
    selection — handy at season start. Pick the type and season year, then
    **Preview**: the dialog aggregates how many members will change, how many

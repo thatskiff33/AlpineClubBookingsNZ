@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useConfirm } from "@/components/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -59,6 +60,7 @@ interface LodgeOption {
 }
 
 export default function AdminDisplayDevicesPage() {
+  const { confirm, confirmDialog } = useConfirm();
   // When a display device last checked in — real INSTANTS, projected through the club's persisted zone rather
   // than the viewer's or the build's (CT-4, #2870; INV-CONFIG-002).
   const clubTime = useClubTime();
@@ -230,9 +232,15 @@ export default function AdminDisplayDevicesPage() {
     await refresh();
   }
 
-  async function revoke(deviceId: string) {
+  async function revoke(device: ClientDevice) {
     setMessage(null);
-    const response = await fetch(`/api/admin/display/devices/${deviceId}/revoke`, {
+    if (!(await confirm({
+      title: `Revoke ${device.name}?`,
+      description: "The screen will return to pairing and must be paired again at the lodge.",
+      confirmLabel: "Revoke",
+      destructive: true,
+    }))) return;
+    const response = await fetch(`/api/admin/display/devices/${device.id}/revoke`, {
       method: "POST",
     });
     if (response.status === 403) {
@@ -265,6 +273,7 @@ export default function AdminDisplayDevicesPage() {
 
   return (
     <div className="p-6">
+      {confirmDialog}
       {viewOnlyBanner}
       <div className="space-y-6">
       <div>
@@ -519,7 +528,7 @@ export default function AdminDisplayDevicesPage() {
                       canEdit={canEdit}
                       describeReason={false}
                       variant="destructive"
-                      onClick={() => void revoke(device.id)}
+                      onClick={() => void revoke(device)}
                     >
                       Revoke
                     </ViewOnlyActionButton>

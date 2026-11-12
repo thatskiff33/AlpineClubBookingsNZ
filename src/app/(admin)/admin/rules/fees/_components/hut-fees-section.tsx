@@ -4,6 +4,8 @@ import type { AgeTier } from "@prisma/client";
 import { useEffect, useLayoutEffect, useMemo, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { adminHref } from "@/lib/admin-hubs";
+import { useConfirm } from "@/components/confirm-dialog";
+import { seasonDeleteConfirmation } from "../../../_lib/season-delete-confirmation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FieldHint, describedByFieldHint, useFieldHint } from "@/components/ui/field-hint";
@@ -144,6 +146,7 @@ function withoutKey(
 }
 
 export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
+  const { confirm, confirmDialog } = useConfirm();
   /*
     The club's RECORDED currency, not the build's (#3564; INV-CONFIG-006).
     This label was the transitional constant from `@/config/operational`,
@@ -621,13 +624,13 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     }
   }
 
-  async function handleDelete(id: string) {
+  async function handleDelete(season: Season) {
     if (!lodgeScopeReady) return;
     const requestedScope = scopedLodgeId;
-    if (!confirm("Are you sure you want to delete this season?")) return;
+    if (!(await confirm(seasonDeleteConfirmation(season.name)))) return;
 
     try {
-      const res = await fetch(`/api/admin/seasons/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/admin/seasons/${season.id}`, { method: "DELETE" });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || "Failed to delete");
@@ -635,7 +638,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
       if (activeScopeRef.current !== requestedScope) return;
       fetchSeasons();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      raiseError(err instanceof Error ? err.message : "Unknown error");
     }
   }
 
@@ -772,7 +775,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                 >
                   New season from this
                 </ViewOnlyActionButton>
-                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="destructive" size="sm" aria-label={`Delete ${season.name}`} onClick={() => handleDelete(season.id)}>
+                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="destructive" size="sm" aria-label={`Delete ${season.name}`} onClick={() => handleDelete(season)}>
                   Delete
                 </ViewOnlyActionButton>
               </div>
@@ -887,6 +890,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
       tabIndex={-1}
       className="focus:outline-none"
     >
+      {confirmDialog}
       <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
           {/*

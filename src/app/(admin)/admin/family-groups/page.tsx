@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { useConfirm } from "@/components/confirm-dialog";
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
@@ -57,6 +59,7 @@ export default function FamilyGroupsPage() {
 }
 
 function FamilyGroupsTab() {
+  const { confirm, confirmDialog } = useConfirm();
   // A partner invite's `expiresAt` and a group's `createdAt` are real INSTANTS,
   // read in the club's PERSISTED zone (`INV-CONFIG-002`). The shared helper they
   // used to go through pinned `APP_TIME_ZONE`, so an expiry an admin abroad was
@@ -87,6 +90,9 @@ function FamilyGroupsTab() {
   const [searching, setSearching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  // A failed delete is reported above the groups list, not inside the editor
+  // form, which may be closed when Delete is clicked on a row (#4973).
+  const [deleteError, setDeleteError] = useState("");
   // #2256: the create/edit form renders in the anchor below the filter card and
   // the two queue cards (pending changes, outstanding partner invites), while
   // its triggers sit elsewhere — New Group in the page header, Edit on a row in
@@ -361,22 +367,35 @@ function FamilyGroupsTab() {
     }
   }
 
-  async function handleDelete(id: string) {
+  async function handleDelete(group: FamilyGroupSummary) {
     if (!canEditMembership) return;
-    if (!confirm("Delete this family group? Members will be unlinked.")) return;
-    const res = await fetch(`/api/admin/family-groups/${id}`, { method: "DELETE" });
-    if (res.ok) {
+    if (!(await confirm({
+      title: `Delete ${group.name || "Unnamed Group"}?`,
+      description: "Members will be unlinked.",
+      confirmLabel: "Delete group",
+      destructive: true,
+    }))) return;
+    setDeleteError("");
+    try {
+      const res = await fetch(`/api/admin/family-groups/${group.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setDeleteError(data.error || "Failed to delete family group");
+        return;
+      }
       fetchData();
+    } catch {
+      setDeleteError("Failed to delete family group");
     }
   }
 
   async function handleRevokePartnerInvite(invite: PartnerInvite) {
-    if (
-      !confirm(
-        `Revoke the outstanding invitation to ${invite.invitedEmail}? The link they were sent will stop working.`
-      )
-    )
-      return;
+    if (!(await confirm({
+      title: `Revoke invitation to ${invite.invitedEmail}?`,
+      description: "The link they were sent will stop working.",
+      confirmLabel: "Revoke invitation",
+      destructive: true,
+    }))) return;
     setPartnerInviteError("");
     try {
       const res = await fetch(
@@ -417,7 +436,9 @@ function FamilyGroupsTab() {
 
   return (
     <div>
+      {confirmDialog}
       {viewOnlyBanner}
+      {deleteError && <Alert variant="error" className="mb-6">{deleteError}</Alert>}
       <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-foreground">Groups</h2>
@@ -859,7 +880,7 @@ function FamilyGroupsTab() {
                             describeReason={false}
                             variant="ghost"
                             size="sm"
-                            onClick={() => handleDelete(g.id)}
+                            onClick={() => handleDelete(g)}
                             className="text-danger-11 hover:text-danger-11 hover:bg-danger-3"
                             aria-label={`Delete ${g.name || "Unnamed Group"}`}
                           >
