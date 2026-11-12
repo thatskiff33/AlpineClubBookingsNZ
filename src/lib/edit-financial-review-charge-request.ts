@@ -16,8 +16,8 @@ import { formatCents } from "@/lib/utils";
 import {
   enqueueXeroSecondSupplementaryInvoiceOperation,
   restatePendingSupplementaryInvoiceAmount,
-  type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-supplementary-invoice-enqueue";
+import type { XeroSupplementaryInvoiceEnqueueOutcome } from "@/lib/xero-supplementary-invoice-statuses";
 import type { ClubFormat } from "@/lib/club-format";
 import type { UncollectedShareOverride } from "@/lib/edit-financial-review-charge-cancelled";
 import { LEDGER_ROWS_NEWEST_FIRST } from "@/lib/payment-ledger-order";

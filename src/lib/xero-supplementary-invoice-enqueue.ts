@@ -19,7 +19,7 @@ import { startXeroSyncOperation } from "@/lib/xero-sync";
 import { primaryInvoiceGapPayload } from "@/lib/additional-capture-receipt-payload";
 import { anchorCaptureHasReceipt, bookingHasUnattributedCaptures, keptInvoiceBillsChangeCapture } from "@/lib/additional-capture-receipt-link";
 import { supplementaryInvoiceBilledCents, XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
-import { outstandingSupplementaryInvoiceOperationsWhere, RESTATABLE_SUPPLEMENTARY_INVOICE_STATUSES, restatableSupplementaryInvoiceOperationsWhere } from "@/lib/xero-supplementary-invoice-statuses";
+import { outstandingSupplementaryInvoiceOperationsWhere, RESTATABLE_SUPPLEMENTARY_INVOICE_STATUSES, restatableSupplementaryInvoiceOperationsWhere, type XeroSupplementaryInvoiceEnqueueOutcome } from "@/lib/xero-supplementary-invoice-statuses";
 /**
  * Single-flights the link-check -> queued-check -> raise-or-create transaction
  * (#3170). All callers, composed lock orders and the transaction client's P2002
@@ -43,13 +43,6 @@ export async function lockSupplementaryInvoiceAnchor(
 ): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${XERO_SUPPLEMENTARY_INVOICE_LOCK_NAMESPACE}), hashtext(${anchorId}))`;
 }
-
-/** Whether the existing or queued invoice covers the requested accounting ask. */
-export type XeroSupplementaryInvoiceEnqueueOutcome =
-  | "covers-total"
-  | "short-sent"
-  | "short-in-flight"
-  | "none";
 
 /**
  * THE SECOND ASK (#3193, epic #2797): raise a settled review share's OWN small

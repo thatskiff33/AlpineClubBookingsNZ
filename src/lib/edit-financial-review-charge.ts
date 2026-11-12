@@ -42,8 +42,8 @@ import {
 } from "@/lib/xero-supplementary-invoice-statuses";
 import {
   enqueueEditReviewChargeInvoiceInTransaction,
-  type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-supplementary-invoice-enqueue";
+import type { XeroSupplementaryInvoiceEnqueueOutcome } from "@/lib/xero-supplementary-invoice-statuses";
 import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
 import type { Prisma } from "@prisma/client";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
