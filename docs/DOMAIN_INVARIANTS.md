@@ -788,6 +788,7 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-020` | Credential writes name a person or a named system actor, audited atomically |
 | `INV-PRIV-021` | Admin-origin issue-report screenshot pixels are Full-Admin-only; unknown origin fails closed |
 | `INV-PRIV-022` | Profile and booking dietary data absent unless one granted module selects it |
+| `INV-PRIV-023` | A stay's dietary value is cleared a club-set period after the stay |
 
 ## Membership Lifecycle
 
