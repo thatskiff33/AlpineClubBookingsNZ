@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { AlertTriangle } from "lucide-react";
 
 /**
@@ -47,26 +48,33 @@ export function DeleteAccountButton() {
     }
   }
 
-  if (submitted) {
-    return (
-      <p className="text-sm text-success-11 bg-success-3 border border-success-6 rounded-md px-3 py-2">
-        Your deletion request has been submitted. An admin will review it and
-        contact you by email.
-      </p>
-    );
-  }
-
+  // #4949: the confirmation fills a status region mounted with the button, so
+  // it is announced rather than inserted already filled.
   return (
     <>
-      <Button
-        variant="outline"
-        size="sm"
-        className="text-danger-11 border-danger-6 hover:bg-danger-3 hover:text-danger-11"
-        onClick={() => setOpen(true)}
+      <p
+        role="status"
+        className={
+          submitted
+            ? "text-sm text-success-11 bg-success-3 border border-success-6 rounded-md px-3 py-2"
+            : "sr-only"
+        }
       >
-        <AlertTriangle className="h-4 w-4 mr-2" />
-        Request Account Deletion
-      </Button>
+        {submitted
+          ? "Your deletion request has been submitted. An admin will review it and contact you by email."
+          : null}
+      </p>
+      {submitted ? null : (
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-danger-11 border-danger-6 hover:bg-danger-3 hover:text-danger-11"
+          onClick={() => setOpen(true)}
+        >
+          <AlertTriangle className="h-4 w-4 mr-2" />
+          Request Account Deletion
+        </Button>
+      )}
 
       <Dialog open={open} onOpenChange={(v) => !submitting && setOpen(v)}>
         <DialogContent>
@@ -110,7 +118,7 @@ export function DeleteAccountButton() {
               rows={3}
             />
           </div>
-          {error && <p className="text-sm text-danger-11">{error}</p>}
+          <FocusedActionError id="delete-account-error" error={error ?? ""} />
           <DialogFooter>
             <Button
               variant="outline"

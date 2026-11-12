@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { FocusedActionError } from "@/components/focused-action-error";
 
 /**
  * Lets the owner of a card (Stripe) PAYMENT_PENDING booking switch to Internet
@@ -61,9 +62,11 @@ export function SwitchToInternetBankingButton({
       <Button variant="outline" onClick={switchToInternetBanking} disabled={busy}>
         {busy ? "Switching..." : "Pay by internet banking instead"}
       </Button>
-      {error ? (
-        <p className="mt-2 text-sm text-destructive">{error}</p>
-      ) : null}
+      <FocusedActionError
+        id={`switch-to-internet-banking-${bookingId}-error`}
+        error={error}
+        className="mt-2"
+      />
     </div>
   );
 }

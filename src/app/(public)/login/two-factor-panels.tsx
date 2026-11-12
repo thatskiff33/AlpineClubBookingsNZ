@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { RetiredRecoveryCodesNotice } from "@/components/retired-recovery-codes-notice";
 
@@ -189,11 +190,7 @@ export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
-        {error ? (
-          <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            {error}
-          </div>
-        ) : null}
+        <FocusedActionError id="two-factor-enroll-error" error={error} />
 
         <div className="grid grid-cols-2 gap-2">
           <Button
@@ -390,11 +387,7 @@ export function TwoFactorVerifyPanel({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
-        {error ? (
-          <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            {error}
-          </div>
-        ) : null}
+        <FocusedActionError id="two-factor-verify-error" error={error} />
 
         {recoveryCodesRetired ? (
           <RetiredRecoveryCodesNotice>

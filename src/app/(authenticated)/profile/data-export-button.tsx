@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { Download } from "lucide-react";
 
 /**
@@ -62,7 +63,7 @@ export function DataExportButton() {
         <Download className="h-4 w-4" />
         {loading ? "Generating..." : "Download My Data"}
       </Button>
-      {error && <p className="text-sm text-danger-11">{error}</p>}
+      <FocusedActionError id="data-export-error" error={error ?? ""} />
     </div>
   );
 }

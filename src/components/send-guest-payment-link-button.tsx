@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { FocusedActionError } from "@/components/focused-action-error";
 
 /**
  * Split-booking guest-portion affordance (#1967). Shown with the
@@ -82,12 +83,15 @@ export function SendGuestPaymentLinkButton({ bookingId }: { bookingId: string })
             ? "Re-send the payment link"
             : "Email me a payment link for my guests"}
       </Button>
-      {done ? (
-        <p className="mt-2 text-sm text-success-11">{done}</p>
-      ) : null}
-      {error ? (
-        <p className="mt-2 text-sm text-destructive">{error}</p>
-      ) : null}
+      {/* #4949: mounted before the request, so the confirmation is announced. */}
+      <p role="status" className={done ? "mt-2 text-sm text-success-11" : "sr-only"}>
+        {done}
+      </p>
+      <FocusedActionError
+        id={`send-guest-payment-link-${bookingId}-error`}
+        error={error}
+        className="mt-2"
+      />
     </div>
   );
 }

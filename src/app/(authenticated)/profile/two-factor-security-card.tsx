@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { RetiredRecoveryCodesNotice } from "@/components/retired-recovery-codes-notice";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { isSecondFactorEnrolled } from "@/lib/second-factor-enrolment";
@@ -193,11 +194,7 @@ export function TwoFactorSecurityCard({
         </RetiredRecoveryCodesNotice>
       ) : null}
 
-      {error ? (
-        <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {error}
-        </div>
-      ) : null}
+      <FocusedActionError id="two-factor-security-error" error={error} />
 
       <div className="space-y-2">
         <p className="text-xs text-muted-foreground">Passkeys</p>

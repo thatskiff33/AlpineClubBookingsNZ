@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { useConfirm } from "@/components/confirm-dialog";
 
 type DeleteBookingMode = "draft" | "cancelled";
@@ -97,7 +98,7 @@ export function DeleteBookingButton({
         </div>
       ) : null}
 
-      {error ? <p className="text-sm text-danger-11">{error}</p> : null}
+      <FocusedActionError id={`delete-booking-${bookingId}-error`} error={error ?? ""} />
       {blockers.length > 0 ? (
         <ul className="space-y-1 text-sm text-danger-11">
           {blockers.map((blocker) => (

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { FocusedActionError } from "@/components/focused-action-error";
 
 export function NominationConfirmCard(props: {
   token: string;
@@ -46,16 +47,18 @@ export function NominationConfirmCard(props: {
 
   return (
     <div className="space-y-3">
-      {message && (
-        <div className="rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11">
-          {message}
-        </div>
-      )}
-      {error && (
-        <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
-      )}
+      {/* #4949: mounted before the request, so the outcome is announced. */}
+      <div
+        role="status"
+        className={
+          message
+            ? "rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11"
+            : "sr-only"
+        }
+      >
+        {message}
+      </div>
+      <FocusedActionError id="nomination-confirm-error" error={error} className="px-4 py-3" />
       {props.canConfirm && (
         <Button onClick={handleConfirm} disabled={loading}>
           {loading ? "Confirming..." : "Agree to Nominate"}
