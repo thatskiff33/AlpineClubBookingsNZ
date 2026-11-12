@@ -15,6 +15,18 @@ export const STRIPE_DISPUTE_STATUS_LABEL: Record<StripeDisputeStatus, string> = 
   CLOSED_OTHER: "closed with no funds taken",
 };
 
+/**
+ * The statuses that hold a capture's refunds and credits: open, or lost to the
+ * cardholder. The one rule the hold's query (`stripe-dispute-hold.ts`) and every
+ * dispute marker read; kept here, a leaf, so client components can import it.
+ */
+export const HOLDING_DISPUTE_STATUSES: readonly StripeDisputeStatus[] = ["OPEN", "LOST"];
+
+/** Whether a dispute in this status holds its capture's refunds and credits. */
+export function disputeHoldsCapture(status: StripeDisputeStatus): boolean {
+  return HOLDING_DISPUTE_STATUSES.includes(status);
+}
+
 /** What the app does while a dispute holds the capture: the one sentence both alerts carry. */
 export const STRIPE_DISPUTE_HOLD_NOTE =
   "While the dispute is open or lost, the app issues no card refund and no account credit for this payment: a cancellation is recorded and handed to the treasurer instead. " +

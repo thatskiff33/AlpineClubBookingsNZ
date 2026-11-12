@@ -12,12 +12,7 @@
  */
 import { StripeDisputeStatus, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-
-/** The statuses that hold a capture's refunds and credits. */
-export const HOLDING_DISPUTE_STATUSES: readonly StripeDisputeStatus[] = [
-  StripeDisputeStatus.OPEN,
-  StripeDisputeStatus.LOST,
-];
+import { HOLDING_DISPUTE_STATUSES } from "@/lib/stripe-dispute-note";
 
 type DisputeReader = Pick<Prisma.TransactionClient, "stripeDispute">;
 

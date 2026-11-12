@@ -1,6 +1,6 @@
 import type { StripeDisputeStatus } from "@prisma/client";
 
-import { STRIPE_DISPUTE_STATUS_LABEL } from "@/lib/stripe-dispute-note";
+import { STRIPE_DISPUTE_STATUS_LABEL, disputeHoldsCapture } from "@/lib/stripe-dispute-note";
 
 /**
  * #4911 (`INV-PAY-151`): the booking page's officer-only line that the booking's
@@ -14,7 +14,7 @@ export function BookingStripeDisputeNotice({
 }: {
   disputes: ReadonlyArray<{ stripeDisputeId: string; status: StripeDisputeStatus }>;
 }) {
-  const holding = disputes.some((dispute) => dispute.status === "OPEN" || dispute.status === "LOST");
+  const holding = disputes.some((dispute) => disputeHoldsCapture(dispute.status));
   return (
     <div
       role="status"

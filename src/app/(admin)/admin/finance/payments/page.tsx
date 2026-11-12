@@ -1,7 +1,7 @@
 "use client";
 
 import type { PaymentStatus, StripeDisputeStatus } from "@prisma/client";
-import { STRIPE_DISPUTE_STATUS_LABEL } from "@/lib/stripe-dispute-note";
+import { STRIPE_DISPUTE_STATUS_LABEL, disputeHoldsCapture } from "@/lib/stripe-dispute-note";
 import { RefundsAndCreditsOwedList } from "@/components/admin/refunds-and-credits-owed";
 import { useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
@@ -1288,7 +1288,7 @@ export default function PaymentsPage() {
                       {/* #4911 (`INV-PAY-151`): a cardholder dispute, by Stripe's dispute id. */}
                       {(p.disputes ?? []).map((dispute) => (
                         <span key={dispute.stripeDisputeId} title={`Stripe dispute ${dispute.stripeDisputeId} for ${formatCents(dispute.amountCents, format)}`}>
-                          <MiniChip tone={dispute.status === "OPEN" || dispute.status === "LOST" ? "warning" : "neutral"} icon={AlertTriangle}>
+                          <MiniChip tone={disputeHoldsCapture(dispute.status) ? "warning" : "neutral"} icon={AlertTriangle}>
                             Disputed by cardholder - {STRIPE_DISPUTE_STATUS_LABEL[dispute.status]}
                           </MiniChip>
                         </span>

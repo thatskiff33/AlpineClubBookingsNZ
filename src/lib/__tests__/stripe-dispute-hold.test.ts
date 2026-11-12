@@ -18,9 +18,9 @@ import {
   disputedCaptureCents,
   disputedCaptureRefusal,
   DisputedCaptureRefundRefusedError,
-  HOLDING_DISPUTE_STATUSES,
   paymentCaptureIntentIds,
 } from "@/lib/stripe-dispute-hold";
+import { HOLDING_DISPUTE_STATUSES, disputeHoldsCapture } from "@/lib/stripe-dispute-note";
 import { disputedCaptureRefundCause, unretryableRecoveryCause } from "@/lib/recovery-unretryable-cause";
 import { PartialRefundError } from "@/lib/payment-transactions";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -36,6 +36,7 @@ beforeEach(() => {
 describe("disputedCaptureCents (#4911)", () => {
   it("holds only on open and lost disputes", () => {
     expect([...HOLDING_DISPUTE_STATUSES]).toEqual(["OPEN", "LOST"]);
+    expect((["OPEN", "WON", "LOST", "CLOSED_OTHER"] as const).filter(disputeHoldsCapture)).toEqual(["OPEN", "LOST"]);
   });
 
   it("asks nothing when there is no capture to ask about", async () => {
