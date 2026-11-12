@@ -6,7 +6,7 @@ import { ADMIN_PAGES, adminPageRoutePath, getAdminPage, type AdminPageId } from 
 import { adminPageFiles, toRawPathname } from "./helpers/admin-route-enumeration";
 
 /**
- * Every admin page's heading is its menu name (#4968, INV-SSOT-001): the
+ * Every admin page's heading is its menu name (#4968, INV-SSOT-007): the
  * registry label the sidebar, the palette and help already show. Each page's
  * `<h1>` — and the `title` of a component that renders one — is read from
  * disk as JSX, so a comment or an unrelated string cannot satisfy it, and every
@@ -117,7 +117,7 @@ function headingsIn(file: string, seen = new Set<string>()): string[] {
   });
 }
 
-describe("admin page headings are their menu names (#4968, INV-SSOT-001)", () => {
+describe("admin page headings are their menu names (#4968, INV-SSOT-007)", () => {
   for (const page of ADMIN_PAGES) {
     if (page.kind !== "page" || EXCLUDED[page.id as AdminPageId]) continue;
     it(page.id, () => {

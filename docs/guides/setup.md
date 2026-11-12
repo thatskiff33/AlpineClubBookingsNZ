@@ -47,7 +47,7 @@ enough — every sub-page is captured and detailed where it lives.
    expected booking behavior if prompted.
 3. Use the **hub cards** to open a configuration area: Foundations Setup,
    Finance Setup, Bookings Setup, Integration Readiness, Membership & Members,
-   Cancellation Requests, or Email Messages / Notifications. Booking Rules, Operational
+   Cancellation Requests, or Notifications & Email. Booking Rules, Operational
    Integrations and Cancellation were drill-downs of their own until #4796
    merged each into the page it linked to; their old addresses still work.
 
@@ -64,7 +64,7 @@ the areas it links to:
 | Integration Readiness | Xero connection, modules, delivery health: a section of System Health ([health](health.md#integration-readiness)) | support; its Xero cards need finance |
 | Membership & Members | Membership types, member fields, subscription lockout ([membership-setup](membership-setup.md)) | membership |
 | Cancellation Requests | Cancellation settings and the request queue: the Settings tab of [Cancellation Requests](membership-cancellations.md) | membership |
-| Email Messages / Notifications | Delivery rules, recipients, templates, member copy ([notifications](notifications.md)) | support |
+| Notifications & Email | Delivery rules, recipients, templates, member copy ([notifications](notifications.md)) | support |
 
 Provider tests cover Stripe, SMTP (email), Sentry, and Xero. Each check is
 **complete**, **warning**, **blocked**, or **not started**.

@@ -21,8 +21,8 @@ import {
 } from "@/lib/admin-hubs";
 
 /**
- * The cards on the Setup page and its two drill-downs. Titles read the
- * registry (INV-SSOT). The Setup page is the checklist, so no card on a
+ * The cards on the Setup page and its two drill-downs. A card that opens a
+ * registry page is titled with its label (INV-SSOT-007). The Setup page is the checklist, so no card on a
  * drill-down links back to it — each drill-down's back link does (#4968).
  */
 export const setupHubCards: AdminHubSection[] = [
@@ -43,7 +43,7 @@ export const setupHubCards: AdminHubSection[] = [
   // they replaced were merged into.
   {
     href: adminHref("bookings-setup"),
-    title: "Bookings Setup",
+    title: getAdminPage("bookings-setup").label,
     description:
       "Review booking policy, seasons, age groups, promo codes, inventory, and booking copy.",
     icon: BookOpenCheck,
@@ -56,8 +56,8 @@ export const setupHubCards: AdminHubSection[] = [
     icon: Plug,
   },
   {
-    href: "/admin/membership-setup",
-    title: "Membership & Members",
+    href: adminHref("membership-setup"),
+    title: getAdminPage("membership-setup").label,
     description:
       "Configure membership types, member fields, and subscription lockout policy.",
     icon: BadgeCheck,
@@ -71,7 +71,7 @@ export const setupHubCards: AdminHubSection[] = [
   },
   {
     href: adminHref("notifications"),
-    title: "Email Messages / Notifications",
+    title: getAdminPage("notifications").label,
     description:
       "Manage delivery rules, recipients, email templates, and member-facing message text.",
     icon: Bell,
@@ -92,22 +92,22 @@ export const foundationsSetupSections: AdminHubSection[] = [
     icon: BadgeInfo,
   },
   {
-    href: "/admin/modules",
-    title: "Modules",
+    href: adminHref("modules"),
+    title: getAdminPage("modules").label,
     description:
       "Enable or disable optional club features before opening related workflows.",
     icon: Puzzle,
   },
   {
-    href: "/admin/lodges",
-    title: "Lodges",
+    href: adminHref("lodges"),
+    title: getAdminPage("lodges").label,
     description:
       "Create and maintain lodge records used by multi-lodge configuration.",
     icon: Building2,
   },
   {
     href: adminHref("health"),
-    title: "System Health",
+    title: getAdminPage("health").label,
     description:
       "Check runtime, database, provider, and background-job readiness.",
     icon: Activity,
@@ -124,7 +124,7 @@ export const financeSetupLinks: AdminHubSection[] = [
   },
   {
     href: adminHref("xero-setup"),
-    title: "Xero Setup",
+    title: getAdminPage("xero-setup").label,
     description:
       "Connect Xero and configure accounting settings used by finance workflows.",
     icon: Plug,
