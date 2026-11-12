@@ -71,6 +71,7 @@ import {
 import { adoptSavedCardChargeAttemptForIntent } from "@/lib/saved-card-charge-settle";
 import { GROUP_SETTLEMENT_INTENT_TYPE, appPaymentIntentRoute } from "@/lib/stripe-app-intent-metadata";
 import { recordUnmatchedAppStripePayment, recordUnrecognisedStripePayment } from "@/lib/unrecognised-stripe-payment";
+import { recordStripeDispute } from "@/lib/stripe-dispute";
 import { STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES } from "@/lib/stripe-webhook-lease";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { isCapturedTransactionStatus, isRefusedRefundStatus } from "@/lib/payment-transaction-status";
@@ -310,6 +311,15 @@ export async function processStripeWebhookEvent(
       case "refund.updated":
       case "charge.refund.updated":
         await recordRefusedCardRefund(event.data.object as Stripe.Refund);
+        break;
+
+      // #4911 (`INV-PAY-151`): one record and two Finance alerts per dispute;
+      // the record holds the capture's refunds and credits. Never a refund.
+      case "charge.dispute.created":
+      case "charge.dispute.funds_withdrawn":
+      case "charge.dispute.funds_reinstated":
+      case "charge.dispute.closed":
+        await recordStripeDispute(event.data.object as Stripe.Dispute, event, format);
         break;
 
       default:

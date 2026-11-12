@@ -27,6 +27,7 @@ import { IntentLedgerRowOnAnotherPaymentError, writePaymentIntentTransaction } f
 import { accountCreditDispositionCents } from "@/lib/stripe-cash-refund-evidence";
 import { readPaidAnotherWayCloseBankCashByPayment } from "@/lib/card-refund-paid-another-way-cash";
 import type { ClubFormat } from "@/lib/club-format";
+import { DisputedCaptureRefundRefusedError, disputedCaptureCents } from "@/lib/stripe-dispute-hold";
 import { MemberMoneyReservationRefused, postBookingReceipts, postCardRefundCash, reserveCardRefundSlice, resolveBookingMoneyPostingContext,
   type BookingJournalContext, type CardRefundObligationRef, type CardRefundReservationOutcome, type CardRefundSliceReservation } from "@/lib/member-money/doors";
 import { createAuditLog } from "@/lib/audit";
@@ -1584,6 +1585,19 @@ export async function refundPaymentTransactions({
     }
 
     slices = derived.slices;
+  }
+
+  // #4911 (`INV-PAY-151`): a disputed capture refunds nothing, decided for every slice before any is reserved or
+  // sent, so no part of a refund goes out ahead of the refusal. The chokepoint (`processRefund`) asks again per slice.
+  const disputeHold = await disputedCaptureCents(store, slices.map((slice) => slice.transaction.stripePaymentIntentId));
+  const [first] = disputeHold.disputes;
+  if (first) {
+    throw new PartialRefundError({
+      completedRefundCents: 0,
+      refunds: [],
+      cause: new DisputedCaptureRefundRefusedError(first.stripePaymentIntentId, disputeHold.disputes),
+      format,
+    });
   }
 
   const sliceKey = (slice: { transaction: { id: string }; amountCents: number; stripeKeySuffix?: string }) => idempotencyKeyPrefix
