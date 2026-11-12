@@ -275,6 +275,7 @@ let markerFinishedAt: Date | null = null;
     beforeEach(async () => {
       resetStripeRaceHooks();
       await deletePaymentRows();
+      await prisma.cancellationPolicy.updateMany({ where: { lodgeId: LODGE_ID }, data: { refundPercentage: 50 } });
       // Again for each test: another suite run beside this one (#4104's) restores the
       // marker in its own afterAll, which would make these refunds read as backlog.
       await setCutoff(new Date("2026-01-01T00:00:00.000Z"));
@@ -427,7 +428,7 @@ let markerFinishedAt: Date | null = null;
         stripeRaceHooks.refund = accept;
         const x = made[0];
         if (!x) throw new Error("Stripe made no refund");
-        return { x, cancelRow: await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { idempotencyKey: CANCEL_KEY } }) };
+        return { x, made, cancelRow: await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { idempotencyKey: CANCEL_KEY } }) };
       }
 
       /** The `charge.refunded` sync records X as Stripe holds it: still `pending`, counted. */
@@ -468,6 +469,64 @@ let markerFinishedAt: Date | null = null;
         expect(page).toContain(`$100.00 could not go back to your card and was paid back to you another way ${RETAINED}`);
         expect(page).not.toContain("on its way");
         expect(page).not.toContain("was refunded");
+      });
+
+      it("a full refund paid back by bank keeps that cash in the refunded total when the late card refund fails", async () => {
+        await prisma.cancellationPolicy.updateMany({ where: { lodgeId: LODGE_ID }, data: { refundPercentage: 100 } });
+        const { x, cancelRow } = await cancelAnswerLost();
+        expect(x.amount).toBe(PAID_CENTS);
+        vi.setSystemTime(CLOSED_AT);
+        await paidAnotherWay(cancelRow.id, PAID_CENTS);
+        await recordedLate(x);
+        expect((await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } })).refundedAmountCents).toBe(PAID_CENTS);
+
+        vi.setSystemTime(FAILED_AT);
+        expect(await recordRefusedCardRefund({ ...x, status: "failed" } as Stripe.Refund)).toBe("recorded");
+        expect(await prisma.paymentRecoveryOperation.findUnique({ where: { idempotencyKey: `card_refund_failed_later_${x.id}` } })).toBeNull();
+        // The card refund filled no remaining headroom: failing it must preserve the bank transfer.
+        expect((await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } })).refundedAmountCents).toBe(PAID_CENTS);
+      });
+
+      it("the real runner holds an older unweighed failed-later row as a dead check and sends no additional card refund", async () => {
+        const { x, made, cancelRow } = await cancelAnswerLost();
+        vi.setSystemTime(CLOSED_AT);
+        await paidAnotherWay(cancelRow.id, MEMBER_REFUND_CENTS);
+        await recordedLate(x);
+        vi.setSystemTime(FAILED_AT);
+        expect(await recordRefusedCardRefund({ ...x, status: "failed" } as Stripe.Refund)).toBe("recorded");
+        const key = `card_refund_failed_later_${x.id}`;
+        expect(await prisma.paymentRecoveryOperation.findUnique({ where: { idempotencyKey: key } })).toBeNull();
+
+        // An older release raised this row without recording that it had weighed the close.
+        const old = await prisma.paymentRecoveryOperation.create({
+          data: {
+            type: "REFUND_BOOKING_MODIFICATION",
+            status: "PENDING",
+            bookingId: BOOKING_ID,
+            paymentId: PAYMENT_ID,
+            paymentIntentId: INTENT,
+            amountCents: MEMBER_REFUND_CENTS,
+            idempotencyKey: key,
+            stripeKeyPrefix: key,
+            allocationPlan: [{ paymentTransactionId: TXN_ID, amountCents: MEMBER_REFUND_CENTS }],
+            nextRetryAt: FAILED_AT,
+          },
+        });
+        expect(made).toHaveLength(1);
+        expect(await runPaymentRecoveryOperationNow(old.id, CLUB_FORMAT_TEST)).toBe("not-claimed");
+        expect(made).toHaveLength(1);
+        const held = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: old.id } });
+        expect(held).toMatchObject({ status: "PENDING", attempts: 5, processingStartedAt: null });
+        expect(parseRefundAllocationPlan(held.allocationPlan)).toEqual([{
+          paymentTransactionId: TXN_ID,
+          amountCents: MEMBER_REFUND_CENTS,
+          paidAnotherWayWeighed: true,
+          paidAnotherWayCheck: { closedOperationId: cancelRow.id, reason: "uncertain" },
+        }]);
+        expect((await listDeadCardRefunds()).filter((each) => each.bookingId === BOOKING_ID)).toEqual([expect.objectContaining({ operationId: old.id, owedCents: MEMBER_REFUND_CENTS, check: "uncertain" })]);
+        const audit = await prisma.auditLog.findFirstOrThrow({ where: { targetId: BOOKING_ID, action: "booking-payment.card-refund.failed-later-paid-another-way", metadata: { path: ["heldByRunner"], equals: true } } });
+        expect(audit).toMatchObject({ entityType: "PaymentRefund", entityId: x.id, category: "payment" });
+        expect(audit.metadata).toMatchObject({ decision: "raised-check-uncertain", raisedOperationId: old.id, operationId: cancelRow.id, heldByRunner: true });
       });
 
       // #4210 round 2 (F3): a part close may have given up the refund's share - that much is left for an officer.

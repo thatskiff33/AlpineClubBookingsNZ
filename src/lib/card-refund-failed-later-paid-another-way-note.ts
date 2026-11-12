@@ -61,9 +61,10 @@ const CLOSE_CHECK = `If the member is owed it, pay them another way and close it
 /** How the refund stood when the close was recorded (money F5: said only where true). */
 function howItStood(note: PaidAnotherWayFailedLaterNoteInput): string {
   if (note.outcome === "raised-check-uncertain") return "";
+  const closeShare = note.partClose ? "treated its share as still owed" : "paid its share back";
   return note.recordedAfterClose
-    ? " The app had not yet counted this refund when the close was recorded, so the close paid its share back."
-    : " The app had counted this refund toward another card refund on the booking, not this one, so the close paid its share back.";
+    ? ` The app had not yet counted this refund when the close was recorded, so the close ${closeShare}.`
+    : ` The app had counted this refund toward another card refund on the booking, not this one, so the close ${closeShare}.`;
 }
 
 export function paidAnotherWayFailedLaterNote(note: PaidAnotherWayFailedLaterNoteInput): string {

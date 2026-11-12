@@ -484,6 +484,8 @@ describe("the officers' alert: its own unmuteable mail", () => {
       debt({ outcome: "raised-check-uncertain", paidAnotherWay: { ...debt().paidAnotherWay!, checkCents: 4_000, onPaidTwiceList: false, recordedAfterClose: false } }),
     ]);
     expect(noteOf(0)).toMatch(/paid the member back \$25\.00 of the \$40\.00 it owed and gave the rest up.*Up to \$15\.00 of this refund may be part of what the close gave up/);
+    expect(noteOf(0)).toContain("The app had not yet counted this refund when the close was recorded, so the close treated its share as still owed.");
+    expect(noteOf(0)).not.toContain("so the close paid its share back");
     expect(noteOf(1)).toMatch(/marked resolved under "Card refunds paid back twice", with the note: "Returned by bank"\. If the member returned the extra, they are owed \$40\.00 again/);
     expect(noteOf(2)).toMatch(/The app cannot tell whether that close paid this refund's share back.*\$40\.00 is listed under/);
     expect(noteOf(2)).not.toMatch(/counted this refund/);
@@ -493,5 +495,11 @@ describe("the officers' alert: its own unmuteable mail", () => {
       // Round 4 (money F-E): what becomes of a card refund note Xero still holds for it.
       expect(noteOf(call)).toMatch(/checked - not owed, and then a card refund credit note raised in Xero while Stripe counted the refund no longer matches money paid back: the Xero reconciliation report lists it/);
     }
+  });
+
+  it("a part close that counted the refund toward another row says its share was still owed, without claiming it all was paid back", async () => {
+    await alertFailedLaterCardRefunds([debt({ outcome: "raised-check-part-close", paidAnotherWay: { ...debt().paidAnotherWay!, paidBackCents: 2_500, checkCents: 1_500, recordedAfterClose: false, onPaidTwiceList: false } })]);
+    expect(noteOf()).toContain("The app had counted this refund toward another card refund on the booking, not this one, so the close treated its share as still owed.");
+    expect(noteOf()).not.toContain("so the close paid its share back");
   });
 });
