@@ -5,13 +5,15 @@
  * the card-refund chokepoint's in `stripe.test.ts`.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { PaymentRecoveryOperationType } from "@prisma/client";
+import { PaymentRecoveryOperationType, type Prisma } from "@prisma/client";
 
 const db = vi.hoisted(() => ({
   stripeDispute: { findMany: vi.fn() },
   paymentTransaction: { findMany: vi.fn() },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: db }));
+/** The double, as the reader the helpers take (each test sets only the one query it reads). */
+const reader = db as unknown as Prisma.TransactionClient;
 
 import {
   assertCaptureNotDisputed,
@@ -40,14 +42,14 @@ describe("disputedCaptureCents (#4911)", () => {
   });
 
   it("asks nothing when there is no capture to ask about", async () => {
-    expect(await disputedCaptureCents(db, [null, undefined, ""])).toEqual({ cents: 0, disputes: [] });
+    expect(await disputedCaptureCents(reader, [null, undefined, ""])).toEqual({ cents: 0, disputes: [] });
     expect(db.stripeDispute.findMany).not.toHaveBeenCalled();
   });
 
   it("reads each capture once, for holding disputes only, and sums what they claim", async () => {
     db.stripeDispute.findMany.mockResolvedValue([OPEN, LOST]);
 
-    expect(await disputedCaptureCents(db, ["pi_1", "pi_2", "pi_1", null])).toEqual({ cents: 5000, disputes: [OPEN, LOST] });
+    expect(await disputedCaptureCents(reader, ["pi_1", "pi_2", "pi_1", null])).toEqual({ cents: 5000, disputes: [OPEN, LOST] });
     expect(db.stripeDispute.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { stripePaymentIntentId: { in: ["pi_1", "pi_2"] }, status: { in: ["OPEN", "LOST"] } },
     }));
@@ -58,7 +60,7 @@ describe("paymentCaptureIntentIds (#4911)", () => {
   it("names the payment's own intents and every ledger row's, once each", async () => {
     db.paymentTransaction.findMany.mockResolvedValue([{ stripePaymentIntentId: "pi_1" }, { stripePaymentIntentId: "pi_3" }]);
 
-    expect(await paymentCaptureIntentIds(db, { id: "payment_1", stripePaymentIntentId: "pi_1", additionalPaymentIntentId: "pi_2" }))
+    expect(await paymentCaptureIntentIds(reader, { id: "payment_1", stripePaymentIntentId: "pi_1", additionalPaymentIntentId: "pi_2" }))
       .toEqual(["pi_1", "pi_2", "pi_3"]);
     expect(db.paymentTransaction.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { paymentId: "payment_1", stripePaymentIntentId: { not: null } },
