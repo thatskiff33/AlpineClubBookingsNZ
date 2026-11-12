@@ -104,7 +104,7 @@ import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import type { BookingJournalContext } from "@/lib/member-money/doors";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
-import { reserveModificationRefundDebts } from "@/lib/booking-modification-settlement";
+import { reserveModificationRefundDebts, type BookingModificationPaymentContext } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
 import {
   pricingSideFromPriceBreakdown,
@@ -128,7 +128,7 @@ export type RemoveBookingGuestResult = {
   priceDiffCents: number;
   refundAmountCents: number;
   accountCreditAmountCents: number;
-  ownCardRefund: import("@/lib/booking-modification-settlement").BookingModificationPaymentContext["ownCardRefund"];
+  ownCardRefund: BookingModificationPaymentContext["ownCardRefund"];
   pendingRefundAmountCents: number;
   additionalAmountCents: number;
   /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead of this member. */
@@ -289,7 +289,6 @@ function resolveRemovalReviewUpdate({
 
 export async function removeBookingGuestInTransaction({
   tx,
-  door,
   bookingId,
   guestId,
   actorMemberId,
@@ -303,7 +302,6 @@ export async function removeBookingGuestInTransaction({
   journal,
 }: {
   tx: Prisma.TransactionClient;
-  door: "guestRemoval";
   bookingId: string;
   guestId: string;
   actorMemberId: string;
@@ -1068,9 +1066,10 @@ export async function removeBookingGuestInTransaction({
       booking.payment?.id,
     );
   }
-  // #3653: an organiser-settled child's refund debt, before this edit commits.
+  // #3653, #4992: the card refund this edit owes (an organiser's, or the member's
+  // own with its frozen plan), written before this edit commits.
   const ownCardRefund = await reserveModificationRefundDebts(tx, {
-    door,
+    door: "guestRemoval",
     pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
     plan: paymentImpact.organiserChildRefund,
     bookingId,

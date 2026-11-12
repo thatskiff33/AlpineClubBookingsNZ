@@ -73,7 +73,7 @@ export async function closePrePersistedRefundRow({
 
 /** The pre-persisted doors: each names its alert's once-ever key (`<door>-close-lost:<row id>`). */
 export const PRE_PERSISTED_REFUND_DOORS = {
-  "booking-modification": { name: "the booking modification", refundLabel: "The booking edit’s card refund" },
+  "booking-modification": { name: "the booking modification", refundLabel: "The booking edit's card refund" },
   cancellation: { name: "the cancellation", refundLabel: "The cancellation's card refund" },
   "edit-review": { name: "the edit financial review", refundLabel: "The edit review's card refund" },
   "duplicate-capture": { name: "the duplicate capture", refundLabel: "The duplicate capture's refund" },

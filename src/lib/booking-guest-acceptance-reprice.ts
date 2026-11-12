@@ -19,6 +19,8 @@ import {
   createModificationAdditionalPaymentIntent,
   drainSupersededPrimaryIntents,
   executeBookingModificationRefund,
+  reserveModificationRefundDebts,
+  type BookingModificationPaymentContext,
 } from "@/lib/booking-modification-settlement";
 import {
   applyLifecycleTransitions,
@@ -50,7 +52,6 @@ import { sendBookingModifiedEmail } from "@/lib/email/booking";
 import { editRefundBankTransferPayee, raiseEditRefundHandBackIfOwed } from "@/lib/edit-refund-hand-back";
 import { fullReductionReturnRoute } from "@/lib/booking-guest-acceptance-return-route";
 import { getDefaultLodgeId } from "@/lib/lodges";
-import { reserveModificationRefundDebts } from "@/lib/booking-modification-settlement";
 import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import logger from "@/lib/logger";
 import {
@@ -142,7 +143,7 @@ export type GuestAcceptanceReprice =
       priceDiffCents: number;
       refundAmountCents: number;
       /** The Stripe slice of `refundAmountCents`, refunded after commit. */
-      ownCardRefund: import("@/lib/booking-modification-settlement").BookingModificationPaymentContext["ownCardRefund"];
+      ownCardRefund: BookingModificationPaymentContext["ownCardRefund"];
       pendingRefundAmountCents: number;
       /**
        * #3653 (composed by #3829): non-null when that slice goes back to the
@@ -521,8 +522,8 @@ export async function repriceBookingAfterGuestAcceptance(
   });
   // #3954: a smaller re-issued ask, and a billed offset's note, are durable from this commit.
   await queueEditAskFollowUps(tx, { bookingId, paymentId: booking.payment?.id ?? null, bookingModificationId: bookingModification.id, door: "guestAcceptanceReprice", settled: paymentImpact });
-  // #3653 (composed by #3829): an organiser-settled child's refund debt, before
-  // this re-price commits, as every edit door reserves it.
+  // #3653 (composed by #3829), #4992: the card refund this re-price owes (an
+  // organiser's, or the member's own with its frozen plan), before it commits.
   const ownCardRefund = await reserveModificationRefundDebts(tx, {
     door: "guestAcceptanceReprice",
     pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,

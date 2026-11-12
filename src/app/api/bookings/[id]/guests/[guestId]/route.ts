@@ -147,7 +147,6 @@ export async function DELETE(
   try {
     const result = await prisma.$transaction((tx) =>
       removeBookingGuestInTransaction({
-        door: "guestRemoval",
         format,
         journal,
         tx,

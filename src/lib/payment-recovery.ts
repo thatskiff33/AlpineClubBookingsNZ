@@ -231,6 +231,14 @@ export async function enqueuePaymentIntentCancellationRecovery({
   });
 }
 
+/** #4992: the payment has no Stripe intent, so there is no card to owe this refund to. */
+export class NoRefundPaymentIntentError extends Error {
+  constructor() {
+    super("Cannot enqueue ledger refund recovery without a payment intent");
+    this.name = "NoRefundPaymentIntentError";
+  }
+}
+
 async function enqueueLedgerRefundRecovery({
   bookingId,
   paymentId,
@@ -277,9 +285,7 @@ async function enqueueLedgerRefundRecovery({
     null;
 
   if (!representativePaymentIntentId) {
-    throw new Error(
-      "Cannot enqueue ledger refund recovery without a payment intent",
-    );
+    throw new NoRefundPaymentIntentError();
   }
 
   const allocationPlanJson =

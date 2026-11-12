@@ -32,6 +32,7 @@ import {
   enqueueAdditionalPaymentIntentRecovery,
   enqueueBookingModificationRefundRecovery,
   markBookingModificationRefundRecoverySucceeded,
+  NoRefundPaymentIntentError,
   processPaymentRecoveryOperations,
 } from "@/lib/payment-recovery";
 import { runOrganiserChildRefundDebtNow } from "@/lib/organiser-child-refund-executor";
@@ -182,12 +183,21 @@ async function reserveBookingModificationCardRefund(
     if (err instanceof Prisma.PrismaClientKnownRequestError || err instanceof Prisma.PrismaClientUnknownRequestError) throw err;
     logger.error({ err, bookingId, paymentId }, "Could not plan the edit's card refund; reserving the whole debt (#4992)");
   }
-  await enqueueBookingModificationRefundRecovery({
-    bookingId, paymentId, bookingModificationId, amountCents: pendingRefundAmountCents,
-    stripeKeyPrefix: `${buildBookingModificationRefundKeyPrefix(door, bookingId)}_${bookingModificationId}`,
-    ...(plan ? { allocationPlan: plan } : {}),
-    store: tx,
-  });
+  try {
+    await enqueueBookingModificationRefundRecovery({
+      bookingId, paymentId, bookingModificationId, amountCents: pendingRefundAmountCents,
+      stripeKeyPrefix: `${buildBookingModificationRefundKeyPrefix(door, bookingId)}_${bookingModificationId}`,
+      ...(plan ? { allocationPlan: plan } : {}),
+      store: tx,
+    });
+  } catch (err) {
+    // A payment with no Stripe intent has no card to owe a refund to: the edit
+    // still stands and the door reports the refund pending, as before #4992.
+    // Any other failure rolls the edit back.
+    if (!(err instanceof NoRefundPaymentIntentError)) throw err;
+    logger.error({ err, bookingId, paymentId }, "Could not reserve the edit's card refund debt: the payment has no Stripe intent (#4992)");
+    return null;
+  }
   return { plan };
 }
 

@@ -2089,7 +2089,8 @@ export async function modifyBookingBatch({
         booking.payment?.id,
       );
     }
-    // #3653: an organiser-settled child's refund debt, before this edit commits.
+    // #3653, #4992: the card refund this edit owes (an organiser's, or the member's
+    // own with its frozen plan), written before this edit commits.
     const ownCardRefund = await reserveModificationRefundDebts(tx, {
       door: "batchModify",
       pendingRefundAmountCents: payments.pendingRefundAmountCents,

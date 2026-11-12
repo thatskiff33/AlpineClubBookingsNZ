@@ -13,14 +13,15 @@
  * refusal back. Whoever READS a refusal therefore moves that slice to its next
  * key generation (`nextRefusedRefundKeySuffix`), a key never sent before:
  *
- * - The edit's door (#3984) and an approved refund request (#4102) queue their
- *   attempt's whole plan, refused slices already moved and made ones marked
+ * - An approved refund request (#4102) queues its attempt's whole plan,
+ *   refused slices already moved and made ones marked
  *   (`inlineRefundAfterAttempt`), so "Refunds owed" counts them
  *   (`openCardRefundOwedByOperation`).
- * - A door whose row was written before its attempt - the cancellation, the edit
- *   review, the late-capture approval, the duplicate capture and the capacity
- *   race (#4103) - moves its row's plan the same way, only while no worker has
- *   touched it (PENDING, no attempt yet; `keepRefusedPrePersistedRefundOwed`).
+ * - A door whose row was written before its attempt - the cancellation, a
+ *   booking edit's own-card refund (#4992), the edit review, the late-capture
+ *   approval, the duplicate capture and the capacity race (#4103) - moves its
+ *   row's plan the same way, only while no worker has touched it (PENDING, no
+ *   attempt yet; `keepRefusedPrePersistedRefundOwed`).
  * - The late-capture webhook, which writes no row before its attempt, holds a
  *   refusal for a treasurer instead (`holdLateCaptureRefusedByStripe`, #4103),
  *   whose approval asks on the key its recorded refusals count to
@@ -28,7 +29,7 @@
  * - The runner, on the attempt it holds, does the same and fails the attempt,
  *   so the backoff asks again.
  *
- * The runner, the pre-persisted doors, the edit and the refund request keep every slice in the
+ * The runner, the pre-persisted doors and the refund request keep every slice in the
  * plan and the row's amount as the plan's total (`planAfterAttempt`,
  * `inlineRefundAfterAttempt`): a slice Stripe made beside a refusal is marked
  * with its refund and never sent again - so a replay past Stripe's 24-hour
@@ -200,9 +201,11 @@ export type InlineRefundRead = {
 };
 
 /**
- * #4102, #4117, #3984: an inline attempt over a frozen plan, read, for a door
- * that raises its recovery row AFTER the attempt (an approved refund request,
- * or a booking edit's own-card refund).
+ * #4102, #4117: an inline attempt over a frozen plan, read, for a door that
+ * raises its recovery row AFTER the attempt (an approved refund request). A
+ * booking edit's own-card refund is no longer one: since #4992 its row is
+ * written before the attempt, so it is a pre-persisted door
+ * (`keepRefusedPrePersistedRefundOwed`, `markPrePersistedRefundAttempt`).
  * `refundPaymentTransactions` sends the plan in order and stops at the first
  * slice that throws, wrapping any throw after a Stripe call in
  * `PartialRefundError` with the slices answered before it, so the first
@@ -460,7 +463,7 @@ export async function keepRefusedPrePersistedRefundOwed({
 }
 
 /**
- * #4104: a pre-persisted inline refund that failed partway (`PartialRefundError`)
+ * #4104, #4992: a pre-persisted inline refund that failed partway (`PartialRefundError`)
  * with nothing refused (a refusal is `keepRefusedPrePersistedRefundOwed`'s): its
  * pre-persisted row is re-planned as the runner would (`replanPrePersistedRow`) -
  * each slice made marked with its refund, so a failure Stripe reports later is

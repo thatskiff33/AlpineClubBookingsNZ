@@ -542,7 +542,17 @@ export function cardRefundOperationRefundMetadata(operation: {
   );
 }
 
-/** #4992 / INV-MOD-061: the edit's reserve, inline attempt and replay share one request. */
+// #1507, #4992: THE ONE HOME of a booking edit's card refund door - its Stripe
+// idempotency-key prefix and the Stripe metadata `reason` it maps to
+// (`INV-MOD-061`, #4101). The edit's transaction writes the prefix on its
+// pre-persisted row (`stripeKeyPrefix`, #1152), the inline attempt
+// (`executeBookingModificationRefund`) stamps the reason for it, and the
+// recovery replay rebuilds that reason from the stored prefix, so all three
+// send one request. A new door adds its row here; a caller of
+// `reserveModificationRefundDebts` naming no door here is refused by
+// `modification-refund-replay-reason.test.ts`. Legacy rows enqueued before
+// #1152 carry no stored prefix; they keep the historical recovery reason and
+// their operation-scoped key.
 export const BOOKING_MODIFICATION_REFUND_DOORS = {
   dateChange: { prefix: "mod_dates_refund_", reason: "date_change_price_decrease" },
   batchModify: { prefix: "mod_batch_refund_", reason: "batch_modification" },
@@ -556,7 +566,6 @@ export function buildBookingModificationRefundKeyPrefix(door: BookingModificatio
   return `${BOOKING_MODIFICATION_REFUND_DOORS[door].prefix}${bookingId}`;
 }
 
-/** Legacy rows keep the historical recovery reason when their prefix is absent. */
 export function bookingModificationRefundReasonForKeyPrefix(
   keyPrefix: string | null | undefined,
 ): string {
