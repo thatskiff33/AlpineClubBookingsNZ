@@ -894,10 +894,10 @@ The supported AlpineClubBookingsNZ deploy path is:
 ```
 
 The script snapshots the resolved commit (`origin/main` unless `DEPLOY_REF`
-names another) into a clean deployment workspace, selects the matching GHCR image tags, copies the environment file,
-preserves Caddy upstream state, then re-enters itself with
-`--internal-blue-green-deploy` to run the blue/green deployment engine before it
-fast-forwards the clean checkout after success.
+names another) into a clean deployment workspace, selects the matching GHCR
+image tags, copies the environment file, preserves Caddy upstream state, then
+re-enters itself with `--internal-blue-green-deploy` to run the blue/green
+deployment engine before it fast-forwards the clean checkout after success.
 
 Since #4978 it refuses a commit that is not a published release, so the plain
 command above works only while `origin/main` is itself a tagged release. To
@@ -920,7 +920,8 @@ shell environment; the `.env` route survives it.
 Every production deploy runs a tagged release, so adopting clubs and forks can
 tell which `main` commit is a known-good release, and a rollback has a version
 to name. The deploy script enforces this (#4978): it refuses a commit no
-release tag points at unless you record a reason. Before the deploy, cut the release with `pnpm run release:cut`
+release tag points at unless you record a reason. Before the deploy, cut the
+release with `pnpm run release:cut`
 ([`scripts/release/cut-release.mjs`](scripts/release/cut-release.mjs)) — the
 full order, its refusals and its recovery messages are in
 [`docs/MAINTENANCE.md`](docs/MAINTENANCE.md#public-reference-release-checklist),

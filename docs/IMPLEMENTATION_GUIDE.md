@@ -25,8 +25,8 @@ pnpm run setup:check
 
 The `git checkout` line finds the newest release tag on `main` (an annotated
 tag named like `v0.13.2`) and checks it out. Run `git describe --exact-match`
-at any time to print the release you are on. Git reports a "detached HEAD", which is
-expected: you are on a release, not on a branch. For a production host, follow
+at any time to print the release you are on. Git reports a "detached HEAD",
+which is expected: you are on a release, not on a branch. For a production host, follow
 [`DEPLOYMENT.md` → "First Bootstrap"](../DEPLOYMENT.md#first-bootstrap), which
 keeps the host checkout on a branch called `main` held at the release, because
 the deploy script expects that. To work on the code itself, `git switch main`.
