@@ -12,8 +12,9 @@ member money. It changes no code, schema, migration, money policy or deployed
 behaviour. Implementation children below are proposals for owner approval;
 none is filed by this document.
 
-The settled contract is all member money, optional Xero, two-way sync, and the
-ledger switch before individual mirror-drift fixes. Sources are the owner
+The settled contract is all member money, optional Xero and two-way sync.
+Individual Xero and payment fixes no longer wait for the ledger switch
+([section 11](#11-proposed-children-in-shipping-order), #4898). Sources are the owner
 records on [#4450](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4450)
 and [#4461's bank-transfer decision](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4461#issuecomment-6415213385).
 Without Xero, the app shows configured club bank details and a unique payment

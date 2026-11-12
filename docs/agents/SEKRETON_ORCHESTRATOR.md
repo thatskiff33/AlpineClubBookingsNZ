@@ -68,11 +68,11 @@ record. Only #4404's parallel level still applies.
 **The claude.ai cloud session is the one orchestrator** (#4898, above). Routines fire
 into it at :07 and :37, plus the digest. Each Routine's prompt names this page and says
 to run "One pass" exactly as written; it never lists its own focus issues, since
-priorities belong on this page and in the issues. There, the handoff and log are a
-signed `LANE-SYNC:` on #4450 rather than `state/`.
+priorities belong on this page and in the issues. Its handoff and log are signed
+`LANE-SYNC:` comments on #4450.
 
 Another host runs this loop only if the owner moves the orchestrator there. The
-original runner shows the shape: systemd user timers on the owner's WSL host, outside
+original runner: systemd user timers on the owner's WSL host, outside
 the repository so no tracked file holds credentials, each running `claude -p` under
 `flock` (passes at :07 and :37, the digest at 05:45 and 20:45). Its `state/` folder
 (`HANDOFF.md`, `log.md`, the `task_changes` cursor) lives in
@@ -183,14 +183,14 @@ Email the owner a link to it, with the counts.
   - commit work in progress, and push it only if the pre-push checks pass
     (COORDINATION.md "When the pre-push checks cannot pass");
   - post a `LANE-SYNC:` checkpoint on each unit's issue;
-  - update `state/HANDOFF.md`, and log the limit.
+  - update the handoff ("Where it runs"), and log the limit.
 
   The owner resumes with another agent or plan.
 
 ## Resuming: any agent, any plan
 
-All state lives on GitHub, in Sekreton, and in the runner's `state/` folder (see "Where it runs"). Nothing
-depends on a chat session. Each pass rewrites `state/HANDOFF.md`, which holds:
+All state lives on GitHub, in Sekreton, and in the handoff "Where it runs" names. Nothing
+depends on a chat session. Each pass rewrites the handoff, which holds:
 
 - each unit in flight: issue, PR, branch, worktree, Sekreton task, stage, and next step;
 - local work that hasn't been pushed (there should be none);
@@ -200,10 +200,11 @@ depends on a chat session. Each pass rewrites `state/HANDOFF.md`, which holds:
 To resume, a new agent reads, in order:
 
 1. this page;
-2. `state/HANDOFF.md`;
-3. the last 40 lines of `state/log.md`;
+2. the handoff: the latest signed `LANE-SYNC:` on #4450, or `state/HANDOFF.md` on
+   another host;
+3. the recent log;
 4. the pinned "Owner queue" issue.
 
 Then it runs a pass. A unit's stage can always be re-derived from GitHub (PR head,
-checks, comments) and Sekreton (`get_task`), so a stale HANDOFF is safe. Verify
+checks, comments) and Sekreton (`get_task`), so a stale handoff is safe. Verify
 against those sources before acting.
