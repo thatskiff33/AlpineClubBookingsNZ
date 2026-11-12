@@ -5,7 +5,7 @@ import { clubReportFilename } from "@/lib/club-report-filename";
 describe("clubReportFilename", () => {
   it("names the file from the club's short name, lower-cased and hyphenated", () => {
     expect(clubReportFilename("Ruapehu AC", "2026-07-01", "csv")).toBe("ruapehu-ac-report-2026-07-01.csv");
-    expect(clubReportFilename("TAC", "2026-07-01", "pdf")).toBe("tac-report-2026-07-01.pdf");
+    expect(clubReportFilename("Ruapehu AC", "2026-07-01", "pdf")).toBe("ruapehu-ac-report-2026-07-01.pdf");
   });
 
   it("keeps macronned letters and drops characters a filename cannot carry", () => {

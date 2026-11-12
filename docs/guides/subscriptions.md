@@ -88,6 +88,26 @@ configurable — see [Subscription lockout](subscription-lockout.md)).
 1. Click **Incremental Sync** for the normal low-cost refresh, or **Repair Stale
    Linked Members** for a broader backfill of linked members that may be stuck.
 
+### If the club does not use Xero
+
+Subscription invoices are raised and emailed through Xero. While the **Xero
+integration** module is off (see [Modules](modules.md)), the billing panel says
+**Subscription invoicing needs Xero**:
+
+- The preview still shows who owes what, but **Confirm and queue annual batch**
+  and **Retry** are disabled, and the server refuses them too. The missing Xero
+  account-mapping exception is hidden, because the mapping screen is hidden too.
+- Approving a membership application creates no subscription charge and no
+  joining-fee invoice. The approval still succeeds and warns you to record
+  payment by hand.
+- Bill members outside the app. When a member pays, use **Mark as paid
+  (manual)** below.
+- If charges were queued before Xero was switched off, the panel says how many
+  are **waiting for Xero**. They are raised and emailed automatically when Xero
+  is switched back on. Before switching it on, mark every member who has already
+  paid: a charge not yet invoiced in Xero is then held as **Conflict** for you
+  to close, instead of being invoiced.
+
 ### Run the annual billing batch
 
 1. In **Annual Membership Fee billing**, set the **Decision date** and click
@@ -240,6 +260,8 @@ stored exceptions.
 | The billing panel and Actions column are read-only | Your finance role is view-only | Ask a finance-edit admin |
 | A member stays "Not Invoiced" | They have no Xero contact link | Link or create a Xero contact in [Members](members.md), then run a refresh |
 | A charge stays **Queued** with no Xero invoice number long after it was confirmed | A fault before this release (#3971) stopped the invoice being raised. This page shows no error for it; the reason, "Membership subscription charge not found: [REDACTED]", is on the charge's **Failed** operation in **Xero → Operations** | Press **Retry in background** on that operation (see the [Xero Sync guide](xero.md#troubleshooting)), or press **Retry** on the charge here. Use one or the other: either raises the one invoice |
+| **Confirm and queue annual batch** and **Retry** are greyed out, with "Subscription invoicing needs Xero" | The Xero integration module is off, so nothing can be invoiced | Record payments with **Mark as paid (manual)**, or switch Xero on in [Modules](modules.md) ([without Xero](#if-the-club-does-not-use-xero)) |
+| An approval warns "Subscription invoicing is off because Xero is not enabled" | The Xero integration module is off, so the new member was not invoiced | Bill the member outside the app and record the payment with **Mark as paid (manual)** |
 | A sync fails | Xero is disconnected or errored | Check the Xero connection in the [Xero Sync guide](xero.md) |
 | A charge stays **Conflict** saying the covered subscription is already paid, and **Retry** doesn't clear it | The members it covers were marked paid (usually cash) after the charge was queued, so it correctly raised no Xero invoice | If they really have paid, press **Close: already paid** on the charge and give a reason; it shows **Not required**, marked as closed, and no longer offers Retry. If a payment was recorded by mistake, reverse it first (**Mark as unpaid** on the subscription, or void it in Xero) and then **Retry** to invoice. If only some of the members have paid, the charge says so and **Close: already paid** isn't offered: record the remaining payments and then close it, or reverse **every** payment recorded for it and then Retry (Retry alone conflicts again while anyone on it is paid). If a payment is reversed after the close, that member is billed again in the next preview, on a new charge. On a per-family charge the whole family fee is billed again, and if only some members' payments were reversed the preview shows a **Check before confirming** warning first. If the family has two closed charges, only the newest one counts. Until a payment is reversed, a closed family stays billed: a member who joins later is not invoiced for it. Exempt (**Not required**) members count as paid for the close, and since they paid nothing there is nothing of theirs to reverse: changing an exempt member's membership type later doesn't bill the family again, and asks you to decide instead (below). Approving a membership application never confirms through the warning: that family is left uninvoiced and the warning stays under the exceptions for Finance to check and confirm. The close is refused while an invoice attempt for the charge is still queued or running in **Xero → Operations**: wait for it to finish, then close |
 | A closed charge shows "This charge was closed as already paid while Xero invoice … was being raised for it" | An invoice attempt was already in Xero when the charge was closed. That invoice was not emailed and is not recorded against any member here | Void it in Xero promptly: until then the membership sync may attach it to the recipient's subscription. The charge stays closed, and the note stays on it as the record; once the invoice is voided there is nothing more to do |

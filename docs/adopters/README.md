@@ -50,6 +50,10 @@ to tested releases and a club getting live without the maintainer.
   change belongs on.
 - [Modules](../guides/modules.md) — the live list of every optional capability
   and its out-of-the-box default, on one admin page.
+  Running without Xero? Internet Banking, subscription invoicing, joining-fee
+  invoicing and the Finance dashboard's Xero data need it; [What needs
+  Xero](../guides/modules.md#what-needs-xero) lists the manual alternative
+  for each, such as **Mark as paid (manual)** for subscriptions.
 - [Setup](../guides/setup.md) — the in-app installation checklist and
   configuration hub at `/admin/setup`.
 - [Site Appearance & Content](../guides/appearance.md), [Site Style](../guides/site-style.md),
