@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { startAuthentication } from "@simplewebauthn/browser";
 import { Copy, Fingerprint, KeyRound, Loader2, Mail, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
+import { useQrDataUrl } from "@/hooks/use-qr-data-url";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { RetiredRecoveryCodesNotice } from "@/components/retired-recovery-codes-notice";
 
@@ -85,6 +87,8 @@ export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const setupQrDataUrl = useQrDataUrl(totpSetup?.otpauthUrl ?? null, 192);
+  const canEnroll = !loading && (method !== "TOTP" || totpSetup !== null);
 
   useEffect(() => {
     if (method !== "TOTP" || totpSetup) return;
@@ -175,6 +179,15 @@ export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
     }
   }
 
+  // A real form, so Enter in a code field enrols (#4952). preventDefault keeps
+  // the code out of the URL; the guard stops Enter doing what the disabled
+  // button would not.
+  function submitEnroll(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canEnroll) return;
+    void (method === "TOTP" ? enrollTotp() : enrollEmail());
+  }
+
   if (recoveryCodes) {
     return <RecoveryCodes callbackUrl={callbackUrl} codes={recoveryCodes} />;
   }
@@ -188,98 +201,107 @@ export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
           Choose how you want to verify future sign-ins.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-5">
-        {error ? (
-          <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            {error}
-          </div>
-        ) : null}
+      <form noValidate onSubmit={submitEnroll}>
+        <CardContent className="space-y-5">
+          {error ? (
+            <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              {error}
+            </div>
+          ) : null}
 
-        <div className="grid grid-cols-2 gap-2">
-          <Button
-            type="button"
-            variant={method === "TOTP" ? "default" : "outline"}
-            onClick={() => setMethod("TOTP")}
-          >
-            <KeyRound className="h-4 w-4" />
-            App
-          </Button>
-          <Button
-            type="button"
-            variant={method === "EMAIL" ? "default" : "outline"}
-            onClick={() => setMethod("EMAIL")}
-          >
-            <Mail className="h-4 w-4" />
-            Email
-          </Button>
-        </div>
+          <OptionCardGroup label="Verification method">
+            <OptionCard
+              icon={KeyRound}
+              title="App"
+              selected={method === "TOTP"}
+              onSelect={() => setMethod("TOTP")}
+            />
+            <OptionCard
+              icon={Mail}
+              title="Email"
+              selected={method === "EMAIL"}
+              onSelect={() => setMethod("EMAIL")}
+            />
+          </OptionCardGroup>
 
-        {method === "TOTP" ? (
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Manual setup key</Label>
-              <div className="break-all rounded-md border bg-muted p-3 font-mono text-sm">
-                {totpSetup?.secret ?? "Preparing setup key..."}
-              </div>
-              {totpSetup ? (
-                <a
-                  className="text-sm font-medium underline underline-offset-4"
-                  href={totpSetup.otpauthUrl}
-                >
-                  Open authenticator app
-                </a>
+          {method === "TOTP" ? (
+            <div className="space-y-4">
+              {setupQrDataUrl ? (
+                <div className="flex flex-col items-center gap-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- a QR bitmap
+                      drawn in the browser as a data URL; next/image cannot optimise
+                      one. */}
+                  <img
+                    src={setupQrDataUrl}
+                    alt="QR code to scan with your authenticator app"
+                    className="h-48 w-48 rounded-md border"
+                  />
+                  <p className="text-center text-sm text-muted-foreground">
+                    Scan this QR code with your authenticator app.
+                  </p>
+                </div>
               ) : null}
+              <div className="space-y-2">
+                <Label htmlFor="totp-setup-key">Or type this setup key</Label>
+                <output
+                  id="totp-setup-key"
+                  className="block break-all rounded-md border bg-muted p-3 font-mono text-sm"
+                >
+                  {totpSetup?.secret ?? "Preparing setup key..."}
+                </output>
+                {totpSetup ? (
+                  <a
+                    className="text-sm font-medium underline underline-offset-4"
+                    href={totpSetup.otpauthUrl}
+                  >
+                    Open authenticator app
+                  </a>
+                ) : null}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="totp-code">Authenticator code</Label>
+                <Input
+                  autoComplete="one-time-code"
+                  id="totp-code"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={totpCode}
+                  onChange={(event) => setTotpCode(event.target.value)}
+                />
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="totp-code">Authenticator code</Label>
-              <Input
-                autoComplete="one-time-code"
-                id="totp-code"
-                inputMode="numeric"
-                maxLength={6}
-                value={totpCode}
-                onChange={(event) => setTotpCode(event.target.value)}
-              />
+          ) : (
+            <div className="space-y-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void sendEmailCode()}
+                disabled={loading}
+              >
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                {emailSent ? "Send another code" : "Send email code"}
+              </Button>
+              <div className="space-y-2">
+                <Label htmlFor="email-code">Email code</Label>
+                <Input
+                  autoComplete="one-time-code"
+                  id="email-code"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={emailCode}
+                  onChange={(event) => setEmailCode(event.target.value)}
+                />
+              </div>
             </div>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void sendEmailCode()}
-              disabled={loading}
-            >
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
-              {emailSent ? "Send another code" : "Send email code"}
-            </Button>
-            <div className="space-y-2">
-              <Label htmlFor="email-code">Email code</Label>
-              <Input
-                autoComplete="one-time-code"
-                id="email-code"
-                inputMode="numeric"
-                maxLength={6}
-                value={emailCode}
-                onChange={(event) => setEmailCode(event.target.value)}
-              />
-            </div>
-          </div>
-        )}
-      </CardContent>
-      <CardFooter>
-        <Button
-          className="w-full"
-          type="button"
-          disabled={loading || (method === "TOTP" && !totpSetup)}
-          onClick={() =>
-            method === "TOTP" ? void enrollTotp() : void enrollEmail()
-          }
-        >
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-          Enroll
-        </Button>
-      </CardFooter>
+          )}
+        </CardContent>
+        <CardFooter>
+          <Button className="w-full" type="submit" disabled={!canEnroll}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+            Enroll
+          </Button>
+        </CardFooter>
+      </form>
     </Card>
   );
 }
@@ -343,6 +365,13 @@ export function TwoFactorVerifyPanel({
     }
   }
 
+  // A real form, so Enter in the code field verifies (#4952); see submitEnroll.
+  function submitVerify(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!enrolledMethod || loading) return;
+    void verify();
+  }
+
   async function signInWithPasskey() {
     setLoading(true);
     setError("");
@@ -389,45 +418,38 @@ export function TwoFactorVerifyPanel({
             : "Use your passkey to continue."}
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-5">
-        {error ? (
-          <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            {error}
-          </div>
-        ) : null}
-
-        {recoveryCodesRetired ? (
-          <RetiredRecoveryCodesNotice>
-            Sign in with your {enrolledMethod === "EMAIL" ? "email" : "app"} code, then
-            generate new recovery codes from your profile.
-          </RetiredRecoveryCodesNotice>
-        ) : null}
-
-        <div className="grid grid-cols-2 gap-2">
-          {enrolledMethod ? (
-            <Button
-              type="button"
-              variant={method === enrolledMethod ? "default" : "outline"}
-              onClick={() => setMethod(enrolledMethod)}
-            >
-              {enrolledMethod === "EMAIL" ? (
-                <Mail className="h-4 w-4" />
-              ) : (
-                <KeyRound className="h-4 w-4" />
-              )}
-              {enrolledMethod === "EMAIL" ? "Email" : "App"}
-            </Button>
+      <form noValidate onSubmit={submitVerify}>
+        <CardContent className="space-y-5">
+          {error ? (
+            <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              {error}
+            </div>
           ) : null}
-          {enrolledMethod ? (
-            <Button
-              type="button"
-              variant={method === "RECOVERY" ? "default" : "outline"}
-              onClick={() => setMethod("RECOVERY")}
-            >
-              <ShieldCheck className="h-4 w-4" />
-              Recovery
-            </Button>
+
+          {recoveryCodesRetired ? (
+            <RetiredRecoveryCodesNotice>
+              Sign in with your {enrolledMethod === "EMAIL" ? "email" : "app"} code, then
+              generate new recovery codes from your profile.
+            </RetiredRecoveryCodesNotice>
           ) : null}
+
+          {enrolledMethod ? (
+            <OptionCardGroup label="Verification method">
+              <OptionCard
+                icon={enrolledMethod === "EMAIL" ? Mail : KeyRound}
+                title={enrolledMethod === "EMAIL" ? "Email" : "App"}
+                selected={method === enrolledMethod}
+                onSelect={() => setMethod(enrolledMethod)}
+              />
+              <OptionCard
+                icon={ShieldCheck}
+                title="Recovery"
+                selected={method === "RECOVERY"}
+                onSelect={() => setMethod("RECOVERY")}
+              />
+            </OptionCardGroup>
+          ) : null}
+
           {hasPasskey ? (
             <Button
               type="button"
@@ -439,48 +461,43 @@ export function TwoFactorVerifyPanel({
               Use your passkey
             </Button>
           ) : null}
-        </div>
 
-        {enrolledMethod && method === "EMAIL" ? (
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void sendEmailCode()}
-            disabled={loading}
-          >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
-            {emailSent ? "Send another code" : "Send email code"}
-          </Button>
-        ) : null}
+          {enrolledMethod && method === "EMAIL" ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void sendEmailCode()}
+              disabled={loading}
+            >
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+              {emailSent ? "Send another code" : "Send email code"}
+            </Button>
+          ) : null}
 
+          {enrolledMethod ? (
+            <div className="space-y-2">
+              <Label htmlFor="two-factor-code">
+                {method === "RECOVERY" ? "Recovery code" : "Two-factor code"}
+              </Label>
+              <Input
+                autoComplete={method === "RECOVERY" ? "off" : "one-time-code"}
+                id="two-factor-code"
+                inputMode={method === "RECOVERY" ? "text" : "numeric"}
+                value={code}
+                onChange={(event) => setCode(event.target.value)}
+              />
+            </div>
+          ) : null}
+        </CardContent>
         {enrolledMethod ? (
-          <div className="space-y-2">
-            <Label htmlFor="two-factor-code">
-              {method === "RECOVERY" ? "Recovery code" : "Two-factor code"}
-            </Label>
-            <Input
-              autoComplete={method === "RECOVERY" ? "off" : "one-time-code"}
-              id="two-factor-code"
-              inputMode={method === "RECOVERY" ? "text" : "numeric"}
-              value={code}
-              onChange={(event) => setCode(event.target.value)}
-            />
-          </div>
+          <CardFooter>
+            <Button className="w-full" type="submit" disabled={loading}>
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+              Verify
+            </Button>
+          </CardFooter>
         ) : null}
-      </CardContent>
-      {enrolledMethod ? (
-      <CardFooter>
-        <Button
-          className="w-full"
-          type="button"
-          disabled={loading}
-          onClick={() => void verify()}
-        >
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-          Verify
-        </Button>
-      </CardFooter>
-      ) : null}
+      </form>
     </Card>
   );
 }

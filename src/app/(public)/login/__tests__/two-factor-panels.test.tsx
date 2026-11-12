@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import QRCode from "qrcode";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Keep a soft-navigation regression observable without needing a Next router.
@@ -205,5 +206,136 @@ describe("passkey on the sign-in challenge (#4617)", () => {
     expect(screen.getByRole("button", { name: "Use your passkey" })).toBeVisible();
     expect(screen.queryByLabelText("Two-factor code")).toBeNull();
     expect(screen.queryByRole("button", { name: "Verify" })).toBeNull();
+  });
+});
+
+// A browser's implicit submission (#4952): Enter in a field clicks the form's
+// default button — its first submit button — and does nothing when that button
+// is disabled or there is no form. jsdom does not do this on a key press.
+function pressEnterIn(field: HTMLElement) {
+  const form = (field as HTMLInputElement).form;
+  const defaultButton = form?.querySelector<HTMLButtonElement>('button[type="submit"]');
+  if (defaultButton && !defaultButton.disabled) fireEvent.click(defaultButton);
+}
+
+describe("method choice is announced, not only shaded (#4952)", () => {
+  it("names the enrolment group and marks the chosen method pressed", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => response(setup)));
+    render(<TwoFactorEnrollPanel callbackUrl={deepLink} />);
+    const group = screen.getByRole("group", { name: "Verification method" });
+    const app = within(group).getByRole("button", { name: "App" });
+    const email = within(group).getByRole("button", { name: "Email" });
+    expect(app).toHaveAttribute("aria-pressed", "true");
+    expect(email).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(email);
+    expect(app).toHaveAttribute("aria-pressed", "false");
+    expect(email).toHaveAttribute("aria-pressed", "true");
+    expect(within(email).getByText("Selected")).toBeVisible();
+    await screen.findByLabelText("Email code");
+  });
+
+  it("names the sign-in group and moves pressed to Recovery", () => {
+    render(<TwoFactorVerifyPanel callbackUrl={deepLink} enrolledMethod="EMAIL" hasPasskey />);
+    const group = screen.getByRole("group", { name: "Verification method" });
+    const email = within(group).getByRole("button", { name: "Email" });
+    const recovery = within(group).getByRole("button", { name: "Recovery" });
+    expect(email).toHaveAttribute("aria-pressed", "true");
+    expect(recovery).toHaveAttribute("aria-pressed", "false");
+    expect(within(group).queryByRole("button", { name: "Use your passkey" })).toBeNull();
+
+    fireEvent.click(recovery);
+    expect(email).toHaveAttribute("aria-pressed", "false");
+    expect(recovery).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Recovery code")).toBeVisible();
+  });
+});
+
+describe("authenticator setup QR code (#4952)", () => {
+  it("draws the exact otpauth URL locally once setup loads and keeps the labelled key", async () => {
+    const fetchMock = vi.fn(async () => response(setup));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TwoFactorEnrollPanel callbackUrl={deepLink} />);
+    expect(screen.queryByRole("img")).toBeNull();
+
+    const qr = await screen.findByRole("img", { name: "QR code to scan with your authenticator app" });
+    const expected = await QRCode.toDataURL(setup.otpauthUrl, { width: 192, margin: 4 });
+    expect(qr).toHaveAttribute("src", expected);
+    expect(screen.getByLabelText("Or type this setup key")).toHaveTextContent(setup.secret);
+    // The secret reaches no server but the setup endpoint it came from.
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith("/api/auth/2fa/totp/setup", expect.anything());
+  });
+});
+
+describe("Enter submits the code (#4952)", () => {
+  it.each(["TOTP", "EMAIL"] as const)("enrols %s once per Enter", async (method) => {
+    const fetchMock = vi.fn(async (url: string) =>
+      response(url.endsWith("/totp/setup") ? setup : { recoveryCodes }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TwoFactorEnrollPanel callbackUrl={deepLink} />);
+    await screen.findByText(setup.secret);
+    if (method === "EMAIL") fireEvent.click(screen.getByRole("button", { name: "Email" }));
+    const field = screen.getByLabelText(method === "TOTP" ? "Authenticator code" : "Email code");
+    fireEvent.change(field, { target: { value: "123456" } });
+
+    pressEnterIn(field);
+    pressEnterIn(field);
+    // A submit that skips the disabled button, as a fast double Enter can.
+    fireEvent.submit(field.closest("form")!);
+
+    await screen.findByRole("heading", { name: "Save your recovery codes" });
+    const enrolCalls = fetchMock.mock.calls.filter(([url]) => url.includes("/enroll/"));
+    expect(enrolCalls).toEqual([[`/api/auth/2fa/enroll/${method.toLowerCase()}`, expect.anything()]]);
+  });
+
+  it("does not enrol on Enter before the setup key has loaded", () => {
+    const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TwoFactorEnrollPanel callbackUrl={deepLink} />);
+    const field = screen.getByLabelText("Authenticator code");
+    fireEvent.change(field, { target: { value: "123456" } });
+    pressEnterIn(field);
+    fireEvent.submit(field.closest("form")!);
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith("/api/auth/2fa/totp/setup", expect.anything());
+  });
+
+  it("keeps Send email code from submitting the enrolment", async () => {
+    const fetchMock = vi.fn(async (url: string) => response(url.endsWith("/totp/setup") ? setup : {}));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TwoFactorEnrollPanel callbackUrl={deepLink} />);
+    await screen.findByText(setup.secret);
+    fireEvent.click(screen.getByRole("button", { name: "Email" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send email code" }));
+    await screen.findByRole("button", { name: "Send another code" });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/auth/2fa/totp/setup",
+      "/api/auth/2fa/email/send",
+    ]);
+  });
+
+  it("verifies once per Enter and not again while the first is in flight", () => {
+    const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TwoFactorVerifyPanel callbackUrl={deepLink} enrolledMethod="TOTP" />);
+    const field = screen.getByLabelText("Two-factor code");
+    fireEvent.change(field, { target: { value: "123456" } });
+
+    pressEnterIn(field);
+    pressEnterIn(field);
+    fireEvent.submit(field.closest("form")!);
+
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith("/api/auth/2fa/verify", expect.objectContaining({
+      body: JSON.stringify({ method: "TOTP", code: "123456" }),
+    }));
+  });
+
+  it("keeps Send email code from submitting the sign-in", async () => {
+    const fetchMock = vi.fn(async () => response({}));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TwoFactorVerifyPanel callbackUrl={deepLink} enrolledMethod="EMAIL" />);
+    fireEvent.click(screen.getByRole("button", { name: "Send email code" }));
+    await screen.findByRole("button", { name: "Send another code" });
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith("/api/auth/2fa/email/send", expect.anything());
   });
 });

@@ -105,7 +105,7 @@ for (const account of accounts) {
       await submitLoginForm(page, account.email);
       await expect(page).toHaveURL(/\/login\/enroll/);
       await expect(page.getByRole("heading", { name: "Set up two-factor authentication", exact: true })).toBeVisible();
-      const setupKey = page.locator("div.font-mono").first();
+      const setupKey = page.getByLabel("Or type this setup key", { exact: true });
       await expect(setupKey).not.toHaveText(/Preparing setup key/);
       const secret = (await setupKey.innerText()).trim();
       await page.locator("#totp-code").fill(totpCode(secret));

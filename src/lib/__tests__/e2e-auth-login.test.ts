@@ -98,6 +98,7 @@ function mockPage(initialPath: string, destination = "/admin/payments") {
     locator,
     getByRole: (role: string, options: { name: string }) => locator(options.name, role),
     getByText: (name: string) => locator(name),
+    getByLabel: (name: string) => locator(name),
     waitForURL: vi.fn(async (predicate: RegExp | ((url: URL) => boolean), options?: { timeout: number }) => {
       const url = new URL(page.url());
       if (!(typeof predicate === "function" ? predicate(url) : predicate.test(url.href))) {
