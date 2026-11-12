@@ -48,10 +48,13 @@ are permanent: never renumbered, never reused.
 - **An accepted exception lasts only while its reason is alive; retiring one
   needs a measurement, not an argument.** A convergence onto one home changes
   an identity, which is proved rather than reasoned about: pins against the
-  separate copies come FIRST (#3218).
+  separate copies, mutation-verified, come FIRST and pass the convergence
+  unchanged (`stable-digest.test.ts`, #3218).
 - Recorded homes: `promo-stored-guest-targets.ts` (#3131), `stable-digest.ts`
-  (#3218), `hasIssuedPrimaryXeroInvoice` (#3200) — no bookings API route reads
-  `Payment.xeroInvoiceId` directly
+  (#3218), `hasIssuedPrimaryXeroInvoice` (#3200) — no bookings API route
+  decides it from `Payment.xeroInvoiceId` (one display read is allowlisted),
+  the home takes `xeroInvoiceId` as a REQUIRED field, and the set of files
+  reaching `applyPaymentAdjustments` is pinned
   (`issued-primary-xero-invoice-one-home.test.ts`).
 - **Known exceptions.** The admin promo-codes client reads the guest-scope
   default inline twice (recorded in `promo-guest-scope.ts`, pending

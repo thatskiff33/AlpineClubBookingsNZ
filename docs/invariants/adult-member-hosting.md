@@ -1362,8 +1362,8 @@ compliant indefinitely.
   names every booking it will leave uncovered, and the both-directions sentence
   says which way the money goes without counting bookings. Every claim must hold
   for both directions at once: a payable figure has the fee added and a refund
-  has it taken off, so no fee sentence says the total "includes" it; no fee sentence naming a figure when the combined fee
-  is zero; no "one change fee only" on the waiver branch when the primary's own
+  has it taken off, so no fee sentence says the total "includes" it; no fee
+  sentence names a figure when the combined fee is zero; no "one change fee only" on the waiver branch when the primary's own
   fee is also nothing; no promise that the member "will be asked once" where the
   money goes when the request already carried that answer. The offer names
   `policyRetainedAmountCents` summed across every booking that moves.

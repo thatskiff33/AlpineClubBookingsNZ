@@ -35,9 +35,9 @@ The reason may not contain a `|`, even inside backticks (cells are split on pipe
 | ID | Ceiling | Deciding issue | Reason |
 | --- | ---: | --- | --- |
 
-There are no approved exceptions yet. Candidates are proposed on each entry's deciding
-issue as the compaction waves (#4990) reach them; until the owner approves one, an oversize entry is
-migration debt below.
+There are no approved exceptions yet. Candidates are proposed on each entry's
+deciding issue as the compaction waves (#4990) reach them; until the owner
+approves one, an oversize entry is migration debt below.
 
 ## Migration ratchet
 
@@ -91,8 +91,8 @@ each stays here at its new count while its exception is proposed.
 | `INV-CONFIG-005` | 676 |
 | `INV-HOST-046` | 764 |
 | `INV-HOST-045` | 727 |
-| `INV-ADDPAY-039` | 917 |
-| `INV-SSOT-001` | 378 |
+| `INV-ADDPAY-039` | 931 |
+| `INV-SSOT-001` | 410 |
 | `INV-PRIV-016` | 1512 |
 | `INV-HOST-051` | 1443 |
 | `INV-HOST-053` | 1434 |

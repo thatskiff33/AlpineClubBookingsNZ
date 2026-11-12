@@ -1326,7 +1326,8 @@ written and the club is told the money did **not** go out, so a person reconcile
 > or #2774.** Cite it as an orchestrator decision: attributing #2773 or #2774 to the
 > owner is false, as the first version of this branch did in eighteen places
 > (#2713). The #2760 and #2761 citations, dated 10 Aug 2026, are real owner
-> decisions; check the thread before repeating any citation of this kind.
+> decisions; check the thread before repeating or removing any citation of this
+> kind: deleting a true one is as damaging as inventing a false one.
 >
 > **It is reversible.** #2774 D2 (this rule) is one read,
 > `findCompletedHandBackForLateCapture`: drop the call and the refund goes out as
