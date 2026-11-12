@@ -1,9 +1,7 @@
 import { exactContains } from "@/lib/prisma-exact-prefix";
 import { z } from "zod";
 import { Prisma, type AgeTier } from "@prisma/client";
-import { randomBytes } from "crypto";
-import { hash } from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
+import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
@@ -740,7 +738,7 @@ export async function reviewAdminFamilyGroupRequest(params: {
           // #2716: pointer and CHOICE written together. Under one hop the
           // resolved mailbox IS the requester, who is this child's parent.
           inheritEmailChoiceId: inheritEmailFromId,
-          passwordHash: await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST),
+          passwordHash: UNUSABLE_PLACEHOLDER_PASSWORD_HASH,
           emailVerified: true,
           phoneCountryCode: cleanOptionalString(request.requester.phoneCountryCode),
           phoneAreaCode: cleanOptionalString(request.requester.phoneAreaCode),
@@ -825,7 +823,7 @@ export async function reviewAdminFamilyGroupRequest(params: {
           ageTier,
           active: true,
           canLogin: false,
-          passwordHash: await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST),
+          passwordHash: UNUSABLE_PLACEHOLDER_PASSWORD_HASH,
           emailVerified: true,
         };
       } else {

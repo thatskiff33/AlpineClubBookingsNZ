@@ -48,9 +48,14 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-vi.mock("bcryptjs", () => ({
-  default: { hash: vi.fn().mockResolvedValue("hashed-password") },
-}));
+vi.mock("@/lib/password-hashing", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/password-hashing");
+  const overrides = { hashPassword: vi.fn().mockResolvedValue("hashed-password") };
+  return {
+    ...actual,
+    ...overrides,
+  };
+});
 
 // #4609: a completed reset clears the account's sign-in throttle.
 const { mockClearPasswordAttempts } = vi.hoisted(() => ({

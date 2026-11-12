@@ -13,7 +13,9 @@ import {
 } from "../password-hashing";
 import { realElapsedMs } from "./helpers/clock";
 
-describe("password hashing (#4934)", () => {
+// Real cost-13 bcrypt, partly in pure-JS bcryptjs: about 3s a test on an idle
+// machine, so the 5s default is too tight for a loaded CI shard.
+describe("password hashing (#4934)", { timeout: 30_000 }, () => {
   it("keeps real, dummy and placeholder passwords at the same cost (#4639)", async () => {
     const hash = await hashPassword("test-password-only");
     expect(bcrypt.getRounds(hash)).toBe(PASSWORD_BCRYPT_COST);
@@ -50,7 +52,9 @@ describe("password hashing (#4934)", () => {
     ["abc\u0000def", "abc"],
   ])("preserves bcryptjs byte truncation and Unicode behaviour for %j", async (plain, other) => {
     const oldHash = await bcrypt.hash(plain, 10);
-    const newHash = await hashPassword(plain);
+    // Same native hash call as hashPassword; cost 10 keeps the bcryptjs
+    // comparisons inside the default timeout and does not change truncation.
+    const newHash = await hashPin(plain, 10);
     for (const candidate of [plain, other, "wrong"]) {
       const expected = await bcrypt.compare(candidate, oldHash);
       expect(await verifyPassword(candidate, oldHash)).toBe(expected);

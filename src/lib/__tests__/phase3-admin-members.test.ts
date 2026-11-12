@@ -150,7 +150,7 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
 vi.mock("@/lib/email", () => ({
   sendMemberSetupInviteEmail: vi.fn(),
 }));
-vi.mock("bcryptjs", () => ({ hash: vi.fn().mockResolvedValue("hashed") }));
+
 
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";

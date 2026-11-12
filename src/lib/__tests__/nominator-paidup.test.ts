@@ -64,7 +64,7 @@ vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error:
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/induction", () => ({ createMemberInduction: vi.fn() }));
 vi.mock("server-only", () => ({}));
-vi.mock("bcryptjs", () => ({ hash: vi.fn().mockResolvedValue("hashed-secret") }));
+
 
 import { prisma } from "@/lib/prisma";
 import { resolveMembershipTypePolicyForMember } from "@/lib/membership-type-policy";

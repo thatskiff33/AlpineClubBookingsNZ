@@ -14,8 +14,7 @@ import { cache } from "react";
 import NextAuth, { CredentialsSignin, type NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
-import bcrypt from "bcryptjs";
-import { DUMMY_PASSWORD_HASH } from "./password-hashing";
+import { burnDummyPasswordCompare, verifyPassword } from "./password-hashing";
 import { prisma } from "./prisma";
 import { getAuthSecret, getAuthTrustHost } from "./runtime-config";
 import logger from "./logger";
@@ -90,9 +89,6 @@ class LoginThrottledError extends CredentialsSignin {
 class MagicLinkPasswordChangeRequiredError extends CredentialsSignin {
   override code = "PASSWORD_CHANGE_REQUIRED";
 }
-
-const burnDummyCompare = (password: string) =>
-  bcrypt.compare(password, DUMMY_PASSWORD_HASH);
 
 declare module "next-auth" {
   interface Session {
@@ -238,7 +234,7 @@ export const authConfig = {
         // #4609: claimed before any Member read or password compare, so a
         // throttled real account and an unknown email answer identically.
         if (!(await claimPasswordAttempt(email)).allowed) {
-          await burnDummyCompare(password);
+          await burnDummyPasswordCompare(password);
           throw new LoginThrottledError();
         }
 
@@ -256,11 +252,11 @@ export const authConfig = {
         // Still burns the dummy compare, so the refusal is timing-identical to
         // an unknown email and cannot be used to enumerate deleted accounts.
         if (!member || !member.active || isDeletedAccountRecord(member)) {
-          await burnDummyCompare(password);
+          await burnDummyPasswordCompare(password);
           return null;
         }
 
-        const isValid = await bcrypt.compare(password, member.passwordHash);
+        const isValid = await verifyPassword(password, member.passwordHash);
         if (!isValid) {
           return null;
         }

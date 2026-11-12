@@ -14,10 +14,8 @@
  *   - only SHA-256 token hashes are stored (issueActionToken)
  *   - external calls (email) run after the transaction commits
  */
-import { randomBytes } from "crypto";
 import { DEFAULT_BOOKING_REQUEST_SETTINGS } from "@/config/club-settings-defaults";
-import { hash } from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
+import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import {
   AgeTier,
   BookingEventType,
@@ -2130,9 +2128,9 @@ export async function approveBookingRequest(input: {
   const linkedMembers = linkedGuestMemberMap(request.linkedGuestMembers);
   const priceCents = request.priceCents;
 
-  // Non-login members never authenticate; store a random bcrypt hash so the
+  // Non-login members never authenticate; store the precomputed unusable bcrypt hash so the
   // row satisfies the schema without any usable credential.
-  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
+  const placeholderPasswordHash = UNUSABLE_PLACEHOLDER_PASSWORD_HASH;
   const holdDays = await getNonMemberHoldDays(request.checkIn, approvalLodgeId);
   const reviewedAt = new Date();
   const nonMemberHoldUntil = resolveRequestBookingHoldUntil(

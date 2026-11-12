@@ -133,10 +133,7 @@ vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: vi.fn().mockReturnValue(null),
   rateLimiters: { register: {} },
 }));
-vi.mock("bcryptjs", () => ({
-  default: { hash: vi.fn().mockResolvedValue("hashedpw") },
-  hash: vi.fn().mockResolvedValue("hashedpw"),
-}));
+
 vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: vi.fn().mockResolvedValue(null),
   requireAdmin: vi.fn().mockResolvedValue({

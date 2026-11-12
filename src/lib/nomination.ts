@@ -1,8 +1,7 @@
 import "server-only";
 
 import { randomBytes } from "crypto";
-import { hash } from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
+import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import {
   ApplicationStatus,
   AgeTier,
@@ -1487,7 +1486,7 @@ export async function approveMemberApplication(
       )
     : [];
 
-  const applicantPasswordHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
+  const applicantPasswordHash = UNUSABLE_PLACEHOLDER_PASSWORD_HASH;
   const passwordSetupToken = buildResetToken();
   const passwordSetupExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
@@ -1749,7 +1748,7 @@ export async function approveMemberApplication(
         ...(target.onboardingConfirmedAt ? {} : { onboardingConfirmedAt: profileConfirmedAt }),
       };
       if (outcome.loginPromoted) {
-        // Promotion path (canLogin:false -> true): fresh random hash, verified
+        // Promotion path (canLogin:false -> true): unusable placeholder hash, verified
         // email, cleared email inheritance; a set-password token is issued
         // below. Mirrors the create path's auth bootstrap.
         applicantUpdate.canLogin = true;

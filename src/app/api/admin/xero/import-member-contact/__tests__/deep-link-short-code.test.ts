@@ -34,7 +34,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 
-vi.mock("bcryptjs", () => ({ hash: async () => "hashed" }));
+
 
 vi.mock("@/lib/session-guards", () => ({
   requireAdmin: async () => ({

@@ -61,11 +61,15 @@ vi.mock("next-auth/providers/credentials", () => ({
   default: vi.fn((config) => config),
 }));
 
-vi.mock("bcryptjs", () => ({
-  default: {
-    compare: vi.fn().mockResolvedValue(true),
-  },
-}));
+vi.mock("@/lib/password-hashing", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/password-hashing");
+  const overrides = { verifyPassword: vi.fn().mockResolvedValue(true), };
+  return {
+    ...actual,
+    ...overrides,
+    burnDummyPasswordCompare: (plain: string) => overrides.verifyPassword(plain, actual.DUMMY_PASSWORD_HASH),
+  };
+});
 
 vi.mock("next-auth", () => {
   class CredentialsSignin extends Error {

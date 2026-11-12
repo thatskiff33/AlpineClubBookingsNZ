@@ -1,6 +1,6 @@
 import { randomBytes } from "crypto";
 
-import bcrypt from "bcryptjs";
+import { verifyPassword } from "./password-hashing";
 
 import { prisma } from "@/lib/prisma";
 import { memberHasStoredPasskey, verifyPasskeyAssertion } from "@/lib/webauthn";
@@ -243,7 +243,7 @@ export async function proveSessionReauth(input: {
     if (!(await claimPasswordAttempt(member.email)).allowed) {
       return throttleResult();
     }
-    const valid = await bcrypt.compare(input.password ?? "", member.passwordHash);
+    const valid = await verifyPassword(input.password ?? "", member.passwordHash);
     if (!valid) {
       return { ok: false, status: 400, error: INVALID_PROOF_ERROR };
     }

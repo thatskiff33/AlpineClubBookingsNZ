@@ -2,10 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
-import bcrypt from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
+import { hashPassword, UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import { breachedPasswordRefusal, screenChosenPassword } from "@/lib/breached-password";
-import crypto from "crypto";
 import { z } from "zod";
 import { nameField } from "@/lib/zod-helpers";
 import { clubDomainEmail } from "@/config/club-identity";
@@ -168,8 +166,7 @@ export async function GET() {
 
   if (!lodge && isFullAdmin(session.user)) {
     // Auto-create the lodge account with a random password (admin must set via UI)
-    const randomPassword = crypto.randomBytes(24).toString("base64url");
-    const passwordHash = await bcrypt.hash(randomPassword, PASSWORD_BCRYPT_COST);
+    const passwordHash = UNUSABLE_PLACEHOLDER_PASSWORD_HASH;
     lodge = await prisma.member.create({
       data: {
         email: LODGE_ACCOUNT_EMAIL,
@@ -333,7 +330,7 @@ export async function PUT(request: NextRequest) {
     changes.push(`email changed to ${email.toLowerCase()}`);
   }
   if (password) {
-    updateData.passwordHash = await bcrypt.hash(password, PASSWORD_BCRYPT_COST);
+    updateData.passwordHash = await hashPassword(password);
     // #4742: the `jwt` refresh ends any session issued before this
     // (`isRevokedMemberSession`), so rotating the password signs out a tablet
     // still on the old one, as the member change- and reset-password routes do.
@@ -443,7 +440,7 @@ export async function POST(request: NextRequest) {
   const screen = await screenChosenPassword(parsed.data.password);
   if (!screen.ok) return breachedPasswordRefusal(screen);
 
-  const passwordHash = await bcrypt.hash(parsed.data.password, PASSWORD_BCRYPT_COST);
+  const passwordHash = await hashPassword(parsed.data.password);
   const created = await prisma.$transaction(async (tx) => {
     const member = await tx.member.create({
       data: {

@@ -2,8 +2,7 @@
 // the seed against a populated database must never delete, overwrite, or
 // duplicate data. Clubs customise the placeholders through the admin screens.
 import { type AgeTier, PrismaClient } from "@prisma/client";
-import bcrypt from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "../src/lib/password-hashing";
+import { hashPassword } from "../src/lib/password-hashing";
 import { screenChosenPassword } from "../src/lib/breached-password";
 import { clubConfig } from "../src/config/club";
 import {
@@ -526,7 +525,7 @@ async function main() {
   // account; forcePasswordChange routes the first login to /change-password.
   // Its password was screened before the first write, above.
   if (!existingAdmin) {
-    const passwordHash = await bcrypt.hash(seedAdminPassword, PASSWORD_BCRYPT_COST);
+    const passwordHash = await hashPassword(seedAdminPassword);
     const admin = await prisma.member.create({
       data: buildSeedAdminMemberData({
         email: seedAdminEmail,
@@ -563,7 +562,7 @@ async function main() {
   // screened before the first write, above; the kiosk signs in with it and is
   // not forced to change it.
   if (lodgePassword !== null) {
-    const lodgePasswordHash = await bcrypt.hash(lodgePassword, PASSWORD_BCRYPT_COST);
+    const lodgePasswordHash = await hashPassword(lodgePassword);
     const lodge = await prisma.member.create({
       data: buildSeedLodgeMemberData({
         email: lodgeAccountEmail,

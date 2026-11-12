@@ -173,9 +173,7 @@ vi.mock("@/lib/xero-sync", () => ({
   startXeroSyncOperation: mocks.startXeroSyncOperation,
   upsertXeroObjectLink: mocks.upsertXeroObjectLink,
 }));
-vi.mock("bcryptjs", () => ({
-  hash: vi.fn().mockResolvedValue("placeholder-hash"),
-}));
+
 vi.mock("xero-node", () => ({
   XeroClient: class {
     accountingApi = mocks.accountingApi;

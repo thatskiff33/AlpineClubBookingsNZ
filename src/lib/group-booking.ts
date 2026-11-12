@@ -24,9 +24,8 @@
  * lookup. The join orchestration (member join, non-member verify, child booking
  * creation) builds on these in the route layer.
  */
-import { randomBytes, randomInt } from "crypto";
-import { hash } from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
+import { randomInt } from "crypto";
+import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import {
   AgeTier,
   BookingEventType,
@@ -1679,9 +1678,9 @@ export async function verifyAndCreateNonMemberJoin(
   });
   const priceCents = price.totalPriceCents;
 
-  // Non-login member: store a random bcrypt hash so the row satisfies the
+  // Non-login member: store the precomputed unusable bcrypt hash so the row satisfies the
   // schema without any usable credential (mirrors approveBookingRequest).
-  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
+  const placeholderPasswordHash = UNUSABLE_PLACEHOLDER_PASSWORD_HASH;
   const reviewedAt = new Date();
   const holdDays = await getNonMemberHoldDays(checkIn, groupLodgeId);
   const nonMemberHoldUntil = resolveRequestBookingHoldUntil(

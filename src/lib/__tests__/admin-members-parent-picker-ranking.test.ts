@@ -54,7 +54,7 @@ vi.mock("@/lib/xero", () => ({
   getXeroContactIdsForGroup: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("@/lib/email", () => ({ sendMemberSetupInviteEmail: vi.fn() }));
-vi.mock("bcryptjs", () => ({ hash: vi.fn() }));
+
 
 import { prisma } from "@/lib/prisma";
 import {
