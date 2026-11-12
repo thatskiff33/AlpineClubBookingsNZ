@@ -1031,6 +1031,64 @@ and by how much in total — run `pnpm run quality:budget --report`, or read the
 from the tree through the same function, so neither can drift from the other or
 from the gate.
 
+### Function-length ratchet
+
+The file-size budget measures whole files, so a 2,000-line function inside a
+file that is already allowed to be long passes it. `performBookingCancellation`
+is exactly that: one function of more than two thousand lines in a file whose
+size debt the file-size ratchet accepts (#4927). So `pnpm run quality:budget`
+runs a second ratchet in the same run, over functions, with the same rule:
+
+> Current length debt may stay. New debt and debt growth may not appear silently.
+
+**The ceiling is 300 lines** (`FUNCTION_LENGTH_LIMIT` in
+`scripts/lib/function-length-ratchet.ts`), a function a reviewer can still hold
+in their head in one sitting. Measured on 12 Nov 2026, 322 of 13,289 production
+functions are over it, carrying 92,699 lines of length debt; run
+`pnpm run quality:budget --report` for the current figure and the longest ten.
+
+**What counts as a function** is what a reader opens and reads top to bottom: a
+top-level `function` declaration, a function or arrow assigned to a top-level
+`const`/`let`, and a method, constructor, accessor or arrow-valued field of a
+top-level class (named `Class.member`). A function nested inside one of those is
+part of its length, not a unit of its own, so keeping a long function's phases
+as inner closures does not shorten it. A span runs from the first token to the
+closing token; the leading doc comment does not count. `scripts/lib/function-length.ts`
+is the measurement.
+
+For each production file a change touches (the same scope and the same base ref
+as the file-size ratchet, so `--base` means the same thing to both):
+
+- a function that was **within** 300 lines may not go over;
+- a function **already over** may not exceed the length it had on the base ref;
+- a **new** function may not arrive over 300.
+
+A function is matched by name within its file. A git rename of the file keeps
+each function's base length, and so does a function moved to another file the
+change touches or out of a file it deletes, provided that name exists in only
+one of the change's files on each side. A function moved in from outside the
+budgeted scope is judged as new. A split is therefore recognised as progress: the
+moved function keeps its old length as its ceiling and the old file loses it. Renaming
+a long function is not followed: the ratchet cannot tell a rename from a
+deletion plus a new function, so keep the name or split it while you are there.
+
+**When a function legitimately has to grow**, splitting it stays the preferred
+answer. Where the split is genuinely worse, declare it in this change's
+`size-allowances.d/` fragment, exactly as for a file, with `function:` naming
+`<path>#<name>`:
+
+```markdown
+function: src/lib/booking-cancel.ts#performBookingCancellation
+lines: 2114
+reason: the guard belongs inside the claim it protects until #4516 splits the
+  cancellation into its phases.
+```
+
+The same rules apply as for a file allowance: the recorded length must be the
+function's real length, it is one-shot, an unneeded one fails, and it may not
+cover a new function or carry one over 300 for the first time.
+[`size-allowances.d/README.md`](../size-allowances.d/README.md) has the format.
+
 ### Quality report
 
 Run the local maintainability report before opening broad refactor PRs, after

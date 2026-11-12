@@ -42,6 +42,10 @@
  * also does not cover a file crossing its budget for the FIRST time: the owner
  * decision permits "growth of an existing in-scope over-budget file", and a
  * module that is still under its budget should be split before it goes over.
+ *
+ * The same fragments carry `function:` entries (`<path>#<name>`) for the
+ * function-length ratchet (#4927), under the same rules; that ratchet judges
+ * them (`scripts/lib/function-length-ratchet.ts`).
  */
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
