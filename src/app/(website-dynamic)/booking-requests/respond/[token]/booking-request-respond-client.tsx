@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, HelpCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useConfirm } from "@/components/confirm-dialog";
 import { Label } from "@/components/ui/label";
@@ -106,6 +107,9 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
   const [actioning, setActioning] = useState<Action | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // #4949: every outcome replaces the form, so it is also spoken from a status
+  // region mounted with the card rather than appearing silently.
+  const [announcement, setAnnouncement] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -176,6 +180,7 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
     setActioning(action);
     setError(null);
     setResult(null);
+    setAnnouncement("");
     try {
       const res = await fetch(`/api/booking-requests/respond/${encodeURIComponent(token)}`, {
         method: "POST",
@@ -202,12 +207,16 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
           declineReason: null,
           declinedAt: null,
         } : current);
-      } else if (data.outcome === "cancelled") {
-        setResult("Quote cancelled. We have let the booking team know.");
-      } else if (data.outcome === "modification_requested") {
-        setResult("Change request sent. The booking team will review it and send a new quote.");
+        setAnnouncement("Your quote has been accepted.");
       } else {
-        setResult("Question sent. The booking team will reply or send an updated quote.");
+        const outcome =
+          data.outcome === "cancelled"
+            ? "Quote cancelled. We have let the booking team know."
+            : data.outcome === "modification_requested"
+              ? "Change request sent. The booking team will review it and send a new quote."
+              : "Question sent. The booking team will reply or send an updated quote.";
+        setResult(outcome);
+        setAnnouncement(outcome);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to send your response.");
@@ -364,11 +373,7 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
               />
             </div>
 
-            {error ? (
-              <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {error}
-              </div>
-            ) : null}
+            <FocusedActionError id="booking-request-respond-error" error={error ?? ""} />
 
             <div className="flex flex-wrap gap-2">
               <Button
@@ -401,6 +406,9 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
             </div>
           </>
         )}
+        <p role="status" className="sr-only">
+          {announcement}
+        </p>
       </CardContent>
       {confirmDialog}
     </Card>
