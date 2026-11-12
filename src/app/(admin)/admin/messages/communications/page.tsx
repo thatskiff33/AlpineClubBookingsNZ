@@ -14,6 +14,7 @@ import {
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useClubTime } from "@/components/club-time-provider";
+import { useConfirm } from "@/components/confirm-dialog";
 import { requireInstant } from "@/lib/club-time";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,6 +26,38 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import type { BulkRecipientFilter } from "@/lib/bulk-communication-recipients";
+
+type OfferedAudience = Exclude<BulkRecipientFilter, "custom">;
+
+// What each audience reaches today, in the words the officer confirms against
+// (#4964). The route's shared recipient query is the authority; keep these in
+// step with `selectBulkCommunicationRecipients`.
+const AUDIENCES: Record<
+  OfferedAudience,
+  { label: string; description: string }
+> = {
+  all: {
+    label: "All Active Members",
+    description:
+      "Every active account, including admin, lodge, school and non-member booking contact accounts.",
+  },
+  "members-only": {
+    label: "Members Only",
+    description:
+      "Active ordinary member accounts. Members whose account has the admin role are not included.",
+  },
+  "admins-only": {
+    label: "Admins Only",
+    description: "Active accounts with the admin role only.",
+  },
+};
+
+const OFFERED_AUDIENCES = Object.keys(AUDIENCES) as OfferedAudience[];
+
+function peopleCount(count: number) {
+  return `${count} ${count === 1 ? "person" : "people"}`;
+}
 
 interface HistoryEntry {
   id: string;
@@ -44,10 +77,16 @@ export default function CommunicationsPage() {
   // Bulk send writes the communications route, which the route-area matrix maps
   // to the membership area; a view-only membership admin cannot send (#1997).
   const canEdit = useAdminAreaEditAccess("membership");
+  const { confirm, confirmDialog } = useConfirm();
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
-  const [recipientFilter, setRecipientFilter] = useState("all");
-  const [sending, setSending] = useState(false);
+  const [recipientFilter, setRecipientFilter] =
+    useState<OfferedAudience>("all");
+  // A send runs checking (the recipient count) → confirming (the dialog) →
+  // sending (the POST); the form takes no second submit until it settles.
+  const [sendPhase, setSendPhase] = useState<
+    "idle" | "checking" | "confirming" | "sending"
+  >("idle");
   const [result, setResult] = useState<{
     success: boolean;
     message: string;
@@ -88,17 +127,67 @@ export default function CommunicationsPage() {
     }
   }
 
+  // How many opted-in accounts the audience reaches, from the same query the
+  // send uses. A GET: it sends nothing and spends none of the hourly quota.
+  async function fetchEligibleCount(
+    audience: OfferedAudience,
+  ): Promise<number | null> {
+    try {
+      const res = await fetch(
+        `/api/admin/communications/send?recipientFilter=${encodeURIComponent(audience)}`,
+      );
+      if (!res.ok) return null;
+      const data = (await res.json()) as { eligibleRecipients?: unknown };
+      return typeof data.eligibleRecipients === "number"
+        ? data.eligibleRecipients
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Submitting the form (the button, or Enter in Subject) only opens the
+  // confirmation step; nothing is sent until the officer confirms (#4964).
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
-    if (!canEdit) return;
-    setSending(true);
+    if (!canEdit || sendPhase !== "idle") return;
+    // Send exactly what was confirmed, whatever happens to the form meanwhile.
+    const message = { subject, body, recipientFilter };
+    const audience = AUDIENCES[message.recipientFilter];
+    setSendPhase("checking");
     setResult(null);
 
     try {
+      const eligible = await fetchEligibleCount(message.recipientFilter);
+      if (eligible === null) {
+        setResult({
+          success: false,
+          message:
+            "Could not check how many people would receive this email, so nothing was sent. Please try again.",
+        });
+        return;
+      }
+      if (eligible === 0) {
+        setResult({
+          success: false,
+          message: `Nobody in "${audience.label}" has opted in to marketing email, so nobody would receive this. Nothing was sent.`,
+        });
+        return;
+      }
+
+      setSendPhase("confirming");
+      const confirmed = await confirm({
+        title: `Send this email to ${peopleCount(eligible)}?`,
+        description: `Audience: ${audience.label} (${audience.description}) Subject: "${message.subject}". Only people who opted in to marketing email are counted. Sending cannot be undone, and you can send ${bulkSendLimit} bulk email${bulkSendLimit === 1 ? "" : "s"} per hour.`,
+        confirmLabel: `Send to ${peopleCount(eligible)}`,
+      });
+      if (!confirmed) return;
+
+      setSendPhase("sending");
       const res = await fetch("/api/admin/communications/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject, body, recipientFilter }),
+        body: JSON.stringify(message),
       });
 
       const data = await res.json();
@@ -120,7 +209,7 @@ export default function CommunicationsPage() {
         message: "Failed to send. Please try again.",
       });
     } finally {
-      setSending(false);
+      setSendPhase("idle");
     }
   }
 
@@ -143,6 +232,7 @@ export default function CommunicationsPage() {
   return (
     <div>
       {viewOnlyBanner}
+      {confirmDialog}
       <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-foreground">Communications</h1>
@@ -182,17 +272,31 @@ export default function CommunicationsPage() {
               <Label htmlFor="recipientFilter">Recipients</Label>
               <Select
                 value={recipientFilter}
-                onValueChange={setRecipientFilter}
+                onValueChange={(value) =>
+                  setRecipientFilter(value as OfferedAudience)
+                }
               >
-                <SelectTrigger id="recipientFilter">
+                <SelectTrigger
+                  id="recipientFilter"
+                  aria-describedby="recipientFilter-help"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Active Members</SelectItem>
-                  <SelectItem value="members-only">Members Only</SelectItem>
-                  <SelectItem value="admins-only">Admins Only</SelectItem>
+                  {OFFERED_AUDIENCES.map((audience) => (
+                    <SelectItem key={audience} value={audience}>
+                      {AUDIENCES[audience].label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
+              <p
+                id="recipientFilter-help"
+                className="text-xs text-muted-foreground mt-1"
+              >
+                {AUDIENCES[recipientFilter].description} Only those who opted
+                in to marketing email receive it.
+              </p>
             </div>
 
             <div>
@@ -212,26 +316,37 @@ export default function CommunicationsPage() {
               </p>
             </div>
 
-            {result && (
-              <div
-                className={`rounded-md p-3 text-sm ${
-                  result.success
-                    ? "bg-success-3 text-success-11 border border-success-6"
-                    : "bg-danger-3 text-danger-11 border border-danger-6"
-                }`}
-              >
-                {result.message}
-              </div>
-            )}
-
             <ViewOnlyActionButton
               canEdit={canEdit}
               describeReason={false}
               type="submit"
-              disabled={sending || !subject || !body}
+              disabled={sendPhase !== "idle" || !subject || !body}
             >
-              {sending ? "Sending..." : "Send to Members"}
+              {sendPhase === "checking"
+                ? "Checking recipients..."
+                : sendPhase === "sending"
+                  ? "Sending..."
+                  : "Send to Members"}
             </ViewOnlyActionButton>
+
+            {/*
+              Permanently mounted so screen readers announce the result: a live
+              region injected already filled in is dropped by some pairings
+              (the same reason as the view-only banner above).
+            */}
+            <div role="status" data-testid="send-result">
+              {result && (
+                <div
+                  className={`rounded-md p-3 text-sm ${
+                    result.success
+                      ? "bg-success-3 text-success-11 border border-success-6"
+                      : "bg-danger-3 text-danger-11 border border-danger-6"
+                  }`}
+                >
+                  {result.message}
+                </div>
+              )}
+            </div>
           </form>
         </CardContent>
       </Card>
