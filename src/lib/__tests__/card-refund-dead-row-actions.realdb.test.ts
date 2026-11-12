@@ -478,7 +478,7 @@ let refundCreatedSeconds = 0;
         expect(failedLater).toMatchObject({ amountCents: REFUND_CENTS, status: "PENDING" });
         await expect(payAnotherWay()).rejects.toMatchObject({ status: 409, message: expect.stringContaining("may be the same money") });
         expect(await prisma.manualRefundTask.count({ where: { bookingId: BOOKING_ID } })).toBe(0);
-        expect(await prisma.bookingLedgerLine.count({ where: { bookingId: BOOKING_ID, type: "BANK_REFUND" } })).toBe(0);
+        expect(await prisma.bookingLedgerLine.count({ where: { bookingId: BOOKING_ID, kind: "BANK_REFUND" } })).toBe(0);
         // The #4492 pair: the given-up row and the failed-later row may be the same money; the re-arm is refused.
         await expect(tryAgain()).rejects.toMatchObject({ status: 409, message: expect.stringContaining("failed later is on this payment") });
         expect(await operationNow()).toMatchObject({ status: "FAILED", attempts: 5 });

@@ -365,9 +365,10 @@ let raisedSeconds = 0;
     });
     async function expectNoBankClose() {
       expect(await prisma.manualRefundTask.count({ where: { bookingId: BOOKING_ID } })).toBe(0);
-      expect(await prisma.bookingLedgerLine.count({ where: { bookingId: BOOKING_ID, type: "BANK_REFUND" } })).toBe(0);
+      expect(await prisma.bookingLedgerLine.count({ where: { bookingId: BOOKING_ID, kind: "BANK_REFUND" } })).toBe(0);
       expect(await prisma.auditLog.count({ where: { targetId: BOOKING_ID, action: "booking-payment.card-refund.paid-another-way" } })).toBe(0);
-      expect(await prisma.xeroSyncOperation.count({ where: { localId: { in: [BOOKING_ID, PAYMENT_ID] }, operationKey: { contains: "paid-another-way" } } })).toBe(0);
+      // A bank close's Xero note is a refund credit note on the Payment marked as paid by internet banking.
+      expect(await prisma.xeroSyncOperation.count({ where: { localModel: "Payment", localId: PAYMENT_ID, requestPayload: { path: ["refundMethod"], equals: "internet-banking" } } })).toBe(0);
     }
 
     it("#4492: a failed-later send killed by the superseded card send cannot also be paid by bank", async () => {

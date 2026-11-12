@@ -44,6 +44,7 @@ import {
 } from "@/lib/card-refund-dead-row";
 import { deadRowClaimWhere, lockDeadCardRefundRow } from "@/lib/card-refund-dead-row-lock";
 import { isOwedCardRefundOperation } from "@/lib/open-card-refund-owed";
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { prisma } from "@/lib/prisma";
 import { isOrganiserChildRefundKey } from "@/lib/payment-recovery-keys";
 import {
@@ -234,6 +235,7 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
       : await prisma.paymentTransaction.findMany({
           where: { paymentId: { in: paymentIds } },
           select: { id: true, paymentId: true, amountCents: true, refundedAmountCents: true },
+          orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
         });
   const listed = operations
     .filter(
@@ -422,6 +424,7 @@ export async function closeCardRefundPaidAnotherWay(
     const charges = await tx.paymentTransaction.findMany({
       where: { paymentId: payment.id },
       select: { id: true, amountCents: true, refundedAmountCents: true },
+      orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
     });
     const refusal = paidAnotherWayRefusal(payment, operation, owed, charges);
     if (refusal) throw new CardRefundPaidAnotherWayError(refusal, 409);

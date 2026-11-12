@@ -211,6 +211,7 @@ export async function tryDeadCardRefundAgain(input: TryCardAgainInput): Promise<
         : await tx.paymentTransaction.findMany({
             where: { paymentId: payment.id },
             select: { id: true, amountCents: true, refundedAmountCents: true },
+            orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
           });
     const bankCloseRefusal = paidAnotherWayRefusal(payment, operation, owed, charges);
     const refusal = tryCardAgainRefusal(payment, rowWithCharge, owed, bankCloseRefusal);
