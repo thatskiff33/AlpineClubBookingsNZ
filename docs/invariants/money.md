@@ -1114,7 +1114,8 @@ journal is re-stated to the lines once (`chargeRestatement`), and that is
 logged. `booking-ledger:census` compares a pending charge with the booking's
 final price plus its recorded fees, or what a cancellation kept
 (`JOURNAL_PENDING`). Every booking write setting PAID or CANCELLED is
-classified as posting or not a sale; each posting write calls its named poster
-in its own enclosing function, checked per write, not per file (#4928). Pins: `member-money-pending-charges.test.ts`,
+classified as posting or not a sale; each posting write's own enclosing
+function calls its named poster at least once per such write, checked by
+function, not per file or per branch (#4928). Pins: `member-money-pending-charges.test.ts`,
 `booking-sale-status-writer-census.test.ts`,
 `booking-ledger-pending-charge.realdb.test.ts`.

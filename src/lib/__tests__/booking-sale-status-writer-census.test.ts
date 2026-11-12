@@ -12,15 +12,16 @@
  *
  * `POSTS` names the posting call, and the census holds EACH write under that
  * entry to it, per site (#4928): the write's own enclosing function (its
- * nearest function-like ancestor) must call it by name. A call elsewhere in the
+ * nearest function-like ancestor) must call it by name, at least once per such
+ * write it holds. A call elsewhere in the
  * file, in a sibling function, in a closure nested under the write's function,
  * or inside a helper the function calls does not count; a failure names the
  * write's `file:line`. A writer that posts through a helper names that helper
  * as its `call`, reviewed with the entry (group cancel and group settle do,
  * each helper a poster in its own right); there is no exception list. The pairing is by function, not by branch: a
  * computed-status site whose post runs only on its PAID branch passes, as does
- * a function that posts on a path the write is not on. So it proves no write
- * forgot its function's post; it does not prove every run of the write posts.
+ * a function whose calls sit on paths its writes are not on. So it proves no
+ * function has fewer posts than writes; it does not prove every run of a write posts.
  *
  * There is no third kind for a sale that posts nothing:
  * #4660 made the credit-covered create and the pay-step credit settle post,
@@ -422,22 +423,40 @@ const placeOf = (file: string, write: ts.Node): string =>
 
 /**
  * THE POSTS PAIRING, PER SITE (#4928): each write whose classification names a
- * posting call must make that call in its OWN enclosing function, the nearest
- * function-like ancestor of the write. A call anywhere else in the file, in a
- * sibling function, or in a closure nested under the write's function (which
- * may never run) does not count. `postFor` gives the call a site's value must
- * make, or undefined for a site that need not post. Returns each unpaired
- * write as `file:line value: call`.
+ * posting call must have that call in its OWN enclosing function, the nearest
+ * function-like ancestor of the write, and a function holding several such
+ * writes must make at least as many of those calls as it has writes. A call
+ * anywhere else in the file, in a sibling function, or in a closure nested
+ * under the write's function (which may never run) does not count. `postFor`
+ * gives the call a site's value must make, or undefined for a site that need
+ * not post. Returns each write of a short function as `file:line value: …`.
  */
-function unpairedWrites(file: string, sites: readonly Site[], postFor: (value: string) => string | undefined): string[] {
-  return sites.flatMap(({ value, write }) => {
-    const call = postFor(value);
-    if (call === undefined || callsInOwnBody(enclosingFunction(write), call)) return [];
-    return [`${placeOf(file, write)} ${value}: no ${call}(...) in its enclosing function`];
-  });
+function unpairedWrites(file: string, sites: readonly Site[], postFor: (value: string) => string | undefined): { checked: number; unpaired: string[] } {
+  const byScope = new Map<ts.Node, Map<string, Site[]>>();
+  for (const site of sites) {
+    const call = postFor(site.value);
+    if (call === undefined) continue;
+    const scope = enclosingFunction(site.write);
+    const calls = byScope.get(scope) ?? new Map<string, Site[]>();
+    calls.set(call, [...(calls.get(call) ?? []), site]);
+    byScope.set(scope, calls);
+  }
+  let checked = 0;
+  const unpaired: string[] = [];
+  for (const [scope, calls] of byScope) {
+    for (const [call, writes] of calls) {
+      checked += writes.length;
+      const made = callsInOwnBody(scope, call);
+      if (made >= writes.length) continue;
+      for (const { value, write } of writes) {
+        unpaired.push(`${placeOf(file, write)} ${value}: its enclosing function makes ${made} ${call}(...) call(s) for ${writes.length} write(s)`);
+      }
+    }
+  }
+  return { checked, unpaired };
 }
 
-function census(): { found: Record<string, number>; unpaired: string[] } {
+function census(): { found: Record<string, number>; checked: number; unpaired: string[] } {
   const found: Record<string, number> = {};
   const perFile: [string, Site[]][] = [];
   for (const file of scanned) {
@@ -448,15 +467,15 @@ function census(): { found: Record<string, number>; unpaired: string[] } {
     perFile.push([file, sites]);
   }
   // Keyed by the file's full count, as REVIEWED is: an unlisted key is the first test's failure, not this one's.
-  const unpaired = perFile.flatMap(([file, sites]) => unpairedWrites(file, sites, (value) => {
+  const paired = perFile.map(([file, sites]) => unpairedWrites(file, sites, (value) => {
     const classification = REVIEWED[`${file}|${value}|${found[`${file}|${value}`]}`];
     return classification?.kind === "POSTS" ? classification.call : undefined;
   }));
-  return { found, unpaired };
+  return { found, checked: paired.reduce((sum, { checked }) => sum + checked, 0), unpaired: paired.flatMap(({ unpaired }) => unpaired) };
 }
 
 describe("every booking PAID/CANCELLED writer is classified (#4628)", () => {
-  const { found, unpaired } = census();
+  const { found, checked, unpaired } = census();
 
   it("finds exactly the reviewed writers, by file, value and count", () => {
     const actual = Object.entries(found).map(([site, count]) => `${site}|${count}`).sort();
@@ -465,6 +484,9 @@ describe("every booking PAID/CANCELLED writer is classified (#4628)", () => {
 
   it("holds each POSTS write to its posting call, in the write's own function", () => {
     expect(unpaired, "a PAID/CANCELLED write must post its journal event in the same function").toEqual([]);
+    // Every write a POSTS entry counts was held to its post: a drifted lookup cannot pass by checking nothing.
+    const posting = Object.entries(REVIEWED).filter(([, classification]) => classification.kind === "POSTS");
+    expect(checked, "writes paired with a post").toBe(posting.reduce((sum, [site]) => sum + Number(site.split("|").at(-1)), 0));
   });
 
   it("refuses a raw SQL status write to a booking", () => {
@@ -496,24 +518,30 @@ describe("every booking PAID/CANCELLED writer is classified (#4628)", () => {
 
   it("pairs each write with its post in the write's own function (fixture proof)", () => {
     const unpaired = (code: string) =>
-      unpairedWrites("fixture.ts", bookingSaleStatusSites(code, "fixture.ts"), (value) => (value === "CANCELLED" ? "postCancel" : undefined));
+      unpairedWrites("fixture.ts", bookingSaleStatusSites(code, "fixture.ts"), (value) => (value === "CANCELLED" ? "postCancel" : undefined)).unpaired;
     const CANCEL = "await tx.booking.update({ where, data: { status: BookingStatus.CANCELLED } });";
     expect(unpaired(`async function f(tx) {\n  ${CANCEL}\n  if (bound) await postCancel(tx);\n}`), "a write and its post in one function").toEqual([]);
     expect(unpaired(`async function f(tx) {\n  ${CANCEL}\n}\nasync function g(tx) {\n  await postCancel(tx);\n}`), "a post in a sibling function")
-      .toEqual(["fixture.ts:2 CANCELLED: no postCancel(...) in its enclosing function"]);
+      .toEqual(["fixture.ts:2 CANCELLED: its enclosing function makes 0 postCancel(...) call(s) for 1 write(s)"]);
     // Decided (#4928): a closure under the write's function may never run, so its post is not the write's.
     expect(unpaired(`async function f(tx) {\n  ${CANCEL}\n  const later = async () => { await postCancel(tx); };\n}`), "a post in a nested closure")
-      .toEqual(["fixture.ts:2 CANCELLED: no postCancel(...) in its enclosing function"]);
+      .toEqual(["fixture.ts:2 CANCELLED: its enclosing function makes 0 postCancel(...) call(s) for 1 write(s)"]);
     // The write's own function is the nearest one: a write in a callback pairs with a post in that callback.
     expect(unpaired(`async function f() {\n  await prisma.$transaction(async (tx) => {\n    ${CANCEL}\n  });\n  await postCancel();\n}`), "a post outside the write's callback")
-      .toEqual(["fixture.ts:3 CANCELLED: no postCancel(...) in its enclosing function"]);
+      .toEqual(["fixture.ts:3 CANCELLED: its enclosing function makes 0 postCancel(...) call(s) for 1 write(s)"]);
     expect(unpaired(`async function f() {\n  await prisma.$transaction(async (tx) => {\n    ${CANCEL}\n    await postCancel(tx);\n  });\n}`)).toEqual([]);
     // Only a direct call by name: a same-named method, or a helper that may post, is not the named call.
     expect(unpaired(`async function f(tx) {\n  ${CANCEL}\n  await ledger.postCancel(tx);\n}`)).toHaveLength(1);
     expect(unpaired(`async function f(tx) {\n  ${CANCEL}\n  await cancelAndPost(tx);\n}`)).toHaveLength(1);
     // Each write is held to its own post: a second write in a function that does not post fails on its own line.
     expect(unpaired(`async function f(tx) {\n  ${CANCEL}\n  await postCancel(tx);\n}\nasync function g(tx) {\n  ${CANCEL}\n}`))
-      .toEqual(["fixture.ts:6 CANCELLED: no postCancel(...) in its enclosing function"]);
+      .toEqual(["fixture.ts:6 CANCELLED: its enclosing function makes 0 postCancel(...) call(s) for 1 write(s)"]);
+    // Several writes in one function need as many posts: one post does not cover two cancel paths.
+    expect(unpaired(`async function f(tx) {\n  if (a) {\n    ${CANCEL}\n    await postCancel(tx);\n  } else {\n    ${CANCEL}\n  }\n}`)).toEqual([
+      "fixture.ts:3 CANCELLED: its enclosing function makes 1 postCancel(...) call(s) for 2 write(s)",
+      "fixture.ts:6 CANCELLED: its enclosing function makes 1 postCancel(...) call(s) for 2 write(s)",
+    ]);
+    expect(unpaired(`async function f(tx) {\n  if (a) {\n    ${CANCEL}\n    await postCancel(tx);\n  } else {\n    ${CANCEL}\n    await postCancel(tx);\n  }\n}`)).toEqual([]);
     // A site that need not post is not held to one.
     expect(unpaired("async function f(tx) { await tx.booking.update({ where, data: { status: BookingStatus.PAID } }); }")).toEqual([]);
   });
