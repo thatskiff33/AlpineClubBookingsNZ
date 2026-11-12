@@ -5794,6 +5794,18 @@ queued) or waits until the email call finishes and then commits its VOID debt.
 No invoice construction, contact lookup, create, or VOID provider call is held
 inside that transaction.
 
+The bound is enforced, not assumed (#4919, `INV-INT-003`): one `emailInvoice`
+attempt with zero in-lock retries (no rate-limit sleep under the lock) and a
+3 s client deadline, in a transaction with an explicit 10 s timeout. Prisma's
+timeout counts the wait for `lock(1)`, so the send starts only while the
+deadline plus a 2 s commit margin still fits; otherwise it is not attempted.
+A deadline, rate limit or transient failure leaves the email owed: the fence
+commits at once, the CREATE row keeps an owed marker in `responsePayload` and
+returns to PENDING under `GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED`, and the
+outbox asks again a minute later through the same fence, re-running every
+in-lock check, with the same idempotency key. Usage rows for the call are
+written after the fence, not on a second connection inside it.
+
 A settlement waiting on its combined invoice is bound to it (`INV-PAY-105`,
 #3642). Every writer that could change it re-reads the settlement under the
 same `lock(1)`: the child-commit transaction (a card attempt is refused before
