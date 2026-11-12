@@ -1703,19 +1703,37 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
       "Pending-hold charge release lost its CONFIRMED claim",
       cron.indexOf("export async function confirmPendingBookings"),
     );
+    // #4993: the locks and the guarded hand-back live in the one shared
+    // release (`saved-card-charge-claim.ts`); the cron supplies the re-read.
     const processingRelease = cron.slice(
-      cron.lastIndexOf("await prisma.$transaction", processingMarker),
+      cron.lastIndexOf("await runSavedCardClaimRelease(", processingMarker),
       cron.indexOf('"Booking payment processing"', processingMarker),
     );
-    const releaseOrder = [
-      "pg_advisory_xact_lock(1)",
-      "acquireLodgeCapacityLock(",
+    const cronReleaseOrder = [
+      "await runSavedCardClaimRelease(",
       "const lockedBooking = await tx.booking.findUnique(",
-      "const released = await tx.booking.updateMany(",
-      "reconcileBedAllocationsForBookingWithLodgeLockHeld(",
+      "await releaseSavedCardChargeClaim(tx,",
     ].map((marker) => processingRelease.indexOf(marker));
-    expect(releaseOrder.every((index) => index >= 0)).toBe(true);
-    expect(releaseOrder).toEqual([...releaseOrder].sort((a, b) => a - b));
+    expect(cronReleaseOrder.every((index) => index >= 0)).toBe(true);
+    expect(cronReleaseOrder).toEqual([...cronReleaseOrder].sort((a, b) => a - b));
+
+    const claimModule = readRepoCode("src/lib/saved-card-charge-claim.ts");
+    const runRelease = claimModule.slice(claimModule.indexOf("export async function runSavedCardClaimRelease"));
+    const lockOrder = ["pg_advisory_xact_lock(1)", "acquireLodgeCapacityLock(", "return work(tx)"]
+      .map((marker) => runRelease.indexOf(marker));
+    expect(lockOrder.every((index) => index >= 0)).toBe(true);
+    expect(lockOrder).toEqual([...lockOrder].sort((a, b) => a - b));
+    const handBack = claimModule.slice(
+      claimModule.indexOf("export async function releaseSavedCardChargeClaim"),
+      claimModule.indexOf("export async function runSavedCardClaimRelease"),
+    );
+    const handBackOrder = [
+      "await tx.booking.findUnique(",
+      "await tx.booking.updateMany(",
+      "reconcileBedAllocationsForBookingWithGlobalLockHeld(",
+    ].map((marker) => handBack.indexOf(marker));
+    expect(handBackOrder.every((index) => index >= 0)).toBe(true);
+    expect(handBackOrder).toEqual([...handBackOrder].sort((a, b) => a - b));
 
     const groupSettlement = readRepoCode("src/lib/group-settlement.ts");
     const groupCommitCalls = [

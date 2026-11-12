@@ -248,6 +248,10 @@ vi.mock("../lodges", () => ({
 
 // Mock Prisma
 const mockBookingFindMany = vi.fn();
+// #4993: the stale saved-card claim recovery's CONFIRMED read, kept apart from
+// the pending pass's read so every fixture above keeps describing that pass.
+const mockStaleClaimFindMany = vi.fn().mockResolvedValue([]);
+const mockAuditLogCreate = vi.fn().mockResolvedValue({ id: "audit_1" });
 const mockBookingFindUnique = vi.fn();
 const mockBookingUpdate = vi.fn();
 const mockBookingUpdateMany = vi.fn();
@@ -315,7 +319,10 @@ const mockHostingCoverageReevaluationFindMany = vi.fn().mockResolvedValue([]);
 vi.mock("../prisma", () => ({
   prisma: {
     booking: {
-      findMany: (...args: unknown[]) => mockBookingFindMany(...args),
+      findMany: (args: { where?: { status?: unknown } }) =>
+        args.where?.status === "CONFIRMED"
+          ? mockStaleClaimFindMany(args)
+          : mockBookingFindMany(args),
       findUnique: (...args: unknown[]) => mockBookingFindUnique(...args),
       update: (...args: unknown[]) => mockBookingUpdate(...args),
       updateMany: (...args: unknown[]) => mockBookingUpdateMany(...args),
@@ -354,6 +361,10 @@ vi.mock("../prisma", () => ({
     clubTimeSettings: {
       findUnique: (...args: unknown[]) =>
         mockClubTimeSettingsFindUnique(...args),
+    },
+    // #4993: the claim recovery's and the failed release's awaited audit rows.
+    auditLog: {
+      create: (...args: unknown[]) => mockAuditLogCreate(...args),
     },
     $transaction: (...args: unknown[]) => mockPrismaTransaction(...args),
     // #4217: the root client, so a settle without a caller's transaction opens its own.
@@ -599,6 +610,8 @@ describe("Cron: Confirm Pending Bookings", () => {
       skipped: 0,
     });
     mockBookingUpdateMany.mockResolvedValue({ count: 1 });
+    mockStaleClaimFindMany.mockResolvedValue([]);
+    mockAuditLogCreate.mockResolvedValue({ id: "audit_1" });
     mockPaymentUpsert.mockImplementation(
       async ({
         where,
@@ -1485,6 +1498,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       data: {
         status: "PENDING",
         nonMemberHoldUntil: booking.nonMemberHoldUntil,
+        savedCardClaimAt: null,
       },
     });
     const releaseLockOrder = mockAcquireLodgeCapacityLock.mock.invocationCallOrder.at(-1);
@@ -1613,13 +1627,14 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(result.failedBookingIds).toEqual(["b1"]);
     expect(mockBookingUpdateMany).toHaveBeenCalledWith({
       where: { id: "b1", status: "PENDING" },
-      data: { status: "CONFIRMED", nonMemberHoldUntil: null },
+      data: { status: "CONFIRMED", nonMemberHoldUntil: null, savedCardClaimAt: expect.any(Date) },
     });
     expect(mockBookingUpdateMany).not.toHaveBeenCalledWith({
       where: { id: "b1", status: "CONFIRMED" },
       data: {
         status: "PENDING",
         nonMemberHoldUntil: booking.nonMemberHoldUntil,
+        savedCardClaimAt: null,
       },
     });
     expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
@@ -4471,6 +4486,200 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(mockDetachPaymentMethod).not.toHaveBeenCalled();
       expect(mockPaymentUpdateMany).not.toHaveBeenCalled();
       expect(mockSendSavedCardChargeFailedEmail).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("#4993 a saved-card claim stranded CONFIRMED is recovered and replayed, never re-minted", () => {
+    const NOW = new Date("2026-07-09T00:00:00.000Z");
+    const STALE_MARKER = new Date("2026-07-08T23:00:00.000Z");
+
+    function capacityAvailable() {
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 10,
+        nightDetails: [],
+      });
+    }
+
+    /** The booking as the claim left it: CONFIRMED, marker stamped, hold cleared, Stripe payment pending. */
+    function strandedClaim(marker = STALE_MARKER) {
+      mockStaleClaimFindMany.mockResolvedValue([{ id: "b1", lodgeId: "lodge-1" }]);
+      const pendingRead = mockBookingFindUnique.getMockImplementation()!;
+      let recovered = false;
+      mockBookingUpdateMany.mockImplementation(async (call: { where?: { savedCardClaimAt?: unknown } }) => {
+        if (call?.where?.savedCardClaimAt) recovered = true;
+        return { count: 1 };
+      });
+      mockBookingFindUnique.mockImplementation(async (args: { select?: Record<string, unknown> }) => {
+        if (args.select?.savedCardClaimAt) {
+          return {
+            status: "CONFIRMED",
+            savedCardClaimAt: marker,
+            checkIn: new Date("2026-08-01T00:00:00.000Z"),
+            checkOut: new Date("2026-08-03T00:00:00.000Z"),
+            payment: { source: "STRIPE", status: "PENDING", transactions: [] },
+          };
+        }
+        if (!recovered && args.select && Object.keys(args.select).join() === "status") {
+          return { status: "CONFIRMED" };
+        }
+        return pendingRead(args);
+      });
+    }
+
+    function recoveryReleaseCall() {
+      return mockBookingUpdateMany.mock.calls.find(([call]) => call?.where?.savedCardClaimAt !== undefined);
+    }
+
+    function auditActions() {
+      return mockAuditLogCreate.mock.calls.map(([call]) => (call as { data: { action: string } }).data.action);
+    }
+
+    it("selects only CONFIRMED bookings whose marker is older than the recovery age and whose Stripe payment is still pending", async () => {
+      mockPendingBookings([]);
+
+      await confirmPendingBookings();
+
+      expect(mockStaleClaimFindMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: {
+          status: "CONFIRMED",
+          savedCardClaimAt: { lte: new Date(NOW.getTime() - 30 * 60 * 1000) },
+          payment: { source: "STRIPE", status: "PENDING" },
+        },
+      }));
+    });
+
+    it("a claim whose charge step never ran (the process stopped) is returned to PENDING, then the same run replays the stranded attempt's own key", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      strandedClaim();
+      // The claim minted this row and committed; the POST was never made.
+      mockPaymentTransactionFindMany.mockImplementation(
+        async (args: { where: { OR?: unknown } }) =>
+          args.where.OR
+            ? []
+            : [
+                {
+                  id: "txn_stranded",
+                  status: "PENDING",
+                  amountCents: 10000,
+                  refundedAmountCents: 0,
+                  paymentMethodId: "pm_b1",
+                  stripePaymentIntentId: null,
+                  reference: "pending_charge_b1_txn_stranded_v2",
+                  reason: "cron_pending_hold_charge",
+                  createdAt: STALE_MARKER,
+                  updatedAt: STALE_MARKER,
+                },
+              ],
+      );
+      mockChargePaymentMethod.mockResolvedValue({
+        id: "pi_replayed",
+        status: "succeeded",
+        amount: 10000,
+        payment_method: "pm_b1",
+      });
+
+      const result = await confirmPendingBookings();
+
+      expect(recoveryReleaseCall()?.[0]).toEqual({
+        where: { id: "b1", status: "CONFIRMED", savedCardClaimAt: STALE_MARKER },
+        data: { status: "PENDING", nonMemberHoldUntil: STALE_MARKER, savedCardClaimAt: null },
+      });
+      expect(auditActions()).toContain("booking.saved_card_claim_recovered");
+      // The recovery itself never calls Stripe; the ordinary pass replays by key.
+      expect(mockChargePaymentMethod).toHaveBeenCalledTimes(1);
+      expect(mockChargePaymentMethod).toHaveBeenCalledWith(
+        expect.objectContaining({ idempotencyKey: "pending_charge_b1_txn_stranded_v2" }),
+      );
+      expect(mockPaymentTransactionCreate).not.toHaveBeenCalled();
+      expect(result.confirmedBookingIds).toEqual(["b1"]);
+    });
+
+    it("leaves a claim younger than the recovery age alone after the locked re-read", async () => {
+      mockPendingBookings([]);
+      strandedClaim(new Date(NOW.getTime() - 60 * 1000));
+
+      const result = await confirmPendingBookings();
+
+      expect(recoveryReleaseCall()).toBeUndefined();
+      expect(auditActions()).toEqual([]);
+      expect(result.failedBookingIds).toEqual([]);
+    });
+
+    it("a release that hits P2028 twice is retried once, audited as critical, counted failed, keeps the marker, and #3268 is told the claim was not released", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      mockChargePaymentMethod.mockRejectedValue(
+        stripeError({ type: "card_error", code: "card_declined", decline_code: "lost_card", message: "Your card was declined." }),
+      );
+      const runTransaction = mockPrismaTransaction.getMockImplementation()!;
+      let releaseTransactions = 0;
+      mockPrismaTransaction.mockImplementation(async (arg: unknown, options?: unknown) => {
+        if (typeof arg === "function" && mockChargePaymentMethod.mock.calls.length > 0) {
+          releaseTransactions++;
+          expect(options).toEqual({ maxWait: 5000, timeout: 10000 });
+          throw Object.assign(new Error("Transaction API error: Unable to start a transaction in the given time."), { code: "P2028" });
+        }
+        return runTransaction(arg, options);
+      });
+
+      // The retry's short pause runs on this suite's frozen clock.
+      const run = confirmPendingBookings();
+      await vi.runAllTimersAsync();
+      const result = await run;
+
+      expect(releaseTransactions).toBe(2);
+      expect(result.failedBookingIds).toEqual(["b1"]);
+      expect(auditActions()).toEqual(["booking.saved_card_claim_release_failed"]);
+      expect(mockAuditLogCreate.mock.calls[0]?.[0]).toMatchObject({
+        data: { severity: "critical", category: "payment", entityId: "b1" },
+      });
+      expect(
+        mockBookingUpdateMany.mock.calls.find(([call]) => call?.data?.savedCardClaimAt === null),
+      ).toBeUndefined();
+      const [alert] = mockSendAdminPaymentFailureAlert.mock.calls[0] as [{ errorMessage: string }];
+      expect(alert.errorMessage).toContain("still marked confirmed but unpaid");
+    });
+
+    it("after a definite decline marked the attempt FAILED and the release failed, the next run recovers the booking and starts a FRESH attempt", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      strandedClaim();
+      mockPaymentTransactionFindMany.mockImplementation(
+        async (args: { where: { OR?: unknown } }) =>
+          args.where.OR
+            ? []
+            : [
+                {
+                  id: "txn_declined",
+                  status: "FAILED",
+                  amountCents: 10000,
+                  refundedAmountCents: 0,
+                  paymentMethodId: "pm_b1",
+                  stripePaymentIntentId: "pi_declined",
+                  reference: "pending_charge_b1_txn_declined_v2",
+                  reason: "cron_pending_hold_charge",
+                  createdAt: STALE_MARKER,
+                  updatedAt: STALE_MARKER,
+                },
+              ],
+      );
+      mockChargePaymentMethod.mockResolvedValue({
+        id: "pi_fresh",
+        status: "succeeded",
+        amount: 10000,
+        payment_method: "pm_b1",
+      });
+
+      const result = await confirmPendingBookings();
+
+      expect(recoveryReleaseCall()).toBeDefined();
+      expect(mockPaymentTransactionCreate).toHaveBeenCalledTimes(1);
+      expect(mockChargePaymentMethod).toHaveBeenCalledWith(
+        expect.objectContaining({ idempotencyKey: attemptKeyFor("b1") }),
+      );
+      expect(result.confirmedBookingIds).toEqual(["b1"]);
     });
   });
 });

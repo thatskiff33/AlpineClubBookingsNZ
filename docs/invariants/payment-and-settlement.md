@@ -4127,3 +4127,30 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
   `cancel-card-refund-shortfall-preview.test.ts`,
   `clipped-mirror-open-hand-back.test.ts` and
   `superseded-refund-cancel-hold-back.realdb.test.ts`.
+
+## INV-PAY-151
+
+**Related: `INV-PAY-055`** (the attempt ledger), **`INV-PAY-089`** (replay
+window), **`INV-LOCK-001`** to **`INV-LOCK-003`**.
+
+- **A saved-card claim is durable and recovered** (#4993). Every saved-card
+  PENDING -> CONFIRMED claim stamps `Booking.savedCardClaimAt` in its guarded
+  write; every release and every PAID promotion
+  (`settleBookingPaymentInTransaction`) clears it in the same write. A claim
+  whose process stopped mid-charge, or whose release failed, keeps its marker.
+- **Recovery** (`recoverStaleSavedCardClaims`) runs first in each
+  `confirmPendingBookings`. Under global `lock(1)` then the lodge key it
+  re-reads, and hands back to PENDING only a booking still CONFIRMED whose
+  marker is older than 30 minutes, with a Stripe payment still PENDING and no
+  captured row. The hold becomes the marker time, beds are reconciled, the
+  marker is cleared by a marker-guarded write. It calls no provider and writes
+  no attempt row: the ordinary pass replays the attempt by its own key, or
+  begins a fresh one after a definite failure. An unmarked CONFIRMED booking is
+  never touched.
+- **Releases share one helper** (`runSavedCardClaimRelease`): explicit 5 s / 10
+  s budget, one retry on P2028/P2034, outcome returned as data. A final
+  failure writes an awaited critical `booking.saved_card_claim_release_failed`
+  audit row; a recovery writes `booking.saved_card_claim_recovered`.
+- Proven by `saved-card-charge-claim.test.ts`, `cron-confirm-pending.test.ts`
+  ("#4993"), `saved-card-claim-marker-census.test.ts`, both route suites and
+  `saved-card-claim-recovery.realdb.test.ts`.

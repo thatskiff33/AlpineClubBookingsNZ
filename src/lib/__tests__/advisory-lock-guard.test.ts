@@ -166,13 +166,6 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
-    site: "POST /api/admin/bookings/[id]/confirm-pending-guests#3",
-    tier: "GLOBAL",
-    reason:
-      "Releasing a charge claim that never captured hands the beds back, so the release has to serialise with the same cancel/settlement cohort the claim did before re-taking the lodge key for the guarded release.",
-    invariant: "INV-LOCK-002",
-  },
-  {
     site: "POST /api/admin/bookings/[id]/exclusive-hold#1",
     tier: "GLOBAL",
     reason:
@@ -275,13 +268,6 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     tier: "GLOBAL",
     reason:
       "#3267: the saved-card charge claim (PENDING -> CONFIRMED) joins the cancel/settlement cohort before taking the lodge tier, exactly as the cron's resolveHoldWindowUnderLock and the admin confirm-pending-guests charge branch do — and now also writes the charge ATTEMPT row under both, which is the double-charge guard the shared Stripe key used to stand in for (INV-PAY-055). Until #3267 this route charged with no claim at all.",
-    invariant: "INV-LOCK-002",
-  },
-  {
-    site: "POST /api/payments/charge-saved-method#2",
-    tier: "GLOBAL",
-    reason:
-      "#3267: releasing that claim when the charge did not capture (CONFIRMED -> PENDING, hold restored, beds reconciled; the non-captured branch also records Stripe's answer on the attempt row in the same transaction) serialises with the same cohort the claim did before re-taking the lodge key — the cron's releaseChargeClaim shape.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -655,24 +641,16 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "runSavedCardClaimRelease#1",
+    tier: "GLOBAL",
+    reason: "#4993: normal compensation and stale-claim recovery both return CONFIRMED bookings to PENDING and reconcile beds. Global then lodge excludes the webhook's capture/PAID promotion and cancellation; a locked re-read and guarded marker release prevent clobbering either winner.",
+    invariant: "INV-LOCK-002",
+  },
+  {
     site: "resolveHoldWindowUnderLock#1",
     tier: "GLOBAL",
     reason:
       "The hold-window resolution claims a PENDING booking for charge or releases it, so it must exclude cancel and settlement before taking the booking's lodge key; only the lock key is read before the lock.",
-    invariant: "INV-LOCK-002",
-  },
-  {
-    site: "releaseChargeClaim#1",
-    tier: "GLOBAL",
-    reason:
-      "Releasing a claim taken for a charge that did not capture hands the beds back, so it serialises with the same cohort the claim did before re-taking the lodge key.",
-    invariant: "INV-LOCK-002",
-  },
-  {
-    site: "confirmPendingBookings#1",
-    tier: "GLOBAL",
-    reason:
-      "The bump branch releases a PENDING booking that could not be charged; the global tier keeps that release out of a concurrent capture or cancel of the same booking.",
     invariant: "INV-LOCK-002",
   },
   {

@@ -1,3 +1,4 @@
+import { recoverStaleSavedCardClaims, releaseSavedCardChargeClaim, runSavedCardClaimRelease } from "@/lib/saved-card-charge-claim";
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { savedCardChargeCents } from "@/lib/booking-payment-state";
 import { writeZeroWorthConfirmPayment } from "@/lib/zero-worth-confirm-payment";
@@ -10,7 +11,6 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import {
   reconcileBedAllocationsForBookingWithGlobalLockHeld,
-  reconcileBedAllocationsForBookingWithLodgeLockHeld,
 } from "@/lib/bed-allocation-lifecycle";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
@@ -896,6 +896,7 @@ async function resolveHoldWindowUnderLock(
         // capacity-holding, payment-owed status; it is released back to PENDING
         // if the saved-card charge cannot complete.
         status: BookingStatus.CONFIRMED,
+        savedCardClaimAt: now,
         nonMemberHoldUntil: null,
       },
     });
@@ -991,30 +992,14 @@ async function resolveHoldWindowUnderLock(
 async function releaseChargeClaim(
   claim: Extract<HoldResolution, { type: "claimed_for_charge" }>
 ) {
-  await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-    const claimLodgeId = claim.booking.lodgeId ?? (await getDefaultLodgeId(tx));
-    await acquireLodgeCapacityLock(tx, claimLodgeId);
-
-    const released = await tx.booking.updateMany({
-      where: { id: claim.booking.id, status: BookingStatus.CONFIRMED },
-      data: {
-        status: BookingStatus.PENDING,
-        nonMemberHoldUntil: claim.previousHoldUntil,
-      },
-    });
-
-    if (released.count > 0) {
-      await reconcileBedAllocationsForBookingWithGlobalLockHeld({
-        bookingId: claim.booking.id,
-        db: tx,
-        previousRange: {
-          checkIn: claim.booking.checkIn,
-          checkOut: claim.booking.checkOut,
-        },
-      });
-    }
-  });
+  const outcome = await runSavedCardClaimRelease((tx) => releaseSavedCardChargeClaim(tx, {
+    bookingId: claim.booking.id,
+    restoreHoldUntil: claim.previousHoldUntil,
+    previousRange: { checkIn: claim.booking.checkIn, checkOut: claim.booking.checkOut },
+  }), { bookingId: claim.booking.id, lodgeId: claim.booking.lodgeId });
+  // Committed, whether or not it found the claim still CONFIRMED: either way the
+  // booking is not stuck holding beds unpaid, which is what #3268's alert asks.
+  return outcome.ok;
 }
 
 /**
@@ -1182,6 +1167,10 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
   // #4627: and the journal's posting context, likewise once per run.
   const journal = await resolveBookingMoneyPostingContext({ zone: clubZone });
 
+  // #4993: first hand stale saved-card claims back to PENDING, with their hold
+  // at the claim time, so the pass below selects and replays them this run.
+  const recovery = await recoverStaleSavedCardClaims(now);
+
   // Find all PENDING bookings past their hold deadline, including split
   // non-member child bookings (#738). Process oldest first so older provisional
   // non-member windows resolve before newer competing holds.
@@ -1199,7 +1188,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
     bumpedBookingIds: [],
     cancelledBookingIds: [],
     partialBumpedBookingIds: [],
-    failedBookingIds: [],
+    failedBookingIds: [...recovery.failedBookingIds],
   };
 
   for (const candidate of pendingBookings) {
@@ -1743,12 +1732,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         await queueXeroInvoice(resolution.booking.id, "Xero invoice queued");
         await sendConfirmationEmail(resolution.booking, format);
       } else {
-        const settled = await prisma.$transaction(async (tx) => {
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-          const releaseLodgeId =
-            resolution.booking.lodgeId ?? (await getDefaultLodgeId(tx));
-          await acquireLodgeCapacityLock(tx, releaseLodgeId);
-
+        const releaseOutcome = await runSavedCardClaimRelease(async (tx) => {
           // #3267: record the intent Stripe answered with on the attempt row
           // FIRST, in this locked release transaction, forward only: a
           // `requires_action` or `processing` answer stays PROCESSING for the
@@ -1804,31 +1788,20 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             return { ...recorded, released: false, claimLost: !expected };
           }
 
-          const released = await tx.booking.updateMany({
-            where: {
-              id: resolution.booking.id,
-              status: BookingStatus.CONFIRMED,
-            },
-            data: {
-              status: BookingStatus.PENDING,
-              nonMemberHoldUntil: resolution.previousHoldUntil,
-            },
-          });
-          if (released.count === 0) {
-            throw new Error(
-              "Pending-hold charge release lost its CONFIRMED claim",
-            );
-          }
-          await reconcileBedAllocationsForBookingWithLodgeLockHeld({
+          const released = await releaseSavedCardChargeClaim(tx, {
             bookingId: resolution.booking.id,
-            db: tx,
-            previousRange: {
-              checkIn: resolution.booking.checkIn,
-              checkOut: resolution.booking.checkOut,
-            },
+            restoreHoldUntil: resolution.previousHoldUntil,
+            previousRange: { checkIn: resolution.booking.checkIn, checkOut: resolution.booking.checkOut },
           });
-          return { ...recorded, released: true, claimLost: false };
-        });
+          return { ...recorded, released: released.released, claimLost: !released.released };
+        }, { bookingId: resolution.booking.id, lodgeId: resolution.booking.lodgeId });
+        // #4993: the release already logged and audited its failure; the
+        // booking keeps its claim marker for the next run's recovery.
+        if (!releaseOutcome.ok) {
+          result.failedBookingIds.push(candidate.id);
+          continue;
+        }
+        const settled = releaseOutcome.value;
 
         // A claim lost to an actor other than the settling webhook is an
         // anomaly a person has to look at (the pre-#3267 code threw for it):
@@ -1949,19 +1922,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       // booking that is stuck CONFIRMED and unpaid.
       let claimReleased = false;
       if (claimForCharge && !paymentSucceeded) {
-        claimReleased = await releaseChargeClaim(claimForCharge)
-          .then(() => true)
-          .catch((revertErr) => {
-            logger.error(
-              {
-                err: revertErr,
-                bookingId: claimForCharge?.booking.id,
-                job: "confirmPendingBookings",
-              },
-              "Failed to release pending booking charge claim"
-            );
-            return false;
-          });
+        claimReleased = await releaseChargeClaim(claimForCharge);
       } else if (paymentSucceeded) {
         logger.error(
           { bookingId: candidate.id, job: "confirmPendingBookings" },

@@ -293,7 +293,10 @@ overbook is requested (#1366, #1881). Its
 charge-saved-card branch follows the cron's claim-first shape (#1418): claim
 `PENDING -> CONFIRMED` (hold cleared) under the lock, charge outside it, then
 promote to PAID. A failed or requires-action charge releases the claim back to
-`PENDING` with the hold restored and (on failure) alerts admins; a captured
+`PENDING` with the hold restored and (on failure) alerts admins. The claim
+stamps `Booking.savedCardClaimAt` and the release clears it, so a claim whose
+release never ran is recovered by the cron (#4993, `INV-PAY-151`, "Stale
+saved-card claim recovery" below); a captured
 charge is durably recorded as a PRIMARY payment transaction before promotion,
 so if the promotion fails the booking stays CONFIRMED holding its beds, admins
 are alerted, and the Stripe webhook finishes the promotion idempotently —
@@ -1875,6 +1878,14 @@ anything but refund history; a non-capture only over an unresolved row. So a
 already recorded, and each path's locked release re-reads the booking under its
 locks and hands the claim back only while it is still CONFIRMED — a booking the
 webhook has since settled PAID is left alone.
+
+The claim is durable (#4993, `INV-PAY-151`): all three paths stamp
+`Booking.savedCardClaimAt` in the PENDING -> CONFIRMED write, and every release
+(CONFIRMED -> PENDING) and every PAID promotion clears it in the same guarded
+write. All three release through one helper (`runSavedCardClaimRelease`) with
+its own 5 s / 10 s budget and one retry on P2028/P2034; a release that still
+fails writes a critical `booking.saved_card_claim_release_failed` audit row
+and leaves the marker for recovery.
 
 Before #3267 all three paths shared one key, `pending_charge_<bookingId>`, so
 the admin route's different metadata could only ever answer an idempotency
@@ -5052,6 +5063,36 @@ claim (lock(1) + lodge lock, PENDING -> CONFIRMED, Payment upsert)
 The states and the definite/ambiguous partition are in "Payment Lifecycle"
 above and `INV-PAY-055`. To verify: `saved-card-charge-attempt.test.ts` and
 `cron-confirm-pending.test.ts` ("#3267").
+
+### Stale saved-card claim recovery (#4993)
+
+A claim whose process stopped between the Stripe call and its release, or
+whose release failed twice, would otherwise stay CONFIRMED and unpaid, holding
+its beds, with no writer left to hand it back. Each `confirmPendingBookings`
+run therefore begins with `recoverStaleSavedCardClaims`:
+
+```text
+CONFIRMED + savedCardClaimAt older than 30 min + Stripe Payment PENDING
+  -> lock(1) + lodge lock, re-read
+     no marker / young marker / not CONFIRMED / not Stripe / not PENDING
+       / any captured row                         -> left alone
+     otherwise -> PENDING, hold = marker time, beds reconciled,
+                  marker cleared (guarded on the marker read)
+                  -> critical `booking.saved_card_claim_recovered` audit row
+  -> the same run's pending pass selects it (its hold has elapsed)
+     -> beginSavedCardChargeAttempt replays the unresolved row by its own key,
+        or begins a fresh row after a definite failure (`INV-PAY-089`)
+```
+
+Recovery makes no Stripe call and writes no attempt row. A CONFIRMED booking
+without a marker — an Internet Banking hold, a group booking, a claim made
+before the column existed — is never touched. A recovery that cannot commit is
+counted among the run's failed ids and retried next run. Racing the webhook's
+adoption of a capture, either order is safe: recovery sees the captured row,
+or it hands the booking back first and the capture settles it from PENDING.
+To verify: `saved-card-charge-claim.test.ts`, `cron-confirm-pending.test.ts`
+("#4993"), `saved-card-claim-marker-census.test.ts` and
+`saved-card-claim-recovery.realdb.test.ts`.
 
 ## Two-Factor Login Lifecycle
 

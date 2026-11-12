@@ -1831,6 +1831,7 @@ model Booking {
   // non-member guests cannot be accommodated, instead of the default partial
   // bump (drop the non-members, keep the members). Both happen pre-charge.
   cancelIfGuestsBumped      Boolean            @default(false)
+  savedCardClaimAt          DateTime? // Durable off-session charge claim; swept after interruption.
   nonMemberHoldUntil        DateTime?
   // Split-booking group link (issue #738). A mixed member/non-member party is
   // stored as two bookings: a member booking that is paid up front and holds

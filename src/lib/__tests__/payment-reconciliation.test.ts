@@ -612,6 +612,26 @@ describe("markBookingPaymentSucceeded", () => {
     expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
   });
 
+  it("clears the saved-card claim marker in the same guarded PAID write (#4993)", async () => {
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
+      bookingId: "booking-1",
+      paymentIntentId: "pi_claimed",
+      amountCents: 10000,
+      paymentMethodId: "pm_1",
+    });
+
+    // Every saved-card promotion — cron, both routes, the webhook — settles here,
+    // so a PAID booking can never look like a stranded claim to recovery.
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: BookingStatus.PAID, savedCardClaimAt: null }),
+      })
+    );
+  });
+
   it("pays a staggered booking when only one bed is available on each active guest night", async () => {
     mocks.bookingFindMany.mockResolvedValue([
       {
@@ -649,6 +669,7 @@ describe("markBookingPaymentSucceeded", () => {
       data: {
         status: BookingStatus.PAID,
         draftExpiresAt: null,
+        savedCardClaimAt: null,
       },
     });
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
@@ -758,6 +779,7 @@ describe("markBookingPaymentSucceeded", () => {
       data: {
         status: BookingStatus.PAID,
         draftExpiresAt: null,
+        savedCardClaimAt: null,
       },
     });
   });
@@ -1443,6 +1465,7 @@ describe("markBookingPaymentSucceeded", () => {
       data: {
         status: BookingStatus.PAID,
         draftExpiresAt: null,
+        savedCardClaimAt: null,
       },
     });
     // Never cancelled, never refunded.

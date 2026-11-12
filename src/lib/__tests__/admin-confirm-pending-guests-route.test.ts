@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   sendPaymentFailureAlert: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
   createStructuredAuditLog: vi.fn(),
+  createAuditLog: vi.fn(),
   getAuditRequestContext: vi.fn(),
   // #2576: no hosting policy row, so the rule resolves off and the coverage
   // machinery is a no-op. Present because the production path reads them.
@@ -134,6 +135,7 @@ vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
 }));
 vi.mock("@/lib/audit", () => ({
   createStructuredAuditLog: mocks.createStructuredAuditLog,
+  createAuditLog: mocks.createAuditLog,
   getAuditRequestContext: mocks.getAuditRequestContext,
 }));
 vi.mock("@/lib/logger", () => ({
@@ -418,7 +420,7 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     // BEFORE Stripe is touched, mirroring the cron.
     expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
       where: { id: "b1", status: "PENDING" },
-      data: { status: "CONFIRMED", nonMemberHoldUntil: null },
+      data: { status: "CONFIRMED", nonMemberHoldUntil: null, savedCardClaimAt: expect.any(Date) },
     });
     expect(
       mocks.bookingUpdateMany.mock.invocationCallOrder[0]
@@ -815,6 +817,7 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
       data: {
         status: "PENDING",
         nonMemberHoldUntil: new Date("2026-07-08"),
+        savedCardClaimAt: null,
       },
     });
     // #172: BOTH transactions on this path — the claim and the release —
@@ -841,6 +844,41 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     );
     expect(mocks.markBookingPaymentSucceeded).not.toHaveBeenCalled();
     expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
+  });
+
+  it("a release that fails twice on contention leaves the marker for recovery and writes the critical release-failed audit row (#4993)", async () => {
+    primeBooking(makeBooking());
+    mocks.chargePaymentMethod.mockRejectedValue(new Error("card_declined"));
+    const contention = Object.assign(new Error("Transaction API error"), { code: "P2034" });
+    mocks.transaction.mockImplementation(
+      async (fn: (tx: unknown) => unknown, options?: { maxWait?: number }) => {
+        // The release is the only transaction run with the compensating budget.
+        if (options?.maxWait === 5_000) throw contention;
+        return fn(txClient);
+      },
+    );
+
+    const res = await POST(makeRequest(), { params });
+
+    expect(res.status).toBe(502);
+    const releaseBudgets = mocks.transaction.mock.calls.filter(
+      ([, options]) => (options as { maxWait?: number } | undefined)?.maxWait === 5_000,
+    );
+    expect(releaseBudgets).toHaveLength(2);
+    expect(releaseBudgets[0]![1]).toEqual({ maxWait: 5_000, timeout: 10_000 });
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ status: "CONFIRMED" }) }),
+    );
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.saved_card_claim_release_failed",
+        entityId: "b1",
+        category: "payment",
+        severity: "critical",
+        outcome: "failure",
+        metadata: { lodgeId: "lodge-1", errorCode: "P2034" },
+      }),
+    );
   });
 
   it("#4357: charges the booking's worth - its price plus a change fee recorded on its payment - as the cron does", async () => {
@@ -921,6 +959,7 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
       data: {
         status: "PENDING",
         nonMemberHoldUntil: new Date("2026-07-08"),
+        savedCardClaimAt: null,
       },
     });
     // The answer is recorded on the attempt row through the transaction
