@@ -11,7 +11,7 @@ import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { Pagination } from "@/components/admin/admin-pagination";
 import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
 import { adminTabHref } from "@/lib/admin-hubs";
-import { parseAdminListPageParam } from "@/lib/admin-list-page";
+import { parseAdminListPageParam, setAdminListPageParam } from "@/lib/admin-list-page";
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -446,8 +446,8 @@ function MembershipCancellationRequests() {
   const queueParams = new URLSearchParams(searchParams.toString());
   for (const key of QUEUE_SEARCH_KEYS) queueParams.delete(key);
   if (filter !== "REQUESTED") queueParams.set("status", filter);
-  if (page > 1) queueParams.set("page", String(page));
-  if (archivePageNumber > 1) queueParams.set("archivePage", String(archivePageNumber));
+  setAdminListPageParam(queueParams, page);
+  setAdminListPageParam(queueParams, archivePageNumber, "archivePage");
   const queueQuery = queueParams.toString();
   const requestsHref = adminTabHref("membership-cancellations", "requests");
   const queueHref = queueQuery ? `${requestsHref}?${queueQuery}` : requestsHref;

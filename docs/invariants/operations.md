@@ -468,8 +468,8 @@ rules first written here. #2765 extended it with the measured-audience half.
   `NOT_A_QUEUE_LIST` with its reason, and each route must call
   `adminListPage`. It reads source text, so a new capped route is covered only
   once it is added to that map. Every other admin list must take its range
-  text from `formatAdminListRange` and its URL page from
-  `parseAdminListPageParam`.
+  text from `formatAdminListRange`, read its URL page through
+  `parseAdminListPageParam` and write it through `setAdminListPageParam`.
 
 ## INV-OPS-002
 

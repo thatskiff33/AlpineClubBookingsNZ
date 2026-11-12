@@ -173,6 +173,9 @@ const RANGE_START = /\(\s*[\w.]*[pP]age\s*-\s*1\s*\)\s*\*\s*[\w.]+\s*\+\s*1/;
 /** A client read of a list page from the URL. */
 const PAGE_PARAM_READ = /\.get\(\s*["'](?:page|archivePage|inPage|opPage)["']\s*\)/g;
 
+/** A hand-rolled page-URL write: `if (page > 1) params.set("page", ...)`. */
+const PAGE_PARAM_WRITE = /if\s*\(\s*[\w.]+\s*>\s*1\s*\)\s*[\w.]+\.set\(\s*["'](?:page|archivePage|inPage|opPage)["']/;
+
 /** Files that read a page key without parsing it, with the reason. */
 const RAW_PAGE_READS: Record<string, string> = {
   "src/components/admin/booking-filters.tsx":
@@ -202,6 +205,10 @@ describe("admin lists share the page parser and range text (INV-OPS-017)", () =>
       .filter((file) => !(file in RAW_PAGE_READS))
       .flatMap((file) => unparsedPageReads(code.get(file)!).map((read) => `${file}: ${read}`));
     expect(failures).toEqual([]);
+  });
+
+  it("every page written into a URL goes through setAdminListPageParam", () => {
+    expect(files.filter((file) => PAGE_PARAM_WRITE.test(code.get(file)!))).toEqual([]);
   });
 
   it("enumerates the lists that parse a page key, so an empty walk cannot pass", () => {
@@ -236,5 +243,7 @@ describe("admin lists share the page parser and range text (INV-OPS-017)", () =>
     expect(RANGE_START.test("const start = (pagination.page - 1) * pagination.pageSize + 1")).toBe(true);
     expect(unparsedPageReads('parseAdminListPageParam(searchParams.get("opPage"))')).toEqual([]);
     expect(unparsedPageReads('Number(searchParams.get("opPage"))')).toEqual(['.get("opPage")']);
+    expect(PAGE_PARAM_WRITE.test('if (page > 1) params.set("page", String(page))')).toBe(true);
+    expect(PAGE_PARAM_WRITE.test('if (archivePageNumber > 1) queueParams.set("archivePage", "2")')).toBe(true);
   });
 });
