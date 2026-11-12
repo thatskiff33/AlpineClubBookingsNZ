@@ -1734,31 +1734,24 @@ release).
 - **Once.** Queued per capture under the per-anchor supplementary-invoice lock;
   never on an internet-banking or cancelled booking, save a kept capture
   (`INV-PAY-144`).
-- **Where.** One recorder per dollar (#4434). Unpaid invoices naming the
-  capture, oldest first, then the gap billing the change, the change's own
-  unpaid invoice, then the primary less unallocated credit. Each leg takes
-  only that invoice's room. A paying invoice that also names it counts as
-  already recorded; unreadable billed cents are refused. Anything left goes
-  to an officer. Never a Xero overpayment.
+- **Where.** Each dollar once (#4434): unpaid invoices naming it, oldest
+  first, then the change's gap, its own unpaid invoice, the primary less
+  unallocated credit, each to its room; the rest to an officer, never an
+  overpayment. A paying namer's billed cents count as recorded.
 - **Never twice.** One receipt plans per booking at a time, never during a
-  live create. Store the ordered invoice list under the change's lock before
-  Xero, guarded on the running claim. Each leg matches reference, that leg's
-  cents, and no active `CREDIT_RELEASE_PAYMENT` link (#4435); else the same
-  per-invoice key, or refuse. A retry sends only legs still unlinked. The
-  stored plan's top-level fields are the first leg.
+  live create, storing its ordered invoice list, pending too,
+  under the change's lock before Xero. A leg adopts only a payment with its
+  reference, cents and no active `CREDIT_RELEASE_PAYMENT` link (#4435),
+  else sends on its own key; a retry sends unlinked legs.
 - **Refused, never guessed.** Xero unreadable, nothing due, an uncertain
   recorder or changed figures: FAILED `ADDITIONAL_CAPTURE_RECEIPT_REFUSED`,
   an officer told.
-- **Refunds and repair.** A Stripe refund names the first leg's invoice. The
-  repair tool reports "card payment not recorded in Xero" and queues the
-  receipt, and names a receipt that planned several legs and linked fewer.
-  A missing or revived invoice goes unpaid where a receipt records it.
-- Pinned by `additional-capture-xero-receipt.test.ts`,
-  `additional-capture-recorder.test.ts`,
-  `additional-capture-receipt.realdb.test.ts`,
-  `additional-capture-receipt-unattributed.realdb.test.ts`,
-  `additional-capture-receipt-sweep-retry.realdb.test.ts` and
-  `xero-booking-repair.test.ts`.
+- **Refunds and repair.** A Stripe refund names leg 0's invoice. Repair
+  queues a missing receipt and flags unlinked legs; a missing or revived
+  invoice a receipt records goes unpaid.
+- Pinned by the `additional-capture-xero-receipt`,
+  `additional-capture-recorder` and `xero-booking-repair` unit tests and the
+  `additional-capture-receipt*` realdb suites.
 
 ## INV-PAY-140
 
