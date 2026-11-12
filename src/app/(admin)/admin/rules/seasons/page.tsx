@@ -21,6 +21,7 @@ import {
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status"
 import { readSeasonSchedule } from "../../_lib/season-schedule";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message"
 import { useClubTime } from "@/components/club-time-provider"
 import { useClubFormat } from "@/components/club-format-provider"
 import { type ClubDateFormat, formatStayDateOrNull, calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time"
@@ -229,8 +230,7 @@ export default function SeasonsPage() {
     try {
       const res = await fetch(`/api/admin/seasons/${id}`, { method: "DELETE" })
       if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.error || "Failed to delete")
+        throw new Error(await apiErrorMessageFromResponse(res, "Failed to delete"))
       }
       if (activeScopeRef.current !== requestedScope) return
       fetchSeasons()
@@ -249,8 +249,7 @@ export default function SeasonsPage() {
         body: JSON.stringify({ active: !season.active }),
       })
       if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.error || "Failed to update")
+        throw new Error(await apiErrorMessageFromResponse(res, "Failed to update"))
       }
       if (activeScopeRef.current !== requestedScope) return
       fetchSeasons()

@@ -29,6 +29,8 @@ import {
 import { useClubTime } from "@/components/club-time-provider";
 import { formatPayloadInstantDate } from "../_lib/payload-instant";
 import { useRevealAttention } from "@/hooks/use-scroll-to-feedback";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 type PartnerInvite = {
   id: string;
@@ -87,6 +89,8 @@ function FamilyGroupsTab() {
   const [searching, setSearching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  // A refused delete, shown above the list: `error` sits inside the form, which is hidden then.
+  const [listError, setListError] = useState("");
   // #2256: the create/edit form renders in the anchor below the filter card and
   // the two queue cards (pending changes, outstanding partner invites), while
   // its triggers sit elsewhere — New Group in the page header, Edit on a row in
@@ -242,6 +246,7 @@ function FamilyGroupsTab() {
     setMemberSearch("");
     setSearchResults([]);
     setError("");
+    setListError("");
     setShowForm(true);
     setFormOpenNonce((nonce) => nonce + 1);
   }
@@ -256,6 +261,7 @@ function FamilyGroupsTab() {
     setMemberSearch("");
     setSearchResults([]);
     setError("");
+    setListError("");
     setShowForm(true);
     setFormOpenNonce((nonce) => nonce + 1);
   }, []);
@@ -364,9 +370,17 @@ function FamilyGroupsTab() {
   async function handleDelete(id: string) {
     if (!canEditMembership) return;
     if (!confirm("Delete this family group? Members will be unlinked.")) return;
-    const res = await fetch(`/api/admin/family-groups/${id}`, { method: "DELETE" });
-    if (res.ok) {
-      fetchData();
+    const fallback = "Failed to delete family group";
+    setListError("");
+    try {
+      const res = await fetch(`/api/admin/family-groups/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        fetchData();
+        return;
+      }
+      setListError(await apiErrorMessageFromResponse(res, fallback));
+    } catch {
+      setListError(fallback);
     }
   }
 
@@ -748,6 +762,7 @@ function FamilyGroupsTab() {
       </div>
 
       {/* Groups table */}
+      <FocusedActionError id="family-groups-list-error" error={listError} className="scroll-mt-20" />
       <Card>
         <CardContent className="p-0">
           {loading ? (

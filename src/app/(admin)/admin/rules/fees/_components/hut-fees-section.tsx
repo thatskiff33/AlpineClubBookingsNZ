@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FieldHint, describedByFieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -629,13 +630,12 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     try {
       const res = await fetch(`/api/admin/seasons/${id}`, { method: "DELETE" });
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to delete");
+        throw new Error(await apiErrorMessageFromResponse(res, "Failed to delete"));
       }
       if (activeScopeRef.current !== requestedScope) return;
       fetchSeasons();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      raiseError(err instanceof Error ? err.message : "Unknown error");
     }
   }
 
@@ -649,13 +649,12 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
         body: JSON.stringify({ active: !season.active }),
       });
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to update");
+        throw new Error(await apiErrorMessageFromResponse(res, "Failed to update"));
       }
       if (activeScopeRef.current !== requestedScope) return;
       fetchSeasons();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      raiseError(err instanceof Error ? err.message : "Unknown error");
     }
   }
 
