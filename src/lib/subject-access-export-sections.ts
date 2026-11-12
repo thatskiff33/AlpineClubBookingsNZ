@@ -24,16 +24,29 @@ export type SubjectAccessKey =
  */
 export async function buildSubjectAccessSections(key: SubjectAccessKey) {
   const memberId = "memberId" in key ? key.memberId : null;
-  const email = "email" in key ? key.email : null;
+  // Records filed only by address (applications, requests sent signed out, the
+  // email log, suppressions) are a member's only when the address is theirs
+  // alone or they hold its login: member emails are not unique, and a
+  // dependant sharing a parent's address must not receive the parent's mail.
+  const keyEmail = "email" in key ? key.email : null;
+  const emailKeyedRecords = memberId && keyEmail && !(await memberOwnsEmailAddress(memberId, keyEmail))
+    ? ("withheld: address shared with another member record" as const)
+    : ("included" as const);
+  const email = emailKeyedRecords === "included" ? keyEmail : null;
   const address = email ? { equals: email, mode: "insensitive" as const } : null;
 
   const [guestAppearances, bookingRequests, applications, emailLog, emailSuppressions] = await Promise.all([
     readGuestAppearances(memberId ? { memberId } : "guestId" in key ? { id: key.guestId, memberId: null } : null),
-    // A member's requests are the ones they sent signed in; a non-member's are
-    // the ones sent from their address.
+    // A member's requests are the ones they sent signed in or from their own
+    // address; a non-member's are the ones sent from their address.
     memberId || address
       ? prisma.bookingRequest.findMany({
-          where: memberId ? { requestedByMemberId: memberId } : { contactEmail: address! },
+          where: {
+            OR: [
+              ...(memberId ? [{ requestedByMemberId: memberId }] : []),
+              ...(address ? [{ contactEmail: address }] : []),
+            ],
+          },
           orderBy: { createdAt: "asc" },
           select: {
             type: true, status: true, contactFirstName: true, contactLastName: true, contactEmail: true,
@@ -70,6 +83,7 @@ export async function buildSubjectAccessSections(key: SubjectAccessKey) {
   ]);
 
   const shared = {
+    emailKeyedRecords,
     guestAppearances,
     bookingRequests: bookingRequests.map((request) => ({
       ...request,
@@ -87,6 +101,15 @@ export async function buildSubjectAccessSections(key: SubjectAccessKey) {
   };
   if (!memberId) return { ...shared, ...emptyMemberSections() };
   return { ...shared, ...(await readMemberSections(memberId)) };
+}
+
+async function memberOwnsEmailAddress(memberId: string, email: string): Promise<boolean> {
+  const holders = await prisma.member.findMany({
+    where: { email: { equals: email, mode: "insensitive" } },
+    select: { id: true, canLogin: true },
+  });
+  return holders.every((holder) => holder.id === memberId) ||
+    holders.some((holder) => holder.id === memberId && holder.canLogin);
 }
 
 async function readGuestAppearances(where: { memberId: string } | { id: string; memberId: null } | null) {
@@ -126,7 +149,7 @@ async function readMemberSections(memberId: string) {
   ] = await Promise.all([
     prisma.memberAccessRole.findMany({
       where: { memberId },
-      select: { role: true, roleDefinition: { select: { name: true } }, createdAt: true },
+      select: { role: true, roleDefinition: { select: { label: true } }, createdAt: true },
     }),
     prisma.memberCredit.findMany({
       where: { memberId },
@@ -224,7 +247,7 @@ async function readMemberSections(memberId: string) {
 
   return {
     accessRoles: accessRoles.map((row) => ({
-      role: row.role ?? row.roleDefinition?.name ?? null,
+      role: row.role ?? row.roleDefinition?.label ?? null,
       createdAt: row.createdAt,
     })),
     credits,

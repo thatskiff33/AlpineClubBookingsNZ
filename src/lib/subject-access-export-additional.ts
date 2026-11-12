@@ -52,7 +52,7 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     prisma.adminCreditAdjustmentRequest.findMany({ where: own, select: { amountCents: true, reviewedAt: true, createdAt: true } }),
     prisma.committeeAssignment.findMany({
       where: own,
-      select: { blurb: true, published: true, showPhone: true, isActive: true, createdAt: true, committeeRole: { select: { title: true } } },
+      select: { blurb: true, published: true, showPhone: true, isActive: true, createdAt: true, committeeRole: { select: { name: true } } },
     }),
     prisma.organisationContact.findMany({ where: own, select: { createdAt: true, organisation: { select: { name: true } } } }),
     prisma.schoolMemberClassification.findMany({ where: own, select: { decidedAt: true } }),

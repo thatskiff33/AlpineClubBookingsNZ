@@ -211,8 +211,9 @@ describe("the subject's own data export reads only their own guest rows (INV-PRI
       grantSelfDataExportDietaryAccess({ user: { id: "member-1" } }),
     );
     expect(rows).toEqual([expect.objectContaining({ dietaryRequirements: VALUE })]);
+    // The grant's own subject list (#4915: a Full Admin's report names one subject the same way).
     expect(mocks.bookingGuestFindMany.mock.calls[0]![0].where).toEqual({
-      memberId: "member-1",
+      memberId: { in: ["member-1"] },
       dietaryRequirements: { not: null },
     });
     const booking = await grantBookingAdminDietaryAccess(bookingAdmin("edit"), "view", { enabled: true });

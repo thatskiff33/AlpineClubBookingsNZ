@@ -1,3 +1,11 @@
+/**
+ * F-COMP-03: Personal Data Export
+ * GET /api/member/data-export
+ *
+ * Returns the signed-in member's subject access file, built by the one shared
+ * builder the Full Admin report also uses (#4915, `INV-PRIV-023`). Rate
+ * limited to 5 exports per day.
+ */
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -42,7 +50,7 @@ export async function GET() {
     if (!payload) return NextResponse.json({ error: "Member not found" }, { status: 404 });
     await createAuditLog({ action: "member.data_exported", category: "privacy", memberId: session.user.id,
       targetId: session.user.id, details: "Member downloaded their subject access export." });
-    return subjectAccessExportResponse(payload);
+    return subjectAccessExportResponse(payload, "my-data");
   } catch (err) {
     logger.error({ err, memberId: session.user.id }, "Data export failed");
     return NextResponse.json({ error: "Failed to generate data export" }, { status: 500 });

@@ -121,6 +121,16 @@ const PRIVACY_AUDIT_RETENTION_MIGRATION_PATH = join(
   "migration.sql",
 );
 
+// Issue #4915: guarded update that makes section 8 say what the data download
+// includes. It supersedes #4031 as the writer of the current privacy seed text.
+const PRIVACY_SUBJECT_ACCESS_MIGRATION_PATH = join(
+  process.cwd(),
+  "prisma",
+  "migrations",
+  "20261120010000_correct_starter_privacy_subject_access",
+  "migration.sql",
+);
+
 // Previous starter FAQ contentHtml (flat <h3>/<p> pairs), replaced by the
 // accordion update migration. Extracted verbatim from the policy-pages
 // backfill so the update migration's WHERE guard provably matches what that
@@ -290,13 +300,17 @@ describe("starter page content backfill migration", () => {
     PRIVACY_AUDIT_RETENTION_MIGRATION_PATH,
     "utf8",
   );
+  const privacySubjectAccessSql = readFileSync(
+    PRIVACY_SUBJECT_ACCESS_MIGRATION_PATH,
+    "utf8",
+  );
   // Comments stripped: #2431's header quotes the new hero in prose, and this
   // suite's job is to prove a STATEMENT writes each current seed value.
   const homeGuestCopySql = statementsOnly(
     readFileSync(HOME_GUEST_COPY_MIGRATION_PATH, "utf8"),
   );
   const allInsertSql = `${insertSql}\n${backfill404Sql}\n${policyPagesSql}\n${bookingRequestsSql}\n${schoolBookingsSql}`;
-  const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}\n${genericiseLodgeCopySql}\n${privacyAuditRetentionSql}\n${homeGuestCopySql}`;
+  const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}\n${genericiseLodgeCopySql}\n${privacyAuditRetentionSql}\n${privacySubjectAccessSql}\n${homeGuestCopySql}`;
 
   it("inserts exactly the starter pages defined for the seed", () => {
     const insertedIds = [
@@ -715,7 +729,7 @@ describe("starter privacy audit-retention update migration (#4031)", () => {
 
 
 describe("starter privacy subject-access correction (#4915)", () => {
-  const sql = readFileSync(join(process.cwd(), "prisma/migrations/20261120010000_correct_starter_privacy_subject_access/migration.sql"), "utf8");
+  const sql = readFileSync(PRIVACY_SUBJECT_ACCESS_MIGRATION_PATH, "utf8");
   it("updates only exact old starter content and preserves edited headers", () => {
     const previousSql = readFileSync(PRIVACY_AUDIT_RETENTION_MIGRATION_PATH, "utf8");
     const page = starterPageContent.find((p) => p.slug === "privacy")!;
