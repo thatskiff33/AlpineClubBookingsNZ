@@ -7223,6 +7223,32 @@ claim, with the create's real link save seen queued behind it (by
 `pg_blocking_pids`) and, once the edit commits, reading its worth back; and an
 edit queued behind a held link save, refused.
 
+## A Stripe dispute's record (#4911)
+
+A `charge.dispute.*` event (`INV-PAY-151`) keeps one `StripeDispute` row per
+Stripe dispute id (`recordStripeDispute`, `src/lib/stripe-dispute.ts`):
+
+- **Claim.** The charge's PaymentIntent is read from Stripe first, outside any
+  transaction. The row is then inserted with `createMany` and
+  `skipDuplicates` on the unique dispute id, so two first deliveries insert one
+  row.
+- **Merge.** Each event then locks that row alone (`SELECT 1 … FOR NO KEY
+  UPDATE`, the strength its UPDATE takes), re-reads it and merges the event's
+  snapshot. An event older than the one already applied changes no status;
+  the withdrawn and reinstated sums only grow. No advisory key, no other lock:
+  the writer touches no booking, payment, credit or capacity row.
+- **Alerts** are once-ever claims (`sendAdminAlertOnceEverWithTakeover`) sent
+  after the merge commits, outside the row lock.
+- **Readers.** Every card-refund door (`processRefund`,
+  `refundPaymentTransactions`) and the paid cancel read the holding disputes
+  through `disputedCaptureCents`, without locking the dispute row; the cancel
+  reads them inside its claim, after its own locks. A dispute recorded just
+  after a cancel's read is not seen by that cancel: its card refund is then
+  stopped at `processRefund`, which re-reads before every Stripe call, and the
+  recovery row is handed to the treasurer (`unretryableRecoveryCause`). An
+  account credit committed in that window stays, and the dispute's Finance
+  alert is what tells the treasurer to check it.
+
 ## Stripe refund-note link repair: deliberately lock-free (#2901)
 
 `applyStripeRefundNoteLinkRepairs` (`src/lib/xero-refund-note-link-repair.ts`,

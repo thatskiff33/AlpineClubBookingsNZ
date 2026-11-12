@@ -4127,3 +4127,37 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
   `cancel-card-refund-shortfall-preview.test.ts`,
   `clipped-mirror-open-hand-back.test.ts` and
   `superseded-refund-cancel-hold-back.realdb.test.ts`.
+
+## INV-PAY-151
+
+**Related: `INV-PAY-128`** (a refusal never loops), **`INV-INT-032`** (an
+alert nobody received answers 500).
+
+- **A disputed capture is never refunded or credited** (#4911). While a
+  cardholder's dispute (chargeback) on a capture is OPEN or LOST, no card
+  refund and no account credit is issued for that payment: the bank has taken,
+  or may take, the money back. A WON dispute, or one closed with no funds
+  taken, holds nothing.
+- **One read.** `disputedCaptureCents` (`stripe-dispute-hold.ts`) is the only
+  answer to "is this capture disputed". `processRefund` asks it before every
+  Stripe call; `refundPaymentTransactions` asks before reserving any slice; the
+  paid cancel asks inside its claim, as does its preview.
+- **A paid cancel** of a disputed booking records the cancel, issues neither,
+  raises a `CANCELLED_BOOKING_HAND_BACK` task on the credit tier naming the
+  dispute, and tells the member the refund is with the treasurer. A
+  joiner's refund to the organiser's card is refused at `processRefund`.
+- **A refused refund stops.** `unretryableRecoveryCause` hands a recovery row
+  whose refund was refused for a dispute to the treasurer at once.
+- **One record per dispute.** The four `charge.dispute.*` events keep one
+  `StripeDispute` row, claimed by its unique Stripe id and merged under its row
+  lock: duplicates and replays change nothing, an older event never overwrites
+  a newer one, a closed dispute never reopens.
+- **Two Finance alerts per dispute**, unmuteable and once ever: on open and on
+  close.
+- **A record, not money.** No ledger line, journal, refund, `Payment` total or
+  Xero posting; the treasurer records a lost dispute in Xero by hand
+  (`DEPLOYMENT.md`).
+- Limit: a dispute recorded after a cancel's read is not seen by that cancel;
+  an account credit committed in that window stays.
+- Proven by `stripe-dispute.test.ts`, `admin-stripe-dispute-alert.test.ts`,
+  `cancel-refund-method.test.ts` and `stripe-dispute-cancel.realdb.test.ts`.

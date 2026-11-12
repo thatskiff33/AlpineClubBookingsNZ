@@ -2455,6 +2455,28 @@ inbound fence records its conflict the same way, under the
 
 `INV-ADDPAY-045`, `INV-ADDPAY-046`, `INV-ADDPAY-048`, `INV-ADDPAY-050`, `INV-ADDPAY-051`, `INV-ADDPAY-052`.
 
+### Stripe dispute record (#4911)
+
+One `StripeDispute` row per Stripe dispute (chargeback), kept by the four
+`charge.dispute.*` webhook events (`INV-PAY-151`). The row's status follows
+Stripe's dispute status; the first event to arrive inserts it, whichever it is:
+
+```text
+(none) -> OPEN          charge.dispute.created / funds_withdrawn, or any event on an open dispute
+OPEN   -> WON           charge.dispute.closed, Stripe status won
+OPEN   -> LOST          charge.dispute.closed, Stripe status lost
+OPEN   -> CLOSED_OTHER  charge.dispute.closed with no funds taken (warning_closed, prevented)
+(none) -> WON / LOST / CLOSED_OTHER   a closed event arriving first
+```
+
+WON, LOST and CLOSED_OTHER are terminal: a later or older event never reopens
+the row, and a replay changes nothing. `funds_withdrawn` and `funds_reinstated`
+add to the row's withdrawn and reinstated cents. OPEN and LOST hold the
+payment's captures: no card refund or account credit, and a paid cancel goes to
+the treasurer as a hand-back task. WON and CLOSED_OTHER hold nothing. The opened
+alert is sent once ever on the first record, the closed alert once ever on the
+first terminal status. To verify: `stripe-dispute.test.ts`.
+
 ### Manual refund task lifecycle (#2262)
 
 ```text
@@ -4577,6 +4599,9 @@ PROCESSING -> attempt throws
   card refund whose slice's reservation the journal refused (#4516, M4c)
                               -> FAILED terminal at once, the same way; Stripe was not
                                  asked for that slice; settled by "Paid another way"
+  card refund on a capture an OPEN or LOST Stripe dispute holds (#4911, INV-PAY-151)
+                              -> FAILED terminal at once, the same way; Stripe was not
+                                 asked; the cause names the dispute for the treasurer
 ```
 
 Every terminal row sits at the attempt ceiling, so the claim, the health check
