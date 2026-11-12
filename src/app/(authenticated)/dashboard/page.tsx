@@ -3,6 +3,7 @@ import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { loadSignedInMember } from "@/lib/signed-in-member";
 import { LodgeKioskCard } from "@/components/dashboard/lodge-kiosk-card";
 import {
   Card,
@@ -409,23 +410,21 @@ export default async function DashboardPage() {
   );
   const firstPromoCode = availablePromoCodes[0] ?? null;
 
-  // Lodge induction status for the member-portal card.
-  const inductionInfo = await prisma.member.findUnique({
-    where: { id: memberId },
-    select: {
-      requiresInduction: true,
-      inductions: {
-        orderBy: { createdAt: "desc" },
-        take: 1,
-        select: {
-          status: true,
-          requiredSignOffs: true,
-          _count: { select: { signOffs: true } },
-        },
+  // Lodge induction status for the member-portal card. The flag comes from
+  // the member row the layout already read this render (#4938); the latest
+  // induction is its own table, keyed by the member.
+  const [signedInMember, latestInduction] = await Promise.all([
+    loadSignedInMember(memberId),
+    prisma.memberInduction.findFirst({
+      where: { memberId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        status: true,
+        requiredSignOffs: true,
+        _count: { select: { signOffs: true } },
       },
-    },
-  });
-  const latestInduction = inductionInfo?.inductions[0] ?? null;
+    }),
+  ]);
   const inductionComplete = latestInduction?.status === "COMPLETED";
   const inductionStatusText = inductionComplete
     ? "Complete"
@@ -433,7 +432,7 @@ export default async function DashboardPage() {
       ? `In progress · ${latestInduction._count.signOffs}/${latestInduction.requiredSignOffs} signed`
       : "Not started";
   const inductionNeedsAction =
-    Boolean(inductionInfo?.requiresInduction) && !inductionComplete;
+    Boolean(signedInMember?.requiresInduction) && !inductionComplete;
 
   const modules = await loadEffectiveModuleFlags();
 
