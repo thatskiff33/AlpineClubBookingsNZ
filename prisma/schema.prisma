@@ -7364,7 +7364,12 @@ model NotificationPreference {
   // regardless of the memberGuests module; default on, personally opt-outable.
   bookingAddedByFamily       Boolean  @default(true)
   choreRoster                Boolean  @default(true)
+  // Club newsletters: opt-in, so a member with no row is never sent one.
   marketingEmails            Boolean  @default(false)
+  // #4987: club-business bulk email (AGM, closures, subscriptions due) from
+  // Communications and emailed Notices. Opt-out, so it starts on; the rule for
+  // both bulk categories lives in src/lib/email/bulk-audience.ts (INV-PRIV-023).
+  clubNotices                Boolean  @default(true)
   adminNewBooking            Boolean  @default(true)
   adminPaymentFailure        Boolean  @default(true)
   adminPendingDeadline       Boolean  @default(true)

@@ -877,3 +877,31 @@ Decisions: 20 Sep 2026 on
   guest rows.
 - Proof: `member-dietary-access-census.test.ts`, a text scan (no data-flow
   tracing), plus privacy, kiosk, route and real-database tests.
+
+## INV-PRIV-023
+
+Every bulk email declares one category, and the category alone decides who may
+receive it. Decision: Option A, 11 Nov 2026, recorded in the
+[#4987](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4987) body.
+
+- **`clubNotice` is opt-out.** Club business — AGM notices, lodge closures,
+  subscriptions due — reaches every member in the chosen group except one whose
+  saved preferences set `clubNotices` false. A member with no saved preferences
+  receives it.
+- **`newsletter` is opt-in.** Optional club news reaches only a member whose
+  saved preferences set `marketingEmails` true. A member with no saved
+  preferences never receives one. `marketingEmails` is never defaulted on,
+  backfilled or reinterpreted as a club-notice consent.
+- **Who declares what.** The Communications sender picks the category for each
+  message; a send request without one is treated as `newsletter`, so an old
+  client stays opt-in. A Notice's "Also email this notice to the audience" is
+  always `clubNotice`.
+- **One rule, one count.** `partitionBulkAudience` in
+  `src/lib/email/bulk-audience.ts` is the only place the rule is written. The
+  send route, the pre-send recipient preview and the notice email all partition
+  through it, so the count an admin sees is the count sent.
+- **Opted out is not never opted in.** The partition, the confirmation and the
+  audit row count the two apart; neither is called the other.
+- EmailSuppression still applies inside `sendEmail` to every category.
+- Proof: `bulk-audience.test.ts`, `communications-send-category.test.ts`,
+  `communications-compose-page.test.tsx` and `notices-email.test.ts`.

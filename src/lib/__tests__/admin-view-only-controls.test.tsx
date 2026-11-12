@@ -2845,6 +2845,12 @@ describe("CommunicationsPage view-only gating (#1997, membership)", () => {
     stubFetchRoutes({
       "/api/admin/communications/send": { limit: 5, windowSeconds: 3600 },
       "/api/admin/communications/history": { history: [] },
+      "/api/admin/communications/preview": {
+        totalRecipients: 2,
+        eligibleRecipients: 2,
+        optedOut: 0,
+        neverOptedIn: 0,
+      },
     });
   });
   afterEach(() => {
@@ -2872,6 +2878,8 @@ describe("CommunicationsPage view-only gating (#1997, membership)", () => {
     const body = screen.getByLabelText(/Message|Body/i);
     fireEvent.change(subject, { target: { value: "Hello" } });
     fireEvent.change(body, { target: { value: "World" } });
+    // #4987: the sender must choose the kind of message before sending.
+    fireEvent.click(screen.getByLabelText(/Club notice/i));
 
     expect(
       screen.getByRole("button", { name: /Send to Members/i }),

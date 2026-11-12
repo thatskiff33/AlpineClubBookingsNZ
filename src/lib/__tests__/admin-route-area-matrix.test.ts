@@ -265,6 +265,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/committee/roles": "membership",
   "/api/admin/committee/roles/[id]": "membership",
   "/api/admin/communications/history": "membership",
+  "/api/admin/communications/preview": "membership",
   "/api/admin/communications/send": "membership",
   "/api/admin/notices": "membership",
   "/api/admin/notices/[id]": "membership",

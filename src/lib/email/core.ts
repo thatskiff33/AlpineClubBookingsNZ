@@ -626,6 +626,7 @@ const CATEGORY_TO_PREFERENCE: Record<
   bookingCancelled: "bookingCancelled",
   choreRoster: "choreRoster",
   bookingWaitlist: "bookingWaitlist",
+  clubNotices: "clubNotices",
   marketingEmails: "marketingEmails",
 };
 
@@ -645,7 +646,8 @@ export async function shouldSendEmail(
   });
 
   if (!pref) {
-    // No preference record = defaults (all true except marketingEmails)
+    // No preference record = defaults (all true except marketingEmails, the
+    // opt-in newsletter flag; clubNotices is opt-out, #4987).
     return category !== "marketingEmails";
   }
 

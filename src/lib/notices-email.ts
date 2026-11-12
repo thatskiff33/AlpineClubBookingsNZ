@@ -11,6 +11,10 @@ import {
 } from "@/lib/notices";
 import { prisma } from "@/lib/prisma";
 import { renderEmailHtml } from "@/lib/email-theme";
+import {
+  BULK_EMAIL_PREFERENCE_SELECT,
+  partitionBulkAudience,
+} from "@/lib/email/bulk-audience";
 
 // Throttling mirrors the admin bulk-communication send loop so a large audience
 // never overwhelms SMTP.
@@ -23,9 +27,10 @@ const BATCH_DELAY_MS = 1000;
  * commits and AFTER the caller has claimed the single-send guard (emailedAt).
  *
  * Preference + suppression handling mirrors the Communications bulk send:
- *  - recipients are filtered to those who opted in to `marketingEmails` (the
- *    same opt-in club-communication preference the bulk-communication path
- *    uses; no dedicated notice preference exists — see the carry-forward note);
+ *  - a notice is club business, so recipients are partitioned under the
+ *    `clubNotice` bulk-email category (#4987, INV-PRIV-023): every audience
+ *    member is emailed unless they turned Club notices off, including members
+ *    with no saved preferences;
  *  - EmailSuppression is enforced automatically inside sendEmail.
  *
  * The financialMembersOnly audience filter is already applied by
@@ -47,6 +52,8 @@ export async function sendNoticePublishedEmails(
   let notice: { id: string; title: string; status: string } | null;
   let audience: ResolvedAudienceMember[];
   let recipients: ResolvedAudienceMember[];
+  let optedOut: number;
+  let neverOptedIn: number;
   let firstNameById: Map<string, string>;
   let noticeUrl: string;
   try {
@@ -60,23 +67,21 @@ export async function sendNoticePublishedEmails(
 
     audience = await resolveNoticeAudienceMembers(noticeId);
 
-    // Filter to members opted in to club communications (marketingEmails).
     const prefs = await prisma.member.findMany({
       where: { id: { in: audience.map((a) => a.memberId) } },
       select: {
         id: true,
         firstName: true,
-        notificationPreference: { select: { marketingEmails: true } },
+        notificationPreference: { select: BULK_EMAIL_PREFERENCE_SELECT },
       },
     });
     firstNameById = new Map(prefs.map((p) => [p.id, p.firstName]));
-    const optedIn = new Set(
-      prefs
-        .filter((p) => p.notificationPreference?.marketingEmails === true)
-        .map((p) => p.id),
-    );
+    const partition = partitionBulkAudience(prefs, "clubNotice");
+    const eligible = new Set(partition.eligible.map((p) => p.id));
 
-    recipients = audience.filter((a) => optedIn.has(a.memberId));
+    recipients = audience.filter((a) => eligible.has(a.memberId));
+    optedOut = partition.optedOut.length;
+    neverOptedIn = partition.neverOptedIn.length;
     noticeUrl = `${getAppBaseUrl()}/notices/${noticeId}`;
   } catch (err) {
     // Crash before any email was attempted. Release the single-send claim so a
@@ -106,7 +111,6 @@ export async function sendNoticePublishedEmails(
   //     emailedAt, since earlier recipients in the batch already received it. ---
   let sent = 0;
   let failed = 0;
-  const optedOut = audience.length - recipients.length;
 
   for (const [i, recipient] of recipients.entries()) {
     const firstName = firstNameById.get(recipient.memberId) ?? "there";
@@ -159,10 +163,11 @@ export async function sendNoticePublishedEmails(
       sentCount: sent,
       failedCount: failed,
       optedOutCount: optedOut,
+      neverOptedInCount: neverOptedIn,
     },
   }).catch((err) =>
     logger.error({ err, noticeId }, "Failed to write notice email audit log"),
   );
 
-  return { sent, skipped: optedOut + failed };
+  return { sent, skipped: audience.length - recipients.length + failed };
 }

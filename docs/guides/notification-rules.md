@@ -56,6 +56,21 @@ the list but the selector is disabled.
 | Autosave | Selecting a mode PUTs immediately; a failed save reverts the row and shows an error toast |
 | Stale-rule notice | A banner appears if any delivery rules point at templates that no longer exist ("N stale delivery rules need database cleanup") |
 
+### Bulk email categories
+
+Delivery rules govern automated emails. Bulk email that an admin sends —
+[Communications](communications.md) and a notice's
+[email on publish](member-notices.md#email-on-publish-optional) — is governed by
+the member's own preferences instead, according to its category (#4987,
+[`INV-PRIV-023`](../invariants/analytics-and-privacy.md#inv-priv-023)):
+
+| Category | Member preference | A member who never saved preferences |
+| --- | --- | --- |
+| **Club notice** — club business | **Club notices**, on unless turned off | Receives it |
+| **Club newsletter** — optional news | **Club newsletters**, off unless turned on | Does not receive it |
+
+Email suppression (bounces and complaints) applies to both.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

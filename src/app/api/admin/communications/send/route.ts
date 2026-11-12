@@ -2,12 +2,12 @@
  * N-09: Bulk Member Communication
  * POST /api/admin/communications/send
  * Admin-only. Rate limited to BULK_SENDMAIL_LIMIT sends per hour.
- * Respects marketingEmails notification preference.
+ * Each send declares a category (club notice or newsletter); who receives it
+ * is decided by the shared bulk-email rule (#4987, INV-PRIV-023).
  * Sanitises input to prevent HTML/header injection.
  */
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
-import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { checkRateLimit, type RateLimitConfig } from "@/lib/rate-limit";
 import {
@@ -15,8 +15,13 @@ import {
 } from "@/lib/email-templates/communications";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
-import { MEMBER_LEVEL_ROLE_VALUES } from "@/lib/member-roles";
 import { renderEmailHtml } from "@/lib/email-theme";
+import {
+  bulkEmailCategorySchema,
+  communicationRecipientCounts,
+  communicationRecipientFilterSchema,
+  resolveCommunicationRecipients,
+} from "@/lib/communications-recipients";
 
 const DEFAULT_BULK_SENDMAIL_LIMIT = 1;
 
@@ -44,8 +49,11 @@ const sendSchema = z.object({
     .string()
     .min(1, "Body is required")
     .max(10000, "Body must be under 10,000 characters"),
-  recipientFilter: z.enum(["all", "members-only", "admins-only", "custom"]),
+  recipientFilter: communicationRecipientFilterSchema,
   memberIds: z.array(z.string()).optional(),
+  // A client that names no category gets the opt-in newsletter rule, so an
+  // older page still open during a deploy can never widen who is emailed.
+  category: bulkEmailCategorySchema.default("newsletter"),
 });
 
 export async function GET() {
@@ -101,40 +109,21 @@ export async function POST(request: Request) {
     body: messageBody,
     recipientFilter,
     memberIds,
+    category,
   } = parsed.data;
 
-  // Build recipient query
-  const whereClause: Record<string, unknown> = { active: true };
-  if (recipientFilter === "members-only") {
-    whereClause.role = { in: [...MEMBER_LEVEL_ROLE_VALUES] };
-  } else if (recipientFilter === "admins-only") {
-    whereClause.role = "ADMIN";
-  } else if (recipientFilter === "custom") {
-    if (!memberIds || memberIds.length === 0) {
-      return NextResponse.json(
-        { error: "memberIds required for custom filter" },
-        { status: 400 },
-      );
-    }
-    whereClause.id = { in: memberIds };
-  }
-  // "all" uses just { active: true }
-
-  const recipients = await prisma.member.findMany({
-    where: whereClause,
-    select: {
-      id: true,
-      email: true,
-      notificationPreference: {
-        select: { marketingEmails: true },
-      },
-    },
+  const resolved = await resolveCommunicationRecipients({
+    recipientFilter,
+    memberIds,
+    category,
   });
-
-  // Filter out members who have marketingEmails: false
-  // Default (no preference record) is marketingEmails: false, so exclude those too
-  const eligibleRecipients = recipients.filter(
-    (r) => r.notificationPreference?.marketingEmails === true,
+  if (!resolved.ok) {
+    return NextResponse.json({ error: resolved.error }, { status: 400 });
+  }
+  const eligibleRecipients = resolved.partition.eligible;
+  const counts = communicationRecipientCounts(
+    resolved.total,
+    resolved.partition,
   );
 
   // Generate the email HTML (using escapeHtml inside the template)
@@ -190,17 +179,17 @@ export async function POST(request: Request) {
     details: JSON.stringify({
       subject,
       recipientFilter,
-      totalRecipients: recipients.length,
-      eligibleRecipients: eligibleRecipients.length,
+      category,
+      ...counts,
       queued,
     }),
   });
 
   return NextResponse.json({
     success: true,
-    totalRecipients: recipients.length,
-    eligibleRecipients: eligibleRecipients.length,
+    category,
+    ...counts,
     queued,
-    filteredByPreference: recipients.length - eligibleRecipients.length,
+    filteredByPreference: counts.optedOut + counts.neverOptedIn,
   });
 }

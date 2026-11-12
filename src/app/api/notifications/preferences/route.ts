@@ -15,6 +15,7 @@ const updateSchema = z.object({
   bookingCancelled: z.boolean().optional(),
   bookingAddedByFamily: z.boolean().optional(),
   choreRoster: z.boolean().optional(),
+  clubNotices: z.boolean().optional(),
   marketingEmails: z.boolean().optional(),
 });
 
@@ -26,6 +27,8 @@ const MEMBER_NOTIFICATION_PREFERENCE_KEYS = [
   // #2284 (S2): the family-scope "you were added to a booking" FYI opt-out.
   "bookingAddedByFamily",
   "choreRoster",
+  // #4987: club-business bulk email, opt-out (INV-PRIV-023).
+  "clubNotices",
   "marketingEmails",
 ] as const;
 
@@ -47,6 +50,7 @@ function resolveMemberNotificationPreferences(
     bookingCancelled: preferences?.bookingCancelled ?? true,
     bookingAddedByFamily: preferences?.bookingAddedByFamily ?? true,
     choreRoster: preferences?.choreRoster ?? true,
+    clubNotices: preferences?.clubNotices ?? true,
     marketingEmails: preferences?.marketingEmails ?? false,
   };
 }
@@ -79,6 +83,7 @@ export async function GET() {
     bookingCancelled: prefs.bookingCancelled,
     bookingAddedByFamily: prefs.bookingAddedByFamily,
     choreRoster: prefs.choreRoster,
+    clubNotices: prefs.clubNotices,
     marketingEmails: prefs.marketingEmails,
   });
 }
@@ -159,6 +164,7 @@ export async function PUT(request: Request) {
     bookingCancelled: prefs.bookingCancelled,
     bookingAddedByFamily: prefs.bookingAddedByFamily,
     choreRoster: prefs.choreRoster,
+    clubNotices: prefs.clubNotices,
     marketingEmails: prefs.marketingEmails,
   });
 }
