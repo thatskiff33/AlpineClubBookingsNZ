@@ -698,7 +698,7 @@ Journey: Inspect connection and operations status; open a failed item to follow 
 
 Screen: `/admin/appearance`.
 
-Shows: Theme presets and links to club identity controls.
+Shows: Theme presets and links to club identity controls. The Club Identity sub-page (`/admin/appearance/identity`) also holds **Where members' data is held**, the hosting provider and data location the `{{data-hosting}}` token publishes.
 
 Journey: Choose a preset or open the identity editor; preview before saving.
 

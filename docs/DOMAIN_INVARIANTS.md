@@ -77,6 +77,7 @@ File: [`invariants/public-content.md`](invariants/public-content.md). Prefix
 | `INV-PUB-001` | Fee/policy PageContent blocks are enabled and server-rendered; tokens alone publish nothing |
 | `INV-PUB-002` | Public fees use current effective-dated schedules; joining fees resolve from `JoiningFee` only |
 | `INV-PUB-003` | A named lodge token resolves one active lodge or nothing |
+| `INV-PUB-004` | `{{data-hosting}}` publishes only the two typed hosting values, escaped, or fallback |
 
 ## Money
 
@@ -788,6 +789,7 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-020` | Credential writes name a person or a named system actor, audited atomically |
 | `INV-PRIV-021` | Admin-origin issue-report screenshot pixels are Full-Admin-only; unknown origin fails closed |
 | `INV-PRIV-022` | Profile and booking dietary data absent unless one granted module selects it |
+| `INV-PRIV-023` | Every outside recipient of personal data is in one census-held register |
 
 ## Membership Lifecycle
 

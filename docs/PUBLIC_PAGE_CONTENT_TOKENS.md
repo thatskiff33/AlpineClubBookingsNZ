@@ -167,6 +167,25 @@ and the site footer (they render an escaped string in place, not a block):
 - `{{lodge-address}}` or `{{lodge-address:lodge-slug}}` — a lodge's address
   (renders nothing when the lodge has no address set).
 - `{{currency}}`, and `{{facebook-url}}` (footer only).
+- `{{data-hosting}}` (page bodies only) — one plain-text sentence saying who
+  hosts the club's system and where members' information is held, built from
+  Admin > Club Identity > **Where members' data is held** (#4918). It publishes
+  only the two values the club typed, escaped, or fixed fallback wording; it
+  never reads server configuration, credentials or the backup region
+  (`INV-PUB-004`). The four states:
+
+  | Hosting provider | Where held | Renders |
+  | --- | --- | --- |
+  | set | set | "*Provider* hosts this System and its database; your information is held in *place*." |
+  | set | blank | "*Provider* hosts this System and its database. Ask our Privacy Officer in which country your information is held." |
+  | blank | set | "The company that hosts this System and its database holds your information in *place*. Ask our Privacy Officer which company this is." |
+  | blank | blank | "The company that hosts this System and its database. Ask our Privacy Officer which company this is and in which country your information is held." |
+
+  An app release that does not know a token leaves it as typed, so an older
+  release shows the raw `{{data-hosting}}` braces, not a blank. The starter
+  privacy text adopts the token only in a later release, after one containing
+  it has shipped
+  ([upgrade note](UPGRADING.md#privacy-incident-guide-and-hosting-disclosure-settings-4918)).
 
 For the lodge text tokens the bare form resolves the **default lodge**; a
 `:lodge-slug` parameter targets a named lodge, and an unknown slug falls back to
