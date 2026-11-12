@@ -11,6 +11,7 @@
  */
 
 import { z } from "zod";
+import { ADDRESS_THROTTLED_CODE } from "@/lib/login-throttle-policy";
 
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -308,6 +309,17 @@ export function rateLimitedResponse(result: RateLimitResult): Response {
   );
 }
 
+/** Only these exact Auth.js POST actions bypass the sign-in address budget. */
+export const AUTH_RATE_LIMIT_EXEMPT_ACTIONS: readonly string[] = ["signout", "session"];
+
+/** Keep the standard denial headers while giving next-auth's client its URL. */
+export function authRateLimitedResponse(denial: Response, requestUrl: string): Response {
+  const url = new URL("/login", requestUrl);
+  url.searchParams.set("error", ADDRESS_THROTTLED_CODE);
+  url.searchParams.set("code", ADDRESS_THROTTLED_CODE);
+  return Response.json({ url: url.href }, { status: denial.status, headers: denial.headers });
+}
+
 /**
  * Apply rate limiting to a request. Returns a Response if rate limited, null if allowed.
  */
@@ -401,8 +413,12 @@ export async function applyMemberScopedRateLimit(
 
 // Pre-configured rate limiters for common routes
 export const rateLimiters = {
-  /** Login: 10 attempts per 15 minutes */
-  login: { id: "login", limit: 10, windowSeconds: 15 * 60, authSensitive: true } as RateLimitConfig,
+  /**
+   * Per address: 30 credential-presenting sign-in POSTs per 15 minutes.
+   * The per-account password throttle stops guessing after five failures;
+   * this larger backstop allows shared networks while bounding account sprays.
+   */
+  login: { id: "login", limit: 30, windowSeconds: 15 * 60, authSensitive: true } as RateLimitConfig,
   /** Register: 5 attempts per hour */
   register: { id: "register", limit: 5, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
   /** Membership application: 3 submissions per hour */

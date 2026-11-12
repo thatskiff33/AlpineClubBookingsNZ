@@ -144,8 +144,26 @@ throttling can delay the periodic refresh until the tab becomes visible.
 
 Audience: Operator, Developer.
 
-The per-address limiter (10 attempts per 15 minutes per internet address)
-cannot see one account guessed from many addresses — a botnet, a phone
+The per-address limiter (`rateLimiters.login`: 30 attempts per 15 minutes per
+internet address) counts Auth.js POSTs except the exact `signout` and `session`
+actions. Credentials and magic-link callbacks, Google sign-in starts and unknown
+future POST actions count; GETs do not. This larger shared-network budget is a
+backstop against account spraying alongside the per-account password throttle.
+Sign-out and session updates neither consume this budget nor get refused by it
+(`INV-AUTH-011`).
+
+A refusal is HTTP 429 with `Retry-After`, `X-RateLimit-*`, and a JSON `url` for
+next-auth pointing at `/login?error=ADDRESS_THROTTLED&code=ADDRESS_THROTTLED`.
+Password, Google redirects and magic-link pages show the same network wait,
+without identifying an account. Since next-auth's `signIn` result does not expose
+`Retry-After`, the message says to wait a few minutes. A refused magic link is
+not consumed: **Try again** retries its token from memory, while the visible URL
+stays scrubbed. Reopening the original email link also works while it is valid.
+Other routes' 429 bodies are unchanged. The counter id remains `login`; during a
+blue/green cutover the old slot retains its stricter budget. Store failures keep
+the existing reduced per-process fallback.
+
+The per-address limiter cannot see one account guessed from many addresses — a botnet, a phone
 network, a cloud provider. A second count, kept per account, closes that gap.
 The rules are `INV-AUTH-001` to `INV-AUTH-004` in
 [`invariants/authentication.md`](invariants/authentication.md); this section
