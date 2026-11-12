@@ -5335,6 +5335,13 @@ model Lodge {
   // keeps geography out of seeds); the additive migration backfills only the
   // existing default lodge with the historical hardcoded string.
   address    String?  @db.VarChar(300)
+  // Invoice details (fork #115), all optional and admin-editable in the Lodge
+  // details panel. They feed only the generated booking invoice PDF, read on
+  // the server; no public or member lodge payload carries them.
+  postalAddress      String? @db.VarChar(300)
+  bankAccountName    String? @db.VarChar(200)
+  bankAccountDetails String? @db.VarChar(300)
+  gstNumber          String? @db.VarChar(40)
   // Per-lodge config glob for the lobby display's {{config:<key>}}
   // placeholders (docs/lobby-display/design.md §3, fork issue #26): free-form
   // string key/value pairs, validated at the admin edit surface. Null = none.

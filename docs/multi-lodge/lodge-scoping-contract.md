@@ -891,6 +891,7 @@ caller WITH `lodge:view` keeps the whole record. A caller without it receives
 | `doorCode` | **no** | a physical-access secret, already kept out of audit metadata by `redactLodgeForAudit` |
 | `address` | **no** | the lodge's physical location |
 | `travelNote` | **no** | arrival instructions; its only vocabulary consumer is the MEMBER wizard, which reads `/api/lodges` |
+| `postalAddress`, `bankAccountName`, `bankAccountDetails`, `gstNumber` | **no** | invoice details (fork #115), read only on the server by the booking invoice download, `GET /api/bookings/[id]/invoice`, for the booking's own lodge |
 | `createdAt`, `updatedAt` | **no** | record metadata no vocabulary consumer reads |
 | `isDefault`, `displayConfig`, `displayNotice`, `displayNameGranularity`, `showGuestPhonesOnScreens` | **no** | never in either payload; listed so the enumeration is complete |
 

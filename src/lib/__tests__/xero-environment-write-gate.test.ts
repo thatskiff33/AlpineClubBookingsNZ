@@ -277,6 +277,8 @@ describe("every operation name this repository passes to callXeroApi", () => {
       // #4162: the "already in Xero" answer reads the hand-made note by its number.
       "getCreditNotes",
       "getInvoice",
+      // Fork #115: the booking page's Download invoice reads Xero's own PDF.
+      "getInvoiceAsPdf",
       "getInvoices",
       "getItems",
       "getOnlineInvoice",

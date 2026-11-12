@@ -1,4 +1,9 @@
 import type { Lodge, Prisma, PrismaClient } from "@prisma/client";
+import { z } from "zod";
+import {
+  NZ_BANK_ACCOUNT_INVALID_MESSAGE,
+  NZ_BANK_ACCOUNT_NUMBER_PATTERN,
+} from "./nz-bank-account";
 
 // Callers pass their own Prisma client/transaction so this module stays free
 // of the app prisma singleton and safe to import from prisma/seed.ts.
@@ -15,8 +20,12 @@ export const lodgeSelect = {
   slug: true,
   active: true,
   address: true,
+  postalAddress: true,
   doorCode: true,
   travelNote: true,
+  bankAccountName: true,
+  bankAccountDetails: true,
+  gstNumber: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.LodgeSelect;
@@ -78,8 +87,13 @@ export interface SerializedLodge {
   slug: string;
   active: boolean;
   address: string | null;
+  /** Invoice details (fork #115): admin-only, printed on the generated booking invoice. */
+  postalAddress: string | null;
   doorCode: string | null;
   travelNote: string | null;
+  bankAccountName: string | null;
+  bankAccountDetails: string | null;
+  gstNumber: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -91,8 +105,12 @@ export function serializeLodge(lodge: LodgeRecord): SerializedLodge {
     slug: lodge.slug,
     active: lodge.active,
     address: lodge.address,
+    postalAddress: lodge.postalAddress,
     doorCode: lodge.doorCode,
     travelNote: lodge.travelNote,
+    bankAccountName: lodge.bankAccountName,
+    bankAccountDetails: lodge.bankAccountDetails,
+    gstNumber: lodge.gstNumber,
     createdAt: lodge.createdAt.toISOString(),
     updatedAt: lodge.updatedAt.toISOString(),
   };
@@ -133,6 +151,36 @@ export function lodgeOrderBy() {
   return [{ createdAt: "asc" }, { id: "asc" }] satisfies
     Prisma.LodgeOrderByWithRelationInput[];
 }
+
+/**
+ * The optional lodge invoice details (fork #115), edited in the Lodge details
+ * panel and read only by the generated booking invoice. The PATCH route writes
+ * exactly these and the invoice download selects exactly these, from this list.
+ */
+export const LODGE_INVOICE_DETAIL_FIELDS = [
+  "postalAddress",
+  "bankAccountName",
+  "bankAccountDetails",
+  "gstNumber",
+] as const;
+
+export type LodgeInvoiceDetailField = (typeof LODGE_INVOICE_DETAIL_FIELDS)[number];
+
+/** The PATCH rules for those fields: the `address` rule, bounded by each column's length; the bank account must be a NZ account number. */
+export const lodgeInvoiceDetailsSchemaShape = {
+  postalAddress: z.string().trim().max(300).nullable().optional(),
+  bankAccountName: z.string().trim().max(200).nullable().optional(),
+  // A New Zealand bank account number, BB-bbbb-AAAAAAA-SSS; blank clears it.
+  bankAccountDetails: z
+    .string()
+    .trim()
+    .refine((value) => value === "" || NZ_BANK_ACCOUNT_NUMBER_PATTERN.test(value), {
+      message: NZ_BANK_ACCOUNT_INVALID_MESSAGE,
+    })
+    .nullable()
+    .optional(),
+  gstNumber: z.string().trim().max(40).nullable().optional(),
+} satisfies Record<LodgeInvoiceDetailField, z.ZodTypeAny>;
 
 export function normalizeLodgeText(value: string | null | undefined) {
   const trimmed = value?.trim();

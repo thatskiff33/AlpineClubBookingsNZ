@@ -492,4 +492,50 @@ describe("PATCH /api/admin/lodges/[id]", () => {
     );
     expect(mocks.auditLogCreate).toHaveBeenCalledTimes(1);
   });
+
+  it("saves the invoice details (fork #115): trimmed, blank as null, length-bounded", async () => {
+    mocks.lodgeFindUnique.mockResolvedValue(lodgeRecord());
+    mocks.lodgeUpdate.mockImplementation(async ({ data }) => lodgeRecord(data));
+    mocks.lodgeFindMany.mockResolvedValue([{ name: "Alpine Lodge", doorCode: null, travelNote: null }]);
+
+    const response = await PATCH(
+      jsonRequest("PATCH", {
+        postalAddress: "  PO Box 12, Townsville 1234  ",
+        bankAccountName: " Alpine Club Inc ",
+        bankAccountDetails: "12-3456-7890123-00",
+        gstNumber: "   ",
+      }),
+      params("lodge-1"),
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.lodgeUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          postalAddress: "PO Box 12, Townsville 1234",
+          bankAccountName: "Alpine Club Inc",
+          bankAccountDetails: "12-3456-7890123-00",
+          gstNumber: null,
+        }),
+      }),
+    );
+    const body = await response.json();
+    expect(body.lodge).toMatchObject({
+      postalAddress: "PO Box 12, Townsville 1234",
+      bankAccountName: "Alpine Club Inc",
+      gstNumber: null,
+    });
+
+    const tooLong = await PATCH(
+      jsonRequest("PATCH", { gstNumber: "x".repeat(41) }),
+      params("lodge-1"),
+    );
+    expect(tooLong.status).toBe(400);
+
+    // The bank account is a NZ account number, BB-bbbb-AAAAAAA-SSS, or blank.
+    const notAnAccountNumber = await PATCH(
+      jsonRequest("PATCH", { bankAccountDetails: "12-3456-789-00" }),
+      params("lodge-1"),
+    );
+    expect(notAnAccountNumber.status).toBe(400);
+  });
 });
