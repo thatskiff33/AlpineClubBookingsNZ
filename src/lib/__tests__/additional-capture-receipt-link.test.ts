@@ -240,8 +240,20 @@ describe("anchorCaptureHasReceipt", () => {
 });
 
 describe("findAdditionalCaptureReceiptInvoiceId", () => {
-  it("names the oldest payment link, which is the first leg", async () => {
-    const findFirst = vi.fn(async (args: { orderBy: unknown }) => {
+  it("names the link marked leg 0, whichever leg was linked first", async () => {
+    const findFirst = vi.fn(async (args: { where: { metadata?: unknown } }) => {
+      expect(args.where.metadata).toEqual({ path: ["leg"], equals: 0 });
+      return { metadata: { invoiceId: "inv_leg0", leg: 0 } };
+    });
+    await expect(
+      readAdditionalCaptureReceiptLinkedInvoiceId("ptx_1", { xeroObjectLink: { findFirst } } as never),
+    ).resolves.toBe("inv_leg0");
+    expect(findFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the oldest payment link when none is marked leg 0 (a link from before legs)", async () => {
+    const findFirst = vi.fn(async (args: { where: { metadata?: unknown }; orderBy?: unknown }) => {
+      if (args.where.metadata) return null;
       expect(args.orderBy).toEqual({ createdAt: "asc" });
       return { metadata: { invoiceId: "inv_first" } };
     });

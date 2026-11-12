@@ -26,24 +26,23 @@ type ReceiptLinkStore = Pick<Prisma.TransactionClient, "paymentTransaction" | "x
  * #3953: the Xero invoice a capture's receipt's payment link names, on the
  * capture's `PaymentTransaction` (null while none is linked). The one read of
  * that link: the refund paths and (#4324) the late-capture receipt verdict
- * build on it. The oldest link is the first leg, the invoice that bills the
- * capture (#4434).
+ * build on it. Several legs (#4434): the link naming leg 0, the invoice that
+ * bills the capture, else the oldest.
  */
 export async function readAdditionalCaptureReceiptLinkedInvoiceId(
   paymentTransactionId: string,
   store: Pick<Prisma.TransactionClient, "xeroObjectLink"> = prisma,
 ): Promise<string | null> {
-  const link = await store.xeroObjectLink.findFirst({
-    where: {
-      localModel: "PaymentTransaction",
-      localId: paymentTransactionId,
-      xeroObjectType: "PAYMENT",
-      role: ADDITIONAL_CAPTURE_PAYMENT_ROLE,
-      active: true,
-    },
-    orderBy: { createdAt: "asc" },
-    select: { metadata: true },
-  });
+  const where = {
+    localModel: "PaymentTransaction",
+    localId: paymentTransactionId,
+    xeroObjectType: "PAYMENT",
+    role: ADDITIONAL_CAPTURE_PAYMENT_ROLE,
+    active: true,
+  } satisfies Prisma.XeroObjectLinkWhereInput;
+  const link =
+    (await store.xeroObjectLink.findFirst({ where: { ...where, metadata: { path: ["leg"], equals: 0 } }, select: { metadata: true } })) ??
+    (await store.xeroObjectLink.findFirst({ where, orderBy: { createdAt: "asc" }, select: { metadata: true } }));
   const linked = asRecord(link?.metadata)?.invoiceId;
   return typeof linked === "string" && linked.length > 0 ? linked : null;
 }

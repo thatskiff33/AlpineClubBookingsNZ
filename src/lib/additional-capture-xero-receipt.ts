@@ -434,17 +434,22 @@ export async function recordAdditionalCaptureReceipt(
       );
     }
     const candidates: Array<{ target: AdditionalCaptureReceiptTarget; invoiceId: string }> = [];
+    const operationByInvoice = new Map<string, NonNullable<(typeof targets)[number]["operation"]>>();
     for (const target of targets) {
       if (target.kind === "PRIMARY_INVOICE") {
-        candidates.push({ target: "PRIMARY_INVOICE", invoiceId: primaryInvoiceId });
+        // #4324 (`INV-PAY-144`): on a cancelled booking the receipt is capped at the
+        // invoice billing the change; nothing spills onto the booking's own invoice.
+        if (!cancelled || candidates.length === 0) candidates.push({ target: "PRIMARY_INVOICE", invoiceId: primaryInvoiceId });
         continue;
       }
       const invoiceId = target.link?.active ? target.link.xeroObjectId : null;
       if (!invoiceId) {
         if (candidates.length === 0) return refuse("gap-invoice-not-in-xero", { supplementaryOperationId: target.operation?.id ?? null });
-        continue;
+        // An invoice billing the capture that is not in Xero: its room cannot be
+        // read, so nothing is recorded past it. The rest goes to an officer.
+        break;
       }
-      if (ownPaymentPending(target.operation)) return refuse("own-payment-pending", { supplementaryOperationId: target.operation?.id });
+      if (target.operation) operationByInvoice.set(invoiceId, target.operation);
       candidates.push({ target: target.kind, invoiceId });
     }
     if (candidates.length === 0) return refuse("gap-invoice-not-in-xero");
@@ -516,6 +521,10 @@ export async function recordAdditionalCaptureReceipt(
     if (legs.length === 0) {
       return refuse("nothing-due", { invoiceId: first?.invoiceId ?? primaryInvoiceId, target: first?.target ?? "PRIMARY_INVOICE", capturedCents });
     }
+    // An invoice whose own card payment is still owed shows too much due; only
+    // one this receipt would pay matters.
+    const pendingLeg = legs.find((leg) => ownPaymentPending(operationByInvoice.get(leg.invoiceId) ?? null));
+    if (pendingLeg) return refuse("own-payment-pending", { supplementaryOperationId: operationByInvoice.get(pendingLeg.invoiceId)?.id });
     if (legs.some((leg) => leg.target === "PRIMARY_INVOICE")) {
       const primaryCreate = await prisma.xeroSyncOperation.findFirst({
         where: {

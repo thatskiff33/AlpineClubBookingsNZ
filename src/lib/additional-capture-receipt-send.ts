@@ -58,7 +58,7 @@ export async function sendAdditionalCaptureReceiptLegs(input: {
   }
   const paymentIds: string[] = [];
   let recoveredExisting = false;
-  for (const leg of plan.legs) {
+  for (const [index, leg] of plan.legs.entries()) {
     const linked = linkedByInvoice.get(leg.invoiceId);
     if (linked) {
       paymentIds.push(linked);
@@ -72,7 +72,7 @@ export async function sendAdditionalCaptureReceiptLegs(input: {
       recoveredExisting = true;
       // Linked now, before a later leg's create writes its own link: the
       // refund paths read the oldest link as the first leg.
-      if (plan.legs.length > 1) await upsertXeroObjectLink(receiptLegLink(input, leg, owned.paymentID));
+      if (plan.legs.length > 1) await upsertXeroObjectLink(receiptLegLink(input, leg, index, owned.paymentID));
       if (input.fromStore) {
         const other = await input.recorderNowElsewhere();
         if (other) await input.settleOtherRecorder(other, leg.invoiceId);
@@ -121,7 +121,7 @@ export async function sendAdditionalCaptureReceiptLegs(input: {
         reference: input.reference,
         role: ADDITIONAL_CAPTURE_PAYMENT_ROLE,
         createdByMemberId: input.createdByMemberId,
-        metadata: receiptLegMetadata(leg, input.paymentIntentId),
+        metadata: receiptLegMetadata(leg, index, input.paymentIntentId),
         date: plan.date,
       }),
     );
@@ -134,6 +134,7 @@ export async function sendAdditionalCaptureReceiptLegs(input: {
 function receiptLegLink(
   input: { paymentTransactionId: string; paymentIntentId: string },
   leg: AdditionalCaptureReceiptPlan["legs"][number],
+  index: number,
   paymentId: string,
 ) {
   return {
@@ -142,12 +143,13 @@ function receiptLegLink(
     xeroObjectType: "PAYMENT" as const,
     xeroObjectId: paymentId,
     role: ADDITIONAL_CAPTURE_PAYMENT_ROLE,
-    metadata: receiptLegMetadata(leg, input.paymentIntentId),
+    metadata: receiptLegMetadata(leg, index, input.paymentIntentId),
   };
 }
 
-function receiptLegMetadata(leg: AdditionalCaptureReceiptPlan["legs"][number], paymentIntentId: string) {
-  return { invoiceId: leg.invoiceId, target: leg.target, amountCents: leg.amountCents, paymentIntentId };
+/** `leg` is its place in the plan: the refund paths name leg 0's invoice, whichever link was written first. */
+function receiptLegMetadata(leg: AdditionalCaptureReceiptPlan["legs"][number], index: number, paymentIntentId: string) {
+  return { invoiceId: leg.invoiceId, target: leg.target, amountCents: leg.amountCents, leg: index, paymentIntentId };
 }
 
 /** Active credit-release links for payments on the invoice just read. The one exclusion #4435 uses. */
@@ -204,7 +206,7 @@ export async function completeRecordedReceipt(
     xeroObjectType: "PAYMENT",
     xeroObjectId: firstPaymentId,
     xeroObjectUrl: buildXeroInvoiceUrl(plan.invoiceId),
-    extraLinks: plan.legs.map((leg, index) => receiptLegLink(input, leg, recorded.paymentIds[index] ?? firstPaymentId)),
+    extraLinks: plan.legs.map((leg, index) => receiptLegLink(input, leg, index, recorded.paymentIds[index] ?? firstPaymentId)),
   });
   if (unrecordedCents > 0) {
     const format = await clubFormatValues();

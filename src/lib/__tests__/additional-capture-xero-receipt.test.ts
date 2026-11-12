@@ -628,6 +628,9 @@ describe("recordAdditionalCaptureReceipt", () => {
 
     expect(seam.createXeroPaymentForInvoice).toHaveBeenNthCalledWith(1, expect.objectContaining({ invoiceId: CHANGE, amountCents: 5000 }));
     expect(seam.createXeroPaymentForInvoice).toHaveBeenNthCalledWith(2, expect.objectContaining({ invoiceId: PRIMARY, amountCents: 3000 }));
+    // Each link says its place in the plan, so a refund names leg 0 whichever was linked first.
+    expect(seam.createXeroPaymentForInvoice).toHaveBeenNthCalledWith(1, expect.objectContaining({ metadata: expect.objectContaining({ leg: 0 }) }));
+    expect(seam.createXeroPaymentForInvoice).toHaveBeenNthCalledWith(2, expect.objectContaining({ metadata: expect.objectContaining({ leg: 1 }) }));
     expect(mocks.recheckPrimaryInvoiceWorthGap).not.toHaveBeenCalled();
     expect(mocks.sendAdminXeroSyncErrorAlert).not.toHaveBeenCalled();
     expect(storedPlan()).toEqual(
@@ -673,6 +676,85 @@ describe("recordAdditionalCaptureReceipt", () => {
     const seam = providers();
     await expectWait(seam);
     expect(seam.getAuthenticatedXeroClient).not.toHaveBeenCalled();
+  });
+
+  it("records nothing past a later invoice that never reached Xero; the rest goes to an officer", async () => {
+    const CHANGE = "33333333-3333-4333-8333-333333333333";
+    invoices[CHANGE] = { amountDue: 3000 };
+    invoices[PRIMARY] = { amountDue: 8000 };
+    mocks.readCaptureRecorder.mockResolvedValue(
+      receiptRecorder({
+        targets: [
+          {
+            kind: "CHANGE_INVOICE",
+            operation: { id: "op_change", status: "SUCCEEDED", requestPayload: { recordPayment: false }, responsePayload: {}, manuallyResolvedAt: null },
+            link: { id: "link_change", xeroObjectId: CHANGE, active: true },
+          },
+          {
+            kind: "CHANGE_INVOICE",
+            operation: { id: "op_failed", status: "FAILED", requestPayload: { recordPayment: false }, responsePayload: {}, manuallyResolvedAt: null },
+            link: null,
+          },
+          PRIMARY_TARGET,
+        ],
+      }),
+    );
+    const seam = providers();
+    await run(seam);
+    expect(seam.createXeroPaymentForInvoice).toHaveBeenCalledTimes(1);
+    expect(seam.createXeroPaymentForInvoice).toHaveBeenCalledWith(expect.objectContaining({ invoiceId: CHANGE, amountCents: 3000 }));
+    expect(storedPlan()).toEqual(expect.objectContaining({ legs: [{ target: "CHANGE_INVOICE", invoiceId: CHANGE, amountCents: 3000 }] }));
+    expect(mocks.sendAdminXeroSyncErrorAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a later invoice's owed card payment when an earlier invoice takes the whole capture", async () => {
+    const CHANGE = "33333333-3333-4333-8333-333333333333";
+    const GAP = "44444444-4444-4444-8444-444444444444";
+    invoices[CHANGE] = { amountDue: 8000 };
+    invoices[GAP] = { amountDue: 8000 };
+    const partial = { status: "PARTIAL", requestPayload: {}, responsePayload: { paymentError: { message: "x" } }, manuallyResolvedAt: null };
+    const targets = (gapOperation: typeof partial) => [
+      {
+        kind: "CHANGE_INVOICE",
+        operation: { id: "op_change", status: "SUCCEEDED", requestPayload: { recordPayment: false }, responsePayload: {}, manuallyResolvedAt: null },
+        link: { id: "link_change", xeroObjectId: CHANGE, active: true },
+      },
+      { kind: "GAP_INVOICE", operation: { id: "op_gap", ...gapOperation }, link: { id: "link_gap", xeroObjectId: GAP, active: true } },
+      PRIMARY_TARGET,
+    ];
+    mocks.readCaptureRecorder.mockResolvedValue(receiptRecorder({ targets: targets(partial) }));
+    const seam = providers();
+    await run(seam);
+    expect(seam.createXeroPaymentForInvoice).toHaveBeenCalledTimes(1);
+    expect(seam.createXeroPaymentForInvoice).toHaveBeenCalledWith(expect.objectContaining({ invoiceId: CHANGE, amountCents: 8000 }));
+  });
+
+  it("refuses when an invoice it would pay still owes its own card payment", async () => {
+    const CHANGE = "33333333-3333-4333-8333-333333333333";
+    const GAP = "44444444-4444-4444-8444-444444444444";
+    invoices[CHANGE] = { amountDue: 3000 };
+    invoices[GAP] = { amountDue: 8000 };
+    mocks.readCaptureRecorder.mockResolvedValue(
+      receiptRecorder({
+        targets: [
+          {
+            kind: "CHANGE_INVOICE",
+            operation: { id: "op_change", status: "SUCCEEDED", requestPayload: { recordPayment: false }, responsePayload: {}, manuallyResolvedAt: null },
+            link: { id: "link_change", xeroObjectId: CHANGE, active: true },
+          },
+          {
+            kind: "GAP_INVOICE",
+            operation: { id: "op_gap", status: "PARTIAL", requestPayload: {}, responsePayload: { paymentError: { message: "x" } }, manuallyResolvedAt: null },
+            link: { id: "link_gap", xeroObjectId: GAP, active: true },
+          },
+          PRIMARY_TARGET,
+        ],
+      }),
+    );
+    const seam = providers();
+    await run(seam);
+    expectRefused("own-payment-pending");
+    expect(seam.createXeroPaymentForInvoice).not.toHaveBeenCalled();
   });
 
   it("sends only the unlinked leg when an earlier run recorded the first", async () => {
@@ -888,6 +970,29 @@ describe("recordAdditionalCaptureReceipt", () => {
       await run(seam);
       expect(seam.createXeroPaymentForInvoice).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 5000 }));
       expect(mocks.recheckPrimaryInvoiceWorthGap).not.toHaveBeenCalled();
+      expect(mocks.sendAdminXeroSyncErrorAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it("MUTATION (INV-PAY-144): caps it at the change invoice's AmountDue and never spills the rest onto the primary", async () => {
+      const CHANGE = "33333333-3333-4333-8333-333333333333";
+      invoices[CHANGE] = { amountDue: 5000 };
+      invoices[PRIMARY] = { amountDue: 8000 };
+      mocks.readCaptureRecorder.mockResolvedValue(
+        receiptRecorder({
+          targets: [
+            {
+              kind: "CHANGE_INVOICE",
+              operation: { id: "op_change", status: "SUCCEEDED", requestPayload: { recordPayment: false }, responsePayload: {}, manuallyResolvedAt: null },
+              link: { id: "link_change", xeroObjectId: CHANGE, active: true },
+            },
+            PRIMARY_TARGET,
+          ],
+        }),
+      );
+      const seam = providers();
+      await run(seam);
+      expect(seam.createXeroPaymentForInvoice).toHaveBeenCalledTimes(1);
+      expect(seam.createXeroPaymentForInvoice).toHaveBeenCalledWith(expect.objectContaining({ invoiceId: CHANGE, amountCents: 5000 }));
       expect(mocks.sendAdminXeroSyncErrorAlert).toHaveBeenCalledTimes(1);
     });
 
