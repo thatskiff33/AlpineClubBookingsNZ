@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import {
   useCallback,
@@ -80,7 +81,7 @@ export function useMemberGroupEdit<TForm>({
     setSaving(true);
     setError("");
     try {
-      const res = await fetch(`/api/admin/members/${memberId}`, {
+      const res = await fetchWithRecentAuth(`/api/admin/members/${memberId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildPayload(form)),

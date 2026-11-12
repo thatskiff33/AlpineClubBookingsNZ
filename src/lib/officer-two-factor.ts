@@ -27,7 +27,7 @@ import {
   officerGraceDeadlineDate,
   officerTwoFactorGraceEnd,
 } from "@/lib/officer-two-factor-grace";
-import { OFFICER_SIGN_IN_RELEASE_ENABLED } from "@/lib/officer-sign-in-release";
+import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
 import { prisma } from "@/lib/prisma";
 import {
   isOfficerTwoFactorRequired,
@@ -162,7 +162,7 @@ export type OfficerTwoFactorReportRow = {
 export async function loadOfficerTwoFactorReport(): Promise<
   OfficerTwoFactorReportRow[]
 > {
-  if (!OFFICER_SIGN_IN_RELEASE_ENABLED) return [];
+  if (!OFFICER_SIGN_IN_ENFORCED) return [];
   const [policy, zone, format] = await Promise.all([
     prisma.loginSecuritySetting.findUnique({
       where: { id: "default" },

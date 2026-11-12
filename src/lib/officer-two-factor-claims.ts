@@ -2,7 +2,7 @@
  * The three officer claims a session refresh stamps (#4618).
  *
  * Pure: the refresh, the report and the tests all call this. Production
- * passes `OFFICER_SIGN_IN_RELEASE_ENABLED`. `twoFactorRequired` (the
+ * passes `OFFICER_SIGN_IN_ENFORCED`. `twoFactorRequired` (the
  * club-wide module) is not decided here.
  */
 

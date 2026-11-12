@@ -19,7 +19,7 @@ export function isSecondFactorEnrolled(input: {
 }
 
 /**
- * What may stand as an officer's second factor (#4618, INV-AUTH-010).
+ * What may stand as an officer's second factor (#4618, INV-AUTH-011).
  *
  * A stored passkey qualifies. An authenticator app qualifies only while the
  * flag is on and the method is the app. Email never does. This is the only

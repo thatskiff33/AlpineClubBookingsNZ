@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
@@ -261,7 +262,7 @@ export default function ConfigTransferPage() {
       form.append("mode", mode);
       if (importCategories) form.append("categories", JSON.stringify(importCategories));
       if (resolutions.length > 0) form.append("resolutions", JSON.stringify(resolutions));
-      const res = await fetch("/api/admin/config-transfer/apply", {
+      const res = await fetchWithRecentAuth("/api/admin/config-transfer/apply", {
         method: "POST",
         body: form,
       });

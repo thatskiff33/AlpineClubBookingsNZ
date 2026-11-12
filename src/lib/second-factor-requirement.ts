@@ -10,7 +10,7 @@ import "server-only";
 
 import { MEMBER_PRIVILEGE_CHECK_SELECT } from "@/lib/access-role-definitions";
 import { officerAssignmentsFromMember } from "@/lib/officer-two-factor";
-import { OFFICER_SIGN_IN_RELEASE_ENABLED } from "@/lib/officer-sign-in-release";
+import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
 import { prisma } from "@/lib/prisma";
 import { isOfficerTwoFactorRequired } from "@/lib/second-factor-enrolment";
 import { isKioskSessionMember } from "@/lib/session-idle-expiry";
@@ -24,7 +24,7 @@ export class LastOfficerFactorError extends Error {
 }
 
 export async function assertLastFactorRemovable(memberId: string): Promise<void> {
-  if (!OFFICER_SIGN_IN_RELEASE_ENABLED) return;
+  if (!OFFICER_SIGN_IN_ENFORCED) return;
   const [member, policy] = await Promise.all([
     prisma.member.findUnique({
       where: { id: memberId },

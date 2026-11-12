@@ -25,7 +25,7 @@ import {
 } from "@/lib/admin-member-detail-helpers";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 import { deriveUserType, isFullAdmin, sessionPrivilegeInput } from "@/lib/access-roles";
-import { OFFICER_SIGN_IN_RELEASE_ENABLED } from "@/lib/officer-sign-in-release";
+import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
 import {
   canAdminRequestMembershipCancellation,
   NON_MEMBER_ROLE_VALUES,
@@ -916,7 +916,7 @@ export default function MemberDetailPage({
             inheritEmail={inheritEmail}
             canEdit={canEditMembership}
           />
-          {OFFICER_SIGN_IN_RELEASE_ENABLED &&
+          {OFFICER_SIGN_IN_ENFORCED &&
           actorIsFullAdmin &&
           !isSelf &&
           deriveUserType(member.accessRoles ?? []) !== "lodge" ? (

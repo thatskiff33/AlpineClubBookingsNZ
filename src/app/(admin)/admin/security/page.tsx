@@ -9,7 +9,7 @@ import { getGoogleSetupState } from "@/lib/google-config";
 import { loadLoginSecuritySettings } from "@/lib/login-security-settings";
 import { loadClubModuleSettings } from "@/lib/module-settings";
 import { loadOfficerTwoFactorReport } from "@/lib/officer-two-factor";
-import { OFFICER_SIGN_IN_RELEASE_ENABLED } from "@/lib/officer-sign-in-release";
+import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
 import { clubFormatValues } from "@/lib/club-format-server";
 
 // Login & Security admin page (epic #2030, child #2033). Scaffolds the page and
@@ -47,10 +47,10 @@ export default async function AdminSecurityPage() {
       })),
     ]);
   const googleConfigured = googleState.clientIdSet && googleState.clientSecretSet;
-  const session = OFFICER_SIGN_IN_RELEASE_ENABLED ? await auth() : null;
+  const session = OFFICER_SIGN_IN_ENFORCED ? await auth() : null;
   const viewerIsFullAdmin = session?.user ? isFullAdmin(session.user) : false;
   const officerReport =
-    OFFICER_SIGN_IN_RELEASE_ENABLED && viewerIsFullAdmin
+    OFFICER_SIGN_IN_ENFORCED && viewerIsFullAdmin
       ? await loadOfficerTwoFactorReport()
       : [];
 
@@ -76,10 +76,10 @@ export default async function AdminSecurityPage() {
           verified={googleState.verified}
           needsReentry={googleState.needsReentry}
         />
-        {OFFICER_SIGN_IN_RELEASE_ENABLED ? (
+        {OFFICER_SIGN_IN_ENFORCED ? (
           <OfficerTwoFactorCard canEdit={viewerIsFullAdmin} />
         ) : null}
-        {OFFICER_SIGN_IN_RELEASE_ENABLED && viewerIsFullAdmin ? (
+        {OFFICER_SIGN_IN_ENFORCED && viewerIsFullAdmin ? (
           <section className="space-y-3 rounded-lg border p-6">
             <h2 className="text-base font-semibold">Officers still to set up</h2>
             <p className="text-sm text-muted-foreground">

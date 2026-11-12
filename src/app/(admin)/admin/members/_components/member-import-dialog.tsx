@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import type { ChangeEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
@@ -469,7 +470,7 @@ export function MemberImportDialog({
     setImportResult(null);
     setWizardStep("import");
     try {
-      const res = await fetch("/api/admin/members/import", {
+      const res = await fetchWithRecentAuth("/api/admin/members/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

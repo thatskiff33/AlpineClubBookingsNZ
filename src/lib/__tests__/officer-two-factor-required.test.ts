@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_ACCESS_ROLE_DEFINITIONS } from "@/lib/access-role-definitions";
 import { asClubTimeZone } from "@/lib/club-time";
-import { OFFICER_SIGN_IN_RELEASE_ENABLED } from "@/lib/officer-sign-in-release";
+import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
 import {
   officerGraceClosedByReset,
   officerGraceHasEnded,
@@ -43,7 +43,7 @@ function seeded(systemRole: string): OfficerTwoFactorAssignment {
 
 describe("isOfficerTwoFactorRequired (#4618)", () => {
   it("pins the release constant off until #4620", () => {
-    expect(OFFICER_SIGN_IN_RELEASE_ENABLED).toBe(false);
+    expect(OFFICER_SIGN_IN_ENFORCED).toBe(false);
   });
 
   it("requires a Full Admin whenever the policy and the release are on", () => {

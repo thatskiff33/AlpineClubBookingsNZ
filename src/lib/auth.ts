@@ -10,6 +10,7 @@
  */
 import "server-only";
 
+import { cache } from "react";
 import NextAuth, { CredentialsSignin, type NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
@@ -39,7 +40,7 @@ import {
 } from "./session-member-security";
 import { loadEffectiveModuleFlags } from "./module-settings";
 import { loadLoginSecurityRefresh } from "./login-security-settings";
-import { OFFICER_SIGN_IN_RELEASE_ENABLED } from "./officer-sign-in-release";
+import { OFFICER_SIGN_IN_ENFORCED } from "./officer-sign-in-switch";
 import { resolveOfficerTwoFactorClaims } from "./officer-two-factor";
 import { clubTimeZone } from "./club-time/server";
 import { isSessionPastMaxAge } from "./session-max-age";
@@ -681,9 +682,9 @@ export const authConfig = {
           const twoFactorRequired = modules.twoFactor === true;
           // The officer claims are a separate fact from the module flag.
           // While the release is off they stay false and nothing is stamped.
-          const zone = OFFICER_SIGN_IN_RELEASE_ENABLED ? await clubTimeZone() : null;
+          const zone = OFFICER_SIGN_IN_ENFORCED ? await clubTimeZone() : null;
           const officerClaims = await resolveOfficerTwoFactorClaims({
-            releaseEnabled: OFFICER_SIGN_IN_RELEASE_ENABLED,
+            releaseEnabled: OFFICER_SIGN_IN_ENFORCED,
             policyEnabled: loginSecurity.officerTwoFactorPolicy,
             graceDays: loginSecurity.officerTwoFactorGraceDays,
             member: {
@@ -947,7 +948,13 @@ const nextAuth = NextAuth(buildRequestAuthConfig);
 export const { handlers, signIn, signOut, unstable_update: updateSession } =
   nextAuth;
 
-export async function auth() {
+/**
+ * Memoised per server-component render (#4938): every caller in one render
+ * shares one refresh, the next request refreshes again (INV-AUTH-007), and
+ * outside a render `cache()` memoises nothing. Wrap only here — a second
+ * `cache()` is a second memo. docs/SECURITY.md has the detail.
+ */
+export const auth = cache(async () => {
   const session = await nextAuth.auth();
 
   if (session?.user?.sessionInvalidated) {
@@ -955,7 +962,7 @@ export async function auth() {
   }
 
   return session;
-}
+});
 
 /**
  * Diagnostics-only raw session probe (#1669). Returns the UNWRAPPED

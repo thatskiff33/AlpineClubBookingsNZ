@@ -1037,4 +1037,5 @@ headings the index keeps verbatim.
 | `INV-AUTH-007` | Sessions end a fixed time after sign-in; missing stamp is expired |
 | `INV-AUTH-008` | Password or authenticator app, five minutes, client cannot stamp |
 | `INV-AUTH-009` | A passkey enrols; its challenge lasts two minutes |
-| `INV-AUTH-010` | Officers use an app or passkey after grace |
+| `INV-AUTH-010` | Listed admin routes require a fresh proof first |
+| `INV-AUTH-011` | Officers use an app or passkey after grace |

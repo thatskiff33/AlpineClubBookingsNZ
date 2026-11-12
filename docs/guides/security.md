@@ -15,6 +15,12 @@ configure the `magicLink` and `googleLogin` modules you enable on
 [Modules](modules.md). See [`SECURITY.md`](../SECURITY.md) and the
 [disclosure policy](../../SECURITY.md) for the wider security posture.
 
+Destructive admin actions — restore, credentials, roles, erasure, refunds, the
+member export, and the others listed with them — call the same fresh-proof
+check. It is off, so this page has nothing new to configure, and the five
+minutes is not a setting.
+See [Confirm it's you](../SECURITY.md#confirm-its-you-4616).
+
 When officer sign-in is switched on (#4620), the same page also has an
 **Officer two-factor** card. A Full Admin can require an authenticator app or a
 passkey for Full Admins and for officers whose role can edit Finance or

@@ -5,7 +5,7 @@ import { getAuditRequestContext } from "@/lib/audit";
 import { sendOfficerFactorResetEmail } from "@/lib/email/account";
 import logger from "@/lib/logger";
 import { clearMemberSecondFactors } from "@/lib/officer-factor-reset";
-import { OFFICER_SIGN_IN_RELEASE_ENABLED } from "@/lib/officer-sign-in-release";
+import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -20,7 +20,7 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ memberId: string }> },
 ) {
-  if (!OFFICER_SIGN_IN_RELEASE_ENABLED) {
+  if (!OFFICER_SIGN_IN_ENFORCED) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

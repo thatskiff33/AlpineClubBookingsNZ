@@ -10,7 +10,7 @@ import {
   LOGIN_SECURITY_SETTINGS_ID,
   loadLoginSecurityRefresh,
 } from "@/lib/login-security-settings";
-import { OFFICER_SIGN_IN_RELEASE_ENABLED } from "@/lib/officer-sign-in-release";
+import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
 import {
   OFFICER_TWO_FACTOR_GRACE_MAX_DAYS,
   OFFICER_TWO_FACTOR_GRACE_MIN_DAYS,
@@ -36,7 +36,7 @@ function hidden() {
 }
 
 export async function GET() {
-  if (!OFFICER_SIGN_IN_RELEASE_ENABLED) return hidden();
+  if (!OFFICER_SIGN_IN_ENFORCED) return hidden();
   const guard = await requireAdmin({ permission: { area: AREA, level: "view" } });
   if (!guard.ok) return guard.response;
   const policy = await loadLoginSecurityRefresh();
@@ -47,7 +47,7 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
-  if (!OFFICER_SIGN_IN_RELEASE_ENABLED) return hidden();
+  if (!OFFICER_SIGN_IN_ENFORCED) return hidden();
   const guard = await requireAdmin({ permission: { area: AREA, level: "edit" } });
   if (!guard.ok) return guard.response;
   if (!isFullAdmin(guard.session.user)) {

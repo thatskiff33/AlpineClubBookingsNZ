@@ -10,7 +10,7 @@ import process from "node:process";
 import { sendOfficerFactorResetEmail } from "../src/lib/email/account";
 import logger from "../src/lib/logger";
 import { clearMemberSecondFactors } from "../src/lib/officer-factor-reset";
-import { OFFICER_SIGN_IN_RELEASE_ENABLED } from "../src/lib/officer-sign-in-release";
+import { OFFICER_SIGN_IN_ENFORCED } from "../src/lib/officer-sign-in-switch";
 import { OFFICER_FACTOR_RESET_JOB_NAME } from "../src/lib/two-factor-audit";
 import { normaliseSignInEmail } from "../src/lib/login-throttle";
 import { prisma } from "../src/lib/prisma";
@@ -85,7 +85,7 @@ export async function runResetFactorsCommand(
     io.error(`${parsed.message}\n\n${USAGE}`);
     return 1;
   }
-  if (!OFFICER_SIGN_IN_RELEASE_ENABLED) {
+  if (!OFFICER_SIGN_IN_ENFORCED) {
     io.error("The officer sign-in release is off. Nothing was written.");
     return 1;
   }

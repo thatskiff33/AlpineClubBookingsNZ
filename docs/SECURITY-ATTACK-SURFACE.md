@@ -197,6 +197,10 @@ These family rules are enforced by automated tests (issue #1132):
   helper, or via an allowlisted shared wrapper), that finance routes call the
   viewer/manager guard documented for them, and that member routes carry an
   active-session guard unless explicitly documented as public.
+- `src/lib/__tests__/step-up-route-census.test.ts` walks each admin handler
+  to the destructive operations in `src/lib/step-up-routes.ts` and requires
+  `requireRecentAuth` on that method, after authorisation and before the body.
+  Run it by name (`step-up-route-census`); `test:related` does not select it.
 - `src/lib/__tests__/admin-permissions.test.ts` enumerates every
   `src/app/api/admin/**` route and method from the filesystem and checks the
   resolved area/level requirement against a hand-written role-bundle truth
