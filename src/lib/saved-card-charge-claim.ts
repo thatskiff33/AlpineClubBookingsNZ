@@ -11,7 +11,7 @@ import { prisma } from "@/lib/prisma";
 import { isTransactionContention } from "@/lib/prisma-errors";
 
 /*
- * The durable side of the saved-card charge claim (#4993, `INV-PAY-055`).
+ * The durable side of the saved-card charge claim (#4993, `INV-PAY-151`).
  *
  * Every off-session saved-card charge claims its booking PENDING -> CONFIRMED
  * under the locks, then calls Stripe outside any transaction (#1418). The claim

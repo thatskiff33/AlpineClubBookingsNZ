@@ -1,5 +1,5 @@
 /**
- * Real-PostgreSQL proof of #4993 (`INV-PAY-055`): a saved-card claim stranded
+ * Real-PostgreSQL proof of #4993 (`INV-PAY-151`): a saved-card claim stranded
  * CONFIRMED by an interrupted charge is handed back to PENDING by
  * `recoverStaleSavedCardClaims`, and never while its money is captured.
  *
@@ -248,7 +248,7 @@ async function expectPaidOnce(paymentIntentId: string, attemptRowId: string): Pr
 const AN_HOUR = 60 * 60 * 1000;
 
 (RUN ? describe : describe.skip)(
-  "a saved-card claim stranded CONFIRMED is recovered, never while its money is captured - real PostgreSQL (#4993, INV-PAY-055)",
+  "a saved-card claim stranded CONFIRMED is recovered, never while its money is captured - real PostgreSQL (#4993, INV-PAY-151)",
   { timeout: 120_000 },
   () => {
     beforeAll(async () => {

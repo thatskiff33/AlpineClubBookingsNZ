@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { relativeSource, sourceFiles } from "./support/booking-guest-night-writer-scan";
 
 /*
- * #4993 (`INV-PAY-055`): every saved-card PENDING -> CONFIRMED claim stamps
+ * #4993 (`INV-PAY-151`): every saved-card PENDING -> CONFIRMED claim stamps
  * `Booking.savedCardClaimAt` in the same guarded write. A claim without it is
  * invisible to `recoverStaleSavedCardClaims`, so an interrupted charge would
  * hold its beds CONFIRMED and unpaid with nothing to hand it back.
@@ -78,7 +78,7 @@ function callsBeginAttempt(file: string, code: string) {
   return found;
 }
 
-describe("INV-PAY-055: every saved-card claim stamps the durable claim marker (#4993)", () => {
+describe("INV-PAY-151: every saved-card claim stamps the durable claim marker (#4993)", () => {
   it("detects a CONFIRMED claim without the marker, in either status spelling", () => {
     expect(confirmedClaims("x.ts", `
       await tx.booking.updateMany({ where: { id, status: BookingStatus.PENDING }, data: { status: BookingStatus.CONFIRMED } });

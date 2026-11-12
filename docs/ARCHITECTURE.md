@@ -2131,6 +2131,19 @@ operation holds the settler, a silent keep. The Xero second-instrument conflict 
 (`INV-PAY-043`). It has no foreign key, because the guard re-reads the row and
 trusts it only while it still holds money on this payment.
 
+### The saved-card claim marker (#4993)
+
+`Booking.savedCardClaimAt` is when a saved-card door last claimed the booking
+PENDING -> CONFIRMED for an off-session charge (the confirm-pending cron,
+`charge-saved-method`, confirm-pending-guests). Each claim stamps it, and every
+release back to PENDING and every PAID promotion clears it in the same guarded
+write, so a non-NULL value on a CONFIRMED booking means a claim is in flight or
+was stranded. NULL means no claim is open: the booking was never claimed, the
+claim ended, or it was claimed before the column existed. Only
+`recoverStaleSavedCardClaims` reads it, to hand back a claim older than 30
+minutes with no captured money (`INV-PAY-151`). Nullable, no default, no index:
+an expand-only column the old code neither reads nor writes.
+
 ## Booking and Payment Flow
 
 The happy-path request/data flow for a card booking. Capacity is claimed under

@@ -5407,6 +5407,9 @@ transaction, its own audit and alert obligations and its own response, and the
 only common part is the two lock acquisitions, which are already one helper
 apiece; extracting a shared claim helper is a refactor of its own, not part of
 #3267 (`INV-PAY-055`).
+Since #4993 the release half is shared (`runSavedCardClaimRelease` with
+`releaseSavedCardChargeClaim`); each door keeps its own claim, attempt-row
+settle and response around it (`INV-PAY-151`).
 
 The same cron's terminal branch for a permanently unusable saved card (#3268,
 `INV-PAY-054`) runs AFTER `releaseChargeClaim` has committed and holds no lock
@@ -5493,7 +5496,8 @@ under the global lock. Officer decline claims `DECLINED` before releasing it.
 
 The Stripe capture (`markBookingPaymentSucceeded`), the confirm-pending-guests
 zero-dollar and charge branches, the `charge-saved-method` claim and release
-(#3267), the waitlist-confirm $0 PAID claim, the admin
+(#3267), the shared saved-card claim release and stale-claim recovery
+(`runSavedCardClaimRelease`, #4993), the waitlist-confirm $0 PAID claim, the admin
 return-to-waitlist repair (#2649), the
 switch-to-internet-banking hold, the officer's held-request conversion
 (`approveBookingRequest`), and every booking modification service
@@ -5767,6 +5771,27 @@ the 500 and the Sentry/health-check path, not a compensation that cannot commit.
 `waitlist-confirm-hosting-retry.test.ts` pins all of it, including a compensation
 that fails both attempts (503 + the audit row, never a 500) and a contended
 compensation that succeeds on the retry.
+
+**The second instance: the saved-card claim release (#4993, `INV-PAY-151`).**
+The three saved-card doors (the confirm-pending cron, `charge-saved-method` and
+the officer's confirm-pending-guests route) claim PENDING -> CONFIRMED, call
+Stripe outside any transaction, and compensate a non-capture by releasing the
+claim. That release follows the three rules through one helper,
+`runSavedCardClaimRelease` (`src/lib/saved-card-charge-claim.ts`): global
+`lock(1)` then the booking's lodge key, `maxWait` 5s / `timeout` 10s (two of the
+three doors have a person waiting), one retry on P2028/P2034, and the outcome
+returned as data, never thrown. Its status guard (`status: CONFIRMED`) leaves a
+booking the webhook settled PAID alone. Where it differs from the waitlist case
+is the operator door: this state self-heals. The claim stamps
+`Booking.savedCardClaimAt`, so a release that fails both attempts — or never
+runs because the process stopped mid-charge — leaves a marker, and the next
+`confirmPendingBookings` run's `recoverStaleSavedCardClaims` returns the
+booking to PENDING once the marker is 30 minutes old, through the same helper
+and with the marker in its guard. A final release failure still writes an
+awaited critical `booking.saved_card_claim_release_failed` audit row, and each
+recovery a `booking.saved_card_claim_recovered` row. Pinned by
+`saved-card-charge-claim.test.ts`, both route suites, `cron-confirm-pending.test.ts`
+("#4993") and `saved-card-claim-recovery.realdb.test.ts`.
 
 Because a lost claim `return`s — which **commits** the transaction rather than
 rolling it back — the $0 `Payment` row is created strictly *after* the
