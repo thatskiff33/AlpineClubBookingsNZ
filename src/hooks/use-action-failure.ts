@@ -3,31 +3,42 @@
 import { useCallback, useState } from "react";
 
 /**
- * The failure half of an admin surface that also loads data in the background.
+ * The failure half of an admin action, shaped for `FocusedActionError` (#4975).
  *
- * A load failure and an action failure are different events (#2934): a list
- * that could not be read is a passive notice that moves nothing, while a Save,
- * Retry or Sync that failed is what the admin has to act on next, so it takes
- * focus. Keep the load error in its own state and render this one through
- * `FocusedActionError` with `attentionKey`:
+ * `fail` records the message AND bumps `attentionKey`, so a failure that
+ * repeats word for word still takes focus and is announced again — a plain
+ * string state would not change, and the alert would stay silent. `clear`
+ * empties the message without bumping. A background load failure does not
+ * belong here: it stays a passive box that never takes focus.
  *
- *     const { actionError, attentionKey, failAction, clearActionError } = useActionFailure()
- *     <FocusedActionError id="…" error={actionError} attentionKey={attentionKey} />
- *
- * `failAction` bumps `attentionKey` on every call, so a retry that fails with the
- * IDENTICAL message takes focus again; a bare `setState(message)` would be one
- * arrival and leave focus on the re-enabled button.
+ * ```tsx
+ * const failure = useActionFailure();
+ * // in the action: failure.clear(); … catch → failure.fail(message)
+ * <FocusedActionError id="…" error={failure.error} attentionKey={failure.attentionKey} />
+ * ```
  */
 export function useActionFailure() {
-  const [actionError, setActionError] = useState("");
-  const [attentionKey, setAttentionKey] = useState(0);
+  const [state, setState] = useState({ error: "", attentionKey: 0 });
 
-  const failAction = useCallback((message: string) => {
-    setActionError(message);
-    setAttentionKey((key) => key + 1);
+  const fail = useCallback((message: string) => {
+    setState((previous) => ({
+      error: message,
+      attentionKey: previous.attentionKey + 1,
+    }));
   }, []);
 
-  const clearActionError = useCallback(() => setActionError(""), []);
+  const clear = useCallback(() => {
+    setState((previous) =>
+      previous.error ? { ...previous, error: "" } : previous,
+    );
+  }, []);
 
-  return { actionError, attentionKey, failAction, clearActionError };
+  return {
+    error: state.error,
+    attentionKey: state.attentionKey,
+    fail,
+    clear,
+  };
 }
+
+export type ActionFailure = ReturnType<typeof useActionFailure>;

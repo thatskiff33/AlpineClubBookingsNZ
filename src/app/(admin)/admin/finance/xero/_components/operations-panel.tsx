@@ -95,7 +95,7 @@ export function OperationsPanel({
   const [operations, setOperations] = useState<XeroOperation[]>([])
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState("")
-  const { actionError, attentionKey, failAction, clearActionError } = useActionFailure()
+  const { error: actionError, attentionKey, fail: failAction, clear: clearActionError } = useActionFailure()
   const [statusFilter, setStatusFilter] = useState(searchParams.get("opStatus") || "all")
   const [entityFilter, setEntityFilter] = useState(searchParams.get("opEntityType") || "all")
   const [localModelFilter, setLocalModelFilter] = useState(searchParams.get("opLocalModel") || "all")

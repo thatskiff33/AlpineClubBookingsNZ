@@ -11,7 +11,6 @@ import { adminHref } from "@/lib/admin-hubs";
 import { CopyField, useStepSaving } from "@/components/admin/integration-wizard";
 import type { WizardStepHelpers } from "@/components/admin/integration-wizard";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
-import { FocusedActionError } from "@/components/focused-action-error";
 import { ADMIN_FULL_ADMIN_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { useClubTime } from "@/components/club-time-provider";
 import { clubFormatXeroBaseCurrencyMismatch } from "@/lib/club-format-copy";
@@ -450,14 +449,8 @@ export function ConnectStep({
   // and never rendered either, so a refused authorisation came back to a wizard
   // that simply said "Not Connected" with no hint of what Xero had objected to.
   const clubTime = useClubTime();
-  // A failed disconnect is the hook's separate action error, which takes focus.
-  const {
-    status,
-    handleDisconnect,
-    loadError: connectionError,
-    actionError: disconnectError,
-    actionAttentionKey: disconnectAttentionKey,
-  } = useXeroConnection();
+  const { status, handleDisconnect, error: connectionError } =
+    useXeroConnection();
 
   // #3633: Xero books every invoice in the organisation's base currency, and
   // card payments are charged in the club's. A warning only — connecting is
@@ -537,12 +530,6 @@ export function ConnectStep({
           `context.connected` branch below: a load that failed before it learned
           whether Xero is connected still has something to say, and a region
           that is itself conditional is a region screen readers never adopted. */}
-      <FocusedActionError
-        id="xero-wizard-disconnect-error"
-        error={disconnectError}
-        attentionKey={disconnectAttentionKey}
-      />
-
       <div role="alert">
         {connectionError ? (
           <div className="flex items-start gap-2 rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11">

@@ -21,9 +21,8 @@ import {
   UsagePanel,
   xeroLinkState,
 } from "./_components/panels"
-import { Message } from "./_components/message"
 import { FocusedActionError } from "@/components/focused-action-error"
-import { Button } from "@/components/ui/button"
+import { Message } from "./_components/message"
 import { WebhookAmberBadge } from "./_components/webhook-amber-badge"
 import { SECTION_DEFAULTS, type SectionKey, type SyncResult } from "./_components/types"
 import { useXeroConnection } from "./_hooks/use-xero-connection"
@@ -39,11 +38,10 @@ export default function XeroPage() {
   const {
     status,
     loading,
-    loadError,
-    setLoadError,
-    actionError,
-    actionAttentionKey,
-    clearActionError,
+    error,
+    setError,
+    disconnectError,
+    disconnectAttention,
     connectSuccess,
     setConnectSuccess,
     sectionOpen,
@@ -113,18 +111,8 @@ export default function XeroPage() {
         page.
       </p>
 
-      {loadError && <Message tone="error" message={loadError} onDismiss={() => setLoadError("")} />}
-      <FocusedActionError
-        id="xero-connection-action-error"
-        className="mb-4"
-        error={actionError}
-        attentionKey={actionAttentionKey}
-        action={
-          <Button type="button" variant="outline" size="sm" onClick={clearActionError}>
-            Dismiss
-          </Button>
-        }
-      />
+      {error && <Message tone="error" message={error} onDismiss={() => setError("")} />}
+      <FocusedActionError id="xero-disconnect-error" error={disconnectError} attentionKey={disconnectAttention} className="mb-4" />
       {operationMessage && <Message tone="success" message={operationMessage} onDismiss={() => setOperationMessage("")} />}
       {connectSuccess && <Message tone="success" message="Xero connected successfully!" onDismiss={() => setConnectSuccess(false)} />}
 

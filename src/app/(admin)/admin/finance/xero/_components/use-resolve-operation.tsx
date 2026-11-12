@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react"
 import type { PromptOptions } from "@/components/confirm-dialog"
+import type { ActionFailure } from "@/hooks/use-action-failure"
 import { useClubFormat } from "@/components/club-format-provider"
 import { formatCents } from "@/lib/utils"
 import { postJson } from "./api"
@@ -19,8 +20,8 @@ import type { XeroOperation } from "./types"
  */
 export function useResolveOperation(input: {
   prompt: (options: PromptOptions) => Promise<string | null>
-  failAction: (message: string) => void
-  clearActionError: () => void
+  failAction: ActionFailure["fail"]
+  clearActionError: ActionFailure["clear"]
   onMessage: (message: string) => void
   setResolvingOperationId: (operationId: string | null) => void
   fetchOperations: () => Promise<void>

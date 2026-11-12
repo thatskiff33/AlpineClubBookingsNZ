@@ -91,7 +91,7 @@ export function InboundEventsPanel({
   const [events, setEvents] = useState<XeroInboundEvent[]>([])
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState("")
-  const { actionError, attentionKey, failAction, clearActionError } = useActionFailure()
+  const { error: actionError, attentionKey, fail: failAction, clear: clearActionError } = useActionFailure()
   const [statusFilter, setStatusFilter] = useState(searchParams.get("inStatus") || "all")
   const [categoryFilter, setCategoryFilter] = useState(
     xeroInboundCategoryFilterValue(searchParams.get("inEventCategory")),

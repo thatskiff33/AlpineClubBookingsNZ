@@ -71,7 +71,7 @@ function stubStatus(statusOk: boolean) {
 }
 
 function actionAlert() {
-  const alert = document.getElementById("xero-connection-action-error");
+  const alert = document.getElementById("xero-disconnect-error");
   if (!alert) throw new Error("no action alert");
   return alert;
 }

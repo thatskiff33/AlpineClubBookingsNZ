@@ -73,7 +73,7 @@ export function SetupPanels({
   // failures are a passive notice; an import, repair or family-group write
   // takes focus when it fails (#4975).
   const [loadError, setLoadError] = useState("")
-  const { actionError, attentionKey, failAction, clearActionError } = useActionFailure()
+  const { error: actionError, attentionKey, fail: failAction, clear: clearActionError } = useActionFailure()
   // #4161: a link repair that ran but could not heal every refund note.
   const [warning, setWarning] = useState("")
 

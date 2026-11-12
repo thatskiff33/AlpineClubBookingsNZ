@@ -36,7 +36,7 @@ export function MembershipSyncPanel({
   const clubTime = useClubTime()
   const [lastRefresh, setLastRefresh] = useState<XeroHealthSnapshot["lastMembershipRefresh"] | null>(null)
   const [loadError, setLoadError] = useState("")
-  const { actionError, attentionKey, failAction, clearActionError } = useActionFailure()
+  const { error: actionError, attentionKey, fail: failAction, clear: clearActionError } = useActionFailure()
 
   const fetchLastRefresh = useCallback(async () => {
     setLoadError("")

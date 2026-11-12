@@ -234,7 +234,7 @@ export function MissingContactsPanel({
   // The dry run only reads, so its failure is a passive notice; the batch run
   // writes to Xero, so its failure takes focus (#4975).
   const [dryRunError, setDryRunError] = useState("")
-  const { actionError, attentionKey, failAction, clearActionError } = useActionFailure()
+  const { error: actionError, attentionKey, fail: failAction, clear: clearActionError } = useActionFailure()
   const [result, setResult] = useState<RunResult | null>(null)
 
   /*

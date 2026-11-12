@@ -135,7 +135,7 @@ export default function XeroMemberGroupingPage() {
   // failures are a passive notice. A mode, rule, dry-run or re-sync request is
   // an action, and its failure takes focus (#4975).
   const [loadError, setLoadError] = useState<string | null>(null);
-  const { actionError, attentionKey, failAction, clearActionError } = useActionFailure();
+  const { error: actionError, attentionKey, fail: failAction, clear: clearActionError } = useActionFailure();
   const [busy, setBusy] = useState(false);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   // The persisted dry-run this UI is authorised against — threaded into the bulk

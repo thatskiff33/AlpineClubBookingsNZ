@@ -182,7 +182,7 @@ export function ErasedMemberContactsPanel({
   const [loading, setLoading] = useState(false)
   const [checking, setChecking] = useState(false)
   const [loadError, setLoadError] = useState("")
-  const { actionError, attentionKey, failAction, clearActionError } = useActionFailure()
+  const { error: actionError, attentionKey, fail: failAction, clear: clearActionError } = useActionFailure()
 
   const load = useCallback(async () => {
     setLoading(true)
