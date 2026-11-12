@@ -1926,10 +1926,11 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
   school's identity lives in. Added and linked but read by nothing yet — see
   "Organisations, and the school that is currently a person" below.
 
-### Inert member money journal (#4513)
+### Member money journal (#4513)
 
-The new journal preserves economic evidence without changing any current money
-reader or writer. `MemberMoneyEvent` has one `MemberMoneyJournal`; its positive
+The journal records booking charges and payment receipts alongside the legacy
+writes; screens, reports and Xero documents still use the legacy money columns
+(`INV-MONEY-044`). `MemberMoneyEvent` has one `MemberMoneyJournal`; its positive
 integer-cent `MemberMoneyLine` legs balance in one currency at commit. Headers
 record the transaction and cluster that may insert their complete, counted legs,
 obligations and applications. A debtor is a member or an organisation, never both. Exact reversals append evidence; no row is rewritten.
@@ -1953,7 +1954,7 @@ and review close, cancellation, the group settle and the back-post) and member
 merge post only through the server-only `src/lib/member-money/doors.ts`
 (`INV-MONEY-044`), as, since M3c (#4628), the bank-transfer binding doors and
 the pending-charge syncs do through `booking-ledger-pending-charge.ts`
-(`INV-MONEY-045`); `member-money-journal-inert-census.test.ts` admits exactly
+(`INV-MONEY-045`); `member-money-journal-writer-census.test.ts` admits exactly
 those callers. Writers implement the existing advisory tiers
 (`INV-LOCK-001`–`003`); the journal adds no advisory key, outbox or provider call. The verifier reads a repeatable-read,
 read-only snapshot. See [deployment grants](../DEPLOYMENT.md#member-money-journal-grants-m1)

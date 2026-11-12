@@ -7,7 +7,7 @@ import "server-only";
  *
  * A door resolves its context before its transaction opens, then, inside it,
  * posts the same lines its legacy writer just wrote. Only the legacy chokepoints
- * and member merge call these (`member-money-journal-inert-census.test.ts`);
+ * and member merge call these (`member-money-journal-writer-census.test.ts`);
  * from #4628 also the bank-transfer binding doors and the pending-charge syncs.
  */
 export type { BookingChargeEvent } from "./internal/booking-charges";

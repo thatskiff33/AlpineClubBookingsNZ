@@ -272,7 +272,7 @@ actor. The store, `internal/store.ts`, is the one writer of these tables. It
 looks up a replay first, then completes corrections, then writes in the order
 the foreign keys need. `reverseMemberMoneyJournal` posts the exact whole-batch
 reversal under the journal's own key, so a retry replays. Outside the store a
-journal delegate is only ever read (`member-money-journal-inert-census.test.ts`).
+journal delegate is only ever read (`member-money-journal-writer-census.test.ts`).
 M4a (#4691) added applications, exact reversals and conservation checks. M4b
 (#4516) uses them for receipts through `postBookingReceipts`, and M4c for card
 refunds: R05 at the doors, a reservation before each slice, R12/R13 in the one
