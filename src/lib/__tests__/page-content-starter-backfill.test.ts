@@ -127,7 +127,7 @@ const PRIVACY_SUBJECT_ACCESS_MIGRATION_PATH = join(
   process.cwd(),
   "prisma",
   "migrations",
-  "20261120010000_correct_starter_privacy_subject_access",
+  "20261210120000_correct_starter_privacy_subject_access",
   "migration.sql",
 );
 

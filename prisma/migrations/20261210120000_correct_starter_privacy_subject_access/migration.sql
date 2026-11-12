@@ -1,4 +1,5 @@
 -- #4915: exact old starter only; preserve every club-edited body and header.
+-- `updatedAt` is written in UTC from the statement clock, never the session clock.
 UPDATE "PageContent"
 SET "contentHtml" = $cms$<div class="website-legal-copy">
 <div><h2>1. Who We Are</h2><p>The {{club-name}} Incorporated (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) is a not-for-profit incorporated society registered in New Zealand. We operate {{lodge-name}} and this booking and membership management system (&ldquo;the System&rdquo;).</p><p>We are committed to protecting your personal information and complying with the <strong>New Zealand Privacy Act 2020</strong> and its 13 Information Privacy Principles (IPPs).</p></div>
@@ -14,7 +15,7 @@ SET "contentHtml" = $cms$<div class="website-legal-copy">
 <div><h2>11. Contact Our Privacy Officer</h2><p>For any questions or concerns about this Privacy Policy, or to exercise your privacy rights, please contact our Privacy Officer:</p><div class="website-legal-callout"><p><strong>Privacy Officer</strong></p><p>{{club-name}} Incorporated</p><p>Please use our <a href="/contact">contact form</a>.</p></div></div>
 </div>$cms$,
     "headerText" = CASE WHEN "headerText" = 'How we collect, use, and protect your personal information.<br><small>Effective 1 April 2026 &mdash; Last updated 17 October 2026</small>' THEN 'How we collect, use, and protect your personal information.<br><small>Effective 1 April 2026 &mdash; Last updated 12 November 2026</small>' ELSE "headerText" END,
-    "updatedAt" = CURRENT_TIMESTAMP
+    "updatedAt" = timezone('UTC', statement_timestamp())
 WHERE "slug" = 'privacy'
   AND "contentHtml" = $previous$<div class="website-legal-copy">
 <div><h2>1. Who We Are</h2><p>The {{club-name}} Incorporated (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) is a not-for-profit incorporated society registered in New Zealand. We operate {{lodge-name}} and this booking and membership management system (&ldquo;the System&rdquo;).</p><p>We are committed to protecting your personal information and complying with the <strong>New Zealand Privacy Act 2020</strong> and its 13 Information Privacy Principles (IPPs).</p></div>
