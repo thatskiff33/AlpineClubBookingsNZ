@@ -8,3 +8,19 @@ export declare function evaluateContentionOccupancy(input: {
   readonly attempts: number;
   readonly finalOccupied: number;
 }): { expectedFinal: number; passed: boolean };
+export declare function evaluateOccupancyCeiling(
+  readings: ReadonlyArray<{
+    readonly lodgeId: string;
+    readonly night: string;
+    readonly occupied: unknown;
+    readonly capacity: unknown;
+  }>,
+): {
+  passed: boolean;
+  violations: Array<{
+    lodgeId: string;
+    night: string;
+    occupied: unknown;
+    capacity: unknown;
+  }>;
+};

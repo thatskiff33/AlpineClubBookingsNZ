@@ -37,6 +37,9 @@ export const SCENARIO_IP_OFFSETS = Object.freeze({
   login: 100,
   memberDashboard: 200,
   bookingContention: 300,
+  mixedWrites: 400,
+  adminReads: 500,
+  paymentPath: 600,
   capacityProbe: 9000,
 });
 

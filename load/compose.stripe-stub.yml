@@ -1,0 +1,87 @@
+# Load-test overlay (#4940): a local Stripe stub in place of api.stripe.com.
+#
+# Only ever stacked on the staging override, by scripts/load-stack.sh:
+#   -f docker-compose.yml -f docker-compose.staging.yml -f load/compose.stripe-stub.yml
+#
+# The app's Stripe SDK keeps its default host. Inside this compose network the
+# name api.stripe.com resolves to the stub container, which answers HTTPS with
+# a throwaway certificate whose CA the app trusts through NODE_EXTRA_CA_CERTS.
+# The real Stripe API is therefore unreachable from the app by name, and the
+# only key the stack holds is a generated sk_test_loadstub_ value the stub
+# itself issued. No product code changes and no live provider is contacted.
+# scripts/load-stack.sh generates the certificates and keys into
+# .artifacts/load-stub/ (gitignored) before this file is used; only the tls/
+# subdirectory is mounted, never the env file beside it.
+
+services:
+  app:
+    environment:
+      # A copy by construction; hard-coded, never read from an env file
+      # (ENV-SAFETY 1 #3034). See docker-compose.staging.yml.
+      APP_ENVIRONMENT_ROLE: non-production
+      EMAIL_SERVER_HOST: mailpit
+      EMAIL_SERVER_PORT: "1025"
+      EMAIL_SERVER_SECURE: "false"
+      EMAIL_SERVER_USER: ""
+      EMAIL_SERVER_PASSWORD: ""
+      XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: "false"
+      XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS: "false"
+      XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS: "false"
+      NODE_EXTRA_CA_CERTS: /load-stub/ca.pem
+    volumes:
+      - ./.artifacts/load-stub/tls/ca.pem:/load-stub/ca.pem:ro
+    depends_on:
+      stripe-stub:
+        condition: service_healthy
+
+  # Runs only load/stripe-stub/server.mjs, which imports nothing but Node
+  # built-ins and no application code, so it is listed in
+  # NON_APP_COMPOSE_SERVICES (src/lib/__tests__/helpers/compose.ts).
+  stripe-stub:
+    image: node:24.17-alpine@sha256:156b55f92e98ccd5ef49578a8cea0df4679826564bad1c9d4ef04462b9f0ded6
+    user: node
+    command: ["node", "/stub/server.mjs"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # Port 443 without root or a capability: the sysctl is per network
+    # namespace, so it changes nothing outside this container.
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
+    environment:
+      STUB_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STUB_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STUB_API_PORT: "443"
+      STUB_TLS_CERT: /load-stub/stub.pem
+      STUB_TLS_KEY: /load-stub/stub-key.pem
+      STUB_CONTROL_PORT: "12111"
+      # Bound on every container interface so the host port below reaches it;
+      # the host side is published on loopback only.
+      STUB_CONTROL_HOST: 0.0.0.0
+    volumes:
+      - ./load/stripe-stub:/stub:ro
+      - ./.artifacts/load-stub/tls:/load-stub:ro
+    ports:
+      - "127.0.0.1:${STRIPE_STUB_CONTROL_PORT:-12111}:12111"
+    networks:
+      default:
+        aliases:
+          - api.stripe.com
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:12111/control/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    mem_limit: 128m
+    cpus: 0.5
+
+# No runtime service on this stack can dial an Internet provider, even if a
+# DNS alias disappears. Images are pulled/built before services start.
+networks:
+  default:
+    internal: true
