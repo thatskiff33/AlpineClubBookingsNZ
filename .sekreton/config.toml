@@ -51,3 +51,20 @@ run = "pnpm install --frozen-lockfile --prefer-offline && env AUTH_SECRET=ci-aut
 
 [jobs.kept-change-realdb]
 run = "pnpm install --frozen-lockfile --prefer-offline && bash scripts/ci/kept-change-realdb.sh"
+
+# CI parity (owner decision, 12 Nov 2026): the production half of `typecheck`
+# only; tsconfig.test.json runs this sandbox out of memory, so CI keeps the test
+# and e2e projects.
+[jobs.typecheck]
+run = "pnpm install --frozen-lockfile --prefer-offline && pnpm run typecheck:src"
+
+# The disk-reading censuses plus docs:indexcheck and the file-size ratchet
+# (quality:budget), both judged against origin/main, so fetch it first.
+[jobs.fast-censuses]
+run = "pnpm install --frozen-lockfile --prefer-offline && git fetch --no-tags origin main && pnpm run ci:fast-censuses"
+
+# The data-migration coverage gate always; migration drift and the
+# data-migration realdb suites on a disposable cluster when the change can move
+# them (CHANGE_SCOPES.migrations), fetched against origin/main.
+[jobs.migrations]
+run = "pnpm install --frozen-lockfile --prefer-offline && git fetch --no-tags origin main && bash scripts/ci/sekreton-migration-checks.sh"

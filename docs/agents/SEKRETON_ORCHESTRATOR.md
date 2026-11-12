@@ -27,8 +27,8 @@ below, and the log says which reason applies.
 | --- | --- |
 | Task sandboxes have no GitHub write (ALP-83): no CLAIM, LANE-SYNC, review, ready or close-out comment | Orchestrator, as `thatskiff33-agents` |
 | The project ships by pull request, so Sekreton never merges | Orchestrator merges under gate #3959 |
-| Sekreton's gates are only `lint` + `knip` (4 GB sandbox, `.sekreton/config.toml`) | Orchestrator runs `typecheck`, `test:related`, `test:named`, mutation checks and realdb suites locally (WSL host: 16 cores, 23 GB, Docker), and fixes red PR CI |
-| The 4 GB sandbox is killed (exit 137) by `typecheck`, `test:related`, `test:named` or wide vitest runs | Every brief forbids those commands and asks for commits after each step. On a 137, send `request_changes` with that rule; the orchestrator runs the heavy checks locally |
+| Sekreton's gates (`.sekreton/config.toml`) are `lint`, `knip`, `kept-change-realdb`, the production `typecheck:src`, `fast-censuses` and `migrations`: no test or e2e typecheck, `test:related` or `test:named` | Orchestrator runs the full `typecheck`, `test:related`, `test:named`, mutation checks and other realdb suites locally (WSL host: 16 cores, 23 GB, Docker), and fixes red PR CI |
+| The sandbox is killed (exit 137) by the full `typecheck`, `test:related`, `test:named` or wide vitest runs | Every brief forbids those commands and asks for commits after each step. On a 137, send `request_changes` with that rule; the orchestrator runs the heavy checks locally |
 | Agents can't push to a branch someone else opened | Orchestrator finishes released PRs in a local worktree |
 | Task plans must be approved, and dependent tasks only start once their predecessors ship | Orchestrator approves plans and edits dependencies when the board changes |
 
