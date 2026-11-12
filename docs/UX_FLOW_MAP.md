@@ -44,7 +44,7 @@ rules belong in the linked references. See the [budget register](invariants/WORD
 
 Screen: `/`, `/login`.
 
-Journey: Browse club information, sign in, or follow account recovery. After sign-in, complete any required security or profile steps before opening the dashboard.
+Journey: Browse club information, sign in, or follow account recovery. After sign-in, complete any required security or profile steps before opening the dashboard. When a passkey is saved, the second step can be that passkey beside the app or email code.
 
 [Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -84,7 +84,7 @@ Journey: Find a stay and open its detail. Review status, guests and amounts befo
 
 Screen: Booking detail and its payment action.
 
-Journey: Open the booking, inspect what is owed and choose an available payment method. Read the resulting status before leaving; bank payments can remain pending while settlement is checked.
+Journey: Open the booking, inspect what is owed and choose an available payment method. Switching an unpaid card booking to internet banking asks for confirmation first, because the member cannot switch back to card. Read the resulting status before leaving; bank payments can remain pending while settlement is checked.
 
 [Guide](user-guide/paying-for-your-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -108,7 +108,7 @@ Journey: Join the waitlist for full nights, open an offer, and accept before its
 
 Screen: `/profile`.
 
-Journey: Use the section rail to open personal details, sign-in security, notification preferences or privacy controls. Stage and save the relevant section.
+Journey: Use the section rail to open personal details, sign-in security, notification preferences or privacy controls. Stage and save the relevant section. Sign-in security lists saved passkeys and can add or remove one without changing the authenticator-app or email enrolment.
 
 [Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -636,7 +636,7 @@ Journey: Filter payments, open a record, and inspect its booking and provider st
 
 Screen: `/admin/refund-requests`.
 
-Shows: Refund requests with booking context and decision controls.
+Shows: Refund requests with booking context and decision controls. A credit approval shows the account the requester chose.
 
 Journey: Open a request, inspect the booking and amounts, then use the permitted decision action.
 

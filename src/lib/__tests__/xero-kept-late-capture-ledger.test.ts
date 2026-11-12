@@ -25,12 +25,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *    settled from the Stripe account - the caps `xero-booking-invoice.test.ts`
  *    pins;
  *  - the change payment's supplementary invoice (case e2): a WAITING one naming
- *    the capture, or one the reaper retired `STALE_WAITING_PAYMENT` (re-queued
- *    from that row), is released as the gross ask paid from Stripe, which
- *    `xero-supplementary-invoices.test.ts` pins. #4324: with none waiting the
- *    model releases NOTHING, as the real release then answers `none-queued`
- *    on a cancelled booking - it used to invent a paid invoice, which hid
- *    that a kept change capture went unrecorded;
+ *    the capture is released as the gross ask paid from Stripe, which
+ *    `xero-supplementary-invoices.test.ts` pins. One the reaper retired
+ *    `STALE_WAITING_PAYMENT` is set PENDING by the keep's plan (the real
+ *    revival's guarded update; this store cannot run that SQL) and the
+ *    release model then sends that PENDING row once. #4324: with none waiting
+ *    or revived the model releases NOTHING, as the real release then answers
+ *    `none-queued` on a cancelled booking - it used to invent a paid invoice,
+ *    which hid that a kept change capture went unrecorded;
  *  - (#3924 round 6) the "Paid another way" close's own writes - the money on
  *    the payment, its record, and the one Xero row it queues - whose order and
  *    locks `card-refund-paid-another-way.test.ts` pins. What it queues is the
@@ -315,16 +317,42 @@ vi.mock("@/lib/xero-supplementary-invoice-late-capture", async (importOriginal) 
     const task = h.table("manualRefundTask").find((r) => r.lateCaptureApprovalIntentId === paymentIntentId);
     return task?.status === "DISMISSED" ? "kept" : task?.status === "OPEN" ? "awaiting-decision" : "refunded";
   },
+  // The keep's in-transaction revival (#4382). The real write is a guarded
+  // updateMany; this store is not where that SQL runs. A STALE_WAITING_PAYMENT
+  // row on the anchor becomes PENDING before finish. CAPTURED and COVERED stay.
+  reviveRetiredChangeInvoiceForKeptCapture: async ({
+    paymentIntentId,
+    anchorId,
+  }: {
+    paymentIntentId: string;
+    anchorId: string;
+  }) => {
+    const retired = h.table("xeroSyncOperation").filter(
+      (r) =>
+        r.queueType === "SUPPLEMENTARY_INVOICE" &&
+        r.status === "CANCELLED" &&
+        r.lastErrorCode === "STALE_WAITING_PAYMENT" &&
+        r.localId === anchorId &&
+        (r.requestPayload as { paymentIntentId?: string }).paymentIntentId === paymentIntentId,
+    );
+    for (const row of retired) {
+      row.status = "PENDING";
+      row.startedAt = null;
+      row.completedAt = null;
+      row.lastErrorCode = null;
+      row.lastErrorMessage = null;
+    }
+  },
   // MODEL of the change's supplementary invoice (case e2): see the docblock.
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: async (paymentIntentId: string) => {
     const capture = h.table("paymentTransaction").find((r) => r.stripePaymentIntentId === paymentIntentId)!;
-    // A waiting one is released; one the reaper retired (`STALE_WAITING_PAYMENT`) is re-queued from that row.
+    // A waiting invoice, or one the keep already revived to PENDING, is sent once.
     const waiting = h
       .table("xeroSyncOperation")
       .find(
         (r) =>
           r.queueType === "SUPPLEMENTARY_INVOICE" &&
-          (r.status === "WAITING_PAYMENT" || (r.status === "CANCELLED" && r.lastErrorCode === "STALE_WAITING_PAYMENT")) &&
+          (r.status === "WAITING_PAYMENT" || r.status === "PENDING") &&
           (r.requestPayload as { paymentIntentId?: string }).paymentIntentId === paymentIntentId,
       );
     if (!waiting) return { released: 0, queueOperationIds: [], outcome: "none-queued" };
@@ -776,18 +804,36 @@ describe("a kept late capture is counted once in Xero", () => {
   /**
    * #4324 (`INV-PAY-144`): a change invoice the reaper RETIRED still answers
    * the capture it names (`RETIRED_CODES_ANSWERING_CAPTURE`), though every row
-   * the change has is CANCELLED - so the keep leaves it to the late-success
-   * release and never raises the kept-capture invoice or a receipt beside it.
+   * the change has is CANCELLED. #4382: the keep re-queues a
+   * `STALE_WAITING_PAYMENT` row before finish; the release model sends that
+   * PENDING row once. CAPTURED and COVERED stay retired. Never a kept-capture
+   * invoice or a receipt beside it.
    */
   const keptRows = (queueType: string) => h.table("xeroSyncOperation").filter((r) => r.queueType === queueType);
-  it("MUTATION (e2) a change invoice retired STALE_WAITING_PAYMENT is re-queued by the release and records the capture once", async () => {
+  it("MUTATION (e2) a change invoice retired STALE_WAITING_PAYMENT is PENDING when the plan returns, and the release sends it once", async () => {
     seed({ kind: "ADDITIONAL", cents: 2500, primaryInvoice: { cents: 30000 }, change: { invoice: "retired" } });
-    await keep();
-    await runOutbox();
-    expect(books()).toEqual({ income: 2500, stripe: 2500, receivable: 0 });
+    task().status = "DISMISSED";
+    const plan = await planKeptLateCaptureXeroRecord({
+      manualRefundTaskId: TASK,
+      bookingId: BOOKING,
+      paymentIntentId: INTENT,
+      actingMemberId: "treasurer",
+      clubZone: ZONE,
+      store: h.db as never,
+    });
+    expect(plan).toEqual({ kind: "change-payment", paymentIntentId: INTENT });
+    expect(keptRows("SUPPLEMENTARY_INVOICE")).toEqual([
+      expect.objectContaining({ id: expect.any(String), status: "PENDING", lastErrorCode: null }),
+    ]);
     expect(keptRows("KEPT_LATE_CAPTURE_INVOICE")).toHaveLength(0);
     expect(keptRows("ADDITIONAL_CAPTURE_RECEIPT")).toHaveLength(0);
+    expect(books()).toEqual({ income: 0, stripe: 0, receivable: 0 });
+    await finishKeptLateCaptureXeroRecord(plan);
+    await runOutbox();
+    expect(books()).toEqual({ income: 2500, stripe: 2500, receivable: 0 });
     expect(keptRows("SUPPLEMENTARY_INVOICE")).toEqual([expect.objectContaining({ status: "SUCCEEDED" })]);
+    expect(keptRows("KEPT_LATE_CAPTURE_INVOICE")).toHaveLength(0);
+    expect(keptRows("ADDITIONAL_CAPTURE_RECEIPT")).toHaveLength(0);
   });
 
   for (const retiredCode of ["STALE_WAITING_PAYMENT_CAPTURED", "STALE_WAITING_PAYMENT_COVERED"]) {

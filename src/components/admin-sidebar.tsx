@@ -80,7 +80,10 @@ import {
   retiredAdminPageHref,
   type AdminPageId,
 } from "@/lib/admin-hubs";
-import { isAdminMenuDestination, type AdminHubPage } from "@/lib/admin-hubs/define";
+import {
+  isAdminMenuDestination,
+  type AdminHubPage,
+} from "@/lib/admin-hubs/define";
 import type { FeatureFlags } from "@/config/schema";
 import {
   canAccessConsolidatedFeesPage,
@@ -104,11 +107,14 @@ import {
 } from "@/lib/admin-nav-panels";
 import { getContentPanelSections } from "@/lib/admin-appearance-pages";
 import {
+  HubMenuLinks,
+  MenuRoleSwitcher,
   PanelSwitcher,
   SidebarSearchButton,
   useAdminNavPanel,
   usePendingCounts,
 } from "@/components/admin-sidebar-controls";
+import type { AdminMenuRoleChoice } from "@/lib/admin-menu-role";
 
 interface NavSection {
   label?: string;
@@ -995,12 +1001,71 @@ function SidebarLinks({
   );
 }
 
+function SidebarBody({
+  features,
+  permissionMatrix,
+  isFullAdmin,
+  hutLeaderLabel,
+  panelKey,
+  choices,
+  choose,
+  menuHubKeys,
+  menuRoles,
+  selectedMenuRole,
+  onNavigate,
+}: {
+  features: FeatureFlags;
+  permissionMatrix?: AdminPermissionMatrix;
+  isFullAdmin?: boolean;
+  hutLeaderLabel: string;
+  panelKey: AdminNavPanelKey;
+  choices: readonly AdminNavPanelKey[];
+  choose: (key: AdminNavPanelKey) => void;
+  menuHubKeys?: readonly string[];
+  menuRoles?: readonly AdminMenuRoleChoice[];
+  selectedMenuRole?: string | null;
+  onNavigate?: () => void;
+}) {
+  const hubMenu = menuHubKeys !== undefined;
+  const showRoleSwitcher =
+    hubMenu && !isFullAdmin && (menuRoles?.length ?? 0) >= 2;
+  return (
+    <>
+      {showRoleSwitcher && menuRoles ? (
+        <MenuRoleSwitcher
+          roles={menuRoles}
+          selected={selectedMenuRole ?? null}
+        />
+      ) : null}
+      {hubMenu ? null : (
+        <PanelSwitcher choices={choices} current={panelKey} onChange={choose} />
+      )}
+      <SidebarSearchButton onOpen={onNavigate} />
+      {hubMenu ? (
+        <HubMenuLinks keys={menuHubKeys} onNavigate={onNavigate} />
+      ) : (
+        <SidebarLinks
+          features={features}
+          permissionMatrix={permissionMatrix}
+          isFullAdmin={isFullAdmin}
+          hutLeaderLabel={hutLeaderLabel}
+          panelKey={panelKey}
+          onNavigate={onNavigate}
+        />
+      )}
+    </>
+  );
+}
+
 export function AdminSidebar({
   features,
   permissionMatrix,
   isFullAdmin,
   hutLeaderLabel = "Hut Leader",
   panels = ["admin"],
+  menuHubKeys,
+  menuRoles,
+  selectedMenuRole,
 }: {
   features: FeatureFlags;
   permissionMatrix?: AdminPermissionMatrix;
@@ -1008,9 +1073,32 @@ export function AdminSidebar({
   hutLeaderLabel?: string;
   /** The menus this person's roles give them, default first (#108). */
   panels?: readonly AdminNavPanelKey[];
+  /**
+   * Hubs to list, in any order; rendered in registry order. Omitted while
+   * hubs are off, which leaves today's sidebar as it is.
+   */
+  menuHubKeys?: readonly string[];
+  /** Roles the switcher offers. Shown only with two or more, and not for a Full Admin. */
+  menuRoles?: readonly AdminMenuRoleChoice[];
+  /** The chosen role token, or null for "All my roles". */
+  selectedMenuRole?: string | null;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { choices, panelKey, choose, title } = useAdminNavPanel(panels);
+  const heading = menuHubKeys !== undefined ? "Admin" : title;
+  const closeMobile = () => setMobileOpen(false);
+  const body = {
+    features,
+    permissionMatrix,
+    isFullAdmin,
+    hutLeaderLabel,
+    panelKey,
+    choices,
+    choose,
+    menuHubKeys,
+    menuRoles,
+    selectedMenuRole,
+  };
 
   return (
     <>
@@ -1020,22 +1108,10 @@ export function AdminSidebar({
           <span className="app-brand-mark h-9 w-9">
             <Mountain className="h-5 w-5" />
           </span>
-          <span>{title}</span>
+          <span>{heading}</span>
         </div>
         <div className="flex-1 overflow-y-auto p-3 pb-8">
-          <PanelSwitcher
-            choices={choices}
-            current={panelKey}
-            onChange={choose}
-          />
-          <SidebarSearchButton />
-          <SidebarLinks
-            features={features}
-            permissionMatrix={permissionMatrix}
-            isFullAdmin={isFullAdmin}
-            hutLeaderLabel={hutLeaderLabel}
-            panelKey={panelKey}
-          />
+          <SidebarBody {...body} />
         </div>
       </aside>
 
@@ -1052,27 +1128,14 @@ export function AdminSidebar({
               <span className="app-brand-mark h-9 w-9">
                 <Mountain className="h-5 w-5" />
               </span>
-              <SheetTitle>{title}</SheetTitle>
+              <SheetTitle>{heading}</SheetTitle>
             </SheetHeader>
             <div className="flex-1 overflow-y-auto p-3 pb-8">
-              <PanelSwitcher
-                choices={choices}
-                current={panelKey}
-                onChange={choose}
-              />
-              <SidebarSearchButton onOpen={() => setMobileOpen(false)} />
-              <SidebarLinks
-                features={features}
-                permissionMatrix={permissionMatrix}
-                isFullAdmin={isFullAdmin}
-                hutLeaderLabel={hutLeaderLabel}
-                panelKey={panelKey}
-                onNavigate={() => setMobileOpen(false)}
-              />
+              <SidebarBody {...body} onNavigate={closeMobile} />
             </div>
           </SheetContent>
         </Sheet>
-        <span className="font-semibold text-foreground">{title}</span>
+        <span className="font-semibold text-foreground">{heading}</span>
       </div>
     </>
   );

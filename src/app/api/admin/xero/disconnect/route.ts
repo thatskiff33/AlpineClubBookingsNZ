@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 import { disconnectXero } from "@/lib/xero";
 import { getAuditRequestContext } from "@/lib/audit";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 /**
  * POST /api/admin/xero/disconnect
@@ -11,6 +12,8 @@ import { getAuditRequestContext } from "@/lib/audit";
 export async function POST(request: Request) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     // Destroying the grant is this administrator's act, recorded as theirs (#3454).
     await disconnectXero({

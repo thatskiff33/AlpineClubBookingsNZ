@@ -26,8 +26,9 @@
  *   intent named), which also covers an A whose card was DECLINED - FAILED,
  *   so carried at once, though its cancel (#4422) may not finish now (a
  *   Stripe outage, a backoff) or finished at an earlier supersede;
- * - an edit's Xero leg (`queueXeroBookingEditSettlement`) that parked its
- *   invoice on an ask already FAILED, through
+ * - an edit's Xero leg (`queueXeroBookingEditSettlement`), and the booking
+ *   repair when it queues the same waiting invoice
+ *   (`applyQueuedAction`), that parked it on an ask already FAILED, through
  *   `followSupersededAskInvoicesForIntentSafely`: a leg landing after the
  *   supersession's own move;
  * - the waiting-invoice reaper, before it retires an invoice whose booking no
@@ -565,10 +566,10 @@ export async function supersededAskCancelInFlight(paymentIntentId: string): Prom
 
 /**
  * Move the superseded asks' invoices for the payment whose card request this
- * is, when that request is itself a FAILED ask (review M5): an edit's Xero leg
- * that parks its invoice on an ask a later request already superseded - and
- * whose move already ran, finding nothing - follows it at once, rather than
- * waiting for the reaper's backstop.
+ * is, when that request is itself a FAILED ask (review M5): an edit's Xero leg,
+ * or the booking repair queuing the same waiting invoice, that parks it on an
+ * ask a later request already superseded - and whose move already ran, finding
+ * nothing - follows it at once, rather than waiting for the reaper's backstop.
  */
 export async function followSupersededAskInvoicesForIntentSafely(paymentIntentId: string): Promise<void> {
   try {

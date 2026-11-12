@@ -412,7 +412,7 @@ export async function processStripeWebhookEvent(
  * key Stripe stamps on the event (`event.request.idempotency_key`), which the
  * row stores on `reference`, and — when `event.request` is null, as on an
  * asynchronous capture and every redelivery of it — the attempt row id a
- * `_v2` attempt's metadata carries (#4646; minted only from #4682). Adopt it,
+ * `_v2` attempt's metadata carries (#4646). New attempts mint `_v2` (#4682); original-key rows are not adopted from metadata. Adopt it,
  * forward only, so the handler that follows finds the row by intent id like
  * any other. The `event` is threaded in for the key; see
  * `adoptSavedCardChargeAttemptForIntent`.
