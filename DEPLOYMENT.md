@@ -670,11 +670,11 @@ Generate unique secrets:
 openssl rand -base64 48   # AUTH_SECRET and NEXTAUTH_SECRET
 openssl rand -base64 24   # CRON_SECRET
 openssl rand -base64 24   # DB_PASSWORD
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+openssl rand -base64 32   # one DATA_ENCRYPTION_KEYS entry, written as <id>:<value>
 ```
 
-The Node command produces a 64-character hex key suitable for Xero token
-encryption variables.
+Read [Data-encryption keys](CONFIGURATION.md#data-encryption-keys-4456) before
+setting `DATA_ENCRYPTION_KEYS`.
 
 Minimum production categories:
 
@@ -1823,8 +1823,10 @@ Configure webhook endpoints for the deployed domain:
 - Xero: `/api/webhooks/xero`
 - SES SNS: `/api/webhooks/ses-sns`
 
-Stripe and SES webhook secrets are env-configured (`STRIPE_WEBHOOK_SECRET`,
-`SES_SNS_TOPIC_ARN`); rotate them if exposed. The **Xero** webhook key is **not**
+The SES SNS topic is env-configured (`SES_SNS_TOPIC_ARN`). The **Stripe**
+webhook signing secret is captured in-app (Admin > Integrations > Stripe) and
+stored encrypted; the `STRIPE_WEBHOOK_SECRET` env var is ignored. Rotate either
+if exposed. The **Xero** webhook key is **not**
 an env var since #2079 — it is captured in-app (Admin > Integrations) and stored
 encrypted, and the `/api/webhooks/xero` route resolves it from there and stays
 **fail-closed** (a missing/unreadable key rejects every delivery, it never
