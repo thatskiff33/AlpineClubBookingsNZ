@@ -837,12 +837,26 @@ From the target host:
 git clone https://github.com/<owner>/AlpineClubBookingsNZ.git AlpineClubBookingsNZ
 cd AlpineClubBookingsNZ
 cp .env.example .env
-# edit .env with your own values
+# edit .env with your own values, including SEED_ADMIN_EMAIL,
+# SEED_ADMIN_PASSWORD and SEED_LODGE_PASSWORD
 docker compose up -d --build postgres
 docker compose run --rm migrate
+docker compose run --rm seed
 docker compose up -d --build app app_blue app_green caddy
 docker compose ps
 ```
+
+`docker compose run --rm seed` creates the first admin, the shared lodge kiosk
+account and the starter data (access roles, membership types, starter pages)
+on the empty database. It needs nothing on the server but Docker: it runs
+`prisma/seed.ts` in the same image as `migrate`, so with `MIGRATE_IMAGE` set to
+the published image it builds nothing. It reads the three `SEED_*` values from
+`.env`; if one is missing it stops, names it, and writes nothing. Run it once,
+on the first install only: upgrades never run it (see "Config Self-Heal On
+Boot"), and `docker compose up` never starts it. CI runs the `postgres`,
+`migrate` and `seed` lines above exactly as written, on an empty database
+(`scripts/ci/first-install-smoke.mjs`, `INV-OPS-017`), so keep each a plain
+one-line command.
 
 To validate the production image alone (without Compose), build it locally:
 
@@ -851,8 +865,8 @@ docker build -t tacbookings:local .
 ```
 
 Club identity, capacity, age tiers, seasons, and rates are configured **in the
-database**, not in a file. After the migrate/seed steps, sign in as the seeded
-admin and complete configuration at `/admin/setup` (identity, lodges/capacity,
+database**, not in a file. Once the seed step above has run, sign in as the
+seeded admin and complete configuration at `/admin/setup` (identity, lodges/capacity,
 seasons/rates, email, Stripe, Xero). Optionally run `pnpm run setup:wizard`
 against the migrated database to bootstrap the club identity, capacity, and age
 tiers from the CLI — it writes those database settings rows (no `config/club.json`
@@ -861,7 +875,8 @@ is written). `config/club.json` remains an optional seed/fallback only: copy
 a boot-time fallback, but it is no longer required.
 
 Create or seed accounts only for the intended environment. The first admin
-from `prisma/seed.ts` is controlled by `SEED_ADMIN_EMAIL` and
+from `prisma/seed.ts` (`docker compose run --rm seed` on a Docker-only install,
+`pnpm run db:seed` on a machine with Node and pnpm) is controlled by `SEED_ADMIN_EMAIL` and
 `SEED_ADMIN_PASSWORD` (optionally `SEED_ADMIN_FIRST_NAME` and
 `SEED_ADMIN_LAST_NAME`), and the shared lodge kiosk account by
 `SEED_LODGE_PASSWORD`. The seeded admin can log in immediately and is forced
@@ -1587,7 +1602,7 @@ To seed a fresh instance — disaster recovery, or standing up a replacement /
 clone — from a known-good configuration instead of hand-configuring it, drop the
 club's exported **config-transfer bundle** on disk and point
 `CONFIG_BUNDLE_IMPORT_PATH` at it. On the next Node boot — **after** migrations,
-the base seed, and the C2 self-heal — the app applies that bundle
+the base seed (`docker compose run --rm seed`), and the C2 self-heal — the app applies that bundle
 **non-interactively**, through the same validated import pipeline the admin
 Export & Import page uses (`src/lib/config-transfer/bootstrap-import.ts`,
 implementing ADR-003).
@@ -1595,7 +1610,7 @@ implementing ADR-003).
 The whole provisioning flow becomes:
 
 ```text
-deploy env + bundle file  →  prisma migrate deploy  →  base seed  →  boot auto-import  →  operational site
+deploy env + bundle file  →  run --rm migrate  →  run --rm seed  →  boot auto-import  →  operational site
 ```
 
 ### Placement and enabling

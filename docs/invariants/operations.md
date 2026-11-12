@@ -742,3 +742,30 @@ grant check is not applicable; the check that no grantee but the owner, PUBLIC
 included, holds a right that changes a row always runs. It does not prove
 historical parity, writer-cohort coverage or accounting policy; those activate
 in later milestones.
+
+## INV-OPS-017
+
+A Docker-only install can create its first admin with Docker alone, and the
+commands that do it are the ones CI runs. `DEPLOYMENT.md` "First Bootstrap"
+gives the seed as one plain line, `docker compose run --rm seed`, after
+`run --rm migrate`. The `seed` service runs on the builder image, the same image
+and build as `migrate`, because the runner image holds no source. It sits
+behind a profile, so `docker compose up` never starts it and an upgrade never
+runs it. It reads the `SEED_` secrets from `.env` through `environment:` only,
+never as a build argument or on the command line. Its database pool is bounded
+and counted in the connection budget.
+
+Every operator doc that tells somebody how to seed a Compose install names that
+service. None runs the seed in the app container (`exec app`), whose image
+cannot run it. The setup checklist names the Docker command and the developer
+command from one module, `src/lib/seed-commands.ts`.
+
+- Why: #4977. "First Bootstrap" had lost its seed step, and three docs gave an
+  `exec app` command that fails in the runner image. CI seeded from the host, so
+  no check ran what an operator is told to run, and a new club could not sign in.
+- Enforced by `scripts/ci/first-install-smoke.mjs`, which reads the three
+  commands out of `DEPLOYMENT.md` and runs them verbatim on an empty database in
+  the `docker-image-security` job. A missing `SEED_ADMIN_EMAIL` must fail with
+  nothing written; a second run must change nothing. Also enforced by
+  `first-install-seed-contract.test.ts`, which holds the compose service and
+  every doc to this rule.
