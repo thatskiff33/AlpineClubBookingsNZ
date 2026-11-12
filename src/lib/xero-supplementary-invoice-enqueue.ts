@@ -21,68 +21,11 @@ import { anchorCaptureHasReceipt, bookingHasUnattributedCaptures, keptInvoiceBil
 import { supplementaryInvoiceBilledCents, XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { outstandingSupplementaryInvoiceOperationsWhere, RESTATABLE_SUPPLEMENTARY_INVOICE_STATUSES, restatableSupplementaryInvoiceOperationsWhere } from "@/lib/xero-supplementary-invoice-statuses";
 /**
- * #3170 fix round (F2): the advisory key that makes "one supplementary invoice
- * per booking modification" TRUE rather than asserted.
- *
- * The check-then-create below was racy, and the race lost real money rather than
- * merely duplicating work. Two officers settling the two review tasks of one
- * booking edit both compute a total, both find nothing queued for the anchor, and
- * both queue - and because the queued-operation lookup deduped on a
- * `correlationKey` BUILT FROM THE AMOUNT, $200 and $230 were two different keys
- * and neither found the other. `createXeroSupplementaryInvoice` has no
- * active-link guard of its own and its provider idempotency key also embeds the
- * amount, so that is two Xero invoices to the member totalling $430 for a $230
- * edit. Before the combined request each share queued its own amount and the
- * concurrent case summed correctly, so this shape was introduced by the combining
- * and had to be closed by it.
- *
- * A scoped, namespaced key in the ordinary style of `backup-run.ts`'s
- * reap-check-insert claim: held for the milliseconds of one short transaction
- * that reads and writes only `XeroSyncOperation` and `XeroObjectLink`, composing
- * with no other lock family, so no ordering cycle is possible. The Xero round
- * trip happens later, in the outbox worker, entirely outside this transaction.
- *
- * THE FOUR CALLERS, NAMED, because "every caller is post-commit" was not true
- * and a lock-ordering claim has to be checkable. An enumeration written to be
- * audited is worse than useless once it is silently incomplete, so a new caller
- * belongs in this list before it belongs in the tree.
- *
- *   1. The SETTLEMENT callers reach it post-commit through a fire-and-forget
- *      `queueXeroBookingEditSettlement`, holding nothing.
- *   2. The booking-vs-Xero REPAIR PASS (`xero-booking-repair-passes.ts`,
- *      `QUEUE_SUPPLEMENTARY_INVOICE`) calls it DIRECTLY. That pass is an
- *      operator-driven admin/CLI action which opens no transaction of its own
- *      and holds no advisory lock, so it too arrives holding nothing.
- *   3. The PAYMENT-RECOVERY WORKER (#3181,
- *      `processCreateAdditionalPaymentIntentOperation` ->
- *      `completeDeferredXeroSupplementaryInvoice`), raising the supplementary
- *      invoice a failed mint deferred. It claims its recovery row with a
- *      status-guarded `updateMany` rather than a transaction, and every write it
- *      makes is its own short statement, so it holds neither a transaction nor an
- *      advisory lock when it arrives - and its Stripe round trip has completed
- *      long before this line.
- *
- *   4. THE SECOND ASK (#3193, `raiseSecondEditReviewChargeInvoice` ->
- *      `enqueueXeroSecondSupplementaryInvoiceOperation`), billing one settled
- *      review share whose invoice had already gone out without it. It runs from
- *      the settlement's own fire-and-forget continuation, after that
- *      settlement's transaction has committed, so like caller 1 it arrives
- *      holding nothing. It takes this same lock on a DIFFERENT key - the review
- *      task's id rather than the change's - so it never contends with the ask it
- *      follows, and it takes exactly one.
- *
- * The conclusion is unchanged, and for a stronger reason than "they are all
- * post-commit": none of the four holds anything. This remains a single-lock
- * holder either way.
- *
- * ONE THING THIS TRANSACTION TAKES AWAY, recorded because it is easy to miss:
- * `startXeroSyncOperation` below runs on `tx`, and its P2002 fallback - re-read
- * the winner's row and return it - cannot run inside an aborted Postgres
- * transaction. Under this lock that fallback is unreachable: a concurrent
- * enqueue for the same anchor is serialised behind us and finds our row through
- * the queued-check above, so the create never races. It is defence-in-depth for
- * the module-client callers and dead code here, not a recovery this path can
- * rely on.
+ * Single-flights the link-check -> queued-check -> raise-or-create transaction
+ * (#3170). All callers, composed lock orders and the transaction client's P2002
+ * constraint are documented in docs/CONCURRENCY_AND_LOCKING.md under
+ * "Xero supplementary invoice per anchor". Keep that inventory authoritative:
+ * some callers enqueue inside an existing transaction, after its other locks.
  */
 const XERO_SUPPLEMENTARY_INVOICE_LOCK_NAMESPACE = "xero-supplementary-invoice";
 
@@ -101,67 +44,7 @@ export async function lockSupplementaryInvoiceAnchor(
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${XERO_SUPPLEMENTARY_INVOICE_LOCK_NAMESPACE}), hashtext(${anchorId}))`;
 }
 
-/**
- * DOES THIS EDIT'S ACCOUNTING ASK NOW BILL WHAT THE CALLER ASKED FOR? (#3170 fix
- * round, F2.)
- *
- * The `message` beside this is prose for an operator's repair report and has
- * always been read by a person; nothing could branch on it. The edit-review
- * settlement needs to branch on it, because the difference between "the invoice
- * now bills the combined total" and "the invoice had already left the queue and
- * bills the earlier figure" is the difference between a settled share that is
- * billed and one the club has to collect by hand. Deciding that HERE, where the
- * link check, the queued check and the restate all happen under one lock, is the
- * only place it can be decided at all - the caller can no longer tell afterwards,
- * because `createXeroSupplementaryInvoice` replaces THIS anchor's payload with
- * the Xero invoice body at dispatch. (A second ask's payload survives, but that
- * is a different row on a different anchor, never the one read here.)
- *
- *   * `covers-total` - the ask bills at least the requested net, because this
- *     call queued it, raised it, or found it already asking for that much.
- *   * `short-sent` - an invoice for this anchor HAS BEEN CREATED: the anchor
- *     carries an active `SUPPLEMENTARY_INVOICE` link. What that invoice bills is
- *     fixed forever, and this share is not in it.
- *   * `short-in-flight` - an operation for this anchor exists and could not be
- *     restated, because the outbox has claimed it (RUNNING). Nothing has reached
- *     Xero yet, and that row may still come back.
- *   * `none` - no supplementary invoice is involved at all: nothing positive to
- *     bill, or the booking has no primary Xero invoice to supplement. Not a
- *     shortfall, and not a success either.
- *
- * WHY THE TWO SHORTFALLS ARE SEPARATE VALUES rather than one called `short`
- * (#3193 fix round, the double-bill). They were one value, and that one name was
- * two different facts: an invoice that EXISTS, and a row that is merely being
- * executed. Only the first is durable evidence that a share went out without.
- *
- * A RUNNING row can return to PENDING WITHOUT EVER REACHING XERO, by exactly ONE
- * route (#3193 fix round, second pass - the first version of this list named
- * three and two of them were wrong, and a list written to be audited is worse
- * incorrect than incomplete). A process-global Xero cooldown - the transient
- * outage breaker or the daily-limit gate - refuses the operation before any HTTP
- * call, and `processXeroOutbox` un-claims it, matching RUNNING or the FAILED a
- * self-failing handler left. That one route is enough for everything below.
- *
- * The two that are NOT routes, so nobody re-derives them: an operator Requeue
- * (and the repair pass's `REQUEUE_XERO_OPERATION`, which calls the same helper)
- * leaves the original row FAILED and creates a SEPARATE `REQUEUE` row that
- * replays inline; and the stale-RUNNING reset writes FAILED, not PENDING.
- *
- * Once it is restatable again, the NEXT settlement of this edit raises it to the
- * COMBINED total. So a caller that reacted to the earlier refusal by billing its
- * share on a SEPARATE invoice has then billed that share twice: once on its own
- * invoice, and once inside the total the returned row was raised to. Three
- * shares of $200, $30 and $50 bill $310 for a $280 edit - worse than the
- * shortfall being fixed, because before the second ask existed that sequence
- * produced one correct $280 invoice.
- *
- * The change-anchored restate cannot cap itself against the separate invoice,
- * because that invoice is anchored elsewhere BY DESIGN - the invisibility that
- * makes a second ask idempotent is the same invisibility that hides it from the
- * raise. So the distinction is made where it is actually true instead: a SENT
- * invoice is a fact and can be safely supplemented; an in-flight row is not yet
- * a fact and must not be. `INV-PAY-051`.
- */
+/** Whether the existing or queued invoice covers the requested accounting ask. */
 export type XeroSupplementaryInvoiceEnqueueOutcome =
   | "covers-total"
   | "short-sent"

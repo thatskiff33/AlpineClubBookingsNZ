@@ -57,7 +57,7 @@ function facadeImports(of: ImportGraph): string[] {
   return [...of.imports].flatMap(([file, imports]) =>
     imports
       .filter((entry) => {
-        const named = target(file, entry.specifier)?.replace(/(\/index)?\.tsx?$/, "");
+        const named = target(file, entry.specifier)?.replace(/\.(?:[cm]?[jt]s|[jt]sx)$/, "").replace(/\/index$/, "");
         return named === FACADE.replace(/\.ts$/, "");
       })
       .map((entry) => `${file}:${entry.line}`),
@@ -70,7 +70,10 @@ function componentAppImports(of: ImportGraph): string[] {
     .filter(([file]) => file.startsWith("src/components/"))
     .flatMap(([file, imports]) =>
       imports
-        .filter((entry) => target(file, entry.specifier)?.startsWith("src/app/"))
+        .filter((entry) => {
+          const named = target(file, entry.specifier);
+          return named === "src/app" || named?.startsWith("src/app/");
+        })
         .map((entry) => `${file}:${entry.line} -> ${entry.specifier}`),
     );
 }
@@ -161,6 +164,8 @@ describe("module graph census (#4930, INV-SSOT-007)", () => {
       ["a type import", `import type { EntranceFeeContext } from "${FACADE_SPECIFIER}";`],
       ["a dynamic import", `const facade = () => import("${FACADE_SPECIFIER}");`],
       ["a relative re-export", `export { callXeroApi } from "./xero";`],
+      ["an explicit JavaScript extension", `import { callXeroApi } from "@/lib/xero.js";`],
+      ["a normalized relative import", `import "./nested/../xero.ts";`],
     ])("reports %s of the facade", (_label, spelling) => {
       const file = "src/lib/booking-cancel.ts";
       const added = facadeImports(graphWith(file, spelling)).filter((site) => !facadeImports(graph).includes(site));
@@ -171,6 +176,7 @@ describe("module graph census (#4930, INV-SSOT-007)", () => {
       ["an alias import", `import Page from "@/app/page";`],
       ["a type import", `import type { Metadata } from "@/app/layout";`],
       ["a relative import", `import Page from "../app/page";`],
+      ["the route root", `import "@/app";`],
     ])("reports %s from a component into a route folder", (_label, spelling) => {
       const file = "src/components/edit-booking-panel.tsx";
       const before = componentAppImports(graph).length;

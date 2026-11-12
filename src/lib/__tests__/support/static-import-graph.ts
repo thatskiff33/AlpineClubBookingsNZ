@@ -27,11 +27,12 @@ import ts from "typescript";
 const ROOT = process.cwd();
 const SRC = path.join(ROOT, "src");
 
-const SOURCE = /\.(ts|tsx|mts|cts)$/;
+const SOURCE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 /** Test code and test-only support: neither runs in production. */
 const SKIPPED_DIRS = new Set(["__tests__", "node_modules", "generated"]);
 const SKIPPED_ROOTS = [path.join(SRC, "test")];
-const RESOLVE_SUFFIXES = ["", ".ts", ".tsx", ".mts", ".cts", "/index.ts", "/index.tsx"];
+const RESOLVE_SUFFIXES = ["", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs",
+  "/index.ts", "/index.tsx", "/index.mts", "/index.cts", "/index.js", "/index.jsx", "/index.mjs", "/index.cjs"];
 /** Imports of these load no module code the graph could loop through. */
 const ASSET = /\.(css|scss|svg|png|jpe?g|gif|webp|ico|json|txt|md)$/;
 
@@ -39,7 +40,7 @@ function toRepoPath(file: string): string {
   return path.relative(ROOT, file).split(path.sep).join("/");
 }
 
-/** Every production `.ts`/`.tsx` file under `src/`, repo-relative. */
+/** Every production TypeScript or JavaScript file under `src/`, repo-relative. */
 export function productionSourceFiles(): string[] {
   const walk = (dir: string): string[] =>
     readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -47,7 +48,7 @@ export function productionSourceFiles(): string[] {
       if (entry.isDirectory()) {
         return SKIPPED_DIRS.has(entry.name) || SKIPPED_ROOTS.includes(full) ? [] : walk(full);
       }
-      return SOURCE.test(entry.name) && !entry.name.endsWith(".d.ts") && !/\.(test|spec)\./.test(entry.name)
+      return SOURCE.test(entry.name) && !/\.d\.(ts|mts|cts)$/.test(entry.name) && !/\.(test|spec)\./.test(entry.name)
         ? [full]
         : [];
     });
