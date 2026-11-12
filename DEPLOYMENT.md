@@ -700,8 +700,10 @@ Minimum production categories:
 - Auth: `AUTH_SECRET`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `AUTH_TRUST_HOST`
 - Public app: `DOMAIN`.
   `DOMAIN` is the root public host consumed by `Caddyfile` through the
-  `{$DOMAIN}` placeholder. Caddy derives `www`, `bookings`, and `dashboard`
-  subdomains from that value.
+  `{$DOMAIN}` placeholder. Caddy also serves `www.<DOMAIN>` by default, and
+  `bookings.<DOMAIN>` and `dashboard.<DOMAIN>` only when
+  `CADDY_LEGACY_ROUTES=on`; see "Hostnames and DNS records" below for the
+  records each needs.
 - Modules: optional modules are database-backed in `ClubModuleSettings` and
   controlled from Admin > Modules after first login. No `FEATURE_*`
   environment variables are supported or read by the app.
@@ -1081,6 +1083,37 @@ Caddy sets that header to its resolved client IP (`header_up X-Forwarded-For
 peer when Caddy is the edge and, in `CADDY_TLS_MODE=local`, the address the
 trusted proxy forwarded — see "Client IPs behind the proxy" below.
 
+### Hostnames and DNS records
+
+Caddy requests a certificate for every hostname the Caddyfile serves, so each
+one needs a DNS record (an `A` record, or a `CNAME` to `<DOMAIN>`) pointing at
+this host. A hostname with no record is not harmless: Caddy fails to obtain
+its certificate and logs the failure again on every retry. Which hostnames are
+served is set in `.env`, never by editing the Caddyfile:
+
+| Hostname | Served when | DNS record needed |
+| --- | --- | --- |
+| `<DOMAIN>` | always | yes |
+| `www.<DOMAIN>` | `CADDY_WWW_REDIRECT=on` (the default); redirects to `<DOMAIN>` | yes, or set `CADDY_WWW_REDIRECT=off` |
+| `bookings.<DOMAIN>`, `dashboard.<DOMAIN>` | `CADDY_LEGACY_ROUTES=on` only (default `off`) | only when on |
+| `MEET_HOST` | always (the MiroTalk video-meeting host) | only if the club uses MiroTalk |
+
+`CADDY_LEGACY_ROUTES=on` exists for an installation that still runs a legacy
+finance dashboard of its own. Besides the two hostnames it adds a
+`/finance-legacy*` route on `<DOMAIN>`: the app checks the user first (an
+active finance viewer past two-factor), then Caddy forwards the request to
+`CADDY_FINANCE_LEGACY_UPSTREAM`, the dashboard's `host:port` as the Caddy
+container reaches it. That setting has no default; the step-3 preflight
+refuses `on` without it, refuses anything that is not one `host:port`, and
+refuses either switch set to anything but `on` or `off`. A club that never ran
+such a dashboard leaves both settings unset.
+
+**Upgrading from 0.13.2 or earlier:** those releases served the
+`/finance-legacy*` route (to a fixed private address) and the `bookings.` and
+`dashboard.` hosts unconditionally. An installation that relied on them must
+set `CADDY_LEGACY_ROUTES=on` and `CADDY_FINANCE_LEGACY_UPSTREAM` in `.env`
+before deploying this release, or the route and hosts disappear.
+
 ### Behind a TLS-terminating proxy: `CADDY_TLS_MODE=local`
 
 The shipped `Caddyfile` assumes Caddy is the public edge: `{$DOMAIN}` is an
@@ -1144,9 +1177,11 @@ skips the step-3 and step-4 checks, so a mistyped or missing value stops Caddy
 instead of the deploy: an unset `CADDY_TRUSTED_PROXIES` reaches Caddy as a
 placeholder it rejects.
 
-Do **not** edit `Caddyfile` on the host for this: the deploy refuses a dirty
-checkout, and the workspace it builds is a clean `git archive` that would drop
-the edit on the next release.
+Do **not** edit `Caddyfile` on the host for this, or for any other per-club
+choice: the deploy refuses a dirty checkout, and the workspace it builds is a
+clean `git archive` that would drop the edit on the next release. Every part
+of the edge that differs between clubs is a `.env` setting instead — this one,
+and the hostnames under "Hostnames and DNS records" below.
 
 #### Client IPs behind the proxy
 
