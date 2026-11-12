@@ -34,3 +34,13 @@ export async function readAdminQueryErrorMessage(
   const details = readValidationDetails(payload);
   return details?.fieldErrors[0]?.[1][0] ?? details?.formErrors[0] ?? fallback;
 }
+
+/**
+ * The sentences an admin list shows when its read fails without a refusal to
+ * quote (#4961), shared so the four pages that render `AdminLoadError` cannot
+ * drift into four wordings of one outage.
+ */
+export const ADMIN_LOAD_NETWORK_ERROR =
+  "The server could not be reached. Check your connection, then try again.";
+export const ADMIN_LOAD_FAILED_ERROR =
+  "The server could not answer just now. Nothing was changed; try again.";
