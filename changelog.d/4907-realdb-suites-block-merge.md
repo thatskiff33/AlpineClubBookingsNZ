@@ -1,4 +1,4 @@
-- **A failing real-database test run now stops a merge (#4907).** The 156 test
+- **A failing real-database test run now stops a merge (#4907).** The test
   files that run against a real PostgreSQL database (the proofs that two
   people cannot both take the last bed or both get the same refund, and that
   locks are taken in the right order) used to run in an advisory job: a red
