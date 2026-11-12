@@ -400,6 +400,41 @@ audit log as that administrator's act.
   empty on a connect and stale after a refresh, and the key that encrypted them
   is deleted.
 
+### The old Xero token table is dropped (#3806)
+
+**What changes.** This release drops the `XeroToken` table, the follow trigger
+and both functions, in one maintenance window, after R2. The tokens stay one
+row of the encrypted credential store (`xero-oauth` / `token-set`). The
+connection and the only refresh lease stay the `XeroConnection` row. What a
+club administrator sees in Xero does not change when that store copy is
+current. Deploying this release supersedes the rollback bullets in the R2
+section above: once this migration has run, those bullets no longer describe
+the database.
+
+**Before you deploy.** Confirm production is running R2
+(`20261124010000_add_xero_connection` applied). Stop the old web colour and
+every old worker, scheduler and queue consumer, and confirm no old database
+connection remains. Then set `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1`, a
+non-empty `BLUE_GREEN_MIGRATION_OVERRIDE_REASON`, and
+`BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1`. Those three are operator
+environment, not something this release commits. Migrate, then start only the
+new colour.
+
+R2's application still selects `XeroToken`. Once the drop commits, that colour
+fails because the table is gone, and aborting the deploy does not bring it
+back. A refresh that is still running on the previous release when you migrate
+can leave Xero holding a token this release does not have. The fix is an
+administrator reconnect from **Admin → Xero**.
+
+**Rolling back this release.** Stop the new colour, run
+`prisma/migrations/20261210100000_contract_drop_xero_token/rollback.sql` by
+hand as the migration role, then start R2. That restores the table, the
+functions and the trigger, and one non-secret row. It does not restore token
+ciphertext: those columns have been empty since R2, and R2 reads the credential
+store, so Xero keeps working. Rolling back past R2, to a release that reads
+`XeroToken` ciphertext, needs an administrator reconnect. The backup taken
+before this migrate is the only recovery of those columns.
+
 ### Check card cancellations left behind by earlier cash-payment reversals (#4320)
 
 **What changes.** When an officer reverses a booking recorded as paid in cash,

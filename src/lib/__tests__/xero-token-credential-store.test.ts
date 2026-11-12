@@ -1,39 +1,30 @@
 /**
- * The Xero OAuth tokens in the credential store (#3454), as #3806 R2 left them:
- * the connection and the refresh lease on `XeroConnection`, and the old
- * `XeroToken` row kept, with no ciphertext written or read, for the previous
- * release.
+ * The Xero OAuth tokens in the credential store (#3454), as #3806 left them:
+ * the connection and the only refresh lease on `XeroConnection`, and the token
+ * set only in the credential store.
  *
- * WHAT THIS PROVES, against a STATEFUL double of the four tables, so a
- * rolled-back transaction really leaves the rows as they were — and with the
- * migration's trigger emulated, so `XeroConnection` follows `XeroToken` here
- * as it does in PostgreSQL:
+ * WHAT THIS PROVES, against a STATEFUL double of those two tables, so a
+ * rolled-back transaction really leaves the rows as they were:
  *
- *   - every write lands the store copy, the connection and the previous
- *     release's row with ONE attributed audit row, or nothing;
- *   - the store copy is the only one read, and a connection without a usable
- *     one is a reconnect, never a fallback;
- *   - the previous release (#3454) — which reads, refreshes, connects and
- *     disconnects only through `XeroToken` and the store — reads the STORE copy
- *     after every write here, and interleaved with this code never makes either
- *     side spend a refresh token that has already been rotated;
- *   - a refresh claims both leases or neither, and its save is fenced by both
- *     leases and the store's compare-and-set: losing any rolls everything back;
- *   - the retired wrapped token key goes with the next connect, disconnect or
- *     verify-reset, audited under that operation's actor;
+ *   - a connect, refresh or disconnect lands the store copy and the connection
+ *     with one attributed audit row, or nothing;
+ *   - no connection means not connected, and a connection whose store copy is
+ *     missing, unreadable or another organisation is a reconnect;
+ *   - a refresh claims the one lease, and its save is fenced by that lease and
+ *     the store's compare-and-set: losing either rolls everything back;
+ *   - a store copy R2 wrote, `mirror` and all, still loads, and a `mirror` that
+ *     is not a string does not;
  *   - no plaintext token reaches an audit row, a log line or an error.
  *
- * What it does NOT prove: Postgres row-lock behaviour under real concurrency, or
- * the real trigger. That is `xero-token-credential-store.realdb.test.ts`.
+ * What it does NOT prove: Postgres row-lock behaviour under real concurrency.
+ * That is `xero-token-credential-store.realdb.test.ts`.
  */
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type Row = Record<string, unknown>;
 
 const h = vi.hoisted(() => {
   const state = {
-    xeroToken: [] as Row[],
     xeroConnection: [] as Row[],
     credential: [] as Row[],
     audit: [] as Row[],
@@ -44,10 +35,8 @@ const h = vi.hoisted(() => {
     txDepth: 0,
     /** Writes made through the MODULE client while a transaction was open. */
     outsideTxWrites: [] as string[],
-    /** Called once, just before the next `xeroToken.updateMany`, then cleared. */
-    beforeNextTokenUpdate: null as null | (() => Promise<void> | void),
-    /** Every column name a `xeroToken` call passed in `data` or `select`. */
-    tokenColumnsNamed: new Set<string>(),
+    /** Called once, just before the next `xeroConnection.updateMany`, then cleared. */
+    beforeNextConnectionUpdate: null as null | (() => Promise<void> | void),
   };
 
   const clone = <T>(value: T): T => structuredClone(value);
@@ -79,7 +68,7 @@ const h = vi.hoisted(() => {
         continue;
       }
       if (typeof condition === "object" && condition !== null) {
-        const ops = condition as { lte?: Date; not?: unknown };
+        const ops = condition as { lte?: Date };
         if (ops.lte !== undefined) {
           // Prisma: a NULL column never satisfies `lte`.
           if (!(value instanceof Date) || value.getTime() > ops.lte.getTime()) {
@@ -95,111 +84,14 @@ const h = vi.hoisted(() => {
 
   const now = () => new Date();
 
-  /** `updatedAt` DESC, then `id` DESC — `XERO_TOKEN_ROW_ORDER` and the trigger's order. */
-  function latestTokenRow(): Row | null {
-    const rows = [...state.xeroToken].sort((a, b) => {
-      const byTime = (b.updatedAt as Date).getTime() - (a.updatedAt as Date).getTime();
-      if (byTime !== 0) return byTime;
-      return String(b.id).localeCompare(String(a.id));
-    });
-    return rows[0] ?? null;
-  }
-
-  /**
-   * The migration's statement trigger on `XeroToken`: follow the latest row's
-   * tenant and expiry, delete the connection when no row is left, never touch
-   * the lease, and write nothing when neither value changed.
-   */
-  function followTokenTable(): void {
-    const latest = latestTokenRow();
-    if (!latest) {
-      state.xeroConnection = [];
-      return;
-    }
-    const connection = state.xeroConnection[0];
-    if (!connection) {
-      state.xeroConnection = [
-        {
-          id: "default",
-          tenantId: latest.tenantId ?? null,
-          expiresAt: latest.expiresAt,
-          refreshInProgressUntil: null,
-          createdAt: now(),
-          updatedAt: now(),
-        },
-      ];
-      return;
-    }
-    const sameExpiry =
-      (connection.expiresAt as Date).getTime() === (latest.expiresAt as Date).getTime();
-    if (connection.tenantId !== (latest.tenantId ?? null) || !sameExpiry) {
-      Object.assign(connection, {
-        tenantId: latest.tenantId ?? null,
-        expiresAt: latest.expiresAt,
-        updatedAt: now(),
-      });
-    }
-  }
-
-  function noteColumns(args: { data?: Row; select?: Row } | undefined): void {
-    for (const part of [args?.data, args?.select]) {
-      for (const column of Object.keys(part ?? {})) state.tokenColumnsNamed.add(column);
-    }
-  }
-
-  const xeroToken = {
-    findFirst: vi.fn(async (args?: { select?: Row }) => {
-      noteColumns(args);
-      return clone(latestTokenRow());
-    }),
-    findUnique: vi.fn(async (args: { where: Row }) =>
-      clone(state.xeroToken.find((row) => matches(row, args.where)) ?? null),
-    ),
-    create: vi.fn(async (args: { data: Row; select?: Row }) => {
-      noteColumns(args);
-      const row = {
-        id: `xt-${String(state.nextId++).padStart(4, "0")}`,
-        // The database's '' default: the client cannot name these (#3806).
-        accessToken: "",
-        refreshToken: "",
-        createdAt: now(),
-        updatedAt: now(),
-        refreshInProgressUntil: null,
-        tenantId: null,
-        ...args.data,
-      };
-      state.xeroToken.push(row);
-      followTokenTable();
-      return clone(row);
-    }),
-    updateMany: vi.fn(async (args: { where: Row; data: Row }) => {
-      noteColumns(args);
-      const hook = state.beforeNextTokenUpdate;
-      state.beforeNextTokenUpdate = null;
-      if (hook) await hook();
-      let count = 0;
-      for (const row of state.xeroToken) {
-        if (matches(row, args.where)) {
-          Object.assign(row, args.data, { updatedAt: now() });
-          count += 1;
-        }
-      }
-      followTokenTable();
-      return { count };
-    }),
-    deleteMany: vi.fn(async (args?: { where?: Row }) => {
-      const before = state.xeroToken.length;
-      state.xeroToken = state.xeroToken.filter((row) => !matches(row, args?.where));
-      followTokenTable();
-      return { count: before - state.xeroToken.length };
-    }),
-  };
-
   const xeroConnection = {
     findUnique: vi.fn(async (args: { where: Row }) =>
       clone(state.xeroConnection.find((row) => matches(row, args.where)) ?? null),
     ),
     updateMany: vi.fn(async (args: { where: Row; data: Row }) => {
+      const hook = state.beforeNextConnectionUpdate;
+      state.beforeNextConnectionUpdate = null;
+      if (hook) await hook();
       let count = 0;
       for (const row of state.xeroConnection) {
         if (matches(row, args.where)) {
@@ -303,7 +195,7 @@ const h = vi.hoisted(() => {
    * the same tables. A write through the module client while a transaction is
    * open would, in PostgreSQL, commit on its own whatever the transaction
    * later did — so the double records it, and every test asserts there were
-   * none. Without this, passing `prisma` where `tx` belongs is invisible here.
+   * none.
    */
   const READS = new Set(["findFirst", "findUnique", "findMany", "count"]);
   function moduleClient<T extends Record<string, (...args: never[]) => unknown>>(
@@ -322,22 +214,18 @@ const h = vi.hoisted(() => {
     return guarded as T;
   }
 
-  // #4456 review: the other stores asked before an AUTH_SECRET write; none here.
   const member = { count: vi.fn(async () => 0) };
   const twoFactorRecoveryCode = { count: vi.fn(async () => 0) };
-  const tx = { xeroToken, xeroConnection, integrationCredential, auditLog, member, twoFactorRecoveryCode };
+  const tx = { xeroConnection, integrationCredential, auditLog, member, twoFactorRecoveryCode };
 
   const db = {
-    xeroToken: moduleClient("xeroToken", xeroToken),
     xeroConnection: moduleClient("xeroConnection", xeroConnection),
     integrationCredential: moduleClient("integrationCredential", integrationCredential),
     auditLog: moduleClient("auditLog", auditLog),
     member: moduleClient("member", member),
     twoFactorRecoveryCode: moduleClient("twoFactorRecoveryCode", twoFactorRecoveryCode),
-    // A rolled-back transaction leaves every table as it found it.
     $transaction: vi.fn(async (work: (tx: unknown) => Promise<unknown>) => {
       const snapshot = clone({
-        xeroToken: state.xeroToken,
         xeroConnection: state.xeroConnection,
         credential: state.credential,
         audit: state.audit,
@@ -346,7 +234,6 @@ const h = vi.hoisted(() => {
       try {
         return await work(tx);
       } catch (error) {
-        state.xeroToken = snapshot.xeroToken;
         state.xeroConnection = snapshot.xeroConnection;
         state.credential = snapshot.credential;
         state.audit = snapshot.audit;
@@ -359,7 +246,7 @@ const h = vi.hoisted(() => {
 
   const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
 
-  return { state, db, raw: tx, logger, followTokenTable, latestTokenRow };
+  return { state, db, raw: tx, logger };
 });
 
 vi.mock("@/lib/prisma", () => ({ prisma: h.db }));
@@ -370,7 +257,6 @@ import {
   type CredentialActor,
 } from "@/lib/integration-credential-actor";
 import {
-  readIntegrationCredentialRow,
   resetIntegrationCredentialCacheForTests,
   resolveIntegrationCredential,
   setIntegrationCredentialInTransaction,
@@ -383,6 +269,7 @@ import {
   assertXeroTokensCanBeStored,
   claimXeroTokenRefreshLease,
   deleteXeroTokens,
+  fenceXeroTokenSetRewrite,
   getXeroTokenReadability,
   isXeroConnected,
   loadXeroTokens,
@@ -395,8 +282,18 @@ import { withXeroVerifyReset } from "@/lib/xero-verify-reset";
 const ADMIN: CredentialActor = { kind: "admin", memberId: "admin-7" };
 const REFRESH_JOB: CredentialActor = { kind: "system", actor: "xero-token-refresh" };
 const REQUEST = { id: "req-1", ipAddress: "10.0.0.1", userAgent: "test-agent" };
-/** The previous release's wrapped token key; only its own emulation uses it. */
-const OLD_KEY = Buffer.from("a".repeat(64), "hex");
+
+/**
+ * The fence takes the generated transaction client (`xeroConnection` and
+ * `integrationCredential` only, now the token table is gone). This double
+ * implements the calls the store makes. It is not a `XeroConnectionDelegate`:
+ * that type also requires `findUniqueOrThrow`, `findFirst`, `findMany`,
+ * `fields`, and the rest. The assertion is this boundary. `XeroTokenDb` stays
+ * the generated pick.
+ */
+function asXeroTokenDb(raw: typeof h.raw): Parameters<typeof fenceXeroTokenSetRewrite>[0] {
+  return raw as unknown as Parameters<typeof fenceXeroTokenSetRewrite>[0];
+}
 
 /** Distinctive enough that a substring search cannot match it by accident. */
 const SENTINEL = "xero_SENTINEL_7d41c0a9e2b54f3e8a6PLAINTEXT";
@@ -410,164 +307,6 @@ function tokenSet(tag: string, tenantId = "tenant-1"): TokenData {
   };
 }
 
-function oldEncrypt(plaintext: string): string {
-  const iv = randomBytes(16);
-  const cipher = createCipheriv("aes-256-gcm", OLD_KEY, iv, { authTagLength: 16 });
-  let encrypted = cipher.update(plaintext, "utf8", "hex");
-  encrypted += cipher.final("hex");
-  return `${iv.toString("hex")}:${cipher.getAuthTag().toString("hex")}:${encrypted}`;
-}
-
-function oldDecrypt(value: string): string {
-  const [iv, tag, body] = value.split(":");
-  const decipher = createDecipheriv("aes-256-gcm", OLD_KEY, Buffer.from(iv!, "hex"), {
-    authTagLength: 16,
-  });
-  decipher.setAuthTag(Buffer.from(tag!, "hex"));
-  return decipher.update(body!, "hex", "utf8") + decipher.final("utf8");
-}
-
-/** #3454's fingerprint of a `XeroToken` row, byte for byte. */
-function fingerprint(row: Row): string {
-  return createHash("sha256")
-    .update(`${row.id}:${row.accessToken}:${row.refreshToken}`, "utf8")
-    .digest("hex");
-}
-
-/**
- * THE PREVIOUS RELEASE (#3454), whose code paths know nothing of
- * `XeroConnection`: it reads the store copy only while its fingerprint matches
- * the latest `XeroToken` row (else that row's own ciphertext), claims its lease
- * on that row, and writes both copies itself. Its writes reach `XeroConnection`
- * through the trigger, which `followTokenTable` emulates.
- */
-const oldRelease = {
-  async load(): Promise<(TokenData & { source: "store" | "row" }) | null> {
-    const stored = await readIntegrationCredentialRow(
-      h.raw as never,
-      XERO_OAUTH_TOKEN_PROVIDER,
-      XERO_OAUTH_TOKEN_KEY,
-    );
-    const row = h.latestTokenRow();
-    if (!row) return null;
-    if (stored.status === "configured") {
-      const value = JSON.parse(stored.value) as Row;
-      if (typeof value.mirror === "string" && value.mirror === fingerprint(row)) {
-        return {
-          source: "store",
-          accessToken: value.accessToken as string,
-          refreshToken: value.refreshToken as string,
-          expiresAt: new Date(value.expiresAt as string),
-          tenantId: (value.tenantId as string | null) ?? undefined,
-        };
-      }
-    }
-    // The fallback that would read a stale or empty row: what R2 must never cause.
-    return {
-      source: "row",
-      accessToken: oldDecrypt(row.accessToken as string),
-      refreshToken: oldDecrypt(row.refreshToken as string),
-      expiresAt: row.expiresAt as Date,
-      tenantId: (row.tenantId as string | null) ?? undefined,
-    };
-  },
-  claimLease(now = new Date()): boolean {
-    const row = h.latestTokenRow();
-    const lease = row?.refreshInProgressUntil as Date | null | undefined;
-    if (!row || (lease && lease > now)) return false;
-    const live = h.state.xeroToken.find((candidate) => candidate.id === row.id)!;
-    live.refreshInProgressUntil = new Date(now.getTime() + 120_000);
-    live.updatedAt = new Date();
-    return true;
-  },
-  async write(tokens: TokenData, cause: "oauth-connect" | "token-refresh"): Promise<void> {
-    await h.db.$transaction(async (tx) => {
-      const row = h.latestTokenRow();
-      const access = oldEncrypt(tokens.accessToken);
-      const refresh = oldEncrypt(tokens.refreshToken);
-      const id = (row?.id as string | undefined) ?? `xt-old-${h.state.nextId++}`;
-      if (row) {
-        Object.assign(h.state.xeroToken.find((candidate) => candidate.id === id)!, {
-          accessToken: access,
-          refreshToken: refresh,
-          expiresAt: tokens.expiresAt,
-          tenantId: tokens.tenantId ?? null,
-          refreshInProgressUntil: null,
-          updatedAt: new Date(),
-        });
-      } else {
-        h.state.xeroToken.push({
-          id,
-          accessToken: access,
-          refreshToken: refresh,
-          expiresAt: tokens.expiresAt,
-          tenantId: tokens.tenantId ?? null,
-          refreshInProgressUntil: null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        });
-      }
-      h.followTokenTable();
-      await setIntegrationCredentialInTransaction({
-        tx: tx as never,
-        provider: XERO_OAUTH_TOKEN_PROVIDER,
-        key: XERO_OAUTH_TOKEN_KEY,
-        value: JSON.stringify({
-          v: 1,
-          accessToken: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
-          expiresAt: tokens.expiresAt.toISOString(),
-          tenantId: tokens.tenantId ?? null,
-          mirror: fingerprint({ id, accessToken: access, refreshToken: refresh }),
-        }),
-        actor: cause === "oauth-connect" ? ADMIN : REFRESH_JOB,
-        expect: { expect: "any" },
-        cause: { kind: cause },
-      });
-    });
-  },
-  disconnect(): void {
-    h.state.xeroToken = [];
-    h.followTokenTable();
-    h.state.credential = h.state.credential.filter(
-      (row) => row.provider !== XERO_OAUTH_TOKEN_PROVIDER,
-    );
-  },
-};
-
-/**
- * Xero's side of the grant: one live refresh token at a time, and spending it
- * rotates it. Spending a superseded token is the failure this lane prevents.
- */
-function makeXero(initialRefresh: string) {
-  let live = initialRefresh;
-  let issued = 0;
-  const spent: string[] = [];
-  return {
-    spend(refreshToken: string): TokenData {
-      spent.push(refreshToken);
-      if (refreshToken !== live) {
-        throw new Error(`invalid_grant: ${refreshToken} was already rotated`);
-      }
-      issued += 1;
-      live = `refresh-r${issued}`;
-      return { ...tokenSet(`r${issued}`), refreshToken: live };
-    },
-    spent,
-    get live() {
-      return live;
-    },
-  };
-}
-
-/** This release's refresh, exactly as `getAuthenticatedXeroClient` drives it. */
-async function newRefresh(xero: ReturnType<typeof makeXero>): Promise<void> {
-  const claim = await claimXeroTokenRefreshLease();
-  if (!claim.claimed) throw new Error("R2: lease not claimed");
-  const next = xero.spend(claim.tokens.refreshToken);
-  await saveXeroTokens(next, { actor: REFRESH_JOB, lease: claim.lease });
-}
-
 function credentialAudits(action?: string): Row[] {
   return h.state.audit.filter(
     (row) =>
@@ -576,38 +315,38 @@ function credentialAudits(action?: string): Row[] {
   );
 }
 
-function leases() {
-  return {
-    previousRelease: (h.latestTokenRow()?.refreshInProgressUntil as Date | null) ?? null,
-    ours: (h.state.xeroConnection[0]?.refreshInProgressUntil as Date | null) ?? null,
-  };
+function leaseUntil(): Date | null {
+  return (h.state.xeroConnection[0]?.refreshInProgressUntil as Date | null) ?? null;
+}
+
+function storedTokenSet(): Row | null {
+  const row = h.state.credential.find(
+    (candidate) =>
+      candidate.provider === XERO_OAUTH_TOKEN_PROVIDER && candidate.key === XERO_OAUTH_TOKEN_KEY,
+  );
+  return row ?? null;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  h.state.xeroToken = [];
   h.state.xeroConnection = [];
   h.state.credential = [];
   h.state.audit = [];
   h.state.failAuditAt = null;
   h.state.txDepth = 0;
   h.state.outsideTxWrites = [];
-  h.state.beforeNextTokenUpdate = null;
-  h.state.tokenColumnsNamed = new Set();
+  h.state.beforeNextConnectionUpdate = null;
   resetIntegrationCredentialCacheForTests();
   delete process.env.NEXTAUTH_SECRET;
   process.env.AUTH_SECRET = "s".repeat(48);
 });
 
 afterEach(() => {
-  // Every write a transaction composes went through that transaction's client.
   expect(h.state.outsideTxWrites).toEqual([]);
-  // This release never names the previous release's ciphertext (#3806).
-  expect([...h.state.tokenColumnsNamed].filter((c) => /Token$/.test(c))).toEqual([]);
 });
 
-describe("a connect writes the store copy, the connection and the previous release's row, with one audit row (#3806)", () => {
-  it("stores the set, and the previous release reads the STORE copy of it", async () => {
+describe("a connect writes the store copy and the connection, with one audit row (#3806)", () => {
+  it("stores the set and does not record a mirror", async () => {
     await saveXeroTokens(tokenSet("c1"), { actor: ADMIN, request: REQUEST });
 
     expect(h.state.credential).toHaveLength(1);
@@ -616,21 +355,10 @@ describe("a connect writes the store copy, the connection and the previous relea
       key: XERO_OAUTH_TOKEN_KEY,
       updatedByUserId: "admin-7",
     });
-    // The row the previous release treats as "connected": present, current,
-    // and holding no ciphertext.
-    expect(h.state.xeroToken).toHaveLength(1);
-    expect(h.state.xeroToken[0]).toMatchObject({
-      accessToken: "",
-      refreshToken: "",
-      tenantId: "tenant-1",
-      expiresAt: tokenSet("c1").expiresAt,
-      refreshInProgressUntil: null,
-    });
     expect(h.state.xeroConnection).toEqual([
       expect.objectContaining({ id: "default", tenantId: "tenant-1", refreshInProgressUntil: null }),
     ]);
-    await expect(oldRelease.load()).resolves.toMatchObject({
-      source: "store",
+    await expect(loadXeroTokens()).resolves.toMatchObject({
       accessToken: "access-c1",
       refreshToken: "refresh-c1",
       tenantId: "tenant-1",
@@ -652,22 +380,6 @@ describe("a connect writes the store copy, the connection and the previous relea
     });
   });
 
-  it("replaces a row the previous release wrote, so its ciphertext goes and its fingerprint still matches", async () => {
-    await oldRelease.write(tokenSet("old"), "oauth-connect");
-    const oldRow = h.latestTokenRow()!;
-    expect(oldRow.accessToken).not.toBe("");
-
-    await saveXeroTokens(tokenSet("c2"), { actor: ADMIN });
-
-    expect(h.state.xeroToken).toHaveLength(1);
-    expect(h.state.xeroToken[0].id).not.toBe(oldRow.id);
-    expect(h.state.xeroToken[0].accessToken).toBe("");
-    await expect(oldRelease.load()).resolves.toMatchObject({
-      source: "store",
-      refreshToken: "refresh-c2",
-    });
-  });
-
   it("keeps the previous tenant when the grant names none", async () => {
     await saveXeroTokens(tokenSet("c1", "tenant-kept"), { actor: ADMIN });
     await saveXeroTokens({ ...tokenSet("c2"), tenantId: undefined }, { actor: ADMIN });
@@ -676,10 +388,9 @@ describe("a connect writes the store copy, the connection and the previous relea
 
   it("commits nothing when the audit row fails", async () => {
     h.state.failAuditAt = 1;
-    await expect(
-      saveXeroTokens(tokenSet("c1"), { actor: ADMIN }),
-    ).rejects.toThrow("audit write failed");
-    expect(h.state.xeroToken).toEqual([]);
+    await expect(saveXeroTokens(tokenSet("c1"), { actor: ADMIN })).rejects.toThrow(
+      "audit write failed",
+    );
     expect(h.state.xeroConnection).toEqual([]);
     expect(h.state.credential).toEqual([]);
   });
@@ -720,23 +431,22 @@ describe("the read takes the store copy only, and the connection decides connect
     await expect(isXeroConnected()).resolves.toBe(false);
   });
 
-  it("a connection with no store copy is a reconnect, never a read of the old row", async () => {
-    // A connection the previous release made before #3454 and never refreshed.
-    await oldRelease.write(tokenSet("pre"), "oauth-connect");
-    h.state.credential = [];
+  it("a connection with no store copy is a reconnect", async () => {
+    h.state.xeroConnection.push({
+      id: "default",
+      tenantId: "tenant-1",
+      expiresAt: tokenSet("pre").expiresAt,
+      refreshInProgressUntil: null,
+    });
 
     await expect(loadXeroTokens()).rejects.toBeInstanceOf(XeroTokenDecryptError);
     await expect(getXeroTokenReadability()).resolves.toBe("unreadable");
     await expect(claimXeroTokenRefreshLease()).rejects.toBeInstanceOf(XeroTokenDecryptError);
-    // The failed claim rolled back: no lease is left held.
-    expect(leases()).toEqual({ previousRelease: null, ours: null });
+    expect(leaseUntil()).toBeNull();
   });
 
-  it("a store copy naming another organisation than the connection is a reconnect (#3806 review)", async () => {
+  it("a store copy naming another organisation than the connection is a reconnect", async () => {
     await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
-    // A release from before #3454 reconnected to another organisation: it wrote
-    // XeroToken only, the trigger carried the tenant over, the store kept the old grant.
-    h.state.xeroToken[0]!.tenantId = "tenant-elsewhere";
     h.state.xeroConnection[0]!.tenantId = "tenant-elsewhere";
 
     await expect(loadXeroTokens()).rejects.toThrow(
@@ -746,7 +456,7 @@ describe("the read takes the store copy only, and the connection decides connect
     );
     await expect(getXeroTokenReadability()).resolves.toBe("unreadable");
     await expect(claimXeroTokenRefreshLease()).rejects.toBeInstanceOf(XeroTokenDecryptError);
-    expect(leases()).toEqual({ previousRelease: null, ours: null });
+    expect(leaseUntil()).toBeNull();
   });
 
   it("a store copy that names no organisation takes the connection's", async () => {
@@ -757,62 +467,95 @@ describe("the read takes the store copy only, and the connection decides connect
     await expect(getXeroTokenReadability()).resolves.toBe("readable");
   });
 
-  it("reads the previous release's own writes, through the store copy it wrote", async () => {
-    await oldRelease.write(tokenSet("old"), "oauth-connect");
-    await expect(loadXeroTokens()).resolves.toMatchObject({
-      refreshToken: "refresh-old",
+  it("still loads a store copy R2 wrote with a mirror string, and rejects one that is not a string", async () => {
+    await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
+
+    async function replace(value: Record<string, unknown>) {
+      await h.db.$transaction((tx) =>
+        setIntegrationCredentialInTransaction({
+          tx: tx as never,
+          provider: XERO_OAUTH_TOKEN_PROVIDER,
+          key: XERO_OAUTH_TOKEN_KEY,
+          value: JSON.stringify(value),
+          actor: ADMIN,
+          expect: { expect: "any" },
+        }),
+      );
+    }
+
+    await replace({
+      v: 1,
+      accessToken: "access-mirrored",
+      refreshToken: "refresh-mirrored",
+      expiresAt: "2026-07-01T00:30:00.000Z",
       tenantId: "tenant-1",
+      mirror: "a".repeat(64),
     });
-    await expect(isXeroConnected()).resolves.toBe(true);
+    await expect(loadXeroTokens()).resolves.toMatchObject({ refreshToken: "refresh-mirrored" });
+
+    await replace({
+      v: 1,
+      accessToken: "access-bad",
+      refreshToken: "refresh-bad",
+      expiresAt: "2026-07-01T00:30:00.000Z",
+      tenantId: "tenant-1",
+      mirror: 1,
+    });
+    await expect(loadXeroTokens()).rejects.toBeInstanceOf(XeroTokenDecryptError);
+    await expect(getXeroTokenReadability()).resolves.toBe("unreadable");
   });
 
   it("never answers from the credential store's cache: another container's write is seen at once", async () => {
     await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
-    // Warm the provider cache with the CURRENT set.
     await resolveIntegrationCredential(XERO_OAUTH_TOKEN_PROVIDER, XERO_OAUTH_TOKEN_KEY);
-    // Another container refreshes (the previous release, say).
-    await oldRelease.write(tokenSet("elsewhere"), "token-refresh");
-    await expect(loadXeroTokens()).resolves.toMatchObject({
-      refreshToken: "refresh-elsewhere",
-    });
+    await h.db.$transaction((tx) =>
+      setIntegrationCredentialInTransaction({
+        tx: tx as never,
+        provider: XERO_OAUTH_TOKEN_PROVIDER,
+        key: XERO_OAUTH_TOKEN_KEY,
+        value: JSON.stringify({
+          v: 1,
+          accessToken: "access-elsewhere",
+          refreshToken: "refresh-elsewhere",
+          expiresAt: "2026-07-01T00:30:00.000Z",
+          tenantId: "tenant-1",
+        }),
+        actor: REFRESH_JOB,
+        expect: { expect: "any" },
+        cause: { kind: "token-refresh" },
+      }),
+    );
+
+    await expect(loadXeroTokens()).resolves.toMatchObject({ refreshToken: "refresh-elsewhere" });
   });
 
-  it("reports the previous release's lease to a waiter", async () => {
+  it("reports the connection's lease to a waiter", async () => {
     await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
-    oldRelease.claimLease();
+    const held = new Date(Date.now() + 120_000);
+    h.state.xeroConnection[0]!.refreshInProgressUntil = held;
+
     const loaded = await loadXeroTokens();
-    expect(loaded?.refreshInProgressUntil).toEqual(leases().previousRelease);
+    expect(loaded?.refreshInProgressUntil).toEqual(held);
   });
 });
 
-describe("a refresh claims both leases and is fenced by both and by the store's compare-and-set (#3806)", () => {
-  it("writes the store copy and both rows, and one audit row naming the refresh job", async () => {
+describe("a refresh claims the one lease and is fenced by it and by the store's compare-and-set (#3806)", () => {
+  it("writes the store copy and the connection, and one audit row naming the refresh job", async () => {
     await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
-    const rowId = h.state.xeroToken[0].id;
     h.state.audit = [];
 
     const claim = await claimXeroTokenRefreshLease();
     if (!claim.claimed) throw new Error("expected the lease");
-    expect(leases()).toEqual({ previousRelease: claim.leaseUntil, ours: claim.leaseUntil });
+    expect(leaseUntil()).toEqual(claim.leaseUntil);
+    expect(Object.keys(claim.lease).sort()).toEqual(["leaseUntil", "storeVersion"]);
     const next = { ...tokenSet("r1"), expiresAt: new Date("2026-07-01T01:00:00.000Z") };
     await saveXeroTokens(next, { actor: REFRESH_JOB, lease: claim.lease });
 
-    expect(h.state.xeroToken).toEqual([
-      expect.objectContaining({
-        id: rowId,
-        accessToken: "",
-        expiresAt: next.expiresAt,
-        refreshInProgressUntil: null,
-      }),
-    ]);
     expect(h.state.xeroConnection[0]).toMatchObject({
       expiresAt: next.expiresAt,
       refreshInProgressUntil: null,
     });
-    await expect(oldRelease.load()).resolves.toMatchObject({
-      source: "store",
-      refreshToken: "refresh-r1",
-    });
+    await expect(loadXeroTokens()).resolves.toMatchObject({ refreshToken: "refresh-r1" });
     const audits = credentialAudits();
     expect(audits).toHaveLength(1);
     expect(audits[0]).toMatchObject({ action: "integration.credential.set" });
@@ -823,9 +566,10 @@ describe("a refresh claims both leases and is fenced by both and by the store's 
       expectation: "version",
       cause: "token-refresh",
     });
+    expect(storedTokenSet()).not.toBeNull();
   });
 
-  it("a release clears both leases and audits nothing", async () => {
+  it("a release clears its own lease and audits nothing, and leaves a newer lease alone", async () => {
     await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
     h.state.audit = [];
     const claim = await claimXeroTokenRefreshLease();
@@ -833,49 +577,27 @@ describe("a refresh claims both leases and is fenced by both and by the store's 
 
     await releaseXeroTokenRefreshLease(claim.lease);
 
-    expect(leases()).toEqual({ previousRelease: null, ours: null });
+    expect(leaseUntil()).toBeNull();
     expect(h.state.audit).toEqual([]);
+
+    const again = await claimXeroTokenRefreshLease();
+    if (!again.claimed) throw new Error("expected the lease");
+    const newer = new Date(again.leaseUntil.getTime() + 60_000);
+    h.state.xeroConnection[0]!.refreshInProgressUntil = newer;
+    await releaseXeroTokenRefreshLease(again.lease);
+    expect(leaseUntil()).toEqual(newer);
   });
 
-  it("the previous release and this one compete for ONE lease, both ways round", async () => {
-    await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
-
-    expect(oldRelease.claimLease()).toBe(true);
-    const lost = await claimXeroTokenRefreshLease();
-    expect(lost.claimed).toBe(false);
-    // Losing took nothing: no half lease of ours is left behind.
-    expect(leases().ours).toBeNull();
-
-    h.state.xeroToken[0].refreshInProgressUntil = null;
-    const won = await claimXeroTokenRefreshLease();
-    expect(won.claimed).toBe(true);
-    expect(oldRelease.claimLease()).toBe(false);
-  });
-
-  it("gives the previous release's lease back when its own is held elsewhere (never half a lease)", async () => {
+  it("takes nothing when the connection lease is held elsewhere", async () => {
     await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
     const elsewhere = new Date(Date.now() + 120_000);
-    h.state.xeroConnection[0].refreshInProgressUntil = elsewhere;
+    h.state.xeroConnection[0]!.refreshInProgressUntil = elsewhere;
 
     const claim = await claimXeroTokenRefreshLease();
 
     expect(claim.claimed).toBe(false);
-    expect(leases()).toEqual({ previousRelease: null, ours: elsewhere });
+    expect(leaseUntil()).toEqual(elsewhere);
     expect(claim.tokens?.refreshToken).toBe("refresh-c1");
-  });
-
-  it("claims only its own lease while no XeroToken row exists", async () => {
-    await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
-    // A connection with no row for the previous release (the R3 shape).
-    const connection = h.state.xeroConnection[0];
-    h.state.xeroToken = [];
-    h.state.xeroConnection = [connection];
-
-    const claim = await claimXeroTokenRefreshLease();
-    if (!claim.claimed) throw new Error("expected the lease");
-    expect(claim.lease.tokenRowId).toBeNull();
-    await saveXeroTokens(tokenSet("r1"), { actor: REFRESH_JOB, lease: claim.lease });
-    expect(h.state.xeroConnection[0].refreshInProgressUntil).toBeNull();
   });
 
   it("a reconnect during the refresh wins: the save throws and nothing moves", async () => {
@@ -884,7 +606,6 @@ describe("a refresh claims both leases and is fenced by both and by the store's 
     if (!claim.claimed) throw new Error("expected the lease");
     await saveXeroTokens(tokenSet("c2"), { actor: ADMIN });
     const before = structuredClone({
-      xeroToken: h.state.xeroToken,
       xeroConnection: h.state.xeroConnection,
       credential: h.state.credential,
     });
@@ -893,30 +614,33 @@ describe("a refresh claims both leases and is fenced by both and by the store's 
       saveXeroTokens(tokenSet("late"), { actor: REFRESH_JOB, lease: claim.lease }),
     ).rejects.toThrow("lease expired");
     expect({
-      xeroToken: h.state.xeroToken,
       xeroConnection: h.state.xeroConnection,
       credential: h.state.credential,
     }).toEqual(before);
     await expect(loadXeroTokens()).resolves.toMatchObject({ refreshToken: "refresh-c2" });
   });
 
-  it("the previous release reconnecting in place during the refresh also wins", async () => {
-    await oldRelease.write(tokenSet("old"), "oauth-connect");
+  it("a later lease makes the save lose before it writes the store", async () => {
+    await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
     const claim = await claimXeroTokenRefreshLease();
     if (!claim.claimed) throw new Error("expected the lease");
-    // Its connect clears its own lease on the same row; ours stays set.
-    await oldRelease.write(tokenSet("old-2"), "oauth-connect");
+    const later = new Date(claim.leaseUntil.getTime() + 60_000);
+    h.state.xeroConnection[0]!.refreshInProgressUntil = later;
+    const before = structuredClone({
+      xeroConnection: h.state.xeroConnection,
+      credential: h.state.credential,
+    });
 
     await expect(
       saveXeroTokens(tokenSet("late"), { actor: REFRESH_JOB, lease: claim.lease }),
     ).rejects.toThrow("lease expired");
-    await expect(oldRelease.load()).resolves.toMatchObject({
-      source: "store",
-      refreshToken: "refresh-old-2",
-    });
+    expect({
+      xeroConnection: h.state.xeroConnection,
+      credential: h.state.credential,
+    }).toEqual(before);
   });
 
-  it("a store copy replaced behind the leases makes the save LOSE and rolls everything back", async () => {
+  it("a store copy replaced behind the lease makes the save LOSE and rolls the connection back", async () => {
     await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
     const claim = await claimXeroTokenRefreshLease();
     if (!claim.claimed) throw new Error("expected the lease");
@@ -925,49 +649,56 @@ describe("a refresh claims both leases and is fenced by both and by the store's 
         tx: tx as never,
         provider: XERO_OAUTH_TOKEN_PROVIDER,
         key: XERO_OAUTH_TOKEN_KEY,
-        value: JSON.stringify({ ...tokenSet("bypass"), v: 1, expiresAt: "2026-07-01T00:30:00.000Z" }),
+        value: JSON.stringify({
+          v: 1,
+          accessToken: "access-bypass",
+          refreshToken: "refresh-bypass",
+          expiresAt: "2026-07-01T00:30:00.000Z",
+          tenantId: "tenant-1",
+        }),
         actor: ADMIN,
         expect: { expect: "any" },
       }),
     );
-    const before = structuredClone({
-      xeroToken: h.state.xeroToken,
-      xeroConnection: h.state.xeroConnection,
-    });
+    const before = structuredClone(h.state.xeroConnection);
 
     await expect(
       saveXeroTokens(tokenSet("r1"), { actor: REFRESH_JOB, lease: claim.lease }),
     ).rejects.toBeInstanceOf(StaleCredentialWriteError);
-    expect({ xeroToken: h.state.xeroToken, xeroConnection: h.state.xeroConnection }).toEqual(
-      before,
-    );
+    expect(h.state.xeroConnection).toEqual(before);
+    expect(leaseUntil()).toEqual(claim.leaseUntil);
   });
 
   it("claims FIRST and reads second: a reconnect committing just before the lease hands over the NEW token", async () => {
     await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
-    // The previous release reconnects in the instant before our claim's update.
-    h.state.beforeNextTokenUpdate = () => oldRelease.write(tokenSet("c2"), "oauth-connect");
+    h.state.beforeNextConnectionUpdate = () => saveXeroTokens(tokenSet("c2"), { actor: ADMIN });
 
     const claim = await claimXeroTokenRefreshLease();
     if (!claim.claimed) throw new Error("expected the lease");
     expect(claim.tokens.refreshToken).toBe("refresh-c2");
 
-    // And the save under that claim lands on the reconnect's version.
     await saveXeroTokens(tokenSet("r1"), { actor: REFRESH_JOB, lease: claim.lease });
-    await expect(oldRelease.load()).resolves.toMatchObject({
-      source: "store",
-      refreshToken: "refresh-r1",
-    });
+    await expect(loadXeroTokens()).resolves.toMatchObject({ refreshToken: "refresh-r1" });
+  });
+
+  it("the re-encrypt fence loses while a lease is set, including one that has already expired", async () => {
+    await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
+    expect(await fenceXeroTokenSetRewrite(asXeroTokenDb(h.raw))).toBe(true);
+
+    const claim = await claimXeroTokenRefreshLease({ now: new Date(Date.now() - 10 * 60_000) });
+    if (!claim.claimed) throw new Error("expected the lease");
+    expect(claim.leaseUntil.getTime()).toBeLessThan(Date.now());
+    expect(await fenceXeroTokenSetRewrite(asXeroTokenDb(h.raw))).toBe(false);
+
+    h.state.xeroConnection = [];
+    expect(await fenceXeroTokenSetRewrite(asXeroTokenDb(h.raw))).toBe(true);
   });
 });
 
 describe("a refresh refuses before spending the token when its save could not succeed (#3454 review)", () => {
   it("refuses under an auth secret the capture gate would reject", async () => {
     process.env.AUTH_SECRET = "too-short";
-    await expect(assertXeroTokensCanBeStored()).rejects.toBeInstanceOf(
-      XeroTokenSaveUnavailableError,
-    );
-    // #4456 review: the reason and the gate's own message travel with it.
+    await expect(assertXeroTokensCanBeStored()).rejects.toBeInstanceOf(XeroTokenSaveUnavailableError);
     await expect(assertXeroTokensCanBeStored()).rejects.toMatchObject({
       reason: "auth-secret-weak",
       message: expect.stringMatching(/auth secret.*the refresh token was not spent/i),
@@ -1009,7 +740,6 @@ describe("a refresh refuses before spending the token when its save could not su
       updatedAt: new Date(),
     });
     await expect(assertXeroTokensCanBeStored()).rejects.toBeInstanceOf(XeroTokenSaveUnavailableError);
-    // Its own reason, so the alert says to restore the key, not to change AUTH_SECRET.
     await expect(assertXeroTokensCanBeStored()).rejects.toMatchObject({
       reason: "data-key-ring-missing",
       message: expect.stringMatching(/DATA_ENCRYPTION_KEYS is not set\. Set it back as it was, or set a new key/),
@@ -1023,48 +753,13 @@ describe("a refresh refuses before spending the token when its save could not su
   });
 });
 
-describe("mixed runtime: the previous release interleaved with this one never spends a rotated token (#3806)", () => {
-  it("survives refreshes alternating between the releases, both ways round", async () => {
-    const xero = makeXero("refresh-c1");
-    await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
-
-    for (let round = 0; round < 3; round += 1) {
-      await newRefresh(xero);
-      // The previous release, through its own read, claim and dual write.
-      const seen = await oldRelease.load();
-      expect(seen?.source).toBe("store");
-      expect(oldRelease.claimLease()).toBe(true);
-      await oldRelease.write(xero.spend(seen!.refreshToken), "token-refresh");
-    }
-
-    await newRefresh(xero);
-    await expect(loadXeroTokens()).resolves.toMatchObject({ refreshToken: xero.live });
-    await expect(oldRelease.load()).resolves.toMatchObject({
-      source: "store",
-      refreshToken: xero.live,
-    });
-  });
-
-  it("follows the previous release's disconnect and its first connect", async () => {
-    await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
-    oldRelease.disconnect();
-    await expect(isXeroConnected()).resolves.toBe(false);
-    await expect(loadXeroTokens()).resolves.toBeNull();
-
-    await oldRelease.write(tokenSet("again", "tenant-2"), "oauth-connect");
-    await expect(isXeroConnected()).resolves.toBe(true);
-    expect(h.state.xeroConnection[0].tenantId).toBe("tenant-2");
-  });
-});
-
 describe("destroying the tokens records who and why, once (#3454)", () => {
-  it("a disconnect deletes every copy and writes ONE row naming the administrator", async () => {
+  it("a disconnect deletes the connection and the store copy and writes ONE row naming the administrator", async () => {
     await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
     h.state.audit = [];
 
     await deleteXeroTokens({ actor: ADMIN, request: REQUEST, cause: { kind: "oauth-disconnect" } });
 
-    expect(h.state.xeroToken).toEqual([]);
     expect(h.state.xeroConnection).toEqual([]);
     expect(h.state.credential).toEqual([]);
     const audits = credentialAudits("integration.credential.deleted");
@@ -1074,13 +769,15 @@ describe("destroying the tokens records who and why, once (#3454)", () => {
   });
 
   it("still records destroying a connection whose store copy was already gone", async () => {
-    await oldRelease.write(tokenSet("pre"), "oauth-connect");
-    h.state.credential = [];
-    h.state.audit = [];
+    h.state.xeroConnection.push({
+      id: "default",
+      tenantId: "tenant-1",
+      expiresAt: tokenSet("pre").expiresAt,
+      refreshInProgressUntil: null,
+    });
 
     await deleteXeroTokens({ actor: ADMIN, cause: { kind: "oauth-disconnect" } });
 
-    expect(h.state.xeroToken).toEqual([]);
     expect(h.state.xeroConnection).toEqual([]);
     const audits = credentialAudits("integration.credential.deleted");
     expect(audits).toHaveLength(1);
@@ -1121,7 +818,6 @@ describe("the verify-reset commits with the credential write that causes it (#34
 
     await saveClientSecret("new-client-secret");
 
-    expect(h.state.xeroToken).toEqual([]);
     expect(h.state.xeroConnection).toEqual([]);
     expect(h.state.credential.map((row) => `${row.provider}:${row.key}`)).toEqual([
       "xero:client_secret",
@@ -1130,7 +826,6 @@ describe("the verify-reset commits with the credential write that causes it (#34
       "integration.credential.set",
       "integration.credential.deleted",
     ]);
-    // One request, one administrator, and the delete says what caused it.
     expect(new Set(h.state.audit.map((row) => row.requestId))).toEqual(new Set(["req-1"]));
     expect(h.state.audit[1].metadata).toMatchObject({
       cause: "verify-reset",
@@ -1141,17 +836,13 @@ describe("the verify-reset commits with the credential write that causes it (#34
   it("rolls the credential write back when destroying the tokens fails", async () => {
     await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
     const before = structuredClone({
-      xeroToken: h.state.xeroToken,
       xeroConnection: h.state.xeroConnection,
       credential: h.state.credential,
     });
-    h.state.failAuditAt = 2; // the credential's row lands, the token delete's does not
+    h.state.failAuditAt = 2;
 
-    await expect(saveClientSecret("new-client-secret")).rejects.toThrow(
-      "audit write failed",
-    );
+    await expect(saveClientSecret("new-client-secret")).rejects.toThrow("audit write failed");
     expect({
-      xeroToken: h.state.xeroToken,
       xeroConnection: h.state.xeroConnection,
       credential: h.state.credential,
     }).toEqual(before);
@@ -1182,7 +873,6 @@ describe("no plaintext token reaches an audit row, a log line or an error (#3454
       }
     };
 
-    // Connect, refresh, a reconnect.
     await saveXeroTokens(sentinelSet("c1"), { actor: ADMIN, request: REQUEST });
     const claim = await claimXeroTokenRefreshLease();
     if (!claim.claimed) throw new Error("expected the lease");
@@ -1190,7 +880,6 @@ describe("no plaintext token reaches an audit row, a log line or an error (#3454
     await loadXeroTokens();
     await saveXeroTokens(sentinelSet("c2"), { actor: ADMIN });
 
-    // A lease that expired under a reconnect.
     const lostLease = await claimXeroTokenRefreshLease();
     if (!lostLease.claimed) throw new Error("expected the lease");
     await saveXeroTokens(sentinelSet("c3"), { actor: ADMIN });
@@ -1198,7 +887,6 @@ describe("no plaintext token reaches an audit row, a log line or an error (#3454
       saveXeroTokens(sentinelSet("late"), { actor: REFRESH_JOB, lease: lostLease.lease }),
     );
 
-    // A stale compare-and-set.
     const staleLease = await claimXeroTokenRefreshLease();
     if (!staleLease.claimed) throw new Error("expected the lease");
     await h.db.$transaction((tx) =>
@@ -1206,7 +894,13 @@ describe("no plaintext token reaches an audit row, a log line or an error (#3454
         tx: tx as never,
         provider: XERO_OAUTH_TOKEN_PROVIDER,
         key: XERO_OAUTH_TOKEN_KEY,
-        value: JSON.stringify(sentinelSet("bypass")),
+        value: JSON.stringify({
+          v: 1,
+          accessToken: `${SENTINEL}-access-bypass`,
+          refreshToken: `${SENTINEL}-refresh-bypass`,
+          expiresAt: "2026-07-01T00:30:00.000Z",
+          tenantId: "tenant-1",
+        }),
         actor: ADMIN,
         expect: { expect: "any" },
       }),
@@ -1216,14 +910,12 @@ describe("no plaintext token reaches an audit row, a log line or an error (#3454
     );
     await releaseXeroTokenRefreshLease(staleLease.lease);
 
-    // A store copy written under an auth secret that has since changed.
     await saveXeroTokens(sentinelSet("c4"), { actor: ADMIN });
     process.env.AUTH_SECRET = "t".repeat(48);
     await capture(() => loadXeroTokens());
     await getXeroTokenReadability();
     process.env.AUTH_SECRET = "s".repeat(48);
 
-    // The verify-reset, then the disconnect of a fresh connection.
     await withXeroVerifyReset(
       { actor: ADMIN, request: REQUEST, causedByCredential: "xero:client_id", providers: ["xero"] },
       (tx) =>
@@ -1239,7 +931,6 @@ describe("no plaintext token reaches an audit row, a log line or an error (#3454
     await saveXeroTokens(sentinelSet("c5"), { actor: ADMIN });
     await deleteXeroTokens({ actor: ADMIN, cause: { kind: "oauth-disconnect" } });
 
-    // The instrument saw real traffic, including the failures.
     expect(errors).toHaveLength(3);
     expect(errors.some((error) => error instanceof StaleCredentialWriteError)).toBe(true);
     expect(errors.some((error) => error instanceof XeroTokenDecryptError)).toBe(true);
@@ -1261,11 +952,8 @@ describe("no plaintext token reaches an audit row, a log line or an error (#3454
     expect(JSON.stringify([serialised(error)])).toContain(SENTINEL);
   });
 
-  it("no table stores the token in plaintext, and XeroToken stores no ciphertext either", async () => {
+  it("no table stores the token in plaintext", async () => {
     await saveXeroTokens(sentinelSet("c1"), { actor: ADMIN });
-    expect(
-      JSON.stringify([h.state.xeroToken, h.state.xeroConnection, h.state.credential]),
-    ).not.toContain(SENTINEL);
-    expect(h.state.xeroToken[0]).toMatchObject({ accessToken: "", refreshToken: "" });
+    expect(JSON.stringify([h.state.xeroConnection, h.state.credential])).not.toContain(SENTINEL);
   });
 });

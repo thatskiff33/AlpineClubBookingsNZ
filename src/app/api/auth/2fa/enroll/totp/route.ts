@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
     actor: { kind: "member", memberId: guard.member.id },
     request: getAuditRequestContext(request),
   });
-  await markTwoFactorSessionVerified();
+  await markTwoFactorSessionVerified("TOTP");
 
   return NextResponse.json({ ok: true, recoveryCodes });
 }

@@ -380,6 +380,7 @@ describe("member credit policy properties", () => {
       amountCents: fc.integer({ min: -500, max: 500 }),
       description: fc.constantFrom("desc-a", "desc-b"),
       requestedById: fc.constantFrom("admin-1", "admin-2"),
+      grantAccount: fc.constantFrom("MEMBER_OWN_MONEY" as const, "GOODWILL" as const, null),
     });
     fc.assert(
       fc.property(requestArb, requestArb, (request, expected) => {
@@ -387,7 +388,8 @@ describe("member credit policy properties", () => {
           request.memberId === expected.memberId &&
           request.amountCents === expected.amountCents &&
           request.description === expected.description &&
-          request.requestedById === expected.requestedById;
+          request.requestedById === expected.requestedById &&
+          request.grantAccount === expected.grantAccount;
         const call = () =>
           assertMatchingIdempotentAdjustmentRequest(request, expected);
         if (identical) {

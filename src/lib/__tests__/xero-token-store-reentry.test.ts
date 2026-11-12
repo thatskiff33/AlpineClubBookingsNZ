@@ -11,10 +11,6 @@ const h = vi.hoisted(() => ({
     xeroConnection: {
       findUnique: vi.fn(),
     },
-    // The previous release's lease (#3806 R2); none held here.
-    xeroToken: {
-      findFirst: vi.fn(async () => null),
-    },
     integrationCredential: {
       findUnique: vi.fn(),
       // #4456 review: stored data under a ring key, the same question the

@@ -47,6 +47,10 @@ import { headers } from "next/headers";
 
 import { isFullAdmin } from "@/lib/access-roles";
 import {
+  resolveMemberAdminNavPanels,
+  type AdminNavPanelKey,
+} from "@/lib/admin-nav-panels";
+import {
   canOpenAdminPath,
   getAdminPermissionMatrix,
   getFirstAccessibleAdminHref,
@@ -101,6 +105,8 @@ export interface AdmittedAdmin {
    */
   permissionMatrix: AdminPermissionMatrix;
   isFullAdmin: boolean;
+  /** The sidebar menus this member's roles give them (#108), default first. */
+  adminNavPanels: AdminNavPanelKey[];
   /** CSP nonce for this response, or undefined when middleware set none. */
   nonce: string | undefined;
   /** Whether the onboarding wizard should open for this member. */
@@ -212,6 +218,7 @@ export async function guardAdminLayout(
     },
     permissionMatrix: getAdminPermissionMatrix(member),
     isFullAdmin: isFullAdmin(member),
+    adminNavPanels: resolveMemberAdminNavPanels(member),
     nonce: requestHeaders.get(CSP_NONCE_HEADER) ?? undefined,
     showOnboardingWizard: shouldShowMemberOnboarding(member),
     requestedPath: requestedForGuard,

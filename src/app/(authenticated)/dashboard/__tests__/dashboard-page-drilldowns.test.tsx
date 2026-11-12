@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   loadEffectiveModuleFlags: vi.fn(),
   lockerFindMany: vi.fn(),
   memberFindUnique: vi.fn(),
+  memberInductionFindFirst: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -38,6 +39,7 @@ vi.mock("@/lib/prisma", () => ({
     member: {
       findUnique: mocks.memberFindUnique,
     },
+    memberInduction: { findFirst: mocks.memberInductionFindFirst },
     calendarEvent: {
       findMany: mocks.calendarEventFindMany,
     },
@@ -62,7 +64,8 @@ vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: mocks.loadEffectiveModuleFlags,
 }));
 
-vi.mock("@/lib/access-roles", () => ({
+vi.mock("@/lib/access-roles", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/access-roles")),
   hasAccessRole: mocks.hasAccessRole,
 }));
 
@@ -152,10 +155,8 @@ describe("DashboardPage summary card drill-downs", () => {
     ]);
     mocks.lockerFindMany.mockResolvedValue([]);
     mocks.calendarEventFindMany.mockResolvedValue([]);
-    mocks.memberFindUnique.mockResolvedValue({
-      requiresInduction: false,
-      inductions: [],
-    });
+    mocks.memberFindUnique.mockResolvedValue({ requiresInduction: false });
+    mocks.memberInductionFindFirst.mockResolvedValue(null);
     mocks.loadEffectiveModuleFlags.mockResolvedValue(moduleFlags());
     mocks.hasAccessRole.mockReturnValue(false);
     // Peak occupancy 22 across a 30-bed lodge: night one 20/30, night two
@@ -191,6 +192,44 @@ describe("DashboardPage summary card drill-downs", () => {
     expect(html).toContain('href="/profile?returnTo=%2Fdashboard#promo-codes"');
     expect(html).toContain("SAVE10");
     expect(html).toContain("10% off per individual");
+  });
+
+  it("offers the lodge roster under Open Kiosk while its module is on", async () => {
+    mocks.loadEffectiveModuleFlags.mockResolvedValue({
+      ...moduleFlags(),
+      kiosk: true,
+      memberLodgeRoster: true,
+    });
+    const html = await renderDashboardPage();
+
+    const kiosk = html.indexOf('href="/lodge/kiosk"');
+    const roster = html.indexOf('href="/lodge-roster"');
+    expect(kiosk).toBeGreaterThan(-1);
+    expect(roster).toBeGreaterThan(kiosk);
+  });
+
+  it("leaves the lodge roster off the card while its module is off", async () => {
+    mocks.loadEffectiveModuleFlags.mockResolvedValue({
+      ...moduleFlags(),
+      kiosk: true,
+      memberLodgeRoster: false,
+    });
+    const html = await renderDashboardPage();
+
+    expect(html).toContain('href="/lodge/kiosk"');
+    expect(html).not.toContain('href="/lodge-roster"');
+  });
+
+  it("keeps the roster's card while the kiosk module is off", async () => {
+    mocks.loadEffectiveModuleFlags.mockResolvedValue({
+      ...moduleFlags(),
+      kiosk: false,
+      memberLodgeRoster: true,
+    });
+    const html = await renderDashboardPage();
+
+    expect(html).toContain('href="/lodge-roster"');
+    expect(html).not.toContain('href="/lodge/kiosk"');
   });
 
   it("shows a lodge occupancy meter for the next stay's dates", async () => {
@@ -278,10 +317,8 @@ describe("DashboardPage draft bookings saved by the club (#2779)", () => {
     mocks.getAvailablePromoCodesForMember.mockResolvedValue([]);
     mocks.lockerFindMany.mockResolvedValue([]);
     mocks.calendarEventFindMany.mockResolvedValue([]);
-    mocks.memberFindUnique.mockResolvedValue({
-      requiresInduction: false,
-      inductions: [],
-    });
+    mocks.memberFindUnique.mockResolvedValue({ requiresInduction: false });
+    mocks.memberInductionFindFirst.mockResolvedValue(null);
     mocks.loadEffectiveModuleFlags.mockResolvedValue(moduleFlags());
     mocks.hasAccessRole.mockReturnValue(false);
   });

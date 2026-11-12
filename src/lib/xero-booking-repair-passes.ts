@@ -6,24 +6,21 @@
 import { applyRefundNoteSettlementRepair } from "@/lib/xero-refund-note-unsettled";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { keptLateCaptureDocumentDate } from "@/lib/xero-kept-late-capture-invoice";
-import { editReviewChargeRequestCriteria } from "@/lib/edit-financial-review-charge-shape";
 import logger from "@/lib/logger";
 import { PartialRefundError } from "@/lib/payment-transactions";
 import { sliceAfterRecordedRefusals } from "@/lib/refused-card-refund-retry";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
-import { classifyEditReviewChargeCapture } from "./xero-booking-repair-payments";
+import { type SupplementaryInvoiceChargeKind } from "./xero-booking-repair-payments";
+import { releaseRepairedSupplementaryInvoiceIfAlreadyPaid } from "./xero-booking-repair-supplementary-release";
 import type { BookingXeroRepairAction, BookingXeroRepairBookingSummary, BookingXeroRepairPassReport, XeroBookingRepairActionStatus } from "./xero-booking-repair-types";
 import { LATE_CAPTURE_REPAIR_REFUND_METADATA_REASON } from "@/lib/payment-recovery-keys";
 import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { describeRefusedRepairedLateCaptureRefund, describeRepairedLateCaptureRefund, madeRepairRefunds } from "@/lib/late-capture-repair-result-message";
 import { createCountMap } from "./xero-booking-repair-utils";
 import { applyAdditionalCaptureReceiptAction, applyKeptChangeCaptureRecordAction } from "./xero-booking-repair-additional-capture";
-import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { readModificationNoteWording } from "@/lib/xero-refund-method";
 import { applyHistoricalOrganiserInvoiceRepair } from "./xero-booking-repair-organiser-billing";
-import { LEDGER_ROWS_NEWEST_FIRST } from "@/lib/payment-ledger-order";
-
 export function buildPassReport(pass: number, bookings: BookingXeroRepairBookingSummary[]): BookingXeroRepairPassReport {
   const bookingsWithFindings = bookings.filter((booking) => booking.findings.length > 0);
   const findings = bookingsWithFindings.flatMap((booking) => booking.findings.map((finding) => finding.code));
@@ -313,87 +310,6 @@ async function applyLateCaptureRefundRepair(
   action.resultMessage = refused ?? describeRepairedLateCaptureRefund(refundResult.refunds, xero);
 }
 
-/**
- * THE MEMBER WHO PAYS WHILE THE SWEEP IS RUNNING (#3187 fix round).
- *
- * The plan that parked this invoice on a PaymentIntent was decided from the
- * snapshot the loader took when the pass STARTED, and the enqueue happens
- * minutes later. In between, the member can pay: the webhook's release runs,
- * finds no `WAITING_PAYMENT` row because none exists yet, and does nothing - and
- * then this pass creates exactly that row, parked on a confirmation that has
- * already been and gone. Nothing re-checks. The 14-day stale reaper is the only
- * thing that ever clears it, and until then the anchor reads
- * `BLOCKED_BY_XERO_OPERATION` at warning severity, "waiting for its additional
- * Stripe payment", so the tool CONCEALS the finding it exists to raise. The
- * sweep acts on requests outstanding for days, so this is the ordinary case.
- *
- * WHY AFTER THE ENQUEUE AND NOT BEFORE IT. Re-reading the request just before
- * queueing would only narrow the window; check-then-write always leaves one.
- * Read AFTERWARDS and there is no window at all - the row the webhook's release
- * needs already exists before anybody looks at the capture, so whichever of the
- * two observes it first, one of them releases it, and the release is an
- * `updateMany` fenced on `WAITING_PAYMENT`, so both observing it is harmless.
- * The end state is byte-identical to the live path's own, because it IS the live
- * path's release function.
- *
- * IT RELEASES ONLY ON `covers-ask`. A capture SHORT of the ask must stay parked:
- * the worker books the invoice's own net as the Stripe receipt, so releasing
- * would assert money the club does not hold - the overstatement
- * `planEditReviewChargeInvoicePayment` refuses at classify time, arriving by a
- * different door. That case is reported instead. The invoice it leaves behind
- * is not issued: the waiting-invoice reaper's next run (#3641) finds its payment
- * captured, applies the same capture rule, and cancels it unsent with an alert
- * to an officer, so the shortfall is collected by hand.
- */
-async function releaseRepairedSupplementaryInvoiceIfAlreadyPaid(params: {
-  action: BookingXeroRepairAction;
-  deps: RepairDependencies;
-  bookingId: string;
-  bookingModificationId: string;
-  paymentIntentId: string;
-  expectedNetAmountCents: number;
-  format: ClubFormat;
-}) {
-  const { action, deps } = params;
-  const request = await deps.prisma.paymentTransaction.findFirst({
-    where: {
-      payment: { bookingId: params.bookingId },
-      stripePaymentIntentId: params.paymentIntentId,
-      ...editReviewChargeRequestCriteria(params.bookingModificationId),
-    },
-    orderBy: [...LEDGER_ROWS_NEWEST_FIRST],
-    select: { status: true, amountCents: true },
-  });
-
-  if (!request) {
-    return;
-  }
-
-  const capture = classifyEditReviewChargeCapture(
-    request,
-    params.expectedNetAmountCents
-  );
-
-  if (capture === "not-captured") {
-    return;
-  }
-
-  if (capture === "short-of-ask") {
-    action.status = "manual_review";
-    action.resultMessage = `${action.resultMessage} The member's card was captured while this sweep ran, but for ${formatCents(request.amountCents, params.format)} against an ask of ${formatCents(params.expectedNetAmountCents, params.format)}. The queued invoice was deliberately NOT released - releasing it would book the full ask as received - so it will be retired unsent, and the difference has to be collected by hand.`;
-    return;
-  }
-
-  const released =
-    await deps.releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
-      params.paymentIntentId
-    );
-
-  if (released.released > 0) {
-    action.resultMessage = `${action.resultMessage} The member's card had already been captured, so the queued invoice was released for sending instead of waiting for a confirmation that has already happened.`;
-  }
-}
-
 async function applyQueuedAction(
   action: BookingXeroRepairAction,
   deps: RepairDependencies,
@@ -455,21 +371,16 @@ async function applyQueuedAction(
     case "QUEUE_HISTORICAL_ORGANISER_INVOICE": return applyHistoricalOrganiserInvoiceRepair(action, deps);
     case "QUEUE_SUPPLEMENTARY_INVOICE": {
       /**
-       * #3187: the payment half of the ask travels WITH it.
-       *
-       * The enqueue defaults `recordPayment` to true, which is right for the
-       * arm this action was built for - an ordinary price increase whose card
-       * was captured before the invoice was queued - and wrong for a booking
-       * edit priced by a completed financial review, where the invoice may BE
-       * the unpaid ask. The classifier decides that from the ledger
-       * (`planEditReviewChargeInvoicePayment`) and puts its answer on the
-       * payload; an action carrying no answer keeps the enqueue's own defaults,
-       * so nothing the tool already repaired changes behaviour.
+       * #4413: the plan is explicit for every edit. A payload that omits
+       * `recordPayment` is unpaid. Passing that omission through would hit the
+       * enqueue's paid default and book a Stripe receipt for money never taken.
+       * `chargeKind` selects the same request the plan read, for the fresh
+       * capture check.
        */
       const recordPayment =
         typeof action.payload.recordPayment === "boolean"
           ? action.payload.recordPayment
-          : undefined;
+          : false;
       const waitForConfirmedAdditionalPayment =
         typeof action.payload.waitForConfirmedAdditionalPayment === "boolean"
           ? action.payload.waitForConfirmedAdditionalPayment
@@ -478,6 +389,8 @@ async function applyQueuedAction(
         typeof action.payload.paymentIntentId === "string"
           ? action.payload.paymentIntentId
           : undefined;
+      const chargeKind: SupplementaryInvoiceChargeKind =
+        action.payload.chargeKind === "ordinary" ? "ordinary" : "review";
       const bookingId = String(action.payload.bookingId);
       const bookingModificationId =
         typeof action.payload.bookingModificationId === "string"
@@ -516,6 +429,7 @@ async function applyQueuedAction(
             paymentIntentId,
             expectedNetAmountCents: priceDiffCents + changeFeeCents,
             format,
+            chargeKind,
           });
         } catch (error) {
           // The invoice IS queued, so reporting this action as `failed` would
@@ -529,10 +443,16 @@ async function applyQueuedAction(
               bookingModificationId,
               paymentIntentId,
             },
-            "Failed to re-check a review-priced supplementary invoice against a mid-sweep card capture"
+            "Failed to re-check a repaired supplementary invoice against a mid-sweep card capture"
           );
           action.resultMessage = `${action.resultMessage} Could not re-check whether the member's card was captured while this sweep ran; if it was, this invoice may be waiting for a confirmation that has already happened.`;
         }
+        // #3403 (`INV-PAY-140`): parked on an ask a later request already
+        // superseded. Called holding nothing, after the enqueue has committed,
+        // as the live edit does. No new lock key, order or site
+        // (`INV-LOCK-001`, `INV-LOCK-002`, `INV-LOCK-003`): the carry takes
+        // the keys it already takes.
+        await deps.followSupersededAskInvoicesForIntentSafely(paymentIntentId);
       }
       return;
     }

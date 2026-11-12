@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -475,7 +476,7 @@ function S3BackupCard({
       if (!saved || draft.bucket !== saved.bucket) payload.bucket = draft.bucket;
       if (!saved || draft.region !== saved.region) payload.region = draft.region;
 
-      const res = await fetch(CONFIG_URL, {
+      const res = await fetchWithRecentAuth(CONFIG_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -672,7 +673,7 @@ function CredentialsSection({
   const [success, setSuccess] = useState("");
 
   const writeCredential = useCallback(async (key: string, value: string) => {
-    const res = await fetch(CREDENTIALS_URL, {
+    const res = await fetchWithRecentAuth(CREDENTIALS_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ provider: "backup", key, value }),

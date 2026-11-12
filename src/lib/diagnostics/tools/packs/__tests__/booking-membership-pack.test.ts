@@ -2943,6 +2943,8 @@ const FORBIDDEN_RELATIONS = [
   "TwoFactorRecoveryCode",
   "TwoFactorSessionChallenge",
   "SessionReauthChallenge",
+  "WebAuthnCredential",
+  "WebAuthnChallenge",
   "NominationToken",
   "PartnerInviteToken",
   "GuestChoreToken",

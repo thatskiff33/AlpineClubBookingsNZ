@@ -19,6 +19,7 @@ import {
   hasFinanceViewerAccess,
 } from "@/lib/admin-permissions";
 import { hasAccessRole } from "@/lib/access-roles";
+import { classifyAccountRecord } from "@/lib/member-roles";
 import { addCalendarDays, dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { recordAuthBounce } from "@/lib/auth-diagnostics";
@@ -27,10 +28,10 @@ import { REQUEST_PATH_HEADER } from "@/lib/internal-return-path";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
 import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import {
-  MEMBER_ONBOARDING_GATE_SELECT,
   isOnboardingGateExemptPath,
   shouldShowMemberOnboarding,
 } from "@/lib/member-onboarding";
+import { loadSignedInMember } from "@/lib/signed-in-member";
 import { getCurrentSiteBanners } from "@/lib/site-banners";
 import { getWebsiteThemeRenderState } from "@/lib/club-theme";
 import {
@@ -60,11 +61,9 @@ export default async function AuthenticatedLayout({
     redirect(buildLoginPath(requestedPath, authBounceRef));
   }
 
-  // Check DB directly for force password change and active status (JWT may be stale)
-  const member = await prisma.member.findUnique({
-    where: { id: session.user.id },
-    select: MEMBER_ONBOARDING_GATE_SELECT,
-  });
+  // Check DB directly for force password change and active status (JWT may be
+  // stale). Shared with the page beneath this layout for the render (#4938).
+  const member = await loadSignedInMember(session.user.id);
 
   // Redirect deleted/deactivated accounts even if JWT is still valid, and a
   // member whose login is switched off (#3603): the token refresh already ends
@@ -170,6 +169,9 @@ export default async function AuthenticatedLayout({
     canAccessFinance: hasFinanceViewerAccess(member),
     isHutLeader: isHutLeaderActive,
     isStayingGuest,
+    isAdminOnlyAccount:
+      classifyAccountRecord(member) === "admin" &&
+      !hasAccessRole(member, "USER"),
   };
   // Single-action token routes (e.g. `/nominations/<token>`) are exempt from the
   // mandatory onboarding gate so a member can complete that action without first

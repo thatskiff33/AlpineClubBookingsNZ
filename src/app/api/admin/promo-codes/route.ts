@@ -4,12 +4,9 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
-import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { parseDateOnly } from "@/lib/date-only";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import { BENEFICIAL_PROMO_ALLOCATION_FILTER } from "@/lib/promo-usage-counts";
-
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-});
 
 const promoCodeSchema = z.object({
   code: z.string().min(1, "Code is required").transform((s) => s.toUpperCase().trim()),
@@ -26,10 +23,10 @@ const promoCodeSchema = z.object({
   maxRedemptionsTotal: z.number().int().min(1).optional().nullable(),
   maxUniqueMembersTotal: z.number().int().min(1).optional().nullable(),
   maxUsesPerMember: z.number().int().min(1).optional().nullable(),
-  validFrom: dateOnlyString.optional().nullable(),
-  validUntil: dateOnlyString.optional().nullable(),
-  bookingStartFrom: dateOnlyString.optional().nullable(),
-  bookingStartUntil: dateOnlyString.optional().nullable(),
+  validFrom: dateOnlyStringSchema.optional().nullable(),
+  validUntil: dateOnlyStringSchema.optional().nullable(),
+  bookingStartFrom: dateOnlyStringSchema.optional().nullable(),
+  bookingStartUntil: dateOnlyStringSchema.optional().nullable(),
   membersOnly: z.boolean().default(false),
   memberGuestsOnly: z.boolean().default(false),
   // Omitted: defaults per type below (group fixed-nightly codes default to
