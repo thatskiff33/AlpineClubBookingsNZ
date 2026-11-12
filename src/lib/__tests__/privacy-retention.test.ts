@@ -18,10 +18,9 @@ vi.mock("@/lib/member-photo", () => ({ deleteOwnedMemberPhotoBlobs: vi.fn() }));
 vi.mock("@/lib/member-email-inheritance", () => ({ retireInheritedEmailCopies: vi.fn(), reconcileEmailInheritanceForMemberChange: vi.fn() }));
 
 import logger from "@/lib/logger";
-import { FORMER_MEMBER_ANONYMISATION_JOB_NAME } from "@/lib/privacy-retention-shared";
 import { getPrivacyRetentionPreview } from "@/lib/privacy-retention";
 import { runFormerMemberAnonymisationJob, runPersonalDataPruneJob } from "@/lib/privacy-retention-jobs";
-import { DEFAULT_PRIVACY_RETENTION_SETTINGS } from "@/lib/privacy-retention-shared";
+import { DEFAULT_PRIVACY_RETENTION_SETTINGS, FORMER_MEMBER_ANONYMISATION_JOB_NAME } from "@/lib/privacy-retention-shared";
 import { createAuditLog } from "@/lib/audit";
 import { deleteOwnedMemberPhotoBlobs } from "@/lib/member-photo";
 import { getMemberCreditBalance } from "@/lib/member-credit";
