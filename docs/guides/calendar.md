@@ -163,14 +163,14 @@ route that reads the token — the path form ignores it).
 ### Where each setting lives
 
 **Audience: operator.** Since #2940 the settings a club decides live on
-**Admin → Integrations → Video meetings**, and the settings the machine decides
+**Admin → Integrations → Video Meetings Setup**, and the settings the machine decides
 stay in the environment. Nothing was taken away: every environment variable
 below still works, and is what the page falls back to until somebody sets a
 value on it.
 
 | Setting | Where it lives | Falls back to |
 | --- | --- | --- |
-| Meeting server address | Admin → Integrations → Video meetings | `MIROTALK_URL`, then `https://meet.<your app domain>` |
+| Meeting server address | Admin → Integrations → Video Meetings Setup | `MIROTALK_URL`, then `https://meet.<your app domain>` |
 | Whoever opens a link is the host | the same page | `MIRO_MEETING_PRESENTER`, then on |
 | How long a join link lasts | the same page | `MIRO_JWT_EXP`, then `1h` |
 | Signing key | the same page, stored encrypted | `MIRO_JWT_KEY` |
@@ -204,7 +204,7 @@ value comes from.
 ### Installing MiroTalk
 
 MiroTalk is a **separate service** you self-host; it is not bundled with this
-app. Point the app at it on **Admin → Integrations → Video meetings**, in the
+app. Point the app at it on **Admin → Integrations → Video Meetings Setup**, in the
 **Meeting server address** box — for example `https://meet.example.org`.
 
 - **An address saved on the page has to be a public `https://` one**, with no
@@ -252,7 +252,7 @@ then create a meeting event and click **Open meeting link**.
 2. Reverse-proxy the subdomain through Caddy so it gets a TLS certificate, and
    give that subdomain a `Permissions-Policy` that **allows** `camera` and
    `microphone` (the app's main site deliberately disables them).
-3. Tell the app where it is, on **Admin → Integrations → Video meetings**. (Or
+3. Tell the app where it is, on **Admin → Integrations → Video Meetings Setup**. (Or
    set `MIROTALK_URL=https://meet.<yourdomain>` in the environment and restart,
    which is what installations that predate that page already do.)
 4. For members joining from home, run a **TURN server** (MiroTalk bundles
@@ -270,7 +270,7 @@ app only links to it, which keeps the licence boundary clean.
 
 If your MiroTalk is host-protected (`HOST_PROTECTED=true`, `HOST_USER_AUTH=true`
 with `HOST_USERS`), members would normally hit a login prompt. Fill in the
-**Host sign-in** section of **Admin → Integrations → Video meetings** and the app
+**Host sign-in** section of **Admin → Integrations → Video Meetings Setup** and the app
 appends a **short-lived signed `?token=`** to each meeting link, so committee
 members join straight in while unauthorised people (who never get the link, and
 could not forge a token) stay out. The token is minted fresh on each click and
@@ -371,13 +371,13 @@ in the environment, where there is nobody to tell, grep the container logs for
 | Ends                         | When recurrence stops                  | Never           | Never (≈24 months / 366 cap), On date, or After N times |
 | Location                     | Free-text location                     | —               | Optional; up to 200 characters                          |
 | Details                      | Agenda / notes                         | —               | Optional; up to 5000 characters                         |
-| Video meeting (MiroTalk)     | Attaches a meeting link                | off             | Needs a MiroTalk instance, configured on **Admin → Integrations → Video meetings** (see above) |
+| Video meeting (MiroTalk)     | Attaches a meeting link                | off             | Needs a MiroTalk instance, configured on **Admin → Integrations → Video Meetings Setup** (see above) |
 
 ## Troubleshooting
 
 | Symptom                                               | Likely cause                                                                                    | Fix                                                                                                                               |
 | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| A **Join meeting** link goes to the wrong server, or to `localhost` | Nothing is set on **Admin → Integrations → Video meetings** or in `MIROTALK_URL`, so the address is derived from your app's domain | Open that page: it names the source of every value in force. Set the meeting server address there |
+| A **Join meeting** link goes to the wrong server, or to `localhost` | Nothing is set on **Admin → Integrations → Video Meetings Setup** or in `MIROTALK_URL`, so the address is derived from your app's domain | Open that page: it names the source of every value in force. Set the meeting server address there |
 | An address saved on that page **is not being used** | It failed the page's own rules after it was stored (it is `http://`, carries a sign-in, or names a private address) | The page says which rule and what is being used instead; re-enter a public `https://` address |
 | A join link lands on MiroTalk's **login** prompt | One of the three host sign-in values is missing, so no token is minted | The page shows which are set and from where. All three are needed — a partial set mints nothing, because MiroTalk would reject it |
 | A join link is **rejected** by MiroTalk after it used to work | The signing key and the meeting server no longer match — usually one side was rotated alone | Set the app's signing key to that instance's `JWT_KEY`; they are a pair. Moving the address clears the stored sign-in for you, so after a move it is the three new values that are needed |

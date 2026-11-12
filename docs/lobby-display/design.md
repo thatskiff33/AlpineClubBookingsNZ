@@ -602,12 +602,12 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > **Navigation (LTV-031, ADR-003; fork issue #109).** The display admin is
 > reached from **one** sidebar entry — **Lobby Display** (`/admin/display`) —
 > which opens a **hub landing page of cards** rather than a four-item sidebar
-> group, mirroring the "Site Appearance & Content" hub. The hub cards are
-> **Devices** (`/admin/display/devices`, heading "Display Devices"),
-> **Visual builder** (`/admin/display/builder`, ADR-004), **Layouts (Advanced)**
-> (`/admin/display/layouts`), **Templates**
-> (`/admin/display/templates`), and **Reference**
-> (`/admin/display/reference`). The Devices management page moved from
+> group, mirroring the "Site Appearance & Content" hub. The hub cards, each
+> titled with its page's registry label, are **Display Devices**
+> (`/admin/display/devices`), **Display Builder** (`/admin/display/builder`,
+> ADR-004, the visual builder), **Display Layouts** (`/admin/display/layouts`,
+> Advanced mode), **Display Templates** (`/admin/display/templates`), and
+> **Display Reference** (`/admin/display/reference`). The Devices management page moved from
 > `/admin/display` to `/admin/display/devices` when `/admin/display` became the
 > hub (#109); its behaviour is unchanged. The settings card was renamed off the
 > `/admin/display/templates` path so LTV-033's Template authoring could claim

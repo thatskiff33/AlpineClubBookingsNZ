@@ -123,9 +123,10 @@ keeping their own check-out date.
 The pre-built boards a lodge can assign straight away (issue #2047). Every board
 also carries the fixed lodge header and the info footer; the module lists below
 are the content each board adds. The same gallery is surfaced in-app on
-**Admin → Display → Reference** (with monogram placeholders — open a live
-**Preview** from the Templates page to see the real board), and the built-ins
-appear ready to assign on **Admin → Display → Templates**.
+**Admin → Lobby Display → Display Reference** (with monogram placeholders — open
+a live **Preview** from the Display Templates page to see the real board), and
+the built-ins appear ready to assign on **Admin → Lobby Display → Display
+Templates**.
 
 **Delivery split.** The four broadly-useful boards ship as **built-in seeds**
 (seeded into every install and refreshed from code on re-seed, like the three

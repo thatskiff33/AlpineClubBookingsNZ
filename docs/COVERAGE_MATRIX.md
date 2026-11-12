@@ -273,9 +273,9 @@ pages, and a feature-gated display cluster; the guides document the reality:
   by default**, so `/admin/display` 404s in the seed; the capture stack had the
   module **enabled** to shoot the hub plus **Devices**, **Layouts**,
   **Templates**, **Reference**, and the template **preview**. On current `main`
-  the hub is a **five-card** hub — Devices, **Visual builder** (#2048),
-  Layouts (Advanced), Templates, Reference — and the guide documents the Visual
-  builder card at hub level (the no-HTML authoring path most operators should
+  the hub is a **five-card** hub — Display Devices, **Display Builder** (the
+  visual builder, #2048), Display Layouts, Display Templates, Display Reference —
+  and the guide documents the Display Builder card at hub level (the no-HTML authoring path most operators should
   use), deferring the full builder walk-through to the `lobby-display/` feature
   hub rather than duplicating it. Because the committed `admin-display` capture
   predates the builder card (and `admin-display-templates` predates the #2047

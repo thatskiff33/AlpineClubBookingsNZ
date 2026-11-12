@@ -64,7 +64,7 @@ download a backup, exactly as you already do for addresses and dates of birth.
 
 ### First-time setup with the wizard (recommended)
 
-Open **Admin → Integrations → Database Backups** to start the guided wizard. It
+Open **Admin → Integrations → Backup Setup** to start the guided wizard. It
 has four steps and gates each one until it is satisfied:
 
 1. **S3 credentials** (Full Admin) — enter the S3 **access key ID** and **secret
