@@ -42,8 +42,8 @@ const ZERO_COUNTS: AdminPendingCounts = {
   manualRefundTasks: 0,
   creditApprovals: 0,
   bookingReviews: 0,
-  bookingChangeRequests: 0,
-  newBookingPolicyExceptionRequests: 0,
+  lockedPeriodChangeRequests: 0,
+  policyExceptionRequests: 0,
   publicBookingRequests: 0,
   unpaidFinishedStays: 0,
   unsettledAdditionalFinishedStays: 0,
@@ -479,7 +479,7 @@ describe("AdminSidebar", () => {
       "fetch",
       buildFetchMock({
         bookingReviews: 2,
-        bookingChangeRequests: 1,
+        lockedPeriodChangeRequests: 1,
         publicBookingRequests: 3,
       }),
     );

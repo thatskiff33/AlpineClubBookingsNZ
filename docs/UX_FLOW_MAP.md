@@ -234,9 +234,9 @@ Journey: Review booking rules and cancellation policies before staging a change.
 
 Screen: `/admin/booking-requests`.
 
-Shows: Tabbed request queues and request details with their current status and actions.
+Shows: Four request queue tabs, each with its pending count, and request details with their current status and actions.
 
-Journey: Choose a queue tab, open a request, inspect the proposed stay, and use its available actions.
+Journey: Open on the first tab with pending work (Approvals when none), open a request, inspect the proposed stay, and use its available actions.
 
 [Guide](guides/booking-requests.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

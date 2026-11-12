@@ -106,6 +106,7 @@ import {
   type AdminNavPanelKey,
 } from "@/lib/admin-nav-panels";
 import { getContentPanelSections } from "@/lib/admin-appearance-pages";
+import { totalBookingRequestsPending } from "@/lib/admin-booking-requests-path";
 import {
   HubMenuLinks,
   MenuRoleSwitcher,
@@ -840,14 +841,9 @@ function SidebarLinks({
   if (counts.familyRequests > 0) {
     badges["/admin/family-groups"] = counts.familyRequests;
   }
-  const bookingRequestCount =
-    counts.bookingReviews +
-    counts.bookingChangeRequests +
-    // #2526: a NEW-booking policy exception lives in its own table, so it is a
-    // separate term; a MODIFICATION exception is already a BookingChangeRequest
-    // and is inside the term above.
-    counts.newBookingPolicyExceptionRequests +
-    counts.publicBookingRequests;
+  // The same four per-tab counts the Booking Requests page badges (#4969), so
+  // the tab badges add up to this one.
+  const bookingRequestCount = totalBookingRequestsPending(counts);
   if (bookingRequestCount > 0) {
     badges["/admin/booking-requests"] = bookingRequestCount;
   }
