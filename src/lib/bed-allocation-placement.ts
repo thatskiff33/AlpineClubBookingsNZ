@@ -1,3 +1,5 @@
+import { assertGlobalLockHeld } from "@/lib/global-lock-held";
+import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 /**
  * The shared write chokepoint every manual bed placement passes through
  * (#2688).
@@ -332,6 +334,10 @@ export async function allocateBedNightWithLocksHeld(input: {
   stayDate: Date;
   db: BedAllocationDb;
 }): Promise<{ allocation: BedAllocation; promotedPartner: BedAllocation | null }> {
+  await assertGlobalLockHeld(input.db, "allocateBedNightWithLocksHeld");
+  const lockKey = await input.db.lodgeRoom.findUnique({ where: { id: input.bed.roomId }, select: { lodgeId: true } });
+  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey.lodgeId, "allocateBedNightWithLocksHeld");
+
   const { guest, bed, stayDate, db } = input;
 
   // Custodian occupancy (#2286), THE manual-placement chokepoint. Every manual

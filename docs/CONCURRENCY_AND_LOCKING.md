@@ -91,6 +91,17 @@ never deadlock. Writers that compose several *same-family* locks (multiple
 per-lodge locks, or multiple per-member locks) acquire them in **sorted key
 order** for the same reason. (`INV-LOCK-002`.)
 
+### Checking caller-held locks (#4929)
+
+Exports ending in `LockHeld` or `LocksHeld` inspect `pg_locks` before relying
+on their caller’s locks (`INV-LOCK-003`). The global check lives in
+`global-lock-held.ts`; the lodge check lives beside the single key mint in
+`lodge-capacity-lock.ts`. A missing key throws `GlobalLockNotHeldError` or
+`LodgeCapacityLockNotHeldError`. These checks acquire nothing. A key-only
+lookup may precede the lodge check; mutable state is still re-read afterward.
+The member-merge sweep checks its supplied lodge keys without requiring global.
+The export census prevents an unchecked entrypoint from being added.
+
 ### Status-guarded claims (defense in depth)
 
 Every status-transition write in the cluster is a **status-guarded

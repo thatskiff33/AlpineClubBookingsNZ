@@ -1,3 +1,5 @@
+import { assertGlobalLockHeld } from "@/lib/global-lock-held";
+import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 /**
  * Bed inventory for bed allocation: create, edit, retire, delete (#2688).
  *
@@ -167,6 +169,10 @@ export async function updateBedAllocationBedWithLocksHeld(input: {
    */
   today: Date;
 }): Promise<LodgeBed> {
+  await assertGlobalLockHeld(input.db, "updateBedAllocationBedWithLocksHeld");
+  const lockKey = await input.db.lodgeBed.findUnique({ where: { id: input.id }, select: { room: { select: { lodgeId: true } } } });
+  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey.room.lodgeId, "updateBedAllocationBedWithLocksHeld");
+
   const touchesBunk =
     input.bedType !== undefined || input.bunkGroup !== undefined;
 
@@ -427,6 +433,10 @@ export async function deleteBedAllocationBedWithLocksHeld(input: {
   id: string;
   db: BedAllocationDb;
 }) {
+  await assertGlobalLockHeld(input.db, "deleteBedAllocationBedWithLocksHeld");
+  const lockKey = await input.db.lodgeBed.findUnique({ where: { id: input.id }, select: { room: { select: { lodgeId: true } } } });
+  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey.room.lodgeId, "deleteBedAllocationBedWithLocksHeld");
+
   const db = input.db;
   await assertNoFutureBedAllocations({
     bedId: input.id,

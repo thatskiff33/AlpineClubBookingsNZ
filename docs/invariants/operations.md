@@ -190,6 +190,12 @@ rules first written here. #2765 extended it with the measured-audience half.
   means classifying the writer and naming the counterpart it excludes — never
   editing a count, which is what coupled approval to file layout before #2722.
 
+- **Caller-held lock exports check their required tiers before reading mutable
+  state.** `assertGlobalLockHeld` and `assertLodgeCapacityLockHeld` inspect
+  the current backend. Only immutable key discovery may precede a lodge check.
+  Member merge retains its lodge-only exception. The lock-held export census
+  enforces these entry checks (#4929).
+
 ## INV-LOCK-004
 
 - **A read taken while a lock is held goes through the caller's transaction

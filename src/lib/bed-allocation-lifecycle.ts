@@ -1,3 +1,5 @@
+import { assertGlobalLockHeld } from "@/lib/global-lock-held";
+import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 import { BookingStatus, Prisma, type BedAllocation } from "@prisma/client";
 
 import { isSchoolGroupBooking } from "@/lib/school-group-booking";
@@ -1380,6 +1382,10 @@ export async function reconcileBedAllocationsForBookingWithLodgeLockHeld({
 }: ReconcileBedAllocationsForBookingInput & {
   db: BedAllocationLifecycleDb;
 }): Promise<BedAllocationLifecycleResult> {
+  await assertGlobalLockHeld(db, "reconcileBedAllocationsForBookingWithLodgeLockHeld");
+  const lockKey = await db.booking.findUnique({ where: { id: bookingId }, select: { lodgeId: true } });
+  if (lockKey) await assertLodgeCapacityLockHeld(db, lockKey.lodgeId, "reconcileBedAllocationsForBookingWithLodgeLockHeld");
+
   const enabled = await isEffectiveModuleEnabled("bedAllocation", db);
 
   if (!enabled) {
@@ -1439,6 +1445,8 @@ export async function reconcileBedAllocationsForBookingWithGlobalLockHeld(
     db: BedAllocationLifecycleDb;
   },
 ): Promise<BedAllocationLifecycleResult> {
+  await assertGlobalLockHeld(input.db, "reconcileBedAllocationsForBookingWithGlobalLockHeld");
+
   const bookingKey = await input.db.booking.findUnique({
     where: { id: input.bookingId },
     select: { lodgeId: true },
@@ -2157,6 +2165,12 @@ export async function sweepFuturePartnerSharedAllocationsWithLocksHeld(params: {
   db: BedAllocationLifecycleDb;
   today: Date;
 }): Promise<SweptPartnerSharedAllocation[]> {
+  await assertGlobalLockHeld(params.db, "sweepFuturePartnerSharedAllocationsWithLocksHeld");
+  const lockLodgeIds = await futurePartnerShareAllocationLodgeIds(params.db, [params.memberId, ...(params.partnerMemberId ? [params.partnerMemberId] : [])], params.today);
+  for (const lodgeId of new Set(lockLodgeIds)) {
+    await assertLodgeCapacityLockHeld(params.db, lodgeId, "sweepFuturePartnerSharedAllocationsWithLocksHeld");
+  }
+
   const db = params.db;
   const today = params.today;
   const scopeIds = params.partnerMemberId
@@ -2404,6 +2418,10 @@ export async function sweepUnbackedFutureSharedDoublesWithLocksHeld(params: {
   db: BedAllocationLifecycleDb;
   today: Date;
 }): Promise<SweptPartnerSharedAllocation[]> {
+  for (const lodgeId of params.lockedLodgeIds) {
+    await assertLodgeCapacityLockHeld(params.db, lodgeId, "sweepUnbackedFutureSharedDoublesWithLocksHeld");
+  }
+
   const db = params.db;
   const scopeIds = [...new Set(params.memberIds.filter(Boolean))];
   if (scopeIds.length === 0) return [];
