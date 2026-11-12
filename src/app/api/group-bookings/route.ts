@@ -9,7 +9,7 @@ import {
   createGroupBooking,
   GroupBookingError,
 } from "@/lib/group-booking";
-import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import logger from "@/lib/logger";
 
 const createGroupBookingSchema = z
@@ -17,12 +17,7 @@ const createGroupBookingSchema = z
     organiserBookingId: z.string().min(1),
     paymentMode: z.nativeEnum(GroupBookingPaymentMode),
     // Optional date-only deadline after which no new joins are accepted.
-    joinDeadline: z
-      .string()
-      .refine(isDateOnlyString, { message: "Date must be YYYY-MM-DD" })
-      .transform(parseDateOnly)
-      .optional()
-      .nullable(),
+    joinDeadline: parsedDateOnlySchema.optional().nullable(),
     maxJoiners: z.number().int().min(1).max(200).optional().nullable(),
   })
   .strict();

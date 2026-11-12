@@ -63,6 +63,9 @@ test("member switches a card booking to Internet Banking with Xero absent", asyn
   });
   await expect(switchButton).toBeVisible();
   await switchButton.click();
+  const dialog = page.getByRole("dialog", { name: "Switch to internet banking?" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Switch to internet banking", exact: true }).click();
 
   // Deterministic outcome: on success the switch triggers a hard reload, so the
   // page re-renders from the server to the Internet Banking card — source

@@ -27,11 +27,7 @@ import {
   toEditTimeGroupDiscountConfig,
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
-import { calculateChangeFee } from "@/lib/change-fee";
-import {
-  daysUntilDate,
-  loadCancellationPolicy,
-} from "@/lib/cancellation";
+import { lateNoticeChangeFee } from "@/lib/late-notice-change-fee";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { ApiError } from "@/lib/api-error";
 import {
@@ -479,9 +475,9 @@ export async function POST(
   }
 
   // #3123 — the CLUB's day, from its persisted zone (`INV-CONFIG-002`),
-  // resolved ONCE for this whole quote. Five decisions below read it: the edit
-  // policy here, the late-notice change fee's two `daysUntilDate` operands, the
-  // promotion's validity window, and the reduction refund's settlement tier.
+  // resolved ONCE for this whole quote. The decisions below read it: the edit
+  // policy here, the late-notice change fee (through `lateNoticeChangeFee`),
+  // the promotion's validity window, and the reduction refund's settlement tier.
   // They are the same question, so they must not be able to answer it
   // differently — a quote whose fee said one day and whose refund tier said
   // another would be internally inconsistent across club midnight.
@@ -1975,25 +1971,17 @@ export async function POST(
   const checkInChanged =
     newCheckIn.getTime() !== new Date(booking.checkIn).getTime();
 
-  // #2266: no change fee on a DRAFT — nothing has been committed to, exactly
-  // like fiddling with dates in the wizard before saving. Mirrors the
-  // calculateModificationChangeFee guard on the apply path.
-  if (
-    !skipBookingLifecycleRules &&
-    checkInChanged &&
-    !isInProgressEdit &&
-    booking.status !== "DRAFT"
-  ) {
-    const policy = await loadCancellationPolicy(booking.checkIn, bookingLodgeId);
-    const feeResult = calculateChangeFee({
-      // #3123 — one club day for both operands, so the two day-counts cannot
-      // straddle club midnight and quote a fee neither tier justifies.
-      daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, todayAtClub),
-      daysUntilNewCheckIn: daysUntilDate(newCheckIn, todayAtClub),
-      originalFinalPriceCents: booking.finalPriceCents,
-      policyRules: policy,
+  // An unchanged check-in, a skipped lifecycle and a stay already under way
+  // charge nothing. An unpaid booking, a draft included, is zero inside
+  // `lateNoticeChangeFee` (owner decision, 10 Nov 2026).
+  if (!skipBookingLifecycleRules && checkInChanged && !isInProgressEdit) {
+    changeFeeCents = await lateNoticeChangeFee({
+      booking,
+      lodgeId: bookingLodgeId,
+      newCheckIn,
+      db: prisma,
+      todayAtClub,
     });
-    changeFeeCents = feeResult.feeCents;
 
     if (changeFeeCents > 0) {
       itemizedChanges.push({
