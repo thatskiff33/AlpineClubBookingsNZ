@@ -74,7 +74,7 @@ describe("SwitchToInternetBankingButton", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     const dialog = await screen.findByRole("dialog", { name: "Switch to internet banking?" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Switch to internet banking", exact: true }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Switch to internet banking" }));
 
     await waitFor(() => {
       expect(reloadMock).toHaveBeenCalled();
@@ -103,7 +103,7 @@ describe("SwitchToInternetBankingButton", () => {
     );
 
     const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Switch to internet banking", exact: true }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Switch to internet banking" }));
 
     expect(
       await screen.findByText(/Internet Banking payments are not available./)
