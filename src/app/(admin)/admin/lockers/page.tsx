@@ -45,6 +45,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useClubFormat } from "@/components/club-format-provider";
+import { FocusedActionError } from "@/components/focused-action-error";
 
 type MemberSummary = {
   id: string;
@@ -88,7 +89,14 @@ export default function LockersPage() {
   const bulkPrefixHint = useFieldHint();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  // A failed READ is passive: it is shown in the locker list and moves nothing.
+  // A failed save, delete or bulk create is the admin's own action — often
+  // clicked in the table far below the form — so it takes focus through the
+  // permanently mounted recovery alert, and `actionAttention` re-takes it when
+  // the same failure repeats.
+  const [loadError, setLoadError] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [actionAttention, setActionAttention] = useState(0);
   const [name, setName] = useState("");
   const [allocatedToMemberId, setAllocatedToMemberId] =
     useState<string>("UNALLOCATED");
@@ -158,7 +166,7 @@ export default function LockersPage() {
       return;
     }
     setLoading(true);
-    setError("");
+    setLoadError("");
     try {
       const response = await fetch(
         `/api/admin/lockers?lodgeId=${encodeURIComponent(scopedLodgeId)}`,
@@ -177,7 +185,7 @@ export default function LockersPage() {
       if (loadError instanceof DOMException && loadError.name === "AbortError") {
         return;
       }
-      setError(
+      setLoadError(
         loadError instanceof Error
           ? loadError.message
           : "Failed to load lockers",
@@ -193,12 +201,17 @@ export default function LockersPage() {
     return () => controller.abort();
   }, [loadData]);
 
+  function failAction(message: string) {
+    setActionError(message);
+    setActionAttention((count) => count + 1);
+  }
+
   async function handleFormSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!scopedLodgeId) return;
     const requestedScope = scopedLodgeId;
     setSaving(true);
-    setError("");
+    setActionError("");
 
     try {
       const payload = {
@@ -223,9 +236,9 @@ export default function LockersPage() {
       const body = await response.json();
       if (!response.ok) {
         // Stale-tab / narrowed-permission save surfaces the persistent
-        // forbidden-save reason in the existing error line (#1940).
+        // forbidden-save reason in the action alert (#1940).
         if (response.status === 403) {
-          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          failAction(ADMIN_FORBIDDEN_SAVE_REASON);
           return;
         }
         throw new Error(
@@ -252,7 +265,7 @@ export default function LockersPage() {
       setAllocatedToMemberId("UNALLOCATED");
       setAllocatedToSearch("");
     } catch (submitError) {
-      setError(
+      failAction(
         submitError instanceof Error
           ? submitError.message
           : editingLockerId
@@ -270,7 +283,7 @@ export default function LockersPage() {
     setName(locker.name);
     setAllocatedToMemberId(locker.allocatedToMemberId ?? "UNALLOCATED");
     setAllocatedToSearch("");
-    setError("");
+    setActionError("");
   }
 
   function resetForm() {
@@ -278,7 +291,7 @@ export default function LockersPage() {
     setName("");
     setAllocatedToMemberId("UNALLOCATED");
     setAllocatedToSearch("");
-    setError("");
+    setActionError("");
   }
 
   function handleLodgeChange(nextLodgeId: string | null) {
@@ -305,7 +318,7 @@ export default function LockersPage() {
     }
 
     setDeletingLockerId(locker.id);
-    setError("");
+    setActionError("");
     try {
       const response = await fetch(`/api/admin/lockers/${locker.id}`, {
         method: "DELETE",
@@ -313,7 +326,7 @@ export default function LockersPage() {
       const body = await response.json().catch(() => null);
       if (!response.ok) {
         if (response.status === 403) {
-          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          failAction(ADMIN_FORBIDDEN_SAVE_REASON);
           return;
         }
         throw new Error(body?.error || "Failed to delete locker");
@@ -327,7 +340,7 @@ export default function LockersPage() {
         resetForm();
       }
     } catch (deleteError) {
-      setError(
+      failAction(
         deleteError instanceof Error
           ? deleteError.message
           : "Failed to delete locker",
@@ -342,7 +355,7 @@ export default function LockersPage() {
     const requestedScope = scopedLodgeId;
     const count = Number(bulkCount);
     setBulkSaving(true);
-    setError("");
+    setActionError("");
     try {
       const response = await fetch("/api/admin/lockers/bulk", {
         method: "POST",
@@ -356,7 +369,7 @@ export default function LockersPage() {
       const body = await response.json();
       if (!response.ok) {
         if (response.status === 403) {
-          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          failAction(ADMIN_FORBIDDEN_SAVE_REASON);
           return;
         }
         throw new Error(body.error || "Failed to create lockers");
@@ -365,7 +378,7 @@ export default function LockersPage() {
       setBulkCount("");
       await loadData();
     } catch (bulkError) {
-      setError(
+      failAction(
         bulkError instanceof Error
           ? bulkError.message
           : "Failed to create lockers",
@@ -481,6 +494,12 @@ export default function LockersPage() {
       {viewOnlyBanner}
       <div className="space-y-6">
       {scopeChrome}
+      <FocusedActionError
+        id="lockers-action-error"
+        error={actionError}
+        attentionKey={actionAttention}
+        className="scroll-mt-20"
+      />
       <Card>
         <CardHeader>
           <CardTitle>{editingLockerId ? "Edit Locker" : "New Locker"}</CardTitle>
@@ -579,7 +598,6 @@ export default function LockersPage() {
               ) : null}
             </div>
           </form>
-          {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
         </CardContent>
       </Card>
 
@@ -667,6 +685,8 @@ export default function LockersPage() {
         <CardContent>
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading lockers...</p>
+          ) : loadError ? (
+            <p className="text-sm text-danger">{loadError}</p>
           ) : sortedLockers.length === 0 ? (
             <p className="text-sm text-muted-foreground">No lockers created yet.</p>
           ) : (
