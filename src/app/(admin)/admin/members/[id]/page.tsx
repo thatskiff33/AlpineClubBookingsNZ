@@ -874,8 +874,6 @@ export default function MemberDetailPage({
           </div>
         )}
 
-      {actorIsFullAdmin && <SubjectAccessReport memberId={member.id} />}
-
       <MemberSummaryStrip
         member={member}
         membershipLabel={currentSeasonTypeName ?? "None"}
@@ -1182,6 +1180,9 @@ export default function MemberDetailPage({
                   Merge a duplicate into this member
                 </Button>
               </div>
+            )}
+            {actorIsFullAdmin && (
+              <SubjectAccessReport className={embeddedCardClassName} memberId={member.id} />
             )}
           </div>
         </MemberGroupCard>

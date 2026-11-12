@@ -413,6 +413,8 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/members/import": "membership",
   "/api/admin/members/send-password-reset": "membership",
   "/api/admin/members/send-setup-invite": "membership",
+  "/api/admin/members/subject-access": "membership",
+  "/api/admin/members/subject-access/guests": "membership",
   "/api/admin/membership-cancellation-requests": "membership",
   "/api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]":
     "membership",
