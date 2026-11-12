@@ -460,9 +460,13 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     ]) {
       const source = readFileSync(resolve(REPO_ROOT, door), "utf8");
       expect(source, door).toContain("await applyPaymentAdjustments(tx,");
-      expect(source, door).toMatch(/await reserveOrganiserChildModificationRefund\(tx, \{\s+plan: \w+\.organiserChildRefund,/);
+      // #4992: the child's debt and the member's own card debt are written by one
+      // helper, in the edit's transaction.
+      expect(source, door).toMatch(/await reserveModificationRefundDebts\(tx, \{[^}]*\splan: \w+\.organiserChildRefund,/);
       expect(source, door).toMatch(/organiserChildRefund: \w+\.organiserChildRefund,/);
     }
+    const helper = readFileSync(resolve(REPO_ROOT, "src/lib/booking-modification-settlement.ts"), "utf8");
+    expect(helper).toMatch(/export async function reserveModificationRefundDebts\([\s\S]*?\{\s+await reserveOrganiserChildModificationRefund\(tx, args\);/);
   });
 });
 

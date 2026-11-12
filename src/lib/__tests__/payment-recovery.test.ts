@@ -1907,7 +1907,7 @@ describe("payment recovery worker", () => {
 
   // Mutation proof: dropping the door's allocationPlan made this refund 10000, not 8000 cents.
   it("replays the edit's same Stripe key after recording fails and the webhook records it (#3984)", async () => {
-    const { executeBookingModificationRefund } = await import("@/lib/booking-modification-settlement");
+    const { executeBookingModificationRefund, reserveModificationRefundDebts } = await import("@/lib/booking-modification-settlement");
     const { PartialRefundError } = await import("@/lib/payment-transactions");
     const { refundSliceStripeIdempotencyKey } = await import("@/lib/payment-recovery-keys");
     const slice = { paymentTransactionId: "txn-1", amountCents: 8000 };
@@ -1930,11 +1930,16 @@ describe("payment recovery worker", () => {
       return { refunds: [{ refundId: refund.id, paymentIntentId: "pi_original", amountCents: refund.amount, status: refund.status, slice: sent }] };
     });
 
-    const outcome = await executeBookingModificationRefund({ format: CLUB_FORMAT_TEST, bookingId: "booking-1",
-      result: { pendingRefundAmountCents: 8000, paymentId: "payment-1", bookingModificationId: "mod-1", organiserChildRefund: null } as never,
-      idempotencyKeyPrefix: "mod_dates_refund_booking-1", failureMessage: "refund failed", recoveryFailureMessage: "enqueue failed" });
-    expect(outcome.refundDestination).toBe("own_card_pending");
+    // #4992: the edit's transaction writes the row with its frozen plan before the attempt.
+    const { prisma } = await import("@/lib/prisma");
+    const ownCardRefund = await reserveModificationRefundDebts(prisma as never, { door: "dateChange", pendingRefundAmountCents: 8000,
+      plan: null, bookingId: "booking-1", payment: { id: "payment-1" } as never, bookingModificationId: "mod-1" });
     const data = mockPaymentRecoveryCreateMany.mock.calls[0][0].data[0];
+    const outcome = await executeBookingModificationRefund({ format: CLUB_FORMAT_TEST, bookingId: "booking-1",
+      result: { pendingRefundAmountCents: 8000, paymentId: "payment-1", bookingModificationId: "mod-1", organiserChildRefund: null, ownCardRefund } as never,
+      door: "dateChange", failureMessage: "refund failed" });
+    expect(outcome.refundDestination).toBe("own_card_pending");
+    expect(mockPaymentRecoveryCreateMany).toHaveBeenCalledTimes(1);
 
     // charge.refunded has now recorded the $80; only $20 headroom remains.
     transaction.refundedAmountCents = 8000;

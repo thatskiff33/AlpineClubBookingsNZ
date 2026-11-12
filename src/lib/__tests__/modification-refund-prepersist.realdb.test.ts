@@ -12,6 +12,11 @@ import { declareEnvironmentRoleForSuite } from "./helpers/environment-role";
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { releaseBookingFinancialHistoryForTeardown } from "./support/booking-financial-history-teardown";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
+import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
+
+vi.mock("@/lib/stripe", async (importOriginal) =>
+  (await import("./support/stripe-race-double")).stripeRaceDouble(await importOriginal()),
+);
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -128,7 +133,7 @@ function remove(settlementMethod?: "card" | "credit", consentAuthority?: {
   kind: "CONSENT_DECLINE" | "CONSENT_EXPIRY"; guestId: string; targetMemberId: string;
 }) {
   return prisma.$transaction((tx) => removal.removeBookingGuestInTransaction({
-    tx, door: "guestRemoval", bookingId: BOOKING, guestId: LEAVING, actorMemberId: OFFICER, actorRole: "ADMIN",
+    tx, bookingId: BOOKING, guestId: LEAVING, actorMemberId: OFFICER, actorRole: "ADMIN",
     today: TODAY, format: CLUB_FORMAT_TEST, journal: JOURNAL, settlementMethod, consentAuthority,
   }), { maxWait: 10_000, timeout: 20_000 });
 }
@@ -173,7 +178,10 @@ function remove(settlementMethod?: "card" | "credit", consentAuthority?: {
     } });
   }, 120_000);
 
-  beforeEach(clean);
+  beforeEach(async () => {
+    resetStripeRaceHooks();
+    await clean();
+  });
 
   afterAll(async () => {
     try {
@@ -187,6 +195,7 @@ function remove(settlementMethod?: "card" | "credit", consentAuthority?: {
       await prisma.memberAccessRole.deleteMany({ where: { memberId: OFFICER } });
       await prisma.member.deleteMany({ where: { id: { in: [OWNER, OFFICER, GUEST_MEMBER] } } });
     } finally {
+      resetStripeRaceHooks();
       restoreInline?.();
       role?.restore();
     }
@@ -200,6 +209,36 @@ function remove(settlementMethod?: "card" | "credit", consentAuthority?: {
     })).rejects.toBe(CRASH);
     expect((await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING } })).finalPriceCents).toBe(10_000);
     await debt("mod_dates_refund");
+  });
+
+  it("the runner replays the crashed edit's frozen plan once, under the inline attempt's keys and reason", async () => {
+    await seed();
+    await expect(dates.modifyBookingDates({
+      bookingId: BOOKING, actor: { id: OFFICER, role: Role.ADMIN },
+      input: { checkIn: "2026-09-01", checkOut: "2026-09-02", settlementMethod: "card" }, ipAddress: "127.0.0.1",
+    })).rejects.toBe(CRASH);
+    const row = await debt("mod_dates_refund");
+    const sent: Array<{ key: string | undefined; intent: string; cents: number; reason: string | undefined }> = [];
+    stripeRaceHooks.refund = async (args) => {
+      sent.push({ key: args.idempotencyKey, intent: args.paymentIntentId, cents: args.amountCents, reason: args.metadata?.reason });
+      return {
+        id: `re_race_4992_${sent.length}`, object: "refund", amount: args.amountCents, currency: "nzd", status: "succeeded",
+        created: Math.floor(TODAY.getTime() / 1000), charge: `ch_race_4992_${sent.length}`, payment_intent: args.paymentIntentId,
+        metadata: args.metadata ?? {},
+      };
+    };
+    const { processPaymentRecoveryOperations } = await import("@/lib/payment-recovery");
+    await processPaymentRecoveryOperations({ limit: 50 });
+    const reason = keys.bookingModificationRefundReasonForKeyPrefix(row.stripeKeyPrefix);
+    expect(reason).toBe("date_change_price_decrease");
+    expect(sent).toEqual([
+      { key: keys.refundSliceStripeIdempotencyKey(row.stripeKeyPrefix!, { paymentTransactionId: ADDITIONAL, amountCents: 6_000 }), intent: "pi_race_4992_additional", cents: 6_000, reason },
+      { key: keys.refundSliceStripeIdempotencyKey(row.stripeKeyPrefix!, { paymentTransactionId: PRIMARY, amountCents: 4_000 }), intent: "pi_race_4992_primary", cents: 4_000, reason },
+    ]);
+    expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({ status: "SUCCEEDED" });
+
+    await processPaymentRecoveryOperations({ limit: 50 });
+    expect(sent).toHaveLength(2);
   });
 
   it("standalone batch commits its frozen debt before the inline refund entry", async () => {
@@ -227,7 +266,8 @@ function remove(settlementMethod?: "card" | "credit", consentAuthority?: {
 
   it("guest acceptance re-price commits its frozen debt in the consent transaction", async () => {
     await seed();
-    // The accepted guest now qualifies for the booking's existing $100 code.
+    // The accepted guest is now a member on the booking's existing code, so the
+    // re-price lowers the settled $200 price to nothing.
     await prisma.bookingGuest.update({ where: { id: LEAVING }, data: { memberId: GUEST_MEMBER, isMember: true, consentStatus: "CONFIRMED" } });
     await prisma.promoCode.create({ data: { id: PROMO, code: "RACE4992", type: "FIXED_AMOUNT", valueCents: 10_000 } });
     await prisma.promoRedemption.create({ data: { promoCodeId: PROMO, bookingId: BOOKING, memberId: OWNER, discountCents: 0, guestTargets: { create: { bookingId: BOOKING, bookingGuestId: LEAVING } } } });
@@ -240,8 +280,8 @@ function remove(settlementMethod?: "card" | "credit", consentAuthority?: {
         todayAtClub: clubTime.requireCalendarDate("2026-07-01"), format: CLUB_FORMAT_TEST, journal: JOURNAL,
       });
     }, { timeout: 20_000 });
-    expect(result).toMatchObject({ repriced: true, pendingRefundAmountCents: 10_000 });
-    await debt("guest_accept_refund");
+    expect(result).toMatchObject({ repriced: true, pendingRefundAmountCents: 20_000 });
+    await debt("guest_accept_refund", 20_000);
   });
 
   it("caller rollback after the batch reserve rolls the debt and edit back together", async () => {
