@@ -687,6 +687,11 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
       // that answer rather than switching a target install to treasurer approval.
       lateCaptureRefundNeedsApproval:
         DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
+      // #4932: the three booking timings export their shipped defaults.
+      preArrivalReminderDays: DEFAULT_BOOKING_DEFAULTS.preArrivalReminderDays,
+      additionalPaymentReminderDays:
+        DEFAULT_BOOKING_DEFAULTS.additionalPaymentReminderDays,
+      policyExceptionHoldDays: DEFAULT_BOOKING_DEFAULTS.policyExceptionHoldDays,
     });
     expect(readJson(files, "booking-request-settings")).toEqual({
       ...DEFAULT_BOOKING_REQUEST_SETTINGS,
@@ -1540,6 +1545,34 @@ describe("#2200 singleton dry-run validation (bounds, required, enum)", () => {
     expect(plan.errors.join(" ")).toMatch(
       /nonMemberHoldDays — .*out of range.*1–365/,
     );
+  });
+
+  // #4932: the three booking timings carry the admin form's 1–30 bound.
+  it("rejects a booking timing outside the admin 1–30 range, and accepts one inside it", async () => {
+    for (const field of [
+      "preArrivalReminderDays",
+      "additionalPaymentReminderDays",
+      "policyExceptionHoldDays",
+    ]) {
+      for (const bad of [0, 31]) {
+        const zip = singletonBundle("booking-defaults", {
+          nonMemberHoldEnabled: true,
+          nonMemberHoldDays: 7,
+          waitlistCrossLodgeOrder: "OWN_LODGE_FIRST",
+          [field]: bad,
+        });
+        const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
+        expect(plan.errors.join(" ")).toMatch(new RegExp(`${field} — .*out of range.*1–30`));
+      }
+      const zip = singletonBundle("booking-defaults", {
+        nonMemberHoldEnabled: true,
+        nonMemberHoldDays: 7,
+        waitlistCrossLodgeOrder: "OWN_LODGE_FIRST",
+        [field]: 14,
+      });
+      const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
+      expect(plan.errors).toEqual([]);
+    }
   });
 });
 

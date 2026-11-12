@@ -3915,6 +3915,17 @@ model BookingDefaults {
   // refunds it from the finance queue or keeps it.
   // Club-wide, because it is how the club handles money, not a lodge's policy.
   lateCaptureRefundNeedsApproval Boolean @default(false)
+  // #4932 (`INV-CONFIG-001`): three timings a club may set, each defaulting to
+  // the value it had as a constant, and each CHECKed to 1-30 days by the
+  // migration. Club-wide, like the hold above. They must agree with
+  // DEFAULT_BOOKING_DEFAULTS (src/config/club-settings-defaults.ts).
+  // Days before check-in the pre-arrival reminder goes out.
+  preArrivalReminderDays        Int @default(3)
+  // Days after an extra amount is raised before the first reminder to pay it.
+  additionalPaymentReminderDays Int @default(3)
+  // Days a policy-exception request holds its beds. Read only when a request is
+  // raised: its deadline is stamped then and never moves (INV-EXCEPT).
+  policyExceptionHoldDays       Int @default(7)
   // Soft link for the phase-7 singleton-to-per-lodge conversion
   // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
   lodgeId                 String?

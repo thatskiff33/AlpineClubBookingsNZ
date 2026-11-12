@@ -40,7 +40,10 @@
  * `DEFAULT_MEMBER_FIELDS_SETTINGS` (`src/config/member-fields.ts`).
  */
 
-/** `BookingDefaults` — read by `getNonMemberHoldPolicy` and `getWaitlistCrossLodgeOrder`. */
+/**
+ * `BookingDefaults` — read by `getNonMemberHoldPolicy`, `getWaitlistCrossLodgeOrder`
+ * and `getBookingTimingSettings`.
+ */
 export const DEFAULT_BOOKING_DEFAULTS = {
   nonMemberHoldEnabled: true,
   nonMemberHoldDays: 7,
@@ -57,7 +60,25 @@ export const DEFAULT_BOOKING_DEFAULTS = {
   // existed. Must agree with the schema default on
   // `BookingDefaults.lateCaptureRefundNeedsApproval`.
   lateCaptureRefundNeedsApproval: false,
+  // #4932 (`INV-CONFIG-001`): three timings a club may answer differently. Each
+  // is today's value, so an upgrade moves nothing. Each must agree with its
+  // schema default on `BookingDefaults`, which a test asserts.
+  /** Days before check-in the pre-arrival reminder goes out. */
+  preArrivalReminderDays: 3,
+  /** Days after an extra amount is raised before the first reminder to pay it. */
+  additionalPaymentReminderDays: 3,
+  /** Days a policy-exception request keeps the beds it holds (stamped at creation). */
+  policyExceptionHoldDays: 7,
 } as const;
+
+/**
+ * Inclusive bounds, in days, for the three `BookingDefaults` timings above
+ * (#4932). The admin route, the config-transfer dry-run and the database CHECK
+ * constraints all enforce these two numbers. The floor of 1 keeps a hold at
+ * least as long as `POLICY_EXCEPTION_HOLD_MIN_TTL_HOURS` (24 hours).
+ */
+export const BOOKING_TIMING_DAYS_MIN = 1;
+export const BOOKING_TIMING_DAYS_MAX = 30;
 
 /** `BedAllocationSettings` — read by `resolveAutoAllocationEnabled` and the admin surface. */
 export const BED_ALLOCATION_PRIORITY_VOCABULARY = [

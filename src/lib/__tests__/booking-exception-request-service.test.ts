@@ -10,6 +10,8 @@ import {
 import { mapExceptionRequestError } from "@/lib/booking-exception-request-http";
 
 const mocks = vi.hoisted(() => ({
+  // #4932: no saved BookingDefaults row unless a test says otherwise.
+  bookingDefaultsFindUnique: vi.fn<(...a: unknown[]) => Promise<unknown>>(async () => null),
   nbCreate: vi.fn(),
   nbUpdateMany: vi.fn(),
   nbFindMany: vi.fn(),
@@ -142,6 +144,9 @@ vi.mock("@/lib/prisma", () => {
       },
       member: {
         findMany: () => mocks.memberFindMany(),
+      },
+      bookingDefaults: {
+        findUnique: (...a: unknown[]) => mocks.bookingDefaultsFindUnique(...a),
       },
       $transaction: (fn: (t: typeof tx) => unknown) => fn(tx),
     },
@@ -1051,6 +1056,47 @@ describe("createModificationExceptionRequest", () => {
     const holdExpiresAt = mocks.bcrCreate.mock.calls[0][0].data.holdExpiresAt;
     expect(holdExpiresAt).toBeInstanceOf(Date);
     expect((holdExpiresAt as Date).toISOString()).toBe("2026-07-03T12:00:00.000Z");
+  });
+
+  it("#4932: the hold lasts the club's own number of days, read when the request is raised", async () => {
+    const proposed = {
+      checkIn: "2026-08-04",
+      checkOut: "2026-08-05",
+      guests: [
+        { firstName: "Ada", lastName: "Lovelace", ageTier: "ADULT", isMember: true, memberId: "m1", nights: ["2026-08-04"] },
+        { firstName: "Grace", lastName: "Hopper", ageTier: "ADULT", isMember: false, memberId: null, nights: ["2026-08-04"] },
+      ],
+    };
+    const raise = () =>
+      createModificationExceptionRequest({
+        bookingOwnerMemberId: null,
+        requestedByMemberId: "m1",
+        bookingId: "booking-1",
+        lodgeId: "lodge_1",
+        base,
+        proposed,
+        memberMessage: "please allow",
+        requestedSummary: "add Grace",
+        delta: { checkOut: "2026-08-05" },
+        baseHoldsCapacity: true,
+      });
+
+    // No saved row: the shipped default, seven days from the frozen clock.
+    await raise();
+    expect((mocks.bcrCreate.mock.calls[0][0].data.holdExpiresAt as Date).toISOString()).toBe(
+      "2026-07-08T00:00:00.000Z",
+    );
+
+    // A club that holds beds for two days.
+    mocks.bookingDefaultsFindUnique.mockResolvedValueOnce({
+      preArrivalReminderDays: 3,
+      additionalPaymentReminderDays: 3,
+      policyExceptionHoldDays: 2,
+    });
+    await raise();
+    expect((mocks.bcrCreate.mock.calls[1][0].data.holdExpiresAt as Date).toISOString()).toBe(
+      "2026-07-03T00:00:00.000Z",
+    );
   });
 
   it("supersede RELEASES the prior request's hold before reserving the replacement", async () => {

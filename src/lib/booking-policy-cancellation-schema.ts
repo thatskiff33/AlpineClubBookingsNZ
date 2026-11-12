@@ -1,6 +1,10 @@
 import type { BookingDefaults } from "@prisma/client"
 import { z } from "zod"
-import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults"
+import {
+  BOOKING_TIMING_DAYS_MAX,
+  BOOKING_TIMING_DAYS_MIN,
+  DEFAULT_BOOKING_DEFAULTS,
+} from "@/config/club-settings-defaults"
 
 /**
  * The Cancellation policy page's request shape and its club-wide defaults echo,
@@ -13,7 +17,12 @@ const CLUB_WIDE_ONLY_FIELDS = [
   ["waitlistCrossLodgeOrder", "Waitlist queue order is club-wide and cannot be set per lodge"],
   ["linkedMoveChargesBothChangeFees", "The linked-move change-fee setting is club-wide and cannot be set per lodge"],
   ["lateCaptureRefundNeedsApproval", "The late-payment refund setting is club-wide and cannot be set per lodge"],
+  ["preArrivalReminderDays", "The pre-arrival reminder lead is club-wide and cannot be set per lodge"],
+  ["additionalPaymentReminderDays", "The additional-payment reminder delay is club-wide and cannot be set per lodge"],
+  ["policyExceptionHoldDays", "The policy-exception hold length is club-wide and cannot be set per lodge"],
 ] as const
+
+const bookingTimingDays = z.number().int().min(BOOKING_TIMING_DAYS_MIN).max(BOOKING_TIMING_DAYS_MAX)
 
 export const policySchema = z
   .object({
@@ -43,6 +52,11 @@ export const policySchema = z
     // #3639 delta D3: the value the page loaded, so a save against a value that
     // has since changed is refused rather than silently reverting it.
     lateCaptureRefundNeedsApprovalLoaded: z.boolean().optional(),
+    // #4932: the club's three booking timings, in days. Club-wide: they are the
+    // club's answers about how it treats its members, not a lodge's.
+    preArrivalReminderDays: bookingTimingDays.optional(),
+    additionalPaymentReminderDays: bookingTimingDays.optional(),
+    policyExceptionHoldDays: bookingTimingDays.optional(),
     // Per-lodge override partition (ADR-001 resolved question 3). Omitted =
     // the club-wide (null lodgeId) rules. A lodge's rows REPLACE the
     // club-wide set at runtime; an empty rules array for a lodge removes the
@@ -81,5 +95,12 @@ export function clubWideDefaults(defaults: Partial<BookingDefaults> | null) {
     lateCaptureRefundNeedsApproval:
       defaults?.lateCaptureRefundNeedsApproval ??
       DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
+    preArrivalReminderDays:
+      defaults?.preArrivalReminderDays ?? DEFAULT_BOOKING_DEFAULTS.preArrivalReminderDays,
+    additionalPaymentReminderDays:
+      defaults?.additionalPaymentReminderDays ??
+      DEFAULT_BOOKING_DEFAULTS.additionalPaymentReminderDays,
+    policyExceptionHoldDays:
+      defaults?.policyExceptionHoldDays ?? DEFAULT_BOOKING_DEFAULTS.policyExceptionHoldDays,
   }
 }

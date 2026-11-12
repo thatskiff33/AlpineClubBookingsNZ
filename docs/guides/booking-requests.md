@@ -37,6 +37,13 @@ silenced booking a **reject** emails the member nothing at all: the cancellation
 notice that normally always goes out is withheld too, and the withheld messages
 are listed on the booking for you to relay.
 
+The club can set the policy-exception hold length under **Booking Policies →
+Cancellation → Reminder and hold timings** (1–30 days, default 7). Changing it
+applies to new requests only: an existing hold keeps its stamped deadline.
+The same section controls arrival reminder lead time and the first reminder
+for an extra payment (both default to 3 days). Changes are staged with Edit,
+then Save or Cancel.
+
 ## When you'd use it
 
 - A booking is held for review and a member is waiting to hear if it is

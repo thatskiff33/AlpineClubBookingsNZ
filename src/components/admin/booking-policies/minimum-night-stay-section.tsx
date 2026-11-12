@@ -247,9 +247,9 @@ function MinStayForm({
             This applies when a booking needs an approved exception to this
             minimum-stay rule. New policies have no automatic choice. A hold is
             not open-ended: it lasts until the request is decided or its deadline
-            passes — 7 days after it is raised, never past the start of the first
-            night held, and never less than 24 hours — after which the beds return
-            to the pool and the request is marked Expired.
+            passes — the club&apos;s hold length (Cancellation policy page) after it
+            is raised, never past the first night held, never under 24 hours —
+            after which the beds return to the pool and the request is Expired.
           </FieldHint>
         </div>
 
@@ -843,7 +843,7 @@ export function MinimumNightStaySection() {
                         </div>
                         <p className="mt-2 text-sm text-muted-foreground">
                           {policy.capacityMode === "HOLD"
-                            ? "Exception requests hold the requested capacity while they wait, until they are decided or the hold expires (7 days, and never past the first night held)."
+                            ? "Exception requests hold the requested capacity while they wait, until they are decided or the hold expires (the club's hold length, never past the first night held)."
                             : "Exception requests do not hold capacity until approval."}{" "}
                           Revision {policy.version}.
                         </p>

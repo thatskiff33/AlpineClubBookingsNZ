@@ -604,9 +604,9 @@ export function AdultMemberHostingSection() {
                   requirement is off today — it is what the club will fall back
                   on the moment it is turned on. A hold is not open-ended: it
                   lasts until the request is decided or its deadline passes —
-                  7 days after it is raised, never past the start of the first
-                  night held, and never less than 24 hours — after which the beds
-                  return to the pool and the request is marked Expired.
+                  the club&apos;s hold length (Cancellation policy page) after it
+                  is raised, never past the first night held, never under 24
+                  hours — after which the beds return to the pool, marked Expired.
                 </FieldHint>
               </div>
 
