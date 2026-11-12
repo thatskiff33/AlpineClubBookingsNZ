@@ -29,10 +29,9 @@ test.skip(
 );
 test.describe.configure({ mode: "serial" });
 
-// Private login buckets for E2E_ADMIN, the most shared login in the suite
+// A private login bucket for E2E_ADMIN, the most shared login in the suite
 // (see submitLoginForm). Outside syntheticClientIp's 10.99.0.0/16.
 const ADMIN_GRANT_IP = "10.48.14.1";
-const ADMIN_PREVIEW_IP = "10.48.14.2";
 
 /** A redirect's target, resolved against any origin, for comparison by part. */
 function target(location: string): URL {
@@ -213,44 +212,12 @@ test.describe("the role menu", () => {
   });
 });
 
-test("Preview as role is view-only, and Exit restores editing", async ({ browser }) => {
-  test.setTimeout(120_000);
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  await loginPersona(page, E2E_ADMIN.email, ADMIN_PREVIEW_IP);
-  const identity = page.getByRole("region", { name: "Club identity" });
-  const edit = identity.getByRole("button", { name: "Edit", exact: true });
-
-  try {
-    // The preview cookie is set on this context, as the bar's picker sets it.
-    const start = await page.request.post("/api/admin/preview-role", {
-      data: { roleToken: "ADMIN_CONTENT" },
-    });
-    expect(start.ok(), `start preview (${start.status()})`).toBeTruthy();
-
-    await page.goto(adminHref("club-identity"));
-    await expect(page.getByText(/Previewing as Content Manager/)).toBeVisible();
-    await expect(edit).toBeDisabled();
-
-    // A save sent anyway is refused while previewing, before its body is read.
-    const write = await page.evaluate(async () => {
-      const res = await fetch("/api/admin/club-identity", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      return { status: res.status, body: await res.text() };
-    });
-    expect(write.status, `write response: ${write.body}`).toBe(403);
-
-    await page.getByRole("button", { name: "Exit", exact: true }).click();
-    await expect(page.getByText(/Previewing as/)).toHaveCount(0);
-    await expect(edit).toBeEnabled();
-  } finally {
-    await page.request.delete("/api/admin/preview-role");
-    await context.close();
-  }
-});
+// Preview as role (C15 #4812) has not been built: there is no preview control,
+// banner or route to drive yet. The spec is written with C15, against the
+// accessible names it renders: start preview as Content Manager, open
+// adminHref("club-identity"), a PUT to /api/admin/club-identity is refused,
+// the Edit button is view-only, and Exit restores it.
+test.fixme("Preview as role is view-only, and Exit restores editing", () => {});
 
 test.describe("the command palette", () => {
   async function openPalette(page: Page) {
