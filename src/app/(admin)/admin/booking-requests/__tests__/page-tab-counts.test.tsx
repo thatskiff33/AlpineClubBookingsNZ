@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // #4969: every tab shows its pending count, from the one payload the sidebar
@@ -29,9 +30,11 @@ const nav = vi.hoisted(() => {
 
 // A router whose `replace` really moves the URL, so a test sees the tab the
 // page lands on rather than only the call it made.
-const replace = vi.fn((href: string) => {
-  nav.setQuery(href.split("?")[1] ?? "");
-});
+const replace = vi.fn<(href: string, options?: { scroll?: boolean }) => void>(
+  (href) => {
+    nav.setQuery(href.split("?")[1] ?? "");
+  },
+);
 const push = vi.fn();
 const router = { replace, push, refresh: vi.fn() };
 
@@ -66,26 +69,36 @@ vi.mock("next-auth/react", () => ({
   }),
 }));
 
+// Like the real panels, each one writes its own tab into the URL as soon as it
+// mounts (its canonical address). The Approvals panel therefore turns a bare
+// link into `?tab=approvals` before the counts arrive — the landing tab must
+// still be chosen.
+const panel = vi.hoisted(() => (tab: string, testId: string) =>
+  function Panel() {
+    useEffect(() => {
+      const params = new URLSearchParams(nav.query);
+      params.set("tab", tab);
+      router.replace(`/admin/booking-requests?${params.toString()}`, {
+        scroll: false,
+      });
+    }, []);
+    return <div data-testid={testId} />;
+  },
+);
 vi.mock("@/components/admin/booking-requests/booking-approvals-panel", () => ({
-  BookingApprovalsPanel: () => <div data-testid="approvals-panel" />,
+  BookingApprovalsPanel: panel("approvals", "approvals-panel"),
 }));
 vi.mock(
   "@/components/admin/booking-requests/booking-change-requests-panel",
-  () => ({
-    BookingChangeRequestsPanel: () => <div data-testid="changes-panel" />,
-  }),
+  () => ({ BookingChangeRequestsPanel: panel("changes", "changes-panel") }),
 );
 vi.mock(
   "@/components/admin/booking-requests/policy-exception-requests-panel",
-  () => ({
-    PolicyExceptionRequestsPanel: () => <div data-testid="exceptions-panel" />,
-  }),
+  () => ({ PolicyExceptionRequestsPanel: panel("exceptions", "exceptions-panel") }),
 );
 vi.mock(
   "@/components/admin/booking-requests/public-booking-requests-panel",
-  () => ({
-    PublicBookingRequestsPanel: () => <div data-testid="public-panel" />,
-  }),
+  () => ({ PublicBookingRequestsPanel: panel("public", "public-panel") }),
 );
 
 import BookingRequestsPage from "@/app/(admin)/admin/booking-requests/page";
@@ -153,8 +166,9 @@ describe("BookingRequestsPage tab counts and landing tab (#4969)", () => {
       .getAllByRole("tab")
       .reduce((sum, trigger) => sum + Number(trigger.textContent?.match(/\d+$/)?.[0] ?? 0), 0);
     expect(badgeSum).toBe(totalBookingRequestsPending(counts));
-    // Approvals has work, so the bare URL stays where it is.
-    expect(replace).not.toHaveBeenCalled();
+    // Approvals has work, so the bare URL stays there.
+    await countsLoaded();
+    expect(nav.query).toBe("tab=approvals");
     expect(tab(/^Approvals/)).toHaveAttribute("aria-selected", "true");
   });
 
@@ -166,7 +180,7 @@ describe("BookingRequestsPage tab counts and landing tab (#4969)", () => {
       expect(tab(/^Changes/)).toHaveAttribute("aria-selected", "true"),
     );
     expect(screen.getByTestId("changes-panel")).toBeInTheDocument();
-    expect(replace).toHaveBeenCalledTimes(1);
+    expect(nav.query).toBe("tab=changes");
     expect(replace).toHaveBeenCalledWith("/admin/booking-requests?tab=changes", {
       scroll: false,
     });
@@ -189,11 +203,10 @@ describe("BookingRequestsPage tab counts and landing tab (#4969)", () => {
     serveCounts({ publicBookingRequests: 1 });
     render(<BookingRequestsPage />);
 
-    await waitFor(() => expect(replace).toHaveBeenCalledTimes(1));
-    expect(replace).toHaveBeenCalledWith(
-      "/admin/booking-requests?from=dashboard&tab=public",
-      { scroll: false },
+    await waitFor(() =>
+      expect(tab(/^Public Requests/)).toHaveAttribute("aria-selected", "true"),
     );
+    expect(nav.query).toBe("from=dashboard&tab=public");
   });
 
   it("never overrides an explicit ?tab=", async () => {
@@ -203,30 +216,65 @@ describe("BookingRequestsPage tab counts and landing tab (#4969)", () => {
 
     await waitFor(() => expect(tab(/^Changes/)).toHaveTextContent("Changes3"));
     await countsLoaded();
-    expect(replace).not.toHaveBeenCalled();
+    expect(nav.query).toBe("tab=public");
     expect(tab(/^Public Requests/)).toHaveAttribute("aria-selected", "true");
   });
 
-  it.each(["bookingId=b1", "requestId=r1", "status=REQUESTED"])(
-    "leaves a link carrying %s where it points",
-    async (query) => {
-    nav.setQuery(query);
+  it("never overrides an explicit ?tab=approvals", async () => {
+    nav.setQuery("tab=approvals");
     serveCounts({ lockedPeriodChangeRequests: 3 });
     render(<BookingRequestsPage />);
 
     await waitFor(() => expect(tab(/^Changes/)).toHaveTextContent("Changes3"));
     await countsLoaded();
-    expect(replace).not.toHaveBeenCalled();
+    expect(nav.query).toBe("tab=approvals");
     expect(tab(/^Approvals/)).toHaveAttribute("aria-selected", "true");
+  });
+
+  it.each(["bookingId=b1", "requestId=r1", "status=REQUESTED"])(
+    "leaves a link carrying %s where it points",
+    async (query) => {
+      nav.setQuery(query);
+      serveCounts({ lockedPeriodChangeRequests: 3 });
+      render(<BookingRequestsPage />);
+
+      await waitFor(() => expect(tab(/^Changes/)).toHaveTextContent("Changes3"));
+      await countsLoaded();
+      expect(new URLSearchParams(nav.query).get("tab")).toBe("approvals");
+      expect(tab(/^Approvals/)).toHaveAttribute("aria-selected", "true");
     },
   );
+
+  it("keeps a tab the officer chose while the counts were loading", async () => {
+    let respond: (response: Response) => void = () => {};
+    fetchMock.mockReturnValue(
+      new Promise<Response>((resolve) => {
+        respond = resolve;
+      }),
+    );
+    render(<BookingRequestsPage />);
+    await waitFor(() => expect(nav.query).toBe("tab=approvals"));
+
+    fireEvent.mouseDown(tab(/^Changes/), { button: 0 });
+    await waitFor(() => expect(nav.query).toBe("tab=changes"));
+
+    await act(async () => {
+      respond(Response.json({ ...ZERO_COUNTS, publicBookingRequests: 2 }));
+    });
+    await waitFor(() =>
+      expect(tab(/^Public Requests/)).toHaveTextContent("Public Requests2"),
+    );
+    await countsLoaded();
+    expect(nav.query).toBe("tab=changes");
+    expect(tab(/^Changes/)).toHaveAttribute("aria-selected", "true");
+  });
 
   it("stays on Approvals with no badges when nothing is waiting", async () => {
     serveCounts({});
     render(<BookingRequestsPage />);
 
     await countsLoaded();
-    expect(replace).not.toHaveBeenCalled();
+    expect(nav.query).toBe("tab=approvals");
     expect(tab(/^Approvals/)).toHaveAttribute("aria-selected", "true");
     expect(tab(/^Approvals/)).toHaveTextContent(/^Approvals$/);
     expect(tab(/^Changes/)).toHaveTextContent(/^Changes$/);
@@ -240,7 +288,7 @@ describe("BookingRequestsPage tab counts and landing tab (#4969)", () => {
     render(<BookingRequestsPage />);
 
     await countsLoaded();
-    expect(replace).not.toHaveBeenCalled();
+    expect(nav.query).toBe("tab=approvals");
     expect(tab(/^Approvals/)).toHaveAttribute("aria-selected", "true");
     expect(screen.getByTestId("approvals-panel")).toBeInTheDocument();
     for (const name of [/^Approvals/, /^Changes/, /^Policy Exceptions/, /^Public Requests/]) {

@@ -64,6 +64,23 @@ function readPendingCounts(data: unknown): BookingRequestPendingCounts | null {
     : null;
 }
 
+/**
+ * Whether the URL already says where to open: a tab (other than `allowedTab`,
+ * the one a panel may have written for itself), a record, or a status filter.
+ */
+function hasLandingTarget(
+  searchParams: URLSearchParams,
+  allowedTab?: BookingRequestsTab,
+): boolean {
+  const tab = searchParams.get("tab");
+  return (
+    (tab !== null && tab !== allowedTab) ||
+    searchParams.has("bookingId") ||
+    searchParams.has("requestId") ||
+    searchParams.has("status")
+  );
+}
+
 function TabCountBadge({ count }: { count: number | undefined }) {
   if (!count || count <= 0) return null;
   return (
@@ -125,23 +142,24 @@ export default function BookingRequestsPage() {
   // A bare link to this page (the sidebar's, a bookmark) opens on the first
   // tab with work (#4969), so an officer who followed the sidebar badge never
   // lands on an empty Approvals while the work sits on another tab. Decided
-  // once per mount, when the counts arrive: an explicit ?tab= — including one
-  // the officer picked while the counts were loading — always wins, and so does
-  // a record deep link (bookingId/requestId) or a status filter, which belongs
-  // to the tab it was set on and means nothing on another. `replace`, not
-  // `push`, so Back still leaves the page in one step.
+  // once per mount, when the counts arrive, and only for a link that named no
+  // tab, record (bookingId/requestId) or status filter — a status filter
+  // belongs to the tab it was set on and means nothing on another.
+  //
+  // The link is judged as it was opened, not as it reads when the counts
+  // arrive: the Approvals panel mounts at once and writes `?tab=approvals`
+  // into the URL as its own canonical address, so the live URL never looks
+  // bare by then. What does block the move is the officer acting first —
+  // choosing a tab, or a filter or record on Approvals, while the counts load.
+  // `replace`, not `push`, so Back still leaves the page in one step.
+  const openedFromBareLink = useRef(!hasLandingTarget(searchParams));
+  const officerChoseTab = useRef(false);
   const landingTabDecided = useRef(false);
   useEffect(() => {
     if (landingTabDecided.current || tabCounts === null) return;
     landingTabDecided.current = true;
-    if (
-      searchParams.has("tab") ||
-      searchParams.has("bookingId") ||
-      searchParams.has("requestId") ||
-      searchParams.has("status")
-    ) {
-      return;
-    }
+    if (!openedFromBareLink.current || officerChoseTab.current) return;
+    if (hasLandingTarget(searchParams, "approvals")) return;
     const landingTab = firstBookingRequestsTabWithWork(tabCounts);
     if (landingTab === "approvals") return;
     const params = new URLSearchParams(searchParams.toString());
@@ -152,6 +170,7 @@ export default function BookingRequestsPage() {
   }, [tabCounts, searchParams, router]);
 
   function handleTabChange(value: string) {
+    officerChoseTab.current = true;
     const nextTab = parseBookingRequestsTab(value);
     const params = new URLSearchParams(searchParams.toString());
 
