@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Mail, CheckCircle, RotateCcw } from "lucide-react";
 import { useConfirm } from "@/components/confirm-dialog";
 import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
+import { Button } from "@/components/ui/button";
 import {
   ADMIN_VIEW_ONLY_ACTION_REASON,
   useAdminAreaEditAccess,
@@ -454,15 +455,17 @@ export function EmailDeliverabilitySection({
                     </span>
                     <div className="flex justify-self-end items-center gap-2">
                       {failure.recovery === "retry" ? (
-                        <button
+                        <Button
+                          variant="secondary"
+                          size="sm"
                           onClick={() => requeueEmailFailure(failure.id, failure.to)}
                           disabled={requeueingEmailFailureId === failure.id || !canEdit}
                           title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-muted hover:bg-accent rounded-md transition-colors disabled:opacity-50"
+                          className="h-7 gap-1.5 px-2.5"
                         >
                           <RotateCcw className="h-3.5 w-3.5" />
                           Try again
-                        </button>
+                        </Button>
                       ) : null}
                       <button
                         onClick={() => archiveEmailFailure(failure.id, failure.to)}

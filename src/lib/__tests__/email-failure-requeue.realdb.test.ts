@@ -33,7 +33,7 @@ const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 const { sendMail } = vi.hoisted(() => ({ sendMail: vi.fn() }));
 
 vi.mock("@/lib/environment-delivery-policy", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/environment-delivery-policy")>()),
+  ...((await importOriginal()) as typeof import("@/lib/environment-delivery-policy")),
   resolveDeliveryPolicy: vi.fn(async () => ({
     kind: "allow",
     grounds: "production",
@@ -41,7 +41,7 @@ vi.mock("@/lib/environment-delivery-policy", async (importOriginal) => ({
   })),
 }));
 vi.mock("@/lib/email/internal", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/email/internal")>()),
+  ...((await importOriginal()) as typeof import("@/lib/email/internal")),
   getEmailTransporter: vi.fn(async () => ({
     transporter: { sendMail },
     modeLabel: "race-4963 fake transport",
