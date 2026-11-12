@@ -1780,7 +1780,8 @@ did and never shows the pay buttons again, whether the confirmation resolved in
 the page or a redirect method returned the payer with `payment_intent` and
 `redirect_status` in the address (#4955): the `/pay` link its
 `checkCardSuccess`, the booking page and pay step `confirm-payment` (a
-`processing` intent asks `create-payment-intent`, which hands it back unpaid),
+`processing` intent, or a returned success it cannot vouch for, asks
+`create-payment-intent`, which settles a succeeded intent or hands it back),
 the additional payment `confirm-modification-payment` then its secret door,
 and the group settle its settle route. Each return URL names its surface
 (`stripe_return`), so a surface never checks another's intent.
