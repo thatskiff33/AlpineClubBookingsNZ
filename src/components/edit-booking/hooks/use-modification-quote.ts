@@ -98,7 +98,7 @@ export function useDebouncedModificationQuote({
    * `quoteError`. Must be stable (a `useCallback`), like the setters above.
    */
   onDependantIdentityRefusal?: (code: string) => void;
-}): void {
+}): () => void {
   const quoteTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // Monotonic id per quote request so a slow, superseded response can never
   // overwrite the quote for the user's latest edit.
@@ -227,4 +227,12 @@ export function useDebouncedModificationQuote({
     // stable identity, so the effect still re-runs on exactly the two things it
     // ever re-ran on.
   }, [fetchQuote, modificationPayloadJson, setQuote, setExceptionOfferState]);
+
+  // #4924 (`INV-MOD-062`): price the pending edit again NOW, for the save's
+  // `EDIT_PRICE_CHANGED` refusal — the payload did not change, so the debounce
+  // above would never re-run it. The sequence ref still drops a superseded answer.
+  return useCallback(() => {
+    if (quoteTimeoutRef.current) clearTimeout(quoteTimeoutRef.current);
+    if (modificationPayloadJson) void fetchQuote(modificationPayloadJson);
+  }, [fetchQuote, modificationPayloadJson]);
 }

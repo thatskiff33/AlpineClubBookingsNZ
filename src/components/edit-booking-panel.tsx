@@ -59,6 +59,11 @@ import {
   renamedGuestsForDependantCheck,
 } from "@/lib/booking-dependant-identity-doors";
 import { PriceSummaryCard } from "@/components/edit-booking/price-summary-card";
+import {
+  editPriceChangedMessage,
+  readEditPriceChangedFigures,
+} from "@/components/edit-booking/edit-price-changed";
+import { useClubFormat } from "@/components/club-format-provider";
 import { hasSeveralPromoCodes, PromoCodeCard } from "@/components/edit-booking/promo-code-card";
 import {
   FinishedStayPromoCorrectionCard,
@@ -241,6 +246,7 @@ export function EditBookingPanel({
   // Quote state. Declared before the payload builder because the builder reads
   // the current quote (through `desiredElectionCents`); the debounced fetch that
   // writes it is armed further down, once the payload exists.
+  const format = useClubFormat();
   const quoteState = useModificationQuoteState();
   const { quote, quoteLoading, quoteError } = quoteState;
   // Other Lodges epic: the reciprocal other-club rate election. Offered only when
@@ -799,7 +805,7 @@ export function EditBookingPanel({
       ? exceptionOfferState.offer
       : null;
 
-  useDebouncedModificationQuote({
+  const requote = useDebouncedModificationQuote({
     bookingId: booking.id,
     modificationPayloadJson,
     setQuote: quoteState.setQuote,
@@ -1313,6 +1319,13 @@ export function EditBookingPanel({
       const body = buildSavePayload(notifyMemberChoice);
       const refusedHostingProposalSignature =
         hostingCoverageMutationSignature(body);
+      // #4924 (`INV-MOD-062`): the figures the member is looking at, sent back
+      // unchanged so the save refuses rather than settle a different amount.
+      // Added after the signature, like the linked-move answers below: a
+      // re-priced preview is not a different proposal and must not retire an
+      // open prompt. No preview, no figures — the save then prices as before.
+      const previewedFigures = quote?.quotedFigures ?? null;
+      if (previewedFigures) body.quotedFigures = previewedFigures;
       if (overrideState) {
         body.hostingCoverageOverride = {
           acknowledged: true,
@@ -1356,6 +1369,14 @@ export function EditBookingPanel({
 
       const data = await res.json();
       if (!res.ok) {
+        // #4924: the price moved since the preview, so nothing was saved. Say
+        // what changed, keep the edit open and price it again.
+        const freshFigures = readEditPriceChangedFigures(data);
+        if (freshFigures) {
+          setSaveError(editPriceChangedMessage(previewedFigures, freshFigures, format));
+          requote();
+          return;
+        }
         // #3232, BEFORE the officer's override prompt: a linked-move offer is
         // raised for the BOOKING'S OWN MEMBER, admin or not, so it must not be
         // gated on `actingAsAdmin` the way the override prompt is. The two bodies
