@@ -633,6 +633,7 @@ export function PublicBookingRequestsPanel({
     setLoading,
     setRequests,
     setMemberChoosesPayment,
+    setPinnedRequest,
   ]);
 
   useEffect(() => {

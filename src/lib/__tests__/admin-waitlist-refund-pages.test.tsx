@@ -509,7 +509,7 @@ describe("Admin refund and credit review page", () => {
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
 
-      if (url === "/api/admin/refund-requests?status=APPROVED") {
+      if (url === "/api/admin/refund-requests?status=APPROVED&page=1") {
         return Promise.resolve({
           ok: true,
           json: async () => ({ data: [], page: 1, pageSize: 25, total: 0 }),
@@ -578,7 +578,7 @@ describe("Admin refund and credit review page", () => {
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
 
-      if (url === "/api/admin/refund-requests?status=PENDING") {
+      if (url === "/api/admin/refund-requests?status=PENDING&page=1") {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -691,7 +691,7 @@ describe("Admin refund and credit review page", () => {
     };
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/admin/refund-requests?status=PENDING") {
+      if (url === "/api/admin/refund-requests?status=PENDING&page=1") {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -819,7 +819,7 @@ describe("Admin refund and credit review page", () => {
 
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/admin/refund-requests?status=PENDING") {
+      if (url === "/api/admin/refund-requests?status=PENDING&page=1") {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -900,7 +900,7 @@ describe("Admin refund and credit review page", () => {
   function mockEditedPendingAppeal(appealCardRefundOwedCents = 0) {
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/admin/refund-requests?status=PENDING") {
+      if (url === "/api/admin/refund-requests?status=PENDING&page=1") {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -1039,7 +1039,7 @@ describe("Admin refund and credit review page", () => {
     for (const pending of [true, false]) {
       fetchMock.mockImplementation((input: RequestInfo | URL) => {
         const url = String(input);
-        if (url === "/api/admin/refund-requests?status=PENDING") {
+        if (url === "/api/admin/refund-requests?status=PENDING&page=1") {
           return Promise.resolve({
             ok: true,
             json: async () => ({ data: [waitingRequest(pending)], page: 1, pageSize: 25, total: 1 }),
@@ -1119,7 +1119,7 @@ describe("an approved appeal whose card refund is still partly owed (#4117)", ()
   function serve(status: string, rows: unknown[], put?: unknown) {
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === `/api/admin/refund-requests?status=${status}`) {
+      if (url === `/api/admin/refund-requests?status=${status}&page=1`) {
         return Promise.resolve({ ok: true, json: async () => ({ data: rows, page: 1, pageSize: 25, total: rows.length }) });
       }
       if (url === `/api/admin/credit-approvals?status=${status}`) {
@@ -1194,3 +1194,103 @@ describe("an approved appeal whose card refund is still partly owed (#4117)", ()
   });
 });
 
+
+/*
+  #4960 / INV-OPS-017: refund appeals are capped at 25 a page by their route.
+  The list asks for a page, shows the total, keeps the page in the URL, and
+  goes back to page 1 when the filter changes. Credit approvals stay unbounded.
+*/
+describe("refund appeal paging (#4960)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    global.fetch = fetchMock as typeof fetch;
+    mocks.currentSearch = "";
+    mocks.sessionUser = { id: "admin-2", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] };
+  });
+
+  const appeal = {
+    id: "refund-1",
+    bookingId: "booking-1",
+    memberId: "member-1",
+    reason: "Weather closure",
+    status: "PENDING",
+    requestedAmountCents: 2500,
+    adminNotes: null,
+    approvedAmountCents: null,
+    reviewedAt: null,
+    createdAt: "2026-06-01T00:00:00.000Z",
+    booking: {
+      id: "booking-1",
+      checkIn: "2026-08-01T00:00:00.000Z",
+      checkOut: "2026-08-03T00:00:00.000Z",
+      finalPriceCents: 10000,
+      status: "CANCELLED",
+      noEmails: false,
+      creditsFromCancellation: [],
+      appealCeilingCents: 10000,
+      payment: { status: "SUCCEEDED", amountCents: 10000, refundedAmountCents: 0, stripePaymentIntentId: "pi_1" },
+    },
+    member: { id: "member-1", firstName: "Jane", lastName: "Doe", email: "jane@example.com" },
+  };
+
+  function serveRefunds(total: number) {
+    const refundUrls: URL[] = [];
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/admin/refund-requests") {
+        refundUrls.push(url);
+        const page = Number(url.searchParams.get("page"));
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ data: [appeal], page, pageSize: 25, total, totalPages: Math.ceil(total / 25) }),
+        });
+      }
+      if (url.pathname === "/api/admin/credit-approvals") {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+    return refundUrls;
+  }
+
+  it("asks for a page, shows the total, steps pages and restarts on a filter change", async () => {
+    const refundUrls = serveRefunds(40);
+    render(<RefundRequestsPage />);
+
+    expect(await screen.findByText("Showing 1–25 of 40")).toBeInTheDocument();
+    expect(refundUrls[0].searchParams.get("page")).toBe("1");
+    // The badge counts every pending appeal, not the rows on this page.
+    expect(screen.getByText("40")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("Showing 26–40 of 40")).toBeInTheDocument();
+    expect(refundUrls.at(-1)!.searchParams.get("page")).toBe("2");
+    await waitFor(() =>
+      expect(mocks.routerReplace).toHaveBeenLastCalledWith("/admin/refund-requests?page=2", { scroll: false }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    expect(await screen.findByText("Showing 1–25 of 40")).toBeInTheDocument();
+    expect(refundUrls.at(-1)!.searchParams.get("page")).toBe("1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await screen.findByText("Showing 26–40 of 40");
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    await waitFor(() => expect(refundUrls.at(-1)!.searchParams.get("status")).toBe("ALL"));
+    expect(refundUrls.at(-1)!.searchParams.get("page")).toBe("1");
+  });
+
+  it("shows the total line when every appeal fits on one page", async () => {
+    serveRefunds(1);
+    render(<RefundRequestsPage />);
+    expect(await screen.findByText("Showing 1–1 of 1")).toBeInTheDocument();
+  });
+
+  it("opens on the page the URL names", async () => {
+    mocks.currentSearch = "page=2";
+    const refundUrls = serveRefunds(40);
+    render(<RefundRequestsPage />);
+    expect(await screen.findByText("Showing 26–40 of 40")).toBeInTheDocument();
+    expect(refundUrls[0].searchParams.get("page")).toBe("2");
+  });
+});

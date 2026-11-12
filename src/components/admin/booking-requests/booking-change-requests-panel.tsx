@@ -240,7 +240,7 @@ export function BookingChangeRequestsPanel({
     }
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.
-  }, [filter, page, receive, requestId, setError, setLoading, setRequests, setMemberGuestFind]);
+  }, [filter, page, receive, requestId, setError, setLoading, setRequests, setMemberGuestFind, setPinnedRequest]);
 
   useEffect(() => {
     fetchRequests();

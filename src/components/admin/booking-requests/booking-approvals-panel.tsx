@@ -218,7 +218,7 @@ export function BookingApprovalsPanel({
     }
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.
-  }, [filter, page, receive, focusedBookingId, setBookings, setError, setLoading]);
+  }, [filter, page, receive, focusedBookingId, setBookings, setError, setLoading, setPinnedBooking]);
 
   useEffect(() => {
     fetchBookings();
