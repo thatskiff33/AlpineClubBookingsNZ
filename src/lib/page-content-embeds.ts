@@ -8,6 +8,8 @@ import {
   resolveInImagesRoot,
 } from "@/lib/image-storage";
 import { getClubIdentity } from "@/lib/club-identity-settings";
+import { dataHostingSentence } from "@/lib/privacy-hosting";
+import { getPrivacyHostingSettings } from "@/lib/privacy-hosting-settings";
 import {
   getDefaultLodgeCapacity,
   getLodgeCapacity,
@@ -277,6 +279,12 @@ export async function resolveTextTokens(
   // DB-first club identity (E3 #1929): pre-resolve once (the replace callback is
   // synchronous) so {{club-name}}/{{hut-leader}} render the admin-editable values.
   const clubIdentity = await getClubIdentity();
+  // Read only when the page uses the token. Built raw and escaped once below.
+  const hostingDisclosure = matches.some(
+    (match) => (match[3] ?? "").toLowerCase() === "data-hosting",
+  )
+    ? dataHostingSentence(await getPrivacyHostingSettings())
+    : "";
 
   return contentHtml.replace(
     TEXT_TOKEN_REGEX,
@@ -301,6 +309,8 @@ export async function resolveTextTokens(
           );
           return escapeHtmlText(value?.address ?? "");
         }
+        case "data-hosting":
+          return escapeHtmlText(hostingDisclosure);
         case "club-name":
           return escapeHtmlText(clubIdentity.name);
         case "hut-leader":

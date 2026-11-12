@@ -16,6 +16,7 @@ import type {
   CredentialActor,
   CredentialRequestContext,
 } from "@/lib/integration-credential-actor";
+import { isIntegrationCredentialNamespace, type IntegrationCredentialNamespace } from "@/lib/integration-credential-namespaces";
 import { WeakAuthSecretError } from "@/lib/integration-crypto";
 import {
   credentialWriteResetsXeroTokens,
@@ -73,7 +74,7 @@ import { requireRecentAuth } from "@/lib/require-recent-auth";
  * arbitrary (provider, key) rows and keys the verify-reset behaviour. C4/C5/C6
  * extend this with their providers.
  */
-const WRITABLE_CREDENTIALS: Record<string, readonly string[]> = {
+const WRITABLE_CREDENTIALS: Partial<Record<IntegrationCredentialNamespace, readonly string[]>> = {
   [XERO_PROVIDER]: [
     XERO_CREDENTIAL_KEYS.clientId,
     XERO_CREDENTIAL_KEYS.clientSecret,
@@ -118,7 +119,7 @@ export async function GET(request: Request) {
   if (!guard.ok) return guard.response;
 
   const provider = new URL(request.url).searchParams.get("provider") ?? "";
-  const allowedKeys = WRITABLE_CREDENTIALS[provider];
+  const allowedKeys = isIntegrationCredentialNamespace(provider) ? WRITABLE_CREDENTIALS[provider] : undefined;
   if (!allowedKeys) {
     return NextResponse.json(
       { error: "Unknown provider." },
@@ -228,8 +229,8 @@ export async function POST(request: Request) {
   }
 
   const { provider, key, value, expectedBaseUrl } = parsed.data;
-  const allowedKeys = WRITABLE_CREDENTIALS[provider];
-  if (!allowedKeys || !allowedKeys.includes(key)) {
+  const allowedKeys = isIntegrationCredentialNamespace(provider) ? WRITABLE_CREDENTIALS[provider] : undefined;
+  if (!isIntegrationCredentialNamespace(provider) || !allowedKeys?.includes(key)) {
     return NextResponse.json(
       { error: "Unknown provider or credential key." },
       { status: 400 },

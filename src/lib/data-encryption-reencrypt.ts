@@ -40,6 +40,7 @@
  * a plaintext lives only between the read and the write of its own row.
  */
 
+import { isIntegrationCredentialNamespace } from "@/lib/integration-credential-namespaces";
 import type { Prisma } from "@prisma/client";
 
 import {
@@ -210,16 +211,20 @@ function olderRingKeyCodes(target: DataKey, options: ReencryptOptions): Prisma.T
 
 /** Move one credential row, claimed on the version read inside its transaction. */
 async function moveCredential(row: CredentialRow, target: DataKey): Promise<Outcome> {
+  if (!isIntegrationCredentialNamespace(row.provider)) {
+    throw new ReencryptRefusedError("Refused: unregistered credential namespace in the database.");
+  }
+  const provider = row.provider;
   const targetSource = `${DATA_KEY_SOURCE_PREFIX}${target.id}`;
   try {
-    await withCredentialTransaction([row.provider], async (tx) => {
+    await withCredentialTransaction([provider], async (tx) => {
       if (
         row.provider === XERO_OAUTH_TOKEN_PROVIDER &&
         !(await fenceXeroTokenSetRewrite(tx))
       ) {
         throw new RowNotMoved("lost-claim");
       }
-      const stored = await readIntegrationCredentialRow(tx, row.provider, row.key);
+      const stored = await readIntegrationCredentialRow(tx, provider, row.key);
       if (stored.status === "not_configured") throw new RowNotMoved("gone");
       if (stored.status === "needs_reentry") throw new RowNotMoved("unreadable");
       if (stored.secretSource === targetSource) throw new RowNotMoved("already-current");
@@ -229,13 +234,13 @@ async function moveCredential(row: CredentialRow, target: DataKey): Promise<Outc
       // so a write landing between the two reads makes this move lose instead
       // of having its timestamp rolled back; a later one fails the claim.
       const stamp = await tx.integrationCredential.findUnique({
-        where: { provider_key: { provider: row.provider, key: row.key } },
+        where: { provider_key: { provider, key: row.key } },
         select: { ciphertext: true, iv: true, authTag: true, updatedAt: true },
       });
       if (!stamp || credentialVersionOf(stamp) !== stored.version) throw new RowNotMoved("lost-claim");
       await setIntegrationCredentialInTransaction({
         tx,
-        provider: row.provider,
+        provider,
         key: row.key,
         value: stored.value,
         actor: { kind: "system", actor: DATA_KEY_REENCRYPT_JOB_NAME },

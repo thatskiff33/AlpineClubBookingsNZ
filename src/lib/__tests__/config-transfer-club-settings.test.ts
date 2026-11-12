@@ -45,6 +45,7 @@ const SINGLETON_DELEGATES = [
   "bookingRequestSettings",
   "internetBankingPaymentSettings",
   "clubIdentitySettings",
+  "privacyHostingSettings",
   "emailMessageSetting",
   "groupDiscountSetting",
   "membershipNominationSettings",
@@ -1761,5 +1762,24 @@ describe("a pre-#2543 bundle's `enabled` key still imports to the right mode (#2
     const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "overwrite" });
     expect(plan.errors).toEqual([]);
     expect(plan.categories[0].errors).toEqual([]);
+  });
+});
+
+
+describe("privacy hosting config portability", () => {
+  it("exports and imports both disclosure values", async () => {
+    const values = { hostingProvider: "Example Host", dataLocation: "New Zealand" };
+    const db = stubDb({ privacyHostingSettings: values });
+    const exported = await buildConfigExport({ db, categories: ["club-settings"], format: CLUB_FORMAT_TEST });
+    const { files } = readBundle(exported.zip);
+    expect(JSON.parse(strFromU8(files.get("club-settings/privacy-hosting-settings.json")!))).toEqual(values);
+    const { tx, delegates } = stubTx({});
+    await clubSettingsImporter.apply(applyCtx(tx, files, "merge"));
+    expect(delegates.privacyHostingSettings.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: { id: "default", ...values } }));
+  });
+  it("leaves the row alone when an old bundle has no hosting entity", async () => {
+    const { tx, delegates } = stubTx({ privacyHostingSettings: { hostingProvider: "Local", dataLocation: null } });
+    await clubSettingsImporter.apply(applyCtx(tx, new Map(), "merge"));
+    expect(delegates.privacyHostingSettings.upsert).not.toHaveBeenCalled();
   });
 });

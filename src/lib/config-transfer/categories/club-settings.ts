@@ -1,3 +1,4 @@
+import { privacyHostingSchema, PRIVACY_HOSTING_DEFAULTS } from "@/lib/privacy-hosting";
 import { strToU8, strFromU8 } from "fflate";
 import { Prisma } from "@prisma/client";
 
@@ -576,6 +577,20 @@ export const SINGLETONS: SingletonSpec[] = [
     // No `constraints`: every column is nullable (String?), so null is a
     // legitimate value — nothing to require (#2200 nullability audit).
     defaults: () => ({}),
+  },
+  {
+    entity: "privacy-hosting-settings",
+    delegate: "privacyHostingSettings",
+    fields: ["hostingProvider", "dataLocation"],
+    defaults: () => ({ ...PRIVACY_HOSTING_DEFAULTS }),
+    constraints: Object.fromEntries(Object.keys(PRIVACY_HOSTING_DEFAULTS).map(field => [field, {
+      validate: (value: unknown) => privacyHostingSchema.shape.hostingProvider.safeParse(value).success
+        ? null : "Use at most 120 characters on one line",
+    }])),
+    reconcile: incoming => {
+      const parsed = privacyHostingSchema.partial().safeParse(incoming);
+      return parsed.success ? parsed.data : incoming;
+    },
   },
   {
     entity: "email-message-setting",

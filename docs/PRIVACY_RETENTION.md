@@ -136,6 +136,7 @@ see [backups](guides/backups.md), the
 | `MirotalkSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `LodgeSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `EmailMessageSetting` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
+| `PrivacyHostingSettings` | Hosting disclosure and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `ClubIdentitySettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `ClubTimeSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `ClubFormatSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |

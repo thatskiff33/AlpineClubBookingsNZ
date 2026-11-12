@@ -138,6 +138,25 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Privacy-incident guide and hosting disclosure settings (#4918)
+
+This release adds the [privacy-incident guide](guides/privacy-incidents.md), the
+[recipient register](PRIVACY_RECIPIENTS.md), and **Where members' data is held**
+on **Admin → Setup & Configuration → Site Appearance & Content → Club Identity**.
+Fill in **Hosting provider** and **Where your data is held** now, including both
+locations when database and backups differ. The optional `{{data-hosting}}`
+page-body token publishes these values, with fallback wording for blanks.
+
+**Your published privacy policy and the starter privacy text do not change in
+this release.** A separate release will update unedited starter policies to use
+the token, only after a published release contains #4918. Continue upgrading
+one release at a time.
+
+Rollback is code-only; the additive settings table can stay. If you manually
+insert `{{data-hosting}}` into a page and then roll back to an earlier release
+that does not know the token, visitors see the raw `{{data-hosting}}` braces.
+Replace the token with reviewed plain text before such a rollback.
+
 ### Payment transaction history outlives its payment (#4574)
 
 The database now refuses to delete a payment with transactions, or a transaction

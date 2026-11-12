@@ -388,7 +388,7 @@ Admin route subfamilies are:
 | Email/SNS data | Contact, application, admin communications, email templates, SES/SNS webhook. | Rate limits for public senders, template escaping, SNS signature verification, email suppression records. | #616 for SES/SNS topic allowlist and outbound email abuse. |
 | Audit, webhook, cron, and provider logs | `AuditLog`, `WebhookLog`, `CronJobRun`, Xero operation/inbound records. | Structured logging with redaction helpers for known sensitive URL tokens; webhook logs redact error text. | #615/#616 for callback URL and token redaction review; compromised log reader threat below. |
 | CI/deploy secrets | GitHub Actions secrets/vars, `.env`, Compose, GHCR tokens, Sentry token. | CI permission scoping, gitleaks, deployment docs warn not to commit secrets. | #619 for workflow permissions, provenance, and secret-scope review. |
-| Encrypted integration credentials (#2079, #2082, #2087, #2095, #2211, #2371) | `IntegrationCredential` — seven provider namespaces, enumerated once under "Credentials at rest" below and not re-listed anywhere else (#2720): `xero`, `stripe`, `google`, `backup`, `anthropic`, `anthropic-diagnostics`, `servernz`. | AES-256-GCM under an HKDF-SHA256 key derived from the current data-encryption key (`DATA_ENCRYPTION_KEYS`, or `AUTH_SECRET`/`NEXTAUTH_SECRET` while that is unset, #4456), the key named on the row, per-write random IV, AAD context-binding to `(provider,key,labelVersion)`; write-only Full-Admin API; secret values never returned/logged/exported; excluded from config-transfer. The Stripe publishable key is the ONE value delivered to the browser (it is not secret) — at runtime via `GET /api/stripe/publishable-key`, never a secret. Google's client id/secret are resolved server-side into the request-scoped NextAuth config and never leave the server; the resolver **fails open** (a DB/decrypt failure omits the Google provider, never breaking password/magic-link/2FA sign-in — #2087). | See "Credentials at rest" and "Backup S3 blast radius" below. |
+| Encrypted integration credentials (#2079, #2082, #2087, #2095, #2211, #2371) | `IntegrationCredential` — the typed namespaces are documented under "Credentials at rest" below; outside recipients and their data flows are in the [privacy recipient register](PRIVACY_RECIPIENTS.md). | AES-256-GCM under an HKDF-SHA256 key derived from the current data-encryption key (`DATA_ENCRYPTION_KEYS`, or `AUTH_SECRET`/`NEXTAUTH_SECRET` while that is unset, #4456), the key named on the row, per-write random IV, AAD context-binding to `(provider,key,labelVersion)`; write-only Full-Admin API; secret values never returned/logged/exported; excluded from config-transfer. The Stripe publishable key is the ONE value delivered to the browser (it is not secret) — at runtime via `GET /api/stripe/publishable-key`, never a secret. Google's client id/secret are resolved server-side into the request-scoped NextAuth config and never leave the server; the resolver **fails open** (a DB/decrypt failure omits the Google provider, never breaking password/magic-link/2FA sign-in — #2087). | See "Credentials at rest" and "Backup S3 blast radius" below. |
 | Backup S3 destination + credentials (#2095) | `IntegrationCredential` provider `backup`; consumed by `src/lib/backup.ts` (pg_dump → gzip → `aws s3 cp`) and the `/admin/backups` surface. | S3 access key/secret and the restore-validation DSN are write-only Full-Admin secrets (never returned/logged); the destination (bucket/region) is ALSO Full-Admin-only to write even though it is not secret (see below); the S3 secrets ride the child process env (`AWS_*`), never argv, and the Postgres password rides `PGPASSWORD`, never argv; bucket/region are strictly format-validated before any CLI call. | See "Backup S3 blast radius" below. |
 
 ## Credentials at rest (#2079)
@@ -404,16 +404,19 @@ removes it):
 
 ### The provider list, and the one place it lives (#2720)
 
-**This is the canonical list of provider namespaces in the encrypted store.**
-Every other document points here rather than keeping its own copy; that rule
-exists because `DEPLOYMENT.md`'s rotation runbook did keep one, named two
-providers, and fell four behind as the rest landed. Anything that turns on
-"which credentials does rotating the auth secret strand" answers from this list.
+**The compiler-held list lives in
+[`integration-credential-namespaces.ts`](../src/lib/integration-credential-namespaces.ts).**
+The [recipient census](../src/lib/__tests__/privacy-recipient-census.test.ts)
+checks this credential inventory against it. Other documents link here for
+credential handling and to the [privacy recipient register](PRIVACY_RECIPIENTS.md)
+for recipients, data flows and enablement; they do not keep recipient lists.
 
 - `xero` — client id, client secret and webhook key (#2079). Until #3806 R2 it
   also held the wrapped Xero token-encryption key, now retired; a leftover row
   is deleted on the next connect, disconnect or verify-reset, and the previous
   release may write one again until it has drained.
+- `xero-oauth` — the system-managed Xero OAuth token set (#3806).
+- `mirotalk` — the video-meeting server API key and JWT signing key.
 - `stripe` — secret key, publishable key, webhook signing secret (#2082).
 - `google` — OAuth client id and secret, plus a non-secret `verified_at`
   marker (#2087).
