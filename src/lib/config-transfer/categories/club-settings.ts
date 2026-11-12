@@ -588,8 +588,13 @@ export const SINGLETONS: SingletonSpec[] = [
         ? null : "Use at most 120 characters on one line",
     }])),
     reconcile: incoming => {
-      const parsed = privacyHostingSchema.partial().safeParse(incoming);
-      return parsed.success ? parsed.data : incoming;
+      // Unknown bundle keys are ignored by the importer. Normalize each known
+      // field independently so an extra key cannot bypass trimming/blank nulls.
+      return Object.fromEntries(Object.entries(incoming).map(([field, value]) => {
+        if (!(field in PRIVACY_HOSTING_DEFAULTS)) return [field, value];
+        const parsed = privacyHostingSchema.shape.hostingProvider.safeParse(value);
+        return [field, parsed.success ? parsed.data : value];
+      }));
     },
   },
   {

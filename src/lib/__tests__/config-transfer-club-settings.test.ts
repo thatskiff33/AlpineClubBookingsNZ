@@ -1788,6 +1788,17 @@ describe("privacy hosting config portability (#4918)", () => {
     await clubSettingsImporter.apply(applyCtx(tx, files, "merge"));
     expect(delegates.privacyHostingSettings.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: { id: "default", ...values } }));
   });
+  it("normalizes disclosure values even when the bundle has unknown fields", async () => {
+    const files = new Map([["club-settings/privacy-hosting-settings.json", strToU8(JSON.stringify({
+      hostingProvider: "  Example Host  ", dataLocation: "  ", futureField: true,
+    }))]]);
+    const { tx, delegates } = stubTx({});
+    await clubSettingsImporter.apply(applyCtx(tx, files, "merge"));
+    expect(delegates.privacyHostingSettings.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: { id: "default", hostingProvider: "Example Host", dataLocation: null },
+      update: { hostingProvider: "Example Host", dataLocation: null },
+    }));
+  });
   it("leaves the row alone when an old bundle has no hosting entity", async () => {
     const { tx, delegates } = stubTx({ privacyHostingSettings: { hostingProvider: "Local", dataLocation: null } });
     await clubSettingsImporter.apply(applyCtx(tx, new Map(), "merge"));

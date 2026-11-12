@@ -37,6 +37,7 @@ describe("PrivacyHostingPanel staged settings", () => {
     expect(provider()).toBeDisabled(); expect(location()).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     expect(provider()).toBeEnabled(); expect(location()).toBeEnabled(); expect(save()).toBeDisabled();
+    await waitFor(() => expect(provider()).toHaveFocus());
     fireEvent.change(provider(), { target: { value: "Example Hosting  " } });
     fireEvent.change(location(), { target: { value: "  " } });
     expect(save()).toBeDisabled(); expect(puts()).toHaveLength(0);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useRef } from "react";
+import { useId } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { FieldHint, describedByFieldHint } from "@/components/ui/field-hint";
@@ -79,10 +79,8 @@ function hostingValid(draft: Draft): boolean {
 export function PrivacyHostingPanel() {
   const canEdit = useAdminAreaEditAccess("content");
   const viewOnlyReasonId = useId();
-  const cardRef = useRef<HTMLDivElement>(null);
   const section = useSectionEditState<Draft>({
     regionLabel: PRIVACY_HOSTING_TITLE,
-    revealTarget: cardRef,
     load: async (signal) => {
       const response = await fetch(ENDPOINT, { signal });
       if (!response.ok) throw new Error(LOAD_ERROR);
@@ -158,7 +156,6 @@ export function PrivacyHostingPanel() {
   return (
     <div
       {...section.sectionRegionProps}
-      ref={cardRef}
       tabIndex={-1}
       className="focus:outline-none"
     >
