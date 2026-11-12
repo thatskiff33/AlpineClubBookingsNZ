@@ -313,7 +313,7 @@ async function closePerJoiner(
       outcome: "recorded-stripe",
       finish: {
         operation,
-        payment: { id: payment.id, booking: { memberId: child.memberId } },
+        payment: { id: payment.id, booking: { memberId: bookingOwner(child).memberId } },
         settlementId: settlement.id,
         refund,
         recorded,
@@ -550,7 +550,7 @@ async function mirrorChildren(
     });
     if (!mirror.raised) continue;
     raised.push({
-      child: { id: child.id, memberId: child.memberId },
+      child: { id: child.id, memberId: bookingOwner(child).memberId },
       paymentId: child.payment.id,
       refundedCents: mirror.refundedCents,
       queuedOperationId: mirror.queuedOperationId,

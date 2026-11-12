@@ -254,17 +254,25 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
       });
   const settlementById = new Map(settlements.map((settlement) => [settlement.id, settlement]));
 
-  const listed = operations.flatMap((operation) => {
+  // One shape for all three kinds, so the list (and the rows built from it) type-check as one union.
+  type ListedDeadCardRefund = {
+    operation: (typeof operations)[number];
+    kind: DeadCardRefundRow["settleKind"];
+    owedCents: number;
+    later: ReturnType<typeof laterStripeRefundsCovering>;
+    owed: ReturnType<typeof deadCardRefundStillOwed> | null;
+  };
+  const listed = operations.flatMap((operation): ListedDeadCardRefund[] => {
     if (isOrganiserChildRefundKey(operation.idempotencyKey)) {
-      return [{ operation, kind: "organiser-child" as const, owedCents: operation.amountCents, later: [] as ReturnType<typeof laterStripeRefundsCovering>, owed: null }];
+      return [{ operation, kind: "organiser-child", owedCents: operation.amountCents, later: [], owed: null }];
     }
     if (isGroupSettlementRefundRecoveryKey(operation.idempotencyKey)) {
       const settlement = settlementById.get(groupSettlementIdForRefundRecoveryKey(operation.idempotencyKey));
       return [{
         operation,
-        kind: "legacy-group" as const,
+        kind: "legacy-group",
         owedCents: settlement ? legacyGroupSettlementRefundUnsentCents(settlement) : 0,
-        later: [] as ReturnType<typeof laterStripeRefundsCovering>,
+        later: [],
         owed: null,
       }];
     }
@@ -273,7 +281,7 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
     const later = owed.owedCents === 0 ? laterStripeRefundsCovering(operation.payment, operation.id) : [];
     // #4368 review C: with nothing owed and no Stripe refund the attribution gives this row, there is nothing to settle here.
     if (owed.owedCents <= 0 && later.length === 0) return [];
-    return [{ operation, kind: "charge" as const, owedCents: owed.owedCents, later, owed }];
+    return [{ operation, kind: "charge", owedCents: owed.owedCents, later, owed }];
   });
   return Promise.all(
     listed.map(async ({ operation, kind, owedCents, later, owed }) => {

@@ -5,10 +5,18 @@
 // so a path that should move no money is a path whose lists stay empty.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const CHILD_KEY = "organiser_child_refund_cancel_settle_child-1";
-const APPEAL_KEY = "organiser_card_appeal_refund_req-1";
-const LEGACY_KEY = "group_settlement_refund_recovery_settle1";
-const CHARGE_KEY = "booking_cancel_refund_recovery_b-1";
+import {
+  BOOKING_CANCELLATION_REFUND_RECOVERY_PREFIX,
+  GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX,
+  ORGANISER_CARD_APPEAL_REFUND_KEY_PREFIX,
+  ORGANISER_CHILD_REFUND_KEY_PREFIX,
+} from "@/lib/payment-recovery-keys";
+
+// Each row's idempotency key, built from the prefix its writer mints with.
+const CHILD_ROW = `${ORGANISER_CHILD_REFUND_KEY_PREFIX}cancel_settle_child-1`;
+const APPEAL_ROW = `${ORGANISER_CARD_APPEAL_REFUND_KEY_PREFIX}req-1`;
+const LEGACY_ROW = `${GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX}settle1`;
+const CHARGE_ROW = `${BOOKING_CANCELLATION_REFUND_RECOVERY_PREFIX}b-1`;
 const FROZEN = new Date("2026-07-01T00:00:00.000Z");
 
 const state = vi.hoisted(() => ({
@@ -321,7 +329,7 @@ function dead(overrides: Record<string, unknown> = {}) {
     type: "REFUND_BOOKING_MODIFICATION",
     status: "FAILED",
     attempts: 5,
-    idempotencyKey: CHILD_KEY,
+    idempotencyKey: CHILD_ROW,
     bookingId: "child-1",
     paymentId: "pay-1",
     paymentIntentId: "pi_1",
@@ -372,20 +380,20 @@ describe("classifying the organiser's PaymentIntent", () => {
   it("records a live refund carrying this row's key and ignores another joiner", () => {
     const refunds = [
       liveRefund({ metadata: { organiserChildRefundKey: "organiser_child_refund_other" } }),
-      liveRefund({ id: "re_mine", metadata: { organiserChildRefundKey: CHILD_KEY } }),
+      liveRefund({ id: "re_mine", metadata: { organiserChildRefundKey: CHILD_ROW } }),
     ];
-    expect(classifyOrganiserChildIntentRefunds(refunds, CHILD_KEY, 4_500)).toBe("keyed");
+    expect(classifyOrganiserChildIntentRefunds(refunds, CHILD_ROW, 4_500)).toBe("keyed");
   });
 
   it("cannot tell an unkeyed refund of this amount apart from this refund", () => {
-    expect(classifyOrganiserChildIntentRefunds([liveRefund()], CHILD_KEY, 4_500)).toBe("unkeyed-same-amount");
-    expect(classifyOrganiserChildIntentRefunds([liveRefund({ status: "failed" })], CHILD_KEY, 4_500)).toBe("none");
+    expect(classifyOrganiserChildIntentRefunds([liveRefund()], CHILD_ROW, 4_500)).toBe("unkeyed-same-amount");
+    expect(classifyOrganiserChildIntentRefunds([liveRefund({ status: "failed" })], CHILD_ROW, 4_500)).toBe("none");
   });
 
   it("matches the old whole-group refund only when it is the one live refund of the plan total", () => {
     expect(classifyLegacyGroupIntentRefunds([liveRefund()], 4_500)).toBe("match");
     expect(classifyLegacyGroupIntentRefunds([liveRefund(), liveRefund({ id: "re_2", amount: 100 })], 4_500)).toBe("other");
-    expect(classifyLegacyGroupIntentRefunds([liveRefund({ metadata: { organiserChildRefundKey: CHILD_KEY } })], 4_500)).toBe("other");
+    expect(classifyLegacyGroupIntentRefunds([liveRefund({ metadata: { organiserChildRefundKey: CHILD_ROW } })], 4_500)).toBe("other");
   });
 });
 
@@ -396,23 +404,23 @@ describe("lock modes", () => {
   it("charge-backed still refuses both group keys", async () => {
     state.operation = dead();
     await expect(lock("charge-backed")).rejects.toMatchObject({ status: 409, message: "child refused" });
-    state.operation = dead({ idempotencyKey: LEGACY_KEY, bookingId: "org-booking" });
+    state.operation = dead({ idempotencyKey: LEGACY_ROW, bookingId: "org-booking" });
     await expect(lock("charge-backed")).rejects.toMatchObject({ status: 409, message: "not this kind" });
   });
 
   it("organiser-child accepts only the per-joiner key", async () => {
     await expect(lock("organiser-child")).resolves.toMatchObject({ operation: { id: "op-1" } });
-    state.operation = dead({ idempotencyKey: LEGACY_KEY, bookingId: "org-booking" });
+    state.operation = dead({ idempotencyKey: LEGACY_ROW, bookingId: "org-booking" });
     await expect(lock("organiser-child")).rejects.toMatchObject({ status: 409 });
-    state.operation = dead({ idempotencyKey: CHARGE_KEY });
+    state.operation = dead({ idempotencyKey: CHARGE_ROW });
     await expect(lock("organiser-child")).rejects.toMatchObject({ status: 409 });
   });
 
   it("either-group accepts both group keys and still requires a dead row", async () => {
-    await expect(lock("either-group")).resolves.toMatchObject({ operation: { idempotencyKey: CHILD_KEY } });
-    state.operation = dead({ idempotencyKey: LEGACY_KEY, bookingId: "org-booking" });
-    await expect(lock("either-group")).resolves.toMatchObject({ operation: { idempotencyKey: LEGACY_KEY } });
-    state.operation = dead({ idempotencyKey: CHARGE_KEY });
+    await expect(lock("either-group")).resolves.toMatchObject({ operation: { idempotencyKey: CHILD_ROW } });
+    state.operation = dead({ idempotencyKey: LEGACY_ROW, bookingId: "org-booking" });
+    await expect(lock("either-group")).resolves.toMatchObject({ operation: { idempotencyKey: LEGACY_ROW } });
+    state.operation = dead({ idempotencyKey: CHARGE_ROW });
     await expect(lock("either-group")).rejects.toMatchObject({ status: 409, message: "not this kind" });
     state.operation = dead({ attempts: 1 });
     await expect(lock("either-group")).rejects.toMatchObject({ status: 409, message: "not given up" });
@@ -423,7 +431,7 @@ describe("lock modes", () => {
 
 describe("paid another way for a per-joiner refund", () => {
   it("records a keyed live refund and does not send another", async () => {
-    state.refunds = [liveRefund({ metadata: { organiserChildRefundKey: CHILD_KEY } })];
+    state.refunds = [liveRefund({ metadata: { organiserChildRefundKey: CHILD_ROW } })];
     const result = await closeGroupCardRefundPaidAnotherWay(closeInput);
     expect(result.outcome).toBe("recorded-stripe");
     expect(state.processRefunds).toBe(0);
@@ -448,7 +456,7 @@ describe("paid another way for a per-joiner refund", () => {
   });
 
   it("an appeal writes no REFUNDED booking event", async () => {
-    state.operation = dead({ idempotencyKey: APPEAL_KEY });
+    state.operation = dead({ idempotencyKey: APPEAL_ROW });
     await closeGroupCardRefundPaidAnotherWay(closeInput);
     expect(state.events).toHaveLength(0);
     expect(state.tasks).toHaveLength(1);
@@ -467,7 +475,7 @@ describe("paid another way for a per-joiner refund", () => {
 
 describe("paid another way for an old whole-group refund", () => {
   beforeEach(() => {
-    state.operation = dead({ idempotencyKey: LEGACY_KEY, bookingId: "org-booking", paymentId: "pay-org" });
+    state.operation = dead({ idempotencyKey: LEGACY_ROW, bookingId: "org-booking", paymentId: "pay-org" });
   });
 
   it("a matching unkeyed refund flips the settlement, mirrors, and enqueues the card note", async () => {
@@ -525,22 +533,22 @@ describe("try the card again", () => {
   });
 
   it("does not re-arm when Stripe already has this refund", async () => {
-    state.refunds = [liveRefund({ metadata: { organiserChildRefundKey: CHILD_KEY } })];
+    state.refunds = [liveRefund({ metadata: { organiserChildRefundKey: CHILD_ROW } })];
     await expect(again()).rejects.toMatchObject({ status: 409, message: GROUP_CARD_REFUND_ALREADY_ON_STRIPE });
     expect(state.claims).toHaveLength(0);
   });
 
   it("a refusal still inside Stripe's replay window is re-armed due then, not now", async () => {
     const created = Math.floor(FROZEN.getTime() / 1000);
-    state.refunds = [liveRefund({ status: "failed", created, metadata: { organiserChildRefundKey: CHILD_KEY } })];
+    state.refunds = [liveRefund({ status: "failed", created, metadata: { organiserChildRefundKey: CHILD_ROW } })];
     const result = await again();
-    const due = organiserChildRearmAt(state.refunds, CHILD_KEY, FROZEN);
+    const due = organiserChildRearmAt(state.refunds, CHILD_ROW, FROZEN);
     expect(due.getTime()).toBeGreaterThan(FROZEN.getTime());
     expect(result.nextRetryAt).toBe(due.toISOString());
   });
 
   it("refuses the old whole-group key", async () => {
-    state.operation = dead({ idempotencyKey: LEGACY_KEY, bookingId: "org-booking" });
+    state.operation = dead({ idempotencyKey: LEGACY_ROW, bookingId: "org-booking" });
     await expect(again()).rejects.toMatchObject({ status: 409, message: LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL });
     expect(state.claims).toHaveLength(0);
   });
@@ -551,13 +559,13 @@ describe("the executor reads Stripe before every send", () => {
     listRefundsForPaymentIntent: async () => state.refunds,
     processRefund: async () => {
       state.processRefunds += 1;
-      return { id: "re_sent", amount: 4_500, status: "succeeded", metadata: { organiserChildRefundKey: CHILD_KEY } };
+      return { id: "re_sent", amount: 4_500, status: "succeeded", metadata: { organiserChildRefundKey: CHILD_ROW } };
     },
   };
 
   it("an attempt counted as 1 records a live refund for the key and does not call processRefund", async () => {
     state.operation = dead({ attempts: 1 });
-    state.refunds = [liveRefund({ metadata: { organiserChildRefundKey: CHILD_KEY } })];
+    state.refunds = [liveRefund({ metadata: { organiserChildRefundKey: CHILD_ROW } })];
     await processOrganiserChildRefundOperation(state.operation as unknown as PaymentRecoveryOperation, { currencyCode: "NZD", locale: "en-NZ" }, seam as never);
     expect(state.processRefunds).toBe(0);
     expect(state.refundRecords).toHaveLength(1);
@@ -585,7 +593,7 @@ describe("one row, one winner", () => {
 describe("the list", () => {
   it("lists a per-joiner row and a legacy row, including one with nothing unsent", async () => {
     const child = dead();
-    const legacyOpen = dead({ id: "op-legacy", idempotencyKey: LEGACY_KEY, bookingId: "org-booking" });
+    const legacyOpen = dead({ id: "op-legacy", idempotencyKey: LEGACY_ROW, bookingId: "org-booking" });
     const legacyDone = dead({ id: "op-done", idempotencyKey: "group_settlement_refund_recovery_settle-done", bookingId: "org-booking" });
     state.operations = [child, legacyOpen, legacyDone];
     state.settlements = [
