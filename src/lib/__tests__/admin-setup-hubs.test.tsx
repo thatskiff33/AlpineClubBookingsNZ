@@ -44,7 +44,13 @@ import BookingsSetupHubPage from "@/app/(admin)/admin/rules/bookings-setup/page"
 import FinanceSetupPage from "@/app/(admin)/admin/setup/finance/page";
 import FoundationsSetupHubPage from "@/app/(admin)/admin/setup/foundations/page";
 import { IntegrationReadinessSection } from "@/app/(admin)/admin/system/health/_components/integration-readiness-section";
+import {
+  financeSetupLinks,
+  foundationsSetupSections,
+  setupHubCards,
+} from "@/app/(admin)/admin/setup/hub-cards";
 import { AdminHubSectionCards } from "@/components/admin-hub-page";
+import { adminHref, adminLink, getAdminPage } from "@/lib/admin-hubs";
 import { BedDouble, Coins, MessageSquareText } from "lucide-react";
 import IntegrationsHubPage from "@/app/(admin)/admin/integrations/page";
 import MembershipSetupHubPage from "@/app/(admin)/admin/membership-setup/page";
@@ -241,7 +247,7 @@ describe("admin setup hub pages", () => {
   it("renders the setup drill-down hub pages", async () => {
     const foundationHtml = await renderPage(FoundationsSetupHubPage);
 
-    expect(foundationHtml).toContain("Initial Setup");
+    expect(foundationHtml).toContain(getAdminPage("setup-foundations").label);
     expect(foundationHtml).toContain("/admin/modules");
     // E3 follow-up #1966: foundations cross-links the content-gated Club
     // Identity cards under Admin > Appearance.
@@ -298,17 +304,38 @@ describe("admin setup hub pages", () => {
     expect(html).not.toContain("/admin/appearance/identity");
   });
 
-  it("renders a back link to the Setup Wizard on every setup sub-hub", async () => {
-    // The sub-hubs are drilled into from /admin/setup, so each gets the shared
-    // BackLink (label matches the destination page's heading, "Setup Wizard").
-    // Distinct from Foundations' own "Setup Checklist" card, which is a grid link.
-    // Booking Rules, Cancellation and Operational Integrations are no longer
-    // sub-hubs: S1 (#4796) merged them into the pages they linked to.
-    const pages = [FoundationsSetupHubPage, FinanceSetupPage];
-    for (const Page of pages) {
+  it("renders a back link to the Setup page on every setup sub-hub", async () => {
+    // The sub-hubs are drilled into from the Setup page, so each gets the shared
+    // BackLink, named with the Setup page's registry label (#4968). Booking
+    // Rules, Cancellation and Operational Integrations are no longer sub-hubs:
+    // S1 (#4796) merged them into the pages they linked to.
+    const setup = adminLink("setup");
+    for (const Page of [FoundationsSetupHubPage, FinanceSetupPage]) {
       const html = await renderPage(Page);
-      expect(html).toContain("Setup Wizard");
-      expect(html).toContain('href="/admin/setup"');
+      expect(html).toContain(`href="${setup.href}"`);
+      expect(html).toContain(`${setup.label}</a>`);
+      expect(html).not.toContain("Setup Wizard");
+    }
+  });
+
+  // #4968: Foundations' "Setup Checklist" card linked back to the Setup page,
+  // which is the checklist, so a volunteer went round in a loop.
+  it("links no setup card to the page it is shown on, nor a sub-hub back to Setup", async () => {
+    const setupHref = adminHref("setup");
+    const cardsOn = [
+      { page: "setup", cards: setupHubCards },
+      { page: "setup-foundations", cards: foundationsSetupSections },
+      { page: "setup-finance", cards: financeSetupLinks },
+    ] as const;
+    for (const { page, cards } of cardsOn) {
+      const hrefs = cards.map((card) => card.href.split(/[?#]/)[0]);
+      expect(hrefs, page).not.toContain(adminHref(page));
+      if (page !== "setup") expect(hrefs, page).not.toContain(setupHref);
+    }
+    // And as rendered: the back link is a sub-hub's only link to Setup.
+    for (const Page of [FoundationsSetupHubPage, FinanceSetupPage]) {
+      const html = await renderPage(Page);
+      expect(html.split(`href="${setupHref}"`)).toHaveLength(2);
     }
   });
 

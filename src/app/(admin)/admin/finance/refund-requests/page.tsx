@@ -34,7 +34,7 @@ import {
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice"
 import { getCancellationSettlementBreakdown, type CancellationCreditEntry } from "@/lib/payment-status-display"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
-import { adminHref } from "@/lib/admin-hubs"
+import { adminHref, getAdminPage } from "@/lib/admin-hubs"
 import { useClubTime } from "@/components/club-time-provider"
 import { parseInstant, type BoundClubTime, formatStayDateOrNull } from "@/lib/club-time"
 import { MoneyInput } from "@/components/ui/money-input"
@@ -451,7 +451,7 @@ export default function RefundRequestsPage() {
       {viewOnlyBanner}
       <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">Refund Appeals &amp; Credits</h1>
+        <h1 className="text-3xl font-bold">{getAdminPage("refund-requests").label}</h1>
         <p className="text-muted-foreground mt-1">
           Review refund appeals and manual credit approvals from one queue
         </p>

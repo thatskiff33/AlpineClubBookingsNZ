@@ -25,6 +25,7 @@ export const FINANCE_HUB = defineHub({
     {
       id: "refund-requests",
       label: "Refunds & Credits",
+      keywords: ["refund appeals", "pending review queue"],
       oldPath: "/admin/refund-requests",
       area: "finance",
       moved: true,

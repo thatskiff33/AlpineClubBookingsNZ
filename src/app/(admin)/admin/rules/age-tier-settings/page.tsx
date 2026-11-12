@@ -23,6 +23,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useConfirm } from "@/components/confirm-dialog";
+import { getAdminPage } from "@/lib/admin-hubs";
 
 type AgeTierRow = {
   tier: AgeTier;
@@ -236,7 +237,7 @@ export default function AgeTierSettingsPage() {
       {viewOnlyBanner}
       <div className="space-y-6">
       <AdminPageHeader
-        title="Age Group Settings"
+        title={getAdminPage("age-tier-settings").label}
         description={
           <>
             Configure the age boundaries for each membership tier. The highest

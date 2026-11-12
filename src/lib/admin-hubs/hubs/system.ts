@@ -91,6 +91,7 @@ export const SYSTEM_HUB = defineHub({
     {
       id: "backups-setup",
       label: "Backup Setup",
+      keywords: ["database backup setup"],
       oldPath: "/admin/backups/setup",
       area: "support",
       moved: true,

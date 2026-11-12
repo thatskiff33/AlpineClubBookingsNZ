@@ -337,7 +337,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
     label: "Lodge Operations",
     items: [
       { href: "/admin/hut-leaders", label: "Hut Leaders", icon: UserCheck },
-      { href: "/admin/roster", label: "Roster", icon: ClipboardList },
+      { ...adminLink("roster"), icon: ClipboardList },
       {
         href: "/admin/lodge",
         label: "Lodge Kiosk",

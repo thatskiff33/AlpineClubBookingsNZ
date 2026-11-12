@@ -80,7 +80,7 @@ import {
   buildUnsettledAdditionalUpcomingStaysWhere,
 } from "@/lib/unpaid-finished-stays";
 import { buildUnpaidFinishedStaysHref, buildUnsettledAdditionalStaysHref } from "@/lib/unpaid-finished-stays-hrefs";
-import { adminHref } from "@/lib/admin-hubs";
+import { adminHref, getAdminPage } from "@/lib/admin-hubs";
 
 // #2264: the upcoming check-ins list renders its date range in a fixed-width
 // column, so it stays compact — day plus short month, no year. F3 (#3079)
@@ -494,7 +494,9 @@ export default async function AdminDashboardPage() {
             <CardContent className="flex items-start gap-3 pt-5">
               <AlertTriangle className="h-5 w-5 text-info-11 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="font-medium text-info-11">Pending Review Queue</p>
+                <p className="font-medium text-info-11">
+                  {getAdminPage("refund-requests").label}: pending review
+                </p>
                 <p className="text-sm text-info-11 mt-1">
                   {pendingReviewSummary.join(" and ")} waiting for admin review.
                 </p>

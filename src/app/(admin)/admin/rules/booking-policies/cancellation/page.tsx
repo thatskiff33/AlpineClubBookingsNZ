@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { BackLink } from "@/components/admin/back-link";
-import { adminHref, adminLink } from "@/lib/admin-hubs";
+import { adminHref, adminLink, getAdminPage } from "@/lib/admin-hubs";
 import { DefaultCancellationPolicySection } from "@/components/admin/booking-policies/default-cancellation-policy-section";
 import {
   detectStaleHoldPolicyCopy,
@@ -15,7 +15,7 @@ export default async function CancellationPolicyPage() {
       <div>
         <BackLink {...adminLink("booking-policies")} />
         <h1 className="mt-2 text-2xl font-bold text-foreground">
-          Default Cancellation Policy
+          {getAdminPage("booking-policies-cancellation").label}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Refund rules applied to all bookings unless a date-specific period

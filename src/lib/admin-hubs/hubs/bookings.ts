@@ -13,6 +13,7 @@ export const BOOKINGS_HUB = defineHub({
     {
       id: "bookings",
       label: "Bookings",
+      keywords: ["all bookings"],
       oldPath: "/admin/bookings",
       area: "bookings",
       moved: false,
@@ -45,6 +46,7 @@ export const BOOKINGS_HUB = defineHub({
     {
       id: "book",
       label: "Book on Behalf",
+      keywords: ["book on behalf of member"],
       oldPath: "/admin/book",
       area: "bookings",
       moved: false,
