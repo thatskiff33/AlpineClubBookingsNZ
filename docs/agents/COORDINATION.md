@@ -32,18 +32,15 @@ state, CI on the exact head with the failing required check names, merge state,
 and the stale claims. It replaces #3905's hand-edited reservation tables, whose
 remaining decisions live in their own issues.
 
-`.github/workflows/status-board.yml` runs it hourly with `GITHUB_TOKEN` alone and
-overwrites the body of the issue named by the repository variable
-`STATUS_BOARD_ISSUE`. The hosted board is live only after the variable is set
-and a run has written the issue. Until then, use `pnpm run status`; an unset
-variable produces a warning and job-summary note, with no GitHub write.
-The owner or a lane creates the issue with an empty body (blank issues
-are disabled: `gh issue create --title "Status board" --body ""`, or clear a
-template-filled body) and pins it; the owner sets the variable (the machine
-account lacks admin), under Settings → Secrets and variables → Actions →
-Variables. Never edit the board or
-record a decision on it: the `CLAIM:` and decision record are the record. It is
-data, not a required check.
+`.github/workflows/status-board.yml` overwrites one issue hourly with
+`GITHUB_TOKEN`. Setup: a lane or owner creates and pins an empty issue
+(`gh issue create --title "Status board" --body ""`; blank issues are disabled).
+The owner sets repository variable `STATUS_BOARD_ISSUE` to its number under
+Settings → Secrets and variables → Actions → Variables; the machine account
+lacks admin. The hosted board is live only after a run writes it. Until then,
+use `pnpm run status`. An unset variable produces a warning and job-summary
+note, with no GitHub write. Never edit the board or record decisions on it:
+claims and decision records are authoritative. It is data, not a required check.
 
 ## When a coordinator runs
 
