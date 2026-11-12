@@ -22,6 +22,11 @@ import {
 } from "@/lib/email";
 import { createMemberInduction } from "@/lib/induction";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { isXeroInvoicingEnabled } from "@/lib/xero-invoicing-guard";
+import {
+  JOINING_FEE_INVOICING_XERO_OFF_MESSAGE,
+  SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE,
+} from "@/lib/xero-invoicing-off";
 import { resolveMembershipTypePolicyForMember } from "@/lib/membership-type-policy";
 import logger from "@/lib/logger";
 import { copyStreetAddressToPostal } from "@/lib/member-address";
@@ -1495,11 +1500,23 @@ export async function approveMemberApplication(
   // inside it (#1886, F22). A mapped applicant defaults to SKIP (never
   // double-charged) unless the admin explicitly supplied a decision; the SKIP is
   // resolved here so the in-tx enqueue is simply never made.
-  const entranceFeeDecision: EntranceFeeInvoiceApprovalDecision =
+  //
+  // #4986 (`INV-INT-038`): with Xero off the joining-fee row would wait in the
+  // outbox and be invoiced unchecked the day Xero is switched back on, so the
+  // module is read here, outside the transaction, and a CREATE becomes a
+  // recorded SKIP with the plain warning below. The approval itself proceeds.
+  const requestedEntranceFeeDecision: EntranceFeeInvoiceApprovalDecision =
     entranceFeeInvoiceDecision ??
     (applicantMapped
       ? { action: "SKIP", reason: "Mapped to existing member" }
       : { action: "CREATE" });
+  const entranceFeeSkippedForXeroOff =
+    requestedEntranceFeeDecision.action === "CREATE" &&
+    !(await isXeroInvoicingEnabled());
+  const entranceFeeDecision: EntranceFeeInvoiceApprovalDecision =
+    entranceFeeSkippedForXeroOff
+      ? { action: "SKIP", reason: JOINING_FEE_INVOICING_XERO_OFF_MESSAGE }
+      : requestedEntranceFeeDecision;
 
   const approved = await prisma.$transaction(async (tx) => {
     await lockMembershipApplication(tx, applicationId);
@@ -2317,7 +2334,9 @@ export async function approveMemberApplication(
       memberIds: billingMemberIds,
       approvedByMemberId: adminMemberId,
     });
-    if (subscriptionBilling.exceptionCount > 0) {
+    if (subscriptionBilling.xeroInvoicingOff) {
+      warnings.push(SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE);
+    } else if (subscriptionBilling.exceptionCount > 0) {
       warnings.push(
         `${subscriptionBilling.exceptionCount} membership subscription billing exception${subscriptionBilling.exceptionCount === 1 ? " requires" : "s require"} Finance review`,
       );
@@ -2349,6 +2368,9 @@ export async function approveMemberApplication(
       });
     }
   } else {
+    if (entranceFeeSkippedForXeroOff) {
+      warnings.push(JOINING_FEE_INVOICING_XERO_OFF_MESSAGE);
+    }
     await logAudit({
       action: "XERO_ENTRANCE_FEE_INVOICE_SKIPPED",
       memberId: adminMemberId,

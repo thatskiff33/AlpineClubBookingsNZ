@@ -32,6 +32,8 @@ import { requiresPaidSubscriptionForAgeTier } from "@/lib/member-subscription-el
 import { prisma } from "@/lib/prisma";
 import { defaultMembershipTypeKeyForRole, storedRoleDefaultMembershipTypeWhere } from "@/lib/membership-types";
 import { getResolvedAccountMapping } from "@/lib/xero-mappings";
+import { isXeroInvoicingEnabled } from "@/lib/xero-invoicing-guard";
+import { MISSING_XERO_ACCOUNT_MAPPING_CODE } from "@/lib/xero-invoicing-off";
 import { isBilledThroughFamily, resolveBillingFamilyMembership } from "@/lib/membership-billing-family";
 import { subscriptionInvoiceOutboxRow } from "@/lib/xero-operation-outbox-payload";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
@@ -1433,7 +1435,7 @@ export async function buildSubscriptionBillingPreview(input: {
       entries.length = 0;
       entries.push(...keptEntries);
       exceptions.push(exception({
-        code: "MISSING_XERO_ACCOUNT_MAPPING",
+        code: MISSING_XERO_ACCOUNT_MAPPING_CODE,
         message: "The subscriptionIncome Xero account mapping must be explicitly configured before membership invoices can be queued.",
         seasonYear: input.seasonYear,
         memberId: null,
@@ -1879,6 +1881,13 @@ export async function queueApprovedMembershipSubscriptionCharges(input: {
   // behind it, which took a self-consistent Denver deployment from right to
   // wrong. The club's day is minted here and decoded as an encoding, in UTC, by
   // `seasonYearOfStoredDate`.
+  // #4986 (`INV-INT-038`): with Xero off no charge is frozen and nothing is
+  // queued, because the invoice would wait out the pause and go out unchecked.
+  // The approval still succeeds and turns this into its plain warning. The
+  // seam M7 (#4519) replaces when charges can post locally without Xero.
+  if (!(await isXeroInvoicingEnabled())) {
+    return { chargeIds: [], exceptionCount: 0, xeroInvoicingOff: true as const };
+  }
   const decisionDate =
     input.decisionDate ??
     dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
@@ -1893,5 +1902,5 @@ export async function queueApprovedMembershipSubscriptionCharges(input: {
   const { enqueueMembershipSubscriptionChargeOperation } = await import("@/lib/xero-subscription-invoices");
   await Promise.all(result.chargeIds.map((chargeId) =>
     enqueueMembershipSubscriptionChargeOperation(chargeId, { createdByMemberId: input.approvedByMemberId })));
-  return result;
+  return { ...result, xeroInvoicingOff: false as const };
 }
