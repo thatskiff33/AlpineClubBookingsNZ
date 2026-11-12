@@ -164,6 +164,10 @@ const setupHubCards: SetupHubCard[] = [
   },
 ];
 
+const SETUP_COMPLETE_MESSAGE = "Setup has been marked complete.";
+const SETUP_COMPLETE_BANNER_CLASS =
+  "rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11";
+
 function statusVariant(status: SetupStatus): BadgeProps["variant"] {
   if (status === "complete") return "success";
   if (status === "blocked") return "destructive";
@@ -340,6 +344,7 @@ export function SetupPageClient({
   ) {
     setSavingStep(stepId);
     setError("");
+    setFinishMessage("");
     try {
       const response = await fetch("/api/admin/setup/progress", {
         method: "PATCH",
@@ -380,7 +385,7 @@ export function SetupPageClient({
       }
       const updated = await loadSetup();
       if (updated?.progress.completedAt) {
-        setFinishMessage("Setup has been marked complete.");
+        setFinishMessage(SETUP_COMPLETE_MESSAGE);
       }
     } catch (finishError) {
       setError(
@@ -467,13 +472,17 @@ export function SetupPageClient({
       >
         {loadError}
       </div>
+      {/* Saved completion is a plain banner; only an explicit finish is announced. */}
+      {setupCompleted && !finishMessage ? (
+        <div className={SETUP_COMPLETE_BANNER_CLASS}>{SETUP_COMPLETE_MESSAGE}</div>
+      ) : null}
       <div
         ref={successRef}
         role="status"
         aria-atomic="true"
-        className={setupCompleted ? "rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11" : "sr-only"}
+        className={finishMessage ? SETUP_COMPLETE_BANNER_CLASS : "sr-only"}
       >
-        {setupCompleted ? "Setup has been marked complete." : ""}
+        {finishMessage}
       </div>
       {loading && !readiness ? (
         <div className="flex min-h-[320px] items-center justify-center gap-2 text-sm text-muted-foreground">

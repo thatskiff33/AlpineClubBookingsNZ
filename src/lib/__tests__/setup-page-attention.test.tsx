@@ -172,6 +172,22 @@ describe("Setup action attention", () => {
     expect(document.activeElement).toBe(refresh);
   });
 
+  it("shows saved completion as a banner without announcing it on load", async () => {
+    fetchMock.mockResolvedValue(
+      response({
+        ...setup,
+        progress: {
+          ...setup.progress,
+          completedAt: "2026-07-01T00:00:00.000Z",
+        },
+      }),
+    );
+    mount();
+    await screen.findByText("Setup has been marked complete.");
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    expect(scroll).not.toHaveBeenCalled();
+  });
+
   it("announces a passive load failure without taking focus", async () => {
     fetchMock.mockResolvedValue(
       response({ error: "Readiness unavailable" }, false),
