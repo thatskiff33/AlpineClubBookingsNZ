@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { ADMIN_PAGES, getAdminPage, type AdminPageId } from "@/lib/admin-hubs";
+import { ADMIN_PAGES, adminHref, getAdminPage, type AdminPageId } from "@/lib/admin-hubs";
 
 /**
  * A hub card that opens a whole admin page is titled with that page's registry
@@ -14,9 +14,9 @@ import { ADMIN_PAGES, getAdminPage, type AdminPageId } from "@/lib/admin-hubs";
  * read as TSX so a comment cannot count. A setup-readiness step has no icon and
  * is named for the check, not the page it links to. A card's
  * `href` opens a whole page when it is `adminHref("<id>")` with no parameters,
- * or a string literal equal to a static page's old path. A tab, an anchor, a
- * query string or a computed href opens a slice of a page, and its card may
- * name that slice; those are not checked. The title must be
+ * or a string literal equal to a static page's old path or live href. A tab,
+ * an anchor, a query string or a computed href opens a slice of a page, and
+ * its card may name that slice; those are not checked. The title must be
  * `getAdminPage("<same id>").label`, or a string literal equal to the label.
  */
 
@@ -60,8 +60,12 @@ function productionFiles(dir: string): string[] {
   });
 }
 
-const STATIC_PAGE_BY_PATH = new Map(
-  ADMIN_PAGES.filter((page) => !page.oldPath.includes("[")).map((page) => [page.oldPath, page.id]),
+/** A static page by either path a literal href may spell: its old path or its live `adminHref`. */
+const STATIC_PAGE_BY_PATH = new Map<string, string>(
+  ADMIN_PAGES.filter((page) => !page.oldPath.includes("[")).flatMap((page): [string, string][] => [
+    [page.oldPath, page.id],
+    [adminHref(page.id as never), page.id],
+  ]),
 );
 
 interface HubCard {

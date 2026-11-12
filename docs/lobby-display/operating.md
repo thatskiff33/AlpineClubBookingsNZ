@@ -67,7 +67,7 @@ Advanced mode, with an option to rebuild it from a fresh skeleton if you prefer.
 
 Each device shows the **club-default board** until you bind it to a Template.
 
-- Pick a Template from the device's template selector (**Devices** page). The
+- Pick a Template from the device's template selector (**Display Devices** page). The
   three built-ins — **Everyday board**, **Whole lodge**, **Singles house** —
   appear as ordinary Templates, alongside any you have authored.
 - Choosing "club default" clears the binding (`templateId: null`).
