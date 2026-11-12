@@ -35,10 +35,10 @@ describe("signing out forgets the booking wizard's kept work (#4950)", () => {
       groupPaymentMode: "EACH_PAYS_OWN",
       paymentMethod: "stripe",
       memberReviewJustification: "",
-    useCredit: false,
-    attendingWorkParty: false,
-    selectedWorkPartyEventId: null,
-    waitlistAlternateLodgeIds: [],
+      useCredit: false,
+      attendingWorkParty: false,
+      selectedWorkPartyEventId: null,
+      waitlistAlternateLodgeIds: [],
     });
     expect(loadWizardWork("member-1")).not.toBeNull();
 

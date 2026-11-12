@@ -58,6 +58,14 @@ const savedGuestSchema = z.object({
   stayStart: calendarDateString.optional(),
   stayEnd: calendarDateString.optional(),
   nights: z.array(calendarDateString).optional(),
+  // Kept, not re-derived: it is what the member was shown when they added a
+  // member from outside their family, and `partyNeedsSupervisionJustification`
+  // reads it, so dropping it made an outsider count as the supervising adult
+  // and the create route refuse a party the wizard had let through. Display
+  // only; the server decides consent for itself.
+  memberGuestConsentPreview: z
+    .enum(["PENDING", "NOTIFY_ONLY", "ADMIN_ASSIGNED"])
+    .optional(),
 });
 
 const savedWorkSchema = z.object({

@@ -66,6 +66,19 @@ describe("booking wizard work storage (#4950)", () => {
     expect(raw).not.toContain("passport");
   });
 
+  it("keeps the consent preview of a member added from outside the family", () => {
+    const outsider = {
+      firstName: "Pat",
+      lastName: "Outsider",
+      ageTier: "ADULT" as const,
+      isMember: true,
+      memberId: "member-9",
+      memberGuestConsentPreview: "PENDING" as const,
+    };
+    saveWizardWork(work({ guests: [outsider] }));
+    expect(loadWizardWork("member-1")?.guests).toEqual([outsider]);
+  });
+
   it("removes a copy for another member, with another version, or unreadable", () => {
     saveWizardWork(work());
     expect(loadWizardWork("member-2")).toBeNull();
