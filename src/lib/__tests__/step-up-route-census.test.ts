@@ -8,7 +8,12 @@ import { FACTOR_RESET_ROUTE, STEP_UP_ROUTES } from "@/lib/step-up-routes";
 
 const RESTORE = "src/app/api/admin/backups/restore/route.ts";
 
-describe("step-up route census (#4619)", () => {
+// Every case re-scans the admin routes from source: about 3 seconds each on an
+// idle machine, and several times that on a busy CI runner. One limit for the
+// suite, well clear of both (#5040).
+const CENSUS_TIMEOUT_MS = 90_000;
+
+describe("step-up route census (#4619)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("matches every admin handler that reaches a listed operation", () => {
     const result = runStepUpCensus();
     expect(result.missing).toEqual([]);
@@ -18,7 +23,7 @@ describe("step-up route census (#4619)", () => {
     expect(result.exportCsv).toBeNull();
     expect(result.factorReset).toBeNull();
     expect(findStepUpClientGaps()).toEqual([]);
-  }, 20_000);
+  });
 
   it("fails when a listed route is dropped", () => {
     const result = runStepUpCensus({

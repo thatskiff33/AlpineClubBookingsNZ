@@ -91,6 +91,7 @@ const mocks = vi.hoisted(() => ({
   loadEffectiveModuleFlags: vi.fn(),
   lockerFindMany: vi.fn(),
   memberFindUnique: vi.fn(),
+  memberInductionFindFirst: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -122,6 +123,7 @@ vi.mock("@/lib/prisma", () => ({
     // INV-CAP-039: the active-lodge count behind the rows' lodge line.
     lodge: { count: vi.fn(async () => 1) },
     member: { findUnique: mocks.memberFindUnique },
+    memberInduction: { findFirst: mocks.memberInductionFindFirst },
     calendarEvent: { findMany: mocks.calendarEventFindMany },
   },
 }));
@@ -264,10 +266,8 @@ describe("the member dashboard runs on the persisted club timezone (CT-4, #2870)
     mocks.getAvailablePromoCodesForMember.mockResolvedValue([]);
     mocks.lockerFindMany.mockResolvedValue([]);
     mocks.calendarEventFindMany.mockResolvedValue([]);
-    mocks.memberFindUnique.mockResolvedValue({
-      requiresInduction: false,
-      inductions: [],
-    });
+    mocks.memberFindUnique.mockResolvedValue({ requiresInduction: false });
+    mocks.memberInductionFindFirst.mockResolvedValue(null);
     mocks.loadEffectiveModuleFlags.mockResolvedValue(moduleFlags());
     mocks.checkCapacity.mockResolvedValue({
       available: true,
