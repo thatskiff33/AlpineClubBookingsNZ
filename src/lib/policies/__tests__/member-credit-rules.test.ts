@@ -77,6 +77,7 @@ describe("member credit policy rules", () => {
       amountCents: 2500,
       description: "Service recovery",
       requestedById: "admin-1",
+      grantAccount: "GOODWILL" as const,
     };
 
     expect(() =>
@@ -87,6 +88,13 @@ describe("member credit policy rules", () => {
       assertMatchingIdempotentAdjustmentRequest(original, {
         ...original,
         amountCents: 3000,
+      })
+    ).toThrow(ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT);
+
+    expect(() =>
+      assertMatchingIdempotentAdjustmentRequest(original, {
+        ...original,
+        grantAccount: "MEMBER_OWN_MONEY",
       })
     ).toThrow(ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT);
   });

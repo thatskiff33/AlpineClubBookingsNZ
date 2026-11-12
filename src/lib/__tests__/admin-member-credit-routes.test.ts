@@ -89,6 +89,48 @@ describe("admin member credit routes", () => {
     expect(mocks.createAdminAdjustmentRequest).not.toHaveBeenCalled();
   });
 
+  it("rejects a positive grant that names no account, and a deduction that names one", async () => {
+    const positive = new NextRequest("http://localhost/api/admin/members/member-1/credits", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        amountCents: 2500,
+        description: "Goodwill credit",
+        idempotencyKey: "9a13b0af-7ffc-451b-a50b-81f6fb8630f4",
+      }),
+    });
+    const negative = new NextRequest("http://localhost/api/admin/members/member-1/credits", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        amountCents: -2500,
+        description: "Correction",
+        idempotencyKey: "9a13b0af-7ffc-451b-a50b-81f6fb8630f4",
+        grantAccount: "GOODWILL",
+      }),
+    });
+    expect((await createAdjustmentRequest(positive, { params: Promise.resolve({ id: "member-1" }) })).status).toBe(400);
+    expect((await createAdjustmentRequest(negative, { params: Promise.resolve({ id: "member-1" }) })).status).toBe(400);
+    expect(mocks.createAdminAdjustmentRequest).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when the same key is reused for a different account", async () => {
+    const { MemberCreditValidationError, ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT } = await import("@/lib/policies/member-credit");
+    mocks.createAdminAdjustmentRequest.mockRejectedValue(new MemberCreditValidationError(ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT));
+    const request = new NextRequest("http://localhost/api/admin/members/member-1/credits", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        amountCents: 2500,
+        description: "Goodwill credit",
+        idempotencyKey: "9a13b0af-7ffc-451b-a50b-81f6fb8630f4",
+        grantAccount: "MEMBER_OWN_MONEY",
+      }),
+    });
+    const response = await createAdjustmentRequest(request, { params: Promise.resolve({ id: "member-1" }) });
+    expect(response.status).toBe(409);
+  });
+
   it("passes the idempotency key through and returns replay metadata", async () => {
     mocks.createAdminAdjustmentRequest.mockResolvedValue({
       request: {
@@ -108,6 +150,7 @@ describe("admin member credit routes", () => {
         amountCents: 2500,
         description: "Goodwill credit",
         idempotencyKey: "9a13b0af-7ffc-451b-a50b-81f6fb8630f4",
+        grantAccount: "GOODWILL",
       }),
     });
 
@@ -123,6 +166,7 @@ describe("admin member credit routes", () => {
       "Goodwill credit",
       "admin-1",
       "9a13b0af-7ffc-451b-a50b-81f6fb8630f4",
+      "GOODWILL",
       "127.0.0.1"
     );
     expect(body).toMatchObject({
@@ -155,6 +199,7 @@ describe("per-area gate on POST /api/admin/members/[id]/credits (#2921)", () => 
           amountCents: 2500,
           description: "Goodwill credit",
           idempotencyKey: "9a13b0af-7ffc-451b-a50b-81f6fb8630f4",
+          grantAccount: "GOODWILL",
         }),
       },
     );

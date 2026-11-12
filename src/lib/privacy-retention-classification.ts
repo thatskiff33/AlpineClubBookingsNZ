@@ -18,6 +18,8 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   TwoFactorRecoveryCode: "personal",
   TwoFactorSessionChallenge: "personal",
   SessionReauthChallenge: "personal",
+  WebAuthnCredential: "personal",
+  WebAuthnChallenge: "personal",
   MemberApplication: "personal",
   NominationToken: "personal",
   PartnerInviteToken: "personal",

@@ -122,6 +122,11 @@ const OVERVIEW_ALLOWLIST: Record<string, string> = {
   // enforces its own area on drill-in.
   "/api/admin/pending-counts":
     "Cross-area read-only badge counts for the sidebar; spans all areas, so overview view is correct.",
+  // The sidebar's role-menu preference (C14 #4811). The catch-all area is not
+  // the gate: the handler admits any admin (`permission: "any-admin"`) and
+  // answers 404 while hubs are off, before authentication.
+  "/api/admin/menu-role":
+    "Sidebar role-menu preference. The overview catch-all is not the gate; the handler's any-admin check is, and the route 404s while hubs are off.",
   // The AI Diagnostics workspace shell (AID-7, #2378). It resolves to `overview`
   // here, and that is the area the SIDEBAR and command palette use for the link —
   // but since #2975 it is no longer what ADMITS the page. Owner decision Q6 and

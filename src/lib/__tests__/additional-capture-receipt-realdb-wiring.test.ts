@@ -32,6 +32,13 @@ describe("the change capture receipt proof stays wired into CI (#3953)", () => {
     expect(suite).toContain("an invoice for the change queued after its capture's receipt stored a decision is raised unpaid");
     expect(suite).toContain("a create dead past the staleness threshold blocks neither; a live one blocks both");
     expect(suite).toContain("a retired invoice revived for the capture while its receipt stores a decision is revived unpaid");
+    expect(harness).toContain('import "./additional-capture-receipt-sweep-retry.realdb.test";');
+    const sweepRetry = readFileSync(
+      resolve(REPO_ROOT, "src/lib/__tests__/additional-capture-receipt-sweep-retry.realdb.test.ts"),
+      "utf8",
+    );
+    expect(sweepRetry).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    expect(sweepRetry).toContain("a receipt retried after a crash sends its own payment beside the sweep's equal payment on the primary invoice");
     // Round 7: a capture whose ledger row carries no change stamp.
     expect(harness).toContain('import "./additional-capture-receipt-unattributed.realdb.test";');
     const unattributed = readFileSync(

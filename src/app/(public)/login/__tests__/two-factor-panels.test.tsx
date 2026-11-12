@@ -192,3 +192,18 @@ describe("retired recovery codes notice on the sign-in challenge (#4456)", () =>
     expect(screen.queryByTestId("retired-recovery-codes-notice")).toBeNull();
   });
 });
+
+describe("passkey on the sign-in challenge (#4617)", () => {
+  it("shows Use your passkey beside the app code", () => {
+    render(<TwoFactorVerifyPanel callbackUrl={deepLink} enrolledMethod="TOTP" hasPasskey />);
+    expect(screen.getByRole("button", { name: "Use your passkey" })).toBeVisible();
+    expect(screen.getByLabelText("Two-factor code")).toBeVisible();
+  });
+
+  it("shows only the passkey when no app or email method is enrolled", () => {
+    render(<TwoFactorVerifyPanel callbackUrl={deepLink} enrolledMethod={null} hasPasskey />);
+    expect(screen.getByRole("button", { name: "Use your passkey" })).toBeVisible();
+    expect(screen.queryByLabelText("Two-factor code")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Verify" })).toBeNull();
+  });
+});

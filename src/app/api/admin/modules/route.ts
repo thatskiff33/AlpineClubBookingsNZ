@@ -28,6 +28,7 @@ import {
   type ModuleSettingsValues,
 } from "@/config/modules";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const moduleSettingsSchema = z
   .object(
@@ -78,6 +79,8 @@ export async function PUT(request: Request) {
   const session = guard.session;
 
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await request.json();
   } catch {
