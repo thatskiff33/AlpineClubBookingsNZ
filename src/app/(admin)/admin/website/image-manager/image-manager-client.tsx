@@ -396,14 +396,14 @@ export function ImageManagerClient() {
                     className={cn(
                       "group flex items-center rounded-md pr-2 text-sm transition-colors",
                       isSelected
-                        ? "bg-muted font-medium text-foreground"
+                        ? "bg-muted text-foreground"
                         : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                     )}
                   >
                     <Button
                       type="button"
                       variant="ghost"
-                      className="h-auto min-w-0 flex-1 justify-start py-1.5 pr-2"
+                      className={cn("h-auto min-w-0 flex-1 justify-start py-1.5 pr-2", isSelected ? "font-medium" : "font-normal")}
                       style={{ paddingLeft: `${8 + depth * 12}px` }}
                       aria-current={isSelected ? "true" : undefined}
                       onClick={() => setSelectedDir(dir)}
