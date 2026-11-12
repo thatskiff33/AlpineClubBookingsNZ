@@ -6,7 +6,7 @@ import DevicesPage from "../page";
 
 const access = vi.hoisted(() => ({ canEdit: true }));
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/hooks/use-admin-area-edit-access")>()),
+  ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
   useAdminAreaEditAccess: () => access.canEdit,
 }));
 const device = {

@@ -10,7 +10,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
 }));
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/hooks/use-admin-area-edit-access")>()),
+  ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
   useAdminAreaEditAccess: () => true,
 }));
 const group = {

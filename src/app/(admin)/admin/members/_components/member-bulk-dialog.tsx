@@ -24,8 +24,10 @@ import type { BulkAction } from "../_types"
 
 // What each action really does on the server (#4973). Keep these sentences
 // aligned with api/admin/members/bulk-update/route.ts: a change to that route's
-// side effects changes this map in the same PR.
-const actionDescriptions: Record<BulkAction, string> = {
+// side effects changes this map in the same PR. Membership-type changes have
+// their own dialog, and "" is only the page's nothing-chosen-yet state.
+type MemberBulkDialogAction = Exclude<BulkAction, "" | "set-membership-type">
+const actionDescriptions: Record<MemberBulkDialogAction, string> = {
   deactivate: "Each member's leaving date will be set to today. Their future shared-room bed placements will be cleared and are not restored by Reactivate.",
   reactivate: "Each member's leaving date will be cleared.",
   "set-role": "Each member's existing access roles will be replaced by the chosen role.",
@@ -82,6 +84,8 @@ export function MemberBulkDialog({
     }
   }
 
+  const actionDescription =
+    action === "" || action === "set-membership-type" ? "" : actionDescriptions[action]
   const listedMembers = selectedMembers.slice(0, MAX_LISTED_MEMBERS)
   // Counted from the ids actually posted, so a selection the page has no name
   // for is still owned up to rather than silently left off the list.
@@ -96,7 +100,7 @@ export function MemberBulkDialog({
         <DialogHeader>
           <DialogTitle>Bulk {titleAction}</DialogTitle>
           <DialogDescription>
-            This will affect {selectedIds.size} selected member(s). {actionDescriptions[action]}
+            This will affect {selectedIds.size} selected member(s). {actionDescription}
           </DialogDescription>
         </DialogHeader>
         <ul aria-label="Selected members" className="text-sm list-disc pl-5">
