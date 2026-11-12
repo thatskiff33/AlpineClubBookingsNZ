@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { signOut } from "next-auth/react";
+import { signOutMember } from "@/lib/member-sign-out";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -24,7 +24,7 @@ import { Button } from "@/components/ui/button";
  *
  * ## What it does
  *
- * `signOut({ callbackUrl })` drops the session and navigates back to this invite
+ * `signOutMember({ callbackUrl })` drops the session and navigates back to this invite
  * address, which is now a SIGNED-OUT top-level navigation — so
  * `syncFamilyInviteReturnAddress()` in `src/proxy.ts` writes the return address on
  * that response, and the page shows its signed-out branch with a working "I
@@ -43,8 +43,8 @@ import { Button } from "@/components/ui/button";
  * already uses for the same reason.
  *
  * Signing out requires JavaScript here, exactly as it does everywhere else in this
- * application (`src/components/nav-bar.tsx` calls the same `signOut`), so nothing
- * that worked without scripting stops working. The signed-out branch's anchor —
+ * application (`src/components/nav-bar.tsx` calls the same `signOutMember`), so
+ * nothing that worked without scripting stops working. The signed-out branch's anchor —
  * the one the no-JavaScript recipient of an emailed invite actually uses — is
  * untouched.
  */
@@ -63,7 +63,7 @@ export function SignOutAndReturnButton({
       disabled={signingOut}
       onClick={() => {
         setSigningOut(true);
-        void signOut({ callbackUrl: returnPath });
+        void signOutMember({ callbackUrl: returnPath });
       }}
     >
       {children}

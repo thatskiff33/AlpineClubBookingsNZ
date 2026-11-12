@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { signOutMember } from "@/lib/member-sign-out";
 import { useState } from "react";
 import { Menu, Mountain, LogOut, User, ChevronDown } from "lucide-react";
 import { ThemeMenuItems, ThemeSwitcher } from "@/components/theme-switcher";
@@ -239,7 +239,7 @@ export function NavBar({ user, features, surface = "member" }: NavBarProps) {
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="cursor-pointer text-danger-11 focus:bg-danger-3 focus:text-danger-11"
-                onClick={() => signOut({ callbackUrl: "/login" })}
+                onClick={() => signOutMember({ callbackUrl: "/login" })}
               >
                 <LogOut className="mr-2 h-4 w-4" />
                 Log out
@@ -307,7 +307,7 @@ export function NavBar({ user, features, surface = "member" }: NavBarProps) {
               <button
                 onClick={() => {
                   setMobileOpen(false);
-                  signOut({ callbackUrl: "/login" });
+                  signOutMember({ callbackUrl: "/login" });
                 }}
                 className="mt-4 flex w-full items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium text-danger-11 transition-colors hover:bg-danger-3"
               >

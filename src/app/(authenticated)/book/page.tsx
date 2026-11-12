@@ -22,6 +22,7 @@ import {
   PROFILE_FAMILY_GROUP_RETURN_TO_BOOK,
   readSubscriptionLockoutView,
 } from "./_components/types";
+import { RestoredWorkNotice } from "./_components/restored-work-notice";
 import { useBookingWizard } from "./_hooks/use-booking-wizard";
 
 const PROFILE_RETURN_TO_BOOK = buildProfilePathWithReturnTo("/book");
@@ -150,6 +151,8 @@ export default function BookPage() {
     lodgeLabel,
     waitlistAlternateLodgeIds,
     setWaitlistAlternateLodgeIds,
+    restoredWorkNotice,
+    startAgain,
   } = useBookingWizard();
 
   // Hint the help widget which wizard step is active so its chips lead with the
@@ -558,6 +561,11 @@ export default function BookPage() {
           {wizardSteps[activeStepIndex]?.label}
         </p>
       </nav>
+
+      {/* #4950 — never on the pay step, where the booking already exists. */}
+      {restoredWorkNotice && step !== "pay" && (
+        <RestoredWorkNotice notice={restoredWorkNotice} onStartAgain={startAgain} />
+      )}
 
       {/* Step 1: Dates */}
       {step === "dates" && (

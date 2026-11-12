@@ -1,12 +1,20 @@
 "use client";
 
-import { useCallback, useState, useEffect, useLayoutEffect, useRef } from "react";
+import {
+  useCallback,
+  useState,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+} from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { toast } from "sonner";
 import { type GuestData } from "@/components/guest-form";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { useClubFormat } from "@/components/club-format-provider";
+import { useClubTime } from "@/components/club-time-provider";
 import { useLodgeOptions } from "@/components/lodge-select";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope";
 import { BOOKING_LODGE_UNRESOLVED_MEMBER_MESSAGE } from "@/lib/booking-lodge-scope";
@@ -21,6 +29,8 @@ import {
   createRequestPromoFields,
 } from "@/components/promo-code-list-client";
 import { useWorkingBeeDiscount } from "./use-working-bee-discount";
+import { useWizardWorkPersistence } from "./use-wizard-work-persistence";
+import type { SavedWizardWork } from "@/lib/booking-wizard-work";
 import {
   getBookingErrorPaymentTargets,
   type BookingErrorPaymentTarget,
@@ -789,6 +799,94 @@ export function useBookingWizard() {
     setMemberNightConflicts([]);
   }, [familyMembers, guests, partySizeCeiling]);
 
+  /* ---- Work kept in this tab (#4950) -----------------------------------
+   *
+   * The guests step sends members to their profile "then return here", and a
+   * refresh used to throw the whole wizard away. The member's inputs are kept
+   * in this tab and brought back on return; the rules for what is kept live in
+   * `src/lib/booking-wizard-work.ts`, the timing in `useWizardWorkPersistence`.
+   *
+   * Restoring applies the inputs, then re-runs the same date check a pick
+   * would, so availability, capacity and policy are read afresh; a copy that
+   * had reached review is then re-quoted. Nothing fetched or priced is kept.
+   */
+  const clubTime = useClubTime();
+  const restoredDatesRef = useRef<{
+    lodgeId: string;
+    checkIn: string;
+    checkOut: string;
+    requote: boolean;
+    advance: boolean;
+  } | null>(null);
+  const [restoredRequotePending, setRestoredRequotePending] = useState(false);
+  function applyRestoredWork(work: SavedWizardWork) {
+    // The kept party is the member's own choice, including leaving themselves
+    // out, so the one-shot self seed is spent rather than run over it.
+    selfSeededRef.current = true;
+    setLodgeId(work.lodgeId);
+    setCheckIn(work.checkIn);
+    setCheckOut(work.checkOut);
+    setGuests(work.guests);
+    setNotes(work.notes);
+    setPerGuestDatesEnabled(work.perGuestDatesEnabled);
+    setMultiDateRangesEnabled(work.multiDateRangesEnabled);
+    setExpectedArrivalTime(work.expectedArrivalTime);
+    setRequestedRoomId(work.requestedRoomId);
+    setCancelIfGuestsBumped(work.cancelIfGuestsBumped);
+    setGroupTrip(work.groupTrip);
+    setGroupPaymentMode(work.groupPaymentMode);
+    setPaymentMethod(work.paymentMethod);
+    setMemberReviewJustification(work.memberReviewJustification);
+    setUseCredit(work.useCredit);
+    setAttendingWorkParty(work.attendingWorkParty);
+    setSelectedWorkPartyEventId(work.selectedWorkPartyEventId);
+    setWaitlistAlternateLodgeIds(work.waitlistAlternateLodgeIds);
+    restoredDatesRef.current =
+      work.checkIn && work.checkOut
+        ? {
+            lodgeId: work.lodgeId,
+            checkIn: work.checkIn,
+            checkOut: work.checkOut,
+            requote: work.step === "review",
+            advance: work.step !== "dates",
+          }
+        : null;
+  }
+  const workPersistence = useWizardWorkPersistence({
+    enabled: replaceExceptionRequestId === null,
+    memberId: session?.user?.id ?? null,
+    lodges,
+    lodgesLoading,
+    lodgesFailed,
+    lodgesForbidden,
+    today: clubTime.today(),
+    work:
+      lodgeId && step !== "pay"
+        ? {
+            lodgeId,
+            checkIn,
+            checkOut,
+            step,
+            guests,
+            notes,
+            perGuestDatesEnabled,
+            multiDateRangesEnabled,
+            expectedArrivalTime,
+            requestedRoomId,
+            cancelIfGuestsBumped,
+            groupTrip,
+            groupPaymentMode,
+            paymentMethod,
+            memberReviewJustification,
+            useCredit,
+            attendingWorkParty,
+            selectedWorkPartyEventId,
+            waitlistAlternateLodgeIds,
+          }
+        : null,
+    onRestore: applyRestoredWork,
+  });
+
   useEffect(() => {
     const params = new URLSearchParams();
     if (checkIn) {
@@ -1343,9 +1441,24 @@ export function useBookingWizard() {
   }
 
   async function handleDateSelect(ci: string, co: string) {
+    await selectDates(ci, co, false);
+  }
+
+  /**
+   * Check the chosen dates and move to the guests step. Resolves true only when
+   * it did move there. `keepGuestStayRanges` is for restoring kept work
+   * (#4950), whose per-guest ranges were chosen for these very dates; a fresh
+   * pick clears them because they belong to the dates being replaced.
+   */
+  async function selectDates(
+    ci: string,
+    co: string,
+    keepGuestStayRanges: boolean,
+    advance = true,
+  ): Promise<boolean> {
     if (!scopedLodgeId) {
       returnToUnresolvedLodge();
-      return;
+      return false;
     }
     const requestedLodgeId = scopedLodgeId;
     const sequence = ++dateSelectionSequenceRef.current;
@@ -1367,9 +1480,11 @@ export function useBookingWizard() {
     setMemberNightConflicts([]);
     setAppliedPromos([]);
     setPriceQuote(null);
-    setUseCredit(false);
-    setPerGuestDatesEnabled(false);
-    setGuests((current) => clearGuestStayRanges(current));
+    if (!keepGuestStayRanges) {
+      setUseCredit(false);
+      setPerGuestDatesEnabled(false);
+      setGuests((current) => clearGuestStayRanges(current));
+    }
     setActiveWorkPartyEvents([]);
     setWorkPartyError("");
     setWorkPartyClearedNotice(null);
@@ -1385,10 +1500,10 @@ export function useBookingWizard() {
         `/api/availability/check?checkIn=${ciStr}&checkOut=${coStr}${lodgeParam}`,
         { signal: controller.signal },
       );
-      if (lostSelectionOwnership()) return;
+      if (lostSelectionOwnership()) return false;
       if (res.ok) {
         const data = await res.json();
-        if (lostSelectionOwnership()) return;
+        if (lostSelectionOwnership()) return false;
         setAvailabilityNightDetails(data.nightDetails || []);
         // The selected lodge's own capacity (#2930). Only ever overwritten by a
         // real number, so a malformed response leaves the previous value rather
@@ -1408,10 +1523,10 @@ export function useBookingWizard() {
         `/api/booking-policies/check?checkIn=${ciStr}&checkOut=${coStr}${lodgeParam}`,
         { signal: controller.signal },
       );
-      if (lostSelectionOwnership()) return;
+      if (lostSelectionOwnership()) return false;
       if (policyRes.ok) {
         const policyData = await policyRes.json();
-        if (lostSelectionOwnership()) return;
+        if (lostSelectionOwnership()) return false;
         if (!policyData.valid) {
         // #2562: the date precheck must not strand a member before they can
         // describe the party that the officer would review. Reuse the ONE
@@ -1428,16 +1543,27 @@ export function useBookingWizard() {
           });
           if (!reviewable) {
             setError(policyData.message);
-            return;
+            if (keepGuestStayRanges) {
+              setCheckIn(null);
+              setCheckOut(null);
+              setPerGuestDatesEnabled(false);
+              setMultiDateRangesEnabled(false);
+              setGuests((current) => clearGuestNights(clearGuestStayRanges(current)));
+              setStep("dates");
+            }
+            return false;
           }
         }
       }
-      if (ownsSelection()) setStep("guests");
+      if (!ownsSelection()) return false;
+      if (advance) setStep("guests");
+      return advance;
     } catch (requestError) {
-      if (requestError instanceof DOMException && requestError.name === "AbortError") return;
+      if (requestError instanceof DOMException && requestError.name === "AbortError") return false;
       if (!lostSelectionOwnership()) {
         setError("Failed to check availability. Please try again.");
       }
+      return false;
     } finally {
       if (dateSelectionAbortRef.current === controller) {
         dateSelectionAbortRef.current = null;
@@ -1598,6 +1724,41 @@ export function useBookingWizard() {
     setPriceLoading(false);
   }
 
+  // #4950 — resuming restored work re-runs the same date check and quote a
+  // member's clicks would, so it is wired up after both are declared.
+  const resumeRestoredDates = useEffectEvent(
+    (restored: NonNullable<typeof restoredDatesRef.current>) => {
+      void selectDates(restored.checkIn, restored.checkOut, true, restored.advance).then(
+        (advanced) => {
+          if (advanced && restored.requote) setRestoredRequotePending(true);
+        },
+      );
+    },
+  );
+  useEffect(() => {
+    const restored = restoredDatesRef.current;
+    if (!restored || scopedLodgeId !== restored.lodgeId) return;
+    restoredDatesRef.current = null;
+    resumeRestoredDates(restored);
+  }, [scopedLodgeId, workPersistence.restoreSettled]);
+  const resumeRestoredQuote = useEffectEvent(() => {
+    void handleGuestsDone();
+  });
+  useEffect(() => {
+    if (!restoredRequotePending) return;
+    if (step === "dates") {
+      setRestoredRequotePending(false);
+      return;
+    }
+    // Wait for the family list so the guests-step checks the quote runs behind
+    // see the same party they would on a click.
+    if (step !== "guests" || !(familyMembersLoaded || familyMembersLoadFailed)) {
+      return;
+    }
+    setRestoredRequotePending(false);
+    resumeRestoredQuote();
+  }, [restoredRequotePending, step, familyMembersLoaded, familyMembersLoadFailed]);
+
   async function handleSubmit() {
     /*
      * #2701, owner decision 1: A MEMBER CANNOT COMPLETE A BOOKING WHOSE LODGE
@@ -1679,6 +1840,7 @@ export function useBookingWizard() {
 
     if (res.ok) {
       const data = await res.json();
+      workPersistence.stopKeepingWork();
       if (groupTrip && groupBookingsEnabled) {
         // Best-effort: open the group so the share link is waiting on the
         // booking page. Bookings that aren't committed yet (e.g. non-member
@@ -1829,6 +1991,7 @@ export function useBookingWizard() {
 
     if (res.ok) {
       const data = await res.json();
+      workPersistence.stopKeepingWork();
       router.push(`/bookings/${data.id}`);
     } else {
       const data = await res.json();
@@ -1889,6 +2052,7 @@ export function useBookingWizard() {
 
     if (res.ok) {
       const data = await res.json();
+      workPersistence.stopKeepingWork();
       if (groupTrip && groupBookingsEnabled) {
         // Drafts can't anchor a group; tell the member where the option went.
         toast.info("You can open the group trip after confirming your booking.");
@@ -1968,6 +2132,8 @@ export function useBookingWizard() {
       }
       throw failure;
     }
+    // The proposal is now an officer's to decide; the wizard's copy is done.
+    workPersistence.stopKeepingWork();
     return {
       id: String(data.id),
       proposal: data.proposal,
@@ -2330,5 +2496,8 @@ export function useBookingWizard() {
     lodgeLabel,
     waitlistAlternateLodgeIds,
     setWaitlistAlternateLodgeIds,
+    // #4950 — work brought back from this tab, and the way to throw it away.
+    restoredWorkNotice: workPersistence.restoredWorkNotice,
+    startAgain: workPersistence.startAgain,
   };
 }
