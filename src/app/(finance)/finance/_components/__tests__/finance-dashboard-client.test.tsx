@@ -19,6 +19,10 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mocks.routerReplace }),
 }));
 
+vi.mock("@/components/club-identity-provider", () => ({
+  useClubIdentity: () => ({ name: "Test Club", shortName: "Test AC" }),
+}));
+
 vi.mock("next/dynamic", () => ({
   default: () => () => null,
 }));

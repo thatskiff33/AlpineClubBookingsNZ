@@ -37,6 +37,7 @@ import {
   formatStayDateOrNull,
 } from "@/lib/club-time";
 import { escapeCsvCell } from "@/lib/csv";
+import { clubReportFilename } from "@/lib/club-report-filename";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
 import { formatNetCollectedLedgerGapWarning } from "@/lib/payment-net-collected";
 import {
@@ -435,7 +436,7 @@ export default function ReportsPage() {
     const anchor = document.createElement("a");
     const dateStr = clubTime.today();
     anchor.href = url;
-    anchor.download = `tac-report-${dateStr}.csv`;
+    anchor.download = clubReportFilename(club.shortName, dateStr, "csv");
     anchor.click();
     URL.revokeObjectURL(url);
   }
@@ -450,6 +451,7 @@ export default function ReportsPage() {
       // (#3123); this component already holds the binding.
       await generateReportPDF(reportRef.current, { from, to }, clubTime, {
         title: `${club.name} — Reports`,
+        clubShortName: club.shortName,
       });
     } catch (err) {
       console.error("PDF generation failed:", err);
