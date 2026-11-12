@@ -11,6 +11,7 @@ import {
   CREDIT_ELECTION_NOT_APPLIED_BODIES,
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
   PAYMENT_PROCESSING_BODY,
+  SUPERSEDED_PAYMENT_PROCESSING_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
   REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_BODY,
@@ -180,7 +181,15 @@ describe("BookingPaymentWrapper", () => {
     expect(complete).toHaveBeenCalledTimes(1);
   });
 
-  it.each([PAYMENT_PROCESSING_BODY, SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY,
+  it("completes an already-paid response without inventing a credit notice", async () => {
+    const complete = vi.fn();
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ alreadyPaid: true, creditElection: null }) });
+    renderCreditPayment(complete);
+    await waitFor(() => expect(complete).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("status", { name: "Saved account credit" })).toBeNull();
+  });
+
+  it.each([PAYMENT_PROCESSING_BODY, SUPERSEDED_PAYMENT_PROCESSING_BODY, SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY,
     BELOW_STRIPE_MINIMUM_MEMBER_BODY])("discloses consumed credit on a 409 recovery %j", async (body) => {
     fetchMock.mockResolvedValueOnce({ ok: false, status: 409,
       json: async () => ({ ...body, creditElection }) });
@@ -190,6 +199,24 @@ describe("BookingPaymentWrapper", () => {
     expect(alert).toHaveTextContent("you no longer hold that much credit");
     expect(alert).not.toHaveTextContent("Your card will be charged");
     expect(screen.queryByText("payment-form")).toBeNull();
+  });
+
+  it("retains the zero-dollar short-circuit without creating a card intent", () => {
+    render(<BookingPaymentWrapper bookingId="booking-zero" amountCents={0}
+      paymentMode="payment" returnUrl="http://localhost/return" onPaymentComplete={vi.fn()} />);
+    expect(screen.getByText("No payment is required for this booking.")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not promise another charge when confirmation needs recovery", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({
+      clientSecret: "cs_test", chargedAmountCents: 26000, creditElection,
+    }) }).mockResolvedValueOnce({ ok: false, status: 409,
+      json: async () => PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY });
+    renderCreditPayment();
+    fireEvent.click(await screen.findByText("trigger-success"));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("$40.00 was applied"));
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Your card will be charged");
   });
 
   it("keeps the payment form mounted after a recoverable payment error", async () => {

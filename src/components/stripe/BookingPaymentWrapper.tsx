@@ -342,7 +342,8 @@ export default function BookingPaymentWrapper({
   }
 
   const creditCopy = creditElectionOutcomeCopy(
-    creditElection, format, initRecoveryError || initFailed ? null : chargedAmountCents,
+    creditElection, format,
+    initRecoveryError || confirmationError || initFailed || paymentFormClosed ? null : chargedAmountCents,
   );
 
   if (completedWithCredit) {
