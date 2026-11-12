@@ -7,13 +7,13 @@ only the registration lines land here, with their comments trimmed to one or two
 lines.
 
 file: src/app/(authenticated)/dashboard/page.tsx
-lines: 980
+lines: 979
 reason: the Order food card is its own component (food-order-dashboard-card.tsx);
   the page only gains the two imports and the module- and organisation-gated
   render beside "Report an issue", which has to sit with the other module cards.
 
 file: src/components/admin-sidebar.tsx
-lines: 1086
+lines: 1149
 reason: the Food Orders entry in the Lodge Operations section; the sidebar's
   items are one list and an entry cannot live elsewhere.
 
