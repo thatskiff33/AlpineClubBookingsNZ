@@ -10,7 +10,6 @@ CI, and local experiments.
 git clone https://github.com/<owner>/AlpineClubBookingsNZ.git
 cd AlpineClubBookingsNZ
 cp .env.example .env
-cp config/club.example.json config/club.json
 pnpm install --frozen-lockfile
 pnpm exec prisma generate
 pnpm run setup:check
@@ -23,12 +22,17 @@ for installing it).
 
 ## 2. Configure Club Identity
 
-Edit `config/club.json` first. This file controls:
+Club configuration lives in the database, not in a file. After the first
+migrate and seed, sign in and set the club's identity, beds and age tiers at
+`/admin/setup` and its linked editors. Set nightly rates at `/admin/seasons`.
+[`CONFIGURATION.md`](../CONFIGURATION.md#club-config) is the reference for what
+each layer controls.
 
-- club name, short name, public URL, and support/contact emails
-- sender display name and public social links
-- bed or lodge capacity
-- age tiers and integer-cent nightly rates
+`config/club.json` is optional. Only a process run from the checkout reads it,
+such as a host-run seed or `pnpm run dev`. On the Docker path in section 4 the
+app container holds no `config/` folder, so the seed run inside it fills in
+placeholder values ("Example Mountain Club", 20 beds, default rates). Check and
+correct each one in `/admin/setup` before opening bookings.
 
 Keep all money values in cents. Keep booking dates as New Zealand date-only
 lodge nights unless you intentionally rework the booking model.
@@ -45,16 +49,18 @@ For a guided config pass, run:
 pnpm run setup:wizard
 ```
 
-The wizard writes `config/club.json` only. Keep provider keys, OAuth secrets,
-SMTP credentials, and deployment secrets in environment variables or your
-deployment secret store.
+Run it against the migrated database. The wizard writes the same settings rows
+as the admin editors (identity, time zone, capacity and age tiers), writes no
+files and does not set rates. Before the database is migrated it writes nothing
+and points you at `/admin/setup`. Keep provider keys, OAuth secrets, SMTP
+credentials, and deployment secrets in environment variables, your deployment
+secret store, or the in-app integration wizards.
 
 After the first administrator can sign in, the club name, short name, and
-hut-leader label can also be overridden at runtime (without editing
-`config/club.json`) from Admin > Appearance > Club Identity — cross-linked from
-Admin > Setup > Initial Setup as "Club Identity". A blank field falls back to
-the configured default, and the change reaches the public site and emails within
-a few seconds.
+hut-leader label can also be overridden at runtime from Admin > Appearance >
+Club Identity — cross-linked from Admin > Setup > Initial Setup as "Club
+Identity". A blank field falls back to the configured default, and the change
+reaches the public site and emails within a few seconds.
 
 Configure public website colours, fonts, and the logo from the admin
 `/admin/site-style` wizard after the first administrator can sign in. The public

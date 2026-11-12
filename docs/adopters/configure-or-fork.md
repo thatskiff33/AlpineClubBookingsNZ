@@ -54,14 +54,14 @@ settings.
 - Settings are stored in the database and take effect immediately. They do not
   need a redeploy, a `.env` edit, or a restart.
 
-**Install-time configuration** is the same lever, one layer down.
-`config/club.json` holds the values needed *before* an admin can sign in — club
-name, short name, public URL, contact addresses, bed capacity, age tiers and
-their integer-cent nightly rates. `pnpm run setup:wizard` writes it for you.
-[`../../CONFIGURATION.md`](../../CONFIGURATION.md) is the full reference for it
-and for every environment variable. Some of these values, including club name
-and the hut-leader label, can be overridden later from Admin → Appearance →
-Club Identity without touching the file.
+**Install-time configuration** is the same lever, set before the club opens.
+After the first migrate and seed, an admin sets club name, short name, contact
+addresses, bed capacity and age tiers at `/admin/setup`, or runs
+`pnpm run setup:wizard` against the migrated database, which writes the same
+database rows. Nightly rates are set at `/admin/seasons`. `config/club.json` is
+an optional seed and fallback, and the Docker app container never reads it.
+[`../../CONFIGURATION.md`](../../CONFIGURATION.md#club-config) is the full
+reference for it and for every environment variable.
 
 Provider credentials — Stripe, Xero, SES, Sentry, the AI keys, the backup
 destination — are **not** `.env` edits in current releases. They are entered
