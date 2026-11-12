@@ -436,7 +436,6 @@ async function cancelLinkedProvisionalChildBookings(
       continue;
     }
 
-
     logBookingCancellationAudit({
       booking: child,
       bookingId: child.id,
@@ -1362,7 +1361,6 @@ async function performBookingCancellation(
       );
     }
 
-
     // Clear the outstanding balance on an unpaid issued invoice. The true
     // amount owed is the current finalPrice plus any billed change fee: a
     // prior reduction issues a modification credit note against the primary
@@ -2243,7 +2241,6 @@ async function performBookingCancellation(
         "Failed to queue unapplied Xero credit note"
       );
     }
-
 
     logBookingCancellationAudit({
       booking: fresh,
