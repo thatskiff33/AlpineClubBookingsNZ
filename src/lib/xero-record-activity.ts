@@ -27,7 +27,7 @@ import type {
   XeroRecordReference,
 } from "@/lib/xero-record-types";
 
-import { adminLink } from "@/lib/admin-hubs";
+import { adminLink, getAdminPage } from "@/lib/admin-hubs";
 interface XeroRecordScope {
   rootRecord: XeroRecordReference
   scopeRecords: XeroRecordReference[]
@@ -535,7 +535,7 @@ async function getMembershipCancellationRequestScope(localId: string, format: Cl
     relatedRecords: relatedMembers,
     backLink: {
       href: "/admin/membership-cancellations?status=ALL",
-      label: "Membership Cancellations",
+      label: getAdminPage("membership-cancellations").label,
     },
   };
 }
@@ -593,7 +593,7 @@ async function getMembershipCancellationParticipantScope(localId: string, format
     relatedRecords: [relatedMember],
     backLink: {
       href: "/admin/membership-cancellations?status=ALL",
-      label: "Membership Cancellations",
+      label: getAdminPage("membership-cancellations").label,
     },
   };
 }

@@ -1933,7 +1933,7 @@ describe("the registry is inert", () => {
     "src/lib/finance-sync-health.ts": "C5: the Xero admin link is adminHref",
     "src/lib/stuck-state-dashboard.ts":
       "C5, C7: stuck-state links use adminHref; C7: the voided bank refund notes row is adminAnchorHref",
-    "src/lib/xero-record-activity.ts": "C5: the payments back link is adminLink",
+    "src/lib/xero-record-activity.ts": "C5: the payments back link is adminLink; #4968: the cancellations back link reads the registry label",
     "src/lib/xero-record-links.ts": "C5: a Xero record's URL is adminHref",
     "src/lib/contextual-help/admin/finance.ts":
       "C5: the Finance pages' help is keyed by each page's registry old path; C6: and the fee console's",
@@ -2023,6 +2023,7 @@ describe("the registry is inert", () => {
       "C8: the Message Board's tab links and search form address it at its adminHref",
     "src/lib/__tests__/admin-page-headings.test.ts":
       "#4968: every page heading is its registry label",
+    "src/lib/__tests__/admin-leaf-back-links.test.tsx": "#4968: the induction back link reads the registry label",
     "src/lib/__tests__/admin-setup-hubs.test.tsx":
       "#4968: no setup card links to the page it is shown on",
     "src/app/(admin)/admin/setup/hub-cards.ts":
@@ -2036,6 +2037,7 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/display/reference/page.tsx": "#4968: its heading is the registry label",
     "src/app/(admin)/admin/display/setup/page.tsx": "#4968: its heading is the registry label",
     "src/app/(admin)/admin/induction/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/induction/settings/page.tsx": "#4968: its back link is adminLink",
     "src/app/(admin)/admin/member-applications/page.tsx": "#4968: its heading is the registry label",
     "src/app/(admin)/admin/membership-cancellations/page.tsx":
       "#4968: its heading is the registry label",

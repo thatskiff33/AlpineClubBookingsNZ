@@ -1462,7 +1462,7 @@ function buildMembershipCancellationCheck(
         required: false,
         message: "Membership cancellation settings were not checked.",
         details: [
-          "Review this on the Settings tab of Membership Cancellations after migrations have run.",
+          "Review this on the Settings tab of Cancellation Requests after migrations have run.",
         ],
         href: adminTabHref("membership-cancellations", "settings"),
       },
