@@ -435,4 +435,22 @@ describe("Xero webhook inbound kick (#4922)", () => {
     expect(runXeroInboundReconciliationCycle).not.toHaveBeenCalled();
     expect(recordCronJobRunSafe).not.toHaveBeenCalled();
   });
+
+  it("applies stored events only when the claim cannot be attempted at all", async () => {
+    vi.clearAllMocks();
+    vi.mocked(withCronRunClaim).mockRejectedValueOnce(new Error("connect ECONNREFUSED"));
+    vi.mocked(processStoredXeroInboundEventBatches).mockResolvedValueOnce(inbound);
+
+    await expect(runXeroWebhookInboundKick({ batchSize: 2, maxBatches: 3 })).resolves.toEqual({ claimed: false, inbound });
+    expect(processStoredXeroInboundEventBatches).toHaveBeenCalledWith({ batchSize: 2, maxBatches: 3 });
+    expect(runXeroInboundReconciliationCycle).not.toHaveBeenCalled();
+  });
+
+  it("does not swallow an error thrown inside the claimed cycle", async () => {
+    vi.clearAllMocks();
+    vi.mocked(runXeroInboundReconciliationCycle).mockRejectedValueOnce(new Error("cycle failed"));
+
+    await expect(runXeroWebhookInboundKick({ batchSize: 2, maxBatches: 3 })).rejects.toThrow("cycle failed");
+    expect(processStoredXeroInboundEventBatches).not.toHaveBeenCalled();
+  });
 });

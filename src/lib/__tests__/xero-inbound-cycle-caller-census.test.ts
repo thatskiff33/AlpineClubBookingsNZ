@@ -22,7 +22,9 @@ function cycleReferences(file: string, text: string): number[] {
   function visit(node: ts.Node) {
     if (ts.isIdentifier(node) && node.text === CYCLE) {
       const declaration = ts.isFunctionDeclaration(node.parent) && node.parent.name === node;
-      const reExport = ts.isExportSpecifier(node.parent);
+      // A plain re-export only: an aliased one (`export { cycle as run }`) hands
+      // the cycle out under a name this census would no longer see.
+      const reExport = ts.isExportSpecifier(node.parent) && node.parent.propertyName === undefined;
       if (!declaration && !reExport) lines.push(source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1);
     }
     // A bracket lookup (`module["runXero…"]`) reaches the cycle as surely as a dotted one.
@@ -45,6 +47,7 @@ describe("Xero inbound cycle callers (#4922, INV-LOCK-003)", () => {
     expect(cycleReferences("alias.ts", `import { ${CYCLE} as cycle } from "@/lib/xero-inbound-reconciliation";`)).toEqual([1]);
     expect(cycleReferences("dynamic.ts", `(await import("@/lib/xero-inbound-reconciliation")).${CYCLE}();`)).toEqual([1]);
     expect(cycleReferences("bracket.ts", `const run = inbound["${CYCLE}"];`)).toEqual([1]);
+    expect(cycleReferences("barrel.ts", `export { ${CYCLE} as runInbound } from "./xero-inbound/event-processing";`)).toEqual([1]);
   });
 
   it("ignores the declaration, a re-export, comments and plain strings", () => {

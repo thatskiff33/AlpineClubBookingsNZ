@@ -508,9 +508,22 @@ export async function runXeroWebhookInboundKick(options: {
   batchSize: number;
   maxBatches: number;
 }): Promise<XeroWebhookInboundKickResult> {
-  const outcome = await withCronRunClaim(XERO_CRON_JOB_NAMES.inbound, () =>
-    runXeroInboundReconciliationCycle(options),
-  );
+  // A claim that cannot even be attempted (no database connection) must not
+  // strand stored events until the next scheduled run: they are row-claimed, so
+  // applying them unclaimed is the held-elsewhere path. An error from inside the
+  // cycle itself is not swallowed.
+  let cycleStarted = false;
+  let outcome: { claimed: false } | { claimed: true; result: RunXeroInboundReconciliationCycleResult };
+  try {
+    outcome = await withCronRunClaim(XERO_CRON_JOB_NAMES.inbound, () => {
+      cycleStarted = true;
+      return runXeroInboundReconciliationCycle(options);
+    });
+  } catch (error) {
+    if (cycleStarted) throw error;
+    logger.error({ err: error }, "Xero webhook kick could not take the inbound run claim; applying stored events only");
+    outcome = { claimed: false };
+  }
   if (outcome.claimed) return { claimed: true, cycle: outcome.result };
   return { claimed: false, inbound: await processStoredXeroInboundEventBatches(options) };
 }
