@@ -9,7 +9,7 @@
 // `toHaveURL` or `waitForURL`.
 import { escapeRegExp } from "@/lib/escape-regexp";
 
-export { adminAnchorHref, adminHref, adminTabHref } from "@/lib/admin-hubs";
+export { adminHref, adminTabHref } from "@/lib/admin-hubs";
 
 export interface AdminUrlPatternOptions {
   /** One more path segment under `href`: a detail page under its list page. */
