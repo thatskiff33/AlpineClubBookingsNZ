@@ -22,14 +22,11 @@ vi.mock("@/lib/prisma", () => ({
     booking: { findUnique: (...a: unknown[]) => mocks.bookingFindUnique(...a) },
   },
 }));
-vi.mock("@/lib/payment-reconciliation", async () => {
-  const actual = (await vi.importActual("@/lib/payment-reconciliation")) as typeof import("@/lib/payment-reconciliation");
-  return {
-    markBookingPaymentManuallySettled: (...a: unknown[]) =>
-      mocks.markBookingPaymentManuallySettled(...a),
-    reverseManualBookingPayment: vi.fn(),
-  };
-});
+vi.mock("@/lib/payment-reconciliation", () => ({
+  markBookingPaymentManuallySettled: (...a: unknown[]) =>
+    mocks.markBookingPaymentManuallySettled(...a),
+  reverseManualBookingPayment: vi.fn(),
+}));
 vi.mock("@/lib/email", () => ({
   sendBookingConfirmedEmail: (...a: unknown[]) =>
     mocks.sendBookingConfirmedEmail(...a),

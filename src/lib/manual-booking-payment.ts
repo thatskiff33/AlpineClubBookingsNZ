@@ -9,7 +9,6 @@ import {
   MANUAL_PAYMENT_NOTE_MAX,
   normaliseManualPaymentNote,
 } from "@/lib/manual-subscription-payment";
-import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import {
   markBookingPaymentManuallySettled,
   reverseManualBookingPayment,
