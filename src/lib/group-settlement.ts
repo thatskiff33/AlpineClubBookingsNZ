@@ -33,6 +33,7 @@ import {
   PaymentStatus,
 } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { prisma } from "@/lib/prisma";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -1325,7 +1326,7 @@ async function settleConfirmedChildrenAndNotify(
     );
 
     return settledIds;
-  }, { maxWait: 10_000, timeout: 30_000 }); // #4627: each child's R01 adds journal round trips; the lock(1) holders' bound.
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET); // #4627: each child's R01 adds journal round trips (`INV-LOCK-005`).
 
   if (settled === "refunded") {
     logger.warn(

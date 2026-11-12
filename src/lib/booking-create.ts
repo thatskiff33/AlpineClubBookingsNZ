@@ -115,7 +115,10 @@ import {
 } from "./booking-create-guests";
 import { recordAdultMemberHostingReviewForNewBooking } from "@/lib/adult-member-hosting-review";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
-import { withOptionalTransaction } from "@/lib/db-transaction";
+import {
+  LOCK1_HOLDER_TRANSACTION_BUDGET,
+  withOptionalTransaction,
+} from "@/lib/db-transaction";
 import { organiserPaysForJoinerInTx } from "@/lib/group-late-joiner";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { resolveBookingGuestDietary } from "@/lib/member-dietary-booking-writes";
@@ -295,6 +298,8 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
   // `server-only` is a bare throw outside the `react-server` condition.
   const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
 
+  // The wait for lock(1) counts against this budget (`INV-LOCK-005`); on the
+  // defaults any long holder of the key aborted the draft.
   const newBooking = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     // The explicit lodge id is the immutable lock key.  Take the capacity lock
@@ -496,7 +501,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
     );
 
     return createdBooking;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   logAudit({
     action: "booking.created",
@@ -796,7 +801,8 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     // unchanged). The caller that supplies `tx` has ALREADY taken global lock(1)
     // and the per-lodge capacity lock; the `acquireLodgeCapacityLock` below then
     // re-enters that same per-lodge key (a no-op) so the lock order holds either
-    // way.
+    // way. The lock(1) budget applies only to the transaction opened here; a
+    // caller's `tx` keeps its opener's budget (`INV-LOCK-005`).
     booking = await withOptionalTransaction(input.tx, async (tx) => {
       if (!input.tx) {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -1418,7 +1424,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       );
 
       return newBooking;
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
     if (err instanceof Error && err.message === "CAPACITY_EXCEEDED_SENTINEL" && capacityFullNights) {
       return { type: "capacityExceeded", fullNights: capacityFullNights };
