@@ -119,7 +119,8 @@ type BookingEventClient = Pick<typeof prisma, "bookingEvent">;
  * `INV-PAY-109`), which must commit or roll back with the switch, and the
  * REFUNDED event of a capacity race's or a member cancel's card refund
  * (`closeRefundRowRecordingEvent`, #4125, #4145), which commits with the
- * recovery row's close that records the refund made.
+ * recovery row's close that records the refund made, and the cancellation CREDITED
+ * event (`createCancellationCredit`, `INV-PAY-151`), which commits with its credit.
  */
 export async function recordBookingEvent(
   input: RecordBookingEventInput,
