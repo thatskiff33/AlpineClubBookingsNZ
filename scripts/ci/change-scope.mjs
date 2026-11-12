@@ -76,10 +76,12 @@ export const CHANGE_SCOPES = {
       /^docker-compose[^/]*\.yml$/,
       /^\.dockerignore$/,
       /^\.trivyignore$/,
-      // The first-install smoke this job also runs (#4977): its harness and
-      // the seed it runs inside the builder-stage image.
+      // The first-install smoke this job also runs (#4977): its harness, the
+      // seed it runs inside the builder-stage image, and the .env.example it
+      // copies for Compose to parse.
       /^scripts\/ci\/first-install-smoke\.mjs$/,
       /^prisma\/seed\.ts$/,
+      /^\.env\.example$/,
       ...WORKFLOW_AND_CLASSIFIER,
     ],
   },

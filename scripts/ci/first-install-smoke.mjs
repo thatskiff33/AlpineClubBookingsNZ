@@ -22,7 +22,8 @@
  *    with throwaway values generated here. Never a repository secret.
  * 3. Runs postgres and migrate, then the seed with SEED_ADMIN_EMAIL emptied:
  *    it must fail naming the variable and write nothing.
- * 4. Runs the seed: exit 0, and an active ADMIN member with SEED_ADMIN_EMAIL.
+ * 4. Runs the seed: exit 0, an active ADMIN member with SEED_ADMIN_EMAIL, and
+ *    the lodge kiosk account at the NEXTAUTH_URL domain, not @example.org.
  * 5. Runs the seed again: exit 0, and every table's row count and both seeded
  *    password hashes unchanged.
  * 6. Fails if a seed password appears in anything the seed printed.
@@ -171,6 +172,7 @@ function main() {
   }
 
   const adminEmail = "first-install-smoke@example.org";
+  const clubHost = "club.example.test";
   const adminPassword = secret();
   const lodgePassword = secret();
   // `cp .env.example .env`, then edit — as the doc says. Compose reads the
@@ -184,6 +186,7 @@ function main() {
       "# first-install smoke (scripts/ci/first-install-smoke.mjs): throwaway values",
       `DB_PASSWORD=${secret()}`,
       "APP_ENVIRONMENT_ROLE=non-production",
+      `NEXTAUTH_URL=https://${clubHost}`,
       `SEED_ADMIN_EMAIL=${adminEmail}`,
       `SEED_ADMIN_PASSWORD=${adminPassword}`,
       `SEED_LODGE_PASSWORD=${lodgePassword}`,
@@ -221,8 +224,11 @@ function main() {
       `SELECT count(*) FROM "Member" WHERE role = 'ADMIN' AND active AND "canLogin" AND email = '${adminEmail}'`,
     );
     check(admins === "1", "the seed created an active admin who can sign in");
-    const lodgeAccounts = psql(`SELECT count(*) FROM "Member" WHERE role = 'LODGE'`);
-    check(lodgeAccounts === "1", "the seed created the lodge kiosk account");
+    const lodgeAccounts = psql(`SELECT string_agg(email, ',') FROM "Member" WHERE role = 'LODGE'`);
+    check(
+      lodgeAccounts === `lodge@${clubHost}`,
+      "the seed created one lodge kiosk account, at the club's NEXTAUTH_URL domain",
+    );
 
     const seeded = fingerprint();
     const second = run(commands.seed);

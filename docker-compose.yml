@@ -665,6 +665,10 @@ services:
       SEED_ADMIN_LAST_NAME: ${SEED_ADMIN_LAST_NAME:-}
       SEED_LODGE_PASSWORD: ${SEED_LODGE_PASSWORD:-}
       SEED_THEME_COMPLETE: ${SEED_THEME_COMPLETE:-}
+      # The kiosk login and the committee role addresses are created at the
+      # club's own domain, taken from NEXTAUTH_URL exactly as the app does
+      # (x-app-environment above); without it they would be @example.org.
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
       # The APP role, not the migration role: the seed writes rows the way the
       # app does and changes no schema, so it needs the app's grants and no
       # more. A pool of 2 like migrate's, so a seed run beside a live stack

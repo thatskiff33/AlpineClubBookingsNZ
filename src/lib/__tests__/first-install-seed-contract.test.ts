@@ -3,7 +3,12 @@ import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 import { firstInstallCommands } from "../../../scripts/ci/first-install-smoke.mjs";
-import { BASE_COMPOSE, composeServices, readRepoFile } from "./helpers/compose";
+import {
+  appEnvironmentAnchor,
+  BASE_COMPOSE,
+  composeServices,
+  readRepoFile,
+} from "./helpers/compose";
 import { DOCKER_SEED_COMMAND, SEED_COMPOSE_SERVICE } from "@/lib/seed-commands";
 
 /**
@@ -20,14 +25,14 @@ import { DOCKER_SEED_COMMAND, SEED_COMPOSE_SERVICE } from "@/lib/seed-commands";
  * it (`docs/TESTING.md`): run it with `pnpm run test:named`.
  */
 
+/**
+ * Every `SEED_` variable the seed reads, taken from the seed itself so a new
+ * one cannot be missed by the service. `SEED_PASSWORD_SCREEN_POLICY` is a
+ * constant the seed imports, not an environment variable.
+ */
 const SEED_ENVIRONMENT = [
-  "SEED_ADMIN_EMAIL",
-  "SEED_ADMIN_PASSWORD",
-  "SEED_LODGE_PASSWORD",
-  "SEED_ADMIN_FIRST_NAME",
-  "SEED_ADMIN_LAST_NAME",
-  "SEED_THEME_COMPLETE",
-];
+  ...new Set(readRepoFile("prisma/seed.ts").match(/\bSEED_[A-Z_]+\b/g) ?? []),
+].filter((name) => name !== "SEED_PASSWORD_SCREEN_POLICY");
 
 /** The docs that walk an operator through seeding a Compose stack. */
 const OPERATOR_SEED_DOCS = [
@@ -74,10 +79,21 @@ describe("the first-install seed service (#4977, INV-OPS-017)", () => {
   });
 
   it("receives every SEED_ variable from .env through environment:", () => {
+    expect(SEED_ENVIRONMENT).toEqual(
+      expect.arrayContaining(["SEED_ADMIN_EMAIL", "SEED_ADMIN_PASSWORD", "SEED_LODGE_PASSWORD"]),
+    );
     for (const name of SEED_ENVIRONMENT) {
       expect(seed, name).toContain(`${name}: \${${name}:-}`);
     }
     expect(seed).toContain("APP_ENVIRONMENT_ROLE: ${APP_ENVIRONMENT_ROLE}");
+  });
+
+  it("takes the club's domain from NEXTAUTH_URL, as the app does", () => {
+    // The kiosk and committee addresses are `<name>@` that host; without it
+    // the seed falls back to example.org.
+    const anchor = appEnvironmentAnchor(readRepoFile(BASE_COMPOSE)) ?? "";
+    expect(line(seed, "NEXTAUTH_URL")).toBeDefined();
+    expect(line(seed, "NEXTAUTH_URL")).toBe(line(anchor, "NEXTAUTH_URL"));
   });
 
   it("never takes a seed secret as a build argument or on its command line", () => {

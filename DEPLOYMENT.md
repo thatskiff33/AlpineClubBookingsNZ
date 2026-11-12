@@ -38,6 +38,7 @@ Postgres `max_connections=40`:
 | `app_blue` / `app_green` | web slots | 10 each |
 | `app` | cron leader + warm fallback web | 5 |
 | `migrate` | deploy-window migrations | 2 |
+| `seed` | first-install seed, one-shot, never on an upgrade | 2 |
 | `app` (cron leader), `AUDIT_RETENTION_DATABASE_URL` | nightly audit retention, only when set (#4453) | 2 |
 
 The ceiling holds per container because `src/lib/prisma.ts` shares one client
@@ -1756,6 +1757,8 @@ docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml up -d --build postgres app
 docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml run --rm migrate
+docker compose --env-file .env.staging -p tacbookings-staging \
+  -f docker-compose.yml -f docker-compose.staging.yml run --rm seed
 ```
 
 See `docs/STAGING_ACCESSIBILITY.md` for route coverage and Lighthouse guidance.

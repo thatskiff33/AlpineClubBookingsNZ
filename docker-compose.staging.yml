@@ -130,10 +130,12 @@ services:
   # The one-shot first-install seed (#4977) imports application code, so a
   # staging stack declares its role literally here for the reason the app
   # services above do: `run --rm seed` against this file must never read the
-  # live deployment's ${APP_ENVIRONMENT_ROLE}.
+  # live deployment's ${APP_ENVIRONMENT_ROLE}. NEXTAUTH_URL matches the staging
+  # app's, so the seeded addresses carry the same domain the app uses.
   seed:
     environment:
       APP_ENVIRONMENT_ROLE: non-production
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3001}
 
   caddy:
     profiles: ["production-caddy"]
