@@ -483,6 +483,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
   // pass, not a bypass.
   const fenceBooking = recordingBookingDouble(async () => booking);
   return {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     // #1881 — the date/batch service takes the global lock(1) via $executeRaw.
     $executeRaw: vi.fn().mockResolvedValue(undefined),
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),

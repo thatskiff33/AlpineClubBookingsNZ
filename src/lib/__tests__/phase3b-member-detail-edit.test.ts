@@ -179,6 +179,7 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
       }
 
       return operation({
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
         $executeRaw: vi.fn().mockResolvedValue(1),
         member: {
           update: prisma.member.update,

@@ -131,6 +131,7 @@ function boardBooking(wholeLodgeHold: boolean) {
 
 function boardDb(wholeLodgeHold: boolean) {
   return {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     lodge: {
       findUnique: vi.fn().mockResolvedValue({ id: "lodge-1", active: true }),
     },

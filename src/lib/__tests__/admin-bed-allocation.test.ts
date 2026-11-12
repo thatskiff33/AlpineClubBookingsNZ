@@ -585,6 +585,7 @@ describe("manuallyAllocateBedForNights", () => {
     }>;
   }) {
     return {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       bookingGuest: {
         findUnique: vi.fn().mockResolvedValue(input.guest),
       },
@@ -1248,6 +1249,7 @@ describe("same-date allocation moves (#2366)", () => {
     );
 
     return {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       $executeRaw: vi.fn().mockResolvedValue(1),
       bookingGuest: {
         findUnique: vi.fn().mockResolvedValue({
@@ -1548,6 +1550,7 @@ describe("bed type + bunk pairing (#1675)", () => {
     const executeRaw = vi.fn().mockResolvedValue(1);
     return {
       db: {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
         $executeRaw: executeRaw,
         lodgeBed: { create, update, findMany, findUnique },
         bedAllocation: {
@@ -2023,6 +2026,7 @@ describe("bunk write transaction self-wrap (#1675)", () => {
 
   it("self-wraps a grouped create and runs the lock, membership check, and write on the tx client", async () => {
     const tx = {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       $executeRaw: vi.fn().mockResolvedValue(1),
       lodgeBed: {
         findMany: vi.fn().mockResolvedValue([{ id: "top", bedType: "BUNK_TOP" }]),
@@ -2065,6 +2069,7 @@ describe("bunk write transaction self-wrap (#1675)", () => {
 
   it("self-wraps a bunk-affecting update and runs the lock, membership check, and write on the tx client", async () => {
     const tx = {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       $executeRaw: vi.fn().mockResolvedValue(1),
       lodgeBed: {
         findUnique: vi
@@ -2146,6 +2151,7 @@ describe("bunk write transaction self-wrap (#1675)", () => {
       .fn()
       .mockImplementation(({ data }) => ({ id: "bed-1", ...data }));
     const tx = {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       $executeRaw: vi.fn().mockResolvedValue(1),
       lodgeBed: {
         findUnique: vi.fn().mockResolvedValue({ room: { lodgeId: "lodge-1" } }),
@@ -3128,6 +3134,7 @@ describe("deleteBedAllocationRoom (#1674 guarded hard delete)", () => {
     // without failing this test. The tx client is a distinct object from the
     // top-level prisma singleton, which has no room/bed methods here.
     const tx = {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       $executeRaw: vi.fn().mockResolvedValue(1),
       lodgeRoom: {
         findFirst: vi
@@ -3399,6 +3406,7 @@ describe("deleteBedAllocation orphan auto-promote (#1743)", () => {
       partner: allocationRow({ id: "alloc-partner", isSecondOccupant: true }),
     });
     const tx = {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       ...deleteDb,
       $executeRaw: vi.fn().mockResolvedValue(1),
       bedAllocation: {

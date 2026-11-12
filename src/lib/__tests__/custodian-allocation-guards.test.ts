@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     $transaction: mocks.transaction,
     $executeRaw: mocks.executeRaw,
     hutLeaderAssignment: { findMany: mocks.hutLeaderAssignmentFindMany },
@@ -129,6 +130,7 @@ function bedRow() {
 /** A transactional client covering every delegate the guarded paths touch. */
 function buildDb(overrides: Record<string, unknown> = {}) {
   return {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     $executeRaw: mocks.executeRaw,
     hutLeaderAssignment: { findMany: mocks.hutLeaderAssignmentFindMany },
     bookingGuest: { findUnique: vi.fn().mockResolvedValue(guestRow()) },

@@ -77,6 +77,7 @@ const mocks = vi.hoisted(() => ({
 */
 vi.mock("@/lib/prisma", () => {
   const delegates = {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     clubTimeSettings: { findUnique: mocks.clubTimeSettingsFindUnique },
     hutLeaderAssignment: { findMany: mocks.hutLeaderAssignmentFindMany },
     bedAllocation: { findMany: mocks.bedAllocationFindMany },

@@ -305,6 +305,7 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
             mocks.bookingFindUnique(args),
           );
           const mockTx = {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
             bookingEvent: { create: mocks.txBookingEventCreate },
             // #3835: the reviews settled before the cancel, frozen on its event.
             manualRefundTask: {

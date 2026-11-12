@@ -166,6 +166,7 @@ function buildDb(input: {
   );
 
   const db = {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     bookingGuest: {
       findUnique: vi
         .fn()

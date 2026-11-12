@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 const mockTx = {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
   $executeRaw: vi.fn().mockResolvedValue(1),
   booking: {
     findUnique: mocks.bookingFindUnique,
