@@ -1,4 +1,3 @@
-import correctStarterPrivacyRetentionAndHosting from "./20261210120000_correct_starter_privacy_retention_and_hosting";
 import addClubTimeSettings from "./20260822010000_add_club_time_settings";
 import addHutLeaderAssignmentSource from "./20260820020000_add_hut_leader_assignment_source";
 import addMemberEmailInheritanceChoice from "./20260813010000_add_member_email_inheritance_choice";
@@ -29,6 +28,7 @@ import correctStarterPrivacyAuditRetention from "./20261119010000_correct_starte
 import addXeroConnection from "./20261124010000_add_xero_connection";
 import memberMoneyApplications from "./20261210080000_member_money_applications";
 import memberMoneyJournal from "./20261127010000_member_money_journal";
+import correctStarterPrivacyRetentionAndHosting from "./20261210120000_correct_starter_privacy_retention_and_hosting";
 import type { DataMigrationVerification } from "./types";
 
 /**
@@ -49,7 +49,6 @@ import type { DataMigrationVerification } from "./types";
  * in order, and advances through it.
  */
 export const DATA_MIGRATION_VERIFICATIONS: DataMigrationVerification[] = [
-  correctStarterPrivacyRetentionAndHosting,
   clearWaldvogelLodgeAddress,
   clearStarterFooterAffiliations,
   updateStarterHomeGuestCopy,
@@ -80,4 +79,5 @@ export const DATA_MIGRATION_VERIFICATIONS: DataMigrationVerification[] = [
   addXeroConnection,
   memberMoneyJournal,
   memberMoneyApplications,
+  correctStarterPrivacyRetentionAndHosting,
 ];

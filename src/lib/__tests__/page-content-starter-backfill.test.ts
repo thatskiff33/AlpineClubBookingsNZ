@@ -298,7 +298,7 @@ describe("starter page content backfill migration", () => {
   );
   const allInsertSql = `${insertSql}\n${backfill404Sql}\n${policyPagesSql}\n${bookingRequestsSql}\n${schoolBookingsSql}`;
   const privacyRetentionSql = readFileSync(join(process.cwd(), "prisma/migrations/20261210120000_correct_starter_privacy_retention_and_hosting/migration.sql"), "utf8");
-  const combinedSql = `${privacyRetentionSql}\n${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}\n${genericiseLodgeCopySql}\n${privacyAuditRetentionSql}\n${homeGuestCopySql}`;
+  const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}\n${genericiseLodgeCopySql}\n${privacyAuditRetentionSql}\n${homeGuestCopySql}\n${privacyRetentionSql}`;
 
   it("inserts exactly the starter pages defined for the seed", () => {
     const insertedIds = [
