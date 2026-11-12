@@ -71,15 +71,25 @@ export function buildStoredReceiptPlan(input: {
   };
 }
 
-/** The invoices a receipt's target list names, in order, skipping one not in Xero yet. */
+/**
+ * The receipt's target list as the decision it stores, in order: each invoice's
+ * Xero id, or `pending:<outbox operation>` for one not in Xero yet. Keeping the
+ * pending one means an invoice moved onto the capture before it reaches Xero
+ * still changes the list, so the plan store sees `target-moved`.
+ */
 export function invoiceIdsForReceiptTargets(
-  targets: readonly { kind: string; link?: { active: boolean; xeroObjectId: string } | null }[],
+  targets: readonly { kind: string; operation?: { id: string } | null; link?: { active: boolean; xeroObjectId: string } | null }[],
   primaryInvoiceId: string,
 ): string[] {
   const ids: string[] = [];
   for (const target of targets) {
-    const invoiceId = target.kind === "PRIMARY_INVOICE" ? primaryInvoiceId : target.link?.active ? target.link.xeroObjectId : null;
-    if (invoiceId && !ids.includes(invoiceId)) ids.push(invoiceId);
+    const invoiceId =
+      target.kind === "PRIMARY_INVOICE"
+        ? primaryInvoiceId
+        : target.link?.active
+          ? target.link.xeroObjectId
+          : `pending:${target.operation?.id ?? target.kind}`;
+    if (!ids.includes(invoiceId)) ids.push(invoiceId);
   }
   return ids;
 }

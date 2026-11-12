@@ -39,8 +39,9 @@ export interface AdditionalCaptureReceiptPlan {
   legs: AdditionalCaptureReceiptLeg[];
   /**
    * The invoices the decision was taken against, in order, including one this
-   * receipt did not need because an earlier invoice had room. Absent on a
-   * legacy row: that row's one invoice is `invoiceId`.
+   * receipt did not need because an earlier invoice had room, and
+   * `pending:<operation>` for one not in Xero yet. Absent on a legacy row:
+   * that row's one invoice is `invoiceId`.
    */
   targetInvoiceIds?: string[];
 }

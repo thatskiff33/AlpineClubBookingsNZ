@@ -108,7 +108,7 @@ import {
   queueReceiptsForUnrecordedCaptures,
 } from "@/lib/additional-capture-receipt-enqueue";
 import { readAdditionalCaptureReceiptPayload } from "@/lib/additional-capture-receipt-payload";
-import { fillAdditionalCaptureReceiptLegs } from "@/lib/additional-capture-receipt-legs";
+import { fillAdditionalCaptureReceiptLegs, invoiceIdsForReceiptTargets, sameInvoiceIds } from "@/lib/additional-capture-receipt-legs";
 import {
   ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE,
   ADDITIONAL_CAPTURE_RECEIPT_WAITING_CODE,
@@ -327,6 +327,19 @@ describe("chooseAdditionalCaptureReceiptTarget", () => {
       { target: "PRIMARY_INVOICE", invoiceId: PRIMARY, amountCents: 3000 },
     ]);
     expect(legs.reduce((sum, leg) => sum + leg.amountCents, 0)).toBe(8000);
+  });
+
+  it("counts an invoice moved onto the capture before it reaches Xero as a change of target", () => {
+    const primaryOnly = invoiceIdsForReceiptTargets([{ kind: "PRIMARY_INVOICE", operation: null, link: null }], PRIMARY);
+    const afterMove = invoiceIdsForReceiptTargets(
+      [
+        { kind: "CHANGE_INVOICE", operation: { id: "op_a" }, link: null },
+        { kind: "PRIMARY_INVOICE", operation: null, link: null },
+      ],
+      PRIMARY,
+    );
+    expect(afterMove).toEqual(["pending:op_a", PRIMARY]);
+    expect(sameInvoiceIds(afterMove, primaryOnly)).toBe(false);
   });
 });
 
