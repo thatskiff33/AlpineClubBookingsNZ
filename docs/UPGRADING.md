@@ -198,6 +198,7 @@ fit into.
    - [A later bank-transfer hand-back gets its own Xero credit note (#4287)](#a-later-bank-transfer-hand-back-gets-its-own-xero-credit-note-4287)
    - [A card refund on a bank-transfer payment gets its own Xero credit note (#4312)](#a-card-refund-on-a-bank-transfer-payment-gets-its-own-xero-credit-note-4312)
    - [One-off correction of the starter privacy policy's audit-log retention (#4031)](#one-off-correction-of-the-starter-privacy-policys-audit-log-retention-4031)
+   - [Re-save a customised "refund appeal approved" email (#3827)](#re-save-a-customised-refund-appeal-approved-email-3827)
    - [Declare whether this deployment is the live site (#3034)](#you-must-declare-whether-this-deployment-is-the-live-site-3034-epic-2986)
    - [The club's time zone moves into the database (#2989)](#the-clubs-time-zone-moves-into-the-database-2989-epic-2988)
    - [Family email inheritance becomes direct-parent only (#2716)](#family-email-inheritance-becomes-direct-parent-only-and-re-resolves-itself-2716)
