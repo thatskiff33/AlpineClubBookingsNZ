@@ -1,4 +1,4 @@
-import { BookingStatus, Prisma } from "@prisma/client";
+import { BookingStatus, PaymentStatus, Prisma } from "@prisma/client";
 
 export const CAPACITY_HOLDING_BOOKING_STATUSES = [
   BookingStatus.PAID,
@@ -214,6 +214,23 @@ export const DUPLICATE_STAY_BOOKING_STATUSES = [
 
 export function isPaymentOwedBookingStatus(status: string) {
   return (PAYMENT_OWED_BOOKING_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * Whether a booking's own price is still owed: it is in a payment-owed status
+ * and its payment has not succeeded. One home (`INV-PAY-119`, `INV-SSOT`): the
+ * dashboard's Payment Owed card and the booking page's pay, credit and
+ * change-fee cards all read it, so they cannot quote different amounts owed.
+ * Additional asks are a separate question (`outstandingAdditionalAskCents`).
+ */
+export function isBookingOwnAmountOwed(booking: {
+  status: string;
+  payment: { status: string } | null;
+}): boolean {
+  return (
+    isPaymentOwedBookingStatus(booking.status) &&
+    booking.payment?.status !== PaymentStatus.SUCCEEDED
+  );
 }
 
 // test seam

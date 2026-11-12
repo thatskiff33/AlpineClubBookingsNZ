@@ -1,5 +1,5 @@
 import { outstandingAdditionalAskCents } from "@/lib/additional-payment-ask";
-import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
+import { isBookingOwnAmountOwed } from "@/lib/booking-status";
 
 export interface DashboardPaymentSnapshot {
   id: string;
@@ -20,10 +20,7 @@ export interface DashboardPaymentSummary {
 export function getDashboardPaymentOwedCents(booking: DashboardPaymentSnapshot) {
   let owedCents = 0;
 
-  if (
-    isPaymentOwedBookingStatus(booking.status) &&
-    booking.payment?.status !== "SUCCEEDED"
-  ) {
+  if (isBookingOwnAmountOwed(booking)) {
     owedCents += booking.finalPriceCents;
   }
 

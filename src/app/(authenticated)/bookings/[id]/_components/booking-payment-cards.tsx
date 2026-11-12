@@ -11,7 +11,7 @@ import { ConfirmDraftButton } from "@/components/confirm-draft-button";
 import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
 import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { WAITLIST_OFFER_HOURS } from "@/lib/waitlist";
-import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
+import { isBookingOwnAmountOwed } from "@/lib/booking-status";
 import type { BookingDetailRecord } from "../_lib/load-booking-detail";
 import type { BoundClubTime } from "@/lib/club-time";
 import type { BookingDetailViewer } from "../_lib/booking-detail-viewer";
@@ -189,8 +189,7 @@ export function BookingPaymentCards({
       {!isDeleted &&
         canManageBooking &&
         internetBankingPayment &&
-        isPaymentOwedBookingStatus(booking.status) &&
-        internetBankingPayment.status !== "SUCCEEDED" && (
+        isBookingOwnAmountOwed(booking) && (
           <Card className="border-warning-6 bg-warning-3">
             <CardHeader>
               <CardTitle className="text-warning-11">Internet Banking Payment</CardTitle>

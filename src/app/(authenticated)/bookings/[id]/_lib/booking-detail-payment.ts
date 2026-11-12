@@ -10,7 +10,7 @@ import {
   recordedChangeFeeCents,
 } from "@/lib/booking-payment-state";
 import { refundAppealCeilingParts } from "@/lib/manual-refund-task-settlement-rules";
-import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
+import { isBookingOwnAmountOwed } from "@/lib/booking-status";
 import { isSwitchableToInternetBanking } from "@/lib/booking-payment-flow";
 import {
   getNetCollectedCashParts,
@@ -195,8 +195,7 @@ export function resolveBookingDetailPayment({
     isBookingOwner &&
     !isDeleted &&
     !internetBankingPayment &&
-    isPaymentOwedBookingStatus(booking.status) &&
-    (!booking.payment || booking.payment.status !== "SUCCEEDED");
+    isBookingOwnAmountOwed(booking);
 
   // Issue #778: surface auto-applied member credit (display only). #3991: the
   // LEDGER credit the intent is minted against, from the page's one read — not
@@ -206,18 +205,16 @@ export function resolveBookingDetailPayment({
   const showCreditApplied =
     canManageBooking &&
     creditAppliedCents > 0 &&
-    isPaymentOwedBookingStatus(booking.status) &&
-    booking.payment?.status !== "SUCCEEDED";
+    isBookingOwnAmountOwed(booking);
   // #3750: through the one home, so a change fee recorded on the payment is
   // part of what the page says is due.
   const amountDueAfterCreditCents = amountOwed.dueCents; // floored at zero
   // #3955 review F8: a change fee recorded on an unpaid booking's payment is
   // owed with the price, so the card shows it as its own row and the
   // breakdown adds up to the amount due.
-  const changeFeeOwedCents =
-    isPaymentOwedBookingStatus(booking.status) && booking.payment?.status !== "SUCCEEDED"
-      ? recordedChangeFeeCents(booking.payment)
-      : 0;
+  const changeFeeOwedCents = isBookingOwnAmountOwed(booking)
+    ? recordedChangeFeeCents(booking.payment)
+    : 0;
   const showAmountBreakdown = showCreditApplied || changeFeeOwedCents > 0;
   // What the pay card charges: net of credit only where the card says so.
   const cardAmountDueCents = showCreditApplied
