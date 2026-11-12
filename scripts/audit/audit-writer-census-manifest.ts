@@ -749,7 +749,10 @@ export const AUDIT_CENSUS_TOTALS = {
   // `booking-payment.card-refund.try-card-again`, the treasurer closing a dead card refund
   // a later Stripe refund covers and putting one back to try the card, each awaited on its
   // own transaction (`card-refund-dead-row-actions.ts`), both `payment`. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 538,
+  // 538 -> 540 (#4915): `member.data_exported`, the member's own download, and
+  // `member.subject_access_exported`, a Full Admin's report on one person; both
+  // `createAuditLog`, both `privacy`. RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 540,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -974,7 +977,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // 170 -> 171 (#4686): the lost-claim part-success's row, above.
     // 171 -> 172 (triyder/AlpineClubBookingsNZ#97): the link dialog's row, above.
     // 172 -> 174 (#4516): the refused reservation and the OPERATOR release, above.
-    createAuditLog: { total: 176, uncategorised: 0 }, // 174 -> 176 (#4368): the two dead card refund settlements.
+    createAuditLog: { total: 178, uncategorised: 0 }, // 174 -> 176 (#4368): the two dead card refund settlements. 176 -> 178 (#4915): the two subject access writers.
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1506,7 +1509,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // Diagnostics correlation entry, which for `privacy` needs membership too.
     // 20 -> 21 (#3492): the guest promo-code lookup, above.
     // 21 -> 22 (#4457): `privacy.retention.member_anonymised`, readable only with membership:view.
-    privacy: 22,
+    privacy: 24, // 22 -> 24 (#4915): the member's download and the Full Admin subject access report.
     // UNCHANGED by #2581 child 2. `system` is for genuine platform events with
     // no narrower business domain, and none of the 82 was one.
     system: 4,
@@ -2748,7 +2751,7 @@ export const MEMBER_RECORD_ADMIN_SURFACES_2755: readonly string[] = [
  *    less about their own cancellation than they knew when they asked for it.
  *  - The **remaining member-admin surface writers** are each about a specific
  *    narrower domain that already answers to its own gate: a dependant link is
- *    `family`, an export is `privacy`, and a credential email is `security` by
+ *    `family`, an export or a subject access report is `privacy`, and a credential email is `security` by
  *    #2581 decision 3 (the domain is the CREDENTIAL, not the mailing).
  *
  * None of that is settled beyond challenge — it is recorded so a challenge has to
@@ -2763,6 +2766,9 @@ export const OFFICER_DRIVEN_MEMBER_VISIBLE_WRITERS_2755: Readonly<
   "src/app/api/admin/members/[id]/dependents/link/route.ts::POST.linkedMember#0":
     "family",
   "src/app/api/admin/members/export/route.ts::GET#0": "privacy",
+  // A copy of the subject's own record released by a Full Admin (#4915): the
+  // subject sees that it left, which is the check on a mistaken identity check.
+  "src/app/api/admin/members/subject-access/route.ts::GET#0": "privacy",
   "src/app/api/admin/members/send-password-reset/route.ts::POST#0": "security",
   "src/app/api/admin/members/send-setup-invite/route.ts::POST.batchResults#0":
     "security",
