@@ -1,9 +1,9 @@
-import { editDoorBooking } from "./support/edit-door-booking";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { PaymentSource, PaymentStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
+import { editDoorBooking, type EditDoorBookingOverrides } from "./support/edit-door-booking";
 
 import { requireCalendarDate } from "@/lib/club-time";
 import {
@@ -18,7 +18,6 @@ import { GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE, organiserBankChildPriceChangeRe
 import { ORGANISER_COMBINED_INVOICE_MISSING_MESSAGE, organiserCombinedInvoiceRefusal } from "@/lib/organiser-billing";
 import type { BookingModificationSettlementOptions } from "@/lib/booking-modify-settlement";
 import { noReductionAgainstUnpaidAsk, readReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
-import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /** #3809: the club's day and format the shared settlement now takes, resolved before its transaction. */
@@ -41,7 +40,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 const REPO_ROOT = resolve(__dirname, "../../..");
 
-function child(overrides: Record<string, unknown> = {}) {
+function child(overrides: EditDoorBookingOverrides = {}) {
   return editDoorBooking({
     id: "child_1",
     status: "PAID",

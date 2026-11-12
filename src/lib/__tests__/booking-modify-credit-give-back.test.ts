@@ -1,6 +1,6 @@
-import { editDoorBooking } from "./support/edit-door-booking";
-import { PaymentSource, PaymentStatus } from "@prisma/client";
+import { BookingStatus, PaymentSource, PaymentStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { editDoorBooking, type EditDoorBookingOverrides } from "./support/edit-door-booking";
 
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import type { CancellationRule } from "@/lib/cancellation";
@@ -68,7 +68,7 @@ const NO_HAND_BACKS = {
 const tx = { payment: { update: paymentUpdate }, ...NO_HAND_BACKS } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
 
 /** $200, paid entirely by account credit: nothing captured, PAID. */
-function creditPaidBooking(overrides: { status?: string; payment?: Record<string, unknown>; memberId?: string | null } = {}) {
+function creditPaidBooking(overrides: { status?: BookingStatus; payment?: NonNullable<EditDoorBookingOverrides["payment"]>; memberId?: string | null } = {}) {
   return editDoorBooking({
     id: "booking_3809",
     status: overrides.status ?? "PAID",
@@ -246,7 +246,7 @@ describe("#3809: every other booking settles exactly as before", () => {
     credit.policy = TIERS["100%"];
   });
 
-  it.each(["CONFIRMED", "PAYMENT_PENDING"])("MUTATION: a %s booking with nothing captured is still owing - the reduction lowers the invoice by the whole $50 and gives nothing back", async (status) => {
+  it.each([BookingStatus.CONFIRMED, BookingStatus.PAYMENT_PENDING])("MUTATION: a %s booking with nothing captured is still owing - the reduction lowers the invoice by the whole $50 and gives nothing back", async (status) => {
     const result = await reduce(creditPaidBooking({ status }));
 
     expect(credit.giveBack).not.toHaveBeenCalled();

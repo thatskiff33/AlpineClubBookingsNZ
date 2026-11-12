@@ -22,6 +22,7 @@ import {
 } from "@/lib/booking-modification-settlement";
 import {
   applyLifecycleTransitions,
+  EDIT_DOOR_BOOKING_INCLUDE,
   applyPaymentAdjustments,
   isQuotePricedBooking,
 } from "@/lib/booking-modify";
@@ -56,7 +57,6 @@ import {
   clampAppliedCreditToBookingPrice,
 } from "@/lib/member-credit";
 import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
-import { EDIT_DOOR_BOOKING_INCLUDE } from "@/lib/booking-modify-validation";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
@@ -198,9 +198,7 @@ export async function repriceBookingAfterGuestAcceptance(
   const { bookingId, todayAtClub, format, journal } = params;
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
-    include: {
-      ...EDIT_DOOR_BOOKING_INCLUDE,
-    },
+    include: EDIT_DOOR_BOOKING_INCLUDE,
   });
   if (!booking) return { repriced: false, reason: "BOOKING_STATUS" };
   const redemptions = bookingPromoRedemptions(booking).filter((redemption) => redemption.promoCode);
@@ -249,13 +247,12 @@ export async function repriceBookingAfterGuestAcceptance(
     promoAdjustmentCents: newPromoAdjustmentCents,
   });
   const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
-  const loaded = booking;
   // #3502: a credit-paid ($0) booking too - this path never mints a card ask.
   const priceSettled =
     hasCapturedPayment(booking.payment) ||
     canAskCardForIncrease(booking) ||
     isPaidLikeBookingStatus(booking.status) ||
-    hasIssuedPrimaryXeroInvoice(loaded);
+    hasIssuedPrimaryXeroInvoice(booking);
   if (priceDiffCents > 0 && priceSettled) {
     logger.warn(
       { bookingId, priceDiffCents },
@@ -267,8 +264,8 @@ export async function repriceBookingAfterGuestAcceptance(
   // D-3813-5: how the whole reduction goes back, decided BEFORE anything is
   // written, so a reduction that cannot be returned in full moves no code.
   // #3954: the unpaid ask, read ONCE, for the return route and the save.
-  const reduction = await readReductionAgainstUnpaidAsk(tx, loaded, priceDiffCents);
-  const returnRoute = await fullReductionReturnRoute(tx, booking, loaded, priceDiffCents, reduction, todayAtClub);
+  const reduction = await readReductionAgainstUnpaidAsk(tx, booking, priceDiffCents);
+  const returnRoute = await fullReductionReturnRoute(tx, booking, priceDiffCents, reduction, todayAtClub);
   if (returnRoute === null) {
     logger.warn(
       { bookingId, priceDiffCents },
@@ -326,7 +323,7 @@ export async function repriceBookingAfterGuestAcceptance(
       xeroAdditionalAmountCents: 0,
       settlementMethod: null,
       creditReturnedAsApplied: false,
-      hasIssuedXeroInvoice: hasIssuedPrimaryXeroInvoice(loaded),
+      hasIssuedXeroInvoice: hasIssuedPrimaryXeroInvoice(booking),
       hasSucceededPayment: false, bankTransferRefundPayee: null,
       paymentStatus: booking.payment?.status ?? null,
       paymentId: booking.payment?.id ?? null,
@@ -343,7 +340,7 @@ export async function repriceBookingAfterGuestAcceptance(
 
   // The ordinary edit machinery from here (see the module docblock).
   const adjusted = await applyPaymentAdjustments(tx, {
-    booking: loaded,
+    booking,
     priceDiffCents,
     changeFeeCents: 0,
     reduction,
@@ -398,7 +395,7 @@ export async function repriceBookingAfterGuestAcceptance(
     paymentImpact = { ...adjusted, accountCreditAmountCents: clamp.refundedExcessCents };
   }
   const lifecycle = await applyLifecycleTransitions(tx, {
-    booking: loaded,
+    booking,
     bookingId,
     newCheckIn: booking.checkIn,
     newFinalPriceCents,

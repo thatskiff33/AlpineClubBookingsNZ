@@ -1,6 +1,6 @@
-import { editDoorBooking } from "./support/edit-door-booking";
-import { PaymentSource, PaymentStatus } from "@prisma/client";
+import { BookingStatus, PaymentSource, PaymentStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { editDoorBooking, type EditDoorBookingOverrides } from "./support/edit-door-booking";
 
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import type { CancellationRule } from "@/lib/cancellation";
@@ -69,8 +69,8 @@ const tx = { payment: { update: paymentUpdate, updateMany: paymentUpdateMany }, 
 
 /** $200, paid entirely by account credit: a $0 SUCCEEDED card-source payment, PAID. */
 function zeroDollarBooking(overrides: {
-  status?: string;
-  payment?: Record<string, unknown>;
+  status?: BookingStatus;
+  payment?: NonNullable<EditDoorBookingOverrides["payment"]>;
   organiserSettled?: boolean;
   parentBookingId?: string | null;
 } = {}) {
@@ -133,7 +133,7 @@ describe("#3502: canAskCardForIncrease, the one increase question", () => {
   it.each([
     ["an Internet-Banking payment", { payment: { source: PaymentSource.INTERNET_BANKING } }],
     ["a payment that never captured", { payment: { status: PaymentStatus.PENDING } }],
-    ["a booking outside its payment lifecycle", { status: "DRAFT" }],
+    ["a booking outside its payment lifecycle", { status: BookingStatus.DRAFT }],
   ])("refuses %s", (_label, overrides) => {
     expect(canAskCardForIncrease(zeroDollarBooking(overrides))).toBe(false);
   });

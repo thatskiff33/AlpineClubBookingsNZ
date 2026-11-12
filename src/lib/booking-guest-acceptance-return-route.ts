@@ -49,13 +49,7 @@ export type FullReductionReturnRoute =
  */
 export async function fullReductionReturnRoute(
   tx: Prisma.TransactionClient,
-  booking: {
-    id: string;
-    status: string;
-    finalPriceCents: number;
-    payment: LoadedBookingForModify["payment"];
-  },
-  loaded: LoadedBookingForModify,
+  booking: LoadedBookingForModify,
   priceDiffCents: number,
   /**
    * #3954: the reduction set against the booking's unpaid ask, read ONCE by the
@@ -78,7 +72,7 @@ export async function fullReductionReturnRoute(
   // an earlier edit's open task is cash the club owes, not cash it holds.
   const settlementOptions = capturedCash
     ? calculateFullReductionSettlementOptions({
-        booking: loaded,
+        booking,
         netChargeCents: reduction.netChargeLeftCents,
         refundableCashCents: await refundableCashNetOfOpenHandBacks(tx, booking.payment),
         todayAtClub,
@@ -93,7 +87,7 @@ export async function fullReductionReturnRoute(
   if (
     settlementOptions?.returnsToOrganiser &&
     booking.payment &&
-    !(await organiserCardCanReturnInFull(tx, loaded, booking.payment, settlementOptions.cardRefundAmountCents))
+    !(await organiserCardCanReturnInFull(tx, booking, booking.payment, settlementOptions.cardRefundAmountCents))
   ) {
     return null;
   }
@@ -101,7 +95,7 @@ export async function fullReductionReturnRoute(
   if (settlementOptions && cashCents === reductionCents) {
     return { kind: "money-back", settlementOptions, creditRemainder: null };
   }
-  const creditHolder = bookingOwner(loaded).memberId;
+  const creditHolder = bookingOwner(booking).memberId;
   if (creditHolder === null) return null;
   await lockMemberCreditLedger(creditHolder, tx);
   const appliedCreditCents = await deriveBookingAppliedCreditCents(booking.id, tx);

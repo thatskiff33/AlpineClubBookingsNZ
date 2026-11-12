@@ -2,7 +2,6 @@ import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queu
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
-import { EDIT_DOOR_BOOKING_INCLUDE } from "@/lib/booking-modify-validation";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { bookingAmountOwedCents, bookingWorthCents, recordedChangeFeeCents as feeOnPayment } from "@/lib/booking-payment-state";
 import {
@@ -85,6 +84,7 @@ import {
 } from "@/lib/edit-refund-hand-back";
 import {
   applyPaymentAdjustments,
+  EDIT_DOOR_BOOKING_INCLUDE,
   assertBookingNotQuotePriced,
   calculateModificationSettlementOptions,
   rateSnapshotUpdateForRepricedGuest,
@@ -380,9 +380,7 @@ export async function modifyBookingDates({
     // capacity check and the claim consume ONLY this post-lock snapshot.
     const booking = await tx.booking.findUnique({
       where: { id: bookingId },
-      include: {
-        ...EDIT_DOOR_BOOKING_INCLUDE,
-      },
+      include: EDIT_DOOR_BOOKING_INCLUDE,
     });
 
     if (!booking) {
@@ -794,7 +792,7 @@ export async function modifyBookingDates({
     // options and the save, so a capture between two reads cannot split them.
     const reduction = await readReductionAgainstUnpaidAsk(tx, booking, netChargeCents);
     const settlementOptions = await calculateModificationSettlementOptions({
-      booking: booking,
+      booking,
       netChargeCents,
       reduction,
       db: tx, // locked transaction; see `CancellationPolicyDb`
@@ -807,7 +805,7 @@ export async function modifyBookingDates({
       );
     }
     const payments = await applyPaymentAdjustments(tx, {
-      booking: booking,
+      booking,
       priceDiffCents,
       changeFeeCents,
       reduction,

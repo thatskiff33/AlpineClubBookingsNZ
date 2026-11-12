@@ -3,7 +3,6 @@ import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
-import { EDIT_DOOR_BOOKING_INCLUDE } from "@/lib/booking-modify-validation";
 import {
   type Booking,
   type BookingGuest,
@@ -22,6 +21,7 @@ import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
 import {
   applyChoreCleanup,
+  EDIT_DOOR_BOOKING_INCLUDE,
   applyGuestChanges,
   applyLifecycleTransitions,
   applyPaymentAdjustments,
@@ -1048,7 +1048,11 @@ export async function modifyBookingBatch({
       where: { id: bookingId },
       include: {
         ...EDIT_DOOR_BOOKING_INCLUDE,
-        // Preserve the batch door's deterministic pricing/promo guest order.
+        // Per-night sets (issue #713): preserve unedited guests' gaps and
+        // re-sync edited guests' nights. Deterministic order (#2266 MED-4):
+        // pricing, promo targeting and the client's guest list must all agree
+        // on guest order, so never rely on the planner's unordered scan. Only
+        // this door orders guests; the shared include deliberately does not.
         guests: {
           ...EDIT_DOOR_BOOKING_INCLUDE.guests,
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],

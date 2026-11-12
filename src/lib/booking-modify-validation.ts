@@ -7,7 +7,6 @@ import type { DependantIdentityDeclaration } from "@/lib/booking-dependant-ident
 import {
   BookingStatus,
   type AgeTier,
-  type Booking,
   type Payment,
   type Prisma,
   type Role,
@@ -209,19 +208,35 @@ export function resolveStayRangesOrApiError<Guest extends LiveGuestStayRow>(args
   }
 }
 
-/** The post-lock snapshot shared by all four edit doors (INV-SSOT-001).
- * Guest ordering stays with each door: only batch edits impose an order.
- * Night prices remain nullable: unknown and a sold price of zero are distinct.
+/**
+ * #4925: the booking every edit door re-reads under its locks - the full edit,
+ * the date change, guest removal and the guest-acceptance re-price - and hands
+ * to the shared settlement and lifecycle code. It is the ONE home of that shape
+ * (`INV-SSOT-001`): the loaded types below are derived from it, so a field the
+ * shared code reads but a door does not load is a compile error rather than a
+ * cast that hides it. A field added here reaches all four doors.
+ *
+ * Guest order is deliberately absent: only the batch door orders guests, and it
+ * adds that `orderBy` over this include itself.
  */
 export const EDIT_DOOR_BOOKING_INCLUDE = {
   guests: {
     include: {
+      // Each guest's explicit night set (issue #713), so an edit preserves the
+      // gaps of guests it does not change. #3170: `priceCents` is `null` when
+      // the row's price is NOT KNOWN and a number (0 included, a comped night)
+      // when it is the sold price; `?? 0` on it is prohibited.
       nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
     },
   },
+  // #4019 review: with its transactions, oldest first (`INV-PAY-133`), because
+  // `isUnpaidConfirmedWholeLodge` reads them to tell an abandoned card attempt
+  // from a capture (`INV-PAY-143`).
   payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
+  // #3369: the owner is a member OR an organisation; read it via bookingOwner().
   member: true,
   organisation: { select: { name: true, email: true } },
+  // #3826: one redemption per promo code; read through booking-promo-redemptions.ts.
   promoRedemptions: {
     include: {
       guestTargets: { select: { bookingGuestId: true } },
@@ -235,15 +250,19 @@ export const EDIT_DOOR_BOOKING_INCLUDE = {
   },
 } satisfies Prisma.BookingInclude;
 
-/** Compiler-checked edit snapshot, including ordered ledger rows (INV-PAY-143). */
+/** The booking an edit door hands `applyLifecycleTransitions`, ledger rows included. */
 export type LoadedBookingForLifecycle = Prisma.BookingGetPayload<{
   include: typeof EDIT_DOOR_BOOKING_INCLUDE;
 }>;
 
-// Quote callers need the same facts except for the payment's ledger rows.
+/**
+ * The same snapshot for the quote and settlement readers, which never read the
+ * payment's ledger rows - so a caller holding a bare payment can still use them.
+ */
 export type LoadedBookingForModify = Omit<LoadedBookingForLifecycle, "payment"> & {
   payment: Payment | null;
 };
+
 export type LoadedPromoRedemption = LoadedBookingForLifecycle["promoRedemptions"][number];
 
 type BookingGuestNameEditPayment = Pick<

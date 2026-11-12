@@ -1,6 +1,6 @@
-import { editDoorBooking } from "./support/edit-door-booking";
 import { PaymentSource, PaymentStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
+import { editDoorBooking } from "./support/edit-door-booking";
 
 import {
   bookingLedgerCensusSql,
@@ -16,7 +16,6 @@ import {
 } from "@/lib/additional-payment-ask";
 import { applyPaymentAdjustments } from "@/lib/booking-modify-settlement";
 import { noReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
-import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import type { CalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 

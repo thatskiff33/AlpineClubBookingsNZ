@@ -1,5 +1,6 @@
-import { editDoorBooking } from "./support/edit-door-booking";
+import type { BookingStatus } from "@prisma/client";
 import { describe, expect, it } from "vitest";
+import { editDoorBooking } from "./support/edit-door-booking";
 import { ApiError } from "@/lib/api-error";
 import {
   GUEST_MEMBER_LINK_IN_PROGRESS_MESSAGE,
@@ -11,7 +12,7 @@ import {
 // resolveTargetDates is a pure function; only booking.status/checkIn/checkOut and
 // the guest envelopes are read; the builder supplies the remaining loaded fields.
 function makeBooking(
-  status: string,
+  status: BookingStatus,
   checkIn: string,
   checkOut: string,
 ): LoadedBookingForModify {

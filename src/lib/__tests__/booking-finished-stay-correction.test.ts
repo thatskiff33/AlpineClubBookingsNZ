@@ -1,5 +1,6 @@
-import { editDoorBooking } from "./support/edit-door-booking";
+import type { BookingStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
+import { editDoorBooking } from "./support/edit-door-booking";
 
 import {
   classifyFinishedStayChangeFeeRule,
@@ -35,7 +36,7 @@ function day(value: string): Date {
 
 const TODAY = day("2026-07-01");
 
-function makeBooking(status = "COMPLETED"): LoadedBookingForModify {
+function makeBooking(status: BookingStatus = "COMPLETED"): LoadedBookingForModify {
   return editDoorBooking({
     status,
     checkIn: day("2026-06-10"),

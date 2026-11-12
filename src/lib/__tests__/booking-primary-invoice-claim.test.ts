@@ -1,6 +1,6 @@
-import { editDoorBooking } from "./support/edit-door-booking";
 import { PaymentSource, PaymentStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { editDoorBooking } from "./support/edit-door-booking";
 
 import { AdditionalAskChangedDuringReductionError } from "@/lib/additional-ask-reduction-error";
 import { noReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";

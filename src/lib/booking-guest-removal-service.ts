@@ -1,7 +1,6 @@
 import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
-import { EDIT_DOOR_BOOKING_INCLUDE } from "@/lib/booking-modify-validation";
 import {
   AdminReviewStatus,
   type AgeTier,
@@ -55,6 +54,7 @@ import {
 } from "@/lib/booking-edit-policy";
 import {
   applyLifecycleTransitions,
+  EDIT_DOOR_BOOKING_INCLUDE,
   applyPaymentAdjustments,
   assertBookingNotQuotePriced,
   calculateModificationSettlementOptions,
@@ -396,9 +396,7 @@ export async function removeBookingGuestInTransaction({
   // from this post-lock snapshot.
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
-    include: {
-      ...EDIT_DOOR_BOOKING_INCLUDE,
-    },
+    include: EDIT_DOOR_BOOKING_INCLUDE,
   });
 
   if (!booking) {
@@ -787,7 +785,7 @@ export async function removeBookingGuestInTransaction({
   // options and the save, so a capture between two reads cannot split them.
   const reduction = await readReductionAgainstUnpaidAsk(tx, booking, priceDiffCents);
   const settlementOptions = await calculateModificationSettlementOptions({
-    booking: booking,
+    booking,
     netChargeCents: priceDiffCents,
     reduction,
     db: tx, // locked transaction; see `CancellationPolicyDb`
@@ -806,7 +804,7 @@ export async function removeBookingGuestInTransaction({
     );
   }
   const paymentImpact = await applyPaymentAdjustments(tx, {
-    booking: booking,
+    booking,
     priceDiffCents,
     changeFeeCents: 0,
     reduction,
@@ -824,7 +822,7 @@ export async function removeBookingGuestInTransaction({
   // paid/confirmed booking is flagged for the admin queue without a status
   // change (applyLifecycleTransitions enforces that).
   const lifecycle = await applyLifecycleTransitions(tx, {
-    booking: booking,
+    booking,
     bookingId,
     newCheckIn: booking.checkIn,
     newFinalPriceCents,

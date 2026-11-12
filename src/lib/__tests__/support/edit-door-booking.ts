@@ -4,7 +4,7 @@ type LoadedGuest = LoadedBookingForLifecycle["guests"][number];
 type LoadedPayment = NonNullable<LoadedBookingForLifecycle["payment"]>;
 type LoadedMember = NonNullable<LoadedBookingForLifecycle["member"]>;
 
-type BookingOverrides = Omit<Partial<LoadedBookingForLifecycle>, "guests" | "payment"> & {
+export type EditDoorBookingOverrides = Omit<Partial<LoadedBookingForLifecycle>, "guests" | "payment"> & {
   guests?: Partial<LoadedGuest>[];
   payment?: Partial<LoadedPayment> | null;
 };
@@ -92,7 +92,7 @@ function editDoorMember(overrides: Partial<LoadedMember> = {}): LoadedMember {
   };
 }
 
-function editDoorGuest(overrides: Partial<LoadedGuest> = {}): LoadedGuest {
+export function editDoorGuest(overrides: Partial<LoadedGuest> = {}): LoadedGuest {
   return {
     id: "guest_1",
     bookingId: "booking_1",
@@ -159,7 +159,7 @@ function editDoorPayment(overrides: Partial<LoadedPayment> = {}): LoadedPayment 
 }
 
 /** Complete, compiler-checked snapshot; each test states only the facts it varies. */
-export function editDoorBooking(overrides: BookingOverrides = {}): LoadedBookingForLifecycle {
+export function editDoorBooking(overrides: EditDoorBookingOverrides = {}): LoadedBookingForLifecycle {
   const { guests = [], payment = null, ...booking } = overrides;
   return {
     id: "booking_1",
