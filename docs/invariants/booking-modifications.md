@@ -781,7 +781,8 @@ are gone: the refund ceiling and the even-split write-back. Every edit path
 values a held night by `valueStrandNights`, whose figures add up to the guest's
 stored total, and none values one at current rates. Whether an edit's new
 nights are discounted is answered by INV-MOD-006 and INV-MOD-026 and nowhere
-else.
+else. Not retired: the body still holds enforced rules, and retirement is an
+open question on #2770.
 
 **Price the nights held, never the envelope (#2736).** An in-progress edit
 prices, quotes and persists each guest over the nights they hold — the canonical
@@ -808,8 +809,9 @@ list:
   refuse it;
 - a guest is active for the future when they hold a future night.
 
-For a contiguous stay that runs to the booking's check-out every output equals
-the pre-#2736 envelope arithmetic, to the cent, the night and the thrown error,
+For a contiguous stay that runs to the booking's check-out, whose night rows are
+exactly priced at a rate that has not moved since, every output equals the
+pre-#2736 envelope arithmetic, to the cent, the night and the thrown error,
 proven by re-implementing that arithmetic in
 `booking-edit-guest-ranges-sparse.test.ts`.
 
@@ -920,16 +922,17 @@ breakdown.
 
 At a club that has not switched the discount on, an edit does not move by a cent.
 
-**Written-back amounts are each night's real rate (#2744).** A kept night keeps
-its stored price and a newly bought night takes its own season rate; that list
-is what `BookingGuestNight.priceCents` receives. The amounts sum to the guest's
-total exactly in integer cents, remainder spread one cent at a time, including
-for a negative total, so Xero's invoice lines multiply back out (INV-MONEY-001,
-INV-MONEY-003). A guest left holding no nights — removed before their stay began
-— lands on zero if their rows account for their total, and otherwise keeps the
-drift.
+**Written-back amounts are each night's real value, not an average (#2744).** A
+kept night keeps its `valueStrandNights` value (its stored price on an exactly
+priced strand) and a newly bought night takes its own season rate; that list is
+what `BookingGuestNight.priceCents` receives. The amounts, plus any money
+INV-MOD-028 leaves unattached (a negative stored total, D11), sum to the guest's
+total exactly in integer cents, so Xero's invoice lines multiply back out
+(INV-MONEY-001, INV-MONEY-003). A guest left holding no nights — removed before
+their stay began — is credited their stored total and lands on zero.
 
-**Money direction.** Against the pre-#2743 answer nothing moves up: every
+**Money direction.** For exactly priced rows, against the pre-#2743 answer
+nothing moves up (other row shapes are valued under INV-MOD-028): every
 difference is a member paying less or a refused edit. Against the pre-#2736
 arithmetic, on drifted data (a stored `stayEnd` claiming more nights than the
 rows), an envelope drifted to or before the check-out lands back on the

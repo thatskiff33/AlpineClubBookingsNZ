@@ -254,7 +254,7 @@ decision, not automatic.
   (`src/app/api/admin/members/bulk-update/route.ts`). Administering a member's
   record — fields, activation, what they may do — is one domain however many
   screens reach it. None of the six reaches the subject member's timeline; only
-  the support correlation entry returns them. Rows written earlier keep their
+  the System correlation entry (`support` area alone) returns them. Rows written earlier keep their
   stored category, so bulk history splits by date; rewriting it would withdraw
   rows members can see, and is the owner's decision (#2763).
 

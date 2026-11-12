@@ -334,7 +334,8 @@ home for that explanation and is not repeated here.
 - **Existing and restored links are in scope.** Before a contact id, a
   `findOrCreateXeroContact` fast-path return included, reaches anything that can
   raise a document, `ensureXeroContactContained` finds proof or establishes
-  containment, else throws `XeroContactContainmentError` and nothing is raised.
+  containment, else throws (`XeroContactContainmentError`, or the provider's own
+  daily-limit, outage or reconnect error, never relabelled) and nothing is raised.
 - **Proof** is one `XeroSandboxContactContainment` row per contact, written only
   after reading Xero's stored value back. The fast path needs its address to
   match what the member's current address yields and the row to be younger than

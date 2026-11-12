@@ -47,8 +47,8 @@ are permanent: never renumbered, never reused.
   which one you rejected and why.
 - **An accepted exception lasts only while its reason is alive; retiring one
   needs a measurement, not an argument.** A convergence onto one home changes
-  an identity, which is proved: write and mutation-verify pins against the
-  separate copies FIRST.
+  an identity, which is proved rather than reasoned about: pins against the
+  separate copies come FIRST (#3218).
 - Recorded homes: `promo-stored-guest-targets.ts` (#3131), `stable-digest.ts`
   (#3218), `hasIssuedPrimaryXeroInvoice` (#3200) — no bookings API route reads
   `Payment.xeroInvoiceId` directly
@@ -234,7 +234,8 @@ History, measurements and rejected alternatives: #3126 (and #3123, #3131,
   reader; every `CoverageOwnerFacts` read
   spreads `COVERAGE_OWNER_FACTS_BASE_SELECT`; `hosting-fake-booking-store.ts`
   is the one booking double (each suite keeps its `makeStore`);
-  `race-db-url.ts` is the one race-database safety guard.
+  `race-db-url.ts` is the one race-database safety guard; suites that still
+  restate it are unconverged (#3039 converged its own caller only).
 
 History, measurements and rejected alternatives: #3126 (and #3039, #3132,
 #3164, #3180, #3191, #3196).
