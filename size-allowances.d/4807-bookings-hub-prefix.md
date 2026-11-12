@@ -23,13 +23,13 @@ reason: one import line, so the allocation board link comes from the hub
   registry. The link sits beside the booking it opens the board for.
 
 file: src/components/admin/booking-requests/policy-exception-requests-panel.tsx
-lines: 1015
+lines: 1016
 reason: one import line, so the panel's address comes from the hub registry.
   Splitting the exception queue is a refactor of its own and would not shrink
   this hunk.
 
 file: src/components/admin/booking-requests/public-booking-requests-panel.tsx
-lines: 2722
+lines: 2723
 reason: one import line, so the panel's address comes from the hub registry.
   Splitting the public-requests queue is a refactor of its own and would not
   shrink this hunk.
