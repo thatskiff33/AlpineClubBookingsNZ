@@ -115,7 +115,11 @@ async function clean(): Promise<void> {
   await prisma.booking.deleteMany({ where: { id: BOOKING_ID } });
 }
 
-/** A held Internet Banking booking: one guest for two nights, payment PENDING at the price. */
+/**
+ * A paid Internet Banking booking: one guest for two nights, paid at the price.
+ * Paid, because only a paid booking is charged the late-notice change fee the
+ * proof moves across (owner decision, 10 Nov 2026, `late-notice-change-fee.ts`).
+ */
 async function seed(): Promise<void> {
   await prisma.booking.create({
     data: {
@@ -124,7 +128,7 @@ async function seed(): Promise<void> {
       lodgeId: LODGE_ID,
       checkIn: CHECK_IN,
       checkOut: CHECK_OUT,
-      status: "CONFIRMED",
+      status: "PAID",
       totalPriceCents: PRICE_CENTS,
       finalPriceCents: PRICE_CENTS,
     },
@@ -154,7 +158,7 @@ async function seed(): Promise<void> {
       bookingId: BOOKING_ID,
       amountCents: PRICE_CENTS,
       source: "INTERNET_BANKING",
-      status: "PENDING",
+      status: "SUCCEEDED",
       reference: "BOOKING-RACE4924",
       internetBankingHoldSlots: true,
       transactions: {
@@ -163,7 +167,7 @@ async function seed(): Promise<void> {
           kind: "PRIMARY",
           source: "INTERNET_BANKING",
           amountCents: PRICE_CENTS,
-          status: "PENDING",
+          status: "SUCCEEDED",
           reference: "BOOKING-RACE4924",
           reason: "internet_banking_booking_payment",
         },
