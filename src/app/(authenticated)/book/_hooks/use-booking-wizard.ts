@@ -171,14 +171,14 @@ function clearGuestNights(guestList: GuestData[]): GuestData[] {
   });
 }
 
-// Booking wizard state machine (#1209). Extracted verbatim from the /book page
-// shell: the same 51 useState, 9 useEffect (identical bodies, deps, and order),
-// and handlers. The page renders the _components step views with this hook's
-// return. The BookErrorPaymentTarget type is referenced via state below.
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+// Booking wizard state machine (#1209). Extracted verbatim from the /book page
+// shell: the same 51 useState, 9 useEffect (identical bodies, deps, and order),
+// and handlers. The page renders the _components step views with this hook's
+// return. The BookErrorPaymentTarget type is referenced via state below.
 export function useBookingWizard() {
   const format = useClubFormat();
   const router = useRouter();
