@@ -4,10 +4,11 @@ import type { ReactNode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const navigation = vi.hoisted(() => ({ replace: vi.fn() }));
+// One URLSearchParams per test file, as Next keeps it stable between renders.
+const navigation = vi.hoisted(() => ({ replace: vi.fn(), searchParams: new URLSearchParams() }));
 vi.mock("next/navigation", () => ({
   useRouter: () => navigation,
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => navigation.searchParams,
   usePathname: () => "/admin",
 }));
 vi.mock("@/hooks/use-admin-area-edit-access", async (original) => ({
@@ -50,6 +51,7 @@ const payment = {
   id: "payment", amountCents: 12345, refundedAmountCents: 0, status: "SUCCEEDED",
   source: "STRIPE", createdAt: "2026-06-30T00:00:00Z", lastUpdatedAt: "2026-06-30T00:00:00Z",
   xeroState: "notNeeded", settlementState: "settled", stripePaymentIntentId: null,
+  xeroActivity: { failed: 0, partial: 0, pending: 0, latestOperationId: null, latestOperationStatus: null, latestOperationAt: null },
   booking: { id: "booking", reference: "STALE-PAYMENT", status: "CONFIRMED", checkIn: "2026-07-10", checkOut: "2026-07-12", creditsFromCancellation: [], member: { id: "member", firstName: "Previous", lastName: "Payment", email: "previous@example.test" } },
 };
 const subscription = {
@@ -78,8 +80,8 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
     return response({ error: "The list service is unavailable." }, 500);
   };
   if (init?.method && init.method !== "GET") return response({ eligibleRecipients: 1, filteredByPreference: 0 });
-  if (url.startsWith("/api/admin/payments?")) return failure ? fail() : response({ data: [payment], total: 1, summary: { netCollectedCents: 12345, refundedCents: 200, count: 1 } });
-  if (url.startsWith("/api/admin/subscriptions?")) return failure ? fail() : response({ data: [subscription], total: 1, summary: { total: 17, paid: 13, unpaid: 4, overdue: 2, notInvoiced: 0, notRequired: 0 } });
+  if (url.startsWith("/api/admin/payments?")) return failure ? fail() : response({ data: [payment], total: 60, summary: { netCollectedCents: 12345, refundedCents: 200, count: 1 } });
+  if (url.startsWith("/api/admin/subscriptions?")) return failure ? fail() : response({ data: [subscription], total: 60, summary: { total: 17, paid: 13, unpaid: 4, overdue: 2, notInvoiced: 0, notRequired: 0 } });
   if (url === "/api/admin/communications/history") return failure ? fail() : response({ history: [history] });
   if (url === "/api/admin/communications/send") return response({ limit: 10 });
   if (url === "/api/admin/lodges") return response({ lodges: [{ id: "lodge-1", name: "Lodge One" }, { id: "lodge-2", name: "Lodge Two" }] });
@@ -113,18 +115,21 @@ for (const kind of ["server", "network"] as const) {
   describe(`${kind} failure`, () => {
     it("Payments clears the previous search's rows and totals and recovers", async () => {
       render(<PaymentsPage />);
-      await screen.findByText("STALE-PAYMENT");
+      await screen.findByText("Payment, Previous");
       expect(screen.getAllByText("$123.45").length).toBeGreaterThan(0);
+      expect(screen.getByRole("button", { name: "Next page" })).toBeInTheDocument();
       failure = kind;
-      fireEvent.change(screen.getByLabelText("Search"), { target: { value: "new query" } });
-      const alert = await assertFailure("payments-load-error", "No payments found", "STALE-PAYMENT");
+      fireEvent.change(screen.getByLabelText("Member or reference"), { target: { value: "new query" } });
+      const alert = await assertFailure("payments-load-error", "No payments found", "Payment, Previous");
       expect(screen.queryByText("$123.45")).not.toBeInTheDocument();
       expect(screen.queryByText("Net Collected")).not.toBeInTheDocument();
       expect(screen.queryByText(/Showing .*payment/)).not.toBeInTheDocument();
+      // The previous query's total must not survive as page controls.
+      expect(screen.queryByRole("button", { name: "Next page" })).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: /More filters/ })).toHaveAttribute("aria-expanded", "false");
       failure = null;
       fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
-      await screen.findByText("STALE-PAYMENT");
+      await screen.findByText("Payment, Previous");
       expect(screen.queryByTestId("payments-load-error")).not.toBeInTheDocument();
     });
 
@@ -132,11 +137,13 @@ for (const kind of ["server", "network"] as const) {
       render(<SubscriptionsPage />);
       await screen.findByText("Subscriber, Previous");
       expect(screen.getByText("17")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Next page" })).toBeInTheDocument();
       failure = kind;
       fireEvent.change(screen.getByLabelText("Season Year"), { target: { value: "2027" } });
       const alert = await assertFailure("subscriptions-load-error", "No subscriptions found", "Subscriber, Previous");
       expect(screen.queryByText("17")).not.toBeInTheDocument();
       expect(screen.queryByText(/Showing .*subscription/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Next page" })).not.toBeInTheDocument();
       failure = null;
       fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
       await screen.findByText("Subscriber, Previous");
@@ -189,7 +196,7 @@ for (const kind of ["server", "network"] as const) {
 }
 
 it("Payments shows a 400 pointer while More filters is closed and keeps the field reason", async () => {
-  fetchMock.mockImplementationOnce(async () => response({ error: "Search must be at most 100 characters." }, 400));
+  fetchMock.mockImplementationOnce(async () => response({ error: "Invalid query parameters", details: { formErrors: [], fieldErrors: { search: ["Search must be at most 100 characters."] } } }, 400));
   render(<PaymentsPage />);
   const alert = await screen.findByTestId("payments-load-error");
   expect(alert).toHaveTextContent("Search must be at most 100 characters.");
