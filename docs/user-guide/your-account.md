@@ -137,7 +137,7 @@ The **Privacy & Data** section gives you two rights:
 | Enrol in 2FA | You save recovery codes; regenerating them invalidates the old set |
 | Magic link / Google | Only shown when the club enables them; both still respect 2FA |
 | Notification preferences | Optional emails toggle; booking/cancellation emails are not affected by it. Rarely, the club arranges a particular booking with you directly rather than by email — if you expected a message about a booking and nothing arrived, contact us |
-| Download My Data | JSON export, capped to a few per day |
+| Download My Data | JSON export, capped to a few per day. Filename `<club>-my-data-<date>.json`, from the club's short name |
 | Request account deletion | Reviewed by an admin; irreversible on approval; anonymises you and cancels future bookings |
 
 ## Troubleshooting

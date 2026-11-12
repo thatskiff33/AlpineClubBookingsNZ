@@ -30,6 +30,8 @@ import {
   readMemberDietaryRequirementsByIds,
 } from "@/lib/member-dietary";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { getClubIdentity } from "@/lib/club-identity-settings";
+import { clubDownloadFilename } from "@/lib/club-download-filename";
 
 const AGE_TIER_VALUES = Object.values(AgeTier);
 const SUBSCRIPTION_STATUS_FILTERS = [
@@ -532,11 +534,13 @@ export async function GET(req: NextRequest) {
       },
     });
 
+    const { shortName } = await getClubIdentity();
+    const filename = clubDownloadFilename(shortName, "members", today, "csv");
     return new Response(csv, {
       status: 200,
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="tac-members-${today}.csv"`,
+        "Content-Disposition": `attachment; filename="${filename}"`,
       },
     });
   } catch (error) {

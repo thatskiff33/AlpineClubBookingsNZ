@@ -11,6 +11,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findMany: vi.fn() },
     clubTimeSettings: { findUnique: vi.fn() },
+    clubIdentitySettings: { findUnique: vi.fn() },
   },
 }));
 
@@ -296,7 +297,7 @@ describe("members export — the persisted club timezone, not the environment (C
     expect(cellByHeader(csv, "Life Member Date").value).toBe("2015-01-01");
   });
 
-  it("stamps the download filename with the club's calendar day, not the host's", async () => {
+  it("names the download from the club's own short name and calendar day, not the host's", async () => {
     // Same premise, same reason: the environment's "today" must not already be
     // the club's, or the filename below proves nothing. `ENVIRONMENT_CLUB_ZONE`
     // is passed on purpose, for the reason given in the case above (#3123).
@@ -307,6 +308,14 @@ describe("members export — the persisted club timezone, not the environment (C
     ).not.toBe("2026-06-30");
 
     vi.mocked(prisma.member.findMany).mockResolvedValue([] as never);
+    // INV-CONFIG-001: the name comes from the persisted club identity, never
+    // one club's initials (#4986).
+    vi.mocked(prisma.clubIdentitySettings.findUnique).mockResolvedValueOnce({
+      name: null,
+      shortName: "Ruapehu AC",
+      hutLeaderLabel: null,
+      facebookUrl: null,
+    } as never);
 
     const res = await exportRequest();
 
@@ -314,7 +323,7 @@ describe("members export — the persisted club timezone, not the environment (C
     // and still the EVENING OF 30 JUNE in Denver. A club there must not have
     // yesterday's export named for tomorrow.
     expect(res.headers.get("Content-Disposition")).toBe(
-      'attachment; filename="tac-members-2026-06-30.csv"',
+      'attachment; filename="ruapehu-ac-members-2026-06-30.csv"',
     );
   });
 });
