@@ -12,7 +12,7 @@ import { describe, it, expect, vi } from "vitest";
 // (#4929) are proven against PostgreSQL in bed-allocation-lock-held.realdb.test.ts.
 vi.mock("@/lib/global-lock-held", () => ({ assertGlobalLockHeld: vi.fn() }));
 vi.mock("@/lib/lodge-capacity-lock", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/lodge-capacity-lock")>()),
+  ...((await importOriginal()) as typeof import("@/lib/lodge-capacity-lock")),
   assertLodgeCapacityLockHeld: vi.fn(),
 }));
 import { BookingStatus } from "@prisma/client";
