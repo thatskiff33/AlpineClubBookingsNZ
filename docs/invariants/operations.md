@@ -22,8 +22,9 @@ Read this file when you are writing raw SQL, taking a row lock or an advisory
 lock, adding an import to a `"use client"` module, dropping a column, changing
 the meaning of a stored value (an audit `category`, a status string) so that the
 rows already written no longer match the code, deploying to production,
-choosing credentials or data for CI and local validation, or mocking a money
-seam in a test that asserts money.
+choosing credentials or data for CI and local validation, mocking a money
+seam in a test that asserts money, or capping the rows an admin list route
+returns (`INV-OPS-017`).
 
 A Prisma `startsWith` is SQL `LIKE` too, and Prisma does not escape it: a
 prefix carrying an id or typed text goes through `exactPrefix`
@@ -440,6 +441,32 @@ rules first written here. #2765 extended it with the measured-audience half.
   client-module set the census's own non-vacuity test proves is not empty; 18 of
   the CLI census's 38 roots reach `server-only`, and every published way of
   running each of them carries the condition.
+
+## INV-OPS-017
+
+- **A row-capped admin list shows its total and reaches every row (#4960).**
+  When an admin route answers one page of a list, every screen that reads it
+  for that list shows the total ("Showing 1–25 of 40", even on a single page)
+  and a pager that reaches the last row, in the same change that adds the cap.
+  A cap with no pager is silent data loss: #297 capped the officer queues at 25
+  rows and the screens kept showing only the newest 25, so the requests that
+  had waited longest were the ones hidden.
+- One shape, one pager. A capped route answers through `adminListPage` in
+  `src/lib/admin-list-page.ts` (`total`, `page`, `pageSize`, `totalPages`,
+  beside its old keys); a screen pages through `useAdminQueuePage` and renders
+  the shared `Pagination` with `formatAdminListRange` as its summary. A filter
+  change returns to page 1, a page left empty by a decision steps back one, and
+  the page is kept in the URL.
+- A work queue's pending filter reads oldest first (`adminQueueCreatedOrder`).
+  A focused deep link (`bookingId=`, `requestId=`) whose record is off the
+  current page shows it pinned above the list, with `PINNED_QUEUE_RECORD_NOTE`.
+- Enforced by `src/lib/__tests__/admin-queue-pagination-census.test.ts`, which
+  names this ID: every client file fetching a route in `CAPPED_QUEUE_ROUTES`
+  must import the hook and render `Pagination`, or be exempt in
+  `NOT_A_QUEUE_LIST` with its reason, and each route must call
+  `adminListPage`. It reads source text, so a new capped route is covered only
+  once it is added to that map; admin lists outside the officer queues are
+  not in it yet.
 
 ## INV-OPS-002
 

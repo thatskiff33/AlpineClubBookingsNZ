@@ -43,6 +43,13 @@ or replace a nominator. Money is in integer cents (shown as dollars).
    *Approved*, or *Rejected*. **Reset** restores Pending admin without changing
    any in-progress nominator search or review input.
 
+3. The list shows 25 applications a page, with a total line such as "Showing
+   1–25 of 40" under it and **Previous** / **Next** buttons when there is more
+   than one page. **Pending admin** lists the oldest application first, so the
+   one that has waited longest is at the top; the other filters list the newest
+   first. Changing the filter returns to page 1, and the filter and page stay in
+   the address, so a reload or a shared link opens the same page.
+
 ### Chase or replace a nominator
 
 1. On a **Waiting on nominators** application, each **Nominator 1 / Nominator 2**

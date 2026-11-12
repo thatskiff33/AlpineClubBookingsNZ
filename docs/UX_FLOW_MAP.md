@@ -234,7 +234,7 @@ Journey: Review booking rules and cancellation policies before staging a change.
 
 Screen: `/admin/booking-requests`.
 
-Shows: Tabbed request queues and request details with their current status and actions.
+Shows: Tabbed request queues and request details with their current status and actions. Each queue pages 25 rows with a "Showing 1–25 of 40" total line; pending filters list the oldest first (INV-OPS-017). A deep link to one booking or request pins it above the page when it is elsewhere.
 
 Journey: Choose a queue tab, open a request, inspect the proposed stay, and use its available actions.
 
@@ -390,7 +390,7 @@ Journey: Choose a lodge, inspect lockers and assignments, and manage the selecte
 
 Screen: `/admin/member-applications`.
 
-Shows: Applications, nomination progress and officer decisions.
+Shows: Applications, nomination progress and officer decisions. The list pages 25 rows with a "Showing 1–25 of 40" total line; Pending admin lists the oldest first (INV-OPS-017).
 
 Journey: Open an application, review its details and nominations, and use the available decision actions.
 
@@ -422,7 +422,7 @@ Screen: `/admin/membership-cancellations`.
 
 Merged in (#4796): a Requests tab and a Settings tab (`?tab=settings`); `/admin/membership-cancellation` and `/admin/setup/cancellation` redirect to the Settings tab.
 
-Shows: The membership cancellation review queue; on the Settings tab, the cancellation copy and Xero handling.
+Shows: The membership cancellation and archive review queues, each paged 25 rows with its own total line (INV-OPS-017); on the Settings tab, the cancellation copy and Xero handling.
 
 Journey: Open a cancellation request and review its consequences before deciding it; or open Settings, from here or from Notifications & Email, to change the cancellation wording.
 
@@ -636,7 +636,7 @@ Journey: Filter payments, open a record, and inspect its booking and provider st
 
 Screen: `/admin/refund-requests`.
 
-Shows: Refund requests with booking context and decision controls. A credit approval shows the account the requester chose.
+Shows: Refund requests with booking context and decision controls, paged 25 rows with a total line (INV-OPS-017). A credit approval shows the account the requester chose.
 
 Journey: Open a request, inspect the booking and amounts, then use the permitted decision action.
 
