@@ -26,8 +26,8 @@ describe("Image Manager folder controls", () => {
   it("selects folders with Enter and Space and names the separate folder actions", async () => {
     const user = userEvent.setup();
     render(<ImageManagerClient />);
-    const photos = await screen.findByRole("button", { name: "photos", exact: true });
-    const winter = screen.getByRole("button", { name: "winter", exact: true });
+    const photos = await screen.findByRole("button", { name: "photos" });
+    const winter = screen.getByRole("button", { name: "winter" });
     for (let step = 0; step < 15 && document.activeElement !== photos; step++) await user.tab();
     expect(photos).toHaveFocus();
     await user.keyboard("{Enter}");
@@ -55,8 +55,8 @@ describe("Image Manager folder controls", () => {
     access.canEdit = false;
     const user = userEvent.setup();
     render(<ImageManagerClient />);
-    await user.click(await screen.findByRole("button", { name: "photos", exact: true }));
-    expect(screen.getByRole("button", { name: "photos", exact: true })).toHaveAttribute("aria-current", "true");
+    await user.click(await screen.findByRole("button", { name: "photos" }));
+    expect(screen.getByRole("button", { name: "photos" })).toHaveAttribute("aria-current", "true");
     expect(screen.queryByRole("button", { name: /Rename folder|Delete folder/ })).not.toBeInTheDocument();
   });
 });
