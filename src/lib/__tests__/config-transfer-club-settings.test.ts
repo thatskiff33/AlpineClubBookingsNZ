@@ -778,11 +778,16 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
     const result = await clubSettingsImporter.apply(applyCtx(tx, files, "merge"));
 
     // Effect on what the app reads: none. Effect on the database: the row is
-    // MATERIALISED — the cost the owner accepted on #2171. Except for the two
-    // all-null override-only singletons, which create nothing (test below).
-    expect(result.created).toBe(
-      SINGLETONS.length - DEFAULTS_INTENTIONALLY_PARTIAL.size,
+    // MATERIALISED — the cost the owner accepted on #2171. Except for a
+    // singleton whose effective defaults are all null — the two override-only
+    // ones and privacy-hosting-settings (#4918) — which creates nothing.
+    const allNullDefaults = SINGLETONS.filter((spec) =>
+      Object.values(spec.defaults()).every((value) => value === null),
     );
+    expect(allNullDefaults.map((spec) => spec.entity).sort()).toEqual(
+      [...DEFAULTS_INTENTIONALLY_PARTIAL, "privacy-hosting-settings"].sort(),
+    );
+    expect(result.created).toBe(SINGLETONS.length - allNullDefaults.length);
     expect(delegates.bookingRequestSettings.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: { id: "default", ...DEFAULT_BOOKING_REQUEST_SETTINGS },

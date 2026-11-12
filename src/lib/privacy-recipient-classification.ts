@@ -150,6 +150,8 @@ export const NON_RECIPIENT_HTTPS_HOSTS = {
   "outlook.live.com": "User-opened calendar link with event title and dates; not a server upload of member details.",
   "rmca.org.nz": "Legacy literal recognised only by the config-transfer sanitiser.",
   "snowhq.com": "Public snow conditions fetched without member information.",
+  "tacbookings.local": "Parse base for validating internal return paths; never contacted.",
+  "visible-email-url.invalid": "Reserved-TLD parse base for URLs shown in email text; never contacted.",
   "www.fmc.org.nz": "Legacy public-link literal recognised only by the config-transfer sanitiser.",
   "www.snow.nz": "Public snow-report link in token help text.",
   "www.whakapapa.com": "Public snow conditions fetched without member information.",
