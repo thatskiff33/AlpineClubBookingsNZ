@@ -846,7 +846,7 @@ work written would wait and go out unchecked the day Xero comes back.
   `enqueueMembershipSubscriptionChargeOperation` refuses for any other caller.
 - **Approval still succeeds.** It creates no subscription charge and no
   joining-fee outbox row (the fee is SKIPPED and audited), and warns the
-  officer to record payment by hand.
+  officer to bill anything owed outside the app.
 - **Work already waiting is shown, not changed.** The screen counts the
   season's QUEUED, PROCESSING and INVOICE_CREATED charges and tells the officer
   to mark paid members first: a paid member's charge not yet invoiced is then

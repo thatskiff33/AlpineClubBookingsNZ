@@ -2,8 +2,9 @@
   invoices that would go out late (#4986).** A club that does not use Xero used
   to see only a missing Xero account-mapping exception on the Subscriptions page,
   pointing at a screen it cannot open. With the Xero integration module off, the
-  page now explains that subscription invoicing needs Xero and that payments are
-  recorded with **Mark as paid (manual)**. **Confirm and queue annual batch** and
+  page now explains that subscription invoicing needs Xero, still previews what
+  is owed, and points to **Mark as paid (manual)** for members listed for the
+  season. **Confirm and queue annual batch** and
   **Retry** are disabled.
 
   With Xero off, no subscription or joining-fee invoice work is written at all.

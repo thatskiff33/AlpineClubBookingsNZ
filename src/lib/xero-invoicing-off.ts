@@ -5,9 +5,13 @@
  * `xero-invoicing-guard.ts` (`INV-INT-038`).
  */
 
-/** Every subscription-invoice refusal and the approval warning use this one message. */
+/**
+ * Every subscription-invoice refusal and the approval warning use this one
+ * message. Worded "any … owed" because an approval warns before knowing whether
+ * the new member owes a subscription at all.
+ */
 export const SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE =
-  "Subscription invoicing is off because Xero is not enabled; record payment manually with Mark as paid (manual).";
+  "Subscription invoicing is off because Xero is not enabled. Bill any subscription owed outside the app.";
 
 /**
  * The refusal a subscription writer throws while Xero is off; routes map it to
@@ -23,9 +27,13 @@ export class XeroInvoicingOffError extends Error {
   }
 }
 
-/** The joining-fee counterpart, raised on application approval. */
+/**
+ * The joining-fee counterpart, raised on application approval. Conditional,
+ * because the approval does not know whether a fee applies (an exempt
+ * organisation, or no fee configured, owes none).
+ */
 export const JOINING_FEE_INVOICING_XERO_OFF_MESSAGE =
-  "Joining-fee invoicing is off because Xero is not enabled; invoice the joining fee outside the app.";
+  "Joining-fee invoicing is off because Xero is not enabled. If a joining fee applies, invoice it outside the app.";
 
 /**
  * The preview exception raised when the subscriptionIncome mapping is not set.

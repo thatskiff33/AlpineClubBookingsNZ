@@ -87,7 +87,7 @@ uses the manual alternative:
 | Feature | Without Xero |
 | --- | --- |
 | Internet Banking payments (bank transfer against a Xero invoice) | Take card payments, or record a bank transfer by hand on the booking |
-| Annual subscription invoicing (the annual batch and its retries) | Bill members outside the app; record each payment with **Mark as paid (manual)** in [Subscriptions](subscriptions.md#if-the-club-does-not-use-xero) |
+| Annual subscription invoicing (the annual batch and its retries) | Bill members outside the app; record a listed member's payment with **Mark as paid (manual)** in [Subscriptions](subscriptions.md#if-the-club-does-not-use-xero) |
 | Subscription and joining-fee invoices on application approval | Approval still succeeds without them and warns you; invoice the new member outside the app |
 | The Finance dashboard's Xero data (monthly accounts figures from the finance sync) | Use [Reports](reports.md), which read the app's own bookings and payments |
 
@@ -105,7 +105,7 @@ module is on but a dependency — credentials, an API key, inventory — is miss
 | A module shows "Needs setup" | It's on but a dependency isn't configured | Add the named credential/API key/inventory; see [`CONFIGURATION.md`](../../CONFIGURATION.md) |
 | A page still 404s after enabling | You didn't **Save**, or you're looking at a cached tab | Save, then reload the target page |
 | Enabling Internet Banking payments does nothing | It depends on Xero integration | Enable Xero integration first |
-| Subscriptions can't confirm the annual batch, or an approval says subscription invoicing is off | Subscription and joining-fee invoicing depend on Xero integration | Record payments with **Mark as paid (manual)**, or enable Xero integration ([What needs Xero](#what-needs-xero)) |
+| Subscriptions can't confirm the annual batch, or an approval says subscription invoicing is off | Subscription and joining-fee invoicing depend on Xero integration | Bill outside the app and record listed members' payments with **Mark as paid (manual)**, or enable Xero integration ([What needs Xero](#what-needs-xero)) |
 
 ## Related links
 

@@ -359,7 +359,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
           <>
             {xeroInvoicingOff ? (
               <Alert variant="info" title="Subscription invoicing needs Xero">
-                {SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE} The preview below shows what is owed, but no batch can be confirmed. When a member pays, use Mark as paid (manual) in the subscriptions list on this page.
+                {SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE} The preview below shows what is owed, but no batch can be confirmed. When a member listed for this season in the subscriptions list pays, record it there with Mark as paid (manual). A member with no row for this season cannot be recorded in the app yet.
               </Alert>
             ) : null}
             {xeroInvoicingOff && awaitingXeroCount > 0 ? (
