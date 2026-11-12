@@ -566,7 +566,7 @@ describe("POST /api/payments/charge-saved-method", () => {
       const claim = claimCall();
       expect(claim?.[0]).toEqual({
         where: { id: "booking-1", status: "PENDING" },
-        data: { status: "CONFIRMED", nonMemberHoldUntil: null },
+        data: { status: "CONFIRMED", nonMemberHoldUntil: null, savedCardClaimAt: expect.any(Date) },
       });
       const order = [
         mockExecuteRaw.mock.invocationCallOrder[0]!,
@@ -743,7 +743,7 @@ describe("POST /api/payments/charge-saved-method", () => {
       expect(await response.json()).toEqual({ error: "Failed to charge saved payment method" });
       expect(releaseCall()?.[0]).toEqual({
         where: { id: "booking-1", status: "CONFIRMED" },
-        data: { status: "PENDING", nonMemberHoldUntil: HOLD_UNTIL },
+        data: { status: "PENDING", nonMemberHoldUntil: HOLD_UNTIL, savedCardClaimAt: null },
       });
       // Both transactions on this path — the claim and the release — take both
       // locks; the release re-locks rather than running unserialised.
@@ -806,7 +806,7 @@ describe("POST /api/payments/charge-saved-method", () => {
       expect(body.error).toContain("3D Secure");
       expect(releaseCall()?.[0]).toEqual({
         where: { id: "booking-1", status: "CONFIRMED" },
-        data: { status: "PENDING", nonMemberHoldUntil: HOLD_UNTIL },
+        data: { status: "PENDING", nonMemberHoldUntil: HOLD_UNTIL, savedCardClaimAt: null },
       });
       const settle = settleCall("pi_3ds");
       // Forward only: a non-capture is written only over an unresolved row.

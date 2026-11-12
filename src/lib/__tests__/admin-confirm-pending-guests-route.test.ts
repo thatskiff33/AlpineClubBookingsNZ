@@ -418,7 +418,7 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     // BEFORE Stripe is touched, mirroring the cron.
     expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
       where: { id: "b1", status: "PENDING" },
-      data: { status: "CONFIRMED", nonMemberHoldUntil: null },
+      data: { status: "CONFIRMED", nonMemberHoldUntil: null, savedCardClaimAt: expect.any(Date) },
     });
     expect(
       mocks.bookingUpdateMany.mock.invocationCallOrder[0]
@@ -815,6 +815,7 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
       data: {
         status: "PENDING",
         nonMemberHoldUntil: new Date("2026-07-08"),
+        savedCardClaimAt: null,
       },
     });
     // #172: BOTH transactions on this path — the claim and the release —
@@ -921,6 +922,7 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
       data: {
         status: "PENDING",
         nonMemberHoldUntil: new Date("2026-07-08"),
+        savedCardClaimAt: null,
       },
     });
     // The answer is recorded on the attempt row through the transaction

@@ -1329,6 +1329,7 @@ async function settleBookingPaymentInTransaction(
       where: { id: booking.id, status: { in: [...PAYABLE_SUCCESS_STATUS_LIST] } },
       data: {
         status: BookingStatus.PAID,
+        savedCardClaimAt: null,
         draftExpiresAt: null,
       },
     });

@@ -36,14 +36,24 @@ beforeEach(() => {
 
 describe("saved-card claim recovery", () => {
   it("releases a stranded claim with its marker as the elapsed hold and leaves the attempt ledger alone", async () => {
-    expect(await recoverStaleSavedCardClaims(now, "Pacific/Auckland")).toEqual({ recoveredBookingIds: ["booking"], failedBookingIds: [] });
+    expect(await recoverStaleSavedCardClaims(now)).toEqual({ recoveredBookingIds: ["booking"], failedBookingIds: [] });
     expect(db.booking.updateMany).toHaveBeenCalledWith({
       where: { id: "booking", status: "CONFIRMED", savedCardClaimAt: marker },
       data: { status: "PENDING", nonMemberHoldUntil: marker, savedCardClaimAt: null },
     });
     expect(reconcile).toHaveBeenCalledOnce();
     expect(db.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(lodgeLock.mock.invocationCallOrder[0]!);
-    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "booking.saved_card_claim_recovered", severity: "critical", lodgeId: "lodge" }));
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "booking.saved_card_claim_recovered", category: "payment", severity: "critical", entityId: "booking",
+      metadata: { lodgeId: "lodge", markerAgeMs: 60 * 60 * 1000 },
+    }));
+    expect(db.booking.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        status: "CONFIRMED",
+        savedCardClaimAt: { lte: new Date("2026-06-30T23:30:00.000Z") },
+        payment: { source: "STRIPE", status: "PENDING" },
+      },
+    }));
   });
 
   it.each([
@@ -54,7 +64,7 @@ describe("saved-card claim recovery", () => {
     ["bank transfer", { payment: { source: "INTERNET_BANKING", status: "PENDING", transactions: [] } }],
   ])("does not release a %s after the locked re-read", async (_name, overrides) => {
     db.booking.findUnique.mockResolvedValue(booking(overrides));
-    await recoverStaleSavedCardClaims(now, "Pacific/Auckland");
+    await recoverStaleSavedCardClaims(now);
     expect(db.booking.updateMany).not.toHaveBeenCalled();
     expect(reconcile).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
@@ -62,16 +72,21 @@ describe("saved-card claim recovery", () => {
 
   it("does nothing after a lost marker guard", async () => {
     db.booking.updateMany.mockResolvedValue({ count: 0 });
-    await recoverStaleSavedCardClaims(now, "Pacific/Auckland");
+    await recoverStaleSavedCardClaims(now);
     expect(reconcile).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("counts a booking recovered even when its audit row cannot be written", async () => {
+    audit.mockRejectedValue(new Error("audit offline"));
+    expect(await recoverStaleSavedCardClaims(now)).toEqual({ recoveredBookingIds: ["booking"], failedBookingIds: [] });
   });
 
   it("continues after a failed booking and records the failure", async () => {
     db.booking.findMany.mockResolvedValue([booking(), booking({ id: "second" })]);
     db.$transaction.mockRejectedValueOnce(new Error("unavailable"));
     db.booking.findUnique.mockResolvedValue(booking({ id: "second" }));
-    const result = await recoverStaleSavedCardClaims(now, "Pacific/Auckland");
+    const result = await recoverStaleSavedCardClaims(now);
     expect(result.failedBookingIds).toEqual(["booking"]);
     expect(result.recoveredBookingIds).toEqual(["second"]);
   });
@@ -97,7 +112,7 @@ describe("saved-card claim compensation", () => {
 
   it("keeps a webhook's PAID state when release loses the claim", async () => {
     db.booking.findUnique.mockResolvedValue({ status: "PAID" });
-    const outcome = await runSavedCardClaimRelease((tx) => releaseSavedCardChargeClaim(tx, { ...context, restoreHoldUntil: marker, previousRange: range }), context);
+    const outcome = await runSavedCardClaimRelease((tx) => releaseSavedCardChargeClaim(tx, { bookingId: "booking", restoreHoldUntil: marker, previousRange: range }), context);
     expect(outcome).toEqual({ ok: true, value: { released: false, statusFound: "PAID" } });
     expect(db.booking.updateMany).not.toHaveBeenCalled();
   });

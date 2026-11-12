@@ -1,3 +1,4 @@
+import { releaseSavedCardChargeClaim, runSavedCardClaimRelease } from "@/lib/saved-card-charge-claim";
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { NextRequest, NextResponse } from "next/server";
 import { handOffSupersededCaptureAfterRefusal } from "@/lib/superseded-paid-intent";
@@ -32,7 +33,6 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import {
   reconcileBedAllocationsForBooking,
-  reconcileBedAllocationsForBookingWithGlobalLockHeld,
   reconcileBedAllocationsForBookingWithLodgeLockHeld,
 } from "@/lib/bed-allocation-lifecycle";
 import {
@@ -470,7 +470,7 @@ export async function POST(
       const claimed = await tx.booking.updateMany({
         where: { id: bookingId, status: BookingStatus.PENDING },
         data: {
-          status: BookingStatus.CONFIRMED,
+          status: BookingStatus.CONFIRMED, savedCardClaimAt: new Date(),
           nonMemberHoldUntil: null,
           // Persisted capacity override (#1771): an admin "confirm now" that
           // claims a priced booking CONFIRMED over the ceiling (allowOverbook
@@ -622,10 +622,8 @@ export async function POST(
     const releaseChargeClaim = async (answer?: {
       attemptRowId: string;
       paymentIntent: SavedCardChargeAnswer;
-    }) =>
-      prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-        await acquireLodgeCapacityLock(tx, booking.lodgeId);
+    }) => {
+      const outcome = await runSavedCardClaimRelease(async (tx) => {
         if (answer) {
           await settleSavedCardChargeAttempt({ journal: receiptJournal,
             ...answer,
@@ -660,22 +658,14 @@ export async function POST(
           }
           return { released: false };
         }
-        const released = await tx.booking.updateMany({
-          where: { id: bookingId, status: BookingStatus.CONFIRMED },
-          data: {
-            status: BookingStatus.PENDING,
-            nonMemberHoldUntil: booking.nonMemberHoldUntil,
-          },
+        return releaseSavedCardChargeClaim(tx, {
+          bookingId,
+          restoreHoldUntil: booking.nonMemberHoldUntil,
+          previousRange,
         });
-        if (released.count > 0) {
-          await reconcileBedAllocationsForBookingWithGlobalLockHeld({
-            bookingId,
-            db: tx,
-            previousRange,
-          });
-        }
-        return { released: released.count > 0 };
-      });
+      }, { bookingId, lodgeId: booking.lodgeId });
+      return outcome.ok ? outcome.value : { released: false };
+    };
 
     // Charge the saved payment method through the one attempt contract every
     // path uses (#3267, `INV-PAY-055`): earlier attempts the claim ended (a
