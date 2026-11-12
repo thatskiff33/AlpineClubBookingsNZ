@@ -98,8 +98,12 @@ export function useDebouncedModificationQuote({
    * `quoteError`. Must be stable (a `useCallback`), like the setters above.
    */
   onDependantIdentityRefusal?: (code: string) => void;
-}): () => void {
+}): { requote: () => void; quoteIsFor: (payloadJson: string | null) => boolean } {
   const quoteTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // #4924: the payload the shown quote priced. Inside the 500ms debounce the
+  // quote on screen is still the previous edit's, so its figures are not the
+  // ones the pending edit would be bound to.
+  const quotedPayloadRef = useRef<string | null>(null);
   // Monotonic id per quote request so a slow, superseded response can never
   // overwrite the quote for the user's latest edit.
   const quoteRequestSeqRef = useRef(0);
@@ -162,6 +166,7 @@ export function useDebouncedModificationQuote({
           return;
         }
         setMemberGuestAddError(null);
+        quotedPayloadRef.current = payloadJson;
         setQuote(data);
         // A quote that came back is not a refusal, so no request is on offer.
         // Cleared here rather than only on the next attempt, so a member who fixes
@@ -231,8 +236,14 @@ export function useDebouncedModificationQuote({
   // #4924 (`INV-MOD-062`): price the pending edit again NOW, for the save's
   // `EDIT_PRICE_CHANGED` refusal — the payload did not change, so the debounce
   // above would never re-run it. The sequence ref still drops a superseded answer.
-  return useCallback(() => {
+  const requote = useCallback(() => {
     if (quoteTimeoutRef.current) clearTimeout(quoteTimeoutRef.current);
     if (modificationPayloadJson) void fetchQuote(modificationPayloadJson);
   }, [fetchQuote, modificationPayloadJson]);
+  const quoteIsFor = useCallback(
+    (payloadJson: string | null) =>
+      payloadJson !== null && quotedPayloadRef.current === payloadJson,
+    [],
+  );
+  return { requote, quoteIsFor };
 }

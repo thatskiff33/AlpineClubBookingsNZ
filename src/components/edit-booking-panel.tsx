@@ -805,7 +805,7 @@ export function EditBookingPanel({
       ? exceptionOfferState.offer
       : null;
 
-  const requote = useDebouncedModificationQuote({
+  const { requote, quoteIsFor } = useDebouncedModificationQuote({
     bookingId: booking.id,
     modificationPayloadJson,
     setQuote: quoteState.setQuote,
@@ -1307,6 +1307,13 @@ export function EditBookingPanel({
       !linkedMoveSettlementMethod
     ) {
       setSaveError("Choose a refund or account credit before saving");
+      return;
+    }
+    // #4924 (`INV-MOD-062`): Save pressed inside the quote's debounce would
+    // carry the PREVIOUS edit's figures and be refused for a price nobody
+    // changed. Price this edit now instead; the member saves what it shows.
+    if (quote?.quotedFigures && !quoteIsFor(modificationPayloadJson)) {
+      requote();
       return;
     }
     if (saveInFlightRef.current) return;

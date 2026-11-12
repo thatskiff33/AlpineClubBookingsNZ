@@ -184,4 +184,27 @@ describe("EditBookingPanel — the save binds the previewed figures (#4924)", ()
     expect(modifyCalls()[1].body).toMatchObject({ quotedFigures: FRESH });
     await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
   });
+
+  it("a Save pressed before the latest edit is priced prices it instead of sending the old figures", async () => {
+    const SECOND = { ...PREVIEWED, newFinalPriceCents: 4000, priceDiffCents: -6000, netChargeCents: -6000 };
+    const threeGuests = { ...booking, guests: [...booking.guests, guest("g3", "Cy")] };
+    render(<EditBookingPanel booking={threeGuests} onDone={vi.fn()} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[2]);
+    const save = screen.getByRole("button", { name: "Save Changes" });
+    await waitFor(() => expect(save).not.toBeDisabled(), { timeout: 3000 });
+    const quotesBefore = quoteCalls().length;
+
+    // A second edit, then Save inside the debounce: the quote on screen is
+    // still the first edit's.
+    currentQuote = quote(SECOND);
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
+    fireEvent.click(save);
+
+    await waitFor(() => expect(quoteCalls().length).toBeGreaterThan(quotesBefore));
+    expect(modifyCalls()).toHaveLength(0);
+    await waitFor(() => expect(save).not.toBeDisabled(), { timeout: 3000 });
+    fireEvent.click(save);
+    await waitFor(() => expect(modifyCalls()).toHaveLength(1));
+    expect(modifyCalls()[0].body).toMatchObject({ quotedFigures: SECOND });
+  });
 });
