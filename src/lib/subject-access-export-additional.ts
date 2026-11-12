@@ -6,7 +6,9 @@ import type { AdditionalRecordModel } from "@/lib/subject-access-export-coverage
 /**
  * The personal models with no section of their own (#4915): each one's rows
  * for this member, under the model's name. Projections are explicit and leave
- * out officer notes, idempotency keys and provider identifiers. The
+ * out officer notes, idempotency keys, provider identifiers and the ids of
+ * records that belong to someone else (another member's induction, the booking
+ * that triggered a hosting re-check, the member a request was about). The
  * `satisfies` ties the keys to the coverage map, so a model placed under
  * `additionalRecords` there and not read here does not compile.
  */
@@ -25,15 +27,15 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     prisma.seasonalMembershipAssignment.findMany({ where: own, select: { seasonYear: true, applyFrom: true, createdAt: true } }),
     prisma.memberLifecycleActionRequest.findMany({
       where: { OR: [own, { requestedByMemberId: memberId }] },
-      select: { memberId: true, requestedAt: true, reviewedAt: true, processedAt: true },
-    }),
+      select: { memberId: true, action: true, status: true, requestedAt: true, reviewedAt: true, processedAt: true },
+    }).then((rows) => rows.map(({ memberId: about, ...row }) => ({ ...row, aboutYou: about === memberId }))),
     prisma.promoRedemption.findMany({
       where: own,
       select: { bookingId: true, discountCents: true, priceAdjustmentCents: true, freeNightsUsed: true, createdAt: true, promoCode: { select: { code: true } } },
     }),
     prisma.promoRedemptionAllocation.findMany({ where: own, select: { bookingId: true, discountCents: true, priceAdjustmentCents: true, freeNightsUsed: true, createdAt: true } }),
     prisma.promoCodeAssignment.findMany({ where: own, select: { createdAt: true, promoCode: { select: { code: true } } } }),
-    prisma.hostingCoverageReevaluation.findMany({ where: own, select: { sourceBookingId: true, enqueuedAt: true, processedAt: true } }),
+    prisma.hostingCoverageReevaluation.findMany({ where: own, select: { enqueuedAt: true, processedAt: true } }),
     prisma.financeSyncRun.findMany({ where: { requestedByMemberId: memberId }, select: { workflow: true, startedAt: true, completedAt: true } }),
     prisma.aiAssistantUsageEvent.findMany({ where: own, select: { surface: true, success: true, questionChars: true, createdAt: true } }),
     prisma.noticeAudience.findMany({ where: own, select: { createdAt: true, notice: { select: { title: true } } } }),
@@ -58,11 +60,11 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     prisma.schoolMemberClassification.findMany({ where: own, select: { decidedAt: true } }),
     prisma.memberMoneyObligation.findMany({ where: own, select: { faceCents: true } }),
     prisma.memberInductionAssignedSigner.findMany({
-      where: own, select: { inductionId: true, emailSentAt: true, createdAt: true },
+      where: own, select: { emailSentAt: true, createdAt: true },
     }),
     prisma.memberInductionSignOff.findMany({
       where: { signerMemberId: memberId },
-      select: { inductionId: true, signerName: true, signerRole: true, signedAt: true, declarationAccepted: true },
+      select: { signerName: true, signerRole: true, signedAt: true, declarationAccepted: true },
     }),
   ]);
   return {

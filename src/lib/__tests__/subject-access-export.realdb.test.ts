@@ -227,14 +227,14 @@ async function teardown() {
   it("includes only the subject's assigned induction signer rows", async () => {
     const { file } = await ownFile();
     expect(file.additionalRecords?.MemberInductionAssignedSigner).toEqual([
-      { inductionId: expect.any(String), emailSentAt: null, createdAt: expect.any(Date) },
+      { emailSentAt: null, createdAt: expect.any(Date) },
     ]);
   });
 
   it("includes the subject's sign-offs on other people's inductions", async () => {
     const { file } = await ownFile();
     expect(file.additionalRecords?.MemberInductionSignOff).toEqual([
-      { inductionId: expect.any(String), signerName: "Subjecta Own", signerRole: "HUT_LEADER",
+      { signerName: "Subjecta Own", signerRole: "HUT_LEADER",
         signedAt: expect.any(Date), declarationAccepted: true },
     ]);
   });
