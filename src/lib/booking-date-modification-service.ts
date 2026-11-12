@@ -101,12 +101,8 @@ import {
   requireMemberCreditRecipient,
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
-import {
-  daysUntilDate,
-  getNonMemberHoldPolicy,
-  loadCancellationPolicy,
-} from "@/lib/cancellation";
-import { calculateChangeFee } from "@/lib/change-fee";
+import { getNonMemberHoldPolicy } from "@/lib/cancellation";
+import { lateNoticeChangeFee } from "@/lib/late-notice-change-fee";
 import {
   cleanupChoreAssignmentsForDateChange,
   cleanupChoreAssignmentsForGuestStayRanges,
@@ -788,18 +784,17 @@ export async function modifyBookingDates({
     const checkInChanged =
       newCheckIn.getTime() !== new Date(booking.checkIn).getTime();
 
-    // #4317 (D8): every date change is priced, so every one is charged the
-    // ordinary change fee its policy tier sets.
+    // A check-in move of a booking that has been paid is charged the late-notice
+    // fee its policy sets. One that has not been paid is repriced with no fee
+    // (owner decision, 10 Nov 2026).
     if (checkInChanged) {
-      const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, tx);
-      const feeResult = calculateChangeFee({
-        // #3123 — one club day for both operands.
-        daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, todayAtClub),
-        daysUntilNewCheckIn: daysUntilDate(newCheckIn, todayAtClub),
-        originalFinalPriceCents: booking.finalPriceCents,
-        policyRules: policy,
+      changeFeeCents = await lateNoticeChangeFee({
+        booking,
+        lodgeId: booking.lodgeId,
+        newCheckIn,
+        db: tx,
+        todayAtClub,
       });
-      changeFeeCents = feeResult.feeCents;
     }
 
     // Settle the date change through the same policy-based machinery the batch
@@ -906,9 +901,9 @@ export async function modifyBookingDates({
     const appliedBeforeClamp = isRepriceablePrePayment
       ? await deriveBookingAppliedCreditCents(bookingId, tx)
       : 0;
-    // #3750 (#3955 review F1, `INV-PAY-119`): a change fee recorded on the
-    // payment is owed with the price, so credit is kept up to the booking's
-    // worth and the $0 decision reads what it owes — with any fee this edit just added (#4661).
+    // A change fee already recorded on the payment is owed with the price, so
+    // credit is kept up to the booking's worth. A new ordinary edit of an
+    // unpaid booking adds none (owner decision, 10 Nov 2026).
     const recordedChangeFeeCents = feeOnPayment(booking.payment) + payments.changeFeeAddedToAmountOwedCents;
     // #4661 review F1: what a card intent must now be for, as the batch lifecycle compares.
     let owedCents = bookingWorthCents({ finalPriceCents: newFinalPriceCents, changeFeeCents: recordedChangeFeeCents });
@@ -1236,7 +1231,7 @@ export async function modifyBookingDates({
           // #3954: what an unpaid ask took of this reduction, for the Xero repair pass.
           ...unpaidAskOffsetHistory(payments),
           ...primaryInvoiceSettlementHistory(payments), // #3980: the gap's anchor
-          ...changeFeeAddedToAmountOwedHistory(payments.changeFeeAddedToAmountOwedCents), // #4661: the settle's fee line
+          ...changeFeeAddedToAmountOwedHistory(payments.changeFeeAddedToAmountOwedCents), // empty: a new ordinary edit adds no fee to the amount owed
           // #2390: the same sentence the member was shown at the edit, kept on
           // the booking's own history so the split has an answer later.
           ...(promoCoverage ? { promoCoverageNote: promoCoverage.message } : {}),
