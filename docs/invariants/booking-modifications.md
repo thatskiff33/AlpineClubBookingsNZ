@@ -108,11 +108,13 @@ second ask for the same money. Not recorded means not raised.
   recovery replay sends it** (#4101, #1507). Stripe refuses a key replayed with
   other parameters (`idempotency_error`), so a refund Stripe made but the app
   never recorded recovers only if the replay sends the original body.
-  `executeBookingModificationRefund` takes no reason from its caller: it
-  stamps the one `bookingModificationRefundReasonForKeyPrefix` gives the
-  caller's key prefix, stores that prefix on the recovery row, and the replay
-  rebuilds the reason from the stored prefix. Each caller's prefix and reason
-  are spelled once, in that map; a new caller adds its prefix there.
+  Each edit door's prefix and reason are spelled once, in
+  `BOOKING_MODIFICATION_REFUND_DOORS` (`payment-recovery-keys.ts`, #4992); a
+  caller names its door, never a prefix. The edit's transaction stores the
+  door's prefix on its recovery row, `executeBookingModificationRefund` stamps
+  the reason `bookingModificationRefundReasonForKeyPrefix` gives that prefix,
+  and the replay rebuilds the reason from the stored prefix. A new door adds
+  its row there.
 - Before #4101 each caller passed its reason by hand and the guest-acceptance
   re-price's prefix was missing, so its replays died on `idempotency_error`
   although Stripe had refunded. Such a dead row is flagged **Stripe may have
