@@ -510,11 +510,11 @@ describe("email-log-retention token", () => {
   it("uses the default policy when there is no settings row", async () => {
     expect(DEFAULT_PRIVACY_RETENTION_SETTINGS.pruneLogsAndApplicationsEnabled).toBe(false);
     expect(await resolveTextTokens("{{email-log-retention}}", CLUB_FORMAT_TEST))
-      .toBe("kept until the club deletes them; automatic deletion is switched off");
+      .toBe("kept with automatic deletion switched off");
   });
 
   it.each([
-    [false, 3, "kept until the club deletes them; automatic deletion is switched off"],
+    [false, 3, "kept with automatic deletion switched off"],
     [true, 1, "kept for 1 year, then automatically deleted"],
     [true, 3, "kept for 3 years, then automatically deleted"],
     [true, 100, "kept for 100 years, then automatically deleted"],
@@ -531,7 +531,7 @@ describe("email-log-retention token", () => {
   it("reads only once for repeated tokens and reads again on the next render", async () => {
     const read = vi.mocked(prisma.privacyRetentionSettings.findUnique);
     expect(await resolveTextTokens("{{email-log-retention}} / {{EMAIL-LOG-RETENTION}}", CLUB_FORMAT_TEST))
-      .toBe("kept until the club deletes them; automatic deletion is switched off / kept until the club deletes them; automatic deletion is switched off");
+      .toBe("kept with automatic deletion switched off / kept with automatic deletion switched off");
     expect(read).toHaveBeenCalledTimes(1);
     read.mockResolvedValue({ ...DEFAULT_PRIVACY_RETENTION_SETTINGS, pruneLogsAndApplicationsEnabled: true, emailLogRetentionYears: 3 } as never);
     expect(await resolveTextTokens("{{email-log-retention}}", CLUB_FORMAT_TEST))

@@ -166,11 +166,12 @@ and the site footer (they render an escaped string in place, not a block):
 - `{{lodge-name}}` or `{{lodge-name:lodge-slug}}` — a lodge's name.
 - `{{lodge-address}}` or `{{lodge-address:lodge-slug}}` — a lodge's address
   (renders nothing when the lodge has no address set).
-- `{{email-log-retention}}` (page bodies only) — the current club-wide email-log
-  schedule from Privacy retention settings. With automatic deletion off, it says
-  logs are kept until the club deletes them. With it on, it gives the configured
-  whole-year period, using “1 year” for the singular. Public pages and previews
-  read the setting once per render, so a saved change appears on the next request.
+- `{{email-log-retention}}` (listed in the page-body token help) — the current
+  club-wide email-log schedule from Privacy retention settings. With automatic
+  deletion off, it says logs are kept with automatic deletion switched off. With
+  it on, it gives the configured whole-year period, using “1 year” for the
+  singular. Public pages and previews read the setting once per render, so a
+  saved change appears on the next request.
 - `{{currency}}`, and `{{facebook-url}}` (footer only).
 
 For the lodge text tokens the bare form resolves the **default lodge**; a

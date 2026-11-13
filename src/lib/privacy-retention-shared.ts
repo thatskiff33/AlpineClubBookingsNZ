@@ -36,5 +36,5 @@ export function describeEmailLogRetention(settings: PrivacyRetentionSettingsValu
   const { pruneLogsAndApplicationsEnabled, emailLogRetentionYears } = privacyRetentionSettingsSchema.parse(settings);
   return pruneLogsAndApplicationsEnabled
     ? `kept for ${emailLogRetentionYears} ${emailLogRetentionYears === 1 ? "year" : "years"}, then automatically deleted`
-    : "kept until the club deletes them; automatic deletion is switched off";
+    : "kept with automatic deletion switched off";
 }
