@@ -25,7 +25,7 @@
  * row and its line commit separately, and a crash between them leaves a row
  * the next write for that booking posts. Every production caller passes one
  * (thirteen at #3609's review, before `createCancellationCredit` required one
- * under `INV-PAY-151`); the fallback serves tests.
+ * under `INV-PAY-152`); the fallback serves tests.
  *
  * NO READ-ORDER RACE. #3581's sync must read lines before rows because it can
  * post reversals; nothing here is ever reversed, so a mixed snapshot can only

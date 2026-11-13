@@ -4,6 +4,11 @@
 // hand, because a new row does not carry the old row's mark.
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import {
+  CARD_REFUND_REVERSAL_INVOICE_ROLE,
+  liveCardRefundReversalCents,
+  NOT_CARD_REFUND_REVERSAL_INVOICE,
+} from "@/lib/xero-card-refund-reversal-outbox";
 import { XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { parsePaymentCreditNoteRetryInput } from "@/lib/xero-payment-credit-note-payload";
 import { countsTowardRefundNoteCoverage, refundNoteIdSets } from "@/lib/xero-refund-note-status";
@@ -189,7 +194,30 @@ export async function sumRefundCreditNoteCoverageCents(
   resolved: ResolvedRefundCreditNoteCoverage,
   db: Prisma.TransactionClient = prisma,
 ): Promise<number> {
-  return (await sumCoveredRefundCreditNoteCents(paymentId, db)) + resolved.coveredCents;
+  const gross = (await sumCoveredRefundCreditNoteCents(paymentId, db)) + resolved.coveredCents;
+  // #4369 (`INV-PAY-151`): a reversal invoice that has reached Xero and is not
+  // voided or deleted undoes that much of the card note. One still queued, or
+  // one with no amount on the link, changes nothing.
+  const reversals = await db.xeroObjectLink.findMany({
+    where: {
+      localModel: "Payment",
+      localId: paymentId,
+      xeroObjectType: "INVOICE",
+      role: CARD_REFUND_REVERSAL_INVOICE_ROLE,
+      active: true,
+    },
+    select: { role: true, metadata: true },
+  });
+  // The role is on the row as well as in the query: a credit note also stores
+  // amountCents, and only this role undoes coverage (`INV-PAY-151`).
+  const reversed = reversals.reduce(
+    (sum, link) =>
+      link.role === CARD_REFUND_REVERSAL_INVOICE_ROLE
+        ? sum + liveCardRefundReversalCents(link.metadata)
+        : sum,
+    0,
+  );
+  return Math.max(0, gross - reversed);
 }
 
 /**
@@ -243,6 +271,7 @@ export async function findResolvedBookingInvoiceCreate(
       operationType: "CREATE",
       localModel: "Payment",
       localId: paymentId,
+      ...NOT_CARD_REFUND_REVERSAL_INVOICE,
     },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     select: { id: true, manuallyResolvedAt: true },

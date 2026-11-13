@@ -157,7 +157,7 @@ export async function createCancellationCredit(
   });
   await syncBookingLedgerCredits({ bookingId, store: db });
 
-  // INV-PAY-151: this settlement fact commits or rolls back with its credit.
+  // INV-PAY-152: this settlement fact commits or rolls back with its credit.
   // Do not swallow an insert failure: PostgreSQL has already aborted the claim.
   await db.bookingEvent.create({
     data: {

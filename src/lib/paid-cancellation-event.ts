@@ -48,7 +48,7 @@ export function paidCancellationBranch(params: {
  * says never to call it inside one), so a swallowed failure could not keep the
  * claim; throwing rolls the cancel back and the member retries, where the old
  * order committed a cancellation with no record of what it decided. The credit
- * branch's CREDITED event also commits with its credit (`INV-PAY-151`). Both
+ * branch's CREDITED event also commits with its credit (`INV-PAY-152`). Both
  * are documented exceptions to `recordBookingEvent`'s best-effort rule.
  *
  * The content is exactly what the four post-commit writes produced, one
