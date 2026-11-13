@@ -1,6 +1,5 @@
 "use client"
 
-import { adminHref } from "@/lib/admin-hubs";
 /**
  * The erased-member Xero contact review (#3058). `INV-INT-024`.
  *
@@ -55,6 +54,7 @@ import {
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { useClubTime } from "@/components/club-time-provider"
 import { requireInstant } from "@/lib/club-time"
+import { adminHref } from "@/lib/admin-hubs"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { buildXeroContactUrl } from "@/lib/xero-links"
 import type {

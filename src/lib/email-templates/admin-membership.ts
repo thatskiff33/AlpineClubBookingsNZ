@@ -1,10 +1,10 @@
-import { adminHref } from "@/lib/admin-hubs";
 /**
  * Admin alerts about membership and member records: applications, cancellation
  * and archive requests, deletion decisions, and family-group requests.
  *
  * The family boundary is `src/lib/email/admin-alerts-membership.ts`.
  */
+import { adminHref } from "@/lib/admin-hubs";
 import { escapeHtml } from "./escape";
 import {
   alertBox,

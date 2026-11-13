@@ -1,6 +1,5 @@
 "use client"
 
-import { adminHref } from "@/lib/admin-hubs";
 /**
  * The missing-Xero-contact panel (#2939). `INV-INT-022`, `INV-INT-023`.
  *
@@ -33,6 +32,7 @@ import {
 } from "@/components/admin/view-only-action"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
+import { adminHref } from "@/lib/admin-hubs"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { buildXeroContactUrl } from "@/lib/xero-links"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"

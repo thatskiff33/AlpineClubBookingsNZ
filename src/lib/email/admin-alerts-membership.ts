@@ -17,8 +17,8 @@ import {
   shouldSendDirectAdminSystemEmail,
 } from "./admin-alerts-shared";
 import { renderEmailHtml } from "@/lib/email-theme";
-
 import { adminHref } from "@/lib/admin-hubs";
+
 export async function sendAdminMembershipApplicationPendingEmail(data: {
   applicationId: string;
   applicantName: string;

@@ -6,13 +6,15 @@ growth in each is the one line that imports `adminHref`.
 
 file: src/app/(admin)/admin/membership/deletion-requests/deletion-requests-client.tsx
 lines: 1495
-reason: one import line, so the member link on a deletion request comes from
-  the hub registry. The link sits beside the request it opens.
+reason: one import line, so the return path on a deletion request's booking
+  link comes from the hub registry. The link sits beside the request it
+  belongs to.
 
 file: src/app/(admin)/admin/membership/family-groups/page.tsx
 lines: 882
-reason: one import line, so the member links on a family group come from the
-  hub registry. Splitting the family-groups page is a refactor of its own.
+reason: one import line, so the page's own URL (its router.replace call) comes
+  from the hub registry. Splitting the family-groups page is a refactor of its
+  own.
 
 file: src/app/(admin)/admin/membership/members/[id]/page.tsx
 lines: 1354
@@ -22,9 +24,9 @@ reason: one import line, so this member page's own links come from the hub
 
 file: src/app/(admin)/admin/membership/members/page.tsx
 lines: 601
-reason: one import line, so the member list links come from the hub registry.
-  Splitting the member list is a refactor of its own and would not shrink
-  this hunk.
+reason: one import line, so the Open affected member link in the Xero recovery
+  card comes from the hub registry. Splitting the member list is a refactor of
+  its own and would not shrink this hunk.
 
 file: src/app/(admin)/admin/membership/membership-cancellations/page.tsx
 lines: 1229
