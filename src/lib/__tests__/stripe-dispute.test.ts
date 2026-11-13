@@ -109,9 +109,16 @@ vi.mock("@/lib/prisma", () => {
         state.heldKeys.set(data.key, data.lastAlertedAt);
         return data;
       },
-      deleteMany: async ({ where }: { where: { key: string; lastAlertedAt: Date } }) => {
+      // #5061 follow-up: the won-after-loss owed marker, written with the merge and read and settled after it.
+      findUnique: async ({ where }: { where: { key: string } }) =>
+        state.heldKeys.has(where.key) ? { key: where.key } : null,
+      upsert: async ({ where, create }: { where: { key: string }; create: { key: string; lastAlertedAt: Date } }) => {
+        if (!state.heldKeys.has(where.key)) state.heldKeys.set(create.key, create.lastAlertedAt);
+        return create;
+      },
+      deleteMany: async ({ where }: { where: { key: string; lastAlertedAt?: Date } }) => {
         const held = state.heldKeys.get(where.key);
-        if (held && held.getTime() === where.lastAlertedAt.getTime()) {
+        if (held && (!where.lastAlertedAt || held.getTime() === where.lastAlertedAt.getTime())) {
           state.heldKeys.delete(where.key);
           return { count: 1 };
         }
@@ -174,9 +181,10 @@ import {
   stripeDisputeAlertKey,
   stripeDisputeAlertSentKey,
   StripeDisputeAlertNotSentError,
+  stripeDisputeWonAfterLossOwedKey,
   type DisputeSnapshot,
 } from "@/lib/stripe-dispute";
-import { STRIPE_DISPUTE_NEXT_STEP } from "@/lib/stripe-dispute-note";
+import { STRIPE_DISPUTE_NEXT_STEP, STRIPE_DISPUTE_WON_AFTER_LOSS_NEXT_STEP } from "@/lib/stripe-dispute-note";
 import { UNRECOGNISED_ALERT_IN_FLIGHT_MS } from "@/lib/unrecognised-stripe-payment";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -574,6 +582,63 @@ describe("recordStripeDispute (#4911)", () => {
 
     expect(state.rows.size).toBe(2);
     expect(sentAlerts().map((fields) => fields.disputeId)).toEqual(["dp_1", "dp_2"]);
+  });
+});
+
+describe("a lost dispute later won (#5061 follow-up, INV-PAY-151)", () => {
+  beforeEach(reset);
+
+  const lost = () => recordStripeDispute(dispute({ status: "lost" }), event("charge.dispute.closed", MINUTE, "evt_lost"), CLUB_FORMAT_TEST);
+  const won = () => recordStripeDispute(dispute({ status: "won" }), event("charge.dispute.closed", 2 * MINUTE, "evt_won"), CLUB_FORMAT_TEST);
+
+  it("sends one more alert, telling the treasurer to reverse the Xero loss, and settles its owed marker", async () => {
+    matchedCapture();
+    await lost();
+    await won();
+
+    expect(stored()).toEqual(expect.objectContaining({ status: "WON" }));
+    expect(sentAlerts().map((fields) => [fields.stage, fields.outcome, fields.disputeNextStep])).toEqual([
+      ["opened", "open", STRIPE_DISPUTE_NEXT_STEP.OPEN],
+      ["closed", "lost", STRIPE_DISPUTE_NEXT_STEP.LOST],
+      ["won-after-loss", "won", STRIPE_DISPUTE_WON_AFTER_LOSS_NEXT_STEP],
+    ]);
+    // The closed alert's key is untouched; the extra alert is claimed under its own.
+    expect(state.heldKeys.has(stripeDisputeAlertKey("dp_1", "closed"))).toBe(true);
+    expect(state.heldKeys.has(stripeDisputeAlertKey("dp_1", "won-after-loss"))).toBe(true);
+    expect(state.heldKeys.has(stripeDisputeWonAfterLossOwedKey("dp_1"))).toBe(false);
+
+    // A replay of the won event, or a late lost one, sends nothing more.
+    await won();
+    await lost();
+    expect(mocks.sendAlert).toHaveBeenCalledTimes(3);
+  });
+
+  it("MUTATION: when the alert reached nobody, throws, and the redelivery - reading the row already WON - still sends it once", async () => {
+    await lost();
+    mocks.sendAlert.mockResolvedValueOnce("undelivered");
+
+    await expect(won()).rejects.toEqual(
+      expect.objectContaining({ name: "StripeDisputeAlertNotSentError", stage: "won-after-loss" }),
+    );
+    expect(stored()).toEqual(expect.objectContaining({ status: "WON" }));
+    expect(state.heldKeys.has(stripeDisputeWonAfterLossOwedKey("dp_1"))).toBe(true);
+
+    await won();
+    await won();
+
+    expect(sentAlerts().map((fields) => fields.stage)).toEqual(["opened", "closed", "won-after-loss", "won-after-loss"]);
+    expect(state.heldKeys.has(stripeDisputeWonAfterLossOwedKey("dp_1"))).toBe(false);
+  });
+
+  it("sends none for a dispute won straight from open", async () => {
+    await recordStripeDispute(dispute(), event("charge.dispute.created"), CLUB_FORMAT_TEST);
+    await won();
+
+    expect(sentAlerts().map((fields) => [fields.stage, fields.outcome])).toEqual([
+      ["opened", "open"],
+      ["closed", "won"],
+    ]);
+    expect(state.heldKeys.has(stripeDisputeWonAfterLossOwedKey("dp_1"))).toBe(false);
   });
 });
 

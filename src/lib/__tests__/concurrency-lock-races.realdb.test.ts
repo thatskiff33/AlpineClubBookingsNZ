@@ -813,6 +813,10 @@ import "./data-encryption-key-ring.realdb.test";
 // dispute; a won dispute restores the credit path. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4911-` fixtures.
 import "./stripe-dispute-cancel.realdb.test";
+// The #5061 follow-up proves the same for an edit that lowers the price (date
+// change, guest removal, batch edit): one treasurer task, no money moved. It
+// owns and cleans its own `race-5061e-` fixtures.
+import "./stripe-dispute-edit.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

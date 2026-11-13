@@ -19,6 +19,11 @@
  *
  * Two unmuteable Finance-editor alerts, each once ever per dispute: one when it
  * opens (raised by whichever event first records it) and one when it closes.
+ * A third (#5061 follow-up) when a dispute closed as lost is reported won by a
+ * newer event: the lost alert told the treasurer to record the loss in Xero, so
+ * this one says to reverse it. The merge that sees LOST become WON writes its
+ * durable owed marker in the same transaction, since a redelivery reads the row
+ * already WON and could not see the change again.
  * Each is claimed by its once-ever `AlertCooldown` key and stamped on the row
  * once a recipient was sent, as #4532's unrecognised-payment alert is
  * (`INV-INT-032`): a send nobody received throws and the webhook answers 500 so
@@ -37,7 +42,7 @@ import { StripeDisputeStatus, type StripeDispute } from "@prisma/client";
 
 import { findHeldOnceEverAlertKeys } from "@/lib/admin-alert-once";
 import { sendAdminAlertOnceEverWithTakeover } from "@/lib/admin-alert-once-takeover";
-import { ALERT_ONCE_EVER_WINDOW_MS, claimAlertCooldown } from "@/lib/alert-cooldown";
+import { ALERT_ONCE_EVER_WINDOW_MS, claimAlertCooldown, settleOwedAlert } from "@/lib/alert-cooldown";
 import type { ClubFormat } from "@/lib/club-format";
 import { sendAdminStripeDisputeAlert } from "@/lib/email";
 import { UNMUTEABLE_ALERT_SENT } from "@/lib/email/admin-alert-send-result";
@@ -46,7 +51,12 @@ import { emailClubDateTime } from "@/lib/email-templates-club-time";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { getChargePaymentIntentId } from "@/lib/stripe";
-import { STRIPE_DISPUTE_NEXT_STEP, STRIPE_DISPUTE_STATUS_LABEL } from "@/lib/stripe-dispute-note";
+import {
+  STRIPE_DISPUTE_NEXT_STEP,
+  STRIPE_DISPUTE_STATUS_LABEL,
+  STRIPE_DISPUTE_WON_AFTER_LOSS_NEXT_STEP,
+  type StripeDisputeAlertStage,
+} from "@/lib/stripe-dispute-note";
 import {
   UNRECOGNISED_ALERT_IN_FLIGHT_MS,
   stripeDashboardPaymentUrl,
@@ -260,6 +270,11 @@ async function applyEvent(row: StripeDispute, snapshot: DisputeSnapshot): Promis
     const current = await tx.stripeDispute.findUniqueOrThrow({ where: { id: row.id } });
     const merged = mergeDisputeSnapshot(current, snapshot);
     if (sameSnapshot(current, merged)) return current;
+    if (current.status === StripeDisputeStatus.LOST && merged.status === StripeDisputeStatus.WON) {
+      // #5061 follow-up: owed until sent, settled by `ensureWonAfterLossAlert`.
+      const key = stripeDisputeWonAfterLossOwedKey(row.stripeDisputeId);
+      await tx.alertCooldown.upsert({ where: { key }, create: { key, lastAlertedAt: new Date() }, update: {} });
+    }
     return tx.stripeDispute.update({ where: { id: row.id }, data: merged });
   });
 }
@@ -295,9 +310,30 @@ export async function recordStripeDispute(
   if (disputeIsClosed(row.status)) {
     await ensureAlert(row, "closed", event.livemode, format);
   }
+  await ensureWonAfterLossAlert(row, event.livemode, format);
 }
 
-type AlertStage = StripeDisputeAlertFields["stage"];
+type AlertStage = StripeDisputeAlertStage;
+
+/** #5061 follow-up: the durable marker that a lost dispute's won-after-loss alert is owed. */
+export function stripeDisputeWonAfterLossOwedKey(disputeId: string): string {
+  return `stripe-dispute-won-after-loss-owed:${disputeId}`;
+}
+
+/**
+ * Send the won-after-loss alert while its owed marker stands, then settle the
+ * marker. A replay after the send finds the once-ever claim kept and sends
+ * nothing; an OPEN dispute that is won never writes the marker.
+ */
+async function ensureWonAfterLossAlert(row: StripeDispute, livemode: boolean, format: ClubFormat): Promise<void> {
+  // The marker is written only on a move to WON, so no other row can owe it.
+  if (row.status !== StripeDisputeStatus.WON) return;
+  const key = stripeDisputeWonAfterLossOwedKey(row.stripeDisputeId);
+  const owed = await prisma.alertCooldown.findUnique({ where: { key }, select: { key: true } });
+  if (!owed) return;
+  await ensureAlert(row, "won-after-loss", livemode, format);
+  await settleOwedAlert({ key });
+}
 
 /** The once-ever claim of one dispute's alert at one stage. */
 export function stripeDisputeAlertKey(disputeId: string, stage: AlertStage): string {
@@ -317,7 +353,12 @@ export class StripeDisputeAlertNotSentError extends Error {
   }
 }
 
-const STAMP_FIELD = { opened: "openedAlertedAt", closed: "closedAlertedAt" } as const;
+/** The row's stamp per stage; the won-after-loss alert has none and is known by its sent marker alone. */
+const STAMP_FIELD: Record<AlertStage, "openedAlertedAt" | "closedAlertedAt" | null> = {
+  opened: "openedAlertedAt",
+  closed: "closedAlertedAt",
+  "won-after-loss": null,
+};
 
 /**
  * Send one stage's alert once, by the shared sequence #4532's alert uses
@@ -325,7 +366,8 @@ const STAMP_FIELD = { opened: "openedAlertedAt", closed: "closedAlertedAt" } as 
  * against the same webhook lease.
  */
 async function ensureAlert(row: StripeDispute, stage: AlertStage, livemode: boolean, format: ClubFormat): Promise<void> {
-  if (row[STAMP_FIELD[stage]] != null) return;
+  const stampField = STAMP_FIELD[stage];
+  if (stampField && row[stampField] != null) return;
   const key = stripeDisputeAlertKey(row.stripeDisputeId, stage);
   const context = { disputeId: row.stripeDisputeId, stage };
   const fields = await alertFields(row, stage, livemode, format);
@@ -350,11 +392,14 @@ async function ensureAlert(row: StripeDispute, stage: AlertStage, livemode: bool
 
 /** Stamp the row once the alert went out; a failed write falls back to the sent marker. */
 async function stampAlertSent(row: StripeDispute, stage: AlertStage, context: Record<string, unknown>): Promise<void> {
-  try {
-    await prisma.stripeDispute.update({ where: { id: row.id }, data: { [STAMP_FIELD[stage]]: new Date() } });
-    return;
-  } catch (err) {
-    logger.error({ ...context, err }, "The Stripe dispute alert was sent, but its stamp failed; writing the sent marker");
+  const stampField = STAMP_FIELD[stage];
+  if (stampField) {
+    try {
+      await prisma.stripeDispute.update({ where: { id: row.id }, data: { [stampField]: new Date() } });
+      return;
+    } catch (err) {
+      logger.error({ ...context, err }, "The Stripe dispute alert was sent, but its stamp failed; writing the sent marker");
+    }
   }
   const sentKey = stripeDisputeAlertSentKey(row.stripeDisputeId, stage);
   await claimAlertCooldown({ key: sentKey, windowMs: ALERT_ONCE_EVER_WINDOW_MS }).catch((err) =>
@@ -367,7 +412,8 @@ async function alertWasSent(row: StripeDispute, stage: AlertStage): Promise<bool
     where: { id: row.id },
     select: { openedAlertedAt: true, closedAlertedAt: true },
   });
-  if (current?.[STAMP_FIELD[stage]] != null) return true;
+  const stampField = STAMP_FIELD[stage];
+  if (stampField && current?.[stampField] != null) return true;
   const sentKey = stripeDisputeAlertSentKey(row.stripeDisputeId, stage);
   return (await findHeldOnceEverAlertKeys([sentKey], new Date())).has(sentKey);
 }
@@ -405,7 +451,7 @@ async function alertFields(
     disputeId: row.stripeDisputeId,
     paymentIntentId: row.stripePaymentIntentId ?? NONE,
     chargeId: row.stripeChargeId,
-    disputeNextStep: STRIPE_DISPUTE_NEXT_STEP[status],
+    disputeNextStep: stage === "won-after-loss" ? STRIPE_DISPUTE_WON_AFTER_LOSS_NEXT_STEP : STRIPE_DISPUTE_NEXT_STEP[status],
     stripeDashboardUrl: stripeDashboardPaymentUrl(row.stripePaymentIntentId ?? row.stripeChargeId, livemode),
   };
 }

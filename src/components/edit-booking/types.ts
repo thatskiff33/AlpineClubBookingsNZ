@@ -264,6 +264,8 @@ export interface SettlementOptions {
   returnsToOrganiser: boolean;
   /** #3949: by bank transfer, the organiser having paid by Internet Banking; else to their card. */
   organiserRefundByBankTransfer: boolean;
+  /** #5061 follow-up (`INV-PAY-151`): the card payment is disputed, so the treasurer hands the reduction back; no choice. */
+  refundHeldForDispute: boolean;
 }
 
 export interface QuoteResult {

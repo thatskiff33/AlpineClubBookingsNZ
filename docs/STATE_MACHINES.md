@@ -2467,15 +2467,19 @@ OPEN   -> WON           charge.dispute.closed, Stripe status won
 OPEN   -> LOST          charge.dispute.closed, Stripe status lost
 OPEN   -> CLOSED_OTHER  charge.dispute.closed with no funds taken (warning_closed, prevented)
 (none) -> WON / LOST / CLOSED_OTHER   a closed event arriving first
+LOST   -> WON           a newer closed event, Stripe status won (a lost dispute reversed)
 ```
 
-WON, LOST and CLOSED_OTHER are terminal: a later or older event never reopens
-the row, and a replay changes nothing. `funds_withdrawn` and `funds_reinstated`
+WON, LOST and CLOSED_OTHER are closed: no event reopens the row, an older
+event changes nothing, and a replay changes nothing; only a newer closed event
+replaces one closed status with another. `funds_withdrawn` and `funds_reinstated`
 add to the row's withdrawn and reinstated cents. OPEN and LOST hold the
-payment's captures: no card refund or account credit, and a paid cancel goes to
-the treasurer as a hand-back task. WON and CLOSED_OTHER hold nothing. The opened
-alert is sent once ever on the first record, the closed alert once ever on the
-first terminal status. To verify: `stripe-dispute.test.ts`.
+payment's captures: no card refund or account credit, and a paid cancel or a
+price-lowering edit goes to the treasurer as a hand-back task. WON and
+CLOSED_OTHER hold nothing. The opened alert is sent once ever on the first
+record, the closed alert once ever on the first closed status, and a third once
+ever on LOST -> WON, owed by a marker written in the same transaction as the
+status. To verify: `stripe-dispute.test.ts`, `stripe-dispute-edit.realdb.test.ts`.
 
 ### Manual refund task lifecycle (#2262)
 

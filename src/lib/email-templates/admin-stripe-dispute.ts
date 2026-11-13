@@ -1,7 +1,8 @@
 /**
  * #4911 (`INV-PAY-151`): the admin alert for a cardholder's dispute
  * (chargeback) on a Stripe payment - once when Stripe opens it and once when it
- * closes. The app posts nothing to Xero for a dispute, so this mail is what
+ * closes, plus once more when a dispute closed as lost is later reported won
+ * (#5061 follow-up). The app posts nothing to Xero for a dispute, so this mail is what
  * tells the treasurer to respond in Stripe and, when it is lost, to record the
  * loss by hand.
  *
@@ -9,12 +10,12 @@
  */
 import { escapeHtml } from "./escape";
 import { alertBox, button, heading, infoTable, layout, paragraph } from "./layout";
-import { STRIPE_DISPUTE_HOLD_NOTE } from "@/lib/stripe-dispute-note";
+import { STRIPE_DISPUTE_HOLD_NOTE, type StripeDisputeAlertStage } from "@/lib/stripe-dispute-note";
 
 /** What the alert names, already rendered: amounts in the dispute's own currency, times in the club's. */
 export type StripeDisputeAlertFields = {
-  /** "opened" or "closed": which of the dispute's two alerts this is. */
-  stage: "opened" | "closed";
+  /** Which of the dispute's alerts this is. */
+  stage: StripeDisputeAlertStage;
   /** The dispute's status as the alert reports it ("open", "won", "lost"...). */
   outcome: string;
   amount: string;
@@ -30,16 +31,33 @@ export type StripeDisputeAlertFields = {
   stripeDashboardUrl: string;
 };
 
+const STAGE_COPY: Record<
+  StripeDisputeAlertStage,
+  (outcome: string) => { heading: string; summary: string; tone: "warning" | "info" }
+> = {
+  opened: () => ({
+    heading: "Card Payment Disputed by the Cardholder",
+    summary: "A cardholder has disputed a card payment with their bank. Stripe holds the disputed amount until the dispute is decided.",
+    tone: "warning",
+  }),
+  closed: (outcome) => ({
+    heading: "Card Payment Dispute Closed",
+    summary: `A cardholder's dispute of a card payment has closed: ${escapeHtml(outcome)}.`,
+    tone: outcome === "lost" ? "warning" : "info",
+  }),
+  // #5061 follow-up: a dispute already alerted as lost, reported won by a newer event.
+  "won-after-loss": () => ({
+    heading: "Lost Card Payment Dispute Now Won",
+    summary: "A card payment dispute already reported lost is now reported won: Stripe has returned the disputed amount.",
+    tone: "warning",
+  }),
+};
+
 export function adminStripeDisputeTemplate(data: StripeDisputeAlertFields): string {
-  const opened = data.stage === "opened";
+  const { heading: title, summary, tone } = STAGE_COPY[data.stage](data.outcome);
   return layout(`
-    ${heading(opened ? "Card Payment Disputed by the Cardholder" : "Card Payment Dispute Closed")}
-    ${alertBox(
-      opened
-        ? "A cardholder has disputed a card payment with their bank. Stripe holds the disputed amount until the dispute is decided."
-        : `A cardholder's dispute of a card payment has closed: ${escapeHtml(data.outcome)}.`,
-      opened || data.outcome === "lost" ? "warning" : "info",
-    )}
+    ${heading(title)}
+    ${alertBox(summary, tone)}
     ${paragraph(escapeHtml(data.disputeNextStep))}
     ${paragraph(STRIPE_DISPUTE_HOLD_NOTE)}
     ${infoTable([

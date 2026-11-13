@@ -29,7 +29,7 @@ export function disputeHoldsCapture(status: StripeDisputeStatus): boolean {
 
 /** What the app does while a dispute holds the capture: the one sentence both alerts carry. */
 export const STRIPE_DISPUTE_HOLD_NOTE =
-  "While the dispute is open or lost, the app issues no card refund and no account credit for this payment: a cancellation is recorded and handed to the treasurer instead. " +
+  "While the dispute is open or lost, the app issues no card refund and no account credit for this payment: a cancellation, or an edit that lowers the price, is recorded and handed to the treasurer instead. " +
   "The app posts nothing to Xero for the dispute.";
 
 /** The next step, by what the alert reports. */
@@ -48,12 +48,29 @@ export const STRIPE_DISPUTE_NEXT_STEP: Record<StripeDisputeStatus, string> = {
 };
 
 /**
- * The subject phrase (`{{disputeSubjectLabel}}`): which of the dispute's two
- * alerts this is, and once closed, how it ended. One template carries both, so
- * a subject typed in by hand would title a closed dispute as a new one.
+ * Which of a dispute's alerts this is: when it opens, when it closes, and the
+ * one more a dispute already closed as lost owes when a newer event reports it
+ * won (#5061 follow-up).
  */
-export function stripeDisputeSubjectLabel(stage: "opened" | "closed", outcome: string): string {
-  return stage === "opened"
-    ? "Card payment disputed by the cardholder - respond in Stripe"
-    : `Card payment dispute closed (${outcome})`;
+export type StripeDisputeAlertStage = "opened" | "closed" | "won-after-loss";
+
+/**
+ * The next step of the won-after-loss alert: the lost alert told the treasurer
+ * to record the loss in Xero, so this one says to reverse it, and that a
+ * hand-back raised while the dispute held is still theirs to settle.
+ */
+export const STRIPE_DISPUTE_WON_AFTER_LOSS_NEXT_STEP =
+  "This dispute was reported lost, and Stripe now reports it won: the disputed amount has come back to the club's balance. " +
+  "If you recorded the loss and dispute fee in Xero, reverse that entry the same way, as the deployment guide's lost-dispute procedure describes. " +
+  "Any hand-back task the app raised for this payment while the dispute held stays open: settle or dismiss it as usual.";
+
+/**
+ * The subject phrase (`{{disputeSubjectLabel}}`): which of the dispute's
+ * alerts this is, and once closed, how it ended. One template carries them all,
+ * so a subject typed in by hand would title a closed dispute as a new one.
+ */
+export function stripeDisputeSubjectLabel(stage: StripeDisputeAlertStage, outcome: string): string {
+  if (stage === "opened") return "Card payment disputed by the cardholder - respond in Stripe";
+  if (stage === "won-after-loss") return "Lost card payment dispute now won - reverse the Xero loss entry";
+  return `Card payment dispute closed (${outcome})`;
 }
