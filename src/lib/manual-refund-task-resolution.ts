@@ -76,6 +76,7 @@ import {
   planKeptLateCaptureXeroRecord,
   type KeptLateCaptureXeroPlan,
 } from "@/lib/late-capture-kept-xero";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * B5 (#2262): close a hand-back task raised when a cash-settled booking was
@@ -649,7 +650,7 @@ export async function resolveManualRefundTask(
           : ManualRefundTaskStatus.DISMISSED,
       keptLateCaptureXeroPlan, chargeInvoice, // #3947: the invoice route's queued invoice
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   if (result.recordedRefund) {
     await recordBookingEvent({

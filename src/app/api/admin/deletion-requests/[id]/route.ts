@@ -88,6 +88,7 @@ import {
 import { DIETARY_ERASURE_PATCH } from "@/lib/member-dietary";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 // Route-private: a Next.js route module's export surface is its handlers.
 const DELETION_CLAIM_RELEASE_FULL_ADMIN_MESSAGE =
@@ -1126,7 +1127,7 @@ export async function POST(
         },
       });
 
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
     memberAnonymised = true;
 
     try {

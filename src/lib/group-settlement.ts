@@ -482,7 +482,7 @@ export async function createGroupSettlementIntent(
       },
     });
     return { attached: true as const, refusal: null };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   if (!attached.attached) {
     await cancelPaymentIntentIfCancellable(paymentIntent.id).catch((err) =>
       logger.error(
@@ -659,7 +659,7 @@ async function createGroupSettlementInvoice(
       { newAttempt: true, store: tx }
     );
     return { settlement, queued };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   // Void the dropped card intent in Stripe so a retained client_secret in a
   // stale tab can no longer capture money alongside the combined invoice.
@@ -943,7 +943,7 @@ async function commitChildrenToConfirmed(
       hostingCoverageQueued,
       claimedNewChild,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 export interface GroupSettlementAppliedResult {
@@ -1633,7 +1633,7 @@ export async function markGroupSettlementIntentRefunded(
       },
       data: { status: PaymentStatus.REFUNDED },
     });
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 /**
@@ -1681,5 +1681,5 @@ export async function markGroupSettlementIntentFailed(
       },
       data: { status },
     });
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }

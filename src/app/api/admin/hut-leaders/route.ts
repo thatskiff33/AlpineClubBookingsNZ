@@ -35,6 +35,7 @@ import {
   isHutLeaderStayCheckExempt,
 } from "@/lib/hut-leader-stayed-nights";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const createSchema = z.object({
   memberId: z.string().min(1),
@@ -380,7 +381,7 @@ export async function POST(req: NextRequest) {
         });
       }
       return { assignment, member: lockedMember, amendments, lodgeId: lockedLodgeId };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
     const { assignment } = created;
     let emailSent = true;
     try {

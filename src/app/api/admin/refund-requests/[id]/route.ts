@@ -47,6 +47,7 @@ import {
   runOrganiserChildAppealRefundNow,
 } from "@/lib/organiser-child-appeal-refund";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /** #3827 (`INV-PAY-118`): thrown inside the approval to roll its claim back. */
 class RefundRequestHandBackNotRaisedError extends Error {}
@@ -303,7 +304,7 @@ export async function PUT(
         bankTransferCents,
         organiserChildDebtId: null as string | null,
       };
-    }).catch((err: unknown) => {
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET).catch((err: unknown) => {
       if (err instanceof RefundRequestHandBackNotRaisedError) {
         return { kind: "handBackNotRaised" as const };
       }
@@ -478,7 +479,7 @@ export async function PUT(
               await withdrawRefundObligation(tx, journal, { bookingId: booking.id, scope: "refund-request", id, actorMemberId: session.user.id,
                 reason: "Refund appeal approval released: its card refund was never sent", senderKeyPrefix: buildRefundRequestRefundStripeKeyPrefix(id) });
             }
-          })
+          }, LOCK1_HOLDER_TRANSACTION_BUDGET)
           .catch((revertErr: unknown) => {
             logger.error(
               { err: revertErr, refundRequestId: id },

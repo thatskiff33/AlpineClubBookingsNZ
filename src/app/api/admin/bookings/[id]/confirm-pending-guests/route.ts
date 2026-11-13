@@ -59,6 +59,7 @@ import {
 import { clubFormatValues } from "@/lib/club-format-server";
 import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE as CURRENCY_REFUSED } from "@/lib/stripe-charge-currency";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const confirmPendingGuestsSchema = z.object({
   allowOverbook: z.boolean().optional(),
@@ -322,7 +323,7 @@ export async function POST(
         await postStoredBookingConfirmationLedgerLines(tx, bookingId, journal);
 
         return { ok: true as const };
-      });
+      }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
       if ("error" in zeroResult) {
         return NextResponse.json(
@@ -543,7 +544,7 @@ export async function POST(
         card: lockedCard,
         amountCents: chargeCents,
       };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     let claim: Awaited<ReturnType<typeof runClaim>>;
     try {
@@ -675,7 +676,7 @@ export async function POST(
           });
         }
         return { released: released.count > 0 };
-      });
+      }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     // Charge the saved payment method through the one attempt contract every
     // path uses (#3267, `INV-PAY-055`): earlier attempts the claim ended (a

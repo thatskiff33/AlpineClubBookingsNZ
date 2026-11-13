@@ -64,6 +64,7 @@ import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { BELOW_STRIPE_MINIMUM_MEMBER_BODY, BelowStripeMinimumError, chargeCurrencyRefusal, isLocalChargeRefusal, localChargeRefusal, stripeChargeCurrency, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE as CURRENCY_REFUSED } from "@/lib/stripe-charge-currency";
 import { intentCurrencyDiffers } from "@/lib/additional-intent-currency";
 import { staleIntentAction } from "@/lib/stale-intent-action";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 class PaymentIntentCapacityError extends Error {
   constructor() {
@@ -467,7 +468,7 @@ export async function POST(request: NextRequest) {
               // pre-transaction snapshot.
               finalPriceCents: freshBooking.finalPriceCents,
             };
-          })
+          }, LOCK1_HOLDER_TRANSACTION_BUDGET)
         : null;
 
     // The admin alert for review-flagged bookings is sent once at

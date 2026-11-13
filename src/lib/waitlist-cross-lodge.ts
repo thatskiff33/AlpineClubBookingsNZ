@@ -59,6 +59,7 @@ import {
 } from "@/lib/member-dietary-booking-writes";
 import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
 import type { ClubFormat } from "@/lib/club-format";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 // Cross-lodge waitlist support (ADR-004). The processor consults these
 // helpers when a member has opted into alternate lodges: the queue-order
@@ -401,7 +402,7 @@ export async function confirmCrossLodgeWaitlistOffer(
             await acquireLodgeCapacityLock(tx, lodgeId);
           }
           await revertOfferToWaitlisted(tx, current);
-        });
+        }, LOCK1_HOLDER_TRANSACTION_BUDGET);
       } catch (err) {
         logger.error(
           { err, bookingId },
@@ -483,7 +484,7 @@ export async function confirmCrossLodgeWaitlistOffer(
             await acquireLodgeCapacityLock(tx, lodgeId);
           }
           await revertOfferToWaitlisted(tx, current);
-        });
+        }, LOCK1_HOLDER_TRANSACTION_BUDGET);
       } catch (err) {
         logger.error(
           { err, bookingId },
@@ -678,7 +679,7 @@ export async function confirmCrossLodgeWaitlistOffer(
         offeredLodgeId,
         quotedPriceCents: entry.waitlistOfferedPriceCents,
       };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
     logger.error({ err, bookingId }, "Failed to validate cross-lodge waitlist confirm");
     return { success: false, error: "An error occurred while confirming your booking" };
@@ -821,7 +822,7 @@ export async function confirmCrossLodgeWaitlistOffer(
           await acquireLodgeCapacityLock(tx, lodgeId);
         }
         return revertOfferToWaitlisted(tx, entry);
-      });
+      }, LOCK1_HOLDER_TRANSACTION_BUDGET);
       if (!reverted) {
         return {
           success: false,
@@ -881,7 +882,7 @@ export async function confirmCrossLodgeWaitlistOffer(
           data: { waitlistOfferedPriceCents: newBooking.finalPriceCents },
         });
         return refreshedOffer.count === 1;
-      });
+      }, LOCK1_HOLDER_TRANSACTION_BUDGET);
       // #2576 §7's immediate half, after the unwind has committed: re-read the
       // now-committed facts, open or resolve the incident, notify the owner once.
       // Before the early return below, because the obligation is owed whether or
@@ -952,7 +953,7 @@ export async function confirmCrossLodgeWaitlistOffer(
         previousRange: { checkIn: entry.checkIn, checkOut: entry.checkOut },
       });
       return true;
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     if (cancelledEntry) {
       waitlistEntryCleanupCompleted = true;

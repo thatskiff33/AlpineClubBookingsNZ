@@ -167,6 +167,7 @@ import {
 import { clubFormatValues } from "@/lib/club-format-server";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 import { GUEST_CHANGE_LIST_BOUND } from "@/lib/booking-guest-stay-range-input";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const addGuestsSchema = z.object({
   guests: z
@@ -1227,7 +1228,7 @@ export async function POST(
           .map((guest) => guest.memberId)
           .filter((memberId): memberId is string => Boolean(memberId)),
       };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     // #2576 §7/§8: drain the bounded re-evaluation this add committed, if any.
     // Adding guests can move an account's cover in either direction, so this both

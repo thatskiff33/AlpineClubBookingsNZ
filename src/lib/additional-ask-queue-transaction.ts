@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { outstandingAdditionalAskCents, type AdditionalAsk } from "@/lib/additional-payment-ask";
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * #4442: A NEW ADDITIONAL ASK NEVER CARRIES MONEY ALREADY PAID.
@@ -24,13 +25,12 @@ import { prisma } from "@/lib/prisma";
  */
 
 /**
- * The budget every carrying-ask queue transaction runs on (#4442 review C-F1).
- * It waits on the global key, whose longest ordinary holder runs on this same
- * budget (`assignBedRange`); queued behind it, Prisma's 5s default would fail a
- * mint whose intent Stripe already holds. The copy `additional-payment-withdraw.ts`
- * made for the same reason.
+ * The budget every carrying-ask queue transaction runs on (#4442 review C-F1):
+ * the shared lock(1) budget (`INV-LOCK-005`), under the name its three openers
+ * share. It waits on the global key; queued behind a long holder of it,
+ * Prisma's 5s default would fail a mint whose intent Stripe already holds.
  */
-export const ADDITIONAL_ASK_QUEUE_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 30_000 } as const;
+export const ADDITIONAL_ASK_QUEUE_TRANSACTION_OPTIONS = LOCK1_HOLDER_TRANSACTION_BUDGET;
 
 /**
  * The carrying-ask queue's locks, in `INV-LOCK-002`'s order: the global key

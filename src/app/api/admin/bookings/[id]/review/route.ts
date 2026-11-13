@@ -18,6 +18,7 @@ import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const reviewSchema = z
   .object({
@@ -151,7 +152,7 @@ export async function PATCH(
 
       await reconcileBedAllocationsForBookingWithLodgeLockHeld({ bookingId, db: tx });
       return current;
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     if (!reviewedBooking) {
       return NextResponse.json(
@@ -243,7 +244,7 @@ export async function PATCH(
       await releaseBookingPromoRedemptions(tx, bookingId);
     }
     return current;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   if (!reviewedBooking) {
     return NextResponse.json(

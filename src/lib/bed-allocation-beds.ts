@@ -27,6 +27,7 @@ import {
   lockRoomForBunkGroup,
   normalizeBunkGroup,
 } from "@/lib/bed-allocation-bunk-pairing";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 // The bed CREATE path never looks the room up (the route validates roomId only
 // as a non-empty string), so any bogus or stale roomId — most commonly a room
@@ -145,7 +146,7 @@ export async function updateBedAllocationBed(input: {
       await acquireLodgeCapacityLock(tx, bedKey.room.lodgeId);
     }
     return updateBedAllocationBedWithLocksHeld({ ...input, db: tx, today });
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 /** Internal bed writer for callers that already hold global -> owning lodge. */
@@ -419,7 +420,7 @@ export async function deleteBedAllocationBed(input: {
       await acquireLodgeCapacityLock(tx, bedKey.room.lodgeId);
     }
     return deleteBedAllocationBedWithLocksHeld({ ...input, db: tx });
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 /** Internal bed delete for callers that already hold global -> owning lodge. */

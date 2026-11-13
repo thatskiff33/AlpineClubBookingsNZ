@@ -20,6 +20,7 @@ import {
 import { formatDateOnly } from "@/lib/date-only";
 import logger from "@/lib/logger";
 import { z } from "zod";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const exclusiveHoldSchema = z.object({
   hold: z.boolean(),
@@ -391,7 +392,7 @@ export async function POST(
           promotedCount: allocationReconcile.promotedCount,
         },
       };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     if ("error" in result) {
       return NextResponse.json(

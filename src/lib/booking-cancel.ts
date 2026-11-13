@@ -131,6 +131,7 @@ import {
   readPartPaymentAtCancel,
   recordPartPaymentInClaim,
 } from "@/lib/internet-banking-part-payment-at-cancel";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 // The no-payment / holding statuses the shared cancel path may flip straight to
 // CANCELLED with no refund and no external-provider (Stripe/Xero) work. A strict
@@ -430,7 +431,7 @@ async function cancelLinkedProvisionalChildBookings(
       await postCancellationLedgerLines({ store: tx, journal: journal!, bookingId: fresh.id, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:linked-child" });
       await cleanupPromoRedemption(tx, fresh.id);
       return fresh;
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     // The cron (or another cancel) won the child claim. Its transition and
     // side effects are authoritative; never emit a stale cancellation event,
@@ -800,7 +801,7 @@ async function performBookingCancellation(
         priorStatus: fresh.status,
         creditRestoredCents,
       };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     // Loser contract (mirrors the paid single-flight path, #1160): a concurrent
     // officer approval / cancel that transitioned the row out of the no-payment
@@ -983,7 +984,7 @@ async function performBookingCancellation(
       });
 
       return { claimed: true as const, fresh, creditRestoredCents };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     if (!claim.claimed) {
       return {
@@ -1320,7 +1321,7 @@ async function performBookingCancellation(
         // #3809: the tiered credit's frozen figures, for a later review's netting (`INV-PAY-113`).
         creditLedger: tiered ? { ...creditKept, policyKeptCents: creditKept.policyKeptCents ?? 0, keptBeyondPolicyCents: creditKept.keptCents - (creditKept.policyKeptCents ?? 0), appliedCreditCents: appliedAtCancelCents, creditRestoredCents, appliedCreditBaseCents: tiered.appliedCreditBaseCents } : null,
       };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     // Loser contract (mirrors the paid single-flight path, #1160): a
     // concurrent capture / cancel that transitioned the row gets a real 409,
@@ -2053,7 +2054,7 @@ async function performBookingCancellation(
       organiserChildDebtId,
       groupCancellationDebt,
     };
-  }).catch((err: unknown) => {
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET).catch((err: unknown) => {
     if (err instanceof PartPaymentChangedError) return { claimed: false as const };
     throw err;
   });

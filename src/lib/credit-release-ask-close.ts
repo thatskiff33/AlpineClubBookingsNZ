@@ -18,6 +18,7 @@ import { LEDGER_ROWS_NEWEST_FIRST } from "@/lib/payment-ledger-order";
 import { prisma } from "@/lib/prisma";
 import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
 import { isSettledInXero, readXeroInvoiceBalance, type XeroInvoiceBalanceReader } from "@/lib/xero-invoice-balance";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * CLOSE A CREDIT-RELEASE REQUEST WHEN XERO SHOWS THE INVOICE PAID (#4253,
@@ -223,7 +224,7 @@ export async function closeCreditReleaseAsksPaidInXero(
         );
         return true;
       },
-      { maxWait: 10_000, timeout: 30_000 },
+      LOCK1_HOLDER_TRANSACTION_BUDGET,
     );
     if (closed) result.closed += 1;
     else result.left += 1;
@@ -330,6 +331,6 @@ export async function recordReleasePaidInXeroCash({
       );
       return cents;
     },
-    { maxWait: 10_000, timeout: 30_000 },
+    LOCK1_HOLDER_TRANSACTION_BUDGET,
   );
 }

@@ -26,6 +26,7 @@ import { rearmedPaymentRecoveryOperationData } from "@/lib/payment-recovery-cons
 import { cardRefundFailedLaterRefundId } from "@/lib/payment-recovery-keys";
 import { listRefundsOnCardCharge } from "@/lib/card-refund-stripe-refunds";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * #4368 (owner decision, 25 Oct 2026: "build as shown in the mock-up";
@@ -169,7 +170,7 @@ export async function closeCardRefundNothingLeftOwed(input: NothingLeftOwedInput
       tx,
     );
     return { operationId: operation.id, bookingId: operation.bookingId, paymentId: payment.id, coveredBy };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 export interface TryCardAgainInput {
@@ -278,7 +279,7 @@ export async function tryDeadCardRefundAgain(input: TryCardAgainInput): Promise<
       tx,
     );
     return { operationId: operation.id, bookingId: operation.bookingId, paymentId: payment.id, owedCents: owed.owedCents };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 const STRIPE_UNREADABLE =

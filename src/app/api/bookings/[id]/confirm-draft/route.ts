@@ -52,6 +52,7 @@ import {
 import { clubFormatValues } from "@/lib/club-format-server";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 export async function POST(
   request: NextRequest,
@@ -348,7 +349,7 @@ export async function POST(
         ...(hostingOverride ? { override: hostingOverride } : {}),
       }),
     });
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;

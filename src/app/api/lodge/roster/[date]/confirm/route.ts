@@ -8,6 +8,7 @@ import { z } from "zod";
 import logger from "@/lib/logger";
 import { lockRosterEligibilityMutation } from "@/lib/roster-lock";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const allocationSchema = z.object({
   choreTemplateId: z.string().min(1),
@@ -130,7 +131,7 @@ export async function POST(
         })),
       });
       return { success: true as const };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     if ("invalid" in result) {
       return NextResponse.json(

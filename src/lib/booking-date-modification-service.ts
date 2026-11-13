@@ -167,6 +167,7 @@ import { unpaidAskOffsetHistory } from "@/lib/unpaid-ask-offset-marker";
 import { primaryInvoiceSettlementHistory } from "@/lib/booking-primary-invoice-claim";
 import { changeFeeAddedToAmountOwedHistory } from "@/lib/change-fee-owed";
 import type { BookingModifiedRefundDestination } from "@/lib/booking-modified-email-copy";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 export type ModifyBookingDatesInput = {
   checkIn?: string;
@@ -1367,7 +1368,7 @@ export async function modifyBookingDates({
       bookingModificationId: bookingModification.id,
       priceLines,
     } satisfies DateModificationTransactionResult;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   const refund = await executeBookingModificationRefund({
     format,
@@ -2126,7 +2127,7 @@ export async function adminShiftBookingDates({
       paymentSource: booking.payment?.source ?? null,
       lodgeId: booking.lodgeId,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   // Post-transaction (no Stripe/Xero/payment mutations at all).
   const linkedChangeRequestId = await linkModificationToOutstandingChangeRequest(

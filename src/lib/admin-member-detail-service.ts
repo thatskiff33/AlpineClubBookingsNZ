@@ -135,6 +135,7 @@ import {
   type DietaryAccessGrant,
 } from "@/lib/member-dietary";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -1630,7 +1631,7 @@ export async function updateAdminMember(params: {
         ...updatedMember,
         accessRoles: nextAccessRoles ?? resolveAccessRoleTokens(updatedMember),
       };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     if (
       existing.active !== updated.active ||

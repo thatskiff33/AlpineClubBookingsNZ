@@ -16,6 +16,7 @@ import { sendBookingRequestQuoteEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -280,7 +281,7 @@ async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
           data: { heldBookingId: null, version: { increment: 1 } },
         });
         return true;
-      });
+      }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
       if (released) {
         releasedHoldCount += 1;
@@ -469,7 +470,7 @@ async function releaseStaleModificationHolds(now: Date): Promise<number> {
           data: { heldBookingId: null, version: { increment: 1 } },
         });
         return current.status;
-      });
+      }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
       if (releasedStatus) {
         releasedHoldCount += 1;

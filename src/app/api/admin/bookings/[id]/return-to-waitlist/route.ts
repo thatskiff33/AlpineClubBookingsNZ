@@ -25,6 +25,7 @@ import {
 import { isTransactionContention } from "@/lib/prisma-errors";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * #2649 review — the repair's own lock budget.
@@ -37,15 +38,12 @@ import { clubFormatValues } from "@/lib/club-format-server";
  * contention that creates strands: the longest-lived holder of `lock(1)` in the
  * tree is `assignBedRange`, inside a 30s transaction.
  *
- * So this takes the ADMIN precedent rather than the member one — the same
- * `{ maxWait: 10_000, timeout: 30_000 }` as `assignBedRange`
- * (`bed-allocation-range-assign.ts`), above `saveClubTheme`'s 10s/15s. The member
- * budget is tighter on purpose (a member is watching the request); an officer
- * pressing a recovery button can wait out the worst contender, and a repair that
- * fails safely is still a repair that did not happen.
+ * So this runs on the shared lock(1) budget, `LOCK1_HOLDER_TRANSACTION_BUDGET`
+ * (`INV-LOCK-005`), the one `assignBedRange` holds the key under. The member
+ * offer release is tighter on purpose (a member is watching the request); an
+ * officer pressing a recovery button can wait out the worst contender, and a
+ * repair that fails safely is still a repair that did not happen.
  */
-const RETURN_TO_WAITLIST_MAX_WAIT_MS = 10_000;
-const RETURN_TO_WAITLIST_TIMEOUT_MS = 30_000;
 
 /**
  * Return a stranded zero-dollar waitlist confirm to the waitlist (#2649).
@@ -320,10 +318,7 @@ export async function POST(
           waitlistPosition,
         };
       },
-      {
-        maxWait: RETURN_TO_WAITLIST_MAX_WAIT_MS,
-        timeout: RETURN_TO_WAITLIST_TIMEOUT_MS,
-      },
+      LOCK1_HOLDER_TRANSACTION_BUDGET,
     );
 
     if ("error" in result) {

@@ -51,6 +51,7 @@ import { hasAdminAccess } from "@/lib/access-roles";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
 import { consumeStoredCreditElection } from "@/lib/booking-credit-election";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * The member's account credit leaves nothing for the invoice to ask for, so
@@ -468,7 +469,7 @@ export async function POST(request: NextRequest) {
     await postBindingCharge(tx, journal, locked.id, locked.lodgeId);
 
     return { type: "updated" as const, payment, creditElection };
-  }).catch((err: unknown) => {
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET).catch((err: unknown) => {
     // The "credit covers it all" bail is signalled by a throw so the whole
     // transaction rolls back and the election goes back on the booking. Turn it
     // into an ordinary outcome here; every other error still propagates.

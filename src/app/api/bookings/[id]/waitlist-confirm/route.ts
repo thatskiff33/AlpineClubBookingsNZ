@@ -38,6 +38,7 @@ import {
 import { clubFormatValues } from "@/lib/club-format-server";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * #2623 T4 — budgets for the compensating offer release.
@@ -314,7 +315,7 @@ export async function POST(
         },
       });
       return { ok: true as const };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     // Phase one already consumed the offer and committed PAYMENT_PENDING. Any
     // phase-two failure rolls phase two back, so compensate under the same
@@ -350,6 +351,9 @@ export async function POST(
           }
           return restored.count === 1;
         },
+        // INV-LOCK-005 exception: a bounded retry loop a member is waiting on
+        // (see the budget's comment above); two attempts on the shared lock(1)
+        // budget would hold the request for a minute.
         { maxWait: OFFER_RELEASE_MAX_WAIT_MS, timeout: OFFER_RELEASE_TIMEOUT_MS },
       );
 

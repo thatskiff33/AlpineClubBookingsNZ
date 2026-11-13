@@ -62,6 +62,7 @@ import {
   isDeletedAccountRecord,
 } from "@/lib/deleted-account";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const bulkUpdateSchema = z.object({
   ids: z.array(z.string()).min(1, "At least one member ID is required").max(100),
@@ -612,7 +613,7 @@ export async function POST(req: NextRequest) {
         }
       }
       return updateResult;
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     for (const { memberId, reason, swept } of sweptSharesByMember) {
       const member = existingMembers.find((m) => m.id === memberId);

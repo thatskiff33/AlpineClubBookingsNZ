@@ -32,6 +32,7 @@ import { z } from "zod";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const forceConfirmSchema = z.object({
   allowOverbook: z.boolean().optional(),
@@ -310,7 +311,7 @@ export async function POST(
         status: nextStatus,
         unpaidFinishedStay: createdUnpaidFinishedStay,
       };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     if ("error" in result) {
       return NextResponse.json(

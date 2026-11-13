@@ -163,6 +163,7 @@ import { generateSchoolGuests } from "@/lib/school-booking-constants";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { isPendingSchoolAdultsWriteEnabled } from "@/lib/pending-school-adults-gate";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * The states a request may be corrected in: every state where it is live, in
@@ -528,7 +529,7 @@ export async function correctBookingRequest(
       preview,
       supersededQuoteCount: superseded.count,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   if (!claim.claimed) {
     throw new BookingRequestError(

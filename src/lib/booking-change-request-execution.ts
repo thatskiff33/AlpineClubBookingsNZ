@@ -53,6 +53,7 @@ import {
   withOfficerEnteredGuests,
   type OfficerEnteredGuest,
 } from "@/lib/booking-change-request-guests";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * Approve-and-execute for a LOCKED_PERIOD change request on a FINISHED stay
@@ -676,7 +677,7 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
         notifyMember,
         memberEmailed: notifyMember && !booking.noEmails,
       };
-    },
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET,
   ).catch((error: unknown) => {
     if (error instanceof FinishedStayDryRun) {
       return { outcome: "quoted" as const, ...error.figures };

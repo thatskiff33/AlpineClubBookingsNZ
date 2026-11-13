@@ -59,6 +59,7 @@ import {
   creditNoteWriteDownWhere,
   writtenDownCentsByCreditNote,
 } from "./xero-credit-note-write-down";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /** `XeroSyncOperation.manuallyResolvedReason` for a failure this routine closed. */
 export const CREDIT_SPENT_OUTSIDE_APP_RESOLUTION_REASON =
@@ -327,7 +328,7 @@ export async function convergeCreditNoteSpentOutsideApp(input: ConvergeInput): P
       tx,
     );
     return { converged: true, writtenDownCents: downCents, closedOperations: closed.count };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   if (result.converged) {
     logger.info(

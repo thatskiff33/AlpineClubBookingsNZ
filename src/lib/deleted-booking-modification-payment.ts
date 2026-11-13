@@ -14,6 +14,7 @@ import {
   deletedBookingPrimaryPaymentRefundReason,
   type CancelledBookingLateCaptureKind,
 } from "@/lib/late-capture-reason-sentences";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * What happens when a booking modification payment lands on a booking the club
@@ -315,7 +316,7 @@ export async function raiseDeletedBookingModificationRefundTask(params: {
       select: { id: true },
     });
     return { taskId: task.id, created: true, alreadyRefunded: false };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 /**
@@ -511,13 +512,14 @@ export const AUTOMATIC_REFUND_NOTICE_WINDOW_DAYS = 30;
  * BUDGETED FOR LOCK(1) CONTENTION, NOT LEFT ON PRISMA'S DEFAULTS. The advisory
  * wait counts against the interactive-transaction budget, and the default is
  * `maxWait: 2s / timeout: 5s` while the longest-lived holder of `lock(1)` in the
- * tree — `assignBedRange` — runs on `{ maxWait: 10_000, timeout: 30_000 }`. An
- * admin assigning a bed range concurrently with a Stripe delivery would therefore
- * blow this transaction's budget with a P2028, and the record would wait for
- * Stripe's redelivery (#4149). It takes a wider budget than the default and a
- * TIGHTER one than the admin precedent — Stripe's own delivery timeout is the ceiling on a webhook handler,
- * so copying 30s here would trade a lost row for a lost delivery. The caller
- * writes a `critical` audit row if it still fails.
+ * tree — `assignBedRange` — runs on the shared `LOCK1_HOLDER_TRANSACTION_BUDGET`
+ * (`INV-LOCK-005`). An admin assigning a bed range concurrently with a Stripe
+ * delivery would therefore blow this transaction's budget with a P2028, and the
+ * record would wait for Stripe's redelivery (#4149). It takes a wider budget than
+ * the default and a TIGHTER one than the shared budget — Stripe's own delivery
+ * timeout is the ceiling on a webhook handler, so copying 30s here would trade a
+ * lost row for a lost delivery. The caller writes a `critical` audit row if it
+ * still fails.
  *
  * CLOSED IS NOT HIDDEN (#2750). The task is the only durable record that this
  * particular money movement happened, and until #2750 closing it took it off the
@@ -696,10 +698,9 @@ export async function recordAutomaticCancelledBookingRefundTask(params: {
         existingStatus: null,
       };
     },
-    // See "BUDGETED FOR LOCK(1) CONTENTION" above: wider than Prisma's 2s/5s
-    // default because the advisory wait counts against it, tighter than
-    // `assignBedRange`'s admin precedent because a webhook has Stripe's delivery
-    // timeout over it.
+    // INV-LOCK-005 exception: Stripe's delivery timeout is the ceiling on this
+    // webhook handler, so it runs tighter than the shared lock(1) budget and
+    // wider than Prisma's 2s/5s default (see "BUDGETED FOR LOCK(1) CONTENTION").
     { maxWait: 5_000, timeout: 10_000 },
   );
 

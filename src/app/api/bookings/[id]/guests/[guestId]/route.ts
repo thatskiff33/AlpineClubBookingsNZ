@@ -55,6 +55,7 @@ import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 export async function DELETE(
   request: NextRequest,
@@ -161,7 +162,7 @@ export async function DELETE(
         subscriptionLockoutMode,
         hostingCoverageOverride,
         today: clubTodayDateOnly,
-      })
+      }), LOCK1_HOLDER_TRANSACTION_BUDGET
     );
 
     // #2576 §7/§8. Removing the qualifying adult member is the change class the

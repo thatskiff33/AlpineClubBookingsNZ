@@ -12,6 +12,7 @@ import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { lockRosterDates } from "@/lib/roster-lock";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const bodySchema = z.object({
   bookingGuestId: z.string().min(1),
@@ -138,7 +139,7 @@ export async function PUT(
         });
       }
       return { guest, departedAt };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     if ("notFound" in updateResult) {
       return NextResponse.json(

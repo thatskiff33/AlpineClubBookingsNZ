@@ -15,6 +15,7 @@ import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { planAcceptedSchoolHeldPrices, readAcceptedSchoolTerms } from "@/lib/school-pending-adult-price-plan";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { PrimaryInvoiceRaisedDuringEditError, writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /** Replace accepted anonymous slots with real names without changing the deal. */
 export async function resolveAcceptedSchoolPendingAdults(input: {
@@ -245,7 +246,7 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
       adultCount: remaining,
     });
     return { pendingAdultCount: remaining, version: request.version + 1 };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   logAudit({
     action: "booking_request.pending_adults_named",
