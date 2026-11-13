@@ -453,7 +453,7 @@ describe("paid another way for a per-joiner refund", () => {
     expect(state.paymentUpdates[0]?.data?.refundedAmountCents).toBe(4_500);
     expect(state.tasks[0]?.occurrenceKey).toBe("card-refund-paid-another-way:op-1:no-xero-note");
     expect(state.ledger.flat().some((row) => row.kind === "BANK_REFUND" && row.unitCents === 4_500)).toBe(true);
-    expect(state.alerts).toEqual([expect.objectContaining({ bookingId: "child-1", refundCents: 4_500 })]);
+    expect(state.alerts).toEqual([expect.objectContaining({ bookingId: "child-1", refundCents: 4_500, paidBy: "card" })]);
     expect(state.claims[0]).toEqual(expect.objectContaining({ data: expect.objectContaining({ lastError: PAID_ANOTHER_WAY_MARKER }) }));
   });
 
@@ -498,7 +498,7 @@ describe("paid another way for an old whole-group refund", () => {
     expect(state.settlementUpdates).toHaveLength(1);
     expect(state.paymentUpdateMany).toHaveLength(1);
     expect(state.enqueues).toHaveLength(0);
-    expect(state.alerts).toEqual([expect.objectContaining({ bookingId: "joiner-a", refundCents: 4_500 })]);
+    expect(state.alerts).toEqual([expect.objectContaining({ bookingId: "joiner-a", refundCents: 4_500, paidBy: "card", reference: expect.stringContaining("old whole-group card refund") })]);
     expect(state.claims[0]).toEqual(expect.objectContaining({ data: expect.objectContaining({ lastError: PAID_ANOTHER_WAY_MARKER }) }));
   });
 

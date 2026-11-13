@@ -2878,15 +2878,11 @@ _Legacy: settles tasks raised before #4317._
     await one in flight; link then note once under the approval task's row,
     read first (`:note-after-receipt`). Cash evidence counts it once noted.
   - A superseded intent's row closes whole, only while its charge holds exactly
-    that. This close refuses an organiser child's and a pre-#3653 whole-group
-    refund. Their bank route (`closeGroupCardRefundPaidAnotherWay`, #4851)
-    moves no Stripe money; a refund Stripe already has is recorded, and nobody
-    is paid again.
+    that. Group organiser rows are refused: `INV-PAY-149` closes them (#4851).
   - **Refused** (#4492, `paidAnotherWayRefusal`, list and close; 409, no writes,
-    stays listed): a
-    failed-later sibling; a plan-less superseded row until its sizing refund
-    is card-paid; a dead failed-later row a superseded send over-filled, or
-    its unreadable charge.
+    stays listed): a failed-later sibling; a plan-less superseded row until its
+    sizing refund is card-paid; a dead failed-later row a superseded send
+    over-filled, or its unreadable charge.
   - A refund inside a closed row's window, recorded later, lists as paid
     twice; an audited task note resolves it, moving no money (9 Oct).
 
@@ -4089,9 +4085,10 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
   (`lock(1)`, row, Payment row) and its claim: dead, on the plan read. A closed
   row is never re-armed, nor a re-armed one closed until given up again. Each is
   audited (`payment`).
-- **Group organiser rows** (#4851) are on this list. A per-joiner Try the card
-  again is `tryOrganiserChildCardRefundAgain`, not the charge-backed preflight.
-  The old whole-group row is bank only. One row, one winner, same claim.
+- **Group organiser rows** (#4851) are listed and share that claim. Paid
+  another way (`closeGroupCardRefundPaidAnotherWay`) records a refund Stripe
+  already has, else the bank payment; it moves no Stripe money. Only a
+  per-joiner row is re-armed (`tryOrganiserChildCardRefundAgain`).
 - Limit: another door's unmatched refund of the same money, failing later, is
   owed beside the row (#4104, #4492).
 - Proven by `card-refund-dead-row-actions.test.ts`,

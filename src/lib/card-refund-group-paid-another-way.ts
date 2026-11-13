@@ -225,7 +225,7 @@ export async function closeGroupCardRefundPaidAnotherWay(
     await recordLegacyGroupChildRefundRecovered(follow);
   }
   for (const alert of result.alerts) {
-    await alertGroupMirrorRefundXeroByHand({ ...alert, format });
+    await alertGroupMirrorRefundXeroByHand({ ...alert, format, paidBy: "card" });
   }
   return {
     operationId: result.operationId,
@@ -260,7 +260,8 @@ interface CloseBody {
   outcome: GroupCardRefundPaidAnotherWayResult["outcome"];
   finish: Parameters<typeof finishRecordedOrganiserChildRefund>[0] | null;
   legacyFollowUps: Parameters<typeof recordLegacyGroupChildRefundRecovered>[0][];
-  alerts: { bookingId: string; taskId: string; refundCents: number }[];
+  /** One by-hand Xero alert each (`alertGroupMirrorRefundXeroByHand`); `reference` names the record to find. */
+  alerts: { bookingId: string; taskId: string; refundCents: number; reference?: string }[];
 }
 
 async function closePerJoiner(
@@ -507,7 +508,13 @@ async function closeLegacy(
       amountCents: total,
       outcome: "bank",
       legacyFollowUps: [],
-      alerts: raised.map((row) => ({ bookingId: row.child.id, taskId: operation.id, refundCents: row.refundedCents })),
+      // No refund task on this path: the officer finds the given-up refund row, not a task.
+      alerts: raised.map((row) => ({
+        bookingId: row.child.id,
+        taskId: operation.id,
+        refundCents: row.refundedCents,
+        reference: `old whole-group card refund ${operation.id}`,
+      })),
     };
   }
 
