@@ -314,6 +314,38 @@ describe("MemberOnboardingWizard", () => {
     expect(signOutMock).toHaveBeenCalledWith({ callbackUrl: "/login" });
   });
 
+  it("disables Log out while the final confirmation is saving", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => onboardingData,
+      })
+      // The confirm POST never settles, so the wizard stays in `confirming`.
+      .mockReturnValueOnce(new Promise(() => {}));
+
+    render(<MemberOnboardingWizard initialShouldShow />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Confirm details are correct" })
+    );
+    expect(
+      (screen.getByRole("button", { name: "Log out" }) as HTMLButtonElement).disabled
+    ).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: /Confirm and finish/ }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/member/onboarding/confirm",
+        expect.objectContaining({ method: "POST" })
+      )
+    );
+    const logOut = screen.getByRole("button", { name: "Log out" }) as HTMLButtonElement;
+    expect(logOut.disabled).toBe(true);
+    fireEvent.click(logOut);
+    expect(signOutMock).not.toHaveBeenCalled();
+  });
+
   it("stays open when Escape is pressed", async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,

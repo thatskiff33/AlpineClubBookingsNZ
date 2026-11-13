@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   CircleAlert,
@@ -189,6 +189,7 @@ export function MemberOnboardingWizard({
   const [confirming, setConfirming] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [detailsAccepted, setDetailsAccepted] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   const loadOnboarding = useCallback(async () => {
     setLoading(true);
@@ -267,7 +268,16 @@ export function MemberOnboardingWizard({
   return (
     <Dialog open={open}>
       <DialogContent
+        ref={contentRef}
         className="max-h-[92vh] max-w-3xl overflow-y-auto"
+        // Radix focuses the first tabbable element on open. Left alone that is
+        // Log out (the only tabbable element while loading), so an accidental
+        // Enter or Space would sign the member out. Focus the dialog itself;
+        // Log out stays first in the tab order.
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          contentRef.current?.focus();
+        }}
         onEscapeKeyDown={(event) => event.preventDefault()}
         onInteractOutside={(event) => event.preventDefault()}
         showCloseButton={false}
