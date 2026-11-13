@@ -49,10 +49,7 @@ export async function POST(
   const body = await request.json();
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
 
   const { paymentIntentId } = parsed.data;
@@ -80,10 +77,7 @@ export async function POST(
     }
 
     if (payment.additionalPaymentIntentId !== paymentIntentId) {
-      return NextResponse.json(
-        { error: "PaymentIntent does not match booking" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "PaymentIntent does not match booking" }, { status: 400 });
     }
 
     const paymentTransaction = await findPaymentTransactionByIntentId({
@@ -105,17 +99,11 @@ export async function POST(
 
     const pi = await getPaymentIntent(paymentIntentId);
     if (pi.status !== "succeeded") {
-      return NextResponse.json(
-        { error: `Payment has not succeeded (status: ${pi.status})` },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: `Payment has not succeeded (status: ${pi.status})` }, { status: 400 });
     }
 
     if (pi.amount !== paymentTransaction.amountCents) {
-      return NextResponse.json(
-        { error: "Payment amount does not match booking modification" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Payment amount does not match booking modification" }, { status: 400 });
     }
 
     await markPaymentIntentTransactionSucceeded({
@@ -256,9 +244,6 @@ export async function POST(
     // #1888 — never echo an unexpected error's message to the client; the raw
     // error stays in the log only.
     logger.error({ err, bookingId }, "Failed to confirm modification payment");
-    return NextResponse.json(
-      { error: "Failed to confirm payment" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to confirm payment" }, { status: 500 });
   }
 }

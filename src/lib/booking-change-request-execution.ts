@@ -40,10 +40,7 @@ import {
   type ChangeRequestPromoChange,
   type PromoChangeStamp,
 } from "@/lib/booking-change-request-promo";
-import {
-  checkOwnDependantIdentityForParty,
-  claimedMemberPathIds,
-} from "@/lib/booking-dependant-identity";
+import { checkOwnDependantIdentityForParty, claimedMemberPathIds } from "@/lib/booking-dependant-identity";
 import { sameNightKeys } from "@/lib/booking-guest-stay-ranges";
 import {
   addedGuestNightsRefusal,

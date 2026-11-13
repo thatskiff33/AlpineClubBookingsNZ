@@ -453,9 +453,8 @@ export async function correctBookingRequest(
     // before any read whose answer the claim depends on.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
-    // Re-asked UNDER the lock, so what the officer confirmed is what the write
-    // is about: with approvals excluded, no record can appear between this read
-    // and the claim below.
+    // Re-asked UNDER the lock so what the officer confirmed is what the write is
+    // about: with approvals excluded, nothing can appear before the claim below.
     const preview = schoolName
       ? await previewSchoolRecordForName(tx, schoolName)
       : null;

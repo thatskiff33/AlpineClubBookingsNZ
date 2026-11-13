@@ -417,8 +417,7 @@ export async function createXeroInvoiceForGroupSettlement(
           number: createdInvoice.invoiceNumber ?? null,
           totalCents: providerAmountToCents(createdInvoice.total),
         },
-      }), LOCK1_HOLDER_TRANSACTION_BUDGET
-    );
+      }), LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     if (cancellationResult.abandoned) {
       if (cancellationResult.totalMismatch) {

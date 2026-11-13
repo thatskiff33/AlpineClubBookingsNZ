@@ -70,10 +70,10 @@ budget for row-lock waits.
   operation says nothing was saved. A multi-step operation, where an earlier step
   may already have committed, asks the user to check the current status before
   retrying. Booking create keeps its #4933 wording and code.
-- **Services that caught every error** (the waitlist offer claim in
-  `src/lib/waitlist.ts` and the cross-lodge waitlist create in
-  `src/lib/waitlist-cross-lodge.ts`) now rethrow contention so the route can
-  answer it, instead of reporting it as a refusal.
+- **Services that caught every error** now rethrow contention so the route can
+  answer it, instead of reporting it as a refusal: `waitlist.ts`,
+  `waitlist-cross-lodge.ts`, `admin-member-detail-service.ts` and
+  `admin-roster-service.ts` (all under `src/lib/`).
 - **Recovery answers are preserved.** Where a payment was already captured, or an
   earlier step already committed, the route's existing recovery response wins
   over the 503.

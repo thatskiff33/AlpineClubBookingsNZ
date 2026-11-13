@@ -236,10 +236,9 @@ export async function resolveManualRefundTask(
         );
       }
       if (confirmedAmountCents === null) {
-        // #2797 (owner decision D2): a task cannot be COMPLETED without a
-        // confirmed amount. The DB `ManualRefundTask_completed_amount_present`
-        // check enforces the same rule; this throws first with a message an
-        // operator can read.
+        // #2797 (owner decision D2): no COMPLETED task without a confirmed
+        // amount. The DB `ManualRefundTask_completed_amount_present` check
+        // enforces it too; this throws first, with a message an operator reads.
         if (task.amountCents === null) {
           throw new ManualBookingPaymentError(
             "This refund has no confirmed amount yet — price it before completing.",
