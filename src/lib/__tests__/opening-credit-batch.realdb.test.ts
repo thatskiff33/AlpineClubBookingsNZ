@@ -179,25 +179,28 @@ let observerClient: import("@prisma/client").PrismaClient;
     ] });
     const input = await previewed();
     const started = deferred();
-    const spend = deferred();
+    const spend = deferred<Date>();
     const spending = lockHolderClient.$transaction(async (tx) => {
       // Force the real PostgreSQL transaction to begin before the batch posts.
       await tx.$queryRaw`SELECT CURRENT_TIMESTAMP`;
       started.resolve();
-      await spend.promise;
+      // The test clock is frozen, so stamp the row as a column default of
+      // CURRENT_TIMESTAMP would: at this transaction's start, before the post.
+      const stampedAt = await spend.promise;
       await credit.lockMemberCreditLedger(MEMBER_B, tx);
       return tx.memberCredit.create({ data: {
-        memberId: MEMBER_B, amountCents: -500, type: "ADMIN_ADJUSTMENT", description: "Later deduction, older transaction" },
+        memberId: MEMBER_B, amountCents: -500, type: "ADMIN_ADJUSTMENT", description: "Later deduction, older transaction", createdAt: stampedAt },
       });
     }, { timeout: 30_000, maxWait: 10_000 });
     await started.promise;
-    let posted: Awaited<ReturnType<typeof batches.postOpeningCreditBatch>>;
+    let posted: Awaited<ReturnType<typeof batches.postOpeningCreditBatch>> | undefined;
     try {
       posted = await batches.postOpeningCreditBatch(input);
     } finally {
-      spend.resolve();
+      spend.resolve(new Date((posted?.postedAt.getTime() ?? Date.UTC(2026, 6, 1)) - 1000));
     }
     const deducted = await spending;
+    if (!posted) throw new Error("the batch did not post");
     expect(deducted.createdAt.getTime()).toBeLessThan(posted.postedAt.getTime());
     expect(await credit.getMemberCreditBalance(MEMBER_B)).toBe(2650);
     expect(await prisma.openingCreditBatch.findUnique({ where: { id: posted.batchId }, select: { negativeCreditCountAtPost: true } })).toEqual({ negativeCreditCountAtPost: 1 });
