@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type { MemberMoneyRefundReservationReleaseReason, Prisma } from "@prisma/client";
+import type {
+  MemberMoneyAccount,
+  MemberMoneyExportConflictReason,
+  MemberMoneyExportDocumentRole,
+  MemberMoneyExportOutcome,
+  MemberMoneyRefundReservationReleaseReason,
+  Prisma,
+} from "@prisma/client";
 import { MAX_INTEGER_CENTS } from "../../money-input";
 import { capProblem } from "./cap-problems";
 import { applicationRoleOf, sameApplicationDebtor, memberMoneyConservationProblems, memberMoneyApplicationTotals, refundFamilyKey, type ApplicationState } from "./application-state";
@@ -473,4 +480,44 @@ export async function reserveMemberMoneyRefund(db: Db, plan: MemberMoneyReservat
 
 export async function appendMemberMoneyReservationRelease(db: Db, reservationId: string, reason: Exclude<MemberMoneyRefundReservationReleaseReason, "ANSWERED">): Promise<void> {
   await db.memberMoneyRefundReservationRelease.createMany({ data: [{ reservationId, reason }] });
+}
+
+/** One export manifest and its coverage, as `recordPrimaryInvoiceManifest` writes it (#4525, Ledger M13). */
+export interface ExportManifestRow {
+  documentRole: MemberMoneyExportDocumentRole;
+  legacyKey: string;
+  bookingId: string;
+  outcome: MemberMoneyExportOutcome;
+  reason: MemberMoneyExportConflictReason | null;
+  payloadHash: string;
+  frozenMapping: Prisma.InputJsonObject;
+  lineTotalCents: number;
+  providerInvoiceId: string;
+  coverage: ReadonlyArray<{ account: MemberMoneyAccount; chargeIdentity: string; coveredCents: number; taxCode: string | null }>;
+}
+
+/**
+ * Insert a manifest under its key, or leave the row already there: the first
+ * write wins (`SAME` when it hashed the same lines for the same invoice, else
+ * `KEPT_FIRST`). The deferred check runs at the caller's commit.
+ */
+export async function writeExportManifest(db: Db, row: ExportManifestRow): Promise<"WRITTEN" | "SAME" | "KEPT_FIRST"> {
+  const prior = await db.memberMoneyExportManifest.findUnique({
+    where: { documentRole_legacyKey: { documentRole: row.documentRole, legacyKey: row.legacyKey } },
+    select: { payloadHash: true, providerInvoiceId: true },
+  });
+  if (prior) return prior.payloadHash === row.payloadHash && prior.providerInvoiceId === row.providerInvoiceId ? "SAME" : "KEPT_FIRST";
+  const id = randomUUID();
+  await db.memberMoneyExportManifest.createMany({ data: [{
+    id, documentRole: row.documentRole, legacyKey: row.legacyKey, renderRevision: 1, bookingId: row.bookingId,
+    outcome: row.outcome, reason: row.reason, payloadHash: row.payloadHash, frozenMapping: row.frozenMapping,
+    lineTotalCents: row.lineTotalCents, providerInvoiceId: row.providerInvoiceId,
+  }] });
+  if (row.coverage.length > 0) {
+    await db.memberMoneyExportCoverage.createMany({ data: row.coverage.map((c) => ({
+      id: randomUUID(), manifestId: id, documentRole: row.documentRole, account: c.account,
+      chargeIdentity: c.chargeIdentity, coveredCents: c.coveredCents, taxCode: c.taxCode,
+    })) });
+  }
+  return "WRITTEN";
 }
