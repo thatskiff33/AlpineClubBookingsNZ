@@ -548,9 +548,9 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   that row after `lock(1)`, before its record. No new lock (`INV-LOCK-001`). A
   duplicate delivery writes and alerts nothing.
 - **Unchanged**: the open row that counted the refund is re-planned (no close
-  can be on it); with no close, the row is live. Open gap (#4492): a dead,
-  unclosed row that sent the refund but does not count it gets a live row if
-  the refund fails first, and its close still goes through.
+  can be on it); with no close, the row is live. If the refund fails first,
+  that dead row's bank close is refused (`INV-PAY-122`); a close that commits
+  first still holds the re-send.
 - **Limits.** After a part close the figure can include what that close
   recorded as no longer owed: check its record before paying. After a full
   close the held row owes nothing the payment holds, so no close is offered;
@@ -1430,8 +1430,8 @@ one, check the other.
     open row owes that Stripe created before the cutoff migration, or one whose
     row closed "Paid another way" (`INV-PAY-142`) is raised dead; one naming no
     booking only alerts and is audited.
-  - **Paid another way** notes only what a card note still in Xero does not
-    cover, kept on its record (`failedLaterCardNoteCoverCents`).
+  - **Paid another way** queues a Stripe reversal for the cents a card note
+    still covers, and a bank note for the whole close (`INV-PAY-151`).
   - **Officers hear once per refused slice or failed-later decision**, and
     again if retries run out.
   - **Deploy window**: an older release closes a refused row as paid and drops
@@ -1802,24 +1802,24 @@ release).
   one request per intent, 100 results, ten-second timeout, no network
   retries. More results, or a read or recording failure, permits no send;
   normal recovery backoff applies.
-- Refunds on the captured charge are recorded through
+- Captured-charge refunds are recorded through
   `recordStripeRefundsAgainstTransaction`, including ones the app never saw,
-  sharing `charge.refunded`'s note router, which keeps their accounting
-  correction. The superseded-payment refund is sized on the ledger after this
-  recording (#4699), which cancellations leave alone (`INV-PAY-150`); a stored
-  plan's slices are sent as written (#4103).
+  via the `charge.refunded` note router. The superseded-payment refund is
+  sized on the ledger after this recording (#4699; cancellations,
+  `INV-PAY-150`); a stored plan is sent as written (#4103).
 - A counted refund made outside the app (`cardRefundDoorOf`), on that charge
   at or after the recovery debt's creation second, holds the entire row before
   any slice is sent, whatever its amount. Counted status comes from
   `isRecordedRefundStatus`; a stored refusal overrides a stale counted
-  listing. Stripe timestamps are compared in whole seconds.
+  listing. Timestamps compare in whole seconds.
 - #4858: a plan-less superseded-payment refund left owing also holds while
   the owed figure credits it with a refund its own request did not make
-  (`foreignRefundsSizingSupersededRow`).
+  (`foreignRefundsSizingSupersededRow`). Until that refund is card-paid, the held
+  row's bank close is refused (`INV-PAY-122`), not sent to a developer.
 - A hold uses the guarded terminal failure: `FAILED`, attempts at the
-  ceiling, no retry. Only a winning claim alerts officers and writes a payment
-  audit entry. It neither closes the debt nor adopts the refund. Officers
-  settle anything owed with **Paid another way**, never a new dashboard refund.
+  ceiling, no retry. Only a winning claim alerts officers and audits the
+  payment. It neither closes the debt nor adopts the refund. Officers
+  settle with **Paid another way**, never a dashboard refund.
 - Stripe keys stay unchanged; slice evidence is adopted under `INV-PAY-147`.
   Organiser-child and legacy group-settlement executors are outside this
   rule. A refund made after the provider read can still race the send; this
@@ -2860,31 +2860,33 @@ _Legacy: settles tasks raised before #4317._
 - **"Paid another way" records the close as a completed hand-back and ends the
   refund** (#3372, owner 7 Oct 2026). `closeCardRefundPaidAnotherWay`
   (finance:edit) takes `lock(1)`, then the payment row, refuses (409) unless
-  what is owed is what the treasurer saw, and claims a dead row to
-  `SUCCEEDED` with a status guard. It records the amount with
-  `applyLocalRefundAllocation` on the unsent slices' charges, writes a COMPLETED
+  the owed figure is what the treasurer saw, and claims a dead row to
+  `SUCCEEDED`, status-guarded. It records the amount on unsent slices'
+  charges (`applyLocalRefundAllocation`), writes a COMPLETED
   hand-back task under `card-refund-paid-another-way:<row>`, its `BANK_REFUND`
   line (`INV-MONEY-035`) and R14, and audits under `payment`. No Stripe call.
   - **Full or part, chosen** (8 Oct): "full" is exactly what is owed,
-    "partial" strictly between nil and it; else 400.
+    "partial" above nil, below it; else 400.
   - **Its rest, chosen** (#4516, 2 Nov), no default; else 400. "Club keeps
-    it": owed nowhere; reviews net the full raised amount; the journal retains
+    it": owed nowhere; reviews net the full raised amount; the journal keeps
     it. "Still owed": the task records the paid part; a dead row
-    (`card_refund_still_owed_<task>`) keeps the rest owed.
-  - **Xero** (8 Oct): every kind queues a bank-transfer note keyed on the
-    task, sized by it less its own notes, dated the close's day, where an
-    invoice exists to credit; else none (`:no-xero-note`). No card note fills
-    that cash.
-  - **A late capture: receipt, then credit** (8 Oct). The note names the
-    capture's receipt by its invoice, never by intent. With none in Xero, the
-    close queues it (`INV-PAY-110`), requeuing a failed one that cannot have
-    reached Xero, or awaits one in flight; link, then note at most once, under
-    the approval task's row, taken before the receipt is read
-    (`:note-after-receipt`). Cash evidence counts a close only once noted.
+    (`card_refund_still_owed_<task>`) owes the rest.
+  - **Xero** (8 Oct): with no card-note cover, a bank-transfer note keyed on
+    the task, sized by it less its notes, dated the close's day, where an
+    invoice exists; else none (`:no-xero-note`). Covered: `INV-PAY-151`.
+    A late capture's note names its receipt by invoice, never by intent.
+    None in Xero: queue it (`INV-PAY-110`), requeue a failed one that cannot have reached Xero, or
+    await one in flight; link then note once under the approval task's row,
+    read first (`:note-after-receipt`). Cash evidence counts it once noted.
   - A superseded intent's row closes whole, only while its charge holds exactly
-    what it owes. An organiser child's is refused.
-  - A refund made inside a closed row's window, recorded later, lists as paid
-    twice; an audited note on the task resolves it; no money moves (9 Oct).
+    that. An organiser child's is refused.
+  - **Refused** (#4492, `paidAnotherWayRefusal`, list and close; 409, no writes,
+    stays listed): a
+    failed-later sibling; a plan-less superseded row until its sizing refund
+    is card-paid; a dead failed-later row a superseded send over-filled, or
+    its unreadable charge.
+  - A refund inside a closed row's window, recorded later, lists as paid
+    twice; an audited task note resolves it, moving no money (9 Oct).
 
 ## INV-PAY-070
 
@@ -4079,8 +4081,8 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
   one: what its charge holds, while every refund attributed to it is its own);
   any failed-later row on the payment, open or paid (#4492); a counted,
   unstamped, unmarked refund Stripe lists from this booking's same door
-  (unreadable refuses); or a moved owed figure or plan. Where "Paid another way"
-  cannot close it either, the refusal points to a developer.
+  (unreadable refuses); or a moved owed figure or plan. Where that close is
+  refused, #4492 says so; only the charge-fill rule asks a developer.
 - **One row, one winner.** All three settlements share `lockDeadCardRefundRow`
   (`lock(1)`, row, Payment row) and its claim: dead, on the plan read. A closed
   row is never re-armed, nor a re-armed one closed until given up again. Each is
@@ -4127,3 +4129,49 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
   `cancel-card-refund-shortfall-preview.test.ts`,
   `clipped-mirror-open-hand-back.test.ts` and
   `superseded-refund-cancel-hold-back.realdb.test.ts`.
+
+## INV-PAY-151
+
+**Related: `INV-PAY-122`** and **`INV-PAY-128`**.
+
+- **A Paid another way close of a failed-later card refund whose card note
+  covers some of it queues two Xero documents** (#4369, 10 Nov 2026). An
+  ACCREC invoice for the covered cents records that money back in the Stripe
+  account. A bank-transfer refund credit note for the whole close records what
+  was paid. A close with no cover queues only the bank note.
+- The invoice is coded like the note it undoes (`hutFeeRefunds`, GST
+  inclusive), paid in full into the Stripe bank account, never emailed, never
+  allocated, and never stored on `Payment.xeroInvoiceId`. It is dated the club
+  day of the close. A lock on or after that day dates the invoice and its
+  payment the next open day and keeps the close day in the reference. A voided
+  or deleted one is not raised again.
+- Coverage subtracts a reversal only once its invoice link is active and not
+  voided or deleted. Paying back less than the card note leaves the
+  over-coverage the reconciliation report already lists. While the reversal is linked and the bank note is only queued, the
+  gap is the close's own uncovered cents, and card-note sizing raises no
+  Stripe note for it.
+- A later close's cover counts earlier closes' unlinked bank notes and
+  live unlinked reversals as posted, so worker order never changes it.
+- The close does not store `paidAnotherWayCardNoteCover`. A capacity-race
+  shortfall still does.
+- Both rows go in the close's transaction, after the record and the money
+  line, under the locks already held. Either enqueue refusing throws, so
+  neither commits. No new advisory lock. Xero is called after commit.
+- Proven by `card-refund-paid-another-way-xero.test.ts`,
+  `card-refund-paid-another-way.test.ts`,
+  `xero-card-refund-reversal-invoice.test.ts`,
+  `card-refund-reversal-coverage.test.ts`,
+  `card-refund-reversal-readers.test.ts` and both `.realdb` suites
+  (`card-refund-paid-another-way`, `xero-deleted-payment-links`).
+
+## INV-PAY-152
+
+A cancellation's CREDITED event commits or rolls back with the credit it describes
+(#4913). `createCancellationCredit` requires the caller's transaction client and
+writes the event directly on it without swallowing failures. Its amount equals
+the credit's amount; its reason remains "Cancellation refund held as account
+credit." A failed event insert aborts the cancellation, like the paid-path
+CANCELLED decision (`INV-PAY-106`). A rolled-back attempt leaves neither credit
+nor event, so a later retry or manual hand-back cannot claim credit never given.
+Proven by `cancellation-credit-event.realdb.test.ts` and `member-credit.test.ts`;
+`booking-narrative.test.ts` shows the outcome. Historical stray events are not repaired.

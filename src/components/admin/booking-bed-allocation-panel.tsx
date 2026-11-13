@@ -1,5 +1,6 @@
 "use client";
 
+import { adminHref } from "@/lib/admin-hubs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { BedDouble, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
@@ -619,7 +620,7 @@ export function BookingBedAllocationPanel({
     !notAllocatable && !held && Boolean(payload) && !bookingRow;
 
   const boardHref = buildHrefWithReturnTo(
-    `/admin/bed-allocation?${new URLSearchParams({
+    `${adminHref("bed-allocation")}?${new URLSearchParams({
       from: fromDate,
       to: toDate,
       bookingId,
