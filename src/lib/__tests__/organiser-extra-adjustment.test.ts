@@ -30,6 +30,7 @@ const transactionStore = {
     update: vi.fn(),
   },
 };
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => ({ prisma: {
   xeroSyncOperation: { findUniqueOrThrow: vi.fn(async () => mocks.operation), findFirst: mocks.held },
   xeroObjectLink: { findMany: vi.fn(async () => []) },

@@ -33,6 +33,18 @@ export interface XeroTaxRendering {
   readonly taxType?: string;
 }
 
+/**
+ * The baseline treatment's rendering: what every document carried before #4632.
+ * Only for a builder that prices lines without sending them (a reconciliation
+ * total, a rounding audit) and so needs no anchor; a document the app SENDS
+ * always resolves its anchor's rendering (`xero-tax-anchors.ts`). Equal to
+ * `xeroTaxRenderingOf` of the baseline period, which `xero-tax-rendering.test.ts` holds.
+ */
+export const BASELINE_XERO_TAX_RENDERING: XeroTaxRendering = Object.freeze({
+  lineAmountTypes: LineAmountTypes.Inclusive,
+  taxType: DEFAULT_XERO_OUTPUT_TAX_TYPE,
+});
+
 export function xeroTaxRenderingOf(treatment: ClubTaxTreatment): XeroTaxRendering {
   if (!treatment.registered) return { lineAmountTypes: LineAmountTypes.NoTax };
   return { lineAmountTypes: LineAmountTypes.Inclusive, taxType: treatment.xeroTaxType };

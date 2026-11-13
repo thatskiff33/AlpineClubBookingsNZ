@@ -7,6 +7,7 @@
 // Xero by reference — rather than creating a duplicate.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     entranceFee: { findFirst: vi.fn().mockResolvedValue(null) },

@@ -1,5 +1,5 @@
 /** Durable Xero execution for organiser-extra waivers and bank-refund notes. */
-import { CreditNote, Invoice, LineAmountTypes } from "xero-node";
+import { CreditNote, Invoice } from "xero-node";
 import { prisma } from "@/lib/prisma";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { completeXeroSyncOperation } from "@/lib/xero-sync";
@@ -7,6 +7,8 @@ import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { getResolvedAccountMapping } from "@/lib/xero-mappings";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroLineTax } from "@/lib/xero-tax-rendering";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { settleRefundNoteFromXero } from "@/lib/xero-refund-note-settlement";
 import { syncOrganiserExtraInvoiceCash } from "@/lib/organiser-extra-receipt";
 import { reserveOrganiserExtraRacedCash } from "@/lib/organiser-extra-raced-cash";
@@ -131,12 +133,15 @@ export async function executeOrganiserExtraAdjustment(
     const account = await getResolvedAccountMapping("hutFeeRefunds");
     if (!invoice.contact?.contactID) throw new Error("Organiser invoice has no Xero contact");
     const waive = payload.purpose === "waive";
+    // #4632: the extra invoice carried the organiser's booking's treatment, as
+    // the combined invoice does (`xero-supplementary-invoices.ts`); its note matches.
+    const taxRendering = await resolveXeroTaxRendering({ kind: "organiser-billed-place", bookingId: payload.bookingId });
     const reference = `Booking ${payload.bookingId} — ${waive ? "unpaid extra waived" : "organiser bank-transfer refund"} (${invoice.invoiceNumber ?? extraInvoiceId})`;
     const created = await callXeroApi(
       () => xero.accountingApi.createCreditNotes(tenantId, { creditNotes: [{
         type: CreditNote.TypeEnum.ACCRECCREDIT, contact: { contactID: invoice.contact!.contactID }, date,
-        status: CreditNote.StatusEnum.AUTHORISED, lineAmountTypes: LineAmountTypes.Inclusive, reference,
-        lineItems: [{ description: waive ? WAIVER_LINE : REFUND_LINE, quantity: 1, unitAmount: amountCents / 100, accountCode: account.code ?? "200" }],
+        status: CreditNote.StatusEnum.AUTHORISED, lineAmountTypes: taxRendering.lineAmountTypes, reference,
+        lineItems: [{ description: waive ? WAIVER_LINE : REFUND_LINE, quantity: 1, unitAmount: amountCents / 100, ...xeroLineTax(taxRendering), accountCode: account.code ?? "200" }],
       }] }, undefined, undefined, `${key}:credit-note`),
       { operation: "createCreditNotes", resourceType: "CREDIT_NOTE", workflow: "organiserExtraAdjustment", context: `credit organiser invoice ${extraInvoiceId}` },
     );

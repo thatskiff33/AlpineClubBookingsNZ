@@ -47,6 +47,7 @@ const mocks = vi.hoisted(() => ({
 
 const deallocationFence = vi.hoisted(() => ({ findFirst: vi.fn() }));
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => {
   const prisma = {
     // #3548: a new refund note is recorded (payment, link, row) in one transaction.

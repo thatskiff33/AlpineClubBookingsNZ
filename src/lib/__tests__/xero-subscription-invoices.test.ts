@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BASELINE_XERO_TAX_RENDERING } from "@/lib/xero-tax-rendering";
 import { Invoice, LineAmountTypes } from "xero-node";
 
 const enqueueMocks = vi.hoisted(() => ({
@@ -8,6 +9,7 @@ const enqueueMocks = vi.hoisted(() => ({
   chargeUpdate: vi.fn(),
 }));
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     membershipSubscriptionCharge: { findUnique: enqueueMocks.chargeFindUnique, updateMany: enqueueMocks.chargeUpdate },
@@ -107,6 +109,7 @@ describe("Xero membership subscription invoice adoption", () => {
     lines: [{ amountCents: 12_000, accountCode: "203", itemCode: "SUB" as string | null }],
     dueDays: 30,
     reference: "MEMSUB-reference",
+    taxRendering: BASELINE_XERO_TAX_RENDERING,
   };
 
   it("adopts only an exact reference, recipient, GST-inclusive amount, account and ACCREC match", () => {
@@ -185,6 +188,7 @@ describe("Xero membership subscription invoice adoption", () => {
       lines: [{ amountCents: 0, accountCode: "203", itemCode: "SUB" as string | null }],
       dueDays: 30,
       reference: "MEMSUB-reference",
+      taxRendering: BASELINE_XERO_TAX_RENDERING,
     };
 
     it.each([
@@ -274,6 +278,7 @@ describe("Xero membership subscription invoice adoption", () => {
       ],
       dueDays: 30,
       reference: "MEMSUB-reference",
+      taxRendering: BASELINE_XERO_TAX_RENDERING,
     };
 
     it("adopts an exact full-line-array match in order", () => {

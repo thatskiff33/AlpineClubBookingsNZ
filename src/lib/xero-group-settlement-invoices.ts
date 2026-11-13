@@ -13,7 +13,7 @@
  * Xero payment to record here — it is always emailed and reconciled on payment.
  */
 
-import { Invoice, LineAmountTypes } from "xero-node";
+import { Invoice } from "xero-node";
 import { GroupBookingStatus, type Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -47,6 +47,7 @@ import {
   releaseUninvoiceableGroupSettlement,
 } from "./xero-group-settlement-invoice-lines";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { xeroDocumentDatesFromColumnAndInstant } from "@/lib/xero-provider-dates";
 import {
   enqueueXeroGroupSettlementInvoiceAbandonVoidOperation,
@@ -265,8 +266,14 @@ export async function createXeroInvoiceForGroupSettlement(
 
   // #3642 (`INV-SSOT-002`): built from exactly the committed children, and
   // never raised unless it totals the settlement.
+  // #4632: the combined document carries the organiser's booking's treatment.
+  const taxRendering = await resolveXeroTaxRendering({
+    kind: "booking",
+    bookingId: settlement.groupBooking.organiserBookingId,
+  });
   const lines = await buildGroupSettlementInvoiceLines(
-    settlement.groupBooking.organiserBookingId
+    settlement.groupBooking.organiserBookingId,
+    taxRendering,
   );
   if (lines.childCount === 0) {
     throw new Error(
@@ -317,7 +324,7 @@ export async function createXeroInvoiceForGroupSettlement(
     dueDate,
     reference: `Group settlement ${settlement.groupBooking.id.slice(0, 8)}`,
     status: Invoice.StatusEnum.AUTHORISED,
-    lineAmountTypes: LineAmountTypes.Inclusive,
+    lineAmountTypes: taxRendering.lineAmountTypes,
   });
 
   // #3642: keyed by attempt, so a retry of this attempt is deduplicated by Xero

@@ -93,6 +93,7 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: mocks.transaction,

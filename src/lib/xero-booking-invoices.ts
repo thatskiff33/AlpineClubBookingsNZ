@@ -11,7 +11,6 @@ import {
   Invoice,
   Invoices,
   LineItem,
-  LineAmountTypes,
   Payment as XeroPayment,
 } from "xero-node";
 import { PaymentSource, PaymentTransactionKind } from "@prisma/client";
@@ -81,6 +80,8 @@ import {
   type NightPriceRun,
 } from "@/lib/night-price-runs";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { BASELINE_XERO_TAX_RENDERING, xeroLineTax, type XeroTaxRendering } from "@/lib/xero-tax-rendering";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { requireContainedXeroContactForInvoiceOperation } from "@/lib/xero-contact-containment-proof";
 import {
@@ -140,6 +141,9 @@ export interface UpdateXeroBookingInvoiceOptions
  * @param itemCode - Single hutFeesIncome item code applied to all guests, used
  *   only when the resolver is absent/unconfigured or no seasonType is known —
  *   never as a fallback for a per-guest miss once keyed rows exist.
+ * @param taxRendering - The treatment the lines carry (#4632), resolved from
+ *   the booking's tax anchor by every caller that sends the document; the
+ *   baseline only for a caller that totals lines without sending them.
  */
 export function buildInvoiceLineItems(
   guests: Array<{
@@ -167,6 +171,7 @@ export function buildInvoiceLineItems(
   accountCodeExplicitlyConfigured: boolean = false,
   itemCodeResolver?: HutFeeItemCodeResolver,
   seasonType?: string | null,
+  taxRendering: XeroTaxRendering = BASELINE_XERO_TAX_RENDERING,
 ): LineItem[] {
   // The precedence itself (#1930, E4) lives in `xero-hut-fee-line-codes.ts`,
   // shared with the itemised modification documents (#3530) so a night's money
@@ -206,7 +211,7 @@ export function buildInvoiceLineItems(
       description,
       quantity: run.nightCount,
       unitAmount: run.perNightCents / 100, // Xero uses dollars, not cents
-      taxType: "OUTPUT2", // GST on Income (NZ)
+      ...xeroLineTax(taxRendering), // the booking's tax treatment (#4632)
     }, guest);
   };
 
@@ -258,7 +263,7 @@ export function buildInvoiceLineItems(
           description,
           quantity: nights,
           unitAmount: guest.priceCents / 100, // Xero uses dollars, not cents
-          taxType: "OUTPUT2", // GST on Income (NZ)
+          ...xeroLineTax(taxRendering), // the booking's tax treatment (#4632)
         }, guest)];
       }
       const syntheticNights = evenlySplitCents(guest.priceCents, nights).map(
@@ -584,10 +589,12 @@ export async function createXeroInvoiceForBooking(
   });
 
   // Resolve account codes, item codes, and season type
-  const [hutFeeMapping, stripeBankCode, hutFeeItemCodeMap] = await Promise.all([
+  const [hutFeeMapping, stripeBankCode, hutFeeItemCodeMap, taxRendering] = await Promise.all([
     getResolvedAccountMapping("hutFeesIncome"),
     getAccountMapping("stripeBankAccount"),
     getHutFeeItemCodeMap(),
+    // #4632: the treatment in force when the booking was made, for every line.
+    resolveXeroTaxRendering({ kind: "booking", bookingId }),
   ]);
   const incomeCode = hutFeeMapping.code ?? "200";
   const bankCode = stripeBankCode ?? "606";
@@ -623,6 +630,7 @@ export async function createXeroInvoiceForBooking(
     // Byte-identical to main's boolean-keyed map precedence.
     hutFeeItemCodeMap,
     bookingSeasonType,
+    taxRendering,
   );
 
   // Add signed promo adjustment lines if applicable. Negative values behave
@@ -643,7 +651,7 @@ export async function createXeroInvoiceForBooking(
       itemCodeResolver: hutFeeItemCodeMap,
       seasonType: bookingSeasonType,
       hutFeeMapping,
-    }),
+    }, taxRendering),
   );
   const promoLineRecord = promoAdjustmentLineRecord(promoLinePlan);
 
@@ -653,7 +661,7 @@ export async function createXeroInvoiceForBooking(
   // what the member is charged. No other document can have carried it yet;
   // the reasoning is on the helper.
   const feeOwedCents = recordedChangeFeeCents(booking.payment);
-  if (feeOwedCents > 0) lineItems.push(changeFeeLineItem(feeOwedCents, hutFeeMapping));
+  if (feeOwedCents > 0) lineItems.push(changeFeeLineItem(feeOwedCents, hutFeeMapping, taxRendering));
   // #3980: the worth this read gives and what its lines bill, stored with the link.
   const builtFrom = {
     worthCents: bookingWorthCents({ finalPriceCents: booking.finalPriceCents, changeFeeCents: booking.payment.changeFeeCents }),
@@ -675,7 +683,7 @@ export async function createXeroInvoiceForBooking(
     dueDate: getBookingInvoiceDueDate(booking, clubZone),
     reference: `Booking ${bookingId.slice(0, 8)}`,
     status: Invoice.StatusEnum.AUTHORISED,
-    lineAmountTypes: LineAmountTypes.Inclusive,
+    lineAmountTypes: taxRendering.lineAmountTypes,
   });
 
   // The booking's stable handle, minted in one place so the outbox row this
@@ -1443,9 +1451,10 @@ export async function updateXeroBookingInvoiceForBooking(
   }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const [hutFeeMapping, hutFeeItemCodeMap] = await Promise.all([
+  const [hutFeeMapping, hutFeeItemCodeMap, taxRendering] = await Promise.all([
     getResolvedAccountMapping("hutFeesIncome"),
     getHutFeeItemCodeMap(),
+    resolveXeroTaxRendering({ kind: "booking", bookingId }),
   ]);
   const incomeCode = hutFeeMapping.code ?? "200";
   const checkIn = new Date(booking.checkIn);
@@ -1472,6 +1481,7 @@ export async function updateXeroBookingInvoiceForBooking(
     hutFeeMapping.codeExplicitlyConfigured,
     hutFeeItemCodeMap,
     bookingSeasonType,
+    taxRendering,
   );
 
   const invoiceUpdateIdempotencyKey = buildXeroIdempotencyKey(
@@ -1606,7 +1616,8 @@ export async function updateXeroBookingInvoiceForBooking(
         getBookingInvoiceDueDate(booking, await readClubTimeZoneOutsideRequest()),
       reference: currentInvoice.reference ?? `Booking ${bookingId.slice(0, 8)}`,
       invoiceNumber: currentInvoice.invoiceNumber,
-      lineAmountTypes: currentInvoice.lineAmountTypes ?? LineAmountTypes.Inclusive,
+      // The basis it was issued under; one Xero did not echo is the booking's own (#4632).
+      lineAmountTypes: currentInvoice.lineAmountTypes ?? taxRendering.lineAmountTypes,
     };
     const requestPayload: Invoices = { invoices: [updatedInvoice] };
 

@@ -19,6 +19,7 @@
  * operation to record.
  */
 import type { LineItem } from "xero-node";
+import type { XeroTaxRendering } from "@/lib/xero-tax-rendering";
 import { BookingStatus } from "@prisma/client";
 import { prisma } from "./prisma";
 import { getStayNights } from "./pricing";
@@ -62,7 +63,9 @@ export interface GroupSettlementInvoiceLines {
 
 /** Build the combined invoice's lines from the settlement's committed children. */
 export async function buildGroupSettlementInvoiceLines(
-  organiserBookingId: string
+  organiserBookingId: string,
+  /** The organiser's booking's tax treatment (#4632): one combined document, one anchor. */
+  taxRendering: XeroTaxRendering,
 ): Promise<GroupSettlementInvoiceLines> {
   const children = await prisma.booking.findMany({
     where: {
@@ -119,7 +122,8 @@ export async function buildGroupSettlementInvoiceLines(
         hutFeeMapping.itemCode,
         hutFeeMapping.codeExplicitlyConfigured,
         hutFeeItemCodeMap,
-        seasonType
+        seasonType,
+        taxRendering,
       )
     );
     const promoLinePlan = planPromoAdjustmentLines({
@@ -133,14 +137,14 @@ export async function buildGroupSettlementInvoiceLines(
         itemCodeResolver: hutFeeItemCodeMap,
         seasonType,
         hutFeeMapping,
-      })
+      }, taxRendering)
     );
     const promoLineRecord = promoAdjustmentLineRecord(promoLinePlan);
     if (promoLineRecord) promoLines.push({ bookingId: child.id, ...promoLineRecord });
     // #3750 (#3955 review F3): the child's recorded change fee is in its worth,
     // so the combined invoice bills it on the one change-fee line.
     const childFeeCents = recordedChangeFeeCents(child.payment);
-    if (childFeeCents > 0) lineItems.push(changeFeeLineItem(childFeeCents, hutFeeMapping));
+    if (childFeeCents > 0) lineItems.push(changeFeeLineItem(childFeeCents, hutFeeMapping, taxRendering));
   }
 
   return {

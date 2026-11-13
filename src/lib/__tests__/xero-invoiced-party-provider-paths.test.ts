@@ -65,6 +65,7 @@ const mocks = vi.hoisted(() => ({
   readClubTimeZoneOutsideRequest: vi.fn(),
 }));
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     // #3635: the refund note names a kept late capture's own invoice first;

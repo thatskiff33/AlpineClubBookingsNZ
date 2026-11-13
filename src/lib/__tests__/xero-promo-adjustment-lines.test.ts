@@ -4,6 +4,7 @@
  * and group suites pin the wired paths; these pin the planner's edges.
  */
 import { describe, expect, it } from "vitest";
+import { BASELINE_XERO_TAX_RENDERING } from "@/lib/xero-tax-rendering";
 
 import {
   isPromoAdjustmentLineDescription,
@@ -44,7 +45,7 @@ describe("planPromoAdjustmentLines (#3828)", () => {
       amountCents: -500,
     });
     expect(promoAdjustmentLineRecord(plan)).toBeNull();
-    expect(promoAdjustmentLineItems(plan, coding)).toEqual([
+    expect(promoAdjustmentLineItems(plan, coding, BASELINE_XERO_TAX_RENDERING)).toEqual([
       { description: "Promo adjustment - SAVE5", quantity: 1, unitAmount: -5, taxType: "OUTPUT2", itemCode: "HUT" },
     ]);
   });
@@ -56,7 +57,7 @@ describe("planPromoAdjustmentLines (#3828)", () => {
       adjustmentRows: [{ promoRedemptionId: "a", beneficiaryMemberId: "m1", amountCents: -500 }],
     });
     expect(plan.kind).toBe("PER_CODE");
-    expect(promoAdjustmentLineItems(plan, coding).map((line) => line.description)).toEqual([
+    expect(promoAdjustmentLineItems(plan, coding, BASELINE_XERO_TAX_RENDERING).map((line) => line.description)).toEqual([
       "Promo adjustment - SAVE5",
     ]);
     expect(promoAdjustmentLineRecord(plan)?.promoLineCodes).toEqual([
@@ -75,7 +76,7 @@ describe("planPromoAdjustmentLines (#3828)", () => {
       ],
     });
     expect(plan).toMatchObject({ kind: "AGGREGATE_FALLBACK", reason: "CODE_BUILDUP_NOT_KNOWN" });
-    expect(promoAdjustmentLineItems(plan, coding)).toEqual([
+    expect(promoAdjustmentLineItems(plan, coding, BASELINE_XERO_TAX_RENDERING)).toEqual([
       { description: "Promo adjustment - SAVE5, MYSTERY", quantity: 1, unitAmount: -8, taxType: "OUTPUT2", itemCode: "HUT" },
     ]);
   });

@@ -35,6 +35,7 @@
  */
 import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import type { LineItem } from "xero-node";
+import { xeroLineTax, type XeroTaxRendering } from "@/lib/xero-tax-rendering";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
@@ -91,13 +92,15 @@ export const CHANGE_FEE_LINE_DESCRIPTION = "Late notice booking change fee";
 export function changeFeeLineItem(
   changeFeeCents: number,
   incomeMapping: ResolvedAccountMapping,
+  /** The booking's tax treatment (#4632), as its document's other lines carry it. */
+  taxRendering: XeroTaxRendering,
 ): LineItem {
   const incomeCode = incomeMapping.code ?? "200";
   const li: LineItem = {
     description: CHANGE_FEE_LINE_DESCRIPTION,
     quantity: 1,
     unitAmount: changeFeeCents / 100,
-    taxType: "OUTPUT2",
+    ...xeroLineTax(taxRendering),
   };
   if (incomeMapping.itemCode) li.itemCode = incomeMapping.itemCode;
   if (!incomeMapping.itemCode || incomeCode !== "200" || incomeMapping.codeExplicitlyConfigured) {
@@ -135,6 +138,8 @@ export type ModificationDocumentCodingContext = {
    */
   promosByCode?: ReadonlyMap<string, { xeroItemCode: string | null; xeroAccountCode: string | null }>;
   firstGuest: { ageTier: string; isMember: boolean; rateMembershipTypeId: string | null } | null;
+  /** The booking's tax treatment (#4632), resolved from its anchor by the document's builder. */
+  taxRendering: XeroTaxRendering;
 };
 
 /**
@@ -144,6 +149,7 @@ export type ModificationDocumentCodingContext = {
  */
 export async function loadModificationDocumentCodingContext(
   bookingId: string,
+  taxRendering: XeroTaxRendering,
   /** The document's `PROMO_DELTA` lines, in line order. */
   promoLines: ReadonlyArray<Pick<PromoDeltaLine, "promoCode" | "codesBefore">> = [],
 ): Promise<ModificationDocumentCodingContext> {
@@ -226,6 +232,7 @@ export async function loadModificationDocumentCodingContext(
     ),
     ...(promosByCode ? { promosByCode } : {}),
     firstGuest: booking.guests[0] ?? null,
+    taxRendering,
   };
 }
 
@@ -261,7 +268,7 @@ export function buildModificationDocumentLineItems(args: {
         (line.kind === "PROMO_DELTA"
           ? orientation * line.amountCents
           : orientation * line.sign * line.unitCents) / 100,
-      taxType: "OUTPUT2",
+      ...xeroLineTax(context.taxRendering),
     };
     if (line.kind === "PROMO_DELTA") {
       return applyHutFeeLineCodes(
@@ -306,7 +313,7 @@ export function buildModificationDocumentLineItems(args: {
           description: renderEditReviewShareDescription(share),
           quantity: 1,
           unitAmount: (orientation * share.sign * share.amountCents) / 100,
-          taxType: "OUTPUT2",
+          ...xeroLineTax(context.taxRendering),
         },
         share.sign > 0
           ? {
@@ -330,7 +337,7 @@ export function buildModificationDocumentLineItems(args: {
           description: CHANGE_FEE_LINE_DESCRIPTION,
           quantity: 1,
           unitAmount: (orientation * changeFeeCents) / 100,
-          taxType: "OUTPUT2",
+          ...xeroLineTax(context.taxRendering),
         },
         {
           itemCode: context.incomeMapping.itemCode,
@@ -410,6 +417,12 @@ export async function resolveModificationDocumentLineItems(args: {
   billedCents: number;
   billedFigures?: { priceDiffCents: number; changeFeeCents: number };
   secondAsk?: boolean;
+  /**
+   * The booking's tax treatment (#4632), resolved by the builder BEFORE this
+   * call: the single line it falls back to carries the same one, so a
+   * treatment that cannot be read fails the document rather than narrating it away.
+   */
+  taxRendering: XeroTaxRendering;
 },
   format: ClubFormat,
 ): Promise<{ lineItems: LineItem[] | null; record: ModificationDocumentLinesRecord }> {
@@ -457,6 +470,7 @@ export async function resolveModificationDocumentLineItems(args: {
     }
     const context = await loadModificationDocumentCodingContext(
       args.bookingId,
+      args.taxRendering,
       selection.lines.filter((line): line is PromoDeltaLine => line.kind === "PROMO_DELTA"),
     );
     const lineItems = buildModificationDocumentLineItems({

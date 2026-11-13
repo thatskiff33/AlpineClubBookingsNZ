@@ -58,6 +58,7 @@ const db = vi.hoisted(() => {
   return db;
 });
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => ({ prisma: db }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   lockSupplementaryInvoiceAnchor: (...a: unknown[]) => mocks.lockAnchor(...a),

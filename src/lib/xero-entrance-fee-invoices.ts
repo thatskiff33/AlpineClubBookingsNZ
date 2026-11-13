@@ -9,7 +9,6 @@
 
 import {
   Invoice,
-  LineAmountTypes,
   LineItem,
   type XeroClient,
 } from "xero-node";
@@ -46,6 +45,9 @@ import {
   parseDateOnly,
 } from "@/lib/date-only";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { requireInstant } from "@/lib/club-time";
+import { BASELINE_XERO_TAX_RENDERING, xeroLineTax, type XeroTaxRendering } from "@/lib/xero-tax-rendering";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { buildJoiningFeeNarration } from "./joining-fee-narration";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
@@ -190,11 +192,13 @@ export function buildEntranceFeeLineItem(
   itemCode?: string | null,
   accountCodeExplicitlyConfigured: boolean = false,
   descriptionOverride?: string | null,
+  /** The fee's tax treatment (#4632); the sender always passes its anchor's. */
+  taxRendering: XeroTaxRendering = BASELINE_XERO_TAX_RENDERING,
 ): LineItem {
   const lineItem: LineItem = {
     quantity: 1,
     unitAmount: amountCents / 100,
-    taxType: "OUTPUT2",
+    ...xeroLineTax(taxRendering),
   };
 
   const description = descriptionOverride?.trim();
@@ -352,6 +356,13 @@ export async function createXeroEntranceFeeInvoice(
     });
     const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
     const incomeCode = incomeMapping.code ?? "200";
+    // #4632: no charge row stands behind the fee, so its anchor is its queued
+    // operation's creation, or now on a direct write, which creates one below.
+    const taxRendering = await resolveXeroTaxRendering(
+      queuedOperationId
+        ? { kind: "xero-operation", operationId: queuedOperationId }
+        : { kind: "instant", at: requireInstant(new Date()) },
+    );
 
     const lineItem = buildEntranceFeeLineItem(
       categoryLabel,
@@ -360,6 +371,7 @@ export async function createXeroEntranceFeeInvoice(
       feeMapping.itemCode,
       incomeMapping.codeExplicitlyConfigured,
       entranceFee.description,
+      taxRendering,
     );
 
     // The invoice's issue date decides its GST period and financial year, so it
@@ -383,7 +395,7 @@ export async function createXeroEntranceFeeInvoice(
       dueDate,
       reference,
       status: Invoice.StatusEnum.AUTHORISED,
-      lineAmountTypes: LineAmountTypes.Inclusive,
+      lineAmountTypes: taxRendering.lineAmountTypes,
     });
 
     const requestPayload = { invoices: [buildInvoice(contactId)] };

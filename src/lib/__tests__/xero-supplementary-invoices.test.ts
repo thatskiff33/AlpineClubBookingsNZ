@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   unpaidGapPayloadIfOverlapping: vi.fn(),
 }));
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/credit-release-xero-payment", () => ({
   unpaidGapPayloadIfOverlapping: async (...a: unknown[]) => (await mocks.unpaidGapPayloadIfOverlapping(...a)) ?? null,
 }));

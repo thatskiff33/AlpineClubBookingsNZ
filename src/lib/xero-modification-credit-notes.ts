@@ -7,7 +7,7 @@
  * original invoice when possible.
  */
 
-import { CreditNote, LineAmountTypes, type LineItem } from "xero-node";
+import { CreditNote, type LineItem } from "xero-node";
 import { prisma } from "./prisma";
 import { bookingOwner } from "@/lib/booking-owner";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
@@ -29,6 +29,8 @@ import {
   invoicedPartyContactRepair,
 } from "@/lib/organisation-xero-contacts";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroLineTax } from "@/lib/xero-tax-rendering";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { buildSyntheticAllocationId } from "./xero-invoice-helpers";
 import {
@@ -189,6 +191,8 @@ export async function createXeroCreditNoteForModification(params: {
   });
   const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
   const accountCode = refundMapping.code ?? "200";
+  // #4632: a note returns money under the treatment the booking was charged under.
+  const taxRendering = await resolveXeroTaxRendering({ kind: "booking", bookingId });
 
   /**
    * #3530 (`INV-MOD-058`): the lines the edit stored, inverted for a credit
@@ -204,6 +208,7 @@ export async function createXeroCreditNoteForModification(params: {
         bookingModificationId,
         document: "MODIFICATION_CREDIT_NOTE",
         billedCents: refundAmountCents,
+        taxRendering,
       }, params.format)
     : // A legacy row anchored on the booking has no edit behind it; nothing
       // to itemise and nothing to record, as the account-credit note does.
@@ -217,7 +222,7 @@ export async function createXeroCreditNoteForModification(params: {
     }),
     quantity: 1,
     unitAmount: refundAmountCents / 100,
-    taxType: "OUTPUT2",
+    ...xeroLineTax(taxRendering),
   };
   if (refundMapping.itemCode) {
     modRefundLineItem.itemCode = refundMapping.itemCode;
@@ -236,7 +241,7 @@ export async function createXeroCreditNoteForModification(params: {
     type: CreditNote.TypeEnum.ACCRECCREDIT,
     contact: { contactID: resolvedContactId },
     date: modificationCreditNoteDate,
-    lineAmountTypes: LineAmountTypes.Inclusive,
+    lineAmountTypes: taxRendering.lineAmountTypes,
     lineItems: itemised?.lineItems ?? [modRefundLineItem],
     reference: buildRefundDocumentReference({ method: wording, bookingId }),
     status: CreditNote.StatusEnum.AUTHORISED,

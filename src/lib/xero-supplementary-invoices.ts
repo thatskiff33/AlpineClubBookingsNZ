@@ -10,7 +10,6 @@
 import {
   Invoice,
   LineItem,
-  LineAmountTypes,
   Payment as XeroPayment,
 } from "xero-node";
 import { prisma } from "./prisma";
@@ -45,6 +44,8 @@ import {
 import { readStripeCaptureDocumentDate } from "@/lib/stripe-capture-date";
 import { queueWaitingPaidAnotherWayNote } from "@/lib/paid-another-way-receipt-note";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroLineTax } from "@/lib/xero-tax-rendering";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import {
   xeroDocumentDateForClubToday,
   xeroDocumentDateFromInstant,
@@ -181,6 +182,12 @@ export async function createXeroSupplementaryInvoice(params: {
     ? await resolveOrganiserXeroContact(organiserBilling, contactOptions)
     : await findOrCreateXeroContactForInvoicedParty(booking, contactOptions);
   const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
+  // #4632: the booking's own treatment; a place billed to its organiser
+  // carries the organiser's booking's, as its combined invoice does.
+  const taxRendering = await resolveXeroTaxRendering({
+    kind: "booking",
+    bookingId: organiserBilling?.organiserBookingId ?? bookingId,
+  });
   // A negative price adjustment is a give-back, so it posts to the
   // hutFeeRefunds mapping like the standalone-reduction credit-note path
   // (owner decision on #1356): clubs that prefer a single account map
@@ -209,6 +216,7 @@ export async function createXeroSupplementaryInvoice(params: {
     billedCents: netAmountCents,
     billedFigures: { priceDiffCents, changeFeeCents },
     secondAsk: Boolean(shortfallReviewTaskId),
+    taxRendering,
   }, params.format);
 
   const lineItems: LineItem[] = itemised.lineItems ?? [];
@@ -236,7 +244,7 @@ export async function createXeroSupplementaryInvoice(params: {
         : `Booking modification - price adjustment (Booking ${bookingId.slice(0, 8)})`,
       quantity: 1,
       unitAmount: priceDiffCents / 100,
-      taxType: "OUTPUT2",
+      ...xeroLineTax(taxRendering),
     };
     if (lineMapping.itemCode) li.itemCode = lineMapping.itemCode;
     if (!lineMapping.itemCode || lineCode !== "200" || lineMapping.codeExplicitlyConfigured) {
@@ -246,7 +254,7 @@ export async function createXeroSupplementaryInvoice(params: {
   }
 
   if (!itemised.lineItems && changeFeeCents > 0) {
-    lineItems.push(changeFeeLineItem(changeFeeCents, incomeMapping));
+    lineItems.push(changeFeeLineItem(changeFeeCents, incomeMapping, taxRendering));
   }
 
   // Both halves of this are real instants — `BookingModification.createdAt` is a
@@ -306,7 +314,7 @@ export async function createXeroSupplementaryInvoice(params: {
       ? `Further supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`
       : `Supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`,
     status: Invoice.StatusEnum.AUTHORISED,
-    lineAmountTypes: LineAmountTypes.Inclusive,
+    lineAmountTypes: taxRendering.lineAmountTypes,
   });
 
   // #3193: a second ask is anchored on the review task whose share it bills, so

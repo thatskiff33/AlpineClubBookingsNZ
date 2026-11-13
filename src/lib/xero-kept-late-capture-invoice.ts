@@ -41,7 +41,7 @@
  * transaction that records the receipt's link - so the note exists exactly
  * when the receipt does, and never runs before it.
  */
-import { Invoice, LineAmountTypes, type LineItem } from "xero-node";
+import { Invoice, type LineItem } from "xero-node";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -68,6 +68,8 @@ import { applyHutFeeLineCodes } from "@/lib/xero-hut-fee-line-codes";
 import { xeroDocumentDateFromInstant } from "@/lib/xero-provider-dates";
 import { readStripeCaptureDocumentDate } from "@/lib/stripe-capture-date";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroLineTax } from "@/lib/xero-tax-rendering";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { createXeroPaymentForInvoice } from "@/lib/xero-invoice-payments";
 import type { ClubTimeZone } from "@/lib/club-time";
 import { findLateCaptureRefundPaidAnotherWay } from "@/lib/late-capture-paid-another-way";
@@ -539,12 +541,14 @@ export async function createXeroKeptLateCaptureInvoice(
         repairExistingLink: params.repairExistingLink,
       });
       const income = await getResolvedAccountMapping("hutFeesIncome");
+      // #4632: the kept money was charged under the booking's own treatment.
+      const taxRendering = await resolveXeroTaxRendering({ kind: "booking", bookingId });
       const line: LineItem = applyHutFeeLineCodes(
         {
           description: keptLateCaptureLineDescription(bookingId),
           quantity: 1,
           unitAmount: capturedCents / 100,
-          taxType: "OUTPUT2",
+          ...xeroLineTax(taxRendering),
         },
         {
           itemCode: income.itemCode,
@@ -560,7 +564,7 @@ export async function createXeroKeptLateCaptureInvoice(
         dueDate: capturedOn,
         reference: `Kept late payment for booking ${bookingId.slice(0, 8)}`,
         status: Invoice.StatusEnum.AUTHORISED,
-        lineAmountTypes: LineAmountTypes.Inclusive,
+        lineAmountTypes: taxRendering.lineAmountTypes,
       });
       // Keep the queued instruction beside the request, so a retry replays it.
       const buildStoredPayload = (resolvedContactId: string) => ({

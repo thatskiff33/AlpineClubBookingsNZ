@@ -193,6 +193,7 @@ const mocks = vi.hoisted(() => {
   };
 });
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("xero-node", () => ({
   XeroClient: mocks.XeroClient,
   Contact: class {},
