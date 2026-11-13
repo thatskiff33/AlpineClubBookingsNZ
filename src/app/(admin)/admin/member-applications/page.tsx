@@ -27,6 +27,7 @@ import {
 import ApprovalMappingPanel, {
   type ReviewRequestPayload,
 } from "./_components/approval-mapping-panel";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 type ApplicationStatus =
   | "PENDING_NOMINATORS"
@@ -187,12 +188,12 @@ export default function MemberApplicationsPage() {
         params.set("status", nextFilter);
       }
       const response = await fetch(`/api/admin/member-applications?${params.toString()}`);
-      const data = await response.json();
-
       if (!response.ok) {
-        setError(data.error || "Could not load member applications.");
+        setError(await apiErrorMessageFromResponse(response, "Could not load member applications."));
         return;
       }
+
+      const data = await response.json();
 
       setApplications(data.applications || []);
       setPendingCount(data.pendingCount || 0);
@@ -271,12 +272,12 @@ export default function MemberApplicationsPage() {
           ...(mappingPreviewToken ? { mappingPreviewToken } : {}),
         }),
       });
-      const data = await response.json();
-
       if (!response.ok) {
-        setError(data.error || "Could not update the application.");
+        setError(await apiErrorMessageFromResponse(response, "Could not update the application."));
         return;
       }
+
+      const data = await response.json();
 
       const warnings =
         Array.isArray(data.warnings) && data.warnings.length > 0
@@ -307,12 +308,12 @@ export default function MemberApplicationsPage() {
         `/api/admin/member-applications/${applicationId}/nominations/refresh`,
         { method: "POST" }
       );
-      const data = await response.json();
-
       if (!response.ok) {
-        setError(data.error || "Could not refresh the nomination workflow.");
+        setError(await apiErrorMessageFromResponse(response, "Could not refresh the nomination workflow."));
         return;
       }
+
+      const data = await response.json();
 
       const warnings =
         Array.isArray(data.warnings) && data.warnings.length > 0
@@ -343,12 +344,12 @@ export default function MemberApplicationsPage() {
       const response = await fetch(
         `/api/admin/members?q=${encodeURIComponent(query)}&active=true&pageSize=5`
       );
-      const data = await response.json();
-
       if (!response.ok) {
-        setError(data.error || "Could not search members.");
+        setError(await apiErrorMessageFromResponse(response, "Could not search members."));
         return;
       }
+
+      const data = await response.json();
 
       setReplacementResults((prev) => ({
         ...prev,
@@ -379,12 +380,12 @@ export default function MemberApplicationsPage() {
           body: JSON.stringify({ memberId: member.id }),
         }
       );
-      const data = await response.json();
-
       if (!response.ok) {
-        setError(data.error || "Could not replace the nominator.");
+        setError(await apiErrorMessageFromResponse(response, "Could not replace the nominator."));
         return;
       }
+
+      const data = await response.json();
 
       const warnings =
         Array.isArray(data.warnings) && data.warnings.length > 0

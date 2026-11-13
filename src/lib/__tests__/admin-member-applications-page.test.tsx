@@ -2,6 +2,7 @@
 
 import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";
 
 // #1997: the page derives view-only gating from the session matrix via
 // useAdminAreaEditAccess("membership"). Mock an all-edit admin so the existing
@@ -90,11 +91,24 @@ function listResponse() {
   };
 }
 
+/**
+ * One request a refusal case answers itself (#4976, ALP-589); every other
+ * request gets the suite's ordinary answer below.
+ */
+let refused: {
+  matches: (url: string, init?: RequestInit) => boolean;
+  answer: () => Response | Promise<Response>;
+} | null = null;
+
 describe("MemberApplicationsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    refused = null;
     global.fetch = fetchMock as typeof fetch;
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (refused?.matches(url, init)) {
+        return Promise.resolve().then(refused.answer);
+      }
       if (init?.method === "PUT") {
         return Promise.resolve({
           ok: true,
@@ -281,4 +295,118 @@ describe("MemberApplicationsPage", () => {
       );
     });
   });
+
+  // #4976 (ALP-589): every handler used to parse the reply before checking
+  // `ok`. Their catches already fell back, so these hold the shared reader in
+  // place rather than a visible fix.
+  describe("a refused request says why", () => {
+    async function refreshTheStuckApplication() {
+      render(<MemberApplicationsPage />);
+      await screen.findByText("Stuck Nominators");
+      fireEvent.click(screen.getByRole("button", { name: /Refresh nomination workflow/i }));
+    }
+
+    async function searchForANominator() {
+      render(<MemberApplicationsPage />);
+      await screen.findByText("Stuck Nominators");
+      fireEvent.change(screen.getAllByPlaceholderText(/Search name or email/i)[0], {
+        target: { value: "Nom Three" },
+      });
+      fireEvent.click(screen.getAllByRole("button", { name: /Search members/i })[0]);
+    }
+
+    async function replaceTheNominator() {
+      await searchForANominator();
+      fireEvent.click((await screen.findAllByRole("button", { name: /^Use$/ }))[0]);
+    }
+
+    async function rejectTheStuckApplication() {
+      render(<MemberApplicationsPage />);
+      await screen.findByText("Stuck Nominators");
+      fireEvent.click(screen.getByRole("button", { name: /Reject application/i }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: /Reject and email applicant/i }),
+      );
+    }
+
+    describe("loading the applications", () => {
+      itShowsEveryRefusal({
+        fallback: "Could not load member applications.",
+        submit: async (answer) => {
+          refused = {
+            matches: (url) => url.startsWith("/api/admin/member-applications?"),
+            answer,
+          };
+          render(<MemberApplicationsPage />);
+        },
+      });
+    });
+
+    describe("reviewing an application", () => {
+      itShowsEveryRefusal({
+        fallback: "Could not update the application.",
+        submit: async (answer) => {
+          refused = { matches: (_url, init) => init?.method === "PUT", answer };
+          await rejectTheStuckApplication();
+        },
+      });
+
+      it("reloads the list after a successful review", async () => {
+        await rejectTheStuckApplication();
+
+        expect(await screen.findByText("Application rejected.")).toBeTruthy();
+        await waitFor(() => expect(listLoads()).toBe(2));
+      });
+    });
+
+    describe("refreshing the nomination workflow", () => {
+      itShowsEveryRefusal({
+        fallback: "Could not refresh the nomination workflow.",
+        submit: async (answer) => {
+          refused = { matches: (url) => url.endsWith("/nominations/refresh"), answer };
+          await refreshTheStuckApplication();
+        },
+      });
+
+      it("reloads the list after a successful refresh", async () => {
+        await refreshTheStuckApplication();
+
+        expect(await screen.findByText("Nomination workflow refreshed.")).toBeTruthy();
+        await waitFor(() => expect(listLoads()).toBe(2));
+      });
+    });
+
+    describe("searching for a replacement nominator", () => {
+      itShowsEveryRefusal({
+        fallback: "Could not search members.",
+        submit: async (answer) => {
+          refused = { matches: (url) => url.startsWith("/api/admin/members?"), answer };
+          await searchForANominator();
+        },
+      });
+    });
+
+    describe("replacing a nominator", () => {
+      itShowsEveryRefusal({
+        fallback: "Could not replace the nominator.",
+        submit: async (answer) => {
+          refused = { matches: (url) => url.endsWith("/replace"), answer };
+          await replaceTheNominator();
+        },
+      });
+
+      it("reloads the list after a successful replacement", async () => {
+        await replaceTheNominator();
+
+        expect(await screen.findByText("Nominator replaced with Nom Three.")).toBeTruthy();
+        await waitFor(() => expect(listLoads()).toBe(2));
+      });
+    });
+  });
 });
+
+function listLoads() {
+  return fetchMock.mock.calls.filter(([url]) =>
+    String(url).startsWith("/api/admin/member-applications?"),
+  ).length;
+}
