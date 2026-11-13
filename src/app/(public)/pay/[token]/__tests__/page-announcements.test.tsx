@@ -197,4 +197,3 @@ describe("the pay-link page announces its outcomes (#4949)", () => {
     await waitFor(() => expect(document.activeElement).toBe(status));
   });
 });
-
