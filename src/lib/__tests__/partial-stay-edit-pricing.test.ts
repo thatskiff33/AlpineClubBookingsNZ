@@ -179,6 +179,8 @@ vi.mock("@/lib/payment-recovery", () => ({
   completeCanceledSupersededPaymentIntentRecovery: vi.fn().mockResolvedValue(undefined),
   queueSupersededPaymentIntentRefundRecovery: vi.fn().mockResolvedValue(undefined),
   queueRefundRecoveryOperation: vi.fn().mockResolvedValue(undefined),
+  // #4992: the edit writes its own-card refund debt inside its transaction.
+  enqueueBookingModificationRefundRecovery: vi.fn().mockResolvedValue({ id: "recovery_modification_refund" }),
   getStripePaymentMethodId: vi.fn().mockReturnValue(null),
 }));
 // #3341 (`INV-OPS-015`): the ADDITIONAL supersede stays REAL. The price

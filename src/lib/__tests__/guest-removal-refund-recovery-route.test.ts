@@ -5,10 +5,12 @@ const mockPlanStripeRefundAllocation = vi.hoisted(() => vi.fn());
 import { NO_ADDITIONAL_ASK } from "@/lib/additional-payment-ask";
 import { NextRequest } from "next/server";
 
-// Issue #818 (wave 2): a Stripe refund failure after guest removal must enqueue a
-// durable, admin-visible REFUND_BOOKING_MODIFICATION recovery operation instead of
-// only logging "manual reconciliation required". These tests pin that behaviour to
-// the DELETE handler so it stays consistent with the booking-modification path.
+// Issue #818 (wave 2): a Stripe refund failure after guest removal leaves a
+// durable, admin-visible REFUND_BOOKING_MODIFICATION recovery operation owed
+// instead of only logging "manual reconciliation required". #4992: the removal's
+// transaction wrote that row before it committed (`ownCardRefund`), so the DELETE
+// handler sends its frozen plan, closes the row when the refund is made, and
+// never queues one after commit.
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -18,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   removeBookingGuestInTransaction: vi.fn(),
   refundPaymentTransactions: vi.fn(),
   enqueueBookingModificationRefundRecovery: vi.fn(),
+  markBookingModificationRefundRecoverySucceeded: vi.fn(),
+  recoveryUpdateMany: vi.fn(),
   logAudit: vi.fn(),
   sendBookingModifiedEmail: vi.fn(),
   queueXeroBookingEditSettlement: vi.fn(),
@@ -35,7 +39,8 @@ vi.mock("@/lib/prisma", () => ({
     $transaction: mocks.transaction,
     member: { findUnique: mocks.memberFindUnique },
     // #4057: the organiser child refund's debt, looked up and re-read after commit.
-    paymentRecoveryOperation: { findUnique: mocks.recoveryFindUnique },
+    // #4992: the own-card row's re-plan after a refusal or a partial failure.
+    paymentRecoveryOperation: { findUnique: mocks.recoveryFindUnique, updateMany: mocks.recoveryUpdateMany },
   },
 }));
 vi.mock("@/lib/booking-guest-removal-service", () => ({
@@ -59,6 +64,7 @@ vi.mock("@/lib/payment-recovery", () => ({
   enqueueAdditionalPaymentIntentRecovery: vi.fn().mockResolvedValue({ id: "recovery_additional" }),
   enqueueBookingModificationRefundRecovery:
     mocks.enqueueBookingModificationRefundRecovery,
+  markBookingModificationRefundRecoverySucceeded: mocks.markBookingModificationRefundRecoverySucceeded,
   runPaymentRecoveryOperationNow: mocks.runPaymentRecoveryOperationNow,
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: mocks.logAudit }));
@@ -73,7 +79,13 @@ vi.mock("@/lib/logger", () => ({
 
 import { DELETE } from "@/app/api/bookings/[id]/guests/[guestId]/route";
 import { ORGANISER_REFUND_DEBT_STATES, primeOrganiserRefundDebt } from "./support/organiser-refund-debt-reread";
-import { expectQueuedOnce, ownCardRefundPlan, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
+import {
+  expectPrePersistedEditRefund,
+  frozenOwnCardRefund,
+  ownCardRefundPlan,
+  OWN_CARD_REFUND_STATES,
+  primeOwnCardRefund,
+} from "./support/own-card-refund-outcome";
 
 const params = Promise.resolve({ id: "b1", guestId: "g1" });
 
@@ -122,6 +134,8 @@ function makeResult(overrides: Record<string, unknown> = {}) {
     bookingModificationId: "mod_1",
     zeroDollarAutoPaid: false,
     supersededPrimaryPaymentIntents: [],
+    // #4992: the plan the removal's transaction froze on its pre-persisted row.
+    ownCardRefund: { plan: [{ paymentTransactionId: "txn_refund", amountCents: 2000 }] },
     ...overrides,
   };
 }
@@ -140,10 +154,13 @@ beforeEach(() => {
   mocks.queueXeroBookingEditSettlement.mockResolvedValue(undefined);
   mocks.sendBookingModifiedEmail.mockResolvedValue(undefined);
   mocks.enqueueBookingModificationRefundRecovery.mockResolvedValue(undefined);
+  mocks.markBookingModificationRefundRecoverySucceeded.mockResolvedValue({ count: 1 });
+  mocks.recoveryFindUnique.mockResolvedValue(null);
+  mocks.recoveryUpdateMany.mockResolvedValue({ count: 1 });
 });
 
 describe("DELETE /api/bookings/[id]/guests/[guestId] refund recovery", () => {
-  it("enqueues durable refund recovery when the Stripe refund fails", async () => {
+  it("leaves the pre-persisted refund recovery owed when the Stripe refund fails", async () => {
     mocks.removeBookingGuestInTransaction.mockResolvedValue(makeResult());
     mocks.refundPaymentTransactions.mockRejectedValue(new Error("stripe down"));
 
@@ -152,21 +169,23 @@ describe("DELETE /api/bookings/[id]/guests/[guestId] refund recovery", () => {
 
     expect(res.status).toBe(200);
     expect(body.stripeRefundId).toBeNull();
-    expect(mocks.enqueueBookingModificationRefundRecovery).toHaveBeenCalledWith({
-      bookingId: "b1",
-      paymentId: "pay_1",
-      bookingModificationId: "mod_1",
-      amountCents: 2000,
-      // The route's exact Stripe key prefix rides on the recovery row (#1152).
-      stripeKeyPrefix: "guest_remove_refund_b1_mod_1",
-      allocationPlan: [{ paymentTransactionId: "txn_refund", amountCents: 2000 }],
-    });
+    // The frozen plan, under the route's exact Stripe key prefix (#1152).
+    expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "pay_1",
+        amountCents: 2000,
+        allocation: [{ paymentTransactionId: "txn_refund", amountCents: 2000 }],
+        idempotencyKeyPrefix: "guest_remove_refund_b1_mod_1",
+      }),
+    );
+    expect(mocks.enqueueBookingModificationRefundRecovery).not.toHaveBeenCalled();
+    expect(mocks.markBookingModificationRefundRecoverySucceeded).not.toHaveBeenCalled();
   });
 
-  it("does not enqueue recovery when the Stripe refund succeeds", async () => {
+  it("closes the pre-persisted row when the Stripe refund succeeds", async () => {
     mocks.removeBookingGuestInTransaction.mockResolvedValue(makeResult());
     mocks.refundPaymentTransactions.mockResolvedValue({
-      refunds: [{ refundId: "re_1" }],
+      refunds: [{ refundId: "re_1", status: "succeeded" }],
     });
 
     const res = await DELETE(makeRequest(), { params });
@@ -175,19 +194,21 @@ describe("DELETE /api/bookings/[id]/guests/[guestId] refund recovery", () => {
     expect(res.status).toBe(200);
     expect(body.stripeRefundId).toBe("re_1");
     expect(mocks.enqueueBookingModificationRefundRecovery).not.toHaveBeenCalled();
+    expect(mocks.markBookingModificationRefundRecoverySucceeded).toHaveBeenCalledExactlyOnceWith({
+      idempotencyKey: "payment_recovery_modification_refund_mod_1",
+      sentPlan: [{ paymentTransactionId: "txn_refund", amountCents: 2000 }],
+    });
   });
 
-  it("still returns success when recovery enqueue also fails", async () => {
+  it("still returns success when the close also fails", async () => {
     mocks.removeBookingGuestInTransaction.mockResolvedValue(makeResult());
-    mocks.refundPaymentTransactions.mockRejectedValue(new Error("stripe down"));
-    mocks.enqueueBookingModificationRefundRecovery.mockRejectedValue(
-      new Error("db down"),
-    );
+    mocks.refundPaymentTransactions.mockResolvedValue({ refunds: [{ refundId: "re_1", status: "succeeded" }] });
+    mocks.markBookingModificationRefundRecoverySucceeded.mockRejectedValue(new Error("db down"));
 
     const res = await DELETE(makeRequest(), { params });
 
     expect(res.status).toBe(200);
-    expect(mocks.enqueueBookingModificationRefundRecovery).toHaveBeenCalled();
+    expect(mocks.markBookingModificationRefundRecoverySucceeded).toHaveBeenCalled();
   });
 
   it("does not refund or enqueue recovery when there is nothing to refund", async () => {
@@ -278,41 +299,50 @@ describe("DELETE guest removal on an organiser-paid child: the email's refund de
 
 /*
   #4070: the member's own card. The email says the refund was made only when
-  Stripe made it; a refund the Stripe call could not make is queued for the
-  recovery runner and on its way. The real `executeBookingModificationRefund`
+  Stripe made it; a refund the Stripe call could not make stays owed on the
+  row the removal wrote before it committed (#4992), and is on its way. The real `executeBookingModificationRefund`
   runs here.
 */
 describe("DELETE guest removal on the member's own card: the email's refund destination (#4070)", () => {
-  it.each(OWN_CARD_REFUND_STATES)("$label -> $destination", async ({ answer, queued, destination }) => {
-    mocks.removeBookingGuestInTransaction.mockResolvedValue(makeResult());
+  it.each(OWN_CARD_REFUND_STATES)("$label -> $destination", async ({ answer, destination }) => {
+    mocks.removeBookingGuestInTransaction.mockResolvedValue(makeResult({ ownCardRefund: frozenOwnCardRefund(answer, 2000) }));
     primeOwnCardRefund(mocks.refundPaymentTransactions, answer, mockPlanStripeRefundAllocation);
 
     const res = await DELETE(makeRequest(), { params });
 
     expect(res.status).toBe(200);
     expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ paymentId: "pay_1", amountCents: 2000 }));
-    expectQueuedOnce(mocks.enqueueBookingModificationRefundRecovery, queued, 2000, answer);
+    expectPrePersistedEditRefund(
+      {
+        refund: mocks.refundPaymentTransactions,
+        enqueue: mocks.enqueueBookingModificationRefundRecovery,
+        close: mocks.markBookingModificationRefundRecoverySucceeded,
+      },
+      { answer, destination, pendingCents: 2000, bookingModificationId: "mod_1", reservedInTransaction: false },
+    );
     expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ refundAmountCents: 2000, refundDestination: destination, refundByBankTransfer: null }),
       expect.anything(),
     );
   });
 
-  // #4083 review: the officers hear of a refusal once, when the edit's row is
-  // first written - not when a repeat enqueue finds it already there.
+  // #4083 review, #4992: the officers hear of a refusal once, when it first
+  // re-plans the removal's pre-persisted row - not when another writer already did.
   it.each([
-    [true, 1],
-    [false, 0],
-  ])("a refused refund alerts the officers when its row is created (%s -> %i alert)", async (created, alerts) => {
-    mocks.removeBookingGuestInTransaction.mockResolvedValue(makeResult());
+    [1, 1],
+    [0, 0],
+  ])("a refused refund alerts the officers when it re-plans the row (%i moved -> %i alert)", async (count, alerts) => {
     const slice = { paymentTransactionId: "txn_primary", amountCents: 2000 };
+    mocks.removeBookingGuestInTransaction.mockResolvedValue(makeResult({ ownCardRefund: { plan: [slice] } }));
     mocks.refundPaymentTransactions.mockResolvedValue({
       refunds: [{ refundId: "re_refused", paymentIntentId: "pi_original", amountCents: 2000, status: "failed", slice }],
     });
-    mocks.enqueueBookingModificationRefundRecovery.mockResolvedValue({ created, paymentIntentId: "pi_original" });
+    mocks.recoveryUpdateMany.mockResolvedValue({ count });
 
     await DELETE(makeRequest(), { params });
 
+    expect(mocks.enqueueBookingModificationRefundRecovery).not.toHaveBeenCalled();
+    expect(mocks.markBookingModificationRefundRecoverySucceeded).not.toHaveBeenCalled();
     expect(mocks.alertPaymentRecoveryOfficers).toHaveBeenCalledTimes(alerts);
     if (alerts) {
       expect(mocks.alertPaymentRecoveryOfficers).toHaveBeenCalledWith(
@@ -326,19 +356,21 @@ describe("DELETE guest removal on the member's own card: the email's refund dest
     }
   });
 
-  it("a refused refund whose row could not be written still alerts the officers: the alert is then its only record (#4083)", async () => {
-    mocks.removeBookingGuestInTransaction.mockResolvedValue(makeResult());
+  it("a refused refund whose re-plan fails is still owed on the row the removal wrote (#4992)", async () => {
     const slice = { paymentTransactionId: "txn_primary", amountCents: 2000 };
+    mocks.removeBookingGuestInTransaction.mockResolvedValue(makeResult({ ownCardRefund: { plan: [slice] } }));
     mocks.refundPaymentTransactions.mockResolvedValue({
       refunds: [{ refundId: "re_refused", paymentIntentId: "pi_original", amountCents: 2000, status: "failed", slice }],
     });
-    mocks.enqueueBookingModificationRefundRecovery.mockRejectedValue(new Error("database down"));
+    mocks.recoveryUpdateMany.mockRejectedValue(new Error("database down"));
 
-    await DELETE(makeRequest(), { params });
+    const res = await DELETE(makeRequest(), { params });
 
-    expect(mocks.alertPaymentRecoveryOfficers).toHaveBeenCalledTimes(1);
-    expect(mocks.alertPaymentRecoveryOfficers).toHaveBeenCalledWith(
-      expect.objectContaining({ amountCents: 2000, paymentIntentId: "pi_original" }),
+    expect(res.status).toBe(200);
+    expect(mocks.enqueueBookingModificationRefundRecovery).not.toHaveBeenCalled();
+    expect(mocks.markBookingModificationRefundRecoverySucceeded).not.toHaveBeenCalled();
+    expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ refundDestination: "own_card_pending" }),
       expect.anything(),
     );
   });

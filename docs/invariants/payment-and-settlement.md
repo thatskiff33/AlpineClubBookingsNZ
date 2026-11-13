@@ -1480,13 +1480,13 @@ preview).
 
 ## INV-PAY-130
 
-**Related: `INV-PAY-128`**, carried here to the other card refund doors
-(#4103).
+**Related: `INV-PAY-128`** (#4103).
 
 - **No card refund door closes a row, or says "refunded", on a refusal.**
   Stripe's `failed` or `canceled` answer sent nothing back.
-  - **A door whose row predates its attempt** - the cancellation, edit
-    review, approved late capture, duplicate capture and capacity race -
+  - **A door whose row predates its attempt** - the cancellation, a booking
+    edit's own-card refund (#4992), edit review, approved late capture,
+    duplicate capture and capacity race -
     re-plans that row through `keepRefusedPrePersistedRefundOwed`: refused
     slices on their next key,
     made ones marked, a slice after a throw on its own key; only while
@@ -1836,13 +1836,17 @@ release).
 and **`INV-PAY-147`** (slice evidence).
 
 - A booking edit's own-card refund freezes its allocation with
-  `planStripeRefundAllocation` before asking Stripe, rejects a shortfall with
-  the existing exceeds-captured error, and sends exactly those slices through
-  `refundPaymentTransactions` (#3984).
-- On success or throw, `inlineRefundAfterAttempt` reads that same plan. If any
-  cents remain unmade, recovery keeps the whole read plan and its total:
-  completed slices marked `madeRefundId`, refused slices moved to their next
-  key, unanswered slices on their original key. Within Stripe's 24-hour
+  `planStripeRefundAllocation` inside the edit's own transaction, rejects a
+  shortfall with the existing exceeds-captured error, and writes its recovery
+  row there with that plan (`reserveModificationRefundDebts`, #3984, #4992). A
+  process that dies after the edit commits leaves the refund owed. After commit
+  the edit sends exactly those slices through `refundPaymentTransactions`.
+- The edit door is pre-persisted (`INV-PAY-130`): a refund made closes its row
+  on the plan it sent; a refusal re-plans it
+  (`keepRefusedPrePersistedRefundOwed`); a throw marks the slices made before
+  it (`markPrePersistedRefundAttempt`) and leaves the rest on their keys for
+  the runner, which replays them under the edit's own prefix and reason
+  (`INV-MOD-061`). Nothing is queued after commit. Within Stripe's 24-hour
   idempotency window, a recording failure after Stripe succeeds therefore
   replays the same refund even if `charge.refunded` records it first. Beyond
   that window, `INV-PAY-147` closes this gap for refunds carrying slice evidence.
@@ -1850,13 +1854,16 @@ and **`INV-PAY-147`** (slice evidence).
 - Limit: on a multi-charge payment, a concurrent refund on the same charge can
   leave a frozen slice larger than its headroom; the row then dies owed and
   alerts, and never over-refunds.
-- Planning failures occur before Stripe; they retain the existing whole-debt
-  recovery. Refused slices still alert when the row is newly written or cannot
-  be written, and an incomplete refund reports `own_card_pending`.
+- A planning failure that is not a database error writes the whole debt with
+  no plan; the edit still commits and reports `own_card_pending`, as does any
+  incomplete refund. A payment with no Stripe intent writes no row and reports
+  the same. Officers hear of a refusal when it moves the row.
 - Date edits, batch edits, guest removals and guest-acceptance reprice share this
-  door. Edit-financial-review uses its separate pre-persisted plan.
-- Proven by `modification-refund-replay-reason.test.ts`, `payment-recovery.test.ts`
-  and `refused-card-refund-retry.realdb.test.ts`.
+  door.
+- Proven by `modification-refund-replay-reason.test.ts`, `payment-recovery.test.ts`,
+  `booking-modification-refund.test.ts`,
+  `modification-refund-prepersist.realdb.test.ts` and
+  `refused-card-refund-retry.realdb.test.ts`.
 
 ## INV-PAY-147
 

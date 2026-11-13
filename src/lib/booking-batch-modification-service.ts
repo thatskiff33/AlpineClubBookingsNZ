@@ -115,7 +115,7 @@ import {
   raiseEditRefundHandBackIfOwed,
   refundableCashNetOfOpenHandBacks,
 } from "@/lib/edit-refund-hand-back";
-import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
+import { reserveModificationRefundDebts } from "@/lib/booking-modification-settlement";
 import { prisma } from "@/lib/prisma";
 import {
   withOptionalTransaction,
@@ -2089,8 +2089,11 @@ export async function modifyBookingBatch({
         booking.payment?.id,
       );
     }
-    // #3653: an organiser-settled child's refund debt, before this edit commits.
-    await reserveOrganiserChildModificationRefund(tx, {
+    // #3653, #4992: the card refund this edit owes (an organiser's, or the member's
+    // own with its frozen plan), written before this edit commits.
+    const ownCardRefund = await reserveModificationRefundDebts(tx, {
+      door: "batchModify",
+      pendingRefundAmountCents: payments.pendingRefundAmountCents,
       plan: payments.organiserChildRefund,
       bookingId,
       payment: booking.payment,
@@ -2232,6 +2235,7 @@ export async function modifyBookingBatch({
       xeroAdditionalAmountCents: payments.xeroAdditionalAmountCents,
       xeroRefundAmountCents: payments.xeroRefundAmountCents,
       appliedCreditGivenBackCents: payments.appliedCreditGivenBackCents,
+      ownCardRefund,
       organiserChildRefund: payments.organiserChildRefund,
       settlementMethod: payments.settlementMethod,
       policyRetainedAmountCents: payments.policyRetainedAmountCents,
@@ -2395,10 +2399,8 @@ export async function modifyBookingBatch({
       format,
       bookingId,
       result,
-      idempotencyKeyPrefix: `mod_batch_refund_${bookingId}`,
-      failureMessage: "Stripe refund failed after batch modification - enqueueing recovery",
-      recoveryFailureMessage:
-        "Failed to enqueue payment recovery for Stripe refund failure after batch modification",
+      door: "batchModify",
+      failureMessage: "Stripe refund failed after batch modification; the pre-persisted debt stays owed",
     });
 
     const additionalMint = await createModificationAdditionalPaymentIntent({

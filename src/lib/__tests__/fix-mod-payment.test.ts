@@ -39,6 +39,9 @@ const mockAuditCreate = vi.fn();
 const mockUpsertPaymentIntentTransaction = vi.fn();
 const mockRefundPaymentTransactions = vi.fn();
 const mockEnqueueBookingModificationRefundRecovery = vi.fn();
+const mockMarkBookingModificationRefundRecoverySucceeded = vi.fn<(...args: unknown[]) => Promise<{ count: number }>>(async () => ({ count: 1 }));
+// #4992: a refused or part-made own-card refund re-plans the edit's pre-persisted row.
+const mockRecoveryOperationUpdateMany = vi.fn<(...args: unknown[]) => Promise<{ count: number }>>(async () => ({ count: 1 }));
 const mockFindPaymentTransactionByIntentId = vi.fn();
 const mockMarkPaymentIntentTransactionSucceeded = vi.fn();
 const mockMarkPaymentIntentTransactionFailed = vi.fn();
@@ -99,6 +102,7 @@ vi.mock("@/lib/prisma", () => ({
     paymentRecoveryOperation: {
       findMany: vi.fn(async () => []),
       findUnique: (...args: unknown[]) => mockRecoveryOperationFindUnique(...args),
+      updateMany: (...args: unknown[]) => mockRecoveryOperationUpdateMany(...args),
     },
     manualRefundTask: {
       // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
@@ -276,6 +280,9 @@ vi.mock("@/lib/payment-recovery", () => ({
   // #4070: what an own-card refund the Stripe call could not make still owes.
   enqueueBookingModificationRefundRecovery: (...args: unknown[]) =>
     mockEnqueueBookingModificationRefundRecovery(...args),
+  // #4992: the edit's own close of its pre-persisted card refund row.
+  markBookingModificationRefundRecoverySucceeded: (...args: unknown[]) =>
+    mockMarkBookingModificationRefundRecoverySucceeded(...args),
   completeCanceledSupersededPaymentIntentRecovery: (...args: unknown[]) =>
     mockCompleteCanceledSupersededPaymentIntentRecovery(...args),
   queueSupersededPaymentIntentRefundRecovery: (...args: unknown[]) =>
@@ -331,7 +338,7 @@ import {
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { ORGANISER_REFUND_DEBT_STATES, primeOrganiserRefundDebt } from "./support/organiser-refund-debt-reread";
-import { expectQueuedOnce, ownCardRefundPlan, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
+import { expectPrePersistedEditRefund, ownCardRefundPlan, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
 import { UNSUPPORTED_CHARGE_CURRENCY_MEMBER_BODY } from "@/lib/stripe-charge-currency";
 import {
   ADDITIONAL_PAYMENT_ALREADY_MADE_CODE,
@@ -1310,8 +1317,9 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
 
   // #4070: a reduction refunded to the member's own card. The email says the
   // refund was made only when Stripe made it; one the Stripe call could not
-  // make is queued for the recovery runner and on its way.
-  it.each(OWN_CARD_REFUND_STATES)("an own-card date reduction emails refund destination: $label -> $destination (#4070)", async ({ answer, queued, destination }) => {
+  // make stays owed on the row the edit wrote before it committed (#4992), and
+  // is on its way.
+  it.each(OWN_CARD_REFUND_STATES)("an own-card date reduction emails refund destination: $label -> $destination (#4070)", async ({ answer, destination }) => {
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockedAuth.mockResolvedValue(makeSession() as any);
@@ -1337,7 +1345,14 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
 
     expect(res.status).toBe(200);
     expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ paymentId: "p1", amountCents: 3000 }));
-    expectQueuedOnce(mockEnqueueBookingModificationRefundRecovery, queued, 3000, answer);
+    expectPrePersistedEditRefund(
+      {
+        refund: mockRefundPaymentTransactions,
+        enqueue: mockEnqueueBookingModificationRefundRecovery,
+        close: mockMarkBookingModificationRefundRecoverySucceeded,
+      },
+      { answer, destination, pendingCents: 3000, bookingModificationId: "mod1", reservedInTransaction: true },
+    );
     const { sendBookingModifiedEmail } = await import("@/lib/email");
     expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ refundAmountCents: 3000, refundDestination: destination, refundByBankTransfer: null }),

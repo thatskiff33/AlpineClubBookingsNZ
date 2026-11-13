@@ -4719,6 +4719,9 @@ PROCESSING -> FAILED  (#4858: a superseded refund with no stored plan, still owi
                        did not make - another door's since it was raised: the
                        same hold, nothing sent; INV-PAY-145)
 PROCESSING -> FAILED  (attempts spent: DEAD, alerted once; still owed)
+(none) -> PENDING     (a booking edit's own-card refund: written with its frozen
+                       plan in the edit's transaction, before the attempt; the
+                       edit closes it SUCCEEDED once Stripe made it; #4992)
 (none) -> PENDING     (a refund Stripe accepted, then failed: a new row per
                        Stripe refund, card_refund_failed_later_<refund>, under
                        the Payment row lock; INV-PAY-128)
@@ -4805,11 +4808,11 @@ A refund Stripe answers `failed` or `canceled` on a booking edit, a cancellation
 or an approved refund request never closes its row (#4083, #4096, #4102,
 `INV-PAY-128`). Stripe answers a repeated key with the original refusal for 24
 hours, so whoever reads a refusal moves that slice to a fresh idempotency key
-(`refused1`, `refused2`, ...). An edit freezes its plan before Stripe and queues
-its whole read plan after success or throw if any slice is unmade (#3984,
-`INV-PAY-146`), even if the webhook has since recorded a refund. A cancellation
-re-plans its pre-persisted row the same way while it is still `PENDING` with no
-attempt. An approved refund request also queues its whole plan after the attempt:
+(`refused1`, `refused2`, ...). An edit freezes its plan and writes its row in
+its own transaction, before Stripe (#3984, #4992, `INV-PAY-146`); like a
+cancellation, it re-plans that pre-persisted row while it is still `PENDING`
+with no attempt, and a throw marks the slices made before it, even if the
+webhook has since recorded a refund. An approved refund request also queues its whole plan after the attempt:
 refused slices on their next key, unanswered ones keep their key, made ones
 marked with their refund (`madeRefundId`). If no row can be written once Stripe
 was asked by a refund-request approval, its approval
@@ -4825,14 +4828,15 @@ it, and the row's amount stays the plan's total; the ledger census's in-flight
 refund reads only its unmade slices, and the retries-exhausted alert what the
 row still owes once it is marked failed, netting the refunds its final attempt
 recorded. The officers are alerted once per refused slice - by the write that
-first moves it off the key it was planned under (a cancellation's re-plan, the
-runner's, or an edit's or refund request's row when it is written), or by the
-edit door when no row could be written - and again if the retries run out.
+first moves it off the key it was planned under (a pre-persisted door's
+re-plan - a cancellation's or a booking edit's (#4992) - the runner's, or a
+refund request's row when it is written) - and again if the retries run out.
 
 Every other card refund door keeps a refusal owed too (#4103, `INV-PAY-130`). A
-door whose row is written before its attempt - the edit financial review, the
-treasurer-approved late capture, the duplicate capture and the capacity race,
-as the cancellation does - re-plans that row while it is `PENDING` with no
+door whose row is written before its attempt - a booking edit's own-card
+refund (written in the edit's transaction with its frozen plan, #4992), the
+edit financial review, the treasurer-approved late capture, the duplicate
+capture and the capacity race, as the cancellation does - re-plans that row while it is `PENDING` with no
 attempt, once per refusal (compare-and-set on the row's plan), including a
 refusal before a later slice threw, and never closes it. The superseded-payment
 runner asks under its row's key first and moves a refusal to a one-slice plan on

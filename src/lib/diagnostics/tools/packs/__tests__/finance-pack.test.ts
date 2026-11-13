@@ -1173,6 +1173,7 @@ describe("AID-6C finance pack: the recovery scenario catalogue (#4076)", () => {
    * never stored in `PaymentRecoveryOperation."idempotencyKey"`.
    */
   const NOT_A_RECOVERY_KEY: Record<string, string> = {
+    BOOKING_MODIFICATION_REFUND_DOORS: "Stripe idempotency key prefixes and metadata reasons of the booking edit's card refund doors (#4992)",
     CARD_REFUND_FAILED_LATER_REASON: "Stripe refund metadata",
     CARD_REFUND_STILL_OWED_REASON: "Stripe refund metadata (#4516)",
     cardRefundStillOwedCloseRecordId: "parser of a mapped key",
@@ -1189,6 +1190,7 @@ describe("AID-6C finance pack: the recovery scenario catalogue (#4076)", () => {
     bookingModificationRefundReasonForKeyPrefix: "Stripe metadata reason",
     buildBookingCancellationRefundMetadata: "Stripe metadata",
     buildBookingModificationRefundMetadata: "Stripe metadata",
+    buildBookingModificationRefundKeyPrefix: "Stripe idempotency key prefix (#4992)",
     buildCapacityClaimFailedRefundStripeKeyPrefix: "Stripe idempotency key prefix",
     buildDuplicateCaptureRefundStripeKeyPrefix: "Stripe idempotency key prefix",
     buildEditFinancialReviewAdditionalIntentStripeKey: "Stripe idempotency key",
