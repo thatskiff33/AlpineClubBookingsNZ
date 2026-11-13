@@ -239,7 +239,8 @@ to internet banking, the school pay-on-account approval) post R01; an edit or
 the Internet Banking reconcile's flip, which now writes the confirmation's
 ledger lines as the settle does) links its lines to that charge rather than
 charging again. Every writer that sets `PAID` or `CANCELLED` is classified by
-`booking-sale-status-writer-census.test.ts`.
+`booking-sale-status-writer-census.test.ts`, which requires each posting write's
+own function to call its poster at least once per write.
 
 Waitlist confirmation and expiry serialize on the offered booking's lodge lock.
 Confirmation re-reads `WAITLIST_OFFERED` and the deadline after acquiring the

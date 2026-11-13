@@ -9060,6 +9060,9 @@ model PrivacyRetentionSettings {
   pruneLogsAndApplicationsEnabled    Boolean  @default(false)
   anonymiseMembersEnabled            Boolean  @default(false)
   sentryReplayEnabled                Boolean  @default(false)
+  bookingDietaryRetentionDays        Int      @default(30)
+  bookingDietaryClearEnabled         Boolean  @default(true)
+  bookingDietaryClearStartedAt       DateTime?
   pruneStartedAt                    DateTime?
   anonymiseStartedAt                DateTime?
   updatedByMemberId                  String?

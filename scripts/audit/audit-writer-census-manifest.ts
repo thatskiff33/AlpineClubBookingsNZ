@@ -749,10 +749,14 @@ export const AUDIT_CENSUS_TOTALS = {
   // `booking-payment.card-refund.try-card-again`, the treasurer closing a dead card refund
   // a later Stripe refund covers and putting one back to try the card, each awaited on its
   // own transaction (`card-refund-dead-row-actions.ts`), both `payment`. RE-MEASURED with `pnpm run audit:census`.
-  // 538 -> 541 (#4988): the opening-credit batch's post and reverse rows (`opening-credit-batch.ts`),
+  // 538 -> 539 (#4916): `privacy.retention.booking_dietary_cleared`, the count-only row
+  // each clearing batch of the nightly after-stay dietary clear writes in its own
+  // transaction, an awaited `createAuditLog` with a literal `privacy` category.
+  // RE-MEASURED with `pnpm run audit:census`.
+  // 539 -> 542 (#4988): the opening-credit batch's post and reverse rows (`opening-credit-batch.ts`),
   // both `payment`, and the member import's family group created from a Family Key column, `family`
   // like the family-groups route's own create. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 541,
+  writeSites: 542,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -977,7 +981,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 170 -> 171 (#4686): the lost-claim part-success's row, above.
     // 171 -> 172 (triyder/AlpineClubBookingsNZ#97): the link dialog's row, above.
     // 172 -> 174 (#4516): the refused reservation and the OPERATOR release, above.
-    createAuditLog: { total: 179, uncategorised: 0 }, // 174 -> 176 (#4368): the two dead card refund settlements. 176 -> 179 (#4988): the opening-credit post and reverse, and the import's family group.
+    // 174 -> 176 (#4368): the two dead card refund settlements.
+    // 176 -> 177 (#4916): the after-stay dietary clear's count row.
+    createAuditLog: { total: 180, uncategorised: 0 }, // 177 -> 180 (#4988): the opening-credit post and reverse, and the import's family group.
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1512,7 +1518,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // Diagnostics correlation entry, which for `privacy` needs membership too.
     // 20 -> 21 (#3492): the guest promo-code lookup, above.
     // 21 -> 22 (#4457): `privacy.retention.member_anonymised`, readable only with membership:view.
-    privacy: 22,
+    // 22 -> 23 (#4916): `privacy.retention.booking_dietary_cleared`, a count with no value or guest id,
+    // filed with the other retention rows so it needs membership:view too.
+    privacy: 23,
     // UNCHANGED by #2581 child 2. `system` is for genuine platform events with
     // no narrower business domain, and none of the 82 was one.
     system: 4,
