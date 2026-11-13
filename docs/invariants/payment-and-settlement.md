@@ -1190,13 +1190,13 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   UNCHANGED and conserves: the 100% restore + `finalPrice − allocated`
   clearing note void the invoice while returning the credit LOCALLY. After a
   cancel of an allocated-credit booking the restored credit is local-only (the
-  cancelled invoice consumed its funding note); the local ledger is the source
-  of truth and Xero catches up on the next use, via the mint-fresh branch. A new
+  cancelled invoice consumed its funding note); the local ledger is authoritative
+  and Xero catches up on next use, via the mint-fresh branch. A new
   manual grant carries the note queued at approval, and spend allocates it. Only a
   noteless legacy `ADMIN_ADJUSTMENT` is still minted, to
   `goodwillWriteOffs` (falling back to `hutFeeRefunds` while unset, `INV-INT-021`).
-  Every other minted share, restored credit and an opening credit
-  (`INV-PAY-151`) included, stays on `hutFeeRefunds`.
+  Every other minted share (restored or opening credit, `INV-PAY-151`) stays
+  on `hutFeeRefunds`.
 
 ## INV-PAY-127
 

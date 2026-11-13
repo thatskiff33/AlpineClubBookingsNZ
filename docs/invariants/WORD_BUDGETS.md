@@ -153,7 +153,7 @@ stays for the agent-doc ceilings below.
 | `INV-HOST-023` | 348 |
 | `INV-MONEY-024` | 348 |
 | `INV-PAY-025` | 348 |
-| `INV-PAY-023` | 335 |
+| `INV-PAY-023` | 333 |
 | `INV-ADDPAY-035` | 340 |
 | `INV-LIFE-018` | 338 |
 | `INV-CAP-030` | 337 |
