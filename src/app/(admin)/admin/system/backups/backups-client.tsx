@@ -11,6 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,6 +22,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { useActionFailure } from "@/hooks/use-action-failure";
 import {
   useSectionEditState,
   ForbiddenSaveError,
@@ -260,26 +262,28 @@ function StatusCard({
 }) {
   const clubTime = useClubTime();
   const [running, setRunning] = useState(false);
-  const [runError, setRunError] = useState("");
+  // A refused run is an action failure: focused, and re-announced on repeat (#4975).
+  const runFailure = useActionFailure();
+  const { fail: failRun, clear: clearRunFailure } = runFailure;
 
   const lastSuccess = status.recentRuns.find((r) => r.status === "SUCCESS");
 
   const runNow = useCallback(async () => {
-    setRunError("");
+    clearRunFailure();
     setRunning(true);
     try {
       const res = await fetch(RUN_URL, { method: "POST" });
       if (!res.ok && res.status !== 202) {
-        setRunError(await apiErrorMessageFromResponse(res, "Could not start a backup."));
+        failRun(await apiErrorMessageFromResponse(res, "Could not start a backup."));
         return;
       }
       await onRan();
     } catch {
-      setRunError("Could not start a backup.");
+      failRun("Could not start a backup.");
     } finally {
       setRunning(false);
     }
-  }, [onRan]);
+  }, [clearRunFailure, failRun, onRan]);
 
   // canEdit gating is handled by ViewOnlyActionButton; these are the additional
   // run-specific reasons the button stays disabled.
@@ -393,11 +397,11 @@ function StatusCard({
           </div>
         </dl>
 
-        {runError ? (
-          <p role="alert" className="text-sm text-danger">
-            {runError}
-          </p>
-        ) : null}
+        <FocusedActionError
+          id="backup-run-error"
+          error={runFailure.error}
+          attentionKey={runFailure.attentionKey}
+        />
 
         <div className="flex flex-wrap items-center gap-3">
           <ViewOnlyActionButton
@@ -669,7 +673,9 @@ function CredentialsSection({
   const [secretAccessKey, setSecretAccessKey] = useState("");
   const [restoreUrl, setRestoreUrl] = useState("");
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  // A refused save is an action failure: focused, and re-announced on repeat (#4975).
+  const saveFailure = useActionFailure();
+  const { fail: failSave, clear: clearSaveFailure } = saveFailure;
   const [success, setSuccess] = useState("");
 
   const writeCredential = useCallback(async (key: string, value: string) => {
@@ -684,7 +690,7 @@ function CredentialsSection({
   }, []);
 
   const onSave = useCallback(async () => {
-    setError("");
+    clearSaveFailure();
     setSuccess("");
     const pending: Array<[string, string]> = [];
     if (accessKeyId.trim()) pending.push(["access_key_id", accessKeyId.trim()]);
@@ -693,7 +699,7 @@ function CredentialsSection({
     if (restoreUrl.trim())
       pending.push(["restore_validation_url", restoreUrl.trim()]);
     if (pending.length === 0) {
-      setError("Enter at least one value to save.");
+      failSave("Enter at least one value to save.");
       return;
     }
     setSaving(true);
@@ -707,11 +713,19 @@ function CredentialsSection({
       setSuccess("Saved. Stored values are write-only and never shown again.");
       await onSaved();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save.");
+      failSave(err instanceof Error ? err.message : "Could not save.");
     } finally {
       setSaving(false);
     }
-  }, [accessKeyId, secretAccessKey, restoreUrl, writeCredential, onSaved]);
+  }, [
+    accessKeyId,
+    secretAccessKey,
+    restoreUrl,
+    writeCredential,
+    onSaved,
+    clearSaveFailure,
+    failSave,
+  ]);
 
   return (
     <div className="space-y-4 rounded-md border border-border p-3">
@@ -786,11 +800,11 @@ function CredentialsSection({
           </FieldHint>
         </div>
 
-        {error ? (
-          <p role="alert" className="text-sm text-danger">
-            {error}
-          </p>
-        ) : null}
+        <FocusedActionError
+          id="backup-credentials-save-error"
+          error={saveFailure.error}
+          attentionKey={saveFailure.attentionKey}
+        />
         {success ? (
           <p role="status" className="text-sm text-success">
             {success}

@@ -1,11 +1,14 @@
 "use client";
 
 import type { AgeTier } from "@prisma/client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { useActionFailure } from "@/hooks/use-action-failure";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
+import { FocusedActionError } from "@/components/focused-action-error";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlySectionBanner,
@@ -91,9 +94,24 @@ export default function AgeTierSettingsPage() {
   const [savedSettings, setSavedSettings] = useState<AgeTierRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // A failed READ stays a passive box. A refused save is the admin's own
+  // action, so it takes focus and is re-announced when it repeats (#4975).
+  const [loadError, setLoadError] = useState("");
+  const saveFailure = useActionFailure();
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(true);
+  // A landed save closes the editor, taking the focused Save button with it,
+  // so it positions at the top of the boundaries card; failure still wins.
+  const [savesLanded, setSavesLanded] = useState(0);
+  const boundariesCardRef = useRef<HTMLDivElement>(null);
+  useActionAttention({
+    // `FocusedActionError` owns the failure focus; the error is passed only so
+    // a failure suppresses the success position.
+    error: saveFailure.error,
+    errorTarget: null,
+    success: savesLanded,
+    successTarget: boundariesCardRef,
+  });
 
   useEffect(() => {
     fetch("/api/admin/age-tier-settings")
@@ -104,7 +122,7 @@ export default function AgeTierSettingsPage() {
         setSettings(data);
         setSavedSettings(data);
       })
-      .catch(() => setError("Failed to load settings"))
+      .catch(() => setLoadError("Failed to load settings"))
       .finally(() => setLoading(false));
   }, []);
 
@@ -122,7 +140,7 @@ export default function AgeTierSettingsPage() {
       )
     );
     setSuccess(false);
-    setError(null);
+    saveFailure.clear();
   }
 
   // Remove a tier (issue #2009 — a club may run a SUBSET of the four built-in
@@ -148,7 +166,7 @@ export default function AgeTierSettingsPage() {
       return remaining;
     });
     setSuccess(false);
-    setError(null);
+    saveFailure.clear();
   }
 
   async function handleRestoreDefaults() {
@@ -165,12 +183,12 @@ export default function AgeTierSettingsPage() {
     if (!confirmed) return;
     setSettings(normalizeAgeTierRows(DEFAULT_SETTINGS));
     setSuccess(false);
-    setError(null);
+    saveFailure.clear();
   }
 
   async function handleSave() {
     setSaving(true);
-    setError(null);
+    saveFailure.clear();
     setSuccess(false);
 
     const bySort = [...settings].sort((a, b) => a.sortOrder - b.sortOrder);
@@ -189,20 +207,21 @@ export default function AgeTierSettingsPage() {
         body: JSON.stringify({ settings: payload }),
       });
       if (res.status === 403) {
-        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        saveFailure.fail(ADMIN_FORBIDDEN_SAVE_REASON);
         return;
       }
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? "Failed to save");
+        saveFailure.fail(data.error ?? "Failed to save");
       } else {
         setSettings(data.settings);
         setSavedSettings(data.settings);
         setEditing(false);
         setSuccess(true);
+        setSavesLanded((count) => count + 1);
       }
     } catch {
-      setError("Network error");
+      saveFailure.fail("Network error");
     } finally {
       setSaving(false);
     }
@@ -211,7 +230,7 @@ export default function AgeTierSettingsPage() {
   function handleCancel() {
     setSettings(savedSettings);
     setEditing(false);
-    setError(null);
+    saveFailure.clear();
     setSuccess(false);
   }
 
@@ -246,7 +265,7 @@ export default function AgeTierSettingsPage() {
         }
       />
 
-      <Card>
+      <Card ref={boundariesCardRef}>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Age Tier Boundaries</CardTitle>
           {!editing && (
@@ -414,11 +433,16 @@ export default function AgeTierSettingsPage() {
             );
           })}
 
-          {error ? (
+          {loadError ? (
             <div className="rounded-md border border-danger/20 bg-danger-muted p-3 text-sm text-danger">
-              {error}
+              {loadError}
             </div>
           ) : null}
+          <FocusedActionError
+            id="age-tier-save-error"
+            error={saveFailure.error}
+            attentionKey={saveFailure.attentionKey}
+          />
           {success ? (
             <div className="rounded-md border border-success/20 bg-success-muted p-3 text-sm text-success">
               Age tier settings saved successfully.

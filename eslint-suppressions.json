@@ -407,11 +407,6 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/finance/refund-requests/page.tsx": {
-    "design-system/no-raw-button": {
-      "count": 1
-    }
-  },
   "src/app/(admin)/admin/finance/reports/page.tsx": {
     "design-system/no-raw-select": {
       "count": 2

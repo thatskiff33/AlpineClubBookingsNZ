@@ -13,6 +13,9 @@ import { Alert } from "@/components/ui/alert"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
+import { useActionFailure } from "@/hooks/use-action-failure"
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback"
+import { FocusedActionError } from "@/components/focused-action-error"
 import {
   LodgeSelect,
   initialLodgeIdFromLocation,
@@ -57,7 +60,23 @@ export default function SeasonsPage() {
   const format = useClubFormat()
   const [seasons, setSeasons] = useState<Season[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState("")
+  // A failed READ is passive: it is shown above the list and moves nothing. A
+  // failed save, delete or toggle is the admin's own action, so it takes focus
+  // through the permanently mounted recovery alert, again on a repeat (#4975).
+  const [loadError, setLoadError] = useState("")
+  const actionFailure = useActionFailure()
+  // A save closes the edit form, taking the focused Save button with it, so a
+  // landed save positions at the top of the page; failure still wins (#2934).
+  const [savesLanded, setSavesLanded] = useState(0)
+  const pageRef = useRef<HTMLDivElement>(null)
+  useActionAttention({
+    // `FocusedActionError` owns the failure focus; the error is passed only so
+    // a failure suppresses the success position.
+    error: actionFailure.error,
+    errorTarget: null,
+    success: savesLanded,
+    successTarget: pageRef,
+  })
   const [editingId, setEditingId] = useState<string | null>(null)
   const canEdit = useAdminAreaEditAccess("bookings")
   const {
@@ -118,7 +137,7 @@ export default function SeasonsPage() {
     if (!scopedLodgeId) {
       setSeasons([])
       setEditingId(null)
-      setError("")
+      setLoadError("")
       setLoading(false)
       return
     }
@@ -132,7 +151,7 @@ export default function SeasonsPage() {
       setSeasons(data)
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return
-      setError(err instanceof Error ? err.message : "Unknown error")
+      setLoadError(err instanceof Error ? err.message : "Unknown error")
     } finally {
       setLoading(false)
     }
@@ -169,7 +188,8 @@ export default function SeasonsPage() {
     setEndDate("")
     setActive(true)
     setEditingId(null)
-    setError("")
+    setLoadError("")
+    actionFailure.clear()
   }
 
   function handleLodgeChange(nextLodgeId: string | null) {
@@ -195,7 +215,7 @@ export default function SeasonsPage() {
     if (!editingId || !lodgeScopeReady) return
     const requestedScope = scopedLodgeId
     setSaving(true)
-    setError("")
+    actionFailure.clear()
 
     // Window-only PUT: omit membershipTypeRates so the [id] route leaves the
     // season's existing rates untouched (see the route's `if (membershipTypeRates)`
@@ -214,9 +234,12 @@ export default function SeasonsPage() {
       }
       if (activeScopeRef.current !== requestedScope) return
       resetForm()
+      setSavesLanded((count) => count + 1)
       fetchSeasons()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error")
+      // A failure from a lodge the admin has since left must not take focus.
+      if (activeScopeRef.current !== requestedScope) return
+      actionFailure.fail(err instanceof Error ? err.message : "Unknown error")
     } finally {
       setSaving(false)
     }
@@ -235,7 +258,9 @@ export default function SeasonsPage() {
       if (activeScopeRef.current !== requestedScope) return
       fetchSeasons()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error")
+      // A failure from a lodge the admin has since left must not take focus.
+      if (activeScopeRef.current !== requestedScope) return
+      actionFailure.fail(err instanceof Error ? err.message : "Unknown error")
     }
   }
 
@@ -255,7 +280,9 @@ export default function SeasonsPage() {
       if (activeScopeRef.current !== requestedScope) return
       fetchSeasons()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error")
+      // A failure from a lodge the admin has since left must not take focus.
+      if (activeScopeRef.current !== requestedScope) return
+      actionFailure.fail(err instanceof Error ? err.message : "Unknown error")
     }
   }
 
@@ -336,7 +363,7 @@ export default function SeasonsPage() {
   )
 
   return (
-    <div>
+    <div ref={pageRef}>
       {viewOnlyBanner}
       <div className="space-y-6">
       <AdminPageHeader
@@ -369,11 +396,16 @@ export default function SeasonsPage() {
           />
       </div>
 
-      {error && (
+      {loadError && (
         <div role="alert" className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
-          {error}
+          {loadError}
         </div>
       )}
+      <FocusedActionError
+        id="season-action-error"
+        error={actionFailure.error}
+        attentionKey={actionFailure.attentionKey}
+      />
 
       {lodgeScopeReady && editingId && canEdit && (
         <Card>

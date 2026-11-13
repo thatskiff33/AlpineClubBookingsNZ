@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
@@ -29,6 +30,7 @@ import {
 import { useClubTime } from "@/components/club-time-provider";
 import { formatPayloadInstantDate } from "../_lib/payload-instant";
 import { useRevealAttention } from "@/hooks/use-scroll-to-feedback";
+import { useActionFailure } from "@/hooks/use-action-failure";
 
 type PartnerInvite = {
   id: string;
@@ -72,7 +74,8 @@ function FamilyGroupsTab() {
   const [groups, setGroups] = useState<FamilyGroupSummary[]>([]);
   const [requests, setRequests] = useState<FamilyGroupRequest[]>([]);
   const [partnerInvites, setPartnerInvites] = useState<PartnerInvite[]>([]);
-  const [partnerInviteError, setPartnerInviteError] = useState("");
+  // A failed revoke — an action, so it is focused and re-announced (#4975).
+  const partnerInviteFailure = useActionFailure();
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingGroup, setEditingGroup] = useState<FamilyGroupSummary | null>(null);
@@ -86,7 +89,9 @@ function FamilyGroupsTab() {
   const [selectedMembers, setSelectedMembers] = useState<MemberIdentityOption[]>([]);
   const [searching, setSearching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
+  // A refused create, kept apart from the passive list load (#4975).
+  const saveFailure = useActionFailure();
+  const clearSaveFailure = saveFailure.clear;
   // #2256: the create/edit form renders in the anchor below the filter card and
   // the two queue cards (pending changes, outstanding partner invites), while
   // its triggers sit elsewhere — New Group in the page header, Edit on a row in
@@ -241,7 +246,7 @@ function FamilyGroupsTab() {
     setSelectedMembers([]);
     setMemberSearch("");
     setSearchResults([]);
-    setError("");
+    clearSaveFailure();
     setShowForm(true);
     setFormOpenNonce((nonce) => nonce + 1);
   }
@@ -255,10 +260,10 @@ function FamilyGroupsTab() {
     );
     setMemberSearch("");
     setSearchResults([]);
-    setError("");
+    clearSaveFailure();
     setShowForm(true);
     setFormOpenNonce((nonce) => nonce + 1);
-  }, []);
+  }, [clearSaveFailure]);
 
   // On mount: fetch data, then auto-open edit dialog if ?edit=GROUP_ID is set.
   useEffect(() => {
@@ -323,9 +328,9 @@ function FamilyGroupsTab() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canEditMembership) return;
-    setError("");
+    clearSaveFailure();
     if (selectedMembers.length < 1) {
-      setError("At least one member is required");
+      saveFailure.fail("At least one member is required");
       return;
     }
     setSubmitting(true);
@@ -350,7 +355,7 @@ function FamilyGroupsTab() {
 
       if (!res.ok) {
         const data = await res.json();
-        setError(data.error || "Failed to save");
+        saveFailure.fail(data.error || "Failed to save");
         return;
       }
 
@@ -377,7 +382,7 @@ function FamilyGroupsTab() {
       )
     )
       return;
-    setPartnerInviteError("");
+    partnerInviteFailure.clear();
     try {
       const res = await fetch(
         `/api/admin/family-groups/partner-invites?id=${encodeURIComponent(invite.id)}`,
@@ -388,12 +393,12 @@ function FamilyGroupsTab() {
         return;
       }
       const data = await res.json().catch(() => ({}));
-      setPartnerInviteError(
+      partnerInviteFailure.fail(
         data.error ||
           `Could not revoke the invitation to ${invite.invitedEmail}. It may have just been claimed or already revoked.`
       );
     } catch {
-      setPartnerInviteError(
+      partnerInviteFailure.fail(
         `Could not revoke the invitation to ${invite.invitedEmail}. Please try again.`
       );
     }
@@ -538,11 +543,11 @@ function FamilyGroupsTab() {
           </p>
         </CardHeader>
         <CardContent className="space-y-3">
-          {partnerInviteError && (
-            <div className="rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11">
-              {partnerInviteError}
-            </div>
-          )}
+          <FocusedActionError
+            id="partner-invite-action-error"
+            error={partnerInviteFailure.error}
+            attentionKey={partnerInviteFailure.attentionKey}
+          />
           {loading ? (
             <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
               Loading outstanding partner invitations...
@@ -725,7 +730,11 @@ function FamilyGroupsTab() {
                   </p>
                 </div>
 
-                {error && <p className="text-sm text-danger-11">{error}</p>}
+                <FocusedActionError
+                  id="family-group-save-error"
+                  error={saveFailure.error}
+                  attentionKey={saveFailure.attentionKey}
+                />
 
                 <div className="flex gap-2">
                   <ViewOnlyActionButton

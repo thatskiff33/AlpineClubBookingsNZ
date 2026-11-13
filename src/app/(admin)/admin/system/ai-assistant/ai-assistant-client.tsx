@@ -11,6 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MoneyInput } from "@/components/ui/money-input";
@@ -19,6 +20,7 @@ import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
 import { AiSpendCurrencyCard } from "@/components/admin/ai-spend-currency-card";
 import { useClubFormat } from "@/components/club-format-provider";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { useActionFailure } from "@/hooks/use-action-failure";
 import { isFullAdmin } from "@/lib/access-roles";
 import { useClubTime } from "@/components/club-time-provider";
 import { requireInstant } from "@/lib/club-time";
@@ -146,15 +148,17 @@ function KeyCard({
   const [setAt, setSetAt] = useState<string | null>(initialKeySetAt);
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  // A refused save is an action failure: focused, and re-announced on repeat (#4975).
+  const saveFailure = useActionFailure();
+  const { fail: failSave, clear: clearSaveFailure } = saveFailure;
   const [success, setSuccess] = useState("");
 
   const onSave = useCallback(async () => {
-    setError("");
+    clearSaveFailure();
     setSuccess("");
     const trimmed = value.trim();
     if (!trimmed) {
-      setError("Enter your Anthropic API key to save it.");
+      failSave("Enter your Anthropic API key to save it.");
       return;
     }
     setSaving(true);
@@ -169,7 +173,7 @@ function KeyCard({
         }),
       });
       if (!res.ok) {
-        setError(await apiErrorMessageFromResponse(res, "Could not store the API key."));
+        failSave(await apiErrorMessageFromResponse(res, "Could not store the API key."));
         return;
       }
       setValue("");
@@ -177,11 +181,11 @@ function KeyCard({
       setSetAt(new Date().toISOString());
       setSuccess("Saved. The key is write-only and never shown again.");
     } catch {
-      setError("Could not store the API key.");
+      failSave("Could not store the API key.");
     } finally {
       setSaving(false);
     }
-  }, [value]);
+  }, [clearSaveFailure, failSave, value]);
 
   return (
     <Card>
@@ -239,11 +243,11 @@ function KeyCard({
           />
         </div>
 
-        {error ? (
-          <p role="alert" className="text-sm text-danger">
-            {error}
-          </p>
-        ) : null}
+        <FocusedActionError
+          id="anthropic-api-key-save-error"
+          error={saveFailure.error}
+          attentionKey={saveFailure.attentionKey}
+        />
         {success ? (
           <p role="status" className="text-sm text-success">
             {success}
@@ -277,7 +281,11 @@ function BudgetCard() {
   const [savedCents, setSavedCents] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  // The spend-cap load stays passive; a refused save is an action failure,
+  // focused and re-announced on repeat (#4975).
+  const [loadError, setLoadError] = useState("");
+  const saveFailure = useActionFailure();
+  const { fail: failSave, clear: clearSaveFailure } = saveFailure;
   const [success, setSuccess] = useState("");
 
   useEffect(() => {
@@ -286,7 +294,7 @@ function BudgetCard() {
       try {
         const res = await fetch(SETTINGS_URL, { cache: "no-store" });
         if (!res.ok) {
-          if (!cancelled) setError(await apiErrorMessageFromResponse(res, "Could not load the spend cap."));
+          if (!cancelled) setLoadError(await apiErrorMessageFromResponse(res, "Could not load the spend cap."));
           return;
         }
         const data = (await res.json()) as { monthlyBudgetCents: number };
@@ -295,7 +303,7 @@ function BudgetCard() {
           setDollars(centsToDollars(data.monthlyBudgetCents));
         }
       } catch {
-        if (!cancelled) setError("Could not load the spend cap.");
+        if (!cancelled) setLoadError("Could not load the spend cap.");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -306,11 +314,11 @@ function BudgetCard() {
   }, []);
 
   const onSave = useCallback(async () => {
-    setError("");
+    clearSaveFailure();
     setSuccess("");
     const parsed = parseDollarsToCents(dollars, format);
     if (!parsed.ok) {
-      setError(parsed.error);
+      failSave(parsed.error);
       return;
     }
     setSaving(true);
@@ -321,7 +329,7 @@ function BudgetCard() {
         body: JSON.stringify({ monthlyBudgetCents: parsed.cents }),
       });
       if (!res.ok) {
-        setError(await apiErrorMessageFromResponse(res, "Could not save the spend cap."));
+        failSave(await apiErrorMessageFromResponse(res, "Could not save the spend cap."));
         return;
       }
       const data = (await res.json()) as { monthlyBudgetCents: number };
@@ -329,11 +337,11 @@ function BudgetCard() {
       setDollars(centsToDollars(data.monthlyBudgetCents));
       setSuccess("Monthly spend cap saved.");
     } catch {
-      setError("Could not save the spend cap.");
+      failSave("Could not save the spend cap.");
     } finally {
       setSaving(false);
     }
-  }, [dollars, format]);
+  }, [clearSaveFailure, dollars, failSave, format]);
 
   const editingDisabled = !canEdit || saving || loading;
 
@@ -383,11 +391,16 @@ function BudgetCard() {
               </p>
             ) : null}
 
-            {error ? (
+            {loadError ? (
               <p role="alert" className="text-sm text-danger">
-                {error}
+                {loadError}
               </p>
             ) : null}
+            <FocusedActionError
+              id="ai-budget-save-error"
+              error={saveFailure.error}
+              attentionKey={saveFailure.attentionKey}
+            />
             {success ? (
               <p role="status" className="text-sm text-success">
                 {success}
