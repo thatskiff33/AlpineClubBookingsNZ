@@ -1,7 +1,9 @@
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 import { readNonTestSources } from "./support/advisory-lock-scan";
 import { scanLock1Transactions, type TransactionOpener } from "./support/lock1-transaction-scan";
+import { stripComments } from "./support/strip-comments";
 
 /**
  * `INV-LOCK-005`: every interactive transaction that waits for
@@ -43,7 +45,7 @@ const sources = readNonTestSources();
 const scan = scanLock1Transactions(sources);
 
 function withoutComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "").replace(/\s+/g, " ").trim();
+  return stripComments(text).replace(/\s+/g, " ").trim();
 }
 
 /** Every `const X = LOCK1_HOLDER_TRANSACTION_BUDGET;` in the tree: another name for the budget. */
@@ -58,13 +60,21 @@ function budgetAliases(): Set<string> {
 
 type Verdict = "budget" | "exception" | string;
 
-/** The text of every comment in `text`, joined into one line. */
+/**
+ * The text of every comment in `text`, joined into one line. TypeScript's own
+ * scanner finds them, so a comment marker inside a string is not one.
+ */
 function commentText(text: string): string {
-  const comments = text.match(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g) ?? [];
-  return comments
-    .map((comment) => comment.replace(/^\/\/|^\/\*|\*\/$/g, "").replace(/^\s*\*/gm, ""))
-    .join(" ")
-    .replace(/\s+/g, " ");
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, text);
+  const comments: string[] = [];
+  for (let kind = scanner.scan(); kind !== ts.SyntaxKind.EndOfFileToken; kind = scanner.scan()) {
+    const token = scanner.getTokenText();
+    if (kind === ts.SyntaxKind.SingleLineCommentTrivia) comments.push(token.slice(2));
+    if (kind === ts.SyntaxKind.MultiLineCommentTrivia) {
+      comments.push(token.slice(2, -2).replace(/^\s*\*/gm, ""));
+    }
+  }
+  return comments.join(" ").replace(/\s+/g, " ");
 }
 
 function classifyOptions(options: string | null, aliases: ReadonlySet<string>): Verdict {
