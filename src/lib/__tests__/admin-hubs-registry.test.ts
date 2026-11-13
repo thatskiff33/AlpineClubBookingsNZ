@@ -1932,6 +1932,10 @@ describe("the registry is inert", () => {
       "C10: the Bookings links and the Booking Requests badge are adminLink and adminHref",
     "src/lib/admin-work-queues.ts":
       "#4962: each officer work queue's link and label are adminLink and adminHref",
+    "src/lib/__tests__/admin-work-queues.test.tsx":
+      "#4962: pins the manual refund queue to the Payments page's adminHref",
+    "src/lib/__tests__/admin-work-queue-census.test.ts":
+      "#4962: resolves the dashboard's adminHref links to find a stray queue link",
     "src/components/admin-sidebar-controls.tsx":
       "C14: the role menu lists one link per hub, in registry order, at the hub root",
     "src/lib/admin-page-revalidation.ts": "C3: revalidateAdminPage revalidates a page's file path",
