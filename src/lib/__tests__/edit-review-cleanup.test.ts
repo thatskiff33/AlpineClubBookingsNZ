@@ -367,10 +367,10 @@ describe("pricing the change fee a parked date edit missed (D8)", () => {
     createdAt: new Date("2026-03-01T00:00:00.000Z"),
   };
   const paid = {
-    status: "PAID",
+    status: "PAID" as const,
     lodgeId: "lodge-1",
     finalPriceCents: 30_000,
-    payment: { id: "pay-1", status: "SUCCEEDED", amountCents: 30_000, xeroInvoiceId: null },
+    payment: { id: "pay-1", status: "SUCCEEDED" as const, amountCents: 30_000, xeroInvoiceId: null },
   };
 
   it("MUTATION: prices the move on the club day the edit was saved, not the day the script runs", async () => {
@@ -378,9 +378,9 @@ describe("pricing the change fee a parked date edit missed (D8)", () => {
   });
 
   it("MUTATION: charges a confirmed booking whose payment was captured, through the late-notice leaf's own gate", async () => {
-    const capturedNotFlipped = { ...paid, status: "CONFIRMED" };
+    const capturedNotFlipped = { ...paid, status: "CONFIRMED" as const };
     await expect(prospectiveEditChangeFeeCents(capturedNotFlipped, modification, policyDb, zone)).resolves.toBe(15_000);
-    const unpaid = { ...paid, status: "CONFIRMED", payment: null };
+    const unpaid = { ...paid, status: "CONFIRMED" as const, payment: null };
     await expect(prospectiveEditChangeFeeCents(unpaid, modification, policyDb, zone)).resolves.toBe(0);
   });
 
