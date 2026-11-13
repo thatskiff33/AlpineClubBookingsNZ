@@ -232,6 +232,40 @@ describe("DashboardPage summary card drill-downs", () => {
     expect(html).not.toContain('href="/lodge/kiosk"');
   });
 
+  // Fork #121: the Order food card sits beside "Report an issue" only while the
+  // foodOrders module is on, and never for an organisation account.
+  it("offers Order food while the food orders module is on", async () => {
+    mocks.loadEffectiveModuleFlags.mockResolvedValue({
+      ...moduleFlags(),
+      foodOrders: true,
+    });
+    const html = await renderDashboardPage();
+    expect(html).toContain('href="/food-order"');
+    expect(html).toContain('href="/food-orders"');
+  });
+
+  it("hides Order food while the food orders module is off", async () => {
+    mocks.loadEffectiveModuleFlags.mockResolvedValue({
+      ...moduleFlags(),
+      foodOrders: false,
+    });
+    const html = await renderDashboardPage();
+    expect(html).not.toContain('href="/food-order"');
+    expect(html).not.toContain('href="/food-orders"');
+  });
+
+  it("hides Order food from an organisation account", async () => {
+    mocks.auth.mockResolvedValue({
+      user: { id: "member-1", name: "School", accessRoles: ["ORG"] },
+    });
+    mocks.loadEffectiveModuleFlags.mockResolvedValue({
+      ...moduleFlags(),
+      foodOrders: true,
+    });
+    const html = await renderDashboardPage();
+    expect(html).not.toContain('href="/food-order"');
+  });
+
   it("shows a lodge occupancy meter for the next stay's dates", async () => {
     const html = await renderDashboardPage();
 

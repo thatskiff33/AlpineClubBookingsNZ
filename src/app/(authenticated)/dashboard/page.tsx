@@ -55,6 +55,8 @@ import {
 } from "@/lib/promo";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { canViewCalendarEvents } from "@/lib/calendar-access";
+import { canActorUseFoodOrders } from "@/lib/food-order-access";
+import { FoodOrderDashboardCard } from "@/components/food-order-dashboard-card";
 import { RecentNewsCard } from "@/components/recent-news-card";
 import { MessageBoardCard } from "@/components/message-board-card";
 import { countClubPostsSince } from "@/lib/club-posts";
@@ -755,6 +757,11 @@ export default async function DashboardPage() {
               </Button>
             </CardContent>
           </Card>
+        )}
+
+        {/* Fork #121: beside "Report an issue", while the module is on. */}
+        {modules.foodOrders && canActorUseFoodOrders(session.user) && (
+          <FoodOrderDashboardCard />
         )}
 
         {modules.lockers && (

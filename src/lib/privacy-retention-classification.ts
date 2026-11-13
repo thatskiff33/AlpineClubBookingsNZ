@@ -206,6 +206,12 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MaintenanceReport: "personal",
   MaintenanceReportAnswer: "personal",
   LodgeMaintenanceReportToken: "personal",
+  // Fork #121: an order names its member and the officers who closed and priced
+  // it; its items are that member's order; the settings hold the officer's
+  // address and who last saved them.
+  FoodOrderSettings: "personal",
+  FoodOrder: "personal",
+  FoodOrderItem: "personal",
   EnvironmentSafetySettings: "personal",
   XeroSandboxContactContainment: "personal",
   Organisation: "personal",

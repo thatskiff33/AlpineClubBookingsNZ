@@ -299,6 +299,20 @@ These family rules are enforced by automated tests (issue #1132):
 - `src/app/api/booking-policies/check/route.ts`
 - `src/app/api/bookings/**/route.ts`
 - `src/app/api/chores/roster/[date]/print/route.ts`
+- `src/app/api/food-orders/**/route.ts` — fork #121, module-gated
+  (`foodOrders`, off by default; 404 in the proxy and again in every handler).
+  An active session that is not an organisation account. `POST` places an order
+  (member-scoped rate limit, items and needed-by date validated, stored before
+  the officer email is queued); `history` returns the caller's own orders, or
+  every order for committee, a current hut leader or Lodge Operations view;
+  `[id]/received` (strict body `{ itemIds }`, 1-50 distinct items of that
+  order, else 400 with nothing written) and `[id]/price` are decided by one rule,
+  `canManageFoodOrder` (committee, a hut leader at that order's lodge today, or
+  Lodge Operations edit). An order the caller may not see answers 404 rather
+  than 403, so ids are not confirmed, and `history?order=<id>` returns a null
+  `linkedOrder` for it, the same as for a missing id. A price change must carry
+  the price the caller saw (`expectedCents`), so a stale screen is refused. The
+  price is a record only and moves no money.
 - `src/app/api/issue-reports/route.ts`
 - `src/app/api/lodges/route.ts`
 - `src/app/api/member/**/route.ts`
@@ -353,6 +367,9 @@ Admin route subfamilies are:
 - Lodge/chores/committee/hut leaders/roster/issues: `admin/lodge`,
   `admin/chores/**`, `admin/committee/**`, `admin/hut-leaders/**`,
   `admin/roster/**`, `admin/issue-reports/**`
+- Food orders settings (fork #121, `foodOrders` module, Lodge Operations
+  view/edit): `admin/food-orders/settings` — the food officer email, checked
+  only as an email address, and the officer label
 - Multi-lodge management (always-on since ADR-005 / #128 removed the
   `multiLodge` flag; `requireAdmin()` is the sole boundary): `admin/lodges/**`,
   `admin/members/[id]/lodge-access`. `admin/lodges/**` also hosts the guided

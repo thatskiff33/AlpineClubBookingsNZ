@@ -57,6 +57,26 @@ describe("MoneyInput", () => {
     expect(input).toHaveProperty("value", "11.34");
   });
 
+  it("offers the step buttons by default", () => {
+    render(<Harness value="12.34" />);
+    expect(screen.getAllByRole("button")).toHaveLength(2);
+  });
+
+  it("with stepButtons={false} renders no step buttons and arrow keys change nothing", () => {
+    render(<Harness value="12.34" stepButtons={false} />);
+    const input = screen.getByRole("textbox", { name: "Nightly rate" });
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    expect(input).toHaveProperty("value", "12.34");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(input).toHaveProperty("value", "12.34");
+    // Typing still works, with the same two-decimal guard.
+    fireEvent.change(input, { target: { value: "40.50" } });
+    expect(input).toHaveProperty("value", "40.50");
+    fireEvent.change(input, { target: { value: "40.505" } });
+    expect(input).toHaveProperty("value", "40.50");
+  });
+
   it("disables unavailable step directions at bounds, malformed drafts, and the canonical ceiling", () => {
     const onValueChange = vi.fn();
     const { rerender } = render(

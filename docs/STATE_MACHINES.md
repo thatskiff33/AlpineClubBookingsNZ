@@ -3108,6 +3108,35 @@ published assignment appears on public committee surfaces
 contactable published assignment can receive server-routed contact form mail through the role email alias, or the linked member email when the role email is blank
 ```
 
+## Food Order Lifecycle
+
+Fork #121 (`src/lib/food-orders.ts`, guide [Food Orders](guides/food-orders.md)).
+
+```text
+member places an order -> OPEN, every item unreceived (order, items and audit
+  row in one transaction; the food officer email is queued only after it commits)
+items received (one or more, OPEN only), in ONE transaction:
+  1. take the order row: updateMany WHERE id AND status = 'OPEN' (touch
+     updatedAt); count 0 -> 409 "already received", nothing written. This row
+     lock serialises concurrent receipts on one order.
+  2. mark the chosen items still unreceived (receivedAt, receivedById); none
+     left to mark -> 409, rolled back
+  3. audit food_order.items_received (items marked, count remaining)
+  4. if no item remains unreceived: OPEN -> RECEIVED by updateMany WHERE
+     status = 'OPEN', receivedAt/receivedById = this moment and person, audit
+     food_order.received
+  partly received stays OPEN ("2 of 5 items received")
+item received and order RECEIVED are terminal: no unticking, no reopening
+price (either status): updateMany WHERE priceCents = the amount the caller's
+  screen showed; a mismatch answers 409 and writes nothing; each change audits
+  the old and new cents; the price moves no money
+```
+
+Who may make either transition is `canManageFoodOrder`: an active committee
+assignment, a hut leader whose access window covers today at that order's lodge,
+or Lodge Operations edit. No advisory lock is taken: the order shares no row or
+key with any booking, capacity or settlement writer.
+
 ## Refund And Credit Lifecycle
 
 Known credit types: `CANCELLATION_REFUND`,

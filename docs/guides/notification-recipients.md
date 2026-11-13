@@ -92,6 +92,12 @@ offered to them at all:
 | Maintenance reports | Lodge Operations | Somebody reports a physical fault at a lodge |
 | Central server version | Lodge Operations | Every day, inside the Daily digest, while syncing with the Alpine Central Server is paused because the server is on a different software version from this site. This is the one entry that reaches two audiences: the digest's own readers get it inside their digest, and a Lodge Operations editor who does not receive the digest gets a separate message, *Admin Server Version Paused* under [Email Messages](email-messages.md), carrying **only** this entry — never the digest's alert counts — with its own wording and its own delivery rule. Somebody in both groups gets one email, the digest |
 
+The food-order email (`food-order-placed`, fork #121) is not in this grid
+either: it goes to the one address in the [Food Orders](food-orders.md)
+settings, not to an admin role, so it has no checkbox here. It can be muted
+under [Delivery Rules](notification-rules.md) like any other non-locked
+operational email.
+
 ### Always-on alerts
 
 Eleven alerts are sent outside this grid. They have no checkbox anywhere and cannot

@@ -191,6 +191,14 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   "MaintenanceReport.resolvedById",
   "MaintenanceReport.photoDeletedById",
   "LodgeMaintenanceReportToken.rotatedById",
+  // Fork #121: who confirmed a food order received and who last recorded its
+  // price. Bare FK-less Strings written from a member session, kept as
+  // immutable history on merge like MaintenanceReport.resolvedById. (The order's
+  // own member, FoodOrder.memberId, is a real relation classified `move`.)
+  "FoodOrder.receivedById",
+  "FoodOrder.priceUpdatedById",
+  // Fork #121 owner change: who ticked a food-order item received. Same kind.
+  "FoodOrderItem.receivedById",
   // #4513 (M1): the actor recorded on an immutable member-money event. A bare
   // String the detector cannot see; the database refuses any UPDATE of a posted
   // event, so a merge could not rewrite it even if it tried.
@@ -249,6 +257,9 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   "EmailMessageSetting.updatedByMemberId",
   "EmailTemplateOverride.updatedByMemberId",
   "FinanceSyncRun.requestedByMemberId",
+  // Fork #121: who last saved the food-order settings singleton. Kept as
+  // immutable history on merge like every other `*.updatedByMemberId`.
+  "FoodOrderSettings.updatedByMemberId",
   "IntegrationWizardProgress.updatedByMemberId",
   "InternetBankingPaymentSettings.updatedByMemberId",
   "LodgeInstruction.updatedByMemberId",

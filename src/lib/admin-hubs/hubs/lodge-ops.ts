@@ -136,6 +136,16 @@ export const LODGE_OPS_HUB = defineHub({
       moved: false,
     },
     {
+      // Fork #121: the Food Orders settings card (food officer email, label).
+      id: "food-orders",
+      label: "Food Orders",
+      oldPath: "/admin/food-orders",
+      area: "lodge",
+      flags: ["foodOrders"],
+      keywords: ["food", "catering", "provisions", "order", "officer"],
+      moved: false,
+    },
+    {
       id: "display",
       label: "Lobby Display",
       oldPath: "/admin/display",

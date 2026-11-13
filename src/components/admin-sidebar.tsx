@@ -42,6 +42,7 @@ import {
   UserX,
   BedDouble,
   Hammer,
+  ShoppingBasket,
   Wrench,
   Palette,
   UserPlus,
@@ -363,6 +364,12 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         href: "/admin/maintenance-reports",
         label: "Lodge Maintenance",
         icon: Wrench,
+      },
+      {
+        // Food orders (fork #121): hidden with the `foodOrders` module, like the entry above.
+        href: "/admin/food-orders",
+        label: "Food Orders",
+        icon: ShoppingBasket,
       },
       // Lobby Display (fork issue #109): one Lodge Operations entry opens the
       // hub landing page (/admin/display), which lays out cards for Devices,

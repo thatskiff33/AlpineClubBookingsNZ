@@ -442,6 +442,10 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Maintenance report: {{lodgeName}}",
     "defaultBody": "Maintenance Report Lodged\n\nSomething needs attention at {{lodgeName}}.\n\nLodge: {{lodgeName}}\nReported by: {{reportedBy}}\nHow it was sent: {{sourceLabel}}\nPhoto: {{photoLabel}}\n\n{{summary}}\n\n{{answersText}}\n\nReview Maintenance Report: {{maintenanceReportUrl}}"
   },
+  "food-order-placed": {
+    "defaultSubject": "Food order: {{lodgeName}}, needed by {{neededBy}}",
+    "defaultBody": "Food Order Placed\n\nA food order has been placed for {{lodgeName}}. You are receiving it as the club's {{officerLabel}}.\n\nLodge: {{lodgeName}}\nNeeded by: {{neededBy}}\nOrdered by: {{orderedBy}}\n\n{{itemsText}}\n\n{{notes}}\n\nView Food Order: {{foodOrderUrl}}"
+  },
   "admin-issue-report": {
     "defaultSubject": "Issue Report: {{memberName}}",
     "defaultBody": "Issue Report Submitted\n\n{{memberName}} has reported an issue from the bookings site.\n\nMember: {{memberName}}\nEmail: {{memberEmail}}\nPage: {{pageTitle}}\nScreenshot: Available in admin OR Not included\n\n{{description}}\n\nReview Issue Report: {{issueReportUrl}}\n\nOpen Reported Page: {{pageUrl}}"
