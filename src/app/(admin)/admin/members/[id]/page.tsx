@@ -1085,6 +1085,8 @@ export default function MemberDetailPage({
             ancestorRendersViewOnlyBanner
             className={embeddedCardClassName}
             member={member}
+            // Keep this card mounted while refreshing so its confirmation and
+            // success focus survive the member read.
             onSaved={fetchMember}
           />
         </MemberGroupCard>
