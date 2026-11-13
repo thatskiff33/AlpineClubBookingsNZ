@@ -50,7 +50,11 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import {
+  ApiRefusalError,
+  apiErrorMessageFromBody,
+  refusalMessageOr,
+} from "@/lib/api-error-message";
 import {
   MEMBERSHIP_TYPE_BOOKING_BEHAVIOR_LABELS,
   canonicalKeyResolvedRateHolderBookingBehavior,
@@ -1126,11 +1130,11 @@ export default function AdminMembershipTypesPage() {
       const response = await fetch("/api/admin/membership-types", {
         credentials: "same-origin",
       });
-      const body = (await response.json()) as
+      const body = (await response.json().catch(() => ({}))) as
         | MembershipTypesResponse
         | { error?: string };
       if (!response.ok || !("membershipTypes" in body)) {
-        throw new Error(
+        throw new ApiRefusalError(
           apiErrorMessageFromBody(body, "Failed to load membership types"),
         );
       }
@@ -1142,9 +1146,7 @@ export default function AdminMembershipTypesPage() {
       );
     } catch (loadError) {
       setError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Failed to load membership types",
+        refusalMessageOr(loadError, "Failed to load membership types"),
       );
     } finally {
       setLoading(false);
@@ -1214,7 +1216,8 @@ export default function AdminMembershipTypesPage() {
     try {
       const validationError = validateDraft(newDraft);
       if (validationError) {
-        throw new Error(validationError);
+        setError(validationError);
+        return;
       }
       const response = await fetch("/api/admin/membership-types", {
         method: "POST",
@@ -1222,7 +1225,7 @@ export default function AdminMembershipTypesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(draftPayload(newDraft, availableAgeTiers)),
       });
-      const body = (await response.json()) as
+      const body = (await response.json().catch(() => ({}))) as
         | { membershipType: MembershipType }
         | { error?: string };
       if (!response.ok || !("membershipType" in body)) {
@@ -1232,7 +1235,7 @@ export default function AdminMembershipTypesPage() {
           setError(ADMIN_FORBIDDEN_SAVE_REASON);
           return;
         }
-        throw new Error(
+        throw new ApiRefusalError(
           apiErrorMessageFromBody(body, "Failed to create membership type"),
         );
       }
@@ -1243,9 +1246,7 @@ export default function AdminMembershipTypesPage() {
       setSavedMessage("Membership type created.");
     } catch (createError) {
       setError(
-        createError instanceof Error
-          ? createError.message
-          : "Failed to create membership type",
+        refusalMessageOr(createError, "Failed to create membership type"),
       );
     } finally {
       setCreating(false);
@@ -1266,7 +1267,8 @@ export default function AdminMembershipTypesPage() {
     try {
       const validationError = validateDraft(draft);
       if (validationError) {
-        throw new Error(validationError);
+        setError(validationError);
+        return false;
       }
       const response = await fetch(`/api/admin/membership-types/${type.id}`, {
         method: "PATCH",
@@ -1274,7 +1276,7 @@ export default function AdminMembershipTypesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(draftPayload(draft, availableAgeTiers)),
       });
-      const body = (await response.json()) as
+      const body = (await response.json().catch(() => ({}))) as
         | { membershipType: MembershipType }
         | { error?: string };
       if (!response.ok || !("membershipType" in body)) {
@@ -1282,7 +1284,7 @@ export default function AdminMembershipTypesPage() {
           setError(ADMIN_FORBIDDEN_SAVE_REASON);
           return false;
         }
-        throw new Error(
+        throw new ApiRefusalError(
           apiErrorMessageFromBody(body, "Failed to save membership type"),
         );
       }
@@ -1296,9 +1298,7 @@ export default function AdminMembershipTypesPage() {
       return true;
     } catch (saveError) {
       setError(
-        saveError instanceof Error
-          ? saveError.message
-          : "Failed to save membership type",
+        refusalMessageOr(saveError, "Failed to save membership type"),
       );
       return false;
     } finally {
@@ -1331,7 +1331,7 @@ export default function AdminMembershipTypesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ orderedIds: nextOrder.map((type) => type.id) }),
       });
-      const body = (await response.json()) as
+      const body = (await response.json().catch(() => ({}))) as
         | MembershipTypesResponse
         | { error?: string };
       if (!response.ok || !("membershipTypes" in body)) {
@@ -1339,7 +1339,7 @@ export default function AdminMembershipTypesPage() {
           setError(ADMIN_FORBIDDEN_SAVE_REASON);
           return;
         }
-        throw new Error(
+        throw new ApiRefusalError(
           apiErrorMessageFromBody(body, "Failed to reorder membership types"),
         );
       }
@@ -1355,9 +1355,7 @@ export default function AdminMembershipTypesPage() {
       setSavedMessage("Membership type order saved.");
     } catch (reorderError) {
       setError(
-        reorderError instanceof Error
-          ? reorderError.message
-          : "Failed to reorder membership types",
+        refusalMessageOr(reorderError, "Failed to reorder membership types"),
       );
     } finally {
       setReordering(false);
@@ -1382,7 +1380,7 @@ export default function AdminMembershipTypesPage() {
           setError(ADMIN_FORBIDDEN_SAVE_REASON);
           return;
         }
-        throw new Error(
+        throw new ApiRefusalError(
           apiErrorMessageFromBody(body, "Failed to delete membership type"),
         );
       }
@@ -1397,9 +1395,7 @@ export default function AdminMembershipTypesPage() {
       setSavedMessage(`Deleted ${type.name}.`);
     } catch (deleteError) {
       setError(
-        deleteError instanceof Error
-          ? deleteError.message
-          : "Failed to delete membership type",
+        refusalMessageOr(deleteError, "Failed to delete membership type"),
       );
     } finally {
       setDeletingId(null);
@@ -1460,7 +1456,7 @@ export default function AdminMembershipTypesPage() {
           setError(ADMIN_FORBIDDEN_SAVE_REASON);
           return;
         }
-        throw new Error(
+        throw new ApiRefusalError(
           apiErrorMessageFromBody(body, "Failed to merge membership type"),
         );
       }
@@ -1477,9 +1473,7 @@ export default function AdminMembershipTypesPage() {
       );
     } catch (mergeError) {
       setError(
-        mergeError instanceof Error
-          ? mergeError.message
-          : "Failed to merge membership type",
+        refusalMessageOr(mergeError, "Failed to merge membership type"),
       );
     } finally {
       setMerging(false);
@@ -1524,7 +1518,7 @@ export default function AdminMembershipTypesPage() {
           dryRun,
         }),
       });
-      const body = (await response.json()) as
+      const body = (await response.json().catch(() => ({}))) as
         | RollForwardResponse
         | { error?: string };
       if (!response.ok || !("wouldCopyCount" in body)) {
@@ -1532,7 +1526,7 @@ export default function AdminMembershipTypesPage() {
           setError(ADMIN_FORBIDDEN_SAVE_REASON);
           return;
         }
-        throw new Error(
+        throw new ApiRefusalError(
           apiErrorMessageFromBody(
             body,
             dryRun
@@ -1554,11 +1548,12 @@ export default function AdminMembershipTypesPage() {
       );
     } catch (rollForwardError) {
       setError(
-        rollForwardError instanceof Error
-          ? rollForwardError.message
-          : dryRun
+        refusalMessageOr(
+          rollForwardError,
+          dryRun
             ? "Failed to preview seasonal assignment roll-forward"
             : "Failed to roll forward seasonal assignments",
+        ),
       );
     } finally {
       setRollForwardMode(null);
