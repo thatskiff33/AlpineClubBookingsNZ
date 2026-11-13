@@ -382,7 +382,7 @@ describe("hosting coverage queue participant fence (#2597)", () => {
     const answers = [...lockCounts];
     const db = {
       $executeRaw: vi.fn((sql: { strings?: readonly string[] }) => {
-        if (!/FOR UPDATE/.test((sql.strings ?? []).join("?"))) return Promise.resolve(0);
+        if (!/FOR (NO KEY )?UPDATE/.test((sql.strings ?? []).join("?"))) return Promise.resolve(0);
         const next = answers.shift();
         if (next === undefined) throw new Error("an unexpected row-lock statement");
         return typeof next === "number" ? Promise.resolve(next) : Promise.reject(next.reject);
