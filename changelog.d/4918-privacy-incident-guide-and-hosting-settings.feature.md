@@ -18,7 +18,11 @@
   the country or region your data is kept in. A new `{{data-hosting}}` page
   token shows these in a sentence on a page such as your privacy policy, with
   wording that sends members to your Privacy Officer for anything left blank.
+  Each save is recorded in the Audit Log under the `admin` category, like
+  Club Identity changes, so anyone with support access can see it. The row
+  holds only the two hosting values, before and after, never member data.
 
-  **Your published privacy policy does not change in this release.** The next
-  release will update privacy policies that still hold the unedited starter
-  text to use this setting, so fill it in now.
+  **This change does not alter your published privacy policy.** (The separate
+  starter-policy correction, #4914, has its own note.) A later release will
+  update privacy policies that still hold the unedited starter text to use
+  this setting, so fill it in now.
