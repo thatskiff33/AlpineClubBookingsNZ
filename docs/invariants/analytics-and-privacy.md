@@ -903,8 +903,9 @@ club setting, default 30 days, shipped ON.
   claims its lease column on `PrivacyRetentionSettings`, rechecks the switch in
   every batch transaction and clears at most `RETENTION_BATCH_SIZE` rows per
   batch through `clearExpiredStayDietaryValues`, the only writer, in the
-  booking write half. It takes no advisory lock (`INV-LOCK-001`). Each run
-  writes one `privacy` audit row holding the count, never a value.
+  booking write half. It takes no advisory lock (`INV-LOCK-001`). Each clearing
+  batch writes one `privacy` audit row holding its count, never a value, in the
+  same transaction.
 - **Re-entry.** A value an officer re-enters on a stay older than the period is
   cleared the next night.
 - **Who may change it.** Support edit plus bookings edit.

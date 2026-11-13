@@ -4,8 +4,8 @@
   automatic way for it to be removed. A new nightly job now clears the note
   once the stay ended more than a set number of days ago, for every guest and
   every booking status. Names, nights, prices, the booking and a member's own
-  profile note are not touched, and each run records only a count in the
-  audit log.
+  profile note are not touched, and the audit log records only how many
+  notes were cleared.
 
   **This ships switched on, with a 30-day period.** The first nightly run
   after upgrading (03:30 club time) clears every stay note whose stay ended

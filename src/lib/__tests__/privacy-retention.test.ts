@@ -327,7 +327,7 @@ describe("after-stay dietary retention", () => {
   it.each([1, 365])("accepts the day boundary %s", days => {
     expect(privacyRetentionSettingsSchema.safeParse({ ...DEFAULT_PRIVACY_RETENTION_SETTINGS, bookingDietaryRetentionDays: days }).success).toBe(true);
   });
-  it("clears only expired notes in bounded batches and audits one count without values", async () => {
+  it("clears only expired notes in bounded batches and audits each batch's count without values", async () => {
     const s = store();
     for (let n = 0; n < 205; n++) s.data.bookingGuest.push({ id: String(n).padStart(3, "0"), stayEnd: new Date("2026-05-31"), dietaryRequirements: "Private fixture" });
     s.data.bookingGuest.push(
@@ -340,9 +340,29 @@ describe("after-stay dietary retention", () => {
     expect(await runBookingDietaryClearJob({ db: s.db, now: NOW })).toMatchObject({ clearedBookingDietary: 205 });
     expect(s.data.bookingGuest.filter(row => row.dietaryRequirements === "Keep")).toHaveLength(3);
     expect(s.db.$transaction).toHaveBeenCalledTimes(3);
-    expect(createAuditLog).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ category: "privacy", metadata: { count: 205 } }), s.db);
+    // One count row per clearing batch, written through the batch's own transaction client.
+    expect(vi.mocked(createAuditLog).mock.calls.map(([event]) => event.metadata)).toEqual([{ count: 100 }, { count: 100 }, { count: 5 }]);
+    for (const [event, client] of vi.mocked(createAuditLog).mock.calls) {
+      expect(event).toMatchObject({ category: "privacy", action: "privacy.retention.booking_dietary_cleared" });
+      expect(client).toBe(s.db);
+    }
+    expect(JSON.stringify(vi.mocked(createAuditLog).mock.calls)).not.toContain("Private fixture");
     expect(s.db.$executeRaw).not.toHaveBeenCalled();
+    vi.mocked(createAuditLog).mockClear();
     expect(await runBookingDietaryClearJob({ db: s.db, now: NOW })).toMatchObject({ clearedBookingDietary: 0 });
+    expect(createAuditLog).not.toHaveBeenCalled();
+  });
+  it("keeps the audit row of a committed batch when a later batch fails", async () => {
+    const s = store();
+    for (let n = 0; n < 150; n++) s.data.bookingGuest.push({ id: String(n).padStart(3, "0"), stayEnd: new Date("2026-05-31"), dietaryRequirements: "Private fixture" });
+    const failure = new Error("lock timeout");
+    vi.mocked(s.db.$transaction)
+      .mockImplementationOnce(async callback => (callback as (tx: PrismaClient) => Promise<unknown>)(s.db))
+      .mockRejectedValueOnce(failure);
+    await expect(runBookingDietaryClearJob({ db: s.db, now: NOW })).rejects.toBe(failure);
+    expect(createAuditLog).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ category: "privacy", metadata: { count: 100 } }), s.db);
+    // The lease is still released after the failure.
+    expect(s.settings.bookingDietaryClearStartedAt).toBeNull();
   });
   it("does not claim or write when disabled or already busy", async () => {
     const s = store();

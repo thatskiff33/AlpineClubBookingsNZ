@@ -2,6 +2,7 @@ import "server-only";
 import type { PrismaClient } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getPrivacyRetentionSettings, PRIVACY_RETENTION_SETTINGS_ID } from "@/lib/privacy-retention-settings";
+import { DEFAULT_PRIVACY_RETENTION_SETTINGS } from "@/lib/privacy-retention-shared";
 import { privacyRetentionSelection, selectFormerMemberBatch, RETENTION_BATCH_SIZE } from "@/lib/privacy-retention-selection";
 import { createAuditLog } from "@/lib/audit";
 import { clearExpiredStayDietaryValues } from "@/lib/member-dietary-booking-writes";
@@ -25,9 +26,10 @@ async function runClaimed(
   if (!settings[enabledField]) return { ...result, skipped: "disabled" };
   // A new installation may not have saved settings yet; preserve defaults and
   // never overwrite a concurrently saved policy. The default-on job needs a lease row.
+  // The row is seeded from the same TS defaults the preview reads (INV-SSOT).
   if (kind === "dietary") await db.privacyRetentionSettings.upsert({
     where: { id: PRIVACY_RETENTION_SETTINGS_ID },
-    create: { id: PRIVACY_RETENTION_SETTINGS_ID }, update: {},
+    create: { id: PRIVACY_RETENTION_SETTINGS_ID, ...DEFAULT_PRIVACY_RETENTION_SETTINGS }, update: {},
   });
   const claimed = await db.privacyRetentionSettings.updateMany({
     where: {
@@ -37,6 +39,8 @@ async function runClaimed(
   });
   if (claimed.count !== 1) return { ...result, skipped: "busy" };
   try {
+    // Prune and anonymise use these cutoffs; the dietary branch recomputes its
+    // cutoff from the settings it rechecks inside each batch.
     const selection = await privacyRetentionSelection(settings, now);
     if (kind === "prune") {
       // Each bounded delete rechecks the selection: a concurrent application
@@ -63,16 +67,19 @@ async function runClaimed(
           const current = await getPrivacyRetentionSettings(tx);
           if (!current.bookingDietaryClearEnabled) return 0;
           const { bookingDietaryCutoff } = await privacyRetentionSelection(current, now);
-          return clearExpiredStayDietaryValues(tx, { cutoff: bookingDietaryCutoff, take: RETENTION_BATCH_SIZE });
+          const cleared = await clearExpiredStayDietaryValues(tx, { cutoff: bookingDietaryCutoff, take: RETENTION_BATCH_SIZE });
+          // The count row commits or rolls back with its own clear, so a later
+          // batch's failure can never leave committed clears unaudited.
+          if (cleared > 0) await createAuditLog({
+            action: "privacy.retention.booking_dietary_cleared", category: "privacy",
+            entityType: "PrivacyRetentionSettings", entityId: PRIVACY_RETENTION_SETTINGS_ID,
+            summary: "Expired stay dietary values cleared", metadata: { count: cleared },
+          }, tx);
+          return cleared;
         });
         result.clearedBookingDietary += count;
         if (count < RETENTION_BATCH_SIZE) break;
       }
-      await createAuditLog({
-        action: "privacy.retention.booking_dietary_cleared", category: "privacy",
-        entityType: "PrivacyRetentionSettings", entityId: PRIVACY_RETENTION_SETTINGS_ID,
-        summary: "Expired stay dietary values cleared", metadata: { count: result.clearedBookingDietary },
-      }, db);
     } else {
       let afterId: string | undefined;
       for (;;) {

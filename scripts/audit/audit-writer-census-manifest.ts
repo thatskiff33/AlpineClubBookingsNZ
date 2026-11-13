@@ -749,9 +749,10 @@ export const AUDIT_CENSUS_TOTALS = {
   // `booking-payment.card-refund.try-card-again`, the treasurer closing a dead card refund
   // a later Stripe refund covers and putting one back to try the card, each awaited on its
   // own transaction (`card-refund-dead-row-actions.ts`), both `payment`. RE-MEASURED with `pnpm run audit:census`.
-  // 538 -> 539 (#4916): `privacy.retention.booking_dietary_cleared`, the one count-only row
-  // the nightly after-stay dietary clear writes per run, an awaited `createAuditLog` with a
-  // literal `privacy` category. RE-MEASURED with `pnpm run audit:census`.
+  // 538 -> 539 (#4916): `privacy.retention.booking_dietary_cleared`, the count-only row
+  // each clearing batch of the nightly after-stay dietary clear writes in its own
+  // transaction, an awaited `createAuditLog` with a literal `privacy` category.
+  // RE-MEASURED with `pnpm run audit:census`.
   writeSites: 539,
   /**
    * Of those, sites whose event object carries no `category` key.

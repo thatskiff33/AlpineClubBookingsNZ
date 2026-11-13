@@ -78,9 +78,10 @@ let run: typeof import("@/lib/privacy-retention-jobs").runBookingDietaryClearJob
       .toEqual({ dietaryRequirements: "Profile fixture" });
     expect(await run({ db, now: NOW })).toMatchObject({ clearedBookingDietary: 0 });
     const audits = await db.auditLog.findMany({ where: { action: AUDIT_ACTION, id: { notIn: priorAuditIds } }, orderBy: { createdAt: "asc" } });
-    expect(audits).toHaveLength(2);
+    // One count row per clearing batch, committed with it; a run that clears nothing writes none.
+    expect(audits).toHaveLength(1);
     expect(audits.every(row => row.category === "privacy")).toBe(true);
-    expect(audits.map(row => row.metadata)).toEqual(expect.arrayContaining([{ count: 4 }, { count: 0 }]));
+    expect(audits.map(row => row.metadata)).toEqual([{ count: 4 }]);
     expect(JSON.stringify(audits)).not.toContain("Stay fixture");
   });
   it("writes nothing with the independent switch off", async () => {
@@ -89,5 +90,15 @@ let run: typeof import("@/lib/privacy-retention-jobs").runBookingDietaryClearJob
     expect(await run({ db, now: NOW })).toMatchObject({ skipped: "disabled", clearedBookingDietary: 0 });
     expect(await db.bookingGuest.findUnique({ where: { id: PREFIX + "false-expired" }, select: { dietaryRequirements: true } }))
       .toEqual({ dietaryRequirements: "Re-entered fixture" });
+  });
+  it("on an install with no saved settings, seeds the shipped defaults and clears", async () => {
+    await db.privacyRetentionSettings.deleteMany({ where: { id: "default" } });
+    expect(await run({ db, now: NOW })).toMatchObject({ clearedBookingDietary: 1 });
+    expect(await db.bookingGuest.findUnique({ where: { id: PREFIX + "false-expired" }, select: { dietaryRequirements: true } }))
+      .toEqual({ dietaryRequirements: null });
+    expect(await db.privacyRetentionSettings.findUnique({
+      where: { id: "default" },
+      select: { bookingDietaryRetentionDays: true, bookingDietaryClearEnabled: true, bookingDietaryClearStartedAt: true },
+    })).toEqual({ bookingDietaryRetentionDays: 30, bookingDietaryClearEnabled: true, bookingDietaryClearStartedAt: null });
   });
 });
