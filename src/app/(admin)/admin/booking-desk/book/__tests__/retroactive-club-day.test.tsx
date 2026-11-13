@@ -165,7 +165,7 @@ vi.mock("@/components/promo-code-input", () => ({
   PromoCodeInput: () => null,
 }))
 
-import AdminBookPage from "@/app/(admin)/admin/book/page"
+import AdminBookPage from "@/app/(admin)/admin/booking-desk/book/page"
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture"
 
 function response(body: unknown): Response {

@@ -1,6 +1,7 @@
 "use client";
 import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
+import { adminHref } from "@/lib/admin-hubs";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -105,7 +106,7 @@ function buildBookingChangeRequestsPath(
 }
 
 export function BookingChangeRequestsPanel({
-  basePath = "/admin/booking-requests",
+  basePath = adminHref("booking-requests"),
   fixedSearchParams = EMPTY_SEARCH_PARAMS,
   showHeading = true,
   canEdit = true,
@@ -333,7 +334,7 @@ export function BookingChangeRequestsPanel({
           <p className="mt-1 text-muted-foreground">
             Review locked same-day and past-night booking change requests.
             See also{" "}
-            <Link className="underline" href="/admin/booking-requests?tab=approvals">
+            <Link className="underline" href={`${adminHref("booking-requests")}?tab=approvals`}>
               booking approvals
             </Link>{" "}
             (new bookings flagged for admin review).
