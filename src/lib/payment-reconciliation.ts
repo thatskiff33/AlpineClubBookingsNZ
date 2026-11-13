@@ -1,4 +1,5 @@
 import { XERO_ACTIVE_OPERATION_STATUSES } from "./xero-active-operation-statuses";
+import { NOT_CARD_REFUND_REVERSAL_INVOICE } from "@/lib/xero-card-refund-reversal-outbox";
 import { bookingOwner } from "@/lib/booking-owner";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
@@ -321,6 +322,8 @@ async function assertNoXeroInvoiceEvidence(
       localModel: "Payment",
       localId: payment.id,
       status: "SUCCEEDED",
+      // A failed-card-refund reversal is not a bill the member was sent (`INV-PAY-151`).
+      ...NOT_CARD_REFUND_REVERSAL_INVOICE,
     },
     select: { id: true },
   });
@@ -346,6 +349,7 @@ async function assertNoXeroInvoiceEvidence(
       localModel: "Payment",
       localId: payment.id,
       status: { in: [...XERO_ACTIVE_OPERATION_STATUSES] },
+      ...NOT_CARD_REFUND_REVERSAL_INVOICE,
     },
     select: { id: true },
   });
