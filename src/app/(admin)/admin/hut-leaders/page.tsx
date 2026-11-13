@@ -66,6 +66,12 @@ import {
   coveredNightsByDate,
 } from "./_components/leader-calendar-overlay";
 import type { HutLeaderOnNight } from "@/lib/hut-leader-handover";
+import {
+  apiErrorMessageFromBody,
+  apiErrorMessageFromResponse,
+  jsonObjectOrNull,
+  readApiErrorBody,
+} from "@/lib/api-error-message";
 
 interface HutLeaderAssignment {
   id: string;
@@ -524,7 +530,16 @@ export default function HutLeadersPage() {
           });
           return;
         }
-        const data = await res.json();
+        // A refusal is not always JSON: an HTML error page reads as no body,
+        // and falls through to this screen's own sentence (ALP-589).
+        const data = (jsonObjectOrNull(await readApiErrorBody(res)) ?? {}) as {
+          code?: unknown;
+          nightDetails?: NonNullable<typeof overCapacity>["nights"];
+          nonHoldingBookings?: unknown;
+          nights?: NonNullable<typeof holdAmendment>["nights"];
+          amendments?: unknown;
+          lastNightStayed?: unknown;
+        };
         // #2286 warn-and-confirm: not a failure, a question. Keep the form
         // exactly as it is and show the nights so the admin decides.
         if (data.code === "CUSTODIAN_OVER_CAPACITY_CONFIRM_REQUIRED") {
@@ -558,7 +573,7 @@ export default function HutLeadersPage() {
           return;
         }
         setError({
-          message: data.error || "Failed to create",
+          message: apiErrorMessageFromBody(data, "Failed to create"),
           memberId: target.memberId,
           // #3817: the stay refusal names the last night stayed from the start
           // date; the form offers it as the corrected end.
@@ -585,6 +600,9 @@ export default function HutLeadersPage() {
       fetchAssignments();
       fetchUnassignedDates();
       refreshOverlay(visibleMonthKey);
+    } catch {
+      if (activeLodgeIdRef.current !== requestedLodgeId) return;
+      setError({ message: "Failed to create", memberId: target.memberId });
     } finally {
       if (activeLodgeIdRef.current === requestedLodgeId) setCreating(false);
     }
@@ -754,15 +772,17 @@ export default function HutLeadersPage() {
         method: "POST",
       });
       if (activeLodgeIdRef.current !== requestedLodgeId) return;
-      if (!res.ok && res.status === 403) {
-        setError({ message: ADMIN_FORBIDDEN_SAVE_REASON, memberId: null });
+      if (!res.ok) {
+        setError({
+          message:
+            res.status === 403
+              ? ADMIN_FORBIDDEN_SAVE_REASON
+              : await apiErrorMessageFromResponse(res, "Failed to reset PIN"),
+          memberId: null,
+        });
         return;
       }
       const data = await res.json();
-      if (!res.ok) {
-        setError({ message: data.error || "Failed to reset PIN", memberId: null });
-        return;
-      }
 
       setPinMessage({
         memberName: assignment.memberName,
@@ -770,6 +790,9 @@ export default function HutLeadersPage() {
         emailSent: Boolean(data.emailSent),
       });
       fetchAssignments();
+    } catch {
+      if (activeLodgeIdRef.current !== requestedLodgeId) return;
+      setError({ message: "Failed to reset PIN", memberId: null });
     } finally {
       if (activeLodgeIdRef.current === requestedLodgeId) {
         setResettingPinId(null);
