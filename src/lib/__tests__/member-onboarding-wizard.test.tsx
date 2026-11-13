@@ -7,6 +7,9 @@ import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
 import { MEMBER_ONBOARDING_CONFIRMED_EVENT } from "@/lib/member-onboarding-events";
 
 const fetchMock = vi.fn();
+const signOutMock = vi.hoisted(() => vi.fn());
+
+vi.mock("next-auth/react", () => ({ signOut: signOutMock }));
 
 vi.mock("sonner", () => ({
   toast: {
@@ -27,10 +30,21 @@ vi.mock("@/app/(authenticated)/profile/family-group-section", () => ({
   FamilyGroupSection: () => <div data-testid="family-group-section" />,
 }));
 
+// Test the wizard's Escape cancellation directly. Radix also prevents the
+// native event during dismissal, which would mask a missing wizard handler.
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ children, open }: { children: ReactNode; open?: boolean }) =>
     open ? <div role="dialog">{children}</div> : null,
-  DialogContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogContent: ({ children, onEscapeKeyDown }: {
+    children: ReactNode;
+    onEscapeKeyDown?: (event: KeyboardEvent) => void;
+  }) => (
+    <div role="presentation" onKeyDown={(event) => {
+      if (event.key === "Escape") onEscapeKeyDown?.(event.nativeEvent);
+    }}>
+      {children}
+    </div>
+  ),
   DialogDescription: ({ children }: { children: ReactNode }) => <p>{children}</p>,
   DialogFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -225,5 +239,133 @@ describe("MemberOnboardingWizard", () => {
     } finally {
       window.removeEventListener(MEMBER_ONBOARDING_CONFIRMED_EVENT, onConfirmed);
     }
+  });
+
+  it("offers Log out while the onboarding payload is still loading", () => {
+    fetchMock.mockReturnValueOnce(new Promise(() => {}));
+
+    render(<MemberOnboardingWizard initialShouldShow />);
+
+    expect(screen.getByText("Loading member details")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+    expect(signOutMock).toHaveBeenCalledWith({ callbackUrl: "/login" });
+  });
+
+  it.each([
+    ["the fetch rejects", () => fetchMock.mockRejectedValueOnce(new Error("offline"))],
+    [
+      "the response is not OK",
+      () =>
+        fetchMock.mockResolvedValueOnce({
+          ok: false,
+          json: async () => ({ error: "Could not load onboarding" }),
+        }),
+    ],
+  ])("offers Log out after a failed load when %s", async (_case, failLoad) => {
+    failLoad();
+
+    render(<MemberOnboardingWizard initialShouldShow />);
+
+    expect(await screen.findByRole("button", { name: "Try again" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+    expect(signOutMock).toHaveBeenCalledWith({ callbackUrl: "/login" });
+  });
+
+  it("offers Log out on the profile step without confirming onboarding", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ...onboardingData,
+        currentMember: {
+          ...onboardingData.currentMember,
+          status: { ...baseStatus, isProfileComplete: false },
+        },
+      }),
+    });
+
+    render(<MemberOnboardingWizard initialShouldShow />);
+
+    expect(await screen.findByRole("button", { name: "save-profile" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+
+    expect(signOutMock).toHaveBeenCalledWith({ callbackUrl: "/login" });
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/member/onboarding/confirm",
+      expect.anything()
+    );
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("keeps Log out reachable on the confirm and family steps", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => onboardingData,
+    });
+
+    render(<MemberOnboardingWizard initialShouldShow />);
+
+    const confirm = await screen.findByRole("button", {
+      name: "Confirm details are correct",
+    });
+    expect(screen.getByRole("button", { name: "Log out" })).toBeTruthy();
+    fireEvent.click(confirm);
+    expect(screen.getByRole("button", { name: /Confirm and finish/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+    expect(signOutMock).toHaveBeenCalledWith({ callbackUrl: "/login" });
+  });
+
+  it("disables Log out while the final confirmation is saving", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => onboardingData,
+      })
+      // The confirm POST never settles, so the wizard stays in `confirming`.
+      .mockReturnValueOnce(new Promise(() => {}));
+
+    render(<MemberOnboardingWizard initialShouldShow />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Confirm details are correct" })
+    );
+    expect(
+      (screen.getByRole("button", { name: "Log out" }) as HTMLButtonElement).disabled
+    ).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: /Confirm and finish/ }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/member/onboarding/confirm",
+        expect.objectContaining({ method: "POST" })
+      )
+    );
+    const logOut = screen.getByRole("button", { name: "Log out" }) as HTMLButtonElement;
+    expect(logOut.disabled).toBe(true);
+    fireEvent.click(logOut);
+    expect(signOutMock).not.toHaveBeenCalled();
+  });
+
+  it("stays open when Escape is pressed", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => onboardingData,
+    });
+
+    render(<MemberOnboardingWizard initialShouldShow />);
+
+    const confirm = await screen.findByRole("button", {
+      name: "Confirm details are correct",
+    });
+    const escape = new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(confirm, escape);
+
+    expect(escape.defaultPrevented).toBe(true);
+
+    expect(screen.getByRole("dialog")).toBeTruthy();
   });
 });
