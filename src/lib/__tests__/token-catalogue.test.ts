@@ -83,6 +83,7 @@ describe("token catalogue contents", () => {
       "lodge-address",
       "hut-leader",
       "hut-leader-lower",
+      "email-log-retention",
       "facebook-url",
     ]);
   });

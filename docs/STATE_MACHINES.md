@@ -239,7 +239,8 @@ to internet banking, the school pay-on-account approval) post R01; an edit or
 the Internet Banking reconcile's flip, which now writes the confirmation's
 ledger lines as the settle does) links its lines to that charge rather than
 charging again. Every writer that sets `PAID` or `CANCELLED` is classified by
-`booking-sale-status-writer-census.test.ts`.
+`booking-sale-status-writer-census.test.ts`, which requires each posting write's
+own function to call its poster at least once per write.
 
 Waitlist confirmation and expiry serialize on the offered booking's lodge lock.
 Confirmation re-reads `WAITLIST_OFFERED` and the deadline after acquiring the
@@ -4733,8 +4734,12 @@ PENDING|FAILED -> same (an open, claimed row that counted the refund is
                        recording the failure in failedRefundIds; compare-and-set
                        on the plan, status, attempts and nextRetryAt read)
 DEAD -> SUCCEEDED     ("Paid another way": finance:edit, lock(1), then the
-                       Payment row, refused (409) unless what is owed is the
-                       figure the treasurer saw, then a status-guarded claim on
+                       Payment row; refused (409) when the owed figure moved,
+                       or (#4492) a failed-later row is on the payment, a
+                       plan-less superseded row's sizing refund has not gone
+                       back to the card, or that row's charge was already
+                       returned by a superseded card-send with less left than
+                       it still owes; then a status-guarded claim on
                        PENDING|FAILED with attempts >= MAX; lastError is the
                        paid-another-way marker, nextRetryAt null, succeededAt
                        now; the amount - all of what is still owed, or part

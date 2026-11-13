@@ -726,7 +726,7 @@ describe("combined member refusal and officer queue contracts", () => {
   });
 
   it("puts unresolved incidents in the bookings permission area with direct rows", () => {
-    const page = readRepoCode("src/app/(admin)/admin/bookings/page.tsx");
+    const page = readRepoCode("src/app/(admin)/admin/booking-desk/bookings/page.tsx");
     expect(page).toContain('id="hosting-coverage-incidents"');
     expect(page).toContain("prisma.hostingCoverageIncident.count(");
     expect(page).toContain("prisma.hostingCoverageIncident.findMany(");

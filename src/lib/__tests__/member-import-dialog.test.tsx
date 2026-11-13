@@ -3,9 +3,9 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ComponentProps, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MemberImportDialog } from "@/app/(admin)/admin/members/_components/member-import-dialog";
+import { MemberImportDialog } from "@/app/(admin)/admin/membership/members/_components/member-import-dialog";
 import { ClubTimeProvider } from "@/components/club-time-provider";
-import type { ImportResult } from "@/app/(admin)/admin/members/_types";
+import type { ImportResult } from "@/app/(admin)/admin/membership/members/_types";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const fetchMock = vi.fn();
