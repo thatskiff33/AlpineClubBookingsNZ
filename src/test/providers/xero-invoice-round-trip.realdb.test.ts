@@ -17,10 +17,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
 import { releaseBookingJournalForTeardown } from "@/lib/__tests__/support/booking-financial-history-teardown";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
-import { declareEnvironmentRoleForSuite, type SuiteEnvironmentRoleDeclaration } from "@/lib/__tests__/helpers/environment-role";
+import type { SuiteEnvironmentRoleDeclaration } from "@/lib/__tests__/helpers/environment-role";
 import { ENVIRONMENT_ROLE_ENV_VAR } from "@/lib/environment-role-declaration";
 import { XeroFake } from "./xero-fake";
-import { xeroTransport } from "./xero-transport";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -41,6 +40,11 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let xeroClient: typeof import("@/lib/xero-api-client");
 let invoices: typeof import("@/lib/xero-booking-invoices");
 let inbound: typeof import("@/lib/xero-inbound/invoice");
+// Loaded in beforeAll, after DATABASE_URL points at the race database. The
+// transport (through `xero-modification-line-items`) and the environment-role
+// helper both reach `@/lib/prisma`; a static import would bind the client to
+// the default URL first.
+let xeroTransport: (typeof import("./xero-transport"))["xeroTransport"];
 let role: SuiteEnvironmentRoleDeclaration | undefined;
 
 (RUN ? describe : describe.skip)("Xero invoice push and inbound sync served by XeroFake - real PostgreSQL (#4908)", { timeout: 60_000 }, () => {
@@ -64,11 +68,13 @@ let role: SuiteEnvironmentRoleDeclaration | undefined;
   beforeAll(async () => {
     assertSafeRaceDbUrl(RACE_DB_URL, "Xero transport round trip");
     process.env.DATABASE_URL = RACE_DB_URL;
+    const { declareEnvironmentRoleForSuite } = await import("@/lib/__tests__/helpers/environment-role");
     role = declareEnvironmentRoleForSuite("non-production");
     ({ prisma } = await import("@/lib/prisma"));
     xeroClient = await import("@/lib/xero-api-client");
     invoices = await import("@/lib/xero-booking-invoices");
     inbound = await import("@/lib/xero-inbound/invoice");
+    ({ xeroTransport } = await import("./xero-transport"));
     await clean();
     await prisma.member.deleteMany({ where: { id: MEMBER_ID } });
     await prisma.lodgeSettings.deleteMany({ where: { lodgeId: LODGE_ID } });
