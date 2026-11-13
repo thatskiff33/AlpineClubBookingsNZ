@@ -84,7 +84,7 @@ export default defineConfig({
   // API request. Kept at 0 locally so a real failure surfaces immediately.
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI
-    ? [["list"], ["html", { open: "never" }], ["github"]]
+    ? [["list"], ["html", { open: "never" }], ["github"], ["json", { outputFile: ".artifacts/playwright-results.json" }]]
     : [["list"], ["html", { open: "never" }]],
   timeout: 90_000,
   expect: { timeout: 15_000 },

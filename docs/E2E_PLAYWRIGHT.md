@@ -568,6 +568,27 @@ one click instead of a stuck page. A spec that wants to assert the failure path
 should therefore look for that explanation, not for an indefinite
 "Confirming the organisation name…".
 
+## Flaky tests in CI
+
+Every browser job (all single-lodge shards, multi-lodge and the rollover proof)
+adds **Flaky Playwright tests** to its GitHub job summary. The table lists each
+test that passed only after a retry: spec, full title, project, failed attempts
+and total attempts. Each also emits a warning annotation. A clean run says
+**No flaky tests**.
+
+The policy is **warn on any flaky test, with no failure threshold**. Retries and
+the required `Playwright E2E` test verdict stay unchanged. Once Playwright has
+run, missing, unreadable or malformed JSON fails the reporting step; absence of
+evidence is not a clean run. A job that failed before Playwright started skips
+the step. The CI-only JSON reporter writes `.artifacts/playwright-results.json`,
+separate from the HTML report and test attachments. Rollover `--list` probes
+use only the list reporter and are not summarised.
+
+When a test appears, inspect the HTML report and retained retry evidence, then
+file an issue with its spec, project and run link. Check the Flake invariants
+below and investigate a real intermittent product defect as well; a retry
+passing is not a reason to ignore the failure. No cross-run history is kept.
+
 ## Flake invariants — read before writing a spec (issue #2302)
 
 Five specs flaked on `main` over the last week of July 2026
