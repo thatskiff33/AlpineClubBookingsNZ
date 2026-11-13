@@ -24,7 +24,6 @@ import { PayStep } from "./_components/pay-step";
 import {
   BOOKING_WIZARD_ERROR_ID,
   PROFILE_FAMILY_GROUP_RETURN_TO_BOOK,
-  readSubscriptionLockoutView,
 } from "./_components/types";
 import { useBookingWizard } from "./_hooks/use-booking-wizard";
 
@@ -138,7 +137,9 @@ export default function BookPage() {
     cardPaymentDescription,
     internetBankingPaymentDescription,
     internetBankingUnavailableCopy,
-    subscriptionUnpaid,
+    subscriptionIsUnpaid,
+    subscriptionLockout,
+    bookingBlockedBySubscription,
     showInviteFamilyGroupMembersLink,
     showPaymentMethodChoice,
     wizardSteps,
@@ -167,8 +168,8 @@ export default function BookPage() {
   // before booking": that is only true under HARD_BLOCK. An absent or
   // unrecognised mode resolves to HARD_BLOCK, today's copy, so an older cached
   // subscription-status response cannot silently drop a warning that still
-  // holds. See `readSubscriptionLockoutView`.
-  const subscriptionLockout = readSubscriptionLockoutView(subscriptionStatus);
+  // holds. The hook reads the mode once (`readSubscriptionLockoutView`) and
+  // derives `bookingBlockedBySubscription` from that same view (#4941).
 
   // Built once so the two doors to the waitlist offer the same control with the
   // same state (#2930 fix round). Null when there is no second eligible lodge.
@@ -277,7 +278,7 @@ export default function BookPage() {
           `role="status"`): nothing is at stake for this booking, so an assertive
           alert would be noise. The payment affordance stays in every mode — a
           member who wants to settle an unpaid subscription always may. */}
-      {!subscriptionLoading && subscriptionUnpaid && (
+      {!subscriptionLoading && subscriptionIsUnpaid && (
         <Alert
           variant={subscriptionLockout.mode === "NO_BLOCK" ? "info" : "warning"}
           data-testid="subscription-unpaid-banner"
@@ -616,7 +617,7 @@ export default function BookPage() {
       {/* Step 1: Dates */}
       {step === "dates" && (
         <DatesStep
-          subscriptionUnpaid={subscriptionUnpaid}
+          bookingBlockedBySubscription={bookingBlockedBySubscription}
           handleDateSelect={handleDateSelect}
           checkIn={checkIn}
           checkOut={checkOut}

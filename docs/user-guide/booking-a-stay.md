@@ -182,7 +182,11 @@ Paying by card versus by internet banking is covered in
 ### After you book: My Bookings
 
 Your bookings live at **My Bookings** (`/bookings`), sortable by start date and
-filterable by status.
+filterable by status. If your club has more than one lodge, each booking shows
+its lodge under the dates, as the dashboard's Next Stay, draft and Recent
+Bookings rows do; in a one-lodge club the lists look as before, except that a
+booking still at a lodge the club has stopped using shows that lodge's name. The
+booking's own page always names its lodge.
 
 Emails about one of your bookings take you straight to that booking's detail
 page when you are signed in and allowed to open it. If an email is sent to a
@@ -400,6 +404,7 @@ different party. Either way the officer's explanation is on your request in
 | You are quoted the non-member rate | Your membership subscription is not paid up | Check your [subscription status](your-account.md#account-information); pay it, then re-quote |
 | "You already have a booking for these nights" | A member cannot double-book the same night | Open the existing booking from **My Bookings** and [change it](changing-or-cancelling-a-booking.md) instead |
 | The stay is blocked by a minimum-stay rule | That period has a minimum number of nights | Extend your stay to meet the minimum, or use **Request Booking Officer approval** to ask to be let past it (see [above](#asking-to-be-let-past-a-booking-rule)) |
+| "The service response could not be read…" after pressing **Continue to Payment**, **Join Waitlist** or **Save as Draft** | The connection dropped, or the club's server sent an error page, before the reply reached you. The booking, waitlist place or draft may still have been made — and any account credit you applied used on it | Open **My Bookings** first. If it is there, carry on from it; if not, press the same button again — what you entered is still on screen |
 | You paid but the booking still says "Payment required" | The card step was closed before payment finished | Open the booking and use its **Complete Payment** card |
 | Your non-member guests show as provisional | Your club runs the *Members First* policy (a name you never see in the wizard) and a hold applies to your stay | This is expected — their bed is charged/confirmed around the hold deadline; see [Paying](paying-for-your-stay.md#split-charges-for-non-member-guests) |
 | **Book** refuses you because your subscription is unpaid, but you need a bed | The block stops you *starting* a booking; it does not stop you paying for one | Ask the club to make the booking for you and save it — it lands in your drafts and you pay it yourself (see [above](#a-booking-the-club-saved-for-you)) |
