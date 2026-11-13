@@ -25,7 +25,7 @@ fail() {
 # a stale origin/main from an earlier snapshot is not its ancestor.
 if git remote get-url origin >/dev/null 2>&1; then
   git fetch --no-tags origin "+refs/heads/main:$TARGET" \
-    || fail "could not fetch main from the origin remote ($(git remote get-url origin))"
+    || fail "could not fetch main from the origin remote"
 elif git rev-parse --verify --quiet 'refs/heads/main^{commit}' >/dev/null; then
   echo "sekreton-prepare-base: no origin remote; using the sandbox's local main snapshot as origin/main"
   git fetch --no-tags . "+refs/heads/main:$TARGET" \
