@@ -293,6 +293,24 @@ export async function recoverRefundCreditNoteLinkAmountCents(
 }
 
 /**
+ * The active REFUND_CREDIT_NOTE links of one payment, or of many (#4936). The
+ * one filter both `sumCoveredRefundCreditNoteCents` and its bulk lower bound
+ * `readActiveRefundNoteMetadataCentsByPayment` select by, so the bound can
+ * never read links the exact sum does not (`INV-SSOT`).
+ */
+function activeRefundCreditNoteLinksWhere(
+  localId: string | { in: string[] }
+): Prisma.XeroObjectLinkWhereInput {
+  return {
+    localModel: "Payment",
+    localId,
+    xeroObjectType: "CREDIT_NOTE",
+    role: "REFUND_CREDIT_NOTE",
+    active: true,
+  };
+}
+
+/**
  * Cents already covered by refund credit notes for a payment (#1162): the sum
  * of the active REFUND_CREDIT_NOTE links' recorded amounts. Links written
  * before amounts were recorded fall back to the create operation's persisted
@@ -311,11 +329,7 @@ export async function sumCoveredRefundCreditNoteCents(
   if (onlyNoteIds && onlyNoteIds.length === 0) return 0;
   const links = await db.xeroObjectLink.findMany({
     where: {
-      localModel: "Payment",
-      localId: paymentId,
-      xeroObjectType: "CREDIT_NOTE",
-      role: "REFUND_CREDIT_NOTE",
-      active: true,
+      ...activeRefundCreditNoteLinksWhere(paymentId),
       ...(onlyNoteIds ? { xeroObjectId: { in: [...onlyNoteIds] } } : {}),
     },
     select: { xeroObjectId: true, metadata: true },
@@ -345,13 +359,7 @@ export async function readActiveRefundNoteMetadataCentsByPayment(
   const centsByPayment = new Map<string, number>();
   if (paymentIds.length === 0) return centsByPayment;
   const links = await db.xeroObjectLink.findMany({
-    where: {
-      localModel: "Payment",
-      localId: { in: [...paymentIds] },
-      xeroObjectType: "CREDIT_NOTE",
-      role: "REFUND_CREDIT_NOTE",
-      active: true,
-    },
+    where: activeRefundCreditNoteLinksWhere({ in: [...paymentIds] }),
     select: { localId: true, metadata: true },
   });
   for (const link of links) {
