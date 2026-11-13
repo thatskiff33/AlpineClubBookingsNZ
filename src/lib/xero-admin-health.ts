@@ -390,7 +390,9 @@ export async function getRefundsMissingXeroCreditNotes(options?: {
   // `refundedAmountCents` mirror. Safe because the exact reader's eligible cash
   // is capped at that mirror (`resolveStripeCashRefundEvidence`), and its
   // coverage is those links at no less than these amounts plus resolved notes
-  // that are never negative, less the live reversal invoices it subtracts
+  // (not clamped there; this assumes, as every enqueue path guarantees, that a
+  // resolved note's recorded amount is never negative), less the live reversal
+  // invoices it subtracts
   // (#4369, `INV-PAY-151`) read by the same filter, so such a payment's gap is
   // always 0. Anything the bound cannot settle - a legacy link without a
   // recorded amount, a short sum - still goes through the exact reader below.
