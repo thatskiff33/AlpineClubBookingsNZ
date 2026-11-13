@@ -1009,7 +1009,7 @@ policy, dimensions and evidence.
 PostgreSQL CHECKs, foreign keys, unique indexes and deferred constraint triggers
 enforce this even through direct SQL. `member_money_batch_errors` is the shared
 validation rule used by the triggers and the read-only verifier.
-M1 is inert: no legacy writer cohort is activated and no old source is required
+M1 shipped inert: no legacy writer cohort is activated and no old source is required
 to have a journal link. M3a (#4626) adds one command, `postMemberMoneyEvent`;
 its store is the only writer; the booking doors reach it from M3b (`INV-MONEY-044`). Mandatory legacy links need backfill and worker drain
 in their writer milestone; a nullable bridge is never universal posting proof.

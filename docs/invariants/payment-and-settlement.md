@@ -4163,3 +4163,15 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
   `card-refund-reversal-coverage.test.ts`,
   `card-refund-reversal-readers.test.ts` and both `.realdb` suites
   (`card-refund-paid-another-way`, `xero-deleted-payment-links`).
+
+## INV-PAY-152
+
+A cancellation's CREDITED event commits or rolls back with the credit it describes
+(#4913). `createCancellationCredit` requires the caller's transaction client and
+writes the event directly on it without swallowing failures. Its amount equals
+the credit's amount; its reason remains "Cancellation refund held as account
+credit." A failed event insert aborts the cancellation, like the paid-path
+CANCELLED decision (`INV-PAY-106`). A rolled-back attempt leaves neither credit
+nor event, so a later retry or manual hand-back cannot claim credit never given.
+Proven by `cancellation-credit-event.realdb.test.ts` and `member-credit.test.ts`;
+`booking-narrative.test.ts` shows the outcome. Historical stray events are not repaired.
