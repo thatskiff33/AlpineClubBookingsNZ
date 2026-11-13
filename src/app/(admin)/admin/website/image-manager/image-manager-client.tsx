@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ApiRefusalError, apiErrorMessageFromBody, apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 import {
   FolderOpen,
   Folder,
@@ -47,6 +48,15 @@ type DialogMode =
   | { kind: "delete-dir"; path: string }
   | { kind: "delete-image"; dir: string; filename: string }
   | null;
+
+// What a refused dialog action says when the route gives no sentence of its
+// own, or the request never gets an answer (#4976, ALP-589).
+const DIALOG_FAILURE: Record<NonNullable<DialogMode>["kind"], string> = {
+  "create-dir": "Failed to create directory",
+  "rename-dir": "Failed to rename directory",
+  "delete-dir": "Failed to delete directory",
+  "delete-image": "Failed to delete image",
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -146,7 +156,7 @@ export function ImageManagerClient() {
           method: "POST",
           body: formData,
         });
-        const data = (await res.json()) as {
+        const data = (await res.json().catch(() => ({}))) as {
           results?: Array<{ filename: string; ok: boolean; error?: string }>;
           error?: string;
         };
@@ -154,7 +164,7 @@ export function ImageManagerClient() {
         // single { error } message rather than per-file results — surface it.
         if (!res.ok || !data.results) {
           if (res.status === 403) setForbidden(true);
-          throw new Error(data.error ?? "Upload failed");
+          throw new ApiRefusalError(apiErrorMessageFromBody(data, "Upload failed"));
         }
         const failed = data.results.filter((r) => !r.ok);
         const succeeded = data.results.filter((r) => r.ok);
@@ -169,7 +179,7 @@ export function ImageManagerClient() {
           toast.error(`${f.filename}: ${f.error ?? "Upload failed"}`);
         }
       } catch (err: unknown) {
-        toast.error(err instanceof Error ? err.message : "Upload failed");
+        toast.error(refusalMessageOr(err, "Upload failed"));
       } finally {
         setUploading(false);
         if (fileInputRef.current) fileInputRef.current.value = "";
@@ -236,6 +246,7 @@ export function ImageManagerClient() {
 
   const handleDialogConfirm = async () => {
     if (!dialog) return;
+    const fallback = DIALOG_FAILURE[dialog.kind];
     setDialogBusy(true);
     setForbidden(false);
 
@@ -251,8 +262,7 @@ export function ImageManagerClient() {
         });
         if (!res.ok) {
           if (res.status === 403) setForbidden(true);
-          const d = (await res.json()) as { error?: string };
-          throw new Error(d.error ?? "Failed to create directory");
+          throw await apiRefusalFromResponse(res, fallback);
         }
         toast.success("Directory created");
         await loadDirectories();
@@ -269,8 +279,7 @@ export function ImageManagerClient() {
         });
         if (!res.ok) {
           if (res.status === 403) setForbidden(true);
-          const d = (await res.json()) as { error?: string };
-          throw new Error(d.error ?? "Failed to rename directory");
+          throw await apiRefusalFromResponse(res, fallback);
         }
         toast.success("Directory renamed");
         // If the renamed dir was selected, update selection
@@ -291,8 +300,7 @@ export function ImageManagerClient() {
         });
         if (!res.ok) {
           if (res.status === 403) setForbidden(true);
-          const d = (await res.json()) as { error?: string };
-          throw new Error(d.error ?? "Failed to delete directory");
+          throw await apiRefusalFromResponse(res, fallback);
         }
         toast.success("Directory deleted");
         if (
@@ -312,8 +320,7 @@ export function ImageManagerClient() {
         });
         if (!res.ok) {
           if (res.status === 403) setForbidden(true);
-          const d = (await res.json()) as { error?: string };
-          throw new Error(d.error ?? "Failed to delete image");
+          throw await apiRefusalFromResponse(res, fallback);
         }
         toast.success("Image deleted");
         await loadImages(selectedDir);
@@ -321,7 +328,7 @@ export function ImageManagerClient() {
 
       setDialog(null);
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "An error occurred");
+      toast.error(refusalMessageOr(err, fallback));
     } finally {
       setDialogBusy(false);
     }
