@@ -52,11 +52,11 @@ import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
  * offer already consumed.
  *
  * These are deliberately generous against those defaults but TIGHTER than the
- * admin precedents (`saveClubTheme` 10s/15s, `assignBedRange` 10s/30s), because
+ * shared lock(1) budget, `LOCK1_HOLDER_TRANSACTION_BUDGET` (`INV-LOCK-005`), because
  * a member is watching this request rather than an officer: two attempts cap the
  * member-visible wait at roughly 30s. Going higher would buy little — the
- * longest-lived holder of `lock(1)` in the tree is `assignBedRange`, which takes
- * it inside a `timeout: 30_000` transaction — so a budget that always beat the
+ * longest-lived holders of `lock(1)` in the tree, such as `assignBedRange`, run on
+ * that shared budget themselves — so a budget that always beat the
  * worst contender would mean a member waiting a minute for a failure they cannot
  * act on. That is why the guard and the operator door below exist instead of a
  * bigger number.

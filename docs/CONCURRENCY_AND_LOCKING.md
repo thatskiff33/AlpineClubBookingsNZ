@@ -93,10 +93,17 @@ it queues behind - and its route maps P2028 / P2034 through
 `isTransactionContention` to a retryable 503. `withOptionalTransaction` takes the
 budget as an optional third argument and applies it only to the transaction it
 opens; a caller-supplied `tx` keeps its opener's budget, and in tx-mode the
-service takes neither lock(1) nor options. On the constant today:
-`createDraftBooking`, `createConfirmedBooking` (own transaction),
-`LINKED_MOVE_TRANSACTION_BUDGET`, `assignBedRange` and the group-settlement
-settle. `POST /api/bookings` answers contention on its draft, confirmed and
+service takes neither lock(1) nor options. Every lock(1) opener in the tree is
+on the constant, an alias of it, or a commented exception: the follow-up to
+#4933 moved the 129 still on Prisma's defaults and the copied or partial
+literals, and `lock1-transaction-budget-census.test.ts` now fails on a new one.
+The classified list, with the three exceptions and their reasons, is
+[`audits/lock1-transaction-budgets.md`](audits/lock1-transaction-budgets.md).
+Interactive routes answer contention through `transactionContendedResponse`
+(`src/lib/transaction-contended-response.ts`): 503, `Retry-After: 2`, and a
+"check the current status" message where an earlier step may already have
+committed; a captured-payment or already-committed recovery answer still wins.
+Crons and webhooks rethrow and keep their own retry. `POST /api/bookings` answers contention on its draft, confirmed and
 waitlisted paths with 503, `Retry-After: 2` and "The booking system is busy right
 now. Nothing was saved, so please try again in a moment." The booking wizard and
 the admin booking page already show the server's message. Lock order inside

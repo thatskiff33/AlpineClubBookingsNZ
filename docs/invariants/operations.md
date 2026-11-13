@@ -273,9 +273,12 @@ rules first written here. #2765 extended it with the measured-audience half.
   `docs/CONCURRENCY_AND_LOCKING.md` -> "The lock(1) transaction budget" states
   it against `DEPLOYMENT.md` -> "Connection pool sizing". A writer with a harder
   ceiling of its own, such as a provider delivery timeout, may run tighter and
-  says why at the site. Booking create, the linked date move, bed-range
-  assignment and group settlement use the constant; other lock(1) writers still
-  on the defaults are a known gap tracked for follow-up, not a licence.
+  says why in an `INV-LOCK-005 exception:` comment inside the options argument.
+  `lock1-transaction-budget-census.test.ts` enforces this: it follows every
+  lock(1) site out through named helpers to the transaction that opens it, and
+  accepts only the constant, a `const` that is exactly it, the constant spread
+  with an `isolationLevel` alone, or a reasoned exception
+  (`docs/audits/lock1-transaction-budgets.md`).
 
 ## INV-OPS-014
 

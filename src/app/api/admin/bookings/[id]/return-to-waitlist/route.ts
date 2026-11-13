@@ -35,8 +35,8 @@ import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
  * the confirm's compensating release, and that compensation was deliberately
  * given 5s/10s for the same reason (`waitlist-confirm/route.ts`). Running the
  * repair on the defaults would mean the button 503s during exactly the
- * contention that creates strands: the longest-lived holder of `lock(1)` in the
- * tree is `assignBedRange`, inside a 30s transaction.
+ * contention that creates strands: the longest-lived holders of `lock(1)` in the
+ * tree, such as `assignBedRange`, run on the shared lock(1) budget.
  *
  * So this runs on the shared lock(1) budget, `LOCK1_HOLDER_TRANSACTION_BUDGET`
  * (`INV-LOCK-005`), the one `assignBedRange` holds the key under. The member
