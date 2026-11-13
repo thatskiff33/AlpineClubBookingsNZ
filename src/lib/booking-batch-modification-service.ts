@@ -114,7 +114,6 @@ import { hasCapturedPayment, hasIssuedPrimaryXeroInvoice } from "@/lib/booking-p
 import {
   editRefundBankTransferPayee,
   raiseEditRefundHandBackIfOwed,
-  refundableCashNetOfOpenHandBacks,
 } from "@/lib/edit-refund-hand-back";
 import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
 import { prisma } from "@/lib/prisma";
@@ -150,7 +149,7 @@ import {
 } from "@/lib/roster-lock";
 import { formatDateOnly } from "@/lib/date-only";
 import { loadCancellationPolicy } from "@/lib/cancellation";
-import { calculateFullReductionSettlementOptions } from "@/lib/booking-modify-settlement-options";
+import { calculateFullReductionSettlementOptions, refundableCashForModification } from "@/lib/booking-modify-settlement-options";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
@@ -1626,7 +1625,7 @@ export async function modifyBookingBatch({
         ? calculateFullReductionSettlementOptions({
             booking,
             netChargeCents: reduction.netChargeLeftCents,
-            refundableCashCents: await refundableCashNetOfOpenHandBacks(tx, booking.payment),
+            refundableCashCents: await refundableCashForModification(tx, booking.payment, reduction),
             todayAtClub: moneyTierDay,
           })
         : await calculateModificationSettlementOptions({
