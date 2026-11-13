@@ -4,6 +4,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 // ── Mock Prisma ─────────────────────────────────────────────────────────────
 
 const prismaMock = {
+  bookingEvent: { create: vi.fn().mockResolvedValue({}) },
   memberCredit: {
     aggregate: vi.fn(),
     create: vi.fn(),
@@ -188,7 +189,7 @@ describe("member-credit helpers", () => {
 
       const { createCancellationCredit } = await import("@/lib/member-credit");
       // #4685: the id is what the account-credit note's row names for its stamp.
-      await expect(createCancellationCredit("member-1", 5000, "booking-abc12345", "xero-cn-1")).resolves.toBe("credit-1");
+      await expect(createCancellationCredit(prisma as any, "member-1", 5000, "booking-abc12345", "xero-cn-1")).resolves.toBe("credit-1");
 
       expect(prisma.memberCredit.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
@@ -205,12 +206,30 @@ describe("member-credit helpers", () => {
       });
     });
 
+    it("writes the settlement through the supplied client and propagates an insert failure", async () => {
+      const tx = {
+        memberCredit: { create: vi.fn().mockResolvedValue({ id: "credit-tx" }) },
+        bookingEvent: { create: vi.fn().mockResolvedValue({}) },
+      };
+      const { createCancellationCredit } = await import("@/lib/member-credit");
+      await expect(createCancellationCredit(tx as any, "member-1", 3000, "booking-tx")).resolves.toBe("credit-tx");
+      expect(tx.bookingEvent.create).toHaveBeenCalledWith({ data: {
+        bookingId: "booking-tx", type: "CREDITED", amountCents: 3000,
+        reason: "Cancellation refund held as account credit.",
+      } });
+      expect(mockSyncBookingLedgerCredits).toHaveBeenCalledWith({ bookingId: "booking-tx", store: tx });
+      expect(prismaMock.bookingEvent.create).not.toHaveBeenCalled();
+      const failure = new Error("event refused");
+      tx.bookingEvent.create.mockRejectedValueOnce(failure);
+      await expect(createCancellationCredit(tx as any, "member-1", 3000, "booking-tx")).rejects.toBe(failure);
+    });
+
     it("handles missing Xero credit note ID", async () => {
       const { prisma } = await import("@/lib/prisma");
       vi.mocked(prisma.memberCredit.create).mockResolvedValue({ id: "credit-2" } as any);
 
       const { createCancellationCredit } = await import("@/lib/member-credit");
-      await createCancellationCredit("member-1", 3000, "booking-xyz");
+      await createCancellationCredit(prisma as any, "member-1", 3000, "booking-xyz");
 
       expect(prisma.memberCredit.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
@@ -708,7 +727,7 @@ describe("member-credit helpers", () => {
       );
 
       await restoreCreditFromBooking("member-1", "booking-both", undefined, 3000);
-      await createCancellationCredit("member-1", 2000, "booking-both");
+      await createCancellationCredit(prisma as any, "member-1", 2000, "booking-both");
 
       // Restore row: type=CANCELLATION_REFUND, sourceBookingId set, AND the
       // restore-specific dedupe key set.

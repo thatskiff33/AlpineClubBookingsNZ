@@ -463,7 +463,7 @@ export function BookingChangeRequestsPanel({
                     </Link>
                     {owner.id ? (
                       <Link
-                        href={buildHrefWithReturnTo(`/admin/members/${owner.id}`, currentPath)}
+                        href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: owner.id })}`, currentPath)}
                         className="text-info-11 hover:underline"
                       >
                         Open member
