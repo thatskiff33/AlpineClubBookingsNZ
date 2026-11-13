@@ -192,7 +192,7 @@ describe("sumCoveredRefundCreditNoteCents (#1162)", () => {
     await readActiveRefundNoteMetadataCentsByPayment(["payment_1", "payment_2"]);
 
     const [exactWhere, bulkWhere] = mocks.linkFindMany.mock.calls.map(
-      ([args]: [{ where: Record<string, unknown> }]) => args.where
+      (call) => (call[0] as { where: Record<string, unknown> }).where
     );
     const { localId: exactLocalId, ...exactFilter } = exactWhere;
     const { localId: bulkLocalId, ...bulkFilter } = bulkWhere;
