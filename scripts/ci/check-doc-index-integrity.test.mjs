@@ -1725,6 +1725,123 @@ describe("invariant baseline resolution and loading", () => {
     ).toThrow("PR_BASE_SHA refs/heads/not-fetched does not resolve to a commit");
   });
 
+  describe("a pull request compares with its branch point, not the base's later tip (#5156)", () => {
+    const prEnv = (base) =>
+      checkerEnv({ GITHUB_BASE_REF: "main", GITHUB_EVENT_NAME: "pull_request", PR_BASE_SHA: base });
+    const tree = (repoRoot) => loadInvariantFilesAtRef(repoRoot, "HEAD");
+    const removed = (repoRoot, baseline) =>
+      auditPermanentInvariantIds(tree(repoRoot), loadInvariantFilesAtRef(repoRoot, baseline), baseline);
+
+    /** main defines MONEY-001; a branch is cut; main then gains MONEY-002. */
+    function behindBranch() {
+      const repoRoot = initGitRepo();
+      const branchPoint = commitFiles(repoRoot, "base", {
+        "docs/invariants/money.md": family("MONEY", ["001"]),
+      });
+      git(repoRoot, "checkout", "-b", "feature");
+      commitFiles(repoRoot, "feature", { "feature.txt": "feature\n" });
+      git(repoRoot, "checkout", "main");
+      const baseTip = commitFiles(repoRoot, "main gains an id", {
+        "docs/invariants/money.md": family("MONEY", ["001", "002"]),
+      });
+      git(repoRoot, "checkout", "feature");
+      return { repoRoot, branchPoint, baseTip };
+    }
+
+    it("passes a branch that is only behind a base which gained an id", () => {
+      const { repoRoot, branchPoint, baseTip } = behindBranch();
+      const resolved = resolveInvariantBaselineRef(repoRoot, prEnv(baseTip));
+      expect(resolved).toBe(branchPoint);
+      expect(removed(repoRoot, resolved)).toEqual([]);
+      // The defect this replaces: against the tip, MONEY-002 "disappeared".
+      expect(removed(repoRoot, baseTip).join("\n")).toContain("INV-MONEY-002 disappeared");
+    });
+
+    it("still fails a branch that removes an id present at its branch point, naming it", () => {
+      const { repoRoot, baseTip } = behindBranch();
+      commitFiles(repoRoot, "delete an id", {
+        "docs/invariants/money.md": family("MONEY", ["002"]),
+      });
+      const resolved = resolveInvariantBaselineRef(repoRoot, prEnv(baseTip));
+      const problems = removed(repoRoot, resolved);
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain("INV-MONEY-001 disappeared");
+    });
+
+    it("is unchanged when HEAD is the merge commit: the baseline is PR_BASE_SHA itself", () => {
+      const { repoRoot, baseTip } = behindBranch();
+      git(repoRoot, "checkout", "--detach", baseTip);
+      git(repoRoot, "merge", "--no-ff", "-m", "merge feature", "feature");
+      expect(resolveInvariantBaselineRef(repoRoot, prEnv(baseTip))).toBe(baseTip);
+      expect(removed(repoRoot, baseTip)).toEqual([]);
+      // Once the branch contains the base's new id, it is answerable for it.
+      commitFiles(repoRoot, "drop the base's new id", {
+        "docs/invariants/money.md": family("MONEY", ["001"]),
+      });
+      const resolved = resolveInvariantBaselineRef(repoRoot, prEnv(baseTip));
+      expect(resolved).toBe(baseTip);
+      expect(removed(repoRoot, resolved).join("\n")).toContain("INV-MONEY-002 disappeared");
+    });
+
+    it("fails closed when HEAD and PR_BASE_SHA share no merge base", () => {
+      const repoRoot = initGitRepo();
+      const base = commitFiles(repoRoot, "base", {
+        "docs/invariants/money.md": family("MONEY", ["001"]),
+      });
+      git(repoRoot, "checkout", "--orphan", "unrelated");
+      git(repoRoot, "rm", "-rqf", ".");
+      commitFiles(repoRoot, "unrelated root", { "README.md": "unrelated\n" });
+      expect(() => resolveInvariantBaselineRef(repoRoot, prEnv(base))).toThrow(
+        /share no merge base.*fetch-depth: 0/,
+      );
+      // The same with no event name, where PR_BASE_SHA alone identifies a PR.
+      expect(() =>
+        resolveInvariantBaselineRef(repoRoot, checkerEnv({ PR_BASE_SHA: base })),
+      ).toThrow("share no merge base");
+    });
+
+    it("uses the branch point when PR identity is inferred without an event name", () => {
+      const { repoRoot, branchPoint, baseTip } = behindBranch();
+      expect(
+        resolveInvariantBaselineRef(repoRoot, checkerEnv({ GITHUB_BASE_REF: "main", PR_BASE_SHA: baseTip })),
+      ).toBe(branchPoint);
+    });
+
+    it("still refuses DOC_INDEX_BASE_REF and a missing PR_BASE_SHA on a behind branch", () => {
+      const { repoRoot, baseTip } = behindBranch();
+      expect(() =>
+        resolveInvariantBaselineRef(repoRoot, { ...prEnv(baseTip), DOC_INDEX_BASE_REF: "HEAD" }),
+      ).toThrow("DOC_INDEX_BASE_REF cannot be set for a pull-request event");
+      expect(() => resolveInvariantBaselineRef(repoRoot, prEnv(""))).toThrow(
+        "PR_BASE_SHA is required",
+      );
+    });
+
+    it("does not count an agent-doc ceiling the base changed after the branch point as set here", () => {
+      // The ceiling audit reads the same baseline. The branch left A's loose row
+      // alone; main later tightened it. Against main's tip the branch would be
+      // blamed for a row it never wrote.
+      const prose = (n) => Array.from({ length: n }, (_, i) => `w${i + 1}`).join(" ");
+      const register = (ceiling) =>
+        ["# Word budgets", "", "## Agent docs", "", "| File | Ceiling |", "| --- | ---: |",
+          `| \`docs/agents/A.md\` | ${ceiling} |`, ""].join("\n");
+      const repoRoot = initGitRepo();
+      commitFiles(repoRoot, "base", {
+        [WORD_BUDGET_REGISTER]: register(101 + AGENT_DOC_BUDGET_SLACK),
+        "docs/agents/A.md": prose(100),
+      });
+      git(repoRoot, "checkout", "-b", "feature");
+      commitFiles(repoRoot, "feature", { "feature.txt": "feature\n" });
+      git(repoRoot, "checkout", "main");
+      const baseTip = commitFiles(repoRoot, "main tightens", { [WORD_BUDGET_REGISTER]: register(100) });
+      git(repoRoot, "checkout", "feature");
+      const head = new Map([...tree(repoRoot), ["docs/agents/A.md", prose(100)]]);
+      const resolved = resolveInvariantBaselineRef(repoRoot, prEnv(baseTip));
+      expect(auditAgentDocWordBudgets(head, loadInvariantFilesAtRef(repoRoot, resolved))).toEqual([]);
+      expect(auditAgentDocWordBudgets(head, loadInvariantFilesAtRef(repoRoot, baseTip))).toHaveLength(1);
+    });
+  });
+
   it("fails an invalid explicit diagnostic baseline instead of falling back", () => {
     const repoRoot = initGitRepo();
     commitFiles(repoRoot, "base", { "README.md": "# Repo\n" });

@@ -1440,7 +1440,10 @@ export function agentDocBudgetDrift(files) {
  * Every agent guide within its ceiling, every row well formed and live, and
  * every ceiling this change sets close to its page. `baselineFiles` is the
  * base the checker already resolves for invariant ids; without one, no row
- * counts as set by this change.
+ * counts as set by this change. For a pull request that base is the branch
+ * point (#5156), which is also the right one here: a ceiling the base branch
+ * changed after the branch point is not one this change set, and measuring
+ * against the base's later tip would hold the branch to it.
  */
 export function auditAgentDocWordBudgets(files, baselineFiles = null) {
   const { ceilings, problems } = parseAgentDocBudgets(files);
@@ -2577,9 +2580,46 @@ function mergeBaseAgainstMain(repoRoot, head) {
 }
 
 /**
+ * A pull request's invariant baseline: the merge base of `HEAD` and the event's
+ * exact `PR_BASE_SHA` (#5156).
+ *
+ * `PR_BASE_SHA` is the base branch's tip when the event fired, and it can be
+ * newer than anything the checked-out tree contains: a job may check out the PR
+ * head rather than the merge commit, and a re-run keeps its original commit while
+ * the base moves on. Measured against that tip, an id `main` gained after the
+ * branch point reads as one this branch removed. The merge base is the last
+ * commit the branch and its base shared, so it is exactly the set of ids the
+ * branch is answerable for retaining; both inputs are immutable commits, so it
+ * cannot drift. When `HEAD` is the merge commit, `PR_BASE_SHA` is one of its
+ * parents and the merge base IS `PR_BASE_SHA`, so that case is unchanged.
+ *
+ * A real deletion cannot hide behind this. An id the branch deleted was present
+ * at the branch point (or it was never the branch's to keep) and is absent from
+ * `HEAD`, so it is still reported. An id the base added later is checked when
+ * the branch's merge commit is, and on the push to `main`.
+ *
+ * No merge base fails closed: unrelated history or a checkout too shallow to
+ * reach the branch point gives no honest baseline, and `PR_BASE_SHA` would bring
+ * back the false "disappeared" this exists to remove.
+ */
+function pullRequestBranchPoint(repoRoot, head, prBase) {
+  const base = resolveRequiredCommit(repoRoot, prBase, "PR_BASE_SHA");
+  const branchPoint = tryMergeBase(repoRoot, head, base);
+  if (!branchPoint) {
+    throw new Error(
+      `HEAD and PR_BASE_SHA ${prBase} share no merge base, so there is no branch point ` +
+        "to take the invariant baseline from. Either the histories are unrelated or the " +
+        "checkout is shallow: check out full history (actions/checkout with fetch-depth: 0)",
+    );
+  }
+  return branchPoint;
+}
+
+/**
  * Pick the revision whose already-merged ids the current tree must retain.
  *
- * Pull requests compare with the immutable base SHA from their event. Pushes to
+ * Pull requests compare with the merge base of `HEAD` and the immutable base SHA
+ * from their event (#5156; see {@link pullRequestBranchPoint}). Pushes to
  * `main` and to an `epic/**` integration branch (#3002) compare with the event's
  * immutable pre-push SHA — except the push that CREATES an epic branch, which
  * carries no such SHA and compares with the branch point instead. Local feature
@@ -2615,7 +2655,7 @@ export function resolveInvariantBaselineRef(repoRoot, env = process.env) {
           "can drift after the event and is not an exact substitute",
       );
     }
-    return resolveRequiredCommit(repoRoot, prBase, "PR_BASE_SHA");
+    return pullRequestBranchPoint(repoRoot, head, prBase);
   }
 
   if (eventName === "push") {
@@ -2731,7 +2771,7 @@ export function resolveInvariantBaselineRef(repoRoot, env = process.env) {
           "can drift after the event and is not an exact substitute",
       );
     }
-    return resolveRequiredCommit(repoRoot, prBase, "PR_BASE_SHA");
+    return pullRequestBranchPoint(repoRoot, head, prBase);
   }
 
   if (isMainPush) {
@@ -2865,6 +2905,11 @@ if (isMainModule(import.meta.url)) {
       console.log(formatWordInventory(files));
       process.exit(0);
     }
+    // ONE baseline for every comparison against a base (#5156): id retention
+    // (`auditPermanentInvariantIds`) and "a ceiling this change set"
+    // (`auditAgentDocWordBudgets`, whose register lives under docs/invariants/)
+    // both ask what this branch changed, so both read the same revision — for a
+    // pull request, its branch point. Every other rule reads the tree alone.
     const baselineRef = resolveInvariantBaselineRef(repoRoot);
     const baselineFiles = loadInvariantFilesAtRef(repoRoot, baselineRef);
     const definitions = collectDefinitions(files);
