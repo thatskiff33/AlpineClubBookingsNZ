@@ -67,7 +67,7 @@ describe("planRefundNotePayment", () => {
   });
 
   it("covers a bank close's R14 on BANK, and never the refund debt", () => {
-    expect(planRefundNotePayment({ ...input, refundMethod: "bank-transfer", cash: { account: "BANK", chargeIdentity: "paid-another-way:t", cents: 5000 } }))
+    expect(planRefundNotePayment({ ...input, refundMethod: "internet-banking", cash: { account: "BANK", chargeIdentity: "paid-another-way:t", cents: 5000 } }))
       .toMatchObject({ outcome: "COVERED" });
     expect(planRefundNotePayment({ ...input, cash: debt })).toMatchObject({ outcome: "CONFLICT", reason: "COMPONENT_UNUSABLE" });
     expect(planRefundNotePayment({ ...input, cash: { account: "BANK", chargeIdentity: "x", cents: 4999 } })).toMatchObject({ outcome: "CONFLICT", reason: "CENTS" });
