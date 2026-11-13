@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_ACCESS_ROLE_DEFINITIONS } from "@/lib/access-role-definitions";
-import { asClubTimeZone } from "@/lib/club-time";
+import { requireClubTimeZone } from "@/lib/club-time";
 import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
 import {
   officerGraceClosedByReset,
@@ -18,7 +18,7 @@ import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { isLoginRevokedSession } from "@/lib/session-member-security";
 import { isTwoFactorSessionBlocked } from "@/lib/two-factor-gate";
 
-const ZONE = asClubTimeZone("Pacific/Auckland");
+const ZONE = requireClubTimeZone("Pacific/Auckland");
 const FROZEN_NOW = new Date("2026-07-01T00:00:00.000Z");
 
 function assignment(
