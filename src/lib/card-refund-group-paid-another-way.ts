@@ -213,9 +213,38 @@ export async function closeGroupCardRefundPaidAnotherWay(
   const result = await prisma.$transaction(async (tx) => {
     const locked = await lockDeadCardRefundRow(tx, input.operationId, REFUSALS, "either-group");
     if (locked.operation.paymentIntentId !== snap.paymentIntentId) throw new DeadCardRefundActionError(CHANGED, 409);
-    return childKey
-      ? closePerJoiner(tx, locked, snap, input, note, format)
-      : closeLegacy(tx, locked, snap, input, format);
+    const body = childKey
+      ? await closePerJoiner(tx, locked, snap, input, note, format)
+      : await closeLegacy(tx, locked, snap, input, format);
+    // Every outcome is the officer's close of the row, so every one is audited under `payment` with its note.
+    await createAuditLog(
+      {
+        action: "booking-payment.card-refund.paid-another-way",
+        memberId: input.actingMemberId,
+        actorMemberId: input.actingMemberId,
+        subjectMemberId: bookingOwner(locked.booking).memberId,
+        targetId: locked.operation.bookingId,
+        entityType: "PaymentRecoveryOperation",
+        entityId: locked.operation.id,
+        category: "payment",
+        severity: "important",
+        outcome: "success",
+        summary: closeSummary(childKey ? "organiser-child" : "legacy-group", body.outcome),
+        details: note,
+        metadata: {
+          operationId: locked.operation.id,
+          bookingId: locked.operation.bookingId,
+          paymentId: locked.payment.id,
+          settleKind: childKey ? "organiser-child" : "legacy-group",
+          outcome: body.outcome,
+          amountCents: body.amountCents,
+          organiserCard: true,
+          ...body.auditMetadata,
+        },
+      },
+      tx,
+    );
+    return body;
   });
 
   if (result.finish) {
@@ -252,6 +281,23 @@ async function perJoinerSettlement(paymentId: string, bookingId: string): Promis
 
 type Locked = Awaited<ReturnType<typeof lockDeadCardRefundRow>>;
 
+/** The audit row's summary for each outcome of the close. */
+function closeSummary(kind: "organiser-child" | "legacy-group", outcome: GroupCardRefundPaidAnotherWayResult["outcome"]): string {
+  const what = kind === "organiser-child"
+    ? "Group organiser's card refund Stripe gave up on"
+    : "Old whole-group card refund Stripe gave up on";
+  switch (outcome) {
+    case "recorded-stripe":
+      return `${what} closed: Stripe already had the refund, so it was recorded and nobody was paid again.`;
+    case "bank":
+      return `${what} closed as paid by bank transfer. Officers credit the group's invoice in Xero by hand.`;
+    case "mirrors":
+      return `${what} closed: the group's payment was already refunded, so only the joiners' refund records were finished.`;
+    case "closed":
+      return `${what} closed with nothing left to send or record.`;
+  }
+}
+
 interface CloseBody {
   operationId: string;
   bookingId: string;
@@ -262,6 +308,8 @@ interface CloseBody {
   legacyFollowUps: Parameters<typeof recordLegacyGroupChildRefundRecovered>[0][];
   /** One by-hand Xero alert each (`alertGroupMirrorRefundXeroByHand`); `reference` names the record to find. */
   alerts: { bookingId: string; taskId: string; refundCents: number; reference?: string }[];
+  /** Extra fields for the close's one audit row. */
+  auditMetadata: Record<string, unknown>;
 }
 
 async function closePerJoiner(
@@ -322,6 +370,7 @@ async function closePerJoiner(
       },
       legacyFollowUps: [],
       alerts: [],
+      auditMetadata: { stripeRefundId: refund.id },
     };
   }
 
@@ -385,32 +434,6 @@ async function closePerJoiner(
       tx,
     );
   }
-  await createAuditLog(
-    {
-      action: "booking-payment.card-refund.paid-another-way",
-      memberId: input.actingMemberId,
-      actorMemberId: input.actingMemberId,
-      subjectMemberId: bookingOwner(child).memberId,
-      targetId: operation.bookingId,
-      entityType: "PaymentRecoveryOperation",
-      entityId: operation.id,
-      category: "payment",
-      severity: "important",
-      outcome: "success",
-      summary: "Group organiser's card refund Stripe gave up on closed as paid by bank transfer. Officers credit the group's invoice in Xero by hand.",
-      details: note,
-      metadata: {
-        operationId: operation.id,
-        bookingId: operation.bookingId,
-        paymentId: payment.id,
-        settleKind: "organiser-child",
-        amountCents: input.amountCents,
-        manualRefundTaskId: record.id,
-        organiserCard: true,
-      },
-    },
-    tx,
-  );
   return {
     operationId: operation.id,
     bookingId: operation.bookingId,
@@ -420,6 +443,7 @@ async function closePerJoiner(
     finish: null,
     legacyFollowUps: [],
     alerts: [{ bookingId: operation.bookingId, taskId: record.id, refundCents: input.amountCents }],
+    auditMetadata: { manualRefundTaskId: record.id },
   };
 }
 
@@ -430,7 +454,7 @@ async function closeLegacy(
   input: GroupCardRefundPaidAnotherWayInput,
   format: ClubFormat,
 ): Promise<CloseBody> {
-  const { operation, booking } = locked;
+  const { operation } = locked;
   const current = await tx.groupBookingSettlement.findUnique({
     where: { id: snap.settlement?.id ?? groupSettlementIdForRefundRecoveryKey(operation.idempotencyKey) },
     select: { id: true, status: true, amountCents: true, source: true, stripePaymentIntentId: true, refundPlan: true, groupBookingId: true },
@@ -452,6 +476,7 @@ async function closeLegacy(
     paymentId: locked.payment.id,
     finish: null,
     alerts: [] as CloseBody["alerts"],
+    auditMetadata: {},
   };
 
   if (!current || total <= 0) {
@@ -468,6 +493,7 @@ async function closeLegacy(
       ...base,
       amountCents: total,
       outcome: live === "match" ? "recorded-stripe" : raised.length > 0 ? "mirrors" : "closed",
+      auditMetadata: { raised: raised.map((row) => row.child.id) },
       legacyFollowUps: raised.map((row) => ({
         child: row.child,
         settlementId: current.id,
@@ -485,28 +511,11 @@ async function closeLegacy(
     await flipSettlement(tx, current, total);
     const raised = await mirrorChildren(tx, current, false);
     await claimSucceeded(tx, operation, PAID_ANOTHER_WAY_MARKER);
-    await createAuditLog(
-      {
-        action: "booking-payment.card-refund.paid-another-way",
-        memberId: input.actingMemberId,
-        actorMemberId: input.actingMemberId,
-        subjectMemberId: bookingOwner(booking).memberId,
-        targetId: operation.bookingId,
-        entityType: "PaymentRecoveryOperation",
-        entityId: operation.id,
-        category: "payment",
-        severity: "important",
-        outcome: "success",
-        summary: "Old whole-group card refund Stripe gave up on closed as paid by bank transfer. Officers credit the group's invoice in Xero by hand.",
-        details: normaliseManualPaymentNote(input.note),
-        metadata: { operationId: operation.id, settleKind: "legacy-group", amountCents: total, organiserCard: true, raised: raised.map((row) => row.child.id) },
-      },
-      tx,
-    );
     return {
       ...base,
       amountCents: total,
       outcome: "bank",
+      auditMetadata: { raised: raised.map((row) => row.child.id) },
       legacyFollowUps: [],
       // No refund task on this path: the officer finds the given-up refund row, not a task.
       alerts: raised.map((row) => ({

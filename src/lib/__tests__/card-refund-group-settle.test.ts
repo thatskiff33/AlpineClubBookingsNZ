@@ -33,7 +33,7 @@ const state = vi.hoisted(() => ({
   claims: [] as unknown[],
   tasks: [] as { occurrenceKey?: string; amountCents?: number }[],
   events: [] as { type?: string; bookingId?: string }[],
-  audits: [] as { action?: string }[],
+  audits: [] as { action?: string; category?: string; actorMemberId?: string; metadata?: Record<string, unknown> }[],
   ledger: [] as { kind?: string; unitCents?: number }[][],
   enqueues: [] as unknown[],
   alerts: [] as { bookingId?: string; refundCents?: number }[],
@@ -472,6 +472,34 @@ describe("paid another way for a per-joiner refund", () => {
     });
     expect(state.tasks).toHaveLength(0);
     expect(state.claims).toHaveLength(0);
+  });
+});
+
+describe("every Paid another way outcome writes the officer's one audit row", () => {
+  const audited = () => state.audits.filter((row) => row.action === "booking-payment.card-refund.paid-another-way");
+
+  it.each([
+    ["a per-joiner refund Stripe already has", "child", true, "recorded-stripe"],
+    ["a per-joiner bank payment", "child", false, "bank"],
+    ["an old whole-group refund Stripe already has", "legacy", true, "recorded-stripe"],
+    ["an old whole-group bank payment", "legacy", false, "bank"],
+  ] as const)("%s", async (_name, kind, onStripe, outcome) => {
+    if (kind === "legacy") state.operation = dead({ idempotencyKey: LEGACY_ROW, bookingId: "org-booking", paymentId: "pay-org" });
+    if (onStripe) state.refunds = [liveRefund(kind === "child" ? { metadata: { organiserChildRefundKey: CHILD_ROW } } : {})];
+    await closeGroupCardRefundPaidAnotherWay(closeInput);
+    expect(audited()).toHaveLength(1);
+    expect(audited()[0]).toMatchObject({
+      category: "payment",
+      actorMemberId: closeInput.actingMemberId,
+      metadata: expect.objectContaining({ outcome, organiserCard: true }),
+    });
+  });
+
+  it("an already-refunded old whole-group settlement is audited too", async () => {
+    state.operation = dead({ idempotencyKey: LEGACY_ROW, bookingId: "org-booking", paymentId: "pay-org" });
+    state.settlement = settlement({ status: "REFUNDED" });
+    await closeGroupCardRefundPaidAnotherWay({ ...closeInput, amountCents: 0, expectedOwedCents: 0 });
+    expect(audited()).toEqual([expect.objectContaining({ metadata: expect.objectContaining({ outcome: "mirrors" }) })]);
   });
 });
 

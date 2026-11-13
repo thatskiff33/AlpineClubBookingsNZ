@@ -749,12 +749,12 @@ export const AUDIT_CENSUS_TOTALS = {
   // `booking-payment.card-refund.try-card-again`, the treasurer closing a dead card refund
   // a later Stripe refund covers and putting one back to try the card, each awaited on its
   // own transaction (`card-refund-dead-row-actions.ts`), both `payment`. RE-MEASURED with `pnpm run audit:census`.
-  // 538 -> 541 (#4851): a group organiser's dead card refund, settled from Stuck States -
-  // `booking-payment.card-refund.paid-another-way` for a joiner's refund and for a pre-#3653
-  // whole-group refund (`card-refund-group-paid-another-way.ts`), and
+  // 538 -> 540 (#4851): a group organiser's dead card refund, settled from Stuck States -
+  // `booking-payment.card-refund.paid-another-way`, one site for every outcome of a joiner's refund and
+  // a pre-#3653 whole-group refund (`card-refund-group-paid-another-way.ts`), and
   // `booking-payment.card-refund.try-card-again` for a joiner's (`card-refund-group-try-again.ts`);
   // all `createAuditLog`, all `payment`. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 541,
+  writeSites: 540,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -979,8 +979,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 170 -> 171 (#4686): the lost-claim part-success's row, above.
     // 171 -> 172 (triyder/AlpineClubBookingsNZ#97): the link dialog's row, above.
     // 172 -> 174 (#4516): the refused reservation and the OPERATOR release, above.
-    // 174 -> 176 (#4368): the two dead card refund settlements. 176 -> 179 (#4851): the group organiser's three.
-    createAuditLog: { total: 179, uncategorised: 0 },
+    // 174 -> 176 (#4368): the two dead card refund settlements. 176 -> 178 (#4851): the group organiser's close and re-arm.
+    createAuditLog: { total: 178, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1195,8 +1195,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 66 -> 67 (#4359): the re-send hold's row - the payment's figures, read by the same people.
     // 67 -> 69 (#4516): a refused card refund reservation, and its OPERATOR release - read by the same people.
     // 69 -> 71 (#4368): a dead card refund closed with nothing left owed, and one put back to try the card.
-    // 71 -> 74 (#4851): a group organiser's dead card refund paid another way (per joiner, legacy whole group) or tried again.
-    payment: 74,
+    // 71 -> 73 (#4851): a group organiser's dead card refund paid another way (one site, both kinds) or tried again.
+    payment: 73,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.
