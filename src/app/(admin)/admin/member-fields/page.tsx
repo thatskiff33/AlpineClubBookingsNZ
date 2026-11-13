@@ -85,7 +85,7 @@ export default function AdminMemberFieldsPage() {
         credentials: "same-origin",
         signal,
       });
-      const body = (await response.json()) as
+      const body = (await response.json().catch(() => ({}))) as
         | FieldsResponse
         | { error?: string };
       if (!response.ok || !("settings" in body)) {

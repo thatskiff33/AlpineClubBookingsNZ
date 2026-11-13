@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
+import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -63,13 +64,12 @@ export function MemberBillingFamilyCard({
           billingFamilyGroupId: next === "none" ? null : next,
         }),
       });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error ?? "Failed to update billing family");
+      if (!response.ok) throw await apiRefusalFromResponse(response, "Failed to update billing family");
       toast.success("Billing family updated");
       onChange?.(next === "none" ? null : next);
     } catch (cause) {
       setValue(previous);
-      toast.error(cause instanceof Error ? cause.message : "Failed to update billing family");
+      toast.error(refusalMessageOr(cause, "Failed to update billing family"));
     } finally {
       setSaving(false);
     }
