@@ -157,10 +157,6 @@ function refreshFailureRequiresReconnect(err: unknown): boolean {
 // Simple mutex to prevent concurrent token refreshes from using the same refresh token
 let _tokenRefreshPromise: Promise<{ xero: XeroClient; tenantId: string }> | null = null;
 
-// Test-only provider seam (#4908): tokens are skipped; the daily-limit latch,
-// callXeroApi's environment gate and withXeroRetry all still run.
-export { setXeroClientForTests, resetXeroClientForTests } from "./xero-test-client-override";
-
 function tokenNeedsRefresh(tokens: XeroTokenRecord, now = Date.now()) {
   return now >= tokens.expiresAt.getTime() - TOKEN_REFRESH_BUFFER_MS;
 }
@@ -229,9 +225,9 @@ export async function getAuthenticatedXeroClient(): Promise<{
 }> {
   throwIfXeroDailyLimitActive();
 
+  // Test-only seam (#4908): skips tokens; the latch, callXeroApi and retries still run.
   const testClient = xeroTestClientOverride();
   if (testClient) return testClient;
-
   const tokens = await loadXeroTokens();
   if (!tokens) {
     throw new XeroReconnectRequiredError("Xero is not connected. Please connect via admin panel.");

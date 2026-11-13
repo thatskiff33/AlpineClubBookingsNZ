@@ -10,6 +10,7 @@ import "server-only";
 
 import Stripe from "stripe";
 import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
+import { stripeTestClientOverride } from "@/lib/stripe-test-client-override";
 import type { ClubFormat } from "@/lib/club-format";
 import {
   refuseBelowStripeMinimum,
@@ -28,34 +29,16 @@ import {
 // important for the long-lived cron-leader process.
 let _stripe: Stripe | null = null;
 let _stripeKey: string | null = null;
-// Test-only provider seam (#4908): a test can hand the app an in-memory Stripe
-// client (src/test/providers/stripe-transport.ts). Nothing but a test call
-// sets it, and it refuses to serve outside NODE_ENV=test.
-let testStripeClient: Stripe | null = null;
-
-export function setStripeClientForTests(client: Stripe | null): void {
-  if (process.env.NODE_ENV !== "test") throw new Error("Stripe client override is test-only");
-  testStripeClient = client;
-}
-
-export function resetStripeClientForTests(): void {
-  testStripeClient = null;
-}
 
 export async function getStripe(): Promise<Stripe> {
-  if (testStripeClient) {
-    if (process.env.NODE_ENV !== "test") throw new Error("Stripe client override is test-only");
-    return testStripeClient;
-  }
+  const testClient = stripeTestClientOverride(); // test-only seam (#4908)
+  if (testClient) return testClient;
   const key = await getOperationalStripeSecretKey();
   if (!key) {
     throw new Error("Stripe secret key is not configured");
   }
   if (!_stripe || _stripeKey !== key) {
-    _stripe = new Stripe(key, {
-      apiVersion: Stripe.API_VERSION,
-      typescript: true,
-    });
+    _stripe = new Stripe(key, { apiVersion: Stripe.API_VERSION, typescript: true });
     _stripeKey = key;
   }
   return _stripe;

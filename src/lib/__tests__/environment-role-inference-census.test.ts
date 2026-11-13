@@ -255,7 +255,7 @@ const NOT_ENVIRONMENT_SAFETY_READS: Allowance[] = [
       "Warn-only diagnostic on the seasonal-assignment path; changes no outcome.",
   },
   {
-    file: "src/lib/stripe.ts",
+    file: "src/lib/stripe-test-client-override.ts",
     reads: 2,
     reason:
       "NODE_ENV === 'test' gates the in-memory Stripe client override (#4908): refusing it outside the test runner, not deciding whether this is production.",

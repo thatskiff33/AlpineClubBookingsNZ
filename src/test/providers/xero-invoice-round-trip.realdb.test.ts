@@ -37,7 +37,7 @@ const NIGHT_CENTS = 4_000;
 const PRICE_CENTS = 2 * NIGHT_CENTS;
 
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
-let xeroClient: typeof import("@/lib/xero-api-client");
+let xeroOverride: typeof import("@/lib/xero-test-client-override");
 let invoices: typeof import("@/lib/xero-booking-invoices");
 let inbound: typeof import("@/lib/xero-inbound/invoice");
 // Loaded in beforeAll, after DATABASE_URL points at the race database. The
@@ -71,7 +71,7 @@ let role: SuiteEnvironmentRoleDeclaration | undefined;
     const { declareEnvironmentRoleForSuite } = await import("@/lib/__tests__/helpers/environment-role");
     role = declareEnvironmentRoleForSuite("non-production");
     ({ prisma } = await import("@/lib/prisma"));
-    xeroClient = await import("@/lib/xero-api-client");
+    xeroOverride = await import("@/lib/xero-test-client-override");
     invoices = await import("@/lib/xero-booking-invoices");
     inbound = await import("@/lib/xero-inbound/invoice");
     ({ xeroTransport } = await import("./xero-transport"));
@@ -89,7 +89,7 @@ let role: SuiteEnvironmentRoleDeclaration | undefined;
   beforeEach(async () => {
     await clean();
     fake = new XeroFake(`${P}-`);
-    xeroClient.setXeroClientForTests(xeroTransport(fake));
+    xeroOverride.setXeroClientForTests(xeroTransport(fake));
     await prisma.booking.create({
       data: { id: BOOKING_ID, memberId: MEMBER_ID, lodgeId: LODGE_ID, checkIn: CHECK_IN, checkOut: CHECK_OUT, status: "PAYMENT_PENDING", totalPriceCents: PRICE_CENTS, finalPriceCents: PRICE_CENTS },
     });
@@ -111,7 +111,7 @@ let role: SuiteEnvironmentRoleDeclaration | undefined;
       await prisma.lodgeSettings.deleteMany({ where: { lodgeId: LODGE_ID } });
       await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
     } finally {
-      xeroClient?.resetXeroClientForTests();
+      xeroOverride?.resetXeroClientForTests();
       role?.restore();
     }
   });

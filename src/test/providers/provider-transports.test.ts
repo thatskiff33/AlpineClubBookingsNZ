@@ -7,9 +7,11 @@ import { XeroFake } from "./xero-fake";
 import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 import { isCreditNoteOverAllocationText } from "@/lib/xero-credit-note-spent-outside-app";
 import { StripeFake } from "./stripe-fake";
-import { getAuthenticatedXeroClient, setXeroClientForTests, resetXeroClientForTests, resetXeroRateLimitStateForTests, withXeroRetry, XeroDailyLimitError, getXeroErrorSearchText } from "@/lib/xero-api-client";
+import { setXeroClientForTests, resetXeroClientForTests } from "@/lib/xero-test-client-override";
+import { getAuthenticatedXeroClient, resetXeroRateLimitStateForTests, withXeroRetry, XeroDailyLimitError, getXeroErrorSearchText } from "@/lib/xero-api-client";
 import { isXeroConnected } from "@/lib/xero-token-store";
-import { getStripe, getPaymentIntent, setStripeClientForTests, resetStripeClientForTests, processRefund } from "@/lib/stripe";
+import { getStripe, getPaymentIntent, processRefund } from "@/lib/stripe";
+import { setStripeClientForTests, resetStripeClientForTests } from "@/lib/stripe-test-client-override";
 
 const invoice = (contactID: string): Invoice => ({ type: Invoice.TypeEnum.ACCREC, status: Invoice.StatusEnum.AUTHORISED, contact: { contactID }, lineItems: [{ description: "Stay", quantity: 2, unitAmount: 40 }] });
 afterEach(() => { resetXeroClientForTests(); resetXeroRateLimitStateForTests(); resetStripeClientForTests(); vi.unstubAllEnvs(); });

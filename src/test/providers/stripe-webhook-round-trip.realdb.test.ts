@@ -33,6 +33,7 @@ const REFUND_CENTS = 6_000;
 
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let stripeLib: typeof import("@/lib/stripe");
+let stripeOverride: typeof import("@/lib/stripe-test-client-override");
 let webhook: typeof import("@/lib/stripe-webhook-service");
 
 (RUN ? describe : describe.skip)("Stripe webhooks served by StripeFake - real PostgreSQL (#4908)", { timeout: 60_000 }, () => {
@@ -79,6 +80,7 @@ let webhook: typeof import("@/lib/stripe-webhook-service");
     process.env.DATABASE_URL = RACE_DB_URL;
     ({ prisma } = await import("@/lib/prisma"));
     stripeLib = await import("@/lib/stripe");
+    stripeOverride = await import("@/lib/stripe-test-client-override");
     webhook = await import("@/lib/stripe-webhook-service");
     await clean();
     await prisma.member.deleteMany({ where: { id: MEMBER_ID } });
@@ -94,7 +96,7 @@ let webhook: typeof import("@/lib/stripe-webhook-service");
     fake = new StripeFake(`${P}-`);
     transport = stripeTransport(fake);
     delivered = 0;
-    stripeLib.setStripeClientForTests(transport.client);
+    stripeOverride.setStripeClientForTests(transport.client);
 
     // The card is authorised and captured through the app's own Stripe client.
     const stripe = await stripeLib.getStripe();
@@ -131,7 +133,7 @@ let webhook: typeof import("@/lib/stripe-webhook-service");
       await prisma.member.deleteMany({ where: { id: MEMBER_ID } });
       await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
     } finally {
-      stripeLib?.resetStripeClientForTests();
+      stripeOverride?.resetStripeClientForTests();
     }
   });
 
