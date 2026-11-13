@@ -62,7 +62,8 @@ const POPULATION_PUBLISHERS = [
 // changed, not just the count, and a regex that only reached the number would
 // have gone on matching a sentence that had become false.
 // #3276 added a second helper (the shared night-writer scanner), so the clause
-// counts helpers too — still exact; #3278 adds the third shared scanner.
+// counts helpers too — still exact; #3278 adds the third shared scanner; the
+// shared advisory-lock reader (#4933) makes seven.
 const PUBLISHED_POPULATION =
   /(\d+)\s+test files,\s+seven\s+test\s+helpers and\s+one CI script import\b/;
 
