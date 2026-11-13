@@ -9,9 +9,10 @@ import {
 } from "@/lib/manual-settlement-reversal-event";
 import {
   getStuckStateDashboard,
+  STUCK_STATE_DETAIL_ROW_CAP,
   type StuckStateDashboardDependencies,
 } from "@/lib/stuck-state-dashboard";
-import { adminAnchorHref } from "@/lib/admin-hubs";
+import { adminAnchorHref, adminHref } from "@/lib/admin-hubs";
 
 const modulesOn: FeatureFlags = {
   kiosk: true,
@@ -110,6 +111,8 @@ function buildDeps(overrides?: Partial<StuckStateDashboardDependencies>) {
     db: {
       paymentRecoveryOperation: {
         count: vi.fn(),
+        // #4959: the named rows, read only for a finance and membership viewer.
+        findMany: vi.fn().mockResolvedValue([]),
       },
       // #2576: active same-owner hosting-coverage incidents (the critical officer
       // card). Zero by default so every existing expectation is unchanged.
@@ -171,6 +174,7 @@ function buildDeps(overrides?: Partial<StuckStateDashboardDependencies>) {
     getWaitlistOfferEmailDeliveries: vi.fn().mockResolvedValue(new Map()),
     countUnconfirmedSchoolAttendeeLists: vi.fn().mockResolvedValue(0),
     countBookingsWithUnnamedPlaceholderGuests: vi.fn().mockResolvedValue(0),
+    listBookingsWithUnnamedPlaceholderGuests: vi.fn().mockResolvedValue([]),
     getBedAllocationDashboard: vi.fn().mockResolvedValue({
       unallocatedGuestNights: [],
       suggestedUnallocatedGuestNights: [],
@@ -185,6 +189,9 @@ function buildDeps(overrides?: Partial<StuckStateDashboardDependencies>) {
     // #4162: the voided bank refund notes a person answers.
     countBankRefundVoidsToAnswer: vi.fn().mockResolvedValue(0),
     countExhaustedCashSettlementAlerts: vi.fn().mockResolvedValue(0),
+    listExhaustedCashSettlementAlerts: vi.fn().mockResolvedValue([]),
+    listDeadCardRefundOperationIds: vi.fn().mockResolvedValue(new Set()),
+    loadDetailFormat: vi.fn().mockResolvedValue(detailFormat),
   };
 
   return {
@@ -197,9 +204,19 @@ function buildDeps(overrides?: Partial<StuckStateDashboardDependencies>) {
         ...deps.db.hostingCoverageIncident,
         ...overrides?.db?.hostingCoverageIncident,
       },
+      paymentRecoveryOperation: {
+        ...deps.db.paymentRecoveryOperation,
+        ...overrides?.db?.paymentRecoveryOperation,
+      },
     },
   };
 }
+
+/** A stand-in for the club's money format and zone (#4959). */
+const detailFormat = {
+  cents: (cents: number) => `$${(cents / 100).toFixed(2)}`,
+  instantDate: (instant: Date) => instant.toISOString().slice(0, 10),
+};
 
 describe("getStuckStateDashboard", () => {
   beforeEach(() => {
@@ -232,7 +249,7 @@ describe("getStuckStateDashboard", () => {
     ];
     const deps = buildDeps({
       db: {
-        paymentRecoveryOperation: { count: paymentCount },
+        paymentRecoveryOperation: { count: paymentCount, findMany: vi.fn().mockResolvedValue([]) },
         hostingCoverageIncident: {
           count: vi.fn().mockResolvedValue(0),
           findMany: vi.fn().mockResolvedValue([]),
@@ -530,7 +547,8 @@ describe("getStuckStateDashboard", () => {
       severity: "warning",
       owner: "Admin",
       count: 3,
-      href: "/admin/bookings",
+      // #4959: the card names its bookings on this page.
+      href: adminAnchorHref("stuck-states", "booking-unnamed-placeholder-guests"),
     });
     expect(item?.summary).toContain("3 upcoming bookings still list");
     // The copy must not promise a chase for every row: a school list confirmed
@@ -624,7 +642,7 @@ describe("getStuckStateDashboard", () => {
     );
     const deps = buildDeps({
       db: {
-        paymentRecoveryOperation: { count: vi.fn().mockResolvedValue(0) },
+        paymentRecoveryOperation: { count: vi.fn().mockResolvedValue(0), findMany: vi.fn().mockResolvedValue([]) },
         // #2576: active same-owner hosting-coverage incidents. Zero, so this
         // suite's expectations are unchanged.
         hostingCoverageIncident: {
@@ -669,7 +687,7 @@ describe("getStuckStateDashboard", () => {
     const bookingCount = vi.fn().mockResolvedValue(1);
     const deps = buildDeps({
       db: {
-        paymentRecoveryOperation: { count: vi.fn().mockResolvedValue(0) },
+        paymentRecoveryOperation: { count: vi.fn().mockResolvedValue(0), findMany: vi.fn().mockResolvedValue([]) },
         // #2576: active same-owner hosting-coverage incidents. Zero, so this
         // suite's expectations are unchanged.
         hostingCoverageIncident: {
@@ -1023,4 +1041,238 @@ it("keeps exhausted settlement figure alerts visible for finance", async () => {
   expect(result.items).toContainEqual(expect.objectContaining({
     id: "payment-settlement-alert-undelivered", count: 1, severity: "critical", href: "/admin/payments",
   }));
+});
+
+/**
+ * #4959: the eight signals that name their bookings. A finance and membership
+ * viewer gets up to STUCK_STATE_DETAIL_ROW_CAP rows each, read with the very
+ * where the count reads; anyone else gets the count and the card link only.
+ */
+describe("named rows behind the stuck-state signals (#4959)", () => {
+  const NOW = new Date("2026-06-22T00:00:00.000Z");
+  const PAYMENT_ROW_SIGNALS = [
+    "payment-group-settlement-refund-unexecuted",
+    "payment-cancelled-refund-unrecorded",
+    "payment-recovery-exhausted",
+    "payment-recovery-stale-processing",
+    "payment-group-settlement-stale",
+    "payment-recovery-overdue-pending",
+    "payment-settlement-alert-undelivered",
+  ];
+
+  function owned(id: string) {
+    return { id, member: { firstName: "Aroha", lastName: "Ngata" }, organisation: null };
+  }
+
+  type Where = Record<string, unknown>;
+  /** Which recovery signal a where reads, by the shape each builder gives it. */
+  function recoverySignal(where: Where) {
+    if (where.status === "PROCESSING") return "stale";
+    if (where.status === "PENDING") return "overdue";
+    return "exhausted";
+  }
+
+  /** Every payment signal live: `counts` per signal, rows minted up to `take`. */
+  function paymentDeps(counts: { exhausted: number; stale: number; overdue: number; cancelled: number }) {
+    const recoveryCount = vi.fn(async ({ where }: { where: Where }) => counts[recoverySignal(where)]);
+    const recoveryFindMany = vi.fn(async ({ where, take }: { where: Where; take: number }) =>
+      Array.from({ length: Math.min(take, counts[recoverySignal(where)]) }, (_unused, index) => ({
+        id: `${recoverySignal(where)}-op-${index}`,
+        type: "REFUND_BOOKING_MODIFICATION",
+        amountCents: 12_345,
+        createdAt: new Date("2026-06-01T00:00:00.000Z"),
+        booking: owned(`${recoverySignal(where)}-booking-${index}`),
+      })),
+    );
+    const bookingCount = vi.fn().mockResolvedValue(counts.cancelled);
+    const bookingFindMany = vi.fn(async (args: { where: Where; take?: number }) =>
+      args.where.status === "CANCELLED"
+        ? Array.from({ length: Math.min(args.take ?? 0, counts.cancelled) }, (_unused, index) => ({
+            ...owned(`cancelled-booking-${index}`),
+            updatedAt: new Date("2026-06-10T00:00:00.000Z"),
+            lodge: { name: "Ruapehu Lodge" },
+            payment: { amountCents: 40_000 },
+          }))
+        : [],
+    );
+    const settlementFindMany = vi.fn(async (args: { where: { status?: unknown } }) =>
+      args.where.status === "SUCCEEDED"
+        ? [
+            { id: "settlement-planned", amountCents: 90_000, refundPlan: { child: 4_500 }, groupBooking: { organiserBooking: owned("organiser-planned") } },
+            { id: "settlement-done", amountCents: 10_000, refundPlan: null, groupBooking: { organiserBooking: owned("organiser-done") } },
+          ]
+        : [
+            {
+              id: "settlement-stale",
+              amountCents: 75_000,
+              updatedAt: new Date("2026-05-01T00:00:00.000Z"),
+              groupBooking: { organiserBooking: { ...owned("organiser-stale"), checkIn: new Date("2026-05-10T00:00:00.000Z") } },
+            },
+          ],
+    );
+    const deps = buildDeps({
+      db: {
+        paymentRecoveryOperation: { count: recoveryCount, findMany: recoveryFindMany },
+        hostingCoverageIncident: { count: vi.fn().mockResolvedValue(0), findMany: vi.fn().mockResolvedValue([]) },
+        booking: { count: bookingCount, findMany: bookingFindMany },
+        groupBookingSettlement: { findMany: settlementFindMany },
+        issueReport: { count: vi.fn().mockResolvedValue(0) },
+      },
+      countExhaustedCashSettlementAlerts: vi.fn().mockResolvedValue(1),
+      listExhaustedCashSettlementAlerts: vi.fn().mockResolvedValue([
+        {
+          id: "alert-1",
+          createdAt: new Date("2026-06-15T00:00:00.000Z"),
+          booking: { ...owned("alert-booking"), checkIn: new Date("2026-08-01T00:00:00.000Z"), checkOut: new Date("2026-08-03T00:00:00.000Z") },
+        },
+      ]),
+      listDeadCardRefundOperationIds: vi.fn().mockResolvedValue(new Set(["exhausted-op-0"])),
+    });
+    return { deps, recoveryCount, recoveryFindMany, bookingCount, bookingFindMany };
+  }
+
+  const ALL_SIGNALS = { exhausted: 60, stale: 2, overdue: 1, cancelled: 3 };
+
+  it("names each payment signal's bookings for a finance and membership viewer, capped with the full count kept", async () => {
+    const { deps } = paymentDeps(ALL_SIGNALS);
+    const dashboard = await getStuckStateDashboard({ deps, now: NOW, viewerCanViewFinance: true, viewerCanViewMembership: true });
+    const item = (id: string) => dashboard.items.find((candidate) => candidate.id === id);
+
+    for (const id of PAYMENT_ROW_SIGNALS) {
+      expect(item(id)?.details?.length, id).toBeGreaterThan(0);
+      for (const detail of item(id)?.details ?? []) {
+        expect(detail.title, id).toMatch(/ - Aroha Ngata$/);
+        expect(detail.href, id).toMatch(/^\/bookings\//);
+      }
+    }
+    // The cap: the count stays the whole total, so the page says "and 10 more".
+    expect(item("payment-recovery-exhausted")).toMatchObject({ count: 60 });
+    expect(item("payment-recovery-exhausted")?.details).toHaveLength(STUCK_STATE_DETAIL_ROW_CAP);
+    expect(item("payment-cancelled-refund-unrecorded")?.details).toEqual([
+      expect.objectContaining({
+        id: "cancelled-booking-0",
+        href: "/bookings/cancelled-booking-0",
+        summary: "Ruapehu Lodge; $400.00 captured and not refunded; cancelled, last changed 2026-06-10.",
+      }),
+      expect.anything(),
+      expect.anything(),
+    ]);
+    expect(item("payment-recovery-stale-processing")?.details?.[0]?.summary).toBe(
+      "Card refund of $123.45, raised 2026-06-01.",
+    );
+    // Only the planned settlement counts and is named; its organiser is the owner.
+    expect(item("payment-group-settlement-refund-unexecuted")).toMatchObject({
+      count: 1,
+      details: [expect.objectContaining({ id: "settlement-planned", href: "/bookings/organiser-planned" })],
+    });
+    expect(item("payment-group-settlement-stale")).toMatchObject({
+      count: 1,
+      details: [expect.objectContaining({ id: "settlement-stale", href: "/bookings/organiser-stale" })],
+    });
+    expect(item("payment-settlement-alert-undelivered")?.details).toEqual([
+      expect.objectContaining({ id: "alert-1", href: "/bookings/alert-booking" }),
+    ]);
+    expect(deps.listExhaustedCashSettlementAlerts).toHaveBeenCalledWith(STUCK_STATE_DETAIL_ROW_CAP);
+  });
+
+  it("sends an exhausted card refund Stripe gave up on to its settle list, and no other row", async () => {
+    const { deps } = paymentDeps(ALL_SIGNALS);
+    const dashboard = await getStuckStateDashboard({ deps, now: NOW, viewerCanViewFinance: true, viewerCanViewMembership: true });
+    const details = dashboard.items.find((item) => item.id === "payment-recovery-exhausted")?.details ?? [];
+    expect(details[0]?.summary).toContain('Settle it under "Card refunds Stripe gave up on"');
+    expect(details.slice(1).some((detail) => detail.summary.includes("Card refunds Stripe gave up on"))).toBe(false);
+  });
+
+  it("MUTATION: reads each signal's rows with the very where its count reads", async () => {
+    const { deps, recoveryCount, recoveryFindMany, bookingCount, bookingFindMany } = paymentDeps(ALL_SIGNALS);
+    await getStuckStateDashboard({ deps, now: NOW, viewerCanViewFinance: true, viewerCanViewMembership: true });
+    const countWheres = recoveryCount.mock.calls.map(([args]) => args.where);
+    const rowWheres = recoveryFindMany.mock.calls.map(([args]) => args.where);
+    expect(rowWheres).toHaveLength(3);
+    expect(rowWheres).toEqual(expect.arrayContaining(countWheres));
+    expect(countWheres).toEqual(expect.arrayContaining(rowWheres));
+    const cancelledRows = bookingFindMany.mock.calls.find(([args]) => args.where.status === "CANCELLED");
+    expect(cancelledRows?.[0].where).toEqual(bookingCount.mock.calls[0]?.[0].where);
+    // Never the provider's detail: no error text, Stripe id or idempotency key.
+    for (const [args] of recoveryFindMany.mock.calls) {
+      expect(Object.keys((args as unknown as { select: object }).select).sort()).toEqual(
+        ["amountCents", "booking", "createdAt", "id", "type"],
+      );
+    }
+  });
+
+  it.each([
+    ["membership only", { viewerCanViewMembership: true }],
+    ["finance only", { viewerCanViewFinance: true }],
+    ["neither", {}],
+  ])("keeps the payment counts and links but names nobody and reads no rows with %s", async (_label, flags) => {
+    const { deps, recoveryFindMany, bookingFindMany } = paymentDeps(ALL_SIGNALS);
+    const dashboard = await getStuckStateDashboard({ deps, now: NOW, ...flags });
+    for (const id of PAYMENT_ROW_SIGNALS) {
+      const item = dashboard.items.find((candidate) => candidate.id === id);
+      expect(item?.count, id).toBeGreaterThan(0);
+      expect(item?.href, id).toBeTruthy();
+      expect(item?.details, id).toBeUndefined();
+    }
+    expect(recoveryFindMany).not.toHaveBeenCalled();
+    expect(bookingFindMany.mock.calls.some(([args]) => args.where.status === "CANCELLED")).toBe(false);
+    expect(deps.listExhaustedCashSettlementAlerts).not.toHaveBeenCalled();
+    expect(deps.listDeadCardRefundOperationIds).not.toHaveBeenCalled();
+    expect(deps.loadDetailFormat).not.toHaveBeenCalled();
+  });
+
+  it("links each payment signal where its work is done, and none to System Health", async () => {
+    const { deps } = paymentDeps(ALL_SIGNALS);
+    const dashboard = await getStuckStateDashboard({ deps, now: NOW });
+    const href = (id: string) => dashboard.items.find((item) => item.id === id)?.href;
+    for (const id of [
+      "payment-group-settlement-refund-unexecuted",
+      "payment-cancelled-refund-unrecorded",
+      "payment-recovery-exhausted",
+      "payment-group-settlement-stale",
+    ] as const) {
+      expect(href(id)).toBe(adminAnchorHref("stuck-states", id));
+    }
+    expect(href("payment-recovery-stale-processing")).toBe(adminHref("background-jobs"));
+    expect(href("payment-recovery-overdue-pending")).toBe(adminHref("background-jobs"));
+    expect(href("payment-settlement-alert-undelivered")).toBe(adminHref("payments"));
+    expect(dashboard.items.filter((item) => item.href === adminHref("health"))).toEqual([]);
+  });
+
+  function unnamedBooking(index: number) {
+    return {
+      ...owned(`unnamed-booking-${index}`),
+      checkIn: new Date("2026-07-10T00:00:00.000Z"),
+      lodge: { name: "Ruapehu Lodge" },
+      unnamedGuestCount: 2,
+    };
+  }
+
+  it("names the unnamed-guest bookings for a membership viewer from the list the count is the length of", async () => {
+    const deps = buildDeps({
+      listBookingsWithUnnamedPlaceholderGuests: vi.fn().mockResolvedValue(
+        Array.from({ length: 55 }, (_unused, index) => unnamedBooking(index)),
+      ),
+    });
+    const dashboard = await getStuckStateDashboard({ deps, now: NOW, viewerCanViewMembership: true });
+    const item = dashboard.items.find((candidate) => candidate.id === "booking-unnamed-placeholder-guests");
+    expect(item?.count).toBe(55);
+    expect(item?.details).toHaveLength(STUCK_STATE_DETAIL_ROW_CAP);
+    expect(item?.details?.[0]).toMatchObject({
+      id: "unnamed-booking-0",
+      title: expect.stringMatching(/ - Aroha Ngata$/),
+      summary: expect.stringContaining("2 unnamed guests"),
+      href: "/bookings/unnamed-booking-0",
+    });
+    expect(deps.countBookingsWithUnnamedPlaceholderGuests).not.toHaveBeenCalled();
+  });
+
+  it("counts the unnamed-guest bookings without naming them for a viewer without membership:view", async () => {
+    const deps = buildDeps({ countBookingsWithUnnamedPlaceholderGuests: vi.fn().mockResolvedValue(4) });
+    const dashboard = await getStuckStateDashboard({ deps, now: NOW, viewerCanViewFinance: true });
+    const item = dashboard.items.find((candidate) => candidate.id === "booking-unnamed-placeholder-guests");
+    expect(item).toMatchObject({ count: 4, href: adminAnchorHref("stuck-states", "booking-unnamed-placeholder-guests") });
+    expect(item?.details).toBeUndefined();
+    expect(deps.listBookingsWithUnnamedPlaceholderGuests).not.toHaveBeenCalled();
+  });
 });

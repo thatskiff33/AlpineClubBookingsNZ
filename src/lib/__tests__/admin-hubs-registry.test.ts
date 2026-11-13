@@ -1100,6 +1100,15 @@ describe("isInexactAdminPagePath", () => {
   });
 });
 
+/** #4959: the Stuck States signals whose card links to their own named rows. */
+const STUCK_STATE_ROW_ANCHORS = [
+  "payment-group-settlement-refund-unexecuted",
+  "payment-cancelled-refund-unrecorded",
+  "payment-recovery-exhausted",
+  "payment-group-settlement-stale",
+  "booking-unnamed-placeholder-guests",
+];
+
 describe("tabs and anchors", () => {
   it("links a tab, the default one without a query, and a section", () => {
     expect(adminTabHref("family-groups", "suggestions")).toBe("/admin/family-groups?tab=suggestions");
@@ -1146,7 +1155,7 @@ describe("tabs and anchors", () => {
       ["membership-cancellations", ["requests", "settings"], []],
       ["family-groups", ["groups", "suggestions"], []],
       ["health", [], ["integration-readiness"]],
-      ["stuck-states", [], ["bank-refund-voids"]],
+      ["stuck-states", [], ["bank-refund-voids", ...STUCK_STATE_ROW_ANCHORS]],
     ]);
   });
 
@@ -1186,6 +1195,8 @@ describe("tabs and anchors", () => {
    */
   const MINTED_ANCHORS: Record<string, string> = {
     "xero-section-mappings": 'id={xeroSectionId("mappings")}',
+    // #4959: each signal's table row carries its item id.
+    ...Object.fromEntries(STUCK_STATE_ROW_ANCHORS.map((anchor) => [anchor, "<TableRow id={item.id}"])),
   };
 
   /**
@@ -1229,7 +1240,7 @@ describe("tabs and anchors", () => {
     // The panel writes `id={BANK_REFUND_VOIDS_ANCHOR}`; its stuck-state row links
     // with adminAnchorHref. One spelling, typed against the registry.
     expect(BANK_REFUND_VOIDS_ANCHOR).toBe("bank-refund-voids");
-    expect(getAdminPage("stuck-states").anchors).toEqual([BANK_REFUND_VOIDS_ANCHOR]);
+    expect(getAdminPage("stuck-states").anchors).toEqual([BANK_REFUND_VOIDS_ANCHOR, ...STUCK_STATE_ROW_ANCHORS]);
     expect(adminAnchorHref("stuck-states", BANK_REFUND_VOIDS_ANCHOR)).toBe(
       "/admin/stuck-states#bank-refund-voids",
     );
