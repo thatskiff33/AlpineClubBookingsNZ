@@ -4,9 +4,9 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { MemberXeroCreateDialog } from "@/app/(admin)/admin/members/[id]/_components/member-xero-create-dialog";
-import { MemberXeroDecisionDialog } from "@/app/(admin)/admin/members/[id]/_components/member-xero-decision-dialog";
-import { MemberXeroLinkDialog } from "@/app/(admin)/admin/members/[id]/_components/member-xero-link-dialog";
+import { MemberXeroCreateDialog } from "@/app/(admin)/admin/membership/members/[id]/_components/member-xero-create-dialog";
+import { MemberXeroDecisionDialog } from "@/app/(admin)/admin/membership/members/[id]/_components/member-xero-decision-dialog";
+import { MemberXeroLinkDialog } from "@/app/(admin)/admin/membership/members/[id]/_components/member-xero-link-dialog";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 
 const RETRY_MESSAGE =

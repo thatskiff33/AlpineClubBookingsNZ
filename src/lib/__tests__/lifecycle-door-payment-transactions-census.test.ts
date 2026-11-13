@@ -54,6 +54,7 @@ import {
   relativeSource,
   sourceFiles,
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
+import { enclosingFunction } from "@/lib/__tests__/support/function-scope";
 
 /** The callees whose answer depends on the payment's transaction rows. */
 const UNPAID_READERS = new Set(["applyLifecycleTransitions", "isUnpaidConfirmedWholeLodge"]);
@@ -79,14 +80,6 @@ const GUARD_SHAPES =
   "where <guard> reads isUnpaidConfirmedWholeLodge(...) through nothing but `&&` and parentheses";
 
 type DoorScan = { readers: string[]; loadsSharedInclude: boolean; postsConfirmation: boolean };
-
-/** The innermost function around `node`: the door's own scope. */
-function enclosingFunction(node: ts.Node): ts.Node {
-  for (let at = node.parent; at; at = at.parent) {
-    if (ts.isFunctionLike(at)) return at;
-  }
-  return node.getSourceFile();
-}
 
 /** Does `expr` being true prove the unpaid whole-lodge answer true? Only `&&` and parentheses may sit between. */
 function provesUnpaid(expr: ts.Expression): boolean {
