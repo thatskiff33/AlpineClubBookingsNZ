@@ -1,6 +1,5 @@
 "use client";
 
-import type { AgeTier } from "@prisma/client";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
@@ -26,64 +25,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useConfirm } from "@/components/confirm-dialog";
-
-type AgeTierRow = {
-  tier: AgeTier;
-  minAge: number;
-  maxAge: number | null;
-  label: string;
-  subscriptionRequiredForBooking: boolean;
-  familyGroupRequestCreateMemberAllowed: boolean;
-  sortOrder: number;
-};
-
-const DEFAULT_SETTINGS: AgeTierRow[] = [
-  {
-    tier: "INFANT",
-    minAge: 0,
-    maxAge: 4,
-    label: "Infant (under 5)",
-    subscriptionRequiredForBooking: false,
-    familyGroupRequestCreateMemberAllowed: true,
-    sortOrder: 0,
-  },
-  {
-    tier: "CHILD",
-    minAge: 5,
-    maxAge: 9,
-    label: "Child (5-9)",
-    subscriptionRequiredForBooking: false,
-    familyGroupRequestCreateMemberAllowed: true,
-    sortOrder: 1,
-  },
-  {
-    tier: "YOUTH",
-    minAge: 10,
-    maxAge: 17,
-    label: "Youth (10-17)",
-    subscriptionRequiredForBooking: true,
-    familyGroupRequestCreateMemberAllowed: false,
-    sortOrder: 2,
-  },
-  {
-    tier: "ADULT",
-    minAge: 18,
-    maxAge: null,
-    label: "Adult (18+)",
-    subscriptionRequiredForBooking: true,
-    familyGroupRequestCreateMemberAllowed: false,
-    sortOrder: 3,
-  },
-];
-
-function normalizeAgeTierRows(rows: AgeTierRow[]): AgeTierRow[] {
-  return rows.map((row) => ({
-    ...row,
-    subscriptionRequiredForBooking: row.subscriptionRequiredForBooking ?? true,
-    familyGroupRequestCreateMemberAllowed:
-      row.familyGroupRequestCreateMemberAllowed ?? false,
-  }));
-}
+import {
+  type AgeTierRow,
+  DEFAULT_SETTINGS,
+  normalizeAgeTierRows,
+} from "./_lib/age-tier-rows";
 
 export default function AgeTierSettingsPage() {
   // Age-tier boundaries are a bookings-area setting; a bookings:view admin sees

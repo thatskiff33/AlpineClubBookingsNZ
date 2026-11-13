@@ -254,14 +254,7 @@ export default function RefundRequestsPage() {
     }
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.
-  }, [
-    clearActionFailure,
-    filter,
-    setCreditApprovals,
-    setLoadError,
-    setLoading,
-    setRefundRequests,
-  ])
+  }, [clearActionFailure, filter, setCreditApprovals, setLoadError, setLoading, setRefundRequests])
 
   useEffect(() => {
     fetchRequests()
