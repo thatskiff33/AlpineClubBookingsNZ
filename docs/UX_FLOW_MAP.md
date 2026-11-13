@@ -1065,7 +1065,7 @@ layer decides three things once, so no form has to:
 
 The committee page's **Add / Edit Role** form is the worked example: its
 schema module is `src/lib/forms/committee-role-schema.ts`, and its form is
-`src/app/(admin)/admin/committee/_components/committee-role-form.tsx`.
+`src/app/(admin)/admin/membership/committee/_components/committee-role-form.tsx`.
 
 ### Building a form
 
