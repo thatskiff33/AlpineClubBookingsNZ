@@ -4138,26 +4138,25 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
 Xero note mints one when spent).
 
 - **Opening credit posts once, from one approval** (#4988). A club moving in
-  carries over members' credit balances from one CSV. Preview writes nothing:
+  carries over members' balances from one CSV. Preview writes nothing:
   it matches each row to one current member, refuses a member named twice
-  or the posting admin (two-person control stays), totals the cents, and
+  or the posting admin (keeping two-person control), totals the cents, and
   offers a batch key only when no row is in error. A member holding credit
   from an unreversed batch is a row in error, checked again under the locks,
   so a corrected file never credits twice.
 - **The key is the claim.** The key hashes what the file posts (member, cents,
   description, sorted). Confirm re-previews the file and refuses unless key
-  and total still match what the officer saw; the `OpeningCreditBatch` row's
-  unique key then claims it, so a second confirm, concurrent or later, posts
-  nothing.
+  and total still match the preview; the `OpeningCreditBatch` row's unique
+  key then claims it, so a second confirm posts nothing.
 - **One transaction**: the batch row, one `ADMIN_ADJUSTMENT` credit per member
   under that member's `lockMemberCreditLedger` (sorted ids), and one
   `payment` audit row with the total. No email, no Xero document and no Stripe
-  call: the old system already accounted for the balance.
+  call: the old system accounted for the balance.
 - **When spent in Xero**, the note minted for an opening-credit lot is coded
   as the member's own money (`hutFeeRefunds`), never as a goodwill write-off.
 - **Reversal is whole-batch** and only while every credit is wholly free: its
-  lot untouched, the balance covering it, an unchanged negative-row count
-  captured under posting locks (transaction timestamps cannot order spends), and no
+  lot untouched, the balance covering it, its members' negative-row count
+  unchanged since posting (counted under the locks, not by timestamp), and no
   Xero-noted credit consumed. It claims the batch with a `reversedAt`-guarded
   `updateMany`, then posts one negative row per credit. One spent credit
   refuses it and writes nothing. A reversed batch's credits are no longer lots
