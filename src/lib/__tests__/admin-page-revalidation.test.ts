@@ -110,10 +110,11 @@ describe("revalidateAdminPage", () => {
 
   it("names a page file on disk for every registered page, before and after it moves", async () => {
     // The tree as it is: of the hubs `loadWith` sets, Finance (C5 #4802), Help &
-    // system (C7 #4804) and Members (C9 #4806) have moved.
+    // system (C7 #4804), Bookings (C10 #4807) and Members (C9 #4806) have moved.
     const { adminPageRevalidationTarget, registry } = await loadWith(false, [
       "finance",
       "system",
+      "bookings",
       "members",
     ]);
     const fileFor = ([target, type]: readonly [string, ("page" | undefined)?]) =>

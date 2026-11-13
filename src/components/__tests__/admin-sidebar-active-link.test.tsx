@@ -83,11 +83,11 @@ describe("the sidebar's active link over a moved hub", () => {
     stubPendingCounts();
   });
 
-  it("PREMISE: the Finance, Website, Rules, Help & system, Messages & email and Members hubs have moved, and nothing else has", () => {
+  it("PREMISE: the Finance, Website, Rules, Help & system, Messages & email, Bookings and Members hubs have moved, and nothing else has", () => {
     const moved = ADMIN_PAGES.filter((page) => page.moved);
     expect(moved.length).toBeGreaterThan(0);
     expect(new Set(moved.map((page) => page.hub))).toEqual(
-      new Set(["finance", "website", "rules", "system", "messages", "members"]),
+      new Set(["finance", "website", "rules", "system", "messages", "bookings", "members"]),
     );
     expect(moved.find((page) => page.id === "payments")?.hubPath).toBe(
       "/admin/finance/payments",
@@ -125,18 +125,28 @@ describe("the sidebar's active link over a moved hub", () => {
     // C9 (#4806): Members, and a member's own page beneath it.
     ["Members' hub URL", "/admin/membership/members", ["Members"]],
     ["a member's hub URL", "/admin/membership/members/m-1", ["Members"]],
+    // C10 (#4807): Bookings, at the hub URL and the address the menu still uses.
+    ["Bookings' old URL", "/admin/bookings", ["Bookings"]],
+    ["Bookings' hub URL", "/admin/booking-desk/bookings", ["Bookings"]],
+    ["Booking Requests' old URL", "/admin/booking-requests", ["Booking Requests"]],
+    ["Booking Requests' hub URL", "/admin/booking-desk/booking-requests", ["Booking Requests"]],
+    ["Book on Behalf's hub URL", "/admin/booking-desk/book", ["Book on Behalf"]],
+    ["Bed Allocation's hub URL", "/admin/booking-desk/bed-allocation", ["Bed Allocation"]],
+    ["the Waitlist's old URL", "/admin/waitlist", ["Waitlist"]],
+    ["the Waitlist's hub URL", "/admin/booking-desk/waitlist", ["Waitlist"]],
   ])("highlights the same link at %s (%s)", async (_label, pathname, expected) => {
     await expect(activeLabels(pathname)).resolves.toEqual([...expected].sort());
   });
 
   it("leaves an unmoved page's highlight as it was", async () => {
-    await expect(activeLabels("/admin/bookings")).resolves.toEqual(["Bookings"]);
-    // Bookings has not moved, so its hub path is served by nothing and lights nothing.
-    await expect(activeLabels("/admin/booking-desk/bookings")).resolves.toEqual([]);
+    await expect(activeLabels("/admin/lodges")).resolves.toEqual(["Lodges"]);
+    // Lodges has not moved, so its hub path is served by nothing and lights nothing.
+    await expect(activeLabels("/admin/lodge-ops/lodges")).resolves.toEqual([]);
   });
 
   it("highlights nothing at the hub's own root, which is no page yet (C13)", async () => {
     await expect(activeLabels("/admin/finance")).resolves.toEqual([]);
+    await expect(activeLabels("/admin/booking-desk")).resolves.toEqual([]);
     await expect(activeLabels("/admin/membership")).resolves.toEqual([]);
   });
 });

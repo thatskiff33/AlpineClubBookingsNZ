@@ -291,7 +291,7 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     severity: "critical",
     owner: "Finance",
     count: counts.unexecutedSettlementRefunds,
-    href: "/admin/bookings",
+    href: adminHref("bookings"),
     summary: `${counts.unexecutedSettlementRefunds} cancelled organiser-pays ${plural(
       counts.unexecutedSettlementRefunds,
       "group",
@@ -347,7 +347,7 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     severity: "warning",
     owner: "Admin",
     count: counts.staleSettlements,
-    href: "/admin/bookings",
+    href: adminHref("bookings"),
     summary: `${counts.staleSettlements} organiser-pays group ${plural(
       counts.staleSettlements,
       "settlement",
@@ -669,7 +669,7 @@ async function addWaitlistItems(
     severity: "critical",
     owner: "Admin",
     count: offerEmailFailures,
-    href: "/admin/waitlist",
+    href: adminHref("waitlist"),
     summary: `${offerEmailFailures} active waitlist ${plural(
       offerEmailFailures,
       "offer",
@@ -682,7 +682,7 @@ async function addWaitlistItems(
     severity: "warning",
     owner: "Admin",
     count: expiredOffers,
-    href: "/admin/waitlist",
+    href: adminHref("waitlist"),
     summary: `${expiredOffers} waitlist ${plural(
       expiredOffers,
       "offer",
@@ -714,7 +714,7 @@ async function addBedAllocationItems(
     severity: "warning",
     owner: "Lodge",
     count: dashboard.unallocatedGuestNights.length,
-    href: "/admin/bed-allocation",
+    href: adminHref("bed-allocation"),
     summary: `${dashboard.unallocatedGuestNights.length} guest ${plural(
       dashboard.unallocatedGuestNights.length,
       "night",
@@ -727,7 +727,7 @@ async function addBedAllocationItems(
     severity: "critical",
     owner: "Lodge",
     count: dashboard.suggestedUnallocatedGuestNights.length,
-    href: "/admin/bed-allocation",
+    href: adminHref("bed-allocation"),
     summary: `${dashboard.suggestedUnallocatedGuestNights.length} guest ${plural(
       dashboard.suggestedUnallocatedGuestNights.length,
       "night",
@@ -740,7 +740,7 @@ async function addBedAllocationItems(
     severity: "warning",
     owner: "Lodge",
     count: dashboard.warnings.length,
-    href: "/admin/bed-allocation",
+    href: adminHref("bed-allocation"),
     summary: `${dashboard.warnings.length} bed allocation ${plural(
       dashboard.warnings.length,
       "warning",
@@ -1002,7 +1002,7 @@ export async function getStuckStateDashboard(input?: {
     severity: "warning",
     owner: "Admin",
     count: unconfirmedSchoolAttendeeLists,
-    href: "/admin/booking-requests?tab=approvals",
+    href: `${adminHref("booking-requests")}?tab=approvals`,
     summary: `${unconfirmedSchoolAttendeeLists} school ${plural(
       unconfirmedSchoolAttendeeLists,
       "booking",
@@ -1036,7 +1036,7 @@ export async function getStuckStateDashboard(input?: {
     severity: "warning",
     owner: "Admin",
     count: unnamedPlaceholderBookings,
-    href: "/admin/bookings",
+    href: adminHref("bookings"),
     summary: `${unnamedPlaceholderBookings} upcoming ${plural(
       unnamedPlaceholderBookings,
       "booking",
@@ -1122,7 +1122,7 @@ export async function getStuckStateDashboard(input?: {
     severity: "critical",
     owner: "Booking Officer",
     count: hostingCoverageIncidents,
-    href: "/admin/bookings#hosting-coverage-incidents",
+    href: `${adminHref("bookings")}#hosting-coverage-incidents`,
     summary: `${hostingCoverageIncidents} confirmed ${plural(
       hostingCoverageIncidents,
       "booking",

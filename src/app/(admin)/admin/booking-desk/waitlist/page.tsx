@@ -263,7 +263,7 @@ export default function AdminWaitlistPage() {
   const queryPageSize = parsePageSize(searchParams.get("pageSize"));
   const fromParam = searchParams.get("from") ?? "";
   const toParam = searchParams.get("to") ?? "";
-  const currentWaitlistPath = buildPathWithSearch("/admin/waitlist", queryString);
+  const currentWaitlistPath = buildPathWithSearch(adminHref("waitlist"), queryString);
   const [entries, setEntries] = useState<WaitlistEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [forceConfirming, setForceConfirming] = useState<string | null>(null);
@@ -423,7 +423,7 @@ export default function AdminWaitlistPage() {
     // treat that memoized dependency as mutable and skip the component.
     const nextParams = new URLSearchParams(searchParams.toString());
     mutator(nextParams);
-    router.replace(buildPathWithSearch("/admin/waitlist", nextParams), {
+    router.replace(buildPathWithSearch(adminHref("waitlist"), nextParams), {
       scroll: false,
     });
   }

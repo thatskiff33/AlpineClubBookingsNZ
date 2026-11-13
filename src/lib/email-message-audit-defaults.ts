@@ -3,6 +3,7 @@
 import { BOOKING_URL_TEMPLATE_NAMES } from "@/lib/booking-email-template-contract";
 
 import { adminHref } from "@/lib/admin-hubs";
+
 const EMAIL_AUDIT_DEFAULTS_BASE = {
   "password-reset": {
     "defaultSubject": "Reset your {{CLUB_NAME}} password",
@@ -114,7 +115,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "admin-waitlist-offer": {
     "defaultSubject": "Waitlist Offer: {{memberName}}",
-    "defaultBody": "Waitlist Offer Made\n\nA waitlist offer has been sent to {{memberName}}.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nQueue Position: #{{position}}\n\nThe member has 48 hours to confirm their booking.\n\nView Waitlist: {{BASE_URL}}/admin/waitlist"
+    "defaultBody": "Waitlist Offer Made\n\nA waitlist offer has been sent to {{memberName}}.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nQueue Position: #{{position}}\n\nThe member has 48 hours to confirm their booking.\n\nView Waitlist: {{BASE_URL}}" + adminHref("waitlist")
   },
   "nomination-request": {
     "defaultSubject": "Nomination request for {{applicantName}} — {{CLUB_NAME}}",
@@ -258,19 +259,19 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "admin-minors-review": {
     "defaultSubject": "Review required: booking has only under-18 guests ({{memberName}})",
-    "defaultBody": "Booking Review Required\n\nA paid booking was edited and now has only under-18 guests. It is blocked from lodge check-in until an admin reviews it.\n\n{{reviewReason}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nReview Bookings: {{BASE_URL}}/admin/bookings"
+    "defaultBody": "Booking Review Required\n\nA paid booking was edited and now has only under-18 guests. It is blocked from lodge check-in until an admin reviews it.\n\n{{reviewReason}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nReview Bookings: {{BASE_URL}}" + adminHref("bookings")
   },
   "admin-owner-substitution": {
     "defaultSubject": "Owner substitution — reconcile Xero contact for booking request {{requestId}}",
-    "defaultBody": "Owner Substitution — Xero Reconciliation Required\n\nAn owner substitution occurred while converting booking request {{requestId}} into booking {{bookingId}}. The booking (and its Xero invoice) will bill a newly-created contact instead of the intended owner.\n\nAction required: reconcile the invoice's contact in Xero — repoint it from the newly-created contact to the intended organisation.\n\nIntended owner (should be billed): {{intendedMemberName}} ({{intendedMemberId}})\nSubstituted contact (currently billed): {{substituteMemberName}} ({{substituteMemberId}})\nReason: {{reason}}\nRequester: {{requesterName}} ({{memberEmail}})\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nReview Bookings: {{BASE_URL}}/admin/bookings"
+    "defaultBody": "Owner Substitution — Xero Reconciliation Required\n\nAn owner substitution occurred while converting booking request {{requestId}} into booking {{bookingId}}. The booking (and its Xero invoice) will bill a newly-created contact instead of the intended owner.\n\nAction required: reconcile the invoice's contact in Xero — repoint it from the newly-created contact to the intended organisation.\n\nIntended owner (should be billed): {{intendedMemberName}} ({{intendedMemberId}})\nSubstituted contact (currently billed): {{substituteMemberName}} ({{substituteMemberId}})\nReason: {{reason}}\nRequester: {{requesterName}} ({{memberEmail}})\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nReview Bookings: {{BASE_URL}}" + adminHref("bookings")
   },
   "admin-partner-share-swept": {
     "defaultSubject": "Review required: shared double-bed placements removed ({{memberName}})",
-    "defaultBody": "Shared Double-Bed Placements Removed\n\nA partner pair no longer qualifies for double-bed sharing, so their future shared placements were removed. The affected guest nights are back in the awaiting-allocation queue and may need re-planning on the allocation board.\n\nMember: {{memberName}}\nPartner: {{partnerName}}\nReason: {{reason}}\nRemoved night{{s}}: {{date}}\n\nReview Bed Allocation: {{BASE_URL}}/admin/bed-allocation"
+    "defaultBody": "Shared Double-Bed Placements Removed\n\nA partner pair no longer qualifies for double-bed sharing, so their future shared placements were removed. The affected guest nights are back in the awaiting-allocation queue and may need re-planning on the allocation board.\n\nMember: {{memberName}}\nPartner: {{partnerName}}\nReason: {{reason}}\nRemoved night{{s}}: {{date}}\n\nReview Bed Allocation: {{BASE_URL}}" + adminHref("bed-allocation")
   },
   "admin-new-booking": {
     "defaultSubject": "New Booking: {{memberName}} ({{status}})",
-    "defaultBody": "New Booking Created\n\nA new booking has been created.\n\n{{reviewReasonNote}}Member: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTotal: {{total}}\nStatus: {{status}}\n\nView Bookings: {{BASE_URL}}/admin/bookings"
+    "defaultBody": "New Booking Created\n\nA new booking has been created.\n\n{{reviewReasonNote}}Member: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTotal: {{total}}\nStatus: {{status}}\n\nView Bookings: {{BASE_URL}}" + adminHref("bookings")
   },
   "admin-payment-failure": {
     "defaultSubject": "Payment Failed — {{CLUB_BOOKINGS_NAME}}",
@@ -388,15 +389,15 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "admin-pending-deadline": {
     "defaultSubject": "{{count}} Pending Booking{{s}} Approaching Deadline",
-    "defaultBody": "Pending Bookings Approaching Deadline\n\n{{count}} pending booking(s) will reach their hold deadline within 48 hours.\n\nMember | Dates | Guests | Deadline | Remaining\n{{memberName}} | {{checkIn}} – {{checkOut}} | {{guestCount}} | {{deadline}} | {{hoursRemaining}}h\n...\n\nView Bookings: {{BASE_URL}}/admin/bookings"
+    "defaultBody": "Pending Bookings Approaching Deadline\n\n{{count}} pending booking(s) will reach their hold deadline within 48 hours.\n\nMember | Dates | Guests | Deadline | Remaining\n{{memberName}} | {{checkIn}} – {{checkOut}} | {{guestCount}} | {{deadline}} | {{hoursRemaining}}h\n...\n\nView Bookings: {{BASE_URL}}" + adminHref("bookings")
   },
   "admin-booking-bumped": {
     "defaultSubject": "Booking Bumped: {{bumpedMemberName}}",
-    "defaultBody": "Booking Bumped\n\nA pending booking has been bumped due to a member booking.\n\nBumped Member: {{bumpedMemberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTriggered By: {{triggeringMemberName}}\n\nView Bookings: {{BASE_URL}}/admin/bookings"
+    "defaultBody": "Booking Bumped\n\nA pending booking has been bumped due to a member booking.\n\nBumped Member: {{bumpedMemberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTriggered By: {{triggeringMemberName}}\n\nView Bookings: {{BASE_URL}}" + adminHref("bookings")
   },
   "admin-capacity-warning": {
     "defaultSubject": "Capacity Warning: {{count}} high-occupancy day{{s}} ahead",
-    "defaultBody": "Capacity Warning\n\n{{count}} day(s) in the next 14 days have high occupancy.\n\nDate | Occupied | Available | Occupancy\n{{date}} | {{occupiedBeds}}/{{LODGE_CAPACITY}} | {{availableBeds}} | {{percent}}%\n...\n\nView Bookings: {{BASE_URL}}/admin/bookings"
+    "defaultBody": "Capacity Warning\n\n{{count}} day(s) in the next 14 days have high occupancy.\n\nDate | Occupied | Available | Occupancy\n{{date}} | {{occupiedBeds}}/{{LODGE_CAPACITY}} | {{availableBeds}} | {{percent}}%\n...\n\nView Bookings: {{BASE_URL}}" + adminHref("bookings")
   },
   "admin-daily-digest": {
     "defaultSubject": "Admin Daily Digest - {{totalAlerts}} alert{{s}} in past 24h",
