@@ -2148,6 +2148,8 @@ describe("the registry is inert", () => {
     "src/lib/__tests__/stuck-state-dashboard.test.ts":
       "C7: the voided bank refund notes row links the registry anchor",
     "src/lib/setup-readiness-data-keys.ts": "C7: the data-key check links System Health with adminHref",
+    "src/lib/setup-readiness-database-role.ts":
+      "#4904: the database-role check links System Health with adminHref",
     "src/app/(admin)/admin/messages/notification-rules/page.tsx": "C8: its back link is adminLink",
     "src/app/(admin)/admin/messages/notification-recipients/page.tsx": "C8: its back link is adminLink",
     "src/app/(admin)/admin/messages/email-messages/page.tsx": "C8: its back link is adminLink",
