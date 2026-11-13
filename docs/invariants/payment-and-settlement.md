@@ -2873,10 +2873,9 @@ _Legacy: settles tasks raised before #4317._
     (`card_refund_still_owed_<task>`) owes the rest.
   - **Xero** (8 Oct): with no card-note cover, a bank-transfer note keyed on
     the task, sized by it less its notes, dated the close's day, where an
-    invoice exists; else none (`:no-xero-note`). A covered close is
-    `INV-PAY-151`. A late capture's note
-    names its receipt by invoice, never by intent. None in Xero: queue it
-    (`INV-PAY-110`), requeue a failed one that cannot have reached Xero, or
+    invoice exists; else none (`:no-xero-note`). Covered: `INV-PAY-151`.
+    A late capture's note names its receipt by invoice, never by intent.
+    None in Xero: queue it (`INV-PAY-110`), requeue a failed one that cannot have reached Xero, or
     await one in flight; link then note once under the approval task's row,
     read first (`:note-after-receipt`). Cash evidence counts it once noted.
   - A superseded intent's row closes whole, only while its charge holds exactly
