@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 import { prisma } from "@/lib/prisma";
 import { getClientIp } from "@/lib/rate-limit";
 import { ApiError } from "@/lib/api-error";
@@ -156,6 +157,12 @@ export async function POST(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   const { id } = await params;
+
+  // INV-AUTH-010: the handler reaches the batch modification's refund
+  // operations (it never refunds, but the census reads the call graph), so it
+  // asks for a fresh proof after the guard and before it reads the body.
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
 
   let body: unknown;
   try {

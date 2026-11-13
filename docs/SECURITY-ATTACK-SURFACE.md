@@ -337,7 +337,9 @@ These family rules are enforced by automated tests (issue #1132):
     the canonical booking edit, as account credit: organiser-paid bookings,
     whose money would go back to the organiser, are refused, so it never
     refunds. It applies only the figures the officer was shown, and answers 404
-    while the Work Parties module is off.
+    while the Work Parties module is off. Its POST is on the step-up list
+    (`INV-AUTH-010`): the canonical edit it calls reaches the refund
+    operations, so it asks for a fresh proof before reading the body.
 
 Admin route subfamilies are:
 
