@@ -13,7 +13,7 @@ import {
 import { sanitizeForJson } from "../../xero-sync";
 import { stableDigest } from "../../stable-digest";
 import { bookingChargeIdentity } from "./booking-charges";
-import { liveComponentSplit, type PostedRevenueLeg } from "./components";
+import { componentKey, componentsPostedBy, liveComponentSplit, type PostedRevenueLeg } from "./components";
 
 /**
  * THE PRIMARY BOOKING INVOICE, PLANNED FROM THE JOURNAL (#4525, Ledger M13).
@@ -185,10 +185,15 @@ function coverPrimaryInvoiceLines(input: {
     ({ outcome: "CONFLICT", lines, reason, problem, ...rendering([]) });
 
   const stayIdentity = bookingChargeIdentity(bookingId);
-  const identities = [...new Set(postedLegs.flatMap((leg) => (leg.chargeIdentity === null ? [] : [`${leg.account}\u0000${leg.chargeIdentity}`])))].sort();
+  const identities = componentsPostedBy({ lines: postedLegs }).sort((a, b) => {
+    const left = componentKey(a.account, a.chargeIdentity);
+    const right = componentKey(b.account, b.chargeIdentity);
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
   const components: PrimaryInvoiceCoverage[] = [];
-  for (const key of identities) {
-    const [account, chargeIdentity] = key.split("\u0000") as [PrimaryInvoiceCoverage["account"], string];
+  for (const identity of identities) {
+    const account = identity.account as PrimaryInvoiceCoverage["account"];
+    const { chargeIdentity } = identity;
     const split = liveComponentSplit(postedLegs, account, chargeIdentity);
     if (!split) continue;
     if ("problem" in split) return conflict("COMPONENT_UNUSABLE", split.problem);
