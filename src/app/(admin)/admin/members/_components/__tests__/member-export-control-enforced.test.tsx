@@ -30,7 +30,7 @@ describe("member export when officer sign-in is enforced (#4619)", () => {
       new Response("name\nAda\n", {
         status: 200,
         headers: {
-          "Content-Disposition": 'attachment; filename="tac-members-2026-07-01.csv"',
+          "Content-Disposition": 'attachment; filename="ruapehu-ac-members-2026-07-01.csv"',
         },
       }),
     );
@@ -51,7 +51,7 @@ describe("member export when officer sign-in is enforced (#4619)", () => {
     expect(screen.queryByRole("link", { name: "Export CSV" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Export CSV" }));
 
-    await waitFor(() => expect(anchors.some((anchor) => anchor.download === "tac-members-2026-07-01.csv")).toBe(true));
+    await waitFor(() => expect(anchors.some((anchor) => anchor.download === "ruapehu-ac-members-2026-07-01.csv")).toBe(true));
     expect(fetchWithRecentAuth).toHaveBeenCalledTimes(1);
     expect(fetchWithRecentAuth).toHaveBeenCalledWith("/api/admin/members/export?q=ada");
   });

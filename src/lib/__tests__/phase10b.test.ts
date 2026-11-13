@@ -92,6 +92,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     $executeRaw: vi.fn().mockResolvedValue(1),
     $transaction: vi.fn(),
+    clubIdentitySettings: { findUnique: vi.fn() },
   },
 }));
 
@@ -169,13 +170,21 @@ describe("F-COMP-03: Personal Data Export", () => {
     mockedPrisma.choreAssignment.findMany.mockResolvedValue([]);
     mockedPrisma.memberSubscription.findMany.mockResolvedValue([]);
     mockedPrisma.auditLog.findMany.mockResolvedValue([]);
+    // INV-CONFIG-001: named from the persisted club identity, never one
+    // club's initials (#4986).
+    mockedPrisma.clubIdentitySettings.findUnique.mockResolvedValueOnce({
+      name: null,
+      shortName: "Ruapehu AC",
+      hutLeaderLabel: null,
+      facebookUrl: null,
+    } as any);
 
     const res = await dataExportGet();
     expect(res.status).toBe(200);
 
     const disposition = res.headers.get("Content-Disposition");
     expect(disposition).toMatch(/attachment/);
-    expect(disposition).toMatch(/tac-my-data-\d{4}-\d{2}-\d{2}\.json/);
+    expect(disposition).toMatch(/filename="ruapehu-ac-my-data-\d{4}-\d{2}-\d{2}\.json"/);
 
     const body = await res.json();
     expect(body.profile.firstName).toBe("Alice");

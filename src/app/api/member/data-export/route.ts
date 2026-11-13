@@ -14,6 +14,8 @@ import { checkRateLimit, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { formatDateOnly } from "@/lib/date-only";
 import { clubTime } from "@/lib/club-time/server";
+import { getClubIdentity } from "@/lib/club-identity-settings";
+import { clubDownloadFilename } from "@/lib/club-download-filename";
 import { seasonSelectLabel } from "@/lib/season-label";
 import { readDeclaredMemberText } from "@/lib/audit-member-disclosure";
 import {
@@ -361,7 +363,8 @@ export async function GET() {
       })),
     };
 
-    const filename = `tac-my-data-${exportDate}.json`;
+    const { shortName } = await getClubIdentity();
+    const filename = clubDownloadFilename(shortName, "my-data", exportDate, "json");
     const json = JSON.stringify(payload, null, 2);
 
     return new Response(json, {

@@ -3,12 +3,15 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
+import { useClubIdentity } from "@/components/club-identity-provider";
+import { clubDownloadFilename } from "@/lib/club-download-filename";
 
 /**
  * F-COMP-03: Download My Data button.
  * Triggers a GET /api/member/data-export and downloads the file.
  */
 export function DataExportButton() {
+  const { shortName } = useClubIdentity();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,7 +36,8 @@ export function DataExportButton() {
       // answered its absence (#2801).
       const [, matchedFilename] =
         disposition.match(/filename="(.+?)"/) ?? [];
-      const filename = matchedFilename ?? "tac-my-data.json";
+      const filename =
+        matchedFilename ?? clubDownloadFilename(shortName, "my-data", null, "json");
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

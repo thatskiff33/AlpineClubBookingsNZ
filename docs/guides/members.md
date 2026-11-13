@@ -257,7 +257,7 @@ The list is a working roster; its controls:
 | Reset | Restore list search, filters, sort, and page | Disabled while the list is already at its defaults |
 | Add Member / Open | Create a member, or open an existing member read-only | Opening needs membership view; create and per-section Edit need membership edit; Admin user-type and privileged roles are Full-Admin only |
 | Import CSV | Bulk-create from a CSV | Membership edit; 500-row cap; duplicate-email rows skipped |
-| Export CSV | Download the filtered list | View access can export |
+| Export CSV | Download the filtered list | View access can export. Filename `<club>-members-<date>.csv`, from the club's short name |
 | Invite / Resend / Reset Password | Send login/setup emails | Setup invites are 7-day links; reset expiry 1 hour / 1 day / 3 days |
 | Bulk bar | Deactivate / Reactivate / Change Access / Set Membership Type / send emails | Membership edit |
 | Refresh Xero Groups | Refresh cached contact-group memberships | Membership edit; only when Xero is connected |
