@@ -12,10 +12,7 @@ import {
   setIntegrationCredential,
   setIntegrationCredentialInTransaction,
 } from "@/lib/integration-credentials";
-import type {
-  CredentialActor,
-  CredentialRequestContext,
-} from "@/lib/integration-credential-actor";
+import type { CredentialActor, CredentialRequestContext } from "@/lib/integration-credential-actor";
 import { isIntegrationCredentialNamespace, type IntegrationCredentialNamespace } from "@/lib/integration-credential-namespaces";
 import { WeakAuthSecretError } from "@/lib/integration-crypto";
 import {
