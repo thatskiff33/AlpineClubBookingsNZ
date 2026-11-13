@@ -1035,6 +1035,9 @@ every screen:
 - **Destructive confirmations** use `useConfirm()` from
   `src/components/confirm-dialog.tsx`, never `window.confirm`. Lint enforces
   it (`design-system/no-native-confirm`), with today's calls on a ratchet.
+  The prompt names what it acts on and says what will change and what cannot
+  be undone (#4973); when the server gains a side effect, the prompt that
+  guards it changes in the same PR.
 
 New code follows this rule; existing inline success panels are converted
 opportunistically when a file is already being touched.

@@ -21,7 +21,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import { useEffect } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -296,5 +296,28 @@ describe("Seasons page: navigable without seeing it", () => {
     expect(
       screen.queryByRole("button", { name: /Delete Winter 2026/ }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("season deletion confirmation (#4973)", () => {
+  it("names the season and lost nightly rates; cancel sends no delete", async () => {
+    mockApi([season()]);
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Winter 2026" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Winter 2026");
+    expect(dialog).toHaveTextContent(/nightly rates.*deleted/i);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+  });
+  it("deletes the selected season only after confirmation", async () => {
+    mockApi([season()]);
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Winter 2026" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete season" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/admin/seasons/season-winter", { method: "DELETE" }));
   });
 });

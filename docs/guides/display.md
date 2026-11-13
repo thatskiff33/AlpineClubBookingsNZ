@@ -161,7 +161,9 @@ change one thing rather than set the whole thing up.
    URL. The screen shows a **six-character pairing code**.
 3. Create (or pick) a device below, type the code into its **Pair** box, and the
    screen connects itself within a few seconds. It keeps working across reboots
-   until you **revoke** it. Per-lodge display values (guest-name granularity, the
+   until you **revoke** it. **Revoke** asks you to confirm first: a revoked
+   screen returns to the pairing screen and must be paired again at the lodge.
+   Per-lodge display values (guest-name granularity, the
    committee notice, and `{{config:key}}` values) are edited on each lodge under
    **Admin → Lodges → [a lodge] → display**, not here.
 

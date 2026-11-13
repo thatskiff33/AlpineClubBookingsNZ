@@ -155,9 +155,6 @@
     }
   },
   "src/app/(admin)/admin/family-groups/page.tsx": {
-    "design-system/no-native-confirm": {
-      "count": 2
-    },
     "design-system/no-raw-button": {
       "count": 2
     },
@@ -174,9 +171,6 @@
     }
   },
   "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx": {
-    "design-system/no-native-confirm": {
-      "count": 1
-    },
     "design-system/no-raw-input": {
       "count": 1
     },
@@ -434,9 +428,6 @@
     }
   },
   "src/app/(admin)/admin/rules/seasons/page.tsx": {
-    "design-system/no-native-confirm": {
-      "count": 1
-    },
     "design-system/no-raw-input": {
       "count": 1
     },

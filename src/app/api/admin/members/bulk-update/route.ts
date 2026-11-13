@@ -398,6 +398,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Keep the consequence warning in members/_components/member-bulk-dialog.tsx aligned.
     // #1756: shared-double placements swept by a deactivate or an ORG grant that
     // leaves ADULT, collected inside the transaction and alerted on after commit.
     const sweptSharesByMember: Array<{
