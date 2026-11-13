@@ -21,7 +21,7 @@ export { splitTaxInclusiveGross } from "./internal/tax";
 // shared by the doors' adapter and the comparison census. The doors' own entry,
 // which reads settings through the server's client, is `./doors` (server-only),
 // so a plain-Node operator command can still import this index.
-export { bookingChargeIdentity, journalComponentOfLegacyLine, refundCloseOutRecordOfIdentity } from "./internal/booking-charges";
+export { bookingChargeIdentity, journalComponentOfLegacyLine, keptCapturePaymentIntentOfIdentity, refundCloseOutRecordOfIdentity } from "./internal/booking-charges";
 export {
   countBookingJournalEvents,
   isJournalEraBooking,

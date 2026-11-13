@@ -50,7 +50,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
-import { postBookingReceipts, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
+import { postBookingReceipts, postHandBackObligation, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 import { internetBankingLateCashCreditDescription, sumInternetBankingMintedCentsForBookings } from "@/lib/internet-banking-late-cash-credit";
 import { lockMemberCreditLedger, restoreCreditFromBooking } from "@/lib/member-credit";
@@ -885,7 +885,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             await retirePendingClearingNote(tx, settlementPayment.bookingId);
           }
           if (shouldHandBack && !alreadyRaised) {
-            await tx.manualRefundTask.create({
+            const task = await tx.manualRefundTask.create({
               data: {
                 bookingId: settlementPayment.bookingId,
                 paymentId: settlementPayment.id,
@@ -900,7 +900,12 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
                   MANUAL_REFUND_TASK_REASON_MAX,
                 ),
               },
+              select: { id: true },
             });
+            // #4516 (M4d): the organisation's late cash is a hand-back debt. This delivery holds lock(1).
+            if (journal) {
+              await postHandBackObligation(tx, journal, { bookingId: settlementPayment.bookingId, taskId: task.id, amountCents: handBackCents, origin: "XERO", debtorRead: "booking-row" });
+            }
           }
           logger.warn(
             {

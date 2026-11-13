@@ -75,6 +75,18 @@ describe("the JOURNAL comparison (#4627)", () => {
     expect(journalChargeComparison(row([nightA, nightB], charges(3000))).identity).toMatchObject({ status: "DISAGREE", deltaCents: 3000 });
   });
 
+  it("counts a kept late capture on the ledger side as the gross the journal still carries (#4516 M4d)", () => {
+    const kept = {
+      charged: true,
+      components: [
+        { account: "BOOKING_REVENUE" as const, chargeIdentity: CHARGE, liveGrossCents: 12000 },
+        { account: "BOOKING_REVENUE" as const, chargeIdentity: `booking:${B}:kept-capture:pi_kept`, liveGrossCents: 4000 },
+      ],
+      bridgedLineIds: all(["n1", "n2"]),
+    };
+    expect(journalChargeComparison(row([nightA, nightB], kept)).identity).toMatchObject({ status: "AGREE", columnCents: 16000, ledgerCents: 16000 });
+  });
+
   it("disagrees when the journal carries a different total from the bridged lines", () => {
     const result = journalChargeComparison(row([nightA, fee], {
       charged: true,

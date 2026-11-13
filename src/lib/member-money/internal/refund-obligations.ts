@@ -46,6 +46,11 @@ export interface RefundObligationDoor {
    */
   concession?: boolean;
   evidence?: MemberMoneyEvidence;
+  /**
+   * The batch's reason. Card doors leave it unset ("Refund owed by card"); a hand-back or a review paid by hand
+   * names how the money goes back, so the journal does not call a bank payment a card refund.
+   */
+  reason?: string;
 }
 
 /** The booking's owner as the caller's lock tier allows (`RefundObligationDoor.debtorRead`). */
@@ -85,7 +90,7 @@ export async function postRefundObligation(tx: Db, context: BookingJournalContex
   ];
   await postMemberMoneyEvent(tx, context, { kind: "REFUND_OBLIGATION", eventKey: chain.next, origin: door.origin,
     actorMemberId: door.actorMemberId ?? null, source: { kind: "BOOKING", id: door.bookingId, version: chain.next },
-    reason: door.concession ? "Refund owed: an approved appeal's concession and its card refund" : "Refund owed by card",
+    reason: door.concession ? "Refund owed: an approved appeal's concession and its card refund" : (door.reason ?? "Refund owed by card"),
     obligations: [{ key: chain.next, kind: "REFUND", debtor, faceCents: door.amountCents, evidence }], legs });
   return chain.next;
 }
