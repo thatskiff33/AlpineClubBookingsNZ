@@ -45,6 +45,7 @@ import {
   ORGANISER_CARD_APPEAL_CEILING_NOTE,
   ORGANISER_CARD_APPEAL_PENDING_ADMIN_NOTE,
 } from "@/lib/group-organiser-paid"
+import { notifyAdminQueueChanged } from "@/lib/admin-queue-events"
 
 /** Where this page is served under the switch: its own address, as officers see it. */
 const REFUND_REQUESTS_HREF = adminHref("refund-requests")
@@ -360,6 +361,7 @@ export default function RefundRequestsPage() {
               ? " The member was not emailed."
               : "")
       )
+      notifyAdminQueueChanged()
       await fetchRequests()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error")
@@ -396,6 +398,7 @@ export default function RefundRequestsPage() {
             ? "Credit adjustment approved and applied"
             : "Credit adjustment rejected")
       )
+      notifyAdminQueueChanged()
       await fetchRequests()
     } catch (err) {
       setError(

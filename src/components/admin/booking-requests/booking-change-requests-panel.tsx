@@ -50,6 +50,7 @@ import {
   type BookingChangeRequestData,
   type DecisionDraft,
 } from "@/components/admin/booking-requests/booking-change-request-panel-model";
+import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 
 type RequestFilter = "REQUESTED" | "APPROVED" | "REJECTED" | "ALL";
 
@@ -295,6 +296,7 @@ export function BookingChangeRequestsPanel({
           linkedModificationId: trimmedModificationId,
         }),
       );
+      notifyAdminQueueChanged();
       await fetchRequests();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to review request");

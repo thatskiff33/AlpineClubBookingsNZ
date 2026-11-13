@@ -137,13 +137,15 @@ export function PendingCountsError({
       <span className="flex-1">
         {partial ? "Couldn't load some counts" : "Couldn't load counts"}
       </span>
-      <button
+      <Button
         type="button"
+        variant="link"
+        size="sm"
         onClick={retry}
-        className="font-semibold underline underline-offset-2 hover:no-underline"
+        className="h-auto p-0 text-xs font-semibold text-warning-11 underline"
       >
         Retry
-      </button>
+      </Button>
     </div>
   );
 }

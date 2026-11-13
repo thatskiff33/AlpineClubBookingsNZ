@@ -56,6 +56,7 @@ import { requireInstant } from "@/lib/club-time";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { adminHref } from "@/lib/admin-hubs";
+import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 
 /** #2264 — the rejection-reason hint id, spelled once. Only one review dialog
  *  is mounted at a time, so a fixed id cannot collide. */
@@ -524,6 +525,7 @@ export default function DeletionRequestsClient({
       setReviewDialog(null);
       setReviewNote("");
       setDeletionRecovery(null);
+      notifyAdminQueueChanged();
       await fetchRequests();
     } catch (err) {
       setReviewDialog(null);
@@ -1238,6 +1240,7 @@ function AdminInitiatedDeletionSection({
       setDialog(null);
       setNote("");
       setUnconfirmedRequestId(null);
+      notifyAdminQueueChanged();
       fetchRequests();
     } catch (err) {
       setDialog(null);

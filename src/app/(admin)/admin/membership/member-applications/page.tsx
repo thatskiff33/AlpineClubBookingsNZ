@@ -20,6 +20,7 @@ import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import ApprovalMappingPanel, {
   type ReviewRequestPayload,
 } from "./_components/approval-mapping-panel";
+import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 
 type ApplicationStatus =
   | "PENDING_NOMINATORS"
@@ -282,6 +283,7 @@ export default function MemberApplicationsPage() {
           ? `Application approved.${warnings}`
           : "Application rejected.") + suppressed
       );
+      notifyAdminQueueChanged();
       await loadApplications(filter);
     } catch {
       setError("Could not update the application.");

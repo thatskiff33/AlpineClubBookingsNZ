@@ -77,6 +77,7 @@ import { BankRefundVoidAnswerChoice } from "@/components/admin/bank-refund-void-
 import { bankRefundVoidQuestion, type BankRefundVoidAnswer } from "@/lib/bank-refund-void-follow-up-copy";
 import { formatBookingReference } from "@/lib/booking-reference";
 import { ManualRefundTaskStillOwedNotice } from "@/components/admin/manual-refund-task-still-owed-notice";
+import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 
 const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
 
@@ -1481,6 +1482,7 @@ export function ManualRefundTaskQueue() {
       setHandMadeNoteNumber("");
       setAmountInput("");
       setNightPriceInputs({});
+      notifyAdminQueueChanged();
       await load();
     } catch {
       /*

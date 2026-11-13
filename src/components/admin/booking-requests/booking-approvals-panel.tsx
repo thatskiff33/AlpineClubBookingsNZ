@@ -28,6 +28,7 @@ import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { useClubFormat } from "@/components/club-format-provider";
+import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 
 type ReviewFilter = "PENDING" | "APPROVED" | "REJECTED" | "ALL";
 
@@ -281,6 +282,7 @@ export function BookingApprovalsPanel({
           );
           setDecisionRecovery({ bookingId, message: recoveryBase });
           setRecoveryAttentionVersion((version) => version + 1);
+          notifyAdminQueueChanged();
           const refreshed = await fetchBookings();
           // The refresh outcome is folded into the durable recovery below; do
           // not duplicate it in the ordinary action region or steal focus.
@@ -322,6 +324,7 @@ export function BookingApprovalsPanel({
         (decision === "APPROVED" ? "Booking approved." : "Booking rejected and cancelled.") +
           suppressedNote,
       );
+      notifyAdminQueueChanged();
       await fetchBookings();
     } catch (err) {
       showActionError(err instanceof Error ? err.message : "Failed to record decision");
