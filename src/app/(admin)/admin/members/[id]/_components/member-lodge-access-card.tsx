@@ -7,6 +7,8 @@ import {
   type AncestorViewOnlyBannerProps,
 } from "@/components/admin/view-only-action"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
+import { useActionFailure } from "@/hooks/use-action-failure"
+import { FocusedActionError } from "@/components/focused-action-error"
 import {
   Card,
   CardContent,
@@ -59,7 +61,11 @@ export function MemberLodgeAccessCard({
   } = useLodgeOptions("admin")
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState("")
+  // A failed load stays passive. A refused save is the admin's own action, so
+  // it takes focus and is re-announced on a repeat (#4975).
+  const [loadError, setLoadError] = useState("")
+  const saveFailure = useActionFailure()
+  const { fail: failSave, clear: clearSaveFailure } = saveFailure
   const [success, setSuccess] = useState("")
   const [bookingRestrictionLodgeIds, setBookingRestrictionLodgeIds] = useState<
     string[]
@@ -89,14 +95,16 @@ export function MemberLodgeAccessCard({
     if (!lodgeOptionsReady) {
       saveSequenceRef.current += 1
       setLoading(false)
-      setError("")
+      setLoadError("")
+      clearSaveFailure()
       setSuccess("")
       setBookingRestrictionLodgeIds([])
       setStaffLodgeIds([])
       return
     }
     setLoading(true)
-    setError("")
+    setLoadError("")
+    clearSaveFailure()
     try {
       const res = await fetch(`/api/admin/members/${memberId}/lodge-access`)
       const body = await res.json()
@@ -119,7 +127,7 @@ export function MemberLodgeAccessCard({
       setStaffLodgeIds(
         rows.filter((row) => row.kind === "STAFF").map((row) => row.lodgeId),
       )
-    } catch (loadError) {
+    } catch (loadFailure) {
       if (
         sequence !== loadSequenceRef.current ||
         !lodgeOptionsReadyRef.current ||
@@ -127,9 +135,9 @@ export function MemberLodgeAccessCard({
       ) {
         return
       }
-      setError(
-        loadError instanceof Error
-          ? loadError.message
+      setLoadError(
+        loadFailure instanceof Error
+          ? loadFailure.message
           : "Failed to load lodge access",
       )
     } finally {
@@ -141,7 +149,7 @@ export function MemberLodgeAccessCard({
         setLoading(false)
       }
     }
-  }, [lodgeOptionsKey, memberId, lodgeOptionsReady])
+  }, [clearSaveFailure, lodgeOptionsKey, memberId, lodgeOptionsReady])
 
   useEffect(() => {
     void loadAccess()
@@ -158,7 +166,7 @@ export function MemberLodgeAccessCard({
       lodgeOptionsReadyRef.current &&
       lodgeOptionsKeyRef.current === lodgeOptionsKey
     setSaving(true)
-    setError("")
+    clearSaveFailure()
     setSuccess("")
     try {
       const res = await fetch(`/api/admin/members/${memberId}/lodge-access`, {
@@ -174,7 +182,7 @@ export function MemberLodgeAccessCard({
       setSuccess("Lodge access saved.")
     } catch (saveError) {
       if (!ownsCurrentScope()) return
-      setError(
+      failSave(
         saveError instanceof Error
           ? saveError.message
           : "Failed to save lodge access",
@@ -301,7 +309,14 @@ export function MemberLodgeAccessCard({
                 affect booking access.
               </p>
             </div>
-            {error ? <p className="text-sm text-danger-11">{error}</p> : null}
+            {loadError ? (
+              <p className="text-sm text-danger-11">{loadError}</p>
+            ) : null}
+            <FocusedActionError
+              id="member-lodge-access-save-error"
+              error={saveFailure.error}
+              attentionKey={saveFailure.attentionKey}
+            />
             {success ? (
               <p className="text-sm text-success-11">{success}</p>
             ) : null}

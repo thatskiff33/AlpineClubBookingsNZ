@@ -1085,10 +1085,9 @@ export default function MemberDetailPage({
             ancestorRendersViewOnlyBanner
             className={embeddedCardClassName}
             member={member}
-            onSaved={async () => {
-              setLoading(true);
-              await fetchMember();
-            }}
+            // Keep this card mounted while refreshing so its confirmation and
+            // success focus survive the member read.
+            onSaved={fetchMember}
           />
         </MemberGroupCard>
 
