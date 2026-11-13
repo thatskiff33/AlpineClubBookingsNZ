@@ -277,8 +277,7 @@ skipped under 6 GiB); PR CI keeps the rest.
 `fast-censuses` (`pnpm run ci:fast-censuses`) and `migrations` first run
 [`sekreton-fetch-main.sh`](../../scripts/ci/sekreton-fetch-main.sh): refresh
 `origin/main` from `origin`, else `gh`; fetch errors fail.
-The `realdb-all` job on GitHub remains advisory, so cite its actual result
-separately before making the PR ready.
+`realdb-all` remains advisory; cite its result before PR readiness.
 
 ## Checking `main` after a merge
 
