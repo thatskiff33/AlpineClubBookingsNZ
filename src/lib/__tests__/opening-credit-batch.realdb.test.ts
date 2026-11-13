@@ -1,8 +1,9 @@
 /**
  * Real-PostgreSQL proof for #4988 (`INV-PAY-151`): an opening-credit file posts
  * once even when two officers confirm it at the same moment, the post queues
- * behind a member's credit-ledger lock, and a reversal refuses a batch whose
- * credit has been spent and reverses one that has not.
+ * behind a member's credit-ledger lock, a reversal refuses a batch whose
+ * credit has been spent and reverses one that has not (leaving no lot behind),
+ * and a corrected file cannot credit a member twice.
  *
  *   RUN_CONCURRENCY_RACE_TESTS=1 \
  *   CONCURRENCY_RACE_DATABASE_URL=postgresql://user:pass@127.0.0.1:55442/concurrency_race_1881 \
@@ -33,6 +34,7 @@ function assertSafeRaceDbUrl(url: string): void {
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let credit: typeof import("@/lib/member-credit");
 let batches: typeof import("@/lib/opening-credit-batch");
+let creditLots: typeof import("@/lib/xero-applied-credit-lots");
 let harnessRole: SuiteEnvironmentRoleDeclaration | undefined;
 let lockHolderClient: import("@prisma/client").PrismaClient;
 let observerClient: import("@prisma/client").PrismaClient;
@@ -83,6 +85,7 @@ let observerClient: import("@prisma/client").PrismaClient;
     harnessRole = declareEnvironmentRoleForSuite("non-production");
     credit = await import("@/lib/member-credit");
     batches = await import("@/lib/opening-credit-batch");
+    creditLots = await import("@/lib/xero-applied-credit-lots");
     const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([import("@prisma/client"), import("@/lib/prisma-adapter")]);
     const separate = (applicationName: string) => {
       const url = new URL(RACE_DB_URL);
@@ -180,6 +183,31 @@ let observerClient: import("@prisma/client").PrismaClient;
       reversedById: ADMIN_ID,
       reversalReason: "wrong file",
     });
+    // A reversed batch's credits are no longer lots a booking can draw on.
+    const lots = await prisma.$transaction((tx) => creditLots.loadFreeCreditLots(tx, [MEMBER_A, MEMBER_B]));
+    expect(lots.get(MEMBER_A)?.lots).toEqual([]);
+    expect(lots.get(MEMBER_B)?.lots).toEqual([]);
+  });
+
+  it("refuses a corrected file naming a member who still holds an opening credit, until that batch is reversed", async () => {
+    await seed();
+    const posted = await batches.postOpeningCreditBatch(await previewed());
+    const corrected = `Member ID,Amount\n${MEMBER_A},45\n`;
+    const refused = await batches.buildOpeningCreditPreview(corrected);
+    expect(refused.ok && refused.preview.batchKey).toBe(null);
+    expect(refused.ok && refused.preview.rows[0]?.errors[0]).toMatch(/already has an opening credit/);
+
+    await batches.reverseOpeningCreditBatch({ batchId: posted.batchId, reason: "wrong amounts", adminId: ADMIN_ID });
+    const allowed = await batches.buildOpeningCreditPreview(corrected);
+    if (!allowed.ok || !allowed.preview.batchKey) throw new Error("the corrected file should preview cleanly once reversed");
+    await batches.postOpeningCreditBatch({
+      csvText: corrected,
+      expectedBatchKey: allowed.preview.batchKey,
+      expectedTotalCents: allowed.preview.totalCents,
+      adminId: ADMIN_ID,
+    });
+    expect(await credit.getMemberCreditBalance(MEMBER_A)).toBe(4_500);
+    expect(await credit.getMemberCreditBalance(MEMBER_B)).toBe(0);
   });
 });
 

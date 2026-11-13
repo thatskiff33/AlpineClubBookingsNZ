@@ -147,10 +147,12 @@ in one batch ([Moving in from your old system](moving-in.md#6-credit-post-the-op
    audit entry with the total. Nothing is emailed, and no Xero credit note or
    card charge is made: the money was settled before the move. This needs no
    second admin, because the total is what you approve. The same file cannot
-   post twice.
+   post twice, and a member still holding an opening credit from an unreversed
+   batch is refused, so a corrected file cannot credit anyone twice.
 4. A posted batch is listed with its total and who posted it. **Reverse batch**
    removes every credit in it after you give a reason. It is refused, and
-   nothing changes, if any member has spent any of their opening credit.
+   nothing changes, if any member has spent any of their opening credit or had
+   any credit deducted since the batch posted.
 
 When a member later spends an opening credit, Xero codes it as the member's own
 money (the hut-fee refunds account), never as goodwill (`INV-PAY-151`).
@@ -185,8 +187,9 @@ governed by the [cancellation policy](../CANCELLATIONS.md#refund-policy).
 | Approving a group joiner's appeal says the group cancellation's own refund "is still being made or reconciled" (the review screen says the same where it would show the maximum, and the member is told to appeal once it is made) | An older group cancellation's single refund to the organiser's card is still being retried (#3956) | Wait for the automatic retry to make that refund, then approve; or decline the appeal. If no retry has started yet it shows under **Unexecuted group settlement refunds**, and if the retry has used all its attempts under **Exhausted recovery operations**, both on [Stuck States](stuck-states.md), which does not close this kind of refund: ask a developer to reconcile it |
 | The queue is empty | The status filter excludes the request | Switch to **All** to see approved/rejected items |
 | An opening-credit row says **Unmatched** | No member has that ID or email, or two members share the email and the name does not tell them apart | Fix the ID or email, or add **First Name** and **Last Name** |
-| Posting says the file was already posted | The same rows were posted as an earlier batch | Nothing to do; the earlier batch is listed on the card |
-| **Reverse batch** is refused | A member has spent part of their opening credit | Correct that member with a credit adjustment instead |
+| Posting says the file was already posted | The same rows were posted as an earlier batch | If that batch still stands, nothing to do. If it was reversed, change the file (such as a description) so it posts as a new batch |
+| A row says the member already has an opening credit | An earlier batch that has not been reversed credited them | Reverse that batch, or leave the member out of this file |
+| **Reverse batch** is refused | A member has spent part of their opening credit, or had credit deducted since it posted | Correct that member with a credit adjustment instead |
 
 ## Related links
 

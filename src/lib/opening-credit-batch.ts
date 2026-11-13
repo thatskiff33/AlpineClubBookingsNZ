@@ -77,10 +77,27 @@ export function openingCreditBatchKey(rows: readonly { memberId: string; amountC
   return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
 }
 
+const OPENING_CREDIT_ALREADY_HELD =
+  "already has an opening credit from an earlier batch that has not been reversed; reverse that batch first or leave this member out";
+
+/** Of these members, those holding a credit from a batch not yet reversed. */
+async function membersHoldingOpeningCredit(db: Pick<Prisma.TransactionClient, "memberCredit">, memberIds: string[]) {
+  if (memberIds.length === 0) return new Set<string>();
+  const held = await db.memberCredit.findMany({
+    where: {
+      memberId: { in: [...new Set(memberIds)] },
+      amountCents: { gt: 0 },
+      openingCreditBatch: { is: { reversedAt: null } },
+    },
+    select: { memberId: true },
+  });
+  return new Set(held.map((row) => row.memberId));
+}
+
 /** Match the file to live members and total it. Reads only. */
 export async function buildOpeningCreditPreview(
   csvText: string,
-  db: Pick<Prisma.TransactionClient, "member" | "openingCreditBatch"> = prisma,
+  db: Pick<Prisma.TransactionClient, "member" | "memberCredit" | "openingCreditBatch"> = prisma,
 ): Promise<PreviewResult> {
   const parsed = parseOpeningCreditCsv(csvText);
   if (!parsed.ok) return parsed;
@@ -147,22 +164,40 @@ export async function buildOpeningCreditPreview(
     }
   }
 
-  const valid = rows.filter(
-    (row): row is OpeningCreditPreviewRow & { memberId: string; amountCents: number } =>
-      row.errors.length === 0 && row.memberId !== null && row.amountCents !== null,
-  );
-  const errorCount = rows.length - valid.length;
-  const totalCents = valid.reduce((sum, row) => sum + row.amountCents, 0);
-  if (totalCents > MAX_INTEGER_CENTS) {
-    return { ok: false, error: "The file's total is larger than one batch can record; split it into two files" };
-  }
-  const batchKey = errorCount === 0 ? openingCreditBatchKey(valid) : null;
+  const tally = () => {
+    const valid = rows.filter(
+      (row): row is OpeningCreditPreviewRow & { memberId: string; amountCents: number } =>
+        row.errors.length === 0 && row.memberId !== null && row.amountCents !== null,
+    );
+    return { valid, errorCount: rows.length - valid.length };
+  };
+  let { valid, errorCount } = tally();
+  let batchKey = errorCount === 0 ? openingCreditBatchKey(valid) : null;
   const existing = batchKey
     ? await db.openingCreditBatch.findUnique({
         where: { batchKey },
         select: { id: true, postedAt: true, reversedAt: true },
       })
     : null;
+
+  // A corrected file is a new batch, so a member it shares with an earlier,
+  // unreversed batch would be credited twice. Re-previewing that same file
+  // reports it as already posted instead.
+  if (!existing) {
+    const holders = await membersHoldingOpeningCredit(
+      db,
+      rows.flatMap((row) => (row.memberId ? [row.memberId] : [])),
+    );
+    for (const row of rows) {
+      if (row.memberId && holders.has(row.memberId)) row.errors.push(OPENING_CREDIT_ALREADY_HELD);
+    }
+    if (holders.size > 0) ({ valid, errorCount } = tally());
+    batchKey = errorCount === 0 ? openingCreditBatchKey(valid) : null;
+  }
+  const totalCents = valid.reduce((sum, row) => sum + row.amountCents, 0);
+  if (totalCents > MAX_INTEGER_CENTS) {
+    return { ok: false, error: "The file's total is larger than one batch can record; split it into two files" };
+  }
 
   return {
     ok: true,
@@ -230,6 +265,18 @@ export async function postOpeningCreditBatch(input: {
       for (const credit of credits) {
         await lockMemberCreditLedger(credit.memberId, tx);
       }
+      // Re-read under the locks: another batch may have credited a member since
+      // the preview. This batch's own row is not yet a holder.
+      const holders = await membersHoldingOpeningCredit(
+        tx,
+        credits.map((credit) => credit.memberId),
+      );
+      if (holders.size > 0) {
+        throw new ApiError(
+          `${holders.size} member(s) in this file ${OPENING_CREDIT_ALREADY_HELD}; preview it again`,
+          409,
+        );
+      }
       await tx.memberCredit.createMany({
         data: credits.map((credit) => ({
           memberId: credit.memberId,
@@ -294,6 +341,7 @@ export async function reverseOpeningCreditBatch(input: {
       select: {
         id: true,
         totalCents: true,
+        postedAt: true,
         reversedAt: true,
         credits: {
           where: { amountCents: { gt: 0 } },
@@ -313,20 +361,36 @@ export async function reverseOpeningCreditBatch(input: {
     for (const credit of batch.credits) {
       await lockMemberCreditLedger(credit.memberId, tx);
     }
-    const claimed = await tx.openingCreditBatch.updateMany({
-      where: { id: batch.id, reversedAt: null },
-      data: { reversedAt: new Date(), reversedById: input.adminId, reversalReason: reason },
-    });
-    if (claimed.count !== 1) throw new ApiError("This opening-credit batch has already been reversed", 409);
-
-    // After the locks and the claim: what each member holds now.
-    const lots = await loadFreeCreditLots(tx, batch.credits.map((credit) => credit.memberId));
+    // After the locks, and before the claim stamps the batch reversed (a
+    // reversed batch's credits are no longer lots): what each member holds now.
+    const memberIds = batch.credits.map((credit) => credit.memberId);
+    const lots = await loadFreeCreditLots(tx, memberIds);
+    // Any deduction since posting may have drawn on the opening credit, even
+    // where the balance still covers it; the guide says to reverse before then.
+    const deductedSincePost = new Set(
+      (
+        await tx.memberCredit.findMany({
+          where: {
+            memberId: { in: memberIds },
+            amountCents: { lt: 0 },
+            createdAt: { gte: batch.postedAt },
+            OR: [{ openingCreditBatchId: null }, { openingCreditBatchId: { not: batch.id } }],
+          },
+          select: { memberId: true },
+        })
+      ).map((row) => row.memberId),
+    );
     const spent: string[] = [];
     for (const credit of batch.credits) {
       const name = memberName(credit.member);
       const lot = lots.get(credit.memberId)?.lots.find((free) => free.memberCreditId === credit.id);
       const balance = await getMemberCreditBalance(credit.memberId, tx);
-      if (!lot || lot.remainingCents !== credit.amountCents || balance < credit.amountCents) {
+      if (
+        !lot ||
+        lot.remainingCents !== credit.amountCents ||
+        balance < credit.amountCents ||
+        deductedSincePost.has(credit.memberId)
+      ) {
         spent.push(`${name}: some of the ${formatCents(credit.amountCents, format)} has been used`);
         continue;
       }
@@ -340,6 +404,11 @@ export async function reverseOpeningCreditBatch(input: {
     if (spent.length > 0) {
       throw new ApiError(`This batch cannot be reversed because some credit is no longer unspent. ${spent.join("; ")}`, 409);
     }
+    const claimed = await tx.openingCreditBatch.updateMany({
+      where: { id: batch.id, reversedAt: null },
+      data: { reversedAt: new Date(), reversedById: input.adminId, reversalReason: reason },
+    });
+    if (claimed.count !== 1) throw new ApiError("This opening-credit batch has already been reversed", 409);
 
     await tx.memberCredit.createMany({
       data: batch.credits.map((credit) => ({

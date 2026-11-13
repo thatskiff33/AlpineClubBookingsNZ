@@ -7,13 +7,14 @@ Six already-over-budget files grow. The new logic lives in new modules
 that can only live in the file that owns it.
 
 file: src/lib/member-csv-import.ts
-lines: 1183
+lines: 1184
 reason: two field definitions, Membership Type and Family Key, with their
   aliases and the note on why none collides with a lastName alias.
   `MEMBER_IMPORT_FIELD_DEFINITIONS` is the one list that column mapping, the
   alias-collision test and the preview read. The type and family rules
   themselves moved out to `member-csv-import-type-family.ts`; only their two
-  calls in the preview stay here.
+  calls in the preview stay here. One doc line exports the header normaliser
+  so the opening-credit CSV reuses it rather than copying it.
 
 file: src/app/api/admin/members/import/route.ts
 lines: 892

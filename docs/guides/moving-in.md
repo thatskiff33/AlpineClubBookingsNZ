@@ -118,7 +118,10 @@ posts.
    they match, click **Post $X to N members**.
 
 The same file can only post once. If anything in the file changes, it is a new
-batch, and its total must be checked again.
+batch, and its total must be checked again. A member who already holds an
+opening credit from an earlier batch that has not been reversed is refused, so
+a corrected file cannot credit anyone twice: reverse the wrong batch first, or
+leave those members out of the new file.
 
 If a batch was wrong, **Reverse batch** removes every credit in it, with a
 reason. Do it before members spend any of it: the reversal is refused, and
@@ -203,8 +206,9 @@ guide.
 | A member import row says a family has too many members | More than 10 rows share one family key | Split the family into two keys, or correct the key |
 | A member was imported but "membership type not assigned" | The season save was refused for that member, or the member is cancelled | Set the type from the member's page; the row says why |
 | An opening-credit row is **Unmatched** | No member has that ID or email, or two do and the name does not narrow it | Fix the email or ID, or add First Name and Last Name |
-| "This file has already been posted" | The same rows were posted before | Nothing to do. Check the batch on the **Opening credits** card |
-| **Reverse batch** is refused | A member has used some of their opening credit | Correct that member with a credit adjustment instead |
+| "This file has already been posted" | The same rows were posted before | If that batch still stands, nothing to do. If it was reversed and you want it again, change the file (such as a description) so it is a new batch |
+| An opening-credit row says the member already has an opening credit | An earlier batch that has not been reversed credited them | Reverse that batch, or leave the member out of this file |
+| **Reverse batch** is refused | A member has used some of their opening credit, or has had any credit deducted since the batch posted | Correct that member with a credit adjustment instead |
 | **Record manual payment** says there is a Xero invoice | The booking was confirmed on Internet Banking | Settle the invoice in Xero against the old payment; see step 7 |
 
 ## Related links

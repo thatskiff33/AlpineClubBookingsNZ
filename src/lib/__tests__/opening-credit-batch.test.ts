@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const db = vi.hoisted(() => ({
   member: { findMany: vi.fn() },
   openingCreditBatch: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
-  memberCredit: { createMany: vi.fn() },
+  memberCredit: { createMany: vi.fn(), findMany: vi.fn() },
   $transaction: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: db }));
@@ -64,6 +64,7 @@ beforeEach(() => {
   db.openingCreditBatch.findUnique.mockResolvedValue(null);
   db.openingCreditBatch.create.mockResolvedValue({ id: "batch-1", postedAt: new Date("2026-07-01T00:00:00Z") });
   db.memberCredit.createMany.mockImplementation(async ({ data }) => ({ count: data.length }));
+  db.memberCredit.findMany.mockResolvedValue([]);
   db.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
     fn({ openingCreditBatch: db.openingCreditBatch, memberCredit: db.memberCredit }),
   );
@@ -114,9 +115,26 @@ describe("buildOpeningCreditPreview (#4988)", () => {
     expect(bare.rows[0]?.errors[0]).toMatch(/2 members share/);
   });
 
-  it("reports a file already posted", async () => {
+  it("reports a file already posted, without calling its own members holders", async () => {
     db.openingCreditBatch.findUnique.mockResolvedValue({ id: "batch-0", postedAt: new Date(0), reversedAt: null });
-    expect((await preview()).alreadyPosted).toMatchObject({ batchId: "batch-0" });
+    db.memberCredit.findMany.mockResolvedValue([{ memberId: "m-b" }]);
+    const result = await preview();
+    expect(result.alreadyPosted).toMatchObject({ batchId: "batch-0" });
+    expect(result.errorCount).toBe(0);
+  });
+
+  it("refuses a member still holding credit from an unreversed batch, so a corrected file cannot credit twice", async () => {
+    db.memberCredit.findMany.mockResolvedValue([{ memberId: "m-b" }]);
+    const result = await preview();
+    expect(db.memberCredit.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ amountCents: { gt: 0 }, openingCreditBatch: { is: { reversedAt: null } } }),
+      }),
+    );
+    expect(result.batchKey).toBeNull();
+    expect(result.errorCount).toBe(1);
+    expect(result.totalCents).toBe(1250);
+    expect(result.rows[0]?.errors[0]).toMatch(/already has an opening credit from an earlier batch/);
   });
 });
 
@@ -167,6 +185,21 @@ describe("postOpeningCreditBatch (#4988)", () => {
     await expect(confirm()).rejects.toBeInstanceOf(OpeningCreditBatchAlreadyPostedError);
   });
 
+  it("refuses, under the locks, a member credited by another batch since the preview", async () => {
+    const shown = await preview();
+    db.memberCredit.findMany.mockResolvedValue([{ memberId: "m-a" }]);
+    await expect(
+      postOpeningCreditBatch({ csvText: FILE, expectedBatchKey: shown.batchKey ?? "", expectedTotalCents: 5250, adminId: "o" }),
+    ).rejects.toMatchObject({ status: 400 });
+    // The same race, lost only inside the transaction after the locks.
+    db.memberCredit.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([{ memberId: "m-a" }]);
+    await expect(
+      postOpeningCreditBatch({ csvText: FILE, expectedBatchKey: shown.batchKey ?? "", expectedTotalCents: 5250, adminId: "o" }),
+    ).rejects.toMatchObject({ status: 409, message: expect.stringContaining("already has an opening credit") });
+    expect(ledger.locked).toEqual(["m-a", "m-b"]);
+    expect(db.memberCredit.createMany).not.toHaveBeenCalled();
+  });
+
   it("refuses a file with an error row", async () => {
     await expect(
       postOpeningCreditBatch({ csvText: "Email,Amount\nnobody@example.com,5\n", expectedBatchKey: "0".repeat(64), expectedTotalCents: 5, adminId: "o" }),
@@ -175,13 +208,14 @@ describe("postOpeningCreditBatch (#4988)", () => {
 });
 
 describe("reverseOpeningCreditBatch (#4988)", () => {
+  const POSTED_AT = new Date("2026-06-01T00:00:00Z");
   const credits = [
     { id: "c-a", memberId: "m-a", amountCents: 1250, member: { firstName: "Al", lastName: "Adams" } },
     { id: "c-b", memberId: "m-b", amountCents: 4000, member: { firstName: "Bea", lastName: "Brown" } },
   ];
 
   beforeEach(() => {
-    db.openingCreditBatch.findUnique.mockResolvedValue({ id: "batch-1", totalCents: 5250, reversedAt: null, credits });
+    db.openingCreditBatch.findUnique.mockResolvedValue({ id: "batch-1", totalCents: 5250, postedAt: POSTED_AT, reversedAt: null, credits });
     db.openingCreditBatch.updateMany.mockResolvedValue({ count: 1 });
     lots.mockResolvedValue(
       new Map(credits.map((credit) => [credit.memberId, { lots: [{ memberCreditId: credit.id, remainingCents: credit.amountCents }] }])),
@@ -202,6 +236,28 @@ describe("reverseOpeningCreditBatch (#4988)", () => {
       -1250, -4000,
     ]);
     expect(audit.mock.calls[0]?.[0]).toMatchObject({ action: "member.credit.opening_batch.reverse", category: "payment" });
+    // The lots are read before the claim stamps the batch reversed, since a
+    // reversed batch's credits stop being lots.
+    expect(lots.mock.invocationCallOrder[0]).toBeLessThan(db.openingCreditBatch.updateMany.mock.invocationCallOrder[0] ?? 0);
+  });
+
+  it("refuses when a member has had any credit deducted since the batch posted, though the balance covers it", async () => {
+    db.memberCredit.findMany.mockResolvedValue([{ memberId: "m-a" }]);
+    await expect(reverseOpeningCreditBatch({ batchId: "batch-1", reason: "r", adminId: "o" })).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining("Al Adams"),
+    });
+    expect(db.memberCredit.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          amountCents: { lt: 0 },
+          createdAt: { gte: POSTED_AT },
+          OR: [{ openingCreditBatchId: null }, { openingCreditBatchId: { not: "batch-1" } }],
+        }),
+      }),
+    );
+    expect(db.openingCreditBatch.updateMany).not.toHaveBeenCalled();
+    expect(db.memberCredit.createMany).not.toHaveBeenCalled();
   });
 
   it("refuses when any credit has been partly spent, and writes no credit row", async () => {
@@ -234,7 +290,7 @@ describe("reverseOpeningCreditBatch (#4988)", () => {
   });
 
   it("refuses a second reversal, and one that loses the claim", async () => {
-    db.openingCreditBatch.findUnique.mockResolvedValueOnce({ id: "batch-1", totalCents: 5250, reversedAt: new Date(), credits });
+    db.openingCreditBatch.findUnique.mockResolvedValueOnce({ id: "batch-1", totalCents: 5250, postedAt: POSTED_AT, reversedAt: new Date(), credits });
     await expect(reverseOpeningCreditBatch({ batchId: "batch-1", reason: "r", adminId: "o" })).rejects.toMatchObject({ status: 409 });
     db.openingCreditBatch.updateMany.mockResolvedValueOnce({ count: 0 });
     await expect(reverseOpeningCreditBatch({ batchId: "batch-1", reason: "r", adminId: "o" })).rejects.toMatchObject({ status: 409 });

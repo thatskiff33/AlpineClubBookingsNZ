@@ -98,6 +98,7 @@ const credit = (row: Row): Row => ({
   type: "CANCELLATION_REFUND",
   xeroCreditNoteId: null,
   outsideSpendConvergedAt: null,
+  openingCreditBatchId: null,
   appliedToBookingId: null,
   ...row,
 });
