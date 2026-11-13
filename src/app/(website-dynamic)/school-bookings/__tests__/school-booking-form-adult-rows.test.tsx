@@ -21,7 +21,8 @@ import { SchoolBookingForm } from "@/app/(website-dynamic)/school-bookings/schoo
  * reader announced "edit text" three times per row, clicking a label did
  * nothing, and every Remove button was just "Remove". These cases find the
  * fields the way a screen reader user does — by label, row by row — so deleting
- * any one `htmlFor`/`id` pair, the row group, or the Remove name fails here.
+ * any one `htmlFor`/`id` pair, pointing a label at a sibling's input, the row
+ * group, or the Remove name fails here.
  */
 
 function club(): ClubIdentity {
@@ -65,11 +66,25 @@ function type(input: HTMLElement, value: string) {
   fireEvent.change(input, { target: { value } });
 }
 
+const ADULT_LABELS = ["First name", "Last name", "Email (optional)"] as const;
+
+/**
+ * A row's three inputs in DOM order (First name, Last name, Email). This does
+ * not go through any label link, so it is an oracle independent of the
+ * `htmlFor`/`id` wiring: if two labels reach the same input, or two swap, the
+ * label lookups disagree with this order.
+ */
+function adultInputs(row: HTMLElement): HTMLInputElement[] {
+  const inputs = Array.from(row.querySelectorAll("input"));
+  expect(inputs).toHaveLength(ADULT_LABELS.length);
+  return inputs;
+}
+
 describe("school booking form adult rows (#4957)", () => {
   it("links every visible label to its own row's input, in row order", () => {
     renderWithTwoAdults();
 
-    for (const label of ["First name", "Last name", "Email (optional)"]) {
+    for (const label of ADULT_LABELS) {
       const inputs = screen.getAllByLabelText(label);
       expect(inputs).toHaveLength(2);
       expect(inputs[0]).toBe(
@@ -78,6 +93,17 @@ describe("school booking form adult rows (#4957)", () => {
       expect(inputs[1]).toBe(
         within(screen.getByRole("group", { name: "Adult 2" })).getByLabelText(label),
       );
+    }
+
+    // Each label reaches its own input, not a sibling's: checked against the
+    // row's DOM order, which does not depend on the label links under test.
+    for (const name of ["Adult 1", "Adult 2"]) {
+      const row = screen.getByRole("group", { name });
+      const inputs = adultInputs(row);
+      expect(inputs[2]).toHaveAttribute("type", "email");
+      ADULT_LABELS.forEach((label, position) => {
+        expect(within(row).getByLabelText(label)).toBe(inputs[position]);
+      });
     }
   });
 
@@ -88,7 +114,7 @@ describe("school booking form adult rows (#4957)", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("keeps ids unique when the form is rendered twice on one page", () => {
+  it("keeps adult-row ids unique when the form is rendered twice on one page", () => {
     render(
       <>
         <SchoolBookingForm club={club()} />
@@ -110,7 +136,7 @@ describe("school booking form adult rows (#4957)", () => {
     const secondRow = screen.getByRole("group", { name: "Adult 2" });
 
     const label = within(secondRow).getByText("First name") as HTMLLabelElement;
-    expect(label.control).toBe(within(secondRow).getByLabelText("First name"));
+    expect(label.control).toBe(adultInputs(secondRow)[0]);
   });
 
   it("keeps surviving fields labelled after removing a middle row and adding another", () => {
@@ -132,10 +158,11 @@ describe("school booking form adult rows (#4957)", () => {
     for (const [index, name] of ["Aroha", "Mere", ""].entries()) {
       const row = screen.getByRole("group", { name: `Adult ${index + 1}` });
       expect(within(row).getByLabelText("First name")).toHaveValue(name);
-      for (const label of ["First name", "Last name", "Email (optional)"]) {
+      const inputs = adultInputs(row);
+      ADULT_LABELS.forEach((label, position) => {
         const element = within(row).getByText(label) as HTMLLabelElement;
-        expect(element.control).toBe(within(row).getByLabelText(label));
-      }
+        expect(element.control).toBe(inputs[position]);
+      });
     }
     const ids = Array.from(container.querySelectorAll("[id]"), (el) => el.id);
     expect(new Set(ids).size).toBe(ids.length);

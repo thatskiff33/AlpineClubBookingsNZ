@@ -69,9 +69,10 @@ export function SchoolBookingForm({ club }: { club: ClubIdentity }) {
     every deployment today; only the authority moved.
   */
   const clubTime = useClubTime();
-  // Prefix for the per-row adult field ids (#4957): the form can render twice
-  // on one page (dedicated page plus a `{{school-bookings}}` token), so the
-  // index alone would not keep ids unique.
+  // Prefix for the per-row adult field ids (#4957): a page body can hold the
+  // `{{school-bookings}}` token more than once, so two forms can share a page
+  // and the row index alone would not keep these ids unique. Only the adult-row
+  // ids carry the prefix; the form's other fields keep their fixed ids.
   const adultIdPrefix = useId();
   const [schoolName, setSchoolName] = useState("");
   const [contactFirstName, setContactFirstName] = useState("");
