@@ -5,6 +5,7 @@ import {
   getPrivacyRetentionSettings, savePrivacyRetentionSettings,
 } from "@/lib/privacy-retention-settings";
 import { BOOKING_RETENTION_FIELDS, MEMBERSHIP_RETENTION_FIELDS, privacyRetentionSettingsSchema, type PrivacyRetentionSettingsValues } from "@/lib/privacy-retention-shared";
+import { revalidatePublicSite } from "@/lib/public-content-revalidation";
 import { requireAdmin } from "@/lib/session-guards";
 
 export async function GET(request: Request) {
@@ -80,5 +81,7 @@ export async function PUT(request: Request) {
     }
   }
   const settings = await savePrivacyRetentionSettings(parsed.data, guard.session.user.id);
+  // #4914: stored CMS pages render {{email-log-retention}} from these settings.
+  revalidatePublicSite();
   return NextResponse.json({ settings });
 }

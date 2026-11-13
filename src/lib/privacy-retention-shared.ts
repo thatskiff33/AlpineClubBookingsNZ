@@ -39,3 +39,11 @@ export const MEMBERSHIP_RETENTION_FIELDS = new Set<keyof PrivacyRetentionSetting
 export const BOOKING_RETENTION_FIELDS = new Set<keyof PrivacyRetentionSettingsValues>([
   "bookingDietaryRetentionDays", "bookingDietaryClearEnabled",
 ]);
+
+/** Public policy copy derives from the same validated settings as the prune job. */
+export function describeEmailLogRetention(settings: PrivacyRetentionSettingsValues): string {
+  const { pruneLogsAndApplicationsEnabled, emailLogRetentionYears } = privacyRetentionSettingsSchema.parse(settings);
+  return pruneLogsAndApplicationsEnabled
+    ? `kept for ${emailLogRetentionYears} ${emailLogRetentionYears === 1 ? "year" : "years"}, then automatically deleted`
+    : "kept with automatic deletion switched off";
+}
