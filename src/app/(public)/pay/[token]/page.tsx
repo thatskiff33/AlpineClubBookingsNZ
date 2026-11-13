@@ -360,7 +360,11 @@ export default function PayByLinkPage() {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
-          <p>
+          {/* INV-CAP-039: the booking's OWN lodge, so the guest knows what the
+              money is for. Never `club.lodgeName`: with no lodge on the wire
+              the line is left out rather than naming the club default. */}
+          {context.lodgeName ? <p>Lodge: {context.lodgeName}</p> : null}
+          <p className={context.lodgeName ? "mt-1" : undefined}>
             Dates: {formatStayDateOrNull(payable.checkIn, format) ?? payable.checkIn} to{" "}
             {formatStayDateOrNull(payable.checkOut, format) ?? payable.checkOut}
           </p>

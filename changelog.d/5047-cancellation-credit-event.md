@@ -1,0 +1,1 @@
+- **Failed cancellations no longer claim account credit was given (#4913).** The credit history now saves with the cancellation. If the cancellation fails, its credit note is rolled back too, so a retry or later manual refund shows the correct outcome.

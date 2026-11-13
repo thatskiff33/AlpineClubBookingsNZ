@@ -95,7 +95,7 @@ export const DIRECT_SCROLL_EXCLUSIONS: ReadonlyArray<{
   reason: string;
 }> = [
   {
-    file: "src/app/(admin)/admin/members/[id]/page.tsx",
+    file: "src/app/(admin)/admin/membership/members/[id]/page.tsx",
     reason:
       "the /admin/members/[id]#account-credit deep link scrolls once the collapsed Finance accordion has finished expanding — a navigation restore, not an action result",
   },

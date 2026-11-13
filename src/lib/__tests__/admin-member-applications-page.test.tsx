@@ -25,7 +25,7 @@ vi.mock("next-auth/react", () => ({
   }),
 }));
 
-import MemberApplicationsPage from "@/app/(admin)/admin/member-applications/page";
+import MemberApplicationsPage from "@/app/(admin)/admin/membership/member-applications/page";
 
 const fetchMock = vi.fn();
 

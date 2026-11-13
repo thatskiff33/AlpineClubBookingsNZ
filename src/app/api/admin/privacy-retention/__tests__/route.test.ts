@@ -7,11 +7,13 @@ const mocks = vi.hoisted(() => ({
   getSettings: vi.fn(),
   saveSettings: vi.fn(),
   preview: vi.fn(),
+  revalidatePublicSite: vi.fn(),
 }));
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock("@/lib/admin-permissions", () => ({ hasAdminAreaAccess: mocks.hasAdminAreaAccess }));
 vi.mock("@/lib/privacy-retention-settings", () => ({ getPrivacyRetentionSettings: mocks.getSettings, savePrivacyRetentionSettings: mocks.saveSettings }));
 vi.mock("@/lib/privacy-retention", () => ({ getPrivacyRetentionPreview: mocks.preview }));
+vi.mock("@/lib/public-content-revalidation", () => ({ revalidatePublicSite: mocks.revalidatePublicSite }));
 import { GET, PUT } from "../route";
 
 const groups = {
@@ -78,12 +80,15 @@ describe("privacy retention admin API", () => {
     expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "support", level: "edit" } });
     expect(mocks.saveSettings).toHaveBeenCalledWith(DEFAULT_PRIVACY_RETENTION_SETTINGS, "admin-1");
     expect(await response.json()).toEqual({ settings: DEFAULT_PRIVACY_RETENTION_SETTINGS });
+    // #4914: the stored privacy page renders {{email-log-retention}} from these settings.
+    expect(mocks.revalidatePublicSite).toHaveBeenCalledTimes(1);
   });
   it.each([...MEMBERSHIP_RETENTION_FIELDS])("rejects changes to %s without membership edit", async field => {
     mocks.hasAdminAreaAccess.mockReturnValue(false);
     const oldValue = DEFAULT_PRIVACY_RETENTION_SETTINGS[field];
     const changed = { ...DEFAULT_PRIVACY_RETENTION_SETTINGS, [field]: typeof oldValue === "boolean" ? !oldValue : oldValue + 1 };
     expect((await PUT(put(changed))).status).toBe(403);
+    expect(mocks.revalidatePublicSite).not.toHaveBeenCalled();
     expect(mocks.hasAdminAreaAccess).toHaveBeenCalledWith({ id: "admin-1" }, { area: "membership", level: "edit" });
     expect(mocks.saveSettings).not.toHaveBeenCalled();
   });

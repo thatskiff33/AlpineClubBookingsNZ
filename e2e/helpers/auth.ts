@@ -122,7 +122,7 @@ export async function submitLoginForm(
   await page.waitForURL((url) => url.pathname !== "/login", { timeout: 15_000 });
 }
 
-// Completes TOTP enrollment on /login/enroll: reads the on-page manual setup
+// Completes TOTP enrollment on /login/enroll: reads the on-page typed setup
 // key, answers with a generated authenticator code, and captures the recovery
 // codes. Leaves the browser on the post-login destination.
 export async function enrollTotp(page: Page, email: string): Promise<StoredTwoFactor> {
@@ -130,7 +130,7 @@ export async function enrollTotp(page: Page, email: string): Promise<StoredTwoFa
     page.getByRole("heading", { name: "Set up two-factor authentication" }),
   ).toBeVisible();
 
-  const setupKey = page.locator("div.font-mono").first();
+  const setupKey = page.getByLabel("Or type this setup key", { exact: true });
   await expect(setupKey).not.toHaveText(/Preparing setup key/);
   const secret = (await setupKey.innerText()).trim();
 

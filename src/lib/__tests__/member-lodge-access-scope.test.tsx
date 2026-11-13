@@ -24,7 +24,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
   useAdminAreaEditAccess: () => true,
 }))
 
-import { MemberLodgeAccessCard } from "@/app/(admin)/admin/members/[id]/_components/member-lodge-access-card"
+import { MemberLodgeAccessCard } from "@/app/(admin)/admin/membership/members/[id]/_components/member-lodge-access-card"
 
 const LODGES = [
   { id: "lodge-a", name: "Lodge A" },

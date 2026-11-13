@@ -185,3 +185,22 @@ export function readSubscriptionLockoutView(
       typeof rawNotice === "string" && rawNotice.length > 0 ? rawNotice : null,
   };
 }
+
+/**
+ * Whether the club's lockout mode stops this member starting a booking (#4941).
+ *
+ * `subscriptionIsUnpaid` is the FACT (an UNPAID or OVERDUE season subscription);
+ * this is the CONSEQUENCE, and only HARD_BLOCK makes the fact a refusal. Under
+ * NON_MEMBER_PRICING the member books at non-member rates, and under NO_BLOCK the
+ * subscription does not gate booking, so both must reach the calendar. Read it
+ * off the defaulted `SubscriptionLockoutView`: an absent or unrecognised mode is
+ * already HARD_BLOCK there, so a stale response keeps blocking an unpaid member
+ * rather than opening the wizard to one the server will refuse. The server stays
+ * the authority (`POST /api/bookings`); this decides only what the wizard draws.
+ */
+export function isBookingBlockedBySubscription(
+  subscriptionIsUnpaid: boolean,
+  lockout: SubscriptionLockoutView,
+): boolean {
+  return subscriptionIsUnpaid && lockout.mode === "HARD_BLOCK";
+}

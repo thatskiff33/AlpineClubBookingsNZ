@@ -50,6 +50,7 @@ function row(overrides: Partial<DeadCardRefundPanelRow> = {}): DeadCardRefundPan
     stripeMayHaveRefunded: false,
     laterStripeRefunds: [],
     tryCardAgainRefusal: null,
+    paidAnotherWayRefusal: null,
     ...overrides,
   };
 }
@@ -325,16 +326,16 @@ describe("the Paid another way dialog", () => {
     expect(screen.getByText(/later reported it failed - a retry that failed again/)).toBeInTheDocument();
     expect(
       screen.getByText(
-        `Xero already holds a card refund credit note for $40.00 of this refund, raised when the card provider first accepted it. Up to that much of what you pay back needs no new note; for anything beyond it, a Xero refund credit note worded "${BANK_NOTE_WORDING}" is queued when you close it. If you pay back less than $40.00, Xero's note credits more than went back: the Xero reconciliation report lists the difference as refund coverage above the refunded total, for you to correct in Xero.`,
+        `Closing this queues two Xero documents: an invoice for $40.00 recording the failed card refund's money back in the Stripe account, and a Xero refund credit note for the full amount you pay back, worded "${BANK_NOTE_WORDING}". If you pay back less than $40.00, Xero's note credits more than went back: the Xero reconciliation report lists the difference as refund coverage above the refunded total, for you to correct in Xero.`,
       ),
     ).toBeInTheDocument();
     fireEvent.click(fullChoice());
     fireEvent.change(noteBox(), { target: { value: "Bank transfer" } });
-    respond(200, { success: true, xeroQueued: "refund-note-beyond-card-note" });
+    respond(200, { success: true, xeroQueued: "stripe-reversal-and-bank-note" });
     fireEvent.click(closeButton());
     await waitFor(() =>
       expect(mocks.toastSuccess).toHaveBeenCalledWith(
-        `Closed. $150.00 recorded as paid back in full. A card refund credit note already in Xero records part of what you paid back; a Xero refund credit note worded "${BANK_NOTE_WORDING}" is queued for the rest.`,
+        `Closed. $150.00 recorded as paid back in full. An invoice recording the failed card refund's money back in the Stripe account, for the amount its card note covered, is queued, and a Xero refund credit note worded "${BANK_NOTE_WORDING}" is queued for the full amount paid back.`,
       ),
     );
   });
@@ -734,7 +735,7 @@ describe("#4368: Try the card again (decision 5)", () => {
   });
 
   it("MUTATION: where the re-arm would refuse, the row says why and offers no button", () => {
-    const refusal = "A refund Stripe failed later is still open on this payment, and it may be the same money as this one.";
+    const refusal = "Stripe may have made this refund after all; check the Stripe dashboard.";
     render(<DeadCardRefundsPanel rows={[row({ tryCardAgainRefusal: refusal })]} bankNoteWording={BANK_NOTE_WORDING} />);
     expect(screen.getByText(refusal)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Try the card again/ })).not.toBeInTheDocument();
@@ -803,5 +804,34 @@ describe("#4368: both new buttons are view-only without edit rights, as Paid ano
     expect(nothingLeftButton()).toBeDisabled();
     fireEvent.click(nothingLeftButton());
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+
+describe("#4492: Paid another way is withheld when it would pay the member twice", () => {
+  it("a row that may still be closed by bank still shows the button", () => {
+    render(<DeadCardRefundsPanel rows={[row()]} bankNoteWording={BANK_NOTE_WORDING} />);
+    expect(screen.getByRole("button", { name: "Close the card refund for booking BK-0001 as paid another way" })).toBeEnabled();
+  });
+
+  it.each([
+    "A refund Stripe failed later is on this payment, and it may be the same money. The card is asked for it again, so this row cannot be closed as paid another way.",
+    "Another refund on this charge failed later and has not gone back to the card yet, so this row cannot be closed as paid another way.",
+    "The superseded charge was already sent back to the card, which is why this refund died. Closing it as paid another way would pay the member again, so it cannot be closed here.",
+  ])("hides the button, shows the reason, and closes an open dialog on refresh: %s", (refusal) => {
+    const view = openDialog();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    view.rerender(
+      <DeadCardRefundsPanel
+        rows={[row({ paidAnotherWayRefusal: refusal, tryCardAgainRefusal: "Paid another way cannot close it either." })]}
+        bankNoteWording={BANK_NOTE_WORDING}
+      />,
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /as paid another way/ })).not.toBeInTheDocument();
+    expect(screen.getByText(refusal)).toBeInTheDocument();
+    expect(screen.getByText("Paid another way cannot close it either.")).toBeInTheDocument();
+    expect(screen.getByText("That card refund changed, so its dialog was closed. The list is up to date.")).toBeInTheDocument();
+    expect(mocks.fetch).not.toHaveBeenCalled();
   });
 });

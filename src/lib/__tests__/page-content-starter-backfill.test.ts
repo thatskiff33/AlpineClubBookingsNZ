@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { tokensForContext } from "../token-catalogue";
 import { starterPageContent } from "../../../prisma/starter-page-content";
 
 // Production deploys run Prisma migrations but not the seed, so the starter
@@ -122,12 +123,12 @@ const PRIVACY_AUDIT_RETENTION_MIGRATION_PATH = join(
 );
 
 // Issue #4915: guarded update that makes section 8 say what the data download
-// includes. It supersedes #4031 as the writer of the current privacy seed text.
+// includes. It supersedes #4914 as the writer of the current privacy seed text.
 const PRIVACY_SUBJECT_ACCESS_MIGRATION_PATH = join(
   process.cwd(),
   "prisma",
   "migrations",
-  "20261210120000_correct_starter_privacy_subject_access",
+  "20261214020000_correct_starter_privacy_subject_access",
   "migration.sql",
 );
 
@@ -310,7 +311,8 @@ describe("starter page content backfill migration", () => {
     readFileSync(HOME_GUEST_COPY_MIGRATION_PATH, "utf8"),
   );
   const allInsertSql = `${insertSql}\n${backfill404Sql}\n${policyPagesSql}\n${bookingRequestsSql}\n${schoolBookingsSql}`;
-  const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}\n${genericiseLodgeCopySql}\n${privacyAuditRetentionSql}\n${privacySubjectAccessSql}\n${homeGuestCopySql}`;
+  const privacyRetentionSql = readFileSync(join(process.cwd(), "prisma/migrations/20261214010000_correct_starter_privacy_retention_and_hosting/migration.sql"), "utf8");
+  const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}\n${genericiseLodgeCopySql}\n${privacyAuditRetentionSql}\n${homeGuestCopySql}\n${privacyRetentionSql}\n${privacySubjectAccessSql}`;
 
   it("inserts exactly the starter pages defined for the seed", () => {
     const insertedIds = [
@@ -708,7 +710,7 @@ describe("starter privacy audit-retention update migration (#4031)", () => {
   it("writes the current privacy seed copy, with the real audit-log schedule", () => {
     const page = starterPageContent.find((p) => p.slug === "privacy");
     expect(page).toBeDefined();
-    expect(nthCmsBlock(sql, 1)).toBe(page!.contentHtml.replace("Download your profile, bookings, credits and other personal records as JSON from your <a href=\"/profile\">Profile page</a>. The file lists exclusions. Contact our Privacy Officer for anything else, for a dependant’s record, or if you do not have an account.", "You can download your data from your <a href=\"/profile\">Profile page</a>."));
+    expect(nthCmsBlock(sql, 1)).toContain("at least 10 years");
     expect(page!.contentHtml).not.toContain("Retained for 90 days, then automatically pruned");
     expect(page!.contentHtml).toContain("at least 10 years");
     expect(sql).toContain("updatedAt");
@@ -719,25 +721,73 @@ describe("starter privacy audit-retention update migration (#4031)", () => {
     // backfill) moves to the seed's header; any other header is kept.
     const page = starterPageContent.find((p) => p.slug === "privacy");
     const policyPagesSql = readFileSync(POLICY_PAGES_MIGRATION_PATH, "utf8");
-    const previousHeader = page!.headerText.replace("Last updated 12 November 2026", "Last updated 1 April 2026");
+    const previousHeader = page!.headerText.replace("Last updated 14 November 2026", "Last updated 1 April 2026");
     expect(policyPagesSql).toContain(sqlQuote(previousHeader));
     expect(statementsOnly(sql)).toContain(`WHEN "headerText" = ${sqlQuote(previousHeader)}`);
-    expect(statementsOnly(sql)).toContain(`THEN ${sqlQuote(page!.headerText.replace("Last updated 12 November 2026", "Last updated 17 October 2026"))}`);
+    expect(statementsOnly(sql)).toContain(`THEN ${sqlQuote(page!.headerText.replace("Last updated 14 November 2026", "Last updated 17 October 2026"))}`);
     expect(statementsOnly(sql)).toContain(`ELSE "headerText"`);
+  });
+});
+
+
+describe("starter privacy retention census (#4914)", () => {
+  const page = starterPageContent.find((p) => p.slug === "privacy")!;
+  it("uses only the configured email-log schedule, never a literal period", () => {
+    const emailLine = page.contentHtml.match(/<li><strong>Email logs:<\/strong>(.*?)<\/li>/)?.[1];
+    expect(emailLine?.trim()).toBe("{{email-log-retention}}.");
+  });
+  it("registers every retention token for the page editor", () => {
+    const retentionTokens = [...page.contentHtml.matchAll(/\{\{([^}]*retention[^}]*)\}\}/g)].map((m) => m[1]);
+    expect(retentionTokens).toContain("email-log-retention");
+    const catalogue = tokensForContext("page-content-body").map((t) => t.token);
+    for (const token of retentionTokens) expect(catalogue).toContain(token);
+  });
+});
+
+
+describe("starter privacy retention and hosting migration (#4914)", () => {
+  const sql = readFileSync(join(process.cwd(), "prisma/migrations/20261214010000_correct_starter_privacy_retention_and_hosting/migration.sql"), "utf8");
+  const previousSql = readFileSync(PRIVACY_AUDIT_RETENTION_MIGRATION_PATH, "utf8");
+  const page = starterPageContent.find((p) => p.slug === "privacy")!;
+  // #4915 later rewrote section 8 and moved the date on; this migration's
+  // own output is frozen at the #4914 copy.
+  const body4914 = page.contentHtml.replace("Download your profile, bookings, credits and other personal records as JSON from your <a href=\"/profile\">Profile page</a>. The file lists exclusions. Contact our Privacy Officer for anything else, for a dependant’s record, or if you do not have an account.", "You can download your data from your <a href=\"/profile\">Profile page</a>.");
+  it("writes the #4914 seed body and guards on the exact #4031 body", () => {
+    expect(body4914).not.toBe(page.contentHtml);
+    expect(nthCmsBlock(sql, 1)).toBe(body4914);
+    expect(sql.match(/\$previous\$([\s\S]*?)\$previous\$/)?.[1]).toBe(nthCmsBlock(previousSql, 1));
+    expect(sql).toContain('AND "contentHtml" = $previous$');
+    expect(sql).toContain('WHERE "slug" = \'privacy\'');
+  });
+  it("preserves a custom header and uses the UTC statement clock", () => {
+    expect(sql).toContain(`WHEN "headerText" = ${sqlQuote(page.headerText.replace("14 November 2026", "17 October 2026"))}`);
+    expect(sql).toContain(`THEN ${sqlQuote(page.headerText.replace("14 November 2026", "12 November 2026"))}`);
+    expect(sql).toContain('ELSE "headerText"');
+    expect(sql).toContain("statement_timestamp() AT TIME ZONE 'UTC'");
+  });
+  it("uses host-neutral text and visible deployment review notes", () => {
+    expect(page.contentHtml).not.toMatch(/Lightsail|Sydney|encrypted and stored in AWS S3/);
+    for (const section of [5, 6]) {
+      const text = page.contentHtml.split(`<div><h2>${section}.`)[1]?.split('</div>')[0];
+      expect(text).toContain("Admin note:");
+      expect(text).toMatch(/hosting provider, region, backup store/);
+    }
   });
 });
 
 
 describe("starter privacy subject-access correction (#4915)", () => {
   const sql = readFileSync(PRIVACY_SUBJECT_ACCESS_MIGRATION_PATH, "utf8");
-  it("updates only exact old starter content and preserves edited headers", () => {
-    const previousSql = readFileSync(PRIVACY_AUDIT_RETENTION_MIGRATION_PATH, "utf8");
+  it("updates only the exact #4914 starter content and preserves edited headers", () => {
+    const previousSql = readFileSync(join(process.cwd(), "prisma/migrations/20261214010000_correct_starter_privacy_retention_and_hosting/migration.sql"), "utf8");
     const page = starterPageContent.find((p) => p.slug === "privacy")!;
     expect(sql.match(/\$previous\$([\s\S]*?)\$previous\$/)?.[1]).toBe(nthCmsBlock(previousSql, 1));
     expect(nthCmsBlock(sql, 1)).toBe(page.contentHtml);
     expect(sql).toContain('WHERE "slug" = \'privacy\'');
     expect(sql).toContain('AND "contentHtml" = $previous$');
+    expect(sql).toContain(`WHEN "headerText" = ${sqlQuote(page.headerText.replace("14 November 2026", "12 November 2026"))}`);
+    expect(sql).toContain(`THEN ${sqlQuote(page.headerText)}`);
     expect(sql).toContain('ELSE "headerText" END');
-    expect(sql).toContain(sqlQuote(page.headerText));
+    expect(sql).toContain("timezone('UTC', statement_timestamp())");
   });
 });

@@ -57,7 +57,7 @@ vi.mock("@/lib/member-guest-consent-exceptions", () => ({
   listMemberGuestConsentExceptions: vi.fn(),
 }));
 
-import AdminBookingsPage from "@/app/(admin)/admin/bookings/page";
+import AdminBookingsPage from "@/app/(admin)/admin/booking-desk/bookings/page";
 import {
   adminBookingsQuerySchema,
   buildAdminBookingsWhere,
@@ -252,7 +252,7 @@ describe("the Admin › Bookings consent chips (#2307, MG2-M-3)", () => {
     // over the source: keying on the guest's NAME makes two same-named guests
     // on one booking collide, and React then reuses the wrong row.
     const source = readFileSync(
-      path.resolve(process.cwd(), "src/app/(admin)/admin/bookings/page.tsx"),
+      path.resolve(process.cwd(), "src/app/(admin)/admin/booking-desk/bookings/page.tsx"),
       "utf8",
     );
     expect(source).toContain("<TableRow key={row.guestId}>");

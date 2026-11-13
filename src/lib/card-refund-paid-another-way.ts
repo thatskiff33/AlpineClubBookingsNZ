@@ -10,7 +10,6 @@ import { formatBookingReference } from "@/lib/booking-reference";
 import {
   PaidAnotherWayXeroChangedError,
   paidAnotherWayXeroAuditFollowUp,
-  paidAnotherWayCardNoteCoversCents,
   paidAnotherWayXeroPlan,
   paidAnotherWayXeroPromise,
   queuePaidAnotherWayXero,
@@ -27,7 +26,6 @@ import { recordCardRefundMadeBeforePaidAnotherWay } from "@/lib/cancel-card-refu
 import type { ClubTimeZone } from "@/lib/club-time";
 import logger from "@/lib/logger";
 import { MANUAL_REFUND_TASK_REASON_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
-import { paidAnotherWayCardNoteCoverContext } from "@/lib/card-refund-paid-another-way-cash";
 import { cardRefundPaidAnotherWayOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
 import {
   DEAD_CARD_REFUND_OPERATION_SELECT,
@@ -37,12 +35,14 @@ import {
   deadCardRefundStillOwed,
   lastErrorSuggestsStripeMayHaveRefunded,
   laterStripeRefundsCovering,
+  paidAnotherWayRefusal,
   supersededCloseFillsItsCharge,
   tryCardAgainRefusal,
   type LaterStripeRefund,
 } from "@/lib/card-refund-dead-row";
 import { deadRowClaimWhere, lockDeadCardRefundRow } from "@/lib/card-refund-dead-row-lock";
 import { isOwedCardRefundOperation } from "@/lib/open-card-refund-owed";
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { prisma } from "@/lib/prisma";
 import { isOrganiserChildRefundKey } from "@/lib/payment-recovery-keys";
 import {
@@ -185,9 +185,9 @@ export interface DeadCardRefundRow {
    */
   xeroRefundNote: PaidAnotherWayXeroPromise;
   /**
-   * #4104: how much of it a card refund note already in Xero answers - a refund
-   * Stripe accepted, noted and failed later (`failedLaterCardNoteCoverCents`);
-   * 0 for none. With it, `xeroRefundNote` is `covered-by-card-note`.
+   * #4104 / #4369: how much of it a card refund note still answers. With it,
+   * `xeroRefundNote` is `covered-by-card-note`: the close queues a Stripe
+   * reversal for these cents and a bank note for the whole amount. 0 for none.
    */
   cardNoteCoversCents: number;
   /** Its last failure looked like a timeout or a network error, so Stripe may have refunded after all. */
@@ -200,6 +200,7 @@ export interface DeadCardRefundRow {
   laterStripeRefunds: LaterStripeRefund[];
   /** #4368 (decision 5): why "Try the card again" may not re-arm it, or null when it may (`tryCardAgainRefusal`). */
   tryCardAgainRefusal: string | null;
+  paidAnotherWayRefusal: string | null;
 }
 
 /**
@@ -225,6 +226,15 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
       paymentTransaction: { select: { paymentId: true, amountCents: true, refundedAmountCents: true } },
     },
   });
+  const paymentIds = [...new Set(operations.map((operation) => operation.paymentId))];
+  const charges =
+    paymentIds.length === 0
+      ? []
+      : await prisma.paymentTransaction.findMany({
+          where: { paymentId: { in: paymentIds } },
+          select: { id: true, paymentId: true, amountCents: true, refundedAmountCents: true },
+          orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
+        });
   const listed = operations
     .filter(
       (operation) => isOwedCardRefundOperation(operation) && !isOrganiserChildRefundKey(operation.idempotencyKey),
@@ -239,6 +249,8 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
       const xeroPlan = owed.owedCents > 0
         ? await paidAnotherWayXeroPlan(prisma, operation, operation.payment, { lockApprovalTask: false })
         : null;
+      const bankCloseRefusal = paidAnotherWayRefusal(operation.payment, operation, owed,
+        charges.filter((charge) => charge.paymentId === operation.paymentId));
       return {
         operationId: operation.id,
         bookingId: operation.bookingId,
@@ -250,7 +262,8 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
         cardNoteCoversCents: xeroPlan?.xeroRefundNote === "now" ? (xeroPlan.cardNoteCoversCents ?? 0) : 0,
         stripeMayHaveRefunded: lastErrorSuggestsStripeMayHaveRefunded(operation.lastError),
         laterStripeRefunds: later,
-        tryCardAgainRefusal: tryCardAgainRefusal(operation.payment, operation, owed),
+        tryCardAgainRefusal: tryCardAgainRefusal(operation.payment, operation, owed, bankCloseRefusal),
+        paidAnotherWayRefusal: bankCloseRefusal,
       };
     }),
   );
@@ -353,12 +366,6 @@ async function postPaidAnotherWayLine(
   await writeBookingLedgerRows(tx, rows);
 }
 
-/** The record's `reviewContext` for a card-note cover, or nothing (A-F1). */
-function cardNoteCoverReviewContext(cardNoteCoversCents: number): { reviewContext?: Prisma.InputJsonObject } {
-  const reviewContext = paidAnotherWayCardNoteCoverContext(cardNoteCoversCents);
-  return reviewContext ? { reviewContext } : {};
-}
-
 /** Close one dead card refund as paid another way. See the module comment. */
 export async function closeCardRefundPaidAnotherWay(
   input: CardRefundPaidAnotherWayInput,
@@ -397,7 +404,8 @@ export async function closeCardRefundPaidAnotherWay(
       notGivenUp: "This card refund is still being retried, so it cannot be closed yet.",
       otherBooking: "This card refund's payment belongs to another booking, so it cannot be closed here. Ask a developer to reconcile it.",
     });
-    const { ownCents, owedCents, unsentTransactionIds, unsent } = deadCardRefundStillOwed(payment, operation.id);
+    const owed = deadCardRefundStillOwed(payment, operation.id);
+    const { ownCents, owedCents, unsentTransactionIds, unsent } = owed;
     // C7: the figure the treasurer chose against, read under the payment row.
     if (owedCents !== input.expectedOwedCents) {
       throw new CardRefundPaidAnotherWayError(
@@ -405,6 +413,13 @@ export async function closeCardRefundPaidAnotherWay(
         409,
       );
     }
+    const charges = await tx.paymentTransaction.findMany({
+      where: { paymentId: payment.id },
+      select: { id: true, amountCents: true, refundedAmountCents: true },
+      orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
+    });
+    const refusal = paidAnotherWayRefusal(payment, operation, owed, charges);
+    if (refusal) throw new CardRefundPaidAnotherWayError(refusal, 409);
     if (input.amountCents > owedCents) {
       throw new CardRefundPaidAnotherWayError(
         "That is more than this refund still owes. Refresh and check the amount.",
@@ -496,9 +511,6 @@ export async function closeCardRefundPaidAnotherWay(
         completedByMemberId: input.actingMemberId,
         note,
         reason: paidAnotherWayReason(booking.id, input.paidBack, rest),
-        // #4104 delta review (A-F1): what a card note already in Xero answers
-        // of the close, so its share counts it covered.
-        ...cardNoteCoverReviewContext(paidAnotherWayCardNoteCoversCents(xeroPlan, input.amountCents)),
       },
       select: { id: true },
     });
@@ -586,7 +598,7 @@ export async function closeCardRefundPaidAnotherWay(
   // invoice, or on an officer, queued nothing to run.
   if (
     result.xeroQueued === "refund-note" ||
-    result.xeroQueued === "refund-note-beyond-card-note" ||
+    result.xeroQueued === "stripe-reversal-and-bank-note" ||
     result.xeroQueued === "receipt-then-refund-note"
   ) {
     // The note's (or the receipt's) row committed with the close: only the kick is left.

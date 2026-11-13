@@ -75,7 +75,7 @@ const BOOKING_NOTIFY_PROMPTS = [
   "components/cancel-booking-button.tsx",
   "components/edit-booking-panel.tsx",
   "components/admin/booking-requests/booking-approvals-panel.tsx",
-  "app/(admin)/admin/waitlist/page.tsx",
+  "app/(admin)/admin/booking-desk/waitlist/page.tsx",
   "app/(admin)/admin/finance/refund-requests/page.tsx",
   // #4533: a finished-stay promo correction may withhold the change email.
   "components/admin/booking-requests/booking-change-request-officer-entry.tsx",
@@ -89,7 +89,7 @@ const BOOKING_NOTIFY_PROMPTS = [
  */
 const NOT_BOOKING_BOUND: Record<string, string> = {
   // A booking that does not exist yet cannot carry the switch.
-  "app/(admin)/admin/book/page.tsx":
+  "app/(admin)/admin/booking-desk/book/page.tsx":
     "creates a NEW booking; there is nothing silenced yet",
   // BookingRequest, not Booking. Its templates are explicitly excluded from
   // ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES for the same reason.
@@ -98,15 +98,15 @@ const NOT_BOOKING_BOUND: Record<string, string> = {
   // Membership / account / family lifecycle: keyed on a member, not a booking.
   // The switch is deliberately booking-keyed and never address-keyed, so it
   // does not and must not reach these.
-  "app/(admin)/admin/membership-cancellations/page.tsx":
+  "app/(admin)/admin/membership/membership-cancellations/page.tsx":
     "membership-scoped: reviews cancellation participants, not a booking",
-  "app/(admin)/admin/member-applications/page.tsx":
+  "app/(admin)/admin/membership/member-applications/page.tsx":
     "membership application review, not a booking",
-  "app/(admin)/admin/deletion-requests/deletion-requests-client.tsx":
+  "app/(admin)/admin/membership/deletion-requests/deletion-requests-client.tsx":
     "account deletion (privacy) request, not a booking",
-  "app/(admin)/admin/members/[id]/_components/member-lifecycle-card.tsx":
+  "app/(admin)/admin/membership/members/[id]/_components/member-lifecycle-card.tsx":
     "member archive/delete lifecycle, not a booking",
-  "app/(admin)/admin/members/[id]/_components/member-partner-link-card.tsx":
+  "app/(admin)/admin/membership/members/[id]/_components/member-partner-link-card.tsx":
     "member partner link, not a booking",
   "components/admin/family-groups/request-review-section.tsx":
     "family group request review, not a booking",

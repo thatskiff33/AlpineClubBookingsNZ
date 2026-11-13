@@ -20,12 +20,12 @@
  * statement PostgreSQL refuses has already aborted the transaction. The write
  * skips, rather than refuses, a key already posted (`INV-MONEY-033`).
  *
- * A WRITER WITHOUT A TRANSACTION. Three writers fall back to the singleton
- * when handed no client (`createCancellationCredit`,
- * `createBookingModificationCredit`, `restoreCreditFromBooking`); there the
+ * A WRITER WITHOUT A TRANSACTION. Two writers fall back to the singleton
+ * when handed no client (`createBookingModificationCredit`, `restoreCreditFromBooking`); there the
  * row and its line commit separately, and a crash between them leaves a row
  * the next write for that booking posts. Every production caller passes one
- * (all thirteen checked for #3609's review); the fallback serves tests.
+ * (thirteen at #3609's review, before `createCancellationCredit` required one
+ * under `INV-PAY-152`); the fallback serves tests.
  *
  * NO READ-ORDER RACE. #3581's sync must read lines before rows because it can
  * post reversals; nothing here is ever reversed, so a mixed snapshot can only
