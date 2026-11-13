@@ -15,7 +15,7 @@ It complements the two documents next to it and does not repeat them:
 
 ## Correct the starter privacy policy (#4914)
 
-Migration `20261210120000_correct_starter_privacy_retention_and_hosting` updates
+Migration `20261211020000_correct_starter_privacy_retention_and_hosting` updates
 only a privacy body that still exactly matches the previous starter copy. It
 corrects the email-log promise, removes fixed hosting and backup claims, and
 adds missing personal-data categories. A custom body is left untouched. If only

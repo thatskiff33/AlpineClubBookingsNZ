@@ -23,7 +23,7 @@ const sectionState = `
 `;
 
 const verification: DataMigrationVerification = {
-  migration: "20261210120000_correct_starter_privacy_retention_and_hosting",
+  migration: "20261211020000_correct_starter_privacy_retention_and_hosting",
   intent:
     "Replace the untouched starter privacy page with configured email-log retention and host-neutral copy, and leave a privacy page a club edited untouched.",
   idempotentReRun: true,

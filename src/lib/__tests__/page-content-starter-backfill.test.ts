@@ -297,7 +297,7 @@ describe("starter page content backfill migration", () => {
     readFileSync(HOME_GUEST_COPY_MIGRATION_PATH, "utf8"),
   );
   const allInsertSql = `${insertSql}\n${backfill404Sql}\n${policyPagesSql}\n${bookingRequestsSql}\n${schoolBookingsSql}`;
-  const privacyRetentionSql = readFileSync(join(process.cwd(), "prisma/migrations/20261210120000_correct_starter_privacy_retention_and_hosting/migration.sql"), "utf8");
+  const privacyRetentionSql = readFileSync(join(process.cwd(), "prisma/migrations/20261211020000_correct_starter_privacy_retention_and_hosting/migration.sql"), "utf8");
   const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}\n${genericiseLodgeCopySql}\n${privacyAuditRetentionSql}\n${homeGuestCopySql}\n${privacyRetentionSql}`;
 
   it("inserts exactly the starter pages defined for the seed", () => {
@@ -732,7 +732,7 @@ describe("starter privacy retention census (#4914)", () => {
 
 
 describe("starter privacy retention and hosting migration (#4914)", () => {
-  const sql = readFileSync(join(process.cwd(), "prisma/migrations/20261210120000_correct_starter_privacy_retention_and_hosting/migration.sql"), "utf8");
+  const sql = readFileSync(join(process.cwd(), "prisma/migrations/20261211020000_correct_starter_privacy_retention_and_hosting/migration.sql"), "utf8");
   const previousSql = readFileSync(PRIVACY_AUDIT_RETENTION_MIGRATION_PATH, "utf8");
   const page = starterPageContent.find((p) => p.slug === "privacy")!;
   it("writes the seed body and guards on the exact #4031 body", () => {
