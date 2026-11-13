@@ -4,12 +4,14 @@
 import { describe, expect, it } from "vitest";
 import {
   buildMemberImportPreview,
-  findOversizedMemberImportFamilyKeys,
   inferMemberImportColumnMapping,
-  matchMemberImportMembershipType,
   MEMBER_IMPORT_FIELD_DEFINITIONS,
   parseMemberImportCsv,
 } from "@/lib/member-csv-import";
+import {
+  findOversizedMemberImportFamilyKeys,
+  matchMemberImportMembershipType,
+} from "@/lib/member-csv-import-type-family";
 import { ADMIN_FAMILY_GROUP_MAX_MEMBERS } from "@/lib/admin-family-group-create";
 
 const CLUB_TODAY = "2026-07-01";

@@ -11,7 +11,7 @@ import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { sendMemberSetupInviteEmail } from "@/lib/email";
 import { applyRateLimit } from "@/lib/rate-limit";
-import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
+import { createAuditLog } from "@/lib/audit";
 import logger from "@/lib/logger";
 import {
   describeUniqueConstraintTarget,
@@ -31,20 +31,24 @@ import {
   MEMBER_IMPORT_DATE_FORMAT_VALUES,
   MEMBER_IMPORT_FIELD_DEFINITIONS,
   MEMBER_IMPORT_OCCUPATION_MAX_LENGTH,
-  MEMBER_IMPORT_FAMILY_KEY_MAX_LENGTH,
-  MEMBER_IMPORT_MEMBERSHIP_TYPE_MAX_LENGTH,
-  findOversizedMemberImportFamilyKeys,
   isMemberImportCancelledDateInFuture,
-  matchMemberImportMembershipType,
   normalizeMemberImportDateValue,
-  normalizeMemberImportFamilyKey,
   type MemberImportDateFieldKey,
   type MemberImportDateFormatMapping,
 } from "@/lib/member-csv-import";
 import { clubTime } from "@/lib/club-time/server";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
-import { createFamilyGroupWithMembers } from "@/lib/admin-family-group-create";
+import {
+  MEMBER_IMPORT_FAMILY_KEY_MAX_LENGTH,
+  MEMBER_IMPORT_MEMBERSHIP_TYPE_MAX_LENGTH,
+  findOversizedMemberImportFamilyKeys,
+} from "@/lib/member-csv-import-type-family";
+import {
+  assignImportedMembershipTypes,
+  createImportFamilyGroups,
+  resolveImportTypeAndFamily,
+} from "@/lib/member-import-type-family";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import {
   GENDER_OPTIONS,
@@ -241,94 +245,6 @@ function normalizeImportDateField(
 }
 
 /**
- * #4988: give each imported member the current-season membership type its
- * row named. Mirrors the Xero import (#2108): an existing assignment is never
- * overwritten, and each save goes through the preview token and
- * `saveSeasonalMembershipAssignment` with source `IMPORT`. The members are
- * new, so they have no Xero contact to regroup and that sync is skipped.
- */
-async function assignImportedMembershipTypes({
-  members,
-  seasonYear,
-  clubTodayDateOnly,
-  adminMemberId,
-  request,
-}: {
-  members: ReadonlyArray<{
-    id: string;
-    email: string;
-    rowNum: number;
-    membershipTypeId: string | null;
-  }>;
-  seasonYear: number;
-  clubTodayDateOnly: Date;
-  adminMemberId: string;
-  request: Request;
-}) {
-  const failures: Array<{ row: number; email: string; error: string }> = [];
-  let assigned = 0;
-  const existing = await prisma.seasonalMembershipAssignment.findMany({
-    where: { seasonYear, memberId: { in: members.map((member) => member.id) } },
-    select: { memberId: true },
-  });
-  const alreadyAssigned = new Set(existing.map((row) => row.memberId));
-  const { getSeasonalMembershipChangePreview, saveSeasonalMembershipAssignment } =
-    await import("@/lib/seasonal-membership-assignments");
-
-  for (const member of members) {
-    const membershipTypeId = member.membershipTypeId;
-    if (!membershipTypeId || alreadyAssigned.has(member.id)) continue;
-    const fail = (error: string) =>
-      failures.push({ row: member.rowNum, email: member.email, error });
-    try {
-      const previewResult = await getSeasonalMembershipChangePreview({
-        memberId: member.id,
-        seasonYear,
-        membershipTypeId,
-        now: clubTodayDateOnly,
-        clubCurrentSeasonYear: seasonYear,
-      });
-      if (previewResult.init?.status && previewResult.init.status >= 400) {
-        fail(
-          (previewResult.body as { error?: string } | undefined)?.error ??
-            "Failed to preview the membership type assignment",
-        );
-        continue;
-      }
-      const previewToken = (
-        previewResult.body as { preview: { previewToken: string } }
-      ).preview.previewToken;
-      const saveResult = await saveSeasonalMembershipAssignment({
-        memberId: member.id,
-        seasonYear,
-        membershipTypeId,
-        adminMemberId,
-        reason: "Member CSV import",
-        previewToken,
-        source: "IMPORT",
-        skipXeroContactGroupSync: true,
-        request: getAuditRequestContext(request),
-      });
-      if (saveResult.init?.status && saveResult.init.status >= 400) {
-        fail(
-          (saveResult.body as { error?: string } | undefined)?.error ??
-            "Failed to save the membership type assignment",
-        );
-        continue;
-      }
-      assigned++;
-    } catch (err) {
-      logger.error(
-        { err, memberId: member.id, membershipTypeId },
-        "Failed to assign membership type during member import",
-      );
-      fail("Failed to save the membership type assignment");
-    }
-  }
-  return { assigned, failures };
-}
-
-/**
  * POST /api/admin/members/import
  * Bulk import members from CSV data.
  */
@@ -407,11 +323,7 @@ export async function POST(req: NextRequest) {
     // #4988: the Membership Type and Family Key columns.
     familyGroupsCreated: 0,
     membershipTypesAssigned: 0,
-    membershipTypeFailures: [] as Array<{
-      row: number;
-      email: string;
-      error: string;
-    }>,
+    membershipTypeFailures: [] as Array<{ row: number; email: string; error: string }>,
     total: rows.length,
   };
 
@@ -644,34 +556,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let membershipTypeId: string | null = null;
-    const membershipTypeInput = row.membershipType?.trim();
-    if (membershipTypeInput) {
-      const match = matchMemberImportMembershipType(
-        membershipTypeInput,
-        activeMembershipTypes,
-      );
-      if (match.ok) {
-        membershipTypeId = match.type.id;
-      } else {
-        rowErrors.push(
-          `Membership Type${getImportColumnContext(row, "membershipType")} ${match.error}`,
-        );
-      }
-    }
-
-    const familyKeyInput = row.familyKey?.trim();
-    const familyKey = familyKeyInput
-      ? normalizeMemberImportFamilyKey(familyKeyInput)
-      : null;
-    const oversizedFamilyMessage = familyKey
-      ? oversizedFamilyKeys.get(familyKey)
-      : undefined;
-    if (oversizedFamilyMessage) {
-      rowErrors.push(
-        `Family Key${getImportColumnContext(row, "familyKey")} "${familyKeyInput}" ${oversizedFamilyMessage}`,
-      );
-    }
+    const { membershipTypeId, familyKey } = resolveImportTypeAndFamily({
+      membershipType: row.membershipType,
+      familyKey: row.familyKey,
+      activeMembershipTypes,
+      oversizedFamilyKeys,
+      columnContext: (key) => getImportColumnContext(row, key),
+      rowErrors,
+    });
 
     if (rowErrors.length > 0) {
       results.errors.push({ row: rowNum, errors: rowErrors });
@@ -874,43 +766,12 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        // #4988: the members created here that share a Family Key become one
-        // new family group, through the admin family-group writer. Only rows
-        // this import created join, so a re-import of the same file adds
-        // nothing. No partner or parent link is written.
-        const familyMembersByKey = new Map<string, typeof created>();
-        for (const member of created) {
-          if (!member.familyKey) continue;
-          familyMembersByKey.set(member.familyKey, [
-            ...(familyMembersByKey.get(member.familyKey) ?? []),
-            member,
-          ]);
-        }
-        let familyGroupsCreated = 0;
-        for (const familyMembers of familyMembersByKey.values()) {
-          const [firstMember] = familyMembers;
-          if (!firstMember) continue;
-          const name = `${firstMember.lastName} Family`;
-          const memberIds = familyMembers.map((member) => member.id);
-          const group = await createFamilyGroupWithMembers(tx, {
-            name,
-            memberIds,
-          });
-          familyGroupsCreated++;
-          await createAuditLog(
-            {
-              action: "FAMILY_GROUP_CREATED",
-              category: "family",
-              memberId: session.user.id,
-              targetId: group.id,
-              entityType: "FamilyGroup",
-              entityId: group.id,
-              summary: "Family group created by member import",
-              details: JSON.stringify({ name, memberIds, source: "IMPORT" }),
-            },
-            tx,
-          );
-        }
+        // #4988: members created here that share a Family Key become one group.
+        const familyGroupsCreated = await createImportFamilyGroups(
+          tx,
+          created,
+          session.user.id,
+        );
         return { created, familyGroupsCreated };
       },
       { timeout: 30000 },
@@ -938,32 +799,17 @@ export async function POST(req: NextRequest) {
         : [],
     );
 
-    // #4988: the Membership Type column assigns the current season, after
-    // commit, through the hardened save path (age exemptions, audit). A
-    // member imported as cancelled gets no assignment.
-    const membershipTypeCandidates = createdMembers.filter(
-      (member) => member.membershipTypeId && !member.cancelled,
-    );
-    for (const member of createdMembers) {
-      if (member.membershipTypeId && member.cancelled) {
-        results.rowNotes.push({
-          row: member.rowNum,
-          email: member.email,
-          note: "Membership Type not applied because the member was imported as cancelled",
-        });
-      }
-    }
-    if (membershipTypeCandidates.length > 0) {
-      const assignment = await assignImportedMembershipTypes({
-        members: membershipTypeCandidates,
-        seasonYear: clubSeason,
-        clubTodayDateOnly: dateOnlyInstantOf(club.today()),
-        adminMemberId: session.user.id,
-        request: req,
-      });
-      results.membershipTypesAssigned = assignment.assigned;
-      results.membershipTypeFailures = assignment.failures;
-    }
+    // #4988: the Membership Type column assigns the current season, after commit.
+    const assignment = await assignImportedMembershipTypes({
+      members: createdMembers,
+      seasonYear: clubSeason,
+      clubTodayDateOnly: dateOnlyInstantOf(club.today()),
+      adminMemberId: session.user.id,
+      request: req,
+    });
+    results.membershipTypesAssigned = assignment.assigned;
+    results.membershipTypeFailures = assignment.failures;
+    results.rowNotes.push(...assignment.rowNotes);
 
     // Invite emails remain post-commit best-effort; import/audit durability is
     // handled inside the transaction above.

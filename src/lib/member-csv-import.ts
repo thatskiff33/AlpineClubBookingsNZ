@@ -12,13 +12,14 @@ import {
   isDietaryRequirementsWithinLimit,
   normalizeImportedDietaryRequirements,
 } from "@/lib/member-dietary-field";
-import { ADMIN_FAMILY_GROUP_MAX_MEMBERS } from "@/lib/admin-family-group-create";
+import {
+  appendOversizedFamilyKeyErrors,
+  memberImportTypeFamilyErrors,
+} from "@/lib/member-csv-import-type-family";
 
 export const MEMBER_IMPORT_MAX_ROWS = 500;
 export const MEMBER_IMPORT_COMMENTS_MAX_LENGTH = 4000;
 export const MEMBER_IMPORT_OCCUPATION_MAX_LENGTH = 100;
-export const MEMBER_IMPORT_MEMBERSHIP_TYPE_MAX_LENGTH = 200;
-export const MEMBER_IMPORT_FAMILY_KEY_MAX_LENGTH = 100;
 
 /** Maximum lengths for the structured street address import fields. */
 export const MEMBER_IMPORT_ADDRESS_MAX_LENGTHS = {
@@ -916,74 +917,6 @@ function getColumnContext(
   return label ? ` (column ${label})` : "";
 }
 
-/** How a membership type name compares: case, spacing and ends ignored. */
-export function normalizeMemberImportMembershipTypeName(value: string) {
-  return value.trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-export type MemberImportMembershipTypeMatch<T extends { name: string }> =
-  | { ok: true; type: T }
-  | { ok: false; error: string };
-
-/**
- * Match one imported Membership Type value against the club's ACTIVE types by
- * name (#4988). The browser preview and the server both call this; the server
- * passes the types it read itself, so its answer is the authoritative one.
- */
-export function matchMemberImportMembershipType<T extends { name: string }>(
-  value: string,
-  activeTypes: readonly T[],
-): MemberImportMembershipTypeMatch<T> {
-  const wanted = normalizeMemberImportMembershipTypeName(value);
-  const matches = activeTypes.filter(
-    (type) => normalizeMemberImportMembershipTypeName(type.name) === wanted,
-  );
-  const [only] = matches;
-  if (only && matches.length === 1) return { ok: true, type: only };
-  if (matches.length > 1) {
-    return {
-      ok: false,
-      error: `matches ${matches.length} active membership types named "${value}"; rename one in Membership Types first`,
-    };
-  }
-  return {
-    ok: false,
-    error: `"${value}" is not the name of an active membership type`,
-  };
-}
-
-/** How a family key compares: case, spacing and ends ignored. */
-export function normalizeMemberImportFamilyKey(value: string) {
-  return value.trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-/**
- * The family-key refusal shared by the preview and the server (#4988): a key
- * shared by more rows than one family group may hold blocks every one of
- * those rows. Returns the message for each offending key.
- */
-export function findOversizedMemberImportFamilyKeys(
-  familyKeys: readonly (string | undefined)[],
-): Map<string, string> {
-  const counts = new Map<string, number>();
-  for (const value of familyKeys) {
-    if (!value) continue;
-    const key = normalizeMemberImportFamilyKey(value);
-    if (!key) continue;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  const oversized = new Map<string, string>();
-  for (const [key, count] of counts) {
-    if (count > ADMIN_FAMILY_GROUP_MAX_MEMBERS) {
-      oversized.set(
-        key,
-        `is shared by ${count} rows; a family group holds at most ${ADMIN_FAMILY_GROUP_MAX_MEMBERS} members`,
-      );
-    }
-  }
-  return oversized;
-}
-
 export function buildMemberImportPreview(
   csv: MemberImportCsvData,
   mapping: MemberImportColumnMapping,
@@ -1200,27 +1133,14 @@ export function buildMemberImportPreview(
     if (roleInput && !role) {
       errors.push(`Role must be one of ${MEMBER_IMPORT_ROLE_LABEL}`);
     }
-    if (membershipType.length > MEMBER_IMPORT_MEMBERSHIP_TYPE_MAX_LENGTH) {
-      errors.push(
-        `Membership Type${getColumnContext(sourceColumnLabels, "membershipType")} must be ${MEMBER_IMPORT_MEMBERSHIP_TYPE_MAX_LENGTH} characters or fewer`,
-      );
-    } else if (membershipType && options.activeMembershipTypeNames) {
-      const match = matchMemberImportMembershipType(
+    errors.push(
+      ...memberImportTypeFamilyErrors({
         membershipType,
-        options.activeMembershipTypeNames.map((name) => ({ name })),
-      );
-      if (!match.ok) {
-        errors.push(
-          `Membership Type${getColumnContext(sourceColumnLabels, "membershipType")} ${match.error}`,
-        );
-      }
-    }
-    if (familyKey.length > MEMBER_IMPORT_FAMILY_KEY_MAX_LENGTH) {
-      errors.push(
-        `Family Key${getColumnContext(sourceColumnLabels, "familyKey")} must be ${MEMBER_IMPORT_FAMILY_KEY_MAX_LENGTH} characters or fewer`,
-      );
-    }
-
+        familyKey,
+        activeMembershipTypeNames: options.activeMembershipTypeNames,
+        columnContext: (key) => getColumnContext(sourceColumnLabels, key),
+      }),
+    );
     return {
       lineNumber: record.lineNumber,
       sourceValues: record.values,
@@ -1247,20 +1167,9 @@ export function buildMemberImportPreview(
     }
   }
 
-  const oversizedFamilyKeys = findOversizedMemberImportFamilyKeys(
-    rows.map((row) => row.values.familyKey),
+  appendOversizedFamilyKeyErrors(rows, (key) =>
+    getColumnContext(sourceColumnLabels, key),
   );
-  for (const row of rows) {
-    const familyKey = row.values.familyKey;
-    const message =
-      familyKey &&
-      oversizedFamilyKeys.get(normalizeMemberImportFamilyKey(familyKey));
-    if (message) {
-      row.errors.push(
-        `Family Key${getColumnContext(sourceColumnLabels, "familyKey")} "${familyKey}" ${message}`,
-      );
-    }
-  }
 
   const hasErrors =
     fileErrors.length > 0 || rows.some((row) => row.errors.length > 0);
