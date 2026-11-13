@@ -11,7 +11,7 @@
  * SQL `UPDATE "Booking"` that sets the status is refused outright.
  *
  * `POSTS` names the posting call, and the census holds EACH write under that
- * entry to it, per site (#4928): the write's own enclosing function (its
+ * entry to it, per write call (#4928): the write's own enclosing function (its
  * nearest function-like ancestor) must call it by name, at least once per such
  * write it holds. A call elsewhere in the file, in a sibling function, in a
  * closure nested under the write's function, or inside a helper the function
@@ -423,14 +423,18 @@ const placeOf = (file: string, write: ts.Node): string =>
   `${file}:${write.getSourceFile().getLineAndCharacterOfPosition(write.getStart()).line + 1}`;
 
 /**
- * THE POSTS PAIRING, PER SITE (#4928): each write whose classification names a
+ * THE POSTS PAIRING, PER WRITE (#4928): each write whose classification names a
  * posting call must have that call in its OWN enclosing function, the nearest
  * function-like ancestor of the write, and a function holding several such
  * writes must make at least as many of those calls as it has writes. A call
  * anywhere else in the file, in a sibling function, or in a closure nested
- * under the write's function (which may never run) does not count. `postFor`
- * gives the call a site's value must make, or undefined for a site that need
- * not post. Returns each write of a short function as `file:line value: …`.
+ * under the write's function (which may never run) does not count. A write is
+ * one booking write call: an upsert cancelling on both create and update, or a
+ * payload choosing between two cancelling objects, is one write needing one
+ * post, though it yields two sites. `postFor` gives the call a site's value
+ * must make, or undefined for a site that need not post. `checked` counts sites,
+ * as REVIEWED does; each write of a short function is returned once, as
+ * `file:line value(s): …`.
  */
 function unpairedWrites(file: string, sites: readonly Site[], postFor: (value: string) => string | undefined): { checked: number; unpaired: string[] } {
   const byScope = new Map<ts.Node, Map<string, Site[]>>();
@@ -445,12 +449,15 @@ function unpairedWrites(file: string, sites: readonly Site[], postFor: (value: s
   let checked = 0;
   const unpaired: string[] = [];
   for (const [scope, calls] of byScope) {
-    for (const [call, writes] of calls) {
-      checked += writes.length;
+    for (const [call, sitesForCall] of calls) {
+      checked += sitesForCall.length;
+      // One entry per write call, with every value its sites set under this poster.
+      const writes = new Map<ts.CallExpression, string[]>();
+      for (const { value, write } of sitesForCall) writes.set(write, [...(writes.get(write) ?? []), value]);
       const made = callsInOwnBody(scope, call);
-      if (made >= writes.length) continue;
-      for (const { value, write } of writes) {
-        unpaired.push(`${placeOf(file, write)} ${value}: its enclosing function makes ${made} ${call}(...) call(s) for ${writes.length} write(s)`);
+      if (made >= writes.size) continue;
+      for (const [write, values] of writes) {
+        unpaired.push(`${placeOf(file, write)} ${[...new Set(values)].join(",")}: its enclosing function makes ${made} ${call}(...) call(s) for ${writes.size} write(s)`);
       }
     }
   }
@@ -543,6 +550,11 @@ describe("every booking PAID/CANCELLED writer is classified (#4628)", () => {
       "fixture.ts:6 CANCELLED: its enclosing function makes 1 postCancel(...) call(s) for 2 write(s)",
     ]);
     expect(unpaired(`async function f(tx) {\n  if (a) {\n    ${CANCEL}\n    await postCancel(tx);\n  } else {\n    ${CANCEL}\n    await postCancel(tx);\n  }\n}`)).toEqual([]);
+    // One write call is one write, however many sites it yields: an upsert cancelling on create and update needs one post.
+    const UPSERT = "await tx.booking.upsert({ where, create: { status: BookingStatus.CANCELLED }, update: { status: BookingStatus.CANCELLED } });";
+    expect(unpaired(`async function f(tx) {\n  ${UPSERT}\n  await postCancel(tx);\n}`), "an upsert cancelling on both arms").toEqual([]);
+    expect(unpaired(`async function f(tx) {\n  ${UPSERT}\n}`), "an unposted upsert is named once")
+      .toEqual(["fixture.ts:2 CANCELLED: its enclosing function makes 0 postCancel(...) call(s) for 1 write(s)"]);
     // A site that need not post is not held to one.
     expect(unpaired("async function f(tx) { await tx.booking.update({ where, data: { status: BookingStatus.PAID } }); }")).toEqual([]);
   });

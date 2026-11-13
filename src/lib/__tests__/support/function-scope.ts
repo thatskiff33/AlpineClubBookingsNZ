@@ -1,8 +1,8 @@
 /**
  * The function-boundary walk the source censuses share (#4928): which function
  * a node runs in, and how often that function's own body makes a call. A census
- * that pairs an action with its required side effect pairs them per site and in
- * the same function, never per file.
+ * that pairs an action with its required side effect pairs them per write and
+ * in the same function, never per file.
  */
 import ts from "typescript";
 
