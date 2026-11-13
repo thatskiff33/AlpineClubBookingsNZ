@@ -435,10 +435,14 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
       it("narrows its own tables as the migration role, so the deploy grants check passes without re-provisioning", async () => {
         const database = DATABASES.journal;
         await admin.query(`CREATE DATABASE "${database}" TEMPLATE "${DATABASES.fresh}"`);
-        // The release before the journal, provisioned: take the journal and the
-        // M4a reservation tables away, then apply both migrations as the migrator.
+        // The release before these append-only tables, provisioned: take the
+        // journal, the M4a reservation tables and the Stripe evidence table
+        // away, then apply those migrations as the migrator. StripePayout is
+        // dropped with them so its migration can be reapplied; it stays mutable.
         await withClient(urlFor(database), (client) => client.query(`
           DROP TABLE ${MEMBER_MONEY_RELATIONS.map((name) => `"${name}"`).join(", ")} CASCADE;
+          DROP TABLE IF EXISTS "StripeBalanceTransactionEvidence", "StripePayout" CASCADE;
+          DROP TYPE IF EXISTS "StripePayoutStatus";
           DROP FUNCTION IF EXISTS member_money_require_complete(), member_money_batch_errors(text),
             member_money_check_seal(), member_money_refuse_mutation(), member_money_system_identifier(),
             member_money_application_state(text), member_money_reservation_errors(text),
@@ -447,14 +451,17 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
             "MemberMoneySourceKind", "MemberMoneyObligationKind", "MemberMoneyDebtorKind",
             "MemberMoneyRefundReservationReleaseReason";
           DELETE FROM "_prisma_migrations" WHERE migration_name IN (
-            '20261127010000_member_money_journal', '${APPEND_ONLY_SCHEMA_MIGRATION}')`));
+            '20261127010000_member_money_journal', '20261210080000_member_money_applications',
+            '${APPEND_ONLY_SCHEMA_MIGRATION}')`));
         expect(deployGrantsCheck(database)).toBe("");
         // Applied as prisma migrate deploy applies them: each file, as the migration role.
         await withClient(urlFor(database, "migrator"), async (client) => {
           await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261127010000_member_money_journal/migration.sql"), "utf8"));
+          await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261210080000_member_money_applications/migration.sql"), "utf8"));
           await client.query(readFileSync(path.join(REPO_ROOT, `prisma/migrations/${APPEND_ONLY_SCHEMA_MIGRATION}/migration.sql`), "utf8"));
         });
         expect(deployGrantsCheck(database)).toBe("");
+        const insertOnly = [...MEMBER_MONEY_RELATIONS, "StripeBalanceTransactionEvidence"];
         const { rows } = await withClient(urlFor(database), (client) => client.query(
           `SELECT t.name, has_table_privilege($1, to_regclass(format('public.%I', t.name)), 'SELECT')
                     AND has_table_privilege($1, to_regclass(format('public.%I', t.name)), 'INSERT') AS inserts,
@@ -462,10 +469,17 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
                   pg_get_userbyid(c.relowner) AS owner
              FROM unnest($2::text[]) AS t(name) JOIN pg_class c ON c.oid = to_regclass(format('public.%I', t.name))
              ORDER BY t.name`,
-          [ROLES.app, [...MEMBER_MONEY_RELATIONS]],
+          [ROLES.app, insertOnly],
         ));
-        expect(rows).toEqual([...MEMBER_MONEY_RELATIONS].sort().map((name) => (
+        expect(rows).toEqual([...insertOnly].sort().map((name) => (
           { name, inserts: true, changes: false, owner: ROLES.migrator })));
+        const payout = await withClient(urlFor(database), (client) => client.query(
+          `SELECT has_table_privilege($1, '"StripeBalanceTransactionEvidence"', 'UPDATE') AS "evidenceUpdate",
+                  has_table_privilege($1, '"StripePayout"', 'INSERT') AS inserts,
+                  has_table_privilege($1, '"StripePayout"', 'UPDATE') AS changes`,
+          [ROLES.app],
+        ));
+        expect(payout.rows).toEqual([{ evidenceUpdate: false, inserts: true, changes: true }]);
       });
     });
 

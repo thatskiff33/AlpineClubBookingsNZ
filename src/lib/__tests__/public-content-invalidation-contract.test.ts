@@ -92,6 +92,8 @@ const bodyDataWriters = [
   "src/app/api/admin/image-manager/upload/route.ts",
   "src/app/api/admin/image-manager/images/route.ts",
   "src/app/api/admin/image-manager/directories/route.ts",
+  // #4914: the privacy policy body renders {{email-log-retention}} from these.
+  "src/app/api/admin/privacy-retention/route.ts",
 ] as const;
 
 describe("public site full-route invalidation contract (#2352 F3)", () => {

@@ -167,6 +167,18 @@ function summarizeQueuedPayload(
       };
     }
 
+    case "CARD_REFUND_REVERSAL_INVOICE":
+      facts
+        .add("Booking", shortId(req.bookingId))
+        .add("Payment", shortId(req.paymentId))
+        .add("Close", shortId(req.closeTaskId))
+        .add("Amount", formatCentsValue(req.amountCents, format))
+        .add("Closed on", readString(req.closedOn));
+      return {
+        title: "Queued: record a failed card refund back in Stripe",
+        facts: facts.build(),
+      };
+
     case "KEPT_LATE_CAPTURE_INVOICE":
       // #3635: a late card payment a treasurer kept, invoiced and paid in Xero.
       facts
