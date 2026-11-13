@@ -83,7 +83,8 @@ function jsonResponse(body: unknown, ok = true, status = ok ? 200 : 400) {
   return { ok, status, json: async () => body } as Response;
 }
 
-type Refusal = { status: number; body: Record<string, unknown> };
+/** A server refusal, or `"dropped"`: the connection fails before any reply. */
+type Refusal = { status: number; body: Record<string, unknown> } | "dropped";
 
 /** Stub every wizard fetch; `POST /api/bookings` answers with `refusal`. */
 function stubFetch(refusal: Refusal) {
@@ -133,6 +134,7 @@ function stubFetch(refusal: Refusal) {
       if (u.includes("/api/work-parties/active")) return jsonResponse({ events: [] });
       if (u.endsWith("/api/bookings") && init?.method === "POST") {
         posts.push(JSON.parse(String(init.body)));
+        if (refusal === "dropped") throw new TypeError("Failed to fetch");
         return jsonResponse(refusal.body, false, refusal.status);
       }
       return jsonResponse({}, false);
@@ -201,6 +203,27 @@ describe("review-step failures land where the member is looking (#4945)", () => 
     await expectRecoveryAlertToHoldFocus(errorBox());
     // One assertive region for the wizard: the box is it.
     expect(screen.getAllByRole("alert")).toEqual([errorBox()]);
+  });
+
+  it("focuses the error box when the connection drops before the reply", async () => {
+    // #4942 made a lost reply an unknown outcome the member is told about; it is
+    // still a failure their press raised, so it must reach them like a refusal.
+    await renderOnReviewStep("dropped");
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Payment" }));
+
+    await waitFor(() => expect(errorBox()).toHaveTextContent("could not verify"));
+    await expectRecoveryAlertToHoldFocus(errorBox());
+
+    // A second press that drops the same way brings the member back to the same
+    // sentence. (The press clears the box first, so this does not lean on the
+    // attention key; the client-side review-reason case below does.)
+    const again = screen.getByRole("button", { name: "Continue to Payment" });
+    again.focus();
+    expect(document.activeElement).toBe(again);
+    fireEvent.click(again);
+
+    await expectRecoveryAlertToHoldFocus(errorBox());
   });
 
   it("keeps a guest-profile refusal's action inside the focused box", async () => {
