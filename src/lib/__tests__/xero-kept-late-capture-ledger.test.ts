@@ -396,7 +396,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { recordAdditionalCaptureReceipt } from "@/lib/additional-capture-xero-receipt";
 import { createXeroPaymentForInvoice } from "@/lib/xero-invoice-payments";
 import type { ClubTimeZone } from "@/lib/club-time";
-import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
+import { TEST_XERO_CLAIMED_AT, xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 const ZONE = "Pacific/Auckland" as ClubTimeZone;
 const CAPTURED_AT = new Date("2026-06-10T01:00:00.000Z"); // 10 Jun at the club
@@ -612,7 +612,10 @@ async function runOutbox() {
   for (const row of h.table("xeroSyncOperation").filter(
     (r) => r.queueType === "ADDITIONAL_CAPTURE_RECEIPT" && r.status === "PENDING",
   )) {
+    // As the real outbox's claim: RUNNING with this claim's `startedAt`, which
+    // the receipt's guarded plan store (#4434, `INV-INT-029`) matches on.
     row.status = "RUNNING";
+    row.startedAt = TEST_XERO_CLAIMED_AT;
     await recordAdditionalCaptureReceipt({ syncOperation: xeroClaim(row.id) }, receiptProviders).catch(() => undefined);
   }
   for (const note of h.table("xeroSyncOperation").filter(
