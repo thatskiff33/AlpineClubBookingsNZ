@@ -8,9 +8,11 @@ import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
 import { formatMemberIdentityAge } from "@/lib/member-age";
 import { clubTime } from "@/lib/club-time/server";
 
+import { ADMIN_FAMILY_GROUP_MAX_MEMBERS, ADMIN_FAMILY_GROUP_NAME_MAX_LENGTH } from "@/lib/admin-family-group-create";
+
 const updateFamilyGroupSchema = z.object({
-  name: z.string().min(1).max(200).optional(),
-  memberIds: z.array(z.string()).min(1).max(10).optional(),
+  name: z.string().min(1).max(ADMIN_FAMILY_GROUP_NAME_MAX_LENGTH).optional(),
+  memberIds: z.array(z.string()).min(1).max(ADMIN_FAMILY_GROUP_MAX_MEMBERS).optional(),
 });
 
 /**

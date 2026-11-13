@@ -20,8 +20,6 @@
  *    rows are insert-only, `INV-MONEY-035`) and stamps the batch reversed.
  */
 
-import { createHash } from "node:crypto";
-
 import { CreditType, type Prisma } from "@prisma/client";
 
 import { ApiError } from "@/lib/api-error";
@@ -34,6 +32,9 @@ import { memberName } from "@/lib/member-serialization";
 import { OPENING_CREDIT_REVERSAL_REASON_MAX_LENGTH, parseOpeningCreditCsv } from "@/lib/opening-credit-csv";
 import { MemberCreditValidationError } from "@/lib/policies/member-credit";
 import { prisma } from "@/lib/prisma";
+import { compareOrdinal } from "@/lib/ordinal-order";
+import { normalizePersonNamePart } from "@/lib/person-name-normalization";
+import { stableDigest } from "@/lib/stable-digest";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { formatCents } from "@/lib/utils";
 import { loadFreeCreditLots } from "@/lib/xero-applied-credit-lots";
@@ -66,15 +67,15 @@ type PreviewResult = { ok: true; preview: OpeningCreditPreview } | { ok: false; 
 type MatchCandidate = { id: string; email: string; firstName: string; lastName: string };
 
 function sameName(a: string | null, b: string) {
-  return a === null || a.trim().toLowerCase() === b.trim().toLowerCase();
+  return a === null || normalizePersonNamePart(a) === normalizePersonNamePart(b);
 }
 
 /** The posted content, canonical and sorted, so the same file always hashes the same. */
 export function openingCreditBatchKey(rows: readonly { memberId: string; amountCents: number; description: string }[]) {
   const canonical = [...rows]
     .map((row) => [row.memberId, row.amountCents, row.description] as const)
-    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+    .sort((a, b) => compareOrdinal(a[0], b[0]));
+  return stableDigest(canonical);
 }
 
 const OPENING_CREDIT_ALREADY_HELD =
@@ -249,7 +250,7 @@ export async function postOpeningCreditBatch(input: {
         ? [{ memberId: row.memberId, amountCents: row.amountCents, description: row.description }]
         : [],
     )
-    .sort((a, b) => (a.memberId < b.memberId ? -1 : a.memberId > b.memberId ? 1 : 0));
+    .sort((a, b) => compareOrdinal(a.memberId, b.memberId));
   const batchKey = preview.batchKey;
   // Before the transaction and its ledger locks (#3565).
   const format = await clubFormatValues();

@@ -81,6 +81,22 @@ describe("buildOpeningCreditPreview (#4988)", () => {
     expect(db.memberCredit.createMany).not.toHaveBeenCalled();
   });
 
+  it("preserves the stored opening-credit file digest", () => {
+    expect(openingCreditBatchKey([{ memberId: "m-a", amountCents: 1, description: "x" }])).toBe(
+      "fc3db20fe38272937fa0a953d9933ac988c532e6e287065daf26c918881d706e",
+    );
+  });
+
+  it("matches shared-email names with canonical Unicode and internal spacing", async () => {
+    db.member.findMany.mockResolvedValue([
+      { id: "m-1", email: "family@example.com", firstName: "Ana Maria", lastName: "Ngāti" },
+      { id: "m-2", email: "family@example.com", firstName: "Ben", lastName: "Ngāti" },
+    ]);
+    const named = await preview("Email,First Name,Last Name,Amount\nfamily@example.com,Ana   Maria,Nga\u0304ti,10\n");
+    expect(named.errorCount).toBe(0);
+    expect(named.rows[0]?.memberId).toBe("m-1");
+  });
+
   it("hashes the same content the same way whatever the row order", async () => {
     const reordered = await preview("Email,Amount\nal@example.com,12.50\nbea@example.com,40.00\n");
     expect(reordered.batchKey).toBe((await preview()).batchKey);
