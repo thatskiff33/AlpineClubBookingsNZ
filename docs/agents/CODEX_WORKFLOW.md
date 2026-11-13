@@ -253,11 +253,10 @@ from `.nvmrc`, pnpm from `package.json`, frozen dependencies and Prisma with a
 placeholder database URL. Node download failure stops setup. The provider puts
 `SETUP_TOOL_DIR/bin` on `PATH`; the fallback archive targets Linux x86-64.
 
-These quick checks fit the task sandbox. The orchestrator remains responsible
-for the local validation in `AGENTS.md`; PR CI owns the full unit suite, build,
-migration and E2E gates before merge. What a Sekreton lane owns on GitHub, from
-its claim to the merge, is in
-[`COORDINATION.md`](COORDINATION.md#lanes-and-assignments) (#4392).
+The orchestrator owns local validation under `AGENTS.md`; PR CI owns the full
+unit suite, build, migration and E2E gates.
+[`COORDINATION.md`](COORDINATION.md#lanes-and-assignments) defines Sekreton's
+GitHub responsibilities (#4392).
 
 PostgreSQL checks use the declared `postgresql` package and a disposable,
 loopback-only cluster managed by `scripts/ci/disposable-postgres.sh` (see its
