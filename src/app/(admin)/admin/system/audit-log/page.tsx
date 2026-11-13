@@ -971,7 +971,7 @@ export default function AuditLogPage() {
                           {entry.subject?.id ? (
                             <Link
                               href={buildHrefWithReturnTo(
-                                `/admin/members/${entry.subject.id}`,
+                                `${adminHref("member-detail", { id: entry.subject.id })}`,
                                 currentAuditPath
                               )}
                               className="text-info-11 hover:underline"
