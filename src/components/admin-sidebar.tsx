@@ -96,9 +96,11 @@ import {
 import type { CalendarDate } from "@/lib/club-time";
 import { useClubTime } from "@/components/club-time-provider";
 import {
-  buildUnpaidFinishedStaysHref,
-  buildUnsettledAdditionalStaysHref,
-} from "@/lib/unpaid-finished-stays-hrefs";
+  ADMIN_WORK_QUEUES,
+  adminWorkQueueBadges,
+  adminWorkQueuesByHref,
+  isAdminWorkQueueUnavailable,
+} from "@/lib/admin-work-queues";
 import {
   ADMIN_NAV_PANELS,
   NEEDS_ATTENTION_LABEL,
@@ -110,6 +112,7 @@ import {
   HubMenuLinks,
   MenuRoleSwitcher,
   PanelSwitcher,
+  PendingCountsError,
   SidebarSearchButton,
   useAdminNavPanel,
   usePendingCounts,
@@ -135,9 +138,12 @@ interface NavSection {
 
 /*
  * NEEDS_ATTENTION_LABEL (from `admin-nav-panels`) names the queue-driven
- * section whose items are shown only when they have something pending. The
- * section (and its header) disappears entirely once all its queues are clear,
- * so it never implies work that isn't there.
+ * section whose items are shown only when they have something pending. Its
+ * items are the officer work queues (`ADMIN_WORK_QUEUES`, #4962), the same
+ * list the Admin Dashboard's attention cards render, so the two surfaces cannot
+ * disagree about what needs an officer. The section disappears once every queue
+ * is clear — but never because the counts failed to load: then it stays and
+ * says so (`PendingCountsError`).
  */
 
 /**
@@ -148,39 +154,19 @@ interface NavSection {
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "admin-sidebar:expanded-sections";
 
 /**
- * Deep link for the unsettled-additions queue (#1723 path 2, widened by #2350):
- * every booking whose upward modification delta was never collected, whether the
- * stay has finished or is still ahead. Unlike the queue above this needs no date
- * in the URL — the owed filter alone is the queue — so the two halves the badge
- * sums both land here. Same drift rule: href from src/lib/unpaid-finished-stays-hrefs.ts,
- * count from the shared predicate in src/lib/unpaid-finished-stays.ts.
- */
-const UNSETTLED_ADDITIONS_HREF = buildUnsettledAdditionalStaysHref();
-
-/**
  * The pre-filtered queue views: Bookings deep links that are not pages of their
  * own, so the hub registry cannot list them. The sidebar shows them under
  * "Needs Attention" while their queue has something in it; the command palette
- * always offers them, under the hub of `page` (S2 #4797). One list, so the two
- * surfaces cannot carry different dated hrefs (#3123).
+ * always offers them, under the hub of `page` (S2 #4797). Both read the work
+ * queue registry, so the two surfaces cannot carry different dated hrefs
+ * (#3123).
  */
 const buildAdminQueueViews = (clubToday: CalendarDate) =>
-  [
-    {
-      href: buildUnpaidFinishedStaysHref(clubToday),
-      label: "Unpaid Finished Stays",
-      icon: DollarSign,
-      page: "bookings",
-    },
-    {
-      href: UNSETTLED_ADDITIONS_HREF,
-      label: "Unpaid Stay Additions",
-      icon: DollarSign,
-      page: "bookings",
-    },
-  ] as const satisfies ReadonlyArray<
-    NavSection["items"][number] & { page: AdminPageId }
-  >;
+  ADMIN_WORK_QUEUES.flatMap((queue) =>
+    queue.paletteView
+      ? [{ href: queue.href(clubToday), label: queue.label, page: queue.paletteView.page }]
+      : [],
+  );
 
 /**
  * Every admin nav section, for a given club day.
@@ -212,27 +198,17 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
     ],
   },
   {
-    // Queue-driven alerts. Every item here is also reachable from its natural
-    // section below (Unpaid Finished Stays as a pre-filtered Bookings view);
-    // these are duplicate links that surface only while their queue has
-    // something pending (see the filtering in SidebarLinks).
+    // Queue-driven alerts, one per officer work queue (#4962). Every item here
+    // is also reachable from its natural section below (Unpaid Finished Stays
+    // as a pre-filtered Bookings view); these are duplicate links that surface
+    // only while their queue has something pending (see the filtering in
+    // SidebarLinks).
     label: NEEDS_ATTENTION_LABEL,
-    items: [
-      { href: adminHref("xero"), label: "Silent Xero Webhook", icon: Bell },
-      { ...adminLink("booking-requests"), icon: ClipboardList },
-      ...buildAdminQueueViews(clubToday).map(({ href, label, icon }) => ({
-        href,
-        label,
-        icon,
-      })),
-      { ...adminLink("member-applications"), icon: ClipboardList },
-      { ...adminLink("family-groups"), icon: Users },
-      { ...adminLink("refund-requests"), icon: RotateCcw },
-      { ...adminLink("membership-cancellations"), icon: UserX },
-      { ...adminLink("deletion-requests"), icon: Trash2 },
-      { ...adminLink("issue-reports"), icon: Bug },
-      { href: "/admin/hut-leaders", label: "Hut Leaders", icon: Bell },
-    ],
+    items: ADMIN_WORK_QUEUES.map((queue) => ({
+      href: queue.href(clubToday),
+      label: queue.label,
+      icon: queue.icon,
+    })),
   },
   {
     label: "Bookings & Beds",
@@ -691,6 +667,11 @@ export function getRenderedAdminNavSections(
   isFullAdmin?: boolean,
   hutLeaderLabel = "Hut Leader",
   panelKey: AdminNavPanelKey = "admin",
+  /**
+   * Keep the Needs Attention section even with no badge in it, so it can say
+   * its counts failed to load (#4962) instead of vanishing like "all clear".
+   */
+  keepNeedsAttention = false,
 ): NavSection[] {
   return getPanelAdminNavSections(
     clubToday,
@@ -708,7 +689,12 @@ export function getRenderedAdminNavSections(
           }
         : section,
     )
-    .filter((section) => section.label && section.items.length > 0);
+    .filter(
+      (section) =>
+        section.label &&
+        (section.items.length > 0 ||
+          (keepNeedsAttention && section.label === NEEDS_ATTENTION_LABEL)),
+    );
 }
 
 function SidebarLinks({
@@ -727,7 +713,7 @@ function SidebarLinks({
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
-  const counts = usePendingCounts();
+  const { counts, status: countsStatus, retry: retryCounts } = usePendingCounts();
   /*
     ONE club day for this render, and everything dated below is built from it
     (#3123, `INV-CONFIG-002`). The nav href and the badge-map key are produced by
@@ -784,69 +770,28 @@ function SidebarLinks({
     });
   };
 
-  // Map href -> badge count
-  const badges: Record<string, number> = {};
-  if (counts.memberApplications > 0) {
-    badges[adminHref("member-applications")] = counts.memberApplications;
-  }
-  if (counts.familyRequests > 0) {
-    badges[adminHref("family-groups")] = counts.familyRequests;
-  }
-  const bookingRequestCount =
-    counts.bookingReviews +
-    counts.bookingChangeRequests +
-    // #2526: a NEW-booking policy exception lives in its own table, so it is a
-    // separate term; a MODIFICATION exception is already a BookingChangeRequest
-    // and is inside the term above.
-    counts.newBookingPolicyExceptionRequests +
-    counts.publicBookingRequests;
-  if (bookingRequestCount > 0) {
-    badges[adminHref("booking-requests")] = bookingRequestCount;
-  }
-  if (counts.unpaidFinishedStays > 0) {
-    badges[buildUnpaidFinishedStaysHref(clubToday)] = counts.unpaidFinishedStays;
-  }
-  // #2350: both halves of the unsettled-additions queue behind one badge. The
-  // predicates are disjoint by construction (check-out before/after today), so
-  // the sum counts every owing booking exactly once.
-  const unsettledAdditionsCount =
-    counts.unsettledAdditionalFinishedStays +
-    counts.unsettledAdditionalUpcomingStays;
-  if (unsettledAdditionsCount > 0) {
-    badges[UNSETTLED_ADDITIONS_HREF] = unsettledAdditionsCount;
-  }
-  if (counts.refundAppeals + counts.creditApprovals > 0) {
-    badges[adminHref("refund-requests")] =
-      counts.refundAppeals + counts.creditApprovals;
-  }
-  // B5 (#2262): open cash hand-back tasks live on the payments board, which is
-  // where an admin closes them once the money has actually been paid back.
-  if (counts.manualRefundTasks > 0) {
-    badges[adminHref("payments")] = counts.manualRefundTasks;
-  }
-  if (counts.membershipCancellations + counts.archiveRequests > 0) {
-    badges[adminHref("membership-cancellations")] =
-      counts.membershipCancellations + counts.archiveRequests;
-  }
-  // The deletion-requests page hosts two flows: self-service account deletions
-  // (deletionRequests, status PENDING) and admin-initiated hard-delete review
-  // (memberDeleteRequests, DELETE requests status REQUESTED). Merge both into
-  // one attention badge, mirroring the cancellations+archive merge above (#1938).
-  if (counts.deletionRequests + counts.memberDeleteRequests > 0) {
-    badges[adminHref("deletion-requests")] =
-      counts.deletionRequests + counts.memberDeleteRequests;
-  }
-  if (counts.issueReports > 0) {
-    badges[adminHref("issue-reports")] = counts.issueReports;
-  }
-  if (counts.unassignedHutLeaderDates > 0) {
-    badges["/admin/hut-leaders"] = counts.unassignedHutLeaderDates;
-  }
+  // href -> badge count, from the work queue registry the dashboard renders too.
+  const badges = adminWorkQueueBadges(clubToday, counts);
+  const queuesByHref = adminWorkQueuesByHref(clubToday);
 
-  if ((counts.xeroSilentWebhook ?? 0) > 0) {
-    badges[adminHref("xero")] = counts.xeroSilentWebhook!;
-  }
-
+  const visibleNavSections = getPanelAdminNavSections(
+    clubToday,
+    features,
+    panelKey,
+    permissionMatrix,
+    isFullAdmin,
+    hutLeaderLabel,
+  );
+  // A failure the viewer would otherwise mistake for "nothing to do": the
+  // whole request failed, or a queue this panel shows them could not be counted.
+  const attentionQueues =
+    visibleNavSections
+      .find((section) => section.label === NEEDS_ATTENTION_LABEL)
+      ?.items.flatMap((item) => queuesByHref.get(item.href) ?? []) ?? [];
+  const countsFailed =
+    attentionQueues.length > 0 &&
+    (countsStatus === "error" ||
+      attentionQueues.some((queue) => isAdminWorkQueueUnavailable(queue, counts)));
   const renderedNavSections = getRenderedAdminNavSections(
     clubToday,
     features,
@@ -855,14 +800,7 @@ function SidebarLinks({
     isFullAdmin,
     hutLeaderLabel,
     panelKey,
-  );
-  const visibleNavSections = getPanelAdminNavSections(
-    clubToday,
-    features,
-    panelKey,
-    permissionMatrix,
-    isFullAdmin,
-    hutLeaderLabel,
+    countsFailed,
   );
 
   const navHrefs = visibleNavSections.flatMap((s) => s.items.map((i) => i.href));
@@ -905,12 +843,18 @@ function SidebarLinks({
                   {section.label}
                 </p>
               ))}
+            {section.label === NEEDS_ATTENTION_LABEL && countsFailed && (
+              <PendingCountsError
+                retry={retryCounts}
+                partial={countsStatus !== "error"}
+              />
+            )}
             {open &&
               section.items.map(({ href, label, icon: Icon }) => {
                 const active = href === activeHref;
                 const badgeCount = badges[href];
                 const badgeClasses =
-                  href === adminHref("refund-requests")
+                  queuesByHref.get(href)?.tone === "danger"
                     ? "bg-danger text-danger-foreground"
                     : "bg-warning text-warning-foreground";
 

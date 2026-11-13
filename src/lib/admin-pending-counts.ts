@@ -1,3 +1,4 @@
+import logger from "@/lib/logger";
 import { getXeroWebhookHealth } from "@/lib/xero-webhook-health";
 import { prisma } from "@/lib/prisma";
 import { buildBookingRequestListWhere } from "@/lib/booking-request";
@@ -15,146 +16,122 @@ import {
   buildUnsettledAdditionalUpcomingStaysWhere,
 } from "@/lib/unpaid-finished-stays";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
+import { getStuckStateAffectedCount } from "@/lib/stuck-state-dashboard";
+import {
+  ADMIN_PENDING_COUNT_KEYS,
+  type AdminPendingCountKey,
+  type AdminPendingCounts,
+} from "@/lib/admin-work-queues";
 
-export type AdminPendingCounts = {
-  xeroSilentWebhook?: number;
-  familyRequests: number;
-  memberApplications: number;
-  refundAppeals: number;
-  /** B5 (#2262): open hand-back tasks for cancelled cash-settled bookings. */
-  manualRefundTasks: number;
-  creditApprovals: number;
-  bookingReviews: number;
-  bookingChangeRequests: number;
-  /**
-   * #2526: NEW-booking policy-exception requests awaiting a Booking Officer.
-   * Counted separately because they live in their own table — a MODIFICATION
-   * exception request is a `BookingChangeRequest` and is already inside
-   * `bookingChangeRequests` above. The sidebar sums the two, so a member waiting
-   * on either kind raises the same badge.
-   */
-  newBookingPolicyExceptionRequests: number;
-  publicBookingRequests: number;
-  unpaidFinishedStays: number;
-  unsettledAdditionalFinishedStays: number;
-  /**
-   * #2350: the same uncollected addition on a stay that has not finished yet.
-   * Disjoint from the finished count above, so the sidebar badge sums the pair.
-   */
-  unsettledAdditionalUpcomingStays: number;
-  membershipCancellations: number;
-  archiveRequests: number;
-  deletionRequests: number;
-  memberDeleteRequests: number;
-  issueReports: number;
-  /**
-   * Uncovered LODGE-nights, not calendar dates (#2917): each lodge runs its own
-   * hut leader, so a night on which two lodges both lack one is two pieces of
-   * work and the sidebar badge counts two. Identical to the old number on a
-   * single-lodge club.
-   */
-  unassignedHutLeaderDates: number;
-};
+export type { AdminPendingCounts } from "@/lib/admin-work-queues";
+
+type PendingCounter = (context: { today: Date }) => Promise<number>;
 
 /**
- * All admin queue counts in one query batch, for the sidebar badges.
+ * One counter per count the officer work queues read (`ADMIN_WORK_QUEUES` in
+ * `src/lib/admin-work-queues.ts`).
  *
- * ponytail: each count mirrors the where-clause of its queue route/service
+ * ponytail: each counter mirrors the where-clause of its queue route/service
  * (family-groups/requests, member-applications, refund-requests,
  * manual refund tasks (#2262, the cash hand-back queue),
  * credit-approvals, booking-reviews, booking-change-requests,
  * new-booking policy-exception requests (#2526),
  * booking-requests, unpaid-finished-stays and unsettled stay
- * additions, both finished and still-upcoming (shared helpers with the
- * dashboard cards, #1709/#1731/#1723/#2350),
+ * additions, both finished and still-upcoming (shared predicates,
+ * #1709/#1731/#1723/#2350),
  * membership-cancellation-requests,
  * member-lifecycle-action-requests (ARCHIVE and DELETE review queues),
  * deletion-requests, issue-reports,
- * hut-leaders/unassigned-dates); update both together if a queue definition
+ * hut-leaders/unassigned-dates, the silent Xero webhook, and Stuck States'
+ * affected-item headline (#4962)); update both together if a queue definition
  * changes.
  */
-export async function getAdminPendingCounts(): Promise<AdminPendingCounts> {
-  // ONE club day for the whole panel. Three of these queues and the hut-leader
-  // coverage read are all bounded on today, and three independent reads across
-  // this `Promise.all` could straddle club midnight and report counts from two
-  // different days beside each other (#3123).
-  const today = await clubTodayDateOnlyInstant();
-  const [
-    familyRequests,
-    memberApplications,
-    refundAppeals,
-    manualRefundTasks,
-    creditApprovals,
-    bookingReviews,
-    bookingChangeRequests,
-    newBookingPolicyExceptionRequests,
-    publicBookingRequests,
-    unpaidFinishedStays,
-    unsettledAdditionalFinishedStays,
-    unsettledAdditionalUpcomingStays,
-    membershipCancellations,
-    archiveRequests,
-    deletionRequests,
-    memberDeleteRequests,
-    issueReports,
-    unassignedDates,
-  ] = await Promise.all([
+const PENDING_COUNTERS = {
+  xeroSilentWebhook: async () => ((await getXeroWebhookHealth()).silent ? 1 : 0),
+  familyRequests: () =>
     prisma.familyGroupJoinRequest.count({
       where: { status: "PENDING", type: { in: [...REVIEWED_REQUEST_TYPES] } },
     }),
+  memberApplications: () =>
     prisma.memberApplication.count({ where: { status: "PENDING_ADMIN" } }),
-    prisma.refundRequest.count({ where: { status: "PENDING" } }),
+  refundAppeals: () => prisma.refundRequest.count({ where: { status: "PENDING" } }),
+  manualRefundTasks: () =>
     prisma.manualRefundTask.count({ where: { status: "OPEN" } }),
+  creditApprovals: () =>
     prisma.adminCreditAdjustmentRequest.count({ where: { status: "PENDING" } }),
+  bookingReviews: () =>
     prisma.booking.count({
       where: { deletedAt: null, adminReviewStatus: "PENDING" },
     }),
+  bookingChangeRequests: () =>
     prisma.bookingChangeRequest.count({ where: { status: "REQUESTED" } }),
+  newBookingPolicyExceptionRequests: () =>
     prisma.newBookingPolicyExceptionRequest.count({
       where: { status: "REQUESTED" },
     }),
+  publicBookingRequests: () =>
     prisma.bookingRequest.count({
       where: buildBookingRequestListWhere("QUEUE"),
     }),
-    prisma.booking.count({
-      where: buildUnpaidFinishedStaysWhere(today),
-    }),
+  unpaidFinishedStays: ({ today }) =>
+    prisma.booking.count({ where: buildUnpaidFinishedStaysWhere(today) }),
+  unsettledAdditionalFinishedStays: ({ today }) =>
     prisma.booking.count({
       where: buildUnsettledAdditionalFinishedStaysWhere(today),
     }),
+  unsettledAdditionalUpcomingStays: ({ today }) =>
     prisma.booking.count({
       where: buildUnsettledAdditionalUpcomingStaysWhere(today),
     }),
-    getPendingMembershipCancellationReviewCount(),
-    getPendingMemberArchiveReviewCount(),
+  membershipCancellations: () => getPendingMembershipCancellationReviewCount(),
+  archiveRequests: () => getPendingMemberArchiveReviewCount(),
+  deletionRequests: () =>
     prisma.deletionRequest.count({
       where: { status: { in: OPEN_DELETION_REQUEST_STATUSES } },
     }),
-    getPendingMemberDeleteReviewCount(),
-    prisma.issueReport.count({ where: { resolvedAt: null } }),
-    getUnassignedHutLeaderDates({ today, scope: { kind: "all" } }),
-  ]);
+  memberDeleteRequests: () => getPendingMemberDeleteReviewCount(),
+  issueReports: () => prisma.issueReport.count({ where: { resolvedAt: null } }),
+  unassignedHutLeaderDates: async ({ today }) =>
+    (await getUnassignedHutLeaderDates({ today, scope: { kind: "all" } })).length,
+  // Cached for a minute: the sidebar asks on every admin navigation, and the
+  // stuck-state scan is many queries (no provider network call).
+  stuckStatesAffected: () => getStuckStateAffectedCount(),
+} satisfies Record<AdminPendingCountKey, PendingCounter>;
 
-  const webhookHealth = await getXeroWebhookHealth();
-  return {
-    xeroSilentWebhook: webhookHealth.silent ? 1 : 0,
-    familyRequests,
-    memberApplications,
-    refundAppeals,
-    manualRefundTasks,
-    creditApprovals,
-    bookingReviews,
-    bookingChangeRequests,
-    newBookingPolicyExceptionRequests,
-    publicBookingRequests,
-    unpaidFinishedStays,
-    unsettledAdditionalFinishedStays,
-    unsettledAdditionalUpcomingStays,
-    membershipCancellations,
-    archiveRequests,
-    deletionRequests,
-    memberDeleteRequests,
-    issueReports,
-    unassignedHutLeaderDates: unassignedDates.length,
-  };
+/**
+ * Every officer queue count in one batch, for the dashboard cards and the
+ * sidebar badges alike.
+ *
+ * Each counter settles on its own (#4962): one that throws is logged, reads 0,
+ * and is named in `unavailable`, so the rest still arrive and the caller can
+ * say which number it could not load rather than show a false zero.
+ *
+ * `today` is ONE club day for the whole panel (#3123): four of these queues
+ * are bounded on it, and independent reads across the batch could straddle club
+ * midnight. A caller that already holds the day (the dashboard) passes it, so
+ * its own cards and these counts describe the same day.
+ */
+export async function getAdminPendingCounts(input?: {
+  today?: Date;
+}): Promise<AdminPendingCounts> {
+  const today = input?.today ?? (await clubTodayDateOnlyInstant());
+  const settled = await Promise.allSettled(
+    ADMIN_PENDING_COUNT_KEYS.map((key) => PENDING_COUNTERS[key]({ today })),
+  );
+
+  const counts = { unavailable: [] } as unknown as AdminPendingCounts;
+  settled.forEach((result, index) => {
+    const key = ADMIN_PENDING_COUNT_KEYS[index];
+    if (result.status === "fulfilled") {
+      counts[key] = result.value;
+      return;
+    }
+    counts[key] = 0;
+    counts.unavailable.push(key);
+    logger.error(
+      { err: result.reason, count: key },
+      "Admin pending count failed; reporting it as unavailable",
+    );
+  });
+  return counts;
 }

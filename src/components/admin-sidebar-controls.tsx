@@ -6,7 +6,7 @@
  * counts behind the badges, the "Search…" trigger, the role-panel switcher
  * (#108), and the hub-menu role switcher (C14 #4811).
  */
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Search } from "lucide-react";
@@ -22,7 +22,11 @@ import { cn } from "@/lib/utils";
 import { ADMIN_HUBS } from "@/lib/admin-hubs";
 import { hubRoot } from "@/lib/admin-hubs/define";
 import { openAdminCommandPalette } from "@/lib/admin-command-palette-events";
-import type { AdminPendingCounts } from "@/lib/admin-pending-counts";
+import { ADMIN_QUEUE_CHANGED_EVENT } from "@/lib/admin-queue-events";
+import {
+  ZERO_ADMIN_PENDING_COUNTS,
+  type AdminPendingCounts,
+} from "@/lib/admin-work-queues";
 import {
   ADMIN_NAV_PANELS,
   ADMIN_NAV_PANEL_STORAGE_KEY,
@@ -30,49 +34,118 @@ import {
   type AdminNavPanelKey,
 } from "@/lib/admin-nav-panels";
 
-const ZERO_PENDING_COUNTS: AdminPendingCounts = {
-  familyRequests: 0,
-  memberApplications: 0,
-  refundAppeals: 0,
-  manualRefundTasks: 0,
-  creditApprovals: 0,
-  bookingReviews: 0,
-  bookingChangeRequests: 0,
-  newBookingPolicyExceptionRequests: 0,
-  publicBookingRequests: 0,
-  unpaidFinishedStays: 0,
-  unsettledAdditionalFinishedStays: 0,
-  unsettledAdditionalUpcomingStays: 0,
-  membershipCancellations: 0,
-  archiveRequests: 0,
-  deletionRequests: 0,
-  memberDeleteRequests: 0,
-  issueReports: 0,
-  unassignedHutLeaderDates: 0,
-};
+export type PendingCountsStatus = "loading" | "ok" | "error";
 
-/** Fetch every queue count for the sidebar badges in a single request. */
-export function usePendingCounts(): AdminPendingCounts {
-  const [counts, setCounts] = useState<AdminPendingCounts>(ZERO_PENDING_COUNTS);
+/**
+ * The officer work-queue counts behind the Needs Attention badges (#4962).
+ *
+ * The admin layout is never remounted on a client navigation, so "fetch on
+ * mount" meant "fetch once per hard reload": a decided request kept its badge
+ * and new work never appeared. The counts are refetched instead
+ * - whenever the pathname changes,
+ * - when the tab regains focus or becomes visible again,
+ * - when a queue page announces a decision (`notifyAdminQueueChanged`),
+ * with at most one request in flight: a trigger during a request queues one
+ * more after it, never a second concurrent one.
+ *
+ * A failed or non-OK load sets `status: "error"` and KEEPS the last good
+ * counts, so the sidebar can say it could not load them rather than show a
+ * false zero; `retry` asks again.
+ */
+export function usePendingCounts(): {
+  counts: AdminPendingCounts;
+  status: PendingCountsStatus;
+  retry: () => void;
+} {
+  const pathname = usePathname();
+  const [counts, setCounts] = useState<AdminPendingCounts>(ZERO_ADMIN_PENDING_COUNTS);
+  const [status, setStatus] = useState<PendingCountsStatus>("loading");
+  const load = useRef<() => void>(() => {});
 
   useEffect(() => {
-    let cancelled = false;
+    let disposed = false;
+    let inFlight = false;
+    let again = false;
 
-    fetch("/api/admin/pending-counts")
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        if (!cancelled && data) {
-          setCounts({ ...ZERO_PENDING_COUNTS, ...data });
-        }
-      })
-      .catch(() => {});
+    const run = () => {
+      if (inFlight) {
+        again = true;
+        return;
+      }
+      inFlight = true;
+      fetch("/api/admin/pending-counts", { cache: "no-store" })
+        .then(async (response) => {
+          if (!response.ok) throw new Error(`pending-counts ${response.status}`);
+          const data = (await response.json()) as Partial<AdminPendingCounts>;
+          if (disposed) return;
+          setCounts({ ...ZERO_ADMIN_PENDING_COUNTS, ...data });
+          setStatus("ok");
+        })
+        .catch(() => {
+          if (!disposed) setStatus("error");
+        })
+        .finally(() => {
+          inFlight = false;
+          if (again && !disposed) {
+            again = false;
+            run();
+          }
+        });
+    };
+    load.current = run;
 
+    const onVisible = () => {
+      if (document.visibilityState === "visible") run();
+    };
+    window.addEventListener("focus", run);
+    window.addEventListener(ADMIN_QUEUE_CHANGED_EVENT, run);
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
-      cancelled = true;
+      disposed = true;
+      window.removeEventListener("focus", run);
+      window.removeEventListener(ADMIN_QUEUE_CHANGED_EVENT, run);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
 
-  return counts;
+  // Every navigation, the first render included.
+  useEffect(() => {
+    load.current();
+  }, [pathname]);
+
+  const retry = useCallback(() => load.current(), []);
+  return { counts, status, retry };
+}
+
+/**
+ * Shown in place of a silent, empty Needs Attention section when the counts
+ * could not be loaded (#4962): a failure must never look like "nothing to do".
+ */
+export function PendingCountsError({
+  retry,
+  partial,
+}: {
+  retry: () => void;
+  /** Some counts loaded and some did not, rather than the whole request failing. */
+  partial?: boolean;
+}) {
+  return (
+    <div
+      role="alert"
+      className="mx-3 my-1 flex items-center gap-2 rounded-md border border-warning-6 bg-warning-3 px-2 py-1.5 text-xs text-warning-11"
+    >
+      <span className="flex-1">
+        {partial ? "Couldn't load some counts" : "Couldn't load counts"}
+      </span>
+      <button
+        type="button"
+        onClick={retry}
+        className="font-semibold underline underline-offset-2 hover:no-underline"
+      >
+        Retry
+      </button>
+    </div>
+  );
 }
 
 /**
