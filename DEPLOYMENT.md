@@ -325,7 +325,7 @@ not a measurement of the headroom.
 
 ### Member money journal grants (M1)
 
-The journal is inert: this release changes no production money reader or writer.
+At M1 the journal was inert: that release changed no production money reader or writer.
 #4453's append-only treatment now covers `MemberMoneyEvent`, `MemberMoneyJournal`,
 `MemberMoneyLine`, `MemberMoneyObligation`, `MemberMoneyApplication`,
 `MemberMoneySourceLink` and `MemberMoneySourcePosting`: the migration role owns
@@ -1927,7 +1927,7 @@ keeps one record per cardholder dispute (chargeback), emails Finance when a
 dispute opens and when it closes, shows "Disputed by cardholder" on the
 booking and on **Finance → Payments**, and, while a dispute is open or lost,
 issues no card refund or account credit for that payment: a cancel, or an edit
-that lowers the price, is handed to the treasurer instead (`INV-PAY-151`). Disputes opened before the upgrade are
+that lowers the price, is handed to the treasurer instead (`INV-PAY-153`). Disputes opened before the upgrade are
 not back-filled, so check Stripe's **Disputes** page once after adding the
 events and handle any open dispute by hand.
 

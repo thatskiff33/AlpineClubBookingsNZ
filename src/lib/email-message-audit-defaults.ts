@@ -123,7 +123,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "admin-membership-application-pending": {
     "defaultSubject": "Membership application ready: {{applicantName}}",
-    "defaultBody": "Membership Application Ready for Review\n\nBoth nominators have now confirmed a new membership application.\n\nApplicant: {{applicantName}}\nEmail: {{applicantEmail}}\n\nDependent family members included in this application: {{familyMemberCount}}\n\nReview Application: {{BASE_URL}}/admin/member-applications\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+    "defaultBody": "Membership Application Ready for Review\n\nBoth nominators have now confirmed a new membership application.\n\nApplicant: {{applicantName}}\nEmail: {{applicantEmail}}\n\nDependent family members included in this application: {{familyMemberCount}}\n\nReview Application: {{BASE_URL}}" + adminHref("member-applications") + "\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
   },
   "membership-application-approved": {
     "defaultSubject": "Your {{CLUB_NAME}} membership has been approved",
@@ -155,7 +155,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "admin-family-group-request": {
     "defaultSubject": "Family Group Request: {{requesterName}} ({{requestType}})",
-    "defaultBody": "Family Group Request\n\nA new {{requestType}} request has been submitted.\n\nRequester: {{requesterName}}\n\nGroup: {{groupName}}\n\n{{details}}\n\nReview Requests: {{BASE_URL}}/admin/family-groups\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+    "defaultBody": "Family Group Request\n\nA new {{requestType}} request has been submitted.\n\nRequester: {{requesterName}}\n\nGroup: {{groupName}}\n\n{{details}}\n\nReview Requests: {{BASE_URL}}" + adminHref("family-groups") + "\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
   },
   "join-request-confirmation": {
     "defaultSubject": "Join request submitted — {{CLUB_BOOKINGS_NAME}}",
@@ -315,7 +315,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Booking card payment the app could not match - check it: {{amount}}",
     "defaultBody": "Booking Card Payment the App Could Not Match\n\nA card payment the app started for a booking went through in Stripe, but the app has no matching payment on that booking, so it did not mark the booking paid and has sent nothing to Xero.\n\n{{unmatchedAppPaymentNote}}\n\nAmount: {{amount}}\nReceived: {{receivedAt}}\nBooking: {{bookingId}}\nFound in the app: {{ledgerMatch}}\nStripe payment: {{paymentIntentId}}\nCharge: {{chargeId}}\n\nOpen in Stripe: {{stripeDashboardUrl}}"
   },
-  // #4911 (`INV-PAY-151`): a cardholder's dispute (chargeback), when it opens and when it closes.
+  // #4911 (`INV-PAY-153`): a cardholder's dispute (chargeback), when it opens and when it closes.
   "admin-stripe-dispute": {
     "defaultSubject": "{{disputeSubjectLabel}}: {{amount}}",
     "defaultBody": "Card Payment Dispute\n\n{{disputeSubjectLabel}}.\n\n{{disputeNextStep}}\n\n{{disputeHoldNote}}\n\nStatus: {{outcome}}\nAmount: {{amount}}\nReason: {{reason}}\nOpened: {{openedAt}}\nBooking: {{bookingId}}\nBooked by: {{bookingOwner}}\nDispute: {{disputeId}}\nStripe payment: {{paymentIntentId}}\nCharge: {{chargeId}}\n\nOpen in Stripe: {{stripeDashboardUrl}}"

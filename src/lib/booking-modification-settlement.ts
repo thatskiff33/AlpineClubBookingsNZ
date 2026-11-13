@@ -65,7 +65,7 @@ import {
 export type BookingModificationPaymentContext = {
   pendingRefundAmountCents: number;
   /**
-   * #5061 follow-up (`INV-PAY-151`): a Stripe dispute holds the member's card
+   * #5061 follow-up (`INV-PAY-153`): a Stripe dispute holds the member's card
    * payment, so this edit's refund is with the treasurer (a hand-back) and no
    * Stripe refund runs here; the email says so (`with_treasurer`).
    */

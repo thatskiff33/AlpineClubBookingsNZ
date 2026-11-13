@@ -16,7 +16,7 @@ vi.mock("@/lib/admin-member-xero-actions", async (importOriginal) => {
   return { ...actual, ...mocks };
 });
 
-import { useMemberXero } from "@/app/(admin)/admin/members/[id]/_hooks/use-member-xero";
+import { useMemberXero } from "@/app/(admin)/admin/membership/members/[id]/_hooks/use-member-xero";
 import { AdminMemberXeroActionError } from "@/lib/admin-member-xero-actions";
 
 describe("useMemberXero partial-success recovery", () => {

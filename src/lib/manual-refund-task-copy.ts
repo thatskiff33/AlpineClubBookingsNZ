@@ -438,7 +438,7 @@ export function cancellationHandBackReason({ bookingId, refundPercentage, payee,
 }
 
 /**
- * #4911 (`INV-PAY-151`): THE REASON LINE of a paid cancellation handed to the
+ * #4911 (`INV-PAY-153`): THE REASON LINE of a paid cancellation handed to the
  * treasurer because the cardholder is disputing the card payment, or has won the
  * dispute. It names each dispute, so the treasurer can find it in Stripe before
  * deciding what, if anything, is still owed. Officer-facing, so no issue numbers.
@@ -452,7 +452,7 @@ export function disputedCancellationHandBackReason({ bookingId, refundPercentage
 }
 
 /**
- * #5061 follow-up (`INV-PAY-151`): THE REASON LINE of an edit's refund
+ * #5061 follow-up (`INV-PAY-153`): THE REASON LINE of an edit's refund
  * hand-back raised because the card payment is disputed - a lowered price whose
  * refund the app neither sends to the card nor holds as credit. Worded as the
  * cancel's (`disputedCancellationHandBackReason`), naming each dispute.

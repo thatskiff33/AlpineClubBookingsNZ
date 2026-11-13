@@ -2458,7 +2458,7 @@ inbound fence records its conflict the same way, under the
 ### Stripe dispute record (#4911)
 
 One `StripeDispute` row per Stripe dispute (chargeback), kept by the four
-`charge.dispute.*` webhook events (`INV-PAY-151`). The row's status follows
+`charge.dispute.*` webhook events (`INV-PAY-153`). The row's status follows
 Stripe's dispute status; the first event to arrive inserts it, whichever it is:
 
 ```text
@@ -4603,7 +4603,7 @@ PROCESSING -> attempt throws
   card refund whose slice's reservation the journal refused (#4516, M4c)
                               -> FAILED terminal at once, the same way; Stripe was not
                                  asked for that slice; settled by "Paid another way"
-  card refund on a capture an OPEN or LOST Stripe dispute holds (#4911, INV-PAY-151)
+  card refund on a capture an OPEN or LOST Stripe dispute holds (#4911, INV-PAY-153)
                               -> FAILED terminal at once, the same way; Stripe was not
                                  asked; the cause names the dispute for the treasurer
 ```

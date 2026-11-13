@@ -1627,7 +1627,7 @@ export async function modifyBookingBatch({
             netChargeCents: reduction.netChargeLeftCents,
             refundableCashCents: await refundableCashNetOfOpenHandBacks(tx, booking.payment),
             todayAtClub: moneyTierDay,
-            // #5061 follow-up (`INV-PAY-151`): read under this edit's locks.
+            // #5061 follow-up (`INV-PAY-153`): read under this edit's locks.
             refundHeldForDispute: (await editReductionDisputeHold(tx, booking)).cents > 0,
           })
         : await calculateModificationSettlementOptions({
@@ -2636,7 +2636,7 @@ async function dispatchBatchPostTransactionSideEffects({
     datesChanged: result.datesChanged,
     guestIdentityChanged: result.guestIdentityChanged,
     settlementMethod: result.settlementMethod,
-    // #5061 follow-up (`INV-PAY-151`): a disputed payment's reduction goes back by hand.
+    // #5061 follow-up (`INV-PAY-153`): a disputed payment's reduction goes back by hand.
     refundedThroughStripe: result.hasSucceededPayment && !result.refundHeldForDispute,
     appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     // #3653: the organiser child refund raises the one note, after Stripe.

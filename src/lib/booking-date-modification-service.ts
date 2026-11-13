@@ -1560,7 +1560,7 @@ async function dispatchDatePostTransactionSideEffects({
     // issued invoice falls back to the full delta inside classify when null.
     settlementAmountCents: result.xeroRefundAmountCents,
     settlementMethod: result.settlementMethod,
-    // #5061 follow-up (`INV-PAY-151`): a disputed payment's reduction goes back by hand.
+    // #5061 follow-up (`INV-PAY-153`): a disputed payment's reduction goes back by hand.
     refundedThroughStripe: result.hasSucceededPayment && !result.refundHeldForDispute,
     appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     // #3653: the organiser child refund raises the one note, after Stripe.

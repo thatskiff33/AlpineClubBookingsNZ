@@ -55,7 +55,7 @@ export type BookingModificationSettlementOptions = {
    */
   organiserRefundByBankTransfer: boolean;
   /**
-   * #5061 follow-up (`INV-PAY-151`): an OPEN or LOST Stripe dispute holds the
+   * #5061 follow-up (`INV-PAY-153`): an OPEN or LOST Stripe dispute holds the
    * member's card payment (`editReductionDisputeHold`), so the reduction is
    * handed to the treasurer: no choice is offered, no card refund is made and
    * no account credit is minted (`heldForDisputeSettlementCents`).
@@ -69,7 +69,7 @@ export type EditDisputeHoldDb = Pick<Prisma.TransactionClient, "stripeDispute" |
 const NO_DISPUTE_HOLD: CaptureDisputeHold = { cents: 0, disputes: [] };
 
 /**
- * #5061 follow-up (`INV-PAY-151`): the Stripe dispute hold on the money a
+ * #5061 follow-up (`INV-PAY-153`): the Stripe dispute hold on the money a
  * reduction would return - the member's own captured card payment. A booking
  * the group organiser paid for is outside it: an organiser-card joiner's refund
  * is stopped by the refund chokepoint instead (`processRefund`), and an
@@ -88,7 +88,7 @@ export async function editReductionDisputeHold(
 }
 
 /**
- * #5061 follow-up (`INV-PAY-151`): what a disputed reduction hands to the
+ * #5061 follow-up (`INV-PAY-153`): what a disputed reduction hands to the
  * treasurer - the whole reduction on the credit tier, as a disputed paid
  * cancel's hand-back is (`cancelRefundDisposition`), whatever the member chose.
  */
@@ -208,7 +208,7 @@ export async function calculateModificationSettlementOptions({
       refundHeldForDispute: false,
     };
   }
-  // #5061 follow-up (`INV-PAY-151`): a disputed payment offers no choice; the treasurer has the reduction.
+  // #5061 follow-up (`INV-PAY-153`): a disputed payment offers no choice; the treasurer has the reduction.
   const refundHeldForDispute = (await editReductionDisputeHold(db, booking)).cents > 0;
   return {
     basisAmountCents,
@@ -270,7 +270,7 @@ export function calculateFullReductionSettlementOptions({
   /** `refundableCashNetOfOpenHandBacks`, read by the caller under its locks (`INV-PAY-117`). */
   refundableCashCents: number;
   todayAtClub: CalendarDate;
-  /** #5061 follow-up: `editReductionDisputeHold` above zero, read by the caller under its locks (`INV-PAY-151`). */
+  /** #5061 follow-up: `editReductionDisputeHold` above zero, read by the caller under its locks (`INV-PAY-153`). */
   refundHeldForDispute: boolean;
 }): BookingModificationSettlementOptions | null {
   const basisAmountCents = settlementBasisCents(booking, netChargeCents, refundableCashCents);
@@ -344,7 +344,7 @@ export function resolveSelectedSettlementAmount({
   }
 
   if (settlementOptions.refundHeldForDispute) {
-    // #5061 follow-up (`INV-PAY-151`): money back, by the treasurer's hand - never account credit.
+    // #5061 follow-up (`INV-PAY-153`): money back, by the treasurer's hand - never account credit.
     const amountCents = heldForDisputeSettlementCents(settlementOptions);
     return {
       settlementMethod: amountCents > 0 ? ("card" as const) : null,

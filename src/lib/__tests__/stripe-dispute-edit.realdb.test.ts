@@ -1,5 +1,5 @@
 /**
- * Real-PostgreSQL proof of the #5061 follow-up (`INV-PAY-151`): an edit that
+ * Real-PostgreSQL proof of the #5061 follow-up (`INV-PAY-153`): an edit that
  * lowers the price of a booking whose card capture the cardholder disputes
  * issues no card refund and no account credit, and hands the reduction to the
  * treasurer - as the cancel does (`stripe-dispute-cancel.realdb.test.ts`).

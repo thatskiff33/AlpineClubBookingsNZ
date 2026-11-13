@@ -417,7 +417,7 @@ export function PriceSummaryCard({
                       : "No refund is available for this reduction under the current policy."}
                   </p>
                 ) : quote.settlementOptions.refundHeldForDispute ? (
-                  // #5061 follow-up (`INV-PAY-151`): the save hands the credit tier to the treasurer, in the email's words.
+                  // #5061 follow-up (`INV-PAY-153`): the save hands the credit tier to the treasurer, in the email's words.
                   <p data-testid="disputed-refund-notice">
                     {disputedRefundSentence(
                       formatCents(quote.settlementOptions.accountCreditAmountCents, format),

@@ -73,7 +73,7 @@ export function queueGuestRemovalXeroSettlement(
     // classifyXeroBookingEditSettlement when this is null.
     settlementAmountCents: settlement.xeroRefundAmountCents,
     settlementMethod: settlement.settlementMethod,
-    // #5061 follow-up (`INV-PAY-151`): a disputed payment's reduction goes back by hand.
+    // #5061 follow-up (`INV-PAY-153`): a disputed payment's reduction goes back by hand.
     refundedThroughStripe: settlement.hasSucceededPayment && !settlement.refundHeldForDispute,
     appliedCreditGiveBackCents: settlement.appliedCreditGivenBackCents,
     // #3653: the organiser child refund raises the one note, after Stripe.

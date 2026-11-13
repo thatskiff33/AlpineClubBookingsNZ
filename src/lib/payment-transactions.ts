@@ -1587,7 +1587,7 @@ export async function refundPaymentTransactions({
     slices = derived.slices;
   }
 
-  // #4911 (`INV-PAY-151`): a disputed capture refunds nothing, decided for every slice before any is reserved or
+  // #4911 (`INV-PAY-153`): a disputed capture refunds nothing, decided for every slice before any is reserved or
   // sent, so no part of a refund goes out ahead of the refusal. The chokepoint (`processRefund`) asks again per slice.
   const disputeHold = await disputedCaptureCents(store, slices.map((slice) => slice.transaction.stripePaymentIntentId));
   const [first] = disputeHold.disputes;

@@ -67,7 +67,7 @@ export const REVIEW_CREDIT_ANCHOR_TAKEN_MESSAGE =
   "The booking change behind this review has already issued account credit, so a second credit cannot be recorded against it. Hand the amount back another way, then dismiss this task with a note recording what you paid and how - the note is the record that the money was settled outside the system.";
 
 /**
- * #5061 follow-up (`INV-PAY-151`): the account-credit route on a booking whose
+ * #5061 follow-up (`INV-PAY-153`): the account-credit route on a booking whose
  * captured card payment is under an OPEN or LOST Stripe dispute. The bank is
  * taking that money back from the club, so crediting the member as well would
  * pay them twice - as a disputed edit or cancel mints no credit either. The

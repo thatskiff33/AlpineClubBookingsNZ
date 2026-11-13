@@ -115,7 +115,7 @@ export type OwnCardRefundMethod = "card" | "card_pending";
  * was minted; a hand-back task was raised). #3973: the organiser's card
  * refunds, and the organiser's Internet Banking settlement the club repays by
  * hand (`OrganiserRefundMethod`). #4084: the member's own card
- * (`OwnCardRefundMethod`). #4911 (`INV-PAY-151`): "disputed" is a card payment
+ * (`OwnCardRefundMethod`). #4911 (`INV-PAY-153`): "disputed" is a card payment
  * the cardholder is disputing with their bank, or has won back, so the refund
  * is with the treasurer: no card refund and no account credit were issued.
  */
@@ -217,7 +217,7 @@ export function bookingCancelledRefundMade(refundCents: number, refundMethod: Bo
 }
 
 /**
- * #4911 (`INV-PAY-151`): a cancel whose card payment is disputed - the email and
+ * #4911 (`INV-PAY-153`): a cancel whose card payment is disputed - the email and
  * the cancel dialog's confirmation (`INV-SSOT`). The treasurer checks the
  * dispute first, since the bank may already have returned the money.
  */
@@ -291,7 +291,7 @@ function bankTransferRefundSentence(amount: string, recipient: "you" | "the memb
  * the group organiser paid for by card (#3653), and the refund's debt says
  * Stripe made it. `organiser_card_pending`: that refund, not made yet - failed,
  * not claimed in the run, or unreadable - and owed to the recovery runner.
- * `with_treasurer` (#5061 follow-up, `INV-PAY-151`): the member's card payment
+ * `with_treasurer` (#5061 follow-up, `INV-PAY-153`): the member's card payment
  * is disputed, so no card refund or account credit was issued and the
  * treasurer has the refund - the disputed cancel's wording (`disputedRefundSentence`).
  */

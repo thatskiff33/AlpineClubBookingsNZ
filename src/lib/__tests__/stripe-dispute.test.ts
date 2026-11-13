@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type Stripe from "stripe";
 
 /**
- * #4911 (`INV-PAY-151`): the record and alerts of a cardholder's dispute - a
+ * #4911 (`INV-PAY-153`): the record and alerts of a cardholder's dispute - a
  * matched capture and an unknown charge, delivery out of order, each outcome,
  * the monotonic merge, redelivery and a lease takeover, and an alert nobody
  * received. The store is one in-memory table keyed as the unique index keys
@@ -585,7 +585,7 @@ describe("recordStripeDispute (#4911)", () => {
   });
 });
 
-describe("a lost dispute later won (#5061 follow-up, INV-PAY-151)", () => {
+describe("a lost dispute later won (#5061 follow-up, INV-PAY-153)", () => {
   beforeEach(reset);
 
   const lost = () => recordStripeDispute(dispute({ status: "lost" }), event("charge.dispute.closed", MINUTE, "evt_lost"), CLUB_FORMAT_TEST);

@@ -151,7 +151,7 @@ export type RemoveBookingGuestResult = {
   organiserChildRefund: { amountCents: number } | null;
   xeroAdditionalAmountCents: number;
   hasSucceededPayment: boolean;
-  /** #5061 follow-up: see `PaymentAdjustmentResult` (`INV-PAY-151`). */
+  /** #5061 follow-up: see `PaymentAdjustmentResult` (`INV-PAY-153`). */
   refundHeldForDispute: boolean;
   hasIssuedXeroInvoice: boolean;
   paymentStatus: string | null;

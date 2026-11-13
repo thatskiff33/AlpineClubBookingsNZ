@@ -142,7 +142,7 @@ describe("#4299: what this member has remaining to pay", () => {
   });
 });
 
-describe("#5061 follow-up (INV-PAY-151): a reduction on a disputed card payment", () => {
+describe("#5061 follow-up (INV-PAY-153): a reduction on a disputed card payment", () => {
   const disputed = (): QuoteResult =>
     ({
       ...organiserQuote(false),

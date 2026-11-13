@@ -9,7 +9,7 @@
  * as pending has failed, so it is owed again; the payments cron's read-back
  * finds one only while it is still recorded pending.
  *
- * The four `charge.dispute.*` events (#4911, `INV-PAY-151`) record a
+ * The four `charge.dispute.*` events (#4911, `INV-PAY-153`) record a
  * cardholder's dispute, alert Finance, and hold the capture's refunds and
  * credits while it is open or lost.
  */

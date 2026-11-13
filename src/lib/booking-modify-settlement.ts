@@ -82,7 +82,7 @@ export type PaymentAdjustmentResult = {
   additionalAsk: AdditionalAsk;
   pendingRefundAmountCents: number;
   hasSucceededPayment: boolean;
-  /** INV-PAY-151: treasurer hand-back; pending Stripe refund and account credit are zero. */
+  /** INV-PAY-153: treasurer hand-back; pending Stripe refund and account credit are zero. */
   refundHeldForDispute: boolean;
   hasIssuedXeroInvoice: boolean;
   xeroRefundAmountCents: number;
@@ -243,7 +243,7 @@ export async function applyPaymentAdjustments(
   // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
   const remainingRefundableCents = await refundableCashForModification(tx, booking.payment, reduction);
 
-  // INV-PAY-151: decide under the door's global/lodge locks; the quote's read only shaped the choices.
+  // INV-PAY-153: decide under the door's global/lodge locks; the quote's read only shaped the choices.
   // OPEN/LOST disputes send the whole reduction to the treasurer; options that found a hold keep it (they offered no choice).
   const refundHeldForDispute = netAmountCents < 0 && hasSucceededPayment &&
     (settlementOptions?.refundHeldForDispute === true || (await editReductionDisputeHold(tx, booking)).cents > 0);

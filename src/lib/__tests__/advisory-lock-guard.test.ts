@@ -1771,7 +1771,7 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // other lock and no advisory key. See docs/CONCURRENCY_AND_LOCKING.md, "An
   // allocation Xero no longer lists (#4447)".
   "src/lib/xero-inbound/retire-unlisted-credit-note-allocations.ts": 1,
-  // #4911 (`INV-PAY-151`): a dispute event locks its own StripeDispute row
+  // #4911 (`INV-PAY-153`): a dispute event locks its own StripeDispute row
   // (`SELECT 1 … FOR NO KEY UPDATE`), re-reads it and merges the event, so two
   // deliveries of one dispute serialise. It holds no other lock and no advisory
   // key; the refund and cancel doors only read the row. See

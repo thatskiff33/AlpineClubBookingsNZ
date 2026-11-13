@@ -36,7 +36,7 @@ interface CancelPreview {
   hasPayment: boolean;
   /** #2262: cash/off-Xero bank settlement; direct hand-back, no card refund or account credit. */
   manualRefund?: boolean;
-  /** INV-PAY-151: disputed card capture; treasurer hand-back on credit tier, as for manualRefund. */
+  /** INV-PAY-153: disputed card capture; treasurer hand-back on credit tier, as for manualRefund. */
   refundDisputed?: boolean;
   /** cancel-refund-method.ts's forced method; show only that option (credit for internet banking). */
   refundMethodForced?: Parameters<typeof ForcedRefundNote>[0]["forced"] | null; // #3949: or organiser_by_hand

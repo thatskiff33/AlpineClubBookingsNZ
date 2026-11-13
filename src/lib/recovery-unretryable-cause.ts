@@ -27,7 +27,7 @@
  * way. Stripe was not asked for it; the row goes dead for the treasurer, who
  * checks the booking's refunds and closes it "Paid another way" if owed.
  *
- * The fifth (#4911, `INV-PAY-151`): a card refund of a capture the cardholder is
+ * The fifth (#4911, `INV-PAY-153`): a card refund of a capture the cardholder is
  * disputing, or has won back from the club (`disputedCaptureRefusal`). Stripe
  * refuses a refund of a disputed charge, and a lost dispute has already paid the
  * cardholder back, so every retry is refused the same way until a person acts.

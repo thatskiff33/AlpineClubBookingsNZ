@@ -103,7 +103,7 @@ const mocks = vi.hoisted(() => ({
   planKeptLateCaptureXeroRecord: vi.fn(),
   finishKeptLateCaptureXeroRecord: vi.fn(),
   settleKeptLateCaptureRecordOnApproval: vi.fn(),
-  // #5061 follow-up (`INV-PAY-151`): the dispute hold on the payment an account credit is allocated against.
+  // #5061 follow-up (`INV-PAY-153`): the dispute hold on the payment an account credit is allocated against.
   paymentDisputedCaptureCents: vi.fn(),
 }));
 
@@ -2242,7 +2242,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     );
   });
 
-  it("MUTATION: refuses account credit against a disputed card payment (#5061 follow-up, INV-PAY-151)", async () => {
+  it("MUTATION: refuses account credit against a disputed card payment (#5061 follow-up, INV-PAY-153)", async () => {
     mocks.manualRefundTaskFindUnique.mockResolvedValue(
       editReviewTask({
         paymentId: null,

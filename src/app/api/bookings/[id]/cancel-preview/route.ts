@@ -171,7 +171,7 @@ export async function GET(
     // no longer holds money.
     const organiserCard = paidByOrganiserCard(booking) ? await organiserChildCancelBasis(prisma, booking, booking.payment) : null;
     const organiserByBank = paidByOrganiserInternetBanking(booking); // #3949: refunded to the organiser by hand, on the card tiers
-    // #4911 (`INV-PAY-151`): the cancel's own read - a disputed capture's refund goes to the treasurer.
+    // #4911 (`INV-PAY-153`): the cancel's own read - a disputed capture's refund goes to the treasurer.
     const disputed = (await paymentDisputedCaptureCents(prisma, booking.payment)).cents > 0;
     const preview = calculateCancellationPreview({
       // #3643: the cash the cancel will record, not the invoice's face value.

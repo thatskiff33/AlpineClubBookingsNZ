@@ -2051,7 +2051,7 @@ async function processRefundSupersededPaymentOperation(
           planAttemptKeys: plan.map((slice) => refundSliceStripeIdempotencyKey(operation.idempotencyKey, slice)),
         });
       }
-      // #4911 (`INV-PAY-151`): a disputed capture is refused before anything is reserved, as `refundPaymentTransactions` does.
+      // #4911 (`INV-PAY-153`): a disputed capture is refused before anything is reserved, as `refundPaymentTransactions` does.
       await assertCaptureNotDisputed(operation.paymentIntentId);
       // #4516 (M4c): this row's one request is reserved under its own key, as a slice is (plan section 5).
       const journal = await resolveBookingMoneyPostingContext();

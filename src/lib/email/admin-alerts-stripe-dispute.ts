@@ -8,7 +8,7 @@ import { type UnmuteableAdminAlertOutcome } from "./admin-alert-send-result";
 import { sendUnmuteableAdminAlert } from "./admin-alerts-shared";
 
 /**
- * #4911 (`INV-PAY-151`): a cardholder's dispute of a Stripe payment, once when
+ * #4911 (`INV-PAY-153`): a cardholder's dispute of a Stripe payment, once when
  * it opens and once when it closes. Through the UNMUTEABLE sender and
  * delivery-locked, for #4170's reason: Stripe moved the money outside the app,
  * nothing reaches Xero, and a missed response deadline loses the dispute, so

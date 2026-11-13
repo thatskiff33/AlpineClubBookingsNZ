@@ -483,7 +483,7 @@ export async function chooseEditReviewSettlementRoute({
   const allocateAgainstPaymentId = hasCapturedPayment(task.booking.payment)
     ? (task.booking.payment?.id ?? null)
     : null;
-  // #5061 follow-up (`INV-PAY-151`): no credit against a card payment the bank is taking back.
+  // #5061 follow-up (`INV-PAY-153`): no credit against a card payment the bank is taking back.
   if (allocateAgainstPaymentId !== null && (await reviewCreditPaymentDisputedCents(store, allocateAgainstPaymentId)) > 0) {
     throw new ManualBookingPaymentError(REVIEW_CREDIT_DISPUTED_MESSAGE, 409);
   }

@@ -156,7 +156,7 @@ interface CancelBookingResult {
   creditRestoredCents?: number;
   stripeRefundId?: string;
   manualRefundTaskId?: string;
-  /** #4911 (`INV-PAY-151`): a "manual" refund handed to the treasurer because the card payment is disputed. */
+  /** #4911 (`INV-PAY-153`): a "manual" refund handed to the treasurer because the card payment is disputed. */
   refundDisputed?: true;
   /** #3973: a refund that is the group organiser's (`refundMethod` stays "card"), as its email words it, for the confirmation screen. */
   organiserRefund?: { method: OrganiserRefundMethod; amountCents: number };
@@ -1632,7 +1632,7 @@ async function performBookingCancellation(
     // #3949 (owner decision, 22 Oct 2026): one the organiser paid for by Internet Banking is refunded to the organiser
     // by bank transfer - a hand-back task (the manual branch), tiered as every refund to the organiser is. The method
     // and disposition come from their one home, shared with the preview (`cancelRefundDisposition`).
-    // #4911 (`INV-PAY-151`): an OPEN or LOST dispute on any of its captures, read under the claim's locks - a capture
+    // #4911 (`INV-PAY-153`): an OPEN or LOST dispute on any of its captures, read under the claim's locks - a capture
     // the bank has taken back is handed to the treasurer, never refunded to the card or held as credit.
     const disputeHold = await paymentDisputedCaptureCents(tx, payment);
     const disputed = disputeHold.cents > 0;
@@ -1928,7 +1928,7 @@ async function performBookingCancellation(
         );
       }
       // #4685: the credit's id rides the account-credit note's row, whose stamp writes it by id.
-      cancellationCreditId = await createCancellationCredit(creditRecipientMemberId, refundAmountCents, bookingId, undefined, tx);
+      cancellationCreditId = await createCancellationCredit(tx, creditRecipientMemberId, refundAmountCents, bookingId);
     }
 
     // Card-path refund debt, ATOMIC with the claim (F2, #1349): persist the
@@ -2150,7 +2150,7 @@ async function performBookingCancellation(
     await cleanupPromoRedemption(bookingId);
     // #3949 (owner decision, 22 Oct 2026): a joiner's place the organiser paid for by Internet Banking - the hand-back is the organiser's.
     const toOrganiser = paidByOrganiserInternetBanking({ ...fresh, payment });
-    // #4911 (`INV-PAY-151`): handed to the treasurer because the cardholder disputes the card payment.
+    // #4911 (`INV-PAY-153`): handed to the treasurer because the cardholder disputes the card payment.
     const disputed = disputes.length > 0 && !toOrganiser;
     const disputeIds = disputes.map((dispute) => dispute.stripeDisputeId);
 

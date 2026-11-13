@@ -83,7 +83,7 @@ export async function fullReductionReturnRoute(
         netChargeCents: reduction.netChargeLeftCents,
         refundableCashCents: await refundableCashNetOfOpenHandBacks(tx, booking.payment),
         todayAtClub,
-        // #5061 follow-up (`INV-PAY-151`): read under the acceptance's locks.
+        // #5061 follow-up (`INV-PAY-153`): read under the acceptance's locks.
         refundHeldForDispute: (await editReductionDisputeHold(tx, loaded)).cents > 0,
       })
     : null;

@@ -410,7 +410,7 @@ describe("#3809: a booking paid by card AND credit gets back what an all-card on
 });
 
 /*
-  #5061 follow-up (`INV-PAY-151`): the door's options found the card payment
+  #5061 follow-up (`INV-PAY-153`): the door's options found the card payment
   disputed and so offered no choice. If the save's own read no longer sees the
   dispute (it closed between the two reads), the reduction still goes to the
   treasurer rather than silently returning nothing.
