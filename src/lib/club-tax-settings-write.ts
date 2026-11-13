@@ -24,7 +24,7 @@ import { readXeroTaxRates } from "@/lib/xero-tax-rates";
 
 /**
  * THE ONE WRITER of the club's tax treatment (#4632), behind `PUT` and `DELETE
- * /api/admin/club-tax`. `club-tax-settings-writer-census.test.ts` holds every
+ * /api/admin/club-tax`. `club-tax-settings-one-writer-census.test.ts` holds every
  * other production path to reads. The route validates the body and authorises
  * a Full Admin; this decides what may change and records it.
  *
