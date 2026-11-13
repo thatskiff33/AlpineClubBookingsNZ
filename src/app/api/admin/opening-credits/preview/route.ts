@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Upload a CSV file to preview" }, { status: 400 });
   }
   try {
-    const result = await buildOpeningCreditPreview(parsed.data.csvText);
+    const result = await buildOpeningCreditPreview(parsed.data.csvText, { postingAdminId: guard.session.user.id });
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
     return NextResponse.json(result.preview);
   } catch (error) {

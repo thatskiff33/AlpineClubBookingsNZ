@@ -155,6 +155,25 @@ describe("buildOpeningCreditPreview (#4988)", () => {
   });
 });
 
+describe("buildOpeningCreditPreview self-credit refusal (#4988)", () => {
+  it("refuses a row naming the administrator who would post it", async () => {
+    const result = await buildOpeningCreditPreview(FILE, { postingAdminId: "m-a" });
+    if (!result.ok) throw new Error(result.error);
+    expect(result.preview.batchKey).toBeNull();
+    expect(result.preview.rows.find((row) => row.memberId === "m-a")?.errors).toEqual([
+      expect.stringContaining("is you; a second administrator must post"),
+    ]);
+  });
+
+  it("refuses to post a file crediting the posting administrator", async () => {
+    const shown = await preview();
+    await expect(
+      postOpeningCreditBatch({ csvText: FILE, expectedBatchKey: shown.batchKey ?? "", expectedTotalCents: 5250, adminId: "m-b" }),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+});
+
 describe("postOpeningCreditBatch (#4988)", () => {
   async function confirm(overrides: Partial<{ expectedBatchKey: string; expectedTotalCents: number }> = {}) {
     const shown = await preview();
@@ -256,10 +275,35 @@ describe("reverseOpeningCreditBatch (#4988)", () => {
     expect(db.memberCredit.createMany.mock.calls[0]?.[0].data.map((row: { amountCents: number }) => row.amountCents)).toEqual([
       -1250, -4000,
     ]);
+    // Members see the credit description; the officer's reason stays off it.
+    expect(db.memberCredit.createMany.mock.calls[0]?.[0].data.map((row: { description: string }) => row.description)).toEqual([
+      "Opening credit reversed",
+      "Opening credit reversed",
+    ]);
     expect(audit.mock.calls[0]?.[0]).toMatchObject({ action: "member.credit.opening_batch.reverse", category: "payment" });
     // The lots are read before the claim stamps the batch reversed, since a
     // reversed batch's credits stop being lots.
     expect(lots.mock.invocationCallOrder[0]).toBeLessThan(db.openingCreditBatch.updateMany.mock.invocationCallOrder[0] ?? 0);
+  });
+
+  it("locks members in ordinal order whatever order the database returns", async () => {
+    db.openingCreditBatch.findUnique.mockResolvedValue({
+      id: "batch-1", totalCents: 5250, negativeCreditCountAtPost: 3, reversedAt: null, credits: [...credits].reverse(),
+    });
+    await reverseOpeningCreditBatch({ batchId: "batch-1", reason: "r", adminId: "o" });
+    expect(ledger.locked).toEqual(["m-a", "m-b"]);
+  });
+
+  it("reports a reversal that won the locks first as already reversed", async () => {
+    db.openingCreditBatch.findUnique
+      .mockResolvedValueOnce({ id: "batch-1", totalCents: 5250, negativeCreditCountAtPost: 3, reversedAt: null, credits })
+      .mockResolvedValueOnce({ reversedAt: new Date("2026-07-01T00:00:00Z") });
+    db.memberCredit.count.mockResolvedValue(5);
+    await expect(reverseOpeningCreditBatch({ batchId: "batch-1", reason: "r", adminId: "o" })).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining("already been reversed"),
+    });
+    expect(db.memberCredit.createMany).not.toHaveBeenCalled();
   });
 
   it("refuses a new deduction regardless of its transaction timestamp", async () => {

@@ -4139,10 +4139,11 @@ Xero note mints one when spent).
 
 - **Opening credit posts once, from one approval** (#4988). A club moving in
   carries over members' credit balances from one CSV. Preview writes nothing:
-  it matches each row to one current member, refuses a member named twice,
-  totals the cents, and offers a batch key only when no row is in error. A
-  member holding credit from an unreversed batch is a row in error, checked
-  again under the locks, so a corrected file never credits twice.
+  it matches each row to one current member, refuses a member named twice
+  or the posting admin (two-person control stays), totals the cents, and
+  offers a batch key only when no row is in error. A member holding credit
+  from an unreversed batch is a row in error, checked again under the locks,
+  so a corrected file never credits twice.
 - **The key is the claim.** The key hashes what the file posts (member, cents,
   description, sorted). Confirm re-previews the file and refuses unless key
   and total still match what the officer saw; the `OpeningCreditBatch` row's

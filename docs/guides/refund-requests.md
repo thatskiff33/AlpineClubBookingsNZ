@@ -146,13 +146,15 @@ in one batch ([Moving in from your old system](moving-in.md#6-credit-post-the-op
 3. Click **Post $X to N members**. The credits are added in one go, under one
    audit entry with the total. Nothing is emailed, and no Xero credit note or
    card charge is made: the money was settled before the move. This needs no
-   second admin, because the total is what you approve. The same file cannot
+   second admin, because the total is what you approve, but a row for the
+   admin posting it is refused. The same file cannot
    post twice, and a member still holding an opening credit from an unreversed
    batch is refused, so a corrected file cannot credit anyone twice.
 4. A posted batch is listed with its total and who posted it. **Reverse batch**
-   removes every credit in it after you give a reason. It is refused, and
-   nothing changes, if any member has spent any of their opening credit or had
-   any credit deducted since the batch posted.
+   removes every credit in it after you give a reason, which stays on the
+   batch and its audit entry; members see only "Opening credit reversed". It
+   is refused, and nothing changes, if any member has spent any of their
+   opening credit or had any credit deducted since the batch posted.
 
 When a member later spends an opening credit, Xero codes it as the member's own
 money (the hut-fee refunds account), never as goodwill (`INV-PAY-151`).

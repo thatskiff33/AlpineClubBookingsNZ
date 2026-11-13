@@ -100,7 +100,7 @@ Credit a member already held in the old system moves in as an **opening
 credit**. It is recorded as already settled, so nothing is invoiced, charged
 or emailed. It needs one approval, not the second admin a normal credit
 adjustment needs, because you check the whole file against its total before it
-posts.
+posts. A row for yourself is refused: another admin posts your opening credit.
 
 Before posting, finish the release upgrade and drain the old app and workers.
 After any opening credit posts, a rollback must retain opening-credit lot and
@@ -129,7 +129,8 @@ a corrected file cannot credit anyone twice: reverse the wrong batch first, or
 leave those members out of the new file.
 
 If a batch was wrong, **Reverse batch** removes every credit in it, with a
-reason. Do it before members spend any of it: the reversal is refused, and
+reason. Members see "Opening credit reversed" in their credit history, never
+your reason. Do it before members spend any of it: the reversal is refused, and
 nothing changes, once any member has used part of their opening credit. More
 detail is in [Refunds & Credits](refund-requests.md#post-or-reverse-opening-credits).
 

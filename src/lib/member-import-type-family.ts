@@ -137,10 +137,21 @@ export async function assignImportedMembershipTypes({
   const members = createdMembers.filter((member) => member.membershipTypeId && !member.cancelled);
   let assigned = 0;
   if (members.length === 0) return { assigned, failures, rowNotes };
-  const existing = await prisma.seasonalMembershipAssignment.findMany({
-    where: { seasonYear, memberId: { in: members.map((member) => member.id) } },
-    select: { memberId: true },
-  });
+  let existing: Array<{ memberId: string }>;
+  try {
+    existing = await prisma.seasonalMembershipAssignment.findMany({
+      where: { seasonYear, memberId: { in: members.map((member) => member.id) } },
+      select: { memberId: true },
+    });
+  } catch (err) {
+    // The members are already committed: report the types as not applied
+    // rather than letting the route say the import failed.
+    logger.error({ err }, "Failed to read existing membership assignments during member import");
+    for (const member of members) {
+      failures.push({ row: member.rowNum, email: member.email, error: "Failed to save the membership type assignment" });
+    }
+    return { assigned, failures, rowNotes };
+  }
   const alreadyAssigned = new Set(existing.map((row) => row.memberId));
   const auditRequest = getAuditRequestContext(request);
 

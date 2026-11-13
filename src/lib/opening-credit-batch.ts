@@ -95,10 +95,23 @@ async function membersHoldingOpeningCredit(db: Pick<Prisma.TransactionClient, "m
   return new Set(held.map((row) => row.memberId));
 }
 
-/** Match the file to live members and total it. Reads only. */
+const OPENING_CREDIT_SELF_ROW =
+  "is you; a second administrator must post your own opening credit, or approve it as a credit adjustment";
+
+/**
+ * Match the file to live members and total it. Reads only. A row naming the
+ * posting administrator is refused, keeping the second-admin rule that every
+ * other credit adjustment has (`INV-PAY-151`).
+ */
 export async function buildOpeningCreditPreview(
   csvText: string,
-  db: Pick<Prisma.TransactionClient, "member" | "memberCredit" | "openingCreditBatch"> = prisma,
+  {
+    postingAdminId = null,
+    db = prisma,
+  }: {
+    postingAdminId?: string | null;
+    db?: Pick<Prisma.TransactionClient, "member" | "memberCredit" | "openingCreditBatch">;
+  } = {},
 ): Promise<PreviewResult> {
   const parsed = parseOpeningCreditCsv(csvText);
   if (!parsed.ok) return parsed;
@@ -141,6 +154,7 @@ export async function buildOpeningCreditPreview(
         );
       }
     }
+    if (member && member.id === postingAdminId) errors.push(OPENING_CREDIT_SELF_ROW);
     return {
       lineNumber: row.lineNumber,
       memberId: member?.id ?? null,
@@ -214,6 +228,12 @@ export async function buildOpeningCreditPreview(
   };
 }
 
+/**
+ * A batch locks and checks every member in one transaction, so a migration
+ * file of hundreds of rows needs longer than Prisma's five-second default.
+ */
+const OPENING_CREDIT_TRANSACTION_OPTIONS = { maxWait: 30_000, timeout: 120_000 } as const;
+
 export class OpeningCreditBatchAlreadyPostedError extends ApiError {
   constructor() {
     super("This file has already been posted as an opening-credit batch; no balance was changed", 409);
@@ -233,7 +253,7 @@ export async function postOpeningCreditBatch(input: {
   adminId: string;
   request?: StructuredAuditEvent["request"];
 }) {
-  const built = await buildOpeningCreditPreview(input.csvText);
+  const built = await buildOpeningCreditPreview(input.csvText, { postingAdminId: input.adminId });
   if (!built.ok) throw new ApiError(built.error, 400);
   const { preview } = built;
   if (preview.batchKey === null) {
@@ -310,7 +330,7 @@ export async function postOpeningCreditBatch(input: {
         tx,
       );
       return created;
-    });
+    }, OPENING_CREDIT_TRANSACTION_OPTIONS);
     logger.info(
       { batchId: batch.id, totalCents: preview.totalCents, rowCount: credits.length, adminId: input.adminId },
       "Opening-credit batch posted",
@@ -357,16 +377,21 @@ export async function reverseOpeningCreditBatch(input: {
             amountCents: true,
             member: { select: { firstName: true, lastName: true } },
           },
-          orderBy: { memberId: "asc" },
         },
       },
     });
     if (!batch) throw new ApiError("Opening-credit batch not found", 404);
     if (batch.reversedAt) throw new ApiError("This opening-credit batch has already been reversed", 409);
 
+    // The same ordinal order as posting (INV-LOCK-002), not the database collation.
+    batch.credits.sort((a, b) => compareOrdinal(a.memberId, b.memberId));
     for (const credit of batch.credits) {
       await lockMemberCreditLedger(credit.memberId, tx);
     }
+    // A concurrent reversal that won the locks has already posted its rows;
+    // say so rather than reporting them as a deduction.
+    const current = await tx.openingCreditBatch.findUnique({ where: { id: batch.id }, select: { reversedAt: true } });
+    if (current?.reversedAt) throw new ApiError("This opening-credit batch has already been reversed", 409);
     // After the locks, and before the claim stamps the batch reversed (a
     // reversed batch's credits are no longer lots): what each member holds now.
     const memberIds = batch.credits.map((credit) => credit.memberId);
@@ -414,7 +439,9 @@ export async function reverseOpeningCreditBatch(input: {
         memberId: credit.memberId,
         amountCents: -credit.amountCents,
         type: CreditType.ADMIN_ADJUSTMENT,
-        description: `Opening credit reversed: ${reason}`,
+        // Members see this description in their credit history; the officer's
+        // reason stays on the batch and its audit row.
+        description: "Opening credit reversed",
         approvedById: input.adminId,
         openingCreditBatchId: batch.id,
       })),
@@ -436,7 +463,7 @@ export async function reverseOpeningCreditBatch(input: {
       tx,
     );
     return { batchId: batch.id, totalCents: batch.totalCents, rowCount: batch.credits.length };
-  });
+  }, OPENING_CREDIT_TRANSACTION_OPTIONS);
 
   logger.info({ ...result, adminId: input.adminId }, "Opening-credit batch reversed");
   return result;
