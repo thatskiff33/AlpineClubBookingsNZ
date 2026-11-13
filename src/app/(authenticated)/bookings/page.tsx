@@ -19,7 +19,7 @@ import { canSeeBookingAdminTools } from "@/lib/admin-permissions";
 import {
   BOOKING_LIST_LODGE_SELECT,
   bookingListLodgeLabel,
-  countActiveLodges,
+  countActiveLodgesForBookingList,
 } from "@/lib/lodges";
 
 export default async function MyBookingsPage() {
@@ -124,7 +124,7 @@ export default async function MyBookingsPage() {
     }),
     // INV-CAP-039: read from the database alongside the list, never inferred
     // from a client-side lodge list that can fail to load (#2701).
-    countActiveLodges(prisma),
+    countActiveLodgesForBookingList(prisma),
   ]);
 
   // Split-booking grouping (#738): a mixed party is a member booking plus a

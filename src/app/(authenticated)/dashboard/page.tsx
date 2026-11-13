@@ -71,7 +71,7 @@ import { checkCapacity } from "@/lib/capacity";
 import {
   BOOKING_LIST_LODGE_SELECT,
   bookingListLodgeLabel,
-  countActiveLodges,
+  countActiveLodgesForBookingList,
 } from "@/lib/lodges";
 import { BookingListLodgeName } from "@/components/booking/booking-list-lodge-name";
 
@@ -366,7 +366,7 @@ export default async function DashboardPage() {
     }),
     // INV-CAP-039: decides, with `bookingListLodgeLabel`, whether the rows
     // below name their lodge. In this set so it costs no extra round trip.
-    countActiveLodges(prisma),
+    countActiveLodgesForBookingList(prisma),
   ]);
 
   const nextStay = upcomingBookings[0] ?? null;

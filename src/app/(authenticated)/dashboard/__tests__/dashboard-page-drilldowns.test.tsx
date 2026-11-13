@@ -483,6 +483,17 @@ describe("DashboardPage names each booking's lodge per ADR-002 (INV-CAP-039)", (
     expect(html).not.toContain('data-testid="booking-list-lodge"');
   });
 
+  it("still renders, and names every row's lodge, when the lodge count cannot be read", async () => {
+    mocks.lodgeCount.mockRejectedValueOnce(new Error("statement timeout"));
+    const only = { name: "Ruapehu Lodge", active: true };
+    seed({ upcoming: only, recent: only, draft: only });
+
+    const html = await renderDashboardPage();
+
+    expect(html.match(/data-testid="booking-list-lodge"/g)).toHaveLength(3);
+    expect(draftRow(html)).toContain("Ruapehu Lodge");
+  });
+
   it("names a row left at an archived lodge even with one active lodge", async () => {
     mocks.lodgeCount.mockResolvedValueOnce(1);
     const only = { name: "Ruapehu Lodge", active: true };

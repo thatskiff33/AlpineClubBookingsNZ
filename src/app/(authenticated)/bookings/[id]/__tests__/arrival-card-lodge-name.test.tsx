@@ -11,7 +11,8 @@ import type { EmailMessageSettings } from "@/lib/email-message-settings";
 
 /**
  * INV-CAP-039: the arrival card prints one lodge's travel note and door code,
- * so its title says which lodge — the BOOKING's, never the club default.
+ * so its title says which lodge — the BOOKING's own row, never the club default
+ * that the arrival instructions' own `lodgeName` can fall back to.
  */
 describe("the booking page's arrival card names the booking's lodge (INV-CAP-039)", () => {
   it("titles the card with the booking's own lodge", () => {
@@ -25,8 +26,10 @@ describe("the booking page's arrival card names the booking's lodge (INV-CAP-039
           showRequestedRoom: false,
           showBedAllocationPanel: false,
         } as BookingDetailEditAccess}
+        // A different name from the booking's own, as the real loader returns
+        // when it cannot resolve the lodge: the title must not follow it.
         memberArrivalInstructions={{
-          lodgeName: "Second Lodge",
+          lodgeName: "Club Default Lodge",
           lodgeTravelNote: "Take the left fork after the bridge.",
           doorCode: null,
         } as EmailMessageSettings}
@@ -34,8 +37,9 @@ describe("the booking page's arrival card names the booking's lodge (INV-CAP-039
     );
 
     expect(
-      screen.getByText("How to get to Second Lodge"),
+      screen.getByText("How to Get to Second Lodge"),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/Club Default Lodge/)).not.toBeInTheDocument();
     expect(
       screen.getByText("Take the left fork after the bridge."),
     ).toBeInTheDocument();

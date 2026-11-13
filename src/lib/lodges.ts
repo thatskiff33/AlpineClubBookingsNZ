@@ -183,15 +183,46 @@ export const BOOKING_LIST_LODGE_SELECT = {
 } as const satisfies Prisma.LodgeDefaultArgs;
 
 /**
+ * INV-CAP-039: the active-lodge count a member booking LIST reads to decide
+ * whether its rows name their lodge. Same question as `countActiveLodges`, with
+ * the one difference the rule needs: a count that cannot be read comes back as
+ * 0, which `bookingListLodgeLabel` treats as "name the lodge". A list that fails
+ * to learn how many lodges the club has must lean towards saying which lodge a
+ * booking is at (#4948, the #2701 trap), not drop the page.
+ *
+ * Both member lists call this inside their existing parallel read, so it adds no
+ * round trip. A failed read is not logged here: this module imports no app
+ * singleton (it takes its client from the caller, per the note at the top), and
+ * `prisma/seed.ts` imports it.
+ */
+export async function countActiveLodgesForBookingList(
+  db: LodgeDb,
+): Promise<number> {
+  try {
+    return await countActiveLodges(db);
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * INV-CAP-039: the lodge name a booking LIST row shows, or null for none — the
  * one place the ADR-002 single-lodge presentation rule is decided for member
  * booking lists (My Bookings and the dashboard's rows).
  *
  * Exactly one active lodge hides the name, so a single-lodge club's lists look
  * as they always have. Any other count shows it, and 0 is deliberately on that
- * side: a count that says "no lodges" is not evidence the club has one. A row at
- * a lodge that is no longer active is always named whatever the count, so a club
- * that archived its second lodge never shows a booking still there unlabelled.
+ * side: a count that says "no lodges" is not evidence the club has one, and it
+ * is what `countActiveLodgesForBookingList` returns when the count cannot be
+ * read. A row at a lodge that is no longer active is always named whatever the
+ * count, so a club that archived its second lodge never shows a booking still
+ * there unlabelled.
+ *
+ * Two intended differences from the sibling `coverageNeedsLodgeContext`
+ * (`hut-leader-coverage.ts`), which decides the same ADR-002 question for the
+ * officer coverage list: here a count of 0 shows the name (there, 0 hides it),
+ * and the archived test is per ROW (there, any archived row names every row).
+ * A member's list names only the booking that is actually elsewhere.
  *
  * The name is always the BOOKING's own lodge, never the club default (#2918,
  * #2919). The screens that ask a member to review or pay for one booking (the

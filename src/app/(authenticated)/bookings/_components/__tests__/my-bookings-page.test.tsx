@@ -361,4 +361,13 @@ describe("MyBookingsPage names each booking's lodge per ADR-002 (INV-CAP-039)", 
     expect(html).toContain("Old Hut");
     expect(html).not.toContain("Ruapehu Lodge");
   });
+
+  it("still renders, and names each row's lodge, when the lodge count cannot be read", async () => {
+    vi.mocked(prisma.lodge.count).mockRejectedValue(new Error("statement timeout"));
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([booking()] as never);
+
+    const html = await renderPage();
+    expect(html).toContain("Ruapehu Lodge");
+    expect(html).toContain('data-testid="booking-list-lodge"');
+  });
 });

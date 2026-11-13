@@ -4,7 +4,7 @@
   which lodge the stay was at, even though a booking at the wrong lodge has to
   be moved or cancelled afterwards. The booking page's Stay Details card now
   starts with the lodge, the payment link's card shows it above the dates, and
-  the arrival card is titled "How to get to" the booking's own lodge rather
+  the arrival card is titled "How to Get to" the booking's own lodge rather
   than the club's default one. These always show, in a one-lodge club too, as
   the booking form's review step already does.
 

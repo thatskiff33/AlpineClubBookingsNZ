@@ -1,4 +1,4 @@
-# File-size allowance for #4948 (lodge name on booking screens)
+# File-size allowance for #5029 (lodge name on booking screens, issue #4948)
 
 file: src/app/(authenticated)/dashboard/page.tsx
 lines: 1001
