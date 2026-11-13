@@ -642,7 +642,12 @@ async function readDataKeyUsage(): Promise<DataKeyUsageSnapshot> {
 
 const DATABASE_ROLE_ROW = z.object({ name: z.string(), isSuperuser: z.boolean() });
 
-/** Trust current_user and PostgreSQL membership, never the connection URL's user. */
+/**
+ * Trust the server's roles and PostgreSQL membership, never the connection
+ * URL's user. Both current_user and session_user count: a superuser login
+ * narrowed by a startup `SET ROLE` (`options=-c role=...`, or a pooler) can
+ * still `RESET ROLE` back to the superuser (#5046 review).
+ */
 export async function readSetupDatabaseRole(
   db: Pick<PrismaClient, "$queryRaw"> = prisma,
 ): Promise<DatabaseRoleSnapshot | undefined> {
@@ -650,8 +655,9 @@ export async function readSetupDatabaseRole(
     SELECT current_user::text AS name,
       (r.rolsuper OR EXISTS (
         SELECT 1 FROM pg_catalog.pg_roles other
-        WHERE other.oid <> r.oid AND other.rolsuper
-          AND pg_catalog.pg_has_role(current_user, other.oid, 'MEMBER')
+        WHERE other.rolsuper
+          AND (pg_catalog.pg_has_role(current_user, other.oid, 'MEMBER')
+            OR pg_catalog.pg_has_role(session_user, other.oid, 'MEMBER'))
       )) AS "isSuperuser"
     FROM pg_catalog.pg_roles r WHERE r.rolname = current_user
   `;

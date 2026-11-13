@@ -339,7 +339,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
       await admin.end().catch(() => {});
     });
 
-    it("reports server role facts for the operator, application and superuser membership", async () => {
+    it("reports server role facts for the operator, application and superuser membership (INV-OPS-017)", async () => {
       const { PrismaClient: Prisma } = await import("@prisma/client");
       const { createPrismaPgAdapter } = await import("@/lib/prisma-adapter");
       const operator = new Prisma({ adapter: createPrismaPgAdapter(urlFor(DATABASES.upgrade)) });
@@ -357,6 +357,23 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
             await client.query(`REVOKE "${operatorName}" FROM "${ROLES.app}"`);
           }
         });
+      } finally {
+        await operator.$disconnect();
+      }
+    });
+
+    it("treats a superuser login narrowed by SET ROLE as a superuser (INV-OPS-017)", async () => {
+      const { PrismaClient: Prisma } = await import("@prisma/client");
+      const { createPrismaPgAdapter } = await import("@/lib/prisma-adapter");
+      const operator = new Prisma({ adapter: createPrismaPgAdapter(urlFor(DATABASES.upgrade)) });
+      try {
+        // current_user is the app role; session_user is still the superuser
+        // login, which could RESET ROLE back to it.
+        const snapshot = await operator.$transaction(async (tx) => {
+          await tx.$executeRawUnsafe(`SET LOCAL ROLE "${ROLES.app.replace(/"/g, '""')}"`);
+          return readSetupDatabaseRole(tx);
+        });
+        expect(snapshot).toEqual({ name: ROLES.app, isSuperuser: true });
       } finally {
         await operator.$disconnect();
       }

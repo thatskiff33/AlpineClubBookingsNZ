@@ -752,5 +752,6 @@ before starting web slots and the cron leader. No credential is saved before
 these steps. Existing deployments retain their compatibility defaults and use
 the separate switch-over and key-rollout runbooks in
 [`DEPLOYMENT.md`](../../DEPLOYMENT.md#first-bootstrap). The database-role readiness
-check reads server privileges, including superuser membership, and only warns;
-it never blocks an existing installation.
+check reads server privileges, including superuser membership and a superuser
+login narrowed by `SET ROLE`, and only warns; it never blocks an existing
+installation.

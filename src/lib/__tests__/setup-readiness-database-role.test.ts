@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildDatabaseRoleCheck } from "@/lib/setup-readiness-database-role";
 
-describe("database role readiness", () => {
+describe("database role readiness (INV-OPS-017)", () => {
   it.each([
     [{ name: "operator", isSuperuser: true }, "warning"],
     [{ name: "application", isSuperuser: false }, "complete"],

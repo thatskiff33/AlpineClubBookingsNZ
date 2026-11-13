@@ -3,7 +3,10 @@ import { DEFAULT_DATABASE_ROLE_NAMES } from "@/lib/database-roles";
 
 export interface DatabaseRoleSnapshot {
   name: string;
-  /** Includes membership that permits SET ROLE to a superuser. */
+  /**
+   * Includes membership that permits SET ROLE to a superuser, and a superuser
+   * login (session_user) narrowed to a non-superuser current_user.
+   */
   isSuperuser: boolean;
 }
 
@@ -24,7 +27,7 @@ export function buildDatabaseRoleCheck(snapshot: DatabaseRoleSnapshot | undefine
     return {
       ...base,
       status: "warning" as const,
-      message: `The app is connected as a superuser ("${snapshot.name}", directly or through role membership). Booking-ledger and audit rows can be rewritten with this connection. Provision the least-privilege roles and switch the app to ${DEFAULT_DATABASE_ROLE_NAMES.app}.`,
+      message: `The app is connected as a superuser ("${snapshot.name}", directly, through role membership or through its login role). Booking-ledger and audit rows can be rewritten with this connection. Provision the least-privilege roles and switch the app to ${DEFAULT_DATABASE_ROLE_NAMES.app}.`,
     };
   }
   return { ...base, status: "complete" as const, message: `The connected database role "${snapshot.name}" is not a superuser and belongs to no superuser role.` };
