@@ -27,7 +27,7 @@ import { describe, expect, it } from "vitest";
 // Comments are stripped so only EXECUTABLE text is matched.
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
-const PAGE = "src/app/(admin)/admin/book/page.tsx";
+const PAGE = "src/app/(admin)/admin/booking-desk/book/page.tsx";
 
 function readPageSource(): string {
   // Test helper: a fixed repo file under process.cwd(), not user input.
