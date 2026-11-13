@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -46,7 +46,21 @@ const SCANNED_DIR = join(process.cwd(), "src", "app", "(admin)");
  * them, with the most reads each may still hold. Every entry is a ceiling: a
  * lower count passes, a higher one fails.
  */
-const KNOWN_UNGUARDED: Record<string, { reads: number; reason: string }> = {};
+const SIBLING_LANE =
+  "Edited by a sibling lane (ALP-529, ALP-570, ALP-576, ALP-577, ALP-578 or ALP-581) not yet merged; converted after it lands.";
+
+const KNOWN_UNGUARDED: Record<string, { reads: number; reason: string }> = {
+  "src/app/(admin)/admin/booking-desk/book/page.tsx": { reads: 1, reason: SIBLING_LANE },
+  "src/app/(admin)/admin/chores/page.tsx": { reads: 3, reason: SIBLING_LANE },
+  "src/app/(admin)/admin/family-groups/page.tsx": { reads: 1, reason: SIBLING_LANE },
+  "src/app/(admin)/admin/lockers/page.tsx": { reads: 3, reason: SIBLING_LANE },
+  "src/app/(admin)/admin/members/[id]/_components/member-lodge-access-card.tsx": { reads: 2, reason: SIBLING_LANE },
+  "src/app/(admin)/admin/rules/age-tier-settings/page.tsx": { reads: 1, reason: SIBLING_LANE },
+  "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx": { reads: 3, reason: SIBLING_LANE },
+  "src/app/(admin)/admin/rules/seasons/page.tsx": { reads: 3, reason: SIBLING_LANE },
+  "src/app/(admin)/admin/website/mountain-conditions/_components/mountain-conditions-panel.tsx": { reads: 7, reason: SIBLING_LANE },
+  "src/app/(admin)/admin/work-parties/page.tsx": { reads: 5, reason: SIBLING_LANE },
+};
 
 type Hit = { line: number; kind: "failure-branch" | "parse-before-check" };
 
@@ -307,6 +321,11 @@ describe("admin failed-response JSON reads (#4976, ALP-589)", () => {
       "// if (!res.ok) { const data = await res.json(); }",
     ].join("\n");
     expect(unguardedFailureReads(source)).toEqual([]);
+  });
+
+  it("lists only files that still exist", () => {
+    const missing = Object.keys(KNOWN_UNGUARDED).filter((rel) => !existsSync(join(process.cwd(), rel)));
+    expect(missing, "delete the KNOWN_UNGUARDED entry of a moved or deleted file").toEqual([]);
   });
 
   it("finds no unguarded failure read outside the known ceilings", () => {
