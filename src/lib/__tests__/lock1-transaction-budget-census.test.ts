@@ -170,3 +170,68 @@ describe("the census's option classifier", () => {
     );
   });
 });
+
+describe("tracing a lock wait to its transaction budget", () => {
+  const lock = "await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;";
+
+  it("finds defaults through an imported helper and a named transaction callback", () => {
+    const result = scanLock1Transactions([
+      {
+        rel: "src/lib/writer.ts",
+        text: `export async function write(tx) { ${lock} }`,
+      },
+      {
+        rel: "src/lib/service.ts",
+        text: `import { write as save } from "@/lib/writer";
+          async function run(tx) { await save(tx); }
+          export async function execute() { return prisma.$transaction(run); }`,
+      },
+    ]);
+
+    expect(result.unreached).toEqual([]);
+    expect(result.openers).toHaveLength(1);
+    expect(result.openers[0]).toMatchObject({
+      rel: "src/lib/service.ts",
+      opener: "$transaction",
+      options: null,
+    });
+    expect(result.joinedFunctions).toEqual([
+      "src/lib/writer.ts::write",
+      "src/lib/service.ts::run",
+    ]);
+  });
+
+  it("checks every caller of a joined writer, including optional-transaction wrappers", () => {
+    const result = scanLock1Transactions([
+      {
+        rel: "src/lib/writer.ts",
+        text: `export async function write(tx) { ${lock} }`,
+      },
+      {
+        rel: "src/lib/service.ts",
+        text: `import { write } from "./writer";
+          export async function first() {
+            return prisma.$transaction(async tx => write(tx), LOCK1_HOLDER_TRANSACTION_BUDGET);
+          }
+          export async function second(tx) {
+            return withOptionalTransaction(tx, async inner => write(inner));
+          }`,
+      },
+    ]);
+
+    expect(result.unreached).toEqual([]);
+    expect(result.openers.map(({ opener, options }) => ({ opener, options }))).toEqual([
+      { opener: "$transaction", options: CONSTANT },
+      { opener: "withOptionalTransaction", options: null },
+    ]);
+  });
+
+  it("reports a joined writer with no caller instead of silently approving it", () => {
+    const result = scanLock1Transactions([
+      { rel: "src/lib/writer.ts", text: `export async function write(tx) { ${lock} }` },
+    ]);
+
+    expect(result.openers).toEqual([]);
+    expect(result.unreached).toEqual(["src/lib/writer.ts::write"]);
+  });
+});

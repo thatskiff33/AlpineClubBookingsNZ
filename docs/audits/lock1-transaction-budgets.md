@@ -74,6 +74,10 @@ budget for row-lock waits.
   answer it, instead of reporting it as a refusal: `waitlist.ts`,
   `waitlist-cross-lodge.ts`, `admin-member-detail-service.ts` and
   `admin-roster-service.ts` (all under `src/lib/`).
+- **Bed-allocation routes** use the same response through their shared
+  `admin-bed-allocation-routes.ts` mapper. Range assignment keeps its existing
+  single retry; an exhausted P2034 retry reaches the mapper instead of becoming
+  a 409 refusal. P2002 bed-night collisions keep their 409 answer.
 - **Recovery answers are preserved.** Where a payment was already captured, or an
   earlier step already committed, the route's existing recovery response wins
   over the 503.

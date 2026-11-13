@@ -1031,7 +1031,7 @@ describe("assignBedRange write-conflict handling", () => {
     delete prismaMock.$transaction;
   });
 
-  it.each(["P2002", "P2034"])(
+  it.each(["P2002"])(
     "retries a %s once, then refuses with a 409 rather than a 500",
     async (code) => {
       const transaction = vi.fn().mockRejectedValue(knownError(code));
@@ -1053,6 +1053,21 @@ describe("assignBedRange write-conflict handling", () => {
       );
     },
   );
+
+  it("preserves contention after the existing retry so the route can answer 503", async () => {
+    const error = knownError("P2034");
+    const transaction = vi.fn().mockRejectedValue(error);
+    prismaMock.$transaction = transaction;
+
+    await expect(assignBedRangePublic({
+      bookingGuestId: "guest-1",
+      bedId: "bed-1",
+      from: "2026-06-01",
+      to: "2026-06-06",
+      approvedByMemberId: "admin-1",
+    })).rejects.toBe(error);
+    expect(transaction).toHaveBeenCalledTimes(2);
+  });
 
   it("returns the retry's result when the second attempt succeeds", async () => {
     const { db } = buildDb({});

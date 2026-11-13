@@ -28,6 +28,7 @@ import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { custodianHeldNightsForBed } from "@/lib/custodian-occupancy";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { prisma } from "@/lib/prisma";
+import { isTransactionContention } from "@/lib/prisma-errors";
 import {
   BedAllocationAdminError,
   type BedAllocationDb,
@@ -539,8 +540,9 @@ async function runAssignBedRangeAttempt(input: {
 }
 
 // A concurrent write that cost us the transaction. Both are retryable ONCE
-// against fresh state, and both must end in a plain-English 409 rather than a
-// generic 500 if the retry loses too (#2251 review A3):
+// against fresh state (#2251 review A3). If the retry loses too, a bed-night
+// collision stays a 409; transaction contention escapes to the shared 503
+// mapper (INV-LOCK-005).
 //   P2002 — someone claimed one of the bed-nights between our scan and our write
 //           (the unique index on bed/night did its job).
 //   P2034 — the database aborted this transaction to break a write conflict or
@@ -647,6 +649,9 @@ export async function assignBedRange(
     try {
       return await runAttempt();
     } catch (retryError) {
+      // INV-LOCK-005: after the existing retry, preserve contention so the
+      // route can answer 503 through the shared mapper instead of a refusal.
+      if (isTransactionContention(retryError)) throw retryError;
       const retryableMessage = retryableRangeWriteMessage(retryError);
       if (retryableMessage) {
         throw new BedAllocationAdminError(retryableMessage, 409);
