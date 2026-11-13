@@ -81,6 +81,10 @@ here:
 - **`NON_MEMBER_PRICING`** — the rule above: the unpaid member is repriced, told
   why, and the booking must carry a paid-up adult member.
 
+The member wizard follows the same mode: its dates step hides the lodge picker
+and calendar only when `isBookingBlockedBySubscription` says so — an unpaid
+subscription under `HARD_BLOCK`, or a response too old to name its mode (#4941).
+
 ### INV-LOCKOUT-004
 
 **Independent booking failures are reported together.** A member create or member
