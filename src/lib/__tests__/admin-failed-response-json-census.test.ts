@@ -47,7 +47,7 @@ const SCANNED_DIR = join(process.cwd(), "src", "app", "(admin)");
  * lower count passes, a higher one fails.
  */
 const SIBLING_LANE =
-  "Edited by a sibling lane (ALP-529, ALP-570, ALP-576, ALP-577, ALP-578 or ALP-581) not yet merged; converted after it lands.";
+  "Edited by a sibling lane (ALP-529, ALP-570, ALP-576, ALP-577, ALP-578 or ALP-581) not yet merged; ALP-649 converts it after it lands.";
 
 const KNOWN_UNGUARDED: Record<string, { reads: number; reason: string }> = {
   "src/app/(admin)/admin/booking-desk/book/page.tsx": { reads: 1, reason: SIBLING_LANE },
