@@ -42,6 +42,7 @@ vi.mock("@/lib/xero-credit-note-spent-outside-flag", () => ({
 
 vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
   findResolvedBookingInvoiceCreate: mocks.findResolvedBookingInvoiceCreate,
+  readCardRefundReversalCentsByPayment: vi.fn().mockResolvedValue(new Map()),
   readResolvedRefundCreditNoteCoverage: vi.fn().mockResolvedValue({
     coveredCents: 0,
     correlationKeys: [],
