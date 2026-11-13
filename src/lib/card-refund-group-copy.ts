@@ -25,3 +25,11 @@ export const GROUP_CARD_REFUND_LEGACY_OTHER_LIVE =
 /** Try the card again found this row's refund already live on the intent. */
 export const GROUP_CARD_REFUND_ALREADY_ON_STRIPE =
   "Stripe already has this refund. Paid another way records it and pays nobody again.";
+
+/**
+ * #4851 review: an old whole-group bank close whose plan's bookings no longer
+ * take the whole plan total. Officers would be told to credit less in Xero
+ * than the bank paid, so nothing is written.
+ */
+export const GROUP_CARD_REFUND_LEGACY_PLAN_MISMATCH =
+  "This old whole-group refund's plan no longer matches its cancelled bookings, so a bank payment cannot be recorded from here. Nothing was written. Ask a developer to reconcile it.";

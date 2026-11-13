@@ -30,6 +30,7 @@ import {
   organiserChildRefundWasReopened,
   planOrganiserCancelChildRefunds,
 } from "@/lib/organiser-child-refund";
+import { organiserChildRefundWasRearmed } from "@/lib/organiser-child-refund-rearm";
 import { runPaymentRecoveryOperationNow } from "@/lib/payment-recovery";
 import {
   buildOrganiserChildCancellationRefundKey,
@@ -316,11 +317,13 @@ export async function finishRecordedOrganiserChildRefund(input: {
   // A refund an earlier attempt failed to make (the first claim is attempt
   // 1), or one Stripe failed after it was recorded (the debt was reopened,
   // with its attempts restarted at 0 - so the reopen's durable marker, not
-  // the count, says so): the door that decided it wrote its audit row before
-  // the money moved - a group cancel says it released the spot with the
+  // the count, says so), or one an officer re-armed on Stuck States (#4851,
+  // attempts restarted too, so its `rearmedAt` marker says so): the door that
+  // decided it wrote its audit row before the money moved - a group cancel says it released the spot with the
   // refund still owed - so the recovery says, in the same trail, that the
   // money has now gone back.
-  if (operation.attempts > 1 || organiserChildRefundWasReopened(operation.allocationPlan)) {
+  const rearmed = organiserChildRefundWasRearmed(operation.allocationPlan);
+  if (operation.attempts > 1 || organiserChildRefundWasReopened(operation.allocationPlan) || rearmed) {
     logAudit({
       action: "booking.payment.refund_recovered",
       targetId: operation.bookingId,
@@ -339,6 +342,7 @@ export async function finishRecordedOrganiserChildRefund(input: {
         stripeRefundId: refund.id,
         attempts: operation.attempts,
         reopened: organiserChildRefundWasReopened(operation.allocationPlan),
+        rearmed,
       },
     });
   }

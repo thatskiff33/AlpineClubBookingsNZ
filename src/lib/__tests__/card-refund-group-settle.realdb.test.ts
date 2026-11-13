@@ -68,6 +68,11 @@ let executor: typeof import("@/lib/organiser-child-refund-executor");
 let mirrorHandBack: typeof import("@/lib/group-settlement-mirror-hand-back");
 let MAX_ATTEMPTS: number;
 let PAID_ANOTHER_WAY_MARKER: string;
+let LEGACY_GROUP_REFUND_PAID_BY_BANK_NOTE: string;
+let groupPosting: typeof import("@/lib/booking-ledger-group-settlement-posting");
+let ledgerWrite: typeof import("@/lib/booking-ledger-write");
+let censusStore: typeof import("@/lib/booking-ledger-projection-census-store");
+let census: typeof import("@/lib/booking-ledger-projection-census");
 let legacyKey: (settlementId: string) => string;
 let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixture"))["CLUB_FORMAT_TEST"];
 let realElapsedMs: (typeof import("@/lib/__tests__/helpers/clock"))["realElapsedMs"];
@@ -217,6 +222,28 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
       });
     }
 
+    /**
+     * #4851 review: each child's share on the ledger, as #3583's back-post left
+     * it, through the live share planner and writer. Without it the plan's
+     * refund line has nothing to sit beside and posts nothing.
+     */
+    async function postShares(group: Group) {
+      const plan = groupPosting.planGroupSettlementShareLines({
+        settlement: { id: group.settlement, source: "STRIPE", amountCents: COMBINED_CENTS },
+        children: group.children.map((bookingId) => ({ bookingId, lodgeId: LODGE_ID, shareCents: CHILD_CENTS })),
+      });
+      expect(plan.reconciles).toBe(true);
+      await ledgerWrite.writeBookingLedgerRows(prisma, ledgerWrite.buildBookingLedgerRows(plan.postings));
+    }
+
+    /** The plan's refund line on each child, by kind and amount. */
+    const planRefundLines = (group: Group) =>
+      prisma.bookingLedgerLine.findMany({
+        where: { bookingId: { in: group.children }, anchorKind: "GROUP_SETTLEMENT", sign: -1 },
+        orderBy: { bookingId: "asc" },
+        select: { bookingId: true, kind: true, settlementMethod: true, unitCents: true },
+      });
+
     const childPayment = (group: Group, index = 0) => prisma.payment.findUniqueOrThrow({ where: { id: group.payments[index]! } });
     const settlementNow = (group: Group) => prisma.groupBookingSettlement.findUniqueOrThrow({ where: { id: group.settlement } });
     const closeAudits = (operationId: string) =>
@@ -277,6 +304,11 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
       mirrorHandBack = await import("@/lib/group-settlement-mirror-hand-back");
       ({ MAX_PAYMENT_RECOVERY_ATTEMPTS: MAX_ATTEMPTS } = await import("@/lib/payment-recovery-constants"));
       ({ PAID_ANOTHER_WAY_MARKER } = await import("@/lib/card-refund-paid-another-way"));
+      ({ LEGACY_GROUP_REFUND_PAID_BY_BANK_NOTE } = await import("@/lib/group-settlement-refund-plan"));
+      groupPosting = await import("@/lib/booking-ledger-group-settlement-posting");
+      ledgerWrite = await import("@/lib/booking-ledger-write");
+      censusStore = await import("@/lib/booking-ledger-projection-census-store");
+      census = await import("@/lib/booking-ledger-projection-census");
       ({ buildGroupSettlementRefundRecoveryIdempotencyKey: legacyKey } = await import("@/lib/payment-recovery-keys"));
       ({ CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture"));
       ({ realElapsedMs } = await import("@/lib/__tests__/helpers/clock"));
@@ -452,6 +484,7 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
       await createGroup(group, { childStatus: "CANCELLED", refundPlan: plan });
       const total = LEGACY_PLAN_CENTS[0]! + LEGACY_PLAN_CENTS[1]!;
       const row = await deadLegacyRow(group, total);
+      await postShares(group);
       listed.set(group.intent, [stripeRefund({ id: "re_race_4851_legacy", intent: group.intent, amount: total })]);
 
       const result = await groupClose.closeGroupCardRefundPaidAnotherWay(closeInput(row.id, total));
@@ -462,6 +495,11 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
       expect((await childPayment(group, 0)).refundedAmountCents).toBe(LEGACY_PLAN_CENTS[0]);
       expect((await childPayment(group, 1)).refundedAmountCents).toBe(LEGACY_PLAN_CENTS[1]);
       expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({ status: "SUCCEEDED", lastError: null });
+      // The money went back to the card, so each child's plan refund is a card refund.
+      expect((await planRefundLines(group)).map((line) => [line.kind, line.settlementMethod])).toEqual([
+        ["CARD_REFUND", "CARD"],
+        ["CARD_REFUND", "CARD"],
+      ]);
       expect(alertSpy).not.toHaveBeenCalled();
       expect(await closeAudits(row.id)).toHaveLength(1);
     });
@@ -472,6 +510,7 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
       await createGroup(group, { childStatus: "CANCELLED", refundPlan: plan });
       const total = LEGACY_PLAN_CENTS[0]! + LEGACY_PLAN_CENTS[1]!;
       const row = await deadLegacyRow(group, total);
+      await postShares(group);
 
       const result = await groupClose.closeGroupCardRefundPaidAnotherWay(closeInput(row.id, total));
 
@@ -480,7 +519,23 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
       expect((await settlementNow(group)).status).toBe("PARTIALLY_REFUNDED");
       expect((await childPayment(group, 0)).refundedAmountCents).toBe(LEGACY_PLAN_CENTS[0]);
       expect((await childPayment(group, 1)).refundedAmountCents).toBe(LEGACY_PLAN_CENTS[1]);
-      expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({ status: "SUCCEEDED", lastError: PAID_ANOTHER_WAY_MARKER });
+      expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({
+        status: "SUCCEEDED",
+        lastError: LEGACY_GROUP_REFUND_PAID_BY_BANK_NOTE,
+      });
+      // #4851 review (money M1): the organiser was paid by bank, so the plan's
+      // refund on each child is a bank refund, never a card refund.
+      const sorted = [...group.children].map((id, index) => ({ id, cents: LEGACY_PLAN_CENTS[index]! })).sort((a, b) => a.id.localeCompare(b.id));
+      expect(await planRefundLines(group)).toEqual(
+        sorted.map(({ id, cents }) => ({ bookingId: id, kind: "BANK_REFUND", settlementMethod: "INTERNET_BANKING", unitCents: cents })),
+      );
+      // The census reads the close's note from the row and takes those bank lines as the plan's own.
+      for (const childId of group.children) {
+        const censusRow = (await censusStore.readBookingLedgerCensusRow(prisma, childId))!;
+        expect(censusRow.groupSettlement).toMatchObject({ id: group.settlement, refundPaidByBank: true });
+        const findings = census.evaluateBookingLedgerIdentities(censusRow).integrity;
+        expect(findings.filter((finding) => finding.kind === "SOURCE_DRIFT")).toEqual([]);
+      }
       expect(alertSpy).toHaveBeenCalledTimes(2);
       expect(alertSpy.mock.calls.map(([input]) => input.paidBy)).toEqual(["card", "card"]);
       expect(await closeAudits(row.id)).toHaveLength(1);

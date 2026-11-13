@@ -16,6 +16,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { formatBookingReference } from "@/lib/booking-reference";
 import {
   GROUP_CARD_REFUND_LEGACY_OTHER_LIVE,
+  GROUP_CARD_REFUND_LEGACY_PLAN_MISMATCH,
   GROUP_CARD_REFUND_STRIPE_UNREADABLE,
   GROUP_CARD_REFUND_UNKEYED_SAME_AMOUNT,
 } from "@/lib/card-refund-group-copy";
@@ -23,7 +24,11 @@ import {
   classifyLegacyGroupIntentRefunds,
   classifyOrganiserChildIntentRefunds,
 } from "@/lib/card-refund-group-intent";
-import { DeadCardRefundActionError } from "@/lib/card-refund-dead-row";
+import {
+  DEAD_CARD_REFUND_CHANGED_WHILE_SETTLING,
+  DEAD_CARD_REFUND_CLOSED,
+  DeadCardRefundActionError,
+} from "@/lib/card-refund-dead-row";
 import { deadRowClaimWhere, lockDeadCardRefundRow, type DeadCardRefundRowRefusals } from "@/lib/card-refund-dead-row-lock";
 import { PAID_ANOTHER_WAY_MARKER, postPaidAnotherWayLine } from "@/lib/card-refund-paid-another-way";
 import type { PaidBackChoice } from "@/lib/card-refund-paid-back";
@@ -39,7 +44,11 @@ import {
   applyGroupSettlementMirrorRefund,
   GROUP_CANCEL_IN_PROGRESS_MESSAGE,
 } from "@/lib/group-settlement-mirror-hand-back";
-import { deserializeRefundPlan, legacyGroupSettlementRefundUnsentCents } from "@/lib/group-settlement-refund-plan";
+import {
+  deserializeRefundPlan,
+  LEGACY_GROUP_REFUND_PAID_BY_BANK_NOTE,
+  legacyGroupSettlementRefundUnsentCents,
+} from "@/lib/group-settlement-refund-plan";
 import logger from "@/lib/logger";
 import { cardRefundPaidAnotherWayOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
 import { MANUAL_REFUND_TASK_REASON_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
@@ -86,13 +95,12 @@ import { formatCents } from "@/lib/utils";
 const REFUSALS: DeadCardRefundRowRefusals = {
   notOwedKind: "This is not a group organiser's card refund that can be closed here.",
   organiserChild: "This is not a group organiser's card refund that can be closed here.",
-  closed: "This card refund has already been closed.",
+  closed: DEAD_CARD_REFUND_CLOSED,
   notGivenUp: "This card refund is still being retried, so it cannot be closed yet.",
   otherBooking: "This card refund's payment belongs to another booking, so it cannot be closed here. Ask a developer to reconcile it.",
 };
 
-const CHANGED =
-  "This card refund changed while you were settling it. The list has been refreshed: check it and try again.";
+const CHANGED = DEAD_CARD_REFUND_CHANGED_WHILE_SETTLING;
 
 const NOT_THIS_INTENT =
   "This refund does not match the group organiser's card payment, so it cannot be settled here. Ask a developer to reconcile it.";
@@ -115,14 +123,17 @@ export interface GroupCardRefundPaidAnotherWayResult {
   outcome: "recorded-stripe" | "bank" | "mirrors" | "closed";
 }
 
-interface SettlementSnap {
-  id: string;
-  status: string;
-  amountCents: number;
-  source: PaymentSource;
-  stripePaymentIntentId: string | null;
-  refundPlan: Prisma.JsonValue;
-}
+/** The settlement fields the close pre-reads and re-reads under the lock: one select, so the two cannot drift. */
+const SETTLEMENT_SNAP_SELECT = {
+  id: true,
+  status: true,
+  amountCents: true,
+  source: true,
+  stripePaymentIntentId: true,
+  refundPlan: true,
+} as const satisfies Prisma.GroupBookingSettlementSelect;
+
+type SettlementSnap = Prisma.GroupBookingSettlementGetPayload<{ select: typeof SETTLEMENT_SNAP_SELECT }>;
 
 interface Snap {
   paymentIntentId: string;
@@ -204,7 +215,7 @@ export async function closeGroupCardRefundPaidAnotherWay(
     ? await perJoinerSettlement(preview.paymentId, preview.bookingId)
     : await prisma.groupBookingSettlement.findUnique({
         where: { id: groupSettlementIdForRefundRecoveryKey(preview.idempotencyKey) },
-        select: { id: true, status: true, amountCents: true, source: true, stripePaymentIntentId: true, refundPlan: true },
+        select: SETTLEMENT_SNAP_SELECT,
       });
   const refunds = await readRefunds(preview.paymentIntentId);
   const snap: Snap = { paymentIntentId: preview.paymentIntentId, settlement, refunds };
@@ -275,7 +286,7 @@ async function perJoinerSettlement(paymentId: string, bookingId: string): Promis
   if (!found) return null;
   return prisma.groupBookingSettlement.findUnique({
     where: { id: found.id },
-    select: { id: true, status: true, amountCents: true, source: true, stripePaymentIntentId: true, refundPlan: true },
+    select: SETTLEMENT_SNAP_SELECT,
   });
 }
 
@@ -457,16 +468,13 @@ async function closeLegacy(
   const { operation } = locked;
   const current = await tx.groupBookingSettlement.findUnique({
     where: { id: snap.settlement?.id ?? groupSettlementIdForRefundRecoveryKey(operation.idempotencyKey) },
-    select: { id: true, status: true, amountCents: true, source: true, stripePaymentIntentId: true, refundPlan: true, groupBookingId: true },
+    select: { ...SETTLEMENT_SNAP_SELECT, groupBookingId: true },
   });
-  const comparable = current
-    ? { id: current.id, status: current.status, amountCents: current.amountCents, source: current.source, stripePaymentIntentId: current.stripePaymentIntentId, refundPlan: current.refundPlan }
-    : null;
-  if (!sameSettlement(comparable, snap.settlement)) throw new DeadCardRefundActionError(CHANGED, 409);
+  if (!sameSettlement(current, snap.settlement)) throw new DeadCardRefundActionError(CHANGED, 409);
   const owed = current ? legacyGroupSettlementRefundUnsentCents(current) : 0;
   if (owed !== input.expectedOwedCents) throw new DeadCardRefundActionError(CHANGED, 409);
 
-  const total = planTotal(comparable);
+  const total = planTotal(current);
   const live = classifyLegacyGroupIntentRefunds(snap.refunds, total);
   if (live === "other") throw new DeadCardRefundActionError(GROUP_CARD_REFUND_LEGACY_OTHER_LIVE, 409);
 
@@ -487,7 +495,7 @@ async function closeLegacy(
   const already = current.status === PaymentStatus.REFUNDED || current.status === PaymentStatus.PARTIALLY_REFUNDED;
   if (live === "match" || already) {
     if (live === "match" && current.status === PaymentStatus.SUCCEEDED) await flipSettlement(tx, current, total);
-    const raised = await mirrorChildren(tx, current, true);
+    const raised = await mirrorChildren(tx, current, "card");
     await claimSucceeded(tx, operation, null);
     return {
       ...base,
@@ -509,8 +517,15 @@ async function closeLegacy(
 
   if (current.status === PaymentStatus.SUCCEEDED) {
     await flipSettlement(tx, current, total);
-    const raised = await mirrorChildren(tx, current, false);
-    await claimSucceeded(tx, operation, PAID_ANOTHER_WAY_MARKER);
+    const raised = await mirrorChildren(tx, current, "bank");
+    // #4851 review: the bank paid the whole plan, and the by-hand Xero alerts
+    // are one per raised mirror. If a plan child was skipped or capped, the
+    // alerts would ask for less credit than the bank paid, so roll it all back.
+    if (raised.reduce((sum, row) => sum + row.refundedCents, 0) !== total) {
+      throw new DeadCardRefundActionError(GROUP_CARD_REFUND_LEGACY_PLAN_MISMATCH, 409);
+    }
+    // The note is the plan's record that its refund lines are bank refunds (`legacyGroupRefundPaidByBank`).
+    await claimSucceeded(tx, operation, LEGACY_GROUP_REFUND_PAID_BY_BANK_NOTE);
     return {
       ...base,
       amountCents: total,
@@ -546,7 +561,7 @@ async function flipSettlement(
 async function mirrorChildren(
   tx: Prisma.TransactionClient,
   settlement: { id: string; source: PaymentSource; refundPlan: Prisma.JsonValue },
-  enqueueCreditNote: boolean,
+  paidBackBy: "card" | "bank",
 ): Promise<{ child: { id: string; memberId: string | null }; paymentId: string; refundedCents: number; queuedOperationId: string | null }[]> {
   const raised = [];
   for (const [childId, refundForChild] of deserializeRefundPlan(settlement.refundPlan)) {
@@ -562,7 +577,7 @@ async function mirrorChildren(
       lodgeId: child.lodgeId,
       refundForChild,
       settlement,
-      enqueueCreditNote,
+      paidBackBy,
     });
     if (!mirror.raised) continue;
     raised.push({

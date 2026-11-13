@@ -97,6 +97,23 @@ export function legacyGroupSettlementRefundUnsentCents(settlement: {
 }
 
 /**
+ * #4851 (`INV-PAY-152`): the note a Stuck States bank close leaves in
+ * `lastError` on a pre-#3653 group's ONE refund row
+ * (`group_settlement_refund_recovery_*`) when the plan went back by bank
+ * transfer, not to the card. Unlike the charge-backed `PAID_ANOTHER_WAY_MARKER`
+ * it is read: it is the only record that the plan's refund lines are bank
+ * refunds, so the ledger poster, its census and its back-post agree
+ * (`legacyGroupRefundPaidByBank`).
+ */
+export const LEGACY_GROUP_REFUND_PAID_BY_BANK_NOTE =
+  "Closed by the treasurer: the old whole-group card refund was paid by bank transfer (#4851)";
+
+/** Did a Stuck States bank close settle this pre-#3653 group refund row? The one reader of the note. */
+export function legacyGroupRefundPaidByBank(operation: { status: string; lastError: string | null }): boolean {
+  return operation.status === "SUCCEEDED" && operation.lastError === LEGACY_GROUP_REFUND_PAID_BY_BANK_NOTE;
+}
+
+/**
  * #3956 review F1: is a pre-#3653 plan's ONE combined refund still to be made?
  * It is when it has anything left to send (`legacyGroupSettlementRefundUnsentCents`).
  */

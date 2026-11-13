@@ -9,12 +9,17 @@ import {
   LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL,
 } from "@/lib/card-refund-group-copy";
 import { classifyOrganiserChildIntentRefunds, organiserChildRearmAt } from "@/lib/card-refund-group-intent";
-import { DeadCardRefundActionError } from "@/lib/card-refund-dead-row";
+import {
+  DEAD_CARD_REFUND_CHANGED_WHILE_SETTLING,
+  DEAD_CARD_REFUND_CLOSED,
+  DeadCardRefundActionError,
+} from "@/lib/card-refund-dead-row";
 import { deadRowClaimWhere, lockDeadCardRefundRow, type DeadCardRefundRowRefusals } from "@/lib/card-refund-dead-row-lock";
 import { getClubFormat } from "@/lib/club-format-settings";
 import logger from "@/lib/logger";
 import { isGroupSettlementRefundRecoveryKey, isOrganiserChildRefundKey } from "@/lib/payment-recovery-keys";
 import { rearmedPaymentRecoveryOperationData } from "@/lib/payment-recovery-constants";
+import { organiserChildRefundRearmedPlan } from "@/lib/organiser-child-refund-rearm";
 import { prisma } from "@/lib/prisma";
 import { listRefundsForPaymentIntent } from "@/lib/stripe";
 import { formatCents } from "@/lib/utils";
@@ -38,13 +43,12 @@ import { formatCents } from "@/lib/utils";
 const REFUSALS: DeadCardRefundRowRefusals = {
   notOwedKind: "This card refund cannot be tried again from here.",
   organiserChild: "This card refund cannot be tried again from here.",
-  closed: "This card refund has already been closed.",
+  closed: DEAD_CARD_REFUND_CLOSED,
   notGivenUp: "This card refund is being tried again, so it is not waiting for you. Refresh the list.",
   otherBooking: "This card refund's payment belongs to another booking, so it cannot be settled here. Ask a developer to reconcile it.",
 };
 
-const CHANGED =
-  "This card refund changed while you were settling it. The list has been refreshed: check it and try again.";
+const CHANGED = DEAD_CARD_REFUND_CHANGED_WHILE_SETTLING;
 
 export interface TryOrganiserChildCardAgainInput {
   operationId: string;
@@ -107,7 +111,8 @@ export async function tryOrganiserChildCardRefundAgain(
     }
     const claimed = await tx.paymentRecoveryOperation.updateMany({
       where: deadRowClaimWhere(operation),
-      data: { ...rearmedPaymentRecoveryOperationData(now), nextRetryAt },
+      // `rearmedAt` keeps the recovery audit owed once the card refund goes through (#4851 review).
+      data: { ...rearmedPaymentRecoveryOperationData(now), nextRetryAt, allocationPlan: organiserChildRefundRearmedPlan(operation.allocationPlan, now) },
     });
     if (claimed.count === 0) throw new DeadCardRefundActionError(CHANGED, 409);
     await createAuditLog(

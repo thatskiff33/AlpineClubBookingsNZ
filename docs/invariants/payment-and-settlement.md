@@ -4166,16 +4166,14 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
 
 ## INV-PAY-152
 
-**Related: `INV-PAY-114`** (the per-joiner refund), **`INV-PAY-034`**-`037`
-(the pre-#3653 whole-group refund), **`INV-PAY-122`** and
-**`INV-PAY-149`** (Stuck States' others).
+**Related: `INV-PAY-114`**, **`INV-PAY-034`**-`037`, **`INV-PAY-122`**,
+**`INV-PAY-149`**.
 
 - **A dead refund out of the group organiser's card is settled on Stuck States,
   never by a dashboard refund** (#4851; owner decision 10 Nov 2026). Both kinds
-  are listed for the whole amount: a per-joiner refund
-  (`organiser_child_refund_*`, `organiser_card_appeal_refund_*`) and a
-  pre-#3653 whole-group one (`group_settlement_refund_recovery_*`). No Nothing
-  left owed, no part close.
+  are listed whole: per-joiner (`organiser_child_refund_*`,
+  `organiser_card_appeal_refund_*`) and pre-#3653 whole-group
+  (`group_settlement_refund_recovery_*`). No Nothing left owed, no part close.
 - **Paid another way** (`closeGroupCardRefundPaidAnotherWay`; finance:edit, a
   note) reads the organiser's PaymentIntent first, outside it. Unreadable,
   or a moved intent or settlement under the lock: 409, no writes.
@@ -4184,14 +4182,16 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
     same amount: 409. Else the bank payment: the child's mirror, a COMPLETED
     hand-back (`:no-xero-note`), its `BANK_REFUND` line, `REFUNDED` (not on an
     appeal), no `PaymentRefund`; refused while the group cancels.
-  - Whole-group: the plan's one unkeyed refund flips the settlement and writes
-    mirrors with card notes; an already refunded settlement only finishes
-    mirrors; with no refund, flip and mirrors without card notes; any other
-    live refund: 409.
+  - Whole-group: the plan's one unkeyed refund: flip the settlement, mirrors
+    with card notes. Already refunded: only finish mirrors. No refund: flip,
+    and mirrors without card notes under `legacyGroupRefundPaidByBank`'s
+    note, so plan refund lines are `BANK_REFUND`. Mirrors short of the plan,
+    or any other live refund: 409.
   - A bank payment emails officers to credit the group's invoice in Xero by
     hand (`INV-PAY-137`). Every outcome is audited (`payment`).
 - **Try the card again** (`tryOrganiserChildCardRefundAgain`) re-arms only a
-  per-joiner row and sends nothing. It refuses (409) an unreadable intent, a
+  per-joiner row, marked `rearmedAt` so its recovery is audited, and sends
+  nothing. It refuses (409) an unreadable intent, a
   live refund under its key, an unkeyed one of its amount, or a moved amount;
   after a refused key it waits out Stripe's window (`organiserChildRearmAt`).
 - **One row, one winner**: `lockDeadCardRefundRow` (`accept`) and

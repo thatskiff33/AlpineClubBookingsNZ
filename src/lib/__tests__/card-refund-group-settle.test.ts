@@ -43,6 +43,7 @@ const state = vi.hoisted(() => ({
   settlementUpdates: [] as { data?: { status?: string } }[],
   paymentRefundCreates: 0,
   refundRecords: [] as { refund?: { id?: string } }[],
+  missingBookings: [] as string[],
 }));
 
 function reset() {
@@ -69,6 +70,7 @@ function reset() {
   state.settlementUpdates = [];
   state.paymentRefundCreates = 0;
   state.refundRecords = [];
+  state.missingBookings = [];
 }
 
 vi.mock("server-only", () => ({}));
@@ -232,6 +234,7 @@ vi.mock("@/lib/prisma", () => {
     },
     booking: {
       findUnique: ({ where }: { where: { id: string } }) => {
+        if (state.missingBookings.includes(where.id)) return Promise.resolve(null);
         if (where.id === "joiner-a") {
           return Promise.resolve({
             id: where.id,
@@ -306,6 +309,7 @@ import { DeadCardRefundActionError } from "@/lib/card-refund-dead-row";
 import { lockDeadCardRefundRow, type DeadCardRefundRowRefusals } from "@/lib/card-refund-dead-row-lock";
 import {
   GROUP_CARD_REFUND_ALREADY_ON_STRIPE,
+  GROUP_CARD_REFUND_LEGACY_PLAN_MISMATCH,
   GROUP_CARD_REFUND_UNKEYED_SAME_AMOUNT,
   LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL,
 } from "@/lib/card-refund-group-copy";
@@ -313,6 +317,7 @@ import { classifyLegacyGroupIntentRefunds, classifyOrganiserChildIntentRefunds, 
 import { closeGroupCardRefundPaidAnotherWay } from "@/lib/card-refund-group-paid-another-way";
 import { tryOrganiserChildCardRefundAgain } from "@/lib/card-refund-group-try-again";
 import { listDeadCardRefunds, PAID_ANOTHER_WAY_MARKER } from "@/lib/card-refund-paid-another-way";
+import { LEGACY_GROUP_REFUND_PAID_BY_BANK_NOTE } from "@/lib/group-settlement-refund-plan";
 import { findUnbackedOrganiserChildRefundMirrors } from "@/lib/organiser-child-refund-audit";
 import { processOrganiserChildRefundOperation } from "@/lib/organiser-child-refund-executor";
 import type { PaymentRecoveryOperation } from "@prisma/client";
@@ -527,7 +532,20 @@ describe("paid another way for an old whole-group refund", () => {
     expect(state.paymentUpdateMany).toHaveLength(1);
     expect(state.enqueues).toHaveLength(0);
     expect(state.alerts).toEqual([expect.objectContaining({ bookingId: "joiner-a", refundCents: 4_500, paidBy: "card", reference: expect.stringContaining("old whole-group card refund") })]);
-    expect(state.claims[0]).toEqual(expect.objectContaining({ data: expect.objectContaining({ lastError: PAID_ANOTHER_WAY_MARKER }) }));
+    // #4851 review: the plan's own note, which the ledger census reads to expect bank refund lines.
+    expect(state.claims[0]).toEqual(expect.objectContaining({ data: expect.objectContaining({ lastError: LEGACY_GROUP_REFUND_PAID_BY_BANK_NOTE }) }));
+  });
+
+  it("#4851 review: refuses a bank close whose raised mirrors fall short of the plan, writing nothing", async () => {
+    // joiner-b's booking is gone, so only joiner-a's 4500 of the 7500 plan could be mirrored and alerted.
+    state.settlement = settlement({ refundPlan: { "joiner-a": 4_500, "joiner-b": 3_000 } });
+    state.missingBookings = ["joiner-b"];
+    await expect(
+      closeGroupCardRefundPaidAnotherWay({ ...closeInput, amountCents: 7_500, expectedOwedCents: 7_500 }),
+    ).rejects.toMatchObject({ status: 409, message: GROUP_CARD_REFUND_LEGACY_PLAN_MISMATCH });
+    expect(state.claims).toHaveLength(0);
+    expect(state.alerts).toHaveLength(0);
+    expect(state.audits.filter((row) => row.action === "booking-payment.card-refund.paid-another-way")).toHaveLength(0);
   });
 
   it("an already-refunded settlement only finishes the mirrors", async () => {
@@ -560,6 +578,13 @@ describe("try the card again", () => {
     );
     expect(state.audits[0]?.action).toBe("booking-payment.card-refund.try-card-again");
     expect(state.processRefunds).toBe(0);
+  });
+
+  it("#4851 review: marks the slice re-armed, keeping every other field, so the recovery audit stays owed", async () => {
+    await again();
+    expect((state.claims[0] as { data: { allocationPlan: unknown } }).data.allocationPlan).toEqual([
+      { paymentTransactionId: "organiser-child", amountCents: 4_500, rearmedAt: FROZEN.toISOString() },
+    ]);
   });
 
   it("does not re-arm when Stripe already has this refund", async () => {
@@ -606,6 +631,27 @@ describe("the executor reads Stripe before every send", () => {
     state.refunds = [];
     await processOrganiserChildRefundOperation(state.operation as unknown as PaymentRecoveryOperation, { currencyCode: "NZD", locale: "en-NZ" }, seam as never);
     expect(state.processRefunds).toBe(1);
+  });
+
+  // #4851 review: the re-arm restarts attempts at 0, so attempt 1 of a re-armed
+  // debt must still say, in the audit trail, that the owed money went back.
+  const recovered = () => state.audits.filter((row) => row.action === "booking.payment.refund_recovered");
+
+  it("a re-armed debt whose first attempt sends writes the recovery audit", async () => {
+    state.operation = dead({
+      attempts: 1,
+      allocationPlan: [{ paymentTransactionId: "organiser-child", amountCents: 4_500, rearmedAt: FROZEN.toISOString() }],
+    });
+    await processOrganiserChildRefundOperation(state.operation as unknown as PaymentRecoveryOperation, { currencyCode: "NZD", locale: "en-NZ" }, seam as never);
+    expect(state.processRefunds).toBe(1);
+    expect(recovered()).toEqual([expect.objectContaining({ metadata: expect.objectContaining({ rearmed: true, attempts: 1 }) })]);
+  });
+
+  it("a first attempt never re-armed writes no recovery audit", async () => {
+    state.operation = dead({ attempts: 1 });
+    await processOrganiserChildRefundOperation(state.operation as unknown as PaymentRecoveryOperation, { currencyCode: "NZD", locale: "en-NZ" }, seam as never);
+    expect(state.processRefunds).toBe(1);
+    expect(recovered()).toEqual([]);
   });
 });
 

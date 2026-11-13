@@ -50,6 +50,24 @@ export type GroupSettlementSharePlan = {
   totalShareCents: number;
 };
 
+/**
+ * What a settlement's refund line needs to know: its source, and whether a
+ * pre-#3653 card plan's refund was closed on Stuck States as paid by bank
+ * (`legacyGroupRefundPaidByBank`, #4851). Required, so no reader can forget it.
+ */
+export type GroupSettlementRefundSource = Pick<GroupSettlementForPosting, "id" | "source"> & {
+  refundPaidByBank: boolean;
+};
+
+/**
+ * How the plan's refund went back: to the organiser's card only for a card
+ * settlement whose refund was not paid by bank instead (`INV-PAY-152`). The
+ * one rule the poster, the back-post and the census's drift check share.
+ */
+export function groupSettlementRefundLineKind(settlement: Omit<GroupSettlementRefundSource, "id">): "CARD_REFUND" | "BANK_REFUND" {
+  return settlement.source === "STRIPE" && !settlement.refundPaidByBank ? "CARD_REFUND" : "BANK_REFUND";
+}
+
 /** How the money moved, as the settlement's own source says (`INV-PAY-013`). */
 function settlementShape(
   source: PaymentSource,
@@ -119,17 +137,19 @@ export function planGroupSettlementShareLines(input: {
  * settlement's plan, whose refund the club makes by hand. Null for nothing.
  */
 export function planGroupSettlementRefundLine(input: {
-  settlement: Pick<GroupSettlementForPosting, "id" | "source">;
+  settlement: GroupSettlementRefundSource;
   bookingId: string;
   lodgeId: string;
   refundCents: number;
 }): BookingLedgerPosting | null {
   if (input.refundCents <= 0) return null;
+  // A card plan paid by bank is shaped as the bank refund it was (#4851).
+  const shapeSource: PaymentSource = groupSettlementRefundLineKind(input.settlement) === "CARD_REFUND" ? "STRIPE" : "INTERNET_BANKING";
   return {
     bookingId: input.bookingId,
     lodgeId: input.lodgeId,
     side: "SETTLEMENT",
-    ...settlementShape(input.settlement.source, "refund"),
+    ...settlementShape(shapeSource, "refund"),
     sign: -1,
     quantity: 1,
     unitCents: input.refundCents,

@@ -907,9 +907,9 @@ export type GroupSettlementRefundReplayResult = {
 /**
  * One child's mirror of a frozen pre-#3653 plan, inside the caller's
  * transaction. The replay and the Stuck States bank close share this body.
- * `enqueueCreditNote` is true only when the money went back to the card: the
- * bank close credits the group's invoice by hand and must not enqueue a note
- * worded as a card refund.
+ * `paidBackBy` says where the money went. Only `card` enqueues a card credit
+ * note: the bank close credits the group's invoice by hand. A `bank` close
+ * posts the child's plan refund as the bank refund it was (`INV-PAY-152`).
  */
 export async function applyLegacyGroupChildRefundMirror(
   tx: Prisma.TransactionClient,
@@ -919,10 +919,11 @@ export async function applyLegacyGroupChildRefundMirror(
     lodgeId: string;
     refundForChild: number;
     settlement: { id: string; source: PaymentSource };
-    enqueueCreditNote: boolean;
+    paidBackBy: "card" | "bank";
   },
 ): Promise<{ applied: boolean; raised: boolean; refundedCents: number; queuedOperationId: string | null }> {
-  const { bookingId, paymentId, lodgeId, refundForChild, settlement, enqueueCreditNote } = input;
+  const { bookingId, paymentId, lodgeId, refundForChild, paidBackBy } = input;
+  const settlement = { ...input.settlement, refundPaidByBank: paidBackBy === "bank" };
   const payment = await readGroupChildMirrorForPlanReplay(tx, { bookingId, paymentId });
   if (!payment.claimedByGroupCancel) {
     return { applied: false, raised: false, refundedCents: 0, queuedOperationId: null };
@@ -949,9 +950,8 @@ export async function applyLegacyGroupChildRefundMirror(
     return { applied: false, raised: false, refundedCents: 0, queuedOperationId: null };
   }
   const refundedCents = nextRefunded - payment.refundedAmountCents;
-  const queued = enqueueCreditNote
-    ? await enqueueXeroRefundCreditNoteOperation(paymentId, refundedCents, { store: tx })
-    : null;
+  // Only a card refund gets a card credit note; a bank close's invoice is credited by hand.
+  const queued = paidBackBy === "card" ? await enqueueXeroRefundCreditNoteOperation(paymentId, refundedCents, { store: tx }) : null;
   await postGroupSettlementRefundLedgerLine({
     store: tx,
     settlement,
@@ -1104,7 +1104,7 @@ export async function executeGroupSettlementRefundPlan(
         lodgeId: child.lodgeId,
         refundForChild,
         settlement,
-        enqueueCreditNote: true,
+        paidBackBy: "card",
       }),
     );
     if (!mirrorResult.applied) continue;

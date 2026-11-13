@@ -39,6 +39,7 @@ import {
   supersededCloseFillsItsCharge,
   tryCardAgainRefusal,
   type LaterStripeRefund,
+  DEAD_CARD_REFUND_CLOSED,
 } from "@/lib/card-refund-dead-row";
 import { deadRowClaimWhere, lockDeadCardRefundRow } from "@/lib/card-refund-dead-row-lock";
 import { isOwedCardRefundOperation } from "@/lib/open-card-refund-owed";
@@ -474,7 +475,7 @@ export async function closeCardRefundPaidAnotherWay(
     const { operation, payment, booking } = await lockDeadCardRefundRow(tx, input.operationId, {
       notOwedKind: "This is not a card refund that can be closed here.",
       organiserChild: "This refund comes out of the group organiser's card payment, so it cannot be closed here. Ask a developer to reconcile it.",
-      closed: "This card refund has already been closed.",
+      closed: DEAD_CARD_REFUND_CLOSED,
       notGivenUp: "This card refund is still being retried, so it cannot be closed yet.",
       otherBooking: "This card refund's payment belongs to another booking, so it cannot be closed here. Ask a developer to reconcile it.",
     });
