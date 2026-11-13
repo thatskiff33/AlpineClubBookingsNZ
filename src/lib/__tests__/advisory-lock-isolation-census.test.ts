@@ -1,7 +1,6 @@
-import fs from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { incompatibleLockTransactions } from "./support/advisory-lock-isolation";
+import { lockCensusSources } from "./support/advisory-lock-source";
 
 // INV-LOCK-005: no approved exceptions. Any future entry needs its reason here.
 const ALLOWED: Readonly<Record<string, string>> = {};
@@ -10,18 +9,10 @@ const ALLOWED: Readonly<Record<string, string>> = {};
 // several times that on a busy CI runner. Same limit as the step-up census (#5040).
 const CENSUS_TIMEOUT_MS = 90_000;
 
-function sources(dir: string): Array<{ file: string; text: string }> {
-  return fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) return entry.name === "__tests__" ? [] : sources(full);
-    if (!/\.(ts|tsx)$/.test(entry.name) || /\.(d|test|spec|integration)\./.test(entry.name)) return [];
-    return [{ file: path.relative(process.cwd(), full).replaceAll("\\", "/"), text: fs.readFileSync(full, "utf8") }];
-  });
-}
-
 describe("advisory lock transaction isolation (INV-LOCK-005)", () => {
   it("keeps lock/re-read transactions at READ COMMITTED throughout src", () => {
-    const files = sources(path.join(process.cwd(), "src"));
+    // Same population as the lock inventory (INV-SSOT).
+    const files = lockCensusSources().map(({ rel, text }) => ({ file: rel, text }));
     expect(files.length).toBeGreaterThan(0);
     const violations = incompatibleLockTransactions(files);
     expect(violations.filter(site => !ALLOWED[site]), "INV-LOCK-005: snapshot isolation hides commits made while waiting on advisory locks").toEqual([]);

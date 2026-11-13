@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { blankLiteralsWithSpans, type BlankedSpan } from "./strip-comments";
 
 /** Shared raw transaction-lock spelling for inventories and isolation checks. */
@@ -79,4 +81,47 @@ export function maskedSource(source: string): string {
   }
   pieces.push(code.slice(cursor));
   return pieces.join("");
+}
+
+/**
+ * Test files are skipped by NAME, which is a stated limit of every census here.
+ * `.integration.` anywhere in a path drops the file, so a production module named
+ * `probe-fence.integration.ts` would take locks this scan never sees. Nothing in
+ * this repository is named that way today — the integration modules that exist
+ * spell it `integration-credentials.ts` — and the rule is kept because it is the
+ * one the sibling guards use. It sits alongside the other boundary worth knowing:
+ * only non-test `src/` is walked, so a lock taken in a migration's trigger or in
+ * `scripts/` is outside every census that reads this population.
+ */
+function isTestFile(relPath: string): boolean {
+  return (
+    relPath.includes("__tests__") ||
+    /\.(test|spec)\.tsx?$/.test(relPath) ||
+    relPath.includes(".integration.")
+  );
+}
+
+function walk(dir: string, files: string[] = []): string[] {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === "node_modules") continue;
+      walk(full, files);
+    } else if (/\.(ts|tsx)$/.test(entry.name) && !entry.name.endsWith(".d.ts")) {
+      files.push(full);
+    }
+  }
+  return files;
+}
+
+/**
+ * The one file population every advisory-lock census reads (INV-SSOT): the lock
+ * inventory and the INV-LOCK-005 isolation census must never cover different files.
+ * `rel` is repo-relative with forward slashes.
+ */
+export function lockCensusSources(srcDir = path.join(process.cwd(), "src")): Array<{ rel: string; text: string }> {
+  return walk(srcDir)
+    .map(file => path.relative(process.cwd(), file).split(path.sep).join("/"))
+    .filter(rel => !isTestFile(rel))
+    .map(rel => ({ rel, text: fs.readFileSync(path.join(process.cwd(), rel), "utf8") }));
 }

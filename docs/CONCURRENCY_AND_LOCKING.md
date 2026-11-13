@@ -99,7 +99,8 @@ Read keep the snapshot from the first statement, including a settings read befor
 lock acquisition. A credit, refund request or family link committed while the
 former-member anonymisation job waits must be visible to its blocker checks.
 The job retains global → lifecycle → credit → Member row order and its guarded
-claim; each failed member is logged and counted as blocked before continuing.
+claim; each failed member is logged and counted as blocked before continuing,
+and any such failure records the run FAILURE and reports it once (counts only).
 The lease is released in `finally`. Member merge relies on the same fresh-read
 rule. The isolation census shares the inventory's raw-lock matcher and derives
 helper reachability from source instead of keeping another list of lock names.

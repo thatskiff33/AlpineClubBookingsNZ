@@ -19,7 +19,10 @@ vi.mock("@/lib/member-email-inheritance", () => ({ retireInheritedEmailCopies: v
 
 import logger from "@/lib/logger";
 import { getPrivacyRetentionPreview } from "@/lib/privacy-retention";
-import { runFormerMemberAnonymisationJob, runPersonalDataPruneJob } from "@/lib/privacy-retention-jobs";
+import {
+  privacyRetentionFailureMessage, privacyRetentionRunStatus, runFormerMemberAnonymisationJob, runPersonalDataPruneJob,
+  runRecordedPrivacyRetentionJob,
+} from "@/lib/privacy-retention-jobs";
 import { DEFAULT_PRIVACY_RETENTION_SETTINGS, FORMER_MEMBER_ANONYMISATION_JOB_NAME } from "@/lib/privacy-retention-shared";
 import { createAuditLog } from "@/lib/audit";
 import { deleteOwnedMemberPhotoBlobs } from "@/lib/member-photo";
@@ -132,7 +135,12 @@ describe("privacy retention selection and execution", () => {
     s.data.member.push(member("a-fails"), member("b-succeeds"));
     const failure = new Error("transaction failed");
     vi.mocked(s.db.$transaction).mockRejectedValueOnce(failure);
-    expect(await runFormerMemberAnonymisationJob({ db: s.db, now: NOW })).toMatchObject({ anonymised: 1, blocked: 1 });
+    const result = await runFormerMemberAnonymisationJob({ db: s.db, now: NOW });
+    expect(result).toMatchObject({ anonymised: 1, blocked: 1, failed: 1 });
+    // A thrown member fails the run (cron health and one Sentry report), unlike an ordinary blocker.
+    expect(privacyRetentionRunStatus(result)).toBe("FAILURE");
+    expect(privacyRetentionFailureMessage(result)).toMatch(/^1 former member\(s\) could not be anonymised/);
+    expect(privacyRetentionFailureMessage(result)).not.toContain("a-fails");
     expect(s.data.member[0].deletedAt).toBeNull();
     expect(s.data.member[1].deletedAt).toEqual(NOW);
     expect(s.db.$transaction).toHaveBeenCalledTimes(2);
@@ -140,11 +148,30 @@ describe("privacy retention selection and execution", () => {
     expect(s.settings.anonymiseStartedAt).toBeNull();
   });
 
+  it("records a run with failed members as FAILURE and throws once for the cron step's report", async () => {
+    const recordCronRun = vi.fn();
+    const failedRun = { deletedEmailLogs: 0, deletedApplications: 0, anonymised: 3, blocked: 2, failed: 2 };
+    await expect(runRecordedPrivacyRetentionJob(FORMER_MEMBER_ANONYMISATION_JOB_NAME, async () => failedRun, recordCronRun))
+      .rejects.toThrow(/^2 former member\(s\) could not be anonymised/);
+    expect(recordCronRun).toHaveBeenCalledWith(expect.objectContaining({
+      jobName: FORMER_MEMBER_ANONYMISATION_JOB_NAME, status: "FAILURE", resultSummary: failedRun,
+      error: expect.stringMatching(/^2 former member\(s\)/),
+    }));
+    recordCronRun.mockClear();
+    const heldBack = { ...failedRun, failed: 0 };
+    await expect(runRecordedPrivacyRetentionJob(FORMER_MEMBER_ANONYMISATION_JOB_NAME, async () => heldBack, recordCronRun)).resolves.toBeUndefined();
+    expect(recordCronRun).toHaveBeenCalledWith(expect.objectContaining({ status: "SUCCESS", error: null }));
+    const crash = new Error("database unavailable");
+    await expect(runRecordedPrivacyRetentionJob(FORMER_MEMBER_ANONYMISATION_JOB_NAME, async () => { throw crash; }, recordCronRun)).rejects.toBe(crash);
+  });
+
   it("ships both jobs off and performs no transaction or destructive side effect", async () => {
     const s = store();
     s.data.member.push(member("off"));
     s.data.emailLog.push({ id: "old", createdAt: new Date("2020-01-01Z") });
-    expect(await runPersonalDataPruneJob({ db: s.db, now: NOW })).toMatchObject({ skipped: "disabled", deletedEmailLogs: 0 });
+    const pruneOff = await runPersonalDataPruneJob({ db: s.db, now: NOW });
+    expect(pruneOff).toMatchObject({ skipped: "disabled", deletedEmailLogs: 0 });
+    expect(privacyRetentionRunStatus(pruneOff)).toBe("SKIPPED");
     expect(await runFormerMemberAnonymisationJob({ db: s.db, now: NOW })).toMatchObject({ skipped: "disabled", anonymised: 0 });
     expect(s.db.$transaction).not.toHaveBeenCalled();
     expect(s.data.emailLog).toHaveLength(1);
@@ -244,7 +271,11 @@ describe("privacy retention selection and execution", () => {
       expect.objectContaining({ id: "credit", reasons: ["open money"] }),
       expect.objectContaining({ id: "booking", reasons: ["open booking or booking money"] }),
     ]));
-    expect(await runFormerMemberAnonymisationJob({ db: s.db, now: NOW })).toMatchObject({ anonymised: 0, blocked: 2 });
+    const result = await runFormerMemberAnonymisationJob({ db: s.db, now: NOW });
+    expect(result).toMatchObject({ anonymised: 0, blocked: 2, failed: 0 });
+    // Members held back by open money or links are expected, not a failed run.
+    expect(privacyRetentionRunStatus(result)).toBe("SUCCESS");
+    expect(privacyRetentionFailureMessage(result)).toBeNull();
     expect(createAuditLog).not.toHaveBeenCalled();
   });
 

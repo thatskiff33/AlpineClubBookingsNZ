@@ -1,8 +1,7 @@
-import fs from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
-import { ADVISORY_LOCK_CALL, maskedSource } from "./support/advisory-lock-source";
+import { ADVISORY_LOCK_CALL, lockCensusSources, maskedSource } from "./support/advisory-lock-source";
 import { balancedBrackets } from "./support/balanced-brackets";
 import { blankLiterals, blankLiteralsWithSpans } from "./support/strip-comments";
 
@@ -1772,37 +1771,6 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
 
 const CAPACITY_LOCK_MINT = "src/lib/lodge-capacity-lock.ts";
 
-function walk(dir: string, files: string[] = []): string[] {
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name === "node_modules") continue;
-      walk(full, files);
-    } else if (/\.(ts|tsx)$/.test(entry.name) && !entry.name.endsWith(".d.ts")) {
-      files.push(full);
-    }
-  }
-  return files;
-}
-
-/**
- * Test files are skipped by NAME, which is a stated limit of every census here.
- * `.integration.` anywhere in a path drops the file, so a production module named
- * `probe-fence.integration.ts` would take locks this scan never sees. Nothing in
- * this repository is named that way today — the integration modules that exist
- * spell it `integration-credentials.ts` — and the rule is kept because it is the
- * one the sibling guards use. It sits alongside the other boundary worth knowing:
- * only non-test `src/` is walked, so a lock taken in a migration's trigger or in
- * `scripts/` is outside every census in this file.
- */
-function isTestFile(relPath: string): boolean {
-  return (
-    relPath.includes("__tests__") ||
-    /\.(test|spec)\.tsx?$/.test(relPath) ||
-    relPath.includes(".integration.")
-  );
-}
-
 /**
  * Count occurrences of `needle` in `source`, ignoring comments and the contents
  * of every literal but a raw statement (see {@link maskedSource}).
@@ -2015,12 +1983,7 @@ function indexSitesByKey(sites: readonly AdvisoryLockSite[]): Map<string, Adviso
 const ROW_LOCK_STRENGTHS = /FOR (?:UPDATE|KEY SHARE|NO KEY UPDATE|SHARE)/g;
 
 describe("advisory lock guard (#182 / H1 regression class)", () => {
-  const sources = walk(SRC_DIR)
-    .map((file) => ({
-      rel: path.relative(process.cwd(), file).split(path.sep).join("/"),
-      text: fs.readFileSync(file, "utf8"),
-    }))
-    .filter(({ rel }) => !isTestFile(rel));
+  const sources = lockCensusSources(SRC_DIR);
 
   it("keeps every canonical global pg_advisory_xact_lock(1) site in the reviewed per-site registry", () => {
     const sites = collectAdvisoryLockSites(sources);

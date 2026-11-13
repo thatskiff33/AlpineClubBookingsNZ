@@ -1,5 +1,7 @@
 import "server-only";
 import type { PrismaClient } from "@prisma/client";
+import type { CronJobRunStatus, RecordCronJobRunInput } from "@/lib/cron-job-run";
+import { runRecordedCronTask } from "@/lib/cron-recorded-task";
 import logger from "@/lib/logger";
 import { FORMER_MEMBER_ANONYMISATION_JOB_NAME } from "@/lib/privacy-retention-shared";
 import { prisma } from "@/lib/prisma";
@@ -12,8 +14,26 @@ type JobOptions = { now?: Date; db?: PrismaClient };
 export type PrivacyRetentionResult = {
   skipped?: "disabled" | "busy";
   deletedEmailLogs: number; deletedApplications: number; anonymised: number; blocked: number;
+  /** Members whose transaction threw: counted in `blocked` too, but they fail the run (#4920). */
+  failed: number;
 };
-const empty = (): PrivacyRetentionResult => ({ deletedEmailLogs: 0, deletedApplications: 0, anonymised: 0, blocked: 0 });
+const empty = (): PrivacyRetentionResult => ({ deletedEmailLogs: 0, deletedApplications: 0, anonymised: 0, blocked: 0, failed: 0 });
+
+/**
+ * A member whose transaction threw is held back like a blocked one, but unlike a
+ * member with open money it is a fault nobody would otherwise see. The run is
+ * recorded FAILURE with this message (admin cron health reads it) and reported
+ * once per run, never per member. Counts only: no member data.
+ */
+export function privacyRetentionFailureMessage(result: PrivacyRetentionResult): string | null {
+  return result.failed
+    ? `${result.failed} former member(s) could not be anonymised because their transaction failed; the logs name each member id.`
+    : null;
+}
+export function privacyRetentionRunStatus(result: PrivacyRetentionResult): CronJobRunStatus {
+  if (result.skipped) return "SKIPPED";
+  return privacyRetentionFailureMessage(result) ? "FAILURE" : "SUCCESS";
+}
 
 async function runClaimed(
   kind: "prune" | "anonymise", { now = new Date(), db = prisma }: JobOptions,
@@ -67,6 +87,7 @@ async function runClaimed(
           } catch (err) {
             logger.error({ err, memberId: row.id, job: FORMER_MEMBER_ANONYMISATION_JOB_NAME }, "Former-member anonymisation failed; member blocked for this run");
             result.blocked++;
+            result.failed++;
           }
         }
         const last = batch.at(-1);
@@ -88,4 +109,23 @@ export function runPersonalDataPruneJob(options: JobOptions = {}) {
 }
 export function runFormerMemberAnonymisationJob(options: JobOptions = {}) {
   return runClaimed("anonymise", options);
+}
+
+/**
+ * The nightly cron step for one retention job: records its CronJobRun row and
+ * throws on failure so the caller's step reports it to Sentry. A run whose
+ * members failed (#4920) is recorded FAILURE with the count-only message and
+ * reported once, after every member has been tried.
+ */
+export async function runRecordedPrivacyRetentionJob(
+  jobName: string, work: () => Promise<PrivacyRetentionResult>,
+  recordCronRun?: (input: RecordCronJobRunInput) => Promise<void> | void,
+): Promise<void> {
+  const outcome = await runRecordedCronTask({
+    jobName, work, recordCronRun,
+    statusFor: privacyRetentionRunStatus, errorFor: privacyRetentionFailureMessage,
+  });
+  if (!outcome.ok) throw outcome.error;
+  const memberFailures = privacyRetentionFailureMessage(outcome.result);
+  if (memberFailures) throw new Error(memberFailures);
 }
