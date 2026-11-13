@@ -1559,6 +1559,7 @@ export async function updateXeroBookingInvoiceForBooking(
       providerInvoiceId: invoiceId,
       lines: updatedInvoice.lineItems ?? [],
       lineAmountTypes: updatedInvoice.lineAmountTypes!,
+      providerTotal: updated?.total ?? currentInvoice.total,
     });
 
     return updated?.invoiceID ?? invoiceId;

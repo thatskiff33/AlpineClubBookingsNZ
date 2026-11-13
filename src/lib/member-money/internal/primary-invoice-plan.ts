@@ -251,11 +251,13 @@ export function planPrimaryInvoiceUpdate(input: {
   lines: LineItem[];
   /** What the update sends: the issued invoice's own, so the frozen value is the provider's. */
   lineAmountTypes: LineAmountTypes;
+  /** The provider's gross invoice total, including discounts and tax, converted at its boundary. */
+  providerTotalCents: number;
   primary: PrimaryManifestForUpdate | null;
 }): PrimaryInvoiceUpdatePlan | null {
   const { lines, primary } = input;
   if (!primary) return null;
-  const lineTotalCents = invoiceLineItemsTotalCents(lines);
+  const lineTotalCents = input.providerTotalCents;
   const rendering: PrimaryInvoiceRendering = {
     legacyKey: input.legacyKey,
     payloadHash: primaryInvoicePayloadHash(lines),

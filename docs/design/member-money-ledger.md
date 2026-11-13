@@ -580,8 +580,10 @@ mismatch is a `CONFLICT` with no coverage. The primary invoice's coverage keeps
 slice, so each edit's slice is billed once. `PRIMARY_BOOKING_INVOICE_UPDATE`
 records what `updateXeroBookingInvoiceForBooking` sent: it covers nothing, and
 is `COVERED` only beside a `COVERED` primary manifest for the same invoice and
-total (`PRIMARY_UNMATCHED` otherwise; the deferred trigger enforces it). With no
-primary manifest, no update manifest is written. Two limits stand: coverage is
+total (`PRIMARY_UNMATCHED` otherwise; the deferred trigger enforces it). The
+provider's gross total includes discounts and tax; it is never rebuilt from
+unit prices. With no primary manifest or no usable provider total, no update
+manifest is written. Two limits stand: coverage is
 not yet summed across roles against the component's live gross (credit notes,
 a later cohort, reduce it), and the supplementary sender has no replay, so a
 manifest that failed to write stays unwritten.

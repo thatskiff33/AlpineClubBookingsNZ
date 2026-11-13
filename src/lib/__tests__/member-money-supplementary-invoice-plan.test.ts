@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 // The builders' modules load the client; the planners never query it.
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+import type { Prisma } from "@prisma/client";
+import { readSupplementarySliceEvent } from "@/lib/member-money/internal/supplementary-invoice-manifest";
 import { LineAmountTypes, type LineItem } from "xero-node";
 import { modificationChangeFeeKey } from "@/lib/booking-ledger-posting-keys";
 import { changeFeeLineItem } from "@/lib/xero-modification-line-items";
@@ -130,7 +132,7 @@ describe("planPrimaryInvoiceUpdate (ALP-436)", () => {
   const lines = [stayLine(14000)];
   const primary = { id: "manifest-1", outcome: "COVERED" as const, lineTotalCents: 14000, providerInvoiceId: "inv-1" };
   const update = (overrides: Partial<Parameters<typeof planPrimaryInvoiceUpdate>[0]> = {}) => planPrimaryInvoiceUpdate({
-    legacyKey: "update-key", providerInvoiceId: "inv-1", lines, lineAmountTypes: LineAmountTypes.Exclusive, primary, ...overrides,
+    legacyKey: "update-key", providerInvoiceId: "inv-1", lines, lineAmountTypes: LineAmountTypes.Inclusive, providerTotalCents: 14000, primary, ...overrides,
   });
 
   it("plans nothing without a primary manifest", () => {
@@ -140,16 +142,57 @@ describe("planPrimaryInvoiceUpdate (ALP-436)", () => {
   it("matches a same-total update of the primary invoice, freezing the provider's line amount types", () => {
     expect(update()).toMatchObject({
       outcome: "COVERED", legacyKey: "update-key", lineTotalCents: 14000, payloadHash: primaryInvoicePayloadHash(lines),
-      frozenMapping: { source: "UPDATED_FROM_PROVIDER", primaryManifestId: "manifest-1", lineAmountTypes: LineAmountTypes.Exclusive },
+      frozenMapping: { source: "UPDATED_FROM_PROVIDER", primaryManifestId: "manifest-1", lineAmountTypes: LineAmountTypes.Inclusive },
     });
+  });
+
+  it.each([
+    ["discounted", { ...stayLine(14000), discountRate: 10, lineAmount: 126 }, LineAmountTypes.Inclusive, 12600],
+    ["exclusive tax", { ...stayLine(14000), lineAmount: 140, taxAmount: 21 }, LineAmountTypes.Exclusive, 16100],
+  ])("uses the provider total for %s lines", (_label, line, lineAmountTypes, providerTotalCents) => {
+    expect(update({ lines: [line], lineAmountTypes, providerTotalCents }))
+      .toMatchObject({ outcome: "CONFLICT", reason: "PRIMARY_UNMATCHED", lineTotalCents: providerTotalCents });
   });
 
   it.each([
     ["another invoice", { providerInvoiceId: "inv-2" }, {}],
     ["a conflicted primary", {}, { outcome: "CONFLICT" as const }],
-    ["a changed total", { lines: [stayLine(15000)] }, {}],
+    ["a changed total", { lines: [stayLine(15000)], providerTotalCents: 15000 }, {}],
   ])("records %s as PRIMARY_UNMATCHED", (_label, overrides, primaryOverrides) => {
     expect(update({ ...overrides, primary: { ...primary, ...primaryOverrides } }))
       .toMatchObject({ outcome: "CONFLICT", reason: "PRIMARY_UNMATCHED" });
+  });
+});
+
+describe("readSupplementarySliceEvent (ALP-436)", () => {
+  const anchor = { kind: "SECOND_ASK" as const, modificationId: MOD, taskId: "task_%\\1" };
+  const journal = (eventKey: string, reversed = false) => ({ event: { eventKey }, reversedBy: reversed ? { id: "reversal" } : null, lines: [] });
+  const read = (journals: ReturnType<typeof journal>[]) => {
+    const findMany = vi.fn().mockResolvedValue(journals);
+    const db = { memberMoneyJournal: { findMany } } as unknown as Pick<Prisma.TransactionClient, "memberMoneyJournal">;
+    return { findMany, db };
+  };
+
+  it("matches task IDs literally, escaping SQL wildcard and escape characters", async () => {
+    const { db, findMany } = read([]);
+    await readSupplementarySliceEvent(db, BOOKING, anchor);
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { event: { eventKey: { startsWith: String.raw`review-close:task\_\%\\1:` } }, reversesJournalId: null },
+    }));
+  });
+
+  it("selects the one live closure after an earlier closure was reversed", async () => {
+    const { db } = read([journal("review-close:task:old", true), journal("review-close:task:live")]);
+    await expect(readSupplementarySliceEvent(db, BOOKING, anchor)).resolves.toMatchObject({ eventKey: "review-close:task:live", reversed: false });
+  });
+
+  it("refuses multiple live closures and ignores fully reversed closures", async () => {
+    await expect(readSupplementarySliceEvent(read([journal("one"), journal("two")]).db, BOOKING, anchor)).resolves.toBe("AMBIGUOUS");
+    await expect(readSupplementarySliceEvent(read([journal("old", true)]).db, BOOKING, anchor)).resolves.toBeNull();
+  });
+
+  it("keeps a reversed modification visible so its planner can refuse it", async () => {
+    await expect(readSupplementarySliceEvent(read([journal(EVENT, true)]).db, BOOKING, { kind: "MODIFICATION", modificationId: MOD }))
+      .resolves.toMatchObject({ eventKey: EVENT, reversed: true });
   });
 });

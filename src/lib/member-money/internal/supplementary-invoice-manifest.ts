@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import type { LineItem } from "xero-node";
 import { prisma } from "../../prisma";
 import logger from "../../logger";
+import { exactPrefix } from "../../prisma-exact-prefix";
 import { CHARGE_LEG_SELECT, chargeLegsOf, readBookingChargeLegs } from "./booking-journal-read";
 import { memberMoneyEventKeys, reviewCloseKeyPrefix } from "./keys";
 import { planSupplementaryBookingInvoice, type SliceEvent, type SupplementaryAnchor } from "./supplementary-invoice-plan";
@@ -47,7 +48,8 @@ export async function readSupplementarySliceEvent(
     const [event] = await readSliceEvent(db, { eventKey: memberMoneyEventKeys.modification(anchor.modificationId) }, bookingId);
     return event ?? null;
   }
-  const closures = await readSliceEvent(db, { eventKey: { startsWith: reviewCloseKeyPrefix(anchor.taskId) } }, bookingId);
+  const closures = (await readSliceEvent(db, { eventKey: exactPrefix(reviewCloseKeyPrefix(anchor.taskId)) }, bookingId))
+    .filter((event) => !event.reversed);
   if (closures.length > 1) return "AMBIGUOUS";
   return closures[0] ?? null;
 }

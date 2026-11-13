@@ -2333,10 +2333,13 @@ describe("createXeroInvoiceForBooking", () => {
   });
 
   it.each([
-    ["no primary manifest", null, null],
-    ["a matching primary manifest", { id: "pm_1", outcome: "COVERED", lineTotalCents: 10000, providerInvoiceId: "inv_1" }, "COVERED"],
-    ["a primary manifest naming another invoice", { id: "pm_1", outcome: "COVERED", lineTotalCents: 10000, providerInvoiceId: "inv_0" }, "CONFLICT"],
-  ] as const)("ALP-436: records the update's export manifest against %s, and sends and completes regardless", async (_label, primary, outcome) => {
+    ["no primary manifest", null, null, 100, undefined, 10000],
+    ["a matching primary manifest", { id: "pm_1", outcome: "COVERED", lineTotalCents: 10000, providerInvoiceId: "inv_1" }, "COVERED", 100, undefined, 10000],
+    ["a primary manifest naming another invoice", { id: "pm_1", outcome: "COVERED", lineTotalCents: 10000, providerInvoiceId: "inv_0" }, "CONFLICT", 100, undefined, 10000],
+    ["a discounted provider invoice", { id: "pm_1", outcome: "COVERED", lineTotalCents: 10000, providerInvoiceId: "inv_1" }, "CONFLICT", 90, undefined, 9000],
+    ["a response with a changed total", { id: "pm_1", outcome: "COVERED", lineTotalCents: 10000, providerInvoiceId: "inv_1" }, "CONFLICT", 100, 115, 11500],
+    ["an unavailable provider total", { id: "pm_1", outcome: "COVERED", lineTotalCents: 10000, providerInvoiceId: "inv_1" }, null, undefined, undefined, undefined],
+  ] as const)("ALP-436: records the update's export manifest against %s, and sends and completes regardless", async (_label, primary, outcome, currentTotal, responseTotal, expectedTotalCents) => {
     mocks.tx.memberMoneyExportManifest.findUnique.mockResolvedValueOnce(primary);
     mocks.prisma.booking.findUnique.mockResolvedValue({
       id: "booking_1",
@@ -2377,6 +2380,7 @@ describe("createXeroInvoiceForBooking", () => {
             type: "ACCREC",
             contact: { contactID: "contact_1" },
             lineAmountTypes: "Inclusive",
+            total: currentTotal,
             reference: "Booking booking_",
             lineItems: [
               {
@@ -2399,6 +2403,7 @@ describe("createXeroInvoiceForBooking", () => {
           {
             invoiceID: "inv_1",
             invoiceNumber: "INV-1",
+            total: responseTotal,
           },
         ],
       },
@@ -2440,7 +2445,7 @@ describe("createXeroInvoiceForBooking", () => {
     );
     const rows = mocks.tx.memberMoneyExportManifest.createMany.mock.calls.map(([arg]) => (arg as { data: unknown[] }).data[0]);
     expect(rows).toEqual(outcome === null ? [] : [expect.objectContaining({
-      documentRole: "PRIMARY_BOOKING_INVOICE_UPDATE", bookingId: "booking_1", outcome, providerInvoiceId: "inv_1", lineTotalCents: 10000,
+      documentRole: "PRIMARY_BOOKING_INVOICE_UPDATE", bookingId: "booking_1", outcome, providerInvoiceId: "inv_1", lineTotalCents: expectedTotalCents,
       legacyKey: "booking:booking_1:invoice-update:inv_1:2026-08-03:2026-08-05:v1",
       ...(outcome === "CONFLICT" ? { reason: "PRIMARY_UNMATCHED" } : { reason: null }),
     })]);

@@ -3,6 +3,7 @@ import type { LineAmountTypes, LineItem } from "xero-node";
 import { buildXeroBookingInvoiceCorrelationKey } from "../../xero-booking-invoice-key";
 import { prisma } from "../../prisma";
 import logger from "../../logger";
+import { providerAmountToCents } from "../../money-provider-amount";
 import { readBookingChargeLegs } from "./booking-journal-read";
 import {
   planPrimaryBookingInvoice,
@@ -95,14 +96,20 @@ export async function recordPrimaryInvoiceUpdateManifest(input: {
   providerInvoiceId: string;
   lines: LineItem[];
   lineAmountTypes: LineAmountTypes;
+  providerTotal: unknown;
 }): Promise<void> {
   const { bookingId, providerInvoiceId } = input;
   try {
+    const providerTotalCents = providerAmountToCents(input.providerTotal);
+    if (providerTotalCents === null) {
+      logger.warn({ bookingId, providerInvoiceId }, "Could not record the primary invoice update's manifest without a provider total");
+      return;
+    }
     const primary = await prisma.memberMoneyExportManifest.findUnique({
       where: { documentRole_legacyKey: { documentRole: "PRIMARY_BOOKING_INVOICE", legacyKey: buildXeroBookingInvoiceCorrelationKey(bookingId) } },
       select: { id: true, outcome: true, lineTotalCents: true, providerInvoiceId: true },
     });
-    const plan = planPrimaryInvoiceUpdate({ ...input, primary });
+    const plan = planPrimaryInvoiceUpdate({ ...input, providerTotalCents, primary });
     if (!plan) return;
     const result = await prisma.$transaction((tx) => writeExportManifest(tx, {
       documentRole: "PRIMARY_BOOKING_INVOICE_UPDATE",
