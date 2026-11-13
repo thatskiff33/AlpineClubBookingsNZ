@@ -6,9 +6,8 @@ import "server-only";
  * Prisma client; `./index` stays importable by a plain-Node operator command.
  *
  * A door resolves its context before its transaction opens, then, inside it,
- * posts the same lines its legacy writer just wrote. Only the legacy chokepoints
- * and member merge call these (`member-money-journal-inert-census.test.ts`);
- * from #4628 also the bank-transfer binding doors and the pending-charge syncs.
+ * posts the same lines its legacy writer just wrote. Only the callers listed as
+ * DOORS in `member-money-journal-writer-census.test.ts` call these.
  */
 export type { BookingChargeEvent } from "./internal/booking-charges";
 export { isBookingJournalInactive, type BookingJournalContext } from "./internal/journal-activity";

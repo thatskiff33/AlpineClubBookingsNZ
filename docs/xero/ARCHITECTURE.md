@@ -1240,7 +1240,10 @@ Xero pushes CONTACT, INVOICE, and CREDITNOTE events (the credit-note
 category has no underscore); the webhook stores each signed event as sent and
 returns fast. A category this app does not reconcile is logged and left
 processed, so it is visible without being retried forever. Reconciliation
-happens in a bounded worker kicked after the response and swept by cron.
+happens in a bounded worker kicked after the response and swept by cron. The
+kick shares the cron's `xero-inbound-reconcile` run claim
+(`runXeroWebhookInboundKick`, #4922); while another sync holds it, the kick
+applies stored events only and leaves the cursor reconciliations to the holder.
 
 **A voided refund note (#4091, `INV-ADDPAY-041`).** A credit-note void
 deactivates a payment's refund-note mirror whatever the payment: a card
@@ -2959,8 +2962,10 @@ Stated limits:
 - **A dashboard refund that settles a row Stripe gave up on is noted in
   full.** A re-send that failed too is owed by a row raised dead
   (`raised-dead`), which is never sent again; the treasurer is told to pay the
-  member another way and close it as "Paid another way", whose note is sized
-  against the failed refund's card note. A refund made in the Stripe dashboard
+  member another way and close it as "Paid another way". A close no card note
+  covers is sized by the task less its own notes. When the failed refund's
+  card note covers some of the close, the close queues a Stripe reversal for
+  the covered cents and a bank note for the whole amount (`INV-PAY-151`). A refund made in the Stripe dashboard
   instead is linked to nothing the app made, so it gets its own note and the
   failed refund's note still stands: Xero credits that amount twice until an
   officer voids one (owner decision, 25 Oct 2026). #4361 plans the automated

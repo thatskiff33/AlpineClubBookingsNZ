@@ -9,6 +9,10 @@ contacts. It records purpose, retention and the end action in one table.
 purpose; it does not introduce an automatic deletion period. Settings records
 are personal because they retain the updating officer's identifier.
 
+The starter Privacy Policy uses `{{email-log-retention}}` to describe the current
+email-log setting on every render. Edited policy pages should use this token too;
+see the [upgrade instructions](UPGRADING.md#correct-the-starter-privacy-policy-4914).
+
 ## Automatic retention and operator review
 
 The three new automatic jobs cover old email logs, rejected membership
@@ -213,6 +217,7 @@ see [backups](guides/backups.md), the
 | `MemberMoneyRefundReservation` | Reserved refund amounts linked to financial obligations and captures | Kept for financial records | Keep |
 | `MemberMoneyRefundReservationRelease` | Release evidence for reserved refund amounts | Kept for financial records | Keep |
 | `MemberMoneySourcePosting` | Exact financial source and journal-line coverage | Kept for financial records | Keep |
+| `StripeBalanceTransactionEvidence` | Stripe balance-transaction figures and the payment intent, refund and payout they belong to | Kept for financial records | Keep |
 
 ## Maintaining coverage
 
