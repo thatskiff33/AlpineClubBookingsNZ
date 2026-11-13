@@ -1,6 +1,7 @@
 "use client";
 import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
+import { adminHref } from "@/lib/admin-hubs";
 import { useId, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -307,7 +308,7 @@ export function DeadCardRefundsPanel({
             >
               <div>
                 <div className="text-sm font-medium">
-                  <Link href={`/admin/bookings/${row.bookingId}`} className="underline">
+                  <Link href={`${adminHref("bookings")}/${row.bookingId}`} className="underline">
                     Booking {row.bookingReference}
                   </Link>
                   {" - "}
