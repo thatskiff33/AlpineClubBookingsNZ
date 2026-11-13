@@ -277,8 +277,7 @@ Both it and `migrations` first run `scripts/ci/sekreton-prepare-base.sh`:
 fetch main into that ref when `origin` exists, or use the sandbox's supplied
 local `main` when no remote is configured. A failed fetch, missing local main
 or unrelated local history stops the job; neither check uses HEAD as its base.
-The `realdb-all` job on GitHub remains advisory, so cite its actual result
-separately before making the PR ready.
+GitHub's advisory `realdb-all` result must be cited before PR readiness.
 
 ## Checking `main` after a merge
 
