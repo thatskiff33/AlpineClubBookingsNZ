@@ -127,6 +127,26 @@ describe("scheduleClubTaxChange", () => {
     expect(h.prisma.$transaction).not.toHaveBeenCalled();
   });
 
+  it("re-checks the date inside the transaction, so a Xero read that crosses club midnight cannot start a period today", async () => {
+    // Club midnight in Auckland (NZST, UTC+12) falls at 12:00 UTC on the frozen day.
+    h.readXeroTaxRates.mockImplementation(async () => {
+      vi.setSystemTime(new Date("2026-07-01T12:00:01.000Z"));
+      return RATES;
+    });
+    try {
+      const outcome = await scheduleClubTaxChange({
+        change: { gstRegistered: true, taxRateBasisPoints: 1700, xeroTaxType: "TAX009", effectiveFrom: date("2026-07-02") },
+        actingMemberId: ACTOR,
+        request,
+      });
+      expect(outcome).toEqual({ refused: "not-future", earliest: "2026-07-03" });
+      expect(h.tx.clubTaxSettings.create).not.toHaveBeenCalled();
+      expect(h.tx.auditLog.create).not.toHaveBeenCalled();
+    } finally {
+      vi.setSystemTime(new Date("2026-07-01T00:00:00.000Z"));
+    }
+  });
+
   it("refuses rather than guesses when Xero cannot be read", async () => {
     h.readXeroTaxRates.mockRejectedValue(new Error("not connected"));
     const outcome = await scheduleClubTaxChange({

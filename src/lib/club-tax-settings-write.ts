@@ -16,6 +16,7 @@ import {
   compareCalendarDates,
   dateOnlyInstantOf,
   type CalendarDate,
+  type ClubTimeZone,
 } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { prisma } from "@/lib/prisma";
@@ -70,7 +71,21 @@ export type ClubTaxWriteOutcome = { changed: true; period: ClubTaxPeriod } | Clu
 
 /** The first club date a change may start on: tomorrow. */
 export async function earliestClubTaxChangeDate(): Promise<CalendarDate> {
-  return addCalendarDays(clubToday(await readClubTimeZoneOutsideRequest()), 1);
+  return earliestChangeDateIn(await readClubTimeZoneOutsideRequest());
+}
+
+function earliestChangeDateIn(zone: ClubTimeZone): CalendarDate {
+  return addCalendarDays(clubToday(zone), 1);
+}
+
+/**
+ * Re-checked inside the transaction, after the Xero read: a save checked at
+ * 23:59 must not commit a period that started at midnight, which bookings
+ * made in between were already posted without.
+ */
+function startedRefusal(effectiveFrom: CalendarDate, zone: ClubTimeZone): ClubTaxWriteRefusal | null {
+  const earliest = earliestChangeDateIn(zone);
+  return compareCalendarDates(effectiveFrom, earliest) < 0 ? { refused: "not-future", earliest } : null;
 }
 
 /** What an unregistered period stores: no rate and no Xero code, as the schema's CHECK requires. */
@@ -111,8 +126,9 @@ export async function scheduleClubTaxChange({
   request: Request;
 }): Promise<ClubTaxWriteOutcome> {
   const period = periodOf(change);
-  const earliest = await earliestClubTaxChangeDate();
-  if (compareCalendarDates(period.effectiveFrom, earliest) < 0) return { refused: "not-future", earliest };
+  const zone = await readClubTimeZoneOutsideRequest();
+  const notFuture = startedRefusal(period.effectiveFrom, zone);
+  if (notFuture) return notFuture;
 
   if (period.gstRegistered) {
     let rates;
@@ -127,6 +143,8 @@ export async function scheduleClubTaxChange({
 
   return prisma.$transaction(
     async (tx) => {
+      const started = startedRefusal(period.effectiveFrom, zone);
+      if (started) return started;
       const schedule = await loadClubTaxSchedule(tx);
       if (schedule.some((existing) => existing.effectiveFrom === period.effectiveFrom)) {
         return { refused: "already-scheduled" as const };
@@ -175,12 +193,15 @@ export async function cancelScheduledClubTaxChange({
   actingMemberId: string;
   request: Request;
 }): Promise<ClubTaxWriteOutcome> {
-  const earliest = await earliestClubTaxChangeDate();
+  const zone = await readClubTimeZoneOutsideRequest();
   // A period that has started is history: documents and postings were rendered under it.
-  if (compareCalendarDates(effectiveFrom, earliest) < 0) return { refused: "not-future", earliest };
+  const notFuture = startedRefusal(effectiveFrom, zone);
+  if (notFuture) return notFuture;
 
   return prisma.$transaction(
     async (tx) => {
+      const started = startedRefusal(effectiveFrom, zone);
+      if (started) return started;
       const schedule = await loadClubTaxSchedule(tx);
       const period = schedule.slice(1).find((existing) => existing.effectiveFrom === effectiveFrom);
       if (!period) return { refused: "not-found" as const };

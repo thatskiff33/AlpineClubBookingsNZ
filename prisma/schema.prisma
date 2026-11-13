@@ -5884,7 +5884,7 @@ model ClubFormatSettings {
 // points from 0 to 10000, and xeroTaxType to a non-blank code when registered and
 // NULL when not; effectiveFrom is unique, so a date has one period. Readers read
 // the schedule before their transaction (INV-LOCK-004). updatedByMemberId is the
-// Full Admin who scheduled the period, cleared by member erasure; no foreign key.
+// Full Admin who scheduled the period, kept as tax-record attribution; no foreign key.
 model ClubTaxSettings {
   id                 String   @id @default("default")
   gstRegistered      Boolean  @default(true)
