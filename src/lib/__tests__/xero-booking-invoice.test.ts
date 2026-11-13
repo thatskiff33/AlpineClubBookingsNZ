@@ -103,6 +103,8 @@ const mocks = vi.hoisted(() => {
     memberMoneyLine: {
       findMany: vi.fn().mockResolvedValue([]),
     },
+    // ALP-436: the primary invoice update reads the primary's manifest on the global client.
+    memberMoneyExportManifest: tx.memberMoneyExportManifest,
     xeroObjectLink: {
       findFirst: vi.fn(),
       findMany: vi.fn(),
@@ -2328,6 +2330,121 @@ describe("createXeroInvoiceForBooking", () => {
         xeroObjectId: "inv_1",
       })
     );
+  });
+
+  it.each([
+    ["no primary manifest", null, null],
+    ["a matching primary manifest", { id: "pm_1", outcome: "COVERED", lineTotalCents: 10000, providerInvoiceId: "inv_1" }, "COVERED"],
+    ["a primary manifest naming another invoice", { id: "pm_1", outcome: "COVERED", lineTotalCents: 10000, providerInvoiceId: "inv_0" }, "CONFLICT"],
+  ] as const)("ALP-436: records the update's export manifest against %s, and sends and completes regardless", async (_label, primary, outcome) => {
+    mocks.tx.memberMoneyExportManifest.findUnique.mockResolvedValueOnce(primary);
+    mocks.prisma.booking.findUnique.mockResolvedValue({
+      id: "booking_1",
+      memberId: "mem_1",
+      member: { id: "mem_1" },
+      checkIn: "2026-08-03T00:00:00.000Z",
+      // A 2-night stay (checkIn + 2 days); getStayNights is mocked to length 2
+      // above, so checkOut must be 08-05 for the fixture to be internally
+      // consistent. The #1163 price-run splitter derives the line's end date from
+      // the night count, so an inconsistent checkOut would misdescribe the range.
+      checkOut: "2026-08-05T00:00:00.000Z",
+      createdAt: "2026-05-15T10:30:00.000Z",
+      discountCents: 0,
+      guests: [
+        {
+          firstName: "Jordan",
+          lastName: "Hartley-Smith",
+          ageTier: "ADULT",
+          isMember: true,
+          priceCents: 10000,
+        },
+      ],
+      payment: {
+        id: "pay_1",
+        status: "SUCCEEDED",
+        amountCents: 10000,
+        stripePaymentIntentId: "pi_1",
+        xeroInvoiceId: "inv_1",
+        xeroInvoiceNumber: "INV-1",
+      },
+    });
+    mocks.xeroClientInstance.accountingApi.getInvoice.mockResolvedValue({
+      body: {
+        invoices: [
+          {
+            invoiceID: "inv_1",
+            invoiceNumber: "INV-1",
+            type: "ACCREC",
+            contact: { contactID: "contact_1" },
+            lineAmountTypes: "Inclusive",
+            reference: "Booking booking_",
+            lineItems: [
+              {
+                lineItemID: "line_1",
+                description:
+                  "Jordan Hartley-Smith - (ADULT, Member) - 1 night - 2026-07-31 - 2026-08-01",
+                quantity: 1,
+                unitAmount: 100,
+                taxType: "OUTPUT2",
+                accountCode: "200",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    mocks.xeroClientInstance.accountingApi.updateInvoice.mockResolvedValue({
+      body: {
+        invoices: [
+          {
+            invoiceID: "inv_1",
+            invoiceNumber: "INV-1",
+          },
+        ],
+      },
+    });
+
+    await expect(updateXeroBookingInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+
+    expect(mocks.xeroClientInstance.accountingApi.updateInvoice).toHaveBeenCalledWith(
+      "tenant_1",
+      "inv_1",
+      {
+        invoices: [
+          expect.objectContaining({
+            date: "2026-08-03",
+            dueDate: "2026-05-15",
+            lineItems: [
+              expect.objectContaining({
+                lineItemID: "line_1",
+                description:
+                  "Jordan Hartley-Smith - (ADULT, Member) - 2 nights - 2026-08-03 - 2026-08-05",
+                quantity: 1,
+                unitAmount: 100,
+                taxType: "OUTPUT2",
+                accountCode: "200",
+              }),
+            ],
+          }),
+        ],
+      },
+      undefined,
+      "booking:booking_1:invoice-update:inv_1:2026-08-03:2026-08-05:v1"
+    );
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "op_1" }),
+      expect.objectContaining({
+        xeroObjectType: "INVOICE",
+        xeroObjectId: "inv_1",
+      })
+    );
+    const rows = mocks.tx.memberMoneyExportManifest.createMany.mock.calls.map(([arg]) => (arg as { data: unknown[] }).data[0]);
+    expect(rows).toEqual(outcome === null ? [] : [expect.objectContaining({
+      documentRole: "PRIMARY_BOOKING_INVOICE_UPDATE", bookingId: "booking_1", outcome, providerInvoiceId: "inv_1", lineTotalCents: 10000,
+      legacyKey: "booking:booking_1:invoice-update:inv_1:2026-08-03:2026-08-05:v1",
+      ...(outcome === "CONFLICT" ? { reason: "PRIMARY_UNMATCHED" } : { reason: null }),
+    })]);
+    expect(mocks.tx.memberMoneyExportCoverage.createMany).not.toHaveBeenCalled();
   });
 
   it("#3955 X3: never relabels the change-fee line as a guest when the narration is rewritten", async () => {

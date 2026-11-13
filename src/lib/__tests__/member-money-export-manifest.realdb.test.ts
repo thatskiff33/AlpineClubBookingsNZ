@@ -120,4 +120,53 @@ async function stored(bookingId: string) {
       VALUES ('late-4525', $1, 'PRIMARY_BOOKING_INVOICE', 'BOOKING_REVENUE', $2, 16500)`, [manifests[0].id, `booking:${id}:late`]))
       .rejects.toMatchObject({ code: "23514", message: expect.stringContaining("conflict_with_coverage") });
   });
+
+  describe("ALP-436: supplementary invoices and primary invoice updates", () => {
+    const stayOf = (id: string) => `booking:${id}:charge`;
+    const supplementary = (id: string, sliceKey: string, cents: number, overrides: Partial<ExportManifestRow> = {}): ExportManifestRow => row(id, {
+      documentRole: "SUPPLEMENTARY_BOOKING_INVOICE",
+      legacyKey: `booking-mod:${sliceKey}:supplementary-invoice:v1`,
+      lineTotalCents: cents,
+      coverage: [{ account: "BOOKING_REVENUE", chargeIdentity: stayOf(id), sliceKey: `modification:${sliceKey}`, coveredCents: cents, taxCode: "GST_INCLUSIVE_1500BP" }],
+      ...overrides,
+    });
+    const update = (id: string, overrides: Partial<ExportManifestRow> = {}): ExportManifestRow => row(id, {
+      documentRole: "PRIMARY_BOOKING_INVOICE_UPDATE",
+      legacyKey: `booking:${id}:invoice-update:INV-4525:v1`,
+      coverage: [],
+      ...overrides,
+    });
+
+    it("bills each edit's slice of the stay charge once, beside the primary invoice's whole cover", async () => {
+      const id = await booking();
+      await write(row(id));
+      await expect(write(supplementary(id, "mod-a", 4500))).resolves.toBe("WRITTEN");
+      await expect(write(supplementary(id, "mod-b", 3000))).resolves.toBe("WRITTEN");
+      await expect(write(supplementary(id, "mod-a", 4500, { legacyKey: "another-key" }))).rejects.toMatchObject({ code: "P2002" });
+      const slices = (await app.query(`SELECT "sliceKey", "coveredCents" FROM "MemberMoneyExportCoverage" WHERE "chargeIdentity" = $1 ORDER BY "documentRole", "sliceKey"`, [stayOf(id)])).rows;
+      expect(slices).toEqual([
+        { sliceKey: "", coveredCents: 14000 },
+        { sliceKey: "modification:mod-a", coveredCents: 4500 },
+        { sliceKey: "modification:mod-b", coveredCents: 3000 },
+      ]);
+    });
+
+    it("refuses a slice on the primary invoice's own cover", async () => {
+      const id = await booking();
+      const [stay, fee] = row(id).coverage;
+      await expect(write(row(id, { coverage: [{ ...stay!, sliceKey: "modification:x" }, fee!] })))
+        .rejects.toThrow(/member_money_export_coverage_slice/);
+    });
+
+    it("records a COVERED update with no coverage only against a matching COVERED primary", async () => {
+      const id = await booking();
+      await expect(write(update(id))).rejects.toThrow(/update_without_primary/);
+      await write(row(id));
+      await expect(write(update(id, { lineTotalCents: 16000 }))).rejects.toThrow(/update_without_primary/);
+      await expect(write(update(id, { providerInvoiceId: "INV-other" }))).rejects.toThrow(/update_without_primary/);
+      await expect(write(update(id, { coverage: [row(id).coverage[0]!], lineTotalCents: 14000 }))).rejects.toThrow(/update_with_coverage/);
+      await expect(write(update(id))).resolves.toBe("WRITTEN");
+      await expect(write(update(id, { legacyKey: "update-2", outcome: "CONFLICT", reason: "PRIMARY_UNMATCHED", lineTotalCents: 1 }))).resolves.toBe("WRITTEN");
+    });
+  });
 });

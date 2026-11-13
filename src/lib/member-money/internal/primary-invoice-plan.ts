@@ -218,3 +218,54 @@ function coverPrimaryInvoiceLines(input: {
   }
   return { outcome: "COVERED", lines, coverage, ...rendering(coverage) };
 }
+
+/** The primary manifest an update stands on: the one recorded for the same booking's invoice. */
+export interface PrimaryManifestForUpdate {
+  id: string;
+  outcome: "COVERED" | "CONFLICT";
+  lineTotalCents: number;
+  providerInvoiceId: string;
+}
+
+export type PrimaryInvoiceUpdatePlan =
+  | (PrimaryInvoiceRendering & { outcome: "COVERED" })
+  | (PrimaryInvoiceRendering & { outcome: "CONFLICT"; reason: "PRIMARY_UNMATCHED"; problem: string });
+
+/**
+ * THE UPDATE OF AN ISSUED PRIMARY INVOICE (#4525, ALP-436). Pure.
+ * `updateXeroBookingInvoiceForBooking` rewrites descriptions and dates and
+ * copies every amount from the invoice Xero holds, so an update bills nothing
+ * of its own: it covers no component, and it matches when its total is the
+ * total of the covered primary manifest for the same invoice. The database
+ * holds the same rule (`member_money_require_export_coverage`). Null when no
+ * primary manifest was recorded: there is nothing for an update to stand on.
+ */
+export function planPrimaryInvoiceUpdate(input: {
+  legacyKey: string;
+  providerInvoiceId: string;
+  lines: LineItem[];
+  /** What the update sends: the issued invoice's own, so the frozen value is the provider's. */
+  lineAmountTypes: LineAmountTypes;
+  primary: PrimaryManifestForUpdate | null;
+}): PrimaryInvoiceUpdatePlan | null {
+  const { lines, primary } = input;
+  if (!primary) return null;
+  const lineTotalCents = invoiceLineItemsTotalCents(lines);
+  const rendering: PrimaryInvoiceRendering = {
+    legacyKey: input.legacyKey,
+    payloadHash: primaryInvoicePayloadHash(lines),
+    frozenMapping: {
+      source: "UPDATED_FROM_PROVIDER",
+      primaryManifestId: primary.id,
+      lineCodes: lines.map((line) => ({ accountCode: line.accountCode ?? null, itemCode: line.itemCode ?? null })),
+      lineAmountTypes: input.lineAmountTypes,
+    },
+    lineTotalCents,
+  };
+  const unmatched = (problem: string): PrimaryInvoiceUpdatePlan =>
+    ({ outcome: "CONFLICT", reason: "PRIMARY_UNMATCHED", problem, ...rendering });
+  if (primary.providerInvoiceId !== input.providerInvoiceId) return unmatched("the primary manifest names another invoice");
+  if (primary.outcome !== "COVERED") return unmatched("the primary manifest records a conflict");
+  if (primary.lineTotalCents !== lineTotalCents) return unmatched("the updated lines' total is not the primary invoice's");
+  return { outcome: "COVERED", ...rendering };
+}
