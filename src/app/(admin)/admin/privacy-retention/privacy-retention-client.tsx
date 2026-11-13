@@ -19,6 +19,7 @@ import { ForbiddenSaveError, useSectionEditState } from "@/hooks/use-section-edi
 import { BOOKING_RETENTION_FIELDS, DEFAULT_PRIVACY_RETENTION_SETTINGS, MEMBERSHIP_RETENTION_FIELDS, privacyRetentionSettingsSchema, type PrivacyRetentionSettingsValues } from "@/lib/privacy-retention-shared";
 import { formatClubInstantDate, formatStayDateOrNull, parseInstant } from "@/lib/club-time";
 
+import { adminHref } from "@/lib/admin-hubs";
 type PreviewGroup = {
   count: number;
   rows: { id: string; date: string | null; reasons?: string[] }[];
@@ -185,7 +186,7 @@ export function PrivacyRetentionClient({ page, memberCursors = [] }: { page: num
                 {group.rows.length === 0 ? <p className="text-sm text-muted-foreground">{group.count === 0 ? "No matching records." : "No records on this page."}</p> : <Table>
                   <TableHeader><TableRow><TableHead>Record ID</TableHead><TableHead>{dateLabel}</TableHead>{key === "blockedMembers" && <TableHead>Why it is blocked</TableHead>}</TableRow></TableHeader>
                   <TableBody>{group.rows.map((row) => <TableRow key={row.id}>
-                    <TableCell className="break-all">{["formerMembers", "blockedMembers", "undatedMembers"].includes(key) ? <Link className="underline" href={`/admin/members/${encodeURIComponent(row.id)}`}>{row.id}</Link> : row.id}</TableCell>
+                    <TableCell className="break-all">{["formerMembers", "blockedMembers", "undatedMembers"].includes(key) ? <Link className="underline" href={`${adminHref("member-detail", { id: row.id })}`}>{row.id}</Link> : row.id}</TableCell>
                     <TableCell>{displayDate(row.date, key === "formerMembers" || key === "blockedMembers" || key === "undatedMembers")}</TableCell>
                     {key === "blockedMembers" && <TableCell>{row.reasons?.join("; ")}</TableCell>}
                   </TableRow>)}</TableBody>
