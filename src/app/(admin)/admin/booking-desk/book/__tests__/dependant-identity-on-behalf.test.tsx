@@ -241,7 +241,7 @@ vi.mock("@/components/promo-code-input", () => ({
   PromoCodeInput: () => null,
 }))
 
-import AdminBookPage from "@/app/(admin)/admin/book/page"
+import AdminBookPage from "@/app/(admin)/admin/booking-desk/book/page"
 import { DIFFERENT_PERSON_SAME_NAME } from "@/lib/booking-dependant-identity"
 
 function response(body: unknown, init?: { ok?: boolean; status?: number }) {

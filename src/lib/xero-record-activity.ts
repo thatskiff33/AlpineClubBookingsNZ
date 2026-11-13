@@ -1,5 +1,6 @@
 import "server-only";
 
+import { adminHref } from "@/lib/admin-hubs";
 import {
   formatClubInstantDate,
   formatStayDate,
@@ -276,7 +277,7 @@ async function getBookingScope(localId: string, format: ClubFormat): Promise<Xer
     scopeRecords,
     relatedRecords: [],
     backLink: {
-      href: "/admin/bookings",
+      href: adminHref("bookings"),
       label: "Bookings",
     },
   };
@@ -347,7 +348,7 @@ async function getBookingModificationScope(localId: string, format: ClubFormat):
     scopeRecords: [rootRecord],
     relatedRecords,
     backLink: {
-      href: buildLocalAdminUrl("Booking", modification.booking.id) ?? "/admin/bookings",
+      href: buildLocalAdminUrl("Booking", modification.booking.id) ?? adminHref("bookings"),
       label: "Booking Activity",
     },
   };
@@ -427,7 +428,7 @@ async function getManualRefundTaskScope(localId: string, format: ClubFormat): Pr
     scopeRecords: [rootRecord],
     relatedRecords,
     backLink: {
-      href: buildLocalAdminUrl("Booking", task.booking.id) ?? "/admin/bookings",
+      href: buildLocalAdminUrl("Booking", task.booking.id) ?? adminHref("bookings"),
       label: "Booking Activity",
     },
   };

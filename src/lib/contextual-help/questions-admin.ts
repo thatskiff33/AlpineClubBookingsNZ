@@ -6,7 +6,7 @@
  * the same three fallback questions answer for every unmapped page.
  *
  * A moved page's chips are keyed by its registry old path, as its entry is
- * (C5 #4802, C6 #4803, C7 #4804, C8 #4805; see `admin/finance.ts`).
+ * (C5 #4802, C6 #4803, C7 #4804, C8 #4805, C10 #4807; see `admin/finance.ts`).
  */
 import { getAdminPage } from "@/lib/admin-hubs";
 import type { HelpQuestion } from "./types";
@@ -26,7 +26,7 @@ export const ADMIN_HELP_QUESTIONS: Record<string, HelpQuestion[]> = {
       a: "Follow the link on the relevant dashboard card through to its underlying queue or detail page.",
     },
   ],
-  "/admin/booking-requests": [
+  [getAdminPage("booking-requests").oldPath]: [
     {
       q: "What is a booking request?",
       a: "A public or internal request for a stay that has not yet become a normal booking. You price, quote, approve, decline, or ask for changes.",
@@ -48,7 +48,7 @@ export const ADMIN_HELP_QUESTIONS: Record<string, HelpQuestion[]> = {
       a: "By default, only from you. The form ships unlisted: nothing on the public site links to it and search engines are told to ignore it, so you copy the link from the Public Requests tab and send it to a guest the club has agreed to host. If your club would rather advertise it, give the Booking Requests page a menu title under Site Appearance & Content → Page Content and it joins the site menu and becomes searchable.",
     },
   ],
-  "/admin/bookings": [
+  [getAdminPage("bookings").oldPath]: [
     {
       q: "How do I find a specific booking?",
       a: "Use the member, date, status, and payment filters to narrow the list to the booking you need.",
@@ -160,7 +160,7 @@ export const ADMIN_HELP_QUESTIONS: Record<string, HelpQuestion[]> = {
       a: "Before the booking period opens, taking care with overlapping dates since the window drives which rates apply.",
     },
   ],
-  "/admin/waitlist": [
+  [getAdminPage("waitlist").oldPath]: [
     {
       q: "What does the waitlist page do?",
       a: "It manages members waiting for capacity and offers them a place when beds free up.",
@@ -178,7 +178,7 @@ export const ADMIN_HELP_QUESTIONS: Record<string, HelpQuestion[]> = {
       a: "It confirms a booking despite overbooked nights. Use it only when you understand the overbooking shown in the confirmation prompt.",
     },
   ],
-  "/admin/bed-allocation": [
+  [getAdminPage("bed-allocation").oldPath]: [
     {
       q: "What does bed allocation do?",
       a: "It assigns paid or confirmed guests to rooms and beds for specific lodge nights.",

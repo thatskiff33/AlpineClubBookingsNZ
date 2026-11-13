@@ -17,8 +17,8 @@ const EXPECTED_DIRECT_CONSUMERS = [
 ] as const;
 
 const EXPECTED_HOOK_CONSUMERS = [
-  "src/app/(admin)/admin/bed-allocation/page.tsx",
-  "src/app/(admin)/admin/book/page.tsx",
+  "src/app/(admin)/admin/booking-desk/bed-allocation/page.tsx",
+  "src/app/(admin)/admin/booking-desk/book/page.tsx",
   "src/app/(admin)/admin/chores/page.tsx",
   "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx",
   "src/app/(admin)/admin/hut-leaders/page.tsx",

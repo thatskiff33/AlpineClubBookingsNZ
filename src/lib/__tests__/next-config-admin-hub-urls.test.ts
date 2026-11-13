@@ -20,7 +20,8 @@ import { ADMIN_PAGES, ADMIN_RETIRED_PAGES, isInexactAdminPagePath } from "@/lib/
 // The config's `redirects()` and `rewrites().beforeFiles` are generated from
 // the hub registry. C4 (#4801) has moved the Website pages, C5 (#4802) the
 // Finance pages, C6 (#4803) the Fees & booking rules pages, C7 (#4804) the
-// Help & system pages and C8 (#4805) the Messages & email pages, and the switch is off, so each of those hub URLs
+// Help & system pages, C8 (#4805) the Messages & email pages and C10 (#4807)
+// the Bookings pages, and the switch is off, so each of those hub URLs
 // redirects to its old URL and each old URL is rewritten to the moved file. The five retired pages (S1 #4796) still redirect
 // in both states. All of this is run through
 // Next's own pipeline (`unstable_getResponseFromNextConfig`, which calls the
@@ -105,7 +106,7 @@ describe("next.config.ts with the switch off", () => {
     const config = await loadConfig();
     const moved = movedPages();
     expect(new Set(moved.map((page) => page.hub))).toEqual(
-      new Set(["website", "finance", "rules", "system", "messages"]),
+      new Set(["website", "finance", "rules", "system", "messages", "bookings"]),
     );
     const retired = ADMIN_RETIRED_PAGES.map(({ oldPath }) => oldPath);
     expect(
@@ -126,7 +127,7 @@ describe("next.config.ts with the switch off", () => {
   });
 
   /**
-   * C4 (#4801), C5 (#4802), C6 (#4803), C7 (#4804) and C8 (#4805) off-state smoke. Next's config pipeline answers a
+   * C4 (#4801), C5 (#4802), C6 (#4803), C7 (#4804), C8 (#4805) and C10 (#4807) off-state smoke. Next's config pipeline answers a
    * `beforeFiles` rewrite as 200 and a redirect as 307. The old URL is served
    * from the moved file; the hub URL redirects to the old URL.
    */
@@ -466,6 +467,69 @@ describe("next.config.ts over the moved Messages & email hub", () => {
       url: "/admin/messages/notices/new",
     });
     await expect(resolve(config, "/admin/messages/notifications")).resolves.toEqual({ kind: "none" });
+  });
+});
+
+describe("next.config.ts over the moved Bookings hub", () => {
+  // Bookings moved in C10 (#4807). The prefix is `booking-desk`, not `bookings`.
+  it("PREMISE: every Bookings page has moved", () => {
+    const bookings = ADMIN_PAGES.filter((page) => page.hub === "bookings");
+    expect(bookings).toHaveLength(7);
+    expect(bookings.filter((page) => !page.moved).map((page) => page.id)).toEqual([]);
+  });
+
+  it("off: the Bookings hub URL redirects to its old URL, and the old URL is served from the moved file, query kept", async () => {
+    const config = await loadConfig({ live: false });
+    await expect(resolve(config, "/admin/booking-desk/bookings?status=PENDING")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/bookings?status=PENDING",
+    });
+    await expect(resolve(config, "/admin/bookings?status=PENDING")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/booking-desk/bookings?status=PENDING",
+    });
+  });
+
+  it("off: Booking Requests keeps its tab and status, and each stub is served from its moved file", async () => {
+    const config = await loadConfig({ live: false });
+    await expect(
+      resolve(config, "/admin/booking-desk/booking-requests?tab=approvals&status=PENDING"),
+    ).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/booking-requests?tab=approvals&status=PENDING",
+    });
+    await expect(resolve(config, "/admin/booking-requests?tab=approvals&status=PENDING")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/booking-desk/booking-requests?tab=approvals&status=PENDING",
+    });
+    await expect(resolve(config, "/admin/booking-approvals?status=PENDING")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/booking-desk/booking-approvals?status=PENDING",
+    });
+    await expect(resolve(config, "/admin/booking-change-requests?status=PENDING")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/booking-desk/booking-change-requests?status=PENDING",
+    });
+  });
+
+  it.each([false, true])("leaves the hub's root alone, which no page is at yet (live=%s)", async (live) => {
+    await expect(resolve(await loadConfig({ live }), "/admin/booking-desk")).resolves.toEqual({
+      kind: "none",
+    });
+  });
+
+  it("on: the old URL redirects once, straight to the hub URL, and the hub URL is not rewritten", async () => {
+    const config = await loadConfig({ live: true });
+    await expect(resolve(config, "/admin/bookings?status=PENDING")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/booking-desk/bookings?status=PENDING",
+    });
+    await expect(resolve(config, "/admin/booking-desk/bookings?status=PENDING")).resolves.toEqual({
+      kind: "none",
+    });
   });
 });
 

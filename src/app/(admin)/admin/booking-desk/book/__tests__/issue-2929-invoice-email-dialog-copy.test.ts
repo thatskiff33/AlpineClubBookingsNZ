@@ -35,7 +35,7 @@ import { describe, expect, it } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
-const PAGE = "src/app/(admin)/admin/book/page.tsx";
+const PAGE = "src/app/(admin)/admin/booking-desk/book/page.tsx";
 
 function readPageSource(): string {
   // Test helper: a fixed repo file under process.cwd(), not user input.

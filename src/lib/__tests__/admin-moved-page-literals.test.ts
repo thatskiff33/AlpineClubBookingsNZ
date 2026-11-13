@@ -34,7 +34,15 @@ const ROOT = process.cwd();
  */
 const ALLOWED: Record<string, { literals: readonly string[]; why: string }> = {
   "src/lib/diagnostics/page-context/registry.ts": {
-    literals: ['"/admin/payments"', '"/admin/stuck-states"', '"/admin/health"'],
+    literals: [
+      '"/admin/payments"',
+      '"/admin/stuck-states"',
+      '"/admin/health"',
+      '"/admin/bookings"',
+      '"/admin/booking-requests"',
+      '"/admin/waitlist"',
+      '"/admin/bed-allocation"',
+    ],
     why:
       "a diagnostics row is matched against the help widget's canonicalAdminPathname, " +
       "which is a moved page's OLD path in either switch state",

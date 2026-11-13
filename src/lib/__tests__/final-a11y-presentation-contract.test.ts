@@ -16,7 +16,7 @@ const migratedAdminChrome = [
   "src/app/(admin)/admin/work-parties/page.tsx",
   "src/components/admin/family-groups/family-suggestions-panel.tsx",
   "src/app/(admin)/admin/system/stuck-states/page.tsx",
-  "src/app/(admin)/admin/waitlist/page.tsx",
+  "src/app/(admin)/admin/booking-desk/waitlist/page.tsx",
 ];
 
 describe("#1819 final accessibility presentation contract", () => {
@@ -31,7 +31,7 @@ describe("#1819 final accessibility presentation contract", () => {
 
   it("keeps the five named wide surfaces usable at mobile width", () => {
     const adminLayout = source("src/app/(admin)/layout.tsx");
-    const bookings = source("src/app/(admin)/admin/bookings/page.tsx");
+    const bookings = source("src/app/(admin)/admin/booking-desk/bookings/page.tsx");
     const table = source("src/components/admin/admin-data-table.tsx");
     const review = source(
       "src/app/(authenticated)/book/_components/review-step.tsx",
@@ -130,7 +130,7 @@ describe("#1819 final accessibility presentation contract", () => {
       "src/app/(authenticated)/book/_components/review-step.tsx",
       "src/components/group-booking/organiser-group-booking-card.tsx",
       "src/app/(website-dynamic)/join/[code]/member-group-join-panel.tsx",
-      "src/app/(admin)/admin/book/page.tsx",
+      "src/app/(admin)/admin/booking-desk/book/page.tsx",
     ];
     for (const file of pickers) {
       const text = source(file);
@@ -169,7 +169,7 @@ describe("#1819 final accessibility presentation contract", () => {
       "src/components/admin/page-content-panel.tsx",
       "src/components/group-booking/organiser-group-booking-card.tsx",
       "src/app/(website-dynamic)/join/[code]/member-group-join-panel.tsx",
-      "src/app/(admin)/admin/book/page.tsx",
+      "src/app/(admin)/admin/booking-desk/book/page.tsx",
       "src/app/(authenticated)/book/_components/review-step.tsx",
       "src/components/ui/option-card.tsx",
       "src/components/calendar/day-events-dialog.tsx",
@@ -205,9 +205,9 @@ describe("#1819 final accessibility presentation contract", () => {
       "src/components/admin/occupancy-calendar.tsx",
     );
     const bedSources = [
-      "src/app/(admin)/admin/bed-allocation/_components/board-cell.tsx",
-      "src/app/(admin)/admin/bed-allocation/_components/guest-chip.tsx",
-      "src/app/(admin)/admin/bed-allocation/_components/bucket-board.tsx",
+      "src/app/(admin)/admin/booking-desk/bed-allocation/_components/board-cell.tsx",
+      "src/app/(admin)/admin/booking-desk/bed-allocation/_components/guest-chip.tsx",
+      "src/app/(admin)/admin/booking-desk/bed-allocation/_components/bucket-board.tsx",
     ].map(source);
 
     expect(bookingCalendar).toContain("seasonSuffix");
@@ -310,7 +310,7 @@ describe("#1819 final accessibility presentation contract", () => {
     const button = source("src/components/ui/button.tsx");
     const badge = source("src/components/ui/badge.tsx");
     const destructiveSurfaces = [
-      "src/app/(admin)/admin/waitlist/page.tsx",
+      "src/app/(admin)/admin/booking-desk/waitlist/page.tsx",
       "src/app/(admin)/admin/members/[id]/_components/member-detail-header.tsx",
       "src/app/(admin)/admin/members/[id]/_components/member-dependents-card.tsx",
       "src/app/(admin)/admin/members/[id]/_components/member-parent-links-card.tsx",
@@ -330,7 +330,7 @@ describe("#1819 final accessibility presentation contract", () => {
     expect(destructiveSurfaces).toContain('variant="destructive"');
     expect(destructiveSurfaces).toMatch(/Delete|Archive|Inactive|Overbook/);
     expect(destructiveSurfaces).not.toMatch(/bg-destructive|text-destructive/);
-    expect(source("src/app/(admin)/admin/waitlist/page.tsx")).toContain(
+    expect(source("src/app/(admin)/admin/booking-desk/waitlist/page.tsx")).toContain(
       "<AlertTriangle aria-hidden",
     );
   });

@@ -75,7 +75,7 @@ const BOOKING_NOTIFY_PROMPTS = [
   "components/cancel-booking-button.tsx",
   "components/edit-booking-panel.tsx",
   "components/admin/booking-requests/booking-approvals-panel.tsx",
-  "app/(admin)/admin/waitlist/page.tsx",
+  "app/(admin)/admin/booking-desk/waitlist/page.tsx",
   "app/(admin)/admin/finance/refund-requests/page.tsx",
   // #4533: a finished-stay promo correction may withhold the change email.
   "components/admin/booking-requests/booking-change-request-officer-entry.tsx",
@@ -89,7 +89,7 @@ const BOOKING_NOTIFY_PROMPTS = [
  */
 const NOT_BOOKING_BOUND: Record<string, string> = {
   // A booking that does not exist yet cannot carry the switch.
-  "app/(admin)/admin/book/page.tsx":
+  "app/(admin)/admin/booking-desk/book/page.tsx":
     "creates a NEW booking; there is nothing silenced yet",
   // BookingRequest, not Booking. Its templates are explicitly excluded from
   // ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES for the same reason.

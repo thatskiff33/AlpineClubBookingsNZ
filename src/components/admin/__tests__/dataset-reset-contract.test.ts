@@ -13,7 +13,7 @@ const INCLUDED_DATASETS = [
   ["Audit Log", "src/app/(admin)/admin/system/audit-log/page.tsx"],
   ["Reports", "src/app/(admin)/admin/finance/reports/page.tsx"],
   ["Refund Requests", "src/app/(admin)/admin/finance/refund-requests/page.tsx"],
-  ["Waitlist", "src/app/(admin)/admin/waitlist/page.tsx"],
+  ["Waitlist", "src/app/(admin)/admin/booking-desk/waitlist/page.tsx"],
   ["Xero Operations", "src/app/(admin)/admin/finance/xero/_components/operations-panel.tsx"],
   ["Xero Inbound Events", "src/app/(admin)/admin/finance/xero/_components/inbound-events-panel.tsx"],
   ["Family Groups", "src/app/(admin)/admin/family-groups/page.tsx"],
