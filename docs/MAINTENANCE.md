@@ -1939,9 +1939,12 @@ after. That preview runs inside a transaction it rolls back.
 
 Apply settles each open review through the ordinary refund, credit or charge
 path, and charges the change fee when the edit moved check-in and had not
-already charged one. A review it cannot price, and one whose guest was removed
-after the review was raised, is closed with a note and no money moved. A
-resolver refusal stays open and is listed. The headline pass then re-bases each
+already charged one. That fee is priced on the club day the edit was saved,
+through the normal late-notice fee rule, so an unpaid booking carries none. A
+review it cannot price, and one whose guest was removed after the review was
+raised, is closed with a note and no money moved; a removal that lands during
+the run is caught under the settlement lock and the review is dismissed
+instead. A resolver refusal stays open and is listed. The headline pass then re-bases each
 frozen booking through the same writer a review closure uses. It moves no cash,
 card charge, account credit or Xero document. A second apply changes nothing.
 
