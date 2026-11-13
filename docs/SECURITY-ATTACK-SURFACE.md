@@ -362,6 +362,10 @@ Admin route subfamilies are:
 - Lobby display authoring and devices: `admin/display/**` (layouts, templates,
   lodge-config, devices, pairing/revoke, preview, and preview-grant)
 - Operational Xero: `admin/xero/**`
+- The club's GST/tax treatment schedule: `admin/club-tax` (#4632) — `GET` is
+  `finance:view`, native to the route map's default area; `PUT`/`DELETE` are
+  Full Admin only, stricter than the map (`REVIEWED_PERMISSION_DIVERGENCES`,
+  same shape as `club-format`'s write side)
 
 ### Finance Routes
 

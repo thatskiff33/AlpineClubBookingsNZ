@@ -20,7 +20,9 @@ on `MembershipSubscriptionCharge`. Its correlation key is charge-stable.
 Dispatch resolves the snapshotted recipient and uses the account/item mapping
 frozen at confirmation,
 then searches by the immutable `MEMSUB-*` reference. Zero matches creates an
-AUTHORISED ACCREC invoice with inclusive line amounts and `OUTPUT2`; one exact
+AUTHORISED ACCREC invoice with inclusive line amounts, at the tax treatment
+resolved for the charge's own anchor (see
+["Tax treatment"](#tax-treatment) below); one exact
 contact/account/item/amount/due-interval/type/state match is adopted. Only `AUTHORISED` is
 adoptable; draft, submitted, paid, voided, and deleted invoices conflict rather
 than being emailed. Duplicates or a mismatch set
@@ -518,6 +520,45 @@ converge on one invoice, mirroring the contact path in F7/#1355) rather than a
 DB lock across the provider call, backstopped by the raw partial unique index
 `XeroObjectLink_entrance_fee_active_unique` (at most one ACTIVE entrance-fee link
 per member).
+
+## Tax treatment
+
+Every document above — membership subscription invoices, entrance-fee
+invoices, booking and group-settlement invoices, credit notes and the promo
+adjustment lines — carries the tax treatment resolved by
+`resolveXeroTaxRendering` in
+[`xero-tax-anchors.ts`](../../src/lib/xero-tax-anchors.ts), never a literal
+tax code (#4632, `INV-CONFIG-007`). This is the ONE renderer: it reads the
+club's GST schedule (`loadClubTaxSchedule`,
+[`club-tax-settings.ts`](../../src/lib/club-tax-settings.ts)), resolves the
+period in force on the document's own anchor date, and turns it into the
+`LineAmountTypes` and `taxType` string every builder uses
+([`xero-tax-rendering.ts`](../../src/lib/xero-tax-rendering.ts)).
+
+**The anchor is the charge, never the render or send date** (owner decision A,
+11 Nov 2026): a booking's anchor is `Booking.createdAt`; a subscription
+charge's is its own `createdAt`, and its cancellation credit note shares that
+anchor; an entrance-fee invoice's is its outbox operation's `createdAt`. A
+booking made before the club's GST registration or rate changes keeps the
+treatment it was made under for its whole life, so its invoice, every edit's
+document and every credit note agree with each other and with the
+member-money journal, which splits the same booking's charges on the same
+anchor (`resolveBookingMoneyPostingContext`,
+[`door-context.ts`](../../src/lib/member-money/internal/door-context.ts)).
+
+The schedule has one writer, `scheduleClubTaxChange`/
+`cancelScheduledClubTaxChange`
+([`club-tax-settings-write.ts`](../../src/lib/club-tax-settings-write.ts)),
+behind `PUT`/`DELETE /api/admin/club-tax`, Full Admin only. A change only ever
+adds a period starting after the club's today, so no document already rendered
+changes —
+and is refused outright when Xero's own tax-rate list does not carry the
+chosen code active, at the chosen rate, usable on revenue; the schedule and
+Xero's own codes can never disagree. The admin card on `/admin/finance/xero`
+("GST / tax treatment") shows the period in force and any change already
+scheduled; before a change saves it counts the bookings still in progress on
+the chosen date that will keep the old treatment (bookings, not documents —
+each booking's documents all follow its one anchor).
 
 ## Bird's-eye dataflow
 
