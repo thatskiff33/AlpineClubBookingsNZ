@@ -28,7 +28,6 @@ import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { custodianHeldNightsForBed } from "@/lib/custodian-occupancy";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { prisma } from "@/lib/prisma";
-import { isTransactionContention } from "@/lib/prisma-errors";
 import {
   BedAllocationAdminError,
   type BedAllocationDb,
@@ -540,31 +539,21 @@ async function runAssignBedRangeAttempt(input: {
 }
 
 // A concurrent write that cost us the transaction. Both are retryable ONCE
-// against fresh state (#2251 review A3). If the retry loses too, a bed-night
-// collision stays a 409; transaction contention escapes to the shared 503
-// mapper (INV-LOCK-005).
+// against fresh state, since the rollback means nothing was written (#2251
+// review A3):
 //   P2002 — someone claimed one of the bed-nights between our scan and our write
-//           (the unique index on bed/night did its job).
+//           (the unique index on bed/night did its job). If the retry loses
+//           too, the admin gets a plain-English 409.
 //   P2034 — the database aborted this transaction to break a write conflict or
-//           deadlock. Prisma surfaces it as a distinct code; without an arm here
-//           it fell through to "Bed allocation request failed", a 500 for what is
-//           really "try again".
-const RETRYABLE_RANGE_WRITE_CODES: Record<string, string> = {
-  P2002:
-    "Another admin claimed one of those bed-nights while this range was being assigned. Nothing was written — reload the board and try again.",
-  P2034:
-    "That range collided with another change being saved at the same moment, twice. Nothing was written — reload the board and try again.",
-};
+//           deadlock. If the retry loses too, it is transaction contention and
+//           escapes to the shared retryable 503 (INV-LOCK-005), like P2028.
+const RETRYABLE_RANGE_WRITE_CODES: ReadonlySet<string> = new Set(["P2002", "P2034"]);
 
-/**
- * The operator wording for a retryable write conflict, or `null` when the error
- * is not one. Returning the MESSAGE rather than the code makes the table lookup
- * and its answer one read, so the caller cannot look the code up again and find
- * nothing (#2800).
- */
-function retryableRangeWriteMessage(error: unknown): string | null {
-  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
-  return RETRYABLE_RANGE_WRITE_CODES[error.code] ?? null;
+const BED_NIGHT_COLLISION_MESSAGE =
+  "Another admin claimed one of those bed-nights while this range was being assigned. Nothing was written — reload the board and try again.";
+
+function prismaErrorCode(error: unknown): string | null {
+  return error instanceof Prisma.PrismaClientKnownRequestError ? error.code : null;
 }
 
 /**
@@ -640,7 +629,7 @@ export async function assignBedRange(
   try {
     return await runAttempt();
   } catch (error) {
-    if (!retryableRangeWriteMessage(error)) {
+    if (!RETRYABLE_RANGE_WRITE_CODES.has(prismaErrorCode(error) ?? "")) {
       throw error;
     }
     // Nothing was written (the transaction rolled back), so re-attempt once
@@ -649,13 +638,10 @@ export async function assignBedRange(
     try {
       return await runAttempt();
     } catch (retryError) {
-      // INV-LOCK-005: after the existing retry, preserve contention so the
-      // route can answer 503 through the shared mapper instead of a refusal.
-      if (isTransactionContention(retryError)) throw retryError;
-      const retryableMessage = retryableRangeWriteMessage(retryError);
-      if (retryableMessage) {
-        throw new BedAllocationAdminError(retryableMessage, 409);
+      if (prismaErrorCode(retryError) === "P2002") {
+        throw new BedAllocationAdminError(BED_NIGHT_COLLISION_MESSAGE, 409);
       }
+      // Anything else, P2034 contention included, goes to the route's mapper.
       throw retryError;
     }
   }

@@ -114,7 +114,6 @@ export function bedAllocationErrorResponse(error: unknown) {
         { status: 409 },
       );
     }
-
   }
 
   return NextResponse.json(
