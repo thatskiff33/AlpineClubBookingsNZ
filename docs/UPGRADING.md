@@ -41,7 +41,8 @@ any custom body and re-export your configuration bundle after reviewing it.
 
 ## Review privacy retention before enabling cleanup (#4457)
 
-The three new automatic jobs ship OFF. After upgrading, review the
+The three automatic jobs from #4457 ship OFF. (The after-stay dietary clear
+from #4916 ships ON; see its entry under Unreleased.) After upgrading, review the
 [personal-data retention schedule](PRIVACY_RETENTION.md) and visit
 **Admin → Privacy retention** (`/admin/privacy-retention`) to inspect counts,
 member candidates and the configured periods before enabling any job. Defaults
@@ -164,9 +165,32 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Old stays' dietary notes are cleared on the first night after upgrading (#4916)
+
+**What changes.** A new nightly job clears each stay's dietary/allergy note
+(`BookingGuest.dietaryRequirements`) once the stay ended more than a set number
+of days ago, for member and non-member guests and on bookings of any status.
+Migration `20261216050000_booking_dietary_retention` adds the period (default
+**30 days**) and the switch (default **on**) to `PrivacyRetentionSettings`. It
+is additive and safe with the previous app colour still serving.
+
+**What you will notice.** Because the switch ships on, **the first nightly
+data-pruning run after the upgrade (03:30 club time) clears every stay note
+whose stay ended more than 30 days ago.** Cleared notes cannot be brought back
+except from a backup taken before that run. Names, nights, prices, the booking
+and the member's own profile note are not touched.
+
+**If your club wants to keep them**, open **Admin → Privacy retention**
+(`/admin/privacy-retention`) straight after deploying and, before 03:30 club
+time, untick **Enable after-stay dietary clearing**, or change the period
+(1 to 365 days), and save. Support edit and bookings edit permission are both
+needed. The page shows how many notes the next run would clear. Clubs that never
+switched on the dietary field have no notes and nothing changes for them. See
+the [retention schedule](PRIVACY_RETENTION.md#automatic-retention-and-operator-review).
+
 ### Cancelled bookings give back their promo uses; re-run the repair after cutover (#4909)
 
-`20261211020000_release_cancelled_booking_promos` is a **data-only repair**. It
+`20261217010000_release_cancelled_booking_promos` is a **data-only repair**. It
 adds and removes no schema and is safe to run in the ordinary deploy window with
 the previous app colour still serving. It wants **one post-cutover action**
 (below).
@@ -196,7 +220,7 @@ cutover is complete and the old colour and its workers have stopped:
 
 ```bash
 psql "$DATABASE_URL" \
-  -f prisma/migrations/20261211020000_release_cancelled_booking_promos/migration.sql
+  -f prisma/migrations/20261217010000_release_cancelled_booking_promos/migration.sql
 ```
 
 **Re-running is safe.** A second run finds no cancelled booking holding a

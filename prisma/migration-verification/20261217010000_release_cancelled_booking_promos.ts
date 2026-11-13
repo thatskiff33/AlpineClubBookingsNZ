@@ -1,7 +1,7 @@
 import type { DataMigrationVerification } from "./types";
 
 const verification: DataMigrationVerification = {
-  migration: "20261211020000_release_cancelled_booking_promos",
+  migration: "20261217010000_release_cancelled_booking_promos",
   intent: "Release cancelled bookings' promotions and recount every code by raw allocation rows, preserving live redemptions.",
   // The file is one explicit BEGIN/COMMIT transaction, so it runs byte-for-byte.
   executionMode: "isolated_database",

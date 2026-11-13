@@ -29,7 +29,7 @@ const BOOKING = "race-4909-booking";
 // A second live booking, for the in-flight redeem the repair migration races.
 const LIVE_BOOKING = "race-4909-live";
 const REPAIR_SQL = readFileSync(
-  path.join(process.cwd(), "prisma", "migrations", "20261211020000_release_cancelled_booking_promos", "migration.sql"),
+  path.join(process.cwd(), "prisma", "migrations", "20261217010000_release_cancelled_booking_promos", "migration.sql"),
   "utf8",
 );
 const CODES = ["race-4909-z", "race-4909-a"];
