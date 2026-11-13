@@ -1403,7 +1403,7 @@ let observerClient: PrismaClient;
           .map((row) => {
             const xeroCreditNoteId = row.xeroCreditNoteId ?? stamped.get(row.id) ?? null;
             const remainingCents = xeroCreditNoteId === CREDIT_NOTE_ID ? row.amountCents - allocatedCreditCents : row.amountCents;
-            return { memberCreditId: row.id, creditType: row.type, xeroCreditNoteId, remainingCents };
+            return { memberCreditId: row.id, creditType: row.type, openingCredit: false, xeroCreditNoteId, remainingCents };
           })
           .filter((lot) => lot.remainingCents > 0)
           // Noted lots first, as the oldest funding note always is outside a frozen clock.

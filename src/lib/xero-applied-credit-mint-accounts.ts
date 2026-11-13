@@ -56,11 +56,18 @@ const MINT_SLICE_MAPPING_KEY_ORDER: readonly MintSliceMappingKey[] = [
  * arrives from the outbox worker. Keying on the type instead of the note makes
  * that window irrelevant: where the money lands no longer depends on worker
  * latency.
+ *
+ * AN OPENING CREDIT IS THE MEMBER'S OWN MONEY TOO (#4988, `INV-PAY-151`). It is
+ * stored as an `ADMIN_ADJUSTMENT` row, but it restates a balance the club
+ * already owed the member under its old system (a cancelled stay, a refund kept
+ * as credit), not goodwill the club chose to grant. By the rule above it stays
+ * on `hutFeeRefunds`, so the lot's `openingCredit` flag, not its type, decides.
  */
-export function mintSliceMappingKey(
-  creditType: CreditType,
-): MintSliceMappingKey {
-  return creditType === CreditType.ADMIN_ADJUSTMENT
+export function mintSliceMappingKey(slice: {
+  creditType: CreditType;
+  openingCredit: boolean;
+}): MintSliceMappingKey {
+  return slice.creditType === CreditType.ADMIN_ADJUSTMENT && !slice.openingCredit
     ? "goodwillWriteOffs"
     : "hutFeeRefunds";
 }
@@ -81,11 +88,11 @@ export interface PlannedMintGroup {
  * one group and one line — as it always did.
  */
 export function planMintGroups(
-  slices: readonly { creditType: CreditType; amountCents: number }[],
+  slices: readonly { creditType: CreditType; openingCredit: boolean; amountCents: number }[],
 ): PlannedMintGroup[] {
   const totals = new Map<MintSliceMappingKey, number>();
   for (const slice of slices) {
-    const key = mintSliceMappingKey(slice.creditType);
+    const key = mintSliceMappingKey(slice);
     totals.set(key, (totals.get(key) ?? 0) + slice.amountCents);
   }
   return MINT_SLICE_MAPPING_KEY_ORDER.filter(

@@ -281,6 +281,7 @@ function noteLot(
   return {
     memberCreditId: id,
     creditType: CreditType.CANCELLATION_REFUND,
+    openingCredit: false,
     xeroCreditNoteId,
     remainingCents,
   };
@@ -290,6 +291,7 @@ function adminLot(id: string, remainingCents: number): AppliedCreditLot {
   return {
     memberCreditId: id,
     creditType: CreditType.ADMIN_ADJUSTMENT,
+    openingCredit: false,
     xeroCreditNoteId: null,
     remainingCents,
   };
@@ -300,6 +302,7 @@ function restoredLot(id: string, remainingCents: number): AppliedCreditLot {
   return {
     memberCreditId: id,
     creditType: CreditType.CANCELLATION_REFUND,
+    openingCredit: false,
     xeroCreditNoteId: null,
     remainingCents,
   };
@@ -340,6 +343,7 @@ describe("planAppliedCreditAllocation (#1620 allocate-existing)", () => {
       {
         memberCreditId: "c2",
         creditType: CreditType.ADMIN_ADJUSTMENT,
+        openingCredit: false,
         amountCents: 1000,
       },
     ]);
@@ -354,6 +358,7 @@ describe("planAppliedCreditAllocation (#1620 allocate-existing)", () => {
       {
         memberCreditId: "c1",
         creditType: CreditType.ADMIN_ADJUSTMENT,
+        openingCredit: false,
         amountCents: 4000,
       },
     ]);
@@ -364,6 +369,7 @@ describe("planAppliedCreditAllocation (#1620 allocate-existing)", () => {
     const stamped: AppliedCreditLot = {
       memberCreditId: "grant",
       creditType: CreditType.ADMIN_ADJUSTMENT,
+      openingCredit: false,
       xeroCreditNoteId: "cn-grant",
       remainingCents: 2000,
     };
@@ -372,7 +378,7 @@ describe("planAppliedCreditAllocation (#1620 allocate-existing)", () => {
       { memberCreditId: "grant", xeroCreditNoteId: "cn-grant", amountCents: 2000 },
     ]);
     expect(plan.mintSlices).toEqual([
-      { memberCreditId: "legacy", creditType: CreditType.ADMIN_ADJUSTMENT, amountCents: 1000 },
+      { memberCreditId: "legacy", creditType: CreditType.ADMIN_ADJUSTMENT, openingCredit: false, amountCents: 1000 },
     ]);
   });
 
@@ -447,20 +453,26 @@ describe("assertPlanKeepsCommittedSlices (#4013, INV-PAY-127): a retry keeps wha
 
 describe("mintSliceMappingKey (#2717): goodwill is the admin adjustment", () => {
   it("sends an admin adjustment to the goodwill expense mapping", () => {
-    expect(mintSliceMappingKey(CreditType.ADMIN_ADJUSTMENT)).toBe(
+    expect(mintSliceMappingKey({ creditType: CreditType.ADMIN_ADJUSTMENT, openingCredit: false })).toBe(
       "goodwillWriteOffs",
+    );
+  });
+
+  it("leaves an opening credit on the refund mapping: it is the member's own money (#4988)", () => {
+    expect(mintSliceMappingKey({ creditType: CreditType.ADMIN_ADJUSTMENT, openingCredit: true })).toBe(
+      "hutFeeRefunds",
     );
   });
 
   it("leaves restored cancellation credit on the refund mapping", () => {
     // The member's own prepaid money coming back, not generosity by the club.
-    expect(mintSliceMappingKey(CreditType.CANCELLATION_REFUND)).toBe(
+    expect(mintSliceMappingKey({ creditType: CreditType.CANCELLATION_REFUND, openingCredit: false })).toBe(
       "hutFeeRefunds",
     );
   });
 
   it("leaves a downward-reprice refund on the refund mapping", () => {
-    expect(mintSliceMappingKey(CreditType.BOOKING_MODIFICATION_REFUND)).toBe(
+    expect(mintSliceMappingKey({ creditType: CreditType.BOOKING_MODIFICATION_REFUND, openingCredit: false })).toBe(
       "hutFeeRefunds",
     );
   });
@@ -468,7 +480,7 @@ describe("mintSliceMappingKey (#2717): goodwill is the admin adjustment", () => 
   it("leaves a clamp offset row on the refund mapping", () => {
     // A POSITIVE BOOKING_APPLIED row is the #1887 clamp's offset: it reverses
     // an application, it does not grant anything.
-    expect(mintSliceMappingKey(CreditType.BOOKING_APPLIED)).toBe(
+    expect(mintSliceMappingKey({ creditType: CreditType.BOOKING_APPLIED, openingCredit: false })).toBe(
       "hutFeeRefunds",
     );
   });
@@ -504,12 +516,12 @@ describe("planMintGroups (#2717)", () => {
     // The recorded request payload and every replay of it must agree, so the
     // order cannot come from which lot happened to be created first.
     const goodwillFirst = planMintGroups([
-      { creditType: CreditType.ADMIN_ADJUSTMENT, amountCents: 100 },
-      { creditType: CreditType.CANCELLATION_REFUND, amountCents: 200 },
+      { creditType: CreditType.ADMIN_ADJUSTMENT, openingCredit: false, amountCents: 100 },
+      { creditType: CreditType.CANCELLATION_REFUND, openingCredit: false, amountCents: 200 },
     ]);
     const refundFirst = planMintGroups([
-      { creditType: CreditType.CANCELLATION_REFUND, amountCents: 200 },
-      { creditType: CreditType.ADMIN_ADJUSTMENT, amountCents: 100 },
+      { creditType: CreditType.CANCELLATION_REFUND, openingCredit: false, amountCents: 200 },
+      { creditType: CreditType.ADMIN_ADJUSTMENT, openingCredit: false, amountCents: 100 },
     ]);
     expect(goodwillFirst).toEqual(refundFirst);
     expect(goodwillFirst.map((g) => g.mappingKey)).toEqual([

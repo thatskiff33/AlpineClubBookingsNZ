@@ -56,6 +56,14 @@ export interface AppliedCreditLot {
    * member's own refunded money as a discretionary club expense.
    */
   creditType: CreditType;
+  /**
+   * The lot is an opening credit carried over from a club's old system
+   * (#4988, `INV-PAY-151`). REQUIRED for the same reason as `creditType`: an
+   * opening credit is an `ADMIN_ADJUSTMENT` row, yet it is the member's own
+   * money rather than goodwill, so its minted slice posts to the refund
+   * mapping (`mintSliceMappingKey`).
+   */
+  openingCredit: boolean;
   /** lot.amountCents − Σ already-allocated slices (>= 0). */
   remainingCents: number;
 }
@@ -70,6 +78,8 @@ export interface PlannedMintSlice {
   memberCreditId: string;
   /** Carried from the lot — see `AppliedCreditLot.creditType` (#2717). */
   creditType: CreditType;
+  /** Carried from the lot — see `AppliedCreditLot.openingCredit` (#4988). */
+  openingCredit: boolean;
   amountCents: number;
 }
 
@@ -112,6 +122,7 @@ export function planAppliedCreditAllocation(
       mintSlices.push({
         memberCreditId: lot.memberCreditId,
         creditType: lot.creditType,
+        openingCredit: lot.openingCredit,
         amountCents: slice,
       });
     }
@@ -169,6 +180,7 @@ interface CreditLotRow {
   amountCents: number;
   type: CreditType;
   xeroCreditNoteId: string | null;
+  openingCreditBatchId: string | null;
 }
 
 /**
@@ -198,6 +210,7 @@ export function freeCreditLots(
     free.push({
       memberCreditId: lot.id,
       creditType: lot.type,
+      openingCredit: lot.openingCreditBatchId !== null,
       xeroCreditNoteId: lot.xeroCreditNoteId,
       remainingCents,
     });

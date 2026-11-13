@@ -14,7 +14,7 @@ type CreditLotRow = Parameters<typeof freeCreditLots>[0][number];
  * function the engine and the early warning share (`INV-SSOT`).
  */
 
-const lot = (id: string, amountCents: number, xeroCreditNoteId: string | null = null): CreditLotRow => ({ id, amountCents, type: "CANCELLATION_REFUND", xeroCreditNoteId });
+const lot = (id: string, amountCents: number, xeroCreditNoteId: string | null = null): CreditLotRow => ({ id, amountCents, type: "CANCELLATION_REFUND", xeroCreditNoteId, openingCreditBatchId: null });
 
 describe("freeCreditLots (#4220)", () => {
   it("takes each lot's slices and its note's write-down, the write-down once per note, oldest lot first", () => {
@@ -25,9 +25,15 @@ describe("freeCreditLots (#4220)", () => {
     );
     // a: 5,000 - 1,000 slices = 4,000, all of it written down; b: the other 2,000 of N's write-down.
     expect(free).toEqual([
-      { memberCreditId: "b", creditType: "CANCELLATION_REFUND", xeroCreditNoteId: "N", remainingCents: 2_000 },
-      { memberCreditId: "c", creditType: "CANCELLATION_REFUND", xeroCreditNoteId: null, remainingCents: 3_000 },
+      { memberCreditId: "b", creditType: "CANCELLATION_REFUND", openingCredit: false, xeroCreditNoteId: "N", remainingCents: 2_000 },
+      { memberCreditId: "c", creditType: "CANCELLATION_REFUND", openingCredit: false, xeroCreditNoteId: null, remainingCents: 3_000 },
     ]);
+  });
+
+  it("flags a lot an opening-credit batch posted, and no other (#4988)", () => {
+    const opening: CreditLotRow = { id: "o", amountCents: 1_000, type: "ADMIN_ADJUSTMENT", xeroCreditNoteId: null, openingCreditBatchId: "batch" };
+    const free = freeCreditLots([opening, lot("c", 500)], new Map(), new Map());
+    expect(free.map((l) => [l.memberCreditId, l.openingCredit])).toEqual([["o", true], ["c", false]]);
   });
 
   it("does not change the write-down map it is given", () => {
@@ -53,6 +59,7 @@ describe("the planner is its fill, refused on a shortfall (#4220)", () => {
     const lots: AppliedCreditLot[] = Array.from({ length: next(6) }, (_, index) => ({
       memberCreditId: `lot_${index}`,
       creditType: types[next(1)]!,
+      openingCredit: next(3) === 0,
       xeroCreditNoteId: next(2) === 0 ? null : `note_${index}`,
       // Zero and negative free credit too: the fill skips them, as the planner always did.
       remainingCents: next(10_000) - 500,
@@ -79,13 +86,13 @@ describe("the planner is its fill, refused on a shortfall (#4220)", () => {
       slices.filter((s) => s.lot.xeroCreditNoteId).map((s) => ({ memberCreditId: s.lot.memberCreditId, xeroCreditNoteId: s.lot.xeroCreditNoteId, amountCents: s.amountCents })),
     );
     expect(plan.mintSlices).toEqual(
-      slices.filter((s) => !s.lot.xeroCreditNoteId).map((s) => ({ memberCreditId: s.lot.memberCreditId, creditType: s.lot.creditType, amountCents: s.amountCents })),
+      slices.filter((s) => !s.lot.xeroCreditNoteId).map((s) => ({ memberCreditId: s.lot.memberCreditId, creditType: s.lot.creditType, openingCredit: s.lot.openingCredit, amountCents: s.amountCents })),
     );
     expect(plan.coveredCents).toBe(applied);
   });
 
   it("reports a shortfall as outstanding where the planner refuses, with the same message as before", () => {
-    const lots: AppliedCreditLot[] = [{ memberCreditId: "a", creditType: "CANCELLATION_REFUND", xeroCreditNoteId: "NA", remainingCents: 4_000 }];
+    const lots: AppliedCreditLot[] = [{ memberCreditId: "a", creditType: "CANCELLATION_REFUND", openingCredit: false, xeroCreditNoteId: "NA", remainingCents: 4_000 }];
     expect(fillLotsInOrder(lots, 5_000)).toEqual({ slices: [{ lot: lots[0], amountCents: 4_000 }], outstanding: 1_000 });
     expect(() => planAppliedCreditAllocation(lots, 5_000, CLUB_FORMAT_TEST)).toThrow(
       "Applied credit $50.00 exceeds available credit-lot remaining by $10.00 — member-credit ledger inconsistency",
