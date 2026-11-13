@@ -24,8 +24,8 @@ import "@testing-library/jest-dom/vitest";
 import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DashboardPayload } from "@/app/(admin)/admin/bed-allocation/_components/types";
-import { ALL_LODGES_ALLOCATION_LOCK_REASON } from "@/app/(admin)/admin/bed-allocation/_components/types";
+import type { DashboardPayload } from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/types";
+import { ALL_LODGES_ALLOCATION_LOCK_REASON } from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/types";
 
 const editAccessMock = vi.hoisted(() => vi.fn());
 
@@ -151,7 +151,7 @@ vi.mock("@/components/admin/bed-range-assign-dialog", () => ({
   BedRangeAssignDialog: () => null,
 }));
 
-import AdminBedAllocationPage from "@/app/(admin)/admin/bed-allocation/page";
+import AdminBedAllocationPage from "@/app/(admin)/admin/booking-desk/bed-allocation/page";
 
 function buildPayload(): DashboardPayload {
   return {
