@@ -2081,11 +2081,19 @@ export async function applyPromoCodeChanges(
     newTotalPriceCents,
     guestNightRates,
     todayAtClub,
+    officerWorkPartyPromoCodeId = null,
   }: {
     booking: LoadedBookingForModify;
     bookingId: string;
     input: BatchModifyInput;
     inProgressPlan: BookingEditGuestRangePlan | null;
+    /**
+     * Fork #119: the ONE internal (work-party) promo an officer's "Add booking
+     * to work party" may apply, by id. A service argument the batch service
+     * receives beside `tx`, never a request-body field, so no member route can
+     * set it; every other internal code is still refused as not found.
+     */
+    officerWorkPartyPromoCodeId?: string | null;
     newCheckIn: Date;
     newTotalPriceCents: number;
     guestNightRates: Array<{
@@ -2254,8 +2262,12 @@ export async function applyPromoCodeChanges(
     const id = incomingIds.find((row) => row.code === entry.code)?.id;
     const promoCode = incomingRows.find((row) => row.id === id && row.code === entry.code);
     // Internal promos (work party events) cannot be entered as codes; a code
-    // renamed between the unlocked read and the lock is not found.
-    if (!promoCode || promoCode.internal) {
+    // renamed between the unlocked read and the lock is not found. Fork #119:
+    // the one exception is the work party an officer is adding the booking to.
+    if (
+      !promoCode ||
+      (promoCode.internal && promoCode.id !== officerWorkPartyPromoCodeId)
+    ) {
       throw new ApiError("Promo code not found", 400);
     }
     applications.push({

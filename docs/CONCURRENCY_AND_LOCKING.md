@@ -6152,6 +6152,36 @@ finished) claims on `status: REQUESTED` and now bumps `version`, so it and an
 execution cannot both win. Proved against PostgreSQL in
 `booking-change-request-execution.realdb.test.ts`.
 
+### Adding an existing booking to a work party (fork #119)
+
+An officer's "Add to work party" (`addBookingToWorkParty`,
+`src/lib/work-party-booking-correction.ts`) composes only existing keys and adds
+one registered global site, `addBookingToWorkParty#1` (`INV-LOCK-002`,
+`INV-LOCK-003`). It is the #3750 execution's shape without a request row.
+Order, in one transaction:
+
+1. Pre-read only the booking's immutable `lodgeId`; take global `lock(1)`, then
+   `acquireLodgeCapacityLock`, then the booking row
+   (`lockBookingRowForOwnerRead`, #4845), before the officer is re-read.
+2. Reauthorise the officer from fresh roles (`reauthorizeBookingOfficerFromDb`).
+3. Re-read the booking and the work party under the locks and apply the shared
+   eligibility rule (`workPartyBookingEligibility`), including "already has a
+   work party".
+4. Run `modifyBookingBatch` on the same `tx` with `officerWorkPartyCorrection`
+   and a `preTransaction` resolved before the transaction (`INV-LOCK-004`). The
+   service re-enters all three keys and takes the member keys after them. Any
+   refusal throws and rolls everything back.
+5. A preview throws a sentinel after the edit and so rolls it back; an apply
+   refuses if any money figure differs from the preview's, then commits and runs
+   the service's `deferredPostCommit` (Stripe, Xero, email, audit) outside every
+   lock.
+
+**Counterparts and idempotency.** There is no claim row: a cancel, capture or
+refund of the same booking holds `lock(1)`, and two concurrent applies serialise
+on it — the second re-reads a booking that already carries the work party and is
+refused, so the discount and its credit apply once. Proved against PostgreSQL in
+`work-party-booking-correction.realdb.test.ts`.
+
 ### One-open-request slot for exception requests (#2524)
 
 The request-CREATION lane (`booking-exception-request-service.ts`) enforces "at

@@ -224,6 +224,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // status, so path inference gives it bookings:edit, and the route declares
   // that permission explicitly rather than relying on inference.
   "/api/admin/bookings/[id]/return-to-waitlist": "bookings",
+  "/api/admin/bookings/[id]/work-party": "bookings",
   "/api/admin/bookings/[id]/review": "bookings",
   "/api/admin/bookings/eligible-family": "bookings",
   "/api/admin/bookings/non-member-contact": "bookings",
