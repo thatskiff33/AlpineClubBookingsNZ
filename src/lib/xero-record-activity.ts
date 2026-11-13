@@ -143,7 +143,7 @@ async function getMemberScope(localId: string, yearEndMonth: number): Promise<Xe
     scopeRecords: [rootRecord, ...subscriptionRecords],
     relatedRecords: [],
     backLink: {
-      href: `/admin/members/${member.id}`,
+      href: `${adminHref("member-detail", { id: member.id })}`,
       label: `${member.firstName} ${member.lastName}`,
     },
   };
@@ -473,7 +473,7 @@ async function getMemberSubscriptionScope(localId: string, yearEndMonth: number)
     scopeRecords: [rootRecord],
     relatedRecords: [relatedMember],
     backLink: {
-      href: `/admin/members/${subscription.member.id}`,
+      href: `${adminHref("member-detail", { id: subscription.member.id })}`,
       label: `${subscription.member.firstName} ${subscription.member.lastName}`,
     },
   };
@@ -535,7 +535,7 @@ async function getMembershipCancellationRequestScope(localId: string, format: Cl
     scopeRecords: [rootRecord, ...participantRecords],
     relatedRecords: relatedMembers,
     backLink: {
-      href: "/admin/membership-cancellations?status=ALL",
+      href: `${adminHref("membership-cancellations")}?status=ALL`,
       label: "Membership Cancellations",
     },
   };
@@ -593,7 +593,7 @@ async function getMembershipCancellationParticipantScope(localId: string, format
     scopeRecords: [rootRecord, requestRecord],
     relatedRecords: [relatedMember],
     backLink: {
-      href: "/admin/membership-cancellations?status=ALL",
+      href: `${adminHref("membership-cancellations")}?status=ALL`,
       label: "Membership Cancellations",
     },
   };

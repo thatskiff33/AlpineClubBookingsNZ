@@ -6,8 +6,8 @@
 import { render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UseXeroEntranceFeeDecisionResult } from "@/lib/admin-xero-entrance-fee";
-import { MemberXeroEntranceFeeFields } from "@/app/(admin)/admin/members/_components/member-xero-entrance-fee-fields";
-import { MemberXeroCreateDialog } from "@/app/(admin)/admin/members/[id]/_components/member-xero-create-dialog";
+import { MemberXeroEntranceFeeFields } from "@/app/(admin)/admin/membership/members/_components/member-xero-entrance-fee-fields";
+import { MemberXeroCreateDialog } from "@/app/(admin)/admin/membership/members/[id]/_components/member-xero-create-dialog";
 
 const fetchMock = vi.fn();
 
