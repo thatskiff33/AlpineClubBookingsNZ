@@ -161,6 +161,8 @@ export type GuestAcceptanceReprice =
       creditReturnedAsApplied: boolean;
       hasIssuedXeroInvoice: boolean;
       hasSucceededPayment: boolean;
+      /** #5061 follow-up: see `PaymentAdjustmentResult` (`INV-PAY-151`). */
+      refundHeldForDispute: boolean;
       bankTransferRefundPayee: ReturnType<typeof editRefundBankTransferPayee>; // #3949: member, group organiser, or null
       paymentStatus: string | null;
       paymentId: string | null;
@@ -347,7 +349,7 @@ export async function repriceBookingAfterGuestAcceptance(
       settlementMethod: null,
       creditReturnedAsApplied: false,
       hasIssuedXeroInvoice: hasIssuedPrimaryXeroInvoice(loaded),
-      hasSucceededPayment: false, bankTransferRefundPayee: null,
+      hasSucceededPayment: false, refundHeldForDispute: false, bankTransferRefundPayee: null,
       paymentStatus: booking.payment?.status ?? null,
       paymentId: booking.payment?.id ?? null,
       zeroDollarAutoPaid: false,
@@ -544,6 +546,7 @@ export async function repriceBookingAfterGuestAcceptance(
     creditReturnedAsApplied: returnRoute.kind === "account-credit",
     hasIssuedXeroInvoice: paymentImpact.hasIssuedXeroInvoice,
     hasSucceededPayment: paymentImpact.hasSucceededPayment,
+    refundHeldForDispute: paymentImpact.refundHeldForDispute,
     bankTransferRefundPayee: editRefundBankTransferPayee(paymentImpact, booking),
     paymentStatus: booking.payment?.status ?? null,
     paymentId: booking.payment?.id ?? null,
@@ -581,10 +584,10 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
   });
   // The card's share, through the edit's own refund helper: a key scoped to
   // this modification and durable recovery on failure (#818).
-  const { pendingRefundAmountCents, organiserChildRefund, paymentId, additionalAsk, retiredAdditionalAsks, hasSucceededPayment, hasIssuedXeroInvoice, paymentCustomerId, priceLines } = reprice;
+  const { pendingRefundAmountCents, organiserChildRefund, paymentId, additionalAsk, retiredAdditionalAsks, hasSucceededPayment, refundHeldForDispute, hasIssuedXeroInvoice, paymentCustomerId, priceLines } = reprice;
   const paymentContext = {
     pendingRefundAmountCents, organiserChildRefund, paymentId, additionalAsk, retiredAdditionalAsks,
-    hasSucceededPayment, hasIssuedXeroInvoice, paymentCustomerId, priceLines, bookingModificationId,
+    hasSucceededPayment, refundHeldForDispute, hasIssuedXeroInvoice, paymentCustomerId, priceLines, bookingModificationId,
     memberEmail: reprice.owner.email,
     memberName: reprice.owner.firstName,
     memberFirstName: reprice.owner.firstName,
@@ -617,7 +620,7 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
       datesChanged: false,
       settlementAmountCents: reprice.xeroRefundAmountCents,
       settlementMethod: reprice.settlementMethod,
-      refundedThroughStripe: reprice.hasSucceededPayment,
+      refundedThroughStripe: reprice.hasSucceededPayment && !reprice.refundHeldForDispute, // #5061 follow-up (`INV-PAY-151`)
       ...(reprice.creditReturnedAsApplied ? { refundMethod: "account-credit" as const } : {}),
       // An acceptance never raises a settled booking's price (see
       // `repriceBookingAfterGuestAcceptance`), so there is no Stripe ask to wait on.

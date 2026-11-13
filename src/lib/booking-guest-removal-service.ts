@@ -151,6 +151,8 @@ export type RemoveBookingGuestResult = {
   organiserChildRefund: { amountCents: number } | null;
   xeroAdditionalAmountCents: number;
   hasSucceededPayment: boolean;
+  /** #5061 follow-up: see `PaymentAdjustmentResult` (`INV-PAY-151`). */
+  refundHeldForDispute: boolean;
   hasIssuedXeroInvoice: boolean;
   paymentStatus: string | null;
   paymentId: string | null;
@@ -1111,6 +1113,7 @@ export async function removeBookingGuestInTransaction({
     organiserChildRefund: paymentImpact.organiserChildRefund,
     xeroAdditionalAmountCents: paymentImpact.xeroAdditionalAmountCents,
     hasSucceededPayment: paymentImpact.hasSucceededPayment,
+    refundHeldForDispute: paymentImpact.refundHeldForDispute,
     hasIssuedXeroInvoice: paymentImpact.hasIssuedXeroInvoice,
     paymentStatus: booking.payment?.status ?? null,
     paymentId: booking.payment?.id ?? null,

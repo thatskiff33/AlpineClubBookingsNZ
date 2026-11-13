@@ -8,10 +8,11 @@
  * `disputedCaptureCents` here. A WON dispute, or one Stripe closed with no funds
  * taken, holds nothing and the normal path resumes.
  *
- * DB only: no Stripe import, so `stripe.ts` can read it without a cycle.
+ * DB only: no Stripe import, so `stripe.ts` can read it without a cycle. The
+ * shared client is imported lazily, by the one guard that defaults to it, so an
+ * edit module that only reads a caller's transaction loads no client.
  */
 import { StripeDisputeStatus, type Prisma } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
 import { HOLDING_DISPUTE_STATUSES } from "@/lib/stripe-dispute-note";
 
 type DisputeReader = Pick<Prisma.TransactionClient, "stripeDispute">;
@@ -72,6 +73,19 @@ export async function paymentCaptureIntentIds(
   return [...new Set(ids.filter((id): id is string => Boolean(id)))];
 }
 
+/**
+ * #4911, #5061 follow-up (`INV-PAY-151`): THE payment-level read - the hold on
+ * every capture a booking payment holds (`paymentCaptureIntentIds`). A paid
+ * cancel, its preview, a price-reducing edit and its quote all read it here, so
+ * none can miss a capture the others see. Read it after the caller's locks.
+ */
+export async function paymentDisputedCaptureCents(
+  db: DisputeReader & Pick<Prisma.TransactionClient, "paymentTransaction">,
+  payment: { id: string; stripePaymentIntentId: string | null; additionalPaymentIntentId: string | null },
+): Promise<CaptureDisputeHold> {
+  return disputedCaptureCents(db, await paymentCaptureIntentIds(db, payment));
+}
+
 /** A refund the chokepoint refused because its capture is disputed. */
 export class DisputedCaptureRefundRefusedError extends Error {
   override name = "DisputedCaptureRefundRefusedError";
@@ -100,9 +114,9 @@ export class DisputedCaptureRefundRefusedError extends Error {
  */
 export async function assertCaptureNotDisputed(
   paymentIntentId: string,
-  db: DisputeReader = prisma,
+  db?: DisputeReader,
 ): Promise<void> {
-  const hold = await disputedCaptureCents(db, [paymentIntentId]);
+  const hold = await disputedCaptureCents(db ?? (await import("@/lib/prisma")).prisma, [paymentIntentId]);
   if (hold.cents > 0) {
     throw new DisputedCaptureRefundRefusedError(paymentIntentId, hold.disputes);
   }

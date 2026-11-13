@@ -59,8 +59,7 @@ const cancellationLedger = vi.hoisted(() => ({ postCancellationLedgerLines: vi.f
 // `stripe-dispute-hold.test.ts` and `stripe-dispute-cancel.realdb.test.ts`.
 vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
-  disputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
-  paymentCaptureIntentIds: async () => [],
+  paymentDisputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
 }));
 
 vi.mock("@/lib/member-money/doors", async (importOriginal) => ({

@@ -18,6 +18,12 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
   `credit-paid-reduction.realdb.test.ts`.
 */
 
+// #5061 follow-up: no capture here is disputed; the edit's hold is proved in
+// `stripe-dispute-edit.realdb.test.ts`.
+vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
+  paymentDisputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
+}));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 const credit = vi.hoisted(() => ({

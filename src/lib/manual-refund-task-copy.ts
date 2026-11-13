@@ -448,6 +448,24 @@ export function disputedCancellationHandBackReason({ bookingId, refundPercentage
   refundPercentage: number;
   disputes: readonly { stripeDisputeId: string; status: StripeDisputeStatus }[];
 }): string {
-  const named = disputes.map((dispute) => `${dispute.stripeDisputeId} (${STRIPE_DISPUTE_STATUS_LABEL[dispute.status]})`).join(", ");
-  return `Booking ${bookingId} cancelled while its card payment is disputed by the cardholder (Stripe dispute ${named}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the ${refundPercentage}% due under the policy in effect at the time.`;
+  return `Booking ${bookingId} cancelled while its card payment is disputed by the cardholder (Stripe dispute ${namedDisputes(disputes)}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the ${refundPercentage}% due under the policy in effect at the time.`;
+}
+
+/**
+ * #5061 follow-up (`INV-PAY-151`): THE REASON LINE of an edit's refund
+ * hand-back raised because the card payment is disputed - a lowered price whose
+ * refund the app neither sends to the card nor holds as credit. Worded as the
+ * cancel's (`disputedCancellationHandBackReason`), naming each dispute.
+ */
+export function disputedEditRefundHandBackReason({ bookingId, editLabel, disputes }: {
+  bookingId: string;
+  editLabel: string;
+  disputes: readonly { stripeDisputeId: string; status: StripeDisputeStatus }[];
+}): string {
+  return `Booking ${bookingId} lowered by a ${editLabel} while its card payment is disputed by the cardholder (Stripe dispute ${namedDisputes(disputes)}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the difference.`;
+}
+
+/** Each dispute as the reason lines name it: its Stripe id and status. */
+function namedDisputes(disputes: readonly { stripeDisputeId: string; status: StripeDisputeStatus }[]): string {
+  return disputes.map((dispute) => `${dispute.stripeDisputeId} (${STRIPE_DISPUTE_STATUS_LABEL[dispute.status]})`).join(", ");
 }

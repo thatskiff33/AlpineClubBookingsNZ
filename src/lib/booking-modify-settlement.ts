@@ -82,6 +82,14 @@ export type PaymentAdjustmentResult = {
   additionalAsk: AdditionalAsk;
   pendingRefundAmountCents: number;
   hasSucceededPayment: boolean;
+  /**
+   * #5061 follow-up (`INV-PAY-151`): an OPEN or LOST Stripe dispute holds the
+   * member's card payment, so `refundAmountCents` goes back by the treasurer's
+   * hand (`editRefundGoesBackByHand`) and `pendingRefundAmountCents` and
+   * `accountCreditAmountCents` are 0. The Xero leg treats it as a refund made
+   * by hand, and the email says the treasurer has it.
+   */
+  refundHeldForDispute: boolean;
   hasIssuedXeroInvoice: boolean;
   xeroRefundAmountCents: number;
   xeroAdditionalAmountCents: number;
@@ -155,6 +163,7 @@ export {
   type BookingModificationSettlementOptions,
 } from "@/lib/booking-modify-settlement-options";
 import {
+  editReductionDisputeHold,
   modificationCardRefundTier,
   refundableCashForModification,
   resolveSelectedSettlementAmount,
@@ -240,8 +249,16 @@ export async function applyPaymentAdjustments(
   // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
   const remainingRefundableCents = await refundableCashForModification(tx, booking.payment, reduction);
 
+  // #5061 follow-up (`INV-PAY-151`): an OPEN or LOST Stripe dispute on the
+  // member's card payment, read here under the door's `lock(1)` and lodge key.
+  // The bank is taking that money back, so the whole reduction goes to the
+  // treasurer by hand: no Stripe refund, no account credit, whatever the
+  // member chose - as a disputed paid cancel does. This read decides; the
+  // options' own copy of it only shaped the choice the member was offered.
+  const refundHeldForDispute =
+    netAmountCents < 0 && hasSucceededPayment && (await editReductionDisputeHold(tx, booking)).cents > 0;
   const selectedSettlement = resolveSelectedSettlementAmount({
-    settlementOptions,
+    settlementOptions: settlementOptions && { ...settlementOptions, refundHeldForDispute },
     settlementMethod,
   });
   // On a reduction against an issued Xero invoice (#1015): when a payment has
@@ -312,13 +329,14 @@ export async function applyPaymentAdjustments(
       } else {
         refundAmountCents = selectedSettlement.amountCents;
       }
-      pendingRefundAmountCents = hasSucceededPayment ? refundAmountCents : 0;
+      // A held refund is not Stripe's to make: the hand-back carries it (`editRefundGoesBackByHand`).
+      pendingRefundAmountCents = hasSucceededPayment && !refundHeldForDispute ? refundAmountCents : 0;
     } else if (netAmountCents < 0) {
       refundAmountCents = Math.min(
         Math.abs(netAmountCents),
         remainingRefundableCents,
       );
-      pendingRefundAmountCents = hasSucceededPayment ? refundAmountCents : 0;
+      pendingRefundAmountCents = hasSucceededPayment && !refundHeldForDispute ? refundAmountCents : 0;
     } else if (netAmountCents > 0) {
       // #3340 (`INV-PAY-047`, `INV-ADDPAY-023`). A bare `netAmountCents` here is
       // the money leak: minting the new ADDITIONAL intent retires every other
@@ -417,6 +435,7 @@ export async function applyPaymentAdjustments(
     additionalAsk,
     pendingRefundAmountCents,
     hasSucceededPayment,
+    refundHeldForDispute,
     hasIssuedXeroInvoice,
     xeroRefundAmountCents,
     xeroAdditionalAmountCents,

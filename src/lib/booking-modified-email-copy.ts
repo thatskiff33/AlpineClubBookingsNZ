@@ -291,10 +291,14 @@ function bankTransferRefundSentence(amount: string, recipient: "you" | "the memb
  * the group organiser paid for by card (#3653), and the refund's debt says
  * Stripe made it. `organiser_card_pending`: that refund, not made yet - failed,
  * not claimed in the run, or unreadable - and owed to the recovery runner.
+ * `with_treasurer` (#5061 follow-up, `INV-PAY-151`): the member's card payment
+ * is disputed, so no card refund or account credit was issued and the
+ * treasurer has the refund - the disputed cancel's wording (`disputedRefundSentence`).
  */
 export type BookingModifiedRefundDestination =
   | "own"
   | "own_card_pending"
+  | "with_treasurer"
   | Extract<OrganiserRefundMethod, "organiser_card" | "organiser_card_pending">;
 
 /**
@@ -320,6 +324,8 @@ export function bookingModifiedRefundSentence(
       return organiserCardRefundPendingSentence(amount);
     case "own_card_pending":
       return ownCardRefundPendingSentence(amount);
+    case "with_treasurer":
+      return disputedRefundSentence(amount);
     case "own":
       // #3949 (`INV-PAY-137`): a joiner's booking the organiser paid by internet banking is refunded to the organiser.
       if (refundByBankTransfer === "organiser") return organiserByHandRefundSentence(amount);
@@ -331,9 +337,10 @@ export function bookingModifiedRefundSentence(
  * #4057, #4070: a card refund still on its way, the organiser's or the
  * member's own, reads as information, the way "Booking Cancelled" boxes it
  * (`bookingCancelledRefundMade`); every other edit refund keeps its success box.
+ * #5061 follow-up: so does a refund with the treasurer, which nothing has made.
  */
 export function bookingModifiedRefundPending(refundDestination: BookingModifiedRefundDestination): boolean {
-  return refundDestination === "organiser_card_pending" || refundDestination === "own_card_pending";
+  return refundDestination === "organiser_card_pending" || refundDestination === "own_card_pending" || refundDestination === "with_treasurer";
 }
 
 /**

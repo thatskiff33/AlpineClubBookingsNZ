@@ -65,10 +65,10 @@ describe("the payee: who a bank transfer on a booking goes back to", () => {
   });
 
   it("names the payee of an edit's refund only when it goes back by hand", () => {
-    expect(editRefundBankTransferPayee({ refundAmountCents: 1500, hasSucceededPayment: false }, GROUP_CHILD)).toBe("organiser");
-    expect(editRefundBankTransferPayee({ refundAmountCents: 1500, hasSucceededPayment: false }, { ...GROUP_CHILD, organiserSettled: false })).toBe("member");
-    expect(editRefundBankTransferPayee({ refundAmountCents: 0, hasSucceededPayment: false }, GROUP_CHILD)).toBeNull();
-    expect(editRefundBankTransferPayee({ refundAmountCents: 1500, hasSucceededPayment: true }, GROUP_CHILD)).toBeNull();
+    expect(editRefundBankTransferPayee({ refundAmountCents: 1500, hasSucceededPayment: false, refundHeldForDispute: false }, GROUP_CHILD)).toBe("organiser");
+    expect(editRefundBankTransferPayee({ refundAmountCents: 1500, hasSucceededPayment: false, refundHeldForDispute: false }, { ...GROUP_CHILD, organiserSettled: false })).toBe("member");
+    expect(editRefundBankTransferPayee({ refundAmountCents: 0, hasSucceededPayment: false, refundHeldForDispute: false }, GROUP_CHILD)).toBeNull();
+    expect(editRefundBankTransferPayee({ refundAmountCents: 1500, hasSucceededPayment: true, refundHeldForDispute: false }, GROUP_CHILD)).toBeNull();
   });
 });
 

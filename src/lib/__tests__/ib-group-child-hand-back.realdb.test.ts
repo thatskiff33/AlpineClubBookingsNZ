@@ -95,7 +95,7 @@ async function editHandBack(childId: string, key: string): Promise<string> {
         bookingId: childId,
         paymentId: booking.payment!.id,
         bookingModificationId: modificationId,
-        adjusted: { refundAmountCents: EDIT_CENTS, hasSucceededPayment: false },
+        adjusted: { refundAmountCents: EDIT_CENTS, hasSucceededPayment: false, refundHeldForDispute: false },
         editLabel: "date change",
         booking,
       }),
@@ -335,7 +335,7 @@ const money = async (bookingId: string) =>
     const refused = { status: 409, message: GROUP_CANCEL_IN_PROGRESS_RAISE_MESSAGE };
     await expect(underLock((tx, booking) => raiseEditRefundHandBackIfOwed(tx, {
       bookingId: edited!, paymentId: booking.payment!.id, bookingModificationId: `${edited}-mid-edit`,
-      adjusted: { refundAmountCents: 1_000, hasSucceededPayment: false }, editLabel: "date change", booking,
+      adjusted: { refundAmountCents: 1_000, hasSucceededPayment: false, refundHeldForDispute: false }, editLabel: "date change", booking,
     }))).rejects.toMatchObject(refused);
     await expect(underLock((tx, booking) => raiseRefundRequestHandBack(tx, {
       bookingId: edited!, paymentId: booking.payment!.id, refundRequestId: `${edited}-mid-appeal`, amountCents: 1_000, booking,
@@ -352,7 +352,7 @@ const money = async (bookingId: string) =>
       booking: (await tx.booking.findUniqueOrThrow({ where: { id: edited! }, include: { payment: true, guests: true } })) as never,
       priceDiffCents: -1_000, changeFeeCents: 0, reduction: noReductionAgainstUnpaidAsk(-1_000),
       settlementOptions: { basisAmountCents: 1_000, cardRefundAmountCents: 500, cardRefundPercentage: 50, accountCreditAmountCents: 1_000, accountCreditPercentage: 100,
-        daysUntilCheckIn: 30, requiresSettlementMethod: true, returnsToOrganiser: false, organiserRefundByBankTransfer: false },
+        daysUntilCheckIn: 30, requiresSettlementMethod: true, returnsToOrganiser: false, organiserRefundByBankTransfer: false, refundHeldForDispute: false },
       settlementMethod: "credit", todayAtClub: requireCalendarDate("2026-07-01"), format: CLUB_FORMAT_TEST,
     }))).rejects.toMatchObject({ status: 409, message: GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE });
     expect(await prisma.memberCredit.count({ where: { sourceBookingId: edited! } })).toBe(0);

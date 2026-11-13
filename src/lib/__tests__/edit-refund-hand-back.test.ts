@@ -26,9 +26,9 @@ function tx() {
 
 describe("which edit refunds go back by hand (D-3813-6)", () => {
   it("a refund not captured through Stripe does; a card refund, credit, or nothing does not", () => {
-    expect(editRefundGoesBackByHand({ refundAmountCents: 6000, hasSucceededPayment: false })).toBe(true);
-    expect(editRefundGoesBackByHand({ refundAmountCents: 6000, hasSucceededPayment: true })).toBe(false);
-    expect(editRefundGoesBackByHand({ refundAmountCents: 0, hasSucceededPayment: false })).toBe(false);
+    expect(editRefundGoesBackByHand({ refundAmountCents: 6000, hasSucceededPayment: false, refundHeldForDispute: false })).toBe(true);
+    expect(editRefundGoesBackByHand({ refundAmountCents: 6000, hasSucceededPayment: true, refundHeldForDispute: false })).toBe(false);
+    expect(editRefundGoesBackByHand({ refundAmountCents: 0, hasSucceededPayment: false, refundHeldForDispute: false })).toBe(false);
   });
 });
 
@@ -39,7 +39,7 @@ describe("raising the edit's refund hand-back", () => {
       bookingId: "booking-1",
       paymentId: "pay-1",
       bookingModificationId: "mod-1",
-      adjusted: { refundAmountCents: 6000, hasSucceededPayment: false },
+      adjusted: { refundAmountCents: 6000, hasSucceededPayment: false, refundHeldForDispute: false },
       editLabel: "date change",
       booking: { organiserSettled: false, parentBookingId: null, payment: null },
     });
@@ -66,9 +66,9 @@ describe("raising the edit's refund hand-back", () => {
 
   it("raises nothing for a card refund, a zero refund or a booking with no payment row", async () => {
     for (const [adjusted, paymentId] of [
-      [{ refundAmountCents: 6000, hasSucceededPayment: true }, "pay-1"],
-      [{ refundAmountCents: 0, hasSucceededPayment: false }, "pay-1"],
-      [{ refundAmountCents: 6000, hasSucceededPayment: false }, null],
+      [{ refundAmountCents: 6000, hasSucceededPayment: true, refundHeldForDispute: false }, "pay-1"],
+      [{ refundAmountCents: 0, hasSucceededPayment: false, refundHeldForDispute: false }, "pay-1"],
+      [{ refundAmountCents: 6000, hasSucceededPayment: false, refundHeldForDispute: false }, null],
     ] as const) {
       const store = tx();
       const raised = await raiseEditRefundHandBackIfOwed(store as never, {
@@ -97,7 +97,7 @@ describe("#3949 review round 4: no refund to the organiser is raised while the g
   const editRaise = (store: ReturnType<typeof groupTx>) =>
     raiseEditRefundHandBackIfOwed(store as never, {
       bookingId: "child-1", paymentId: "pay-1", bookingModificationId: "mod-1",
-      adjusted: { refundAmountCents: 10_000, hasSucceededPayment: false }, editLabel: "date change", booking: ORGANISER_PAID,
+      adjusted: { refundAmountCents: 10_000, hasSucceededPayment: false, refundHeldForDispute: false }, editLabel: "date change", booking: ORGANISER_PAID,
     });
   const appealRaise = (store: ReturnType<typeof groupTx>) =>
     raiseRefundRequestHandBack(store as never, { bookingId: "child-1", paymentId: "pay-1", refundRequestId: "rr-1", amountCents: 10_000, booking: ORGANISER_PAID });

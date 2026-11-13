@@ -35,6 +35,12 @@ const h = vi.hoisted(() => ({
   realExecuteBookingModificationRefund: undefined as unknown as (typeof import("@/lib/booking-modification-settlement"))["executeBookingModificationRefund"],
 }));
 
+// #5061 follow-up: no capture here is disputed; the edit's hold is proved in
+// `stripe-dispute-edit.realdb.test.ts`.
+vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
+  paymentDisputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
+}));
 vi.mock("@/lib/prisma", () => ({ prisma: { paymentRecoveryOperation: { findUnique: h.recoveryFindUnique } } }));
 vi.mock("@/lib/payment-recovery", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/payment-recovery")),
