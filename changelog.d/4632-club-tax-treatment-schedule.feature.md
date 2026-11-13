@@ -8,3 +8,5 @@
   charge or other Xero document keeps the treatment in force when it was made
   for its whole life: nothing already invoiced, credited or posted changes
   when the schedule changes.
+- Sandbox census and migration checks can use the supplied `main` snapshot
+  when no `origin` remote is configured; missing or unreadable bases still fail.

@@ -255,8 +255,8 @@ generates Prisma with a placeholder database URL. A failed Node download stops
 setup before extraction. The provider must put `SETUP_TOOL_DIR/bin` on `PATH`;
 the fallback archive targets Linux x86-64.
 
-These quick checks fit the task sandbox. The orchestrator remains responsible
-for the local validation in `AGENTS.md`; PR CI owns the full unit suite, build,
+The orchestrator remains responsible for local validation in `AGENTS.md`;
+PR CI owns the full unit suite, build,
 migration and E2E gates before merge. What a Sekreton lane owns on GitHub, from
 its claim to the merge, is in
 [`COORDINATION.md`](COORDINATION.md#lanes-and-assignments) (#4392).
@@ -274,7 +274,9 @@ always, then, when the change can move CI's migration jobs, drift and the
 data-migration suites with the same no-skip check (its header has the rule).
 `typecheck` runs `scripts/ci/sekreton-typecheck.sh` (production project only,
 skipped under 6 GiB); PR CI keeps the rest.
-`fast-censuses` runs `pnpm run ci:fast-censuses` against a fetched `origin/main`.
+`fast-censuses` and `migrations` run `scripts/ci/sekreton-fetch-base.sh`: fetch
+`origin/main`, or, without a remote, use the local `main` snapshot after checking
+ancestry. Missing bases and failed fetches fail.
 The `realdb-all` job on GitHub remains advisory, so cite its actual result
 separately before making the PR ready.
 
