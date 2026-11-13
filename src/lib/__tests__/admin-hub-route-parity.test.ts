@@ -910,3 +910,115 @@ describe("the Messages & email hub keeps each page's own admission (C8 #4805)", 
     expect(getRequiredFeaturesForPath(pathname)).toEqual([...flags]);
   });
 });
+
+/**
+ * C10 (#4807): every Bookings page is the `bookings` area. Bed Allocation and
+ * the Waitlist also carry their module gates. Each answers at its hub path
+ * exactly as at its old path. A grid holding any other area, including
+ * overview at edit, is refused at both. The hub root has no rule of its own.
+ * `/admin/book` does not swallow `/admin/bookings` or `/admin/booking-requests`.
+ * The `/api/admin` routes these pages call stay where they were.
+ *
+ * Moving one of these pages into another area fails the equality below.
+ */
+describe("the Bookings hub keeps each page's own admission (C10 #4807)", () => {
+  type Row = readonly [
+    id: string,
+    oldPath: string,
+    hubPath: string,
+    flags: readonly FeatureFlagKey[],
+  ];
+  const BOOKINGS: readonly Row[] = [
+    ["bookings", "/admin/bookings", "/admin/booking-desk/bookings", []],
+    ["booking-requests", "/admin/booking-requests", "/admin/booking-desk/booking-requests", []],
+    ["booking-approvals", "/admin/booking-approvals", "/admin/booking-desk/booking-approvals", []],
+    [
+      "booking-change-requests",
+      "/admin/booking-change-requests",
+      "/admin/booking-desk/booking-change-requests",
+      [],
+    ],
+    ["book", "/admin/book", "/admin/booking-desk/book", []],
+    ["bed-allocation", "/admin/bed-allocation", "/admin/booking-desk/bed-allocation", ["bedAllocation"]],
+    ["waitlist", "/admin/waitlist", "/admin/booking-desk/waitlist", ["waitlist"]],
+  ];
+
+  const only = (area: AdminPermissionArea, level: "view" | "edit"): AdminPermissionInput => ({
+    canLogin: true,
+    accessRoles: [],
+    adminPermissionMatrix: {
+      ...(Object.fromEntries(
+        ADMIN_PERMISSION_AREAS.map((entry) => [entry.key, "none"]),
+      ) as AdminPermissionMatrix),
+      [area]: level,
+    },
+  });
+
+  it("names every page of the hub, each moved, on the bookings area's ordinary admission", () => {
+    expect(
+      ADMIN_PAGES.filter((page) => page.hub === "bookings").map((page) => [
+        page.id,
+        page.oldPath,
+        page.hubPath,
+        page.flags,
+      ]),
+    ).toEqual(BOOKINGS);
+    for (const page of ADMIN_PAGES.filter((candidate) => candidate.hub === "bookings")) {
+      expect(page.moved, page.id).toBe(true);
+      expect(page.admission, page.id).toBe("area");
+      expect(page.area, page.id).toBe("bookings");
+    }
+  });
+
+  it.each(BOOKINGS)("%s answers at %s and at %s as main did at the old path", (id, oldPath, hubPath, flags) => {
+    for (const pathname of [oldPath, hubPath].map(concrete)) {
+      expect(getAdminRouteRequirement(pathname, "GET"), pathname).toEqual({
+        area: "bookings",
+        level: "view",
+      });
+      expect(getAdminRouteRequirement(pathname, "POST"), pathname).toEqual({
+        area: "bookings",
+        level: "edit",
+      });
+      expect(getRequiredFeaturesForPath(pathname), pathname).toEqual([...flags]);
+      expect(differences(id, actualAnswer(pathname), oracleAnswer(concrete(oldPath)))).toEqual([]);
+      expect(canOpenAdminPath(only("bookings", "view"), pathname), pathname).toBe(true);
+      for (const area of ADMIN_PERMISSION_AREAS.map((entry) => entry.key)) {
+        if (area === "bookings") continue;
+        expect(canOpenAdminPath(only(area, "edit"), pathname), `${pathname} ${area}`).toBe(false);
+      }
+    }
+  });
+
+  it("gives the hub's root no rule, and matching stops at a segment boundary", () => {
+    expect(ADMIN_ROUTE_MAP.map(({ prefix }) => prefix)).not.toContain("/admin/booking-desk");
+    expect(firstMatch("/admin/booking-desk")?.prefix).toBe("/admin");
+    expect(getRequiredFeaturesForPath("/admin/booking-desk")).toEqual([]);
+    expect(firstMatch("/admin/book")?.prefix).toBe("/admin/book");
+    expect(firstMatch("/admin/bookings")?.prefix).toBe("/admin/bookings");
+    expect(firstMatch("/admin/booking-requests")?.prefix).toBe("/admin/booking-requests");
+    for (const [id, oldPath, hubPath] of BOOKINGS) {
+      const entry = firstMatch(concrete(hubPath));
+      expect(
+        entry && nestsUnder(entry.prefix, "/admin/booking-desk") && entry.prefix !== "/admin/booking-desk",
+        id,
+      ).toBe(true);
+      expect(entry?.area, id).toBe("bookings");
+      expect(entry?.prefix, id).toBe(
+        firstMatch(concrete(oldPath))!.prefix.replace(/^\/admin/, "/admin/booking-desk"),
+      );
+    }
+  });
+
+  it.each([
+    ["/api/admin/bookings", []],
+    ["/api/admin/booking-requests", []],
+    ["/api/admin/booking-change-requests", []],
+    ["/api/admin/bed-allocation", ["bedAllocation"]],
+    ["/api/admin/waitlist", ["waitlist"]],
+  ] as const)("leaves the API %s on bookings", (pathname, flags) => {
+    expect(getAdminRouteRequirement(pathname, "GET")).toEqual({ area: "bookings", level: "view" });
+    expect(getAdminRouteRequirement(pathname, "POST")).toEqual({ area: "bookings", level: "edit" });
+    expect(getRequiredFeaturesForPath(pathname)).toEqual([...flags]);
+  });
+});
