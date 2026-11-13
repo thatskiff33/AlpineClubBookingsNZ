@@ -244,9 +244,9 @@ export async function applyPaymentAdjustments(
   const remainingRefundableCents = await refundableCashForModification(tx, booking.payment, reduction);
 
   // INV-PAY-151: decide under the door's global/lodge locks; the quote's read only shaped the choices.
-  // OPEN/LOST disputes send the whole reduction to the treasurer, whatever method the member chose.
-  const refundHeldForDispute =
-    netAmountCents < 0 && hasSucceededPayment && (await editReductionDisputeHold(tx, booking)).cents > 0;
+  // OPEN/LOST disputes send the whole reduction to the treasurer; options that found a hold keep it (they offered no choice).
+  const refundHeldForDispute = netAmountCents < 0 && hasSucceededPayment &&
+    (settlementOptions?.refundHeldForDispute === true || (await editReductionDisputeHold(tx, booking)).cents > 0);
   const selectedSettlement = resolveSelectedSettlementAmount({
     settlementOptions: settlementOptions && { ...settlementOptions, refundHeldForDispute },
     settlementMethod,

@@ -410,6 +410,34 @@ describe("#3809: a booking paid by card AND credit gets back what an all-card on
 });
 
 /*
+  #5061 follow-up (`INV-PAY-151`): the door's options found the card payment
+  disputed and so offered no choice. If the save's own read no longer sees the
+  dispute (it closed between the two reads), the reduction still goes to the
+  treasurer rather than silently returning nothing.
+*/
+describe("#5061 follow-up: options that found a dispute hold keep it in the save", () => {
+  it("MUTATION: a hold the save no longer reads still hands the credit tier back by hand, never zero", async () => {
+    credit.policy = TIERS["100%"];
+    credit.applied = 10_000;
+    const booking = creditPaidBooking({ payment: { amountCents: 10_000, source: PaymentSource.STRIPE, creditAppliedCents: 10_000 } });
+    const options = await calculateModificationSettlementOptions({ reduction: noReductionAgainstUnpaidAsk(-15_000),
+      booking, netChargeCents: -15_000, db: NO_HAND_BACKS as never, todayAtClub: TODAY,
+    });
+    const settlementOptions = { ...options, refundHeldForDispute: true, requiresSettlementMethod: false };
+    const result = await applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk(-15_000),
+      booking, priceDiffCents: -15_000, changeFeeCents: 0, settlementOptions,
+      todayAtClub: TODAY, format: CLUB_FORMAT_TEST,
+    });
+
+    expect(result.refundHeldForDispute).toBe(true);
+    expect(result.refundAmountCents).toBe(options.accountCreditAmountCents);
+    expect(result.refundAmountCents).toBeGreaterThan(0);
+    expect(result.pendingRefundAmountCents).toBe(0);
+    expect(result.accountCreditAmountCents).toBe(0);
+  });
+});
+
+/*
   Finding 1 of the #3809 fix round: the cancellation tiers the applied credit
   capped, with the money paid, at what the booking is now worth - exactly as it
   caps paid money (`cancelRefundableBaseCents`) - in the executed cancel and in

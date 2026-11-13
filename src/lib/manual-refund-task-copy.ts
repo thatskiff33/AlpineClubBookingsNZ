@@ -462,7 +462,7 @@ export function disputedEditRefundHandBackReason({ bookingId, editLabel, dispute
   editLabel: string;
   disputes: readonly { stripeDisputeId: string; status: StripeDisputeStatus }[];
 }): string {
-  return `Booking ${bookingId} lowered by a ${editLabel} while its card payment is disputed by the cardholder (Stripe dispute ${namedDisputes(disputes)}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the difference.`;
+  return `Booking ${bookingId} lowered by a ${editLabel} while its card payment is disputed by the cardholder (Stripe dispute ${namedDisputes(disputes) || "since closed"}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the difference.`;
 }
 
 /** Each dispute as the reason lines name it: its Stripe id and status. */
