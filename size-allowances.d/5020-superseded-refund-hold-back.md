@@ -10,11 +10,11 @@ lines: 757
 reason: the approval reads the hold-back on its own locked transaction and nets it from the cap it already computes.
 
 file: src/lib/member-credit.ts
-lines: 1152
+lines: 1150
 reason: the modification credit, its ledger lines and the hold-back-aware Payment allocation now commit in one transaction.
 
 file: src/lib/payment-reconciliation.ts
-lines: 2895
+lines: 2899
 reason: the capacity race's refund plan reads the hold-back inside the transaction that already plans the refund.
 
 file: src/lib/payment-recovery.ts
