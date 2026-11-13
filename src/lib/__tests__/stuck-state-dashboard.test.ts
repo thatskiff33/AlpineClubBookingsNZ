@@ -8,7 +8,10 @@ import {
   GROUP_JOINER_PAYS_OWN_EVENT_REASON,
 } from "@/lib/manual-settlement-reversal-event";
 import {
+  STUCK_STATE_AFFECTED_COUNT_TTL_MS,
+  getStuckStateAffectedCount,
   getStuckStateDashboard,
+  resetStuckStateAffectedCountCache,
   type StuckStateDashboardDependencies,
 } from "@/lib/stuck-state-dashboard";
 import { adminAnchorHref } from "@/lib/admin-hubs";
@@ -1023,4 +1026,69 @@ it("keeps exhausted settlement figure alerts visible for finance", async () => {
   expect(result.items).toContainEqual(expect.objectContaining({
     id: "payment-settlement-alert-undelivered", count: 1, severity: "critical", href: "/admin/payments",
   }));
+});
+
+/**
+ * #4962: the Stuck States headline as an officer work queue count. Asked for on
+ * every admin navigation, so one scan is shared for a minute.
+ */
+describe("getStuckStateAffectedCount", () => {
+  const now = new Date("2026-07-01T00:00:00.000Z");
+  const later = (ms: number) => new Date(now.getTime() + ms);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetStuckStateAffectedCountCache();
+  });
+
+  function depsWithStuckPayments(count: number) {
+    return buildDeps({
+      db: {
+        paymentRecoveryOperation: { count: vi.fn().mockResolvedValue(count) },
+      } as unknown as StuckStateDashboardDependencies["db"],
+    });
+  }
+
+  it("is the headline the Stuck States page leads with", async () => {
+    const deps = depsWithStuckPayments(2);
+    const dashboard = await getStuckStateDashboard({ deps, now });
+
+    expect(dashboard.totals.affectedCount).toBeGreaterThan(0);
+    expect(await getStuckStateAffectedCount({ deps, now })).toBe(
+      dashboard.totals.affectedCount,
+    );
+  });
+
+  it("shares one scan within the minute and scans again after it", async () => {
+    const deps = depsWithStuckPayments(2);
+    const scans = () => vi.mocked(deps.loadEffectiveModuleFlags).mock.calls.length;
+
+    const first = await getStuckStateAffectedCount({ deps, now });
+    expect(scans()).toBe(1);
+    expect(
+      await getStuckStateAffectedCount({
+        deps,
+        now: later(STUCK_STATE_AFFECTED_COUNT_TTL_MS - 1),
+      }),
+    ).toBe(first);
+    expect(scans()).toBe(1);
+
+    await getStuckStateAffectedCount({
+      deps,
+      now: later(STUCK_STATE_AFFECTED_COUNT_TTL_MS),
+    });
+    expect(scans()).toBe(2);
+  });
+
+  it("does not keep a failed scan, so the next request tries again", async () => {
+    const deps = depsWithStuckPayments(2);
+    vi.mocked(deps.loadEffectiveModuleFlags).mockRejectedValueOnce(
+      new Error("connection reset"),
+    );
+
+    await expect(getStuckStateAffectedCount({ deps, now })).rejects.toThrow(
+      "connection reset",
+    );
+    await expect(getStuckStateAffectedCount({ deps, now })).resolves.toBeGreaterThan(0);
+  });
 });

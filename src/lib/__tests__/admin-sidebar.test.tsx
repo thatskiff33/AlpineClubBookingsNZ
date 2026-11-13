@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MODULE_KEYS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 import type { AdminPendingCounts } from "@/lib/admin-pending-counts";
+import { ZERO_ADMIN_PENDING_COUNTS } from "@/lib/admin-work-queues";
 
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "admin-sidebar:expanded-sections";
 
@@ -35,26 +36,7 @@ import { requireCalendarDate } from "@/lib/club-time";
  */
 const CLUB_DAY = requireCalendarDate("2026-07-01");
 
-const ZERO_COUNTS: AdminPendingCounts = {
-  familyRequests: 0,
-  memberApplications: 0,
-  refundAppeals: 0,
-  manualRefundTasks: 0,
-  creditApprovals: 0,
-  bookingReviews: 0,
-  bookingChangeRequests: 0,
-  newBookingPolicyExceptionRequests: 0,
-  publicBookingRequests: 0,
-  unpaidFinishedStays: 0,
-  unsettledAdditionalFinishedStays: 0,
-  unsettledAdditionalUpcomingStays: 0,
-  membershipCancellations: 0,
-  archiveRequests: 0,
-  deletionRequests: 0,
-  memberDeleteRequests: 0,
-  issueReports: 0,
-  unassignedHutLeaderDates: 0,
-};
+const ZERO_COUNTS: AdminPendingCounts = ZERO_ADMIN_PENDING_COUNTS;
 
 function buildFetchMock(counts: Partial<AdminPendingCounts> = {}) {
   return vi.fn(async (input: RequestInfo | URL) => {
