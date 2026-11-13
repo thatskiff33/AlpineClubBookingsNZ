@@ -2,7 +2,7 @@
 -- a production database already ran the ORIGINAL (pre-review-rework) two
 -- subscription-category migrations (20261121010000_add_subscription_category,
 -- 20261121020000_widen_membership_charge_for_category), and this fork is now
--- moving to the REDESIGNED pair (20261214010000/20261214020000) that replaces
+-- moving to the REDESIGNED pair (20261215010000/20261215020000) that replaces
 -- them. This is NOT a normal migration file and must NEVER be placed under
 -- prisma/migrations/ or run as part of an ordinary `prisma migrate deploy` —
 -- see docs/guides/subscription-category-redesign-production-reconciliation.md
@@ -40,7 +40,7 @@ BEGIN;
 --
 -- Maintainer review: the data-only guard below passes just as cleanly on a
 -- database that has ALREADY applied the REDESIGNED pair
--- (20261214010000/20261214020000) and simply has not created a custom
+-- (20261215010000/20261215020000) and simply has not created a custom
 -- category yet — nobody has assigned or charged a category, so every data
 -- check is satisfied, but the schema this script is about to DROP is the
 -- CURRENT, in-use one, not leftover scaffolding from a superseded design.
@@ -62,12 +62,12 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM "_prisma_migrations"
     WHERE migration_name IN (
-      '20261214010000_add_subscription_category_and_widen_charge_type_shape',
-      '20261214020000_route_category_charges_and_enforce_axis_exclusivity'
+      '20261215010000_add_subscription_category_and_widen_charge_type_shape',
+      '20261215020000_route_category_charges_and_enforce_axis_exclusivity'
     )
   ) THEN
     RAISE EXCEPTION 'redesigned_subscription_category_migrations_already_applied'
-      USING HINT = 'At least one of the redesigned migrations (20261214010000/20261214020000) is already recorded in _prisma_migrations. This database is ALREADY on the new schema this script would otherwise destroy — stop.';
+      USING HINT = 'At least one of the redesigned migrations (20261215010000/20261215020000) is already recorded in _prisma_migrations. This database is ALREADY on the new schema this script would otherwise destroy — stop.';
   END IF;
   IF EXISTS (SELECT 1 FROM "SubscriptionCategory" WHERE NOT "isBuiltIn") THEN
     RAISE EXCEPTION 'subscription_category_data_exists'
