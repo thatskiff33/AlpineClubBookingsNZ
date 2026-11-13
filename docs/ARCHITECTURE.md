@@ -1947,11 +1947,12 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
 
 ### Member money journal (#4513)
 
-The journal records booking charges and payment receipts alongside the legacy
-writes. No screen, money report or Xero document reads it yet; they still use
-the legacy money columns. Outside the doors, only the operator verifier, the
-booking-ledger census and the deletion guards read it (`INV-MONEY-043`,
-`INV-MONEY-044`). `MemberMoneyEvent` has one `MemberMoneyJournal`; its positive
+The journal records booking charges, payment receipts and card refunds alongside
+the legacy writes. No screen, finance report or Xero document reads it yet; they
+still use the legacy money columns. Outside the doors, only the operator
+verifier, the read-only booking-ledger census and the deletion guards read it
+(`INV-MONEY-043`, `INV-MONEY-044`); `member-money-journal-writer-census.test.ts`
+pins that list. `MemberMoneyEvent` has one `MemberMoneyJournal`; its positive
 integer-cent `MemberMoneyLine` legs balance in one currency at commit. Headers
 record the transaction and cluster that may insert their complete, counted legs,
 obligations and applications. A debtor is a member or an organisation, never both. Exact reversals append evidence; no row is rewritten.

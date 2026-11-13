@@ -2658,8 +2658,10 @@ applies from. There is no environment variable and, for now, no screen.
   card. Until #4632 provides the tax screen, it uses the default GST-inclusive
   15% treatment, matching the Xero invoices. A club that is not GST-registered
   should expect its booking charges to be recorded with that same default tax
-  split in the meantime; it cannot change the setting yet. A journal refusal
-  stops the booking or payment change rather than being ignored
+  split in the meantime. That split does not match its real position until the
+  #4632 screen lets it change the setting, and no screen or Xero document uses
+  those tax figures yet. A journal refusal stops the booking or payment change
+  rather than being ignored
   ([`INV-MONEY-044`](docs/invariants/money.md#inv-money-044)).
 
 ## Finance dashboard
