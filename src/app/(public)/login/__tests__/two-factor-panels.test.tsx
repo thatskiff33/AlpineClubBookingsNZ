@@ -261,7 +261,10 @@ describe("authenticator setup QR code (#4952)", () => {
     const qr = await screen.findByRole("img", { name: "QR code to scan with your authenticator app" });
     const expected = await QRCode.toDataURL(setup.otpauthUrl, { width: 192, margin: 4 });
     expect(qr).toHaveAttribute("src", expected);
-    expect(screen.getByLabelText("Or type this setup key")).toHaveTextContent(setup.secret);
+    const key = screen.getByLabelText("Or type this setup key");
+    expect(key).toHaveTextContent(setup.secret);
+    // <output> is a polite live region by default; the secret is not announced unasked.
+    expect(key).toHaveAttribute("aria-live", "off");
     // The secret reaches no server but the setup endpoint it came from.
     expect(fetchMock).toHaveBeenCalledExactlyOnceWith("/api/auth/2fa/totp/setup", expect.anything());
   });

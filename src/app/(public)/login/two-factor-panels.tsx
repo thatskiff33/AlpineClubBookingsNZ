@@ -243,7 +243,10 @@ export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
               ) : null}
               <div className="space-y-2">
                 <Label htmlFor="totp-setup-key">Or type this setup key</Label>
+                {/* aria-live="off": <output> is an implicit polite live region, and
+                    the secret should not be read aloud unasked when it loads. */}
                 <output
+                  aria-live="off"
                   id="totp-setup-key"
                   className="block break-all rounded-md border bg-muted p-3 font-mono text-sm"
                 >
