@@ -339,7 +339,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
       await admin.end().catch(() => {});
     });
 
-    it("reports server role facts for the operator, application and superuser membership (INV-OPS-017)", async () => {
+    it("reports server role facts for the operator, application and superuser membership (INV-OPS-018)", async () => {
       const { PrismaClient: Prisma } = await import("@prisma/client");
       const { createPrismaPgAdapter } = await import("@/lib/prisma-adapter");
       const operator = new Prisma({ adapter: createPrismaPgAdapter(urlFor(DATABASES.upgrade)) });
@@ -362,7 +362,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
       }
     });
 
-    it("treats a superuser login narrowed by SET ROLE as a superuser (INV-OPS-017)", async () => {
+    it("treats a superuser login narrowed by SET ROLE as a superuser (INV-OPS-018)", async () => {
       const { PrismaClient: Prisma } = await import("@prisma/client");
       const { createPrismaPgAdapter } = await import("@/lib/prisma-adapter");
       const operator = new Prisma({ adapter: createPrismaPgAdapter(urlFor(DATABASES.upgrade)) });

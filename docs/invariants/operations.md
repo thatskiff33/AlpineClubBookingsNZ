@@ -745,6 +745,23 @@ in later milestones.
 
 ## INV-OPS-017
 
+Third-party container images run by deployment scripts or workflows carry a
+full `@sha256:` digest. A floating tag alone is insufficient. First-party
+images built locally or tagged by commit SHA are explicit exceptions.
+
+`scripts/ci/check-image-pins.mjs` enforces workflow service and job containers,
+image environment values, and Docker runs in workflows, the production deploy,
+the backup drill and CI shell scripts. Unsupported checked shapes fail closed.
+Variable references are checked at their definitions; computed sources must be
+explicitly recognised. The deploy's Caddy helpers read the Compose service image
+and refuse an unresolved or unpinned reference. CI PostgreSQL copies are tied
+to Compose by `deployment-image-contracts.test.ts`.
+
+Workflow and shell image digests need manual refresh where Dependabot cannot
+update them; see [the refresh procedure](../MAINTENANCE.md#refreshing-container-image-digests).
+
+## INV-OPS-018
+
 First Bootstrap sets `DATA_ENCRYPTION_KEYS` before the app first starts. It runs
 the first migrations as the operator, provisions least-privilege database roles,
 then sets the application user, migration user and audit-retention URL together
