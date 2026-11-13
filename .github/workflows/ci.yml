@@ -180,7 +180,7 @@ jobs:
       contents: read
       security-events: write # upload Semgrep SARIF to GitHub code scanning
     env:
-      SEMGREP_IMAGE: semgrep/semgrep:1.161.0
+      SEMGREP_IMAGE: semgrep/semgrep:1.161.0@sha256:326e5f41cc972bb423b764a14febbb62bbad29ee1c01820805d077dd868fea48
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -630,7 +630,9 @@ jobs:
           cache: pnpm
 
       - name: Check action SHA pins
-        run: node scripts/ci/check-action-pins.mjs
+        run: |
+          node scripts/ci/check-action-pins.mjs
+          node scripts/ci/check-image-pins.mjs
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -1062,7 +1064,7 @@ jobs:
       contents: read
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -1075,7 +1077,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       concurrency-race-postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -1498,7 +1500,7 @@ jobs:
       contents: read
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -1610,7 +1612,7 @@ jobs:
       contents: read
     services:
       concurrency-race-postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
