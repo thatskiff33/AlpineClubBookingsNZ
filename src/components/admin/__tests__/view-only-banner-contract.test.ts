@@ -424,7 +424,7 @@ const FIGURES = {
    * 377 -> 378 (#4162): the stuck-states page's "Record the answer" on a voided
    * bank refund note. MEASURED by re-running this census.
    */
-  callSites: 388, // 386 -> 388 (#4368): Stuck States' "Try the card again" and "Nothing left owed", under the dead card refund panel's own banner. MEASURED. // #4457 adds privacy retention Edit/Save to #4555’s Xero actions. 378/373 -> 381 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #58's one are disjoint from upstream's. MEASURED by re-running this census on the merged tree.
+  callSites: 390, // 388 -> 390 (#4988): the opening-credit card's Import and Reverse, vouched by the refund appeals page. MEASURED. // 386 -> 388 (#4368): Stuck States' "Try the card again" and "Nothing left owed", under the dead card refund panel's own banner. MEASURED. // #4457 adds privacy retention Edit/Save to #4555’s Xero actions. 378/373 -> 381 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #58's one are disjoint from upstream's. MEASURED by re-running this census on the merged tree.
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -481,7 +481,7 @@ const FIGURES = {
    */
   // 315 -> 317 (#62): the Central lodge card's two, static opt-outs (below).
   // 317 -> 318 (#58): the Other lodges panel's Hide, a vouched opt-out.
-  optOuts: 333, // 331 -> 333 (#4368): the same two, static opt-outs. MEASURED. // #4457 adds two section-banner opt-outs. 323/318 -> 326 (central-server lane, 20 Oct 2026). MEASURED.
+  optOuts: 335, // 333 -> 335 (#4988): the same two, vouched opt-outs. MEASURED. // 331 -> 333 (#4368): the same two, static opt-outs. MEASURED. // #4457 adds two section-banner opt-outs. 323/318 -> 326 (central-server lane, 20 Oct 2026). MEASURED.
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -596,9 +596,9 @@ const FIGURES = {
    * 34 -> 35 (#58): the panel's Hide, render-site vouched; 29 -> 30 there.
    */
   /** …of the vouched: proved at a parent's own JSX render site (#2168). */
-  vouchedOptOuts: 38, // 37 -> 38 (#4467): the committee role form's Save Role. MEASURED. // 36/35 -> 37 (central-server lane, 20 Oct 2026): the Other lodges panel's Hide. MEASURED.
+  vouchedOptOuts: 40, // 38 -> 40 (#4988): the opening-credit card's Import and Reverse. MEASURED. // 37 -> 38 (#4467): the committee role form's Save Role. MEASURED. // 36/35 -> 37 (central-server lane, 20 Oct 2026): the Other lodges panel's Hide. MEASURED.
   /** …of the vouched: proved at a parent's own JSX render site (#2168). */
-  renderSiteVouchedOptOuts: 33, // 32 -> 33 (#4467): the committee role form's Save Role, vouched by the committee page. MEASURED. // 31/30 -> 32 (central-server lane, 20 Oct 2026): the Other lodges panel's Hide, render-site vouched by the Lodges page. MEASURED.
+  renderSiteVouchedOptOuts: 35, // 33 -> 35 (#4988): the same two, vouched at the refund appeals page's render site. MEASURED. // 32 -> 33 (#4467): the committee role form's Save Role, vouched by the committee page. MEASURED. // 31/30 -> 32 (central-server lane, 20 Oct 2026): the Other lodges panel's Hide, render-site vouched by the Lodges page. MEASURED.
   /** …of the vouched: proved through the wizard shell's channel (#2324). */
   shellVouchedOptOuts: 5,
   /**

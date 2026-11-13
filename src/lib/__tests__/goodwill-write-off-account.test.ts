@@ -31,6 +31,7 @@ const h = vi.hoisted(() => {
       amountCents: number;
       type: CreditType;
       xeroCreditNoteId: string | null;
+      openingCreditBatchId: string | null;
     }>,
     appliedCents: 0,
   };
@@ -61,6 +62,7 @@ const h = vi.hoisted(() => {
           amountCents: l.amountCents,
           type: l.type,
           xeroCreditNoteId: l.xeroCreditNoteId,
+          openingCreditBatchId: l.openingCreditBatchId,
         })),
       updateMany: async () => ({ count: 1 }),
     },
@@ -135,7 +137,12 @@ beforeEach(() => {
  * the credit note it would send to Xero.
  */
 async function mintedLines(
-  lots: Array<{ id: string; amountCents: number; type: CreditType }>,
+  lots: Array<{
+    id: string;
+    amountCents: number;
+    type: CreditType;
+    openingCreditBatchId?: string;
+  }>,
 ): Promise<LineItem[]> {
   h.state.appliedCents = lots.reduce((sum, lot) => sum + lot.amountCents, 0);
   h.state.lots = lots.map((lot) => ({
@@ -144,6 +151,7 @@ async function mintedLines(
     amountCents: lot.amountCents,
     type: lot.type,
     xeroCreditNoteId: null,
+    openingCreditBatchId: lot.openingCreditBatchId ?? null,
   }));
 
   let sent: CreditNote | undefined;
@@ -279,6 +287,21 @@ describe("a noteless lot that is NOT goodwill stays on hutFeeRefunds (#2717)", (
         type: CreditType.BOOKING_MODIFICATION_REFUND,
       },
     ]);
+    expect(lines[0].accountCode).toBe("200");
+  });
+
+  it("posts a spent opening credit to the refund account, though it is an ADMIN_ADJUSTMENT (#4988)", async () => {
+    // An opening credit is money the member already held in the club's old
+    // system (INV-PAY-153), not a grant the club chose to give.
+    const lines = await mintedLines([
+      {
+        id: "c1",
+        amountCents: 3000,
+        type: CreditType.ADMIN_ADJUSTMENT,
+        openingCreditBatchId: "batch-1",
+      },
+    ]);
+    expect(lines).toHaveLength(1);
     expect(lines[0].accountCode).toBe("200");
   });
 

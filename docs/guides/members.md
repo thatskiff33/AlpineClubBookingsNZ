@@ -73,6 +73,16 @@ cents; dates are NZ date-only.
    is on, a **Dietary/allergy information** column is imported too (any age,
    up to 500 characters; a longer value blocks the row). While it is off, or if
    your admin role lacks membership edit access, that column is ignored.
+4. Two optional columns save work when a club moves in
+   ([Moving in from your old system](moving-in.md)):
+   - **Membership Type** names one of the club's active types, ignoring
+     capitals and spaces. Each new member gets that type for the current
+     season, recorded as an import. An unknown or archived type blocks the row.
+     A member who already has a type keeps it, and a cancelled member gets none.
+   - **Family Key** is any code you choose. New members sharing a key become
+     one family group. A key shared by more than 10 rows blocks those rows.
+   The result shows how many family groups were made and types assigned, and
+   lists any member whose type could not be saved.
 
 ### Send login invites and password resets
 

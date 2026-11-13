@@ -137,7 +137,7 @@ For what an officer sees and does on each screen, use the
 | `payments` | finance | `ARCHITECTURE.md` (Stripe), `finance-dashboard/README.md` | [guide](guides/payments.md) | 1 |
 | `privacy-retention` | support (settings); membership:view additionally for application/member previews; bookings:edit additionally for the after-stay dietary period and switch | [retention schedule](PRIVACY_RETENTION.md) | [retention schedule and controls](PRIVACY_RETENTION.md) | — (#4457, #4916) |
 | `promo-codes` | bookings | `ARCHITECTURE.md` (promo codes / redemptions) | [guide](guides/promo-codes.md) | 1 |
-| `refund-requests` | finance | `CANCELLATIONS.md`, `ARCHITECTURE.md` (refund recovery) | [guide](guides/refund-requests.md) | 2 |
+| `refund-requests` | finance | `CANCELLATIONS.md`, `ARCHITECTURE.md` (refund recovery), `INV-PAY-153` (opening credits) | [guide](guides/refund-requests.md) | 2 |
 | `reports` | finance | `finance-dashboard/README.md` | [guide](guides/reports.md) | 1 |
 | `rooms-beds` | lodge | `CAPACITY_MODEL.md`, `ARCHITECTURE.md` (bed inventory) | [guide](guides/rooms-beds.md) | 3 |
 | `roster` | lodge | `ARCHITECTURE.md` (roster/chores) | [guide](guides/roster.md) | 3 |

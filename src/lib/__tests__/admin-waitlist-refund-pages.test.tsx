@@ -658,7 +658,7 @@ describe("Admin refund and credit review page", () => {
     render(<RefundRequestsPage />);
 
     expect(
-      await screen.findByText(/can view refund appeals and credit approvals/i),
+      await screen.findByText(/can view refund appeals, credit approvals and opening credits/i),
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: /Review/ })).toBeDisabled();
     const creditSection = screen

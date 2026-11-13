@@ -35,7 +35,11 @@ Then work through these in order:
 5. [`../UPGRADING.md`](../UPGRADING.md) — how to take a new upstream release
    into your deployment, release by release, including the manual steps a
    release needs.
-6. [Contribute a change upstream](upstream-contributions.md) — when your club
+6. [Moving in from your old system](../guides/moving-in.md) — the order to
+   load lodges, membership types, members, families, subscriptions, credit and
+   future bookings; how to carry prepaid stays over without billing twice; and
+   the totals to check against your old records.
+7. [Contribute a change upstream](upstream-contributions.md) — when your club
    builds something reusable, how to get it into the product instead of
    maintaining it forever in your own fork.
 

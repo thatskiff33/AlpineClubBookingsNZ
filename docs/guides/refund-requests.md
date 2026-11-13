@@ -130,6 +130,35 @@ payment not yet made (being retried, or stopped and listed on [Stuck States](stu
    adjustment is applied to the member's credit ledger. A grant also queues its
    Xero credit note at that moment.
 
+### Post or reverse opening credits
+
+A club moving in from another system loads the credit its members already held
+in one batch ([Moving in from your old system](moving-in.md#6-credit-post-the-opening-credits)).
+
+1. On the **Opening credits** card, click **Import opening credits** and choose
+   a CSV. It needs a **Member ID** or **Email** column and one amount column:
+   **Amount** in dollars or **Amount Cents**. **First Name**, **Last Name** and
+   **Description** are optional. A file holds up to 500 rows; a zero amount is
+   skipped and a negative one refused.
+2. The preview shows the matched members, the rows to fix, the total to post,
+   and every line. **Post** stays disabled until every row matches exactly one
+   member.
+3. Click **Post $X to N members**. The credits are added in one go, under one
+   audit entry with the total. Nothing is emailed, and no Xero credit note or
+   card charge is made: the money was settled before the move. This needs no
+   second admin, because the total is what you approve, but a row for the
+   admin posting it is refused. The same file cannot
+   post twice, and a member still holding an opening credit from an unreversed
+   batch is refused, so a corrected file cannot credit anyone twice.
+4. A posted batch is listed with its total and who posted it. **Reverse batch**
+   removes every credit in it after you give a reason, which stays on the
+   batch and its audit entry; members see only "Opening credit reversed". It
+   is refused, and nothing changes, if any member has spent any of their
+   opening credit or had any credit deducted since the batch posted.
+
+When a member later spends an opening credit, Xero codes it as the member's own
+money (the hut-fee refunds account), never as goodwill (`INV-PAY-153`).
+
 ## Settings reference
 
 This is a review queue — its per-review inputs:
@@ -142,6 +171,8 @@ This is a review queue — its per-review inputs:
 | Admin Notes | Note visible to the member | Optional |
 | Notify choice (approve/reject) | Whether the member is emailed | Recorded in the audit log either way |
 | Approve / Reject (credit) | Action a manual credit adjustment | Two-person rule: the requester cannot approve |
+| Import opening credits | Preview and post a moving-in club's opening credit | Finance edit; one approval; up to 500 rows; a file posts once |
+| Reverse batch | Remove a whole opening-credit batch | Finance edit; a reason is required; refused once any of it is spent |
 
 Paid membership subscriptions are not refunded; cancellation credit and GST are
 governed by the [cancellation policy](../CANCELLATIONS.md#refund-policy).
@@ -150,20 +181,25 @@ governed by the [cancellation policy](../CANCELLATIONS.md#refund-policy).
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| Everything is read-only ("… can view refund appeals and credit approvals but cannot approve, reject, or process them") | Your finance role is view-only | Ask a finance-edit admin |
+| Everything is read-only ("… can view refund appeals, credit approvals and opening credits but cannot approve, reject, process, import or reverse them") | Your finance role is view-only | Ask a finance-edit admin |
 | A credit approval is disabled for me | You raised it — the two-person rule needs a different reviewer | Ask another admin to review it |
 | The refund amount won't go above a certain figure | It is capped at the remaining refundable amount (paid minus already refunded, minus any refund task still waiting to be sent by bank transfer, minus account credit already given for a bank transfer that arrived after the cancellation, minus any card refund not yet made: retrying, or stopped and listed on Stuck States) | Refund up to that cap; the rest may already be refunded, credited or promised back |
 | Approving a group joiner's appeal says the organiser's card payment "can refund at most" a smaller amount | The organiser paid for the group by card, and that one payment has already returned money for the group's cancellation or other changes (#3956) | Approve the amount it names or less, or decline the appeal |
 | Approving a group joiner's appeal says the organiser's card payment "has nothing left to refund for it" | That payment has already returned everything it can for this booking (#3956) | Decline the appeal |
 | Approving a group joiner's appeal says the group cancellation's own refund "is still being made or reconciled" (the review screen says the same where it would show the maximum, and the member is told to appeal once it is made) | An older group cancellation's single refund to the organiser's card is still being retried (#3956) | Wait for the automatic retry to make that refund, then approve; or decline the appeal. If no retry has started yet it shows under **Unexecuted group settlement refunds**, and if the retry has used all its attempts under **Exhausted recovery operations**, both on [Stuck States](stuck-states.md), which does not close this kind of refund: ask a developer to reconcile it |
 | The queue is empty | The status filter excludes the request | Switch to **All** to see approved/rejected items |
+| An opening-credit row says **Unmatched** | No member has that ID or email, or two members share the email and the name does not tell them apart | Fix the ID or email, or add **First Name** and **Last Name** |
+| Posting says the file was already posted | The same rows were posted as an earlier batch | If that batch still stands, nothing to do. If it was reversed, change the file (such as a description) so it posts as a new batch |
+| A row says the member already has an opening credit | An earlier batch that has not been reversed credited them | Reverse that batch, or leave the member out of this file |
+| **Reverse batch** is refused | A member has spent part of their opening credit, or had credit deducted since it posted | Correct that member with a credit adjustment instead |
 
 ## Related links
 
 - Back to the [documentation hub](../README.md).
 - Feature hub: [Finance dashboard](../finance-dashboard/README.md).
 - Sibling guides: [Payments](payments.md), [Subscriptions](subscriptions.md),
-  [Cancellation Requests](membership-cancellations.md), [Members](members.md).
+  [Cancellation Requests](membership-cancellations.md), [Members](members.md),
+  [Moving in from your old system](moving-in.md).
 - Reference: the
   [refund and credit lifecycle](../STATE_MACHINES.md#refund-and-credit-lifecycle),
   the [refund policy](../CANCELLATIONS.md#refund-policy) and

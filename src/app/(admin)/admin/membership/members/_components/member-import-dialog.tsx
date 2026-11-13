@@ -60,12 +60,18 @@ import {
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "@/lib/member-setup-invite";
 import type { ImportResult } from "../_types";
 import { useMemberFieldsSettings } from "@/lib/use-member-fields-settings";
+import type { MembershipTypeOption } from "@/hooks/use-membership-type-options";
 
 interface MemberImportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onImported: (result: ImportResult) => void;
   onError: (message: string) => void;
+  /**
+   * #4988: the club's membership types, so the preview can judge a mapped
+   * Membership Type column. Until they load the server alone judges it.
+   */
+  membershipTypes?: readonly MembershipTypeOption[];
 }
 
 const WIZARD_STEPS = [
@@ -350,6 +356,7 @@ export function MemberImportDialog({
   onOpenChange,
   onImported,
   onError,
+  membershipTypes,
 }: MemberImportDialogProps) {
   const [wizardStep, setWizardStep] = useState<WizardStep>("upload");
   const [csvFileName, setCsvFileName] = useState("");
@@ -374,6 +381,12 @@ export function MemberImportDialog({
   // #2941: the dietary column is previewed (and judged) only while the club
   // takes it; the server makes the same decision for itself.
   const { showDietaryRequirements } = useMemberFieldsSettings();
+  const activeMembershipTypeNames = useMemo(() => {
+    const names = (membershipTypes ?? [])
+      .filter((type) => type.isActive)
+      .map((type) => type.name);
+    return names.length > 0 ? names : undefined;
+  }, [membershipTypes]);
   const preview = useMemo(
     () =>
       csvData
@@ -382,10 +395,20 @@ export function MemberImportDialog({
             columnMapping,
             todayAtClub,
             dateFormats,
-            { importsDietaryRequirements: showDietaryRequirements },
+            {
+              importsDietaryRequirements: showDietaryRequirements,
+              activeMembershipTypeNames,
+            },
           )
         : null,
-    [columnMapping, csvData, dateFormats, todayAtClub, showDietaryRequirements],
+    [
+      columnMapping,
+      csvData,
+      dateFormats,
+      todayAtClub,
+      showDietaryRequirements,
+      activeMembershipTypeNames,
+    ],
   );
 
   useEffect(() => {
@@ -822,6 +845,28 @@ export function MemberImportDialog({
                             )
                           </p>
                         ))}
+                      </div>
+                    )}
+                  {((importResult.familyGroupsCreated ?? 0) > 0 ||
+                    (importResult.membershipTypesAssigned ?? 0) > 0) && (
+                    <p className="text-sm text-muted-foreground">
+                      Family groups created:{" "}
+                      {importResult.familyGroupsCreated ?? 0}. Membership types
+                      assigned for this season:{" "}
+                      {importResult.membershipTypesAssigned ?? 0}.
+                    </p>
+                  )}
+                  {importResult.membershipTypeFailures &&
+                    importResult.membershipTypeFailures.length > 0 && (
+                      <div className="max-h-40 overflow-y-auto rounded-md border border-warning-6 p-3 text-xs text-warning-11">
+                        {importResult.membershipTypeFailures.map(
+                          (failure, index) => (
+                            <p key={`${failure.row}-${index}`}>
+                              Row {failure.row}: membership type not assigned —{" "}
+                              {failure.error} ({failure.email})
+                            </p>
+                          ),
+                        )}
                       </div>
                     )}
                   {importResult.rowNotes && importResult.rowNotes.length > 0 && (

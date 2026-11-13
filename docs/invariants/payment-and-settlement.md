@@ -1190,12 +1190,13 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   UNCHANGED and conserves: the 100% restore + `finalPrice − allocated`
   clearing note void the invoice while returning the credit LOCALLY. After a
   cancel of an allocated-credit booking the restored credit is local-only (the
-  cancelled invoice consumed its funding note); the local ledger is the source
-  of truth and Xero catches up on the next use, via the mint-fresh branch. A new
+  cancelled invoice consumed its funding note); the local ledger is authoritative
+  and Xero catches up on next use, via the mint-fresh branch. A new
   manual grant carries the note queued at approval, and spend allocates it. Only a
   noteless legacy `ADMIN_ADJUSTMENT` is still minted, to
   `goodwillWriteOffs` (falling back to `hutFeeRefunds` while unset, `INV-INT-021`).
-  Every other minted share, restored credit included, stays on `hutFeeRefunds`.
+  Every other minted share (restored or opening credit, `INV-PAY-153`) stays
+  on `hutFeeRefunds`.
 
 ## INV-PAY-127
 
@@ -4174,3 +4175,37 @@ CANCELLED decision (`INV-PAY-106`). A rolled-back attempt leaves neither credit
 nor event, so a later retry or manual hand-back cannot claim credit never given.
 Proven by `cancellation-credit-event.realdb.test.ts` and `member-credit.test.ts`;
 `booking-narrative.test.ts` shows the outcome. Historical stray events are not repaired.
+
+## INV-PAY-153
+
+**Related:** **`INV-MONEY-035`** (credit rows are insert-only),
+**`INV-LOCK-002`** (sorted member keys), **`INV-PAY-023`** (a lot with no
+Xero note mints one when spent).
+
+- **Opening credit posts once, from one approval** (#4988). A club moving in
+  carries over members' balances from one CSV. Preview writes nothing:
+  it matches each row to one current member, refuses a member named twice
+  or the posting admin (keeping two-person control), totals the cents, and
+  offers a batch key only when no row is in error. A member holding credit
+  from an unreversed batch is a row in error, checked again under the locks,
+  so a corrected file never credits twice.
+- **The key is the claim.** The key hashes what the file posts (member, cents,
+  description, sorted). Confirm re-previews the file and refuses unless key
+  and total still match the preview; the `OpeningCreditBatch` row's unique
+  key then claims it, so a second confirm posts nothing.
+- **One transaction**: the batch row, one `ADMIN_ADJUSTMENT` credit per member
+  under that member's `lockMemberCreditLedger` (sorted ids), and one
+  `payment` audit row with the total. No email, no Xero document and no Stripe
+  call: the old system accounted for the balance.
+- **When spent in Xero**, the note minted for an opening-credit lot is coded
+  as the member's own money (`hutFeeRefunds`), never as a goodwill write-off.
+- **Reversal is whole-batch** and only while every credit is wholly free: its
+  lot untouched, the balance covering it, its members' negative-row count
+  unchanged since posting (counted under the locks, not by timestamp), and no
+  Xero-noted credit consumed. It claims the batch with a `reversedAt`-guarded
+  `updateMany`, then posts one negative row per credit. One spent credit
+  refuses it and writes nothing. A reversed batch's credits are no longer lots
+  (`creditLotWhere`).
+- Proven by `opening-credit-csv.test.ts`, `opening-credit-batch.test.ts`,
+  `opening-credit-routes.test.ts`, `xero-applied-credit-plan.test.ts` and
+  `opening-credit-batch.realdb.test.ts`.

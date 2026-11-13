@@ -815,6 +815,11 @@ import "./unpaid-edit-change-fee-owed.realdb.test";
 // changed underneath it (no side effect, retried), and two writers forced to meet
 // at the claim. It owns and cleans its own `race-4456` credential rows.
 import "./data-encryption-key-ring.realdb.test";
+// #4988 reuses it to prove an opening-credit file posts once when two officers
+// confirm it together, queues behind a member's credit-ledger lock, and
+// reverses only while every credit in it is unspent. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4988-` fixtures.
+import "./opening-credit-batch.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

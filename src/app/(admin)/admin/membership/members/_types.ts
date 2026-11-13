@@ -157,6 +157,9 @@ export interface ImportResult {
   skippedRows?: Array<{ row: number; email: string; reason: string }>;
   rowNotes?: Array<{ row: number; email: string; note: string }>;
   errors: Array<{ row: number; errors: string[] }>;
+  familyGroupsCreated?: number;
+  membershipTypesAssigned?: number;
+  membershipTypeFailures?: Array<{ row: number; email: string; error: string }>;
   total?: number;
 }
 

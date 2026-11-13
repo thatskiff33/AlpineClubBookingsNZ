@@ -12,6 +12,10 @@ import {
   isDietaryRequirementsWithinLimit,
   normalizeImportedDietaryRequirements,
 } from "@/lib/member-dietary-field";
+import {
+  appendOversizedFamilyKeyErrors,
+  memberImportTypeFamilyErrors,
+} from "@/lib/member-csv-import-type-family";
 
 export const MEMBER_IMPORT_MAX_ROWS = 500;
 export const MEMBER_IMPORT_COMMENTS_MAX_LENGTH = 4000;
@@ -90,6 +94,8 @@ interface MemberImportRowPayload {
   lifeMemberDate?: string;
   comments?: string;
   role?: string;
+  membershipType?: string;
+  familyKey?: string;
   sourceLineNumber?: number;
   sourceColumnLabels?: Record<string, string>;
 }
@@ -278,6 +284,36 @@ export const MEMBER_IMPORT_FIELD_DEFINITIONS = [
     label: "Role",
     required: false,
     aliases: ["role", "memberrole"],
+  },
+  {
+    // #4988: matched by name against the club's active membership types; the
+    // match gets a current-season assignment. Bare "type" is not an alias: a
+    // legacy file's "Type" column is as often an age group or a role.
+    key: "membershipType",
+    label: "Membership Type",
+    required: false,
+    aliases: [
+      "membershiptype",
+      "membertype",
+      "membershipcategory",
+      "membershipclass",
+    ],
+  },
+  {
+    // #4988: rows sharing a key become one family group. "family" and
+    // "familyname" stay lastName aliases; none here collides with them.
+    key: "familyKey",
+    label: "Family Key",
+    required: false,
+    aliases: [
+      "familykey",
+      "familyid",
+      "familycode",
+      "familygroup",
+      "household",
+      "householdkey",
+      "householdid",
+    ],
   },
 ] as const;
 
@@ -593,7 +629,8 @@ export function parseMemberImportCsv(text: string): MemberImportCsvParseResult {
   };
 }
 
-function normalizeMemberImportHeader(header: string) {
+/** A CSV header reduced to lowercase letters and digits, for alias matching. */
+export function normalizeMemberImportHeader(header: string) {
   return header.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
@@ -623,6 +660,8 @@ function createEmptyMemberImportColumnMapping(): MemberImportColumnMapping {
     lifeMemberDate: null,
     comments: null,
     role: null,
+    membershipType: null,
+    familyKey: null,
   };
 }
 
@@ -896,7 +935,15 @@ export function buildMemberImportPreview(
    * While false the column is dropped from the preview rows and its length is
    * not judged, exactly as the server discards it; default false, fail closed.
    */
-  options: { importsDietaryRequirements?: boolean } = {},
+  options: {
+    importsDietaryRequirements?: boolean;
+    /**
+     * #4988: the club's active membership type names, read by the dialog. A
+     * mapped Membership Type value that names none of them blocks its row.
+     * Left out, the preview cannot judge the column and the server decides.
+     */
+    activeMembershipTypeNames?: readonly string[];
+  } = {},
 ): MemberImportPreview {
   const resolvedDateFormats: MemberImportDateFormatMapping = {
     ...createDefaultMemberImportDateFormatMapping(),
@@ -975,6 +1022,8 @@ export function buildMemberImportPreview(
     const streetPostalCode = getValue(record, "streetPostalCode");
     const lifeMemberDate = getValue(record, "lifeMemberDate");
     const comments = getValue(record, "comments");
+    const membershipType = getValue(record, "membershipType");
+    const familyKey = getValue(record, "familyKey");
 
     if (fullName) values.fullName = fullName;
     if (title) values.title = title;
@@ -996,6 +1045,8 @@ export function buildMemberImportPreview(
     if (streetPostalCode) values.streetPostalCode = streetPostalCode;
     if (lifeMemberDate) values.lifeMemberDate = lifeMemberDate;
     if (comments) values.comments = comments;
+    if (membershipType) values.membershipType = membershipType;
+    if (familyKey) values.familyKey = familyKey;
     values.role = role || roleInput.trim().toUpperCase();
 
     const errors: string[] = [];
@@ -1083,7 +1134,14 @@ export function buildMemberImportPreview(
     if (roleInput && !role) {
       errors.push(`Role must be one of ${MEMBER_IMPORT_ROLE_LABEL}`);
     }
-
+    errors.push(
+      ...memberImportTypeFamilyErrors({
+        membershipType,
+        familyKey,
+        activeMembershipTypeNames: options.activeMembershipTypeNames,
+        columnContext: (key) => getColumnContext(sourceColumnLabels, key),
+      }),
+    );
     return {
       lineNumber: record.lineNumber,
       sourceValues: record.values,
@@ -1109,6 +1167,10 @@ export function buildMemberImportPreview(
       seenIdentities.set(identityKey, row.lineNumber);
     }
   }
+
+  appendOversizedFamilyKeyErrors(rows, (key) =>
+    getColumnContext(sourceColumnLabels, key),
+  );
 
   const hasErrors =
     fileErrors.length > 0 || rows.some((row) => row.errors.length > 0);
