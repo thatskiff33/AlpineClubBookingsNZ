@@ -8,6 +8,9 @@ const enqueueMocks = vi.hoisted(() => ({
   chargeUpdate: vi.fn(),
 }));
 
+vi.mock("@/lib/xero-invoicing-guard", () =>
+  import("@/lib/__tests__/helpers/xero-invoicing-guard-mock"),
+);
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     membershipSubscriptionCharge: { findUnique: enqueueMocks.chargeFindUnique, updateMany: enqueueMocks.chargeUpdate },
@@ -23,6 +26,8 @@ import {
   enqueueMembershipSubscriptionChargeOperation,
   subscriptionInvoiceMatchesSnapshot,
 } from "@/lib/xero-subscription-invoices";
+import { setXeroInvoicingEnabled } from "@/lib/__tests__/helpers/xero-invoicing-guard-mock";
+import { XeroInvoicingOffError } from "@/lib/xero-invoicing-off";
 
 describe("enqueueMembershipSubscriptionChargeOperation ignores VOIDED charges (#2147)", () => {
   beforeEach(() => {
@@ -49,6 +54,23 @@ describe("enqueueMembershipSubscriptionChargeOperation ignores VOIDED charges (#
     const result = await enqueueMembershipSubscriptionChargeOperation("charge-live");
     expect(result.queueOperationId).toBe("op-1");
     expect(enqueueMocks.startOperation).toHaveBeenCalledTimes(1);
+  });
+
+  // #4986 (INV-INT-038): the backstop for every caller — with Xero off the
+  // charge is never read, flipped to QUEUED or handed to the outbox.
+  it("refuses with Xero off and writes nothing (#4986)", async () => {
+    enqueueMocks.chargeFindUnique.mockResolvedValue({
+      id: "charge-live", status: "QUEUED", billingBasis: "PER_MEMBER", xeroInvoiceId: null, emailSentAt: null,
+    });
+    setXeroInvoicingEnabled(false);
+    try {
+      await expect(enqueueMembershipSubscriptionChargeOperation("charge-live")).rejects.toBeInstanceOf(XeroInvoicingOffError);
+    } finally {
+      setXeroInvoicingEnabled(true);
+    }
+    expect(enqueueMocks.chargeFindUnique).not.toHaveBeenCalled();
+    expect(enqueueMocks.chargeUpdate).not.toHaveBeenCalled();
+    expect(enqueueMocks.startOperation).not.toHaveBeenCalled();
   });
 
   it("no-ops a charge an officer closed as already paid (#4098)", async () => {

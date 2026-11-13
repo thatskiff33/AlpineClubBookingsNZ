@@ -68,6 +68,9 @@ const { prismaMock, emailMock, xeroMock, xeroOutboxMock, subscriptionBillingMock
   },
 }));
 
+vi.mock("@/lib/xero-invoicing-guard", () =>
+  import("@/lib/__tests__/helpers/xero-invoicing-guard-mock"),
+);
 vi.mock("@/lib/prisma", () => ({
   prisma: prismaMock,
 }));
@@ -130,6 +133,11 @@ import {
   enqueueXeroEntranceFeeInvoiceOperation,
 } from "@/lib/xero-operation-outbox";
 import { logAudit } from "@/lib/audit";
+import { setXeroInvoicingEnabled } from "@/lib/__tests__/helpers/xero-invoicing-guard-mock";
+import {
+  JOINING_FEE_INVOICING_XERO_OFF_MESSAGE,
+  SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE,
+} from "@/lib/xero-invoicing-off";
 import { hashActionToken } from "@/lib/action-tokens";
 import { FAMILY_LINK_GENERATION_LIMIT_ERROR } from "@/lib/member-family-link-depth";
 import {
@@ -1106,6 +1114,90 @@ describe("membership nomination workflow", () => {
     // The worker kick that performs the live Xero call stays post-commit.
     expect(workerKicksAtCommit).toBe(0);
     expect(xeroOutboxMock.processQueuedXeroOutboxOperations).toHaveBeenCalledTimes(1);
+  });
+
+  // #4986 (INV-INT-038): with the xeroIntegration module off, the outbox worker
+  // never runs, so approval must not write invoice work that would wait and go
+  // out unchecked the day Xero comes back. The approval itself still succeeds.
+  it("with Xero off, approves without writing a joining-fee outbox row or subscription charge, and says so (#4986)", async () => {
+    const application = {
+      id: "app-xero-off",
+      applicantFirstName: "Jane",
+      applicantLastName: "Doe",
+      applicantEmail: "jane@test.com",
+      applicantDateOfBirth: new Date("1990-05-01T00:00:00.000Z"),
+      applicantPhone: "64 21 5551234",
+      applicantAddress: null,
+      familyMembers: [],
+      nominator1Email: "nominator1@test.com",
+      nominator2Email: "nominator2@test.com",
+      nominator1Id: null,
+      nominator2Id: null,
+      nominator1ConfirmedAt: new Date("2026-04-12T01:00:00.000Z"),
+      nominator2ConfirmedAt: new Date("2026-04-12T02:00:00.000Z"),
+      status: "PENDING_ADMIN",
+      adminNotes: null,
+      reviewedBy: null,
+      reviewedAt: null,
+      createdAt: new Date("2026-04-12T00:00:00.000Z"),
+      updatedAt: new Date("2026-04-12T00:00:00.000Z"),
+    };
+    vi.mocked(prisma.memberApplication.findUnique).mockResolvedValue(
+      application as never
+    );
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(undefined),
+      member: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({
+          id: "member-1",
+          email: "jane@test.com",
+          firstName: "Jane",
+          lastName: "Doe",
+        }),
+        update: vi.fn().mockResolvedValue({ id: "member-1" }),
+      },
+      familyGroup: { create: vi.fn() },
+      familyGroupMember: { create: vi.fn() },
+      passwordResetToken: {
+        deleteMany: vi.fn().mockResolvedValue(undefined),
+        create: vi.fn().mockResolvedValue(undefined),
+      },
+      memberApplication: {
+        findUnique: vi.fn().mockResolvedValue(application),
+        update: vi.fn().mockResolvedValue({ id: "app-xero-off", status: "APPROVED" }),
+      },
+    };
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback: any) => callback(tx));
+    // queueApproved's own Xero-off early return is pinned in its service test.
+    subscriptionBillingMock.queueApprovedMembershipSubscriptionCharges.mockResolvedValue({
+      chargeIds: [],
+      exceptionCount: 0,
+      xeroInvoicingOff: true,
+    });
+
+    setXeroInvoicingEnabled(false);
+    try {
+      const result = await approveMemberApplication("app-xero-off", "admin-1");
+
+      expect(result.warnings).toEqual(
+        expect.arrayContaining([
+          SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE,
+          JOINING_FEE_INVOICING_XERO_OFF_MESSAGE,
+        ])
+      );
+      expect(result.warnings).not.toContain("0 membership subscription billing exceptions require Finance review");
+      expect(enqueueXeroEntranceFeeInvoiceOperation).not.toHaveBeenCalled();
+      expect(xeroOutboxMock.processQueuedXeroOutboxOperations).not.toHaveBeenCalled();
+      expect(logAudit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "XERO_ENTRANCE_FEE_INVOICE_SKIPPED",
+          details: JOINING_FEE_INVOICING_XERO_OFF_MESSAGE,
+        })
+      );
+    } finally {
+      setXeroInvoicingEnabled(true);
+    }
   });
 
   it("persists post-approval side-effect warnings for admin recovery visibility", async () => {

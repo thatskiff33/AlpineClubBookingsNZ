@@ -1,3 +1,5 @@
+import { isXeroInvoicingEnabled } from "@/lib/xero-invoicing-guard";
+import { SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE } from "@/lib/xero-invoicing-off";
 import { readOrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 import { ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE, ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL } from "@/lib/organiser-billing";
 import type { XeroContactUpdateData } from "@/lib/xero-contacts";
@@ -1506,6 +1508,11 @@ export async function retryXeroSyncOperation(
   const subscriptionInvoicePayload = subscriptionInvoiceRequeuePayload(operation);
   const subscriptionChargeId = subscriptionInvoiceChargeId(operation);
   if (subscriptionInvoicePayload && subscriptionChargeId && operation.status === "FAILED") {
+    // #4986 (`INV-INT-038`): the route gate already hides Xero Operations while
+    // the module is off; this refuses the requeue itself, in the same words.
+    if (!(await isXeroInvoicingEnabled())) {
+      throw new XeroOperationRetryError(SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE, 409);
+    }
     await refuseSubscriptionInvoiceRetryWithNothingToDo(subscriptionChargeId);
     await requeueOutboxRowForRetry(
       operation,

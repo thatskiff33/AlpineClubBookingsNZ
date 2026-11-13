@@ -26,6 +26,10 @@ import {
   isInvoicingPreviewWarning,
   STRAY_INVOICE_AFTER_CLOSE_CODE,
 } from "@/lib/subscription-charge-already-paid";
+import {
+  MISSING_XERO_ACCOUNT_MAPPING_CODE,
+  SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE,
+} from "@/lib/xero-invoicing-off";
 
 type BillingData = {
   preview: {
@@ -108,6 +112,10 @@ type BillingData = {
     coverage: Array<{ memberName: string; releasedAt?: string | null; subscription?: { status: string } }>;
   }>;
   exceptions: Array<{ id: string; fingerprint: string; message: string; code?: string }>;
+  // #4986: the effective xeroIntegration module, and (only while it is off) the
+  // season's charges still waiting for Xero. Optional for an older cached
+  // payload, which predates the guard and is read as Xero on.
+  xeroInvoicing?: { enabled: boolean; awaitingXeroCount: number };
   settings: { invoiceDueDays: number; familyBillingMode: FamilyBillingMode };
 };
 
@@ -141,8 +149,13 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
   const [mutationFeedback, setMutationFeedback] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const loadGeneration = useRef(0);
   const selectionRef = useRef({ seasonYear, decisionDate });
+  const xeroInvoicingOff = data?.xeroInvoicing?.enabled === false;
+  const awaitingXeroCount = data?.xeroInvoicing?.awaitingXeroCount ?? 0;
+  // #4986: with Xero off the missing account mapping is not why nothing can be
+  // invoiced, and the screen that sets it is hidden; the notice says why instead.
   const visibleItems = data
     ? [...new Map([...data.preview.exceptions, ...data.exceptions].map((item) => [item.fingerprint, item])).values()]
+        .filter((item) => !(xeroInvoicingOff && item.code === MISSING_XERO_ACCOUNT_MAPPING_CODE))
     : [];
   // #4110: a warning about a charge confirming still invoices is shown apart
   // from the exceptions that withhold an invoice, and is not counted with them.
@@ -344,6 +357,16 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
         {loadFeedback ? <Alert variant="error">{loadFeedback.text}</Alert> : null}
         {loading ? <Spinner label="Building subscription billing preview…" /> : data ? (
           <>
+            {xeroInvoicingOff ? (
+              <Alert variant="info" title="Subscription invoicing needs Xero">
+                {SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE} The preview below shows what is owed, but no batch can be confirmed. When a member listed for this season in the subscriptions list pays, record it there with Mark as paid (manual). A member with no row for this season cannot be recorded in the app yet.
+              </Alert>
+            ) : null}
+            {xeroInvoicingOff && awaitingXeroCount > 0 ? (
+              <Alert variant="warning" title={`${awaitingXeroCount} charge${awaitingXeroCount === 1 ? " is" : "s are"} waiting for Xero`}>
+                {awaitingXeroCount === 1 ? "This charge was" : "These charges were"} queued for this season before Xero was switched off. When Xero is switched back on, the invoice{awaitingXeroCount === 1 ? " is" : "s are"} raised and emailed automatically. Before switching it on, record every member who has already paid with Mark as paid (manual): a charge not yet invoiced in Xero is then held for your review instead of being invoiced.
+              </Alert>
+            ) : null}
             <div className="grid gap-3 sm:grid-cols-5">
               <div><p className="text-xs text-muted-foreground">Charges</p><p className="text-xl font-semibold tabular-nums">{data.preview.entries.length}</p></div>
               <div><p className="text-xs text-muted-foreground">Preview total</p><p className="text-xl font-semibold tabular-nums">{formatCents(data.preview.totalCents, format)}</p></div>
@@ -380,7 +403,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                     ) : null}
                   </div>
                 ))}
-                <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} type="button" onClick={() => void confirmBatch()} disabled={working}>Confirm and queue annual batch</ViewOnlyActionButton>
+                <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} type="button" onClick={() => void confirmBatch()} disabled={working || xeroInvoicingOff}>Confirm and queue annual batch</ViewOnlyActionButton>
               </div>
             ) : <Alert variant="info">No new charges are available for this preview. Existing immutable coverage is not regenerated.</Alert>}
             {(data.preview.exemptMembers ?? []).length > 0 ? (
@@ -476,7 +499,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                     <div><p className="font-medium">{charge.membershipTypeName} · {charge.recipientName} · {formatCents(charge.chargedAmountCents, format)}</p><p className="text-muted-foreground">{charge.coverage.map((row) => row.memberName).join(", ")} · {charge.xeroInvoiceNumber ?? "No Xero number yet"}</p>{charge.lastErrorMessage ? <p className="text-danger">{charge.lastErrorMessage}</p> : null}{isChargeClosedAsAlreadyPaid(charge) ? <p className="text-muted-foreground">{charge.lastErrorCode === STRAY_INVOICE_AFTER_CLOSE_CODE ? "Closed as already paid." : "Closed as already paid. No Xero invoice is raised for this charge."}</p> : null}</div>
                     <div className="flex items-center gap-2">
                       <Badge variant="secondary">{charge.status.replaceAll("_", " ")}</Badge>
-                      {charge.status === "EMAIL_FAILED" || charge.status === "CONFLICT" || charge.status === "QUEUED" || charge.status === "INVOICE_CREATED" ? <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} size="sm" variant="outline" disabled={working} onClick={() => void post({ action: "RETRY_CHARGE", chargeId: charge.id })}>{charge.status === "EMAIL_FAILED" ? <MailWarning className="mr-1 h-4 w-4" /> : charge.status === "CONFLICT" ? <AlertTriangle className="mr-1 h-4 w-4" /> : <CheckCircle2 className="mr-1 h-4 w-4" />} Retry</ViewOnlyActionButton> : null}
+                      {charge.status === "EMAIL_FAILED" || charge.status === "CONFLICT" || charge.status === "QUEUED" || charge.status === "INVOICE_CREATED" ? <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} size="sm" variant="outline" disabled={working || xeroInvoicingOff} onClick={() => void post({ action: "RETRY_CHARGE", chargeId: charge.id })}>{charge.status === "EMAIL_FAILED" ? <MailWarning className="mr-1 h-4 w-4" /> : charge.status === "CONFLICT" ? <AlertTriangle className="mr-1 h-4 w-4" /> : <CheckCircle2 className="mr-1 h-4 w-4" />} Retry</ViewOnlyActionButton> : null}
                       {canOfferClose(charge) && closingChargeId !== charge.id ? <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} type="button" size="sm" variant="outline" disabled={working} onClick={() => { setClosingChargeId(charge.id); setCloseReason(""); }}>Close: already paid</ViewOnlyActionButton> : null}
                     </div>
                     {canOfferClose(charge) && closingChargeId === charge.id ? (

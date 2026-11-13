@@ -27,6 +27,9 @@ const mocks = vi.hoisted(() => ({
   client: null as unknown,
 }));
 
+vi.mock("@/lib/xero-invoicing-guard", () =>
+  import("@/lib/__tests__/helpers/xero-invoicing-guard-mock"),
+);
 vi.mock("@/lib/prisma", () => {
   const client = {
     $executeRaw: vi.fn(),
@@ -259,7 +262,7 @@ describe("membership subscription confirmation", () => {
     expect(upsert.create).toMatchObject({ code: "CLOSED_FAMILY_PARTLY_REVERSED", source: "NEW_MEMBER_APPROVAL", familyGroupId: "family-1" });
     expect(upsert.create.message).toContain("It was not invoiced on membership approval");
     // Counted, so the approver sees "requires Finance review".
-    expect(result).toEqual({ chargeIds: [], exceptionCount: 1 });
+    expect(result).toEqual({ chargeIds: [], exceptionCount: 1, xeroInvoicingOff: false });
     // The approver's audit row records it as withheld, not acknowledged.
     expect(mocks.audit).toHaveBeenCalledTimes(1);
     const details = JSON.parse((mocks.audit.mock.calls[0]![0] as { details: string }).details) as Record<string, unknown>;
@@ -293,7 +296,7 @@ describe("membership subscription confirmation", () => {
     expect(mocks.exceptionUpsert).toHaveBeenCalledWith(expect.objectContaining({
       create: expect.objectContaining({ code: "CLOSED_FAMILY_PARTLY_REVERSED", source: "NEW_MEMBER_APPROVAL" }),
     }));
-    expect(result).toEqual({ chargeIds: [], exceptionCount: 1 });
+    expect(result).toEqual({ chargeIds: [], exceptionCount: 1, xeroInvoicingOff: false });
   });
 
   it("membership approval withholds a re-bill that sits beside a member's own Xero invoice (review round 5 item 2)", async () => {
@@ -329,7 +332,7 @@ describe("membership subscription confirmation", () => {
     expect(mocks.exceptionUpsert).toHaveBeenCalledWith(expect.objectContaining({
       create: expect.objectContaining({ code: "CLOSED_FAMILY_REBILL_BESIDE_INVOICE", source: "NEW_MEMBER_APPROVAL" }),
     }));
-    expect(result).toEqual({ chargeIds: [], exceptionCount: 1 });
+    expect(result).toEqual({ chargeIds: [], exceptionCount: 1, xeroInvoicingOff: false });
   });
 
   it("freezes one component snapshot per line in the same transaction (#1932, E6)", async () => {

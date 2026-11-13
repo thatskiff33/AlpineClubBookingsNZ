@@ -1,6 +1,7 @@
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import { requireInstant, type BoundClubTime } from "@/lib/club-time";
+import { clubReportFilename } from "@/lib/club-report-filename";
 
 /**
  * Force the light palette onto the off-screen document html2canvas renders from
@@ -67,7 +68,7 @@ export async function generateReportPDF(
   reportElement: HTMLElement,
   dateRange: { from: string; to: string },
   club: BoundClubTime,
-  options?: { title?: string }
+  options: { title?: string; clubShortName: string }
 ): Promise<void> {
   // THE ONLY READING OF THE CLOCK IN THIS FUNCTION (#3123). Both dates the file
   // carries — the cover stamp and the day in its name — are derived from this
@@ -170,5 +171,5 @@ export async function generateReportPDF(
   // Save. The day in the filename is the CLUB's, from the same binding AND the
   // same instant as the cover above — so a file exported at 8am in London is not
   // named yesterday, and its name can never disagree with its own first page.
-  pdf.save(`tac-report-${club.calendarDateOf(generatedAt)}.pdf`);
+  pdf.save(clubReportFilename(options.clubShortName, club.calendarDateOf(generatedAt), "pdf"));
 }

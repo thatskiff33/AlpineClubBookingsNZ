@@ -17,7 +17,7 @@ vi.mock("next/dynamic", () => ({
 }));
 
 vi.mock("@/components/club-identity-provider", () => ({
-  useClubIdentity: () => ({ name: "Test Club", bookingsName: "Bookings" }),
+  useClubIdentity: () => ({ name: "Test Club", shortName: "Test AC", bookingsName: "Bookings" }),
 }));
 
 let lodgeOptions: {
@@ -350,7 +350,10 @@ describe("ReportsPage quick ranges", () => {
     const createObjectUrl = vi.fn<(blob: Blob) => string>(() => "blob:report");
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectUrl });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const downloads: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      downloads.push(this.download);
+    });
 
     render(<ReportsPage />);
     const warning = await screen.findByRole("alert");
@@ -383,6 +386,8 @@ describe("ReportsPage quick ranges", () => {
     expect(csv).toContain("Booked Revenue by Month");
     expect(csv).toContain("Month,Booked Revenue,Distinct Bookings");
     expect(csv).not.toContain("Booked Revenue Less Outstanding");
+    // #4986: named from the club's short name, never another club's initials.
+    expect(downloads).toEqual([expect.stringMatching(/^test-ac-report-\d{4}-\d{2}-\d{2}\.csv$/)]);
   });
 });
 

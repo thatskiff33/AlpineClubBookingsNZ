@@ -828,3 +828,33 @@ A succeeded PaymentIntent the app created for a booking that matches no PRIMARY 
 - **Nothing else.** The booking, its payment, ledger, capacity and Xero are untouched, and no advisory lock is taken: matching the money to the booking or refunding it is a person's.
 
 Pinned by `unrecognised-stripe-payment.test.ts`, `unrecognised-stripe-payment-email-retry.test.ts`, `caller-retried-alert-replay.test.ts`, `stripe-webhook-alerts.test.ts` ("#4624"), `admin-unrecognised-stripe-payment-alert.test.ts` and, against a real database, `unrecognised-stripe-payment.realdb.test.ts`.
+
+## Invoicing while Xero is off (#4986)
+
+### INV-INT-038
+
+While the effective `xeroIntegration` module is off, no subscription or
+joining-fee invoice work is written. The Xero worker skips every task then, so
+work written would wait and go out unchecked the day Xero comes back.
+
+- **One guard.** `isXeroInvoicingEnabled` (`xero-invoicing-guard.ts`) reads the
+  same effective module state as the Xero cron; an unreadable settings row reads
+  as off. A missing account mapping is not a stand-in.
+- **Refused before anything is frozen.** The Subscriptions screen's annual
+  batch and charge retry, and the Xero Operations retry of a subscription
+  invoice, answer 409 with one plain message.
+  `enqueueMembershipSubscriptionChargeOperation` refuses for any other caller.
+- **Approval still succeeds.** It creates no subscription charge and no
+  joining-fee outbox row (the fee is SKIPPED and audited), and warns the
+  officer to bill anything owed outside the app.
+- **Work already waiting is shown, not changed.** The screen counts the
+  season's QUEUED, PROCESSING and INVOICE_CREATED charges and tells the officer
+  to mark paid members first: a paid member's charge not yet invoiced is then
+  held as CONFLICT, not invoiced.
+- **No new lock.** Each check is a read before any write (`INV-LOCK-001`), with
+  no new key or order (`INV-LOCK-002`) and no new site (`INV-LOCK-003`).
+
+Pinned by `xero-invoicing-guard.test.ts`, the subscription-billing `route.test.ts`
+("#4986"), `membership-nomination.test.ts`, `membership-subscription-billing.test.ts`,
+`xero-operation-retry.test.ts`, `xero-subscription-invoices.test.ts` and
+`subscription-billing-panel.test.tsx`.

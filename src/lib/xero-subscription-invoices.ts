@@ -1,3 +1,4 @@
+import { assertSubscriptionInvoicingEnabled } from "@/lib/xero-invoicing-guard";
 import { XERO_ACTIVE_OPERATION_STATUSES } from "./xero-active-operation-statuses";
 import type { Prisma } from "@prisma/client";
 import {
@@ -201,6 +202,10 @@ export async function enqueueMembershipSubscriptionChargeOperation(
   chargeId: string,
   options?: { createdByMemberId?: string },
 ) {
+  // #4986: the backstop for every caller. Confirm and approval refuse earlier,
+  // before their charges are frozen (`INV-INT-038`); this keeps any other
+  // route from writing work that would wait out a Xero pause.
+  await assertSubscriptionInvoicingEnabled();
   const charge = await prisma.membershipSubscriptionCharge.findUnique({
     where: { id: chargeId },
     select: { id: true, status: true, billingBasis: true, xeroInvoiceId: true, emailSentAt: true },

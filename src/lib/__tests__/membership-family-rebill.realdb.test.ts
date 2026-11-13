@@ -79,6 +79,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let billing: typeof import("@/lib/membership-subscription-billing");
 let closeAlreadyPaidSubscriptionCharge: (typeof import("@/lib/membership-subscription-charge-close"))["closeAlreadyPaidSubscriptionCharge"];
 let createdMapping = false;
+let priorXeroModule: { xeroIntegration: boolean } | null = null;
 
 (RUN ? describe : describe.skip)(
   "a family is billed again after its family charge is closed or voided — real PostgreSQL (#4110)",
@@ -255,6 +256,15 @@ let createdMapping = false;
       ({ prisma } = await import("@/lib/prisma"));
       billing = await import("@/lib/membership-subscription-billing");
       ({ closeAlreadyPaidSubscriptionCharge } = await import("@/lib/membership-subscription-charge-close"));
+      // #4986 (INV-INT-038): subscription invoicing refuses while Xero is off,
+      // and the module defaults to off. Switch it on for this suite; restored after.
+      priorXeroModule = await prisma.clubModuleSettings.findUnique({ where: { id: "default" }, select: { xeroIntegration: true } });
+      await prisma.clubModuleSettings.upsert({
+        where: { id: "default" },
+        create: { id: "default", xeroIntegration: true },
+        update: { xeroIntegration: true },
+        select: { id: true },
+      });
       // The subscriptionIncome mapping is a club-wide singleton: configure it only
       // when this database has none, and remove only what this suite created.
       const existing = await prisma.xeroAccountMapping.findUnique({ where: { key: MAPPING_KEY } });
@@ -273,6 +283,8 @@ let createdMapping = false;
       if (!prisma) return;
       await deleteFixtures();
       if (createdMapping) await prisma.xeroAccountMapping.deleteMany({ where: { key: MAPPING_KEY } });
+      if (priorXeroModule) await prisma.clubModuleSettings.update({ where: { id: "default" }, data: priorXeroModule, select: { id: true } });
+      else await prisma.clubModuleSettings.deleteMany({ where: { id: "default" } });
     });
 
     async function expectOneNewFamilyCharge(confirmedChargeIds: string[]) {
@@ -332,7 +344,7 @@ let createdMapping = false;
         approvedByMemberId: OFFICER_ID,
         decisionDate: DECISION_DATE,
       });
-      expect(approval).toEqual({ chargeIds: [], exceptionCount: 1 });
+      expect(approval).toEqual({ chargeIds: [], exceptionCount: 1, xeroInvoicingOff: false });
       expect(await familyChargeIds()).toEqual([OLD_CHARGE_ID]);
       const open = await prisma.membershipBillingException.findMany({ where: { familyGroupId: FAMILY_ID } });
       expect(open).toHaveLength(1);
@@ -588,7 +600,7 @@ let createdMapping = false;
       })).toMatchObject({ status: "OPEN" });
       await expect(billing.queueApprovedMembershipSubscriptionCharges({
         memberIds: [CHILD_ID], approvedByMemberId: OFFICER_ID, decisionDate: DECISION_DATE,
-      })).resolves.toEqual({ chargeIds: [], exceptionCount: 1 });
+      })).resolves.toEqual({ chargeIds: [], exceptionCount: 1, xeroInvoicingOff: false });
       expect(await familyChargeIds()).toEqual([OLD_CHARGE_ID]);
     });
 
