@@ -90,6 +90,7 @@ import {
   buildStructuredAuditLogCreateArgs,
   type StructuredAuditEvent,
 } from "@/lib/audit";
+import { saveImportMembershipTypeAssignment } from "@/lib/import-membership-type-assignment";
 import {
   getAuthenticatedXeroClient,
   XeroDailyLimitError,
@@ -1100,11 +1101,6 @@ export async function importMembersFromXeroGroups(
       ]),
     );
 
-    // Lazily loaded to keep the seasonal module (and its Xero/email graph) out
-    // of the tier-only import path and off the module import cycle.
-    const { getSeasonalMembershipChangePreview, saveSeasonalMembershipAssignment } =
-      await import("@/lib/seasonal-membership-assignments");
-
     for (const [memberId, context] of matchedTypeCandidates) {
       const membershipTypeId = context.membershipTypeId;
       if (!membershipTypeId) continue;
@@ -1128,49 +1124,21 @@ export async function importMembersFromXeroGroups(
       }
 
       try {
-        const previewResult = await getSeasonalMembershipChangePreview({
-          memberId,
-          seasonYear,
-          membershipTypeId,
-          now: clubTodayDateOnly,
-          clubCurrentSeasonYear: seasonYear,
-        });
-        if (previewResult.init?.status && previewResult.init.status >= 400) {
-          errors++;
-          errorDetails.push({
-            member: context.name,
-            error:
-              (previewResult.body as { error?: string } | undefined)?.error ??
-              "Failed to preview membership type assignment",
-          });
-          continue;
-        }
-        const previewToken = (
-          previewResult.body as { preview: { previewToken: string } }
-        ).preview.previewToken;
-
         // Per-member Xero contact-group sync is suppressed here (#2107's flag);
         // ONE batched reconcile of all affected members runs after this loop,
         // before the summary audit, replacing the per-member fan-out.
-        const saveResult = await saveSeasonalMembershipAssignment({
+        const saved = await saveImportMembershipTypeAssignment({
           memberId,
-          seasonYear,
           membershipTypeId,
+          seasonYear,
+          clubTodayDateOnly,
           adminMemberId,
           reason: `Xero import: group ${context.group}`,
-          previewToken,
-          source: "IMPORT",
-          skipXeroContactGroupSync: true,
           request: options.request,
         });
-        if (saveResult.init?.status && saveResult.init.status >= 400) {
+        if (!saved.ok) {
           errors++;
-          errorDetails.push({
-            member: context.name,
-            error:
-              (saveResult.body as { error?: string } | undefined)?.error ??
-              "Failed to save membership type assignment",
-          });
+          errorDetails.push({ member: context.name, error: saved.error });
           continue;
         }
         assignmentsCreated++;

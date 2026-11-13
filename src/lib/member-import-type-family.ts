@@ -9,6 +9,7 @@ import type { Prisma } from "@prisma/client";
 
 import { createFamilyGroupWithMembers } from "@/lib/admin-family-group-create";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
+import { saveImportMembershipTypeAssignment } from "@/lib/import-membership-type-assignment";
 import logger from "@/lib/logger";
 import {
   matchMemberImportMembershipType,
@@ -141,8 +142,7 @@ export async function assignImportedMembershipTypes({
     select: { memberId: true },
   });
   const alreadyAssigned = new Set(existing.map((row) => row.memberId));
-  const { getSeasonalMembershipChangePreview, saveSeasonalMembershipAssignment } =
-    await import("@/lib/seasonal-membership-assignments");
+  const auditRequest = getAuditRequestContext(request);
 
   for (const member of members) {
     const membershipTypeId = member.membershipTypeId;
@@ -150,39 +150,17 @@ export async function assignImportedMembershipTypes({
     const fail = (error: string) =>
       failures.push({ row: member.rowNum, email: member.email, error });
     try {
-      const previewResult = await getSeasonalMembershipChangePreview({
+      const saved = await saveImportMembershipTypeAssignment({
         memberId: member.id,
-        seasonYear,
         membershipTypeId,
-        now: clubTodayDateOnly,
-        clubCurrentSeasonYear: seasonYear,
-      });
-      if (previewResult.init?.status && previewResult.init.status >= 400) {
-        fail(
-          (previewResult.body as { error?: string } | undefined)?.error ??
-            "Failed to preview the membership type assignment",
-        );
-        continue;
-      }
-      const previewToken = (
-        previewResult.body as { preview: { previewToken: string } }
-      ).preview.previewToken;
-      const saveResult = await saveSeasonalMembershipAssignment({
-        memberId: member.id,
         seasonYear,
-        membershipTypeId,
+        clubTodayDateOnly,
         adminMemberId,
         reason: "Member CSV import",
-        previewToken,
-        source: "IMPORT",
-        skipXeroContactGroupSync: true,
-        request: getAuditRequestContext(request),
+        request: auditRequest,
       });
-      if (saveResult.init?.status && saveResult.init.status >= 400) {
-        fail(
-          (saveResult.body as { error?: string } | undefined)?.error ??
-            "Failed to save the membership type assignment",
-        );
+      if (!saved.ok) {
+        fail(saved.error);
         continue;
       }
       assigned++;
