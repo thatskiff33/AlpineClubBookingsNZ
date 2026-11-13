@@ -101,7 +101,7 @@ export function useMemberCredits(id: string) {
           ...(cents > 0 ? { grantAccount } : {}),
         }),
       });
-      const data = (jsonObjectOrNull(await readApiErrorBody(res)) ?? {});
+      const data = jsonObjectOrNull(await readApiErrorBody(res)) ?? {};
       if (!res.ok) {
         throw new ApiRefusalError(apiErrorMessageFromBody(data, "Failed to save adjustment"));
       }
@@ -109,7 +109,7 @@ export function useMemberCredits(id: string) {
       setAdjustmentAmount("");
       setAdjustmentDescription("");
       setAdjustmentIdempotencyKey(null);
-      toast.success(data.message || "Credit adjustment submitted for approval");
+      toast.success((typeof data.message === "string" && data.message) || "Credit adjustment submitted for approval");
       await fetchCredits();
     } catch (err) {
       setAdjustmentError(
