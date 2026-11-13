@@ -397,7 +397,7 @@ describe("K2: a share's evidence is that the settlement captured, a REFUNDED one
   it("a child of a settlement an organiser cancel refunded in full agrees, live and back-posted", () => {
     // Live (or back-posted, the same lines): the share and the plan's whole refund beside it, nothing kept.
     const { row, settlement } = settledChild("INTERNET_BANKING");
-    const refund = planGroupSettlementRefundLine({ settlement, bookingId: B, lodgeId: "l1", refundCents: 4_500 })!;
+    const refund = planGroupSettlementRefundLine({ settlement: { ...settlement, refundPaidByBank: false }, bookingId: B, lodgeId: "l1", refundCents: 4_500 })!;
     const cancellation = planCancellationChargeLines({
       bookingId: B,
       lodgeId: "l1",
@@ -446,7 +446,7 @@ describe("sync lens F1: a refund appeal approved after the organiser cancel leav
   // The lens's probe: a $45 Internet Banking child settled before #3854, its
   // organiser cancel's 50% plan mirrored ($22.50 back, $22.50 kept). The member
   // then appeals and the admin approves $10, which goes back by bank transfer.
-  const settlement = { id: "gs1", source: "INTERNET_BANKING" as const, amountCents: 4_500, stripePaymentIntentId: null, refundPlan: { [B]: 2_250 } };
+  const settlement = { id: "gs1", source: "INTERNET_BANKING" as const, amountCents: 4_500, stripePaymentIntentId: null, refundPlan: { [B]: 2_250 }, refundPaidByBank: false };
   const child = { id: B, lodgeId: "l1", status: "CANCELLED" as const, cancelledWithoutSnapshot: true };
   const siblings = [{ id: B, lodgeId: "l1", payment: { amountCents: 4_500, status: "PARTIALLY_REFUNDED", source: "INTERNET_BANKING" as const } }];
   const task = (status: "OPEN" | "COMPLETED" | "DISMISSED", occurrenceKey: string | null, amountCents: number, kind: "CANCELLED_BOOKING_HAND_BACK" | "EDIT_FINANCIAL_REVIEW" = "CANCELLED_BOOKING_HAND_BACK") => ({
@@ -580,7 +580,7 @@ describe("#3956: an appeal refunded to the organiser's card leaves the planned k
   // A $45 card child under #3653's per-child plan: the organiser cancel's 50%
   // debt refunded $22.50 and the club kept $22.50. The joiner then appeals and
   // the admin approves $10, refunded out of the combined payment by its own debt.
-  const settlement = { id: "gs1", source: "STRIPE" as const, amountCents: 4_500, stripePaymentIntentId: PI, refundPlan: { perChildRefunds: { [B]: 2_250 } } };
+  const settlement = { id: "gs1", source: "STRIPE" as const, amountCents: 4_500, stripePaymentIntentId: PI, refundPlan: { perChildRefunds: { [B]: 2_250 } }, refundPaidByBank: false };
   const child = { id: B, lodgeId: "l1", status: "CANCELLED" as const, cancelledWithoutSnapshot: true };
   const siblings = [{ id: B, lodgeId: "l1", payment: { amountCents: 4_500, status: "PARTIALLY_REFUNDED", source: "STRIPE" as const } }];
   const debt = (idempotencyKey: string, amountCents: number, status: string) => ({

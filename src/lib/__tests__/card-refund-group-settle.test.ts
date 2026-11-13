@@ -597,7 +597,7 @@ describe("try the card again", () => {
     const created = Math.floor(FROZEN.getTime() / 1000);
     state.refunds = [liveRefund({ status: "failed", created, metadata: { organiserChildRefundKey: CHILD_ROW } })];
     const result = await again();
-    const due = organiserChildRearmAt(state.refunds, CHILD_ROW, FROZEN);
+    const due = organiserChildRearmAt(state.refunds as never, CHILD_ROW, FROZEN);
     expect(due.getTime()).toBeGreaterThan(FROZEN.getTime());
     expect(result.nextRetryAt).toBe(due.toISOString());
   });
