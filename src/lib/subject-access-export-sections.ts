@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getMemberCreditBalance } from "@/lib/member-credit";
-import { formatDateOnly } from "@/lib/date-only";
+import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { prisma } from "@/lib/prisma";
 import { readAdditionalSubjectRecords } from "@/lib/subject-access-export-additional";
 
@@ -87,13 +87,13 @@ export async function buildSubjectAccessSections(key: SubjectAccessKey) {
     guestAppearances,
     bookingRequests: bookingRequests.map((request) => ({
       ...request,
-      checkIn: formatDateOnly(request.checkIn),
-      checkOut: formatDateOnly(request.checkOut),
+      checkIn: calendarDateOfDateOnlyInstant(request.checkIn),
+      checkOut: calendarDateOfDateOnlyInstant(request.checkOut),
     })),
     applications: applications.map((application) => ({
       ...application,
       applicantDateOfBirth: application.applicantDateOfBirth
-        ? formatDateOnly(application.applicantDateOfBirth)
+        ? calendarDateOfDateOnlyInstant(application.applicantDateOfBirth)
         : null,
     })),
     emailLog,
@@ -128,15 +128,15 @@ async function readGuestAppearances(where: { memberId: string } | { id: string; 
   });
   return rows.map(({ booking, nights, ...guest }) => ({
     ...guest,
-    stayStart: formatDateOnly(guest.stayStart),
-    stayEnd: formatDateOnly(guest.stayEnd),
+    stayStart: calendarDateOfDateOnlyInstant(guest.stayStart),
+    stayEnd: calendarDateOfDateOnlyInstant(guest.stayEnd),
     booking: {
-      checkIn: formatDateOnly(booking.checkIn),
-      checkOut: formatDateOnly(booking.checkOut),
+      checkIn: calendarDateOfDateOnlyInstant(booking.checkIn),
+      checkOut: calendarDateOfDateOnlyInstant(booking.checkOut),
       status: booking.status,
       lodge: booking.lodge.name,
     },
-    nights: nights.map((night) => ({ stayDate: formatDateOnly(night.stayDate), priceCents: night.priceCents })),
+    nights: nights.map((night) => ({ stayDate: calendarDateOfDateOnlyInstant(night.stayDate), priceCents: night.priceCents })),
   }));
 }
 
@@ -271,8 +271,8 @@ async function readMemberSections(memberId: string) {
     inductions,
     notificationPreferences,
     hutLeaderAssignments: hutLeaderAssignments.map((row) => ({
-      startDate: formatDateOnly(row.startDate),
-      endDate: formatDateOnly(row.endDate),
+      startDate: calendarDateOfDateOnlyInstant(row.startDate),
+      endDate: calendarDateOfDateOnlyInstant(row.endDate),
       isCustodian: row.isCustodian,
       lodge: row.lodge.name,
     })),

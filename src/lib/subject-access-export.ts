@@ -1,13 +1,13 @@
 import "server-only";
 import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { prisma } from "@/lib/prisma";
-import { formatDateOnly } from "@/lib/date-only";
+import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { seasonSelectLabel } from "@/lib/season-label";
 import { buildMemberVisibleAuditLogWhere } from "@/lib/audit-query";
 import { readDeclaredMemberText } from "@/lib/audit-member-disclosure";
-import { readSubjectAccessGuestDietary, readMemberDietaryRequirements, readOwnBookingGuestDietaryForExport, type DietaryAccessGrant } from "@/lib/member-dietary";
+import { readMemberDietaryRequirements, readOwnBookingGuestDietaryForExport, type DietaryAccessGrant } from "@/lib/member-dietary";
 import { buildSubjectAccessSections } from "@/lib/subject-access-export-sections";
 import { SUBJECT_ACCESS_EXPORT_EXCLUSIONS } from "@/lib/subject-access-export-coverage";
 
@@ -45,7 +45,8 @@ export async function buildSubjectAccessExport(
       ...EMPTY_MEMBER_RECORDS,
       ...sections,
       choreAssignments: "guestId" in subject ? await readGuestChores({ id: subject.guestId, memberId: null }) : [],
-      guestDietaryRequirements: await readSubjectAccessGuestDietary(exportGrant),
+      // The officer grant names at most one exact non-member guest row.
+      guestDietaryRequirements: (await readOwnBookingGuestDietaryForExport(exportGrant))[0]?.dietaryRequirements ?? null,
     };
   }
   const records = await readMemberRecords(subject.memberId, exportGrant);
@@ -253,19 +254,19 @@ async function readMemberRecords(memberId: string, exportGrant: DietaryAccessGra
       phoneAreaCode: member.phoneAreaCode ?? null,
       phoneNumber: member.phoneNumber ?? null,
       dateOfBirth: member.dateOfBirth
-        ? formatDateOnly(member.dateOfBirth)
+        ? calendarDateOfDateOnlyInstant(member.dateOfBirth)
         : null,
       role: member.role,
       ageTier: member.ageTier,
       active: member.active,
       joinedDate: member.joinedDate
-        ? formatDateOnly(member.joinedDate)
+        ? calendarDateOfDateOnlyInstant(member.joinedDate)
         : null,
       memberSince: member.createdAt.toISOString(),
       dietaryRequirements,
       bookingDietaryRequirements: ownBookingDietaryRequirements.map((row) => ({
-        stayStart: formatDateOnly(row.stayStart),
-        stayEnd: formatDateOnly(row.stayEnd),
+        stayStart: calendarDateOfDateOnlyInstant(row.stayStart),
+        stayEnd: calendarDateOfDateOnlyInstant(row.stayEnd),
         dietaryRequirements: row.dietaryRequirements,
       })),
       streetAddress: {
@@ -286,8 +287,8 @@ async function readMemberRecords(memberId: string, exportGrant: DietaryAccessGra
       },
     },
     bookings: bookings.map((b) => ({
-      checkIn: formatDateOnly(b.checkIn),
-      checkOut: formatDateOnly(b.checkOut),
+      checkIn: calendarDateOfDateOnlyInstant(b.checkIn),
+      checkOut: calendarDateOfDateOnlyInstant(b.checkOut),
       status: b.status,
       totalPriceCents: b.totalPriceCents,
       discountCents: b.discountCents,
@@ -322,7 +323,7 @@ async function readMemberRecords(memberId: string, exportGrant: DietaryAccessGra
     })),
     choreAssignments: [
       ...choreAssignments.map((c) => ({
-        date: formatDateOnly(c.date),
+        date: calendarDateOfDateOnlyInstant(c.date),
         choreName: c.choreTemplate.name,
         choreDescription: c.choreTemplate.description ?? null,
         assignedTo: c.bookingGuest
@@ -414,7 +415,7 @@ async function readGuestChores(guestWhere: { memberId: string } | { id: string; 
     orderBy: { date: "desc" },
   });
   return rows.map((c) => ({
-    date: formatDateOnly(c.date),
+    date: calendarDateOfDateOnlyInstant(c.date),
     choreName: c.choreTemplate.name,
     choreDescription: c.choreTemplate.description ?? null,
     assignedTo: c.bookingGuest ? `${c.bookingGuest.firstName} ${c.bookingGuest.lastName}` : "You",

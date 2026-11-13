@@ -171,6 +171,8 @@ const DIETARY_REACH: Readonly<Record<string, CensusEntry>> = {
     "member CSV import writer, ON and membership:edit only",
   "src/lib/member-merge-field-rules.ts": "fill-if-blank merge rule",
   "src/lib/member-merge-field-kinds.ts": "merge screen value kind",
+  // #4915: moved from the door, for its size budget; it reads nothing.
+  "src/lib/member-dietary-field.ts": "names the merge diff row whose values redactDietaryMergeRow redacts",
   // #3029: the booking value's readers. None WRITES the column by name (rule 8).
   "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-guest-dietary.ts": {
     reason: "booking-admin reader (R1): mints the grant, returns rows to the page",

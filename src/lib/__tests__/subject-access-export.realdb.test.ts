@@ -251,6 +251,8 @@ async function teardown() {
   it("produces a non-member guest's file from their exact guest row, with their own dietary note only", async () => {
     const { file, text } = await officerFile({ guestId: CO_GUEST });
     expect(file.subjectKind).toBe("non-member");
+    // Narrow the union: only a non-member's file carries a guest dietary note.
+    if (file.subjectKind !== "non-member") throw new Error("expected a non-member file");
     expect(file.guestAppearances).toEqual([expect.objectContaining({ firstName: CO_GUEST_NAME })]);
     expect(file.guestDietaryRequirements).toBe(CO_GUEST_DIETARY);
     expect(file.choreAssignments).toEqual([expect.objectContaining({

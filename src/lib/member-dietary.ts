@@ -174,19 +174,6 @@ export async function grantOfficerSubjectAccessDietaryAccess(
     memberIds: subject.memberId ? [subject.memberId] : [], exportGuestId: subject.guestId });
 }
 
-/** Only an exact non-member guest selected by the verified officer grant. */
-export async function readSubjectAccessGuestDietary(grant: DietaryAccessGrant) {
-  const record = grantRecord(grant);
-  if (!record || record.kind !== "member" || record.purpose !== "subject-access-export") {
-    throw new Error("Subject access grant required");
-  }
-  if (!record.exportGuestId) return null;
-  const row = await prisma.bookingGuest.findFirst({
-    where: { id: record.exportGuestId, memberId: null }, select: { dietaryRequirements: true },
-  });
-  return row?.dietaryRequirements ?? null;
-}
-
 type GrantDb = Prisma.TransactionClient | PrismaClient;
 
 /**
@@ -236,18 +223,6 @@ export async function grantMemberMergeDietaryAccess(
 }
 
 /**
- * What a PERSISTED record (an audit row, a log) may say about a dietary value:
- * that one is recorded, never what it is (`INV-PRIV-022`).
- */
-export const DIETARY_VALUE_REDACTION = "[REDACTED]";
-
-export function redactDietaryValueForRecord(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  if (typeof value === "string" && value.trim() === "") return null;
-  return DIETARY_VALUE_REDACTION;
-}
-
-/**
  * Member merge reads Member rows from a client that OMITS the column, so the
  * field merge would see it blank on both sides and the loser's value would die
  * with the loser row. This attaches both values through this door so the
@@ -284,24 +259,6 @@ export async function attachMergeDietaryRequirements<T extends { id: string }>(
       : { ...row }) as R & { dietaryRequirements?: string };
   };
   return [attach(master), attach(loser)];
-}
-
-/**
- * A merge diff row as a PERSISTED record (or an OFF screen) may hold it: the
- * dietary row keeps its field and source, and its three values become
- * "recorded / not recorded". Every other row is returned untouched, because
- * `INV-PRIV-011` lets an audit row keep names and addresses.
- */
-export function redactDietaryMergeRow<
-  R extends { field: string; master: unknown; loser: unknown; result: unknown },
->(row: R): R {
-  if (row.field !== "dietaryRequirements") return row;
-  return {
-    ...row,
-    master: redactDietaryValueForRecord(row.master),
-    loser: redactDietaryValueForRecord(row.loser),
-    result: redactDietaryValueForRecord(row.result),
-  };
 }
 
 function grantRecord(grant: unknown): GrantRecord | undefined {
@@ -666,7 +623,14 @@ export async function readOwnBookingGuestDietaryForExport(
   // they were added to), identified by the stay dates only: another member's
   // booking id is not the subject's data.
   const rows = await db.bookingGuest.findMany({
-    where: { memberId: { in: [...(record.memberIds ?? [])] }, dietaryRequirements: { not: null } },
+    where: {
+      // An officer grant may name one exact non-member guest row instead (#4915).
+      OR: [
+        { memberId: { in: [...(record.memberIds ?? [])] } },
+        ...(record.exportGuestId ? [{ id: record.exportGuestId, memberId: null }] : []),
+      ],
+      dietaryRequirements: { not: null },
+    },
     select: { stayStart: true, stayEnd: true, dietaryRequirements: true },
     orderBy: [{ stayStart: "asc" }, { id: "asc" }],
   });

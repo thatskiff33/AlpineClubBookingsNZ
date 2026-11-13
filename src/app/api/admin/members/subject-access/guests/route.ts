@@ -12,7 +12,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { isFullAdmin } from "@/lib/access-roles";
 import { prisma } from "@/lib/prisma";
 import { exactContains } from "@/lib/prisma-exact-prefix";
-import { formatDateOnly } from "@/lib/date-only";
+import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import logger from "@/lib/logger";
 
 const MAX_GUESTS = 20;
@@ -48,8 +48,8 @@ export async function GET(request: NextRequest) {
       guests: rows.map((row) => ({
         id: row.id,
         name: `${row.firstName} ${row.lastName}`.trim(),
-        stayStart: formatDateOnly(row.stayStart),
-        stayEnd: formatDateOnly(row.stayEnd),
+        stayStart: calendarDateOfDateOnlyInstant(row.stayStart),
+        stayEnd: calendarDateOfDateOnlyInstant(row.stayEnd),
       })),
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
