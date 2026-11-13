@@ -34,29 +34,13 @@ interface CancelPreview {
   creditRestoredCents: number;
   totalPaidCents: number;
   hasPayment: boolean;
-  /**
-   * B5 (#2262): this booking was settled in cash / by an off-Xero bank transfer,
-   * so there is no card payment to reverse and no account credit is minted —
-   * the club hands the refund back directly. The figures are unchanged.
-   */
+  /** #2262: cash/off-Xero bank settlement; direct hand-back, no card refund or account credit. */
   manualRefund?: boolean;
-  /**
-   * #4911 (`INV-PAY-151`): the card payment is disputed by the cardholder, so the
-   * cancel hands the refund to the treasurer on the credit tier, as `manualRefund`
-   * does - no card refund and no account credit.
-   */
+  /** INV-PAY-151: disputed card capture; treasurer hand-back on credit tier, as for manualRefund. */
   refundDisputed?: boolean;
-  /**
-   * The refund method the cancel will use whatever is chosen — "credit" for an
-   * internet banking payment, decided in `cancel-refund-method.ts` and returned
-   * by the preview. When set, the dialog shows only that option.
-   */
+  /** cancel-refund-method.ts's forced method; show only that option (credit for internet banking). */
   refundMethodForced?: Parameters<typeof ForcedRefundNote>[0]["forced"] | null; // #3949: or organiser_by_hand
-  /**
-   * #3643 DECISION 2: Xero shows a payment the app cannot hand back as credit,
-   * so an officer's cancel treats the booking as unpaid and the treasurer
-   * settles that payment by hand.
-   */
+  /** #3643 D2: Xero payment unavailable for credit; officer cancels as unpaid, treasurer settles. */
   paymentSettledByHand?: boolean;
   /** #3653: the organiser's cancellation of the group already refunds this booking; the cancel's own sentence. */
   groupCancellationRefundNote?: string;
@@ -88,15 +72,8 @@ export function CancelBookingButton({
   canChooseMemberEmail?: boolean;
   /** Exact booking-management authority for #2576's officer-only override. */
   canOverrideHostingCoverage?: boolean;
-  /**
-   * #2259 honesty rule: the booking's "No emails" switch. With it on, the
-   * cancellation email is withheld by the mailer whatever the admin picks, so
-   * the dialog stops offering the choice and states the position instead.
-   *
-   * Only ever read alongside {@link canChooseMemberEmail}, which is admin-only.
-   * A member self-cancelling their own silenced booking sees the ordinary
-   * always-notify confirm and learns nothing about the switch.
-   */
+  /** #2259: mailer withholds email regardless of admin choice; hide the choice and say so.
+   * Read only with admin-only canChooseMemberEmail; self-cancelling members never see the switch. */
   noEmails?: boolean;
 }) {
   const format = useClubFormat();
@@ -547,13 +524,7 @@ export function CancelBookingButton({
               </div>
             )}
 
-            {/* Amount summary.
-                B5 (#2262): a manual settlement's outcome uses the bank-
-                transfer/credit TIER (that is what the executed cancel raises
-                the hand-back task at), so the summary must show that figure —
-                never the card-tier "Refund to card" row, which would disagree
-                with the paragraph above and with what the club will actually
-                hand back. */}
+            {/* #2262: hand-back summary uses the bank/credit tier, matching the task and copy. */}
             <div className="border-t border-danger-6 pt-2 space-y-1">
               {hasCardRefund && handBack && (
                 <div className="flex justify-between">

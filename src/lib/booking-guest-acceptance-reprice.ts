@@ -143,11 +143,7 @@ export type GuestAcceptanceReprice =
       refundAmountCents: number;
       /** The Stripe slice of `refundAmountCents`, refunded after commit. */
       pendingRefundAmountCents: number;
-      /**
-       * #3653 (composed by #3829): non-null when that slice goes back to the
-       * group organiser's card out of the combined payment; its debt is reserved
-       * in this transaction under the modification's key.
-       */
+      /** #3653/#3829: organiser-card slice; debt reserved in this transaction under the modification key. */
       organiserChildRefund: { amountCents: number } | null;
       accountCreditAmountCents: number;
       xeroRefundAmountCents: number;

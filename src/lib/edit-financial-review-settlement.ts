@@ -63,32 +63,14 @@ import { alertGroupMirrorRefundXeroByHand, chooseGroupSettlementMirrorRoute, cho
 import { reviewRefundGoesToGroupOrganiser } from "@/lib/group-settlement-mirror-kinds";
 
 /**
- * #3032 (epic #2797): WHERE a confirmed review amount goes when the task is
- * closed, and what is refused before anything is claimed.
- *
- * ## Why this is a separate module from the completion itself
- *
- * `manual-refund-task-resolution.ts` is the completion DOOR: it validates the
- * operator's input, claims the task and audits the decision, and it ends at the
- * commit. Where an amount goes and how it gets there is a different question - a
- * question about the BOOKING's money rather than about the task's status - and it
- * is the one an adversarial reader needs to be able to check in isolation.
- *
- * ## Two halves, and the boundary between them is the CLAIM
- *
- * `chooseEditReviewSettlementRoute` runs BEFORE the claim, inside the caller's
- * transaction. It moves no money: it returns a plan or throws, and that is the
- * point - a refusal that fired after the claim would leave a task COMPLETED with
- * nothing moved, which is the "pretends money moved" failure `INV-PAY-051` exists
- * to prevent. (`planStripeRefundAllocation` may backfill legacy
- * `PaymentTransaction` rows as a side effect of reading them; that is a read made
- * durable on the caller's own transaction, not a settlement.)
- *
- * `executeEditReviewSettlement` runs AFTER the commit, and is where the provider
- * call, the member-facing events for the routes whose money moves out there, and
- * the Xero leg happen. Nothing between the two writes a settlement: the ledger
- * writes the transaction owns sit in the caller, immediately downstream of the
- * claim.
+ * #3032/#2797: settlement of a confirmed review amount, separate from task completion.
+ * `manual-refund-task-resolution.ts` validates, claims and audits in its transaction.
+ * `chooseEditReviewSettlementRoute` runs before the claim: return a plan or refuse
+ * before the task can become COMPLETED with nothing moved (`INV-PAY-051`).
+ * `planStripeRefundAllocation` may backfill legacy PaymentTransaction evidence
+ * in that transaction; it does not settle. The caller writes ledgers after its claim.
+ * `executeEditReviewSettlement` runs after commit: provider calls, member events
+ * for money moved there, and Xero. No settlement is written between these halves.
  *
  * ## WHY THIS IS NOT `calculateModificationSettlementOptions`
  *

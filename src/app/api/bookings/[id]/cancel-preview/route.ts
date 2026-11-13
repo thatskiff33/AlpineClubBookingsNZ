@@ -35,11 +35,7 @@ import {
 import { checkRateLimit, rateLimitedResponse, rateLimiters } from "@/lib/rate-limit";
 import { paymentDisputedCaptureCents } from "@/lib/stripe-dispute-hold";
 
-/**
- * GET /api/bookings/[id]/cancel-preview
- * Returns the refund breakdown for a booking cancellation without actually cancelling.
- * Used by CancelBookingButton to show amounts before the user confirms.
- */
+/** GET: cancellation breakdown for CancelBookingButton before confirmation. */
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }

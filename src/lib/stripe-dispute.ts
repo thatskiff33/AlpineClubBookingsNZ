@@ -43,6 +43,7 @@ import { StripeDisputeStatus, type StripeDispute } from "@prisma/client";
 import { findHeldOnceEverAlertKeys } from "@/lib/admin-alert-once";
 import { sendAdminAlertOnceEverWithTakeover } from "@/lib/admin-alert-once-takeover";
 import { ALERT_ONCE_EVER_WINDOW_MS, claimAlertCooldown, settleOwedAlert } from "@/lib/alert-cooldown";
+import { bookingOwner } from "@/lib/booking-owner";
 import type { ClubFormat } from "@/lib/club-format";
 import { sendAdminStripeDisputeAlert } from "@/lib/email";
 import { UNMUTEABLE_ALERT_SENT } from "@/lib/email/admin-alert-send-result";
@@ -428,8 +429,9 @@ async function bookingOwnerName(bookingId: string | null): Promise<string> {
       organisation: { select: { name: true } },
     },
   });
-  if (booking?.member) return `${booking.member.firstName} ${booking.member.lastName}`.trim();
-  return booking?.organisation?.name ?? NONE;
+  if (!booking) return NONE;
+  const owner = bookingOwner(booking).member;
+  return `${owner.firstName} ${owner.lastName}`.trim();
 }
 
 async function alertFields(

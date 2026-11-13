@@ -82,13 +82,7 @@ export type PaymentAdjustmentResult = {
   additionalAsk: AdditionalAsk;
   pendingRefundAmountCents: number;
   hasSucceededPayment: boolean;
-  /**
-   * #5061 follow-up (`INV-PAY-151`): an OPEN or LOST Stripe dispute holds the
-   * member's card payment, so `refundAmountCents` goes back by the treasurer's
-   * hand (`editRefundGoesBackByHand`) and `pendingRefundAmountCents` and
-   * `accountCreditAmountCents` are 0. The Xero leg treats it as a refund made
-   * by hand, and the email says the treasurer has it.
-   */
+  /** INV-PAY-151: treasurer hand-back; pending Stripe refund and account credit are zero. */
   refundHeldForDispute: boolean;
   hasIssuedXeroInvoice: boolean;
   xeroRefundAmountCents: number;
@@ -249,12 +243,8 @@ export async function applyPaymentAdjustments(
   // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
   const remainingRefundableCents = await refundableCashForModification(tx, booking.payment, reduction);
 
-  // #5061 follow-up (`INV-PAY-151`): an OPEN or LOST Stripe dispute on the
-  // member's card payment, read here under the door's `lock(1)` and lodge key.
-  // The bank is taking that money back, so the whole reduction goes to the
-  // treasurer by hand: no Stripe refund, no account credit, whatever the
-  // member chose - as a disputed paid cancel does. This read decides; the
-  // options' own copy of it only shaped the choice the member was offered.
+  // INV-PAY-151: decide under the door's global/lodge locks; the quote's read only shaped the choices.
+  // OPEN/LOST disputes send the whole reduction to the treasurer, whatever method the member chose.
   const refundHeldForDispute =
     netAmountCents < 0 && hasSucceededPayment && (await editReductionDisputeHold(tx, booking)).cents > 0;
   const selectedSettlement = resolveSelectedSettlementAmount({
