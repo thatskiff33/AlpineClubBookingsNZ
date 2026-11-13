@@ -124,9 +124,10 @@ population is protected against lock-out by `INV-LIFE-089`.
 
 ## INV-LIFE-094
 
-Subscription category is a fourth independent billing axis, alongside the
-access role, seasonal membership type, and age tier axes `INV-LIFE-005` already
-names — not a variant of them. `SeasonalMembershipAssignment` carries
+Subscription category is a second, independent billing axis beside membership
+type, and a fourth member classification axis beside the access role, seasonal
+membership type and age tier axes `INV-LIFE-005` already names — not a variant
+of them. `SeasonalMembershipAssignment` carries
 `subscriptionCategoryId` (nullable FK to `SubscriptionCategory`) alongside its
 existing `membershipTypeId`; the two are resolved and stored independently, one
 row per member per season. A `SubscriptionCategory` (e.g. "Couple", "Adult +
@@ -138,12 +139,10 @@ lockout: `MembershipType.bookingBehavior`/`subscriptionBehavior` keep deciding
 those, and `src/lib/subscription-lockout-facts.ts`'s
 `resolveMemberSubscriptionSettlement` never reads a category — it only ever
 reads `MembershipType.subscriptionBehavior` and `MemberSubscription.status`.
-The billing engine's OWN category-axis exemption decision calls through this
-same resolver for each category-assigned member (`INV-MONEY-046`,
-`INV-LOCKOUT-020`) — not a parallel exemption rule of its own — so a member
-this resolver treats as exempt is never billed on either axis, keeping
-booking-access and billing in agreement for a category-assigned member the
-same way they already agree for a type-billed one.
+Billing does not call that resolver: both billing axes share
+`resolveSubscriptionTierExemption`, so a member whose type exempts them is
+never billed through a category (`INV-MONEY-046` states the rule and the
+pre-existing edge where it and booking access differ).
 Two members of the same `MembershipType` (same booking rights/rate) can be
 assigned different subscription categories (or none), and two members sharing
 one category can hold different `MembershipType`s (e.g. a Senior + a Life

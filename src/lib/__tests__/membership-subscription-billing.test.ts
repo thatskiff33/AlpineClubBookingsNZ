@@ -2900,6 +2900,107 @@ describe("membership subscription billing", () => {
       ]);
     });
 
+    // #4496 finaliser review: the type branch, when its family is held by a
+    // CATEGORY charge from an earlier run, raised nothing and filed the family
+    // as "already invoiced", while the same misconfiguration in one run raises
+    // MIXED_AXIS_FAMILY_BILLING. Both directions now raise it across runs.
+    it("raises MIXED_AXIS_FAMILY_BILLING for a PER_FAMILY type member whose family is held by an earlier run's category charge", async () => {
+      mocks.effectiveFee.mockResolvedValue(fee({ id: "fee-family", billingBasis: "PER_FAMILY", prorationRule: "NONE" }));
+      mocks.familyMarkers.findMany.mockResolvedValue([
+        { familyGroupId: "family-1", note: null, markedAt: new Date("2026-05-01T00:00:00.000Z"), markedBy: null },
+      ]);
+      mocks.charges.findMany.mockResolvedValue([
+        familyCharge("QUEUED", [], { id: "category-charge", membershipTypeId: null, subscriptionCategoryId: "cat-1" }),
+      ]);
+      mocks.members.findMany.mockResolvedValue([
+        member("carol", { familyGroupMemberships: [familyMembership()] }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+      expect(preview.entries).toEqual([]);
+      expect(preview.alreadyInvoicedFamilies).toEqual([]);
+      expect(preview.exceptions).toEqual([
+        expect.objectContaining({ code: "MIXED_AXIS_FAMILY_BILLING", memberId: "carol", familyGroupId: "family-1", membershipTypeId: "type-1" }),
+      ]);
+    });
+
+    it("still files a type-held family as already invoiced when its only charge is on the type axis", async () => {
+      mocks.effectiveFee.mockResolvedValue(fee({ id: "fee-family", billingBasis: "PER_FAMILY", prorationRule: "NONE" }));
+      mocks.familyMarkers.findMany.mockResolvedValue([
+        { familyGroupId: "family-1", note: null, markedAt: new Date("2026-05-01T00:00:00.000Z"), markedBy: null },
+      ]);
+      mocks.charges.findMany.mockResolvedValue([
+        familyCharge("QUEUED", [], { id: "other-type-charge", membershipTypeId: "type-9", subscriptionCategoryId: null }),
+      ]);
+      mocks.members.findMany.mockResolvedValue([
+        member("carol", { familyGroupMemberships: [familyMembership()] }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+      expect(preview.entries).toEqual([]);
+      expect(preview.exceptions).toEqual([]);
+      expect(preview.alreadyInvoicedFamilies).toEqual([expect.objectContaining({ familyGroupId: "family-1" })]);
+    });
+
+    // #4496 finaliser review: one category per family. Two members of one
+    // family on different categories used to mint two flat charges to the same
+    // recipient in one run, or silently leave the second unbilled across runs.
+    it("withholds a second, different category in a family billed this run (one category per family)", async () => {
+      mocks.members.findMany.mockResolvedValue([
+        categoryMember("alice", {}, { familyGroupMemberships: [familyMembership()] }),
+        categoryMember("bob", { id: "cat-2", key: "family", name: "Family" }, { familyGroupMemberships: [familyMembership()] }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+      expect(preview.entries.map((entry) => entry.key)).toEqual(["2026:category:cat-1:family:family-1"]);
+      expect(preview.exceptions).toEqual([
+        expect.objectContaining({ code: "MIXED_AXIS_FAMILY_BILLING", memberId: "bob", familyGroupId: "family-1", subscriptionCategoryId: "cat-2" }),
+      ]);
+    });
+
+    it("raises MIXED_AXIS_FAMILY_BILLING, not an already-invoiced line, when the family is held by an earlier run's charge on a different category", async () => {
+      mocks.familyMarkers.findMany.mockResolvedValue([
+        { familyGroupId: "family-1", note: null, markedAt: new Date("2026-05-01T00:00:00.000Z"), markedBy: null },
+      ]);
+      mocks.charges.findMany.mockResolvedValue([
+        familyCharge("QUEUED", [], { id: "cat-2-charge", membershipTypeId: null, subscriptionCategoryId: "cat-2" }),
+      ]);
+      mocks.members.findMany.mockResolvedValue([
+        categoryMember("alice", {}, { familyGroupMemberships: [familyMembership()] }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+      expect(preview.entries).toEqual([]);
+      expect(preview.alreadyInvoicedFamilies).toEqual([]);
+      expect(preview.exceptions).toEqual([
+        expect.objectContaining({ code: "MIXED_AXIS_FAMILY_BILLING", memberId: "alice", familyGroupId: "family-1", subscriptionCategoryId: "cat-1" }),
+      ]);
+    });
+
+    // #4496 finaliser review (pinned behaviour, INV-MONEY-046): on the category
+    // axis a tier-exempt BASED_ON_AGE_TIER child is exempt even inside a
+    // family, and even when their type's own fee is PER_FAMILY. The type
+    // axis's PER_FAMILY carve-out (#2148 Q5) is deliberately not copied: a
+    // category fee has no per-member basis to carve out from, and copying it
+    // would bill a solo tier-exempt child the flat fee, against the 11 Nov
+    // 2026 owner decision (the type exemption wins).
+    it("exempts a tier-exempt child in a category family, leaving them out of the family charge's coverage, even under a PER_FAMILY type fee", async () => {
+      mocks.effectiveFee.mockResolvedValue(fee({ id: "fee-family", billingBasis: "PER_FAMILY", prorationRule: "NONE" }));
+      mocks.members.findMany.mockResolvedValue([
+        categoryMember("parent", {}, { familyGroupMemberships: [familyMembership()] }),
+        categoryMember("child", {}, {
+          ageTier: "CHILD",
+          dateOfBirth: null,
+          familyGroupMemberships: [familyMembership()],
+          seasonalMembershipAssignments: [{
+            membershipType: { id: "type-3", key: "JUNIOR", name: "Junior", subscriptionBehavior: "BASED_ON_AGE_TIER", annualFees: [] },
+            subscriptionCategory: { id: "cat-1", key: "couple", name: "Couple", isActive: true },
+          }],
+        }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+      expect(preview.exceptions).toEqual([]);
+      expect(preview.exemptMemberIds).toEqual(["child"]);
+      expect(preview.entries).toHaveLength(1);
+      expect(preview.entries[0]!.coveredMembers.map((covered) => covered.id)).toEqual(["parent"]);
+    });
+
     // Maintainer review (billing, defect 3): the familyInvoiceBlockers loop's
     // `holderKey` used to be built from the holder's membership TYPE only,
     // never their category assignment — so a holder's bare invoice, stored

@@ -64,7 +64,14 @@ A member whose membership type needs no subscription, or whose age tier is
 exempt under their membership type, is never billed through a category. The
 billing preview lists them under **Exempt**, naming the membership type or the
 age tier as the reason. This still holds after their category is archived, so
-an exempt member never needs re-assigning before billing.
+an exempt member never needs re-assigning before billing. An age-exempt child
+in a family stays exempt and is not covered by the family's category charge.
+
+A family shares one category. If members of one family are assigned different
+categories, or some are on a category and others on a family membership-type
+fee, the billing preview bills the first and raises a mixed-billing exception
+for the rest. Give everyone in the family who should share the charge the same
+category, then preview again.
 
 ## Not yet included
 

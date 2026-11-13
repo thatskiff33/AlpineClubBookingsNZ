@@ -28,3 +28,11 @@
   is one member at a time, from their profile, for now. Export & Import does
   not carry subscription categories or their fees yet; recreate them by hand
   on the target deployment.
+
+  A family shares one category. Members of one family on different
+  categories, or split between a category and a family membership-type fee,
+  are billed once and the rest are raised as a mixed-billing exception in the
+  preview, whether the first charge was made in this run or an earlier one.
+  Family membership-type charges made from this release carry a slightly
+  different internal reference shape; existing charges are unchanged and are
+  never billed twice.

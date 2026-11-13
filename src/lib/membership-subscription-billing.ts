@@ -79,7 +79,9 @@ export type SubscriptionBillingExceptionCode =
   // billed on ONE axis this run (category or type) has a member who would
   // bill it again on the OTHER axis. Both axes are PER_FAMILY-shaped and key
   // their dedup on different strings, so neither notices the other without
-  // this check — withholds rather than double-charging the family.
+  // this check — withholds rather than double-charging the family. Also
+  // raised for a second, different category in one family (one category per
+  // family), and across runs as well as within one.
   | "MIXED_AXIS_FAMILY_BILLING"
   // Subscription-category decoupling (review finding): a member's assignment
   // still names a category an admin archived since. Falling through to type
@@ -1082,7 +1084,10 @@ export async function buildSubscriptionBillingPreview(input: {
   // checked by the OTHER axis before it does the same — whichever member is
   // processed first in the loop wins, and the other raises an exception
   // instead of a second charge.
-  const categoryBilledFamilyGroupIdsThisRun = new Set<string>();
+  // familyGroupId -> the subscription category that billed it this run, so a
+  // second, DIFFERENT category in the same family is caught too (one category
+  // per family; #4496 review).
+  const categoryBilledFamilyGroupIdsThisRun = new Map<string, string>();
   const typeBilledFamilyGroupIdsThisRun = new Set<string>();
   const decisionDateOnly = formatDateOnly(decisionDate);
   // #2041: members skipped because a BASED_ON_AGE_TIER type + their season-start
@@ -1169,15 +1174,10 @@ export async function buildSubscriptionBillingPreview(input: {
     // raise the rebill-beside-an-invoice warning (#4496 review, billing
     // defect 3).
     if (resolveMemberSubscriptionCategory(holder)) return "PER_FAMILY";
-    let feeTier: AgeTier | null;
-    if (membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER") {
-      const ageTierSettings = await getAgeTierSettingsMemoized();
-      feeTier = holder.dateOfBirth
-        ? computeAgeTierWithSettings(holder.dateOfBirth, getSeasonStartDate(input.seasonYear), ageTierSettings)
-        : holder.ageTier;
-    } else {
-      feeTier = holder.ageTier;
-    }
+    // The same season-start tier rule the main loop uses (INV-SSOT-001).
+    const feeTier: AgeTier | null = membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER"
+      ? await resolveSeasonStartTier(holder)
+      : holder.ageTier;
     const fee = await getMemoizedFee(membershipType.id, feeTier);
     return fee?.billingBasis ?? null;
   };
@@ -1675,6 +1675,24 @@ export async function buildSubscriptionBillingPreview(input: {
         const otherAxisCharge = existingFamilyCharges.find(
           (charge) => charge.familyGroupId === categoryFamilyGroupId && charge.membershipTypeId != null,
         );
+        // #4496 review: one category per family. A charge for this family on a
+        // DIFFERENT category is a conflict too, never an "already invoiced"
+        // line that silently leaves this member unbilled.
+        const otherCategoryCharge = otherAxisCharge ? undefined : existingFamilyCharges.find(
+          (charge) => charge.familyGroupId === categoryFamilyGroupId
+            && charge.subscriptionCategoryId != null
+            && charge.subscriptionCategoryId !== subscriptionCategory.id,
+        );
+        if (otherCategoryCharge) {
+          exceptions.push(exception({
+            code: "MIXED_AXIS_FAMILY_BILLING",
+            message: `${memberName}'s family ${categoryFamilyGroupId} already has a charge for a different subscription category. A family shares one category: assign the same category to every member of the family who should share it, or bill them separately, before invoicing.`,
+            seasonYear: input.seasonYear, memberId: member.id, familyGroupId: categoryFamilyGroupId,
+            membershipTypeId: null, subscriptionCategoryId: subscriptionCategory.id,
+            context: { memberName },
+          }));
+          continue;
+        }
         if (otherAxisCharge) {
           exceptions.push(exception({
             code: "MIXED_AXIS_FAMILY_BILLING",
@@ -1732,7 +1750,23 @@ export async function buildSubscriptionBillingPreview(input: {
         }));
         continue;
       }
-      if (categoryFamilyGroupId) categoryBilledFamilyGroupIdsThisRun.add(categoryFamilyGroupId);
+      // #4496 review: one category per family, within a run too — a second
+      // category for a family already billed this run is withheld, never a
+      // second flat charge to the same family recipient.
+      const categoryAlreadyBillingFamily = categoryFamilyGroupId
+        ? categoryBilledFamilyGroupIdsThisRun.get(categoryFamilyGroupId)
+        : undefined;
+      if (categoryFamilyGroupId && categoryAlreadyBillingFamily && categoryAlreadyBillingFamily !== subscriptionCategory.id) {
+        exceptions.push(exception({
+          code: "MIXED_AXIS_FAMILY_BILLING",
+          message: `${memberName}'s family ${categoryFamilyGroupId} already has a charge for a different subscription category from another member this run. A family shares one category: assign the same category to every member of the family who should share it, or bill them separately, before invoicing.`,
+          seasonYear: input.seasonYear, memberId: member.id, familyGroupId: categoryFamilyGroupId,
+          membershipTypeId: null, subscriptionCategoryId: subscriptionCategory.id,
+          context: { memberName },
+        }));
+        continue;
+      }
+      if (categoryFamilyGroupId) categoryBilledFamilyGroupIdsThisRun.set(categoryFamilyGroupId, subscriptionCategory.id);
 
       // Component invoice lines through the helper both axes share.
       const categoryComponents = buildChargeComponents({
@@ -1981,6 +2015,24 @@ export async function buildSubscriptionBillingPreview(input: {
     // auto-suppression predicate, so a mixed-basis family whose live invoice sits
     // on a PER_MEMBER-billed member can still be closed out by the operator.
     if (familyGroupId && (suppressedFamilyGroupIds.has(familyGroupId) || markedFamilyGroupIds.has(familyGroupId))) {
+      // #4496 review: mirror the category branch. When what holds this family
+      // is a charge on the OTHER (category) axis, that is an assignment
+      // conflict across runs, raised the same as within one run, not an
+      // ordinary "already invoiced" line. A family with no category charge
+      // (every family before subscription categories) is unaffected.
+      const otherAxisCharge = existingFamilyCharges.find(
+        (charge) => charge.familyGroupId === familyGroupId && charge.subscriptionCategoryId != null,
+      );
+      if (otherAxisCharge) {
+        exceptions.push(exception({
+          code: "MIXED_AXIS_FAMILY_BILLING",
+          message: `${memberName}'s family ${familyGroupId} already has a subscription-category charge. Assign that category to ${memberName} too, or bill them separately, before invoicing.`,
+          seasonYear: input.seasonYear, memberId: member.id, familyGroupId,
+          membershipTypeId: membershipType.id,
+          context: { memberName, membershipAnnualFeeId: fee.id },
+        }));
+        continue;
+      }
       surfaceAlreadyInvoicedFamily(familyGroupId);
       // #4110 review rounds 6 and 7: the family would have been billed again
       // for a reversal, but it is held. The hold stands (#2161, never a second
@@ -2141,7 +2193,9 @@ export async function buildSubscriptionBillingPreview(input: {
   // derivations resolve is not guaranteed to be the same one.
   //
   // The divergence is not theoretical at this call site. `entry.key` is
-  // `<year>:<id>:family:<id>` or `<year>:<id>:member:<id>`, and `:` is
+  // `<year>:type:<id>:family:<id>` or `<year>:category:<id>:family:<id>`
+  // (chargeFamilyAxisKey), `<year>:category:<id>:member:<id>` for a solo
+  // category member, or `<year>:<feeId>:member:<id>`, and `:` is
   // punctuation: locale collation orders it BEFORE a digit, a code-unit
   // comparison orders it after, so `"2026:x1a:family:q"` and `"2026:x:member:q"`
   // order oppositely under the two rules (measured). The admin would be told the
@@ -2443,9 +2497,14 @@ export async function confirmSubscriptionBillingPreview(input: {
       // idempotency key so a post-void re-bill mints a NEW charge instead of
       // no-op-ing onto the released (VOIDED) one via the @unique idempotencyKey.
       // When every voidGeneration is 0 (the never-voided case) the key omits the
-      // discriminator entirely, staying byte-identical to the pre-#2147 shape so
-      // existing charges and re-runs remain idempotent. invoiceReference derives
-      // from this key and follows automatically.
+      // discriminator entirely, so a re-run of the same entry stays idempotent.
+      // invoiceReference derives from this key and follows automatically.
+      // #4496: `entry.key` for a PER_FAMILY type entry gained a `type:` axis
+      // prefix (chargeFamilyAxisKey), so type-family charges minted from this
+      // release get differently shaped idempotency keys and invoice
+      // references. Existing rows are untouched, and an already-charged family
+      // is still found through `billedFamilyTypes` (built by the same helper)
+      // and its coverage claim, never re-minted under the new key.
       const sortedMemberIds = subscriptions.map((row) => row.memberId).sort();
       const voidGenByMember = new Map(subscriptions.map((row) => [row.memberId, row.voidGeneration ?? 0]));
       const voidGenerations = sortedMemberIds.map((memberId) => voidGenByMember.get(memberId) ?? 0);
