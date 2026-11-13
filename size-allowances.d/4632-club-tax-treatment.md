@@ -23,7 +23,7 @@ reason: the create and update paths resolve the booking's tax treatment where
   each builds its lines; the update path keeps copied lines' own tax type.
 
 file: src/lib/xero-credit-notes.ts
-lines: 1343
+lines: 1337
 reason: refund credit notes resolve the booking's tax treatment where each note
   is built, so a note repeats its invoice's treatment.
 
