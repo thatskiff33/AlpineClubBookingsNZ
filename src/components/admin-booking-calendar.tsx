@@ -1,7 +1,12 @@
 "use client";
 
 import type { BookingStatus } from "@prisma/client";
-import { BOOKING_STATUSES_IN_LIFECYCLE_ORDER, isBookingStatus } from "@/lib/booking-status";
+import { BOOKING_STATUSES_IN_LIFECYCLE_ORDER } from "@/lib/booking-status";
+import {
+  defaultHiddenCalendarStatuses,
+  readHiddenCalendarStatuses,
+  writeHiddenCalendarStatuses,
+} from "@/lib/admin-calendar-status-preference";
 import { adminHref } from "@/lib/admin-hubs";
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
@@ -112,19 +117,6 @@ function getMonthDays(year: number, month: number) {
   return { startDow, daysInMonth: daysInCalendarMonth(year, month + 1) };
 }
 
-// The preference stores the statuses an admin HID, so a status added later is
-// shown by default instead of missing from every saved preference (#4923).
-const HIDDEN_STATUSES_STORAGE_KEY = "admin-calendar-hidden-statuses";
-// The pre-#4923 preference stored the ENABLED statuses. It is read once,
-// converted against the statuses that existed when it was written, and removed.
-const ENABLED_STATUSES_STORAGE_KEY = "admin-calendar-enabled-statuses";
-// Frozen: the statuses the old enabled-list preference could have contained.
-// Never add a status here — one it never knew about must not count as hidden.
-const LEGACY_ENABLED_LIST_STATUSES: readonly BookingStatus[] = [
-  "DRAFT", "PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID", "COMPLETED",
-  "CANCELLED", "BUMPED", "WAITLISTED", "WAITLIST_OFFERED",
-];
-
 export function AdminBookingCalendar() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -159,32 +151,18 @@ export function AdminBookingCalendar() {
   // admin's last choice persists across visits (#1039 item 5) as the set of
   // hidden statuses; every other status is shown.
   const [hiddenStatuses, setHiddenStatuses] = useState<Set<BookingStatus>>(() => {
-    const defaults = new Set<BookingStatus>(["CANCELLED"]);
-    if (typeof window === "undefined") return defaults;
+    if (typeof window === "undefined") return defaultHiddenCalendarStatuses();
     try {
-      const stored = window.localStorage.getItem(HIDDEN_STATUSES_STORAGE_KEY);
-      if (stored !== null) {
-        const parsed: unknown = JSON.parse(stored);
-        return Array.isArray(parsed) ? new Set(parsed.filter(isBookingStatus)) : defaults;
-      }
-      const legacy = window.localStorage.getItem(ENABLED_STATUSES_STORAGE_KEY);
-      if (legacy === null) return defaults;
-      const parsed: unknown = JSON.parse(legacy);
-      if (!Array.isArray(parsed)) return defaults;
-      const enabled = new Set(parsed.filter(isBookingStatus));
-      // The old reader fell back to the defaults when nothing valid was saved.
-      if (enabled.size === 0) return defaults;
-      return new Set(LEGACY_ENABLED_LIST_STATUSES.filter((status) => !enabled.has(status)));
+      return readHiddenCalendarStatuses(window.localStorage);
     } catch {
-      return defaults;
+      return defaultHiddenCalendarStatuses();
     }
   });
   const enabledStatuses = new Set(ALL_STATUSES.filter((status) => !hiddenStatuses.has(status)));
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(HIDDEN_STATUSES_STORAGE_KEY, JSON.stringify([...hiddenStatuses]));
-      window.localStorage.removeItem(ENABLED_STATUSES_STORAGE_KEY);
+      writeHiddenCalendarStatuses(window.localStorage, hiddenStatuses);
     } catch {
       // Storage unavailable (private mode, quota): the toggle still works
       // for the session, it just will not persist.
