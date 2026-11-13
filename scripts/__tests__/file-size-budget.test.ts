@@ -287,7 +287,7 @@ describe("budget classification", () => {
       limit: ROUTE_HANDLER_LIMIT,
     });
     expect(
-      budgetForFile("src/app/(admin)/admin/members/page.tsx"),
+      budgetForFile("src/app/(admin)/admin/membership/members/page.tsx"),
     ).toMatchObject({
       slug: "route-page-shell",
       limit: ROUTE_PAGE_LIMIT,
@@ -298,7 +298,7 @@ describe("budget classification", () => {
     });
     // A co-located client component under app/ is a domain module, not a shell.
     expect(
-      budgetForFile("src/app/(admin)/admin/members/members-client.tsx"),
+      budgetForFile("src/app/(admin)/admin/membership/members/members-client.tsx"),
     ).toMatchObject({
       slug: "domain-module",
       limit: PRODUCTION_LIMIT,
