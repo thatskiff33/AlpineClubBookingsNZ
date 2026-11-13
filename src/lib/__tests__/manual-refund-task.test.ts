@@ -78,6 +78,7 @@ const mocks = vi.hoisted(() => ({
   paymentRefundFindMany: vi.fn().mockResolvedValue([]),
   // #4097: the card refund shortfall's preflight - the Payment row, and the cancel's card refund row.
   lockPaymentForRefundedTotal: vi.fn().mockResolvedValue(undefined),
+  readSupersededCaptureHeldBack: vi.fn<(...args: unknown[]) => Promise<{ byTransaction: Map<string, number>; totalCents: number }>>(async () => ({ byTransaction: new Map(), totalCents: 0 })),
   paymentRecoveryOperationFindUnique: vi.fn().mockResolvedValue(null),
   // #4104 review (MM3): the payment's card refunds Stripe failed later, owed by rows of their own.
   failedLaterRecoveryRows: vi.fn((): unknown[] => []),
@@ -165,6 +166,9 @@ vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({
 vi.mock("@/lib/late-capture-refund-credit-note", () => ({
   finishApprovedLateCaptureRefund: (...a: unknown[]) =>
     mocks.queueLateCaptureRefundCreditNote(...a),
+}));
+vi.mock("@/lib/superseded-capture-hold-back", () => ({
+  readSupersededCaptureHeldBack: (...args: unknown[]) => mocks.readSupersededCaptureHeldBack(...args),
 }));
 vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
   // #4097: the card plan's own predicate, real, so the non-card charges are its complement.
@@ -538,6 +542,7 @@ function offerUnpricedNight() {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.paymentDisputedCaptureCents.mockResolvedValue({ cents: 0, disputes: [] });
+  mocks.readSupersededCaptureHeldBack.mockResolvedValue({ byTransaction: new Map(), totalCents: 0 });
   mocks.appliedCredit.cents = 0;
   mocks.appliedCredit.payment = null;
   mocks.giveBackAppliedCredit.mockImplementation(
@@ -658,6 +663,45 @@ describe("resolveManualRefundTask", () => {
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
   });
 
+  it("reads a live superseded capture after the claim and keeps its charge out of the hand-back (#4872)", async () => {
+    const held = new Map([["txn-superseded", 6_500]]);
+    mocks.readSupersededCaptureHeldBack.mockResolvedValueOnce({ byTransaction: held, totalCents: 6_500 });
+
+    await resolveManualRefundTask({ taskId: "task-1", resolution: "completed", note: null, actingMemberId: "admin-1", confirmedAmountCents: null, direction: "REFUND_TO_MEMBER", recordedNightPrices: null }, CLUB_FORMAT_TEST);
+
+    expect(mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(mocks.readSupersededCaptureHeldBack.mock.invocationCallOrder[0]!);
+    expect(mocks.readSupersededCaptureHeldBack.mock.invocationCallOrder[0]).toBeLessThan(mocks.applyLocalRefundAllocation.mock.invocationCallOrder[0]!);
+    expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder.at(-1)).toBeLessThan(mocks.readSupersededCaptureHeldBack.mock.invocationCallOrder[0]!);
+    expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith(expect.objectContaining({
+      paymentId: "payment-1",
+      amountCents: 9000,
+      heldBackByTransaction: held,
+    }));
+  });
+
+  it("rolls the hand-back back when the hold-back leaves too little to allocate (#4872)", async () => {
+    mocks.applyLocalRefundAllocation.mockRejectedValueOnce(new Error("Refund exceeds captured amount"));
+
+    await expect(resolveManualRefundTask({ taskId: "task-1", resolution: "completed", note: null, actingMemberId: "admin-1", confirmedAmountCents: null, direction: "REFUND_TO_MEMBER", recordedNightPrices: null }, CLUB_FORMAT_TEST)).rejects.toThrow(/exceeds captured/);
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+  });
+
+  it("tells the officer a replaced card payment's refund is still in progress, not that the money was never captured (#4872 review)", async () => {
+    const completeIt = () => resolveManualRefundTask({ taskId: "task-1", resolution: "completed", note: null, actingMemberId: "admin-1", confirmedAmountCents: null, direction: "REFUND_TO_MEMBER", recordedNightPrices: null }, CLUB_FORMAT_TEST);
+    mocks.readSupersededCaptureHeldBack.mockResolvedValueOnce({ byTransaction: new Map([["txn-superseded", 6_500]]), totalCents: 6_500 });
+    mocks.applyLocalRefundAllocation.mockRejectedValueOnce(new Error("Refund amount exceeds captured payments"));
+
+    await expect(completeIt()).rejects.toMatchObject({
+      message: "Part of this payment is still being refunded on a card payment that was replaced. Try again once that refund has completed.",
+      status: 409,
+    });
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+
+    // CONTROL: with no hold-back the same refusal still says the amount is too high.
+    mocks.applyLocalRefundAllocation.mockRejectedValueOnce(new Error("Refund amount exceeds captured payments"));
+    await expect(completeIt()).rejects.toThrow(/more than was ever captured/);
+  });
+
   it("dismissal never releases organiser refund notes for money that was not handed back", async () => {
     await resolveManualRefundTask({ taskId: "task-1", resolution: "dismissed", note: "Not transferred", actingMemberId: "admin-1", recordedNightPrices: null }, CLUB_FORMAT_TEST);
     expect(tx.xeroSyncOperation.findMany).not.toHaveBeenCalled();
@@ -679,7 +723,7 @@ describe("resolveManualRefundTask", () => {
       paymentId: "payment-1",
       amountCents: 9000,
       store: tx,
-    });
+     heldBackByTransaction: expect.any(Map),});
     expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         bookingId: "booking-1",
@@ -899,7 +943,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
       paymentId: "payment-1",
       amountCents: 9000,
       store: tx,
-    });
+     heldBackByTransaction: expect.any(Map),});
     expect(result.amountCents).toBe(9000);
     expect(result.amountAmended).toBe(false);
   });
@@ -2363,7 +2407,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       paymentId: "payment-1",
       amountCents: 9000,
       store: tx,
-    });
+     heldBackByTransaction: expect.any(Map),});
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
     expect(mocks.createBookingModificationCredit).not.toHaveBeenCalled();
     expect(mocks.memberCreditFindUnique).not.toHaveBeenCalled();
@@ -2520,7 +2564,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       paymentId: "payment-1",
       amountCents: 6000,
       store: tx,
-    });
+     heldBackByTransaction: expect.any(Map),});
     expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         type: BookingEventType.REFUNDED,
@@ -2769,7 +2813,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         orderBy: { createdAt: "asc" },
         select: { idempotencyKey: true, status: true, attempts: true, nextRetryAt: true, lastError: true },
       });
-      expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({ paymentId: "payment-1", amountCents: 2000, store: tx, preferTransactionIds: ["txn-bank"] });
+      expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({ paymentId: "payment-1", amountCents: 2000, store: tx, preferTransactionIds: ["txn-bank"], heldBackByTransaction: expect.any(Map) });
       expect(vi.mocked(postHandBackLedgerLine)).toHaveBeenCalledWith(
         expect.objectContaining({ manualRefundTaskId: "task-9", amountCents: 2000, paymentSource: "STRIPE", cardShortfall: true }),
       );
@@ -2868,7 +2912,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       await complete();
 
       expect(mocks.paymentTransactionFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ paymentId: "payment-1", stripePaymentIntentId: "pi_race" }) }));
-      expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({ paymentId: "payment-1", amountCents: 2000, store: tx, preferTransactionIds: ["txn-race"], onlyTransactionIds: ["txn-race"] });
+      expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({ paymentId: "payment-1", amountCents: 2000, store: tx, preferTransactionIds: ["txn-race"], onlyTransactionIds: ["txn-race"], heldBackByTransaction: expect.any(Map) });
     });
 
     it("MUTATION: an empty plan with no captured row for the race's intent - refused before any write, still OPEN, naming the blocker, the dismissal and the Xero note by hand", async () => {
@@ -3037,7 +3081,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         paymentId: "payment-1",
         amountCents: 10000,
         store: tx,
-      });
+       heldBackByTransaction: expect.any(Map),});
       expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           type: BookingEventType.REFUNDED,
@@ -4299,7 +4343,7 @@ describe("#3194 - a review raised before the member paid still refunds to their 
       paymentId: "payment-9",
       amountCents: 4500,
       store: tx,
-    });
+     heldBackByTransaction: expect.any(Map),});
     expect(mocks.createBookingModificationCredit).not.toHaveBeenCalled();
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
   });
@@ -4359,7 +4403,7 @@ describe("#3194 - a review raised before the member paid still refunds to their 
         paymentId: "payment-9",
         amountCents: 20000,
         store: tx,
-      });
+       heldBackByTransaction: expect.any(Map),});
     }
     expect(mocks.txPaymentFindUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "payment-9" } })
@@ -5070,7 +5114,7 @@ describe("#3639 - a #2700 hand-back asks what already happened to its capture", 
       paymentId: "payment-1",
       amountCents: 2500,
       store: tx,
-    });
+     heldBackByTransaction: expect.any(Map),});
     // #4838: the Payment row before the capture is read, and so before the claim.
     expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.paymentTransactionFindMany.mock.invocationCallOrder[0]!);
     expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!);
@@ -5135,7 +5179,7 @@ describe("#3639 - a #2700 hand-back asks what already happened to its capture", 
       await complete();
 
       expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.paymentTransactionFindMany.mock.invocationCallOrder[0]!);
-      expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({ paymentId: "payment-1", amountCents: 2500, store: tx });
+      expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({ paymentId: "payment-1", amountCents: 2500, store: tx, heldBackByTransaction: expect.any(Map) });
     });
 
     it("leaves a NULL-kind row with any other reason alone: a cancellation's own hand-back asks nothing of a capture", async () => {
@@ -5144,7 +5188,7 @@ describe("#3639 - a #2700 hand-back asks what already happened to its capture", 
       await complete();
 
       expect(mocks.paymentTransactionFindMany).not.toHaveBeenCalled();
-      expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({ paymentId: "payment-1", amountCents: 2500, store: tx });
+      expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({ paymentId: "payment-1", amountCents: 2500, store: tx, heldBackByTransaction: expect.any(Map) });
     });
   });
 

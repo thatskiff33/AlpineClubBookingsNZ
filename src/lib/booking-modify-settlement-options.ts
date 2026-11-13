@@ -4,6 +4,7 @@
 // the one basis both read. Code moved verbatim; import via
 // "@/lib/booking-modify" or "@/lib/booking-modify-settlement".
 
+import type { Prisma } from "@prisma/client";
 import {
   assertReductionReadForNet,
   type ReductionAgainstUnpaidAsk,
@@ -28,8 +29,10 @@ import {
   refundableCashNetOfOpenHandBacks,
   type OpenNonCancellationHandBackDb,
 } from "@/lib/edit-refund-hand-back";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
+import type { OwnershipReader } from "@/lib/superseded-intent-ownership";
 import { paidByOrganiser, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
-import { PaymentSource, type Prisma } from "@prisma/client";
+import { PaymentSource } from "@prisma/client";
 import { paymentDisputedCaptureCents, type CaptureDisputeHold } from "@/lib/stripe-dispute-hold";
 
 export type BookingModificationSettlementOptions = {
@@ -96,17 +99,25 @@ export function heldForDisputeSettlementCents(options: BookingModificationSettle
   return options.accountCreditAmountCents;
 }
 
+/** The quote and the save both read this. A quote is advisory; the save rechecks under the Payment row. */
+export type ModificationRefundCashDb = OpenNonCancellationHandBackDb &
+  OwnershipReader &
+  Pick<Prisma.TransactionClient, "paymentTransaction">;
+
 /** One cash cap for the quote and save, after unpaid asks have been netted. */
 export async function refundableCashForModification(
-  db: OpenNonCancellationHandBackDb,
+  db: ModificationRefundCashDb,
   payment: LoadedBookingForModify["payment"],
   reduction: ReductionAgainstUnpaidAsk,
 ): Promise<number> {
   const cashCents = await refundableCashNetOfOpenHandBacks(db, payment);
+  // #4872 (`INV-PAY-150`): a live superseded capture is not cash the edit can return.
+  // With no refundable cash there is nothing to hold back, so no read.
+  const heldBackCents = payment && cashCents > 0 ? (await readSupersededCaptureHeldBack(db, payment.id)).totalCents : 0;
   const paidFeeCents = reduction.organiserExtras && payment
     ? effectiveOrganiserPaidChangeFeeCents(payment.changeFeeCents, reduction.organiserExtras)
     : 0;
-  return Math.max(0, cashCents - paidFeeCents);
+  return Math.max(0, cashCents - paidFeeCents - heldBackCents);
 }
 
 /**
@@ -163,7 +174,7 @@ export async function calculateModificationSettlementOptions({
    * Also reads the payment's OPEN edit refund hand-backs (#3827,
    * `INV-PAY-117`), so a reduction is sized off cash not already promised back.
    */
-  db: CancellationPolicyDb & OpenNonCancellationHandBackDb & EditDisputeHoldDb;
+  db: CancellationPolicyDb & ModificationRefundCashDb & EditDisputeHoldDb;
   /**
    * The club's own calendar day (`INV-CONFIG-002`), resolved outside this
    * transaction. It feeds `daysUntilDate` below, which is the refund-tier
@@ -267,7 +278,7 @@ export function calculateFullReductionSettlementOptions({
     "checkIn" | "status" | "payment" | "organiserSettled" | "parentBookingId"
   >;
   netChargeCents: number;
-  /** `refundableCashNetOfOpenHandBacks`, read by the caller under its locks (`INV-PAY-117`). */
+  /** The edit's cash basis (`refundableCashForModification`), read by the caller. */
   refundableCashCents: number;
   todayAtClub: CalendarDate;
   /** #5061 follow-up: `editReductionDisputeHold` above zero, read by the caller under its locks (`INV-PAY-153`). */

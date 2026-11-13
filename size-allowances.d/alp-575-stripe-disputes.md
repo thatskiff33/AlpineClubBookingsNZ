@@ -5,7 +5,7 @@ lines: 1434
 reason: The dispute marker belongs beside each existing payment status chip; extracting the eleven-line addition would split the row presentation and its shared formatting context.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2766
+lines: 2765
 reason: The hold read and flag propagation belong at the existing locked settlement and post-commit Xero boundaries; those few lines cannot be separated without hiding the lock context.
 
 file: src/lib/booking-cancel.ts
@@ -29,7 +29,7 @@ lines: 964
 reason: The dispute subject-token guidance is one entry in the existing shared guidance map; a separate map would add an extra lookup solely for this template.
 
 file: src/lib/payment-recovery.ts
-lines: 3620
+lines: 3634
 reason: The dispute refusal must run immediately before the existing refund reservation. Extracting that guard would hide its order relative to the reservation it protects.
 
 file: src/lib/payment-transactions.ts
