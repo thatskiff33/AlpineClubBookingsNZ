@@ -170,7 +170,7 @@ as a red flag and check the release notes before deploying.
 **What changes.** A new nightly job clears each stay's dietary/allergy note
 (`BookingGuest.dietaryRequirements`) once the stay ended more than a set number
 of days ago, for member and non-member guests and on bookings of any status.
-Migration `20261210120000_booking_dietary_retention` adds the period (default
+Migration `20261216050000_booking_dietary_retention` adds the period (default
 **30 days**) and the switch (default **on**) to `PrivacyRetentionSettings`. It
 is additive and safe with the previous app colour still serving.
 

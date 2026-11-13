@@ -1701,7 +1701,7 @@ rollback until the new colour is back. After each window ends:
 
 ### 3.1c Old stays' dietary notes are cleared on the first nightly run (#4916)
 
-`20261210120000_booking_dietary_retention` adds the after-stay dietary clear
+`20261216050000_booking_dietary_retention` adds the after-stay dietary clear
 to `PrivacyRetentionSettings`, **switched on with a 30-day period** (owner
 decision, 11 Nov 2026). The next data-pruning run at 03:30 club time clears
 every `BookingGuest.dietaryRequirements` value whose stay ended more than 30
