@@ -203,7 +203,7 @@ export async function resolveManualRefundTask(
       throw new ManualBookingPaymentError(editRefundHandBackDismissAfterCancelMessage(task.booking), 409); // #3949: names the organiser on a group child
     }
     const groupRefusal = groupOrganiserHandBackRefusal(task, resolution, confirmedAmountCents, format); if (groupRefusal) throw new ManualBookingPaymentError(groupRefusal, 409); // #4042
-    const laterRemoval = await editReviewLaterRemovalRefusal(tx, task, resolution); if (laterRemoval) throw new ManualBookingPaymentError(laterRemoval, 409); // #4343: under lock(1), which a consent removal also holds
+    const laterRemoval = resolution === "completed" && input.refuseIfGuestRemovedSinceRaised === true ? await editReviewLaterRemovalRefusal(tx, task, resolution) : null; if (laterRemoval) throw new ManualBookingPaymentError(laterRemoval, 409); // #4343: the clean-up's opt-in, under lock(1), which a consent removal also holds; an officer is warned instead (owner, 24 Oct)
     const isEditReview = task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW;
 
     // #3030 (owner decision D2): work out the amount this completion closes at,

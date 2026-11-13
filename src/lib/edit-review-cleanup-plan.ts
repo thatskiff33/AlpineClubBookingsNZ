@@ -101,17 +101,15 @@ export type OpenEditReviewInput = {
   /** `BookingModification.changeFeeCents` already stored for that edit. */
   changeFeeAlreadyChargedCents: number;
   /**
-   * What `calculateModificationChangeFee` would charge now. Used only when
-   * check-in changed and the stored fee is still 0, so a fee already charged
-   * is not added again (D8).
+   * What the late-notice fee leaf (`lateNoticeChangeFee`) would have charged
+   * on the day the edit was made. That leaf is the one home of the owner's
+   * 10 Nov 2026 rule (an unpaid booking carries no fee), so this figure is
+   * already zero for one. Used only when check-in changed and the stored fee
+   * is still 0, so a fee already charged is not added again (D8).
    */
   prospectiveChangeFeeCents: number;
   /** The new check-in could not be read, so the fee cannot be priced. */
   changeFeeUnreadable?: boolean;
-  /** The booking's status. An unpaid, unconfirmed booking carries no change fee. */
-  bookingStatus: string;
-  /** A captured payment exists. With an unconfirmed status, the change fee is zero. */
-  paymentCaptured: boolean;
 };
 
 export function addedNightPriceKey(bookingGuestId: string, date: CalendarDate): string {
@@ -119,14 +117,10 @@ export function addedNightPriceKey(bookingGuestId: string, date: CalendarDate): 
 }
 
 /**
- * Statuses that have been confirmed. Anything else is unconfirmed: with no
- * captured payment it carries no change fee (owner, 10 Nov 2026).
- */
-const CONFIRMED_BOOKING_STATUSES = new Set(["CONFIRMED", "PAID", "COMPLETED", "CANCELLED"]);
-
-/**
  * The change fee wave B adds (D8). Zero when check-in did not move, and zero
  * when the edit already stored a positive fee — that fee was charged once.
+ * Whether the booking can carry a fee at all is the leaf's question, already
+ * answered inside `prospectiveChangeFeeCents`.
  */
 export function changeFeeToAdd(input: {
   checkInChanged: boolean;
@@ -135,18 +129,6 @@ export function changeFeeToAdd(input: {
 }): number {
   if (!input.checkInChanged || input.changeFeeAlreadyChargedCents > 0) return 0;
   return input.prospectiveChangeFeeCents;
-}
-
-/** D8, plus the unpaid-unconfirmed rule. The decision function is the only caller. */
-export function cleanupChangeFeeCents(input: {
-  checkInChanged: boolean;
-  changeFeeAlreadyChargedCents: number;
-  prospectiveChangeFeeCents: number;
-  bookingStatus: string;
-  paymentCaptured: boolean;
-}): number {
-  if (!CONFIRMED_BOOKING_STATUSES.has(input.bookingStatus) && !input.paymentCaptured) return 0;
-  return changeFeeToAdd(input);
 }
 
 function dismiss(
@@ -256,12 +238,10 @@ export function decideOpenEditReview(input: OpenEditReviewInput): OpenEditReview
     charges += addedGuests.totalPriceCents;
   }
 
-  const feeCents = cleanupChangeFeeCents({
+  const feeCents = changeFeeToAdd({
     checkInChanged: input.checkInChanged,
     changeFeeAlreadyChargedCents: input.changeFeeAlreadyChargedCents,
     prospectiveChangeFeeCents: input.prospectiveChangeFeeCents,
-    bookingStatus: input.bookingStatus,
-    paymentCaptured: input.paymentCaptured,
   });
   if (!isNonNegativeIntegerCents(feeCents)) {
     return dismiss(input, "unreadable", {

@@ -105,8 +105,10 @@ export function editFinancialReviewGuestsRemovedSinceRaised(
 
 /**
  * #4343: completing an edit review whose guest was removed since it was raised
- * would pay that removal a second time, so the completion is refused and the
- * review is left to be dismissed. Reads the booking's current party through the
+ * would pay that removal a second time, so the wave-B clean-up's completion is
+ * refused and the script dismisses the review instead. Asked only when the
+ * caller sets `refuseIfGuestRemovedSinceRaised`: an officer's completion is
+ * warned in the queue, not refused (owner, 24 Oct 2026). Reads the booking's current party through the
  * caller's transaction: `resolveManualRefundTask` holds `lock(1)`, which a
  * consent removal also takes, so the two cannot both pay. Null where it does
  * not apply (not an edit review, not a completion, or an unreadable context).

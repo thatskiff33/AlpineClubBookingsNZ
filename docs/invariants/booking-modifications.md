@@ -1460,8 +1460,8 @@ OPEN count is 0. No path raises or reopens a review.
 money-affecting edit and throws a 409 while any `EDIT_FINANCIAL_REVIEW` task on
 the booking is OPEN, because the edit would price against money the older one
 parked. Identity-only edits (`moneyAffecting: false`) pass straight through, and
-a consent-authority removal is exempt. Completing that still-open review is
-refused once the guest is gone; the cleanup dismisses it and moves no more money.
+a consent-authority removal is exempt. The cleanup dismisses that still-open
+review once the guest is gone and moves no more money; an officer is warned.
 
 ## INV-MOD-042
 

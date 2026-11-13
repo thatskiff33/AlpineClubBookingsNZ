@@ -62,8 +62,6 @@ function decisionInput(overrides: Partial<OpenEditReviewInput> & { reviewContext
     checkInChanged: false,
     changeFeeAlreadyChargedCents: 0,
     prospectiveChangeFeeCents: 0,
-    bookingStatus: "CONFIRMED",
-    paymentCaptured: true,
     ...overrides,
   };
 }
@@ -203,7 +201,10 @@ describe("pricing one open edit review (#4343)", () => {
     ).toMatchObject({ action: "dismiss", reason: "unpriced-added-night" });
   });
 
-  it("adds the change fee only when check-in moved and none was stored, and not on an unpaid unconfirmed booking", () => {
+  // Whether an unpaid booking carries a fee at all is the late-notice leaf's
+  // rule, so it arrives here already folded into prospectiveChangeFeeCents
+  // (pinned in edit-review-cleanup.test.ts).
+  it("adds the change fee only when check-in moved and none was stored", () => {
     const priced = context({
       guestTotalCents: 10_000,
       prices: [10_000, null, null],
@@ -229,8 +230,8 @@ describe("pricing one open edit review (#4343)", () => {
       decideOpenEditReview({ ...withFee, checkInChanged: false }),
     ).toMatchObject({ action: "dismiss", reason: "nothing-owing" });
     expect(
-      decideOpenEditReview({ ...withFee, bookingStatus: "DRAFT", paymentCaptured: false }),
-    ).toMatchObject({ action: "dismiss", reason: "nothing-owing", });
+      decideOpenEditReview({ ...withFee, prospectiveChangeFeeCents: 0 }),
+    ).toMatchObject({ action: "dismiss", reason: "nothing-owing" });
   });
 
   it("treats a guest add or removal, which stores no check-in, as an unchanged date", () => {

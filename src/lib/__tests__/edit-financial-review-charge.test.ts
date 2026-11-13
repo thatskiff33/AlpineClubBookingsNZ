@@ -352,11 +352,7 @@ const tx = {
     // #3498: the settle path reads every strand the item names, as a list.
     // Answered from the same fixture, so these cases keep describing the
     // single-strand review they were written for.
-    findMany: async (args?: { where?: { bookingId?: string } }) => {
-      // #4343: completing a review first reads the booking's current party, to
-      // refuse one whose guest a later removal already credited. Both guests
-      // these fixtures name are still on the booking, so none was removed.
-      if (args?.where?.bookingId !== undefined) return [{ id: "guest-1" }, { id: "guest-2" }];
+    findMany: async () => {
       const guest = await mocks.bookingGuestFindUnique();
       return guest ? [guest] : [];
     },

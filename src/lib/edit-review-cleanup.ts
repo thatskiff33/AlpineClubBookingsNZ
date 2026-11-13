@@ -2,17 +2,18 @@ import "server-only";
 
 import { ManualRefundTaskKind, type Prisma, type PrismaClient } from "@prisma/client";
 
-import { hasCapturedPayment } from "@/lib/booking-payment-state";
-import { calculateModificationChangeFee } from "@/lib/booking-modify-plan";
-import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import { censusBookingMoneyReconciliation } from "@/lib/booking-money-reconciliation-store";
+import type { CancellationPolicyDb } from "@/lib/cancellation";
 import type { ClubFormat } from "@/lib/club-format";
 import {
   calendarDateOfDateOnlyInstant,
+  clubCalendarDateOf,
   dateOnlyInstantOf,
   type CalendarDate,
   type ClubTimeZone,
 } from "@/lib/club-time";
+import { EDIT_REVIEW_LATER_REMOVAL_COMPLETION_REFUSAL } from "@/lib/edit-review-guest-removed-since-raised";
+import { lateNoticeChangeFee } from "@/lib/late-notice-change-fee";
 import {
   EDIT_FINANCIAL_REVIEW_ADDITIONAL_INTENT_RECOVERY_PREFIX,
   EDIT_FINANCIAL_REVIEW_REFUND_RECOVERY_PREFIX,
@@ -69,8 +70,15 @@ export type LoadedEditReview = {
     guests: Array<CleanupGuest & { nights: Array<{ stayDate: Date; priceCents: number | null }> }>;
     payment: { id: string; status: string; amountCents: number | null; xeroInvoiceId: string | null } | null;
   };
-  modification: { id: string; changeFeeCents: number; previousData: unknown; newData: unknown } | null;
-  /** What the normal change-fee function would charge. The decision may still add nothing. */
+  modification: {
+    id: string;
+    changeFeeCents: number;
+    previousData: unknown;
+    newData: unknown;
+    /** When the parked edit was saved: the club day its fee is priced on. */
+    createdAt: Date;
+  } | null;
+  /** What the late-notice fee leaf would have charged on the edit's day. The decision may still add nothing. */
   prospectiveChangeFeeCents: number;
 };
 
@@ -128,8 +136,6 @@ export function toOpenEditReviewInput(row: LoadedEditReview): OpenEditReviewInpu
     changeFeeAlreadyChargedCents: row.modification?.changeFeeCents ?? 0,
     prospectiveChangeFeeCents: row.prospectiveChangeFeeCents,
     changeFeeUnreadable: row.modification !== null && checkIn.unreadable,
-    bookingStatus: row.booking.status,
-    paymentCaptured: hasCapturedPayment(row.booking.payment),
   };
 }
 
@@ -211,32 +217,39 @@ const REVIEW_SELECT = {
 
 type ReviewRow = Prisma.ManualRefundTaskGetPayload<{ select: typeof REVIEW_SELECT }>;
 
-async function prospectiveFee(
-  row: ReviewRow,
+/**
+ * D8: the late-notice fee the parked edit's own door would have charged.
+ *
+ * Priced through `lateNoticeChangeFee`, the one leaf that also decides whether
+ * the booking can carry a fee at all (paid-like status or a captured payment,
+ * owner 10 Nov 2026), so it is handed the booking's payment. Measured from the
+ * modification's previous check-in (the live check-in is already the new day)
+ * and on the club day the edit was made, not the day this script runs: the
+ * normal edit prices its fee when it is saved, and a run months later would
+ * otherwise put the move in a different tier.
+ */
+export async function prospectiveEditChangeFeeCents(
+  booking: Pick<ReviewRow["booking"], "status" | "lodgeId" | "finalPriceCents" | "payment">,
   modification: LoadedEditReview["modification"],
-  store: Prisma.TransactionClient,
-  todayAtClub: CalendarDate,
+  store: CancellationPolicyDb,
+  zone: ClubTimeZone,
 ): Promise<number> {
   if (modification === null) return 0;
   const checkIn = modificationCheckInChange(modification.previousData, modification.newData);
   // Whether a stored fee is added again is the decision function's rule. This
-  // only prices the move, and it prices it from the day the edit left behind.
+  // only prices the move.
   if (!checkIn.changed || checkIn.previousCheckIn === null || checkIn.newCheckIn === null) return 0;
-  // The fee function reads status, check-in, lodge and final price only.
-  // The live booking check-in is already the new day, so it is not the original.
-  const booking = {
-    status: row.booking.status,
-    checkIn: dateOnlyInstantOf(checkIn.previousCheckIn),
-    lodgeId: row.booking.lodgeId,
-    finalPriceCents: row.booking.finalPriceCents,
-  } as LoadedBookingForModify;
-  return calculateModificationChangeFee({
-    booking,
+  return lateNoticeChangeFee({
+    booking: {
+      status: booking.status,
+      checkIn: dateOnlyInstantOf(checkIn.previousCheckIn),
+      finalPriceCents: booking.finalPriceCents,
+      payment: booking.payment,
+    },
+    lodgeId: booking.lodgeId,
     newCheckIn: dateOnlyInstantOf(checkIn.newCheckIn),
-    checkInChanged: true,
-    skipBookingLifecycleRules: false,
     db: store,
-    todayAtClub,
+    todayAtClub: clubCalendarDateOf(modification.createdAt, zone),
   });
 }
 
@@ -250,7 +263,7 @@ async function hydrateReview(
   task: ReviewRow,
   modification: LoadedEditReview["modification"],
   store: Prisma.TransactionClient,
-  todayAtClub: CalendarDate,
+  zone: ClubTimeZone,
 ): Promise<LoadedEditReview> {
   return {
     id: task.id,
@@ -260,14 +273,22 @@ async function hydrateReview(
     createdAt: task.createdAt,
     booking: task.booking,
     modification,
-    prospectiveChangeFeeCents: await prospectiveFee(task, modification, store, todayAtClub),
+    prospectiveChangeFeeCents: await prospectiveEditChangeFeeCents(task.booking, modification, store, zone),
   };
 }
+
+const MODIFICATION_SELECT = {
+  id: true,
+  changeFeeCents: true,
+  previousData: true,
+  newData: true,
+  createdAt: true,
+} as const;
 
 async function reloadOpenDecision(
   store: Prisma.TransactionClient,
   taskId: string,
-  todayAtClub: CalendarDate,
+  zone: ClubTimeZone,
 ): Promise<OpenEditReviewDecision | "closed"> {
   const task = await store.manualRefundTask.findUnique({
     where: { id: taskId },
@@ -280,15 +301,15 @@ async function reloadOpenDecision(
       ? null
       : await store.bookingModification.findUnique({
           where: { id: modificationId },
-          select: { id: true, changeFeeCents: true, previousData: true, newData: true },
+          select: MODIFICATION_SELECT,
         });
-  const row = await hydrateReview(task, modification, store, todayAtClub);
+  const row = await hydrateReview(task, modification, store, zone);
   return decideOpenEditReview(toOpenEditReviewInput(row));
 }
 
 async function loadRows(
   store: Prisma.TransactionClient,
-  todayAtClub: CalendarDate,
+  zone: ClubTimeZone,
 ): Promise<{ rows: LoadedEditReview[]; gate: CleanupGate }> {
   const tasks = await store.manualRefundTask.findMany({
     where: { kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW },
@@ -301,14 +322,14 @@ async function loadRows(
       ? []
       : await store.bookingModification.findMany({
           where: { id: { in: modificationIds } },
-          select: { id: true, changeFeeCents: true, previousData: true, newData: true },
+          select: MODIFICATION_SELECT,
         });
   const modificationById = new Map(modifications.map((row) => [row.id, row]));
   const rows: LoadedEditReview[] = [];
   for (const task of tasks) {
     const modificationId = modificationIdOf(task.reviewContext);
     const modification = modificationId ? (modificationById.get(modificationId) ?? null) : null;
-    rows.push(await hydrateReview(task, modification, store, todayAtClub));
+    rows.push(await hydrateReview(task, modification, store, zone));
   }
   const taskIds = tasks.map((task) => task.id);
   const recoveryWhere = [
@@ -361,6 +382,44 @@ export async function applyOpenEditReviews({
   const settled: OpenEditReviewDecision[] = [];
   const closedWithNoMoney: OpenEditReviewDecision[] = [];
   const leftOpen: LeftOpenRow[] = [];
+
+  // One resolver call for one decision. Only this script asks the resolver to
+  // refuse a completion whose guest was removed after the review was raised:
+  // that check runs under the resolver's lock(1), which a consent removal also
+  // takes, so a removal committing after `refreshDecision` cannot be paid twice.
+  // An officer's completion is not refused; the queue warns them instead
+  // (owner, 24 Oct 2026).
+  async function resolveDecision(decision: OpenEditReviewDecision): Promise<void> {
+    if (decision.action === "dismiss") {
+      await resolveTask(
+        {
+          taskId: decision.taskId,
+          resolution: "dismissed",
+          note: decision.note,
+          actingMemberId,
+          recordedNightPrices: null,
+        },
+        format,
+      );
+      closedWithNoMoney.push(decision);
+      return;
+    }
+    await resolveTask(
+      {
+        taskId: decision.taskId,
+        resolution: "completed",
+        note: decision.note,
+        actingMemberId,
+        confirmedAmountCents: decision.amountCents,
+        direction: decision.direction,
+        recordedNightPrices: null,
+        refuseIfGuestRemovedSinceRaised: true,
+      },
+      format,
+    );
+    settled.push(decision);
+  }
+
   for (const planned of decisions) {
     try {
       const decision = refreshDecision ? await refreshDecision(planned) : planned;
@@ -372,32 +431,20 @@ export async function applyOpenEditReviews({
         });
         continue;
       }
-      if (decision.action === "dismiss") {
-        await resolveTask(
-          {
-            taskId: decision.taskId,
-            resolution: "dismissed",
-            note: decision.note,
-            actingMemberId,
-            recordedNightPrices: null,
-          },
-          format,
-        );
-        closedWithNoMoney.push(decision);
-      } else {
-        await resolveTask(
-          {
-            taskId: decision.taskId,
-            resolution: "completed",
-            note: decision.note,
-            actingMemberId,
-            confirmedAmountCents: decision.amountCents,
-            direction: decision.direction,
-            recordedNightPrices: null,
-          },
-          format,
-        );
-        settled.push(decision);
+      try {
+        await resolveDecision(decision);
+      } catch (error) {
+        // A consent removal committed between the re-read and the resolver's
+        // lock. Re-plan once: the 24 Oct rule then dismisses the review with no
+        // money, in this same run, instead of leaving it OPEN for a rerun.
+        const laterRemoval =
+          error instanceof ManualBookingPaymentError &&
+          error.message === EDIT_REVIEW_LATER_REMOVAL_COMPLETION_REFUSAL &&
+          refreshDecision !== undefined;
+        if (!laterRemoval) throw error;
+        const replanned = await refreshDecision(planned);
+        if (replanned === "closed" || replanned.action !== "dismiss") throw error;
+        await resolveDecision(replanned);
       }
     } catch (error) {
       if (error instanceof ManualBookingPaymentError) {
@@ -441,7 +488,7 @@ export async function runEditReviewCleanup({
       throw new Error(`--actor ${actingMemberId} is not a member, so the run was not started.`);
     }
   }
-  const { rows, gate } = await withReadOnlySnapshot(client, (tx) => loadRows(tx, todayAtClub), {
+  const { rows, gate } = await withReadOnlySnapshot(client, (tx) => loadRows(tx, zone), {
     maxWait: 10_000,
     timeout: 120_000,
   });
@@ -475,7 +522,7 @@ export async function runEditReviewCleanup({
       format,
       resolveTask: resolveManualRefundTask,
       refreshDecision: (plannedDecision) =>
-        client.$transaction((tx) => reloadOpenDecision(tx, plannedDecision.taskId, todayAtClub)),
+        client.$transaction((tx) => reloadOpenDecision(tx, plannedDecision.taskId, zone)),
     });
     report.settled = applied.settled;
     report.closedWithNoMoney = applied.closedWithNoMoney;
@@ -483,7 +530,7 @@ export async function runEditReviewCleanup({
   }
 
   const headlineRows = mode === "apply"
-    ? (await withReadOnlySnapshot(client, (tx) => loadRows(tx, todayAtClub), { maxWait: 10_000, timeout: 120_000 })).rows
+    ? (await withReadOnlySnapshot(client, (tx) => loadRows(tx, zone), { maxWait: 10_000, timeout: 120_000 })).rows
     : rows;
   const headlinePlan = mode === "apply" ? planEditReviewCleanup(headlineRows) : planned;
   for (const frozen of headlinePlan.frozen) {
