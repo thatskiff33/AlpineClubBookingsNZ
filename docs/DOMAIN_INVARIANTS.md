@@ -175,6 +175,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-DATE-017` | Two check-out boundaries coexist: completion `<` today, queues `<=` today |
 | `INV-DATE-018` | Base Reports uses lodge nights, one positive cohort, cents-exact allocation |
 | `INV-CAP-001` | Capacity is per lodge; no path may sum beds across lodges |
+| `INV-CAP-039` | Screens reviewing or paying for a booking name its own lodge |
 | `INV-CAP-002` | `lodgeId` is NOT NULL on six tables via a default-lodge column default |
 | `INV-CAP-003` | `getLodgeCapacityStatus` resolves capacity; an explicit capacity caps beds |
 | `INV-CAP-004` | `capacityHoldingBookingFilter()` decides which bookings consume beds |
@@ -362,6 +363,8 @@ Prefix `INV-PAY`.
 | `INV-PAY-148` | Organiser bank-transfer edit invoices, unpaid-first netting and historical repair |
 | `INV-PAY-149` | A dead card refund closes with nothing owed or retries its card |
 | `INV-PAY-150` | A cancellation leaves a live superseded capture to its own refund |
+| `INV-PAY-151` | Paid another way reverses a covered failed card refund |
+| `INV-PAY-152` | Cancellation credit events commit with the credit they describe |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
