@@ -1,0 +1,1 @@
+- **The configuration guide now explains that the money journal is active (#4912).** Booking charges and payment receipts are already recorded, and a refused journal entry stops the change. The guide clarifies that clubs currently use the default GST-inclusive 15% treatment until the tax settings screen is available. No charges or payment behaviour changed.

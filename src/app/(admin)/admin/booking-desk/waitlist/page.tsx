@@ -872,7 +872,7 @@ export default function AdminWaitlistPage() {
                     {entry.memberId ? (
                       <Link
                         href={buildHrefWithReturnTo(
-                          `/admin/members/${entry.memberId}`,
+                          `${adminHref("member-detail", { id: entry.memberId })}`,
                           currentWaitlistPath
                         )}
                         className="hover:underline"

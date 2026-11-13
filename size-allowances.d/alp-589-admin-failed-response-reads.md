@@ -34,7 +34,7 @@ lines: 738
 reason: the preview and search reads check ok before parsing, one line more;
   splitting the panel for one line would scatter its two fetches.
 
-file: src/app/(admin)/admin/member-applications/page.tsx
+file: src/app/(admin)/admin/membership/member-applications/page.tsx
 lines: 819
 reason: the five officer actions check ok before parsing, one line more;
   splitting the page for one line would scatter its handlers.

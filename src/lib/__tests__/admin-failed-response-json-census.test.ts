@@ -52,9 +52,9 @@ const SIBLING_LANE =
 const KNOWN_UNGUARDED: Record<string, { reads: number; reason: string }> = {
   "src/app/(admin)/admin/booking-desk/book/page.tsx": { reads: 1, reason: SIBLING_LANE },
   "src/app/(admin)/admin/chores/page.tsx": { reads: 3, reason: SIBLING_LANE },
-  "src/app/(admin)/admin/family-groups/page.tsx": { reads: 1, reason: SIBLING_LANE },
+  "src/app/(admin)/admin/membership/family-groups/page.tsx": { reads: 1, reason: SIBLING_LANE },
   "src/app/(admin)/admin/lockers/page.tsx": { reads: 3, reason: SIBLING_LANE },
-  "src/app/(admin)/admin/members/[id]/_components/member-lodge-access-card.tsx": { reads: 2, reason: SIBLING_LANE },
+  "src/app/(admin)/admin/membership/members/[id]/_components/member-lodge-access-card.tsx": { reads: 2, reason: SIBLING_LANE },
   "src/app/(admin)/admin/rules/age-tier-settings/page.tsx": { reads: 1, reason: SIBLING_LANE },
   "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx": { reads: 3, reason: SIBLING_LANE },
   "src/app/(admin)/admin/rules/seasons/page.tsx": { reads: 3, reason: SIBLING_LANE },
