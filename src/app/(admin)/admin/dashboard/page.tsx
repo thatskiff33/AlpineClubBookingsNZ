@@ -408,7 +408,7 @@ export default async function AdminDashboardPage() {
 
   const canViewBookings = canViewAdminHrefWithMatrix(
     permissionMatrix,
-    "/admin/bookings",
+    adminHref("bookings"),
   );
   const canViewHutLeaders = canViewAdminHrefWithMatrix(
     permissionMatrix,
@@ -420,7 +420,7 @@ export default async function AdminDashboardPage() {
   );
   const canViewBedAllocation =
     stats.bedAllocationEnabled &&
-    canViewAdminHrefWithMatrix(permissionMatrix, "/admin/bed-allocation");
+    canViewAdminHrefWithMatrix(permissionMatrix, adminHref("bed-allocation"));
   const canViewMembers = canViewAdminHrefWithMatrix(
     permissionMatrix,
     "/admin/members",
@@ -456,8 +456,8 @@ export default async function AdminDashboardPage() {
     stats.pendingBookingReviews > 0 || stats.pendingBookingChangeRequests > 0;
   const bookingRequestsHref =
     stats.pendingBookingReviews > 0
-      ? "/admin/booking-requests?tab=approvals"
-      : "/admin/booking-requests?tab=changes";
+      ? `${adminHref("booking-requests")}?tab=approvals`
+      : `${adminHref("booking-requests")}?tab=changes`;
   const bookingApprovalSummary = [
     stats.pendingBookingReviews > 0
       ? `${stats.pendingBookingReviews} new booking review${stats.pendingBookingReviews === 1 ? "" : "s"}`
@@ -642,7 +642,7 @@ export default async function AdminDashboardPage() {
       {showOfficerRow && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {canViewBookings && (
-            <Link href="/admin/bookings?upcoming=7" className="group">
+            <Link href={`${adminHref("bookings")}?upcoming=7`} className="group">
               <Card className="h-full hover:shadow-md transition-shadow cursor-pointer">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">Bookings</CardTitle>
@@ -712,7 +712,7 @@ export default async function AdminDashboardPage() {
           )}
 
           {canViewBedAllocation && (
-            <Link href="/admin/bed-allocation" className="group">
+            <Link href={adminHref("bed-allocation")} className="group">
               <Card className="h-full hover:shadow-md transition-shadow cursor-pointer">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">
@@ -810,7 +810,7 @@ export default async function AdminDashboardPage() {
             Recent Bookings
           </h2>
           <Button variant="outline" size="sm" asChild>
-            <Link href="/admin/bookings">View all</Link>
+            <Link href={adminHref("bookings")}>View all</Link>
           </Button>
         </div>
         <Card>
@@ -934,7 +934,7 @@ export default async function AdminDashboardPage() {
             </CardHeader>
             <CardContent>
               <Button asChild variant="outline" size="sm" className="w-full">
-                <Link href="/admin/bookings">
+                <Link href={adminHref("bookings")}>
                   View Bookings
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>

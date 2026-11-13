@@ -602,7 +602,7 @@ owner decisions on #3820):
   `INV-DATE-027`; adding days to a document date is `INV-DATE-028`; and *the
   member booking calendar and the admin kiosk deliberately derive today from the
   BROWSER's calendar day* (`src/components/booking-calendar.tsx`,
-  `src/app/(admin)/admin/book/page.tsx`, #2474, `INV-DATE-014`), so "one way to
+  `src/app/(admin)/admin/booking-desk/book/page.tsx`, #2474, `INV-DATE-014`), so "one way to
   ask" holds for server-side and club-facing derivations, not literally
   everywhere. Any comparison the SERVER then makes is still the club day.
 
@@ -672,7 +672,7 @@ owner decisions on #3820):
 - **Client-side, a selected lodge night is an NZ date-only `yyyy-MM-dd` string
   carried end-to-end.** The booking calendar (`src/components/booking-calendar.tsx`),
   the member booking wizard, and the admin "book on behalf" kiosk
-  (`src/app/(admin)/admin/book/page.tsx`) never hold a lodge night as a
+  (`src/app/(admin)/admin/booking-desk/book/page.tsx`) never hold a lodge night as a
   local-midnight `new Date(year, month, day)` (#2474): that is midnight in the
   BROWSER's zone, off by one for a booker far enough from New Zealand the moment
   it reaches an instant-based API. The value submitted, the club-pinned label,

@@ -1240,7 +1240,10 @@ Xero pushes CONTACT, INVOICE, and CREDITNOTE events (the credit-note
 category has no underscore); the webhook stores each signed event as sent and
 returns fast. A category this app does not reconcile is logged and left
 processed, so it is visible without being retried forever. Reconciliation
-happens in a bounded worker kicked after the response and swept by cron.
+happens in a bounded worker kicked after the response and swept by cron. The
+kick shares the cron's `xero-inbound-reconcile` run claim
+(`runXeroWebhookInboundKick`, #4922); while another sync holds it, the kick
+applies stored events only and leaves the cursor reconciliations to the holder.
 
 **A voided refund note (#4091, `INV-ADDPAY-041`).** A credit-note void
 deactivates a payment's refund-note mirror whatever the payment: a card
