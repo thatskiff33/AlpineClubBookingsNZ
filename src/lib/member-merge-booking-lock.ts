@@ -76,12 +76,12 @@ export class MemberMergeBookingRowBusyError extends Error {
 /**
  * The single-booking wait found the row gone, or the shared budget ran out.
  * Merge converts this into the existing booking-ownership 409. Not a retry.
+ * The message is internal: the 409's wording is defined once, in
+ * `member-merge.ts` (`bookingOwnershipDrift`), and never copied here.
  */
 export class MemberMergeBookingOwnershipDriftError extends Error {
   constructor() {
-    super(
-      "Booking ownership changed while the merge was running. Nothing was saved. Re-run the preview and try again.",
-    );
+    super("Captured booking gone, or the booking wait spent the shared merge budget (#4860).");
     this.name = "MemberMergeBookingOwnershipDriftError";
   }
 }

@@ -707,6 +707,36 @@ describe("hosting coverage queue participant fence (#2597)", () => {
     }
   });
 
+  it("names the hosting participants, not the booking, when a later Member wait spends the budget (#4860)", async () => {
+    // Booking wait frees at once; the retried attempt then finds master-1 busy,
+    // and the Member wait's cleanup spends the rest. The refusal names the
+    // Member contention that used the budget up, not the earlier booking wait.
+    let now = 1_000;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      const { db } = mergeParticipantDb([1, 0, 1, 2, 2, 1, 0, 1]);
+      const answer = db.$executeRaw.getMockImplementation()!;
+      db.$executeRaw.mockImplementation((sql) => {
+        const text = (sql.strings ?? []).join("?");
+        if (text === "RELEASE SAVEPOINT member_merge_participant_wait") {
+          now += MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS;
+        }
+        return answer(sql);
+      });
+      let attempts = 0;
+      await expect(
+        withMemberMergeParticipantRows(db as never, async () => {
+          attempts += 1;
+          await lockCapturedLoserOwnedBookings(db as never, CAPTURED_BOOKINGS);
+          return { participantIds: ALL, result: "held" };
+        }),
+      ).rejects.toBeInstanceOf(HostingCoverageParticipantRetryError);
+      expect(attempts).toBe(2);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it("issues no booking statement when the captured set is empty (#4860)", async () => {
     const { db, statements } = mergeParticipantDb([3]);
     await withMemberMergeParticipantRows(db as never, async () => {

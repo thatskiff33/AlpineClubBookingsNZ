@@ -498,7 +498,8 @@ async function rollBackAttempt(db: MemberMergeParticipantDb): Promise<void> {
  * not a second 10 seconds for bookings. The loop cannot spin: an attempt
  * either takes every row, or waits until the row frees or the budget is gone.
  * A Member wait that runs out lands on `HostingCoverageParticipantRetryError`.
- * A booking wait that runs out lands on `MemberMergeBookingOwnershipDriftError`.
+ * A booking wait that runs out lands on `MemberMergeBookingOwnershipDriftError`,
+ * and so does a budget found spent at the next pass after a booking wait.
  * While it waits merge holds none of these rows and none of the attempt's
  * writes. The lock bound only exists inside the wait's savepoint, so later locks keep their
  * ordinary failure semantics. Advisory keys taken before this call stay held,
@@ -510,8 +511,14 @@ export async function withMemberMergeParticipantRows<T>(
 ): Promise<{ lockedMemberIds: readonly string[]; result: T }> {
   const deadline = performance.now() + MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS;
   const remainingBudget = () => Math.ceil(deadline - performance.now());
+  // A budget spent straight after a booking wait is the booking refusal.
+  let lastWaitWasBooking = false;
   for (;;) {
-    if (remainingBudget() <= 0) throw new HostingCoverageParticipantRetryError();
+    if (remainingBudget() <= 0) {
+      throw lastWaitWasBooking
+        ? new MemberMergeBookingOwnershipDriftError()
+        : new HostingCoverageParticipantRetryError();
+    }
     await db.$executeRaw(ATTEMPT_SAVEPOINT.open);
     let planned: { participantIds: readonly string[]; result: T };
     try {
@@ -523,11 +530,10 @@ export async function withMemberMergeParticipantRows<T>(
         const remaining = remainingBudget();
         if (remaining <= 0) throw new MemberMergeBookingOwnershipDriftError();
         const waited = await waitForOneBookingRow(db, error.bookingId, remaining);
-        // Releasing the wait savepoint also spends the shared budget. Preserve
-        // the booking refusal if that cleanup leaves no time for another attempt.
-        if (waited !== "free" || remainingBudget() <= 0) {
-          throw new MemberMergeBookingOwnershipDriftError();
-        }
+        if (waited !== "free") throw new MemberMergeBookingOwnershipDriftError();
+        // The loop-top budget check then refuses as booking drift, even when
+        // the wait's own cleanup spent what was left.
+        lastWaitWasBooking = true;
         continue;
       }
       throw error;
@@ -566,6 +572,7 @@ export async function withMemberMergeParticipantRows<T>(
     if (remaining <= 0) throw new HostingCoverageParticipantRetryError();
     const waited = await waitForOneParticipantRow(db, busy, remaining);
     if (waited !== "free") throw new HostingCoverageParticipantRetryError();
+    lastWaitWasBooking = false;
   }
 }
 

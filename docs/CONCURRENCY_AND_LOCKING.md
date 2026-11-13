@@ -3740,9 +3740,11 @@ On the successful attempt the booking locks are held through the Member
 `FOR UPDATE` and on to commit, which keeps #4840 (booking rows before the
 Member rows). The single-booking wait releases its row before the retry, so it
 does not invert that order. Merge never blocks on a booking while it holds
-another. A row that is gone, or a wait that runs out (`55P03`), refuses with
+another. A row that is gone, a wait that runs out (`55P03`), or a budget found
+spent at the next pass straight after a booking wait refuses with
 the existing booking-ownership 409 (`merge_drift_in_transaction`,
-`driftFields: ["Booking.member"]`). A row that still exists but no longer names
+`driftFields: ["Booking.member"]`). A budget spent after a later Member wait
+names the hosting participants instead. A row that still exists but no longer names
 the loser is locked by id, and the existing count check 409s the same way.
 
 The other `Booking` column sweeps stay a blocking `updateMany`. They re-point
