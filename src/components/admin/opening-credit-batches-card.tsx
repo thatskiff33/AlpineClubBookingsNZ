@@ -19,7 +19,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { parseInstant } from "@/lib/club-time"
 import type { OpeningCreditBatchListItem, OpeningCreditPreview } from "@/lib/opening-credit-batch"
@@ -238,11 +240,10 @@ export function OpeningCreditBatchesCard({
           <div className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="opening-credit-file">CSV file</Label>
-              <input
+              <Input
                 id="opening-credit-file"
                 type="file"
                 accept=".csv,text/csv"
-                className="block text-sm"
                 disabled={busy}
                 onChange={(event) => void chooseFile(event.target.files?.[0])}
               />
@@ -283,20 +284,20 @@ export function OpeningCreditBatchesCard({
                   </p>
                 ) : null}
                 <div className="max-h-80 overflow-auto rounded-md border">
-                  <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-muted text-left">
-                      <tr>
-                        <th className="px-3 py-2">Line</th>
-                        <th className="px-3 py-2">Member</th>
-                        <th className="px-3 py-2 text-right">Amount</th>
-                        <th className="px-3 py-2">Description</th>
-                      </tr>
-                    </thead>
-                    <tbody>
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-muted">
+                      <TableRow>
+                        <TableHead>Line</TableHead>
+                        <TableHead>Member</TableHead>
+                        <TableHead className="text-right">Amount</TableHead>
+                        <TableHead>Description</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
                       {preview.rows.map((row) => (
-                        <tr key={row.lineNumber} className="border-t align-top">
-                          <td className="px-3 py-2">{row.lineNumber}</td>
-                          <td className="px-3 py-2">
+                        <TableRow key={row.lineNumber} className="align-top">
+                          <TableCell>{row.lineNumber}</TableCell>
+                          <TableCell>
                             {row.memberName ? (
                               <>
                                 <span className="font-medium">{row.memberName}</span>
@@ -310,15 +311,15 @@ export function OpeningCreditBatchesCard({
                                 Line {row.lineNumber} {message}
                               </span>
                             ))}
-                          </td>
-                          <td className="px-3 py-2 text-right">
+                          </TableCell>
+                          <TableCell className="text-right">
                             {row.amountCents === null ? "—" : formatCents(row.amountCents, format)}
-                          </td>
-                          <td className="px-3 py-2">{row.description}</td>
-                        </tr>
+                          </TableCell>
+                          <TableCell>{row.description}</TableCell>
+                        </TableRow>
                       ))}
-                    </tbody>
-                  </table>
+                    </TableBody>
+                  </Table>
                 </div>
               </div>
             ) : null}
