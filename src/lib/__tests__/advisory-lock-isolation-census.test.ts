@@ -6,6 +6,10 @@ import { incompatibleLockTransactions } from "./support/advisory-lock-isolation"
 // INV-LOCK-005: no approved exceptions. Any future entry needs its reason here.
 const ALLOWED: Readonly<Record<string, string>> = {};
 
+// The whole-src case parses about 3,100 files: roughly 4 to 6 seconds idle and
+// several times that on a busy CI runner. Same limit as the step-up census (#5040).
+const CENSUS_TIMEOUT_MS = 90_000;
+
 function sources(dir: string): Array<{ file: string; text: string }> {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
     const full = path.join(dir, entry.name);
@@ -22,7 +26,7 @@ describe("advisory lock transaction isolation (INV-LOCK-005)", () => {
     const violations = incompatibleLockTransactions(files);
     expect(violations.filter(site => !ALLOWED[site]), "INV-LOCK-005: snapshot isolation hides commits made while waiting on advisory locks").toEqual([]);
     expect(Object.keys(ALLOWED).filter(site => !violations.includes(site)), "stale isolation exceptions").toEqual([]);
-  }, 15_000);
+  }, CENSUS_TIMEOUT_MS);
 
   it.each(["Serializable", "RepeatableRead"])("finds %s with inline locks, helpers, aliases and wrappers", level => {
     const result = incompatibleLockTransactions([
