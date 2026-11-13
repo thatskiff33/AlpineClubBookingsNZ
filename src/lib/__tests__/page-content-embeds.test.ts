@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
+vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
 
 // Mutable identity state so URL-token tests can vary the configured values;
 // getters make the mocked module read the current state on every access.
@@ -44,6 +45,7 @@ vi.mock("@/lib/lodge-capacity", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    privacyRetentionSettings: { findUnique: vi.fn(async () => null) },
     lodge: {
       findUnique: vi.fn(async ({ where }: { where: { slug: string } }) =>
         where.slug === "river-lodge" ? { id: "lodge-2" } : null,
@@ -81,6 +83,8 @@ import {
 import { sanitizePageContentHtml } from "../page-content-html";
 import { starterSiteContent } from "../../../prisma/starter-site-content";
 import logger from "@/lib/logger";
+import { prisma } from "@/lib/prisma";
+import { DEFAULT_PRIVACY_RETENTION_SETTINGS, privacyRetentionSettingsSchema } from "@/lib/privacy-retention-shared";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("buildEmbeddedBody", () => {
@@ -510,5 +514,59 @@ describe("hosting disclosure token", () => {
   it("preserves unknown tokens verbatim, explaining the two-release boundary", async () => {
     const html = "<p>{{future-unknown-hosting}}</p>";
     expect(await resolveTextTokens(html, CLUB_FORMAT_TEST)).toBe(html);
+  });
+});
+
+describe("email-log-retention token", () => {
+  beforeEach(() => {
+    vi.mocked(prisma.privacyRetentionSettings.findUnique).mockReset();
+    vi.mocked(prisma.privacyRetentionSettings.findUnique).mockResolvedValue(null);
+  });
+
+  it("uses the default policy when there is no settings row", async () => {
+    expect(DEFAULT_PRIVACY_RETENTION_SETTINGS.pruneLogsAndApplicationsEnabled).toBe(false);
+    expect(await resolveTextTokens("{{email-log-retention}}", CLUB_FORMAT_TEST))
+      .toBe("kept with automatic deletion switched off");
+  });
+
+  it.each([
+    [false, 3, "kept with automatic deletion switched off"],
+    [true, 1, "kept for 1 year, then automatically deleted"],
+    [true, 3, "kept for 3 years, then automatically deleted"],
+    [true, 100, "kept for 100 years, then automatically deleted"],
+  ])("renders enabled=%s, years=%s through the shared public/preview renderer", async (enabled, years, expected) => {
+    vi.mocked(prisma.privacyRetentionSettings.findUnique).mockResolvedValue({
+      ...DEFAULT_PRIVACY_RETENTION_SETTINGS,
+      pruneLogsAndApplicationsEnabled: enabled,
+      emailLogRetentionYears: years,
+    } as never);
+    expect(await buildEmbeddedBody(`<p>{{email-log-retention}}</p>`))
+      .toEqual([{ type: "html", value: `<p>${expected}</p>` }]);
+  });
+
+  it("reads only once for repeated tokens and reads again on the next render", async () => {
+    const read = vi.mocked(prisma.privacyRetentionSettings.findUnique);
+    expect(await resolveTextTokens("{{email-log-retention}} / {{EMAIL-LOG-RETENTION}}", CLUB_FORMAT_TEST))
+      .toBe("kept with automatic deletion switched off / kept with automatic deletion switched off");
+    expect(read).toHaveBeenCalledTimes(1);
+    read.mockResolvedValue({ ...DEFAULT_PRIVACY_RETENTION_SETTINGS, pruneLogsAndApplicationsEnabled: true, emailLogRetentionYears: 3 } as never);
+    expect(await resolveTextTokens("{{email-log-retention}}", CLUB_FORMAT_TEST))
+      .toBe("kept for 3 years, then automatically deleted");
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not query retention settings without the token", async () => {
+    await resolveTextTokens("<p>{{club-name}}</p>", CLUB_FORMAT_TEST);
+    expect(prisma.privacyRetentionSettings.findUnique).not.toHaveBeenCalled();
+  });
+
+  it.each([0, -1, 101, 1.5, "<script>alert(1)</script>"])("refuses a stored period outside the schema: %s", async (years) => {
+    vi.mocked(prisma.privacyRetentionSettings.findUnique).mockResolvedValue({
+      ...DEFAULT_PRIVACY_RETENTION_SETTINGS,
+      pruneLogsAndApplicationsEnabled: true,
+      emailLogRetentionYears: years,
+    } as never);
+    expect(privacyRetentionSettingsSchema.safeParse({ ...DEFAULT_PRIVACY_RETENTION_SETTINGS, emailLogRetentionYears: years }).success).toBe(false);
+    await expect(resolveTextTokens("{{email-log-retention}}", CLUB_FORMAT_TEST)).rejects.toThrow();
   });
 });
