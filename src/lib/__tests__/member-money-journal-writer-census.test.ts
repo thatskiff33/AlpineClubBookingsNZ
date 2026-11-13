@@ -221,7 +221,7 @@ function referencing(): string[] {
     .filter((file) => REFERENCE.some((pattern) => pattern.test(readFileSync(join(ROOT, file), "utf8"))));
 }
 
-describe("member money journal stays inert in M1 (#4513)", () => {
+describe("member money journal writer and reader boundaries (#4513, #4627)", () => {
   const found = referencing();
 
   it("has no reader or writer outside the boundary and its named support files", () => {

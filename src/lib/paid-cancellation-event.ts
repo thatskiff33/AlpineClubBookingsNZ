@@ -47,19 +47,13 @@ export function paidCancellationBranch(params: {
  * INSERT aborts the Postgres transaction anyway (the reason `recordBookingEvent`
  * says never to call it inside one), so a swallowed failure could not keep the
  * claim; throwing rolls the cancel back and the member retries, where the old
- * order committed a cancellation with no record of what it decided. NOT QUITE
- * CLEANLY on the credit branch: `createCancellationCredit` has already written
- * its CREDITED event on the base client (deliberately outside the caller's
- * transaction), so that event survives the rollback and a retry writes a second
- * one. That exposure predates #3639 for every in-claim failure after it; this is
- * one more point where it applies. One of the documented exceptions to
- * `recordBookingEvent`'s best-effort rule (`booking-events.ts`).
+ * order committed a cancellation with no record of what it decided. The credit
+ * branch's CREDITED event also commits with its credit (`INV-PAY-152`). Both
+ * are documented exceptions to `recordBookingEvent`'s best-effort rule.
  *
  * The content is exactly what the four post-commit writes produced, one
- * sentence per branch. `occurredAt` is left to the database default, which
- * inside a transaction is its start: the event now precedes the credit path's
- * CREDITED event (written on the base client) rather than following it. The
- * narrative finds each by type, never by order.
+ * sentence per branch. `occurredAt` defaults to the transaction's start, shared
+ * with CREDITED. The narrative finds each by type, never by their relative order.
  */
 /** #3611: what the ledger was told the club keeps, frozen with the decision. */
 export type CancellationLedgerSnapshot = {
