@@ -38,6 +38,7 @@ import { StripeDisputeStatus, type StripeDispute } from "@prisma/client";
 import { findHeldOnceEverAlertKeys } from "@/lib/admin-alert-once";
 import { sendAdminAlertOnceEverWithTakeover } from "@/lib/admin-alert-once-takeover";
 import { ALERT_ONCE_EVER_WINDOW_MS, claimAlertCooldown } from "@/lib/alert-cooldown";
+import { bookingOwner } from "@/lib/booking-owner";
 import type { ClubFormat } from "@/lib/club-format";
 import { sendAdminStripeDisputeAlert } from "@/lib/email";
 import { UNMUTEABLE_ALERT_SENT } from "@/lib/email/admin-alert-send-result";
@@ -378,12 +379,18 @@ async function bookingOwnerName(bookingId: string | null): Promise<string> {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     select: {
+      memberId: true,
+      organisationId: true,
       member: { select: { firstName: true, lastName: true } },
       organisation: { select: { name: true } },
     },
   });
-  if (booking?.member) return `${booking.member.firstName} ${booking.member.lastName}`.trim();
-  return booking?.organisation?.name ?? NONE;
+  if (!booking) return NONE;
+  // `INV-SSOT-005`: the accessor answers who owns it, member or organisation.
+  // A member named but unreadable comes back empty; the alert still goes.
+  const owner = bookingOwner(booking).member as { firstName: string; lastName: string } | null;
+  if (!owner) return NONE;
+  return `${owner.firstName} ${owner.lastName}`.trim() || NONE;
 }
 
 async function alertFields(

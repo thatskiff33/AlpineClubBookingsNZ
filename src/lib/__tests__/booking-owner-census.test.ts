@@ -466,7 +466,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/arrival-time/route.ts:248",
   "src/app/api/bookings/[id]/arrival-time/route.ts:298",
   "src/app/api/bookings/[id]/arrival-time/route.ts:367",
-  "src/app/api/bookings/[id]/cancel-preview/route.ts:78",
+  "src/app/api/bookings/[id]/cancel-preview/route.ts:79",
   "src/app/api/bookings/[id]/change-requests/quote/route.ts:76",
   "src/app/api/bookings/[id]/change-requests/route.ts:179",
   "src/app/api/bookings/[id]/change-requests/route.ts:504",
@@ -487,8 +487,8 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/switch-to-internet-banking/route.ts:127",
   "src/lib/adult-member-hosting-review.ts:3256",
   "src/lib/booking-batch-modification-service.ts:1094",
-  "src/lib/booking-cancel.ts:2537",
-  "src/lib/booking-cancel.ts:568",
+  "src/lib/booking-cancel.ts:2558",
+  "src/lib/booking-cancel.ts:571",
   "src/lib/booking-date-modification-service.ts:413",
   "src/lib/booking-delete.ts:120",
   "src/lib/booking-delete.ts:69",
@@ -523,8 +523,8 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
   "src/lib/member-guest-consent-service.ts:1355",
-  "src/lib/payment-recovery.ts:2751",
-  "src/lib/payment-recovery.ts:2803",
+  "src/lib/payment-recovery.ts:2754",
+  "src/lib/payment-recovery.ts:2806",
   "src/lib/xero-admin-health.ts:400",
 ];
 

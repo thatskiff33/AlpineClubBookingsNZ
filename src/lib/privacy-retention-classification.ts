@@ -69,6 +69,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   PaymentTransaction: "personal",
   PaymentRefund: "personal",
   UnrecognisedStripePayment: "personal",
+  StripeDispute: "personal",
   RateLimitCounter: "personal",
   LoginThrottle: "personal",
   AlertCooldown: "personal",

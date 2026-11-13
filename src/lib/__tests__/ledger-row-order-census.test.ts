@@ -143,6 +143,9 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
   "src/lib/xero-inbound/settle-from-cash.ts > decideInternetBankingReceiptFigure":
     "planInternetBankingCashSettlement filters and sums the rows (the IB primary rows, the ledger's " +
     "refunded total, the captured non-IB cash); no figure depends on the order.",
+  "src/lib/stripe-dispute-hold.ts > paymentCaptureIntentIds":
+    "#4911 (INV-PAY-153): collects the payment's capture intent ids into a de-duplicated set that " +
+    "disputedCaptureCents reads only through an `in` filter and a sum; no answer depends on the order.",
 };
 
 /**
