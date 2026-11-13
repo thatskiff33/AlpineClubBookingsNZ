@@ -7,10 +7,9 @@ name: Status board
 # to edit. The board itself is `pnpm run status` (`scripts/status-board.mjs`).
 #
 # THE TARGET ISSUE IS A REPOSITORY VARIABLE, NOT A NUMBER IN THIS FILE.
-# `STATUS_BOARD_ISSUE` (Settings -> Secrets and variables -> Actions ->
-# Variables) holds the issue number. Until the owner sets it (the machine
-# account cannot) the job exits cleanly with a warning and a job-summary note;
-# it creates nothing and writes no issue. Setup lives in
+# `STATUS_BOARD_ISSUE` holds the issue number. Until the owner sets it (the
+# machine account cannot) the job exits cleanly with a warning and a
+# job-summary note; it creates nothing and writes no issue. Setup lives in
 # docs/agents/COORDINATION.md -> "The status board".
 #
 # NOT A REQUIRED CHECK, and it never will be: it has no `pull_request` or
@@ -67,7 +66,7 @@ jobs:
           if [ -z "${STATUS_BOARD_ISSUE}" ]; then
             echo "::warning title=Status board::The repository variable STATUS_BOARD_ISSUE is not set, so nothing was written. See docs/agents/COORDINATION.md -> The status board for setup."
             echo 'The hosted status board is not live: STATUS_BOARD_ISSUE is unset.' >> "${GITHUB_STEP_SUMMARY}"
-            echo '`pnpm run status` prints the same board locally.' >> "${GITHUB_STEP_SUMMARY}"
+            printf '`pnpm run status %s` prints the same board locally.\n' "${GITHUB_REPOSITORY}" >> "${GITHUB_STEP_SUMMARY}"
             echo "run=false" >> "${GITHUB_OUTPUT}"
           elif printf '%s' "${STATUS_BOARD_ISSUE}" | grep -Eq '^[1-9][0-9]{0,8}$'; then
             echo "run=true" >> "${GITHUB_OUTPUT}"

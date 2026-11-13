@@ -34,7 +34,7 @@ remaining decisions live in their own issues.
 
 `.github/workflows/status-board.yml` overwrites one issue hourly with
 `GITHUB_TOKEN`. Setup: a lane or owner creates and pins an empty issue
-(`gh issue create --title "Status board" --body ""`; blank issues are disabled).
+(`gh issue create --title "Status board" --body ""`, or clear a template body).
 The owner sets repository variable `STATUS_BOARD_ISSUE` to its number under
 Settings → Secrets and variables → Actions → Variables; the machine account
 lacks admin. The board is live only once a run writes it; until then use
