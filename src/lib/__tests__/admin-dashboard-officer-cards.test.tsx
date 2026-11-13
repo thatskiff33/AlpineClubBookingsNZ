@@ -31,18 +31,19 @@ vi.mock("@/lib/prisma", () => ({
       upsert: vi.fn(),
       delete: vi.fn(),
     },
-    refundRequest: { count: vi.fn() },
-    adminCreditAdjustmentRequest: { count: vi.fn() },
-    membershipCancellationRequest: { count: vi.fn() },
-    memberLifecycleActionRequest: { count: vi.fn() },
-    deletionRequest: { count: vi.fn() },
-    bookingChangeRequest: { count: vi.fn() },
     lodge: { count: vi.fn() },
   },
 }));
 
 vi.mock("@/lib/auth", () => ({
   auth: vi.fn(),
+}));
+
+// #4962: the attention cards read the one work-queue counter the sidebar's
+// Needs Attention badges read; its queries are pinned in
+// admin-pending-counts.test.ts.
+vi.mock("@/lib/admin-pending-counts", () => ({
+  getAdminPendingCounts: vi.fn(),
 }));
 
 // Partial mock: only the query is faked. coverageNeedsLodgeContext and
@@ -63,6 +64,8 @@ vi.mock("@/lib/module-settings", async (importOriginal) => ({
 }));
 
 import AdminDashboardPage from "@/app/(admin)/admin/dashboard/page";
+import { getAdminPendingCounts } from "@/lib/admin-pending-counts";
+import { ZERO_ADMIN_PENDING_COUNTS } from "@/lib/admin-work-queues";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import { auth } from "@/lib/auth";
@@ -98,8 +101,18 @@ const CLUB_ZONE = "Pacific/Auckland";
 // getStats booking.count call order (roster + bed counts no longer use
 // booking.count — they now run through window-scoped helpers that findMany
 // bookings + choreAssignments / bedAllocations): totalBookings, activeBookings,
-// upcomingCheckIns, unpaidFinishedStays, unsettledAdditionalFinishedStays,
-// pendingBookingReviews.
+// upcomingCheckIns. Every work-queue count comes from getAdminPendingCounts
+// (#4962), all zero unless a test says otherwise.
+function mockPendingCounts(
+  counts: Partial<Awaited<ReturnType<typeof getAdminPendingCounts>>>,
+) {
+  vi.mocked(getAdminPendingCounts).mockResolvedValue({
+    ...ZERO_ADMIN_PENDING_COUNTS,
+    unavailable: [],
+    ...counts,
+  });
+}
+
 function mockStats() {
   vi.mocked(auth).mockResolvedValue({ user: { id: "admin-1" } } as any);
   vi.mocked(prisma.member.count)
@@ -109,10 +122,8 @@ function mockStats() {
   vi.mocked(prisma.booking.count)
     .mockResolvedValueOnce(120) // totalBookings
     .mockResolvedValueOnce(15) // activeBookings
-    .mockResolvedValueOnce(7) // upcomingCheckIns
-    .mockResolvedValueOnce(0) // unpaidFinishedStays
-    .mockResolvedValueOnce(0) // unsettledAdditionalFinishedStays
-    .mockResolvedValueOnce(0); // pendingBookingReviews
+    .mockResolvedValueOnce(7); // upcomingCheckIns
+  mockPendingCounts({});
 
   // The reworked officer-card counts compute over real fixtures so the headline
   // reconciles with each surface's own semantics (#2091 review). A single guest
@@ -219,12 +230,6 @@ function mockStats() {
       booking: { deletedAt: null, manualRefundTasks: [] },
     },
   ] as any);
-  vi.mocked(prisma.refundRequest.count).mockResolvedValue(0);
-  vi.mocked(prisma.adminCreditAdjustmentRequest.count).mockResolvedValue(0);
-  vi.mocked(prisma.membershipCancellationRequest.count).mockResolvedValue(0);
-  vi.mocked(prisma.memberLifecycleActionRequest.count).mockResolvedValue(0);
-  vi.mocked(prisma.deletionRequest.count).mockResolvedValue(0);
-  vi.mocked(prisma.bookingChangeRequest.count).mockResolvedValue(0);
   // A single-lodge club unless a test says otherwise: the Presentation Rule is
   // keyed on the club's active-lodge count (#2917 review), so this is what
   // decides whether the card names lodges at all.
@@ -502,11 +507,19 @@ describe("admin dashboard hut-leader coverage card", () => {
     vi.clearAllMocks();
     vi.mocked(prisma.clubTimeSettings.findUnique).mockResolvedValue(null);
     mockStats();
-    mockActorMatrix({ overview: "view" });
+    // #4962: the card shows only to an actor who can open the queue it links
+    // to, the same rule the sidebar's Needs Attention entry follows.
+    mockActorMatrix({ overview: "view", lodge: "view" });
+    // ...and only while the hut-leaders module is on.
+    vi.mocked(loadEffectiveModuleFlags).mockResolvedValue({
+      hutLeaders: true,
+    } as Awaited<ReturnType<typeof loadEffectiveModuleFlags>>);
   });
 
   it("names each lodge and counts lodge-nights when two lodges are uncovered on one night", async () => {
     vi.mocked(prisma.lodge.count).mockResolvedValue(2);
+    // The sidebar badge's number, from the same coverage read (#4962).
+    mockPendingCounts({ unassignedHutLeaderDates: 2 });
     vi.mocked(getHutLeaderDashboardCoverage).mockResolvedValue({
       unassignedDates: [
         uncoveredLodgeNight("2026-07-05", "lodge-a", "Alpine Lodge"),
@@ -531,6 +544,8 @@ describe("admin dashboard hut-leader coverage card", () => {
     // dates here — the rejected Option B outcome — and would flip the wording the
     // moment Basin lost cover (#2917 review). It is keyed on the club instead.
     vi.mocked(prisma.lodge.count).mockResolvedValue(3);
+    // The sidebar badge's number, from the same coverage read (#4962).
+    mockPendingCounts({ unassignedHutLeaderDates: 2 });
     vi.mocked(getHutLeaderDashboardCoverage).mockResolvedValue({
       unassignedDates: [
         uncoveredLodgeNight("2026-07-05", "lodge-a", "Alpine Lodge"),
@@ -552,6 +567,8 @@ describe("admin dashboard hut-leader coverage card", () => {
     // so its guests still arrive and still need a leader — and the workspace's
     // lodge selector cannot offer it, which is why the label says so.
     vi.mocked(prisma.lodge.count).mockResolvedValue(1);
+    // The sidebar badge's number, from the same coverage read (#4962).
+    mockPendingCounts({ unassignedHutLeaderDates: 1 });
     vi.mocked(getHutLeaderDashboardCoverage).mockResolvedValue({
       unassignedDates: [
         uncoveredLodgeNight("2026-07-05", "lodge-b", "Basin Lodge", false),
@@ -566,6 +583,8 @@ describe("admin dashboard hut-leader coverage card", () => {
 
   it("shows a single-lodge club the bare dates and the plain wording it saw before", async () => {
     vi.mocked(prisma.lodge.count).mockResolvedValue(1);
+    // The sidebar badge's number, from the same coverage read (#4962).
+    mockPendingCounts({ unassignedHutLeaderDates: 2 });
     vi.mocked(getHutLeaderDashboardCoverage).mockResolvedValue({
       unassignedDates: [
         uncoveredLodgeNight("2026-07-05", "lodge-a", "Alpine Lodge"),

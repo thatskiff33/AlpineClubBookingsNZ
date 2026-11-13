@@ -120,8 +120,8 @@ export async function getAdminPendingCounts(input?: {
   );
 
   const counts = { unavailable: [] } as unknown as AdminPendingCounts;
-  settled.forEach((result, index) => {
-    const key = ADMIN_PENDING_COUNT_KEYS[index];
+  ADMIN_PENDING_COUNT_KEYS.forEach((key, index) => {
+    const result = settled[index]!;
     if (result.status === "fulfilled") {
       counts[key] = result.value;
       return;

@@ -1930,6 +1930,8 @@ describe("the registry is inert", () => {
       "C8: the Messages & email links are adminLink; " +
       "C9: the Members links and badges are adminLink and adminHref; " +
       "C10: the Bookings links and the Booking Requests badge are adminLink and adminHref",
+    "src/lib/admin-work-queues.ts":
+      "#4962: each officer work queue's link and label are adminLink and adminHref",
     "src/components/admin-sidebar-controls.tsx":
       "C14: the role menu lists one link per hub, in registry order, at the hub root",
     "src/lib/admin-page-revalidation.ts": "C3: revalidateAdminPage revalidates a page's file path",
