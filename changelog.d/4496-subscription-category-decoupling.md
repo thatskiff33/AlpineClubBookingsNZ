@@ -25,4 +25,6 @@
 
   Bulk category assignment, filtering the members list by category, and
   Xero contact grouping by category are not part of this change; assignment
-  is one member at a time, from their profile, for now.
+  is one member at a time, from their profile, for now. Export & Import does
+  not carry subscription categories or their fees yet; recreate them by hand
+  on the target deployment.

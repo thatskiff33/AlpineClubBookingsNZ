@@ -72,7 +72,7 @@ function payload(options: {
   subscriptionCategoryName?: string | null;
   chargeMembershipTypeName?: string | null;
   chargeSubscriptionCategoryName?: string | null;
-  exemptMembers?: Array<{ memberId: string; memberName: string; ageTier: string | null }>;
+  exemptMembers?: Array<{ memberId: string; memberName: string; ageTier: string | null; exemptBy?: "AGE_TIER" | "MEMBERSHIP_TYPE"; membershipTypeName?: string }>;
   ungroupedCategoryMembers?: Array<{
     subscriptionCategoryId: string;
     subscriptionCategoryName: string;
@@ -271,6 +271,22 @@ describe("subscription billing panel", () => {
     expect(await screen.findByText(/Exempt \(2\)/)).toBeTruthy();
     expect(screen.getByText("Kid One")).toBeTruthy();
     expect(screen.getByText("Kid Two")).toBeTruthy();
+  });
+
+  // #4496 review: a category member exempt by a NOT_REQUIRED membership type
+  // is listed with the type as the reason, never an age tier.
+  it("names the membership type, not an age tier, for a member exempt by type", async () => {
+    mocks.canEdit.mockReturnValue(true);
+    vi.mocked(fetch).mockImplementation(() => successResponse(payload({
+      exemptMembers: [
+        { memberId: "kid-1", memberName: "Kid One", ageTier: "CHILD", exemptBy: "AGE_TIER" },
+        { memberId: "life-1", memberName: "Life One", ageTier: null, exemptBy: "MEMBERSHIP_TYPE", membershipTypeName: "Life Member" },
+      ],
+    })));
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    expect(await screen.findByText(/no subscription required by age tier or membership type/)).toBeTruthy();
+    expect(screen.getByText("Membership type: Life Member")).toBeTruthy();
+    expect(screen.getByText("CHILD")).toBeTruthy();
   });
 
   // Subscription-category decoupling (review finding): 2+ members billed

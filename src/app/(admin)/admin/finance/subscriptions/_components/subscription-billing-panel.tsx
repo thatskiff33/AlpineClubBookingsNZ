@@ -61,10 +61,15 @@ type BillingData = {
     // required by design). Shown in a collapsed informational "Exempt" section,
     // never raised as MISSING_FEE_SCHEDULE. Optional so an older cached response
     // without the field still renders.
+    // `exemptBy` (#4496) is "MEMBERSHIP_TYPE" for a subscription-category
+    // member whose membership type needs no subscription; optional so an
+    // older cached response still renders as age-tier rows.
     exemptMembers?: Array<{
       memberId: string;
       memberName: string;
       ageTier: string | null;
+      exemptBy?: "AGE_TIER" | "MEMBERSHIP_TYPE";
+      membershipTypeName?: string;
     }>;
     // #2147 (D3): members suppressed from the preview because their season
     // subscription already holds a live Xero invoice. Shown in a collapsed
@@ -408,17 +413,19 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
             {(data.preview.exemptMembers ?? []).length > 0 ? (
               <details className="rounded-md border p-3 text-sm">
                 <summary className="cursor-pointer font-medium">
-                  Exempt ({(data.preview.exemptMembers ?? []).length}) — no subscription required by age tier
+                  Exempt ({(data.preview.exemptMembers ?? []).length}) — no subscription required by {(data.preview.exemptMembers ?? []).some((row) => row.exemptBy === "MEMBERSHIP_TYPE") ? "age tier or membership type" : "age tier"}
                 </summary>
                 <p className="mt-1 text-muted-foreground">
-                  These members are in an age tier that does not require a paid subscription, so no annual fee is charged and no MISSING_FEE_SCHEDULE exception is raised. Confirming the batch records a NOT_REQUIRED subscription for the season.
+                  These members are in an age tier, or hold a membership type, that does not require a paid subscription, so no annual fee is charged and no MISSING_FEE_SCHEDULE exception is raised. Confirming the batch records a NOT_REQUIRED subscription for the season.
                 </p>
                 <ul className="mt-2 space-y-1">
                   {(data.preview.exemptMembers ?? []).map((row) => (
                     <li key={row.memberId} className="flex flex-wrap items-center justify-between gap-2">
                       <span>{row.memberName}</span>
                       <span className="tabular-nums text-muted-foreground">
-                        {row.ageTier ? row.ageTier.replaceAll("_", " ") : "No age tier"}
+                        {row.exemptBy === "MEMBERSHIP_TYPE"
+                          ? `Membership type: ${row.membershipTypeName ?? "not required"}`
+                          : row.ageTier ? row.ageTier.replaceAll("_", " ") : "No age tier"}
                       </span>
                     </li>
                   ))}

@@ -2219,7 +2219,7 @@ describe("membership subscription billing", () => {
       expect(preview.entries).toEqual([]);
       expect(preview.exemptMemberIds).toEqual(["child-no-fee"]);
       expect(preview.exemptMembers).toEqual([
-        { memberId: "child-no-fee", memberName: "First-child-no-fee Member", ageTier: "CHILD" },
+        { memberId: "child-no-fee", memberName: "First-child-no-fee Member", ageTier: "CHILD", exemptBy: "AGE_TIER" },
       ]);
       // No fee resolved and no invoice entries -> the Xero mapping is not touched.
       expect(mocks.mapping).not.toHaveBeenCalled();
@@ -2486,7 +2486,76 @@ describe("membership subscription billing", () => {
       expect(preview.entries).toHaveLength(0);
       expect(preview.exceptions).toEqual([]);
       expect(preview.exemptMemberIds).toContain("exempt-member");
+      // #4496 review: the preview names the type as the reason, never an age tier.
+      expect(preview.exemptMembers).toEqual([{
+        memberId: "exempt-member", memberName: "First-exempt-member Member",
+        ageTier: null, exemptBy: "MEMBERSHIP_TYPE", membershipTypeName: "Life Member",
+      }]);
       expect(mocks.effectiveCategoryFee).not.toHaveBeenCalled();
+    });
+
+    // #4496 review: the type exemption wins (owner decision, 11 Nov 2026)
+    // even when the member's category has since been archived, so an exempt
+    // member raises no ARCHIVED_SUBSCRIPTION_CATEGORY_ASSIGNED exception.
+    it("exempts a NOT_REQUIRED-type member on an ARCHIVED category without raising the archived-category exception", async () => {
+      mocks.members.findMany.mockResolvedValue([
+        categoryMember("life-archived", {}, {
+          seasonalMembershipAssignments: [{
+            membershipType: { id: "type-2", key: "LIFE", name: "Life Member", subscriptionBehavior: "NOT_REQUIRED", annualFees: [] },
+            subscriptionCategory: { id: "cat-1", key: "couple", name: "Couple", isActive: false },
+          }],
+        }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+      expect(preview.exceptions).toEqual([]);
+      expect(preview.entries).toEqual([]);
+      expect(preview.exemptMemberIds).toEqual(["life-archived"]);
+    });
+
+    it("exempts a tier-exempt BASED_ON_AGE_TIER child on an ARCHIVED category without raising the archived-category exception", async () => {
+      mocks.members.findMany.mockResolvedValue([
+        categoryMember("child-archived", {}, {
+          ageTier: "CHILD",
+          dateOfBirth: null,
+          seasonalMembershipAssignments: [{
+            membershipType: { id: "type-3", key: "JUNIOR", name: "Junior", subscriptionBehavior: "BASED_ON_AGE_TIER", annualFees: [] },
+            subscriptionCategory: { id: "cat-1", key: "couple", name: "Couple", isActive: false },
+          }],
+        }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+      expect(preview.exceptions).toEqual([]);
+      expect(preview.exemptMembers).toEqual([{
+        memberId: "child-archived", memberName: "First-child-archived Member", ageTier: "CHILD", exemptBy: "AGE_TIER",
+      }]);
+    });
+
+    // #4496 review (INV-SSOT-001): both axes resolve the family recipient
+    // through one helper, each exception carrying its own axis ids. A
+    // type-axis exception never gains a subscriptionCategoryId key.
+    it("raises INVALID_FAMILY_RECIPIENT on both axes from the one recipient rule, each with its own axis ids", async () => {
+      mocks.effectiveFee.mockResolvedValue(fee({ billingBasis: "PER_FAMILY" }));
+      mocks.members.findMany.mockResolvedValue([
+        categoryMember("cat-a", {}, { familyGroupMemberships: [familyMembership({ active: false })] }),
+        member("type-b", {
+          familyGroupMemberships: [familyMembershipFor("family-2", { archivedAt: new Date("2026-01-01T00:00:00.000Z") })],
+          seasonalMembershipAssignments: [{
+            membershipType: { id: "type-1", key: "FULL", name: "Full", subscriptionBehavior: "REQUIRED", annualFees: [fee({ billingBasis: "PER_FAMILY" })] },
+          }],
+        }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+      expect(preview.entries).toEqual([]);
+      const byMember = new Map(preview.exceptions.map((row) => [row.memberId, row]));
+      expect(byMember.get("cat-a")).toMatchObject({
+        code: "INVALID_FAMILY_RECIPIENT", familyGroupId: "family-1", membershipTypeId: null, subscriptionCategoryId: "cat-1",
+        message: "Family family-1's billing recipient is not an active member of that family.",
+      });
+      expect(byMember.get("type-b")).toMatchObject({
+        code: "INVALID_FAMILY_RECIPIENT", familyGroupId: "family-2", membershipTypeId: "type-1",
+        message: "Family family-2's billing recipient is not an active member of that family.",
+      });
+      expect(Object.keys(byMember.get("type-b")!)).not.toContain("subscriptionCategoryId");
     });
 
     // Review finding, corrected: an archived category on a live assignment

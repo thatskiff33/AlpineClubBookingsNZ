@@ -60,6 +60,21 @@ A member's subscription category is set on their own member record (the
 seasonal membership card), not from this page — this page only manages the
 catalog of categories a club has defined.
 
+A member whose membership type needs no subscription, or whose age tier is
+exempt under their membership type, is never billed through a category. The
+billing preview lists them under **Exempt**, naming the membership type or the
+age tier as the reason. This still holds after their category is archived, so
+an exempt member never needs re-assigning before billing.
+
+## Not yet included
+
+Export & Import ([config transfer](config-transfer.md)) does not carry
+subscription categories or their fee schedules yet. A bundle moved to another
+deployment brings the membership-type fees but no categories. Recreate the
+categories and their fee schedules by hand on the target before assigning
+members there; a category with no effective fee raises a missing-fee exception
+in the billing preview.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | What to do |

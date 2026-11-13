@@ -162,6 +162,10 @@ export type SubscriptionBillingPlanException = {
   context: Record<string, unknown>;
 };
 
+export type SubscriptionBillingExemptMember =
+  | { memberId: string; memberName: string; ageTier: AgeTier | null; exemptBy: "AGE_TIER" }
+  | { memberId: string; memberName: string; ageTier: null; exemptBy: "MEMBERSHIP_TYPE"; membershipTypeName: string };
+
 export type SubscriptionBillingPreview = {
   seasonYear: number;
   decisionDate: string;
@@ -194,11 +198,12 @@ export type SubscriptionBillingPreview = {
   // that tier or the resolved fee is PER_MEMBER (a PER_FAMILY fee still bills the
   // family once, so a tier-exempt child under it is NOT exempted here — Q5 / #2148
   // constraint 1).
-  exemptMembers: Array<{
-    memberId: string;
-    memberName: string;
-    ageTier: AgeTier | null;
-  }>;
+  //
+  // #4496: a member on a subscription category whose membership type is
+  // NOT_REQUIRED is listed too (#4554's acceptance check), with `exemptBy`
+  // "MEMBERSHIP_TYPE" and no tier, so the preview never shows a tier as the
+  // reason. Every other row is `exemptBy` "AGE_TIER".
+  exemptMembers: Array<SubscriptionBillingExemptMember>;
   // #2147 (D3): members skipped because their season MemberSubscription already
   // holds a LIVE Xero invoice (xeroInvoiceId not null — PAID/UNPAID/OVERDUE).
   // The admin sees them, and their invoice number, in a collapsed "Already
@@ -1087,7 +1092,7 @@ export async function buildSubscriptionBillingPreview(input: {
   const exemptMemberIds = new Set<string>();
   // #2148 (D1): parallel display list for the collapsed "Exempt" section — same
   // membership as exemptMemberIds, plus name + the tier that made them exempt.
-  const exemptMembers: Array<{ memberId: string; memberName: string; ageTier: AgeTier | null }> = [];
+  const exemptMembers: SubscriptionBillingExemptMember[] = [];
   let ageTierSettingsCache: AgeTierSettingData[] | null = null;
   const getAgeTierSettingsMemoized = async () => {
     if (!ageTierSettingsCache) {
@@ -1289,6 +1294,148 @@ export async function buildSubscriptionBillingPreview(input: {
     for (const size of sizes) familyGroupSizeById.set(size.familyGroupId, size._count.memberId);
   }
 
+  // ---------------------------------------------------------------------
+  // Rules both billing axes apply (INV-SSOT-001, #4496 review). The type axis
+  // and the subscription-category axis each call these instead of keeping a
+  // copy, so tightening one of them changes both axes at once. Where the axes
+  // genuinely differ (a category member with no family bills alone; only the
+  // type axis has NO_INVOICE), the difference stays at the call site.
+  // ---------------------------------------------------------------------
+  type PreviewMember = (typeof members)[number];
+  // The axis ids an exception carries. A type-axis exception never computes a
+  // `subscriptionCategoryId` key, which keeps its fingerprint unchanged (see
+  // `exception()`).
+  type ChargeAxisIds =
+    | { membershipTypeId: string }
+    | { membershipTypeId: null; subscriptionCategoryId: string };
+  type FamilyRecipientResolution =
+    | { kind: "NONE" }
+    | { kind: "EXCEPTION" }
+    | { kind: "RESOLVED"; familyGroupId: string; recipient: SubscriptionBillingPlanEntry["recipient"] };
+
+  // Which family a family-billed member is billed through, and who receives
+  // the invoice. Raises the family and recipient exceptions itself and
+  // returns EXCEPTION; returns NONE (no family) for the caller to decide, since
+  // the type axis raises MISSING_FAMILY and the category axis bills alone.
+  function resolveFamilyRecipient(member: PreviewMember, memberName: string, axis: ChargeAxisIds): FamilyRecipientResolution {
+    const resolution = resolveBillingFamilyMembership(member);
+    if (resolution.kind === "NONE") return { kind: "NONE" };
+    const familyGroupIds = member.familyGroupMemberships.map((row) => row.familyGroupId);
+    if (resolution.kind === "AMBIGUOUS") {
+      exceptions.push(exception({
+        code: "AMBIGUOUS_FAMILY", message: `${memberName} belongs to more than one family; choose one before billing.`,
+        seasonYear: input.seasonYear, memberId: member.id, familyGroupId: null,
+        ...axis,
+        context: { memberName, familyGroupIds },
+      }));
+      return { kind: "EXCEPTION" };
+    }
+    if (resolution.kind === "INVALID_SELECTION") {
+      exceptions.push(exception({
+        code: "INVALID_BILLING_FAMILY_SELECTION",
+        message: `${memberName}'s selected billing family is no longer one of their families; re-select before billing.`,
+        seasonYear: input.seasonYear, memberId: member.id, familyGroupId: member.billingFamilyGroupId,
+        ...axis,
+        context: { memberName, selectedFamilyGroupId: member.billingFamilyGroupId, familyGroupIds },
+      }));
+      return { kind: "EXCEPTION" };
+    }
+    const familyGroupId = resolution.membership.familyGroupId;
+    const billing = resolution.membership.familyGroup.billingMembership;
+    if (!billing) {
+      exceptions.push(exception({
+        code: "MISSING_FAMILY_RECIPIENT", message: `Family ${familyGroupId} has no explicit billing recipient.`,
+        seasonYear: input.seasonYear, memberId: member.id, familyGroupId,
+        ...axis,
+        context: { memberName },
+      }));
+      return { kind: "EXCEPTION" };
+    }
+    if (billing.familyGroupId !== familyGroupId || !billing.member.active || billing.member.archivedAt) {
+      exceptions.push(exception({
+        code: "INVALID_FAMILY_RECIPIENT", message: `Family ${familyGroupId}'s billing recipient is not an active member of that family.`,
+        seasonYear: input.seasonYear, memberId: member.id, familyGroupId,
+        ...axis,
+        context: { memberName, recipientMemberId: billing.member.id },
+      }));
+      return { kind: "EXCEPTION" };
+    }
+    return {
+      kind: "RESOLVED",
+      familyGroupId,
+      recipient: {
+        id: billing.member.id,
+        name: `${billing.member.firstName} ${billing.member.lastName}`.trim(),
+        email: billing.member.email,
+      },
+    };
+  }
+
+  // Lists a held family once in the "Already invoiced" audit section.
+  function surfaceAlreadyInvoicedFamily(familyGroupId: string) {
+    if (suppressedFamiliesSurfaced.has(familyGroupId)) return;
+    suppressedFamiliesSurfaced.add(familyGroupId);
+    const info = familySuppressionInfo.get(familyGroupId);
+    const marker = markerInfoByFamilyGroupId.get(familyGroupId);
+    alreadyInvoicedFamilies.push({
+      familyGroupId,
+      holderMemberId: info?.holderMemberId ?? null,
+      holderName: info?.holderName ?? null,
+      xeroInvoiceNumber: info?.xeroInvoiceNumber ?? null,
+      status: info?.status ?? null,
+      holderBasisUnresolvable: info?.basisUnresolvable ?? false,
+      membersCovered: familyGroupSizeById.get(familyGroupId) ?? 0,
+      operatorMarked: marker != null,
+      markerNote: marker?.note ?? null,
+      markedByName: marker?.markedByName ?? null,
+      markedAt: marker?.markedAt ?? null,
+    });
+  }
+
+  // What holds a family, in the words the officer-decision exception uses.
+  function familyHoldLabel(familyGroupId: string): string {
+    const info = familySuppressionInfo.get(familyGroupId);
+    if (!info) return "an operator's already-invoiced marker";
+    return info.hasLiveInvoice
+      ? `${info.holderName}'s Xero invoice${info.xeroInvoiceNumber ? ` ${info.xeroInvoiceNumber}` : ""}`
+      : `${info.holderName}'s family charge`;
+  }
+
+  // Component invoice lines (#1932, E6) for either axis. The lifecycle
+  // invariant guarantees an invoiced fee always has at least one component;
+  // the synthetic default is a safety net that derives the identical single
+  // line the backfill would have written, so a fee that somehow lost its
+  // components still bills correctly rather than silently charging zero.
+  function buildChargeComponents(input: {
+    definedComponents: readonly {
+      label: string;
+      amountCents: number;
+      prorate: boolean;
+      xeroAccountCode?: string | null;
+      xeroItemCode?: string | null;
+      sortOrder: number;
+    }[];
+    annualAmountCents: number;
+    defaultLabel: string;
+    coveredMonths: number;
+    describe: (line: { label: string; isSoleComponent: boolean }) => string;
+  }): SubscriptionBillingComponent[] {
+    const feeComponents = input.definedComponents.length > 0
+      ? input.definedComponents
+      : [{ label: input.defaultLabel, amountCents: input.annualAmountCents, prorate: true, xeroAccountCode: null, xeroItemCode: null, sortOrder: 0 }];
+    const isSoleComponent = feeComponents.length === 1;
+    return feeComponents.map((component) => ({
+      label: component.label,
+      description: input.describe({ label: component.label, isSoleComponent }),
+      annualAmountCents: component.amountCents,
+      chargedAmountCents: componentChargedCents(component.amountCents, component.prorate, input.coveredMonths),
+      prorated: component.prorate,
+      xeroAccountCode: component.xeroAccountCode ?? null,
+      xeroItemCode: component.xeroItemCode ?? null,
+      sortOrder: component.sortOrder,
+    }));
+  }
+
   for (const member of members) {
     if (coveredSet.has(member.id) || paidSet.has(member.id)) continue;
     const assignment = member.seasonalMembershipAssignments[0];
@@ -1330,6 +1477,44 @@ export async function buildSubscriptionBillingPreview(input: {
     // billing axes (owner decision, #4554, 11 Nov 2026: the type exemption
     // wins).
     const subscriptionCategory = assignment?.subscriptionCategory;
+    if (subscriptionCategory) {
+      // Review finding (point 3), corrected (billing review, age-tier/
+      // REQUIRED-type exemption gap): a member exempt from ANY season
+      // subscription (type NOT_REQUIRED, or BASED_ON_AGE_TIER with a
+      // tier-exempt season-start age) is never billed via category either
+      // — checked first, before any fee/family work, since an exempt member
+      // needs none of it. Mirrors the type axis's own `exemptMemberIds`/
+      // `exemptMembers` flow below: no charge, confirm still writes/keeps
+      // their NOT_REQUIRED row, and #4554's acceptance check lists them in
+      // the preview's exempt section. Uses `resolveSubscriptionTierExemption`,
+      // the SAME shared gate the type axis calls below — not
+      // `loadMemberSubscriptionSettlements` (a BOOKING-lockout-oriented
+      // resolver that used to gate on the member's live STORED tier even
+      // for a REQUIRED type, so the same person could be billed on one
+      // axis and wrongly exempt on the other).
+      //
+      // #4496 review: this runs before the archived-category check below, so
+      // an exempt member whose category was later archived owes nothing and
+      // raises no exception (the type exemption wins, owner decision 11 Nov
+      // 2026), even when rollover carries the archived category forward.
+      const categorySeasonStartTier = membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER"
+        ? await resolveSeasonStartTier(member)
+        : null;
+      const categoryExempt = resolveSubscriptionTierExemption({
+        subscriptionBehavior: membershipType.subscriptionBehavior,
+        seasonStartTier: categorySeasonStartTier,
+        ageTierSettings: await getAgeTierSettingsMemoized(),
+      });
+      if (categoryExempt) {
+        exemptMemberIds.add(member.id);
+        // A NOT_REQUIRED type is exempt by its type, not an age tier, so the
+        // preview names the reason rather than showing a tier as the cause.
+        exemptMembers.push(membershipType.subscriptionBehavior === "NOT_REQUIRED"
+          ? { memberId: member.id, memberName, ageTier: null, exemptBy: "MEMBERSHIP_TYPE", membershipTypeName: membershipType.name }
+          : { memberId: member.id, memberName, ageTier: categorySeasonStartTier ?? member.ageTier, exemptBy: "AGE_TIER" });
+        continue;
+      }
+    }
     // Review finding: an ARCHIVED category on a live assignment used to fall
     // through to type billing with no trace — a member re-priced (often
     // upward, losing a flat couple/family rate) with nothing in the preview
@@ -1346,32 +1531,7 @@ export async function buildSubscriptionBillingPreview(input: {
       continue;
     }
     if (subscriptionCategory && subscriptionCategory.isActive) {
-      // Review finding (point 3), corrected (billing review, age-tier/
-      // REQUIRED-type exemption gap): a member exempt from ANY season
-      // subscription (type NOT_REQUIRED, or BASED_ON_AGE_TIER with a
-      // tier-exempt season-start age) is never billed via category either
-      // — checked first, before any fee/family work, since an exempt member
-      // needs none of it. Mirrors the type axis's own `exemptMemberIds`/
-      // `exemptMembers` flow below: no charge, confirm still writes/keeps
-      // their NOT_REQUIRED row. Uses `resolveSubscriptionTierExemption`,
-      // the SAME shared gate the type axis calls below — not
-      // `loadMemberSubscriptionSettlements` (a BOOKING-lockout-oriented
-      // resolver that used to gate on the member's live STORED tier even
-      // for a REQUIRED type, so the same person could be billed on one
-      // axis and wrongly exempt on the other).
-      const categorySeasonStartTier = membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER"
-        ? await resolveSeasonStartTier(member)
-        : null;
-      const categoryExempt = resolveSubscriptionTierExemption({
-        subscriptionBehavior: membershipType.subscriptionBehavior,
-        seasonStartTier: categorySeasonStartTier,
-        ageTierSettings: await getAgeTierSettingsMemoized(),
-      });
-      if (categoryExempt) {
-        exemptMemberIds.add(member.id);
-        exemptMembers.push({ memberId: member.id, memberName, ageTier: categorySeasonStartTier ?? member.ageTier });
-        continue;
-      }
+      // The shared exemption gate above has already run for this member.
       // Mirrors the type axis's own PER_FAMILY_FEE_IN_INDIVIDUAL_MODE guard:
       // every SubscriptionCategoryFee is PER_FAMILY-shaped by construction
       // (there is no PER_MEMBER option for a category), so the club's
@@ -1415,66 +1575,19 @@ export async function buildSubscriptionBillingPreview(input: {
       // fee) is not inherently "whole family or nothing": the club's own
       // mental model is "members who share this category bill together",
       // which collapses to a group of one when there's no partner.
-      const familyResolution = resolveBillingFamilyMembership(member);
-      let categoryFamilyGroupId: string | null = null;
-      let categoryRecipient = { id: member.id, name: memberName, email: member.email };
-      if (familyResolution.kind === "AMBIGUOUS") {
-        exceptions.push(exception({
-          code: "AMBIGUOUS_FAMILY",
-          message: `${memberName} belongs to more than one family; choose one before billing.`,
-          seasonYear: input.seasonYear, memberId: member.id, familyGroupId: null,
-          membershipTypeId: null, subscriptionCategoryId: subscriptionCategory.id,
-          context: { memberName, familyGroupIds: member.familyGroupMemberships.map((row) => row.familyGroupId) },
-        }));
-        continue;
-      }
-      if (familyResolution.kind === "INVALID_SELECTION") {
-        exceptions.push(exception({
-          code: "INVALID_BILLING_FAMILY_SELECTION",
-          message: `${memberName}'s selected billing family is no longer one of their families; re-select before billing.`,
-          seasonYear: input.seasonYear, memberId: member.id, familyGroupId: member.billingFamilyGroupId,
-          membershipTypeId: null, subscriptionCategoryId: subscriptionCategory.id,
-          context: {
-            memberName,
-            selectedFamilyGroupId: member.billingFamilyGroupId,
-            familyGroupIds: member.familyGroupMemberships.map((row) => row.familyGroupId),
-          },
-        }));
-        continue;
-      }
-      if (familyResolution.kind === "RESOLVED") {
-        const membership = familyResolution.membership;
-        categoryFamilyGroupId = membership.familyGroupId;
-        const billing = membership.familyGroup.billingMembership;
-        if (!billing) {
-          exceptions.push(exception({
-            code: "MISSING_FAMILY_RECIPIENT",
-            message: `Family ${categoryFamilyGroupId} has no explicit billing recipient.`,
-            seasonYear: input.seasonYear, memberId: member.id, familyGroupId: categoryFamilyGroupId,
-            membershipTypeId: null, subscriptionCategoryId: subscriptionCategory.id,
-            context: { memberName },
-          }));
-          continue;
-        }
-        if (billing.familyGroupId !== categoryFamilyGroupId || !billing.member.active || billing.member.archivedAt) {
-          exceptions.push(exception({
-            code: "INVALID_FAMILY_RECIPIENT",
-            message: `Family ${categoryFamilyGroupId}'s billing recipient is not an active member of that family.`,
-            seasonYear: input.seasonYear, memberId: member.id, familyGroupId: categoryFamilyGroupId,
-            membershipTypeId: null, subscriptionCategoryId: subscriptionCategory.id,
-            context: { memberName, recipientMemberId: billing.member.id },
-          }));
-          continue;
-        }
-        categoryRecipient = {
-          id: billing.member.id,
-          name: `${billing.member.firstName} ${billing.member.lastName}`.trim(),
-          email: billing.member.email,
-        };
-      }
-      // kind === "NONE" falls through with categoryFamilyGroupId staying
-      // null and categoryRecipient staying the member themself — solo
-      // category billing, not an error.
+      const familyResolution = resolveFamilyRecipient(member, memberName, {
+        membershipTypeId: null,
+        subscriptionCategoryId: subscriptionCategory.id,
+      });
+      if (familyResolution.kind === "EXCEPTION") continue;
+      // kind "NONE" leaves categoryFamilyGroupId null and the recipient as
+      // the member themself: solo category billing, not an error.
+      const categoryFamilyGroupId: string | null = familyResolution.kind === "RESOLVED"
+        ? familyResolution.familyGroupId
+        : null;
+      const categoryRecipient = familyResolution.kind === "RESOLVED"
+        ? familyResolution.recipient
+        : { id: member.id, name: memberName, email: member.email };
 
       // The family-shaped case goes through the shared accessor
       // (INV-SSOT-007) so it lands in the SAME `billedFamilyTypes` map the
@@ -1572,24 +1685,7 @@ export async function buildSubscriptionBillingPreview(input: {
           }));
           continue;
         }
-        if (!suppressedFamiliesSurfaced.has(categoryFamilyGroupId)) {
-          suppressedFamiliesSurfaced.add(categoryFamilyGroupId);
-          const info = familySuppressionInfo.get(categoryFamilyGroupId);
-          const marker = markerInfoByFamilyGroupId.get(categoryFamilyGroupId);
-          alreadyInvoicedFamilies.push({
-            familyGroupId: categoryFamilyGroupId,
-            holderMemberId: info?.holderMemberId ?? null,
-            holderName: info?.holderName ?? null,
-            xeroInvoiceNumber: info?.xeroInvoiceNumber ?? null,
-            status: info?.status ?? null,
-            holderBasisUnresolvable: info?.basisUnresolvable ?? false,
-            membersCovered: familyGroupSizeById.get(categoryFamilyGroupId) ?? 0,
-            operatorMarked: marker != null,
-            markerNote: marker?.note ?? null,
-            markedByName: marker?.markedByName ?? null,
-            markedAt: marker?.markedAt ?? null,
-          });
-        }
+        surfaceAlreadyInvoicedFamily(categoryFamilyGroupId);
         // Billing review fix: copy the membership-type path's "held, so ask
         // the officer" exception (#4110 review rounds 6 and 7) — a member a
         // closed CATEGORY charge covered who is no longer settled is asked
@@ -1599,12 +1695,7 @@ export async function buildSubscriptionBillingPreview(input: {
         // type-axis one (that case was already handled above).
         const heldReason = decisionReasonByFamilyKey.get(categoryGroupingKey)?.get(member.id);
         if (heldReason) {
-          const info = familySuppressionInfo.get(categoryFamilyGroupId);
-          const heldBy = !info
-            ? "an operator's already-invoiced marker"
-            : info.hasLiveInvoice
-              ? `${info.holderName}'s Xero invoice${info.xeroInvoiceNumber ? ` ${info.xeroInvoiceNumber}` : ""}`
-              : `${info.holderName}'s family charge`;
+          const heldBy = familyHoldLabel(categoryFamilyGroupId);
           exceptions.push(exception({
             code: CLOSED_FAMILY_MEMBER_NEEDS_DECISION_CODE,
             message: closedFamilyMemberDecisionMessage({
@@ -1643,30 +1734,21 @@ export async function buildSubscriptionBillingPreview(input: {
       }
       if (categoryFamilyGroupId) categoryBilledFamilyGroupIdsThisRun.add(categoryFamilyGroupId);
 
-      // Component invoice lines, same synthetic-default safety net as the
-      // type axis's identical block below.
-      const definedCategoryComponents = categoryFee.components ?? [];
-      const categoryFeeComponents = definedCategoryComponents.length > 0
-        ? definedCategoryComponents
-        : [{ label: "Subscription fee", amountCents: categoryFee.amountCents, prorate: true, xeroAccountCode: null as string | null, xeroItemCode: null as string | null, sortOrder: 0 }];
-      const isSoleCategoryComponent = categoryFeeComponents.length === 1;
-      const categoryComponents: SubscriptionBillingComponent[] = categoryFeeComponents.map((component) => ({
-        label: component.label,
-        description: buildCategoryComponentLineDescription({
+      // Component invoice lines through the helper both axes share.
+      const categoryComponents = buildChargeComponents({
+        definedComponents: categoryFee.components ?? [],
+        annualAmountCents: categoryFee.amountCents,
+        defaultLabel: "Subscription fee",
+        coveredMonths: categoryCalculated.coveredMonths,
+        describe: ({ label, isSoleComponent }) => buildCategoryComponentLineDescription({
           subscriptionCategoryName: subscriptionCategory.name,
           seasonYear: input.seasonYear,
           coveredMonths: categoryCalculated.coveredMonths,
-          label: component.label,
-          isSoleComponent: isSoleCategoryComponent,
+          label,
+          isSoleComponent,
           yearEndMonth,
         }),
-        annualAmountCents: component.amountCents,
-        chargedAmountCents: componentChargedCents(component.amountCents, component.prorate, categoryCalculated.coveredMonths),
-        prorated: component.prorate,
-        xeroAccountCode: component.xeroAccountCode ?? null,
-        xeroItemCode: component.xeroItemCode ?? null,
-        sortOrder: component.sortOrder,
-      }));
+      });
       const categoryChargedAmountCents = categoryComponents.reduce((sum, component) => sum + component.chargedAmountCents, 0);
       const categoryEntry: SubscriptionBillingPlanEntry = {
         key: categoryGroupingKey,
@@ -1766,7 +1848,7 @@ export async function buildSubscriptionBillingPreview(input: {
         // exemptMemberIds (drives the confirm NOT_REQUIRED write — constraint 2),
         // and the display list for the collapsed "Exempt" section.
         exemptMemberIds.add(member.id);
-        exemptMembers.push({ memberId: member.id, memberName, ageTier: feeTier });
+        exemptMembers.push({ memberId: member.id, memberName, ageTier: feeTier, exemptBy: "AGE_TIER" });
         continue;
       }
     }
@@ -1814,8 +1896,7 @@ export async function buildSubscriptionBillingPreview(input: {
       // exception, never silent misbilling. The chosen family then flows
       // through the SAME downstream recipient checks (MISSING_FAMILY_RECIPIENT /
       // INVALID_FAMILY_RECIPIENT) as an unambiguous family.
-      const resolution = resolveBillingFamilyMembership(member);
-      const familyGroupIds = member.familyGroupMemberships.map((row) => row.familyGroupId);
+      const resolution = resolveFamilyRecipient(member, memberName, { membershipTypeId: membershipType.id });
       if (resolution.kind === "NONE") {
         exceptions.push(exception({
           code: "MISSING_FAMILY", message: `${memberName} has a per-family fee but is not in a family.`,
@@ -1824,50 +1905,9 @@ export async function buildSubscriptionBillingPreview(input: {
         }));
         continue;
       }
-      if (resolution.kind === "AMBIGUOUS") {
-        exceptions.push(exception({
-          code: "AMBIGUOUS_FAMILY", message: `${memberName} belongs to more than one family; choose one before billing.`,
-          seasonYear: input.seasonYear, memberId: member.id, familyGroupId: null,
-          membershipTypeId: membershipType.id,
-          context: { memberName, familyGroupIds },
-        }));
-        continue;
-      }
-      if (resolution.kind === "INVALID_SELECTION") {
-        exceptions.push(exception({
-          code: "INVALID_BILLING_FAMILY_SELECTION",
-          message: `${memberName}'s selected billing family is no longer one of their families; re-select before billing.`,
-          seasonYear: input.seasonYear, memberId: member.id, familyGroupId: member.billingFamilyGroupId,
-          membershipTypeId: membershipType.id,
-          context: { memberName, selectedFamilyGroupId: member.billingFamilyGroupId, familyGroupIds },
-        }));
-        continue;
-      }
-      const membership = resolution.membership;
-      familyGroupId = membership.familyGroupId;
-      const billing = membership.familyGroup.billingMembership;
-      if (!billing) {
-        exceptions.push(exception({
-          code: "MISSING_FAMILY_RECIPIENT", message: `Family ${familyGroupId} has no explicit billing recipient.`,
-          seasonYear: input.seasonYear, memberId: member.id, familyGroupId,
-          membershipTypeId: membershipType.id, context: { memberName },
-        }));
-        continue;
-      }
-      if (billing.familyGroupId !== familyGroupId || !billing.member.active || billing.member.archivedAt) {
-        exceptions.push(exception({
-          code: "INVALID_FAMILY_RECIPIENT", message: `Family ${familyGroupId}'s billing recipient is not an active member of that family.`,
-          seasonYear: input.seasonYear, memberId: member.id, familyGroupId,
-          membershipTypeId: membershipType.id,
-          context: { memberName, recipientMemberId: billing.member.id },
-        }));
-        continue;
-      }
-      recipient = {
-        id: billing.member.id,
-        name: `${billing.member.firstName} ${billing.member.lastName}`.trim(),
-        email: billing.member.email,
-      };
+      if (resolution.kind === "EXCEPTION") continue;
+      familyGroupId = resolution.familyGroupId;
+      recipient = resolution.recipient;
     }
     const groupingKey = fee.billingBasis === "PER_FAMILY"
       ? chargeFamilyAxisKey({
@@ -1941,24 +1981,7 @@ export async function buildSubscriptionBillingPreview(input: {
     // auto-suppression predicate, so a mixed-basis family whose live invoice sits
     // on a PER_MEMBER-billed member can still be closed out by the operator.
     if (familyGroupId && (suppressedFamilyGroupIds.has(familyGroupId) || markedFamilyGroupIds.has(familyGroupId))) {
-      if (!suppressedFamiliesSurfaced.has(familyGroupId)) {
-        suppressedFamiliesSurfaced.add(familyGroupId);
-        const info = familySuppressionInfo.get(familyGroupId);
-        const marker = markerInfoByFamilyGroupId.get(familyGroupId);
-        alreadyInvoicedFamilies.push({
-          familyGroupId,
-          holderMemberId: info?.holderMemberId ?? null,
-          holderName: info?.holderName ?? null,
-          xeroInvoiceNumber: info?.xeroInvoiceNumber ?? null,
-          status: info?.status ?? null,
-          holderBasisUnresolvable: info?.basisUnresolvable ?? false,
-          membersCovered: familyGroupSizeById.get(familyGroupId) ?? 0,
-          operatorMarked: marker != null,
-          markerNote: marker?.note ?? null,
-          markedByName: marker?.markedByName ?? null,
-          markedAt: marker?.markedAt ?? null,
-        });
-      }
+      surfaceAlreadyInvoicedFamily(familyGroupId);
       // #4110 review rounds 6 and 7: the family would have been billed again
       // for a reversal, but it is held. The hold stands (#2161, never a second
       // family invoice); every member a closed charge covered who is no longer
@@ -1967,12 +1990,7 @@ export async function buildSubscriptionBillingPreview(input: {
       // Anyone else (a new joiner) is not.
       const heldReason = decisionReasonByFamilyKey.get(groupingKey)?.get(member.id);
       if (heldReason) {
-        const info = familySuppressionInfo.get(familyGroupId);
-        const heldBy = !info
-          ? "an operator's already-invoiced marker"
-          : info.hasLiveInvoice
-            ? `${info.holderName}'s Xero invoice${info.xeroInvoiceNumber ? ` ${info.xeroInvoiceNumber}` : ""}`
-            : `${info.holderName}'s family charge`;
+        const heldBy = familyHoldLabel(familyGroupId);
         exceptions.push(exception({
           code: CLOSED_FAMILY_MEMBER_NEEDS_DECISION_CODE,
           message: closedFamilyMemberDecisionMessage({
@@ -2009,35 +2027,24 @@ export async function buildSubscriptionBillingPreview(input: {
       current.coveredMembers.push({ id: member.id, name: memberName });
       continue;
     }
-    // Component invoice lines (#1932, E6). The lifecycle invariant guarantees a
-    // non-NO_INVOICE fee always has >=1 component; the synthetic default is a
-    // belt-and-suspenders safety net that derives the identical single line the
-    // backfill would have written, so a fee that somehow lost its components
-    // still bills correctly rather than silently charging zero.
-    const definedComponents = fee.components ?? [];
-    const feeComponents = definedComponents.length > 0
-      ? definedComponents
-      : [{ label: "Annual membership fee", amountCents: fee.amountCents, prorate: true, xeroAccountCode: null as string | null, xeroItemCode: null as string | null, sortOrder: 0 }];
-    const isSoleComponent = feeComponents.length === 1;
+    // Component invoice lines through the helper both axes share. A
+    // NO_INVOICE fee has no lines.
     const components: SubscriptionBillingComponent[] = fee.billingBasis === "NO_INVOICE"
       ? []
-      : feeComponents.map((component) => ({
-          label: component.label,
-          description: buildComponentLineDescription({
+      : buildChargeComponents({
+          definedComponents: fee.components ?? [],
+          annualAmountCents: fee.amountCents,
+          defaultLabel: "Annual membership fee",
+          coveredMonths: calculated.coveredMonths,
+          describe: ({ label, isSoleComponent }) => buildComponentLineDescription({
             membershipTypeName: membershipType.name,
             seasonYear: input.seasonYear,
             coveredMonths: calculated.coveredMonths,
-            label: component.label,
+            label,
             isSoleComponent,
             yearEndMonth,
           }),
-          annualAmountCents: component.amountCents,
-          chargedAmountCents: componentChargedCents(component.amountCents, component.prorate, calculated.coveredMonths),
-          prorated: component.prorate,
-          xeroAccountCode: component.xeroAccountCode ?? null,
-          xeroItemCode: component.xeroItemCode ?? null,
-          sortOrder: component.sortOrder,
-        }));
+        });
     // The charge total is Σ components (see componentChargedCents). For a
     // single-component fee this equals the fee-level calculation byte-for-byte.
     const chargedAmountCents = fee.billingBasis === "NO_INVOICE"
@@ -2506,7 +2513,7 @@ export async function confirmSubscriptionBillingPreview(input: {
                     const xeroAccountCode = component.xeroAccountCode ?? entry.xeroAccountCode;
                     if (xeroAccountCode == null) {
                       throw new Error(
-                        `Annual-fee component "${component.label}" for ${entry.membershipTypeName ?? entry.subscriptionCategoryName} ` +
+                        `Annual-fee component "${component.label}" for ${chargeAxisDisplayName({ membershipTypeName: entry.membershipTypeName, subscriptionCategoryName: entry.subscriptionCategoryName ?? null })} ` +
                           `(recipient ${entry.recipient.id}, season ${entry.seasonYear}) has no resolved ` +
                           `Xero account code; the preview mapping pass should have removed unmapped components before confirm.`,
                       );

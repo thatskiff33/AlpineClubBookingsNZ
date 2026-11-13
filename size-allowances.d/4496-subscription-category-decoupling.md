@@ -6,10 +6,12 @@ category admin page's draft helpers, the category routes' shared select and
 audit helpers). The five below were already over budget.
 
 file: src/lib/membership-subscription-billing.ts
-lines: 2654
+lines: 2661
 reason: the category branch reads and writes the same closed-family maps,
   exemption gate and per-run double-billing sets as the membership-type
-  branch, inside one preview build. Splitting it out now would mean passing
+  branch, inside one preview build. The family-recipient, already-invoiced,
+  hold-label and component-line rules both branches apply are local helpers
+  in that build, so each rule exists once (INV-SSOT-001). Splitting it out now would mean passing
   that shared state across a module boundary in money code; a later split of
   the whole preview builder is the better seam.
 
