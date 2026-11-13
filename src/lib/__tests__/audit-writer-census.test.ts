@@ -808,7 +808,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // name-detail writer, classified the same way for the same reason, plus
     // #3819's school hut-leader kinds writer, likewise; minus the two
     // other-lodges writers #52 removed with their handlers.
-    expect(Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765)).toHaveLength(20); // 18/19 -> 20 (central-server lane, 20 Oct 2026): #62 and #58 join #3819's. RE-MEASURED.
+    expect(Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765)).toHaveLength(21); // 20 -> 21 (fork #118): workparty.calendar.add joins its siblings. RE-MEASURED. // 18/19 -> 20 (central-server lane, 20 Oct 2026): #62 and #58 join #3819's. RE-MEASURED.
     expect([
       ...new Set(Object.values(LODGE_GATED_ADMIN_CATEGORIES_2765)),
     ]).toEqual(["admin"]);
@@ -1010,7 +1010,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // roster-settings route file, plus #62's central-lodge route file and #58's
     // other-lodges hide route file.
     // roster-settings route file, plus #3819's school hut-leaders route file.
-    expect(files.filter((file) => gateOf(file) === "lodge")).toHaveLength(13); // 11/12 -> 13 (central-server lane, 20 Oct 2026): the central-lodge and other-lodges hide route files join #3819's. RE-MEASURED.
+    expect(files.filter((file) => gateOf(file) === "lodge")).toHaveLength(14); // 13 -> 14 (fork #118): the work-party calendar route file. RE-MEASURED. // 11/12 -> 13 (central-server lane, 20 Oct 2026): the central-lodge and other-lodges hide route files join #3819's. RE-MEASURED.
     expect(files.filter((file) => gateOf(file) === "other")).toEqual([]);
 
     /*
@@ -1494,7 +1494,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // RE-MEASURED with `pnpm run audit:census`.
     // 406 -> 408 unpinned (#4368): a dead card refund's "Nothing left owed" and "Try the card again", `payment`.
     // RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 130, unpinned: 408 });
+    ).toEqual({ pinned: 131, unpinned: 408 }); // 130 -> 131 pinned (fork #118): workparty.calendar.add.
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

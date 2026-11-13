@@ -49,6 +49,23 @@ beforeEach(() => {
 });
 
 describe("GET /api/calendar/events view gate", () => {
+  it("hides an inactive work party's entries (fork #118)", async () => {
+    const res = await GET(listReq());
+    expect(res.status).toBe(200);
+    const where = mocks.calendarEventFindMany.mock.calls[0][0].where;
+    expect(where.AND).toContainEqual({
+      OR: [
+        { workPartyEventId: null },
+        {
+          workPartyEvent: {
+            active: true,
+            promoCode: { active: true, archivedAt: null },
+          },
+        },
+      ],
+    });
+  });
+
   it("404s an organisation account and never reads the events table", async () => {
     mocks.sessionUser = { id: "org-1", role: "SCHOOL", accessRoles: ["ORG"] };
 

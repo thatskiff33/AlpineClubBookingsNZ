@@ -24,6 +24,7 @@ function makeEvent(n: number): CalendarEventDTO {
     seriesId: null,
     detachedFromSeries: false,
     recurrence: null,
+    workPartyEventId: null,
   };
 }
 

@@ -123,6 +123,8 @@ const HAND_WRITTEN_FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   {
     flag: "workParties",
     prefixes: [
+      // Fork #118: the member work party page.
+      "/work-parties",
       "/api/admin/work-parties",
       "/api/work-parties",
     ],

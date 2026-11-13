@@ -6,6 +6,7 @@ import { canEditCalendarEvents } from "@/lib/calendar-access";
 import {
   updateCalendarEvent,
   deleteCalendarEvent,
+  WorkPartyManagedCalendarEventError,
 } from "@/lib/calendar-service";
 import {
   calendarEditScopeSchema,
@@ -13,6 +14,23 @@ import {
   resolveCalendarEventDates,
   serializeCalendarEvent,
 } from "@/lib/calendar-events";
+
+/**
+ * Fork #118: an entry a work party manages is changed from Work Parties only.
+ * 409 rather than 403 — the caller may edit calendar events, just not this one.
+ */
+async function refusingWorkPartyManaged<T>(
+  mutation: () => Promise<T>,
+): Promise<T | NextResponse> {
+  try {
+    return await mutation();
+  } catch (error) {
+    if (error instanceof WorkPartyManagedCalendarEventError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    throw error;
+  }
+}
 
 /**
  * Update a calendar event. Restricted to lodge-edit admins ONLY — committee
@@ -71,22 +89,25 @@ export async function PATCH(
     }
   }
 
-  const result = await updateCalendarEvent(
-    id,
-    {
-      title: parsed.data.title,
-      location: parsed.data.location?.trim() || null,
-      details: parsed.data.details?.trim() || null,
-      allDay: parsed.data.allDay,
-      isMeeting: parsed.data.isMeeting,
-      startsAt: dates.startsAt,
-      endsAt: dates.endsAt,
-      recurrence,
-    },
-    scope,
-    guard.session.user.id,
+  const result = await refusingWorkPartyManaged(() =>
+    updateCalendarEvent(
+      id,
+      {
+        title: parsed.data.title,
+        location: parsed.data.location?.trim() || null,
+        details: parsed.data.details?.trim() || null,
+        allDay: parsed.data.allDay,
+        isMeeting: parsed.data.isMeeting,
+        startsAt: dates.startsAt,
+        endsAt: dates.endsAt,
+        recurrence,
+      },
+      scope,
+      guard.session.user.id,
+    ),
   );
 
+  if (result instanceof NextResponse) return result;
   if (!result) {
     return NextResponse.json({ error: "Event not found" }, { status: 404 });
   }
@@ -147,7 +168,10 @@ export async function DELETE(
   const exceptionMode =
     searchParams.get("exceptions") === "delete" ? "delete" : "keep";
 
-  const result = await deleteCalendarEvent(id, scope, exceptionMode);
+  const result = await refusingWorkPartyManaged(() =>
+    deleteCalendarEvent(id, scope, exceptionMode),
+  );
+  if (result instanceof NextResponse) return result;
   if (!result) {
     return NextResponse.json({ error: "Event not found" }, { status: 404 });
   }

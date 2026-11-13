@@ -30,6 +30,7 @@ const meetingEvent: CalendarEventDTO = {
   seriesId: null,
   detachedFromSeries: false,
   recurrence: null,
+  workPartyEventId: null,
 };
 
 function renderReadOnly(canManage: boolean) {

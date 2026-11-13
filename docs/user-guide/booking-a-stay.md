@@ -43,6 +43,11 @@ full booking state machine is in
    Winter 2026") shows which season's rates apply — rates differ by season.
 4. If the nights you want are **Full**, you can join the waitlist instead of
    booking — see [The waitlist & offers](waitlist-and-offers.md).
+5. Coming to a **working bee**? Open it from the **Work Parties** card on your
+   dashboard and choose **Join Work Party**. The wizard opens with its nights,
+   its lodge and "I am attending a working bee" already filled in; you still add
+   your guests and pay as usual. See
+   [Work Parties](../guides/work-parties.md#members-join-a-work-party).
 
 ### 2. Add your guests
 

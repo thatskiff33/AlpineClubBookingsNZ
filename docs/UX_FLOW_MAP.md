@@ -60,7 +60,7 @@ Journey: Fill in personal details and nominators, submit the application, and fo
 
 Screen: `/dashboard`.
 
-Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay. The Lodge Kiosk card offers Open Kiosk and, while the roster module is on, Who's at the lodge.
+Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay. The Lodge Kiosk card offers Open Kiosk and, while the roster module is on, Who's at the lodge. Members see a Work Parties card listing upcoming work parties; each opens its work party page.
 
 [Guide](user-guide/README.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -135,6 +135,14 @@ Screen: `/message-board`.
 Journey: When enabled, read recent posts, page to older posts, or compose a message. Review whether sharing with other clubs is available and selected before posting.
 
 [Guide](user-guide/the-message-board.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Work party page
+
+Screen: `/work-parties/{id}`.
+
+Journey: Members only. Open a work party from the dashboard's Work Parties card or its calendar entry, read its nights, lodge, discount and description, then choose Join Work Party. That opens Book a Stay with the dates, the lodge and "I am attending a working bee" filled in; choose guests and pay as usual. A finished work party has no Join button.
+
+[Guide](guides/work-parties.md#members-join-a-work-party) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ## Admin overview
 
@@ -564,9 +572,9 @@ Journey: Choose a lodge and day, inspect arrivals and departures, stage roster e
 
 Screen: `/admin/work-parties`.
 
-Shows: Work-party dates, participation and attendance.
+Shows: Work-party dates, participation and attendance, and whether each is on the Events Calendar.
 
-Journey: Inspect a work party, its participants and attendance before recording changes.
+Journey: Inspect a work party, its participants and attendance before recording changes. Creating one adds it to the Events Calendar when that module is on; Add to calendar puts an older one there.
 
 [Guide](guides/work-parties.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
