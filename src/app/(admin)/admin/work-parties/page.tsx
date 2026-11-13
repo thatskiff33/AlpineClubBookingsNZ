@@ -37,6 +37,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { formatCents } from "@/lib/pricing";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { useClubFormat } from "@/components/club-format-provider";
 
 interface WorkPartyEventRow {
@@ -344,16 +345,20 @@ export default function AdminWorkPartiesPage() {
     if (!lodgeScopeReady) return;
     if (!confirm(`Delete work party event "${event.name}"?`)) return;
     setError("");
+    const fallback = "Failed to delete work party event";
     const res = await fetch(`/api/admin/work-parties/${event.id}`, {
       method: "DELETE",
-    });
+    }).catch(() => null);
+    if (!res) {
+      setError(fallback);
+      return;
+    }
     if (res.status === 403) {
       setError(ADMIN_FORBIDDEN_SAVE_REASON);
       return;
     }
-    const data = await res.json();
     if (!res.ok) {
-      setError(data.error || "Failed to delete work party event");
+      setError(await apiErrorMessageFromResponse(res, fallback));
       return;
     }
     await fetchEvents();
