@@ -291,6 +291,8 @@ vi.mock("@/lib/prisma", () => {
         findMany: () => Promise.resolve(state.operations),
       },
       payment: { findUnique: ({ where }: { where: { id: string } }) => Promise.resolve(paymentRow(where.id)) },
+      // #4492's list reads each listed payment's charges for the charge-backed refusal; group rows use none.
+      paymentTransaction: { findMany: () => Promise.resolve([]) },
       groupBookingSettlement: {
         findUnique: () => Promise.resolve(state.settlement),
         findMany: () => Promise.resolve(state.settlements),
@@ -609,11 +611,13 @@ describe("the list", () => {
       xeroRefundNote: "none",
       tryCardAgainRefusal: null,
       laterStripeRefunds: [],
+      paidAnotherWayRefusal: null,
     });
     expect(byId.get("op-legacy")).toMatchObject({
       settleKind: "legacy-group",
       owedCents: 4_500,
       tryCardAgainRefusal: LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL,
+      paidAnotherWayRefusal: null,
     });
     expect(byId.get("op-done")).toMatchObject({ settleKind: "legacy-group", owedCents: 0 });
   });
