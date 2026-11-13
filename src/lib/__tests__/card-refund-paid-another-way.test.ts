@@ -163,6 +163,7 @@ vi.mock("@/lib/prisma", () => {
     },
     paymentTransaction: {
       findUnique: (...args: unknown[]) => mocks.findTransaction(...args),
+      findMany: async () => [],
       findFirst: (...args: unknown[]) => mocks.findCapture(...args),
     },
     manualRefundTask: {
@@ -183,7 +184,7 @@ vi.mock("@/lib/prisma", () => {
       // #4851: a legacy whole-group row reads its settlement before it is listed.
       groupBookingSettlement: { findMany: vi.fn().mockResolvedValue([]) },
       manualRefundTask: { findMany: mocks.listRecords, findUnique: (...args: unknown[]) => mocks.findApprovalTask(...args) },
-      paymentTransaction: { findFirst: (...args: unknown[]) => mocks.findCapture(...args) },
+      paymentTransaction: { findFirst: (...args: unknown[]) => mocks.findCapture(...args), findMany: async () => [] },
     },
   };
 });

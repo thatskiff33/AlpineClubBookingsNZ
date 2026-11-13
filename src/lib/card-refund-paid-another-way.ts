@@ -37,12 +37,14 @@ import {
   deadCardRefundStillOwed,
   lastErrorSuggestsStripeMayHaveRefunded,
   laterStripeRefundsCovering,
+  paidAnotherWayRefusal,
   supersededCloseFillsItsCharge,
   tryCardAgainRefusal,
   type LaterStripeRefund,
 } from "@/lib/card-refund-dead-row";
 import { deadRowClaimWhere, lockDeadCardRefundRow } from "@/lib/card-refund-dead-row-lock";
 import { isOwedCardRefundOperation } from "@/lib/open-card-refund-owed";
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { prisma } from "@/lib/prisma";
 import { LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL } from "@/lib/card-refund-group-copy";
 import { legacyGroupSettlementRefundUnsentCents } from "@/lib/group-settlement-refund-plan";
@@ -213,6 +215,11 @@ export interface DeadCardRefundRow {
    * skip `deadCardRefundStillOwed` and `paidAnotherWayXeroPlan`.
    */
   settleKind: "charge" | "organiser-child" | "legacy-group";
+  /**
+   * #4492: why "Paid another way" may not close it, or null when it may (`paidAnotherWayRefusal`). Null on the two
+   * group kinds (#4851): their close reads the organiser's PaymentIntent and refuses at click time instead.
+   */
+  paidAnotherWayRefusal: string | null;
 }
 
 /**
@@ -241,6 +248,15 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
       paymentTransaction: { select: { paymentId: true, amountCents: true, refundedAmountCents: true } },
     },
   });
+  const paymentIds = [...new Set(operations.map((operation) => operation.paymentId))];
+  const charges =
+    paymentIds.length === 0
+      ? []
+      : await prisma.paymentTransaction.findMany({
+          where: { paymentId: { in: paymentIds } },
+          select: { id: true, paymentId: true, amountCents: true, refundedAmountCents: true },
+          orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
+        });
   const legacyIds = operations.flatMap((operation) =>
     isGroupSettlementRefundRecoveryKey(operation.idempotencyKey)
       ? [groupSettlementIdForRefundRecoveryKey(operation.idempotencyKey)]
@@ -257,11 +273,12 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
   // One shape for all three kinds, so the list (and the rows built from it) type-check as one union.
   type ListedDeadCardRefund = {
     operation: (typeof operations)[number];
-    kind: DeadCardRefundRow["settleKind"];
     owedCents: number;
     later: ReturnType<typeof laterStripeRefundsCovering>;
-    owed: ReturnType<typeof deadCardRefundStillOwed> | null;
-  };
+  } & (
+    | { kind: "charge"; owed: ReturnType<typeof deadCardRefundStillOwed> }
+    | { kind: "organiser-child" | "legacy-group"; owed: null }
+  );
   const listed = operations.flatMap((operation): ListedDeadCardRefund[] => {
     if (isOrganiserChildRefundKey(operation.idempotencyKey)) {
       return [{ operation, kind: "organiser-child", owedCents: operation.amountCents, later: [], owed: null }];
@@ -284,8 +301,9 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
     return [{ operation, kind: "charge", owedCents: owed.owedCents, later, owed }];
   });
   return Promise.all(
-    listed.map(async ({ operation, kind, owedCents, later, owed }) => {
-      if (kind !== "charge") {
+    listed.map(async (entry) => {
+      const { operation, owedCents, later } = entry;
+      if (entry.kind !== "charge") {
         return {
           operationId: operation.id,
           bookingId: operation.bookingId,
@@ -297,13 +315,17 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
           cardNoteCoversCents: 0,
           stripeMayHaveRefunded: lastErrorSuggestsStripeMayHaveRefunded(operation.lastError),
           laterStripeRefunds: [],
-          tryCardAgainRefusal: kind === "legacy-group" ? LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL : null,
-          settleKind: kind,
+          tryCardAgainRefusal: entry.kind === "legacy-group" ? LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL : null,
+          settleKind: entry.kind,
+          paidAnotherWayRefusal: null,
         };
       }
       const xeroPlan = owedCents > 0
         ? await paidAnotherWayXeroPlan(prisma, operation, operation.payment, { lockApprovalTask: false })
         : null;
+      const { owed } = entry;
+      const bankCloseRefusal = paidAnotherWayRefusal(operation.payment, operation, owed,
+        charges.filter((charge) => charge.paymentId === operation.paymentId));
       return {
         operationId: operation.id,
         bookingId: operation.bookingId,
@@ -315,8 +337,9 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
         cardNoteCoversCents: xeroPlan?.xeroRefundNote === "now" ? (xeroPlan.cardNoteCoversCents ?? 0) : 0,
         stripeMayHaveRefunded: lastErrorSuggestsStripeMayHaveRefunded(operation.lastError),
         laterStripeRefunds: later,
-        tryCardAgainRefusal: owed ? tryCardAgainRefusal(operation.payment, operation, owed) : null,
+        tryCardAgainRefusal: tryCardAgainRefusal(operation.payment, operation, owed, bankCloseRefusal),
         settleKind: "charge" as const,
+        paidAnotherWayRefusal: bankCloseRefusal,
       };
     }),
   );
@@ -463,7 +486,8 @@ export async function closeCardRefundPaidAnotherWay(
       notGivenUp: "This card refund is still being retried, so it cannot be closed yet.",
       otherBooking: "This card refund's payment belongs to another booking, so it cannot be closed here. Ask a developer to reconcile it.",
     });
-    const { ownCents, owedCents, unsentTransactionIds, unsent } = deadCardRefundStillOwed(payment, operation.id);
+    const owed = deadCardRefundStillOwed(payment, operation.id);
+    const { ownCents, owedCents, unsentTransactionIds, unsent } = owed;
     // C7: the figure the treasurer chose against, read under the payment row.
     if (owedCents !== input.expectedOwedCents) {
       throw new CardRefundPaidAnotherWayError(
@@ -471,6 +495,13 @@ export async function closeCardRefundPaidAnotherWay(
         409,
       );
     }
+    const charges = await tx.paymentTransaction.findMany({
+      where: { paymentId: payment.id },
+      select: { id: true, amountCents: true, refundedAmountCents: true },
+      orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
+    });
+    const refusal = paidAnotherWayRefusal(payment, operation, owed, charges);
+    if (refusal) throw new CardRefundPaidAnotherWayError(refusal, 409);
     if (input.amountCents > owedCents) {
       throw new CardRefundPaidAnotherWayError(
         "That is more than this refund still owes. Refresh and check the amount.",
