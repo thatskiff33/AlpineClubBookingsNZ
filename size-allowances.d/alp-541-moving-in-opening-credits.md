@@ -24,7 +24,7 @@ reason: three calls into `member-import-type-family.ts` (resolve the row's
   the response. They sit in the per-row loop and the transaction this route
   owns; the helpers hold the logic.
 
-file: src/app/(admin)/admin/members/_components/member-import-dialog.tsx
+file: src/app/(admin)/admin/membership/members/_components/member-import-dialog.tsx
 lines: 928
 reason: the club's active type names passed into the preview, so a misspelt
   type is shown before upload, and the result panel's family-group and type
@@ -36,8 +36,8 @@ lines: 973
 reason: renders the new Opening credits card with the page's existing
   finance-edit flag; the card is its own component.
 
-file: src/app/(admin)/admin/members/page.tsx
-lines: 601
+file: src/app/(admin)/admin/membership/members/page.tsx
+lines: 602
 reason: passes the already-loaded membership types to the import dialog.
 
 file: src/lib/admin-permissions.ts
