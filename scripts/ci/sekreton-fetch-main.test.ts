@@ -57,12 +57,22 @@ describe("Sekreton main fetch", () => {
     expect(fetchMain().status).toBe(128);
   }, 15_000);
 
-  it("fails without either remote rather than accepting a local base", () => {
+  it("uses the local main branch when no remote is configured, replacing a stale base", () => {
+    git(checkout, "remote", "add", "gh", upstream);
+    expect(fetchMain().status).toBe(0);
+    git(checkout, "remote", "remove", "gh");
+    git(checkout, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--allow-empty", "-m", "Sandbox base");
+    git(checkout, "branch", "main");
+    expect(fetchMain().status).toBe(0);
+    expect(git(checkout, "rev-parse", "origin/main")).toBe(git(checkout, "rev-parse", "main"));
+  }, 15_000);
+
+  it("fails with no remote and no local main rather than keeping a stale base", () => {
     git(checkout, "remote", "add", "gh", upstream);
     expect(fetchMain().status).toBe(0);
     git(checkout, "remote", "remove", "gh");
     const result = fetchMain();
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("neither origin nor gh is configured");
+    expect(result.stderr).toContain("no origin or gh remote and no local main branch");
   }, 15_000);
 });

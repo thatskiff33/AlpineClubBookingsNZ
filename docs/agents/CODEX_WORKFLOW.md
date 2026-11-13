@@ -276,7 +276,8 @@ data-migration suites with the same no-skip check (its header has the rule).
 skipped under 6 GiB); PR CI keeps the rest.
 `fast-censuses` (`pnpm run ci:fast-censuses`) and `migrations` first run
 [`sekreton-fetch-main.sh`](../../scripts/ci/sekreton-fetch-main.sh): refresh
-`origin/main` from `origin`, else `gh`; fetch errors fail.
+`origin/main` from `origin`, else `gh`, else the local `main`; fetch errors
+fail.
 `realdb-all` remains advisory; cite its result before PR readiness.
 
 ## Checking `main` after a merge
