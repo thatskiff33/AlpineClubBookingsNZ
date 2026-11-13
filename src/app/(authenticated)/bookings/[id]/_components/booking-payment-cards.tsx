@@ -137,7 +137,6 @@ export function BookingPaymentCards({
               bookingId={booking.id}
               amountCents={booking.finalPriceCents}
               paymentMode={getBookingPaymentMode(booking.status)}
-              returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
               showOnMount={false}
               gateDescription="Draft bookings stay editable until you explicitly continue to payment. Payment is still collected immediately once you choose to complete the booking."
               gateCtaLabel="Confirm & Continue to Payment"
@@ -322,7 +321,6 @@ export function BookingPaymentCards({
               bookingId={booking.id}
               amountCents={cardAmountDueCents}
               paymentMode={getBookingPaymentMode(booking.status)}
-              returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />
             {canSwitchToInternetBanking && (
               <>
@@ -377,7 +375,6 @@ export function BookingPaymentCards({
               // #4357 (`INV-PAY-119`): what the saved card will be charged.
               amountCents={savedCardChargeCents(booking)}
               paymentMode={getBookingPaymentMode(booking.status)}
-              returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />
           </CardContent>
         </Card>

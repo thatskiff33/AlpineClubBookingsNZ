@@ -1748,7 +1748,6 @@ export function useBookingWizard() {
             id: data.id,
             status: data.status,
             amountCents: remainingToPay,
-            returnUrl: `${window.location.origin}/bookings/${data.id}`,
           });
           setStep("pay");
           setSubmitting(false);

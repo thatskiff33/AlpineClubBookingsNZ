@@ -14,10 +14,19 @@
  * if unpaid - reads the context once more (a webhook that has just settled it
  * shows the paid page), else ends in "Payment received - check booking status",
  * never back at the pay buttons.
+ *
+ * #4955: a confirmation can also resolve `processing` (a bank debit, a
+ * pay-later approval), in the page or on a redirect return. The server then
+ * hands the same intent back unpaid - it only refuses with `PAYMENT_PROCESSING`
+ * for a superseded or old-currency intent - so that answer, unsettled on the
+ * second read, is "Payment being processed": the payment can still fail, and
+ * "received" would claim more than Stripe has said.
  */
 import {
+  PAYMENT_PROCESSING_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
 } from "@/lib/payment-recovery-contract";
+import type { CardConfirmation } from "@/lib/stripe-return";
 import { paymentRecoveryForRefusal, type PaymentLinkContext, type PaymentRecovery } from "./pay-link-presentation";
 
 export type CardSuccessOutcome =
@@ -30,6 +39,11 @@ const STATUS_UNCONFIRMED: CardSuccessOutcome = {
   recovery: { heading: "Payment received - check booking status", message: PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE },
 };
 
+const STILL_PROCESSING: CardSuccessOutcome = {
+  kind: "recovery",
+  recovery: paymentRecoveryForRefusal(PAYMENT_PROCESSING_BODY)!,
+};
+
 /** The link's context, or null when it cannot be read. */
 async function readContext(path: string): Promise<PaymentLinkContext | null> {
   try {
@@ -40,13 +54,17 @@ async function readContext(path: string): Promise<PaymentLinkContext | null> {
   }
 }
 
-export async function checkCardSuccess(token: string, paidIntentId: string): Promise<CardSuccessOutcome> {
+export async function checkCardSuccess(
+  token: string,
+  paidIntentId: string,
+  confirmation: CardConfirmation = "succeeded",
+): Promise<CardSuccessOutcome> {
   const path = `/api/pay/${encodeURIComponent(token)}`;
   const context = await readContext(path);
   if (context?.state === "paid") return { kind: "paid", context };
-  const settledMeanwhile = async (): Promise<CardSuccessOutcome> => {
+  const settledMeanwhile = async (unsettled = STATUS_UNCONFIRMED): Promise<CardSuccessOutcome> => {
     const again = await readContext(path);
-    return again?.state === "paid" ? { kind: "paid", context: again } : STATUS_UNCONFIRMED;
+    return again?.state === "paid" ? { kind: "paid", context: again } : unsettled;
   };
   try {
     const response = await fetch(`${path}/payment-intent`, {
@@ -59,8 +77,10 @@ export async function checkCardSuccess(token: string, paidIntentId: string): Pro
       const recovery = response.status === 409 ? paymentRecoveryForRefusal(data) : null;
       return recovery ? { kind: "recovery", recovery } : settledMeanwhile();
     }
-    if (data.alreadyPaid === true) return { kind: "paid", context: null };
+    // The context read above (when readable): the page may never have loaded its own (#4955).
+    if (data.alreadyPaid === true) return { kind: "paid", context };
     // The intent just paid handed back as if unpaid is no fresh payment to make.
+    if (data.paymentIntentId === paidIntentId && confirmation === "processing") return settledMeanwhile(STILL_PROCESSING);
     if (typeof data.clientSecret !== "string" || data.paymentIntentId === paidIntentId) return settledMeanwhile();
     return {
       kind: "fresh",
