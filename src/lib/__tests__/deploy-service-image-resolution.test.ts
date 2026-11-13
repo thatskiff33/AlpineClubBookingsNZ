@@ -16,6 +16,7 @@ const HARNESS = path.join(ROOT, "lookup.sh");
 writeFileSync(HARNESS, `set -Eeuo pipefail
 PROJECT_DIR="$PWD"
 CRON_SERVICE=app BLUE_SERVICE=app_blue GREEN_SERVICE=app_green MIGRATE_SERVICE=migrate
+${shellFunctionSource(readRepoFile(DEPLOY_SCRIPT), "compose_service_image_ref")}
 ${shellFunctionSource(readRepoFile(DEPLOY_SCRIPT), "get_service_image_ref")}
 docker() {
   printf '%s\\n' "$*" >> docker.calls
