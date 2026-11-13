@@ -32,15 +32,15 @@ state, CI on the exact head with the failing required check names, merge state,
 and the stale claims. It replaces #3905's hand-edited reservation tables, whose
 remaining decisions live in their own issues.
 
-`.github/workflows/status-board.yml` runs it hourly with `GITHUB_TOKEN` alone and
-overwrites the body of the issue named by the repository variable
-`STATUS_BOARD_ISSUE`; while that is unset it exits with a notice and writes
-nothing. The owner or a lane creates the issue with an empty body (blank issues
-are disabled: `gh issue create --title "Status board" --body ""`, or clear a
-template-filled body) and pins it; the owner sets the variable (the machine
-account lacks admin). Never edit the board or
-record a decision on it: the `CLAIM:` and decision record are the record. It is
-data, not a required check.
+`.github/workflows/status-board.yml` overwrites one issue hourly with
+`GITHUB_TOKEN`. Setup: a lane or owner creates and pins an empty issue
+(`gh issue create --title "Status board" --body ""`, or clear a template body).
+The owner sets repository variable `STATUS_BOARD_ISSUE` to its number under
+Settings → Secrets and variables → Actions → Variables; the machine account
+lacks admin. The board is live only once a run writes it; until then use
+`pnpm run status` (an unset variable warns and writes nothing). Never edit the
+board or record decisions on it: claims and decision records are authoritative.
+It is data, not a required check.
 
 ## When a coordinator runs
 
@@ -96,8 +96,9 @@ contract step can't be made inert (owner decision, 27 Oct 2026, #4464;
 Two lanes can claim a free-looking issue within minutes, so a claim is not held
 until checked:
 
-1. Before claiming, read the thread (`pnpm run issue <n>`), the status board,
-   and open PRs for the issue (`gh pr list --search "<n>"`).
+1. Before claiming, read the thread (`pnpm run issue <n>`), `pnpm run status`
+   (or the pinned board, once live), and open PRs for the issue
+   (`gh pr list --search "<n>"`).
 2. Post the `CLAIM:`, then read the thread and PR list again before creating a
    worktree or writing code.
 3. If another lane's `CLAIM:`, assignment or PR for the issue appears, the

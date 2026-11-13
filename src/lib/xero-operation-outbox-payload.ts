@@ -2,6 +2,7 @@ import type { EntranceFeeCategory } from "@prisma/client";
 import { readAdminGrantCreditNotePayload, XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE, type AdminGrantCreditNotePayload } from "@/lib/admin-grant-credit-note-payload";
 import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, type OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
+import { readCardRefundReversalInvoicePayload, XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE, type QueuedCardRefundReversalInvoiceOutboxPayload } from "@/lib/xero-card-refund-reversal-outbox";
 import {
   parseRefundMethod, readModificationNoteWording, readRefundNoteWording,
   type ModificationNoteWording, type RefundMethod, type RefundNoteWording,
@@ -50,6 +51,7 @@ export const XERO_OUTBOX_QUEUE_TYPES = [
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE,
   XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
   XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
+  XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE, // #4369 (`INV-PAY-151`)
   XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
   XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, // #4299 (`INV-PAY-148`)
   XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE, // #4431
@@ -255,6 +257,7 @@ export type QueuedOutboxPayload =
   | QueuedGroupSettlementInvoiceVoidOutboxPayload
   | QueuedSubscriptionInvoiceOutboxPayload
   | QueuedKeptLateCaptureInvoiceOutboxPayload
+  | QueuedCardRefundReversalInvoiceOutboxPayload
   | QueuedAdditionalCaptureReceiptOutboxPayload
   | AdminGrantCreditNotePayload;
 
@@ -516,6 +519,7 @@ export function readQueuedOutboxPayload(
 
   if (queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE) return { queueType }; // #3971
   if (queueType === XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE) return readAdditionalCaptureReceiptPayload(value);
+  if (queueType === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE) return readCardRefundReversalInvoicePayload(value);
 
   if (queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE) {
     const bookingId = readString(payload.bookingId);
@@ -690,6 +694,7 @@ export function getQueuedOutboxExpectedOperation(
             : queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE
               ? // #3635: the approval task that owns the kept capture.
                 ["ManualRefundTask"]
+            : queueType === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE ? ["Payment"] // #4369
             : ["Member"],
   };
 }
