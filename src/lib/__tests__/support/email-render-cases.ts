@@ -95,6 +95,7 @@ import {
 import { adminInternetBankingHoldKeptTemplate } from "@/lib/email-templates/admin-internet-banking";
 import { adminLateCaptureRefundedOutsideAppTemplate } from "@/lib/email-templates/admin-late-capture-outside-app";
 import { adminUnmatchedAppStripePaymentTemplate, adminUnrecognisedStripePaymentTemplate } from "@/lib/email-templates/admin-unrecognised-stripe-payment";
+import { adminStripeDisputeTemplate } from "@/lib/email-templates/admin-stripe-dispute";
 import { adminBankTransferSettlementFigureTemplate } from "@/lib/email-templates/admin-bank-transfer-settlement";
 import { adminDuplicateCaptureKeptTemplate } from "@/lib/email-templates/admin-duplicate-capture-kept";
 import { adminSupersededCaptureRefusedTemplate } from "@/lib/email-templates/admin-superseded-capture-refused";
@@ -882,6 +883,11 @@ const GENERATED_CASES: EmailRenderCase[] = [
   // #4624: the app's own booking payment that matches no payment record.
   { id: "adminUnmatchedAppStripePaymentTemplate:minimal", fn: "adminUnmatchedAppStripePaymentTemplate", render: () =>
     adminUnmatchedAppStripePaymentTemplate({ amount: "amount-1", receivedAt: "receivedAt-2", bookingId: "bookingId-3", ledgerMatch: "ledgerMatch-4", paymentIntentId: "paymentIntentId-5", chargeId: "chargeId-6", stripeDashboardUrl: "https://dashboard.stripe.com/test/payments/paymentIntentId-5" }) },
+  // #4911: a cardholder's dispute, when it opens and when it closes (lost).
+  { id: "adminStripeDisputeTemplate:minimal", fn: "adminStripeDisputeTemplate", render: () =>
+    adminStripeDisputeTemplate({ stage: "opened", outcome: "outcome-1", amount: "amount-2", reason: "reason-3", openedAt: "openedAt-4", bookingId: "bookingId-5", bookingOwner: "bookingOwner-6", disputeId: "disputeId-7", paymentIntentId: "paymentIntentId-8", chargeId: "chargeId-9", disputeNextStep: "disputeNextStep-10", stripeDashboardUrl: "https://dashboard.stripe.com/test/payments/paymentIntentId-8" }) },
+  { id: "adminStripeDisputeTemplate:closed-lost", fn: "adminStripeDisputeTemplate", render: () =>
+    adminStripeDisputeTemplate({ stage: "closed", outcome: "lost", amount: "amount-2", reason: "reason-3", openedAt: "openedAt-4", bookingId: "bookingId-5", bookingOwner: "bookingOwner-6", disputeId: "disputeId-7", paymentIntentId: "paymentIntentId-8", chargeId: "chargeId-9", disputeNextStep: "disputeNextStep-10", stripeDashboardUrl: "https://dashboard.stripe.com/test/payments/paymentIntentId-8" }) },
   { id: "adminLateCaptureHeldTemplate:minimal", fn: "adminLateCaptureHeldTemplate", render: () =>
     adminLateCaptureHeldTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), amountCents: 104, bookingId: "bookingId-5", reviewUrl: "reviewUrl-6" }, CLUB_FORMAT_TEST) },
   { id: "adminPendingDeadlineTemplate:minimal", fn: "adminPendingDeadlineTemplate", render: () =>

@@ -10,6 +10,18 @@ const mocks = vi.hoisted(() => ({
   loggerError: vi.fn(),
 }));
 
+// #4911: no capture here is disputed unless a test says so; the hold's own read
+// is proved in `stripe-dispute-hold.test.ts`.
+const disputeHold = vi.hoisted(() => ({
+  read: vi.fn<(...args: unknown[]) => Promise<{ cents: number; disputes: Array<{ stripeDisputeId: string; stripePaymentIntentId: string; status: "OPEN" | "LOST"; amountCents: number }> }>>(
+    async () => ({ cents: 0, disputes: [] }),
+  ),
+}));
+vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
+  disputedCaptureCents: disputeHold.read,
+}));
+
 vi.mock("@/lib/logger", () => ({
   default: {
     warn: mocks.loggerWarn,
@@ -73,6 +85,7 @@ import {
 } from "@/lib/payment-transactions";
 vi.mock("@/lib/recorded-card-refund-notes", () => ({ queueRecordedCardRefundNotes: vi.fn().mockResolvedValue({ queueOperationId: null }) }));
 import { checkCardRefundResend } from "@/lib/card-refund-resend-preflight";
+import { disputedCaptureRefusal } from "@/lib/stripe-dispute-hold";
 import { refundPlanOrRetryRefusals } from "@/lib/refused-card-refund-retry";
 import { predatesRefundLedger } from "@/lib/payment-transaction-status";
 import {
@@ -691,6 +704,25 @@ describe("payment refund ledger", () => {
       }),
     });
     expect(mocks.processRefund).not.toHaveBeenCalled();
+  });
+
+  it("#4911 (INV-PAY-151): refunds nothing from a disputed capture, refused before any slice is reserved or sent", async () => {
+    const { store } = createRefundStore();
+    disputeHold.read.mockResolvedValueOnce({
+      cents: 2500,
+      disputes: [{ stripeDisputeId: "dp_1", stripePaymentIntentId: "pi_1", status: "OPEN", amountCents: 2500 }],
+    });
+
+    const refused = refundPaymentTransactions({ format: CLUB_FORMAT_TEST, paymentId: "payment_1", amountCents: 2500, store: store as any });
+
+    await expect(refused).rejects.toBeInstanceOf(PartialRefundError);
+    const error = await refused.catch((caught: unknown) => caught);
+    expect(disputedCaptureRefusal(error)).toMatchObject({ paymentIntentId: "pi_1", lost: false });
+    expect(error).toMatchObject({ completedRefundCents: 0, refunds: [] });
+    expect(disputeHold.read).toHaveBeenCalledWith(store, ["pi_1"]);
+    expect(journal.reserveCardRefundSlice).not.toHaveBeenCalled();
+    expect(mocks.processRefund).not.toHaveBeenCalled();
+    expect(store.paymentRefund.createMany).not.toHaveBeenCalled();
   });
 
   it("does not send Internet Banking transactions to Stripe refund APIs", async () => {

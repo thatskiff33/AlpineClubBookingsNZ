@@ -4129,3 +4129,36 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
   `cancel-card-refund-shortfall-preview.test.ts`,
   `clipped-mirror-open-hand-back.test.ts` and
   `superseded-refund-cancel-hold-back.realdb.test.ts`.
+
+## INV-PAY-151
+
+**Related: `INV-PAY-128`** (a refusal never loops), **`INV-INT-032`** (an
+alert nobody received answers 500).
+
+- **A disputed capture is never refunded, nor credited by a cancel** (#4911).
+  While a cardholder's dispute (chargeback) is OPEN or LOST, no card refund is
+  issued for that capture and a paid cancel issues no account credit. A WON
+  dispute, or one closed with no funds taken, holds nothing.
+- **One read.** `disputedCaptureCents` (`stripe-dispute-hold.ts`) answers "is
+  this capture disputed": `processRefund` asks before every Stripe call, a
+  refund asks before reserving, the paid cancel inside its claim.
+- **A paid cancel** of a disputed booking records the cancel, issues neither,
+  raises a `CANCELLED_BOOKING_HAND_BACK` task on the credit tier naming the
+  dispute, and tells the member the refund is with the treasurer. A
+  joiner's refund to the organiser's card is refused at `processRefund`.
+- **A refused refund stops.** A recovery row refused for a dispute goes to
+  the treasurer at once (`unretryableRecoveryCause`); a late capture's is held
+  for a treasurer, never redelivered.
+- **One record per dispute.** The four `charge.dispute.*` events keep one
+  `StripeDispute` row, claimed by its unique Stripe id and merged under its row
+  lock: duplicates and replays change nothing, an older event never overwrites
+  a newer one, a closed dispute never reopens.
+- **Two Finance alerts per dispute**, unmuteable, once ever: open and close.
+- **A record, not money.** No ledger line, journal, refund, `Payment` total or
+  Xero posting; the treasurer records a lost dispute in Xero by hand
+  (`DEPLOYMENT.md`).
+- Limits: a dispute recorded after a cancel's read is not seen by that cancel,
+  so a credit committed in that window stays; a booking edit's reduction does
+  not read the hold and can still mint account credit.
+- Proven by `stripe-dispute.test.ts`, `admin-stripe-dispute-alert.test.ts`,
+  `cancel-refund-method.test.ts` and `stripe-dispute-cancel.realdb.test.ts`.
