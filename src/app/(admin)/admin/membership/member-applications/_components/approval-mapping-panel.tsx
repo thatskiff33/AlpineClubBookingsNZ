@@ -10,6 +10,7 @@ import {
   useJoiningFeePrefill,
   useJoiningFeePreview,
 } from "@/components/admin/joining-fee-preview";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 // E10 (#1936): the extracted application-approval flow — per-person Create/Map
 // decisions, candidate chips + live search, a field-by-field diff preview, the
@@ -265,11 +266,11 @@ export default function ApprovalMappingPanel({
           body: JSON.stringify({ personDecisions }),
         },
       );
-      const data = await response.json();
       if (!response.ok) {
-        onError(data.error || "Could not build the mapping preview.");
+        onError(await apiErrorMessageFromResponse(response, "Could not build the mapping preview."));
         return;
       }
+      const data = await response.json();
       setPreview(data.preview as MappingPreview);
       setPreviewedSignature(decisionSignature);
     } catch {
@@ -290,11 +291,11 @@ export default function ApprovalMappingPanel({
       const response = await fetch(
         `/api/admin/members?q=${encodeURIComponent(query)}&active=true&pageSize=5`,
       );
-      const data = await response.json();
       if (!response.ok) {
-        onError(data.error || "Could not search members.");
+        onError(await apiErrorMessageFromResponse(response, "Could not search members."));
         return;
       }
+      const data = await response.json();
       setSearchResults((prev) => ({ ...prev, [key]: data.members || [] }));
     } catch {
       onError("Could not search members.");

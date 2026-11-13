@@ -54,6 +54,7 @@ import type {
 import { useClubTime } from "@/components/club-time-provider";
 import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import { cn } from "@/lib/utils";
+import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 
 import { adminHref } from "@/lib/admin-hubs";
 type RequestFilter =
@@ -423,17 +424,15 @@ function MembershipCancellationRequests() {
       const response = await fetch(
         `/api/admin/membership-cancellation-requests?${params.toString()}`,
       );
-      const body = await response.json();
       if (!response.ok) {
-        throw new Error(body.error || "Could not load cancellation requests.");
+        throw await apiRefusalFromResponse(response, "Could not load cancellation requests.");
       }
+      const body = await response.json();
       setData(body);
       return null;
     } catch (err) {
       const failure =
-        err instanceof Error
-          ? err.message
-          : "Could not load cancellation requests.";
+        refusalMessageOr(err, "Could not load cancellation requests.");
       setError(failure);
       return failure;
     } finally {
@@ -453,14 +452,14 @@ function MembershipCancellationRequests() {
       const response = await fetch(
         `/api/admin/member-lifecycle-action-requests?${params.toString()}`,
       );
-      const body = await response.json();
       if (!response.ok) {
-        throw new Error(body.error || "Could not load archive requests.");
+        throw await apiRefusalFromResponse(response, "Could not load archive requests.");
       }
+      const body = await response.json();
       setArchiveData(body);
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Could not load archive requests.",
+        refusalMessageOr(err, "Could not load archive requests."),
       );
     } finally {
       setArchiveLoading(false);
@@ -534,10 +533,10 @@ function MembershipCancellationRequests() {
           }),
         },
       );
-      const body = await response.json();
       if (!response.ok) {
-        throw new Error(body.error || "Could not review participant.");
+        throw await apiRefusalFromResponse(response, "Could not review participant.");
       }
+      const body = await response.json();
 
       setNotes((prev) => ({ ...prev, [participantId]: "" }));
       // #1787: when the admin chose "…without emailing", the standard
@@ -556,7 +555,7 @@ function MembershipCancellationRequests() {
       await loadRequests();
     } catch (err) {
       const failure =
-        err instanceof Error ? err.message : "Could not review participant.";
+        refusalMessageOr(err, "Could not review participant.");
       // #2392 (review M6): a refusal is a statement about the queue, not just
       // about this click — most often "Xero says money is owing" on a row whose
       // own panel was loaded before the invoice was raised, or shows nothing at
@@ -600,10 +599,10 @@ function MembershipCancellationRequests() {
           }),
         },
       );
-      const body = await response.json();
       if (!response.ok) {
-        throw new Error(body.error || "Could not review archive request.");
+        throw await apiRefusalFromResponse(response, "Could not review archive request.");
       }
+      const body = await response.json();
 
       setArchiveNotes((prev) => ({ ...prev, [requestId]: "" }));
       setMessage(
@@ -617,7 +616,7 @@ function MembershipCancellationRequests() {
       await loadArchiveRequests();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Could not review archive request.",
+        refusalMessageOr(err, "Could not review archive request."),
       );
     } finally {
       setArchiveSubmittingId(null);

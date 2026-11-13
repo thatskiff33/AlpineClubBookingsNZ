@@ -164,3 +164,28 @@ export async function apiErrorMessageFromResponse(
 ): Promise<string> {
   return apiErrorMessageFromBody(await readApiErrorBody(response), fallback);
 }
+
+/**
+ * A refusal read from a failed response, for a handler that throws it into its
+ * own `catch` (#4976, ALP-589).
+ *
+ * That catch also sees a request that never got an answer (`TypeError: Failed
+ * to fetch`) and any bug in the success path. Showing `err.message` for those
+ * puts the browser's words, or a JSON parse error, in front of the officer;
+ * {@link refusalMessageOr} shows the route's sentence only for this class and
+ * the screen's own fallback for everything else.
+ */
+export class ApiRefusalError extends Error {}
+
+/** Read a failed response into an {@link ApiRefusalError} to throw. */
+export async function apiRefusalFromResponse(
+  response: Response,
+  fallback: string,
+): Promise<ApiRefusalError> {
+  return new ApiRefusalError(await apiErrorMessageFromResponse(response, fallback));
+}
+
+/** The sentence for a caught error: a refusal's own, otherwise `fallback`. */
+export function refusalMessageOr(err: unknown, fallback: string): string {
+  return err instanceof ApiRefusalError ? err.message : fallback;
+}

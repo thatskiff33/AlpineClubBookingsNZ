@@ -49,6 +49,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 
 type IssueReportSummary = {
   id: string;
@@ -159,12 +160,12 @@ export default function AdminIssueReportsPage() {
     setDetailLoading(true);
     try {
       const response = await fetch(`/api/admin/issue-reports/${id}`);
+      if (!response.ok) throw await apiRefusalFromResponse(response, "Failed to load report");
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Failed to load report");
       setSelectedReport(body.report);
       setResolutionNote(body.report?.resolutionNote ?? "");
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to load report");
+      alert(refusalMessageOr(err, "Failed to load report"));
     } finally {
       setDetailLoading(false);
     }
@@ -193,13 +194,13 @@ export default function AdminIssueReportsPage() {
           reason: action === "deleteScreenshot" ? "Deleted during admin triage" : undefined,
         }),
       });
+      if (!response.ok) throw await apiRefusalFromResponse(response, "Failed to update report");
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Failed to update report");
       setSelectedReport(body.report);
       setResolutionNote(body.report?.resolutionNote ?? "");
       fetchReports();
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to update report");
+      alert(refusalMessageOr(err, "Failed to update report"));
     } finally {
       setSubmitting(false);
     }

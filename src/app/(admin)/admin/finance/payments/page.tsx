@@ -11,6 +11,7 @@ import { formatPaidRefundedBreakdown, getPaymentNetOfRefundsCents } from "@/lib/
 import { formatNetCollectedLedgerGapWarning } from "@/lib/payment-net-collected";
 import { requireInstant, formatStayDateOrNull } from "@/lib/club-time";
 import { readAdminQueryErrorMessage } from "@/lib/admin-query-error";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import {
   getPaymentsDatasetDefaults,
   PAYMENT_DATASET_QUERY_KEYS,
@@ -688,8 +689,7 @@ export default function PaymentsPage() {
           setInvoiceNotice(result.message);
         }
       } else {
-        const err = await res.json();
-        setInvoiceError(err.error || "Failed to generate invoice");
+        setInvoiceError(await apiErrorMessageFromResponse(res, "Failed to generate invoice"));
       }
     } catch {
       setInvoiceError("Failed to generate invoice");
