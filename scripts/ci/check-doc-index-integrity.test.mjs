@@ -1757,6 +1757,30 @@ describe("invariant baseline resolution and loading", () => {
       expect(removed(repoRoot, baseTip).join("\n")).toContain("INV-MONEY-002 disappeared");
     });
 
+    it("falls back to the base tip when the branch has more than one merge base, so a deletion cannot pick the kinder one", () => {
+      // feature is stacked on a side commit A1; main adds MONEY-002 (M1); feature
+      // merges M1; main merges A1 and moves on. feature and main's tip now share
+      // two merge bases, M1 (has 002) and A1 (never had it). feature deletes 002.
+      const repoRoot = initGitRepo();
+      commitFiles(repoRoot, "base", { "docs/invariants/money.md": family("MONEY", ["001"]) });
+      git(repoRoot, "checkout", "-b", "side");
+      commitFiles(repoRoot, "A1", { "side.txt": "side\n" });
+      git(repoRoot, "checkout", "-b", "feature");
+      git(repoRoot, "checkout", "main");
+      commitFiles(repoRoot, "M1 adds an id", { "docs/invariants/money.md": family("MONEY", ["001", "002"]) });
+      git(repoRoot, "checkout", "feature");
+      git(repoRoot, "merge", "--no-edit", "main");
+      git(repoRoot, "checkout", "main");
+      git(repoRoot, "merge", "--no-edit", "side");
+      const baseTip = commitFiles(repoRoot, "main moves on", { "main.txt": "main\n" });
+      git(repoRoot, "checkout", "feature");
+      commitFiles(repoRoot, "feature deletes the id", { "docs/invariants/money.md": family("MONEY", ["001"]) });
+
+      const resolved = resolveInvariantBaselineRef(repoRoot, prEnv(baseTip));
+      expect(resolved).toBe(baseTip);
+      expect(removed(repoRoot, resolved).join("\n")).toContain("INV-MONEY-002 disappeared");
+    });
+
     it("still fails a branch that removes an id present at its branch point, naming it", () => {
       const { repoRoot, baseTip } = behindBranch();
       commitFiles(repoRoot, "delete an id", {

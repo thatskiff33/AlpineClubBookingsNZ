@@ -2563,6 +2563,22 @@ function tryMergeBase(repoRoot, left, right) {
   }
 }
 
+/** Every merge base of two commits; empty when there is none or git fails. */
+function allMergeBases(repoRoot, left, right) {
+  try {
+    return execFileSync("git", ["merge-base", "--all", left, right], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * The branch point of `head` against whichever spelling of main this checkout
  * has, or null when it has neither. Shared by the epic-branch push path and the
@@ -2598,12 +2614,20 @@ function mergeBaseAgainstMain(repoRoot, head) {
  * `HEAD`, so it is still reported. An id the base added later is checked when
  * the branch's merge commit is, and on the push to `main`.
  *
+ * Several merge bases fall back to `PR_BASE_SHA` itself (stricter, never weaker).
+ *
  * No merge base fails closed: unrelated history or a checkout too shallow to
  * reach the branch point gives no honest baseline, and `PR_BASE_SHA` would bring
  * back the false "disappeared" this exists to remove.
  */
 function pullRequestBranchPoint(repoRoot, head, prBase) {
   const base = resolveRequiredCommit(repoRoot, prBase, "PR_BASE_SHA");
+  // More than one merge base (a branch stacked on a commit the base later
+  // merged, #5157 review): no single commit is "the" branch point, and picking
+  // one can choose a history that never held an id the branch then deleted. Use
+  // the base tip itself, the stricter pre-#5156 baseline: it can over-report on
+  // such a branch, never under-report.
+  if (allMergeBases(repoRoot, head, base).length > 1) return base;
   const branchPoint = tryMergeBase(repoRoot, head, base);
   if (!branchPoint) {
     throw new Error(
