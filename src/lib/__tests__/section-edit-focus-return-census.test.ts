@@ -38,7 +38,7 @@ const SECTION_EDIT_ADOPTERS = [
   "src/app/(admin)/admin/finance/xero/_components/webhook-health-panel.tsx",
   "src/app/(admin)/admin/lodges/[id]/_components/lodge-central-lodge-card.tsx",
   "src/app/(admin)/admin/lodges/[id]/_components/lodge-roster-settings-card.tsx",
-  "src/app/(admin)/admin/member-fields/page.tsx",
+  "src/app/(admin)/admin/membership/member-fields/page.tsx",
   "src/app/(admin)/admin/privacy-retention/privacy-retention-client.tsx",
   "src/app/(admin)/admin/system/backups/backups-client.tsx",
   "src/app/(admin)/admin/system/backups/local-backup-card.tsx",
