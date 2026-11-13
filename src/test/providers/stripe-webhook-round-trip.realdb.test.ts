@@ -89,7 +89,7 @@ let webhook: typeof import("@/lib/stripe-webhook-service");
       data: { id: MEMBER_ID, email: `${MEMBER_ID}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Round", lastName: "Trip", ageTier: "ADULT" },
     });
     await prisma.lodge.create({ data: { id: LODGE_ID, name: "Race 4908 Stripe Lodge", slug: P } });
-  });
+  }, 60_000);
 
   beforeEach(async () => {
     await clean();

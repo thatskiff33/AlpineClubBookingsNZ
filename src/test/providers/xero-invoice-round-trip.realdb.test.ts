@@ -84,7 +84,7 @@ let role: SuiteEnvironmentRoleDeclaration | undefined;
     });
     await prisma.lodge.create({ data: { id: LODGE_ID, name: "Race 4908 Xero Lodge", slug: P } });
     await prisma.lodgeSettings.create({ data: { id: LODGE_ID, lodgeId: LODGE_ID, capacity: 10 } });
-  });
+  }, 60_000);
 
   beforeEach(async () => {
     await clean();
