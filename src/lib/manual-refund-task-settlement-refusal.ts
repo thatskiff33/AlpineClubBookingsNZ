@@ -9,13 +9,22 @@ import {
   XeroAppliedCreditOperationBusyError,
 } from "@/lib/xero-applied-credit-operation-serialization";
 
+/** #4872: a hand-back refused only because a replaced card payment's own refund still owns part of the payment. */
+const SUPERSEDED_HOLD_BACK_REFUSAL_MESSAGE =
+  "Part of this payment is still being refunded on a card payment that was replaced. Try again once that refund has completed.";
+
 /**
  * A settlement write's refusal, as the operator should read it - or the error
  * itself where it is not one. Shared by the writes before the re-price and the
  * account-credit write after it, so the two cannot answer the same refusal
  * differently.
  */
-export function settlementWriteRefusal(error: unknown, route?: { kind: string; cardShortfall?: { nothingToAllocateMessage?: string } } | null): unknown {
+export function settlementWriteRefusal(
+  error: unknown,
+  route?: { kind: string; cardShortfall?: { nothingToAllocateMessage?: string } } | null,
+  /** #4872: the live superseded-capture hold-back the allocation left alone; 0 when none. */
+  supersededHeldBackCents = 0,
+): unknown {
   // #3030: the settlement cap is now OPERATOR-REACHABLE. Before this the amount
   // always came from cancellation or capture policy and could not exceed what
   // was captured; now an admin types it. The cap itself is not weakened by a
@@ -31,6 +40,10 @@ export function settlementWriteRefusal(error: unknown, route?: { kind: string; c
     // #4097 (`INV-PAY-129`): a card refund shortfall the ledger holds nothing for is dismissed, not repriced.
     // #4154 (`INV-PAY-135`): a capacity race's names its own way out.
     if (route?.cardShortfall) return new ManualBookingPaymentError(route.cardShortfall.nothingToAllocateMessage ?? CARD_SHORTFALL_NOTHING_TO_ALLOCATE_MESSAGE, 400);
+    // #4872 (`INV-PAY-150`): the money was captured, but a replaced card payment's own refund still owns part of it.
+    if (supersededHeldBackCents > 0) {
+      return new ManualBookingPaymentError(SUPERSEDED_HOLD_BACK_REFUSAL_MESSAGE, 409);
+    }
     return new ManualBookingPaymentError("That is more than was ever captured on this payment — check the amount against the booking's payment history.", 400);
   }
   // #3032: a lock-free writer on the same payment (the charge.refunded sync; a
