@@ -69,6 +69,7 @@ const { mockPrisma, mockTransporter } = vi.hoisted(() => {
       findUnique: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
       groupBy: vi.fn().mockResolvedValue([]),
+      count: vi.fn().mockResolvedValue(0),
     },
     auditLog: {
       create: vi.fn().mockResolvedValue({}),
@@ -612,8 +613,10 @@ describe("exhausted email failure review", () => {
         createdAt: new Date("2026-05-14T00:00:00.000Z"),
       },
     ]);
+    mockPrisma.emailLog.count.mockResolvedValue(2);
     mockPrisma.auditLog.findMany.mockResolvedValue([
       {
+        action: "email.failure.reviewed",
         targetId: "reviewed-failure",
         actorMemberId: "admin_1",
         memberId: "admin_1",

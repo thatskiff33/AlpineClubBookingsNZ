@@ -4,6 +4,10 @@ const { mockPrisma } = vi.hoisted(() => ({
   mockPrisma: {
     emailLog: {
       findMany: vi.fn(),
+      count: vi.fn(),
+    },
+    booking: {
+      findMany: vi.fn(),
     },
     auditLog: {
       findMany: vi.fn(),
@@ -23,6 +27,8 @@ describe("exhausted email failure reasons", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.auditLog.findMany.mockResolvedValue([]);
+    mockPrisma.emailLog.count.mockResolvedValue(1);
+    mockPrisma.booking.findMany.mockResolvedValue([]);
   });
 
   it("returns the authoritative security-retirement instruction to the UI", async () => {

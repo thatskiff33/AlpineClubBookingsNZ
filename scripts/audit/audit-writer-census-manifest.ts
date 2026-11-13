@@ -749,7 +749,10 @@ export const AUDIT_CENSUS_TOTALS = {
   // `booking-payment.card-refund.try-card-again`, the treasurer closing a dead card refund
   // a later Stripe refund covers and putting one back to try the card, each awaited on its
   // own transaction (`card-refund-dead-row-actions.ts`), both `payment`. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 538,
+  // 538 -> 539 (#4963): `email.failure.requeued`, an officer's Try again on an exhausted
+  // email failure, awaited on the requeue's own transaction (`email-failure-review.ts`),
+  // `communication`. RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 539,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -974,7 +977,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // 170 -> 171 (#4686): the lost-claim part-success's row, above.
     // 171 -> 172 (triyder/AlpineClubBookingsNZ#97): the link dialog's row, above.
     // 172 -> 174 (#4516): the refused reservation and the OPERATOR release, above.
-    createAuditLog: { total: 176, uncategorised: 0 }, // 174 -> 176 (#4368): the two dead card refund settlements.
+    createAuditLog: { total: 177, uncategorised: 0 }, // 174 -> 176 (#4368): the two dead card refund settlements; 176 -> 177 (#4963): Try again on an exhausted email failure.
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1489,7 +1492,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 20 -> 21 (epic #2992 federation): club_post_image.upload. Still a
     // membership+support read; it records only who uploaded and how many
     // bytes, never what the picture was of.
-    communication: 21,
+    // 21 -> 22 (#4963): email.failure.requeued, beside the archive row
+    // (email.failure.reviewed) it pairs with; the same membership+support read.
+    communication: 22,
     // 14 -> 15 (#2627): `member.deletion_approval_claim_released`. Still a
     // membership+support read, like every other deletion-decision row beside it,
     // so this widens nobody's access.

@@ -51,6 +51,7 @@ const mockPrisma = vi.hoisted(() => ({
   },
   emailLog: {
     findMany: vi.fn(),
+    count: vi.fn(),
   },
   auditLog: {
     count: vi.fn(),
@@ -625,6 +626,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     vi.mocked(prisma.emailSuppression.count).mockResolvedValue(0);
     vi.mocked(prisma.emailSuppression.findMany).mockResolvedValue([]);
     vi.mocked(prisma.emailLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.emailLog.count).mockResolvedValue(0);
     vi.mocked(prisma.auditLog.count).mockResolvedValue(0);
     vi.mocked(prisma.auditLog.findMany).mockResolvedValue([]);
     vi.mocked(getDetailedHealthReport).mockResolvedValue({
@@ -705,6 +707,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     vi.mocked(prisma.emailSuppression.count).mockResolvedValue(0);
     vi.mocked(prisma.emailSuppression.findMany).mockResolvedValue([]);
     vi.mocked(prisma.emailLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.emailLog.count).mockResolvedValue(0);
     vi.mocked(prisma.auditLog.count).mockResolvedValue(0);
     vi.mocked(prisma.auditLog.findMany).mockResolvedValue([]);
     vi.mocked(getDetailedHealthReport).mockResolvedValue({
@@ -745,6 +748,9 @@ describe("OBS-07: GET /api/admin/health", () => {
         activeCount: 0,
         reviewedCount: 0,
         scannedCount: 0,
+        totalExhaustedCount: 0,
+        scanLimit: 200,
+        scanCapped: false,
         maxAttempts: 3,
       },
       failures: [],
@@ -858,6 +864,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     vi.mocked(prisma.emailSuppression.count).mockResolvedValue(0);
     vi.mocked(prisma.emailSuppression.findMany).mockResolvedValue([]);
     vi.mocked(prisma.emailLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.emailLog.count).mockResolvedValue(0);
     vi.mocked(prisma.auditLog.count).mockResolvedValue(0);
     vi.mocked(prisma.auditLog.findMany).mockResolvedValue([]);
     vi.mocked(getDetailedHealthReport).mockResolvedValue({
