@@ -15,14 +15,14 @@ export const BOOKINGS_HUB = defineHub({
       label: "Bookings",
       oldPath: "/admin/bookings",
       area: "bookings",
-      moved: false,
+      moved: true,
     },
     {
       id: "booking-requests",
       label: "Booking Requests",
       oldPath: "/admin/booking-requests",
       area: "bookings",
-      moved: false,
+      moved: true,
     },
     {
       // Redirect stub into Booking Requests' approvals tab.
@@ -31,7 +31,7 @@ export const BOOKINGS_HUB = defineHub({
       oldPath: "/admin/booking-approvals",
       area: "bookings",
       kind: "stub",
-      moved: false,
+      moved: true,
     },
     {
       // Redirect stub into Booking Requests' changes tab.
@@ -40,14 +40,14 @@ export const BOOKINGS_HUB = defineHub({
       oldPath: "/admin/booking-change-requests",
       area: "bookings",
       kind: "stub",
-      moved: false,
+      moved: true,
     },
     {
       id: "book",
       label: "Book on Behalf",
       oldPath: "/admin/book",
       area: "bookings",
-      moved: false,
+      moved: true,
     },
     {
       id: "bed-allocation",
@@ -56,7 +56,7 @@ export const BOOKINGS_HUB = defineHub({
       area: "bookings",
       flags: ["bedAllocation"],
       keywords: ["rooms", "beds", "assign", "bunks"],
-      moved: false,
+      moved: true,
     },
     {
       id: "waitlist",
@@ -64,7 +64,7 @@ export const BOOKINGS_HUB = defineHub({
       oldPath: "/admin/waitlist",
       area: "bookings",
       flags: ["waitlist"],
-      moved: false,
+      moved: true,
     },
   ],
 });
