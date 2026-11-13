@@ -4916,7 +4916,7 @@ enum UnrecognisedStripePaymentReason {
   APP_INTENT_NOT_PRIMARY
 }
 
-// #4911 (`INV-PAY-151`): one row per Stripe dispute (chargeback), recorded from
+// #4911 (`INV-PAY-153`): one row per Stripe dispute (chargeback), recorded from
 // the `charge.dispute.*` webhooks. A record and a hold, not money: no ledger,
 // journal or Xero write reads it, and `Payment.refundedAmountCents` never
 // counts it. While its status is OPEN or LOST a paid cancel of the disputed
@@ -4972,6 +4972,56 @@ enum StripeDisputeStatus {
   LOST
   // Stripe: warning_closed or prevented, closed with no funds taken.
   CLOSED_OTHER
+}
+
+/// Stripe's payout status. An unrecognised value is not stored (#4520).
+enum StripePayoutStatus {
+  PENDING
+  IN_TRANSIT
+  PAID
+  FAILED
+  CANCELED
+}
+
+/// One Stripe balance transaction, stored once. Insert and select only
+/// (#4520, Ledger M8). A repeated insert of the same Stripe id is ignored;
+/// the row is never updated. When it was stored is not a column: the economic
+/// instant is `stripeCreatedAt`.
+model StripeBalanceTransactionEvidence {
+  /// Stripe's balance-transaction id (`txn_…`).
+  id                String   @id
+  type              String
+  reportingCategory String
+  amountCents       Int
+  feeCents          Int
+  netCents          Int
+  /// As Stripe sent it, including case.
+  currency          String
+  /// Frozen `fee_details` components. Not a tax split.
+  feeDetails        Json
+  sourceId          String?
+  paymentIntentId   String?
+  stripeRefundId    String?
+  payoutId          String?
+  stripeCreatedAt   DateTime
+
+  @@index([stripeCreatedAt])
+  @@index([paymentIntentId])
+  @@index([payoutId])
+}
+
+/// Mutable payout head. Its status can change. Balance-transaction rows are not.
+model StripePayout {
+  /// Stripe's payout id (`po_…`).
+  id                          String             @id
+  amountCents                 Int
+  currency                    String
+  status                      StripePayoutStatus
+  automatic                   Boolean
+  arrivalDate                 DateTime?          @db.Date
+  failureBalanceTransactionId String?
+  stripeCreatedAt             DateTime
+  updatedAt                   DateTime           @updatedAt
 }
 
 // ---------------------------------------------------------------------------
@@ -9118,7 +9168,8 @@ enum MemberMoneyDebtorKind {
   ORGANISATION
 }
 
-/// Inert M1 foundation. No production writer or reader is enabled.
+/// Journal header written through the member-money doors since M3b (#4627), in
+/// the door's own transaction (INV-MONEY-044). No screen or Xero document reads it yet.
 model MemberMoneyEvent {
   id String @id @default(cuid())
   eventKey String @unique

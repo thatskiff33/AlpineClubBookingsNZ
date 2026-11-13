@@ -595,11 +595,10 @@ describe("cancelBooking credit refunds", () => {
     // Credit ledger writes now run inside the tx1 claim: the writers receive
     // the transaction client (#1160).
     expect(mocks.createCancellationCredit).toHaveBeenCalledWith(
+      expect.anything(),
       "member_1",
       5000,
-      "booking_1",
-      undefined,
-      expect.anything()
+      "booking_1"
     );
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({
       paymentId: "payment_1",
@@ -971,11 +970,10 @@ describe("cancelBooking credit refunds", () => {
       expect.objectContaining({ paymentId: "payment_pr", amountCents: 3500 })
     );
     expect(mocks.createCancellationCredit).toHaveBeenCalledWith(
+      expect.anything(),
       "member_1",
       3500,
-      "booking_pr",
-      undefined,
-      expect.anything()
+      "booking_pr"
     );
     expect(mocks.bookingUpdate).toHaveBeenCalledWith({
       where: { id: "booking_pr" },
@@ -1320,11 +1318,10 @@ describe("cancelBooking credit refunds", () => {
       expect.objectContaining({ paymentId: "payment_ibpr", amountCents: 3500 })
     );
     expect(mocks.createCancellationCredit).toHaveBeenCalledWith(
+      expect.anything(),
       "member_1",
       3500,
-      "booking_ibpr",
-      undefined,
-      expect.anything()
+      "booking_ibpr"
     );
     expect(mocks.planStripeRefundAllocation).not.toHaveBeenCalled();
     expect(mocks.enqueueBookingCancellationRefundRecovery).not.toHaveBeenCalled();

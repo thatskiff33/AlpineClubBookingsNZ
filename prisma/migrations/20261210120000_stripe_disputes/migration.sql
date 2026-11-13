@@ -1,4 +1,4 @@
--- #4911 (INV-PAY-151): additive. A new enum and a new table only the new code
+-- #4911 (INV-PAY-153): additive. A new enum and a new table only the new code
 -- writes; the deployed client neither reads nor writes either.
 CREATE TYPE "StripeDisputeStatus" AS ENUM ('OPEN', 'WON', 'LOST', 'CLOSED_OTHER');
 

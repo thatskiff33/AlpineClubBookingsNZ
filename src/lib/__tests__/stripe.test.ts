@@ -7,7 +7,7 @@ vi.mock("@/lib/stripe-config", () => ({
   getOperationalStripeSecretKey: vi.fn().mockResolvedValue("sk_test_fake"),
 }));
 
-// #4911 (`INV-PAY-151`): `processRefund` reads the capture's holding disputes
+// #4911 (`INV-PAY-153`): `processRefund` reads the capture's holding disputes
 // first; none unless a test says otherwise.
 const mockStripeDisputeFindMany = vi.fn();
 vi.mock("@/lib/prisma", () => ({
@@ -351,7 +351,7 @@ describe("Stripe library", () => {
       mockStripeDisputeFindMany.mockReset().mockResolvedValue([]);
     });
 
-    it("#4911 (INV-PAY-151): refuses a capture with an open or lost dispute before Stripe is asked", async () => {
+    it("#4911 (INV-PAY-153): refuses a capture with an open or lost dispute before Stripe is asked", async () => {
       mockStripeDisputeFindMany.mockResolvedValue([
         { stripeDisputeId: "dp_1", stripePaymentIntentId: "pi_test_123", status: "LOST", amountCents: 5000 },
       ]);

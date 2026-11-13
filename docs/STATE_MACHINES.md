@@ -2458,7 +2458,7 @@ inbound fence records its conflict the same way, under the
 ### Stripe dispute record (#4911)
 
 One `StripeDispute` row per Stripe dispute (chargeback), kept by the four
-`charge.dispute.*` webhook events (`INV-PAY-151`). The row's status follows
+`charge.dispute.*` webhook events (`INV-PAY-153`). The row's status follows
 Stripe's dispute status; the first event to arrive inserts it, whichever it is:
 
 ```text
@@ -4599,7 +4599,7 @@ PROCESSING -> attempt throws
   card refund whose slice's reservation the journal refused (#4516, M4c)
                               -> FAILED terminal at once, the same way; Stripe was not
                                  asked for that slice; settled by "Paid another way"
-  card refund on a capture an OPEN or LOST Stripe dispute holds (#4911, INV-PAY-151)
+  card refund on a capture an OPEN or LOST Stripe dispute holds (#4911, INV-PAY-153)
                               -> FAILED terminal at once, the same way; Stripe was not
                                  asked; the cause names the dispute for the treasurer
 ```
@@ -4758,8 +4758,12 @@ PENDING|FAILED -> same (an open, claimed row that counted the refund is
                        recording the failure in failedRefundIds; compare-and-set
                        on the plan, status, attempts and nextRetryAt read)
 DEAD -> SUCCEEDED     ("Paid another way": finance:edit, lock(1), then the
-                       Payment row, refused (409) unless what is owed is the
-                       figure the treasurer saw, then a status-guarded claim on
+                       Payment row; refused (409) when the owed figure moved,
+                       or (#4492) a failed-later row is on the payment, a
+                       plan-less superseded row's sizing refund has not gone
+                       back to the card, or that row's charge was already
+                       returned by a superseded card-send with less left than
+                       it still owes; then a status-guarded claim on
                        PENDING|FAILED with attempts >= MAX; lastError is the
                        paid-another-way marker, nextRetryAt null, succeededAt
                        now; the amount - all of what is still owed, or part

@@ -706,7 +706,7 @@ describe("payment refund ledger", () => {
     expect(mocks.processRefund).not.toHaveBeenCalled();
   });
 
-  it("#4911 (INV-PAY-151): refunds nothing from a disputed capture, refused before any slice is reserved or sent", async () => {
+  it("#4911 (INV-PAY-153): refunds nothing from a disputed capture, refused before any slice is reserved or sent", async () => {
     const { store } = createRefundStore();
     disputeHold.read.mockResolvedValueOnce({
       cents: 2500,

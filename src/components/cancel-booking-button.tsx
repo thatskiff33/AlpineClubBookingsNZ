@@ -41,7 +41,7 @@ interface CancelPreview {
    */
   manualRefund?: boolean;
   /**
-   * #4911 (`INV-PAY-151`): the card payment is disputed by the cardholder, so the
+   * #4911 (`INV-PAY-153`): the card payment is disputed by the cardholder, so the
    * cancel hands the refund to the treasurer on the credit tier, as `manualRefund`
    * does - no card refund and no account credit.
    */

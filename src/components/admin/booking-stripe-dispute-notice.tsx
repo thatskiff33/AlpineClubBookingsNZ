@@ -3,7 +3,7 @@ import type { StripeDisputeStatus } from "@prisma/client";
 import { STRIPE_DISPUTE_STATUS_LABEL, disputeHoldsCapture } from "@/lib/stripe-dispute-note";
 
 /**
- * #4911 (`INV-PAY-151`): the booking page's officer-only line that the booking's
+ * #4911 (`INV-PAY-153`): the booking page's officer-only line that the booking's
  * card payment is disputed by the cardholder, and how each dispute stands, read
  * from the `StripeDispute` record. While one is open or lost the app issues no
  * card refund or account credit for the payment; the line says so, so the

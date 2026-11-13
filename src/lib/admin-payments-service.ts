@@ -642,7 +642,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         })
       : [];
 
-    // #4911 (`INV-PAY-151`): the disputes on the page's payments, newest first, for the payment's dispute marker.
+    // #4911 (`INV-PAY-153`): the disputes on the page's payments, newest first, for the payment's dispute marker.
     const disputes = pageIds.length
       ? await prisma.stripeDispute.findMany({
           where: { paymentId: { in: pageIds } },

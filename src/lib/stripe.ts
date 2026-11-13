@@ -234,7 +234,7 @@ export async function processRefund({
   /** #4510 (`INV-PAY-147`): also send `idempotencyKey` as the refund's `refundSliceKey` evidence. */
   stampRefundSliceKey?: boolean;
 }): Promise<Stripe.Refund> {
-  // #4911 (`INV-PAY-151`): every card refund passes here, so no door refunds a
+  // #4911 (`INV-PAY-153`): every card refund passes here, so no door refunds a
   // capture the cardholder is disputing, or has won back from the club.
   await assertCaptureNotDisputed(paymentIntentId);
   const stripe = await getStripe();

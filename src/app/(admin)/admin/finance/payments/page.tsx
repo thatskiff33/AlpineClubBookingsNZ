@@ -1210,7 +1210,7 @@ export default function PaymentsPage() {
                   <TableCell className="font-medium">
                     {owner.id ? (
                       <Link
-                        href={buildHrefWithReturnTo(`/admin/members/${owner.id}`, currentPaymentsPath)}
+                        href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: owner.id })}`, currentPaymentsPath)}
                         className="rounded-sm text-foreground hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         {owner.lastName}, {owner.firstName}
@@ -1285,7 +1285,7 @@ export default function PaymentsPage() {
                       {p.source === "STRIPE" && (
                         <MiniChip tone="info" icon={CreditCard}>Stripe</MiniChip>
                       )}
-                      {/* #4911 (`INV-PAY-151`): a cardholder dispute, by Stripe's dispute id. */}
+                      {/* #4911 (`INV-PAY-153`): a cardholder dispute, by Stripe's dispute id. */}
                       {(p.disputes ?? []).map((dispute) => (
                         <span key={dispute.stripeDisputeId} title={`Stripe dispute ${dispute.stripeDisputeId} for ${formatCents(dispute.amountCents, format)}`}>
                           <MiniChip tone={disputeHoldsCapture(dispute.status) ? "warning" : "neutral"} icon={AlertTriangle}>

@@ -438,7 +438,7 @@ export function cancellationHandBackReason({ bookingId, refundPercentage, payee,
 }
 
 /**
- * #4911 (`INV-PAY-151`): THE REASON LINE of a paid cancellation handed to the
+ * #4911 (`INV-PAY-153`): THE REASON LINE of a paid cancellation handed to the
  * treasurer because the cardholder is disputing the card payment, or has won the
  * dispute. It names each dispute, so the treasurer can find it in Stripe before
  * deciding what, if anything, is still owed. Officer-facing, so no issue numbers.
