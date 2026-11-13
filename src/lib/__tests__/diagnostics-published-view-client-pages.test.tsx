@@ -129,10 +129,10 @@ const membersQueryState = vi.hoisted(() => ({
   buildExportUrl: vi.fn(() => "/api/admin/members/export"),
 }));
 
-vi.mock("@/app/(admin)/admin/members/_hooks/use-members-query-state", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_hooks/use-members-query-state", () => ({
   useMembersQueryState: () => membersQueryState,
 }));
-vi.mock("@/app/(admin)/admin/members/_hooks/use-xero-contact-groups", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_hooks/use-xero-contact-groups", () => ({
   useXeroContactGroups: () => ({
     xeroConnected: false,
     xeroFeatures: {},
@@ -142,37 +142,37 @@ vi.mock("@/app/(admin)/admin/members/_hooks/use-xero-contact-groups", () => ({
     lastRefreshedAt: null,
   }),
 }));
-vi.mock("@/app/(admin)/admin/members/_components/member-bulk-action-bar", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_components/member-bulk-action-bar", () => ({
   MemberBulkActionBar: () => null,
 }));
-vi.mock("@/app/(admin)/admin/members/_components/member-bulk-dialog", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_components/member-bulk-dialog", () => ({
   MemberBulkDialog: () => null,
 }));
 vi.mock(
-  "@/app/(admin)/admin/members/_components/member-bulk-membership-dialog",
+  "@/app/(admin)/admin/membership/members/_components/member-bulk-membership-dialog",
   () => ({ MemberBulkMembershipDialog: () => null }),
 );
-vi.mock("@/app/(admin)/admin/members/_components/member-editor-dialog", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_components/member-editor-dialog", () => ({
   MemberEditorDialog: () => null,
 }));
-vi.mock("@/app/(admin)/admin/members/_components/member-filter-toolbar", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_components/member-filter-toolbar", () => ({
   MemberFilterToolbar: () => null,
 }));
-vi.mock("@/app/(admin)/admin/members/_components/member-import-dialog", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_components/member-import-dialog", () => ({
   MemberImportDialog: () => null,
 }));
-vi.mock("@/app/(admin)/admin/members/_components/member-pagination", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_components/member-pagination", () => ({
   MemberPagination: () => null,
 }));
 vi.mock(
-  "@/app/(admin)/admin/members/_components/member-password-action-dialog",
+  "@/app/(admin)/admin/membership/members/_components/member-password-action-dialog",
   () => ({ MemberPasswordActionDialog: () => null }),
 );
-vi.mock("@/app/(admin)/admin/members/_components/member-table", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_components/member-table", () => ({
   MemberTable: () => null,
 }));
 vi.mock(
-  "@/app/(admin)/admin/members/_components/xero-groups-refresh-hint",
+  "@/app/(admin)/admin/membership/members/_components/xero-groups-refresh-hint",
   () => ({ XeroGroupsRefreshHint: () => null }),
 );
 
@@ -758,7 +758,7 @@ describe("/admin/members publishes the search that FILTERED, not the one being t
     membersQueryState.debouncedSearch = "ngata";
     membersQueryState.filters = { ageTier: "ADULT", role: "ADMIN" };
     const { default: MembersPage } = await import(
-      "@/app/(admin)/admin/members/page"
+      "@/app/(admin)/admin/membership/members/page"
     );
 
     render(
@@ -785,7 +785,7 @@ describe("/admin/members publishes the search that FILTERED, not the one being t
     membersQueryState.debouncedSearch = ""
     membersQueryState.filters = { ageTier: "GROWN_UPS" }
     const { default: MembersPage } = await import(
-      "@/app/(admin)/admin/members/page"
+      "@/app/(admin)/admin/membership/members/page"
     );
 
     render(
@@ -811,7 +811,7 @@ describe("/admin/members publishes the search that FILTERED, not the one being t
     membersQueryState.debouncedSearch = tooLong
     membersQueryState.filters = { ageTier: "ADULT" }
     const { default: MembersPage } = await import(
-      "@/app/(admin)/admin/members/page"
+      "@/app/(admin)/admin/membership/members/page"
     );
 
     render(
@@ -834,7 +834,7 @@ describe("/admin/members publishes the search that FILTERED, not the one being t
     membersQueryState.debouncedSearch = "ngata"
     membersQueryState.filters = {}
     const { default: MembersPage } = await import(
-      "@/app/(admin)/admin/members/page"
+      "@/app/(admin)/admin/membership/members/page"
     );
 
     render(
@@ -852,7 +852,7 @@ describe("/admin/members publishes the search that FILTERED, not the one being t
     membersQueryState.debouncedSearch = "";
     membersQueryState.filters = {};
     const { default: MembersPage } = await import(
-      "@/app/(admin)/admin/members/page"
+      "@/app/(admin)/admin/membership/members/page"
     );
 
     render(
