@@ -6,7 +6,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CLUB_TAX_SETTINGS_DEFAULTS, type ClubTaxPeriod } from "@/lib/club-tax-settings";
 import { requireCalendarDate } from "@/lib/club-time";
-import { usableXeroTaxRates, xeroTaxCodeProblem, type XeroTaxRateOption } from "@/lib/xero-tax-rates";
+import { usableXeroTaxRates, xeroTaxCodeProblem, type XeroTaxRateOption } from "@/lib/xero-tax-rate-options";
 
 const mocks = vi.hoisted(() => ({
   schedule: vi.fn(),
@@ -16,11 +16,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/club-time-zone-runtime", () => ({ readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland" }));
 vi.mock("@/lib/club-tax-settings", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/club-tax-settings")>()),
+  ...((await importOriginal()) as typeof import("@/lib/club-tax-settings")),
   loadClubTaxSchedule: mocks.schedule,
 }));
 vi.mock("@/lib/xero-tax-rates", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/xero-tax-rates")>()),
+  ...((await importOriginal()) as typeof import("@/lib/xero-tax-rates")),
   readXeroTaxRatesOrNull: mocks.rates,
 }));
 vi.mock("@/lib/xero-organisation", () => ({ getXeroConnectedOrganisation: mocks.organisation }));

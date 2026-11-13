@@ -169,6 +169,9 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/api/admin/alpine-server",
       "/api/admin/integrations",
       "/api/admin/xero",
+      // The club's GST / tax treatment (#4632): the card on the Xero page.
+      // finance:view reads; changing it is Full Admin, enforced in the route.
+      "/api/admin/club-tax",
       "/api/admin/payments",
       "/api/admin/internet-banking-settings",
       "/api/admin/refund-requests",

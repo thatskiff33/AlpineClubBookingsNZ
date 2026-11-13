@@ -255,6 +255,7 @@ describe("connected-organisation summary: live read (#2261 review F1/F2)", () =>
       financialYearEndMonth: 3,
       shortCode: "!live1",
       baseCurrency: null,
+      paysTax: null,
       readFailure: null,
     });
     expect(live.getOrganisations).toHaveBeenCalledTimes(1);
@@ -269,6 +270,7 @@ describe("connected-organisation summary: live read (#2261 review F1/F2)", () =>
       financialYearEndMonth: 3,
       shortCode: "!live1",
       baseCurrency: "AUD",
+      paysTax: null,
     });
 
     const first = await getXeroConnectedOrganisation();
@@ -279,6 +281,7 @@ describe("connected-organisation summary: live read (#2261 review F1/F2)", () =>
       financialYearEndMonth: 3,
       shortCode: "!live1",
       baseCurrency: "AUD",
+      paysTax: null,
       readFailure: null,
     });
     expect(second.baseCurrency).toBe("AUD");
@@ -312,6 +315,16 @@ describe("connected-organisation summary: live read (#2261 review F1/F2)", () =>
     expect(failed.baseCurrency).toBe("NZD");
   });
 
+  it.each([
+    ["registered", true, true],
+    ["not registered", false, false],
+    ["silent", undefined, null],
+    ["not a boolean", "true", null],
+  ])("reads whether the organisation pays tax when Xero says %s (#4632)", async (_label, paysTax, expected) => {
+    stubLiveOrg({ name: "Live Org", paysTax });
+    expect((await getXeroConnectedOrganisation()).paysTax).toBe(expected);
+  });
+
   it("returns a null short code when the live organisation has none", async () => {
     stubLiveOrg({ name: "Live Org", financialYearEndMonth: 13 });
 
@@ -330,6 +343,7 @@ describe("connected-organisation summary: live read (#2261 review F1/F2)", () =>
       financialYearEndMonth: null,
       shortCode: null,
       baseCurrency: null,
+      paysTax: null,
       // The read SUCCEEDED — Xero simply reported no organisation. That is a
       // different thing from a failed read, and #2394 turns on the difference.
       readFailure: null,
@@ -435,6 +449,7 @@ describe("connected-organisation summary: live read (#2261 review F1/F2)", () =>
       financialYearEndMonth: null,
       shortCode: null,
       baseCurrency: null,
+      paysTax: null,
       // A bare `invalid_grant` Error carries no status and no known error
       // name, so it classifies as the generic "try again" case (#2394).
       readFailure: {

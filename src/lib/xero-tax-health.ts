@@ -3,7 +3,8 @@ import { clubToday } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { prisma } from "@/lib/prisma";
 import { getXeroConnectedOrganisation } from "@/lib/xero-organisation";
-import { readXeroTaxRatesOrNull, xeroTaxCodeProblem } from "@/lib/xero-tax-rates";
+import { xeroTaxCodeProblem } from "@/lib/xero-tax-rate-options";
+import { readXeroTaxRatesOrNull } from "@/lib/xero-tax-rates";
 
 /**
  * DOES XERO STILL AGREE WITH THE CLUB'S TAX TREATMENT? (#4632). The writer

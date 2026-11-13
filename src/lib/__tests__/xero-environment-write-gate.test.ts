@@ -287,6 +287,8 @@ describe("every operation name this repository passes to callXeroApi", () => {
       "getReportBalanceSheet",
       "getReportBankSummary",
       "getReportProfitAndLoss",
+      // #4632: the club tax writer and health check read the organisation's tax rates.
+      "getTaxRates",
     ];
     const KNOWN_WRITES = [
       "createContactGroupContacts",

@@ -749,7 +749,10 @@ export const AUDIT_CENSUS_TOTALS = {
   // `booking-payment.card-refund.try-card-again`, the treasurer closing a dead card refund
   // a later Stripe refund covers and putting one back to try the card, each awaited on its
   // own transaction (`card-refund-dead-row-actions.ts`), both `payment`. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 538,
+  // 538 -> 540 (#4632): `CLUB_TAX_TREATMENT_SCHEDULED` and `CLUB_TAX_TREATMENT_SCHEDULE_CANCELLED`,
+  // the club tax treatment's one writer (`club-tax-settings-write.ts`), each `tx.auditLog.create`
+  // in its own Serializable transaction, both `admin`. RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 540,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -1012,7 +1015,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // 77 -> 75 (#52): the two removed other-lodges writers above.
     // 75 -> 76 (#58): the Other lodges hide of a row the central server does
     // not list, in the same form as the registry's update.
-    "auditLog.create": { total: 76, uncategorised: 0 },
+    "auditLog.create": { total: 78, uncategorised: 0 }, // 76 -> 78 (#4632): the club tax treatment's two rows.
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -1348,11 +1351,14 @@ export const AUDIT_CENSUS_TOTALS = {
     // booking officer's contact - and no member.
     // 110/107 -> 108 (hand sync of `main` f1ecdb5ff into epic #3789): #3819's
     // one and #52's two removals are disjoint. RE-MEASURED on the composed tree.
-    admin: 112, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
+    admin: 114, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
     // 110 -> 111 (#4457): `privacy.retention.settings_updated`. A deliberate +1 to the
     // support:view-only population: it records only retention settings, never a member.
     // 111 -> 112 (triyder/AlpineClubBookingsNZ#97): the setup page's link dialog row,
     // `LODGE_CENTRAL_LINK_UPDATED`, the Central lodge card's twin. RE-MEASURED.
+    // 112 -> 114 (#4632): `CLUB_TAX_TREATMENT_SCHEDULED` and `..._SCHEDULE_CANCELLED`. A
+    // deliberate +2 to the support:view-only population, like `CLUB_FORMAT_UPDATED`: they
+    // record installation configuration (the period and who scheduled it), never a member's affairs.
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch

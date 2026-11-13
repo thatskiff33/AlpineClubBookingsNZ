@@ -1,14 +1,13 @@
 /**
- * Nothing writes the club's tax setting yet (#4626, Ledger M3a).
+ * ONE WRITER of the club's tax treatment (#4632; `INV-CONFIG-007`).
  *
- * Two places answer "how is this club taxed?" today: `ClubTaxSettings`, which
- * the member-money journal splits charges under, and the Xero renderers, which
- * hard-code the GST-inclusive OUTPUT2 code (#4632). They agree only while the
- * setting holds its default. So until the change that routes Xero's tax type
- * through the setting, no production code may write the row: not the app, a
- * seed, a script, nor config transfer. This census fails on any such writer.
- * Migrations (SQL) and tests are outside it. When #4632's surface lands, it
- * retires this census in the same change.
+ * M3a (#4626) forbade any writer while the Xero renderers hard-coded their tax
+ * code. #4632 routed every Xero document through the one renderer and added
+ * the one writer, `club-tax-settings-write.ts`, which only adds or cancels
+ * periods that start after the club's today, audits each change, and never
+ * touches the baseline. Every other production path — the app, a seed, a
+ * script, config transfer — stays a reader, so history cannot be rewritten
+ * behind the writer's rules. Migrations (SQL) and tests are outside it.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
@@ -19,6 +18,7 @@ import { stripComments } from "./support/strip-comments";
 
 const ROOT = process.cwd();
 const DELEGATE = "clubTaxSettings";
+const WRITER = "src/lib/club-tax-settings-write.ts";
 /** A SQL statement that writes the table, however its name is quoted or qualified. */
 const SQL_WRITE = /\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|MERGE\s+INTO|TRUNCATE|COPY)\s+(?:TABLE\s+)?(?:ONLY\s+)?(?:"?public"?\.)?"?ClubTaxSettings\b/i;
 
@@ -35,11 +35,25 @@ function shellAndSqlFiles(dir: string): string[] {
   });
 }
 
-describe("the club tax setting has no writer until Xero reads it (#4632)", () => {
-  it("is only ever read through its delegate", () => {
-    const offenders = naming.flatMap(({ file, text }) =>
-      delegateUsesBeyondReads(text, file, (name) => name === DELEGATE).map(({ line, text: code }) => `${file}:${line} ${code}`));
-    expect(offenders, "a production path writes ClubTaxSettings while Xero still hard-codes its tax type").toEqual([]);
+describe("the club tax treatment has one writer (#4632)", () => {
+  it("is written through its delegate by the one writer only", () => {
+    const offenders = naming
+      .filter(({ file }) => file !== WRITER)
+      .flatMap(({ file, text }) =>
+        delegateUsesBeyondReads(text, file, (name) => name === DELEGATE).map(({ line, text: code }) => `${file}:${line} ${code}`));
+    expect(offenders, `a production path other than ${WRITER} writes ClubTaxSettings`).toEqual([]);
+  });
+
+  it("the writer only creates periods and deletes non-baseline ones", () => {
+    const writer = naming.find(({ file }) => file === WRITER);
+    expect(writer, "the writer was not scanned").toBeDefined();
+    const lines = writer!.text.split("\n");
+    const writes = delegateUsesBeyondReads(writer!.text, WRITER, (name) => name === DELEGATE).map(({ line }) => lines[line - 1]!);
+    expect(writes.length).toBe(2);
+    expect(writes.some((text) => /\.create\(/.test(text))).toBe(true);
+    expect(writes.some((text) => /\.deleteMany\(/.test(text))).toBe(true);
+    // The delete is fenced off the baseline row in its own where clause.
+    expect(stripComments(writer!.text)).toMatch(/deleteMany\(\{\s*where: \{[^}]*\}?[^}]*id: \{ not: CLUB_TAX_SETTINGS_ID \}/);
   });
 
   it("is written by no raw SQL, in source or in a shell or SQL file outside the migrations", () => {
@@ -57,6 +71,7 @@ describe("the club tax setting has no writer until Xero reads it (#4632)", () =>
 
   it("is not vacuous: the reader is scanned, and every writer shape is caught", () => {
     expect(naming.map(({ file }) => file)).toContain("src/lib/club-tax-settings.ts");
+    expect(naming.map(({ file }) => file)).toContain(WRITER);
     for (const write of [
       "await prisma.clubTaxSettings.upsert({ where, create, update });",
       'await db["clubTaxSettings"].update({ where, data });',

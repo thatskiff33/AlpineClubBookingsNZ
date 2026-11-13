@@ -214,8 +214,10 @@ describe("buildMemberMoneyBatch", () => {
 
     it("refuses a fresh split with no anchor date, never falling back to the posting date", () => {
       const plan = charge();
-      const { taxAnchorDate: _dropped, ...unanchored } = plan.legs[1] as Extract<typeof plan.legs[number], { type: "revenue" }>;
-      expect(problems({ ...plan, legs: [plan.legs[0]!, unanchored] }).join("\n")).toMatch(/names no tax anchor date/);
+      const unanchored: Partial<Extract<typeof plan.legs[number], { type: "revenue" }>> =
+        { ...(plan.legs[1] as Extract<typeof plan.legs[number], { type: "revenue" }>) };
+      delete unanchored.taxAnchorDate;
+      expect(problems({ ...plan, legs: [plan.legs[0]!, unanchored as typeof plan.legs[number]] }).join("\n")).toMatch(/names no tax anchor date/);
     });
   });
 

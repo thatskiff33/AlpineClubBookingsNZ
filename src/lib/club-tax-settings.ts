@@ -42,6 +42,15 @@ export const CLUB_TAX_SETTINGS_ID = "default";
 /** A rate above 100% makes no tax law's sense, and lets one cent's tax eat the whole cent. */
 export const MAX_TAX_RATE_BASIS_POINTS = 10_000;
 
+/**
+ * A tax percentage as whole basis points (15 is 1500, 12.5 is 1250), or null
+ * when it is not a finite number. A rate, never money: it lives here, outside
+ * the money modules, because basis points are this schedule's unit.
+ */
+export function percentToBasisPoints(percent: unknown): number | null {
+  return typeof percent === "number" && Number.isFinite(percent) ? Math.round(percent * 100) : null;
+}
+
 /** One period of the schedule: the treatment in force from `effectiveFrom` until the next period starts. */
 export interface ClubTaxPeriod {
   gstRegistered: boolean;
