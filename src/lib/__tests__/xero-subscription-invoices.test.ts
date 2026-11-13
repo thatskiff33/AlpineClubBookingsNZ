@@ -116,6 +116,12 @@ describe("Xero membership subscription invoice adoption", () => {
     expect(subscriptionInvoiceMatchesSnapshot({ invoice: invoice(), ...snapshot })).toBe(true);
   });
 
+  // #4632: an invoice raised under another tax treatment is never adopted as this charge's.
+  it("refuses an invoice raised under another treatment than the charge's anchor", () => {
+    expect(subscriptionInvoiceMatchesSnapshot({ invoice: invoice(), ...snapshot, taxRendering: { lineAmountTypes: LineAmountTypes.NoTax } })).toBe(false);
+    expect(subscriptionInvoiceMatchesSnapshot({ invoice: invoice(), ...snapshot, taxRendering: { lineAmountTypes: LineAmountTypes.Inclusive, taxType: "TAX005" } })).toBe(false);
+  });
+
   // The due interval is measured from `invoice.date` and `invoice.dueDate`, and
   // both are typed `string` while `xero-node` hands back a `Date` for a
   // Microsoft-JSON payload. `invoiceDueIntervalDays` used to carry its own copy

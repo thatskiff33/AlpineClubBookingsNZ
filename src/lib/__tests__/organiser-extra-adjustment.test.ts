@@ -94,6 +94,8 @@ describe("organiser extra adjustment provider execution", () => {
     await execute(payload(), claim);
     expect(mocks.updateInvoice).not.toHaveBeenCalled();
     expect(mocks.createCreditNotes.mock.calls[0]?.[1]).toMatchObject({ creditNotes: [{ contact: { contactID: "organiser" }, lineItems: [{ unitAmount: 40, accountCode: "219" }] }] });
+    // #4632: the note's line carries the anchor's tax type, as the invoice it credits does.
+    expect(mocks.createCreditNotes.mock.calls[0]?.[1]).toMatchObject({ creditNotes: [{ lineAmountTypes: "Inclusive", lineItems: [{ taxType: "OUTPUT2" }] }] });
     expect(mocks.createCreditNoteAllocation.mock.calls[0]?.[2]).toEqual({ allocations: [{ invoice: { invoiceID: "extra" }, amount: 40, date: "2026-07-01" }] });
   });
   it("N2 voids a wholly unpaid extra instead of raising a credit", async () => {
