@@ -327,7 +327,7 @@ not a measurement of the headroom.
 
 ### Member money journal grants (M1)
 
-The journal is inert: this release changes no production money reader or writer.
+At M1 the journal was inert: that release changed no production money reader or writer.
 #4453's append-only treatment now covers `MemberMoneyEvent`, `MemberMoneyJournal`,
 `MemberMoneyLine`, `MemberMoneyObligation`, `MemberMoneyApplication`,
 `MemberMoneySourceLink` and `MemberMoneySourcePosting`: the migration role owns
