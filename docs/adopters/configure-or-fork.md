@@ -63,9 +63,15 @@ and for every environment variable. Some of these values, including club name
 and the hut-leader label, can be overridden later from Admin → Appearance →
 Club Identity without touching the file.
 
-Provider credentials — Stripe, Xero, SES, Sentry, the AI keys, the backup
+Provider credentials — Stripe, Xero, SES, the AI keys, the backup
 destination — are **not** `.env` edits in current releases. They are entered
 in-app, encrypted at rest, through the wizards in the relevant admin area.
+Sentry is an exception: set `SENTRY_DSN` (server/edge) and
+`NEXT_PUBLIC_SENTRY_DSN` (browser) in the deployment's `.env`. Both are read at
+runtime, including with published images; restart/redeploy after an edit,
+without rebuilding. A blank browser DSN disables browser error reports and
+replay. Source-map upload credentials are build-time settings. See
+[`CONFIGURATION.md`](../../CONFIGURATION.md#sentry).
 
 ### 3. Seed default — "the starting value is wrong for everyone"
 
