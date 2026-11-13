@@ -25,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 interface HistoryEntry {
   id: string;
@@ -101,9 +102,8 @@ export default function CommunicationsPage() {
         body: JSON.stringify({ subject, body, recipientFilter }),
       });
 
-      const data = await res.json();
-
       if (res.ok) {
+        const data = await res.json();
         setResult({
           success: true,
           message: `Sent to ${data.eligibleRecipients} recipients (${data.filteredByPreference} opted out).`,
@@ -112,7 +112,10 @@ export default function CommunicationsPage() {
         setBody("");
         fetchHistory();
       } else {
-        setResult({ success: false, message: data.error });
+        setResult({
+          success: false,
+          message: await apiErrorMessageFromResponse(res, "Failed to send. Please try again."),
+        });
       }
     } catch {
       setResult({
