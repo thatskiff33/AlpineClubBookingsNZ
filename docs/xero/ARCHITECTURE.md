@@ -3050,9 +3050,9 @@ refunds missing credit notes (flagged when the provider-backed CASH refund
 evidence — never the refunded-amount mirror, #2902/INV-PAY-050 — still exceeds
 the cents already covered by active refund credit notes, so multi-note refunds
 are handled and account-credit-only cancellations are excluded; one set-based
-read first drops payments whose active links' recorded amounts already cover
-the refunded mirror, so the per-payment reader runs only on open or unclear
-gaps, #4936), and
+read first drops payments whose active links' recorded amounts, less any live
+card-refund reversal invoice (`INV-PAY-151`), already cover the refunded
+mirror, so the per-payment reader runs only on open or unclear gaps, #4936), and
 per-record activity shows the ledger for one booking/payment/member.
 
 Owner-substitution alert (operator runbook): when a booking request's held owner

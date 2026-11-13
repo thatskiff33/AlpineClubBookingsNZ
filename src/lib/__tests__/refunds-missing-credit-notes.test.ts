@@ -21,15 +21,20 @@ vi.mock("@/lib/card-refund-paid-another-way-cash", () => ({
   readPaidAnotherWayUncoveredCents: (...a: unknown[]) => mocks.readPaidAnotherWayUncoveredCents(...a),
 }));
 
-vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
-  readResolvedRefundCreditNoteCoverage: mocks.readResolvedRefundCreditNoteCoverage,
-  // The real composition, over the two mocked halves.
-  sumRefundCreditNoteCoverageCents: async (
-    paymentId: string,
-    resolved: { coveredCents: number },
-  ) => (await mocks.sumCovered(paymentId)) + resolved.coveredCents,
-  findResolvedBookingInvoiceCreate: vi.fn().mockResolvedValue(null),
-}));
+vi.mock("@/lib/xero-resolved-in-xero-fences", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-resolved-in-xero-fences");
+  return {
+    readResolvedRefundCreditNoteCoverage: mocks.readResolvedRefundCreditNoteCoverage,
+    // #4936: the pre-filter's bulk reversal read is the real one, over `linkFindMany`.
+    readCardRefundReversalCentsByPayment: actual.readCardRefundReversalCentsByPayment,
+    // The real composition over the mocked halves, less live reversals (#4369).
+    sumRefundCreditNoteCoverageCents: async (paymentId: string, resolved: { coveredCents: number }) => {
+      const reversed = (await actual.readCardRefundReversalCentsByPayment([paymentId])).get(paymentId) ?? 0;
+      return Math.max(0, (await mocks.sumCovered(paymentId)) + resolved.coveredCents - reversed);
+    },
+    findResolvedBookingInvoiceCreate: vi.fn().mockResolvedValue(null),
+  };
+});
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -355,21 +360,56 @@ describe("getRefundsMissingXeroCreditNotes link-coverage pre-filter (#4936)", ()
     ]);
   });
 
-  it("reads every candidate's links in one query and keeps count and order with limit 1", async () => {
+  it("reads every candidate's links in one query per link kind and keeps count and order with limit 1", async () => {
     mocks.findMany.mockResolvedValue([row("pay_a", 4000), row("pay_covered", 5000), row("pay_b", 3000)]);
     mocks.linkFindMany.mockResolvedValue([link("pay_covered", { amountCents: 5000 })]);
 
     const result = await getRefundsMissingXeroCreditNotes({ limit: 1 });
 
-    expect(mocks.linkFindMany).toHaveBeenCalledTimes(1);
-    expect(mocks.linkFindMany.mock.calls[0][0].where).toEqual({
-      localModel: "Payment",
-      localId: { in: ["pay_a", "pay_covered", "pay_b"] },
-      xeroObjectType: "CREDIT_NOTE",
-      role: "REFUND_CREDIT_NOTE",
-      active: true,
-    });
+    expect(mocks.linkFindMany.mock.calls.slice(0, 2).map(([args]) => args.where)).toEqual([
+      {
+        localModel: "Payment",
+        localId: { in: ["pay_a", "pay_covered", "pay_b"] },
+        xeroObjectType: "CREDIT_NOTE",
+        role: "REFUND_CREDIT_NOTE",
+        active: true,
+      },
+      {
+        localModel: "Payment",
+        localId: { in: ["pay_a", "pay_covered", "pay_b"] },
+        xeroObjectType: "INVOICE",
+        role: "CARD_REFUND_REVERSAL_INVOICE",
+        active: true,
+      },
+    ]);
     expect(result.count).toBe(2);
     expect(result.payments.map((payment) => payment.paymentId)).toEqual(["pay_a"]);
+  });
+
+  it("MUTATION: still reports a payment whose notes cover the refund but a live reversal invoice undoes some (#4369)", async () => {
+    // `INV-PAY-151`: a reversal invoice in Xero takes its cents off coverage, so
+    // notes that cover the mirror no longer settle it; a voided one takes off nothing.
+    mocks.findMany.mockResolvedValue([row("pay_reversed", 5000), row("pay_void_reversal", 5000)]);
+    const reversal = (paymentId: string, metadata: Record<string, unknown>) => ({
+      localId: paymentId,
+      role: "CARD_REFUND_REVERSAL_INVOICE",
+      metadata,
+    });
+    mocks.linkFindMany.mockImplementation(async ({ where }: { where: { role: string; localId: unknown } }) =>
+      where.role === "CARD_REFUND_REVERSAL_INVOICE"
+        ? [
+            reversal("pay_reversed", { amountCents: 3000, status: "AUTHORISED" }),
+            reversal("pay_void_reversal", { amountCents: 3000, status: "VOIDED" }),
+          ].filter((row) => typeof where.localId !== "string" || row.localId === where.localId)
+        : [link("pay_reversed", { amountCents: 5000 }), link("pay_void_reversal", { amountCents: 5000 })],
+    );
+    mocks.sumCovered.mockResolvedValue(5000);
+
+    const result = await getRefundsMissingXeroCreditNotes();
+
+    expect(reachedExactReader()).toEqual(["pay_reversed"]);
+    expect(result.payments.map((payment) => [payment.paymentId, payment.uncoveredCents])).toEqual([
+      ["pay_reversed", 3000],
+    ]);
   });
 });

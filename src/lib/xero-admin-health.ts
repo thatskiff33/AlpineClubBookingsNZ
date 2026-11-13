@@ -13,6 +13,7 @@ import { findCreditNotesSpentOutsideApp } from "@/lib/xero-credit-note-spent-out
 import { readActiveRefundNoteMetadataCentsByPayment } from "@/lib/xero-sync";
 import {
   findResolvedBookingInvoiceCreate,
+  readCardRefundReversalCentsByPayment,
   readResolvedRefundCreditNoteCoverage,
   sumRefundCreditNoteCoverageCents,
 } from "@/lib/xero-resolved-in-xero-fences";
@@ -389,12 +390,17 @@ export async function getRefundsMissingXeroCreditNotes(options?: {
   // `refundedAmountCents` mirror. Safe because the exact reader's eligible cash
   // is capped at that mirror (`resolveStripeCashRefundEvidence`), and its
   // coverage is those links at no less than these amounts plus resolved notes
-  // that are never negative, so such a payment's gap is always 0. Anything the
-  // bound cannot settle - a legacy link without a recorded amount, a short
-  // sum - still goes through the exact reader below.
-  const linkedCentsByPayment = await readActiveRefundNoteMetadataCentsByPayment(payments.map((payment) => payment.id));
+  // that are never negative, less the live reversal invoices it subtracts
+  // (#4369, `INV-PAY-151`) read by the same filter, so such a payment's gap is
+  // always 0. Anything the bound cannot settle - a legacy link without a
+  // recorded amount, a short sum - still goes through the exact reader below.
+  const paymentIds = payments.map((payment) => payment.id);
+  const linkedCentsByPayment = await readActiveRefundNoteMetadataCentsByPayment(paymentIds);
+  const reversedCentsByPayment = await readCardRefundReversalCentsByPayment(paymentIds);
   const candidates = payments.filter(
-    (payment) => (linkedCentsByPayment.get(payment.id) ?? 0) < payment.refundedAmountCents,
+    (payment) =>
+      Math.max(0, (linkedCentsByPayment.get(payment.id) ?? 0) - (reversedCentsByPayment.get(payment.id) ?? 0)) <
+      payment.refundedAmountCents,
   );
 
   const formatted: RefundMissingCreditNote[] = [];

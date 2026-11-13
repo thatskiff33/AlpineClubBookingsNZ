@@ -5,13 +5,16 @@
  * already cover, in one query, and still answers exactly as the per-payment
  * reader (`readRefundCreditNoteGap`) does for every payment.
  *
- * Five $250 card refunds, each invoiced in Xero and past the 24-hour grace:
+ * Six $250 card refunds, each invoiced in Xero and past the 24-hour grace:
  * - covered: one live link recording $250 - the pre-filter drops it;
  * - short: one live link recording $100 - a $150 gap;
  * - legacy-covered and legacy-short: a link with no recorded amount, its value
  *   only in the create row's payload ($250 and $100) - the pre-filter cannot
  *   read that, so both reach the exact reader, which lists only the short one;
- * - unlinked: no note at all - a $250 gap.
+ * - unlinked: no note at all - a $250 gap;
+ * - reversed: a live link recording $250, but a live $100 reversal invoice in
+ *   Xero undoes that much of it (#4369, `INV-PAY-151`) - a $100 gap the
+ *   pre-filter must not drop.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions, which
@@ -40,12 +43,13 @@ type Note = { kind: "recorded"; cents: number } | { kind: "legacy"; cents: numbe
  * would carry the same frozen test instant, the order would be a tie that
  * PostgreSQL may break any way it likes, and "in order" would prove nothing.
  */
-const CASES: ReadonlyArray<{ key: string; note: Note }> = [
+const CASES: ReadonlyArray<{ key: string; note: Note; reversalCents?: number }> = [
   { key: "covered", note: { kind: "recorded", cents: REFUND_CENTS } },
   { key: "short", note: { kind: "recorded", cents: 10_000 } },
   { key: "legacy-covered", note: { kind: "legacy", cents: REFUND_CENTS } },
   { key: "legacy-short", note: { kind: "legacy", cents: 10_000 } },
   { key: "unlinked", note: null },
+  { key: "reversed", note: { kind: "recorded", cents: REFUND_CENTS }, reversalCents: 10_000 },
 ];
 const paymentId = (key: string) => `${P}-${key}-payment`;
 const bookingId = (key: string) => `${P}-${key}-booking`;
@@ -93,7 +97,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
     }
 
     /** A card payment, invoiced in Xero, with one $250 refund Stripe confirmed, and its note as the case says. */
-    async function refundedCardPayment(key: string, note: Note, updatedAt: Date) {
+    async function refundedCardPayment(key: string, note: Note, updatedAt: Date, reversalCents?: number) {
       const id = paymentId(key);
       const intent = `pi_${P}_${key}`;
       const txn = `${P}-${key}-txn`;
@@ -119,6 +123,15 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
           amountCents: REFUND_CENTS, currency: "nzd", status: "succeeded", stripeCreatedAt: new Date("2026-06-01T00:00:00.000Z"),
         },
       });
+      if (reversalCents) {
+        // A Paid another way close's reversal invoice that reached Xero (#4369).
+        await prisma.xeroObjectLink.create({
+          data: {
+            localModel: "Payment", localId: id, xeroObjectType: "INVOICE", xeroObjectId: `${P}-${key}-reversal`,
+            role: "CARD_REFUND_REVERSAL_INVOICE", active: true, metadata: { amountCents: reversalCents, status: "AUTHORISED" },
+          },
+        });
+      }
       if (!note) return;
       await prisma.xeroObjectLink.create({
         data: {
@@ -147,8 +160,8 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
         data: { id: MEMBER_ID, email: `${MEMBER_ID}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Gap", lastName: "Filter", role: "USER", ageTier: "ADULT" },
       });
       await prisma.lodge.create({ data: { id: LODGE_ID, name: "Race 4936 Lodge", slug: P } });
-      for (const [index, { key, note }] of CASES.entries()) {
-        await refundedCardPayment(key, note, updatedAtFor(index));
+      for (const [index, { key, note, reversalCents }] of CASES.entries()) {
+        await refundedCardPayment(key, note, updatedAtFor(index), reversalCents);
       }
     }, 60_000);
 
@@ -167,7 +180,16 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
         [paymentId("short")]: 10_000,
         [paymentId("legacy-covered")]: 0,
         [paymentId("legacy-short")]: 0,
+        [paymentId("reversed")]: REFUND_CENTS,
       });
+    });
+
+    it("the pre-filter's reversal read subtracts what the exact sum subtracts", async () => {
+      const { readCardRefundReversalCentsByPayment } = await import("@/lib/xero-resolved-in-xero-fences");
+
+      const cents = await readCardRefundReversalCentsByPayment(PAYMENT_IDS);
+
+      expect(Object.fromEntries(cents)).toEqual({ [paymentId("reversed")]: 10_000 });
     });
 
     it("the fixtures' payments carry distinct updatedAt stamps in CASES order, so the list's order is defined", async () => {
@@ -192,6 +214,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
         [paymentId("short"), 15_000],
         [paymentId("legacy-short"), 15_000],
         [paymentId("unlinked"), REFUND_CENTS],
+        [paymentId("reversed"), 10_000],
       ]);
       expect(listed.map((row) => [row.paymentId, row.uncoveredCents])).toEqual(exact);
     });
