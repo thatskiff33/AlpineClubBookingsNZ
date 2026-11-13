@@ -292,7 +292,7 @@ describe("a noteless lot that is NOT goodwill stays on hutFeeRefunds (#2717)", (
 
   it("posts a spent opening credit to the refund account, though it is an ADMIN_ADJUSTMENT (#4988)", async () => {
     // An opening credit is money the member already held in the club's old
-    // system (INV-PAY-151), not a grant the club chose to give.
+    // system (INV-PAY-153), not a grant the club chose to give.
     const lines = await mintedLines([
       {
         id: "c1",

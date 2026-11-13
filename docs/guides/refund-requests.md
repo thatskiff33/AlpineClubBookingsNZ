@@ -157,7 +157,7 @@ in one batch ([Moving in from your old system](moving-in.md#6-credit-post-the-op
    opening credit or had any credit deducted since the batch posted.
 
 When a member later spends an opening credit, Xero codes it as the member's own
-money (the hut-fee refunds account), never as goodwill (`INV-PAY-151`).
+money (the hut-fee refunds account), never as goodwill (`INV-PAY-153`).
 
 ## Settings reference
 

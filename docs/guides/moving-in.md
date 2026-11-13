@@ -224,7 +224,7 @@ guide.
   [Family Groups](family-groups.md), [Subscriptions](subscriptions.md),
   [Xero](xero.md), [Book on Behalf](book.md), [Payments](payments.md),
   [Refunds & Credits](refund-requests.md).
-- `INV-PAY-151` in [payment-and-settlement.md](../invariants/payment-and-settlement.md):
+- `INV-PAY-153` in [payment-and-settlement.md](../invariants/payment-and-settlement.md):
   the opening-credit contract.
 - [#5005](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5005): the
   future-bookings import.

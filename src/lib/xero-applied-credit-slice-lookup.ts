@@ -42,7 +42,7 @@ export async function slicesHeldInXero(
 }
 
 /**
- * An opening credit (#4988, `INV-PAY-151`) is a lot only until its batch is
+ * An opening credit (#4988, `INV-PAY-153`) is a lot only until its batch is
  * reversed: the reversal's negative row cancels it in the balance, so a booking
  * must never draw on it after.
  */

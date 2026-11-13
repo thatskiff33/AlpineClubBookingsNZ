@@ -57,7 +57,7 @@ const MINT_SLICE_MAPPING_KEY_ORDER: readonly MintSliceMappingKey[] = [
  * that window irrelevant: where the money lands no longer depends on worker
  * latency.
  *
- * AN OPENING CREDIT IS THE MEMBER'S OWN MONEY TOO (#4988, `INV-PAY-151`). It is
+ * AN OPENING CREDIT IS THE MEMBER'S OWN MONEY TOO (#4988, `INV-PAY-153`). It is
  * stored as an `ADMIN_ADJUSTMENT` row, but it restates a balance the club
  * already owed the member under its old system (a cancelled stay, a refund kept
  * as credit), not goodwill the club chose to grant. By the rule above it stays

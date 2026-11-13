@@ -1,5 +1,5 @@
 /**
- * Opening-credit batches (#4988, `INV-PAY-151`): the credit balances a club
+ * Opening-credit batches (#4988, `INV-PAY-153`): the credit balances a club
  * carries over from its old system, posted from one CSV in one approval.
  *
  *  - **Preview writes nothing.** It matches each row to a member and totals the
@@ -101,7 +101,7 @@ const OPENING_CREDIT_SELF_ROW =
 /**
  * Match the file to live members and total it. Reads only. A row naming the
  * posting administrator is refused, keeping the second-admin rule that every
- * other credit adjustment has (`INV-PAY-151`).
+ * other credit adjustment has (`INV-PAY-153`).
  */
 export async function buildOpeningCreditPreview(
   csvText: string,

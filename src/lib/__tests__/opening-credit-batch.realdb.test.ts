@@ -1,5 +1,5 @@
 /**
- * Real-PostgreSQL proof for #4988 (`INV-PAY-151`): an opening-credit file posts
+ * Real-PostgreSQL proof for #4988 (`INV-PAY-153`): an opening-credit file posts
  * once even when two officers confirm it at the same moment, the post queues
  * behind a member's credit-ledger lock, a reversal refuses a batch whose
  * credit has been spent and reverses one that has not (leaving no lot behind),
