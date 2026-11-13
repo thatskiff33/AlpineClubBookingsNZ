@@ -1,6 +1,6 @@
 /**
  * The officer work queues: the ONE list of everything an administrator must act
- * on (#4962, `INV-SSOT-…` see docs/invariants/single-source-of-truth.md).
+ * on (#4962, `INV-SSOT-007` in docs/invariants/single-source-of-truth.md).
  *
  * The Admin Dashboard's attention cards and the sidebar's "Needs Attention"
  * section both render from `ADMIN_WORK_QUEUES`, and the command palette's

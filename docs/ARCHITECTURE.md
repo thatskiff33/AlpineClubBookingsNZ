@@ -2466,10 +2466,23 @@ operational defaults such as its fallback capacity override and school-group
 soft cap; the hut-leader lookahead window used by dashboard and Needs Attention
 warnings stays a club-wide knob on the legacy row. Single-lodge clubs keep one
 row (ADR-002); additional lodges get their own keyed by lodge id.
-The sidebar's Needs Attention Booking Requests badge sums pending internal
-booking reviews, requested change requests, and queued public booking requests.
-Pending self-service account deletion requests are also counted there and link
-admins to the deletion request queue. Unpaid finished stays (#1709/#1731) —
+Officer work queues (#4962) are one registry, `ADMIN_WORK_QUEUES` in the
+client-safe `src/lib/admin-work-queues.ts`: each queue's key, label, href,
+icon, tone, the pending counts its number sums and its dashboard card wording.
+The admin dashboard's attention cards (`AdminWorkQueueCards`) and the sidebar's
+Needs Attention section both render that list, and both decide visibility the
+same way, from the queue's href: `isFeatureHrefVisible` for its module and
+`canViewAdminHrefWithMatrix` for the viewer, so for one admin they show the same
+queues with the same numbers. Adding a queue is one registry entry plus its
+counter. The Booking Requests number sums internal booking reviews, requested
+change requests, new-booking policy exception requests and queued public
+booking requests; the deletion queue sums self-service account deletions and
+admin-initiated member deletions; open manual refund tasks are a Payments
+entry; the Stuck States headline (`getStuckStateAffectedCount`, the dashboard
+scan cached per process for 60 seconds, failures not cached) shows only with
+`support:view`. `INV-SSOT-007` and `admin-work-queue-census.test.ts` keep both
+surfaces from counting or linking a queue around the registry.
+Unpaid finished stays (#1709/#1731) —
 `PAYMENT_PENDING` bookings whose check-out is on or before NZ today — badge an
 "Unpaid Finished Stays" entry deep-linking to the pre-filtered bookings list;
 its predicate lives in `src/lib/unpaid-finished-stays.ts` and its href in the
@@ -2493,9 +2506,18 @@ of that predicate is `isAdditionalPaymentOwed`
 (`src/lib/additional-payment-chase.ts`), which takes the booking status as a
 required argument and shares one status list with the SQL builder, so no
 surface can read a cancelled booking's untouched delta columns as money owed.
-All sidebar badge counts come from the single `GET /api/admin/pending-counts`
-endpoint (`src/lib/admin-pending-counts.ts`), whose per-queue where-clauses
-mirror the individual queue routes. Sidebar sections render expanded by
+Every queue count comes from `getAdminPendingCounts`
+(`src/lib/admin-pending-counts.ts`): the dashboard calls it while rendering and
+the sidebar reads it through `GET /api/admin/pending-counts`. Its per-queue
+where-clauses mirror the individual queue routes. Each counter settles on its
+own (`Promise.allSettled`): a failed one reads as zero and is named in the
+payload's `unavailable` list, so both surfaces say which counts are missing
+rather than reading the failure as "nothing to do". The admin layout is
+persistent, so the sidebar refetches on every pathname change, on window focus,
+when the tab becomes visible, and on the `admin-queue-changed` window event a
+queue page fires after a decision (`notifyAdminQueueChanged` in
+`src/lib/admin-queue-events.ts`); a failed load shows "Couldn't load counts"
+with Retry and keeps the last good badges. Sidebar sections render expanded by
 default; a per-section collapse preference persists in localStorage.
 
 The admin command palette (#2092, `src/components/admin-command-palette.tsx`)
