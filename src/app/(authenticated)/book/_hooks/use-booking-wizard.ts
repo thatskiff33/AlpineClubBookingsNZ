@@ -78,6 +78,8 @@ import {
   type PriceQuote,
   type RoomOption,
   type WorkPartyEvent,
+  isBookingBlockedBySubscription,
+  readSubscriptionLockoutView,
 } from "../_components/types";
 
 /*
@@ -2130,9 +2132,18 @@ export function useBookingWizard() {
       "Internet Banking is not available for this check-in date. Please pay by card to secure the booking immediately."
     );
 
-  const subscriptionUnpaid =
-    subscriptionStatus &&
-    (subscriptionStatus.status === "UNPAID" || subscriptionStatus.status === "OVERDUE");
+  // #4941 — the fact and its consequence are separate values. An unpaid
+  // subscription only stops a member starting a booking under HARD_BLOCK; the
+  // mode is read once here so the banner and the dates step cannot disagree.
+  // A failed fetch (UNKNOWN) is not unpaid, so it blocks nobody.
+  const subscriptionIsUnpaid =
+    subscriptionStatus?.status === "UNPAID" ||
+    subscriptionStatus?.status === "OVERDUE";
+  const subscriptionLockout = readSubscriptionLockoutView(subscriptionStatus);
+  const bookingBlockedBySubscription = isBookingBlockedBySubscription(
+    subscriptionIsUnpaid,
+    subscriptionLockout,
+  );
   const showInviteFamilyGroupMembersLink =
     shouldShowInviteFamilyGroupMembersLink(familyMembers);
   /**
@@ -2357,7 +2368,9 @@ export function useBookingWizard() {
     cardPaymentDescription,
     internetBankingPaymentDescription,
     internetBankingUnavailableCopy,
-    subscriptionUnpaid,
+    subscriptionIsUnpaid,
+    subscriptionLockout,
+    bookingBlockedBySubscription,
     showInviteFamilyGroupMembersLink,
     showPaymentMethodChoice,
     wizardSteps,
