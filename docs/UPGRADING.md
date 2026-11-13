@@ -173,10 +173,11 @@ Fill in **Hosting provider** and **Where your data is held** now, including both
 locations when database and backups differ. The optional `{{data-hosting}}`
 page-body token publishes these values, with fallback wording for blanks.
 
-**Your published privacy policy and the starter privacy text do not change in
-this release.** A separate release will update unedited starter policies to use
-the token, only after a published release contains #4918. Continue upgrading
-one release at a time.
+**This change does not alter your published privacy policy or the starter
+privacy text.** The separate starter-policy correction (#4914) has
+[its own note](#correct-the-starter-privacy-policy-4914). A later release will
+update unedited starter policies to use the token, only after a published
+release contains #4918. Continue upgrading one release at a time.
 
 Rollback is code-only; the additive settings table can stay. If you manually
 insert `{{data-hosting}}` into a page and then roll back to an earlier release
