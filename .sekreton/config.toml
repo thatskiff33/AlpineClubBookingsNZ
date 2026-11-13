@@ -61,10 +61,10 @@ run = "pnpm install --frozen-lockfile --prefer-offline && bash scripts/ci/sekret
 # The disk-reading censuses plus docs:indexcheck and the file-size ratchet
 # (quality:budget), both judged against origin/main, so fetch it first.
 [jobs.fast-censuses]
-run = "pnpm install --frozen-lockfile --prefer-offline && git fetch --no-tags origin main && pnpm run ci:fast-censuses"
+run = "pnpm install --frozen-lockfile --prefer-offline && bash scripts/ci/sekreton-fetch-main.sh && pnpm run ci:fast-censuses"
 
 # The data-migration coverage gate always; migration drift and the
 # data-migration realdb suites on a disposable cluster when the change can move
 # them (CHANGE_SCOPES.migrations), fetched against origin/main.
 [jobs.migrations]
-run = "pnpm install --frozen-lockfile --prefer-offline && git fetch --no-tags origin main && bash scripts/ci/sekreton-migration-checks.sh"
+run = "pnpm install --frozen-lockfile --prefer-offline && bash scripts/ci/sekreton-fetch-main.sh && bash scripts/ci/sekreton-migration-checks.sh"
