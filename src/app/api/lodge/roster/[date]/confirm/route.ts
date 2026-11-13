@@ -6,6 +6,7 @@ import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { lockRosterEligibilityMutation } from "@/lib/roster-lock";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
@@ -153,6 +154,13 @@ export async function POST(
 
     return NextResponse.json({ success: true });
   } catch (err) {
+    // The write is one lock(1) transaction (INV-LOCK-005).
+    const contended = transactionContendedResponse(
+      err,
+      "Lodge roster confirm contended for the lock(1) budget",
+      { context: { date: dateStr } },
+    );
+    if (contended) return contended;
     const denied = kioskLodgeAuthErrorResponse(err);
     if (denied) return denied;
     logger.error({ err }, "Error confirming roster");

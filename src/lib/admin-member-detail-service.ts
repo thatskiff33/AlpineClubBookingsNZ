@@ -136,6 +136,7 @@ import {
 } from "@/lib/member-dietary";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { isTransactionContention } from "@/lib/prisma-errors";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -1759,6 +1760,8 @@ export async function updateAdminMember(params: {
       );
     }
 
+    // INV-LOCK-005: contention is the route's retryable 503, not a failure.
+    if (isTransactionContention(error)) throw error;
     logger.error({ err: error, memberId: id }, "Failed to update member");
     return jsonResult({ error: "Failed to update member" }, { status: 500 });
   }

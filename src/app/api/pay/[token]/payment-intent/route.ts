@@ -11,6 +11,10 @@ import {
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
   SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY,
 } from "@/lib/payment-recovery-contract";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 
 /**
  * Token-authenticated Stripe payment intent creation for a public payment
@@ -79,6 +83,15 @@ export async function POST(
         { status: 409 },
       );
     }
+    // After the captured-payment answers above: a stale intent may already be
+    // queued for cancellation or a fresh one minted before the lock(1) attach
+    // (INV-LOCK-005).
+    const contended = transactionContendedResponse(
+      err,
+      "Payment link intent contended for the lock(1) budget",
+      { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE },
+    );
+    if (contended) return contended;
     if (err instanceof PaymentLinkError) {
       return NextResponse.json(
         err.code ? { error: err.message, code: err.code } : { error: err.message },

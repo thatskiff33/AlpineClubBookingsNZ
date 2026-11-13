@@ -185,7 +185,7 @@ describe("bed allocation lock topology", () => {
     // in the file today.
     expect(text).not.toContain("lockMemberNights");
     expect(text).toContain('ORDER BY "bedId", "stayDate", "isSecondOccupant", "id"');
-    expect(apply).toContain("{ timeout: 30_000, maxWait: 10_000 }");
+    expect(apply).toContain("}, LOCK1_HOLDER_TRANSACTION_BUDGET);");
     const guardedUpdate = between(
       text,
       "async function updateReviewedMoveRows",

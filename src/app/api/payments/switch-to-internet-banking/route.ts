@@ -52,6 +52,10 @@ import { lockMemberCreditLedger } from "@/lib/member-credit";
 import { consumeStoredCreditElection } from "@/lib/booking-credit-election";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 
 /**
  * The member's account credit leaves nothing for the invoice to ask for, so
@@ -479,9 +483,21 @@ export async function POST(request: NextRequest) {
     if (isHostingCoverageParticipantRetry(err)) {
       return { type: "hostingCoverageRetry" as const };
     }
+    // The card intent may already be retired above, so the member checks the
+    // status rather than reading "nothing was saved" (INV-LOCK-005).
+    const contended = transactionContendedResponse(
+      err,
+      "Internet Banking switch contended for the lock(1) budget",
+      {
+        message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+        context: { bookingId },
+      },
+    );
+    if (contended) return { type: "contended" as const, response: contended };
     throw err;
   });
 
+  if (paymentResult.type === "contended") return paymentResult.response;
   if (paymentResult.type === "hostingCoverageRetry") {
     return NextResponse.json(HOSTING_COVERAGE_RETRY_BODY, { status: 409 });
   }

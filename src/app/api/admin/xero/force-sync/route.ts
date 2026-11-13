@@ -7,6 +7,10 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import {
@@ -330,6 +334,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const contended = transactionContendedResponse(
+      error,
+      "Targeted Xero sync contended for the lock(1) budget",
+      { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, context: { syncType } },
+    );
+    if (contended) return contended;
     logger.error({ err: error, syncType, query }, "Failed targeted Xero sync");
     return NextResponse.json(
       { error: "Failed targeted Xero sync" },

@@ -12,7 +12,11 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
-import { BookingRequestType } from "@prisma/client";
+import { BookingRequestType, Prisma } from "@prisma/client";
+import {
+  TRANSACTION_CONTENDED_CODE,
+  TRANSACTION_CONTENDED_MESSAGE,
+} from "@/lib/transaction-contended-response";
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
@@ -275,6 +279,45 @@ describe("POST /api/admin/booking-requests/[id]/correct", () => {
       );
       const res = await POST(post(body()), { params });
       expect(res.status).toBe(409);
+      await expect(res.json()).resolves.toMatchObject({
+        corrected: true,
+        holdReleasePending: true,
+      });
+    });
+  });
+
+  // INV-LOCK-005: the claim is the correction's first write, so a spent budget
+  // saved nothing; once the correction committed, the committed shape wins.
+  describe("a correction that ran out of lock(1) budget", () => {
+    const contention = (code: string) =>
+      new Prisma.PrismaClientKnownRequestError("x", { code, clientVersion: "test" });
+
+    it.each(["P2028", "P2034"])(
+      "answers %s on the claim with a retryable 503 saying nothing was saved",
+      async (code) => {
+        mocks.correctBookingRequest.mockRejectedValue(contention(code));
+        const res = await POST(post(body()), { params });
+        expect(res.status).toBe(503);
+        expect(res.headers.get("Retry-After")).toBe("2");
+        await expect(res.json()).resolves.toEqual({
+          error: TRANSACTION_CONTENDED_MESSAGE,
+          code: TRANSACTION_CONTENDED_CODE,
+        });
+      },
+    );
+
+    it("keeps the committed shape when the contention came after the correction saved", async () => {
+      mocks.correctBookingRequest.mockRejectedValue(
+        new BookingRequestCorrectionCommittedError(
+          "The correction was saved, but this request's held beds could not be released.",
+          500,
+          true,
+          { cause: contention("P2028") },
+        ),
+      );
+      const res = await POST(post(body()), { params });
+      expect(res.status).toBe(500);
+      expect(res.headers.get("Retry-After")).toBeNull();
       await expect(res.json()).resolves.toMatchObject({
         corrected: true,
         holdReleasePending: true,

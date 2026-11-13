@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { BookingStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { prisma } from "@/lib/prisma";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import {
@@ -415,6 +416,13 @@ export async function POST(
       bedAllocationReconcile: result.bedAllocationReconcile,
     });
   } catch (err) {
+    // `INV-LOCK-005`: the toggle's one transaction rolled back.
+    const contended = transactionContendedResponse(
+      err,
+      "Exclusive whole-lodge hold toggle contended for the lock(1) budget",
+      { context: { bookingId } },
+    );
+    if (contended) return contended;
     logger.error({ err, bookingId }, "Failed to update exclusive whole-lodge hold");
     return NextResponse.json(
       { error: "Failed to update exclusive whole-lodge hold" },

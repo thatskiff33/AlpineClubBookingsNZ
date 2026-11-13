@@ -15,6 +15,11 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  TRANSACTION_CONTENDED_RETRY_AFTER_SECONDS,
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 import { isDeletedAccountRecord } from "@/lib/deleted-account";
 import { DELETED_CONTACT_EMAIL_DOMAIN } from "@/lib/deleted-account-email";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
@@ -473,7 +478,12 @@ export async function POST(
               error: DELETION_REQUEST_RELEASE_CONTENDED_MESSAGE,
               retryAllowed: true,
             },
-            { status: 503 },
+            {
+              status: 503,
+              headers: {
+                "Retry-After": String(TRANSACTION_CONTENDED_RETRY_AFTER_SECONDS),
+              },
+            },
           );
         }
         throw releaseError;
@@ -1290,6 +1300,20 @@ export async function POST(
         },
         { status: err.statusCode },
       );
+    }
+    // INV-LOCK-005: an exhausted lock(1) budget is a retryable 503 — but only
+    // when no booking was cancelled short of anonymisation, because that case
+    // keeps the partial-cleanup recovery contract below.
+    if (!(completedBookingCancellations > 0 && !memberAnonymised)) {
+      const contended = transactionContendedResponse(
+        err,
+        "Deletion request decision contended for the lock(1) budget",
+        {
+          message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+          context: { requestId: id },
+        },
+      );
+      if (contended) return contended;
     }
     logger.error({ err, requestId: id }, "Failed to process deletion request");
     if (completedBookingCancellations > 0 && !memberAnonymised) {

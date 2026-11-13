@@ -1,0 +1,27 @@
+{
+ "extends": "./tsconfig.test.json",
+ "compilerOptions": {
+  "incremental": false
+ },
+ "include": [
+  "next-env.d.ts",
+  "src/**/*.d.ts"
+ ],
+ "files": [
+  "src/app/api/admin/deletion-requests/[id]/__tests__/deletion-notify-choice.test.ts",
+  "src/lib/__tests__/admin-additional-payment-withdraw-route.test.ts",
+  "src/lib/__tests__/admin-booking-mark-paid-route.test.ts",
+  "src/lib/__tests__/admin-booking-request-correction-routes.test.ts",
+  "src/lib/__tests__/admin-confirm-pending-guests-route.test.ts",
+  "src/lib/__tests__/admin-refund-request-organiser-card.test.ts",
+  "src/lib/__tests__/booking-cancel-route.test.ts",
+  "src/lib/__tests__/charge-saved-method-route.test.ts",
+  "src/lib/__tests__/cross-lodge-waitlist-confirm.test.ts",
+  "src/lib/__tests__/lock1-transaction-budget-census.test.ts",
+  "src/lib/__tests__/payment-intent-routes.test.ts",
+  "src/lib/__tests__/support/lock1-transaction-scan.ts",
+  "src/lib/__tests__/switch-to-internet-banking-route.test.ts",
+  "src/lib/__tests__/waitlist-confirm-hosting-retry.test.ts",
+  "src/lib/__tests__/waitlist.test.ts"
+ ]
+}

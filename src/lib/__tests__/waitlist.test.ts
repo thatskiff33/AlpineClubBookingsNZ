@@ -1361,6 +1361,32 @@ describe("confirmWaitlistOffer", () => {
     expect(mockBookingUpdateMany).not.toHaveBeenCalled();
   });
 
+  // INV-LOCK-005: contention reaches the route's retryable 503 instead of the
+  // generic failure result; any other claim error still becomes that result.
+  it.each(["P2028", "P2034"] as const)(
+    "rethrows %s transaction contention from the offer claim",
+    async (code) => {
+      const { confirmWaitlistOffer } = await import("@/lib/waitlist");
+      const contended = Object.assign(new Error("contended"), { code });
+      mockPrismaTransaction.mockRejectedValueOnce(contended);
+
+      await expect(
+        confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST),
+      ).rejects.toBe(contended);
+    },
+  );
+
+  it("still folds an unrelated claim error into the generic failure result", async () => {
+    const { confirmWaitlistOffer } = await import("@/lib/waitlist");
+    mockPrismaTransaction.mockRejectedValueOnce(
+      Object.assign(new Error("unique"), { code: "P2002" }),
+    );
+
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
+
+    expect(result).toMatchObject({ success: false });
+  });
+
   it("transitions to PAYMENT_PENDING for all-member bookings", async () => {
     const { confirmWaitlistOffer } = await import("@/lib/waitlist");
     const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");

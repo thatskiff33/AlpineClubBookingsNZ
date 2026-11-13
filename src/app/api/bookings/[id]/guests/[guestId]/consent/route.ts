@@ -18,6 +18,10 @@ import { MEMBER_GUEST_MODULE_KEY } from "@/lib/member-guest-consent";
 import { prisma } from "@/lib/prisma";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { GroupCancelInProgressError } from "@/lib/group-cancel-in-progress";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 
 /**
  * Answer one member-guest consent request ("+ Add Member Guest", epic #2305,
@@ -153,6 +157,17 @@ export async function POST(
     // loop against a terminal state.
     return NextResponse.json({ outcome: outcome.outcome });
   } catch (err) {
+    // The answer commits before its post-commit reprice settles, so a
+    // contended lock(1) transaction (INV-LOCK-005) asks for a status check.
+    const contended = transactionContendedResponse(
+      err,
+      "Member-guest consent answer contended for the lock(1) budget",
+      {
+        message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+        context: { bookingId, guestId },
+      },
+    );
+    if (contended) return contended;
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
     if (err instanceof MemberGuestConsentError) {

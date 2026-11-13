@@ -7,6 +7,10 @@ import {
 } from "@/lib/nomination";
 import { personDecisionsSchema } from "@/lib/member-application-decisions";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 import logger from "@/lib/logger";
 
 const entranceFeeInvoiceDecisionSchema = z.discriminatedUnion("action", [
@@ -113,6 +117,12 @@ export async function PUT(
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
 
+    const contended = transactionContendedResponse(
+      err,
+      "Membership application review contended for a transaction budget",
+      { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, context: { applicationId: id } },
+    );
+    if (contended) return contended;
     logger.error({ err, applicationId: id }, "Unexpected error reviewing membership application");
     return NextResponse.json(
       { error: "Could not review the membership application right now" },

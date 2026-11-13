@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { PaymentSource, PaymentStatus } from "@prisma/client";
+import { PaymentSource, PaymentStatus, Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -108,6 +108,10 @@ vi.mock("@/lib/module-settings", async () => {
 
 import { POST } from "@/app/api/payments/switch-to-internet-banking/route";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import {
+  TRANSACTION_CONTENDED_CODE,
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+} from "@/lib/transaction-contended-response";
 
 // buildInternetBankingPaymentReference uppercases the first 8 chars of the id.
 const BOOKING_ID = "abcd1234-booking";
@@ -1037,5 +1041,36 @@ describe("POST /api/payments/switch-to-internet-banking — the card payment mus
 
     expect(res.status).toBe(409);
     expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+});
+
+// INV-LOCK-005: the card intent is retired before the lock(1) switch, so a
+// contended switch asks the member to check the status before retrying.
+describe("POST /api/payments/switch-to-internet-banking — lock(1) contention (INV-LOCK-005)", () => {
+  it.each(["P2028", "P2034"] as const)(
+    "maps %s to a retryable 503 with the status-check wording and raises no invoice",
+    async (code) => {
+      mocks.transaction.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError("x", { code, clientVersion: "test" }),
+      );
+
+      const res = await POST(postRequest());
+
+      expect(res.status).toBe(503);
+      expect(res.headers.get("Retry-After")).toBe("2");
+      await expect(res.json()).resolves.toEqual({
+        error: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+        code: TRANSACTION_CONTENDED_CODE,
+      });
+      expect(mocks.enqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+    },
+  );
+
+  it("still propagates an unrelated transaction error", async () => {
+    mocks.transaction.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError("x", { code: "P2002", clientVersion: "test" }),
+    );
+
+    await expect(POST(postRequest())).rejects.toMatchObject({ code: "P2002" });
   });
 });

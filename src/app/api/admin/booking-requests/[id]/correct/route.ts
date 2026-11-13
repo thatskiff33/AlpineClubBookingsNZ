@@ -14,6 +14,7 @@ import {
 } from "@/lib/school-organisation-preview";
 import { schoolChildCountsSchema, schoolTeacherSchema } from "@/lib/school-booking-request";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { nameField } from "@/lib/zod-helpers";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 
@@ -173,6 +174,14 @@ export async function POST(
         { status: err.status },
       );
     }
+    // `INV-LOCK-005`: the correction's claim rolled back; a failure after it
+    // is the committed shape above.
+    const contended = transactionContendedResponse(
+      err,
+      "Booking request correction contended for the lock(1) budget",
+      { context: { requestId: id } },
+    );
+    if (contended) return contended;
     if (
       err instanceof BookingRequestError ||
       err instanceof SchoolRecordAcknowledgementError ||

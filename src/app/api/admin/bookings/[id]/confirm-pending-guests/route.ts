@@ -8,6 +8,10 @@ import { BookingStatus, PaymentStatus } from "@prisma/client";
 import { z } from "zod";
 
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 import { prisma } from "@/lib/prisma";
 import { stripeReferenceId } from "@/lib/stripe-references";
 import { readStripeErrorFields } from "@/lib/stripe-errors";
@@ -378,7 +382,18 @@ export async function POST(
           { status: 409 }
         );
       }
-      await reconcileBedAllocationsForBooking({ bookingId, previousRange });
+      try {
+        await reconcileBedAllocationsForBooking({ bookingId, previousRange });
+      } catch (err) {
+        // `INV-LOCK-005`: the move to PAYMENT_PENDING has already committed.
+        const contended = transactionContendedResponse(
+          err,
+          "Admin confirm-pending-guests bed reconcile contended for the lock(1) budget",
+          { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, context: { bookingId } },
+        );
+        if (contended) return contended;
+        throw err;
+      }
       await audit("payment_owed", false);
       return NextResponse.json({
         success: true,
@@ -947,6 +962,14 @@ export async function POST(
     }
     return NextResponse.json({ success: true, status: "PAID", charged: true });
   } catch (err) {
+    // The $0 confirm or the charge claim rolled back before any charge; a
+    // failure after a capture answers in its own branch above.
+    const contended = transactionContendedResponse(
+      err,
+      "Admin confirm-pending-guests contended for the lock(1) budget",
+      { context: { bookingId } },
+    );
+    if (contended) return contended;
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
     logger.error({ err, bookingId }, "Failed to confirm pending guests");

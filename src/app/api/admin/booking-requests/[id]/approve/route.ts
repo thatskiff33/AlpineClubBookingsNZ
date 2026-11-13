@@ -11,6 +11,7 @@ import {
 } from "@/lib/school-booking-request";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import {
   getMembershipTypeBookingPolicyErrorBody,
   MembershipTypeBookingPolicyError,
@@ -207,6 +208,13 @@ export async function POST(
       paymentLinkExpiresAt: result.paymentLinkExpiresAt.toISOString(),
     });
   } catch (err) {
+    // `INV-LOCK-005`: the approval's one transaction rolled back.
+    const contended = transactionContendedResponse(
+      err,
+      "Booking request approval contended for the lock(1) budget",
+      { context: { requestId: id } },
+    );
+    if (contended) return contended;
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
     if (err instanceof BookingMemberNightConflictError) {

@@ -7,6 +7,7 @@ import { AdminReviewStatus, BookingStatus, type Prisma } from "@prisma/client";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { cancelBooking } from "@/lib/booking-cancel";
 import {
   sendBookingReviewApprovedEmail,
@@ -62,6 +63,20 @@ async function loadPendingReviewUnderEligibilityLocks(
 // Approve/decline a booking request: a bookings write. Explicit bookings:edit
 // matches the area the route-area matrix already infers for /api/admin/bookings
 // (#1997), pairing the queue's view-only UI gating with a route-level guard.
+/**
+ * `INV-LOCK-005`: a review claim that ran out of its lock(1) budget rolled back
+ * with nothing recorded, so it answers the shared retryable 503.
+ */
+function reviewClaimContended(err: unknown, bookingId: string): NextResponse {
+  const contended = transactionContendedResponse(
+    err,
+    "Booking review claim contended for the lock(1) budget",
+    { context: { bookingId } },
+  );
+  if (contended) return contended;
+  throw err;
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -152,7 +167,8 @@ export async function PATCH(
 
       await reconcileBedAllocationsForBookingWithLodgeLockHeld({ bookingId, db: tx });
       return current;
-    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET).catch((err: unknown) => reviewClaimContended(err, bookingId));
+    if (reviewedBooking instanceof NextResponse) return reviewedBooking;
 
     if (!reviewedBooking) {
       return NextResponse.json(
@@ -244,7 +260,8 @@ export async function PATCH(
       await releaseBookingPromoRedemptions(tx, bookingId);
     }
     return current;
-  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET).catch((err: unknown) => reviewClaimContended(err, bookingId));
+  if (reviewedBooking instanceof NextResponse) return reviewedBooking;
 
   if (!reviewedBooking) {
     return NextResponse.json(

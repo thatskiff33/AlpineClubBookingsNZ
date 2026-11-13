@@ -7,6 +7,7 @@ import { parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { logAudit, getAuditRequestContext } from "@/lib/audit";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { lockRosterDates } from "@/lib/roster-lock";
@@ -184,6 +185,13 @@ export async function PUT(
 
     return NextResponse.json({ success: true, departedAt: departedAt?.toISOString() ?? null });
   } catch (err) {
+    // The write is one lock(1) transaction (INV-LOCK-005).
+    const contended = transactionContendedResponse(
+      err,
+      "Lodge guest departure contended for the lock(1) budget",
+      { context: { date: dateStr, bookingGuestId: parsed.data.bookingGuestId } },
+    );
+    if (contended) return contended;
     const denied = kioskLodgeAuthErrorResponse(err);
     if (denied) return denied;
     logger.error({ err }, "Error marking guest departure");

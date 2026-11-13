@@ -20,13 +20,18 @@ vi.mock("@/lib/rate-limit", () => ({
 }));
 
 vi.mock("@/lib/logger", () => ({
-  default: { error: vi.fn() },
+  default: { error: vi.fn(), warn: vi.fn() },
 }));
 
+import { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { POST } from "@/app/api/bookings/[id]/cancel/route";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import {
+  TRANSACTION_CONTENDED_CODE,
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+} from "@/lib/transaction-contended-response";
 
 const mockedAuth = vi.mocked(auth);
 const mockedCancelBooking = vi.mocked(cancelBooking);
@@ -250,5 +255,42 @@ describe("POST /api/bookings/[id]/cancel", () => {
       "card",
       { hasBookingsEditAccess: true, enforceStartedStayBlock: true, enforceMemberCancelDoor: true }
     );
+  });
+
+  // INV-LOCK-005: a cancel commits in steps, so a contended lock(1) budget asks
+  // the member to check the status before retrying.
+  it.each(["P2028", "P2034"] as const)(
+    "maps %s transaction contention to a retryable 503 with the status-check wording",
+    async (code) => {
+      mockedCancelBooking.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError("x", { code, clientVersion: "test" }),
+      );
+
+      const res = await POST(
+        makeCancelRequest(JSON.stringify({ refundMethod: "card" })),
+        { params: Promise.resolve({ id: "booking-1" }) },
+      );
+
+      expect(res.status).toBe(503);
+      expect(res.headers.get("Retry-After")).toBe("2");
+      await expect(res.json()).resolves.toEqual({
+        error: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+        code: TRANSACTION_CONTENDED_CODE,
+      });
+    },
+  );
+
+  it("keeps the generic 500 for an unrelated error", async () => {
+    mockedCancelBooking.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("x", { code: "P2002", clientVersion: "test" }),
+    );
+
+    const res = await POST(
+      makeCancelRequest(JSON.stringify({ refundMethod: "card" })),
+      { params: Promise.resolve({ id: "booking-1" }) },
+    );
+
+    expect(res.status).toBe(500);
+    expect(res.headers.get("Retry-After")).toBeNull();
   });
 });

@@ -6,6 +6,7 @@ import logger from "@/lib/logger";
 import { getClientIp } from "@/lib/rate-limit";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
 const deleteBookingParamsSchema = z.object({
   id: z.string().min(1),
@@ -94,6 +95,14 @@ export async function DELETE(
       { status: result.status }
     );
   } catch (error) {
+    // The delete is one lock(1) transaction (INV-LOCK-005); its Stripe
+    // clean-up runs only after it commits.
+    const contended = transactionContendedResponse(
+      error,
+      "Booking delete contended for the lock(1) budget",
+      { context: { bookingId: (await params).id } },
+    );
+    if (contended) return contended;
     logger.error({ err: error }, "Error deleting booking");
     return NextResponse.json(
       { error: "Failed to delete booking" },

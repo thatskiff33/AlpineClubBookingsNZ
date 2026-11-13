@@ -29,6 +29,10 @@ import {
   SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY,
 } from "@/lib/payment-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 
 const schema = z.object({
   paymentIntentId: z.string().min(1),
@@ -338,6 +342,19 @@ export async function POST(
         : undefined,
     );
     if (hostingRetry) return hostingRetry;
+    // Before any capture is observed, a contended lock(1) transaction
+    // (INV-LOCK-005) is retryable; after it, the payment-received answer below wins.
+    if (!succeededPaymentIntentObserved) {
+      const contended = transactionContendedResponse(
+        err,
+        "Primary payment confirmation contended for the lock(1) budget",
+        {
+          message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+          context: { bookingId, paymentIntentId },
+        },
+      );
+      if (contended) return contended;
+    }
     // #1888 — never echo an unexpected error's message to the client (it can
     // carry Prisma constraint names or infrastructure detail); the raw error
     // stays in the log only.

@@ -6,6 +6,7 @@ import {
   writeRequestedRoom,
 } from "@/lib/requested-room-write";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
 const requestedRoomSchema = z
   .object({ requestedRoomId: z.string().min(1) })
@@ -21,7 +22,14 @@ async function requireRoomRequestsEnabled() {
       );
 }
 
-function errorResponse(error: unknown) {
+function errorResponse(error: unknown, bookingId: string) {
+  // `INV-LOCK-005`: the write's one transaction rolled back.
+  const contended = transactionContendedResponse(
+    error,
+    "Admin requested-room write contended for the lock(1) budget",
+    { context: { bookingId } },
+  );
+  if (contended) return contended;
   const mapped = requestedRoomWriteErrorResponse(error);
   return NextResponse.json({ error: mapped.error }, { status: mapped.status });
 }
@@ -51,8 +59,8 @@ export async function PUT(
     );
   }
 
+  const { id } = await params;
   try {
-    const { id } = await params;
     const updated = await writeRequestedRoom({
       bookingId: id,
       actorMemberId: guard.session.user.id,
@@ -62,7 +70,7 @@ export async function PUT(
     });
     return NextResponse.json(updated);
   } catch (error) {
-    return errorResponse(error);
+    return errorResponse(error, id);
   }
 }
 
@@ -77,8 +85,8 @@ export async function DELETE(
   const disabled = await requireRoomRequestsEnabled();
   if (disabled) return disabled;
 
+  const { id } = await params;
   try {
-    const { id } = await params;
     const updated = await writeRequestedRoom({
       bookingId: id,
       actorMemberId: guard.session.user.id,
@@ -88,6 +96,6 @@ export async function DELETE(
     });
     return NextResponse.json(updated);
   } catch (error) {
-    return errorResponse(error);
+    return errorResponse(error, id);
   }
 }

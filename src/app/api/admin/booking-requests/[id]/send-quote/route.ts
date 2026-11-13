@@ -12,6 +12,10 @@ import {
 } from "@/lib/booking-member-night-conflicts";
 import { schoolChildCountsSchema } from "@/lib/school-booking-request";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 import { clubFormatValues } from "@/lib/club-format-server";
 
 export async function POST(
@@ -81,6 +85,14 @@ export async function POST(
       options: parseBookingRequestQuoteOptions(quote.options),
     });
   } catch (err) {
+    // `INV-LOCK-005`: sending holds the beds in one transaction and claims the
+    // quote in another, so the hold may already stand.
+    const contended = transactionContendedResponse(
+      err,
+      "Booking request quote send contended for the lock(1) budget",
+      { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, context: { requestId: id } },
+    );
+    if (contended) return contended;
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
     // Sending now auto-holds the beds (#1254), so the hold's guards can surface

@@ -6,6 +6,7 @@ import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { getClientIp } from "@/lib/rate-limit";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { bookingOwner } from "@/lib/booking-owner";
 import { clubTime } from "@/lib/club-time/server";
 import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
@@ -507,6 +508,14 @@ async function runFinishedStayApproval(
       format,
     });
     if (refusal) return refusal;
+    // `INV-LOCK-005`: the executor's one transaction rolled back; the request
+    // is still pending and nothing was saved.
+    const contended = transactionContendedResponse(
+      error,
+      "Locked-period change request execution contended for the lock(1) budget",
+      { context: { requestId: id } },
+    );
+    if (contended) return contended;
     logger.error({ err: error, requestId: id }, "Locked-period change request execution failed");
     return NextResponse.json(
       {

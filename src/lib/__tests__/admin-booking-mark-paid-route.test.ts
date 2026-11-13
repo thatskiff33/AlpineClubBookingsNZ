@@ -1,5 +1,10 @@
+import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import {
+  TRANSACTION_CONTENDED_CODE,
+  TRANSACTION_CONTENDED_MESSAGE,
+} from "@/lib/transaction-contended-response";
 
 /**
  * B5 (#2262) — the mark-paid route's contract.
@@ -478,5 +483,44 @@ describe("POST /api/admin/bookings/[id]/mark-paid — the outstanding extra (#23
     const message = (await response.json()).message as string;
     expect(message).toMatch(/someone will need to contact them to collect it/);
     expect(message).not.toMatch(/pay it themselves/);
+  });
+});
+
+describe("POST /api/admin/bookings/[id]/mark-paid — lock(1) budget contention (INV-LOCK-005)", () => {
+  const paid = {
+    direction: "paid",
+    confirmed: true,
+    notifyMember: false,
+    expectedAmountCents: 10000,
+  };
+
+  it.each(["P2028", "P2034"])(
+    "answers %s with a retryable 503 saying nothing was saved",
+    async (code) => {
+      mocks.applyManualBookingPayment.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError("x", { code, clientVersion: "test" }),
+      );
+
+      const response = await POST(makeRequest(paid), { params });
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("Retry-After")).toBe("2");
+      await expect(response.json()).resolves.toEqual({
+        error: TRANSACTION_CONTENDED_MESSAGE,
+        code: TRANSACTION_CONTENDED_CODE,
+      });
+    },
+  );
+
+  it("keeps an unrelated failure on the generic 500", async () => {
+    mocks.applyManualBookingPayment.mockRejectedValue(new Error("boom"));
+
+    const response = await POST(makeRequest(paid), { params });
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get("Retry-After")).toBeNull();
+    await expect(response.json()).resolves.toEqual({
+      error: "Manual booking payment failed.",
+    });
   });
 });

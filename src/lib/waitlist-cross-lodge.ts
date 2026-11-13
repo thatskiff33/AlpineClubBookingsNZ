@@ -53,6 +53,7 @@ import {
 import { logAudit } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
 import logger from "@/lib/logger";
+import { isTransactionContention } from "@/lib/prisma-errors";
 import {
   carryBookingGuestDietaryFrom,
   resolveBookingGuestDietarySeeding,
@@ -681,6 +682,8 @@ export async function confirmCrossLodgeWaitlistOffer(
       };
     }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
+    // Nothing committed (INV-LOCK-005): the route answers its retryable 503.
+    if (isTransactionContention(err)) throw err;
     logger.error({ err, bookingId }, "Failed to validate cross-lodge waitlist confirm");
     return { success: false, error: "An error occurred while confirming your booking" };
   }
@@ -767,6 +770,9 @@ export async function confirmCrossLodgeWaitlistOffer(
       guestDietarySeeding: await resolveBookingGuestDietarySeeding(),
     });
   } catch (err) {
+    // The create rolled back and the validation above wrote nothing on its way
+    // here (INV-LOCK-005): the route answers its retryable 503.
+    if (isTransactionContention(err)) throw err;
     if (isHostingCoverageParticipantRetry(err)) {
       return {
         success: false,

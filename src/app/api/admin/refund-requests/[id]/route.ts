@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { PaymentSource } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { createAuditLog } from "@/lib/audit";
@@ -312,8 +313,17 @@ export async function PUT(
       if (err instanceof OrganiserChildRefundRefusedError || err instanceof GroupCancelInProgressError) {
         return { kind: "organiserCardRefused" as const, message: err.message };
       }
+      // INV-LOCK-005: the claim is the first write and rolled back whole.
+      const contended = transactionContendedResponse(
+        err,
+        "Refund appeal approval claim contended for the lock(1) budget",
+        { context: { refundRequestId: id } },
+      );
+      if (contended) return { kind: "contended" as const, response: contended };
       throw err;
     });
+
+    if (capped.kind === "contended") return capped.response;
 
     if (capped.kind === "exceeds") {
       return NextResponse.json(

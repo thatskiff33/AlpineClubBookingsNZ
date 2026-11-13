@@ -20,6 +20,10 @@ import {
 import { hasAdminAccess } from "@/lib/access-roles";
 import { raiseDeletedBookingModificationRefundTask } from "@/lib/deleted-booking-modification-payment";
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 
 const schema = z.object({
   paymentIntentId: z.string().min(1),
@@ -237,6 +241,18 @@ export async function POST(
 
     return NextResponse.json({ success: true });
   } catch (err) {
+    // Stripe may already hold the capture when recording it runs out of its
+    // lock(1) budget (INV-LOCK-005): never "nothing was saved". A retry, or the
+    // payment_intent.succeeded webhook, records it.
+    const contended = transactionContendedResponse(
+      err,
+      "Modification payment confirmation contended for the lock(1) budget",
+      {
+        message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+        context: { bookingId, paymentIntentId },
+      },
+    );
+    if (contended) return contended;
     // #1888 — never echo an unexpected error's message to the client; the raw
     // error stays in the log only.
     logger.error({ err, bookingId }, "Failed to confirm modification payment");

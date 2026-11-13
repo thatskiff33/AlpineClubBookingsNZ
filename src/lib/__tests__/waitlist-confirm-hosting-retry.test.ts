@@ -79,6 +79,10 @@ import {
   WAITLIST_CONFIRM_STATUS_MOVED_BODY,
   WAITLIST_OFFER_RELEASED_CAPACITY_BODY,
 } from "@/lib/waitlist-confirm-recovery-contract";
+import {
+  TRANSACTION_CONTENDED_CODE,
+  TRANSACTION_CONTENDED_MESSAGE,
+} from "@/lib/transaction-contended-response";
 
 /** A Prisma transaction-contention rejection, exactly as the client throws it. */
 function contentionError(code: "P2028" | "P2034") {
@@ -435,5 +439,38 @@ describe("zero-dollar waitlist participant contention (#2597)", () => {
     expect(mocks.bookingUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(
       confirmationLedger.postStoredBookingConfirmationLedgerLines.mock.invocationCallOrder[0]!,
     );
+  });
+});
+
+// INV-LOCK-005: phase one (`confirmWaitlistOffer`) now rethrows contention
+// instead of folding it into a generic failure; the route answers the 503.
+describe("waitlist offer acceptance contention (INV-LOCK-005)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.auth.mockResolvedValue({ user: { id: "member-1" } });
+    mocks.requireActiveSessionUser.mockResolvedValue(null);
+  });
+
+  it.each(["P2028", "P2034"] as const)(
+    "maps %s from the offer acceptance to a retryable 503",
+    async (code) => {
+      mocks.confirmWaitlistOffer.mockRejectedValue(contentionError(code));
+
+      const response = await post();
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("Retry-After")).toBe("2");
+      await expect(response.json()).resolves.toEqual({
+        error: TRANSACTION_CONTENDED_MESSAGE,
+        code: TRANSACTION_CONTENDED_CODE,
+      });
+      expect(mocks.transaction).not.toHaveBeenCalled();
+    },
+  );
+
+  it("still propagates an unrelated error from the offer acceptance", async () => {
+    mocks.confirmWaitlistOffer.mockRejectedValue(new Error("unrelated"));
+
+    await expect(post()).rejects.toThrow("unrelated");
   });
 });

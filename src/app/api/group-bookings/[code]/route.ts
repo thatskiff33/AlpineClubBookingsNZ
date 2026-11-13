@@ -12,6 +12,7 @@ import {
 } from "@/lib/group-booking";
 import { toGroupBookingSummaryResponse } from "@/lib/group-booking-summary-response";
 import logger from "@/lib/logger";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
 /**
  * Public lookup of a group booking by its join code. Returns only safe summary
@@ -77,6 +78,13 @@ export async function PATCH(
         : await reopenGroupBooking(code, session.user.id);
     return NextResponse.json({ status: group.status });
   } catch (err) {
+    // The join-status write is one lock(1) transaction (INV-LOCK-005).
+    const contended = transactionContendedResponse(
+      err,
+      "Group booking close/reopen contended for the lock(1) budget",
+      { context: { code, action: parsed.data.action } },
+    );
+    if (contended) return contended;
     if (err instanceof GroupBookingError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }

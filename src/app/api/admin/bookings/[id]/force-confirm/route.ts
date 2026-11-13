@@ -3,6 +3,7 @@ import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { prisma } from "@/lib/prisma";
 import { AdminReviewStatus, BookingStatus } from "@prisma/client";
 import { requiresAdultSupervisionReview } from "@/lib/booking-review";
@@ -364,6 +365,13 @@ export async function POST(
       unpaidFinishedStay,
     });
   } catch (err) {
+    // `INV-LOCK-005`: the force-confirm's one transaction rolled back.
+    const contended = transactionContendedResponse(
+      err,
+      "Force-confirm contended for the lock(1) budget",
+      { context: { bookingId } },
+    );
+    if (contended) return contended;
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
     logger.error({ err, bookingId }, "Failed to force-confirm waitlisted booking");

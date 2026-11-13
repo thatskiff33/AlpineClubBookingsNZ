@@ -3,6 +3,10 @@ import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-host
 import { BookingStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
@@ -100,6 +104,17 @@ export async function POST(
   } catch (err) {
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
+    // `INV-LOCK-005`: `cancelBooking` commits in more than one transaction, so
+    // the officer checks the hold rather than being told nothing changed.
+    const contended = transactionContendedResponse(
+      err,
+      "Booking request hold release contended for the lock(1) budget",
+      {
+        message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+        context: { requestId: id, bookingId: request.heldBookingId },
+      },
+    );
+    if (contended) return contended;
     throw err;
   }
 

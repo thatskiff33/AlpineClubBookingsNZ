@@ -56,6 +56,10 @@ import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 
 export async function DELETE(
   request: NextRequest,
@@ -427,6 +431,17 @@ export async function DELETE(
       choreWarnings: result.choreWarnings,
     });
   } catch (err) {
+    // The removal commits before its refund and additional-ask steps, so a
+    // contended lock(1) transaction (INV-LOCK-005) asks for a status check.
+    const contended = transactionContendedResponse(
+      err,
+      "Guest removal contended for the lock(1) budget",
+      {
+        message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+        context: { bookingId, guestId },
+      },
+    );
+    if (contended) return contended;
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
     if (err instanceof MembershipTypeBookingPolicyError) {

@@ -25,6 +25,7 @@ import { z } from "zod"
 import logger from "@/lib/logger"
 import { logAudit } from "@/lib/audit"
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { isTransactionContention } from "@/lib/prisma-errors";
 
 type JsonRouteResult = {
   body: unknown
@@ -814,6 +815,8 @@ export async function updateAdminRosterForDate(params: {
     }
   }
   } catch (err) {
+    // INV-LOCK-005: contention is the route's retryable 503, not a failure.
+    if (isTransactionContention(err)) throw err
     logger.error({ err }, "Error processing roster action")
     const failures = {
       save: {

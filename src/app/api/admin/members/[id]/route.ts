@@ -6,6 +6,7 @@ import {
   updateMemberSchema,
 } from "@/lib/admin-member-detail-service";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import {
   grantMembershipAdminDietaryAccess,
   isDietaryFieldEnabled,
@@ -97,16 +98,29 @@ export async function PUT(
     );
   }
 
-  const result = await updateAdminMember({
-    id: parsedParams.data.id,
-    currentAdminMemberId: guard.session.user.id,
-    currentAdminAccess: guard.session.user,
-    request: req,
-    data: parsedBody.data,
-    dietaryGrant: (await isDietaryFieldEnabled())
-      ? await grantMembershipAdminDietaryAccess(guard, "edit")
-      : null,
-  });
+  const dietaryGrant = (await isDietaryFieldEnabled())
+    ? await grantMembershipAdminDietaryAccess(guard, "edit")
+    : null;
+  let result: Awaited<ReturnType<typeof updateAdminMember>>;
+  try {
+    result = await updateAdminMember({
+      id: parsedParams.data.id,
+      currentAdminMemberId: guard.session.user.id,
+      currentAdminAccess: guard.session.user,
+      request: req,
+      data: parsedBody.data,
+      dietaryGrant,
+    });
+  } catch (err) {
+    // INV-LOCK-005: the member update's transaction is the first write.
+    const contended = transactionContendedResponse(
+      err,
+      "Admin member update contended for the lock(1) budget",
+      { context: { memberId: parsedParams.data.id } },
+    );
+    if (contended) return contended;
+    throw err;
+  }
   return NextResponse.json(result.body, result.init);
 }
 

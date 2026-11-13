@@ -7,6 +7,7 @@ import { auth } from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { isTransactionContention } from "@/lib/prisma-errors";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { BookingStatus } from "@prisma/client";
 import { confirmWaitlistOffer } from "@/lib/waitlist";
 import {
@@ -100,7 +101,20 @@ export async function POST(
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
 
-  const result = await confirmWaitlistOffer(bookingId, session.user.id, format);
+  let result: Awaited<ReturnType<typeof confirmWaitlistOffer>>;
+  try {
+    result = await confirmWaitlistOffer(bookingId, session.user.id, format);
+  } catch (err) {
+    // Phase one's claim (or the cross-lodge create) is the first write, and it
+    // rolled back (INV-LOCK-005); the offer still stands.
+    const contended = transactionContendedResponse(
+      err,
+      "Waitlist offer confirm contended for the lock(1) budget",
+      { context: { bookingId } },
+    );
+    if (contended) return contended;
+    throw err;
+  }
 
   if (!result.success) {
     const status = result.error === "Forbidden" ? 403

@@ -12,6 +12,7 @@ import {
   removeOwnPartnerLink,
 } from "@/lib/member-partner-link";
 import { cancelOwnPartnerInviteToken } from "@/lib/partner-invite-token";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
 /**
  * GET /api/members/partner-link (#1742)
@@ -200,10 +201,22 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Partner link id required" }, { status: 400 });
   }
 
-  const result = await removeOwnPartnerLink({
-    memberId: guard.session.user.id,
-    linkId,
-  });
+  let result: Awaited<ReturnType<typeof removeOwnPartnerLink>>;
+  try {
+    result = await removeOwnPartnerLink({
+      memberId: guard.session.user.id,
+      linkId,
+    });
+  } catch (err) {
+    // The removal and its share sweep are one lock(1) transaction (INV-LOCK-005).
+    const contended = transactionContendedResponse(
+      err,
+      "Partner link removal contended for the lock(1) budget",
+      { context: { linkId } },
+    );
+    if (contended) return contended;
+    throw err;
+  }
 
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: result.status });

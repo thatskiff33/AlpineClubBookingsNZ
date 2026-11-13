@@ -58,6 +58,10 @@ import {
   MembershipTypeBookingPolicyError,
 } from "@/lib/membership-type-policy";
 import logger from "@/lib/logger";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { getXeroLockGuardErrorResponse } from "@/lib/xero-period-lock-guard";
@@ -227,6 +231,15 @@ export async function PUT(
     if (err instanceof EditPriceChangedError) {
       return NextResponse.json(editPriceChangedBody(err), { status: err.status });
     }
+    // The edit commits before its refund and additional-ask steps, so a
+    // contended lock(1) transaction (INV-LOCK-005) asks for a status check.
+    // The linked move answers its own LINKED_MOVE_CONTENDED 503 below.
+    const contended = transactionContendedResponse(
+      err,
+      "Booking modification contended for the lock(1) budget",
+      { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, context: { bookingId } },
+    );
+    if (contended) return contended;
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
     // #3451 (`INV-GUEST-019`): an added guest is named as one of the owner's

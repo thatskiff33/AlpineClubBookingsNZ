@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 import { checkRateLimit, rateLimitedResponse } from "@/lib/rate-limit";
 import { createAuditLog } from "@/lib/audit";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
@@ -46,6 +50,13 @@ export async function POST(request: Request) {
       action: "XERO_SYNC_NOW", category: "xero", memberId: guard.session.user.id,
       targetId, entityType, entityId, outcome: "failure", summary: message, metadata: { scope: scope.scope },
     });
+    // INV-LOCK-005: after the failure is audited, contention is a retryable 503.
+    const contended = transactionContendedResponse(
+      error,
+      "Xero sync-now contended for the lock(1) budget",
+      { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, context: { scope: scope.scope, entityId } },
+    );
+    if (contended) return contended;
     return NextResponse.json({ error: message }, { status: error instanceof XeroSyncNowError ? error.status : info.handled ? info.status : 500 });
   }
 }
