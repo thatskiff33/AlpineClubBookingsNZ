@@ -558,8 +558,9 @@ infer_active_service_from_caddy_autosave() {
   local active_service
   local caddy_image_ref
 
-  caddy_image_ref="$(resolve_caddy_image_ref)" || return 1
+  # Cheap volume check first: a host with no Caddy volume skips the compose render.
   docker volume inspect "$volume_name" >/dev/null 2>&1 || return 1
+  caddy_image_ref="$(resolve_caddy_image_ref)" || return 1
 
   active_service="$(
     docker run --rm \

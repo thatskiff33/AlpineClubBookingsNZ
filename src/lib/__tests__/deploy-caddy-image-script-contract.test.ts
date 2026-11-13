@@ -60,6 +60,19 @@ describe("compose-pinned Caddy helper", () => {
     expect(run('RESOLVED_COMPOSE_CONFIG="$FIXTURE_RENDER"; docker() { return 1; }; infer_active_service_from_caddy_autosave').status).toBe(1);
   });
 
+  it("checks the Caddy config volume before rendering compose", () => {
+    // The marker file survives the render's subshell; a missing volume must never reach it.
+    const result = run(`
+      marker="$(mktemp)"; rm -f "$marker"; trap 'rm -f "$marker"' EXIT
+      docker() { case "$1" in compose) : > "$marker"; printf '%s' "$FIXTURE_RENDER" ;; *) return 1 ;; esac; }
+      status=0; infer_active_service_from_caddy_autosave || status=$?
+      test ! -e "$marker" || exit 42
+      exit "$status"
+    `);
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stdout).toBe("");
+  });
+
   it("validates with the pinned image and removes its private environment file", () => {
     const result = run(`
       resolved_service_env_value() { printf example.invalid; }
