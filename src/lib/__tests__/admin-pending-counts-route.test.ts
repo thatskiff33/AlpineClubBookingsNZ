@@ -46,7 +46,7 @@ vi.mock("@/lib/member-lifecycle-actions", () => ({
 vi.mock("@/lib/hut-leader-coverage", () => ({
   getUnassignedHutLeaderDates: vi.fn().mockResolvedValue([{}, {}]),
 }));
-vi.mock("@/lib/stuck-state-dashboard", () => ({
+vi.mock("@/lib/stuck-state-affected-count", () => ({
   getStuckStateAffectedCount: vi.fn().mockResolvedValue(2),
 }));
 

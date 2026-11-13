@@ -8,12 +8,14 @@ import {
   GROUP_JOINER_PAYS_OWN_EVENT_REASON,
 } from "@/lib/manual-settlement-reversal-event";
 import {
-  STUCK_STATE_AFFECTED_COUNT_TTL_MS,
-  getStuckStateAffectedCount,
   getStuckStateDashboard,
-  resetStuckStateAffectedCountCache,
   type StuckStateDashboardDependencies,
 } from "@/lib/stuck-state-dashboard";
+import {
+  STUCK_STATE_AFFECTED_COUNT_TTL_MS,
+  getStuckStateAffectedCount,
+  resetStuckStateAffectedCountCache,
+} from "@/lib/stuck-state-affected-count";
 import { adminAnchorHref } from "@/lib/admin-hubs";
 
 const modulesOn: FeatureFlags = {

@@ -38,7 +38,7 @@ const mocks = vi.hoisted(() => ({
   clubTimeSettingsFindUnique: vi.fn(),
 }));
 
-vi.mock("@/lib/stuck-state-dashboard", () => ({
+vi.mock("@/lib/stuck-state-affected-count", () => ({
   getStuckStateAffectedCount: mocks.getStuckStateAffectedCount,
 }));
 

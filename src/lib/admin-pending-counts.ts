@@ -16,7 +16,7 @@ import {
   buildUnsettledAdditionalUpcomingStaysWhere,
 } from "@/lib/unpaid-finished-stays";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
-import { getStuckStateAffectedCount } from "@/lib/stuck-state-dashboard";
+import { getStuckStateAffectedCount } from "@/lib/stuck-state-affected-count";
 import {
   ADMIN_PENDING_COUNT_KEYS,
   type AdminPendingCountKey,
