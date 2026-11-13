@@ -4,7 +4,9 @@ import {
   apiErrorCodeFromBody,
   apiErrorMessageFromBody,
   apiErrorMessageFromResponse,
+  apiRefusalFromResponse,
   readApiErrorBody,
+  refusalMessageOr,
 } from "@/lib/api-error-message";
 import { templateErrorMessage } from "@/components/admin/email-settings/email-message-settings-panel";
 
@@ -165,5 +167,31 @@ describe("readApiErrorBody", () => {
     expect(
       await readApiErrorBody(new Response("<html>502</html>", { status: 502 })),
     ).toBeNull();
+  });
+});
+
+describe("refusalMessageOr", () => {
+  it("shows a thrown refusal's own sentence", async () => {
+    const refusal = await apiRefusalFromResponse(
+      Response.json({ error: "Not found" }, { status: 404 }),
+      FALLBACK,
+    );
+    expect(refusalMessageOr(refusal, "Other")).toBe("Not found");
+  });
+
+  it("shows the refusal's fallback when the body is an HTML page", async () => {
+    const refusal = await apiRefusalFromResponse(
+      new Response("<html>502</html>", { status: 502 }),
+      FALLBACK,
+    );
+    expect(refusalMessageOr(refusal, "Other")).toBe(FALLBACK);
+  });
+
+  it.each([
+    ["a request that never got an answer", new TypeError("Failed to fetch")],
+    ["a parse error on the success path", new SyntaxError("Unexpected token <")],
+    ["a non-error value", "boom"],
+  ])("shows the fallback, not the error's text, for %s", (_label, err) => {
+    expect(refusalMessageOr(err, FALLBACK)).toBe(FALLBACK);
   });
 });
