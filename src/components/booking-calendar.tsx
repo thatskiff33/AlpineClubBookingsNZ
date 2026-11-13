@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { useClubTime } from "@/components/club-time-provider";
@@ -18,6 +18,7 @@ import {
 import { formatCalendarDayOnly } from "@/lib/date-only";
 import { isLodgeSetUpForBookings } from "@/lib/lodge-booking-readiness";
 import { LodgeNotSetUpNotice } from "@/components/lodge-not-set-up-notice";
+import { useBookingCalendarAvailability } from "@/components/booking-calendar-availability";
 
 /**
  * A day button's accessible name, spelled out in full — long weekday, long month
@@ -45,11 +46,6 @@ import { LodgeNotSetUpNotice } from "@/components/lodge-not-set-up-notice";
 // removed the last step of that journey: they are now handed to the kernel's
 // calendar-date shapes as strings, so no `Date` is constructed and no zone is
 // consulted at any point.
-
-interface SeasonInfo {
-  name: string;
-  type: string;
-}
 
 interface BookingCalendarProps {
   // A selected lodge night is a date-only `yyyy-MM-dd` string (#2474), not a
@@ -111,39 +107,6 @@ type DayRole =
 const RETROACTIVE_LOOKBACK_DAYS = 365;
 
 /**
- * Everything one lodge's calendar knows about occupancy, accumulated across
- * every month that has been loaded (#2930).
- *
- * TWO DEFECTS LIVED IN THE SHAPE THIS REPLACES, a bare `Record<string, number>`
- * reset on every month change.
- *
- * 1. **Months did not accumulate.** Paging forward replaced the map wholesale,
- *    so paging back showed an empty month until its refetch landed — and a stay
- *    that spans a month boundary was being judged with one of its two months
- *    missing.
- * 2. **Missing was read as zero.** `availability[date] ?? 0` cannot tell "this
- *    night has nobody in it" from "this night has not been loaded", and it
- *    answered BOTH with an empty lodge. A failed or in-flight fetch therefore
- *    painted a full lodge as completely free and invited the member to pick it.
- *    Unknown is now its own state and renders as unknown.
- *
- * Keyed by lodge because the numbers are only meaningful against the lodge they
- * were counted for: switching lodges DISCARDS the accumulation rather than
- * merging two lodges' nights into one map. `capacity` is that lodge's own
- * effective capacity as the route resolved it (`INV-CAP-003`), never the
- * club-identity figure, which is one lodge's bed count and was previously used
- * as the denominator for all of them.
- */
-interface LodgeAvailabilityState {
-  /** The lodge these nights and this capacity belong to; null = default lodge. */
-  lodgeId: string | null;
-  /** Occupied beds per `yyyy-MM-dd`. An ABSENT key means "not loaded". */
-  nights: Record<string, number>;
-  /** The lodge's effective capacity, or null until a response has resolved it. */
-  capacity: number | null;
-}
-
-/**
  * One cell's derived state (#2930). Computed once per render per day and then
  * read by the class, the disabled attribute, the accessible name and the
  * sub-label — the four places that previously each re-derived "is this day
@@ -167,44 +130,6 @@ interface DayView {
   isFull: boolean;
 }
 
-const EMPTY_AVAILABILITY: LodgeAvailabilityState = {
-  lodgeId: null,
-  nights: {},
-  capacity: null,
-};
-
-/**
- * The months whose availability request FAILED, for one lodge (#4954).
- *
- * An unknown night renders honestly as `?` (#2930), but a night alone cannot
- * say whether its month is still loading or failed to load, so the grid had
- * nothing to hang an error message or a Retry on. The fetch's outcome is
- * recorded here instead. Keys are the `yyyy-MM` prefix the season merge uses;
- * tagged with the lodge for the same reason `LodgeAvailabilityState` is, so one
- * lodge's failure is never shown against another lodge.
- */
-interface FailedMonthsState {
-  lodgeId: string | null;
-  months: ReadonlySet<string>;
-}
-
-/** The `yyyy-MM` key of a month; `month` is 0-based, as in `currentMonth`. */
-function monthKey(year: number, month: number): string {
-  return formatCalendarDayOnly(year, month, 1).slice(0, "yyyy-MM".length);
-}
-
-function withMonth(
-  current: FailedMonthsState,
-  lodgeId: string | null,
-  key: string,
-  failed: boolean,
-): FailedMonthsState {
-  const months = new Set(current.lodgeId === lodgeId ? current.months : []);
-  if (failed) months.add(key);
-  else months.delete(key);
-  return { lodgeId, months };
-}
-
 export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOut, lodgeId, allowPastDates = false, allowFullDates = false, lodgeSettingsHref }: BookingCalendarProps) {
   /**
    * The month the calendar opens on, and the day it treats as "today", both come
@@ -222,134 +147,25 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     const parts = calendarDateParts(clubToday);
     return { year: parts.year, month: parts.month - 1 };
   });
-  const [availability, setAvailability] = useState<LodgeAvailabilityState>({
-    ...EMPTY_AVAILABILITY,
-    lodgeId: lodgeId ?? null,
-  });
-  const [seasons, setSeasons] = useState<Record<string, SeasonInfo>>({});
-  const [failedMonths, setFailedMonths] = useState<FailedMonthsState>({
-    lodgeId: lodgeId ?? null,
-    months: new Set(),
-  });
-  // Bumped by Retry so the load effect runs again for the month on screen.
-  const [reloadToken, setReloadToken] = useState(0);
+  const {
+    availability,
+    seasons,
+    visibleMonthFailed: monthFailedToLoad,
+    retryVisibleMonth: retryMonth,
+  } = useBookingCalendarAvailability(
+    lodgeId,
+    currentMonth.year,
+    currentMonth.month,
+    // The `yyyy-MM` key the season merge and the failed-month record share.
+    formatCalendarDayOnly(currentMonth.year, currentMonth.month, 1).slice(
+      0,
+      "yyyy-MM".length,
+    ),
+  );
   const monthHeadingRef = useRef<HTMLHeadingElement>(null);
   const [selecting, setSelecting] = useState<"checkIn" | "checkOut">("checkIn");
   const [checkIn, setCheckIn] = useState<string | null>(selectedCheckIn ?? null);
   const [checkOut, setCheckOut] = useState<string | null>(selectedCheckOut ?? null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const requestedLodgeId = lodgeId ?? null;
-    const requestedMonth = monthKey(currentMonth.year, currentMonth.month);
-
-    // Only a run that is still current may record its outcome: a late answer
-    // for a month or lodge the member has left must not raise or clear the
-    // alert for the one on screen (#4954).
-    function recordOutcome(failed: boolean) {
-      if (cancelled) return;
-      setFailedMonths((current) =>
-        withMonth(current, requestedLodgeId, requestedMonth, failed),
-      );
-    }
-
-    async function loadAvailability() {
-      const res = await fetch(
-        `/api/availability?year=${currentMonth.year}&month=${currentMonth.month}${
-          lodgeId ? `&lodgeId=${encodeURIComponent(lodgeId)}` : ""
-        }`
-      );
-      if (cancelled) return;
-      if (!res.ok) {
-        // A refused month leaves its nights UNLOADED, which is a state the grid
-        // renders honestly. Before #2930 it left them absent from a map whose
-        // reader defaulted absent to zero occupancy, so a failed fetch drew an
-        // empty lodge. The failure itself is now recorded too (#4954).
-        recordOutcome(true);
-        return;
-      }
-
-      const data = await res.json();
-      if (cancelled) return;
-      recordOutcome(false);
-
-      const loadedNights: Record<string, number> =
-        data.availability && typeof data.availability === "object"
-          ? data.availability
-          : {};
-      // The lodge's own effective capacity (#2930). Never fall back to the
-      // club-identity figure when it is missing: a wrong denominator produces
-      // confident, wrong bed counts, where an absent one produces a visible
-      // "not loaded" the member can act on.
-      const loadedCapacity =
-        typeof data.lodgeCapacity === "number" ? data.lodgeCapacity : null;
-
-      setAvailability((current) =>
-        current.lodgeId === requestedLodgeId
-          ? {
-              lodgeId: requestedLodgeId,
-              // MERGE, so every month paged through stays loaded and a stay
-              // spanning a month boundary is judged against both of its months.
-              nights: { ...current.nights, ...loadedNights },
-              capacity: loadedCapacity ?? current.capacity,
-            }
-          : {
-              // A different lodge: the accumulated nights counted somebody
-              // else's beds, so they are discarded rather than merged.
-              lodgeId: requestedLodgeId,
-              nights: loadedNights,
-              capacity: loadedCapacity,
-            },
-      );
-      // Seasons accumulate across months like the nights do, but they are SPARSE
-      // — only a day inside a season gets a key — so a blanket merge could never
-      // remove one. A season that was deactivated or re-dated kept its label on
-      // the grid until the lodge changed (#2930 fix round). This month's keys are
-      // dropped before the fresh answer is merged, which makes the refetch
-      // authoritative for the month it asked about and leaves every other month
-      // standing.
-      const monthPrefix = `${requestedMonth}-`;
-      const loadedSeasons: Record<string, SeasonInfo> =
-        data.seasons && typeof data.seasons === "object" ? data.seasons : {};
-      setSeasons((current) => {
-        const kept: Record<string, SeasonInfo> = {};
-        for (const [date, season] of Object.entries(current)) {
-          if (!date.startsWith(monthPrefix)) kept[date] = season;
-        }
-        return { ...kept, ...loadedSeasons };
-      });
-    }
-
-    // A rejected fetch (no network) or an unreadable body is a failed month
-    // too, rather than an unhandled rejection the member never hears about.
-    loadAvailability().catch(() => recordOutcome(true));
-
-    return () => {
-      cancelled = true;
-    };
-  }, [currentMonth.month, currentMonth.year, lodgeId, reloadToken]);
-
-  /**
-   * Everything accumulated belongs to the lodge it was counted for, so changing
-   * lodge discards it SYNCHRONOUSLY (#2930 fix round).
-   *
-   * The load effect above discards on a lodge mismatch too, but only on the
-   * branch where a response arrives. A member who is not eligible to book a
-   * lodge gets a refused fetch on every month, so that branch never ran and the
-   * grid went on rendering the PREVIOUS lodge's free-bed counts, heat colours
-   * and full/not-full decisions against the new lodge's dates — including
-   * drawing a held night at the new lodge as free. That is exactly the
-   * confidently-wrong denominator this file's own comments forbid, and unknown
-   * already has an honest rendering.
-   *
-   * Seasons are per lodge for the same reason (`lodgeNullTolerantScope`).
-   */
-  useEffect(() => {
-    setSeasons({});
-    setAvailability({ ...EMPTY_AVAILABILITY, lodgeId: lodgeId ?? null });
-    setFailedMonths({ lodgeId: lodgeId ?? null, months: new Set() });
-  }, [lodgeId]);
 
   // The grid's two facts are calendar-day facts, so the kernel answers both and
   // no `Date` is built (CT-4, #2870). The spelling this replaces was
@@ -519,21 +335,10 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     clubTime.format,
   );
 
-  const visibleMonthFailed =
-    !lodgeNotSetUp &&
-    failedMonths.lodgeId === (lodgeId ?? null) &&
-    failedMonths.months.has(monthKey(currentMonth.year, currentMonth.month));
+  const visibleMonthFailed = !lodgeNotSetUp && monthFailedToLoad;
 
   function retryVisibleMonth() {
-    setFailedMonths((current) =>
-      withMonth(
-        current,
-        lodgeId ?? null,
-        monthKey(currentMonth.year, currentMonth.month),
-        false,
-      ),
-    );
-    setReloadToken((token) => token + 1);
+    retryMonth();
     // The Retry button unmounts with the alert; keep keyboard focus in the
     // calendar rather than letting it fall back to the top of the page.
     monthHeadingRef.current?.focus();
