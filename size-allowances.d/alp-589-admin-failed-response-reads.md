@@ -29,7 +29,7 @@ reason: the leader writes read a refusal, including its capacity and
   amendment details, through the shared reader inside each handler; splitting
   the page is a separate refactor.
 
-file: src/app/(admin)/admin/member-applications/_components/approval-mapping-panel.tsx
+file: src/app/(admin)/admin/membership/member-applications/_components/approval-mapping-panel.tsx
 lines: 738
 reason: the preview and search reads check ok before parsing, one line more;
   splitting the panel for one line would scatter its two fetches.
