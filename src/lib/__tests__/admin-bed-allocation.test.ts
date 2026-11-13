@@ -385,9 +385,14 @@ describe("admin bed allocation", () => {
     // The admin PAGE gates are generated from the hub registry since #4799, so
     // they are asserted as behaviour rather than as literals in the rule.
     expect(getRequiredFeaturesForPath("/admin/bed-allocation")).toContain("bedAllocation");
+    expect(getRequiredFeaturesForPath("/admin/booking-desk/bed-allocation")).toContain(
+      "bedAllocation",
+    );
     expect(getRequiredFeaturesForPath("/admin/rooms-beds")).toContain("bedAllocation");
     expect(featureRoutes).toContain('"/api/admin/bed-allocation"');
-    expect(sidebar).toContain('href: "/admin/bed-allocation"');
+    // The menu item is the registry link (C10 #4807). While the switch is off
+    // that still opens /admin/bed-allocation; the hub path is gated with it.
+    expect(sidebar).toContain('adminLink("bed-allocation")');
     // Linked through the hub registry since S1 (#4796).
     expect(bookingsSetupHub).toContain('href: adminHref("rooms-beds")');
   });
