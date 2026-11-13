@@ -23,7 +23,7 @@ const COLUMNS: Record<string, readonly string[]> = {
     "creditLotId", "chargeIdentity", "refundIdentity", "grossCents", "netCents", "taxCents", "taxCode", "evidence", "originalLineId", "obligationId"],
   memberMoneyApplication: ["id", "applicationKey", "journalId", "sourceLineId", "obligationId", "amountCents", "reversesApplicationId"],
   payment: ["id", "bookingId", "manuallyMarkedPaidAt"],
-  booking: ["id", "lodgeId", "memberId", "organisationId"],
+  booking: ["id", "lodgeId", "memberId", "organisationId", "createdAt"],
   paymentTransaction: ["id", "paymentId", "source", "kind", "status", "amountCents", "stripePaymentIntentId", "reason"],
   bookingLedgerLine: ["id", "bookingId", "side", "kind", "anchorId", "reversesLineId", "amountCents", "postedAt", "postingKey"],
   // #4516 (M4c): reservations and their releases, the card refund rows R12 reads, and the rows a refund's debt is read from.

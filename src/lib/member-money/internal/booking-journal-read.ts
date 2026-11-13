@@ -1,5 +1,6 @@
 import type { MemberMoneySide, Prisma } from "@prisma/client";
 import { bookingOwnerProviderMetadata } from "../../booking-owner";
+import { clubCalendarDateOf, requireInstant, type CalendarDate, type ClubTimeZone } from "../../club-time";
 import { BINDING_CHARGE_SOURCE_VERSION, type BookingChargeAccount } from "./booking-charges";
 import { componentKey, liveComponentGross } from "./components";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
@@ -74,6 +75,23 @@ export async function readBookingLiveChargeCents(db: Pick<Prisma.TransactionClie
 }
 
 /** Whether an event key is in the journal: a replay check, never a lock. */
+/**
+ * A booking's tax anchor (#4632, owner decision A): the club date it was made,
+ * on which every fresh split of its charges takes the treatment in force, so a
+ * booking keeps that treatment for its whole life. The same anchor its Xero
+ * documents use (`xero-tax-anchors.ts`). `createdAt` never changes, so it needs
+ * no lock.
+ */
+export async function readBookingTaxAnchorDate(
+  db: Pick<Prisma.TransactionClient, "booking">,
+  bookingId: string,
+  zone: ClubTimeZone,
+): Promise<CalendarDate> {
+  const booking = await db.booking.findUnique({ where: { id: bookingId }, select: { createdAt: true } });
+  if (!booking) throw new Error(`booking ${bookingId} does not exist, so its charges have no tax anchor`);
+  return clubCalendarDateOf(requireInstant(booking.createdAt), zone);
+}
+
 export async function eventPosted(db: Pick<Prisma.TransactionClient, "memberMoneyEvent">, eventKey: MemberMoneyEventKey): Promise<boolean> {
   return (await db.memberMoneyEvent.findUnique({ where: { eventKey }, select: { id: true } })) !== null;
 }

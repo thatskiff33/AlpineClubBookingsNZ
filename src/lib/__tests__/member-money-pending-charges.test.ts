@@ -16,7 +16,7 @@ import {
   type StandingChargeLine,
 } from "@/lib/member-money/internal/booking-pending-charges";
 import { buildMemberMoneyBatch } from "@/lib/member-money/internal/plan";
-import { memberMoneyTestContext } from "./support/member-money-fixtures";
+import { MEMBER_MONEY_TEST_TAX_ANCHOR, memberMoneyTestContext } from "./support/member-money-fixtures";
 
 const BOOKING = "b1";
 const LODGE = "l1";
@@ -47,7 +47,7 @@ const live = (entries: Array<["BOOKING_REVENUE" | "FEE_REVENUE", string, number]
   entries.map(([account, chargeIdentity, liveGrossCents]) => ({ account, chargeIdentity, liveGrossCents }));
 
 function plan(event: PendingChargeEvent, lines: StandingChargeLine[], liveComponents = live([])) {
-  return planPendingBookingCharge({ bookingId: BOOKING, lodgeId: LODGE, event, debtor: MEMBER, standing: lines, liveComponents });
+  return planPendingBookingCharge({ bookingId: BOOKING, lodgeId: LODGE, event, debtor: MEMBER, standing: lines, liveComponents, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR });
 }
 
 type Legs = Extract<MemberMoneyPlan, { legs: unknown }>;
