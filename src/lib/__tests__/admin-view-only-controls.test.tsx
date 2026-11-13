@@ -146,8 +146,8 @@ import { AdminCapacityHoldControls } from "@/components/admin/admin-capacity-hol
 import { AdminExclusiveHoldControls } from "@/components/admin/admin-exclusive-hold-controls";
 import { ConfirmPendingGuestsButton } from "@/components/admin/confirm-pending-guests-button";
 import { NonMemberContactForm } from "@/components/admin/non-member-contact-form";
-import AdminWaitlistPage from "@/app/(admin)/admin/waitlist/page";
-import AdminBookPage from "@/app/(admin)/admin/book/page";
+import AdminWaitlistPage from "@/app/(admin)/admin/booking-desk/waitlist/page";
+import AdminBookPage from "@/app/(admin)/admin/booking-desk/book/page";
 // #1997 admin action-button surfaces (membership queues lane).
 import DeletionRequestsClient from "@/app/(admin)/admin/deletion-requests/deletion-requests-client";
 import MemberApplicationsPage from "@/app/(admin)/admin/member-applications/page";

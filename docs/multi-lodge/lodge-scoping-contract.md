@@ -244,7 +244,7 @@ operational documents (which may carry door/emergency access details).
   picker into a club-wide one with nothing to catch it.
   **The client half is load-bearing and is now pinned.** Server-side derivation
   reaches the board only because the board names the booking on its own request
-  (`admin/bed-allocation/page.tsx`, `fetchDashboard`); delete that one line and
+  (`admin/booking-desk/bed-allocation/page.tsx`, `fetchDashboard`); delete that one line and
   every server-side test still passes while the four pickers go club-wide again,
   so `src/lib/__tests__/bed-allocation-board-booking-scope.test.tsx` asserts it
   directly.
