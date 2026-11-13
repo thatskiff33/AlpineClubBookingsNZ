@@ -26,7 +26,7 @@ vi.mock("@/lib/cron-run-claim", () => ({
   withCronRunClaim: vi.fn(async (_name: string, work: (assertOwned: () => Promise<void>) => Promise<unknown>) => ({ claimed: true, result: await work(async () => {}) })),
 }));
 import { raiseCashSettlementAlert } from "@/lib/xero-inbound/settle-from-cash-notice";
-import { countExhaustedCashSettlementAlerts, retryCashSettlementAlerts } from "@/lib/xero-inbound/cash-settlement-alert-retry";
+import { countExhaustedCashSettlementAlerts, listExhaustedCashSettlementAlerts, retryCashSettlementAlerts } from "@/lib/xero-inbound/cash-settlement-alert-retry";
 import { runXeroCronTaskList } from "@/lib/xero-cron-runner";
 
 const booking = {
@@ -123,6 +123,18 @@ it("stops both delivery and sweep retries at three failures and counts the durab
       { snapshot: { path: ["alertUndeliveredCount"], gte: 3 } },
     ],
   }) });
+});
+
+it("#4959: names the exhausted alerts' bookings with the very where the count reads", async () => {
+  mocks.count.mockResolvedValue(1);
+  mocks.findMany.mockResolvedValue([]);
+  await countExhaustedCashSettlementAlerts();
+  await listExhaustedCashSettlementAlerts(50);
+  const [listArgs] = mocks.findMany.mock.calls[0] as [{ where: unknown; take: number; select: { booking: unknown } }];
+  expect(listArgs.where).toEqual(mocks.count.mock.calls[0]?.[0].where);
+  expect(listArgs).toMatchObject({ take: 50, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+  // The figures stay Xero's: the row reads the booking, never the snapshot.
+  expect(Object.keys(listArgs.select).sort()).toEqual(["booking", "createdAt", "id"]);
 });
 
 it("re-reads after claiming, so a stale delivery cannot re-send a recorded alert", async () => {
