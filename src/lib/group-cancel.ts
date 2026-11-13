@@ -909,7 +909,7 @@ export type GroupSettlementRefundReplayResult = {
  * transaction. The replay and the Stuck States bank close share this body.
  * `paidBackBy` says where the money went. Only `card` enqueues a card credit
  * note: the bank close credits the group's invoice by hand. A `bank` close
- * posts the child's plan refund as the bank refund it was (`INV-PAY-152`).
+ * posts the child's plan refund as the bank refund it was (`INV-PAY-153`).
  */
 export async function applyLegacyGroupChildRefundMirror(
   tx: Prisma.TransactionClient,

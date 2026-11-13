@@ -1,6 +1,6 @@
 /**
  * Real-PostgreSQL proof of Stuck States' settlement of a dead refund out of the
- * group organiser's card (#4851, owner decision 10 Nov 2026; `INV-PAY-152`).
+ * group organiser's card (#4851, owner decision 10 Nov 2026; `INV-PAY-153`).
  *
  * Driven through the real close (`closeGroupCardRefundPaidAnotherWay`), the real
  * re-arm (`tryOrganiserChildCardRefundAgain`), the shared lock and claim

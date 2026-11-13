@@ -364,7 +364,8 @@ Prefix `INV-PAY`.
 | `INV-PAY-149` | A dead card refund closes with nothing owed or retries its card |
 | `INV-PAY-150` | A cancellation leaves a live superseded capture to its own refund |
 | `INV-PAY-151` | Paid another way reverses a covered failed card refund |
-| `INV-PAY-152` | Stuck States settles dead group organiser card refunds |
+| `INV-PAY-152` | Cancellation credit events commit with the credit they describe |
+| `INV-PAY-153` | Stuck States settles dead group organiser card refunds |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -979,6 +980,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-004` | Production data, backups, live providers and webhooks are not test inputs |
 | `INV-OPS-015` | A money seam is never mocked in a test asserting its money |
 | `INV-OPS-016` | Member journal grants and database guards forbid mutation |
+| `INV-OPS-017` | Third-party deployment and workflow container images require digest pins |
 
 ## Product Configuration
 

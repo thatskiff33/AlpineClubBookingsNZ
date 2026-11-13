@@ -1,5 +1,5 @@
 /**
- * #4851 review (`INV-PAY-152`): the durable mark a Stuck States "Try the card
+ * #4851 review (`INV-PAY-153`): the durable mark a Stuck States "Try the card
  * again" leaves on a given-up organiser child refund debt. The re-arm restarts
  * attempts at 0, so without it the executor could not tell, once the refund
  * goes through, that the owed money is now back. Beside the reopen's own mark

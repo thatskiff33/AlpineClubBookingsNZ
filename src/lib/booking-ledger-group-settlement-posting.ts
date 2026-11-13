@@ -61,7 +61,7 @@ export type GroupSettlementRefundSource = Pick<GroupSettlementForPosting, "id" |
 
 /**
  * How the plan's refund went back: to the organiser's card only for a card
- * settlement whose refund was not paid by bank instead (`INV-PAY-152`). The
+ * settlement whose refund was not paid by bank instead (`INV-PAY-153`). The
  * one rule the poster, the back-post and the census's drift check share.
  */
 export function groupSettlementRefundLineKind(settlement: Omit<GroupSettlementRefundSource, "id">): "CARD_REFUND" | "BANK_REFUND" {

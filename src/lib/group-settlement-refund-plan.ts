@@ -97,7 +97,7 @@ export function legacyGroupSettlementRefundUnsentCents(settlement: {
 }
 
 /**
- * #4851 (`INV-PAY-152`): the note a Stuck States bank close leaves in
+ * #4851 (`INV-PAY-153`): the note a Stuck States bank close leaves in
  * `lastError` on a pre-#3653 group's ONE refund row
  * (`group_settlement_refund_recovery_*`) when the plan went back by bank
  * transfer, not to the card. Unlike the charge-backed `PAID_ANOTHER_WAY_MARKER`

@@ -2057,7 +2057,7 @@ Internet Banking path) and **`INV-PAY-103`** (the one card-refund writer).
     `INV-PAY-034`-`037`.
   - **Only Stripe evidence raises a child's mirror**: the Xero
     credit-note repair never takes it past the child's recorded refunds.
-    Except by `INV-PAY-152`.
+    Except by `INV-PAY-153`.
   - **A pending refund that fails** is taken back out by the payments cron
     and its debt reopened, marked for the recovery audit, due after Stripe's
     key window.
@@ -2880,7 +2880,7 @@ _Legacy: settles tasks raised before #4317._
     await one in flight; link then note once under the approval task's row,
     read first (`:note-after-receipt`). Cash evidence counts it once noted.
   - A superseded intent's row closes whole, only while its charge holds exactly
-    that. Group organiser rows are refused (`INV-PAY-152`).
+    that. Group organiser rows are refused (`INV-PAY-153`).
   - **Refused** (#4492, `paidAnotherWayRefusal`, list and close; 409, no writes,
     stays listed): a failed-later sibling; a plan-less superseded row until its
     sizing refund is card-paid; a dead failed-later row a superseded send
@@ -4083,7 +4083,7 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
   unstamped, unmarked refund Stripe lists from this booking's same door
   (unreadable refuses); or a moved owed figure or plan. Where that close is
   refused, #4492 says so; only the charge-fill rule asks a developer.
-- **One row, one winner.** All, with `INV-PAY-152`, share `lockDeadCardRefundRow`
+- **One row, one winner.** All, with `INV-PAY-153`, share `lockDeadCardRefundRow`
   (`lock(1)`, row, Payment row) and its claim: dead, on the plan read. A closed
   row is never re-armed, nor a re-armed one closed until given up again. Each is
   audited (`payment`).
@@ -4165,6 +4165,18 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
   (`card-refund-paid-another-way`, `xero-deleted-payment-links`).
 
 ## INV-PAY-152
+
+A cancellation's CREDITED event commits or rolls back with the credit it describes
+(#4913). `createCancellationCredit` requires the caller's transaction client and
+writes the event directly on it without swallowing failures. Its amount equals
+the credit's amount; its reason remains "Cancellation refund held as account
+credit." A failed event insert aborts the cancellation, like the paid-path
+CANCELLED decision (`INV-PAY-106`). A rolled-back attempt leaves neither credit
+nor event, so a later retry or manual hand-back cannot claim credit never given.
+Proven by `cancellation-credit-event.realdb.test.ts` and `member-credit.test.ts`;
+`booking-narrative.test.ts` shows the outcome. Historical stray events are not repaired.
+
+## INV-PAY-153
 
 **Related: `INV-PAY-114`**, **`INV-PAY-034`**-`037`, **`INV-PAY-122`**,
 **`INV-PAY-149`**.
