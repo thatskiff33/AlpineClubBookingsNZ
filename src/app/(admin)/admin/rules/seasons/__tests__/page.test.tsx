@@ -21,7 +21,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import { useEffect } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -127,6 +127,28 @@ afterEach(() => {
 });
 
 describe("Seasons page: the windows in order, with their holes", () => {
+  it("keeps focus on the page after deleting the focused season", async () => {
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    let removed = false;
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        removed = true;
+        return Response.json({});
+      }
+      return Response.json(removed ? [] : [season()]);
+    }));
+    renderPage();
+    const remove = await screen.findByRole("button", { name: "Delete Winter 2026" });
+    remove.focus();
+    fireEvent.click(remove);
+    await waitFor(() => expect(remove).not.toBeInTheDocument());
+    const heading = screen.getByRole("heading", { name: "Seasons", level: 1 });
+    await waitFor(() => {
+      expect(document.activeElement).not.toBe(document.body);
+      expect(document.activeElement).toContainElement(heading);
+    });
+  });
+
   it("orders the windows chronologically, whatever order the API returned", async () => {
     mockApi([SUMMER, season()]);
     renderPage();

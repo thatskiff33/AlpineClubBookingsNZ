@@ -1085,10 +1085,7 @@ export default function MemberDetailPage({
             ancestorRendersViewOnlyBanner
             className={embeddedCardClassName}
             member={member}
-            onSaved={async () => {
-              setLoading(true);
-              await fetchMember();
-            }}
+            onSaved={fetchMember}
           />
         </MemberGroupCard>
 

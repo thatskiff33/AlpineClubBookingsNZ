@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import "@testing-library/jest-dom/vitest";
+
 import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 // NOT bare `@testing-library/react`: since CT-4 (#2870) this tree reads the
 // club's zone from `ClubTimeProvider`, and `useClubTime()` throws without one —
@@ -224,6 +226,45 @@ describe("Admin member detail grouped layout", () => {
 
   afterEach(() => {
     window.location.hash = "";
+  });
+
+  it("keeps the committee confirmation mounted and focused while refreshing the member", async () => {
+    const originalFetch = fetchMock.getMockImplementation()!;
+    let finishRefresh!: (response: Response) => void;
+    let memberReads = 0;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/admin/committee/roles") {
+        return Promise.resolve(Response.json({ roles: [{
+          id: "role-chair", key: "chair", name: "Chair", isActive: true,
+          sortOrder: 0, assignmentCount: 0, contactEmail: null,
+        }] }));
+      }
+      if (url === "/api/admin/committee/assignments" && init?.method === "POST") {
+        return Promise.resolve(Response.json({}));
+      }
+      if (url === "/api/admin/members/member-1" && ++memberReads > 1) {
+        return new Promise<Response>((resolve) => { finishRefresh = resolve; });
+      }
+      return originalFetch(input, init);
+    });
+    await renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /^Committee/ }));
+    const add = await screen.findByRole("button", { name: "Add Assignment" });
+    await waitFor(() => expect(add).not.toBeDisabled());
+    fireEvent.click(add);
+    const save = screen.getByRole("button", { name: "Save Assignment" });
+    save.focus();
+    fireEvent.click(save);
+    const confirmation = await screen.findByText("Committee assignment saved");
+    await waitFor(() => {
+      expect(finishRefresh).toBeTypeOf("function");
+      expect(document.activeElement).toContainElement(confirmation);
+    });
+    const focusedCard = document.activeElement;
+    await act(async () => { finishRefresh(Response.json(adminMember())); });
+    expect(confirmation).toBeInTheDocument();
+    expect(document.activeElement).toBe(focusedCard);
   });
 
   it("renders every group collapsed by default with preview lines", async () => {

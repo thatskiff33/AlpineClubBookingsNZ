@@ -65,16 +65,16 @@ export default function SeasonsPage() {
   // through the permanently mounted recovery alert, again on a repeat (#4975).
   const [loadError, setLoadError] = useState("")
   const actionFailure = useActionFailure()
-  // A save closes the edit form, taking the focused Save button with it, so a
-  // landed save positions at the top of the page; failure still wins (#2934).
-  const [savesLanded, setSavesLanded] = useState(0)
+  // Saves close the edit form and removals drop their row, taking the focused
+  // control with them, so success positions at the page top (#2934).
+  const [transitionsLanded, setTransitionsLanded] = useState(0)
   const pageRef = useRef<HTMLDivElement>(null)
   useActionAttention({
     // `FocusedActionError` owns the failure focus; the error is passed only so
     // a failure suppresses the success position.
     error: actionFailure.error,
     errorTarget: null,
-    success: savesLanded,
+    success: transitionsLanded,
     successTarget: pageRef,
   })
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -234,7 +234,7 @@ export default function SeasonsPage() {
       }
       if (activeScopeRef.current !== requestedScope) return
       resetForm()
-      setSavesLanded((count) => count + 1)
+      setTransitionsLanded((count) => count + 1)
       fetchSeasons()
     } catch (err) {
       // A failure from a lodge the admin has since left must not take focus.
@@ -257,6 +257,7 @@ export default function SeasonsPage() {
         throw new Error(data.error || "Failed to delete")
       }
       if (activeScopeRef.current !== requestedScope) return
+      setTransitionsLanded((count) => count + 1)
       fetchSeasons()
     } catch (err) {
       // A failure from a lodge the admin has since left must not take focus.
