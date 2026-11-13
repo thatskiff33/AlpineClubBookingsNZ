@@ -17,7 +17,7 @@ reason: the work party card gains an "On calendar" badge, an "Add to calendar"
   out would split one row of buttons across two files.
 
 file: src/app/(authenticated)/book/_hooks/use-booking-wizard.ts
-lines: 2360
+lines: 2410
 reason: the call to `useWorkPartyPrefill` (the prefill itself lives in its own
   hook) and the few lines that tick the joined work party when the review step
   lists the working bees, and the inputs that tell the prefill when to stand
@@ -31,7 +31,7 @@ reason: one status line for a Join link that could not be filled in, placed
   with the page's other top-of-page notices.
 
 file: src/app/(authenticated)/dashboard/page.tsx
-lines: 1006
+lines: 998
 reason: the members-only gate and one query for the new Work Parties card (the
   card is its own component), and the Events card query now hides an inactive
   work party's entries. The gate and query sit with the other cards' gates and
