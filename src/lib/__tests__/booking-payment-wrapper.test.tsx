@@ -114,6 +114,24 @@ describe("BookingPaymentWrapper", () => {
     });
   });
 
+  // #4949: "Preparing payment..." is silent to a screen reader unless it sits in
+  // a status region.
+  it("says it is preparing payment through a status region while the payment is set up", async () => {
+    fetchMock.mockReturnValueOnce(new Promise(() => undefined));
+
+    render(
+      <BookingPaymentWrapper
+        bookingId="booking-1"
+        amountCents={12500}
+        paymentMode="payment"
+        returnUrl="http://localhost/bookings/booking-1"
+        onPaymentComplete={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("Preparing payment...");
+  });
+
   it("shows generic copy and never renders the raw provider error when init fails", async () => {
     const consoleErrorSpy = vi
       .spyOn(console, "error")
