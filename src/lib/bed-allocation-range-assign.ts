@@ -26,6 +26,7 @@ import {
 import { mayShareDoubleBedWith } from "@/lib/double-bed-sharing";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { custodianHeldNightsForBed } from "@/lib/custodian-occupancy";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { prisma } from "@/lib/prisma";
 import {
   BedAllocationAdminError,
@@ -616,7 +617,8 @@ export async function assignBedRange(
 
   // The scan, the writes and the audit row share one transaction so the refusal
   // report, the rows written from it and the record of both describe the same
-  // instant. The default 5s interactive timeout is raised because the statement
+  // instant. It runs on the shared lock(1) budget (`INV-LOCK-005`) rather than
+  // the default 5s interactive timeout because the statement
   // count is fixed (see runAssignBedRangeAttempt) but a 366-night createMany is
   // a big single statement — generous headroom, not a licence to grow the
   // statement count with nights.
@@ -630,7 +632,7 @@ export async function assignBedRange(
         if (lockLodgeId) await acquireLodgeCapacityLock(tx, lockLodgeId);
         return assignBedRangeWithLocksHeld({ ...input, db: tx });
       },
-      { timeout: 30_000, maxWait: 10_000 },
+      LOCK1_HOLDER_TRANSACTION_BUDGET,
     );
 
   try {
