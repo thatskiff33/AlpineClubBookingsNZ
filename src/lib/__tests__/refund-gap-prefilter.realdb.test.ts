@@ -34,7 +34,12 @@ const CHECK_OUT = new Date("2026-08-03T00:00:00.000Z");
 const LATER_NIGHT = new Date("2100-01-01T00:00:00.000Z");
 
 type Note = { kind: "recorded"; cents: number } | { kind: "legacy"; cents: number } | null;
-/** In `updatedAt` order: the list keeps it. */
+/**
+ * The list reads payments in `updatedAt` order, so each case is stamped one
+ * minute after the one before (`updatedAtFor`). Without that every payment
+ * would carry the same frozen test instant, the order would be a tie that
+ * PostgreSQL may break any way it likes, and "in order" would prove nothing.
+ */
 const CASES: ReadonlyArray<{ key: string; note: Note }> = [
   { key: "covered", note: { kind: "recorded", cents: REFUND_CENTS } },
   { key: "short", note: { kind: "recorded", cents: 10_000 } },
@@ -45,6 +50,8 @@ const CASES: ReadonlyArray<{ key: string; note: Note }> = [
 const paymentId = (key: string) => `${P}-${key}-payment`;
 const bookingId = (key: string) => `${P}-${key}-booking`;
 const PAYMENT_IDS = CASES.map(({ key }) => paymentId(key));
+const FIRST_UPDATED_AT_MS = Date.parse("2026-06-02T00:00:00.000Z");
+const updatedAtFor = (index: number) => new Date(FIRST_UPDATED_AT_MS + index * 60_000);
 
 /** Standalone fail-closed copy: importing this file must not register another suite. */
 function assertSafeRaceDbUrl(url: string): void {
@@ -86,7 +93,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
     }
 
     /** A card payment, invoiced in Xero, with one $250 refund Stripe confirmed, and its note as the case says. */
-    async function refundedCardPayment(key: string, note: Note) {
+    async function refundedCardPayment(key: string, note: Note, updatedAt: Date) {
       const id = paymentId(key);
       const intent = `pi_${P}_${key}`;
       const txn = `${P}-${key}-txn`;
@@ -97,7 +104,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       await prisma.payment.create({
         data: {
           id, bookingId: bookingId(key), amountCents: PAID_CENTS, refundedAmountCents: REFUND_CENTS, source: "STRIPE",
-          status: "PARTIALLY_REFUNDED", stripePaymentIntentId: intent, xeroInvoiceId: `inv-${P}-${key}`,
+          status: "PARTIALLY_REFUNDED", stripePaymentIntentId: intent, xeroInvoiceId: `inv-${P}-${key}`, updatedAt,
           transactions: {
             create: {
               id: txn, kind: "PRIMARY", source: "STRIPE", stripePaymentIntentId: intent, amountCents: PAID_CENTS,
@@ -140,8 +147,8 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
         data: { id: MEMBER_ID, email: `${MEMBER_ID}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Gap", lastName: "Filter", role: "USER", ageTier: "ADULT" },
       });
       await prisma.lodge.create({ data: { id: LODGE_ID, name: "Race 4936 Lodge", slug: P } });
-      for (const { key, note } of CASES) {
-        await refundedCardPayment(key, note);
+      for (const [index, { key, note }] of CASES.entries()) {
+        await refundedCardPayment(key, note, updatedAtFor(index));
       }
     }, 60_000);
 
@@ -161,6 +168,13 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
         [paymentId("legacy-covered")]: 0,
         [paymentId("legacy-short")]: 0,
       });
+    });
+
+    it("the fixtures' payments carry distinct updatedAt stamps in CASES order, so the list's order is defined", async () => {
+      const rows = await prisma.payment.findMany({ where: { id: { in: PAYMENT_IDS } }, select: { id: true, updatedAt: true } });
+      const stampById = new Map(rows.map((row) => [row.id, row.updatedAt.getTime()]));
+
+      expect(PAYMENT_IDS.map((id) => stampById.get(id))).toEqual(CASES.map((_, index) => updatedAtFor(index).getTime()));
     });
 
     it("MUTATION: the list is the exact reader's answer for every payment, in order", async () => {
