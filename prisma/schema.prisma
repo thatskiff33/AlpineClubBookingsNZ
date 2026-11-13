@@ -2105,6 +2105,7 @@ model Booking {
   @@index([otherLodgeId])
   @@index([organisationId])
   memberMoneyLines MemberMoneyLine[]
+  memberMoneyExportManifests MemberMoneyExportManifest[]
 }
 
 // Durable booking-lifecycle event store (issue #740). One row per transition
@@ -9300,4 +9301,70 @@ model MemberMoneyRefundReservationRelease {
   reservation MemberMoneyRefundReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   application MemberMoneyApplication? @relation(fields: [applicationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   @@index([applicationId])
+}
+
+/// M13 (#4525): the outbound document families whose coverage a manifest records.
+enum MemberMoneyExportDocumentRole {
+  PRIMARY_BOOKING_INVOICE
+  /// #4525 (ALP-436): an edit's supplementary invoice, or a review's second ask.
+  SUPPLEMENTARY_BOOKING_INVOICE
+  /// #4525 (ALP-436): a rewrite of an issued primary invoice's descriptions and dates.
+  PRIMARY_BOOKING_INVOICE_UPDATE
+}
+
+enum MemberMoneyExportOutcome {
+  COVERED
+  CONFLICT
+}
+
+/// Why a document's lines could not be matched to the journal components they bill.
+enum MemberMoneyExportConflictReason {
+  STAY_CENTS
+  FEE_CENTS
+  COMPONENT_UNUSABLE
+  /// A supplementary invoice nets a price reduction against a fee: no component is billed whole or as a slice.
+  REDUCTION_NETTED
+  /// A primary-invoice update whose total is not its covered primary manifest's.
+  PRIMARY_UNMATCHED
+}
+
+/// M13 (#4525): what one sent provider document covers, written once under its
+/// legacy correlation key. Immutable; the sender's XeroSyncOperation stays the
+/// delivery record and Payment.xeroInvoiceId the provider link.
+model MemberMoneyExportManifest {
+  id String @id @default(cuid())
+  documentRole MemberMoneyExportDocumentRole
+  legacyKey String
+  renderRevision Int
+  bookingId String
+  outcome MemberMoneyExportOutcome
+  reason MemberMoneyExportConflictReason?
+  payloadHash String
+  frozenMapping Json
+  lineTotalCents Int
+  providerInvoiceId String
+  createdAt DateTime @default(now())
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  coverage MemberMoneyExportCoverage[]
+  @@unique([documentRole, legacyKey])
+  @@unique([id, documentRole])
+  @@index([bookingId])
+}
+
+/// One journal component a manifest's document bills: whole (sliceKey ''), or the
+/// slice one journal event moved (sliceKey: that event's key, supplementary only).
+/// A component is billed whole by at most one document of each role, and each
+/// slice by at most one.
+model MemberMoneyExportCoverage {
+  id String @id @default(cuid())
+  manifestId String
+  documentRole MemberMoneyExportDocumentRole
+  account MemberMoneyAccount
+  chargeIdentity String
+  sliceKey String @default("")
+  coveredCents Int
+  taxCode String?
+  manifest MemberMoneyExportManifest @relation(fields: [manifestId, documentRole], references: [id, documentRole], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([documentRole, account, chargeIdentity, sliceKey])
+  @@index([manifestId, documentRole])
 }

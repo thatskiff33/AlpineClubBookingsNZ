@@ -25,6 +25,9 @@ function revision(value: number): string {
   return String(value);
 }
 
+/** What every closure key of one review task starts with (`memberMoneyEventKeys.reviewClose`): its closures, found by prefix. */
+export const reviewCloseKeyPrefix = (taskId: string) => `review-close:${part(taskId, "task id")}:`;
+
 export const memberMoneyEventKeys = {
   /** R01: once per booking, as the legacy confirmation posts once (`INV-MONEY-033`). */
   bookingCharge: (bookingId: string) => key(`booking-charge:${part(bookingId, "booking id")}`),
@@ -39,7 +42,7 @@ export const memberMoneyEventKeys = {
    * back-post is: a line is written once, so a retry finds its batch.
    */
   reviewClose: (taskId: string, firstLineId: string) =>
-    key(`review-close:${part(taskId, "task id")}:${part(firstLineId, "first legacy line id")}`),
+    key(`${reviewCloseKeyPrefix(taskId)}${part(firstLineId, "first legacy line id")}`),
   /**
    * R26: the booking-ledger back-post filling lines a door could not post, for a
    * booking whose R01 is in the journal (#4627). Named by the first legacy line

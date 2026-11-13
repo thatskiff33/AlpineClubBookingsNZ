@@ -550,6 +550,44 @@ record. A replacement after a genuine void is a new explicit render revision;
 retrying a lost response always uses the original manifest and key. Never derive
 a retry key from the current refund watermark or current set of voids.
 
+M13 (#4525) ships the first role, `PRIMARY_BOOKING_INVOICE`, as an observer.
+`createXeroInvoiceForBooking` still sends its own lines; the pure
+`planPrimaryBookingInvoice` builds the same lines with the same builders and
+compares them in cents with the booking's posted charge legs. Stay lines must
+equal the stay component's live gross, the change-fee line the live fee
+components', and the total what is covered; otherwise the manifest records
+`CONFLICT` (`STAY_CENTS`, `FEE_CENTS` or `COMPONENT_UNUSABLE`) and covers
+nothing. The manifest is written after the invoice link, in its own short
+transaction, under the invoice's existing correlation key
+(`buildXeroBookingInvoiceCorrelationKey`): the first row
+wins, and a failure is logged without changing the send or its operation. A
+replay records it from the operation's stored lines. The frozen mapping keeps
+the Xero tax type and the journal's tax codes side by side, untranslated. No
+delivery record or dispatcher exists yet.
+
+The next cohort (ALP-436) adds two roles to the same manifest, still as
+observers: `XeroSyncOperation` keeps sending. `SUPPLEMENTARY_BOOKING_INVOICE`
+(`planSupplementaryBookingInvoice`) bills a *slice* of the stay component,
+because an edit corrects the whole component and charges the remainder: the
+non-fee lines must equal what the edit's own `modification:` event moved the
+stay charge by, and the coverage row names that event in `sliceKey`. A second
+ask bills the movement of its review task's one live `review-close:` event, and
+no fee. The change-fee line must equal the fee the event posted and the edit's
+fee component's live gross, and is covered whole. A reduction netted against a
+fee (`REDUCTION_NETTED`), a missing, reversed or ambiguous event, or any other
+mismatch is a `CONFLICT` with no coverage. The primary invoice's coverage keeps
+`sliceKey` empty (a CHECK says so), and the coverage key is role, component and
+slice, so each edit's slice is billed once. `PRIMARY_BOOKING_INVOICE_UPDATE`
+records what `updateXeroBookingInvoiceForBooking` sent: it covers nothing, and
+is `COVERED` only beside a `COVERED` primary manifest for the same invoice and
+total (`PRIMARY_UNMATCHED` otherwise; the deferred trigger enforces it). The
+provider's gross total includes discounts and tax; it is never rebuilt from
+unit prices. With no primary manifest or no usable provider total, no update
+manifest is written. Two limits stand: coverage is
+not yet summed across roles against the component's live gross (credit notes,
+a later cohort, reduce it), and the supplementary sender has no replay, so a
+manifest that failed to write stays unwritten.
+
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |
 | Primary, supplementary or combined group invoice | Exact issued charge components, including fee coverage assigned once. Combined invoices consume child charge coverage; individual child invoices cannot consume it again. Pending bank-transfer obligations already have R01 postings. |

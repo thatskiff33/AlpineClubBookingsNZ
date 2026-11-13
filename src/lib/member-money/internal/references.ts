@@ -23,6 +23,20 @@ export async function bookingIdsNamedByJournal(
   return rows.flatMap((row) => (row.bookingId === null ? [] : [row.bookingId]));
 }
 
+/** #4525 (M13): a booking an export manifest names, by the same RESTRICT rule. */
+export async function bookingIdsNamedByExportManifest(
+  db: Pick<Prisma.TransactionClient, "memberMoneyExportManifest">,
+  bookingIds: readonly string[],
+): Promise<string[]> {
+  if (bookingIds.length === 0) return [];
+  const rows = await db.memberMoneyExportManifest.findMany({
+    where: { bookingId: { in: [...bookingIds] } },
+    select: { bookingId: true },
+    distinct: ["bookingId"],
+  });
+  return rows.map((row) => row.bookingId);
+}
+
 export async function journalRowsNamingDebtor(
   db: Pick<Prisma.TransactionClient, "memberMoneyLine" | "memberMoneyObligation">,
   memberId: string,

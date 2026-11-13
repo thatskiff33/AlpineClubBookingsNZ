@@ -29,3 +29,8 @@ export { postCardRefundCash } from "./internal/refund-cash";
 export { postPaidAnotherWayClose, type PaidAnotherWayJournalClose, type PaidAnotherWayRest } from "./internal/refund-closes";
 export { cardRefundObligationOfRecoveryKey, resolveCardRefundObligation, type CardRefundRecoveryRow } from "./internal/refund-obligation-map";
 export { MemberMoneyReservationRefused } from "./internal/store";
+
+// #4525 (M13): the primary booking invoice's export manifest, planned beside the sender's lines and recorded after its link.
+export { planPrimaryInvoiceManifest, recordPrimaryInvoiceManifest, recordPrimaryInvoiceUpdateManifest } from "./internal/primary-invoice-manifest";
+// #4525 (ALP-436): a supplementary invoice's manifest, recorded after its operation completes.
+export { recordSupplementaryInvoiceManifest } from "./internal/supplementary-invoice-manifest";

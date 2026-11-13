@@ -32,7 +32,11 @@ const mocks = vi.hoisted(() => ({
   xeroSyncOperationUpdateMany: vi.fn(),
   // #4494: the gap invoice's send-time check (resets to undefined: no overlap).
   unpaidGapPayloadIfOverlapping: vi.fn(),
+  // ALP-436: the export manifest recorded once the operation completes.
+  recordSupplementaryInvoiceManifest: vi.fn(),
 }));
+
+vi.mock("@/lib/member-money/doors", () => ({ recordSupplementaryInvoiceManifest: mocks.recordSupplementaryInvoiceManifest }));
 
 vi.mock("@/lib/credit-release-xero-payment", () => ({
   unpaidGapPayloadIfOverlapping: async (...a: unknown[]) => (await mocks.unpaidGapPayloadIfOverlapping(...a)) ?? null,
@@ -542,6 +546,7 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     expect(mocks.bookingFindUnique).not.toHaveBeenCalled();
     expect(mocks.getAuthenticatedXeroClient).not.toHaveBeenCalled();
     expect(createPayments).not.toHaveBeenCalled();
+    expect(mocks.recordSupplementaryInvoiceManifest).not.toHaveBeenCalled();
   });
 });
 
@@ -624,6 +629,28 @@ describe("createXeroSupplementaryInvoice: the second ask (#3193)", () => {
     expect(invoiceLink.localId).toBe("task_2");
   });
 
+  it("ALP-436: records its export manifest against the review task, after the operation completes", async () => {
+    await createXeroSupplementaryInvoice({
+      format: CLUB_FORMAT_TEST,
+      bookingId: "bk1",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      shortfallReviewTaskId: "task_2",
+      recordPayment: false,
+    });
+
+    expect(mocks.recordSupplementaryInvoiceManifest).toHaveBeenCalledWith(expect.objectContaining({
+      bookingId: "bk1",
+      anchor: { kind: "SECOND_ASK", modificationId: "mod_123", taskId: "task_2" },
+      legacyKey: "review-task:task_2:supplementary-shortfall-invoice:3000:0:v1",
+      providerInvoiceId: "inv_second",
+      lines: mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload.invoices[0].lineItems,
+    }));
+    expect(mocks.recordSupplementaryInvoiceManifest.mock.invocationCallOrder[0])
+      .toBeGreaterThan(mocks.completeXeroSyncOperation.mock.invocationCallOrder[0]!);
+  });
+
   it("tells the member why a second invoice has arrived", async () => {
     await createXeroSupplementaryInvoice({
       format: CLUB_FORMAT_TEST,
@@ -678,6 +705,11 @@ describe("createXeroSupplementaryInvoice: the second ask (#3193)", () => {
       (link: { role: string }) => link.role === "SUPPLEMENTARY_INVOICE",
     );
     expect(invoiceLink.localModel).toBe("BookingModification");
+    expect(mocks.recordSupplementaryInvoiceManifest).toHaveBeenCalledWith(expect.objectContaining({
+      anchor: { kind: "MODIFICATION", modificationId: "mod_123" },
+      legacyKey: "booking-mod:mod_123:supplementary-invoice:3000:0:v1",
+      providerInvoiceId: "inv_second",
+    }));
   });
 });
 
