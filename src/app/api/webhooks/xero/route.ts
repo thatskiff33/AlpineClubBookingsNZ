@@ -5,7 +5,7 @@ import { recordWebhookLog } from "@/lib/webhook-log";
 import logger from "@/lib/logger";
 import { reportWebhookError } from "@/lib/observability-bridge";
 import { buildXeroIdempotencyKey, recordXeroInboundEvent } from "@/lib/xero-sync";
-import { runXeroInboundReconciliationCycle } from "@/lib/xero-inbound-reconciliation";
+import { runXeroWebhookInboundKick } from "@/lib/xero-cron-runner";
 import { isXeroConnected } from "@/lib/xero";
 import { getOperationalXeroWebhookKey } from "@/lib/xero-config";
 import { recordXeroWebhookValidation } from "@/lib/xero-webhook-validation";
@@ -313,7 +313,7 @@ export async function POST(request: NextRequest) {
           return;
         }
 
-        await runXeroInboundReconciliationCycle({
+        await runXeroWebhookInboundKick({
           batchSize: Math.min(Math.max(events.length, 1), 10),
           maxBatches: 3,
         });
