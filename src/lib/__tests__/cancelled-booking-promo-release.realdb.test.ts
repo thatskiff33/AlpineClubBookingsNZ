@@ -1,6 +1,10 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { PrismaClient } from "@prisma/client";
+import { Client } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
+import { realElapsedMs } from "./helpers/clock";
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
@@ -22,11 +26,19 @@ const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const MEMBER = "race-4909-member";
 const LODGE = "race-4909-lodge";
 const BOOKING = "race-4909-booking";
+// A second live booking, for the in-flight redeem the repair migration races.
+const LIVE_BOOKING = "race-4909-live";
+const REPAIR_SQL = readFileSync(
+  path.join(process.cwd(), "prisma", "migrations", "20261211020000_release_cancelled_booking_promos", "migration.sql"),
+  "utf8",
+);
 const CODES = ["race-4909-z", "race-4909-a"];
 let prisma: PrismaClient;
 
 (RUN ? describe : describe.skip)("Cancellation returns promo uses — PostgreSQL (#4909)", { timeout: 60000 }, () => {
   async function clean() {
+    await prisma.promoRedemption.deleteMany({ where: { bookingId: LIVE_BOOKING } });
+    await prisma.booking.deleteMany({ where: { id: LIVE_BOOKING } });
     await releaseBookingJournalForTeardown(prisma, [BOOKING]);
     await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING } });
     await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING } });
@@ -107,5 +119,50 @@ let prisma: PrismaClient;
     })).rejects.toThrow("force rollback");
     expect(await prisma.promoRedemption.count({ where: { bookingId: BOOKING } })).toBe(2);
     expect((await prisma.promoCode.findMany({ where: { id: { in: CODES } } })).map((p) => p.currentRedemptions)).toEqual([1, 1]);
+  });
+  it("the repair migration recounts a drifted code a redeem is writing to without storing fewer than RAW", async () => {
+    // The original booking stays live with one allocation per code; code z has
+    // drifted to 5, so the recount must rewrite it while a redeem holds its row.
+    const [code] = CODES;
+    await prisma.booking.update({ where: { id: BOOKING }, data: { status: "CONFIRMED" } });
+    await prisma.promoCode.update({ where: { id: code }, data: { currentRedemptions: 5 } });
+    await prisma.booking.create({ data: { id: LIVE_BOOKING, memberId: MEMBER, lodgeId: LODGE, checkIn: new Date("2027-09-01"), checkOut: new Date("2027-09-03"), status: "CONFIRMED", totalPriceCents: 20000, finalPriceCents: 18000 } });
+    const url = process.env.DATABASE_URL ?? "";
+    const redeem = new Client({ connectionString: url });
+    const migrate = new Client({ connectionString: url });
+    await redeem.connect();
+    await migrate.connect();
+    try {
+      // The redeem's own shape: lock the code row, add a redemption (the
+      // compatibility trigger adds its allocation), then increment the counter.
+      await redeem.query("BEGIN");
+      await redeem.query(`SELECT 1 FROM "PromoCode" WHERE "id" = $1 FOR UPDATE`, [code]);
+      await redeem.query(
+        `INSERT INTO "PromoRedemption" ("id", "promoCodeId", "bookingId", "memberId", "discountCents", "freeNightsUsed") VALUES ('race-4909-inflight', $1, $2, $3, 1000, 0)`,
+        [code, LIVE_BOOKING, MEMBER],
+      );
+      await redeem.query(`UPDATE "PromoCode" SET "currentRedemptions" = "currentRedemptions" + 1 WHERE "id" = $1`, [code]);
+      const redeemPid = (await redeem.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+      const migrating = migrate.query(REPAIR_SQL);
+      // Commit the redeem only once the migration is queued on its row lock.
+      const startedAt = process.hrtime.bigint();
+      let queued = 0;
+      while (queued === 0 && realElapsedMs(startedAt) < 10_000) {
+        const rows = await prisma.$queryRaw<Array<{ count: number }>>`
+          SELECT COUNT(*)::int AS "count" FROM pg_stat_activity
+          WHERE datname = current_database() AND ${redeemPid}::int = ANY(pg_blocking_pids(pid))`;
+        queued = rows[0]?.count ?? 0;
+        if (queued === 0) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(queued).toBeGreaterThanOrEqual(1);
+      await redeem.query("COMMIT");
+      await migrating;
+    } finally {
+      await redeem.end();
+      await migrate.end();
+    }
+    const raw = await prisma.promoRedemptionAllocation.count({ where: { promoCodeId: code } });
+    expect(raw).toBe(2);
+    expect((await prisma.promoCode.findUniqueOrThrow({ where: { id: code } })).currentRedemptions).toBe(raw);
   });
 });

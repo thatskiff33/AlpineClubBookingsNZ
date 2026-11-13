@@ -1,4 +1,3 @@
-import releaseCancelledBookingPromos from "./20261211020000_release_cancelled_booking_promos";
 import addClubTimeSettings from "./20260822010000_add_club_time_settings";
 import addHutLeaderAssignmentSource from "./20260820020000_add_hut_leader_assignment_source";
 import addMemberEmailInheritanceChoice from "./20260813010000_add_member_email_inheritance_choice";
@@ -30,6 +29,7 @@ import addXeroConnection from "./20261124010000_add_xero_connection";
 import memberMoneyApplications from "./20261210080000_member_money_applications";
 import memberMoneyJournal from "./20261127010000_member_money_journal";
 import stripeBalanceEvidence from "./20261211010000_stripe_balance_evidence";
+import releaseCancelledBookingPromos from "./20261211020000_release_cancelled_booking_promos";
 import correctStarterPrivacyRetentionAndHosting from "./20261214010000_correct_starter_privacy_retention_and_hosting";
 import type { DataMigrationVerification } from "./types";
 
