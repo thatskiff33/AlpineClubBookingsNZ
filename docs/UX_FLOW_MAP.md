@@ -952,7 +952,7 @@ Journey: Open the relevant notification settings or delivery screen from the hub
 
 Screen: `/admin/privacy-retention`.
 
-Shows: Retention settings, eligible-record previews and cleanup actions.
+Shows: Retention settings, eligible-record previews, the count of stay dietary notes the next run clears, and cleanup actions.
 
 Journey: Preview eligible records before running the documented retention action.
 
