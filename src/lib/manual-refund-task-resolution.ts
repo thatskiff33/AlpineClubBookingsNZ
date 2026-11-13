@@ -390,12 +390,12 @@ export async function resolveManualRefundTask(
       // Doing any of this at RAISE time would have the ledger claim a refund
       // before the club handed anything back, which is the whole reason the task
       // exists.
+      let heldBack: Awaited<ReturnType<typeof readSupersededCaptureHeldBack>> | null = null; // #4872: also names a refusal
       try {
         if (settlementRoute.kind === "local-allocation" && settlementRoute.refundCents > 0) {
-          // #4872: after the credit give-back (member ledger before any Payment row).
-          // The hold-back also covers a card-shortfall check part's newest-first fall-through.
+          // #4872: after the credit give-back (member ledger first); also covers a card-shortfall check part's fall-through.
           await lockPaymentForRefundedTotal(tx, settlementRoute.paymentId);
-          const heldBack = await readSupersededCaptureHeldBack(tx, settlementRoute.paymentId);
+          heldBack = await readSupersededCaptureHeldBack(tx, settlementRoute.paymentId);
           await applyLocalRefundAllocation({
             paymentId: settlementRoute.paymentId,
             amountCents: settlementRoute.refundCents,
@@ -446,7 +446,7 @@ export async function resolveManualRefundTask(
           });
         }
       } catch (error) {
-        throw settlementWriteRefusal(error, settlementRoute);
+        throw settlementWriteRefusal(error, settlementRoute, heldBack?.totalCents ?? 0);
       }
       // #3599: the money the club handed back by hand, on the booking ledger.
       if (isBankTransferHandBackRoute(settlementRoute) && settlementRoute.refundCents > 0) {

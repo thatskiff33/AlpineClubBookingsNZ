@@ -11,3 +11,5 @@
   as account credit, a refund row that still has to work out its plan, and a
   hand-back an officer marks paid — including the part of a cancellation refund
   that has to be checked — do the same. A plan already frozen is left as it was.
+  The refund appeal form and the officers' appeal list offer that same lower
+  ceiling, so an appeal is never invited for money the approval would refuse.

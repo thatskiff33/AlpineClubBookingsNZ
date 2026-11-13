@@ -18,5 +18,9 @@ lines: 2899
 reason: the capacity race's refund plan reads the hold-back inside the transaction that already plans the refund.
 
 file: src/lib/payment-recovery.ts
-lines: 3641
+lines: 3631
 reason: each recovery runner that plans a refund reads the hold-back under the Payment row it already locks.
+
+file: src/app/api/bookings/[id]/refund-request/route.ts
+lines: 306
+reason: the member's appeal cap nets the same hold-back the approval nets, read beside the hand-backs it already reads, so the two caps cannot disagree.

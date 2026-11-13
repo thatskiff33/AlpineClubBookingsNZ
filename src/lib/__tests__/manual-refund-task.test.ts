@@ -679,6 +679,22 @@ describe("resolveManualRefundTask", () => {
     expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
   });
 
+  it("tells the officer a replaced card payment's refund is still in progress, not that the money was never captured (#4872 review)", async () => {
+    const completeIt = () => resolveManualRefundTask({ taskId: "task-1", resolution: "completed", note: null, actingMemberId: "admin-1", confirmedAmountCents: null, direction: "REFUND_TO_MEMBER", recordedNightPrices: null }, CLUB_FORMAT_TEST);
+    mocks.readSupersededCaptureHeldBack.mockResolvedValueOnce({ byTransaction: new Map([["txn-superseded", 6_500]]), totalCents: 6_500 });
+    mocks.applyLocalRefundAllocation.mockRejectedValueOnce(new Error("Refund amount exceeds captured payments"));
+
+    await expect(completeIt()).rejects.toMatchObject({
+      message: "Part of this payment is still being refunded on a card payment that was replaced. Try again once that refund has completed.",
+      status: 409,
+    });
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+
+    // CONTROL: with no hold-back the same refusal still says the amount is too high.
+    mocks.applyLocalRefundAllocation.mockRejectedValueOnce(new Error("Refund amount exceeds captured payments"));
+    await expect(completeIt()).rejects.toThrow(/more than was ever captured/);
+  });
+
   it("dismissal never releases organiser refund notes for money that was not handed back", async () => {
     await resolveManualRefundTask({ taskId: "task-1", resolution: "dismissed", note: "Not transferred", actingMemberId: "admin-1", recordedNightPrices: null }, CLUB_FORMAT_TEST);
     expect(tx.xeroSyncOperation.findMany).not.toHaveBeenCalled();

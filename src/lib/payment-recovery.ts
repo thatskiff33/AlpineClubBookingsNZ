@@ -42,6 +42,7 @@ import {
   refundPaymentTransactions,
   reserveCardRefundAttempt,
   upsertPaymentIntentTransaction,
+  planCardRefundFromLedger,
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
 import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
@@ -90,7 +91,7 @@ import { replayNotingEachRefund } from "@/lib/card-refund-own-note";
 import { finishApprovedLateCaptureRefundAfterReplay } from "@/lib/late-capture-refund-credit-note";
 import { holdSupersededLateCaptureIfRequired } from "@/lib/late-capture-refund-hold";
 import { supersededMachineryOwnsCapture } from "@/lib/superseded-capture-ownership";
-import { compareLedgerRowsNewestFirst, LEDGER_ROWS_NEWEST_FIRST, LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
+import { LEDGER_ROWS_NEWEST_FIRST, LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 
 type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
 
@@ -2234,8 +2235,7 @@ async function processBookingModificationRefundOperation(
         transaction.amountCents - transaction.refundedAmountCents > 0,
       );
       // The executor can refund only these (`refundPaymentTransactions`).
-      const refundableTransactions = capturedStripeTransactions(capturedWithHeadroom)
-        .sort(compareLedgerRowsNewestFirst); // #4132 (INV-PAY-133): a tie's last-inserted row first
+      const refundableTransactions = capturedStripeTransactions(capturedWithHeadroom);
 
       // A capture arriving during preflight has no checked Stripe evidence yet.
       // Retry with that charge included, rather than freezing an unchecked slice.
@@ -2247,43 +2247,33 @@ async function processBookingModificationRefundOperation(
       }
 
       const heldBack = await readSupersededCaptureHeldBack(tx, operation.paymentId);
-      const ledgerHeadroom = (transaction: (typeof refundableTransactions)[number]) =>
-        transaction.amountCents - transaction.refundedAmountCents;
-      const placeable = (transaction: (typeof refundableTransactions)[number]) =>
-        Math.max(0, ledgerHeadroom(transaction) - (heldBack.byTransaction.get(transaction.id) ?? 0));
-      const derivableWithoutHoldBack = refundableTransactions.reduce((sum, transaction) => sum + ledgerHeadroom(transaction), 0);
-      const derivableWithHoldBack = refundableTransactions.reduce((sum, transaction) => sum + placeable(transaction), 0);
+      // The shared card planner (`planCardRefundFromLedger`, INV-SSOT): the same
+      // newest-first slices, and so the same Stripe keys, as every other door.
+      const cardPlan = planCardRefundFromLedger(recordedPayment.transactions, operation.amountCents, heldBack.byTransaction);
+      const derivableWithoutHoldBack = refundableTransactions.reduce(
+        (sum, transaction) => sum + transaction.amountCents - transaction.refundedAmountCents, 0);
       const wouldSendCents = Math.min(operation.amountCents, derivableWithoutHoldBack);
-      const canSendCents = Math.min(operation.amountCents, derivableWithHoldBack);
+      const canSendCents = cardPlan.plannedAmountCents;
       if (canSendCents < wouldSendCents) {
         throw new Error("A live superseded capture still owns part of this refund; retry before planning");
       }
+      const nonCardHeadroom = capturedWithHeadroom.reduce((sum, transaction) =>
+        transaction.source === PaymentSource.STRIPE
+          ? sum
+          : sum + transaction.amountCents - transaction.refundedAmountCents, 0);
+      // A bank row still holding money is not a card slice and not a
+      // recorded-refund shortfall. If the card plan would fall short of what the
+      // payment still holds because of it, leave the whole debt for a retry
+      // rather than freezing (or closing on) a smaller card plan.
+      if (nonCardHeadroom > 0 && canSendCents < Math.min(operation.amountCents, derivableWithoutHoldBack + nonCardHeadroom)) {
+        throw new Error("A missing card-refund plan cannot be frozen onto a non-card charge; retry before planning");
+      }
       if (canSendCents <= 0) {
-        const nonCardHeadroom = capturedWithHeadroom.reduce((sum, transaction) =>
-          transaction.source === PaymentSource.STRIPE
-            ? sum
-            : sum + transaction.amountCents - transaction.refundedAmountCents, 0);
-        // Nothing on a card to send. A bank row still holding money is not a
-        // card slice and not a recorded-refund close: leave the debt for a retry.
-        if (nonCardHeadroom > 0) {
-          throw new Error("A missing card-refund plan cannot be frozen onto a non-card charge; retry before planning");
-        }
         await completePaymentRecoveryOperation(operation, { store: tx });
         return null;
       }
 
-      let remainingCents = canSendCents;
-      const slices: RefundAllocationSlice[] = [];
-      for (const transaction of refundableTransactions) {
-        if (remainingCents <= 0) break;
-        const sliceCents = Math.min(remainingCents, placeable(transaction));
-        if (sliceCents <= 0) continue;
-        slices.push({
-          paymentTransactionId: transaction.id,
-          amountCents: sliceCents,
-        });
-        remainingCents -= sliceCents;
-      }
+      const slices = cardPlan.slices;
 
       // Persist the plan before any Stripe call: if the process dies mid-refund
       // the retry replays these exact slices instead of re-deriving.

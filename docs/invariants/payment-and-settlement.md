@@ -4102,9 +4102,8 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
 (open hand-backs), **`INV-PAY-131`** (the cancel preview).
 
 - **Refund doors leave a live superseded capture to its own refund**
-  (#4866, #4872). A superseded intent's refund with no stored plan sizes its
-  request on its charge's ledger (#4699), so another door's slice or allocation
-  on that charge shrank it and the row closed short, unalerted.
+  (#4866, #4872). A superseded refund with no stored plan sizes itself on its
+  charge's ledger (#4699), so another door's slice there made it close short, unalerted.
 - **What the machinery owns, per charge** (`supersededCaptureHeldBack`), by
   `readSupersededCaptureOwnership`: what a `REFUND_SUPERSEDED_PAYMENT` not yet
   `SUCCEEDED` would send (`reArmWouldSendCents`), held or dead included; while a
@@ -4113,10 +4112,10 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
 - **Read under the Payment row**, with the plan or allocation, and off any paid
   figure, with the open hand-backs. No card plan, credit, mirror fold or hand-back
   takes it. An empty reading changes no slice, amount or Stripe key. A stored plan
-  is never rewritten. A missing plan the hold-back would shrink, against recorded
-  refunds alone, keeps the debt.
+  is never rewritten. A missing plan the hold-back or a bank charge would shrink,
+  against recorded refunds alone, keeps the debt.
 - **Doors:** cancellation and its preview (#4866); an edit's own-card plan;
-  a refund request, including its cap; a capacity race's card plan (the amount
+  a refund request, its cap and the screens' advisory ceilings; a capacity race's card plan (the amount
   owed back stays the capture; a short plan still raises its task); a booking-change
   credit; a plan-less recovery row's first plan; a manual hand-back, including a
   card-shortfall check after its preferred charges (#4872). An edit review's card

@@ -395,6 +395,8 @@ vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
   planStripeRefundAllocation: mockPlanStripeRefundAllocation,
   // #4359: the preflight's no-plan fallback and the executor share this pure filter.
   capturedStripeTransactions: ((await importOriginal()) as typeof import("@/lib/payment-transactions")).capturedStripeTransactions,
+  // #4872 review (INV-SSOT): a missing plan is sized by the shared pure card planner, real here.
+  planCardRefundFromLedger: ((await importOriginal()) as typeof import("@/lib/payment-transactions")).planCardRefundFromLedger,
   // #4699 review: the superseded refund is sized through this pure headroom fold.
   refundHeadroomIncrementCents: ((await importOriginal()) as typeof import("@/lib/payment-transactions")).refundHeadroomIncrementCents,
   // #4217: the runner's claim hold locks the Payment row before the recovery row.
@@ -2736,6 +2738,35 @@ describe("payment recovery worker", () => {
       id: "payment-1",
       stripePaymentIntentId: null,
       transactions: [
+        { id: "txn-bank", source: "INTERNET_BANKING", stripePaymentIntentId: null, amountCents: 10_000, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED, createdAt: new Date("2026-05-15T00:00:00.000Z") },
+      ],
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(0);
+    expect(result.failed + result.retried).toBe(1);
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+    const written = JSON.stringify([...mockPaymentRecoveryUpdate.mock.calls, ...mockPaymentRecoveryUpdateMany.mock.calls]);
+    expect(written).toContain("A missing card-refund plan cannot be frozen onto a non-card charge; retry before planning");
+    expect(written).not.toContain("allocationPlan");
+  });
+
+  it("does not freeze a short card plan when a bank row holds the rest of the debt (#4872 review)", async () => {
+    const legacy = makeOperation({
+      id: "recovery-card-and-bank",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4_000,
+      allocationPlan: null,
+      idempotencyKey: "booking_modification_refund_mod-card-and-bank",
+      paymentTransactionId: null,
+    });
+    queuePlanlessModification(legacy);
+    mockPaymentFindUnique.mockResolvedValue({
+      id: "payment-1",
+      stripePaymentIntentId: "pi_primary",
+      transactions: [
+        { id: "txn-primary", source: "STRIPE", stripePaymentIntentId: "pi_primary", amountCents: 2_000, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED, createdAt: new Date("2026-05-01T00:00:00.000Z") },
         { id: "txn-bank", source: "INTERNET_BANKING", stripePaymentIntentId: null, amountCents: 10_000, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED, createdAt: new Date("2026-05-15T00:00:00.000Z") },
       ],
     });
