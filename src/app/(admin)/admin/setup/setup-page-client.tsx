@@ -38,7 +38,7 @@ import {
   canOpenAdminPathWithMatrix,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
-import { ApiRefusalError, apiErrorMessageFromBody, refusalMessageOr } from "@/lib/api-error-message";
+import { ApiRefusalError, apiErrorMessageFromBody, jsonObjectOrNull, readApiErrorBody, refusalMessageOr } from "@/lib/api-error-message";
 
 type SetupStatus = "complete" | "warning" | "blocked" | "not_started";
 type ProgressStatus = "open" | "completed" | "skipped";
@@ -277,7 +277,7 @@ export function SetupPageClient({
       const response = await fetch("/api/admin/setup", {
         credentials: "same-origin",
       });
-      const body = (await response.json().catch(() => ({}))) as SetupResponse | { error?: string };
+      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as SetupResponse | { error?: string };
       if (!response.ok || !("readiness" in body)) {
         throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to load setup readiness"));
       }
@@ -325,7 +325,7 @@ export function SetupPageClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, stepId }),
       });
-      const body = await response.json().catch(() => null);
+      const body = await readApiErrorBody(response);
       if (!response.ok) {
         throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to update setup progress"));
       }
@@ -347,7 +347,7 @@ export function SetupPageClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "finish" }),
       });
-      const body = await response.json().catch(() => null);
+      const body = await readApiErrorBody(response);
       if (!response.ok) {
         throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to finish setup"));
       }
@@ -369,7 +369,7 @@ export function SetupPageClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider }),
       });
-      const body = (await response.json().catch(() => ({}))) as ProviderTestResult | { error?: string };
+      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as ProviderTestResult | { error?: string };
       if (!response.ok || !("ok" in body)) {
         throw new ApiRefusalError(apiErrorMessageFromBody(body, "Provider test failed"));
       }

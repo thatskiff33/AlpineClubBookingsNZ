@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ApiRefusalError, apiErrorMessageFromBody, apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
+import { ApiRefusalError, apiErrorMessageFromBody, jsonObjectOrNull, readApiErrorBody, apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 import {
   FolderOpen,
   Folder,
@@ -156,7 +156,7 @@ export function ImageManagerClient() {
           method: "POST",
           body: formData,
         });
-        const data = (await res.json().catch(() => ({}))) as {
+        const data = (jsonObjectOrNull(await readApiErrorBody(res)) ?? {}) as {
           results?: Array<{ filename: string; ok: boolean; error?: string }>;
           error?: string;
         };

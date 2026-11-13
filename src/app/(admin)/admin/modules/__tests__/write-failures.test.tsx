@@ -5,7 +5,7 @@
  *
  * Both parsed every reply as JSON and showed `err.message`, so an HTML 502
  * from the proxy read as a JSON parse error and a dropped connection as
- * "Failed to fetch". Both now parse with a catch and throw an
+ * "Failed to fetch". Both now use the shared response reader and throw an
  * `ApiRefusalError`; a 403 keeps the shared forbidden-save reason.
  */
 

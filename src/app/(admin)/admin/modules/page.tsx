@@ -35,6 +35,8 @@ import {
 import {
   ApiRefusalError,
   apiErrorMessageFromBody,
+  jsonObjectOrNull,
+  readApiErrorBody,
   refusalMessageOr,
 } from "@/lib/api-error-message";
 
@@ -156,7 +158,7 @@ export default function AdminModulesPage() {
       const response = await fetch("/api/admin/modules", {
         credentials: "same-origin",
       });
-      const body = (await response.json().catch(() => ({}))) as ModulesResponse | { error?: string };
+      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as ModulesResponse | { error?: string };
       if (!response.ok || !("settings" in body) || !("modules" in body)) {
         throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to load modules"));
       }
@@ -228,7 +230,7 @@ export default function AdminModulesPage() {
       if (response.status === 403) {
         throw new ApiRefusalError(ADMIN_FORBIDDEN_SAVE_REASON);
       }
-      const body = (await response.json().catch(() => ({}))) as ModulesResponse | { error?: string };
+      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as ModulesResponse | { error?: string };
       if (!response.ok || !("settings" in body) || !("modules" in body)) {
         throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to save modules"));
       }

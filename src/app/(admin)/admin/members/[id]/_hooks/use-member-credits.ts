@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import {
   ApiRefusalError,
   apiErrorMessageFromBody,
+  jsonObjectOrNull,
+  readApiErrorBody,
   apiRefusalFromResponse,
   refusalMessageOr,
 } from "@/lib/api-error-message";
@@ -99,7 +101,7 @@ export function useMemberCredits(id: string) {
           ...(cents > 0 ? { grantAccount } : {}),
         }),
       });
-      const data = await res.json().catch(() => ({}));
+      const data = (jsonObjectOrNull(await readApiErrorBody(res)) ?? {});
       if (!res.ok) {
         throw new ApiRefusalError(apiErrorMessageFromBody(data, "Failed to save adjustment"));
       }

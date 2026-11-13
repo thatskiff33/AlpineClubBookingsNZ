@@ -175,6 +175,16 @@ function branchOf(read: ts.Node, name: string): "failure" | "success" | null {
   return null;
 }
 
+/** A prior failure check protects a later parse only if its branch exits. */
+function exitsBranch(statement: ts.Statement): boolean {
+  if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement)) return true;
+  if (ts.isBlock(statement)) return statement.statements.some(exitsBranch);
+  if (ts.isIfStatement(statement) && statement.elseStatement) {
+    return exitsBranch(statement.thenStatement) && exitsBranch(statement.elseStatement);
+  }
+  return false;
+}
+
 function parsedBeforeCheck(read: ts.Node, name: string): boolean {
   let statement: ts.Node = read;
   while (statement.parent && !ts.isBlock(statement.parent) && !ts.isSourceFile(statement.parent)) {
@@ -185,7 +195,9 @@ function parsedBeforeCheck(read: ts.Node, name: string): boolean {
   if (!block || !(ts.isBlock(block) || ts.isSourceFile(block))) return false;
   const siblings = block.statements as ts.NodeArray<ts.Statement>;
   const index = siblings.indexOf(statement as ts.Statement);
-  if (siblings.slice(0, index).some((s) => guardsEveryFailure(s, name))) return false;
+  if (siblings.slice(0, index).some(
+    (s) => ts.isIfStatement(s) && guardsEveryFailure(s, name) && exitsBranch(s.thenStatement),
+  )) return false;
   return siblings.slice(index + 1).some((s) => mentionsOk(s, name));
 }
 
@@ -321,6 +333,20 @@ describe("admin failed-response JSON reads (#4976, ALP-589)", () => {
       "// if (!res.ok) { const data = await res.json(); }",
     ].join("\n");
     expect(unguardedFailureReads(source)).toEqual([]);
+  });
+
+  it("does not treat a non-exiting failure check as protecting a later parse", () => {
+    expect(unguardedFailureReads(`async function save(response: Response) {
+      if (!response.ok) showError();
+      const body = await response.json();
+      if (!response.ok) return body.error;
+    }`)).toEqual([{ line: 3, kind: "parse-before-check" }]);
+
+    expect(unguardedFailureReads(`async function save(response: Response) {
+      if (!response.ok) { showError(); return; }
+      const body = await response.json();
+      if (response.ok) return body;
+    }`)).toEqual([]);
   });
 
   it("lists only files that still exist", () => {

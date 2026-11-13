@@ -6,7 +6,7 @@
  * The load, create, save, reorder and roll-forward parsed every reply as JSON,
  * and every handler showed `err.message`: an HTML 502 from the proxy read as
  * a JSON parse error and a dropped connection as "Failed to fetch". Each now
- * parses with a catch and throws an `ApiRefusalError`, so anything else shows
+ * reads through the shared response reader and throws an `ApiRefusalError`, so anything else shows
  * the handler's own fallback. A 403 keeps the shared forbidden-save reason.
  */
 
@@ -253,6 +253,17 @@ describe("membership-type refusals", () => {
         method: "PATCH",
         url: "/api/admin/membership-types/type-full",
         answer: () => Response.json({ error: "Forbidden" }, { status: 403 }),
+      });
+      await saveADescription();
+
+      expect(await screen.findAllByText(ADMIN_FORBIDDEN_SAVE_REASON)).not.toHaveLength(0);
+    });
+
+    it.each([{ body: null }, { body: "Forbidden" }, { body: [] }])("keeps the forbidden-save reason for a non-object 403 body: %j", async ({ body }) => {
+      installFetch({
+        method: "PATCH",
+        url: "/api/admin/membership-types/type-full",
+        answer: () => Response.json(body, { status: 403 }),
       });
       await saveADescription();
 

@@ -53,6 +53,8 @@ import {
 import {
   ApiRefusalError,
   apiErrorMessageFromBody,
+  jsonObjectOrNull,
+  readApiErrorBody,
   refusalMessageOr,
 } from "@/lib/api-error-message";
 import {
@@ -1130,7 +1132,7 @@ export default function AdminMembershipTypesPage() {
       const response = await fetch("/api/admin/membership-types", {
         credentials: "same-origin",
       });
-      const body = (await response.json().catch(() => ({}))) as
+      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as
         | MembershipTypesResponse
         | { error?: string };
       if (!response.ok || !("membershipTypes" in body)) {
@@ -1225,7 +1227,7 @@ export default function AdminMembershipTypesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(draftPayload(newDraft, availableAgeTiers)),
       });
-      const body = (await response.json().catch(() => ({}))) as
+      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as
         | { membershipType: MembershipType }
         | { error?: string };
       if (!response.ok || !("membershipType" in body)) {
@@ -1276,7 +1278,7 @@ export default function AdminMembershipTypesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(draftPayload(draft, availableAgeTiers)),
       });
-      const body = (await response.json().catch(() => ({}))) as
+      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as
         | { membershipType: MembershipType }
         | { error?: string };
       if (!response.ok || !("membershipType" in body)) {
@@ -1331,7 +1333,7 @@ export default function AdminMembershipTypesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ orderedIds: nextOrder.map((type) => type.id) }),
       });
-      const body = (await response.json().catch(() => ({}))) as
+      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as
         | MembershipTypesResponse
         | { error?: string };
       if (!response.ok || !("membershipTypes" in body)) {
@@ -1372,7 +1374,7 @@ export default function AdminMembershipTypesPage() {
         method: "DELETE",
         credentials: "same-origin",
       });
-      const body = (await response.json().catch(() => null)) as
+      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as
         | { ok?: boolean; error?: string }
         | null;
       if (!response.ok || !body?.ok) {
@@ -1448,7 +1450,7 @@ export default function AdminMembershipTypesPage() {
           body: JSON.stringify({ targetId: mergeTargetId }),
         },
       );
-      const body = (await response.json().catch(() => null)) as
+      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as
         | { ok?: boolean; reassignedCount?: number; error?: string }
         | null;
       if (!response.ok || !body?.ok) {
@@ -1518,7 +1520,7 @@ export default function AdminMembershipTypesPage() {
           dryRun,
         }),
       });
-      const body = (await response.json().catch(() => ({}))) as
+      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as
         | RollForwardResponse
         | { error?: string };
       if (!response.ok || !("wouldCopyCount" in body)) {

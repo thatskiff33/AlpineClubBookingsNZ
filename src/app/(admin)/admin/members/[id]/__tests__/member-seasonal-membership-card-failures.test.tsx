@@ -6,7 +6,7 @@
  *
  * All three parsed every reply as JSON and showed `err.message`, so an HTML
  * 502 from the proxy read as a JSON parse error and a dropped connection as
- * "Failed to fetch". Each now parses with a catch and throws an
+ * "Failed to fetch". Each now uses the shared response reader and throws an
  * `ApiRefusalError`, so anything else shows the card's own fallback.
  */
 
