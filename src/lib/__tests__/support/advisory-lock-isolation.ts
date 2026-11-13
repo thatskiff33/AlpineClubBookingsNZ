@@ -36,7 +36,8 @@ export function incompatibleLockTransactions(sources: readonly Source[]): string
       }
       ts.forEachChild(node, collectBindings);
     };
-    collectBindings(source);
+    // Bindings only feed option resolution, so skip the walk where no option can be set.
+    if (text.includes("isolationLevel")) collectBindings(source);
     const resolve = (expression: ts.Expression, seen = new Set<ts.Node>()): ts.Expression => {
       if (seen.has(expression)) return expression;
       seen.add(expression);
@@ -66,30 +67,40 @@ export function incompatibleLockTransactions(sources: readonly Source[]): string
       const name = ts.isIdentifier(node) ? node.text : ts.isPropertyAccessExpression(node) ? node.name.text : undefined;
       return name && (aliases.get(name) ?? name);
     };
-    const effects = (root: ts.Node) => {
-      const calls = new Set<string>();
-      // Same SQL restoration as the inventory, including separately bound SQL.
-      const rawLock = [...masked.slice(root.getStart(source), root.end).matchAll(ADVISORY_LOCK_CALL)].length > 0;
-      const visit = (node: ts.Node) => {
-        if (ts.isCallExpression(node)) {
-          const name = callName(node.expression);
-          if (name) calls.add(name);
-        }
-        ts.forEachChild(node, visit);
-      };
-      visit(root);
-      return { calls, rawLock };
+    // One walk per file. Each call is credited to every enclosing collector
+    // (named function bodies and snapshot transaction callbacks), so nested
+    // closures still count toward their outer function without re-walking it.
+    // Re-walking each body and re-scanning its masked slice was quadratic in
+    // nesting and timed this census out across all of src.
+    // Same SQL restoration as the inventory, including separately bound SQL.
+    const lockOffsets = [...masked.matchAll(ADVISORY_LOCK_CALL)].map(match => match.index);
+    const rawLockWithin = (root: ts.Node): boolean => {
+      const start = root.getStart(source);
+      let low = 0;
+      let high = lockOffsets.length;
+      while (low < high) {
+        const mid = (low + high) >> 1;
+        if (lockOffsets[mid] < start) low = mid + 1;
+        else high = mid;
+      }
+      return low < lockOffsets.length && lockOffsets[low] < root.end;
     };
-    const visit = (node: ts.Node) => {
+    const visit = (node: ts.Node, collectors: ReadonlyArray<Set<string>>) => {
+      if (ts.isCallExpression(node)) {
+        const name = callName(node.expression);
+        if (name) for (const calls of collectors) calls.add(name);
+      }
+      // At most two children (a function body, a transaction callback) get extra collectors.
+      let extended: Array<[ts.Node, ReadonlyArray<Set<string>>]> | undefined;
+      const collectorsFor = (child: ts.Node) => extended?.find(([node]) => node === child)?.[1];
       if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isMethodDeclaration(node)) {
         const name = node.name && ts.isIdentifier(node.name) ? node.name.text
           : ts.isVariableDeclaration(node.parent) && ts.isIdentifier(node.parent.name) ? node.parent.name.text : undefined;
         if (name && node.body) {
-          const effect = effects(node.body);
           const calls = functions.get(name) ?? new Set<string>();
-          effect.calls.forEach(call => calls.add(call));
           functions.set(name, calls);
-          if (effect.rawLock) directLocks.add(name);
+          if (rawLockWithin(node.body)) directLocks.add(name);
+          (extended ??= []).push([node.body, [...collectors, calls]]);
         }
       }
       if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "$transaction") {
@@ -104,16 +115,18 @@ export function incompatibleLockTransactions(sources: readonly Source[]): string
             const level = ts.isStringLiteral(value) ? value.text : ts.isPropertyAccessExpression(value) ? value.name.text : "";
             if (["Serializable", "RepeatableRead"].includes(level)) {
               const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
-              const effect = effects(callback);
-              if (ts.isIdentifier(callback)) effect.calls.add(aliases.get(callback.text) ?? callback.text);
-              transactions.push({ site: `${file}:${line + 1}`, ...effect });
+              const calls = new Set<string>();
+              if (ts.isIdentifier(callback)) calls.add(aliases.get(callback.text) ?? callback.text);
+              transactions.push({ site: `${file}:${line + 1}`, calls, rawLock: rawLockWithin(callback) });
+              (extended ??= []).push([callback, [...(collectorsFor(callback) ?? collectors), calls]]);
             }
           }
         }
       }
-      ts.forEachChild(node, visit);
+      if (!extended) ts.forEachChild(node, child => visit(child, collectors));
+      else ts.forEachChild(node, child => visit(child, collectorsFor(child) ?? collectors));
     };
-    visit(source);
+    visit(source, []);
   }
   // Fixed point includes wrappers of wrappers, including the anonymise helper.
   for (;;) {
