@@ -565,6 +565,19 @@ replay records it from the operation's stored lines. The frozen mapping keeps
 the Xero tax type and the journal's tax codes side by side, untranslated. No
 delivery record or dispatcher exists yet.
 
+The next M13 cohort adds three roles on the same manifest. `REFUND_NOTE` covers
+the one live R05 refund debt (REFUND_PAYABLE) a note answers, whole, never
+revenue; `REFUND_NOTE_PAYMENT` covers the whole R12 (Stripe clearing) or R14
+(bank) cash slice its payment records. `createXeroCreditNote` and
+`finishRefundCreditNoteSettlement` record them after completing their row, under
+the note's and the payment's existing keys, with the Xero id as the provider
+object; a replay hashes the stored request's lines, never rebuilt ones. A note
+whose cents differ is `CENTS`; one naming no single debt (a watermark note) or a
+missing R05 or R12 is `COMPONENT_UNUSABLE`; a debt an earlier note already
+covers is `ALREADY_COVERED`. A payment left unsettled, part-settled or found
+already settled records nothing. `FAILED_LATER_REFUND_REVERSAL` is planned only
+(`planFailedLaterRefundReversal`, as the table below says): nothing sends it.
+
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |
 | Primary, supplementary or combined group invoice | Exact issued charge components, including fee coverage assigned once. Combined invoices consume child charge coverage; individual child invoices cannot consume it again. Pending bank-transfer obligations already have R01 postings. |

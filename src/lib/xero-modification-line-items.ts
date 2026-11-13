@@ -106,6 +106,31 @@ export function changeFeeLineItem(
   return li;
 }
 
+/**
+ * The one line of a refund credit note (`createXeroCreditNote`) and of the
+ * failed-later reversal invoice that undoes it (#4525, design section 7): the
+ * refund's words, the whole amount inclusive of GST, coded to the
+ * `hutFeeRefunds` mapping as the note always coded it.
+ */
+export function refundDocumentLineItem(
+  description: string,
+  amountCents: number,
+  refundMapping: ResolvedAccountMapping,
+): LineItem {
+  const accountCode = refundMapping.code ?? "200";
+  const li: LineItem = {
+    description,
+    quantity: 1,
+    unitAmount: amountCents / 100,
+    taxType: "OUTPUT2",
+  };
+  if (refundMapping.itemCode) li.itemCode = refundMapping.itemCode;
+  if (!refundMapping.itemCode || accountCode !== "200" || refundMapping.codeExplicitlyConfigured) {
+    li.accountCode = accountCode;
+  }
+  return li;
+}
+
 /** A settled review share's words: the officer's note, or the bare sentence. */
 export function renderEditReviewShareDescription(share: Pick<EditReviewSettledShare, "note">): string {
   const note = share.note?.trim();

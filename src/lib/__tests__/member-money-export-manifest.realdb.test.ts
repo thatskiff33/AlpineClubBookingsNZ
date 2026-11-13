@@ -120,4 +120,25 @@ async function stored(bookingId: string) {
       VALUES ('late-4525', $1, 'PRIMARY_BOOKING_INVOICE', 'BOOKING_REVENUE', $2, 16500)`, [manifests[0].id, `booking:${id}:late`]))
       .rejects.toMatchObject({ code: "23514", message: expect.stringContaining("conflict_with_coverage") });
   });
+
+  it("refuses a second refund note covering the same refund debt, while its CONFLICT records with no rows (#4525 M13)", async () => {
+    const id = await booking();
+    const debt = { account: "REFUND_PAYABLE" as const, chargeIdentity: `refund-obligation|cancellation|${id}`, coveredCents: 5000, taxCode: null };
+    const note = (legacyKey: string, overrides: Partial<ExportManifestRow> = {}) => row(id, {
+      documentRole: "REFUND_NOTE", legacyKey, lineTotalCents: 5000, providerInvoiceId: `CN-${legacyKey}`, coverage: [debt], ...overrides,
+    });
+    await expect(write(note("first"))).resolves.toBe("WRITTEN");
+    await expect(write(note("reissue"))).rejects.toMatchObject({ code: "P2002" });
+    await expect(write(note("reissue", { outcome: "CONFLICT", reason: "ALREADY_COVERED", coverage: [] }))).resolves.toBe("WRITTEN");
+    await expect(write(note("short", { outcome: "CONFLICT", reason: "CENTS", lineTotalCents: 4000, coverage: [] }))).resolves.toBe("WRITTEN");
+    // The note's payment and a failed-later reversal cover cash, under their own roles.
+    const cash = { account: "STRIPE_CLEARING" as const, chargeIdentity: `refund:re_${id}`, coveredCents: 5000, taxCode: null };
+    await expect(write(row(id, { documentRole: "REFUND_NOTE_PAYMENT", legacyKey: "pay", lineTotalCents: 5000, providerInvoiceId: "PAY-1", coverage: [cash] })))
+      .resolves.toBe("WRITTEN");
+    await expect(write(row(id, { documentRole: "FAILED_LATER_REFUND_REVERSAL", legacyKey: "rev", lineTotalCents: 5000, providerInvoiceId: "INV-REV",
+      coverage: [{ ...cash, chargeIdentity: `reversal:journal-${id}` }] }))).resolves.toBe("WRITTEN");
+    const { manifests, coverage } = await stored(id);
+    expect(manifests.map((m) => m.outcome).sort()).toEqual(["CONFLICT", "CONFLICT", "COVERED", "COVERED", "COVERED"]);
+    expect(coverage.map((c) => c.chargeIdentity).sort()).toEqual([`refund-obligation|cancellation|${id}`, `refund:re_${id}`, `reversal:journal-${id}`].sort());
+  });
 });

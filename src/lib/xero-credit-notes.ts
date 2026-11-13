@@ -70,6 +70,7 @@ import type { CashRefundMethod } from "./xero-invoice-payments";
 import {
   finishRefundCreditNoteSettlement,
   refundCreditNoteCompletion,
+  recordSentRefundNotePaymentManifest,
   refundNoteSettlementInterrupted,
   settleRefundCreditNote,
 } from "@/lib/xero-refund-note-settlement";
@@ -84,6 +85,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import { stampBookingModificationCreditXeroNote, stampCancellationCreditXeroNote } from "@/lib/xero-account-credit-note-stamp";
 import { REFUND_REQUEST_CREDIT_NOTE_ROLE } from "@/lib/refund-request-credit-note";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { recordRefundNoteManifest } from "@/lib/member-money/doors";
 
 /** #4104: how often a card note re-reads the closes' figure until it agrees with the cash read between. */
 const STABLE_CLOSE_READ_ATTEMPTS = 3;
@@ -317,6 +319,8 @@ export async function createXeroCreditNote(
         await failXeroSyncOperation(queuedOperation, error);
         throw error;
       }
+      // #4525 (M13): this row's own note, from the request it stored.
+      await recordRefundNoteManifest({ paymentId, bookingId: payment.booking.id, creditNoteId: own.xeroObjectId, source: { kind: "REPLAY", operationId: queuedOperation.id } });
       return own.xeroObjectId;
     }
   }
@@ -621,6 +625,8 @@ export async function createXeroCreditNote(
       });
     }
     logger.info({ paymentId, creditNoteId: existingCreditNoteId }, "Xero credit note already exists, skipping");
+    // #4525 (M13): a note an earlier run raised, from its stored request; never rebuilt.
+    await recordRefundNoteManifest({ paymentId, bookingId: payment.booking.id, creditNoteId: existingCreditNoteId, source: { kind: "REPLAY", operationId: null } });
     return existingCreditNoteId;
   }
 
@@ -826,6 +832,30 @@ export async function createXeroCreditNote(
         refundRequestId,
       })
     );
+    // #4525 (M13): the note's and its payment's export manifests, each in its own transaction; never throw.
+    await recordRefundNoteManifest({
+      paymentId,
+      bookingId: payment.booking.id,
+      creditNoteId: createdNote.creditNoteID,
+      source: {
+        kind: "BUILT",
+        lines: [refundLineItem],
+        legacyKey: creditNoteIdempotencyKey,
+        door: {
+          cardRefundId,
+          paidAnotherWayTaskId: options?.paidAnotherWayTaskId ?? null,
+          handBackTaskId: options?.handBackTaskId ?? null,
+          refundRequestId,
+          reviewTaskId: options?.reviewTaskId ?? null,
+        },
+      },
+    });
+    await recordSentRefundNotePaymentManifest(outcome, {
+      paymentId,
+      creditNoteId: createdNote.creditNoteID,
+      operationId: operationId!,
+      refundMethod,
+    });
 
     return createdNote.creditNoteID;
   } catch (error) {

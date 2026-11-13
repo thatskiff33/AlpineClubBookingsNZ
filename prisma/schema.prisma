@@ -9397,6 +9397,9 @@ model PrivacyHostingSettings {
 /// M13 (#4525): the outbound document families whose coverage a manifest records.
 enum MemberMoneyExportDocumentRole {
   PRIMARY_BOOKING_INVOICE
+  REFUND_NOTE
+  REFUND_NOTE_PAYMENT
+  FAILED_LATER_REFUND_REVERSAL
 }
 
 enum MemberMoneyExportOutcome {
@@ -9409,6 +9412,8 @@ enum MemberMoneyExportConflictReason {
   STAY_CENTS
   FEE_CENTS
   COMPONENT_UNUSABLE
+  CENTS
+  ALREADY_COVERED
 }
 
 /// M13 (#4525): what one sent provider document covers, written once under its
