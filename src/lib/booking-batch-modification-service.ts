@@ -148,7 +148,7 @@ import {
 } from "@/lib/roster-lock";
 import { formatDateOnly } from "@/lib/date-only";
 import { loadCancellationPolicy } from "@/lib/cancellation";
-import { calculateFullReductionSettlementOptions, refundableCashForModification } from "@/lib/booking-modify-settlement-options";
+import { calculateFullReductionSettlementOptions, editReductionDisputeHold, refundableCashForModification } from "@/lib/booking-modify-settlement-options";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
@@ -1626,6 +1626,8 @@ export async function modifyBookingBatch({
             netChargeCents: reduction.netChargeLeftCents,
             refundableCashCents: await refundableCashForModification(tx, booking.payment, reduction),
             todayAtClub: moneyTierDay,
+            // #5061 follow-up (`INV-PAY-153`): read under this edit's locks.
+            refundHeldForDispute: (await editReductionDisputeHold(tx, booking)).cents > 0,
           })
         : await calculateModificationSettlementOptions({
       booking,
@@ -2221,6 +2223,7 @@ export async function modifyBookingBatch({
       oldGuestCount: booking.guests.length,
       addedGuests: createdGuests,
       hasSucceededPayment: payments.hasSucceededPayment,
+      refundHeldForDispute: payments.refundHeldForDispute,
       hasIssuedXeroInvoice: payments.hasIssuedXeroInvoice,
       paymentStatus: booking.payment?.status ?? null,
       paymentSource: booking.payment?.source ?? null,
@@ -2632,7 +2635,8 @@ async function dispatchBatchPostTransactionSideEffects({
     datesChanged: result.datesChanged,
     guestIdentityChanged: result.guestIdentityChanged,
     settlementMethod: result.settlementMethod,
-    refundedThroughStripe: result.hasSucceededPayment,
+    // #5061 follow-up (`INV-PAY-153`): a disputed payment's reduction goes back by hand.
+    refundedThroughStripe: result.hasSucceededPayment && !result.refundHeldForDispute,
     appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     // #3653: the organiser child refund raises the one note, after Stripe.
     organiserChildRefundOwnsCreditNote: result.organiserChildRefund !== null,

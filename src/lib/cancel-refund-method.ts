@@ -39,6 +39,12 @@ export function forcedCancelRefundMethod(
  * A refund to the organiser is tiered on the card tiers, whichever way they paid; one the organiser paid by
  * Internet Banking is paid back by hand (owner decision, 22 Oct 2026). A hand-settled payment of the member's own
  * is paid back by hand on the method they chose; an Internet Banking one of their own is held as account credit.
+ *
+ * #4911 (`INV-PAY-153`): a capture the cardholder is disputing, or has won back, is handed to the treasurer too
+ * (`disputed`, from `disputedCaptureCents` under the cancel's locks): no card refund and no account credit, since
+ * either could pay back money the bank already returned. It is tiered on the credit tier, as a hand-settled payment's
+ * hand-back is, so no card refund is planned for it. A joiner's refund to the organiser's card is the exception:
+ * it is a recovery row, which the refund chokepoint stops for the treasurer (`unretryableRecoveryCause`).
  */
 export function cancelRefundDisposition(params: {
   paymentSource: string | null | undefined;
@@ -47,11 +53,18 @@ export function cancelRefundDisposition(params: {
   /** The joiner's booking the organiser paid for by Internet Banking (`paidByOrganiserInternetBanking`), not by card. */
   organiserByBank: boolean;
   manuallyMarkedPaid: boolean;
+  /** #4911: an OPEN or LOST dispute holds this payment's captures (`disputedCaptureCents` above zero). */
+  disputed: boolean;
   /** The method the member chose, where nothing forces one. */
   requested: "card" | "credit";
 }): { forced: ForcedCancelRefundMethod; refundMethod: "card" | "credit"; manualDisposition: boolean } {
   const organiserByBank = !params.organiserCard && params.organiserByBank;
   const forced = forcedCancelRefundMethod(params.paymentSource, params.organiserCard, organiserByBank);
-  const refundMethod = forced === "credit" ? "credit" : forced === null ? params.requested : "card";
-  return { forced, refundMethod, manualDisposition: !params.organiserCard && (params.manuallyMarkedPaid || organiserByBank) };
+  // #4911: a disputed refund is tiered as every hand-back of the member's own money is, on the credit tier.
+  const refundMethod = forced === "credit" ? "credit" : forced === null ? (params.disputed ? "credit" : params.requested) : "card";
+  return {
+    forced,
+    refundMethod,
+    manualDisposition: !params.organiserCard && (params.manuallyMarkedPaid || organiserByBank || params.disputed),
+  };
 }

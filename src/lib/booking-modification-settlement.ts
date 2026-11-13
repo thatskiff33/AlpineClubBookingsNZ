@@ -67,6 +67,12 @@ import {
 export type BookingModificationPaymentContext = {
   pendingRefundAmountCents: number;
   /**
+   * #5061 follow-up (`INV-PAY-153`): a Stripe dispute holds the member's card
+   * payment, so this edit's refund is with the treasurer (a hand-back) and no
+   * Stripe refund runs here; the email says so (`with_treasurer`).
+   */
+  refundHeldForDispute: boolean;
+  /**
    * #3653: non-null when the refund comes out of a group organiser's combined
    * card payment; its debt was written under the edit's
    * `BookingModification` key (`reserveOrganiserChildModificationRefund`).
@@ -160,6 +166,7 @@ export async function drainSupersededPrimaryIntents({
  * an organiser-card refund is `organiser_card` only when its debt says Stripe
  * made it, otherwise `organiser_card_pending`. #4070: an own-card refund is
  * `own` only when `ownCardRefundMade` says so, otherwise `own_card_pending`.
+ * #5061 follow-up: `with_treasurer` when a Stripe dispute held the refund.
  */
 export type BookingModificationRefundOutcome = {
   stripeRefundId: string | undefined;
@@ -181,6 +188,8 @@ export async function executeBookingModificationRefund({
   failureMessage: string;
   recoveryFailureMessage: string;
 }): Promise<BookingModificationRefundOutcome> {
+  // #5061 follow-up: never `own_card_pending` - nothing is on its way until the treasurer acts.
+  if (result.refundHeldForDispute) return { stripeRefundId: undefined, refundDestination: "with_treasurer" };
   if (result.pendingRefundAmountCents <= 0 || !result.paymentId) {
     // #4057: an organiser child's refund that was not run here is still owed.
     return { stripeRefundId: undefined, refundDestination: result.organiserChildRefund ? "organiser_card_pending" : "own" };

@@ -7,7 +7,7 @@
  * the next attempt will meet again, which only burns the backoff before anyone
  * hears of it.
  *
- * Three such refusals today. The first: an edit's ask write that finds its intent already
+ * Five such refusals today. The first: an edit's ask write that finds its intent already
  * recorded for another edit (`AdditionalAskAttributionConflictError`,
  * `INV-MOD-060`). Edit X's recovery adopted edit Y's intent, Y's write was
  * refused, and Y's retry that re-derives the same figure (the frozen fallback,
@@ -27,6 +27,12 @@
  * way. Stripe was not asked for it; the row goes dead for the treasurer, who
  * checks the booking's refunds and closes it "Paid another way" if owed.
  *
+ * The fifth (#4911, `INV-PAY-153`): a card refund of a capture the cardholder is
+ * disputing, or has won back from the club (`disputedCaptureRefusal`). Stripe
+ * refuses a refund of a disputed charge, and a lost dispute has already paid the
+ * cardholder back, so every retry is refused the same way until a person acts.
+ * Stripe was not asked for it; the row goes dead for the treasurer.
+ *
  * So the runner's failure path (`failPaymentRecoveryOperation`) ends the
  * recovery on the first such failure, through the one terminal transition
  * (`markPaymentRecoveryOperationFailed`, `INV-PAY-056`): FAILED with no retry,
@@ -45,9 +51,16 @@ import {
 } from "@/lib/payment-intent-ledger-row-write";
 import { isCardRefundReservationRefusal } from "@/lib/member-money";
 import { prisma } from "@/lib/prisma";
+import { disputedCaptureRefusal } from "@/lib/stripe-dispute-hold";
 
 /** #4516: what a stopped card refund's row says, and the officers' alert quotes. */
 export const CARD_REFUND_RESERVATION_REFUSED_CAUSE = "The card refund was not sent: the refund it would pay is already reserved or paid from that card payment, so retrying would be refused the same way and the app stopped. Stripe was not asked for it. Check the booking's refunds against Stripe; if money is still owed, close this refund as paid another way.";
+
+/** #4911: what a card refund stopped by a cardholder's dispute says on its row and in the officers' alert. */
+export function disputedCaptureRefundCause(disputes: ReadonlyArray<{ stripeDisputeId: string; status: string }>): string {
+  const named = disputes.map((dispute) => `${dispute.stripeDisputeId} (${dispute.status.toLowerCase()})`).join(", ");
+  return `The card refund was not sent: the cardholder has disputed this card payment with their bank (Stripe dispute ${named}), so the app pays nothing back from it by card or as account credit. Retrying would be refused the same way, so the app stopped. Stripe was not asked for it. If the dispute is lost the cardholder already has the money back; if it is won, check what is still owed and refund it, or close this refund as paid another way.`;
+}
 
 /** How the carried-ask wait's cause opens; the alert's wording keys on it (`recoveryFailureAlertMessage`). */
 const CARRIED_ASK_WAIT_EXPIRED_CAUSE_OPENING = "Stopped waiting on a card request Stripe is still taking money on.";
@@ -77,6 +90,8 @@ export async function unretryableRecoveryCause(
   error: unknown,
 ): Promise<string | null> {
   if (isCardRefundReservationRefusal(error)) return CARD_REFUND_RESERVATION_REFUSED_CAUSE;
+  const disputed = disputedCaptureRefusal(error);
+  if (disputed) return disputedCaptureRefundCause(disputed.disputes);
   if (operation.type !== PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT) {
     return null;
   }

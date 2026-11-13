@@ -39,22 +39,9 @@ import {
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 /**
- * An amount filter typed into the payments search box, in integer cents.
- *
- * The string is parsed by the canonical exact parser (#2685) rather than by
- * `parseFloat` arithmetic, and an amount the parser refuses — including one
- * above the int32 cent range the `amountCents` column holds, which used to reach
- * Prisma and fail the whole request with a 500 — becomes an ordinary 400 with a
- * message. Parsing here, in the schema, is what makes the null case impossible
- * downstream: `amountExact`/`amountMin`/`amountMax` are already cents by the
- * time any query is built.
- */
-/**
- * What an amount filter must look like, said in the operator's words.
- *
- * Exported because the payments screen renders it beside the amount boxes when
- * the API refuses the query — the operator should not have to open a network
- * panel to find out why the table stopped changing (#2685 review).
+ * #2685: parse amount filters to integer cents in the schema using the canonical
+ * exact parser. Refusals, including int32 overflow, become 400s before Prisma.
+ * The payments screen displays this grammar beside a rejected amount filter.
  */
 export const AMOUNT_FILTER_GRAMMAR_MESSAGE =
   "Enter an amount in dollars and cents, for example 125.00 — no currency symbol, thousands separator, or leading zero.";
@@ -642,6 +629,20 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         })
       : [];
 
+    // #4911 (`INV-PAY-153`): the disputes on the page's payments, newest first, for the payment's dispute marker.
+    const disputes = pageIds.length
+      ? await prisma.stripeDispute.findMany({
+          where: { paymentId: { in: pageIds } },
+          select: { paymentId: true, stripeDisputeId: true, status: true, amountCents: true },
+          orderBy: [{ stripeCreatedAt: "desc" }, { stripeDisputeId: "asc" }],
+        })
+      : [];
+    const disputesByPaymentId = new Map<string, Array<Omit<(typeof disputes)[number], "paymentId">>>();
+    for (const { paymentId, ...dispute } of disputes) {
+      if (!paymentId) continue;
+      disputesByPaymentId.set(paymentId, [...(disputesByPaymentId.get(paymentId) ?? []), dispute]);
+    }
+
     const dataById = new Map(data.map((payment) => [payment.id, payment]));
     const orderedData = pageIds
       .map((id) => dataById.get(id))
@@ -665,6 +666,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         settlementKind:
           filteredCandidateById.get(payment.id)?.settlementKind ??
           "none",
+        disputes: disputesByPaymentId.get(payment.id) ?? [],
       }));
 
     // #3372: "Net Collected" (once gross "Total Revenue", #773) is net over

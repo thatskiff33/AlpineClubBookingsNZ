@@ -9,7 +9,7 @@ import { render, screen } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
 import { PriceSummaryCard } from "@/components/edit-booking/price-summary-card";
 import type { QuoteResult } from "@/components/edit-booking/types";
-import { organiserBilledSentence } from "@/lib/booking-modified-email-copy";
+import { disputedRefundSentence, organiserBilledSentence } from "@/lib/booking-modified-email-copy";
 
 function organiserQuote(organiserRefundByBankTransfer: boolean): QuoteResult {
   return {
@@ -139,5 +139,31 @@ describe("#4299: what this member has remaining to pay", () => {
     renderQuote(unchanged, 2_000);
 
     expect(screen.getByTestId("remaining-to-pay").textContent).toBe("Remaining to pay$130.00");
+  });
+});
+
+describe("#5061 follow-up (INV-PAY-153): a reduction on a disputed card payment", () => {
+  const disputed = (): QuoteResult =>
+    ({
+      ...organiserQuote(false),
+      settlementOptions: {
+        basisAmountCents: 5_000,
+        cardRefundAmountCents: 2_500,
+        cardRefundPercentage: 50,
+        accountCreditAmountCents: 3_750,
+        accountCreditPercentage: 75,
+        daysUntilCheckIn: 30,
+        requiresSettlementMethod: false,
+        returnsToOrganiser: false,
+        organiserRefundByBankTransfer: false,
+        refundHeldForDispute: true,
+      },
+    }) as unknown as QuoteResult;
+
+  it("offers no card-or-credit choice and says the treasurer has the refund, in the email's own words", () => {
+    renderQuote(disputed());
+
+    expect(screen.getByTestId("disputed-refund-notice").textContent).toBe(disputedRefundSentence("$37.50"));
+    expect(screen.queryByRole("radio")).toBeNull();
   });
 });

@@ -4966,6 +4966,64 @@ model StripePayout {
   updatedAt                   DateTime           @updatedAt
 }
 
+// #4911 (`INV-PAY-153`): one row per Stripe dispute (chargeback), recorded from
+// the `charge.dispute.*` webhooks. A record and a hold, not money: no ledger,
+// journal or Xero write reads it, and `Payment.refundedAmountCents` never
+// counts it. While its status is OPEN or LOST a paid cancel of the disputed
+// capture issues no card refund or account credit (`disputedCaptureCents`).
+model StripeDispute {
+  id                    String              @id @default(cuid())
+  // The claim: one row per dispute, so a replayed delivery inserts nothing.
+  stripeDisputeId       String              @unique
+  stripeChargeId        String
+  // The disputed capture. Null only when Stripe's dispute names no intent and
+  // the charge read gave none either.
+  stripePaymentIntentId String?
+  // The matched capture, by `stripePaymentIntentId`; all three are null for a
+  // charge the app does not know. Plain ids, no foreign keys.
+  paymentTransactionId  String?
+  paymentId             String?
+  bookingId             String?
+  // Stripe's smallest currency unit: cents for every two-decimal currency.
+  amountCents           Int
+  // As Stripe gives it: lower-case ISO 4217.
+  currency              String
+  // Sums of the dispute's balance transactions Stripe reported: what it took
+  // from and gave back to the club's balance, fees included. Informational.
+  withdrawnCents        Int                 @default(0)
+  reinstatedCents       Int                 @default(0)
+  // Stripe's reason code, e.g. `fraudulent`.
+  reason                String
+  status                StripeDisputeStatus
+  // Stripe's own status string, as last applied.
+  stripeStatus          String
+  // When Stripe opened the dispute. An instant, not a lodge night.
+  stripeCreatedAt       DateTime
+  // The newest event applied: an older delivery never overwrites a newer one.
+  lastEventCreatedAt    DateTime
+  // The webhook event that first recorded it.
+  stripeEventId         String
+  // Set only after each Finance alert was sent (the once-ever sent marker).
+  openedAlertedAt       DateTime?
+  closedAlertedAt       DateTime?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  @@index([stripePaymentIntentId])
+  @@index([paymentId])
+}
+
+// #4911: a dispute's lifecycle. OPEN and LOST hold the capture's refunds.
+enum StripeDisputeStatus {
+  // Stripe: warning_needs_response, warning_under_review, needs_response,
+  // under_review.
+  OPEN
+  WON
+  LOST
+  // Stripe: warning_closed or prevented, closed with no funds taken.
+  CLOSED_OTHER
+}
+
 // ---------------------------------------------------------------------------
 // Webhook Delivery Monitoring (OBS-08)
 // ---------------------------------------------------------------------------

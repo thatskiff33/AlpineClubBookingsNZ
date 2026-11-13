@@ -8,6 +8,10 @@
  * `refund.failed` (#4104) tells the app that a card refund Stripe first accepted
  * as pending has failed, so it is owed again; the payments cron's read-back
  * finds one only while it is still recorded pending.
+ *
+ * The four `charge.dispute.*` events (#4911, `INV-PAY-153`) record a
+ * cardholder's dispute, alert Finance, and hold the capture's refunds and
+ * credits while it is open or lost.
  */
 export const STRIPE_WEBHOOK_EVENT_TYPES = [
   "payment_intent.succeeded",
@@ -20,4 +24,8 @@ export const STRIPE_WEBHOOK_EVENT_TYPES = [
   "setup_intent.canceled",
   "charge.refunded",
   "refund.failed",
+  "charge.dispute.created",
+  "charge.dispute.funds_withdrawn",
+  "charge.dispute.funds_reinstated",
+  "charge.dispute.closed",
 ] as const;

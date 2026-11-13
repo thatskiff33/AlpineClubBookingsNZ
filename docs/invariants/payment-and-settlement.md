@@ -4174,3 +4174,40 @@ CANCELLED decision (`INV-PAY-106`). A rolled-back attempt leaves neither credit
 nor event, so a later retry or manual hand-back cannot claim credit never given.
 Proven by `cancellation-credit-event.realdb.test.ts` and `member-credit.test.ts`;
 `booking-narrative.test.ts` shows the outcome. Historical stray events are not repaired.
+
+## INV-PAY-153
+
+**Related: `INV-PAY-128`** (a refusal never loops), **`INV-INT-032`** (an
+alert nobody received answers 500).
+
+- **A disputed capture is never refunded, nor credited by a cancel or an
+  edit** (#4911, #5061). While a cardholder's dispute (chargeback) is OPEN or
+  LOST, no card refund is issued for that capture, and neither a paid cancel
+  nor a price-lowering edit issues account credit. A WON dispute, or one closed
+  with no funds taken, holds nothing.
+- **One read.** `disputedCaptureCents` (`stripe-dispute-hold.ts`) answers "is
+  this capture disputed": `processRefund` before every Stripe call, a refund
+  before reserving, a paid cancel inside its claim, an edit inside
+  `applyPaymentAdjustments`.
+- **Handed to the treasurer.** A paid cancel, or the whole reduction of an
+  edit, raises one `CANCELLED_BOOKING_HAND_BACK` task naming the dispute, and
+  the member is told the refund is with the treasurer. An officer review
+  refuses account credit on a disputed payment.
+- **A refused refund stops.** A recovery row refused for a dispute goes to
+  the treasurer at once (`unretryableRecoveryCause`); a late capture's is held,
+  never redelivered.
+- **One record per dispute**, merged under its row lock: replays change
+  nothing, an older event never overwrites a newer one, a closed dispute never
+  reopens.
+- **Finance alerts**, unmuteable, once ever: open, close, and a LOST dispute
+  later WON (reverse the Xero loss entry).
+- **A record, not money.** No ledger line, journal, refund, `Payment` total or
+  Xero posting; the treasurer records a lost dispute in Xero by hand
+  (`DEPLOYMENT.md`).
+- Limits: a dispute recorded after a cancel's or edit's read is not seen by
+  it; a joiner's reduction owed to the organiser's card is refused only at
+  `processRefund`; a task raised before a win stays with the treasurer.
+- Proven by `stripe-dispute.test.ts`, `admin-stripe-dispute-alert.test.ts`,
+  `cancel-refund-method.test.ts`, `manual-refund-task.test.ts`,
+  `stripe-dispute-cancel.realdb.test.ts` and
+  `stripe-dispute-edit.realdb.test.ts`.

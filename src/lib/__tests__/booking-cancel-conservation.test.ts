@@ -55,6 +55,13 @@ const mocks = vi.hoisted(() => ({
 // #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
 const cancellationLedger = vi.hoisted(() => ({ postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}) }));
 // #4516 (M4c): R05 posts on PostgreSQL (`member-money-refunds.realdb.test.ts`), not on this fake store.
+// #4911: no capture here is disputed; the hold's own read is proved in
+// `stripe-dispute-hold.test.ts` and `stripe-dispute-cancel.realdb.test.ts`.
+vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
+  paymentDisputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
+}));
+
 vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postRefundObligation: vi.fn(async () => null),

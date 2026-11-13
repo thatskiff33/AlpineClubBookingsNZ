@@ -26,6 +26,7 @@ export { queueEditReviewChargeInvoiceInTransaction } from "@/lib/edit-financial-
 import { REVIEW_CHARGE_WRONG_KIND_MESSAGE } from "@/lib/edit-financial-review-charge-refusals";
 import {
   REVIEW_CREDIT_ANCHOR_TAKEN_MESSAGE,
+  REVIEW_CREDIT_DISPUTED_MESSAGE,
   REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE,
   REVIEW_SETTLEMENT_ANCHOR_MISSING_MESSAGE,
 } from "@/lib/edit-financial-review-refund-refusals";
@@ -55,38 +56,21 @@ import {
   capturedShareOwedAfterCancellation,
 } from "@/lib/edit-financial-review-cancel-netting";
 import type { EditReviewSettlementTask } from "@/lib/edit-financial-review-settlement-task";
+import { paymentDisputedCaptureCents } from "@/lib/stripe-dispute-hold";
 import { cardShortfallSettlement } from "@/lib/cancel-card-refund-shortfall-settle";
 import type { CapacityRaceStripeRefunded } from "@/lib/capacity-race-refunded-total-correction";
 import { alertGroupMirrorRefundXeroByHand, chooseGroupSettlementMirrorRoute, chooseReviewGroupSettlementMirrorRoute, type GroupSettlementMirrorRoute } from "@/lib/group-settlement-mirror-hand-back";
 import { reviewRefundGoesToGroupOrganiser } from "@/lib/group-settlement-mirror-kinds";
 
 /**
- * #3032 (epic #2797): WHERE a confirmed review amount goes when the task is
- * closed, and what is refused before anything is claimed.
- *
- * ## Why this is a separate module from the completion itself
- *
- * `manual-refund-task-resolution.ts` is the completion DOOR: it validates the
- * operator's input, claims the task and audits the decision, and it ends at the
- * commit. Where an amount goes and how it gets there is a different question - a
- * question about the BOOKING's money rather than about the task's status - and it
- * is the one an adversarial reader needs to be able to check in isolation.
- *
- * ## Two halves, and the boundary between them is the CLAIM
- *
- * `chooseEditReviewSettlementRoute` runs BEFORE the claim, inside the caller's
- * transaction. It moves no money: it returns a plan or throws, and that is the
- * point - a refusal that fired after the claim would leave a task COMPLETED with
- * nothing moved, which is the "pretends money moved" failure `INV-PAY-051` exists
- * to prevent. (`planStripeRefundAllocation` may backfill legacy
- * `PaymentTransaction` rows as a side effect of reading them; that is a read made
- * durable on the caller's own transaction, not a settlement.)
- *
- * `executeEditReviewSettlement` runs AFTER the commit, and is where the provider
- * call, the member-facing events for the routes whose money moves out there, and
- * the Xero leg happen. Nothing between the two writes a settlement: the ledger
- * writes the transaction owns sit in the caller, immediately downstream of the
- * claim.
+ * #3032/#2797: settlement of a confirmed review amount, separate from task completion.
+ * `manual-refund-task-resolution.ts` validates, claims and audits in its transaction.
+ * `chooseEditReviewSettlementRoute` runs before the claim: return a plan or refuse
+ * before the task can become COMPLETED with nothing moved (`INV-PAY-051`).
+ * `planStripeRefundAllocation` may backfill legacy PaymentTransaction evidence
+ * in that transaction; it does not settle. The caller writes ledgers after its claim.
+ * `executeEditReviewSettlement` runs after commit: provider calls, member events
+ * for money moved there, and Xero. No settlement is written between these halves.
  *
  * ## WHY THIS IS NOT `calculateModificationSettlementOptions`
  *
@@ -496,13 +480,28 @@ export async function chooseEditReviewSettlementRoute({
     throw new ManualBookingPaymentError(REVIEW_CREDIT_ANCHOR_TAKEN_MESSAGE, 409);
   }
 
+  const allocateAgainstPaymentId = hasCapturedPayment(task.booking.payment)
+    ? (task.booking.payment?.id ?? null)
+    : null;
+  // #5061 follow-up (`INV-PAY-153`): no credit against a card payment the bank is taking back.
+  if (allocateAgainstPaymentId !== null && (await reviewCreditPaymentDisputedCents(store, allocateAgainstPaymentId)) > 0) {
+    throw new ManualBookingPaymentError(REVIEW_CREDIT_DISPUTED_MESSAGE, 409);
+  }
+
   return {
     kind: "account-credit",
     bookingModificationId,
-    allocateAgainstPaymentId: hasCapturedPayment(task.booking.payment)
-      ? (task.booking.payment?.id ?? null)
-      : null,
+    allocateAgainstPaymentId,
   };
+}
+
+/** The OPEN or LOST dispute hold on the payment an account-credit share is allocated against. */
+async function reviewCreditPaymentDisputedCents(store: Prisma.TransactionClient, paymentId: string): Promise<number> {
+  const payment = await store.payment.findUnique({
+    where: { id: paymentId },
+    select: { id: true, stripePaymentIntentId: true, additionalPaymentIntentId: true },
+  });
+  return payment ? (await paymentDisputedCaptureCents(store, payment)).cents : 0;
 }
 
 /**

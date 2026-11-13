@@ -843,6 +843,7 @@ export async function modifyBookingDates({
       unpaidAskCancelled,
       pendingRefundAmountCents,
       hasSucceededPayment,
+      refundHeldForDispute,
       hasIssuedXeroInvoice,
       xeroRefundAmountCents,
       xeroAdditionalAmountCents,
@@ -1367,6 +1368,7 @@ export async function modifyBookingDates({
       oldCheckIn,
       oldCheckOut,
       hasSucceededPayment,
+      refundHeldForDispute,
       hasIssuedXeroInvoice,
       paymentStatus: booking.payment?.status ?? null,
       paymentSource: booking.payment?.source ?? null,
@@ -1558,7 +1560,8 @@ async function dispatchDatePostTransactionSideEffects({
     // issued invoice falls back to the full delta inside classify when null.
     settlementAmountCents: result.xeroRefundAmountCents,
     settlementMethod: result.settlementMethod,
-    refundedThroughStripe: result.hasSucceededPayment,
+    // #5061 follow-up (`INV-PAY-153`): a disputed payment's reduction goes back by hand.
+    refundedThroughStripe: result.hasSucceededPayment && !result.refundHeldForDispute,
     appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     // #3653: the organiser child refund raises the one note, after Stripe.
     organiserChildRefundOwnsCreditNote: result.organiserChildRefund !== null,

@@ -1,11 +1,4 @@
-/**
- * `import "server-only"` makes the production build REFUSE this module in a
- * browser bundle, at any depth (`INV-OPS-013`, #2850). Operator CLIs reach it
- * under plain Node, where that marker would throw at import, so every `tsx`
- * invocation that reaches it runs with `--conditions=react-server` — which
- * resolves `server-only` to an empty module. `cli-server-only-reach-census.test.ts`
- * enforces that pairing; `docs/invariants/operations.md` carries the reasoning.
- */
+/** INV-OPS-013: server-only; CLIs require --conditions=react-server (enforced by cli-server-only-reach-census). */
 import "server-only";
 
 import Stripe from "stripe";
@@ -20,6 +13,7 @@ import {
   assertAppPaymentIntentMetadata,
   type AppPaymentIntentMetadata,
 } from "@/lib/stripe-app-intent-metadata";
+import { assertCaptureNotDisputed } from "@/lib/stripe-dispute-hold";
 
 // DB-only credential resolution (#2082): the secret key lives in the encrypted
 // IntegrationCredential store, so client construction is now ASYNC. We memoize
@@ -44,14 +38,8 @@ export async function getStripe(): Promise<Stripe> {
   return _stripe;
 }
 
-/**
- * THE CHARGE CURRENCY IS THE CLUB'S STORED CURRENCY, AND NO CALLER STATES IT
- * (#3567 D1; INV-SSOT-003, INV-CONFIG-006). Both wire calls below work it out
- * from the `format` they require, through `stripeChargeCurrency`, and refuse a
- * currency without two decimal places (D3) or an amount under the minimum (D7)
- * before Stripe is called. The rule and its reasons live in
- * `stripe-charge-currency.ts`, re-exported here for existing importers.
- */
+/** INV-SSOT-003/INV-CONFIG-006: stripe-charge-currency derives currency from required club format,
+ * refusing unsupported decimals and below-minimum amounts before provider calls (#3567 D1/D3/D7). */
 export {
   stripeChargeCurrency,
   UnsupportedChargeCurrencyError,
@@ -233,6 +221,9 @@ export async function processRefund({
   /** #4510 (`INV-PAY-147`): also send `idempotencyKey` as the refund's `refundSliceKey` evidence. */
   stampRefundSliceKey?: boolean;
 }): Promise<Stripe.Refund> {
+  // #4911 (`INV-PAY-153`): every card refund passes here, so no door refunds a
+  // capture the cardholder is disputing, or has won back from the club.
+  await assertCaptureNotDisputed(paymentIntentId);
   const stripe = await getStripe();
   const params = {
     payment_intent: paymentIntentId,
@@ -246,6 +237,15 @@ export async function processRefund({
   }
 
   return stripe.refunds.create(params);
+}
+
+/** #4911: bounded, no-retry charge lookup when a dispute's payment_intent is empty. */
+export async function getChargePaymentIntentId(chargeId: string, timeoutMs: number): Promise<string | null> {
+  const stripe = await getStripe();
+  const charge = await stripe.charges.retrieve(chargeId, {}, boundedStripeRequest(timeoutMs));
+  const intent = charge.payment_intent;
+  if (!intent) return null;
+  return typeof intent === "string" ? intent : intent.id;
 }
 
 export async function listRefundsForCharge(chargeId: string): Promise<Stripe.Refund[]> {

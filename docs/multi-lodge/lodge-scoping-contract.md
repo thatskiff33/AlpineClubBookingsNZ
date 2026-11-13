@@ -592,6 +592,9 @@ new ADR:
   #4624 it also records an app booking payment nothing settles; it then names
   the intent's `bookingId` as plain text with no relation (the booking may not
   exist here), and is still club-wide Finance evidence with no lodge.
+  `StripeDispute` (#4911) is a cardholder's dispute of a club charge; it names
+  the payment and booking it matched as plain ids with no relation, and stays
+  club-wide Finance evidence with no lodge.
 - Xero and finance: all `Xero*` models (including `XeroConnection`, the one
   operational connection row, #3806), `FinanceSnapshot`,
   `FinanceReportCategory*`, item/account mappings. One club-wide ledger and

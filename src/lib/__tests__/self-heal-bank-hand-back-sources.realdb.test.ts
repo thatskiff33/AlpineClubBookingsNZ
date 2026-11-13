@@ -297,7 +297,7 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
         // The edit's own test: money not captured through Stripe goes back by hand.
         expect(await raiseEditRefundHandBackIfOwed(tx, {
           bookingId: BOOKING_ID, paymentId: PAYMENT_ID, bookingModificationId: MODIFICATION_ID,
-          adjusted: { refundAmountCents: 5_000, hasSucceededPayment: false }, editLabel: "date change", booking: { organiserSettled: false, parentBookingId: null, payment: null },
+          adjusted: { refundAmountCents: 5_000, hasSucceededPayment: false, refundHeldForDispute: false }, editLabel: "date change", booking: { organiserSettled: false, parentBookingId: null, payment: null },
         })).toBe(true);
       });
       const task = await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: BOOKING_ID, occurrenceKey: { startsWith: "edit-refund-hand-back:" } } });

@@ -82,6 +82,8 @@ export type PaymentAdjustmentResult = {
   additionalAsk: AdditionalAsk;
   pendingRefundAmountCents: number;
   hasSucceededPayment: boolean;
+  /** INV-PAY-153: treasurer hand-back; pending Stripe refund and account credit are zero. */
+  refundHeldForDispute: boolean;
   hasIssuedXeroInvoice: boolean;
   xeroRefundAmountCents: number;
   xeroAdditionalAmountCents: number;
@@ -155,6 +157,7 @@ export {
   type BookingModificationSettlementOptions,
 } from "@/lib/booking-modify-settlement-options";
 import {
+  editReductionDisputeHold,
   modificationCardRefundTier,
   refundableCashForModification,
   resolveSelectedSettlementAmount,
@@ -240,8 +243,12 @@ export async function applyPaymentAdjustments(
   // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
   const remainingRefundableCents = await refundableCashForModification(tx, booking.payment, reduction);
 
+  // INV-PAY-153: decide under the door's global/lodge locks; the quote's read only shaped the choices.
+  // OPEN/LOST disputes send the whole reduction to the treasurer; options that found a hold keep it (they offered no choice).
+  const refundHeldForDispute = netAmountCents < 0 && hasSucceededPayment &&
+    (settlementOptions?.refundHeldForDispute === true || (await editReductionDisputeHold(tx, booking)).cents > 0);
   const selectedSettlement = resolveSelectedSettlementAmount({
-    settlementOptions,
+    settlementOptions: settlementOptions && { ...settlementOptions, refundHeldForDispute },
     settlementMethod,
   });
   // On a reduction against an issued Xero invoice (#1015): when a payment has
@@ -312,13 +319,14 @@ export async function applyPaymentAdjustments(
       } else {
         refundAmountCents = selectedSettlement.amountCents;
       }
-      pendingRefundAmountCents = hasSucceededPayment ? refundAmountCents : 0;
+      // A held refund is not Stripe's to make: the hand-back carries it (`editRefundGoesBackByHand`).
+      pendingRefundAmountCents = hasSucceededPayment && !refundHeldForDispute ? refundAmountCents : 0;
     } else if (netAmountCents < 0) {
       refundAmountCents = Math.min(
         Math.abs(netAmountCents),
         remainingRefundableCents,
       );
-      pendingRefundAmountCents = hasSucceededPayment ? refundAmountCents : 0;
+      pendingRefundAmountCents = hasSucceededPayment && !refundHeldForDispute ? refundAmountCents : 0;
     } else if (netAmountCents > 0) {
       // #3340 (`INV-PAY-047`, `INV-ADDPAY-023`). A bare `netAmountCents` here is
       // the money leak: minting the new ADDITIONAL intent retires every other
@@ -417,6 +425,7 @@ export async function applyPaymentAdjustments(
     additionalAsk,
     pendingRefundAmountCents,
     hasSucceededPayment,
+    refundHeldForDispute,
     hasIssuedXeroInvoice,
     xeroRefundAmountCents,
     xeroAdditionalAmountCents,

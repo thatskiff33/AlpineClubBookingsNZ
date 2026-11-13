@@ -210,7 +210,19 @@ export async function loadBookingDetailAdminTools({
         ]
       : [];
 
+  // #4911 (`INV-PAY-153`): a cardholder's dispute on this booking's payment, and how it ended, read from the
+  // durable record the dispute webhooks keep. Behind the same gate as the tools card.
+  const stripeDisputes =
+    canSeeAdminTools && booking.payment
+      ? await prisma.stripeDispute.findMany({
+          where: { paymentId: booking.payment.id },
+          select: { stripeDisputeId: true, status: true, amountCents: true },
+          orderBy: [{ stripeCreatedAt: "desc" }, { stripeDisputeId: "asc" }],
+        })
+      : [];
+
   return {
+    stripeDisputes,
     providerMismatches,
     financialReviewWarnings,
     withheldEmails,

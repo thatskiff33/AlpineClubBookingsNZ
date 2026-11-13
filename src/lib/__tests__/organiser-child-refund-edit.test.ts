@@ -27,6 +27,12 @@ import { reopenedRetryAt } from "@/lib/organiser-child-refund-executor";
 
 // `booking-modify-settlement` reaches `@/lib/cancellation`, which constructs the
 // Prisma adapter at import time; nothing here touches the module client.
+// #5061 follow-up: no capture here is disputed; the edit's hold is proved in
+// `stripe-dispute-edit.realdb.test.ts`.
+vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
+  paymentDisputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
+}));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 /*
@@ -74,6 +80,7 @@ const ORGANISER_OPTIONS: BookingModificationSettlementOptions = {
   requiresSettlementMethod: false,
   returnsToOrganiser: true,
   organiserRefundByBankTransfer: false,
+  refundHeldForDispute: false,
 };
 
 function txWithSettlement(settlement: Record<string, unknown> | null, groupStatus = "OPEN") {
@@ -233,7 +240,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     expect(ib).toMatchObject({ returnsToOrganiser: true, organiserRefundByBankTransfer: true, requiresSettlementMethod: false, accountCreditAmountCents: 0, accountCreditPercentage: 0 });
     expect(ib?.cardRefundAmountCents).toBe(card?.cardRefundAmountCents);
     // The untiered options (a guest's acceptance) answer the same way.
-    const full = calculateFullReductionSettlementOptions({ booking: ibChild(), netChargeCents: -1500, refundableCashCents: 4500, todayAtClub });
+    const full = calculateFullReductionSettlementOptions({ booking: ibChild(), netChargeCents: -1500, refundableCashCents: 4500, todayAtClub, refundHeldForDispute: false });
     expect(full).toMatchObject({ returnsToOrganiser: true, organiserRefundByBankTransfer: true, requiresSettlementMethod: false, accountCreditAmountCents: 0, cardRefundAmountCents: 1500 });
   });
 

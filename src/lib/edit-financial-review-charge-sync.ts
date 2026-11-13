@@ -564,7 +564,7 @@ async function syncEditReviewChargeRequestUnderClaim(
       // Only the fields the minter reads. The rest of
       // `BookingModificationPaymentContext` describes a refund it will not make
       // (`pendingRefundAmountCents` 0) and a settlement it does not choose.
-      pendingRefundAmountCents: 0, organiserChildRefund: null,
+      pendingRefundAmountCents: 0, organiserChildRefund: null, refundHeldForDispute: false,
       paymentId, memberFirstName: "", // #3369: mints an ask, sends nothing.
       additionalAsk: ask, retiredAdditionalAsks: [], // #3954: a review charge retires nothing by reduction.
       // #3947: the chooser's own question (`chooseEditReviewChargeRoute`), so a

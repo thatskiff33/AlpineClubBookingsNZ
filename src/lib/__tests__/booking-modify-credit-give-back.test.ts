@@ -18,6 +18,12 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
   `credit-paid-reduction.realdb.test.ts`.
 */
 
+// #5061 follow-up: no capture here is disputed; the edit's hold is proved in
+// `stripe-dispute-edit.realdb.test.ts`.
+vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
+  paymentDisputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
+}));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 const credit = vi.hoisted(() => ({
@@ -400,6 +406,34 @@ describe("#3809: a booking paid by card AND credit gets back what an all-card on
       refundAmountCents: 10_000,
       allocatedGiveBackCents: 5_000,
     }));
+  });
+});
+
+/*
+  #5061 follow-up (`INV-PAY-153`): the door's options found the card payment
+  disputed and so offered no choice. If the save's own read no longer sees the
+  dispute (it closed between the two reads), the reduction still goes to the
+  treasurer rather than silently returning nothing.
+*/
+describe("#5061 follow-up: options that found a dispute hold keep it in the save", () => {
+  it("MUTATION: a hold the save no longer reads still hands the credit tier back by hand, never zero", async () => {
+    credit.policy = TIERS["100%"];
+    credit.applied = 10_000;
+    const booking = creditPaidBooking({ payment: { amountCents: 10_000, source: PaymentSource.STRIPE, creditAppliedCents: 10_000 } });
+    const options = await calculateModificationSettlementOptions({ reduction: noReductionAgainstUnpaidAsk(-15_000),
+      booking, netChargeCents: -15_000, db: NO_HAND_BACKS as never, todayAtClub: TODAY,
+    });
+    const settlementOptions = { ...options, refundHeldForDispute: true, requiresSettlementMethod: false };
+    const result = await applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk(-15_000),
+      booking, priceDiffCents: -15_000, changeFeeCents: 0, settlementOptions,
+      todayAtClub: TODAY, format: CLUB_FORMAT_TEST,
+    });
+
+    expect(result.refundHeldForDispute).toBe(true);
+    expect(result.refundAmountCents).toBe(options.accountCreditAmountCents);
+    expect(result.refundAmountCents).toBeGreaterThan(0);
+    expect(result.pendingRefundAmountCents).toBe(0);
+    expect(result.accountCreditAmountCents).toBe(0);
   });
 });
 

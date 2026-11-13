@@ -4,8 +4,9 @@ import { matchesWhere } from "./support/prisma-where";
 
 /**
  * #4669: one retry owner per lost copy of a caller-retried admin alert - the
- * settlement-figure alert (#4446, the marker retries it) and the two Stripe
- * payment alerts (#4647, Stripe's redelivery retries them).
+ * settlement-figure alert (#4446, the marker retries it), the two Stripe
+ * payment alerts (#4647) and the Stripe dispute alert (#4911), which Stripe's
+ * redelivery retries.
  *
  * - One recipient's copy fails while another's goes out: the owner sees "sent"
  *   and never retries, so the email retry cron replays exactly that copy, once.
@@ -17,7 +18,8 @@ import { matchesWhere } from "./support/prisma-where";
  *   keeps its claim.
  *
  * Real from the owner to the transport: the owners (`raiseCashSettlementAlert`,
- * `recordUnrecognisedStripePayment`, `recordUnmatchedAppStripePayment`), the
+ * `recordUnrecognisedStripePayment`, `recordUnmatchedAppStripePayment`,
+ * `recordStripeDispute`), the
  * unmuteable sender, `sendEmail` and its EmailLog rows, the release, and
  * `retryFailedEmails`. The doubles are the store (in-memory tables filtered by
  * the shared `matchesWhere`, with a transaction that rolls back on a throw),
@@ -36,6 +38,7 @@ const DEPUTY = "deputy.treasurer@example.test";
 const state = vi.hoisted(() => ({
   emailLogs: new Map<string, Record<string, unknown> & { id: string }>(),
   stripeRows: new Map<string, Record<string, unknown> & { id: string; stripePaymentIntentId: string }>(),
+  disputeRows: new Map<string, Record<string, unknown> & { id: string; stripeDisputeId: string }>(),
   cooldowns: new Map<string, Date>(),
   markers: new Map<string, { id: string; snapshot: unknown }>(),
   /** Every message the transport accepted; each test sends one alert. */
@@ -115,6 +118,42 @@ vi.mock("@/lib/prisma", () => {
         return Object.assign(row, data);
       },
     },
+    // #4911: the dispute's own row; the capture it names is not the app's.
+    stripeDispute: {
+      findUnique: async ({ where }: { where: { stripeDisputeId?: string; id?: string } }) => {
+        if (where.stripeDisputeId) return state.disputeRows.get(where.stripeDisputeId) ?? null;
+        return [...state.disputeRows.values()].find((row) => row.id === where.id) ?? null;
+      },
+      findUniqueOrThrow: async ({ where }: { where: { id: string } }) => {
+        const row = [...state.disputeRows.values()].find((item) => item.id === where.id);
+        if (!row) throw new Error("missing dispute row");
+        return row;
+      },
+      createMany: async ({ data }: { data: (Record<string, unknown> & { stripeDisputeId: string })[] }) => {
+        let count = 0;
+        for (const row of data) {
+          if (state.disputeRows.has(row.stripeDisputeId)) continue;
+          state.disputeRows.set(row.stripeDisputeId, {
+            ...row,
+            id: `sd_${state.disputeRows.size + 1}`,
+            openedAlertedAt: null,
+            closedAlertedAt: null,
+          });
+          count += 1;
+        }
+        return { count };
+      },
+      update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+        const row = [...state.disputeRows.values()].find((item) => item.id === where.id);
+        if (!row) throw new Error("missing dispute row");
+        return Object.assign(row, data);
+      },
+    },
+    paymentTransaction: { findUnique: async () => null },
+    payment: { findFirst: async () => null },
+    groupBookingSettlement: { findUnique: async () => null },
+    booking: { findUnique: async () => null },
+    $executeRaw: async () => 1,
     alertCooldown: {
       updateMany: async ({ where, data }: { where: Record<string, unknown> & { key: string }; data: { lastAlertedAt: Date } }) => {
         const held = state.cooldowns.get(where.key);
@@ -197,6 +236,7 @@ vi.mock("@/lib/email-admin-alert-escalation", () => ({
 
 vi.mock("@/lib/stripe", () => ({
   findCheckoutSessionForPaymentIntent: async () => null,
+  getChargePaymentIntentId: async () => null,
 }));
 
 vi.mock("@/lib/email/admin-alert-xero-links", () => ({
@@ -287,6 +327,7 @@ import {
   recordUnrecognisedStripePayment,
   UnrecognisedStripePaymentAlertNotSentError,
 } from "@/lib/unrecognised-stripe-payment";
+import { recordStripeDispute, StripeDisputeAlertNotSentError } from "@/lib/stripe-dispute";
 import { raiseCashSettlementAlert } from "@/lib/xero-inbound/settle-from-cash-notice";
 import { declareEnvironmentRole, undeclareEnvironmentRole } from "./helpers/environment-role";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -341,6 +382,37 @@ function stripeOwner(name: string, template: string, metadata: Record<string, st
   };
 }
 
+/** #4911: a dispute opened on a capture; Stripe's redelivery of the event is the owner's retry. */
+function disputeOwner(): Owner {
+  const dispute = {
+    id: "dp_4669",
+    object: "dispute",
+    amount: 5000,
+    currency: "nzd",
+    reason: "fraudulent",
+    status: "needs_response",
+    created: CREATED,
+    charge: "ch_4669",
+    payment_intent: "pi_4669",
+    balance_transactions: [],
+  } as unknown as Stripe.Dispute;
+  const event = { id: "evt_dispute_4669", livemode: true, type: "charge.dispute.created", created: CREATED } as Stripe.Event;
+  const record = () => recordStripeDispute(dispute, event, CLUB_FORMAT_TEST);
+  return {
+    name: "the Stripe dispute alert (#4911)",
+    template: "admin-stripe-dispute",
+    deliver: async () => {
+      await record().catch((err) => {
+        if (!(err instanceof StripeDisputeAlertNotSentError)) throw err;
+      });
+    },
+    retry: async () => {
+      await record();
+    },
+    kept: () => state.disputeRows.get("dp_4669")?.openedAlertedAt instanceof Date,
+  };
+}
+
 const MARKER_ID = "marker_4669";
 const booking = { checkIn: new Date("2026-07-10T00:00:00Z"), checkOut: new Date("2026-07-12T00:00:00Z") };
 const raiseSettlement = () =>
@@ -364,6 +436,7 @@ const OWNERS: Owner[] = [
   settlementOwner,
   stripeOwner("the unrecognised Stripe payment alert (#4532)", "admin-unrecognised-stripe-payment", {}),
   stripeOwner("the unmatched app Stripe payment alert (#4624)", "admin-unmatched-app-stripe-payment", { bookingId: "booking-1" }),
+  disputeOwner(),
 ];
 
 const alertRows = (template: string) => [...state.emailLogs.values()].filter((row) => row.templateName === template);
@@ -383,6 +456,7 @@ describe("a caller-retried admin alert has one retry owner per lost copy (#4669)
     start = new Date();
     state.emailLogs.clear();
     state.stripeRows.clear();
+    state.disputeRows.clear();
     state.cooldowns.clear();
     state.markers.clear();
     state.markers.set(MARKER_ID, {
