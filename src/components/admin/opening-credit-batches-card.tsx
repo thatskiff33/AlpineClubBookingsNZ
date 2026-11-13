@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message"
 import { parseInstant } from "@/lib/club-time"
 import type { OpeningCreditBatchListItem, OpeningCreditPreview } from "@/lib/opening-credit-batch"
 import { OPENING_CREDIT_CSV_MAX_CHARS, OPENING_CREDIT_REVERSAL_REASON_MAX_LENGTH } from "@/lib/opening-credit-csv"
@@ -31,11 +32,6 @@ import { formatCents } from "@/lib/utils"
 type Batch = OpeningCreditBatchListItem
 type Preview = Omit<OpeningCreditPreview, "alreadyPosted"> & {
   alreadyPosted: { batchId: string; postedAt: string; reversedAt: string | null } | null
-}
-
-async function readError(response: Response, fallback: string) {
-  const body = (await response.json().catch(() => null)) as { error?: string } | null
-  return body?.error ?? fallback
 }
 
 /**
@@ -103,7 +99,7 @@ export function OpeningCreditBatchesCard({
         body: JSON.stringify({ csvText: text }),
       })
       if (!response.ok) {
-        setDialogError(await readError(response, "The file could not be previewed"))
+        setDialogError(await apiErrorMessageFromResponse(response, "The file could not be previewed"))
         return
       }
       setPreview((await response.json()) as Preview)
@@ -123,7 +119,7 @@ export function OpeningCreditBatchesCard({
         body: JSON.stringify({ csvText, batchKey: preview.batchKey, totalCents: preview.totalCents }),
       })
       if (!response.ok) {
-        setDialogError(await readError(response, "The batch could not be posted"))
+        setDialogError(await apiErrorMessageFromResponse(response, "The batch could not be posted"))
         return
       }
       toast.success(`Posted ${preview.matchedCount} opening credits totalling ${formatCents(preview.totalCents, format)}`)
@@ -146,7 +142,7 @@ export function OpeningCreditBatchesCard({
         body: JSON.stringify({ reason }),
       })
       if (!response.ok) {
-        setDialogError(await readError(response, "The batch could not be reversed"))
+        setDialogError(await apiErrorMessageFromResponse(response, "The batch could not be reversed"))
         return
       }
       toast.success(`Reversed the opening-credit batch of ${formatCents(reversing.totalCents, format)}`)
@@ -279,8 +275,9 @@ export function OpeningCreditBatchesCard({
                 {preview.alreadyPosted ? (
                   <p role="status" className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
                     This file was already posted on {when(preview.alreadyPosted.postedAt)}
-                    {preview.alreadyPosted.reversedAt ? " and later reversed" : ""}. Posting it again would change no
-                    balance, so it cannot be confirmed.
+                    {preview.alreadyPosted.reversedAt ? " and later reversed" : ""}. The same file can only post
+                    once; to post these credits again, change the file (such as its descriptions) so it becomes a new
+                    batch.
                   </p>
                 ) : null}
                 <div className="max-h-80 overflow-auto rounded-md border">
