@@ -1,8 +1,14 @@
-import { countExhaustedCashSettlementAlerts } from "@/lib/xero-inbound/cash-settlement-alert-retry";
+import type { PaymentRecoveryOperationType, Prisma } from "@prisma/client";
+import {
+  countExhaustedCashSettlementAlerts,
+  listExhaustedCashSettlementAlerts,
+} from "@/lib/xero-inbound/cash-settlement-alert-retry";
 import { countBankRefundVoidsToAnswer } from "@/lib/bank-refund-void-follow-up";
 import type { FeatureFlags } from "@/config/schema";
 import { CLUB_HUT_LEADER_LABEL } from "@/config/club-identity";
-import { bookingOwner } from "@/lib/booking-owner";
+import { BOOKING_OWNER_NAME_SELECT, bookingOwnerName } from "@/lib/booking-owner-name";
+import { listDeadCardRefunds } from "@/lib/card-refund-paid-another-way";
+import { clubFormat } from "@/lib/club-format-server";
 import { describeHostingCoverageIncidentCause } from "@/lib/adult-member-hosting-coverage-incidents";
 import { formatDateOnly } from "@/lib/date-only";
 import { addCalendarDays } from "@/lib/club-time";
@@ -20,7 +26,10 @@ import {
   getUnreachableMemberSummary,
   UNREACHABLE_MEMBER_REASON_LABEL,
 } from "@/lib/member-email-inheritance";
-import { countBookingsWithUnnamedPlaceholderGuests } from "@/lib/placeholder-guest-name-reminders";
+import {
+  countBookingsWithUnnamedPlaceholderGuests,
+  listBookingsWithUnnamedPlaceholderGuests,
+} from "@/lib/placeholder-guest-name-reminders";
 import { countUnconfirmedSchoolAttendeeLists } from "@/lib/school-attendee-confirmation";
 import { loadHutLeaderLookaheadDays } from "@/lib/lodge-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -46,6 +55,11 @@ const BED_ALLOCATION_LOOKAHEAD_DAYS = 7;
 // that predate BookingEvent narratives while still catching any recent cancel
 // that crashed between its claim commit and the Stripe refund.
 const CANCELLED_REFUND_UNRECORDED_LOOKBACK_DAYS = 90;
+/**
+ * #4959: the most named rows one signal lists. Its count stays the full total,
+ * and the page says how many more there are.
+ */
+export const STUCK_STATE_DETAIL_ROW_CAP = 50;
 
 export type StuckStateSeverity = "critical" | "warning" | "info";
 
@@ -75,12 +89,21 @@ export interface StuckStateItem {
   count: number;
   href: string;
   summary: string;
-  details?: Array<{
-    id: string;
-    title: string;
-    summary: string;
-    href: string;
-  }>;
+  details?: StuckStateDetail[];
+}
+
+/** One named row under a signal: a booking, its owner, and a plain line. */
+interface StuckStateDetail {
+  id: string;
+  title: string;
+  summary: string;
+  href: string;
+}
+
+/** How a detail row prints money and an instant (#4959), in the club's format and zone. */
+interface StuckStateDetailFormat {
+  cents(cents: number): string;
+  instantDate(instant: Date): string;
 }
 
 interface StuckStateDomainSummary {
@@ -116,7 +139,7 @@ type FindManyDelegate = {
 };
 
 type StuckStateDashboardDb = {
-  paymentRecoveryOperation: CountDelegate;
+  paymentRecoveryOperation: CountDelegate & FindManyDelegate;
   hostingCoverageIncident: CountDelegate & FindManyDelegate;
   booking: FindManyDelegate & CountDelegate;
   groupBookingSettlement: FindManyDelegate;
@@ -141,6 +164,8 @@ export interface StuckStateDashboardDependencies {
   getWaitlistOfferEmailDeliveries: typeof getWaitlistOfferEmailDeliveries;
   countUnconfirmedSchoolAttendeeLists: typeof countUnconfirmedSchoolAttendeeLists;
   countBookingsWithUnnamedPlaceholderGuests: typeof countBookingsWithUnnamedPlaceholderGuests;
+  /** #4959: the bookings the count above counts; called instead of it when the rows may be shown. */
+  listBookingsWithUnnamedPlaceholderGuests: typeof listBookingsWithUnnamedPlaceholderGuests;
   getBedAllocationDashboard: typeof getBedAllocationDashboard;
   getUnassignedHutLeaderDates: typeof getUnassignedHutLeaderDates;
   loadHutLeaderLookaheadDays: typeof loadHutLeaderLookaheadDays;
@@ -154,6 +179,16 @@ export interface StuckStateDashboardDependencies {
   /** #4162: how many voided bank refund notes wait for a person (`countBankRefundVoidsToAnswer`). */
   countBankRefundVoidsToAnswer: () => Promise<number>;
   countExhaustedCashSettlementAlerts: () => Promise<number>;
+  /** #4959: the oldest exhausted alerts, with their bookings, for the named rows. */
+  listExhaustedCashSettlementAlerts: typeof listExhaustedCashSettlementAlerts;
+  /**
+   * #4959: the recovery operations listed under "Card refunds Stripe gave up
+   * on", so an exhausted row can send the officer there. The page passes the
+   * list it already read.
+   */
+  listDeadCardRefundOperationIds: () => Promise<ReadonlySet<string>>;
+  /** #4959: the club's money format and zone for the payment rows. */
+  loadDetailFormat: () => Promise<StuckStateDetailFormat>;
 }
 
 const DOMAIN_LABELS: Record<StuckStateDomain, string> = {
@@ -194,13 +229,48 @@ const defaultDependencies: StuckStateDashboardDependencies = {
   getWaitlistOfferEmailDeliveries,
   countUnconfirmedSchoolAttendeeLists,
   countBookingsWithUnnamedPlaceholderGuests,
+  listBookingsWithUnnamedPlaceholderGuests,
   getBedAllocationDashboard,
   getUnassignedHutLeaderDates,
   loadHutLeaderLookaheadDays,
   countActiveLodges: () => countActiveLodges(prisma),
   countBankRefundVoidsToAnswer,
   countExhaustedCashSettlementAlerts,
+  listExhaustedCashSettlementAlerts,
+  listDeadCardRefundOperationIds: async () =>
+    new Set((await listDeadCardRefunds()).map((row) => row.operationId)),
+  loadDetailFormat: async () => {
+    const [format, time] = await Promise.all([clubFormat(), clubTime()]);
+    return { cents: format.cents, instantDate: time.instantDate };
+  },
 };
+
+type OwnedBooking = Prisma.BookingGetPayload<{
+  select: typeof OWNED_BOOKING_SELECT;
+}>;
+
+/** What a named row selects of its booking: the id and the owner's name. */
+const OWNED_BOOKING_SELECT = {
+  id: true,
+  ...BOOKING_OWNER_NAME_SELECT,
+} satisfies Prisma.BookingSelect;
+
+/**
+ * #4959: one named row — the booking's reference and owner (`bookingOwnerName`,
+ * an organisation as well as a member), a plain line, and the booking's page.
+ */
+function bookingDetailRow(
+  id: string,
+  booking: OwnedBooking,
+  summary: string,
+): StuckStateDetail {
+  return {
+    id,
+    title: `${formatBookingReference(booking.id)} - ${bookingOwnerName(booking)}`,
+    summary,
+    href: `/bookings/${booking.id}`,
+  };
+}
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`) {
   return count === 1 ? singular : pluralForm;
@@ -276,14 +346,20 @@ function buildTotals(items: StuckStateItem[]) {
   };
 }
 
-function buildPaymentItems(items: StuckStateItem[], counts: {
-  exhaustedFailed: number;
-  staleProcessing: number;
-  overduePending: number;
-  staleSettlements: number;
-  cancelledUnrecordedRefunds: number;
-  unexecutedSettlementRefunds: number;
-}) {
+type PaymentSignal =
+  | "exhaustedFailed"
+  | "staleProcessing"
+  | "overduePending"
+  | "staleSettlements"
+  | "cancelledUnrecordedRefunds"
+  | "unexecutedSettlementRefunds";
+
+function buildPaymentItems(
+  items: StuckStateItem[],
+  counts: Record<PaymentSignal, number>,
+  // #4959: undefined unless the viewer may see named payment rows.
+  details: Record<PaymentSignal, StuckStateDetail[]> | undefined,
+) {
   addItem(items, {
     id: "payment-group-settlement-refund-unexecuted",
     domain: "payment",
@@ -291,13 +367,14 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     severity: "critical",
     owner: "Finance",
     count: counts.unexecutedSettlementRefunds,
-    href: adminHref("bookings"),
+    href: adminAnchorHref("stuck-states", "payment-group-settlement-refund-unexecuted"),
     summary: `${counts.unexecutedSettlementRefunds} cancelled organiser-pays ${plural(
       counts.unexecutedSettlementRefunds,
       "group",
     )} still ${
       counts.unexecutedSettlementRefunds === 1 ? "holds" : "hold"
     } an unexecuted settlement refund plan — the organiser has not been refunded yet; the recovery queue retries it and alerts if retries exhaust.`,
+    details: details?.unexecutedSettlementRefunds,
   });
   addItem(items, {
     id: "payment-cancelled-refund-unrecorded",
@@ -306,13 +383,14 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     severity: "critical",
     owner: "Finance",
     count: counts.cancelledUnrecordedRefunds,
-    href: adminHref("health"),
+    href: adminAnchorHref("stuck-states", "payment-cancelled-refund-unrecorded"),
     summary: `${counts.cancelledUnrecordedRefunds} cancelled ${plural(
       counts.cancelledUnrecordedRefunds,
       "booking",
     )} in the last ${CANCELLED_REFUND_UNRECORDED_LOOKBACK_DAYS} days ${
       counts.cancelledUnrecordedRefunds === 1 ? "holds" : "hold"
     } a captured payment with no recorded refund, no recovery operation, and no cancellation settlement record — the cancel may have crashed before the card refund; verify the member was refunded.`,
+    details: details?.cancelledUnrecordedRefunds,
   });
   addItem(items, {
     id: "payment-recovery-exhausted",
@@ -321,11 +399,12 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     severity: "critical",
     owner: "Finance",
     count: counts.exhaustedFailed,
-    href: adminHref("health"),
+    href: adminAnchorHref("stuck-states", "payment-recovery-exhausted"),
     summary: `${counts.exhaustedFailed} payment recovery ${plural(
       counts.exhaustedFailed,
       "operation",
     )} reached ${MAX_PAYMENT_RECOVERY_ATTEMPTS} attempts, or stopped on a failure a retry cannot fix, and need manual reconciliation. A card refund among them that the member was paid another way can be closed under "Card refunds Stripe gave up on" on this page (Finance view).`,
+    details: details?.exhaustedFailed,
   });
   addItem(items, {
     id: "payment-recovery-stale-processing",
@@ -334,11 +413,12 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     severity: "critical",
     owner: "Finance",
     count: counts.staleProcessing,
-    href: adminHref("health"),
+    href: adminHref("background-jobs"),
     summary: `${counts.staleProcessing} payment recovery ${plural(
       counts.staleProcessing,
       "operation",
     )} have been processing for more than ${PAYMENT_PROCESSING_STALE_MINUTES} minutes.`,
+    details: details?.staleProcessing,
   });
   addItem(items, {
     id: "payment-group-settlement-stale",
@@ -347,11 +427,12 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     severity: "warning",
     owner: "Admin",
     count: counts.staleSettlements,
-    href: adminHref("bookings"),
+    href: adminAnchorHref("stuck-states", "payment-group-settlement-stale"),
     summary: `${counts.staleSettlements} organiser-pays group ${plural(
       counts.staleSettlements,
       "settlement",
     )} are unpaid past the reap deadline and still hold (or recently held) beds; the group-settlement reaper releases them on its next run.`,
+    details: details?.staleSettlements,
   });
   addItem(items, {
     id: "payment-recovery-overdue-pending",
@@ -360,11 +441,12 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     severity: "warning",
     owner: "Finance",
     count: counts.overduePending,
-    href: adminHref("health"),
+    href: adminHref("background-jobs"),
     summary: `${counts.overduePending} payment recovery ${plural(
       counts.overduePending,
       "operation",
     )} are more than ${PAYMENT_PENDING_OVERDUE_MINUTES} minutes past their retry time and have not been claimed.`,
+    details: details?.overduePending,
   });
 }
 
@@ -809,58 +891,177 @@ async function addLodgeItems(
   });
 }
 
-async function getPaymentCounts(
+/** #4959: what a recovery operation is for, in words an officer reads. */
+const RECOVERY_OPERATION_PURPOSE: Record<PaymentRecoveryOperationType, string> = {
+  CANCEL_PAYMENT_INTENT: "Cancel an unused card payment",
+  REFUND_SUPERSEDED_PAYMENT: "Refund a replaced card payment",
+  REFUND_BOOKING_MODIFICATION: "Card refund",
+  CREATE_ADDITIONAL_PAYMENT_INTENT: "Create a card request",
+};
+
+/**
+ * What a recovery operation's named row reads (#4959). Never `lastError`, a
+ * Stripe id or an idempotency key: the row names the booking, not the provider.
+ */
+const RECOVERY_OPERATION_ROW_SELECT = {
+  id: true,
+  type: true,
+  amountCents: true,
+  createdAt: true,
+  booking: { select: OWNED_BOOKING_SELECT },
+} satisfies Prisma.PaymentRecoveryOperationSelect;
+
+type RecoveryOperationRow = Prisma.PaymentRecoveryOperationGetPayload<{
+  select: typeof RECOVERY_OPERATION_ROW_SELECT;
+}>;
+
+/** An operation PROCESSING longer than a worker run can last. One where for the count and its rows. */
+function staleProcessingRecoveryWhere(now: Date) {
+  return {
+    status: "PROCESSING",
+    processingStartedAt: {
+      lt: new Date(now.getTime() - PAYMENT_PROCESSING_STALE_MINUTES * 60 * 1000),
+    },
+  } satisfies Prisma.PaymentRecoveryOperationWhereInput;
+}
+
+/** A retryable PENDING operation nobody claimed past its retry time. One where for the count and its rows. */
+function overduePendingRecoveryWhere(now: Date) {
+  return {
+    status: "PENDING",
+    nextRetryAt: {
+      lte: new Date(now.getTime() - PAYMENT_PENDING_OVERDUE_MINUTES * 60 * 1000),
+    },
+    attempts: { lt: MAX_PAYMENT_RECOVERY_ATTEMPTS },
+  } satisfies Prisma.PaymentRecoveryOperationWhereInput;
+}
+
+/**
+ * #1349 (F2) crash-window detector: a CANCELLED booking that kept a fully
+ * captured, unrefunded payment with NO refund-recovery operation and NO
+ * cancellation narrative event can only be a cancel that died between the
+ * claim commit and Phase 2 (deliberate zero-refund cancels write their
+ * CANCELLED BookingEvent; refunds bump refundedAmountCents; the #1349
+ * in-transaction enqueue leaves a recovery operation). Before #1349 NOTHING
+ * fired for this state — the member's refund was silently lost. #4959: the
+ * count and the named rows both read this one where.
+ */
+function cancelledRefundUnrecordedWhere(now: Date) {
+  return {
+    status: "CANCELLED",
+    deletedAt: null,
+    updatedAt: {
+      gte: new Date(
+        now.getTime() -
+          CANCELLED_REFUND_UNRECORDED_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
+      ),
+    },
+    payment: {
+      is: {
+        status: "SUCCEEDED",
+        refundedAmountCents: 0,
+        amountCents: { gt: 0 },
+      },
+    },
+    paymentRecoveryOperations: {
+      none: { type: "REFUND_BOOKING_MODIFICATION" },
+    },
+    events: {
+      // #2262 — the admin-only settlement markers are stored as
+      // CANCELLED events (reversal / reciprocal-fence conflict, and
+      // #3638's second-instrument conflict) but cancel
+      // nothing, so they must not count as "the cancel wrote its
+      // narrative event" here: a genuinely crashed cancel on a booking
+      // that once hit a marker would otherwise be invisible. The DB-level
+      // twin of booking-narrative's isManualSettlementMarkerEvent
+      // exclusion, keyed on the markers' constant `reason` strings (the
+      // snapshot discriminator is not expressible in this relation
+      // filter). The OR keeps a NULL-reason genuine cancel event counted —
+      // a bare notIn would drop NULL rows under SQL three-valued logic.
+      // #2008's duplicate-capture marker does NOT share this shape (it is
+      // a REFUNDED event), so it needs no exclusion here.
+      none: {
+        type: "CANCELLED",
+        OR: [
+          { reason: null },
+          {
+            reason: {
+              notIn: [...SETTLEMENT_MARKER_EVENT_REASONS],
+            },
+          },
+        ],
+      },
+    },
+  } satisfies Prisma.BookingWhereInput;
+}
+
+/** The organiser's booking behind a group settlement, for its named row. */
+const SETTLEMENT_ORGANISER_SELECT = {
+  groupBooking: { select: { organiserBooking: { select: OWNED_BOOKING_SELECT } } },
+} satisfies Prisma.GroupBookingSettlementSelect;
+
+type SettlementOrganiser = Prisma.GroupBookingSettlementGetPayload<{
+  select: typeof SETTLEMENT_ORGANISER_SELECT;
+}>;
+
+async function getPaymentSignals(
   deps: StuckStateDashboardDependencies,
   now: Date,
-) {
-  const staleProcessingThreshold = new Date(
-    now.getTime() - PAYMENT_PROCESSING_STALE_MINUTES * 60 * 1000,
-  );
-  const pendingOverdueThreshold = new Date(
-    now.getTime() - PAYMENT_PENDING_OVERDUE_MINUTES * 60 * 1000,
-  );
-
+  // #4959 (#2823): read and name the rows only for a viewer allowed to see them.
+  showRows: boolean,
+): Promise<{
+  counts: Record<PaymentSignal, number>;
+  details: Record<PaymentSignal, StuckStateDetail[]> | undefined;
+}> {
   // F3 (#1351): a SUCCEEDED settlement under a CANCELLED group whose persisted
   // refund plan was never executed — the organiser's settlement refund has not
   // completed. The recovery queue retries it (and alerts on exhaustion); this
   // tile keeps the state visible to operators the whole time, including for
-  // incidents that predate the durable retry.
-  const unexecutedSettlementRefunds = (
+  // incidents that predate the durable retry. #4959: the rows are this same
+  // filtered read, oldest first, so they cannot drift from the count.
+  const unexecuted = (
     (await deps.db.groupBookingSettlement.findMany({
       where: {
         status: "SUCCEEDED",
         groupBooking: { status: "CANCELLED" },
       },
-      select: { refundPlan: true },
-    })) as Array<{ refundPlan: unknown }>
-  ).filter((settlement) => settlement.refundPlan != null).length;
+      select: showRows
+        ? { refundPlan: true, id: true, amountCents: true, ...SETTLEMENT_ORGANISER_SELECT }
+        : { refundPlan: true },
+      orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+    })) as Array<{ refundPlan: unknown } & Partial<{ id: string; amountCents: number } & SettlementOrganiser>>
+  ).filter((settlement) => settlement.refundPlan != null);
 
-  const staleSettlements = (
+  const stale = (
     (await deps.db.groupBookingSettlement.findMany({
       where: { status: { in: ["PENDING", "FAILED"] } },
       select: {
         updatedAt: true,
+        ...(showRows ? { id: true, amountCents: true } : {}),
         groupBooking: {
-          select: { organiserBooking: { select: { checkIn: true } } },
+          select: {
+            organiserBooking: {
+              select: { checkIn: true, ...(showRows ? OWNED_BOOKING_SELECT : {}) },
+            },
+          },
         },
       },
+      orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
     })) as Array<{
       updatedAt: Date;
-      groupBooking: { organiserBooking: { checkIn: Date } };
+      id?: string;
+      amountCents?: number;
+      groupBooking: { organiserBooking: { checkIn: Date } & Partial<OwnedBooking> };
     }>
-  ).filter(
-    (settlement) =>
-      now >=
-      groupSettlementReapDeadline(
+  )
+    .map((settlement) => ({
+      settlement,
+      deadline: groupSettlementReapDeadline(
         settlement.updatedAt,
         settlement.groupBooking.organiserBooking.checkIn,
       ),
-  ).length;
-
-  const cancelledRefundLookbackThreshold = new Date(
-    now.getTime() -
-      CANCELLED_REFUND_UNRECORDED_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
-  );
+    }))
+    .filter(({ deadline }) => now >= deadline);
 
   const [
     exhaustedFailed,
@@ -870,78 +1071,109 @@ async function getPaymentCounts(
   ] = await Promise.all([
     // #4104: a card refund raised dead is PENDING with its attempts spent.
     deps.db.paymentRecoveryOperation.count({ where: PAYMENT_RECOVERY_EXHAUSTED_WHERE }),
-    deps.db.paymentRecoveryOperation.count({
-      where: {
-        status: "PROCESSING",
-        processingStartedAt: { lt: staleProcessingThreshold },
-      },
-    }),
-    deps.db.paymentRecoveryOperation.count({
-      where: {
-        status: "PENDING",
-        nextRetryAt: { lte: pendingOverdueThreshold },
-        attempts: { lt: MAX_PAYMENT_RECOVERY_ATTEMPTS },
-      },
-    }),
-    // #1349 (F2) crash-window detector: a CANCELLED booking that kept a fully
-    // captured, unrefunded payment with NO refund-recovery operation and NO
-    // cancellation narrative event can only be a cancel that died between the
-    // claim commit and Phase 2 (deliberate zero-refund cancels write their
-    // CANCELLED BookingEvent; refunds bump refundedAmountCents; the #1349
-    // in-transaction enqueue leaves a recovery operation). Before #1349
-    // NOTHING fired for this state — the member's refund was silently lost.
-    deps.db.booking.count({
-      where: {
-        status: "CANCELLED",
-        deletedAt: null,
-        updatedAt: { gte: cancelledRefundLookbackThreshold },
-        payment: {
-          is: {
-            status: "SUCCEEDED",
-            refundedAmountCents: 0,
-            amountCents: { gt: 0 },
-          },
-        },
-        paymentRecoveryOperations: {
-          none: { type: "REFUND_BOOKING_MODIFICATION" },
-        },
-        events: {
-          // #2262 — the admin-only settlement markers are stored as
-          // CANCELLED events (reversal / reciprocal-fence conflict, and
-          // #3638's second-instrument conflict) but cancel
-          // nothing, so they must not count as "the cancel wrote its
-          // narrative event" here: a genuinely crashed cancel on a booking
-          // that once hit a marker would otherwise be invisible. The DB-level
-          // twin of booking-narrative's isManualSettlementMarkerEvent
-          // exclusion, keyed on the markers' constant `reason` strings (the
-          // snapshot discriminator is not expressible in this relation
-          // filter). The OR keeps a NULL-reason genuine cancel event counted —
-          // a bare notIn would drop NULL rows under SQL three-valued logic.
-          // #2008's duplicate-capture marker does NOT share this shape (it is
-          // a REFUNDED event), so it needs no exclusion here.
-          none: {
-            type: "CANCELLED",
-            OR: [
-              { reason: null },
-              {
-                reason: {
-                  notIn: [...SETTLEMENT_MARKER_EVENT_REASONS],
-                },
-              },
-            ],
-          },
-        },
-      },
-    }),
+    deps.db.paymentRecoveryOperation.count({ where: staleProcessingRecoveryWhere(now) }),
+    deps.db.paymentRecoveryOperation.count({ where: overduePendingRecoveryWhere(now) }),
+    deps.db.booking.count({ where: cancelledRefundUnrecordedWhere(now) }),
   ]);
 
-  return {
+  const counts = {
     exhaustedFailed,
     staleProcessing,
     overduePending,
-    staleSettlements,
+    staleSettlements: stale.length,
     cancelledUnrecordedRefunds,
-    unexecutedSettlementRefunds,
+    unexecutedSettlementRefunds: unexecuted.length,
+  };
+  if (!showRows) return { counts, details: undefined };
+
+  const recoveryRows = (where: Prisma.PaymentRecoveryOperationWhereInput, count: number) =>
+    count > 0
+      ? (deps.db.paymentRecoveryOperation.findMany({
+          where,
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          take: STUCK_STATE_DETAIL_ROW_CAP,
+          select: RECOVERY_OPERATION_ROW_SELECT,
+        }) as Promise<RecoveryOperationRow[]>)
+      : Promise.resolve([]);
+  const [format, exhaustedRows, staleRows, overdueRows, cancelledRows, deadCardRefunds] =
+    await Promise.all([
+      deps.loadDetailFormat(),
+      recoveryRows(PAYMENT_RECOVERY_EXHAUSTED_WHERE, exhaustedFailed),
+      recoveryRows(staleProcessingRecoveryWhere(now), staleProcessing),
+      recoveryRows(overduePendingRecoveryWhere(now), overduePending),
+      cancelledUnrecordedRefunds > 0
+        ? (deps.db.booking.findMany({
+            where: cancelledRefundUnrecordedWhere(now),
+            orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+            take: STUCK_STATE_DETAIL_ROW_CAP,
+            select: {
+              ...OWNED_BOOKING_SELECT,
+              updatedAt: true,
+              lodge: { select: { name: true } },
+              payment: { select: { amountCents: true } },
+            },
+          }) as Promise<Array<OwnedBooking & {
+            updatedAt: Date;
+            lodge: { name: string } | null;
+            payment: { amountCents: number } | null;
+          }>>)
+        : Promise.resolve([]),
+      exhaustedFailed > 0 ? deps.listDeadCardRefundOperationIds() : Promise.resolve(new Set<string>()),
+    ]);
+
+  const recoveryDetail = (operation: RecoveryOperationRow, close?: string) =>
+    bookingDetailRow(
+      operation.id,
+      operation.booking,
+      `${RECOVERY_OPERATION_PURPOSE[operation.type]} of ${format.cents(operation.amountCents)}, raised ${format.instantDate(operation.createdAt)}.${close ? ` ${close}` : ""}`,
+    );
+  const settlementDetail = (
+    settlement: { id?: string; amountCents?: number } & { groupBooking: { organiserBooking: Partial<OwnedBooking> } },
+    summary: string,
+  ) =>
+    bookingDetailRow(
+      settlement.id as string,
+      settlement.groupBooking.organiserBooking as OwnedBooking,
+      summary,
+    );
+
+  return {
+    counts,
+    details: {
+      exhaustedFailed: exhaustedRows.map((operation) =>
+        recoveryDetail(
+          operation,
+          deadCardRefunds.has(operation.id)
+            ? 'Settle it under "Card refunds Stripe gave up on" on this page.'
+            : undefined,
+        ),
+      ),
+      staleProcessing: staleRows.map((operation) => recoveryDetail(operation)),
+      overduePending: overdueRows.map((operation) => recoveryDetail(operation)),
+      cancelledUnrecordedRefunds: cancelledRows.map((booking) =>
+        bookingDetailRow(
+          booking.id,
+          booking,
+          `${booking.lodge?.name ?? "Lodge"}; ${format.cents(booking.payment?.amountCents ?? 0)} captured and not refunded; cancelled, last changed ${format.instantDate(booking.updatedAt)}.`,
+        ),
+      ),
+      unexecutedSettlementRefunds: unexecuted
+        .slice(0, STUCK_STATE_DETAIL_ROW_CAP)
+        .map((settlement) =>
+          settlementDetail(
+            settlement as typeof settlement & SettlementOrganiser,
+            `Group cancelled; the organiser's ${format.cents(settlement.amountCents ?? 0)} settlement has a refund plan not yet carried out.`,
+          ),
+        ),
+      staleSettlements: stale
+        .slice(0, STUCK_STATE_DETAIL_ROW_CAP)
+        .map(({ settlement, deadline }) =>
+          settlementDetail(
+            settlement,
+            `Group settlement of ${format.cents(settlement.amountCents ?? 0)} unpaid since its reap deadline, ${format.instantDate(deadline)}.`,
+          ),
+        ),
+    },
   };
 }
 
@@ -970,15 +1202,25 @@ export async function getStuckStateDashboard(input?: {
   };
   const now = input?.now ?? new Date();
   const viewerCanViewMembership = input?.viewerCanViewMembership ?? false;
+  // #4959 (#2823): a named payment row is a booking owner beside their money,
+  // so it needs both finance:view and membership:view. Fail closed: without
+  // both, the rows' queries never run; the count and card link always stay.
+  const viewerCanViewPaymentRows =
+    viewerCanViewMembership && (input?.viewerCanViewFinance ?? false);
   const items: StuckStateItem[] = [];
 
-  const [modules, paymentCounts] = await Promise.all([
+  const [modules, paymentSignals] = await Promise.all([
     deps.loadEffectiveModuleFlags(),
-    getPaymentCounts(deps, now),
+    getPaymentSignals(deps, now, viewerCanViewPaymentRows),
   ]);
 
-  buildPaymentItems(items, paymentCounts);
-  const exhaustedSettlementAlerts = await deps.countExhaustedCashSettlementAlerts();
+  buildPaymentItems(items, paymentSignals.counts, paymentSignals.details);
+  const [exhaustedSettlementAlerts, exhaustedSettlementAlertRows] = await Promise.all([
+    deps.countExhaustedCashSettlementAlerts(),
+    viewerCanViewPaymentRows
+      ? deps.listExhaustedCashSettlementAlerts(STUCK_STATE_DETAIL_ROW_CAP)
+      : Promise.resolve(undefined),
+  ]);
   addItem(items, {
     id: "payment-settlement-alert-undelivered",
     domain: "payment",
@@ -988,6 +1230,13 @@ export async function getStuckStateDashboard(input?: {
     count: exhaustedSettlementAlerts,
     href: adminHref("payments"),
     summary: `${exhaustedSettlementAlerts} settlement figure alerts exhausted their retries. Check the bank transfer amounts against Xero and the staff booking timeline; no further alert emails are attempted.`,
+    details: exhaustedSettlementAlertRows?.map((alert) =>
+      bookingDetailRow(
+        alert.id,
+        alert.booking,
+        `${formatDateOnly(alert.booking.checkIn)} to ${formatDateOnly(alert.booking.checkOut)}; open the booking's staff timeline for the figures to check against Xero.`,
+      ),
+    ),
   });
 
   // School attendee lists inside their confirmation window (#1101): the
@@ -1027,8 +1276,15 @@ export async function getStuckStateDashboard(input?: {
   // `attendeesConfirmedAt: null`), and a booking still held for approval, which
   // has no `convertedBookingId` for either sweep to find. Those are precisely
   // the rows an admin must fix by hand, so the copy has to say so.
+  //
+  // #4959: a membership viewer reads the list the count is the length of, and
+  // its first rows are named here; anyone else reads the count alone.
+  const unnamedPlaceholderList = viewerCanViewMembership
+    ? await deps.listBookingsWithUnnamedPlaceholderGuests(now)
+    : undefined;
   const unnamedPlaceholderBookings =
-    await deps.countBookingsWithUnnamedPlaceholderGuests(now);
+    unnamedPlaceholderList?.length ??
+    (await deps.countBookingsWithUnnamedPlaceholderGuests(now));
   addItem(items, {
     id: "booking-unnamed-placeholder-guests",
     domain: "booking",
@@ -1036,13 +1292,22 @@ export async function getStuckStateDashboard(input?: {
     severity: "warning",
     owner: "Admin",
     count: unnamedPlaceholderBookings,
-    href: adminHref("bookings"),
+    href: adminAnchorHref("stuck-states", "booking-unnamed-placeholder-guests"),
     summary: `${unnamedPlaceholderBookings} upcoming ${plural(
       unnamedPlaceholderBookings,
       "booking",
     )} still ${
       unnamedPlaceholderBookings === 1 ? "lists" : "list"
-    } placeholder guest names ("Guest 2", "School Child 5"), so the chore list and arrival roster would show those instead of real people. Most bookers are chased automatically, but some rows are not — a school list already confirmed with its placeholder names, or a booking still held for approval — so treat this as a list to work through: open the booking and edit the names, which an admin or Booking Officer can always do. The stay is never held up over this.`,
+    } placeholder guest names ("Guest 2", "School Child 5"), so the chore list and arrival roster would show those instead of real people. Most bookers are chased automatically, but some rows are not — a school list already confirmed with its placeholder names, or a booking still held for approval — so open each booking named below and edit the names, which an admin or Booking Officer can always do. The stay is never held up over this.`,
+    details: unnamedPlaceholderList
+      ?.slice(0, STUCK_STATE_DETAIL_ROW_CAP)
+      .map((booking) =>
+        bookingDetailRow(
+          booking.id,
+          booking,
+          `${booking.lodge?.name ?? "Lodge"}; arrives ${formatDateOnly(booking.checkIn)}; ${booking.unnamedGuestCount} unnamed ${plural(booking.unnamedGuestCount, "guest")}.`,
+        ),
+      ),
   });
 
   // #2576 §7 and §16: a CONFIRMED booking at an enforcing lodge that has lost the
@@ -1061,7 +1326,7 @@ export async function getStuckStateDashboard(input?: {
       deps.db.hostingCoverageIncident.findMany({
         where: { resolvedAt: null },
         orderBy: [{ openedAt: "asc" }, { id: "asc" }],
-        take: 50,
+        take: STUCK_STATE_DETAIL_ROW_CAP,
         select: {
           id: true,
           cause: true,
@@ -1069,12 +1334,10 @@ export async function getStuckStateDashboard(input?: {
           evidence: true,
           booking: {
             select: {
-              id: true,
+              // #3369: the owner may be an Organisation; bookingOwnerName() reads both.
+              ...OWNED_BOOKING_SELECT,
               checkIn: true,
               checkOut: true,
-              member: { select: { firstName: true, lastName: true } },
-              // #3369: the owner may be an Organisation; bookingOwner() reads both.
-              organisation: { select: { name: true, email: true } },
               lodge: { select: { name: true } },
             },
           },
@@ -1087,11 +1350,9 @@ export async function getStuckStateDashboard(input?: {
       cause: string;
       openedAt: Date;
       evidence: unknown;
-      booking: {
-        id: string;
+      booking: OwnedBooking & {
         checkIn: Date;
         checkOut: Date;
-        member: { firstName: string; lastName: string };
         lodge: { name: string } | null;
       };
     }>
@@ -1102,18 +1363,14 @@ export async function getStuckStateDashboard(input?: {
           (night): night is string => typeof night === "string",
         )
       : [];
-    const ownerName =
-      `${bookingOwner(incident.booking).member.firstName} ${bookingOwner(incident.booking).member.lastName}`.trim();
-    return {
-      id: incident.id,
-      title: `${formatBookingReference(incident.booking.id)} - ${ownerName}`,
-      summary:
-        `${incident.booking.lodge?.name ?? "Lodge"}; ` +
+    return bookingDetailRow(
+      incident.id,
+      incident.booking,
+      `${incident.booking.lodge?.name ?? "Lodge"}; ` +
         `${formatDateOnly(incident.booking.checkIn)} to ${formatDateOnly(incident.booking.checkOut)}; ` +
         `${nights.length} uncovered ${plural(nights.length, "night")}; ` +
         `${describeHostingCoverageIncidentCause(incident.cause)}.`,
-      href: `/bookings/${incident.booking.id}`,
-    };
+    );
   });
   addItem(items, {
     id: "booking-hosting-coverage-incidents",

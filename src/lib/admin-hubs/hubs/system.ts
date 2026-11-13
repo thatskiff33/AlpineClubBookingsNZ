@@ -32,8 +32,16 @@ export const SYSTEM_HUB = defineHub({
       label: "Stuck States",
       oldPath: "/admin/stuck-states",
       area: "support",
-      // The voided bank refund notes panel (#4162), linked from its stuck-state row.
-      anchors: ["bank-refund-voids"],
+      // The voided bank refund notes panel (#4162), linked from its stuck-state
+      // row, and the rows that name their bookings on this page (#4959).
+      anchors: [
+        "bank-refund-voids",
+        "payment-group-settlement-refund-unexecuted",
+        "payment-cancelled-refund-unrecorded",
+        "payment-recovery-exhausted",
+        "payment-group-settlement-stale",
+        "booking-unnamed-placeholder-guests",
+      ],
       moved: true,
     },
     {
