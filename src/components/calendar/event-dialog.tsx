@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Video, MapPin, Trash2, ExternalLink, Repeat } from "lucide-react";
+import { Video, Trash2, ExternalLink, Repeat } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -24,18 +24,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useClubTime } from "@/components/club-time-provider";
+import {
+  EventDetailsView,
+  type CalendarWorkPartyLink,
+} from "./event-details-view";
 import type {
   CalendarEditScope,
   CalendarEventDTO,
 } from "@/lib/calendar-events";
 import {
   parseCalendarDate,
-  parseInstant,
   type CalendarDate,
 } from "@/lib/club-time";
 import {
-  formatEventDateLong,
-  formatInstantTime,
   isoEndFromDateTimeInputs,
   isoFromDateTimeInputs,
   shouldIncludeRecurrence,
@@ -43,7 +44,6 @@ import {
   toTimeInputValue,
 } from "@/lib/calendar-client";
 import {
-  describeRecurrence,
   recurrenceOptionsForDate,
   recurrenceUnitLabel,
   type CalendarRecurrenceFrequency,
@@ -74,6 +74,8 @@ interface EventDialogProps {
    * calendar creates but does not edit; /admin/calendar keeps full editing.
    */
   canEditExisting: boolean;
+  /** Where a work party's entry points (fork #118); see EventDetailsView. */
+  workPartyLink?: CalendarWorkPartyLink;
   /** Called after a successful create/update/delete so the caller can refetch. */
   onSaved: () => void;
 }
@@ -94,6 +96,7 @@ export function EventDialog({
   canCreate,
   canManage,
   canEditExisting,
+  workPartyLink = null,
   onSaved,
 }: EventDialogProps) {
   /*
@@ -297,97 +300,21 @@ export function EventDialog({
     }
   }
 
-  // Read-only detail view: shown to ordinary members, and to managers on the
-  // member calendar (where existing events are not editable). A meeting shows a
-  // "Join meeting" button only to managers (committee members / admins) — an
-  // ordinary member sees the event details but cannot join the meeting.
-  if (event && !canEditExisting) {
-    // The series summary describes a pattern anchored at a real instant, so it
-    // is rendered only when that instant parses. There is nothing honest to say
-    // about the shape of a series whose anchor is unreadable, and a placeholder
-    // date would be a confident lie.
-    const anchorInstant = parseInstant(event.startsAt);
+  // Read-only detail view (event-details-view.tsx): ordinary members, managers
+  // on the member calendar, and a work party's entry for everyone (fork #118),
+  // which is managed from Work Parties and refused by the calendar API.
+  if (event && (!canEditExisting || event.workPartyEventId)) {
     return (
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              {event.isMeeting && (
-                <Video aria-hidden className="h-4 w-4 text-primary" />
-              )}
-              {event.title}
-            </DialogTitle>
-            <DialogDescription>
-              {formatEventDateLong(event, club.zone, club.format)}
-              {!event.allDay && (
-                <>
-                  {" · "}
-                  {formatInstantTime(event.startsAt, club.zone, club.format)}
-                  {event.endsAt
-                    ? ` – ${formatInstantTime(event.endsAt, club.zone, club.format)}`
-                    : ""}
-                </>
-              )}
-              {event.allDay && " · All day"}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 text-sm">
-            {event.recurrence && anchorInstant && (
-              <p className="flex items-center gap-2 text-muted-foreground">
-                <Repeat aria-hidden className="h-4 w-4" />
-                {describeRecurrence(
-                  {
-                    frequency: event.recurrence.frequency,
-                    interval: event.recurrence.interval,
-                    endMode: event.recurrence.endMode,
-                    until: event.recurrence.until,
-                    count: event.recurrence.count,
-                  },
-                  anchorInstant,
-                  club.zone,
-                  club.format,
-                )}
-              </p>
-            )}
-            {event.location && (
-              <p className="flex items-center gap-2 text-muted-foreground">
-                <MapPin aria-hidden className="h-4 w-4" />
-                {event.location}
-              </p>
-            )}
-            {event.details && (
-              <p className="whitespace-pre-wrap text-foreground">
-                {event.details}
-              </p>
-            )}
-            {!event.location && !event.details && !event.recurrence && (
-              <p className="text-muted-foreground">No further details.</p>
-            )}
-            {joinError && (
-              <p role="alert" className="text-sm font-medium text-destructive">
-                {joinError}
-              </p>
-            )}
-          </div>
-          <DialogFooter className="gap-2 sm:justify-between">
-            {canManage && event.isMeeting ? (
-              <Button
-                type="button"
-                onClick={() => joinMeeting(event.id)}
-                disabled={joining}
-              >
-                <Video aria-hidden className="mr-2 h-4 w-4" />
-                {joining ? "Opening…" : "Join meeting"}
-              </Button>
-            ) : (
-              <span />
-            )}
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <EventDetailsView
+        open={open}
+        onOpenChange={onOpenChange}
+        event={event}
+        canManage={canManage}
+        workPartyLink={workPartyLink}
+        joining={joining}
+        joinError={joinError}
+        onJoinMeeting={joinMeeting}
+      />
     );
   }
 

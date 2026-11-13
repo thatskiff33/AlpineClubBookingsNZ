@@ -121,6 +121,7 @@ export default function BookPage() {
     handleSaveAsDraft,
     exceptionOffer,
     replaceExceptionRequestId,
+    workPartyPrefillNotice,
     submitExceptionRequest,
     getGuestProfileBlockMessage,
     getGuestProfileActionLabel,
@@ -312,6 +313,13 @@ export default function BookPage() {
             </p>
           ) : null}
         </Alert>
+      )}
+
+      {/* Fork #118: a Join link whose work party cannot be filled in. */}
+      {workPartyPrefillNotice && (
+        <p role="status" className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+          {workPartyPrefillNotice}
+        </p>
       )}
 
       {error && (

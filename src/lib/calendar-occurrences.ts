@@ -150,6 +150,44 @@ export function seriesMatchesRule(
   );
 }
 
+/**
+ * The row for a one-off (non-recurring) event — the ONE shape every one-off
+ * create writes (`createCalendarEvent`, and a work party's single-night entry,
+ * fork #118), so a column added to events is added once.
+ */
+export function buildStandaloneEventRow(
+  data: ResolvedEventData,
+  actorId: string,
+  idempotencyKey: string | null = null,
+): Prisma.CalendarEventUncheckedCreateInput {
+  return {
+    title: data.title,
+    location: data.location,
+    details: data.details,
+    allDay: data.allDay,
+    startsAt: data.startsAt,
+    endsAt: data.endsAt,
+    isMeeting: data.isMeeting,
+    meetingRoom: data.isMeeting ? randomUUID() : null,
+    createdById: actorId,
+    idempotencyKey,
+  };
+}
+
+/** The series row for a recurrence rule — every series create writes this. */
+export function buildSeriesRow(
+  rule: RecurrenceRule,
+  actorId: string,
+): Prisma.CalendarEventSeriesUncheckedCreateInput {
+  return {
+    frequency: rule.frequency,
+    interval: rule.interval,
+    until: seriesUntil(rule),
+    count: seriesCount(rule),
+    createdById: actorId,
+  };
+}
+
 export function buildOccurrenceRows(
   starts: Date[],
   data: ResolvedEventData,

@@ -67,6 +67,7 @@ describe("serializeCalendarEvent", () => {
     updatedAt: new Date(),
     seriesId: null,
     detachedFromSeries: false,
+    workPartyEventId: null,
   };
 
   it("never emits a meeting URL/token field — even for a meeting with a room", () => {

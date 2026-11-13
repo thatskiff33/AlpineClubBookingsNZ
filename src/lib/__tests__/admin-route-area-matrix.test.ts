@@ -496,6 +496,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/waitlist": "bookings",
   "/api/admin/work-parties": "lodge",
   "/api/admin/work-parties/[id]": "lodge",
+  "/api/admin/work-parties/[id]/calendar": "lodge",
   "/api/admin/xero/account-mappings": "finance",
   "/api/admin/xero/callback": "finance",
   "/api/admin/xero/chart-of-accounts": "finance",

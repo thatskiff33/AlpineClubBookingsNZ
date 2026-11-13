@@ -22,6 +22,7 @@ import {
   createRequestPromoFields,
 } from "@/components/promo-code-list-client";
 import { useWorkingBeeDiscount } from "./use-working-bee-discount";
+import { useWorkPartyPrefill } from "./use-work-party-prefill";
 import {
   getBookingErrorPaymentTargets,
   type BookingErrorPaymentTarget,
@@ -1578,6 +1579,15 @@ export function useBookingWizard() {
             const events: WorkPartyEvent[] = data.events || [];
             if (!ownsWorkPartyRequest()) return;
             setActiveWorkPartyEvents(events);
+            // Fork #118: tick the work party a Join came from, once. Read when
+            // the response lands, after render, so the hook declared below it
+            // has long been initialised.
+            const joined = workPartyPrefill.takePendingWorkPartySelection(events);
+            if (joined && !selectedWorkPartyEventId) {
+              setSelectedWorkPartyEventId(joined);
+              setAttendingWorkParty(true);
+              return;
+            }
             if (
               selectedWorkPartyEventId &&
               !events.some((e) => e.id === selectedWorkPartyEventId)
@@ -2237,6 +2247,21 @@ export function useBookingWizard() {
     setWorkPartyError,
   });
 
+  // Fork #118: "Join Work Party" opens /book?workParty=<id>. Added after every
+  // existing effect so their order is unchanged.
+  const workPartyPrefill = useWorkPartyPrefill({
+    workPartyId: searchParams?.get("workParty")?.trim() || null,
+    lodgeIds: lodges.map((lodge) => lodge.id),
+    lodgesSettled: !lodgesLoading && !lodgesFailed && !lodgesForbidden,
+    lodgeId,
+    scopedLodgeId,
+    onDatesStep: step === "dates",
+    memberStarted: checkIn !== null || step !== "dates",
+    bookingBlocked: subscriptionLoading ? null : subscriptionUnpaid,
+    selectLodge: handleLodgeChange,
+    selectDates: (ci, co) => void handleDateSelect(ci, co),
+  });
+
   const wizardSteps: Array<{ id: BookingWizardStep; label: string }> = [
     { id: "dates", label: "Select Dates" },
     { id: "guests", label: "Add Guests" },
@@ -2345,6 +2370,7 @@ export function useBookingWizard() {
     // #2562 — the member-facing exception-request surface.
     exceptionOffer,
     replaceExceptionRequestId,
+    workPartyPrefillNotice: workPartyPrefill.workPartyPrefillNotice,
     submitExceptionRequest,
     getGuestProfileBlockMessage,
     getGuestProfileActionLabel,

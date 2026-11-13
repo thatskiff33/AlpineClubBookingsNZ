@@ -9,6 +9,8 @@ import {
 } from "@/lib/calendar-recurrence";
 import {
   buildOccurrenceRows,
+  buildSeriesRow,
+  buildStandaloneEventRow,
   clubDayKey,
   durationMsOf,
   nextMeetingRoom,
@@ -34,6 +36,28 @@ function isRecordNotFoundError(error: unknown): boolean {
       "code" in error &&
       (error as { code?: unknown }).code === "P2025",
   );
+}
+
+/**
+ * Thrown by `updateCalendarEvent` / `deleteCalendarEvent` for an entry a work
+ * party manages (fork #118). Such an entry changes only through its work party
+ * (`replaceWorkPartyCalendarEvents` in calendar-work-party-entries.ts), so the calendar cannot edit it out of
+ * step. A row's link is set when the row is created and never changes, so the
+ * check on the row the mutation has just read cannot race.
+ */
+export class WorkPartyManagedCalendarEventError extends Error {
+  constructor() {
+    super(
+      "This event is managed from Work Parties. Change the work party instead.",
+    );
+    this.name = "WorkPartyManagedCalendarEventError";
+  }
+}
+
+function refuseWorkPartyManagedEvent(event: {
+  workPartyEventId: string | null;
+}): void {
+  if (event.workPartyEventId) throw new WorkPartyManagedCalendarEventError();
 }
 
 /**
@@ -80,7 +104,7 @@ type Db = typeof prisma | Prisma.TransactionClient;
  * pg_advisory_xact_lock returns void, which the driver adapter cannot
  * deserialize as a result row.
  */
-async function lockCalendarSeries(
+export async function lockCalendarSeries(
   tx: Pick<Prisma.TransactionClient, "$executeRaw">,
   seriesId: string,
 ): Promise<void> {
@@ -96,13 +120,7 @@ async function createSeriesRows(
   zone: ClubTimeZone,
 ): Promise<CalendarEvent> {
   const series = await tx.calendarEventSeries.create({
-    data: {
-      frequency: data.recurrence.frequency,
-      interval: data.recurrence.interval,
-      until: seriesUntil(data.recurrence),
-      count: seriesCount(data.recurrence),
-      createdById: actorId,
-    },
+    data: buildSeriesRow(data.recurrence, actorId),
   });
 
   const starts = generateOccurrenceStarts(
@@ -184,18 +202,7 @@ export async function createCalendarEvent(
     // so no zone is needed and none is resolved.
     try {
       return await prisma.calendarEvent.create({
-        data: {
-          title: data.title,
-          location: data.location,
-          details: data.details,
-          allDay: data.allDay,
-          startsAt: data.startsAt,
-          endsAt: data.endsAt,
-          isMeeting: data.isMeeting,
-          meetingRoom: data.isMeeting ? randomUUID() : null,
-          createdById: actorId,
-          idempotencyKey: key,
-        },
+        data: buildStandaloneEventRow(data, actorId, key),
       });
     } catch (error) {
       if (key && isPrismaUniqueConstraintError(error)) {
@@ -433,6 +440,7 @@ export async function updateCalendarEvent(
     include: { series: true },
   })) as EventWithSeries | null;
   if (!existing) return null;
+  refuseWorkPartyManagedEvent(existing);
 
   // One resolution of the club's persisted zone for this whole update, so the
   // day comparison below, the regenerated series and the propagated
@@ -541,6 +549,7 @@ export async function deleteCalendarEvent(
 ): Promise<CalendarDeleteResult | null> {
   const existing = await prisma.calendarEvent.findUnique({ where: { id } });
   if (!existing) return null;
+  refuseWorkPartyManagedEvent(existing);
 
   if (scope === "series" && existing.seriesId) {
     const seriesId = existing.seriesId;

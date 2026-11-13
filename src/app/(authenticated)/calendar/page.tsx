@@ -7,6 +7,7 @@ import {
   canViewCalendarEvents,
 } from "@/lib/calendar-access";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { canViewWorkParties } from "@/lib/work-party-access";
 import { CalendarView } from "@/components/calendar/calendar-view";
 import { CLUB_NAME } from "@/config/club-identity";
 
@@ -58,7 +59,15 @@ export default async function MemberCalendarPage() {
       </div>
       {/* Existing events are read-only here (create-and-view); full editing and
           deletion live on /admin/calendar. */}
-      <CalendarView canManage={canManage} allowEditExisting={false} />
+      <CalendarView
+        canManage={canManage}
+        allowEditExisting={false}
+        workPartyLink={
+          modules.workParties && canViewWorkParties(session.user)
+            ? "member"
+            : null
+        }
+      />
     </div>
   );
 }

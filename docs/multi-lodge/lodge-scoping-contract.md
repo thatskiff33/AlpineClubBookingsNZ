@@ -691,6 +691,14 @@ record the outcome here when decided:
   pre-migration meaning). A lodge-bound event's internal promo resolves
   only for bookings at that lodge; the booking form filters events by the
   chosen lodge and labels lodge-bound ones.
+- **`CalendarEvent.workPartyEventId` (nullable, fork #118) stays club-wide.**
+  It links a calendar entry to the work party that manages it; the calendar
+  itself is club-wide, so the entry carries no lodge of its own and shows the
+  work party's lodge name as its location. The work party's `lodgeId` stays
+  the one lodge fact. The member work party page and dashboard card list
+  lodge-bound and club-wide work parties alike, naming the lodge; "Join Work
+  Party" preselects the work party's lodge (or leaves the member's choice for
+  a club-wide one).
 - **`LodgeSettings` / `BedAllocationSettings` per-lodge rows.** A lodge's
   row is keyed by its lodge id (`id = lodgeId`); the legacy "default" row
   keeps serving the lodge it was soft-linked to in the phase-2 backfill

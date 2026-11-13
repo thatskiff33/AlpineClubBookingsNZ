@@ -181,6 +181,9 @@ export const NON_WEBSITE_ROOT_SEGMENTS: ReadonlySet<string> = new Set([
   "nominations",
   "notices",
   "profile",
+  // Fork #118: the member work party page. An `(authenticated)` route like
+  // dashboard/notices, members only and gated by the workParties module.
+  "work-parties",
   // (public) — login and the token flows an operator may need mid-setup.
   //
   // NOT every token flow in the product, and since #2818 that is worth saying

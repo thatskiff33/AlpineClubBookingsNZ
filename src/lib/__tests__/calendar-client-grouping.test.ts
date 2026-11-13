@@ -39,6 +39,7 @@ function makeEvent(overrides: Partial<CalendarEventDTO>): CalendarEventDTO {
     seriesId: null,
     detachedFromSeries: false,
     recurrence: null,
+    workPartyEventId: null,
     ...overrides,
   };
 }

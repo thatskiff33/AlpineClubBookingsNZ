@@ -39,7 +39,7 @@ import {
 } from "@/lib/booking-guest-stay-range-input";
 import { resolvePromoPreviewStaysOrRefusal } from "@/lib/promo-preview-stay-ranges";
 import { parsedDateOnlySchema } from "@/lib/date-only-schema";
-import { workPartyWindowOverlapsStay } from "@/lib/work-party";
+import { isOpenWorkPartyEvent, workPartyWindowOverlapsStay } from "@/lib/work-party";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { normalizePromoCodeInput } from "@/lib/promo-code-list-rules";
 import { computeMemberGuestBoundary } from "@/lib/booking-guests";
@@ -235,7 +235,7 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (!event.active || !event.promoCode.active || event.promoCode.archivedAt) {
+    if (!isOpenWorkPartyEvent(event)) {
       return NextResponse.json(
         { valid: false, error: "This working bee event is no longer active" },
         { status: 400 }

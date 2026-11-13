@@ -12,6 +12,7 @@ import {
   calendarEventInputSchema,
   resolveCalendarEventDates,
   serializeCalendarEvent,
+  VISIBLE_CALENDAR_EVENT_WHERE,
 } from "@/lib/calendar-events";
 
 // Widest window a single list request may span, guarding against an unbounded
@@ -63,7 +64,11 @@ export async function GET(req: NextRequest) {
       // events (endsAt null) are matched on their start alone.
       where: {
         startsAt: { lte: to },
-        OR: [{ endsAt: null }, { endsAt: { gte: from } }],
+        AND: [
+          { OR: [{ endsAt: null }, { endsAt: { gte: from } }] },
+          // Fork #118: an inactive work party's entries are hidden.
+          VISIBLE_CALENDAR_EVENT_WHERE,
+        ],
       },
       orderBy: { startsAt: "asc" },
       include: { series: true },

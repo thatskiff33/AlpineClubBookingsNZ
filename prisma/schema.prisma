@@ -3736,6 +3736,10 @@ model WorkPartyEvent {
 
   promoCode PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
   lodge     Lodge?    @relation(fields: [lodgeId], references: [id], onDelete: SetNull)
+  // The Events Calendar entries this work party manages (fork #118): one
+  // all-day occurrence per night of the window, as one series. Written only by
+  // src/lib/calendar-work-party-entries.ts (replaceWorkPartyCalendarEvents).
+  calendarEvents CalendarEvent[]
 
   @@index([active])
   @@index([startDate, endDate])
@@ -8283,8 +8287,17 @@ model CalendarEvent {
   detachedFromSeries Boolean              @default(false)
   series             CalendarEventSeries? @relation(fields: [seriesId], references: [id], onDelete: SetNull)
 
+  // Work party this entry belongs to (fork #118). Null = an ordinary calendar
+  // event. A linked entry is managed from Work Parties: the calendar API refuses
+  // to edit or delete it, and it is hidden while its work party is inactive.
+  // Club-wide like every calendar row; the work party carries the lodge
+  // (docs/multi-lodge/lodge-scoping-contract.md).
+  workPartyEventId String?
+  workPartyEvent   WorkPartyEvent? @relation(fields: [workPartyEventId], references: [id], onDelete: Cascade)
+
   @@index([startsAt])
   @@index([seriesId])
+  @@index([workPartyEventId])
 }
 
 // How a recurring calendar event repeats. The weekday / day-of-month / nth
