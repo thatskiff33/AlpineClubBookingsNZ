@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button"
+import { OpeningCreditBatchesCard } from "@/components/admin/opening-credit-batches-card"
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -441,8 +442,8 @@ export default function RefundRequestsPage() {
   */
   const viewOnlyBanner = (
     <AdminViewOnlySectionBanner canEdit={canEditFinance} className="mb-6">
-      Your admin role can view refund appeals and credit approvals but cannot
-      approve, reject, or process them.
+      Your admin role can view refund appeals, credit approvals and opening
+      credits but cannot approve, reject, process, import or reverse them.
     </AdminViewOnlySectionBanner>
   )
 
@@ -901,6 +902,10 @@ export default function RefundRequestsPage() {
           )}
         </div>
       )}
+
+      {/* #4988: the moving-in club's opening credit balances, gated finance:edit
+          and covered by this page's finance banner above. */}
+      <OpeningCreditBatchesCard canEdit={canEditFinance} ancestorRendersViewOnlyBanner />
 
       {/* #1792: per-action member-email choice, mirroring the #1695/#1705/#1769a
           pattern. The refund decision is applied either way; the choice is

@@ -749,7 +749,10 @@ export const AUDIT_CENSUS_TOTALS = {
   // `booking-payment.card-refund.try-card-again`, the treasurer closing a dead card refund
   // a later Stripe refund covers and putting one back to try the card, each awaited on its
   // own transaction (`card-refund-dead-row-actions.ts`), both `payment`. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 538,
+  // 538 -> 541 (#4988): the opening-credit batch's post and reverse rows (`opening-credit-batch.ts`),
+  // both `payment`, and the member import's family group created from a Family Key column, `family`
+  // like the family-groups route's own create. RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 541,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -974,7 +977,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // 170 -> 171 (#4686): the lost-claim part-success's row, above.
     // 171 -> 172 (triyder/AlpineClubBookingsNZ#97): the link dialog's row, above.
     // 172 -> 174 (#4516): the refused reservation and the OPERATOR release, above.
-    createAuditLog: { total: 176, uncategorised: 0 }, // 174 -> 176 (#4368): the two dead card refund settlements.
+    createAuditLog: { total: 179, uncategorised: 0 }, // 174 -> 176 (#4368): the two dead card refund settlements. 176 -> 179 (#4988): the opening-credit post and reverse, and the import's family group.
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1189,7 +1192,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 66 -> 67 (#4359): the re-send hold's row - the payment's figures, read by the same people.
     // 67 -> 69 (#4516): a refused card refund reservation, and its OPERATOR release - read by the same people.
     // 69 -> 71 (#4368): a dead card refund closed with nothing left owed, and one put back to try the card.
-    payment: 71,
+    // 71 -> 73 (#4988): an opening-credit batch posted, and reversed - officer-only, read by the same people.
+    payment: 73,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.
@@ -1197,7 +1201,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // `family` because the affected domain is the family contact relationship,
     // NOT the initiator — so it correlates through membership, never the
     // support-only `admin`/`system` gate, and stays on the subject's timeline.
-    family: 35,
+    // 35 -> 36 (#4988): a family group created by the member import's Family Key column - the
+    // family-groups route's create, reached from the import, so the same category and readers.
+    family: 36,
     // 117 -> 118 (#2352 MC-03D): `PAGE_CONTENT_DELETED`. `admin` is the same
     // category the three sibling page-content writes already use, and it is
     // readable with support:view alone — so this widens nobody's access beyond
@@ -2763,6 +2769,10 @@ export const OFFICER_DRIVEN_MEMBER_VISIBLE_WRITERS_2755: Readonly<
   "src/app/api/admin/members/[id]/dependents/link/route.ts::POST.linkedMember#0":
     "family",
   "src/app/api/admin/members/export/route.ts::GET#0": "privacy",
+  // A family group the member import creates from its Family Key column (#4988): the same act as
+  // `src/app/api/admin/family-groups/route.ts::POST#0`, which files `family`, reached from the
+  // import. Its members already see that create; they see this one the same way.
+  "src/app/api/admin/members/import/route.ts::POST.createdImport#1": "family",
   "src/app/api/admin/members/send-password-reset/route.ts::POST#0": "security",
   "src/app/api/admin/members/send-setup-invite/route.ts::POST.batchResults#0":
     "security",
