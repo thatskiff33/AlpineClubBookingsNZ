@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { ALLOWANCE_DIR, type SizeAllowance } from "../lib/file-size-allowances";
 import { evaluateComputedRatchet } from "../lib/file-size-base";
+import { budgetForFile, isProductionFile } from "../lib/file-size-budget";
 
 /**
  * #2979 — the ratchet's decision, with the previous length read from the base.
@@ -304,5 +306,176 @@ describe("evaluateComputedRatchet — the unusable cases fail rather than pass",
     repo.commit("huge doc");
 
     expect(judge(repo.root, base, { "docs/notes.md": 9000 }).findings).toEqual([]);
+  });
+});
+
+/**
+ * #4926 — the hard ceiling (owner decision, 11 Nov 2026): an allowance may let
+ * an over-budget file grow, but never past three times its budget, and a file
+ * already past that may only stay or shrink. Judged with the REAL budgets and
+ * classifier, so the boundaries below are the published 2,100 / 750 / 1,500.
+ */
+describe("evaluateComputedRatchet — the hard ceiling an allowance cannot pass", () => {
+  const REASON = "the branch sits inside an existing decision tree that is its own refactor.";
+
+  /** Commit `files` as the base, then grow `file` to `lines` with or without an allowance. */
+  function change(
+    files: Record<string, number>,
+    file: string,
+    lines: number,
+    options: { allowance?: number; renameTo?: string } = {},
+  ) {
+    const repo = newRepo();
+    for (const [name, length] of Object.entries(files)) repo.write(name, length);
+    const base = repo.commit("base");
+    const target = options.renameTo ?? file;
+    if (options.renameTo) {
+      mkdirSync(path.dirname(path.join(repo.root, target)), { recursive: true });
+      git(repo.root, "mv", file, target);
+    }
+    repo.write(target, lines);
+    const allowances: SizeAllowance[] = [];
+    if (options.allowance !== undefined) {
+      const source = `${ALLOWANCE_DIR}/4926-grow.md`;
+      mkdirSync(path.join(repo.root, ALLOWANCE_DIR), { recursive: true });
+      writeFileSync(
+        path.join(repo.root, source),
+        `file: ${target}\nlines: ${options.allowance}\nreason: ${REASON}\n`,
+        "utf8",
+      );
+      allowances.push({ source, file: target, lines: options.allowance, reason: REASON });
+    }
+    // Empty when the file stays the same length, which is one of the cases.
+    git(repo.root, "add", "-A");
+    git(repo.root, "commit", "--quiet", "--allow-empty", "-m", "change");
+    return evaluateComputedRatchet({
+      root: repo.root,
+      baseRef: base,
+      unclassified: [],
+      isProductionFile,
+      budgetForFile,
+      countLines: (_r, name) => (name === target ? lines : (files[name] ?? 0)),
+      allowances,
+    });
+  }
+
+  const kinds = (result: { findings: Array<{ kind: string }> }) =>
+    result.findings.map((finding) => finding.kind);
+
+  it.each([
+    ["domain module", "src/lib/big.ts", 1200, 2100],
+    ["route handler", "src/app/api/thing/route.ts", 300, 750],
+    ["route page shell", "src/app/thing/page.tsx", 600, 1500],
+  ])("lets an allowance take a %s exactly to its hard ceiling, and refuses one line more", (_label, file, base, ceiling) => {
+    expect(change({ [file]: base }, file, ceiling, { allowance: ceiling }).findings).toEqual([]);
+
+    const over = change({ [file]: base }, file, ceiling + 1, { allowance: ceiling + 1 });
+    // One finding: the refusal marks the allowance used, so it is not ALSO unused.
+    expect(kinds(over)).toEqual(["allowance-over-hard-ceiling"]);
+    expect(over.findings[0]?.problem).toBe(
+      "an allowance cannot take a file past 3 times its budget",
+    );
+    expect(over.findings[0]?.current).toContain("+1 beyond its hard ceiling");
+    expect(over.findings[0]?.action).toContain("split a cohesive part out first");
+  });
+
+  it("lets a file already past its ceiling stay or shrink with no allowance, and refuses any growth", () => {
+    const file = "src/lib/huge.ts";
+    expect(change({ [file]: 2500 }, file, 2500).findings).toEqual([]);
+    expect(change({ [file]: 2500 }, file, 2400).findings).toEqual([]);
+
+    const allowed = change({ [file]: 2500 }, file, 2501, { allowance: 2501 });
+    expect(kinds(allowed)).toEqual(["allowance-over-hard-ceiling"]);
+    expect(allowed.findings[0]?.action).toContain("at or under 2500 LOC");
+  });
+
+  it("does not tell a file past its ceiling to write an allowance that would be refused", () => {
+    const file = "src/lib/huge.ts";
+    const finding = change({ [file]: 2500 }, file, 2501).findings[0];
+    expect(finding?.kind).toBe("grown-beyond-base");
+    expect(finding?.action).toContain("An allowance cannot help");
+    expect(finding?.action).not.toContain(ALLOWANCE_DIR);
+
+    // Below the ceiling, the allowance is still the advice it was.
+    const under = change({ [file]: 1200 }, file, 1201).findings[0];
+    expect(under?.action).toContain(`${ALLOWANCE_DIR}/<pr-number>-<slug>.md`);
+  });
+
+  it("judges a file renamed within scope against the same hard ceiling", () => {
+    const from = "src/lib/huge.ts";
+    const to = "src/lib/renamed.ts";
+    expect(change({ [from]: 2500 }, from, 2500, { renameTo: to }).findings).toEqual([]);
+
+    const grown = change({ [from]: 2500 }, from, 2501, { renameTo: to, allowance: 2501 });
+    expect(kinds(grown)).toEqual(["allowance-over-hard-ceiling"]);
+    expect(grown.findings[0]?.previous).toContain("renamed from src/lib/huge.ts");
+  });
+
+  it("exempts nothing: src/lib/bed-allocation.ts may shrink but not grow, even with an allowance", () => {
+    const file = "src/lib/bed-allocation.ts";
+    expect(change({ [file]: 3802 }, file, 3790).findings).toEqual([]);
+    expect(kinds(change({ [file]: 3802 }, file, 3803, { allowance: 3803 }))).toEqual([
+      "allowance-over-hard-ceiling",
+    ]);
+  });
+
+  it("keeps the first-crossing and mismatched-length refusals under their own kinds", () => {
+    const file = "src/lib/mod.ts";
+    // A first crossing straight past the ceiling is still a first crossing.
+    expect(kinds(change({ [file]: 600 }, file, 2200, { allowance: 2200 }))).toEqual([
+      "allowance-not-permitted",
+    ]);
+    // Under the ceiling, a wrong number is still a wrong number.
+    expect(kinds(change({ [file]: 1200 }, file, 1300, { allowance: 1250 }))).toEqual([
+      "allowance-mismatched",
+    ]);
+  });
+});
+
+describe("evaluateComputedRatchet — the change's effect on tree-wide size debt", () => {
+  function delta(build: (repo: ReturnType<typeof newRepo>) => void, now: Record<string, number>) {
+    const repo = newRepo();
+    repo.write("src/lib/big.ts", 1200);
+    repo.write("src/lib/small.ts", 100);
+    const base = repo.commit("base");
+    build(repo);
+    repo.commit("change");
+    return evaluateComputedRatchet({
+      root: repo.root,
+      baseRef: base,
+      unclassified: [],
+      isProductionFile,
+      budgetForFile,
+      countLines: (_r, file) => now[file] ?? 0,
+    }).debtDelta;
+  }
+
+  it("is the growth of an over-budget file", () => {
+    expect(delta((repo) => repo.write("src/lib/big.ts", 1300), { "src/lib/big.ts": 1300 })).toBe(100);
+  });
+
+  it("is negative when a file shrinks, and counts only what is over budget", () => {
+    expect(delta((repo) => repo.write("src/lib/big.ts", 600), { "src/lib/big.ts": 600 })).toBe(-500);
+  });
+
+  it("is zero when nothing over budget moves", () => {
+    expect(delta((repo) => repo.write("src/lib/small.ts", 400), { "src/lib/small.ts": 400 })).toBe(0);
+  });
+
+  it("follows a file out of scope and counts a deleted one as gone", () => {
+    expect(
+      delta((repo) => {
+        mkdirSync(path.join(repo.root, "src/lib/__tests__"), { recursive: true });
+        git(repo.root, "mv", "src/lib/big.ts", "src/lib/__tests__/big.ts");
+      }, { "src/lib/__tests__/big.ts": 1200 }),
+    ).toBe(-500);
+    expect(delta((repo) => git(repo.root, "rm", "--quiet", "src/lib/big.ts"), {})).toBe(-500);
+  });
+
+  it("is null when the base cannot be resolved, rather than a reassuring zero", () => {
+    const repo = newRepo();
+    repo.write("src/a.ts", 3);
+    repo.commit("first");
+    expect(judge(repo.root, "refs/heads/definitely-not-a-ref-4926", {}).debtDelta).toBeNull();
   });
 });

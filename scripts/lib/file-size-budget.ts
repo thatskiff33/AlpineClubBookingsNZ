@@ -24,6 +24,13 @@
  * when it was added and it was not in scope when it was removed (#3382), so
  * there was nothing to regenerate and nothing to hide.
  *
+ * The hard ceiling (#4926, owner decision 11 Nov 2026): a size allowance may
+ * let an already-over-budget file grow, but never past `HARD_CEILING_MULTIPLE`
+ * times its budget, and a file already past that can only shrink. There is no
+ * exemption mechanism, by the same decision. `hardCeilingFor` is the one place
+ * the figure is derived; the evaluator in `scripts/lib/file-size-base.ts` asks
+ * it rather than multiplying for itself.
+ *
  * Uses `git ls-files` and `fs` only — no network, no build, no database.
  */
 import { execFileSync } from "node:child_process";
@@ -34,6 +41,12 @@ import path from "node:path";
 export const PRODUCTION_LIMIT = 700;
 export const ROUTE_HANDLER_LIMIT = 250;
 export const ROUTE_PAGE_LIMIT = 500;
+
+/**
+ * How many budgets long an allowance may make a file (#4926): 2,100 / 750 /
+ * 1,500 lines. A repository engineering policy, not a club setting.
+ */
+export const HARD_CEILING_MULTIPLE = 3;
 
 /** The command name quoted in every failure message. */
 export const CHECK_COMMAND = "pnpm run quality:budget";
@@ -253,6 +266,11 @@ export function budgetForFile(file: string): Budget {
   return BUDGETS["domain-module"];
 }
 
+/** The length no allowance may take a file past. */
+export function hardCeilingFor(budget: Pick<Budget, "limit">): number {
+  return budget.limit * HARD_CEILING_MULTIPLE;
+}
+
 export function describeBudget(budget: Budget): string {
   return `${budget.category}, <= ${budget.limit} LOC`;
 }
@@ -382,6 +400,18 @@ export function summariseSizeDebt(stats: FileStat[]): {
     oversizedFiles: oversized.length,
     debt: oversized.reduce((sum, stat) => sum + stat.overBy, 0),
   };
+}
+
+/**
+ * How much a change moves the tree-wide figure `summariseSizeDebt` reports.
+ *
+ * Only the files a change touched can move it, so `base` and `head` are those
+ * files' lengths before and after (a deleted file is absent from `head`, a new
+ * one from `base`). Both sides go through `summariseSizeDebt`, so the per-PR
+ * line can never disagree with `--report` about what counts as debt.
+ */
+export function sizeDebtDelta(base: FileStat[], head: FileStat[]): number {
+  return summariseSizeDebt(head).debt - summariseSizeDebt(base).debt;
 }
 
 function compare(a: string, b: string): number {

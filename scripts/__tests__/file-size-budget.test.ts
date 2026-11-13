@@ -776,6 +776,46 @@ describe("the deliberate escape: a declared allowance", () => {
     expect(result.stdout).toContain("lifting that tree out is a refactor of its own");
   });
 
+  it("prints the change's effect on tree-wide size debt, on a pass and on a failure (#4926)", () => {
+    const grown = overBudgetRepo();
+    grown.repo.write("src/lib/big.ts", 1300);
+    grown.repo.allow("4926-big.md", `file: src/lib/big.ts\nlines: 1300\nreason: ${REASON}\n`);
+    grown.repo.commit("grew, with an allowance");
+    const passed = captureRun(grown.repo.root, ["--base", grown.base]);
+    expect(passed.code).toBe(0);
+    expect(passed.stdout).toContain("Size debt change from this PR: +100 lines\n");
+
+    const shrunk = overBudgetRepo();
+    shrunk.repo.write("src/lib/big.ts", 1150);
+    shrunk.repo.write("src/lib/brand-new.ts", 900);
+    shrunk.repo.commit("shrank one, added an over-budget one");
+    const failed = captureRun(shrunk.repo.root, ["--base", shrunk.base]);
+    expect(failed.code).toBe(1);
+    // -50 from the shrink, +200 from the new file the gate refuses.
+    expect(failed.stderr).toContain("Size debt change from this PR: +150 lines\n");
+
+    const same = overBudgetRepo();
+    same.repo.write("src/lib/keep.ts", 20);
+    same.repo.commit("touched an in-budget file");
+    expect(captureRun(same.repo.root, ["--base", same.base]).stdout).toContain(
+      "Size debt change from this PR: 0 lines\n",
+    );
+  });
+
+  it("refuses an allowance past the hard ceiling of three budgets, and says to split (#4926)", () => {
+    const { repo, base } = overBudgetRepo();
+    repo.write("src/lib/big.ts", 2101);
+    repo.allow("4926-big.md", `file: src/lib/big.ts\nlines: 2101\nreason: ${REASON}\n`);
+    repo.commit("grew past the ceiling, with an allowance");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("an allowance cannot take a file past 3 times its budget");
+    expect(result.stderr).toContain("domain module, <= 700 LOC, hard ceiling 2100 LOC");
+    expect(result.stderr).toContain("split a cohesive part out first");
+    expect(result.stderr).not.toContain("ALLOWED GROWTH");
+  });
+
   it("fails when the recorded length is not the file's real length", () => {
     // The rule that stops an allowance drifting from the tree the way the
     // ledger did, and stops one being written once and reached for later.
