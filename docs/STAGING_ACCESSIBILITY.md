@@ -347,3 +347,50 @@ touches every card in ~167 files and would put the wrong level on many of them,
 so it is not a fix to make in passing — tracked in #2796, which also records
 that this same trap has now been patched per-page three times (#1242,
 `roster-editor.tsx`, and this one).
+
+## #4949 Action Outcomes Announced (2026-11-14)
+
+Member, payment and sign-in screens showed what had just happened (a declined
+card, a wrong sign-in code, a finished cancellation) as a coloured box that
+appeared already filled. Some screen-reader and browser pairs skip text inserted
+that way, so a blind member could not tell whether the action worked. The rule
+that now governs every surface is in `docs/UX_FLOW_MAP.md` ("An outcome is never
+a bare styled box"): a failure goes in `FocusedActionError`, a result or
+progress line goes in a `role="status"` region mounted before the request, and
+a control that disappears hands focus to the next stable element.
+
+Surfaces fixed, each with a component test in `src/components/__tests__/`,
+`src/lib/__tests__/` or beside its page:
+
+- **Card payments.** `PaymentForm` (decline alert, success status),
+  `SetupForm` (failed card save) and `BookingPaymentWrapper` ("Preparing
+  payment..." status). Both forms own their failure, so the `onError` prop is
+  gone and no caller shows the same decline a second time.
+- **Pay-link page** (`/pay/[token]`). Loading and "Checking your payment..."
+  status lines, the card-start and fresh-link failures as alerts, and focus on
+  the "new link sent" confirmation.
+- **Payment buttons.** Switch to internet banking and the guest payment link.
+- **Cancel booking.** One frame keeps a status region and an error alert
+  mounted across every step. Focus moves to each step's heading, back to
+  **Cancel Booking** after "Keep booking" or "Try Again", and to the override
+  reason when a cancellation is refused for want of a hosting override. The
+  success panel lives in `cancel-booking-success-panel.tsx` with its wording
+  unchanged.
+- **Sign-in and account.** Forgot, reset and change password, both
+  two-factor panels, the five profile cards (delete account, notification
+  preferences, Google account, two-factor security, data export) and delete
+  booking. Reset-password sets `aria-invalid` on each failing field, names its
+  own error first in `aria-describedby` and focuses the first failing field.
+  Change password has one form-level error and no field errors.
+- **Other public flows.** The contact form, the booking-request reply page,
+  and the membership-cancellation, nomination and partner-invite cards.
+
+Stated limits:
+
+- This is an automated, DOM-level check of roles, text and focus. It was not
+  run with a real screen reader (NVDA, JAWS or VoiceOver), which remains a human
+  manual-QA task as in the earlier sections.
+- The axe scan in the browser tests (#4466) checks a page as it first settles,
+  so it does not see text that appears only after an action. These component
+  tests are what hold the announcements in place.
+- Admin screens were out of scope.
