@@ -2046,16 +2046,18 @@ Internet Banking path) and **`INV-PAY-103`** (the one card-refund writer).
   - **The record waits for Stripe.** The `PaymentRefund` (no transaction),
     mirror, Xero refund note, settlement status and close commit in one
     `lock(1)` transaction; the edit door raises no modification note. Every
-    attempt, including the first, reads Stripe by `organiserChildRefundKey`
-    before `processRefund`. A live match is recorded and not sent again.
-  - **What has gone back** is the larger of the mirror and the child's refund
-    rows (`organiserChildRefundedCents`). A cancellation tiers what remains
-    less refunds owed (`cancelRefundableBaseCents`, [INV-PAY-018]); the
-    organiser's freezes `{ perChildRefunds }`. Behind the group's cancel a
-    joiner's refunds nothing more. A pre-#3653 plan keeps `INV-PAY-034`-`037`.
-  - **Only Stripe evidence raises a child's mirror**: the Xero credit-note
-    repair never takes it past the child's recorded refunds. The Stuck States
-    bank close is the one exception (`INV-PAY-122`).
+    attempt first finds Stripe's refund by key.
+  - **What has gone back** is the larger of the mirror and the child's
+    refund rows (`organiserChildRefundedCents`). A cancellation, organiser's or joiner's,
+    tiers what remains less refunds owed through `cancelRefundableBaseCents`
+    ([INV-PAY-018]); the organiser's freezes `{ perChildRefunds }`. A joiner's
+    cancel after a reduction takes the paid path; behind the group's it (and
+    its preview) refunds nothing more; its frozen figures follow the final amount. A
+    pre-#3653 `{childId: cents}` plan and an Internet Banking settlement keep
+    `INV-PAY-034`-`037`.
+  - **Only Stripe evidence raises a child's mirror**: the Xero
+    credit-note repair never takes it past the child's recorded refunds.
+    Except by `INV-PAY-151`.
   - **A pending refund that fails** is taken back out by the payments cron
     and its debt reopened, marked for the recovery audit, due after Stripe's
     key window.
@@ -2878,7 +2880,7 @@ _Legacy: settles tasks raised before #4317._
     await one in flight; link then note once under the approval task's row,
     read first (`:note-after-receipt`). Cash evidence counts it once noted.
   - A superseded intent's row closes whole, only while its charge holds exactly
-    that. Group organiser rows are refused: `INV-PAY-149` closes them (#4851).
+    that. Group organiser rows are refused (`INV-PAY-151`).
   - **Refused** (#4492, `paidAnotherWayRefusal`, list and close; 409, no writes,
     stays listed): a failed-later sibling; a plan-less superseded row until its
     sizing refund is card-paid; a dead failed-later row a superseded send
@@ -4081,16 +4083,13 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
   unstamped, unmarked refund Stripe lists from this booking's same door
   (unreadable refuses); or a moved owed figure or plan. Where that close is
   refused, #4492 says so; only the charge-fill rule asks a developer.
-- **One row, one winner.** All three settlements share `lockDeadCardRefundRow`
+- **One row, one winner.** All, with `INV-PAY-151`, share `lockDeadCardRefundRow`
   (`lock(1)`, row, Payment row) and its claim: dead, on the plan read. A closed
   row is never re-armed, nor a re-armed one closed until given up again. Each is
   audited (`payment`).
-- **Group organiser rows** (#4851) are listed and share that claim. Paid
-  another way (`closeGroupCardRefundPaidAnotherWay`) records a refund Stripe
-  already has, else the bank payment; it moves no Stripe money. Only a
-  per-joiner row is re-armed (`tryOrganiserChildCardRefundAgain`).
 - Limit: another door's unmatched refund of the same money, failing later, is
-  owed beside the row (#4104, #4492).
+  owed beside the row (#4104, #4492); one its charge takes after a re-arm holds
+  the runner (#4858).
 - Proven by `card-refund-dead-row-actions.test.ts`,
   `card-refund-dead-row-actions.realdb.test.ts`, `dead-row-actions-route.test.ts`
   and `dead-card-refunds-panel.test.tsx`.
@@ -4130,3 +4129,40 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
   `cancel-card-refund-shortfall-preview.test.ts`,
   `clipped-mirror-open-hand-back.test.ts` and
   `superseded-refund-cancel-hold-back.realdb.test.ts`.
+
+## INV-PAY-151
+
+**Related: `INV-PAY-114`** (the per-joiner refund), **`INV-PAY-034`**-`037`
+(the pre-#3653 whole-group refund), **`INV-PAY-122`** and
+**`INV-PAY-149`** (Stuck States' others).
+
+- **A dead refund out of the group organiser's card is settled on Stuck States,
+  never by a dashboard refund** (#4851; owner decision 10 Nov 2026). Both kinds
+  are listed for the whole amount: a per-joiner refund
+  (`organiser_child_refund_*`, `organiser_card_appeal_refund_*`) and a
+  pre-#3653 whole-group one (`group_settlement_refund_recovery_*`). No Nothing
+  left owed, no part close.
+- **Paid another way** (`closeGroupCardRefundPaidAnotherWay`; finance:edit, a
+  note) reads the organiser's PaymentIntent first, outside it. Unreadable,
+  or a moved intent or settlement under the lock: 409, no writes.
+  - Per-joiner: a live refund under the row's key is recorded by the
+    executor's record step; nobody is paid again. A live unkeyed refund of the
+    same amount: 409. Else the bank payment: the child's mirror, a COMPLETED
+    hand-back (`:no-xero-note`), its `BANK_REFUND` line, `REFUNDED` (not on an
+    appeal), no `PaymentRefund`; refused while the group cancels.
+  - Whole-group: the plan's one unkeyed refund flips the settlement and writes
+    mirrors with card notes; an already refunded settlement only finishes
+    mirrors; with no refund, flip and mirrors without card notes; any other
+    live refund: 409.
+  - A bank payment emails officers to credit the group's invoice in Xero by
+    hand (`INV-PAY-137`). Every outcome is audited (`payment`).
+- **Try the card again** (`tryOrganiserChildCardRefundAgain`) re-arms only a
+  per-joiner row and sends nothing. It refuses (409) an unreadable intent, a
+  live refund under its key, an unkeyed one of its amount, or a moved amount;
+  after a refused key it waits out Stripe's window (`organiserChildRearmAt`).
+- **One row, one winner**: `lockDeadCardRefundRow` (`accept`) and
+  `deadRowClaimWhere`. No new lock key.
+- Limit: a refund Stripe makes after the read can sit beside a bank payment;
+  these rows are not on the paid-back-twice list.
+- Proven by `card-refund-group-settle.test.ts`,
+  `card-refund-group-settle.realdb.test.ts` and `dead-card-refunds-panel.test.tsx`.
