@@ -362,6 +362,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-148` | Organiser bank-transfer edit invoices, unpaid-first netting and historical repair |
 | `INV-PAY-149` | A dead card refund closes with nothing owed or retries its card |
 | `INV-PAY-150` | A cancellation leaves a live superseded capture to its own refund |
+| `INV-PAY-151` | Paid another way reverses a covered failed card refund |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
