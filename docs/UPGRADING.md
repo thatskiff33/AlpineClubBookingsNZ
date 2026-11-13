@@ -13,9 +13,36 @@ It complements the two documents next to it and does not repeat them:
   synced and roll it onto a running database and deployment without losing data
   or breaking the live app color mid-deploy.
 
+## Correct the starter privacy policy (#4914)
+
+Migration `20261214010000_correct_starter_privacy_retention_and_hosting` updates
+only a privacy body that still exactly matches the previous starter copy. It
+corrects the email-log promise, removes fixed hosting and backup claims, and
+adds missing personal-data categories. A custom body is left untouched. If only
+the header was edited, the body is corrected and that header is kept.
+
+**After upgrading, read `/privacy`.** For an edited page, correct section 2 to
+include addresses, photos, dietary or allergy information, and the other profile
+and membership records your club holds. In section 5, check recipients against
+your enabled integrations and name your host, region and backup store. In section
+6, describe your actual hosting, backup access and encryption arrangements.
+Replace section 7's email-log sentence with
+`Email logs: {{email-log-retention}}.` and update the page's “Last updated” date.
+The token follows the saved Privacy retention settings, including when automatic
+deletion is switched off; no retention settings or jobs change in this release.
+
+**Blue/green and rollback:** the previous app leaves unknown tokens as literal
+text. Between migration and cutover an untouched policy may therefore display
+`{{email-log-retention}}` briefly. This display window is accepted for this data
+correction; the old app can still read and edit the row. If rolling back the app,
+edit section 7 by hand to state the current retention setting in plain language
+until the new app is restored. Do not change applied migration files. Preserve
+any custom body and re-export your configuration bundle after reviewing it.
+
 ## Review privacy retention before enabling cleanup (#4457)
 
-The three new automatic jobs ship OFF. After upgrading, review the
+The three automatic jobs from #4457 ship OFF. (The after-stay dietary clear
+from #4916 ships ON; see its entry under Unreleased.) After upgrading, review the
 [personal-data retention schedule](PRIVACY_RETENTION.md) and visit
 **Admin → Privacy retention** (`/admin/privacy-retention`) to inspect counts,
 member candidates and the configured periods before enabling any job. Defaults
@@ -138,6 +165,29 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Old stays' dietary notes are cleared on the first night after upgrading (#4916)
+
+**What changes.** A new nightly job clears each stay's dietary/allergy note
+(`BookingGuest.dietaryRequirements`) once the stay ended more than a set number
+of days ago, for member and non-member guests and on bookings of any status.
+Migration `20261216050000_booking_dietary_retention` adds the period (default
+**30 days**) and the switch (default **on**) to `PrivacyRetentionSettings`. It
+is additive and safe with the previous app colour still serving.
+
+**What you will notice.** Because the switch ships on, **the first nightly
+data-pruning run after the upgrade (03:30 club time) clears every stay note
+whose stay ended more than 30 days ago.** Cleared notes cannot be brought back
+except from a backup taken before that run. Names, nights, prices, the booking
+and the member's own profile note are not touched.
+
+**If your club wants to keep them**, open **Admin → Privacy retention**
+(`/admin/privacy-retention`) straight after deploying and, before 03:30 club
+time, untick **Enable after-stay dietary clearing**, or change the period
+(1 to 365 days), and save. Support edit and bookings edit permission are both
+needed. The page shows how many notes the next run would clear. Clubs that never
+switched on the dietary field have no notes and nothing changes for them. See
+the [retention schedule](PRIVACY_RETENTION.md#automatic-retention-and-operator-review).
+
 ### One-off update of the starter FAQ's personal-data answer (#4914 follow-up)
 
 `20261213010000_summarise_starter_faq_personal_data` is a **data-only
@@ -256,6 +306,19 @@ release keeps posting as before.
 on the least-privilege roles both need no provisioning step: the migration
 narrows its own two tables. If the deploy's grants check ever names one of
 them, re-run `pnpm run db:provision-roles --apply` and deploy again.
+
+### Stripe balance evidence tables (#4520)
+
+**What changes.** Migration `20261211010000_stripe_balance_evidence` adds two
+empty tables: an insert-only record of a Stripe balance transaction, and a
+payout row whose status can change. Nothing in the running app reads or writes
+them yet. Bookings, payments, refunds and Xero are unchanged.
+
+**What you do.** Nothing beyond the normal deploy. Single-role clubs and clubs
+on the least-privilege roles both need no provisioning step: the migration
+narrows the insert-only table itself. The payout table stays ordinary, because
+its status changes. If the deploy's grants check ever names the evidence table,
+re-run `pnpm run db:provision-roles --apply` and deploy again.
 
 ### Nightly backups stream to a disk-backed spool volume (#4487)
 
