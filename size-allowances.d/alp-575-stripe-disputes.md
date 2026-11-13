@@ -39,4 +39,3 @@ reason: The dispute preflight must examine every derived refund slice before any
 file: src/lib/stripe-webhook-service.ts
 lines: 1804
 reason: The dispute event cases and late-capture hold exception belong in the existing webhook dispatch and refund exception branches, preserving their ordering and retry semantics.
-
