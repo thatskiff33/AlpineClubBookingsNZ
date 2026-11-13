@@ -6,6 +6,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FeatureFlags } from "@/config/schema";
+import type { StuckStateDashboardDependencies } from "@/lib/stuck-state-dashboard";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -44,11 +45,11 @@ async function cancelledWithCapture(id: string) {
 }
 
 /** Every other signal at zero, so only the cancelled-unrecorded queries touch the database. */
-function quietDeps(): Partial<import("@/lib/stuck-state-dashboard").StuckStateDashboardDependencies> {
+function quietDeps(): Partial<StuckStateDashboardDependencies> {
   const none = { summary: {}, failures: [], recentlyReviewed: [], recentlyReissued: [], escalations: [], suppressions: [] };
   return {
     db: {
-      ...(prisma as unknown as import("@/lib/stuck-state-dashboard").StuckStateDashboardDependencies["db"]),
+      ...(prisma as unknown as StuckStateDashboardDependencies["db"]),
       paymentRecoveryOperation: { count: async () => 0, findMany: async () => [] },
       groupBookingSettlement: { findMany: async () => [] },
       hostingCoverageIncident: { count: async () => 0, findMany: async () => [] },
