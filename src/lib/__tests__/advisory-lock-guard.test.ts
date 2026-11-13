@@ -1653,10 +1653,20 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // (`FOR UPDATE`, the sixth) under a savepoint-scoped `lock_timeout` of what
   // is left of the 10s budget, then released, and the attempt retried. The bound still lands
   // on the same stable retry (#2623 T6).
-  // See docs/CONCURRENCY_AND_LOCKING.md → "Adult-member-hosting queue
-  // participant fencing", "Member merge" and "Merge never holds a Member row
-  // while waiting for another (#4855)".
+  // Still SIX after #4860: the booking statements the same attempt runs live in
+  // `member-merge-booking-lock.ts` (next entry), called from this wrapper.
   "src/lib/adult-member-hosting-queue-participants.ts": 6,
+  // #4860: the attempt try-locks the captured loser bookings before it re-points
+  // `Booking.member`. Three statements, no new advisory key: one sorted
+  // `FOR NO KEY UPDATE SKIP LOCKED` over that set, a row-by-row `SKIP LOCKED`
+  // probe for the first id it skipped, and a single-booking `FOR NO KEY UPDATE`
+  // under its own savepoint after the attempt has been rolled back. NO KEY, the
+  // `memberId` update's own strength, so a child insert's FK `KEY SHARE` on the
+  // booking is not blocked (#5004). A shortfall waits for that
+  // one booking while holding no rows, on the same 10s budget as the Member
+  // waits. See docs/CONCURRENCY_AND_LOCKING.md → "Merge never holds one of the
+  // duplicate's bookings while waiting for another (#4860)".
+  "src/lib/member-merge-booking-lock.ts": 3,
   // The hosting coverage drain locks the claimed owner and FK-less actor
   // `FOR KEY SHARE` after their sorted member-lifecycle keys and before the exact
   // typed queue refresh, so merge cannot re-point an identity between the claim

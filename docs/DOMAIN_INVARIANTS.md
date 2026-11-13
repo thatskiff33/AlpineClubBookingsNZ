@@ -362,7 +362,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-147` | Refund slice evidence prevents replay after Stripe forgets idempotency keys |
 | `INV-PAY-148` | Organiser bank-transfer edit invoices, unpaid-first netting and historical repair |
 | `INV-PAY-149` | A dead card refund closes with nothing owed or retries its card |
-| `INV-PAY-150` | A cancellation leaves a live superseded capture to its own refund |
+| `INV-PAY-150` | Refund doors leave a live superseded capture to its own refund |
 | `INV-PAY-151` | Paid another way reverses a covered failed card refund |
 | `INV-PAY-152` | Cancellation credit events commit with the credit they describe |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
@@ -791,6 +791,7 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-020` | Credential writes name a person or a named system actor, audited atomically |
 | `INV-PRIV-021` | Admin-origin issue-report screenshot pixels are Full-Admin-only; unknown origin fails closed |
 | `INV-PRIV-022` | Profile and booking dietary data absent unless one granted module selects it |
+| `INV-PRIV-023` | A stay's dietary value is cleared a club-set period after the stay |
 
 ## Membership Lifecycle
 
