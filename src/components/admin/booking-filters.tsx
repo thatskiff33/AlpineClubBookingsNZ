@@ -1,6 +1,7 @@
 "use client";
 
 import { BOOKING_STATUSES_IN_LIFECYCLE_ORDER } from "@/lib/booking-status";
+import { adminHref } from "@/lib/admin-hubs";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useClubTime } from "@/components/club-time-provider";
 import {
@@ -262,7 +263,7 @@ export function BookingFilters({
         if (liveSort.sortBy) params.set("sortBy", liveSort.sortBy);
         if (liveSort.sortDir) params.set("sortDir", liveSort.sortDir);
         const target = params.toString();
-        router.replace(target ? `/admin/bookings?${target}` : "/admin/bookings");
+        router.replace(target ? `${adminHref("bookings")}?${target}` : adminHref("bookings"));
       }
     }, 350);
     return () => {
@@ -317,7 +318,7 @@ export function BookingFilters({
     const params = new URLSearchParams(window.location.search);
     for (const key of BOOKING_RESET_QUERY_KEYS) params.delete(key);
     const target = params.toString();
-    router.replace(target ? `/admin/bookings?${target}` : "/admin/bookings", {
+    router.replace(target ? `${adminHref("bookings")}?${target}` : adminHref("bookings"), {
       scroll: false,
     });
   }

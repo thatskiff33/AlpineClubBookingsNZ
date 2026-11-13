@@ -2,6 +2,7 @@
 
 import type { BookingStatus } from "@prisma/client";
 import { BOOKING_STATUSES_IN_LIFECYCLE_ORDER, isBookingStatus } from "@/lib/booking-status";
+import { adminHref } from "@/lib/admin-hubs";
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -193,7 +194,7 @@ export function AdminBookingCalendar() {
   const monthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
   const currentPageParams = new URLSearchParams(searchParams.toString());
   currentPageParams.set("month", monthKey);
-  const currentBookingsPath = buildPathWithSearch("/admin/bookings", currentPageParams);
+  const currentBookingsPath = buildPathWithSearch(adminHref("bookings"), currentPageParams);
 
   const fetchBookings = useCallback(async () => {
     setLoading(true);

@@ -1,3 +1,4 @@
+import { adminHref } from "@/lib/admin-hubs";
 import { Suspense } from "react";
 import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
@@ -197,7 +198,7 @@ export default async function BookingDetailPage({
   });
   const backHref = resolveInternalReturnPath(
     query.returnTo,
-    isAdmin ? "/admin/bookings" : "/bookings"
+    isAdmin ? adminHref("bookings") : "/bookings"
   );
   const canDeleteDraft =
     !isDeleted &&
