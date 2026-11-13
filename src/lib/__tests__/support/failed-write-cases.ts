@@ -1,3 +1,4 @@
+import "@testing-library/jest-dom/vitest";
 import { screen } from "@testing-library/react";
 import { expect, it } from "vitest";
 
@@ -43,6 +44,6 @@ export function itShowsEveryRefusal({ submit, fallback }: FailedWriteCase): void
     await submit(() => Promise.reject(new TypeError("Failed to fetch")));
 
     expect(await screen.findByText(fallback)).toBeInTheDocument();
-    expect(screen.queryByText(/Failed to fetch/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Failed to fetch")).not.toBeInTheDocument();
   });
 }

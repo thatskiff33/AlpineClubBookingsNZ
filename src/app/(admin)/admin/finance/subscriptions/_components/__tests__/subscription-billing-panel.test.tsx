@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
+import { itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";
 
 const mocks = vi.hoisted(() => ({
   canEdit: vi.fn(),
@@ -146,7 +147,10 @@ describe("subscription billing panel", () => {
     fetchMock.mockRejectedValueOnce(new Error("preview unavailable"));
     fireEvent.change(screen.getByLabelText("Decision date"), { target: { value: "2026-08-01" } });
     expect(screen.queryByRole("button", { name: "Confirm and queue annual batch" })).toBeNull();
-    expect(await screen.findByText("preview unavailable")).toBeTruthy();
+    // A request that never got an answer shows the panel's own sentence, not
+    // the browser's (ALP-589).
+    expect(await screen.findByText("Could not load billing preview.")).toBeTruthy();
+    expect(screen.queryByText("preview unavailable")).toBeNull();
     await waitFor(() => expect(screen.queryByRole("button", { name: "Confirm and queue annual batch" })).toBeNull());
   });
 
@@ -159,7 +163,7 @@ describe("subscription billing panel", () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockImplementationOnce(() => older);
     render(<SubscriptionBillingPanel seasonYear={2026} />);
-    fetchMock.mockRejectedValueOnce(new Error("newer preview failed"));
+    fetchMock.mockResolvedValueOnce(Response.json({ error: "newer preview failed" }, { status: 503 }));
     fireEvent.change(screen.getByLabelText("Decision date"), { target: { value: "2026-08-01" } });
     expect(await screen.findByText("newer preview failed")).toBeTruthy();
 
@@ -176,11 +180,11 @@ describe("subscription billing panel", () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockRejectedValueOnce(new Error("temporary preview failure"));
     render(<SubscriptionBillingPanel seasonYear={2026} />);
-    expect(await screen.findByText("temporary preview failure")).toBeTruthy();
+    expect(await screen.findByText("Could not load billing preview.")).toBeTruthy();
     fetchMock.mockImplementationOnce(() => successResponse());
     fireEvent.click(screen.getByRole("button", { name: "Refresh preview" }));
     expect(await screen.findByRole("button", { name: "Confirm and queue annual batch" })).toBeTruthy();
-    expect(screen.queryByText("temporary preview failure")).toBeNull();
+    expect(screen.queryByText("Could not load billing preview.")).toBeNull();
 
     fetchMock
       .mockResolvedValueOnce({ ok: true, json: async () => ({ message: "Due days saved" }) } as never)
@@ -656,5 +660,44 @@ describe("subscription billing panel", () => {
     expect(screen.queryByText(/^Full · Member One$/)).toBeNull();
     expect(screen.getByRole("button", { name: "Confirm and queue annual batch" }).hasAttribute("disabled")).toBe(false);
     expect(getUrls.at(-1)).toContain("decisionDate=2026-08-01");
+  });
+});
+
+// A refusal is not always JSON: the proxy answers a crashed route with an HTML
+// error page, and a request can go unanswered (ALP-589).
+describe("subscription billing panel: whatever the refusal looks like", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.canEdit.mockReturnValue(true);
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  describe("loading the preview", () => {
+    itShowsEveryRefusal({
+      fallback: "Could not load billing preview.",
+      submit: async (answer) => {
+        vi.stubGlobal("fetch", vi.fn(async () => answer()));
+        render(<SubscriptionBillingPanel seasonYear={2026} />);
+      },
+    });
+  });
+
+  describe("a billing action", () => {
+    itShowsEveryRefusal({
+      fallback: "Billing action failed.",
+      submit: async (answer) => {
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async (_input: string, init?: RequestInit) =>
+            init?.method === "POST" ? answer() : Response.json(payload()),
+          ),
+        );
+        render(<SubscriptionBillingPanel seasonYear={2026} />);
+        fireEvent.click(await screen.findByRole("button", { name: "Save due days" }));
+      },
+    });
   });
 });

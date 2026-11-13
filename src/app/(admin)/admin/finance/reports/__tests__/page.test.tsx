@@ -49,6 +49,7 @@ import { ClubTimeProvider } from "@/components/club-time-provider";
 import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { getReportsDatasetDefaults } from "@/lib/admin-dataset-reset-state";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
+import { itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";
 
 const EMPTY_REPORT = {
   summary: {
@@ -474,6 +475,29 @@ describe("a range the API refuses (#4937)", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(message);
     expect(screen.queryByText("Total Bookings")).not.toBeInTheDocument();
+  });
+
+  // A refusal is not always JSON: the proxy answers a crashed route with HTML
+  // (ALP-589).
+  describe("whatever the refusal looks like", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    itShowsEveryRefusal({
+      fallback: "Failed to fetch reports",
+      submit: async (answer) => {
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async (url: string) =>
+            url.includes("from=2020-01-01") ? answer() : Response.json(EMPTY_REPORT),
+          ),
+        );
+        render(<ReportsPage />);
+        expect(await screen.findByText("Total Bookings")).toBeInTheDocument();
+        fireEvent.change(await screen.findByLabelText("From"), {
+          target: { value: "2020-01-01" },
+        });
+      },
+    });
   });
 });
 
