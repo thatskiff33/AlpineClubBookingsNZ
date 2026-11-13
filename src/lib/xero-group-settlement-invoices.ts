@@ -264,21 +264,13 @@ export async function createXeroInvoiceForGroupSettlement(
 
   const organiserMemberId = settlement.groupBooking.organiserMemberId;
 
-  // #3642 (`INV-SSOT-002`): built from exactly the committed children, and
-  // never raised unless it totals the settlement.
-  // #4632: the combined document carries the organiser's booking's treatment.
-  const taxRendering = await resolveXeroTaxRendering({
-    kind: "booking",
-    bookingId: settlement.groupBooking.organiserBookingId,
-  });
-  const lines = await buildGroupSettlementInvoiceLines(
-    settlement.groupBooking.organiserBookingId,
-    taxRendering,
-  );
+  // #3642 (`INV-SSOT-002`): built from exactly the committed children, and never raised unless it totals the
+  // settlement. #4632: the combined document carries the organiser's booking's tax treatment.
+  const organiserBookingId = settlement.groupBooking.organiserBookingId;
+  const taxRendering = await resolveXeroTaxRendering({ kind: "booking", bookingId: organiserBookingId });
+  const lines = await buildGroupSettlementInvoiceLines(organiserBookingId, taxRendering);
   if (lines.childCount === 0) {
-    throw new Error(
-      `No settleable children found for group settlement: ${settlementId}`
-    );
+    throw new Error(`No settleable children found for group settlement: ${settlementId}`);
   }
   if (lines.childrenCents !== settlement.amountCents) {
     // The group moved since the settle: the next settle replaces the request.
