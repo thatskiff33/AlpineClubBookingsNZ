@@ -742,6 +742,8 @@ model Member {
   credits                                    MemberCredit[]
   requestedCreditAdjustments                 MemberCredit[]                             @relation("RequestedAdminCredits")
   approvedCreditAdjustments                  MemberCredit[]                             @relation("ApprovedAdminCredits")
+  postedOpeningCreditBatches                 OpeningCreditBatch[]                       @relation("PostedOpeningCreditBatches")
+  reversedOpeningCreditBatches               OpeningCreditBatch[]                       @relation("ReversedOpeningCreditBatches")
   adminCreditAdjustmentRequestsRequested     AdminCreditAdjustmentRequest[]             @relation("AdminCreditAdjustmentRequestsRequested")
   adminCreditAdjustmentRequestsReviewed      AdminCreditAdjustmentRequest[]             @relation("AdminCreditAdjustmentRequestsReviewed")
   bookingsCreatedOnBehalf                    Booking[]                                  @relation("BookingsCreatedBy")
@@ -7609,6 +7611,10 @@ model MemberCredit {
   // spendable lot: the release is a positive row, and without this marker the
   // planner would count it as the member's own money and mint a Xero note for it.
   outsideSpendConvergedAt     DateTime?
+  // #4988: the opening-credit batch that posted (or reversed) this row. Null on
+  // every other credit. Nullable, so the previous colour keeps inserting rows
+  // that do not mention it.
+  openingCreditBatchId        String?
   createdAt                   DateTime   @default(now())
 
   member                    Member                        @relation(fields: [memberId], references: [id], onDelete: Restrict)
@@ -7626,12 +7632,38 @@ model MemberCredit {
   // allocated to booking invoices as Xero credit notes. Empty for negative
   // BOOKING_APPLIED rows and for lots never used to reduce an IB invoice.
   noteAllocations           MemberCreditNoteAllocation[]  @relation("CreditLotAllocations")
+  openingCreditBatch        OpeningCreditBatch?           @relation(fields: [openingCreditBatchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([memberId])
   @@index([requestedById])
   @@index([approvedById])
   @@index([sourceBookingId])
   @@index([appliedToBookingId])
+  @@index([openingCreditBatchId])
+}
+
+/// #4988 — one approved opening-credit CSV batch: the balances a club carries
+/// over from its old system, posted once as ADMIN_ADJUSTMENT credit rows.
+/// `batchKey` is the SHA-256 of the batch's canonical rows, so the same file can
+/// be posted only once (a second confirm, concurrent or later, hits the unique
+/// key). Reversal stamps `reversedAt` once and posts negative rows linked here;
+/// nothing is deleted (`INV-PAY-151`).
+model OpeningCreditBatch {
+  id             String    @id @default(cuid())
+  batchKey       String    @unique
+  totalCents     Int
+  rowCount       Int
+  postedById     String?
+  postedAt       DateTime  @default(now())
+  reversedAt     DateTime?
+  reversedById   String?
+  reversalReason String?
+
+  postedBy   Member?        @relation("PostedOpeningCreditBatches", fields: [postedById], references: [id], onDelete: SetNull)
+  reversedBy Member?        @relation("ReversedOpeningCreditBatches", fields: [reversedById], references: [id], onDelete: SetNull)
+  credits    MemberCredit[]
+
+  @@index([postedAt])
 }
 
 /// #1620 — per-note credit-lot allocation ledger for "allocate-existing" applied
