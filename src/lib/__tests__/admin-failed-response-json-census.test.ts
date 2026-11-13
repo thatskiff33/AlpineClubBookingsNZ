@@ -19,15 +19,15 @@ import { describe, expect, it } from "vitest";
   Two shapes are counted, over the TypeScript AST rather than file text so a
   comment quoting the old shape is never a hit:
 
-   - a FAILURE-BRANCH read: `await x.json()` inside `if (!x.ok) { … }`, or in
-     the `else` of `if (x.ok) { … }`;
+   - a FAILURE-BRANCH read: `await x.json()` inside `if (!x.ok) { … }`, in
+     the `else` of `if (x.ok) { … }`, or as the `x.ok ? … : read` arm;
    - a PARSE-BEFORE-CHECK read: `const data = await x.json()` followed, in the
      same block, by a test of `x.ok` — the body is parsed before anyone knows
      whether it is a refusal, so every refusal goes through the unguarded parse.
 
   `await x.json().catch(…)` is not counted: its rejection is already handled.
-  A success read (`if (!x.ok) throw …; const data = await x.json()`) is not
-  counted either: a route that answered 2xx with HTML is a different defect.
+  A success read (`if (!x.ok) throw …; const data = await x.json()`, or one
+  inside `if (x.ok)` or `x.ok ? read : …`) is not counted either: a route that answered 2xx with HTML is a different defect.
 
   KNOWN_UNGUARDED is a CEILING per file, not a pin. Those files are being
   edited by other lanes that had not merged when this census landed (their own
@@ -105,15 +105,16 @@ function skipParens(expr: ts.Expression): ts.Expression {
  * enters, so a later read only ever sees a success. `if (!x.ok && x.status ===
  * 403)` is NOT one: the other refusals fall through to the read.
  */
-function guardsEveryFailure(statement: ts.Statement, name: string): boolean {
-  if (!ts.isIfStatement(statement)) return false;
+function guardsEveryFailure(statement: ts.Statement | ts.Expression, name: string): boolean {
+  if (!ts.isIfStatement(statement) && !ts.isExpression(statement)) return false;
+  const condition = ts.isIfStatement(statement) ? statement.expression : statement;
   const disjuncts = (expr: ts.Expression): ts.Expression[] => {
     const e = skipParens(expr);
     return ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.BarBarToken
       ? [...disjuncts(e.left), ...disjuncts(e.right)]
       : [e];
   };
-  return disjuncts(statement.expression).some(
+  return disjuncts(condition).some(
     (e) =>
       ts.isPrefixUnaryExpression(e) &&
       e.operator === ts.SyntaxKind.ExclamationToken &&
@@ -136,15 +137,28 @@ function unguardedJsonReceiver(node: ts.Node): string | null {
   return ts.isIdentifier(callee.expression) ? callee.expression.text : null;
 }
 
-function inFailureBranch(read: ts.Node, name: string): boolean {
+/**
+ * Which side of an `x.ok` test the read sits on, from the nearest enclosing
+ * `if` or `?:` that tests it: "failure" for `if (!x.ok) { read }`,
+ * `if (x.ok) {} else { read }` and `x.ok ? … : read`; "success" for the
+ * mirror images; `null` when no enclosing test decides it.
+ */
+function branchOf(read: ts.Node, name: string): "failure" | "success" | null {
   let child: ts.Node = read;
   for (let parent = read.parent; parent; child = parent, parent = parent.parent) {
-    if (ts.isFunctionLike(parent)) return false;
-    if (!ts.isIfStatement(parent)) continue;
-    if (child === parent.thenStatement && testsNotOk(parent.expression, name)) return true;
-    if (child === parent.elseStatement && testsOk(parent.expression, name)) return true;
+    if (ts.isFunctionLike(parent)) return null;
+    const [condition, whenTrue, whenFalse] = ts.isIfStatement(parent)
+      ? [parent.expression, parent.thenStatement, parent.elseStatement]
+      : ts.isConditionalExpression(parent)
+        ? [parent.condition, parent.whenTrue, parent.whenFalse]
+        : [null, null, null];
+    if (!condition) continue;
+    if (child === whenTrue && testsNotOk(condition, name)) return "failure";
+    if (child === whenFalse && testsOk(condition, name)) return "failure";
+    if (child === whenTrue && testsOk(condition, name)) return "success";
+    if (child === whenFalse && guardsEveryFailure(condition, name)) return "success";
   }
-  return false;
+  return null;
 }
 
 function parsedBeforeCheck(read: ts.Node, name: string): boolean {
@@ -168,8 +182,9 @@ function unguardedFailureReads(source: string, fileName = "scan.tsx"): Hit[] {
     const name = unguardedJsonReceiver(node);
     if (name) {
       const line = file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1;
-      if (inFailureBranch(node, name)) hits.push({ line, kind: "failure-branch" });
-      else if (parsedBeforeCheck(node, name)) hits.push({ line, kind: "parse-before-check" });
+      const branch = branchOf(node, name);
+      if (branch === "failure") hits.push({ line, kind: "failure-branch" });
+      else if (branch === null && parsedBeforeCheck(node, name)) hits.push({ line, kind: "parse-before-check" });
     }
     ts.forEachChild(node, visit);
   };
@@ -237,6 +252,9 @@ describe("admin failed-response JSON reads (#4976, ALP-589)", () => {
       "    const body = await res.json();",
       "  }",
       "}",
+      "async function g(res: Response) {",
+      "  const data = res.ok ? null : await res.json();",
+      "}",
     ].join("\n");
     expect(unguardedFailureReads(source)).toEqual([
       { line: 3, kind: "failure-branch" },
@@ -245,6 +263,7 @@ describe("admin failed-response JSON reads (#4976, ALP-589)", () => {
       { line: 20, kind: "parse-before-check" },
       { line: 25, kind: "parse-before-check" },
       { line: 31, kind: "failure-branch" },
+      { line: 35, kind: "failure-branch" },
     ]);
   });
 
@@ -273,6 +292,17 @@ describe("admin failed-response JSON reads (#4976, ALP-589)", () => {
       "  if (!res.ok) {",
       "    const later = async () => { const x = await other.json(); };",
       "  }",
+      "}",
+      "async function e(res: Response) {",
+      "  const data = res.ok ? await res.json() : await res.json().catch(() => null);",
+      "  if (res.ok && data.success) return data;",
+      "}",
+      "async function f(res: Response) {",
+      "  if (res.ok) {",
+      "    const data = await res.json();",
+      "    if (data.success) return data;",
+      "  }",
+      "  if (!res.ok) return null;",
       "}",
       "// if (!res.ok) { const data = await res.json(); }",
     ].join("\n");
