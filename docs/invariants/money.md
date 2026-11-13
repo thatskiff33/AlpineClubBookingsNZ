@@ -801,6 +801,34 @@ check the others.
   charge. A later family member produces a visible exception; neither coverage
   mutation nor a second invoice is allowed.
 
+## INV-MONEY-046
+
+- Subscription category is a second, independent billing axis (`INV-LIFE-094`),
+  resolved separately from `MembershipType`'s own fee. A
+  `SubscriptionCategoryFee` has no `billingBasis`: each bills one flat charge
+  per set of family members sharing it (a charge of one with no partner),
+  `INV-MONEY-014`'s uniqueness extended onto
+  `(subscriptionCategoryId, familyGroupId, seasonYear)` by a sibling raw-SQL
+  partial unique index. A `MembershipSubscriptionCharge` bills on exactly one
+  axis: one DB CHECK makes `membershipTypeId` and `subscriptionCategoryId`
+  mutually exclusive and each axis's column group (the `membershipType*` trio,
+  the `subscriptionCategory*` quartet) all-null or all-set. Every reader of
+  those columns goes through `chargeFamilyAxisKey`/`chargeAxisDisplayName`
+  (`INV-SSOT-007`), never a raw template literal, so the closed-family
+  reversal rules (`INV-MONEY-018`, #4110) apply to both axes. Booking rights,
+  rate and lockout stay with `MembershipType`.
+- **Exemption** (#4554 option A, owner, 11 Nov 2026: the type exemption
+  wins): both axes use `resolveSubscriptionTierExemption`, never the booking
+  resolver `resolveMemberSubscriptionSettlement`, which tier-gates a
+  `REQUIRED` type off the stored tier. The two agree on `NOT_REQUIRED` types;
+  their pre-existing age-tier edge is tracked from #4554. A tier-exempt child
+  is exempt inside a category family too, outside its coverage: the type
+  axis's `PER_FAMILY` carve-out (#2148 Q5) would bill a solo exempt child the
+  flat fee.
+- **One category per family:** a member whose family already has a charge,
+  this run or earlier, on the other axis or another category raises
+  `MIXED_AXIS_FAMILY_BILLING` and is withheld.
+
 ## INV-MONEY-015
 
 - Membership approval remains authoritative when billing setup is incomplete:

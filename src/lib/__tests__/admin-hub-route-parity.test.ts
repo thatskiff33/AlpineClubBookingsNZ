@@ -121,6 +121,10 @@ const ORACLE_ROUTE_AREAS: ReadonlyArray<{
       "/admin/communications",
       "/admin/notices",
       "/admin/lockers",
+      // Subscription categories (#4496), added after C2: a new directory, so it
+      // has no row in the frozen oracle above and needs its own reviewed answer,
+      // per this file's own header comment — membership, beside membership-types.
+      "/admin/subscription-categories",
       "/admin/subscription-lockout",
       "/admin/message-board",
       "/admin/family-groups",
@@ -1060,6 +1064,12 @@ describe("the Members hub keeps each page's own admission (C9 #4806)", () => {
     ["membership-types", "/admin/membership-types", "/admin/membership/membership-types", []],
     ["member-fields", "/admin/member-fields", "/admin/membership/member-fields", []],
     ["subscription-lockout", "/admin/subscription-lockout", "/admin/membership/subscription-lockout", []],
+    [
+      "subscription-categories",
+      "/admin/subscription-categories",
+      "/admin/membership/subscription-categories",
+      [],
+    ],
   ];
 
   const only = (area: AdminPermissionArea, level: "view" | "edit"): AdminPermissionInput => ({
@@ -1074,7 +1084,7 @@ describe("the Members hub keeps each page's own admission (C9 #4806)", () => {
   });
 
   it("names every page of the hub, each moved, on ordinary membership admission", () => {
-    expect(ADMIN_PAGES.filter((page) => page.hub === "members")).toHaveLength(15);
+    expect(ADMIN_PAGES.filter((page) => page.hub === "members")).toHaveLength(16);
     expect(
       ADMIN_PAGES.filter((page) => page.hub === "members").map((page) => [
         page.id,

@@ -434,13 +434,29 @@ describe("the #2581 historical null-category backfill (INV-OPS-012, INV-PRIV-012
     // The writer is `fee-configuration.${parsed.data.action.toLowerCase()}` over
     // a discriminated union, so the census cannot name the literals. Read them
     // from the route: the eight `z.literal(...)` discriminators, lower-cased,
-    // must be exactly the eight `fee-configuration.*` actions the map carries.
+    // must be exactly the eight `fee-configuration.*` actions the map carries —
+    // MINUS the actions below this file's own `HISTORICAL_NULL_CATEGORY_MAP_2581`
+    // cannot and must not carry, because that map is closed over the 83 actions
+    // measured read-only on 13 Sep 2026 (`MEASURED_NULL_ACTIONS`) and a literal
+    // added to the route afterwards never had a null-category row to backfill.
+    //
+    // POST_BACKFILL_FEE_CONFIGURATION_ACTIONS: the subscription-category
+    // decoupling's three new discriminators (create/update/delete), added to
+    // the route after the one-shot migration this map describes was written
+    // and applied — they carry a category from day one, so #2581 never
+    // measured them and they belong in neither this map nor the migration.
+    const POST_BACKFILL_FEE_CONFIGURATION_ACTIONS = new Set([
+      "fee-configuration.create_subscription_category_fee",
+      "fee-configuration.update_subscription_category_fee",
+      "fee-configuration.delete_subscription_category_fee",
+    ]);
     const route = readFileSync(
       path.join(process.cwd(), "src", "app", "api", "admin", "fee-configuration", "route.ts"),
       "utf8",
     );
     const fromRoute = [...route.matchAll(/action:\s*z\.literal\("([A-Z_]+)"\)/g)]
       .map((match) => `fee-configuration.${match[1].toLowerCase()}`)
+      .filter((action) => !POST_BACKFILL_FEE_CONFIGURATION_ACTIONS.has(action))
       .sort();
     const fromMap = Object.keys(HISTORICAL_NULL_CATEGORY_MAP_2581)
       .filter((action) => action.startsWith("fee-configuration."))

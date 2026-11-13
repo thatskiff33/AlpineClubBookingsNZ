@@ -133,5 +133,15 @@ export const MEMBERS_HUB = defineHub({
       area: "membership",
       moved: true,
     },
+    {
+      // Subscription categories (#4496): a second billing axis alongside
+      // membership type, so it sits beside membership-types.
+      id: "subscription-categories",
+      label: "Subscription Categories",
+      oldPath: "/admin/subscription-categories",
+      area: "membership",
+      keywords: ["category", "billing", "flat fee", "couple", "family rate"],
+      moved: true,
+    },
   ],
 });

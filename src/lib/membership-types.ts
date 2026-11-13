@@ -5,9 +5,8 @@ import type {
   Prisma,
   Role,
 } from "@prisma/client";
+import { buildUniqueCatalogueKey, normalizeCatalogueKey, normalizeCatalogueText } from "@/lib/catalogue-key";
 import { isKeyResolvedRateHolder } from "@/lib/membership-type-rate-coverage";
-
-const MEMBERSHIP_TYPE_KEY_MAX_LENGTH = 80;
 
 export const MEMBERSHIP_TYPE_BOOKING_BEHAVIORS = [
   "MEMBER_RATE",
@@ -396,19 +395,12 @@ export function serializeMembershipType(type: MembershipTypeWithAssignmentCount)
 export function normalizeMembershipTypeText(
   value: string | null | undefined,
 ): string | null {
-  const trimmed = value?.trim() ?? "";
-  return trimmed.length > 0 ? trimmed : null;
+  return normalizeCatalogueText(value);
 }
 
 // test seam
 export function normalizeMembershipTypeKey(name: string): string {
-  const normalized = name
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, MEMBERSHIP_TYPE_KEY_MAX_LENGTH);
-  return normalized || "CUSTOM";
+  return normalizeCatalogueKey(name);
 }
 
 export async function buildUniqueMembershipTypeKey(
@@ -422,25 +414,8 @@ export async function buildUniqueMembershipTypeKey(
   },
   name: string,
 ): Promise<string> {
-  const base = normalizeMembershipTypeKey(name);
-  let candidate = base;
-  let suffix = 2;
-
-  while (
-    await db.membershipType.findUnique({
-      where: { key: candidate },
-      select: { id: true },
-    })
-  ) {
-    const suffixText = `_${suffix}`;
-    candidate = `${base.slice(
-      0,
-      MEMBERSHIP_TYPE_KEY_MAX_LENGTH - suffixText.length,
-    )}${suffixText}`;
-    suffix += 1;
-  }
-
-  return candidate;
+  return buildUniqueCatalogueKey(name, async (key) =>
+    Boolean(await db.membershipType.findUnique({ where: { key }, select: { id: true } })));
 }
 
 export function defaultMembershipTypeKeyForRole(

@@ -110,6 +110,28 @@ untouched. A `NULL` snapshot (pre-refactor booking) resolves at read time as
 > are now invoiced their own membership type's joining fee. This is surfaced in
 > the Joining Fees section of the Fees page and flagged in the PR body.
 >
+> **Subscription category: a second, independent flat-billing axis.** A club
+> can additionally define `SubscriptionCategory` rows (e.g. "Couple", "Adult +
+> Child", "2 Adults + 2+ Children" — club-definable, not a fixed set) and give
+> each its own flat `SubscriptionCategoryFee` — a plain
+> `(subscriptionCategoryId, effectiveFrom)` schedule with **no** `membershipTypeId`
+> and **no** `ageTier` at all, unlike every fee schedule above. A member's
+> `SeasonalMembershipAssignment.subscriptionCategoryId` (nullable; null is
+> "Individual," the default, byte-identical to today's per-type billing) is
+> resolved and billed entirely independently of their `membershipTypeId`:
+> booking rights/rate stay governed by the type, while the subscription amount
+> and grouping come from the category when one is assigned. Members sharing a
+> category bill together as one flat charge (collapsing to a charge of one when
+> a member has no partner in it) regardless of whether they share a
+> `MembershipType` — e.g. a Senior + a Life Member couple can share one "Couple"
+> charge while each keeps their own type's booking rights. This does **not**
+> replace or conflict with the paragraph above: the built-in Family membership
+> type (booking-rights-and-billing-coupled) keeps working unchanged for clubs
+> that use it, and a club may use either mechanism, or both for different
+> families, without one disabling the other. See `docs/invariants/membership-lifecycle.md`
+> (`INV-LIFE-094`) and `src/lib/membership-subscription-billing.ts`'s category
+> branch in `buildSubscriptionBillingPreview`.
+>
 > **Frozen Xero idempotency (do not change).** The joining-fee invoice's Xero
 > **reference** stays byte-frozen at `` `Entrance fee (<Label>) - <memberId>` ``
 > and the member-scoped **mint** idempotency key stays at v1 — both are
