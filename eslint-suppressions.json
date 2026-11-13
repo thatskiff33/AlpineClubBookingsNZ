@@ -35,7 +35,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/bed-allocation/_components/allocation-chip.tsx": {
+  "src/app/(admin)/admin/booking-desk/bed-allocation/_components/allocation-chip.tsx": {
     "accessibility/minimum-text-size": {
       "count": 4
     },
@@ -43,12 +43,12 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/bed-allocation/_components/board-cell.tsx": {
+  "src/app/(admin)/admin/booking-desk/bed-allocation/_components/board-cell.tsx": {
     "accessibility/minimum-text-size": {
       "count": 5
     }
   },
-  "src/app/(admin)/admin/bed-allocation/_components/guest-chip.tsx": {
+  "src/app/(admin)/admin/booking-desk/bed-allocation/_components/guest-chip.tsx": {
     "accessibility/minimum-text-size": {
       "count": 1
     },
@@ -56,12 +56,12 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/bed-allocation/page.tsx": {
+  "src/app/(admin)/admin/booking-desk/bed-allocation/page.tsx": {
     "jsx-a11y/label-has-associated-control": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/book/page.tsx": {
+  "src/app/(admin)/admin/booking-desk/book/page.tsx": {
     "design-system/no-raw-input": {
       "count": 2
     },
@@ -212,16 +212,10 @@
       "count": 1
     },
     "design-system/no-raw-button": {
-      "count": 4
-    },
-    "jsx-a11y/click-events-have-key-events": {
-      "count": 1
+      "count": 2
     },
     "jsx-a11y/no-autofocus": {
       "count": 2
-    },
-    "jsx-a11y/no-static-element-interactions": {
-      "count": 1
     }
   },
   "src/app/(admin)/admin/induction/[id]/print/page.tsx": {
@@ -460,7 +454,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/waitlist/page.tsx": {
+  "src/app/(admin)/admin/booking-desk/waitlist/page.tsx": {
     "design-system/no-raw-select": {
       "count": 1
     }
@@ -685,12 +679,6 @@
     },
     "design-system/no-raw-button": {
       "count": 3
-    },
-    "jsx-a11y/click-events-have-key-events": {
-      "count": 1
-    },
-    "jsx-a11y/no-static-element-interactions": {
-      "count": 1
     }
   },
   "src/components/admin-sidebar.tsx": {

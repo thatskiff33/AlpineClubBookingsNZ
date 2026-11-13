@@ -10,6 +10,7 @@
 // the authorized members lookup first, and from the audit rows already on screen
 // when that lookup cannot answer.
 import "@testing-library/jest-dom/vitest";
+import userEvent from "@testing-library/user-event";
 import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { StrictMode, useLayoutEffect, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -283,6 +284,27 @@ afterEach(() => {
 });
 
 describe("admin audit log member filter URL (#2733)", () => {
+  it("expands with Enter and collapses with Space without a double toggle", async () => {
+    const user = userEvent.setup();
+    auditEntries = [auditRow({ details: "Keyboard detail" }), auditRow({ id: "plain", summary: "No details" })];
+    await renderAuditLogPage();
+    const expand = await screen.findByRole("button", { name: "Show details" });
+    expect(screen.getAllByRole("button", { name: "Show details" })).toHaveLength(1);
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    for (let step = 0; step < 40 && document.activeElement !== expand; step++) await user.tab();
+    expect(expand).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByText("Keyboard detail")).toBeVisible();
+    expect(expand).toHaveAttribute("aria-expanded", "true");
+    await user.keyboard(" ");
+    expect(screen.queryByText("Keyboard detail")).not.toBeInTheDocument();
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    await user.click(screen.getByText("Member record updated"));
+    expect(screen.getByText("Keyboard detail")).toBeVisible();
+    await user.click(expand);
+    expect(screen.queryByText("Keyboard detail")).not.toBeInTheDocument();
+  });
+
   it("resolves the chip label from an id-only URL and keeps the URL id-only", async () => {
     currentSearchParams = new URLSearchParams({ memberId: JANE.id });
 

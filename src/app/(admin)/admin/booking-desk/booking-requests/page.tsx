@@ -1,5 +1,6 @@
 "use client";
 
+import { adminHref } from "@/lib/admin-hubs";
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -137,7 +138,7 @@ export default function BookingRequestsPage() {
       }
     }
 
-    router.replace(`/admin/booking-requests?${params.toString()}`, {
+    router.replace(`${adminHref("booking-requests")}?${params.toString()}`, {
       scroll: false,
     });
   }
