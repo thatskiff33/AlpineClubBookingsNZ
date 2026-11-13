@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
@@ -137,6 +138,17 @@ describe("school booking form adult rows (#4957)", () => {
 
     const label = within(secondRow).getByText("First name") as HTMLLabelElement;
     expect(label.control).toBe(adultInputs(secondRow)[0]);
+  });
+
+  it("puts the cursor in row 2's own box when each of its labels is clicked", async () => {
+    renderWithTwoAdults();
+    const secondRow = screen.getByRole("group", { name: "Adult 2" });
+    const inputs = adultInputs(secondRow);
+
+    for (const [position, label] of ADULT_LABELS.entries()) {
+      await userEvent.click(within(secondRow).getByText(label));
+      expect(inputs[position]).toHaveFocus();
+    }
   });
 
   it("keeps surviving fields labelled after removing a middle row and adding another", () => {
