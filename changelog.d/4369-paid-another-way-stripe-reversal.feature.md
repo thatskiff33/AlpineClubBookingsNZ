@@ -10,6 +10,8 @@
   bank-transfer refund credit note for the full amount paid back. Paying back
   less than the card note still leaves the difference on the Xero
   reconciliation report. A close the card note does not cover is unchanged.
+  The invoice is never emailed and is not the booking's bill. If an officer
+  voids it in Xero, the app stops counting it and does not raise it again.
 
   A close already taken by a previous release is unchanged, and there is no
   automatic backfill. After this release has taken a covered close, do not
