@@ -629,7 +629,8 @@ export function parseMemberImportCsv(text: string): MemberImportCsvParseResult {
   };
 }
 
-function normalizeMemberImportHeader(header: string) {
+/** A CSV header reduced to lowercase letters and digits, for alias matching. */
+export function normalizeMemberImportHeader(header: string) {
   return header.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 

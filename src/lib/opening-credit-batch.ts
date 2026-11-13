@@ -30,6 +30,7 @@ import { assertDeductionLeavesNotedCreditUntouched } from "@/lib/admin-grant-cre
 import { clubFormatValues } from "@/lib/club-format-server";
 import logger from "@/lib/logger";
 import { getMemberCreditBalance, lockMemberCreditLedger } from "@/lib/member-credit";
+import { memberName } from "@/lib/member-serialization";
 import { OPENING_CREDIT_REVERSAL_REASON_MAX_LENGTH, parseOpeningCreditCsv } from "@/lib/opening-credit-csv";
 import { MemberCreditValidationError } from "@/lib/policies/member-credit";
 import { prisma } from "@/lib/prisma";
@@ -125,7 +126,7 @@ export async function buildOpeningCreditPreview(
     return {
       lineNumber: row.lineNumber,
       memberId: member?.id ?? null,
-      memberName: member ? `${member.firstName} ${member.lastName}`.trim() : null,
+      memberName: member ? memberName(member) : null,
       memberEmail: member?.email ?? null,
       amountCents: row.amountCents,
       description: row.description,
@@ -322,7 +323,7 @@ export async function reverseOpeningCreditBatch(input: {
     const lots = await loadFreeCreditLots(tx, batch.credits.map((credit) => credit.memberId));
     const spent: string[] = [];
     for (const credit of batch.credits) {
-      const name = `${credit.member.firstName} ${credit.member.lastName}`.trim();
+      const name = memberName(credit.member);
       const lot = lots.get(credit.memberId)?.lots.find((free) => free.memberCreditId === credit.id);
       const balance = await getMemberCreditBalance(credit.memberId, tx);
       if (!lot || lot.remainingCents !== credit.amountCents || balance < credit.amountCents) {
@@ -396,8 +397,8 @@ export async function listOpeningCreditBatches() {
     postedAt: batch.postedAt.toISOString(),
     reversedAt: batch.reversedAt?.toISOString() ?? null,
     reversalReason: batch.reversalReason,
-    postedBy: batch.postedBy ? `${batch.postedBy.firstName} ${batch.postedBy.lastName}`.trim() : null,
-    reversedBy: batch.reversedBy ? `${batch.reversedBy.firstName} ${batch.reversedBy.lastName}`.trim() : null,
+    postedBy: batch.postedBy ? memberName(batch.postedBy) : null,
+    reversedBy: batch.reversedBy ? memberName(batch.reversedBy) : null,
   }));
 }
 

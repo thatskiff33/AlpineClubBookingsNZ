@@ -14,7 +14,7 @@
  * Browser-safe: no Prisma, no server imports.
  */
 
-import { parseMemberImportCsv } from "@/lib/member-csv-import";
+import { normalizeMemberImportHeader, parseMemberImportCsv } from "@/lib/member-csv-import";
 import { MAX_INTEGER_CENTS, parseDecimalDollarsToCents } from "@/lib/money-input";
 
 /** One batch is one transaction holding one ledger lock per member, so it is bounded like the member import. */
@@ -43,10 +43,6 @@ const OPENING_CREDIT_COLUMN_ALIASES: Record<OpeningCreditColumn, readonly string
   amountCents: ["amountcents", "cents", "creditcents", "balancecents"],
   description: ["description", "reason", "note", "notes", "memo"],
 };
-
-function normalizeHeader(header: string) {
-  return header.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
 
 export type OpeningCreditCsvRow = {
   lineNumber: number;
@@ -86,7 +82,7 @@ export function parseOpeningCreditCsv(text: string): OpeningCreditCsvParseResult
 
   const columns = new Map<OpeningCreditColumn, number>();
   for (const [index, header] of parsed.data.headers.entries()) {
-    const normalized = normalizeHeader(header);
+    const normalized = normalizeMemberImportHeader(header);
     for (const [column, aliases] of Object.entries(OPENING_CREDIT_COLUMN_ALIASES) as [OpeningCreditColumn, readonly string[]][]) {
       if (!aliases.includes(normalized)) continue;
       if (columns.has(column)) return { ok: false, error: `The CSV has more than one ${header} column` };
