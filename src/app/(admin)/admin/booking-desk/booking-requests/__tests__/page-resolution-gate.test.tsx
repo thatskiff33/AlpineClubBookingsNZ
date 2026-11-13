@@ -53,7 +53,7 @@ vi.mock(
 );
 
 // Imported after the mocks are registered.
-import BookingRequestsPage from "@/app/(admin)/admin/booking-requests/page";
+import BookingRequestsPage from "@/app/(admin)/admin/booking-desk/booking-requests/page";
 
 function editMatrix(): AdminPermissionMatrix {
   return {
