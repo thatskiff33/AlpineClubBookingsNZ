@@ -75,7 +75,6 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { adminHref } from "@/lib/admin-hubs";
 export function formatAdminBookingGuestCount(totalGuests: number, nonMemberGuests: number) {
   return `${totalGuests} (${nonMemberGuests} non-member${nonMemberGuests === 1 ? "" : "s"})`;
 }

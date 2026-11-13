@@ -28,7 +28,7 @@ import type {
   XeroRecordReference,
 } from "@/lib/xero-record-types";
 
-import { adminLink, adminHref } from "@/lib/admin-hubs";
+import { adminLink } from "@/lib/admin-hubs";
 interface XeroRecordScope {
   rootRecord: XeroRecordReference
   scopeRecords: XeroRecordReference[]

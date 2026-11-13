@@ -316,8 +316,8 @@ describe("next.config.ts over the moved Finance hub", () => {
     await expect(
       resolve(config, "/admin/xero/records/Booking/b-1"),
     ).resolves.toEqual({ kind: "rewrite", url: "/admin/finance/xero/records/Booking/b-1" });
-    // Bookings has not moved, so an unmoved neighbour is untouched.
-    await expect(resolve(config, "/admin/bookings")).resolves.toEqual({ kind: "none" });
+    // Lodges has not moved, so an unmoved neighbour is untouched.
+    await expect(resolve(config, "/admin/lodges")).resolves.toEqual({ kind: "none" });
   });
 
   it("on: the old URL redirects (307) to the hub URL, query kept, and nothing is rewritten", async () => {

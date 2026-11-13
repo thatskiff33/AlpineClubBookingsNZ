@@ -27,7 +27,6 @@ import { formatStayDateOrNull } from "@/lib/club-time";
 import { formatPolicyExceptionRequestAge } from "@/lib/booking-exception-request-shared";
 import type { PolicyExceptionReasonCode } from "@/lib/booking-policy-exceptions";
 import { HostingCoverageOverridePrompt } from "@/components/hosting-coverage-override-prompt";
-import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * #2526 — the Booking Officer's booking-policy exception queue.

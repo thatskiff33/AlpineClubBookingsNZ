@@ -193,11 +193,11 @@ describe("every admin page is registered exactly once", () => {
 
   it("expects a moved page at its hub path, not its old path", () => {
     // A page that has not moved yet, played against a synthetic tree. Members
-    // moved in C9, so the specimen is Booking Requests.
+    // (C9) and Bookings (C10) have moved, so the specimen is Lodges.
     const pages = ADMIN_PAGES.map((page) =>
-      page.id === "booking-requests" ? { ...page, moved: true } : page,
+      page.id === "lodges" ? { ...page, moved: true } : page,
     );
-    const specimen = pages.find((page) => page.id === "booking-requests")!;
+    const specimen = pages.find((page) => page.id === "lodges")!;
     const afterMove = ON_DISK_PAGE_PATHS.filter((p) => p !== specimen.oldPath).concat(
       specimen.hubPath,
     );
@@ -207,12 +207,12 @@ describe("every admin page is registered exactly once", () => {
     // old path is unregistered.
     expect(diskCensus(pages, ON_DISK_PAGE_PATHS)).toEqual([
       `${PAGE_FILE_BY_PATH.get(specimen.oldPath)} (${specimen.oldPath}) has no registry entry`,
-      `booking-requests is moved, but no page.tsx serves ${specimen.hubPath}`,
+      `lodges is moved, but no page.tsx serves ${specimen.hubPath}`,
     ]);
     // Moved on disk, but the registry was not told.
     expect(diskCensus(ADMIN_PAGES, afterMove)).toEqual([
       `${specimen.hubPath} (${specimen.hubPath}) has no registry entry`,
-      `booking-requests is not moved, but no page.tsx serves ${specimen.oldPath}`,
+      `lodges is not moved, but no page.tsx serves ${specimen.oldPath}`,
     ]);
   });
 
@@ -984,9 +984,9 @@ describe("adminHref", () => {
   });
 
   it("links the hub path only when the switch is on AND the page has moved", () => {
-    // Booking Requests has not moved. A moved page, even with the switch on,
-    // is what the Members pages are now.
-    const page = ADMIN_PAGES.find((candidate) => candidate.id === "booking-requests")!;
+    // Lodges has not moved, so the switch alone does not send it to its hub
+    // path. The member page has (C9), so it does once the switch is on.
+    const page = ADMIN_PAGES.find((candidate) => candidate.id === "lodges")!;
     const moved = { ...page, moved: true };
     expect(page.moved).toBe(false);
     expect(resolveAdminHref(page, true)).toBe(page.oldPath);
