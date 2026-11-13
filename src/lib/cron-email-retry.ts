@@ -102,7 +102,8 @@ async function retireUnverifiableBookingEmail(params: {
 
 /**
  * N-11: Retry failed emails with backoff.
- * Queries EmailLog for FAILED records with attempts < 3 and re-sends.
+ * Queries EmailLog for FAILED records with attempts below
+ * EMAIL_RETRY_MAX_ATTEMPTS and re-sends.
  * Token-bearing templates are intentionally excluded because their HTML bodies
  * are not retained in EmailLog.
  * SES/SNS bounce and complaint feedback marks undeliverable messages as
