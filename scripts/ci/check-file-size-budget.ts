@@ -13,6 +13,8 @@
  * The rule, in one sentence and unchanged: current size debt may stay, but new
  * debt and debt growth may not appear silently. A file that was not over its
  * budget may not go over it, and a file that was already over may not grow.
+ * A declared allowance may let an over-budget file grow, but never past its
+ * hard ceiling of three times its budget (#4926).
  *
  * WHAT #2979 CHANGED is where "was" comes from. It used to be a checked-in
  * ledger, `scripts/quality/file-size-baseline.txt`. That file was the problem
@@ -42,6 +44,7 @@
 
 import {
   CHECK_COMMAND,
+  HARD_CEILING_MULTIPLE,
   budgetForFile,
   countLines,
   describeBudget,
@@ -104,6 +107,19 @@ export function renderAppliedAllowances(
     `  the file needs no allowance next time and the ${ALLOWANCE_DIR}/ file is inert.`,
     "",
   ].join("\n");
+}
+
+/**
+ * The one line every run on a change prints, pass or fail (#4926): how far this
+ * change moves the tree-wide debt that `--report` totals. A run of small
+ * declared increases is invisible one at a time; their sum is not.
+ */
+export function renderDebtDelta(delta: number | null): string {
+  if (delta === null) {
+    return "Size debt change from this PR: not measured — the base ref could not be resolved\n";
+  }
+  const signed = delta > 0 ? `+${delta}` : String(delta);
+  return `Size debt change from this PR: ${signed} lines\n`;
 }
 
 export function renderReport(findings: readonly ComputedFinding[]): string {
@@ -287,6 +303,7 @@ export function run(root: string, argv: readonly string[]): number {
       `File-size budget ratchet: OK — ${result.checkedFiles} production file(s) changed ` +
         `since ${against}, ${tail}\n`,
     );
+    process.stdout.write(renderDebtDelta(result.debtDelta));
     process.stdout.write(renderAppliedAllowances(result.allowancesApplied));
     return 0;
   }
@@ -296,6 +313,7 @@ export function run(root: string, argv: readonly string[]): number {
       `against ${against}.\n` +
       `Judged ${result.checkedFiles} production file(s) changed since that point.\n`,
   );
+  process.stderr.write(renderDebtDelta(result.debtDelta));
   process.stderr.write(renderReport(findings));
   process.stderr.write(renderAppliedAllowances(result.allowancesApplied));
   process.stderr.write(
@@ -307,7 +325,8 @@ export function run(root: string, argv: readonly string[]): number {
       "An already-over-budget file that genuinely has to grow says so out loud, in",
       `${ALLOWANCE_DIR}/<pr-number>-<slug>.md — one file per pull request, so no two`,
       `branches conflict over it. ${ALLOWANCE_DIR}/README.md is the format and the`,
-      "rules; splitting the file is still the better answer where it is available.",
+      "rules; splitting the file is still the better answer where it is available,",
+      `and the only one past the hard ceiling of ${HARD_CEILING_MULTIPLE} times the budget.`,
       "",
       `  ${CHECK_COMMAND}                     re-run this check`,
       `  ${CHECK_COMMAND} --report         the whole tree's debt, for context`,

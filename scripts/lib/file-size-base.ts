@@ -51,6 +51,12 @@ import {
   type AllowanceProblem,
   type SizeAllowance,
 } from "./file-size-allowances";
+import {
+  HARD_CEILING_MULTIPLE,
+  hardCeilingFor,
+  sizeDebtDelta,
+  type FileStat,
+} from "./file-size-budget";
 
 /** Quoted into every message that asks somebody to write one. */
 const ALLOWANCE_FORMAT_HINT =
@@ -69,7 +75,17 @@ export type BaseSize =
     };
 
 export type BaseResolution =
-  | { ok: true; ref: string; sizes: Map<string, BaseSize> }
+  | {
+      ok: true;
+      ref: string;
+      sizes: Map<string, BaseSize>;
+      /**
+       * Production files this change deleted, with their length on the base.
+       * Nothing is judged on them; they are here so the debt-delta line counts
+       * the debt a deletion removes (#4926).
+       */
+      deleted: FileStat[];
+    }
   | { ok: false; error: string };
 
 /** Count lines the same way `countLines` does, so the two agree exactly. */
@@ -299,6 +315,20 @@ export function baseSizeOf(
   }
 }
 
+/** Paths that existed on the base and are gone now, renames excluded by `-M`. */
+function deletedFilesSinceBase(
+  root: string,
+  baseSha: string,
+): { ok: true; deleted: string[] } | { ok: false; error: string } {
+  try {
+    const raw = git(root, ["diff", "-M", "--name-only", "-z", "--diff-filter=D", baseSha]);
+    return { ok: true, deleted: raw.split("\0").filter(Boolean) };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message.split("\n")[0] : String(error);
+    return { ok: false, error: `Could not read the deletions against ${baseSha}: ${detail}` };
+  }
+}
+
 /**
  * Files git does not track yet and is not ignoring.
  *
@@ -368,6 +398,8 @@ export function resolveBaseSizes(
 
   const diff = changedFilesSinceBase(root, base.sha);
   if (!diff.ok) return { ok: false, error: diff.error };
+  const removed = deletedFilesSinceBase(root, base.sha);
+  if (!removed.ok) return { ok: false, error: removed.error };
 
   const sizes = new Map<string, BaseSize>();
   for (const { file, renamedFrom } of diff.changed) {
@@ -402,7 +434,14 @@ export function resolveBaseSizes(
     if (!sizes.has(file)) sizes.set(file, { kind: "absent" });
   }
 
-  return { ok: true, ref: base.sha, sizes };
+  const deleted: FileStat[] = [];
+  for (const file of removed.deleted) {
+    if (!isProductionFile(file)) continue;
+    const previous = baseSizeOf(root, base.sha, file);
+    if (previous.kind === "existed") deleted.push({ file, lines: previous.lines });
+  }
+
+  return { ok: true, ref: base.sha, sizes, deleted };
 }
 
 /* ------------------------------------------------------------------------- *
@@ -422,6 +461,8 @@ export type ComputedFindingKind =
   | "allowance-mismatched"
   /** An allowance for something an allowance may never cover. */
   | "allowance-not-permitted"
+  /** An allowance that would take a file past its hard ceiling (#4926). */
+  | "allowance-over-hard-ceiling"
   /** An allowance in this change that covered nothing. */
   | "allowance-unused";
 
@@ -449,6 +490,12 @@ export type ComputedResult = {
    * escape the ledger already was.
    */
   allowancesApplied: SizeAllowance[];
+  /**
+   * Net change this change makes to the tree-wide size debt, in lines, or null
+   * when the base could not be resolved. Computed through `sizeDebtDelta`, so
+   * it is the difference `--report` would show before and after (#4926).
+   */
+  debtDelta: number | null;
 };
 
 /**
@@ -547,7 +594,13 @@ export function evaluateComputedRatchet(input: {
         "follow the remedy named above and re-run — this check will not report " +
         "a pass it has no evidence for",
     });
-    return { findings, baseSha: null, checkedFiles: 0, allowancesApplied: [] };
+    return {
+      findings,
+      baseSha: null,
+      checkedFiles: 0,
+      allowancesApplied: [],
+      debtDelta: null,
+    };
   }
 
   // An allowance only has effect on the change that INTRODUCES it: the
@@ -599,13 +652,28 @@ export function evaluateComputedRatchet(input: {
   const used = new Set<string>();
   const allowancesApplied: SizeAllowance[] = [];
 
+  // Lengths of the touched files on each side, for the debt-delta line. The
+  // base side follows a rename to its old path, and counts it only if that path
+  // was budgeted, so a file moved out of scope takes its debt with it and one
+  // moved in arrives as new debt.
+  const baseStats: FileStat[] = [...resolved.deleted];
+  const headStats: FileStat[] = [];
+
   let checkedFiles = 0;
   for (const [file, previous] of [...resolved.sizes.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    if (previous.kind === "existed") {
+      const baseFile = previous.from ?? file;
+      if (input.isProductionFile(baseFile)) {
+        baseStats.push({ file: baseFile, lines: previous.lines });
+      }
+    }
     if (!input.isProductionFile(file)) continue;
     checkedFiles += 1;
 
     const budget = input.budgetForFile(file);
     const current = input.countLines(input.root, file);
+    headStats.push({ file, lines: current });
+    const hardCeiling = hardCeilingFor(budget);
     const describe = `${budget.category}, <= ${budget.limit} LOC`;
 
     const allowance = allowanceFor.get(file);
@@ -662,7 +730,8 @@ export function evaluateComputedRatchet(input: {
 
     // An already-over file keeps its own length as the ceiling; an under-budget
     // one keeps the budget. Taking the max is what lets existing debt stay while
-    // refusing growth, without a stored list of exceptions.
+    // refusing growth, without a stored list of exceptions. A file already past
+    // its hard ceiling keeps its own length too, so it may stay or shrink.
     const ceiling = Math.max(budget.limit, previous.lines);
     if (current > ceiling) {
       const renamedNote = previous.from ? ` (renamed from ${previous.from})` : "";
@@ -671,10 +740,12 @@ export function evaluateComputedRatchet(input: {
       if (allowance) {
         used.add(file);
         if (!alreadyOver) {
-          // The owner decision permits "growth of an existing in-scope
-          // OVER-BUDGET file". A module still inside its budget is a module
-          // that can be split before it goes over, and letting an allowance
-          // carry it over would turn the budget itself into a suggestion.
+          // The owner decision of 21 Aug 2026 (#2979) permits "growth of an
+          // existing in-scope OVER-BUDGET file", and the decision of 11 Nov
+          // 2026 (#4926) bounds that growth at the hard ceiling below. A module
+          // still inside its budget is a module that can be split before it
+          // goes over, and letting an allowance carry it over would turn the
+          // budget itself into a suggestion.
           findings.push({
             severity: "regression",
             kind: "allowance-not-permitted",
@@ -688,6 +759,25 @@ export function evaluateComputedRatchet(input: {
               "split it, or keep it inside its budget. An allowance lets an " +
               "already-over-budget file grow; a file that is still within its " +
               "budget has the cheapest possible split available to it",
+          });
+        } else if (current > hardCeiling) {
+          // Judged before the length match: no correction to the number could
+          // make this allowance acceptable, so that is not the advice to give.
+          // Owner decision, 11 Nov 2026 (#4926): no file is exempt.
+          findings.push({
+            severity: "regression",
+            kind: "allowance-over-hard-ceiling",
+            file,
+            budget: `${describe}, hard ceiling ${hardCeiling} LOC`,
+            previous: `${previous.lines} LOC on the base ref${renamedNote} (${allowance.source})`,
+            current: `${current} LOC, +${current - hardCeiling} beyond its hard ceiling`,
+            problem:
+              `an allowance cannot take a file past ${HARD_CEILING_MULTIPLE} ` +
+              `times its budget`,
+            action:
+              `split a cohesive part out first, so the file ends at or under ` +
+              `${Math.max(hardCeiling, previous.lines)} LOC, and delete the ` +
+              `allowance if it is then not needed`,
           });
         } else if (allowance.lines !== current) {
           // The one rule that stops an allowance drifting from the tree the way
@@ -722,14 +812,19 @@ export function evaluateComputedRatchet(input: {
         problem: alreadyOver
           ? "an already-oversized file grew"
           : "the file grew past its budget",
-        action: alreadyOver
-          ? `split or reduce it. If the increase is genuinely necessary, say so ` +
+        action: !alreadyOver
+          ? "split or reduce it below its budget — an allowance cannot carry a " +
+            "file over its budget for the first time, only let one already over " +
+            "it grow"
+          : current > hardCeiling
+          ? `split a cohesive part out first, so the file ends at or under ` +
+            `${Math.max(hardCeiling, previous.lines)} LOC. An allowance cannot ` +
+            `help: none may take a file past its hard ceiling of ${hardCeiling} ` +
+            `LOC (${HARD_CEILING_MULTIPLE} times its budget)`
+          : `split or reduce it. If the increase is genuinely necessary, say so ` +
             `out loud: add ${ALLOWANCE_DIR}/<pr-number>-<slug>.md containing ` +
             `${ALLOWANCE_FORMAT_HINT.replace(/\n/g, " ")} — one file per pull ` +
-            `request, so no two branches conflict over it`
-          : "split or reduce it below its budget — an allowance cannot carry a " +
-            "file over its budget for the first time, only let one already over " +
-            "it grow",
+            `request, so no two branches conflict over it`,
       });
     }
   }
@@ -764,5 +859,6 @@ export function evaluateComputedRatchet(input: {
     baseSha: resolved.ref,
     checkedFiles,
     allowancesApplied,
+    debtDelta: sizeDebtDelta(baseStats, headStats),
   };
 }
