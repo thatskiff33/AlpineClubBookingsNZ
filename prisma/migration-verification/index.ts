@@ -29,7 +29,7 @@ import addXeroConnection from "./20261124010000_add_xero_connection";
 import memberMoneyApplications from "./20261210080000_member_money_applications";
 import memberMoneyJournal from "./20261127010000_member_money_journal";
 import stripeBalanceEvidence from "./20261211010000_stripe_balance_evidence";
-import correctStarterPrivacyRetentionAndHosting from "./20261211020000_correct_starter_privacy_retention_and_hosting";
+import correctStarterPrivacyRetentionAndHosting from "./20261214010000_correct_starter_privacy_retention_and_hosting";
 import type { DataMigrationVerification } from "./types";
 
 /**
