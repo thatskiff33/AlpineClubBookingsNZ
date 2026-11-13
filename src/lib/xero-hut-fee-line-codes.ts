@@ -18,6 +18,7 @@ import {
   type HutFeeItemCodeResolver,
   type ResolvedAccountMapping,
 } from "@/lib/xero-mappings";
+import { xeroLineTax, type XeroTaxRendering } from "@/lib/xero-tax-rendering";
 
 /**
  * The item code for one guest's hut-fee line. When the per-guest resolver is
@@ -52,6 +53,32 @@ export function resolveHutFeeLineItemCode(
  * there is no item code, when the account is not the "200" default, or when
  * the admin explicitly configured the account to override the Item's default.
  */
+/**
+ * One hut-fee refund line under the caller's tax rendering (#4632), with the
+ * `hutFeeRefunds` item and account (`INV-PAY-151`). The refund credit note and the failed-card-refund reversal
+ * invoice both use it, so the reversal copies the note it undoes.
+ */
+export function hutFeeRefundLine(
+  description: string,
+  amountCents: number,
+  mapping: { itemCode?: string | null; code?: string | null; codeExplicitlyConfigured: boolean },
+  taxRendering: XeroTaxRendering,
+): LineItem {
+  return applyHutFeeLineCodes(
+    {
+      description,
+      quantity: 1,
+      unitAmount: amountCents / 100,
+      ...xeroLineTax(taxRendering),
+    },
+    {
+      itemCode: mapping.itemCode,
+      accountCode: mapping.code ?? "200",
+      accountCodeExplicitlyConfigured: mapping.codeExplicitlyConfigured,
+    },
+  );
+}
+
 export function applyHutFeeLineCodes(
   lineItem: LineItem,
   codes: {

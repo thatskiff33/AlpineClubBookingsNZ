@@ -54,6 +54,7 @@ import {
   getAuthenticatedXeroClient,
 } from "./xero-api-client";
 import { getResolvedAccountMapping } from "./xero-mappings";
+import { hutFeeRefundLine } from "@/lib/xero-hut-fee-line-codes";
 import { retryXeroWriteWithContactRepair, type FindOrCreateXeroContactOptions } from "./xero-contacts";
 import {
   findOrCreateXeroContactForInvoicedParty,
@@ -646,11 +647,10 @@ export async function createXeroCreditNote(
     options,
   );
   const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
-  const accountCode = refundMapping.code ?? "200";
   // #4632: a note returns money under the treatment the booking was charged under.
   const taxRendering = await resolveXeroTaxRendering({ kind: "booking", bookingId: payment.booking.id });
-  const refundLineItem: LineItem = {
-    description: buildRefundDocumentDescription({
+  const refundLineItem: LineItem = hutFeeRefundLine(
+    buildRefundDocumentDescription({
       method: documentWording,
       bookingId: payment.booking.id,
       stay: {
@@ -658,16 +658,10 @@ export async function createXeroCreditNote(
         checkOut: formatDateOnly(new Date(payment.booking.checkOut)),
       },
     }),
-    quantity: 1,
-    unitAmount: effectiveRefundAmountCents / 100,
-    ...xeroLineTax(taxRendering),
-  };
-  if (refundMapping.itemCode) {
-    refundLineItem.itemCode = refundMapping.itemCode;
-  }
-  if (!refundMapping.itemCode || accountCode !== "200" || refundMapping.codeExplicitlyConfigured) {
-    refundLineItem.accountCode = accountCode;
-  }
+    effectiveRefundAmountCents,
+    refundMapping,
+    taxRendering,
+  );
 
   // The stay dates above are `@db.Date` lodge nights, left on truncation —
   // INV-DATE-019's first boundary with INV-DATE-026, not INV-DATE-010 (#3080).

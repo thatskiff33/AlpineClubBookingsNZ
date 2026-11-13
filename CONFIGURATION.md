@@ -2661,6 +2661,10 @@ from. There is no environment variable.
   after the club's today, so no document already rendered changes, and is
   refused when Xero's own tax-rate list does not carry the chosen code,
   active and usable on revenue, at the chosen rate.
+- **Charges are recorded.** Since M3b (#4627), the journal records each
+  booking door's charge lines under the schedule above. A journal refusal
+  stops the booking or payment change rather than being ignored
+  ([`INV-MONEY-044`](docs/invariants/money.md#inv-money-044)).
 
 ## Finance dashboard
 
@@ -2932,4 +2936,4 @@ variables, then Actions):
 
 | Variable | Description |
 | --- | --- |
-| `STATUS_BOARD_ISSUE` | Optional. The number of the issue whose body `.github/workflows/status-board.yml` overwrites hourly with the generated lane status board (#4464). Only the repository owner can set it. While it is unset the job exits with a notice and writes nothing; it also refuses an issue that is a pull request or whose body is neither empty nor an earlier board. |
+| `STATUS_BOARD_ISSUE` | Optional. The number of the issue whose body `.github/workflows/status-board.yml` overwrites hourly with the generated lane status board (#4464). Only the repository owner can set it; see [status board setup](docs/agents/COORDINATION.md#the-status-board). While unset, the job warns and writes nothing. It refuses an issue that is a pull request or whose body is neither empty nor an earlier board. |

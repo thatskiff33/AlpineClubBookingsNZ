@@ -20,8 +20,9 @@ import { ADMIN_PAGES, ADMIN_RETIRED_PAGES, isInexactAdminPagePath } from "@/lib/
 // The config's `redirects()` and `rewrites().beforeFiles` are generated from
 // the hub registry. C4 (#4801) has moved the Website pages, C5 (#4802) the
 // Finance pages, C6 (#4803) the Fees & booking rules pages, C7 (#4804) the
-// Help & system pages, C8 (#4805) the Messages & email pages and C10 (#4807)
-// the Bookings pages, and the switch is off, so each of those hub URLs
+// Help & system pages, C8 (#4805) the Messages & email pages, C9 (#4806) the
+// Members pages and C10 (#4807) the Bookings pages, and the switch is off, so
+// each of those hub URLs
 // redirects to its old URL and each old URL is rewritten to the moved file. The five retired pages (S1 #4796) still redirect
 // in both states. All of this is run through
 // Next's own pipeline (`unstable_getResponseFromNextConfig`, which calls the
@@ -106,7 +107,7 @@ describe("next.config.ts with the switch off", () => {
     const config = await loadConfig();
     const moved = movedPages();
     expect(new Set(moved.map((page) => page.hub))).toEqual(
-      new Set(["website", "finance", "rules", "system", "messages", "bookings"]),
+      new Set(["website", "finance", "rules", "system", "messages", "bookings", "members"]),
     );
     const retired = ADMIN_RETIRED_PAGES.map(({ oldPath }) => oldPath);
     expect(
@@ -127,7 +128,8 @@ describe("next.config.ts with the switch off", () => {
   });
 
   /**
-   * C4 (#4801), C5 (#4802), C6 (#4803), C7 (#4804), C8 (#4805) and C10 (#4807) off-state smoke. Next's config pipeline answers a
+   * C4 (#4801), C5 (#4802), C6 (#4803), C7 (#4804), C8 (#4805), C9 (#4806) and C10
+   * (#4807) off-state smoke. Next's config pipeline answers a
    * `beforeFiles` rewrite as 200 and a redirect as 307. The old URL is served
    * from the moved file; the hub URL redirects to the old URL.
    */
@@ -188,7 +190,7 @@ describe("next.config.ts with the switch off", () => {
     expect(isInexactAdminPagePath("/admin/site%2Dstyle")).toBe(true);
   });
 
-  it.each(["/admin/members", "/admin/lockers", "/admin/members/x1"])(
+  it.each(["/admin/lodges", "/admin/lockers", "/admin/lodges/x1"])(
     "routes %s untouched",
     async (url) => {
       await expect(resolve(await loadConfig(), url)).resolves.toEqual({ kind: "none" });
@@ -270,9 +272,17 @@ describe("next.config.ts with the switch off", () => {
       kind: "rewrite",
       url: "/admin/system/health",
     });
+    // Family Groups and Cancellation Requests moved in C9 (#4806), so their
+    // old URLs are served from the moved files too.
+    await expect(resolve(config, "/admin/family-groups")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/membership/family-groups",
+    });
+    await expect(resolve(config, "/admin/membership-cancellations")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/membership/membership-cancellations",
+    });
     for (const url of [
-      "/admin/family-groups",
-      "/admin/membership-cancellations",
       "/admin/setup",
       "/admin/setup/finance",
       "/admin/setup/foundations",
@@ -306,8 +316,8 @@ describe("next.config.ts over the moved Finance hub", () => {
     await expect(
       resolve(config, "/admin/xero/records/Booking/b-1"),
     ).resolves.toEqual({ kind: "rewrite", url: "/admin/finance/xero/records/Booking/b-1" });
-    // An unmoved page is untouched.
-    await expect(resolve(config, "/admin/members")).resolves.toEqual({ kind: "none" });
+    // Lodges has not moved, so an unmoved neighbour is untouched.
+    await expect(resolve(config, "/admin/lodges")).resolves.toEqual({ kind: "none" });
   });
 
   it("on: the old URL redirects (307) to the hub URL, query kept, and nothing is rewritten", async () => {
@@ -467,6 +477,99 @@ describe("next.config.ts over the moved Messages & email hub", () => {
       url: "/admin/messages/notices/new",
     });
     await expect(resolve(config, "/admin/messages/notifications")).resolves.toEqual({ kind: "none" });
+  });
+});
+
+describe("next.config.ts over the moved Members hub", () => {
+  // Members moved in C9 (#4806). The prefix is `membership`, not `members`.
+  it("PREMISE: every Members page has moved", () => {
+    const members = ADMIN_PAGES.filter((page) => page.hub === "members");
+    expect(members).toHaveLength(15);
+    expect(members.filter((page) => !page.moved).map((page) => page.id)).toEqual([]);
+  });
+
+  it("off: a merge's hub URL redirects to its old URL, and the old URL is served from the moved file, query kept", async () => {
+    const config = await loadConfig({ live: false });
+    await expect(resolve(config, "/admin/membership/members/m-1/merge?loser=m-2")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/members/m-1/merge?loser=m-2",
+    });
+    await expect(resolve(config, "/admin/members/m-1/merge?loser=m-2")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/membership/members/m-1/merge?loser=m-2",
+    });
+  });
+
+  it("off: induction settings is served from the moved file, and a print hub URL redirects to the old URL", async () => {
+    const config = await loadConfig({ live: false });
+    await expect(resolve(config, "/admin/induction/settings")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/membership/induction/settings",
+    });
+    await expect(resolve(config, "/admin/membership/induction/i-1/print")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/induction/i-1/print",
+    });
+  });
+
+  it("off: the cancellation queue keeps its tab when the old URL is rewritten", async () => {
+    const config = await loadConfig({ live: false });
+    await expect(resolve(config, "/admin/membership-cancellations?tab=settings")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/membership/membership-cancellations?tab=settings",
+    });
+  });
+
+  it("off: the retired Members URLs redirect once to the old destination", async () => {
+    const config = await loadConfig({ live: false });
+    await expect(resolve(config, "/admin/family-suggestions")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/family-groups?tab=suggestions",
+    });
+    await expect(resolve(config, "/admin/membership-cancellation")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/membership-cancellations?tab=settings",
+    });
+    await expect(resolve(config, "/admin/setup/cancellation")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/membership-cancellations?tab=settings",
+    });
+  });
+
+  it("on: the retired Members URLs and an old member URL redirect once, straight to the hub", async () => {
+    const config = await loadConfig({ live: true });
+    await expect(resolve(config, "/admin/family-suggestions")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/membership/family-groups?tab=suggestions",
+    });
+    await expect(resolve(config, "/admin/membership-cancellation")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/membership/membership-cancellations?tab=settings",
+    });
+    await expect(resolve(config, "/admin/setup/cancellation")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/membership/membership-cancellations?tab=settings",
+    });
+    await expect(resolve(config, "/admin/members/m-1/merge")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/membership/members/m-1/merge",
+    });
+    await expect(resolve(config, "/admin/membership/members/m-1/merge")).resolves.toEqual({ kind: "none" });
+  });
+
+  it.each([false, true])("leaves /api/admin/members untouched (live=%s)", async (live) => {
+    await expect(resolve(await loadConfig({ live }), "/api/admin/members/m-1")).resolves.toEqual({
+      kind: "none",
+    });
   });
 });
 
