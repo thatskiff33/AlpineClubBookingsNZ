@@ -327,6 +327,19 @@ These family rules are enforced by automated tests (issue #1132):
 ### Admin Routes
 
 - `src/app/api/admin/**/route.ts`
+  - `admin/bookings/[id]/work-party` (fork #119): bookings view to list the
+    work parties a booking could join, bookings edit to preview or apply
+    adding it to one. The only door to a work party's internal promo code on
+    an existing booking: the code is admitted by a service argument
+    (`officerWorkPartyCorrection`) that no request body can carry, and a census
+    pins its one caller (and the service refuses it without an officer, a
+    caller transaction and a promo-only change). It moves money only through
+    the canonical booking edit, as account credit: organiser-paid bookings,
+    whose money would go back to the organiser, are refused, so it never
+    refunds. It applies only the figures the officer was shown, and answers 404
+    while the Work Parties module is off. Its POST is on the step-up list
+    (`INV-AUTH-010`): the canonical edit it calls reaches the refund
+    operations, so it asks for a fresh proof before reading the body.
 
 Admin route subfamilies are:
 

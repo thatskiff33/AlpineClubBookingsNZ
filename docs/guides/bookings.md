@@ -538,6 +538,7 @@ are its filters and columns.
 | Lodge | Filter by lodge | All lodges | Only shown when more than one active lodge exists |
 | Reset | Restore search, filters, sort, and page | — | Keeps the selected lodge; disabled at the dataset defaults |
 | + Create Booking | Open the Book on Behalf wizard | — | Disabled for view-only bookings roles |
+| Booking page → Admin tools → Add to work party | Give a member the working-bee discount they forgot to tick: the booking is repriced and anything paid above the new total comes back as account credit | Shown only with the Work Parties module on | Needs bookings **edit**. No change fee and no refund. See [Work Parties](work-parties.md#add-an-existing-booking-to-a-work-party) |
 | Booking page → Admin tools → Cash / off-Xero payment | Record a payment made in cash or by a bank transfer that never reached Xero, or reverse one | — | Needs finance **edit** (not bookings edit). Never contacts Xero. Asks whether the money also covers any extra still owing from a later change. See the [Payments guide](payments.md) |
 
 **Booking status chips** (shared with the rest of the app): Draft, Pending,

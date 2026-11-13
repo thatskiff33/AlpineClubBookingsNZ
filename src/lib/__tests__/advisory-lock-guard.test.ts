@@ -541,6 +541,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "addBookingToWorkParty#1",
+    tier: "GLOBAL",
+    reason:
+      "Fork #119: an officer adds an existing booking to a work party — the canonical batch modification on the same transaction, which moves settlement money (account credit) and must exclude a concurrent cancel, capture or refund of the same booking, composed with a capacity re-check. Global first, then the booking's immutable lodge key, then (#4845) the booking row before the officer's re-authorisation; the tx-aware service re-enters all three and takes the member keys after. No claim row: two concurrent applies serialise here and the second re-reads a booking that already carries the work party and is refused.",
+    invariant: "INV-LOCK-002",
+  },
+  {
     site: "src/lib/booking-exception-request-service.ts::acquireGlobalBookingLock#1",
     tier: "GLOBAL",
     reason:

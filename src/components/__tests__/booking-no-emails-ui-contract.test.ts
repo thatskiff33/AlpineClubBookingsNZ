@@ -79,6 +79,8 @@ const BOOKING_NOTIFY_PROMPTS = [
   "app/(admin)/admin/finance/refund-requests/page.tsx",
   // #4533: a finished-stay promo correction may withhold the change email.
   "components/admin/booking-requests/booking-change-request-officer-entry.tsx",
+  // Fork #119: adding a booking to a work party sends the booking-change email.
+  "components/admin/booking-work-party-controls.tsx",
 ];
 
 /**

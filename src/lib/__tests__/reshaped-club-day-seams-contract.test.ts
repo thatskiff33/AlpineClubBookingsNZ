@@ -253,7 +253,9 @@ describe("#3123 reshaped seams keep their required club day", () => {
     // the consent service resolved before its transaction. #4202 added a
     // thirteenth: the edit's promo preview refuses a re-rate on a stay under way
     // exactly as the quote does (`promo-preview-edit.ts`), on the club's day it
-    // resolves itself, with no transaction open.
+    // resolves itself, with no transaction open. Fork #119 added an eighth
+    // `bookingStayHasStarted`: "Add to work party" refuses a started stay, on
+    // the club's day its route resolved before the transaction.
     const sources = productionSources();
     let policyCalls = 0;
     let startedCalls = 0;
@@ -264,6 +266,6 @@ describe("#3123 reshaped seams keep their required club day", () => {
       startedCalls += callArguments(code, "bookingStayHasStarted").length;
     }
     expect(policyCalls).toBe(13);
-    expect(startedCalls).toBe(7);
+    expect(startedCalls).toBe(8);
   });
 });

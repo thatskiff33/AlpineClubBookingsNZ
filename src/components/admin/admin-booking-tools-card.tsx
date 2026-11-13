@@ -12,6 +12,7 @@ import {
 } from "@/components/admin/booking-manual-payment-controls";
 import { BookingStoredNightPriceControls } from "@/components/admin/booking-stored-night-price-controls";
 import { AdminReturnToWaitlistControls } from "@/components/admin/admin-return-to-waitlist-controls";
+import { BookingWorkPartyControls } from "@/components/admin/booking-work-party-controls";
 import { ConfirmPendingGuestsButton } from "@/components/admin/confirm-pending-guests-button";
 import { CopyBookingButton } from "@/components/admin/copy-booking-button";
 import type {
@@ -295,6 +296,13 @@ export function AdminBookingToolsCard({
               noEmails={noEmails?.noEmails ?? false}
             />
           )}
+          {/* Fork #119: add the booking to a work party the member missed. */}
+          {!isDeleted && features.workParties && (
+            <BookingWorkPartyControls
+              bookingId={bookingId}
+              noEmails={noEmails?.noEmails ?? false}
+            />
+          )}
           {/* #3214: recording what a guest's nights sold for. It sits with the
               other money controls on this card rather than on the finance
               queue, because the bookings it is for raise no queue task at all —
@@ -324,7 +332,9 @@ export function AdminBookingToolsCard({
               minCheckIn={copyProps.minCheckIn}
             />
           )}
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+          {/* pt-1 and gap-y-2: these links keep 24px of clear space from the controls
+              above and from each other (WCAG 2.5.8, axe target-offset). */}
+          <div className="flex flex-wrap gap-x-4 gap-y-2 pt-1 text-sm">
             {memberId ? (
               <Link
                 className="text-muted-foreground underline hover:text-accent-foreground"

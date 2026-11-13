@@ -191,6 +191,10 @@ export async function findActiveWorkPartyEventsForRange(
       discountPercent: true,
       lodgeId: true,
       lodge: { select: { name: true } },
+      // Fork #119: what `workPartyEventRefusal` reads, so a caller can judge
+      // a listed event with the one rule rather than trust the filter.
+      active: true,
+      promoCode: { select: { active: true, archivedAt: true } },
     },
     orderBy: { startDate: "asc" },
   });
@@ -231,23 +235,54 @@ export async function resolveWorkPartyEventPromoForBooking(
   if (!event) {
     return { ok: false, error: "Working bee event not found" };
   }
-  if (!event.active || !event.promoCode.active || event.promoCode.archivedAt) {
-    return { ok: false, error: "This working bee event is no longer active" };
+  switch (workPartyEventRefusal(event, checkIn, checkOut, bookingLodgeId)) {
+    case "inactive":
+      return { ok: false, error: "This working bee event is no longer active" };
+    case "no-overlap":
+      return {
+        ok: false,
+        error: "This working bee event does not overlap your booking dates",
+      };
+    case "other-lodge":
+      return {
+        ok: false,
+        error: `This working bee is held at ${event.lodge?.name ?? "another lodge"} — book that lodge to attend it`,
+      };
+    case null:
+      return { ok: true, promoCodeStr: event.promoCode.code, eventName: event.name };
   }
-  if (!workPartyWindowOverlapsStay(event, checkIn, checkOut)) {
-    return {
-      ok: false,
-      error: "This working bee event does not overlap your booking dates",
-    };
-  }
-  if (event.lodgeId && bookingLodgeId && event.lodgeId !== bookingLodgeId) {
-    return {
-      ok: false,
-      error: `This working bee is held at ${event.lodge?.name ?? "another lodge"} — book that lodge to attend it`,
-    };
-  }
+}
 
-  return { ok: true, promoCodeStr: event.promoCode.code, eventName: event.name };
+export type WorkPartyEventRefusal = "inactive" | "no-overlap" | "other-lodge";
+
+/**
+ * Whether a work party can discount this stay, as a reason code — the ONE rule
+ * for "this event applies to this booking" (INV-SSOT). The member's booking
+ * create (`resolveWorkPartyEventPromoForBooking`) and the officer's "Add
+ * booking to work party" (fork #119) each word the reason for their own reader.
+ * A lodge-bound event discounts only stays at that lodge; a club-wide one
+ * (null lodge) any lodge.
+ */
+export function workPartyEventRefusal(
+  event: {
+    active: boolean;
+    startDate: Date;
+    endDate: Date;
+    lodgeId: string | null;
+    promoCode: { active: boolean; archivedAt: Date | null };
+  },
+  checkIn: Date,
+  checkOut: Date,
+  bookingLodgeId: string | null | undefined,
+): WorkPartyEventRefusal | null {
+  if (!event.active || !event.promoCode.active || event.promoCode.archivedAt) {
+    return "inactive";
+  }
+  if (!workPartyWindowOverlapsStay(event, checkIn, checkOut)) return "no-overlap";
+  if (event.lodgeId && bookingLodgeId && event.lodgeId !== bookingLodgeId) {
+    return "other-lodge";
+  }
+  return null;
 }
 
 // Shared by the admin work-parties create and update routes.

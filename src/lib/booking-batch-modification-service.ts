@@ -270,6 +270,8 @@ type BatchModificationTransactionResult =
           confirmOverCapacity: boolean;
         })
       | null;
+    /** Fork #119: set only on an officer's work-party correction, for the audit. */
+    officerWorkPartyCorrection: OfficerWorkPartyCorrection | null;
     notifyMember: boolean;
     capacityOverridden: boolean;
     oldCheckIn: Date;
@@ -696,6 +698,48 @@ async function resolveOrdinaryXeroLockDateGuard(
   };
 }
 
+/**
+ * Fork #119: what `officerWorkPartyCorrection` names — the work party an
+ * officer is adding the booking to, and its internal promo. Built only by
+ * `work-party-booking-correction.ts` (census in its test).
+ */
+export type OfficerWorkPartyCorrection = {
+  readonly workPartyEventId: string;
+  readonly promoCodeId: string;
+};
+
+/** The money rule a work-party correction carries, recorded with it. */
+const OFFICER_WORK_PARTY_MONEY_RULE = {
+  changeFee: "none",
+  reduction: "returned in full",
+} as const;
+
+/** The only request fields a work-party correction may carry. */
+const OFFICER_WORK_PARTY_INPUT_KEYS: ReadonlySet<string> = new Set([
+  "promoCodes",
+  "settlementMethod",
+  "notifyMember",
+]);
+
+/**
+ * The argument zeroes the fee and lifts the tier, so it must never ride a
+ * date or guest change, a member's actor, or a self-committing call: those are
+ * programming errors, refused before anything is read.
+ */
+function assertOfficerWorkPartyCorrectionCall(call: {
+  hasCallerTransaction: boolean;
+  actorRole: string;
+  inputKeys: readonly string[];
+}): void {
+  if (!call.hasCallerTransaction || call.actorRole !== "ADMIN") {
+    throw new Error("officerWorkPartyCorrection needs an officer and a caller transaction");
+  }
+  const extra = call.inputKeys.filter((key) => !OFFICER_WORK_PARTY_INPUT_KEYS.has(key));
+  if (extra.length > 0) {
+    throw new Error(`officerWorkPartyCorrection carries only a promo change, not: ${extra.join(", ")}`);
+  }
+}
+
 export async function modifyBookingBatch({
   bookingId,
   actor,
@@ -711,6 +755,7 @@ export async function modifyBookingBatch({
   waiveChangeFee,
   preTransaction,
   finishedStayCorrection,
+  officerWorkPartyCorrection,
 }: {
   bookingId: string;
   actor: { id: string; role: Role };
@@ -844,6 +889,22 @@ export async function modifyBookingBatch({
    */
   waiveChangeFee?: boolean;
   /**
+   * Fork #119: an officer adding the booking to a work party the member was
+   * entitled to and missed ("Add booking to work party",
+   * `work-party-booking-correction.ts`, its ONE caller, pinned by
+   * `work-party-booking-correction.test.ts`). A SERVICE argument, like
+   * `waiveChangeFee` above and for the same reason: `input` is a parsed request
+   * body on the member routes.
+   *
+   * It does three things and nothing else:
+   *  - admits that one internal promo code (`applyPromoCodeChanges`);
+   *  - charges no change fee — an officer correction, not the member's change;
+   *  - returns the reduction IN FULL (`calculateFullReductionSettlementOptions`,
+   *    as #4533's promo correction does), not cut by the cancellation tier,
+   *    because the member is given what ticking the box would have given them.
+   */
+  officerWorkPartyCorrection?: OfficerWorkPartyCorrection;
+  /**
    * The work that has to happen BEFORE the transaction, done by the caller that
    * owns the transaction (#3232, `INV-LOCK-004`).
    *
@@ -878,6 +939,13 @@ export async function modifyBookingBatch({
    */
   finishedStayCorrection?: FinishedStayCorrection;
 }): Promise<BatchModificationResponse> {
+  if (officerWorkPartyCorrection) {
+    assertOfficerWorkPartyCorrectionCall({
+      hasCallerTransaction: Boolean(callerTx && preTransaction),
+      actorRole: actor.role,
+      inputKeys: Object.keys(input),
+    });
+  }
   if (finishedStayCorrection) {
     assertFinishedStayCorrectionCall({
       hasCallerTransaction: Boolean(callerTx && preTransaction),
@@ -1471,6 +1539,7 @@ export async function modifyBookingBatch({
           // as its fee tiers are — on the real today an expired code would be
           // released and its discount billed back to the member.
           todayAtClub: finishedStayCorrection ? finishedStayNoticeDay(booking) : todayAtClub,
+          officerWorkPartyPromoCodeId: officerWorkPartyCorrection?.promoCodeId ?? null,
         });
 
     /**
@@ -1549,9 +1618,11 @@ export async function modifyBookingBatch({
       finishedStayChangeFeeRule !== null && finishedStayRemovalIsCharged(finishedStayChangeFeeRule);
     // #4533: and a correction that applies a promo code returns its reduction
     // in full too — the same untiered settlement, with no removal fee.
+    // Fork #119: so does an officer's work-party correction (see the argument).
     const finishedStayReductionInFull =
-      finishedStayChangeFeeRule !== null &&
-      finishedStayReductionReturnedInFull(finishedStayChangeFeeRule, requestChangesPromoCodes(input));
+      Boolean(officerWorkPartyCorrection) ||
+      (finishedStayChangeFeeRule !== null &&
+        finishedStayReductionReturnedInFull(finishedStayChangeFeeRule, requestChangesPromoCodes(input)));
     const removedPortion = finishedStayRemovalCharged
       ? finishedStayRemovedPortion({
           storedGuests: booking.guests,
@@ -1577,7 +1648,9 @@ export async function modifyBookingBatch({
     // #3750 (owner, 7 Oct 2026, "Same-day fee on removed nights"): a finished-
     // stay correction is charged ONLY the same-day retention on what it removes
     // — never the ordinary late-change fee across the whole booking.
+    // Fork #119: an officer's work-party correction charges none either.
     const chargeableChangeFeeCents =
+      officerWorkPartyCorrection ||
       finishedStayChangeFeeRule === "ADD_ONLY_NO_FEE" || finishedStayChangeFeeRule === "PROMO_ONLY_NO_FEE"
       ? 0
       : finishedStayCorrection
@@ -2007,6 +2080,11 @@ export async function modifyBookingBatch({
                 capacityOverridden: capacityOverridden,
               }
             : {}),
+          // Fork #119: an officer's work-party correction, and why it carried
+          // no fee and returned the reduction in full.
+          ...(officerWorkPartyCorrection
+            ? { officerWorkPartyCorrection: { ...officerWorkPartyCorrection, ...OFFICER_WORK_PARTY_MONEY_RULE } }
+            : {}),
           // #3750: which approved change request this executed, how its fee was
           // decided, and whether an officer confirmed a past-night overbooking.
           ...(finishedStayCorrection && finishedStayChangeFeeRule
@@ -2215,6 +2293,7 @@ export async function modifyBookingBatch({
               confirmOverCapacity: input.confirmOverCapacity === true,
             }
           : null,
+      officerWorkPartyCorrection: officerWorkPartyCorrection ?? null,
       notifyMember,
       capacityOverridden: capacityOverridden,
       oldCheckIn: booking.checkIn,
@@ -2572,6 +2651,17 @@ async function dispatchBatchPostTransactionSideEffects({
     // opted out — members always notify), so every suppressed edit is auditable.
     // #3750: the change request this executed and its fee rule, so the audit
     // trail answers "why did a finished stay change" on its own.
+    // Fork #119: the work party an officer added the booking to, and the
+    // money rule that came with it, so the trail says why the reduction came
+    // back in full with no fee.
+    ...(result.officerWorkPartyCorrection
+      ? {
+          officerWorkPartyCorrection: {
+            ...result.officerWorkPartyCorrection,
+            ...OFFICER_WORK_PARTY_MONEY_RULE,
+          },
+        }
+      : {}),
     ...(result.finishedStayCorrection
       ? {
           finishedStayCorrection: {

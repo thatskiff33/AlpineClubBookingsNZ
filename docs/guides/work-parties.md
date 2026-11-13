@@ -50,6 +50,55 @@ Work-party events are a **lodge** permission area: lodge view to read, lodge
 2. **Delete** is available only while an event has **no** attending bookings; once
    bookings have claimed it, deactivate it instead to preserve the discount history.
 
+### Add an existing booking to a work party
+
+For a member who booked nights inside a work party but forgot to tick "I am
+attending a working bee". You need **bookings edit** (a Booking Officer or Full
+Admin).
+
+1. Open the booking. In the **Admin tools** card, click **Add to work party**.
+2. Choose the work party. Every active work party that overlaps the stay is
+   listed. If the booking is already on one, the dialog says so instead.
+3. Click **Show the new total**. You see the booking's new total, how much comes
+   back to the member as **account credit**, and anything still to pay.
+4. Leave **Email the member about the change** ticked (or untick it), then click
+   **Add to work party**. It starts unticked when the booking has **No emails**
+   on.
+
+What happens:
+
+- The booking is repriced exactly as if the member had ticked the box when
+  booking. The discount applies to each guest's nights inside the window.
+- **Unpaid:** the amount owed drops. With a 100% discount an unpaid booking can
+  end up owing nothing, and is then settled as any $0 booking is.
+- **Paid:** what was paid above the new total goes back as **account credit**,
+  in full, including account credit the booking had used. Nothing is refunded,
+  and no cancellation-policy tier cuts it.
+- **No change fee** is charged: this is an officer correcting a missed tick, not
+  the member changing their stay.
+- It goes through the normal booking change, so the booking's history, the
+  ledger and Xero (an account credit note for a paid booking) record it like any
+  other change. The history marks it as a work-party correction.
+- If the booking changed between the preview and the save, you are shown the
+  new figures and asked to confirm again; nothing is saved meanwhile.
+
+**When a booking can't be added.** The work party is greyed out, with the
+reason:
+
+- the booking isn't pending, confirmed or paid (for example cancelled, a draft,
+  awaiting review, or on the waitlist);
+- the stay has already started, so its prices are fixed;
+- the group organiser paid for it (its money would go back to the organiser, so
+  this action never applies);
+- it belongs to an organisation (a school), which has no account credit;
+- it is priced by its quote (a school or booking-request quote);
+- it already has another promo code and the club allows only one discount per
+  booking (the same rule as when booking);
+- the work party is held at another lodge.
+
+A booking can be on only one work party. Removing a booking from a work party is
+not available.
+
 ## Settings reference
 
 | Field | What it controls | Default | Notes / constraints |
@@ -71,6 +120,7 @@ Work-party events are a **lodge** permission area: lodge view to read, lodge
 | --- | --- | --- |
 | Work Parties is missing from the sidebar / 404s | The `workParties` module is off | Enable it under **Admin → Setup → Modules** — see [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
 | Everything is read-only ("… can view work parties but cannot change them") | Your admin role has lodge view but not edit | Ask a full admin for **lodge edit** access |
+| A work party is "not available" in **Add to work party** | One of the reasons listed under "When a booking can't be added" | The dialog names the reason |
 | There's no Delete button on an event | It already has attending bookings | Deactivate it instead — delete is blocked to keep the discount history |
 | A member says the discount didn't apply | The event is inactive, their nights fall outside the window, or they didn't tick the working-bee option | Check the event is Active, its dates cover their nights, and that they selected it when booking |
 | "Discount must be a whole number between 1 and 100" | A non-integer or out-of-range discount was entered | Enter a whole number from 1 to 100 |
