@@ -1651,9 +1651,11 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   "src/lib/adult-member-hosting-queue-participants.ts": 6,
   // #4860: the attempt try-locks the captured loser bookings before it re-points
   // `Booking.member`. Three statements, no new advisory key: one sorted
-  // `FOR UPDATE SKIP LOCKED` over that set, a row-by-row `SKIP LOCKED` probe for
-  // the first id it skipped, and a single-booking `FOR UPDATE` under its own
-  // savepoint after the attempt has been rolled back. A shortfall waits for that
+  // `FOR NO KEY UPDATE SKIP LOCKED` over that set, a row-by-row `SKIP LOCKED`
+  // probe for the first id it skipped, and a single-booking `FOR NO KEY UPDATE`
+  // under its own savepoint after the attempt has been rolled back. NO KEY, the
+  // `memberId` update's own strength, so a child insert's FK `KEY SHARE` on the
+  // booking is not blocked (#5004). A shortfall waits for that
   // one booking while holding no rows, on the same 10s budget as the Member
   // waits. See docs/CONCURRENCY_AND_LOCKING.md → "Merge never holds one of the
   // duplicate's bookings while waiting for another (#4860)".

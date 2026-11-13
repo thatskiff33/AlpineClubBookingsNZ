@@ -6,11 +6,18 @@
  * its rows in whatever order the plan visits them and waits on a busy row while
  * holding the ones it already has. A writer that holds one of those bookings and
  * then updates a sibling can therefore form a wait-for cycle with it. Merge now
- * takes the whole captured set with one `FOR UPDATE SKIP LOCKED`, or none of
+ * takes the whole captured set with one `FOR NO KEY UPDATE SKIP LOCKED`, or none of
  * it, and on a shortfall throws {@link MemberMergeBookingRowBusyError} so the
  * attempt wrapper (`withMemberMergeParticipantRows`, in
  * `adult-member-hosting-queue-participants.ts`) rolls the attempt back and
  * waits for that one booking holding nothing.
+ *
+ * Every lock here is `FOR NO KEY UPDATE`, the strength the `memberId` update
+ * itself takes (`memberId` is in no unique index). It still conflicts with the
+ * sibling writers' `FOR NO KEY UPDATE`, which is the cycle this closes, but not
+ * with the `FOR KEY SHARE` a child insert's foreign-key check takes on the
+ * booking (a `BookingGuest`, a `Payment`). `FOR UPDATE` blocked those inserts
+ * until the merge committed, and skipped any booking one had touched (#5004).
  *
  * These pieces live apart from the wrapper only to keep that module inside its
  * size budget. They add no advisory key and no new order: see
@@ -98,7 +105,7 @@ export async function waitForOneBookingRow(
       SELECT 1
       FROM "Booking"
       WHERE "id" = ${bookingId}
-      FOR UPDATE
+      FOR NO KEY UPDATE
     `);
     outcome = locked === 1 ? "free" : "missing";
   } catch (error) {
@@ -125,7 +132,7 @@ async function firstSkippedBookingRow(
       SELECT 1
       FROM "Booking"
       WHERE "id" = ${id}
-      FOR UPDATE SKIP LOCKED
+      FOR NO KEY UPDATE SKIP LOCKED
     `);
     if (locked !== 1) return id;
   }
@@ -138,7 +145,7 @@ async function firstSkippedBookingRow(
  * Called at the `Booking.member` arm, before that `updateMany`, and only for
  * the ids the preview captured. An empty set issues no statement (`IN ()` is
  * invalid, and there is no row to wait for). Otherwise one counted
- * `SELECT 1 … ORDER BY "id" FOR UPDATE SKIP LOCKED` (`INV-OPS-001`). Uncontended,
+ * `SELECT 1 … ORDER BY "id" FOR NO KEY UPDATE SKIP LOCKED` (`INV-OPS-001`). Uncontended,
  * the count equals the captured length and this transaction holds every row, so
  * the `updateMany` re-points `memberId` without waiting. A short count throws
  * {@link MemberMergeBookingRowBusyError} for the first skipped id and does not
@@ -155,7 +162,7 @@ export async function lockCapturedLoserOwnedBookings(
     FROM "Booking"
     WHERE "id" IN (${Prisma.join(ids)})
     ORDER BY "id"
-    FOR UPDATE SKIP LOCKED
+    FOR NO KEY UPDATE SKIP LOCKED
   `);
   if (locked === ids.length) return;
   const busy = await firstSkippedBookingRow(db, ids);

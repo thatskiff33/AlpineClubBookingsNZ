@@ -370,7 +370,8 @@ describe("hosting coverage queue participant fence (#2597)", () => {
 
   /**
    * A merge participant client. Every statement goes through `$executeRaw`;
-   * `lockCounts` answers the row-lock statements in turn with the number of
+   * `lockCounts` answers the row-lock statements (Member `FOR UPDATE`, Booking
+   * `FOR NO KEY UPDATE`) in turn with the number of
    * rows each locked (or a rejection), and everything else (savepoints, the
    * lock bound) returns 0. The typed read returns `typed`.
    */
@@ -609,9 +610,9 @@ describe("hosting coverage queue participant fence (#2597)", () => {
   const CAPTURED_BOOKINGS = ["mrg-book-z", "mrg-book-a"];
   const SORTED_BOOKINGS = ["mrg-book-a", "mrg-book-z"];
   const BOOKING_SET =
-    'SELECT 1 FROM "Booking" WHERE "id" IN (?,?) ORDER BY "id" FOR UPDATE SKIP LOCKED';
-  const BOOKING_PROBE = 'SELECT 1 FROM "Booking" WHERE "id" = ? FOR UPDATE SKIP LOCKED';
-  const BOOKING_WAIT = 'SELECT 1 FROM "Booking" WHERE "id" = ? FOR UPDATE';
+    'SELECT 1 FROM "Booking" WHERE "id" IN (?,?) ORDER BY "id" FOR NO KEY UPDATE SKIP LOCKED';
+  const BOOKING_PROBE = 'SELECT 1 FROM "Booking" WHERE "id" = ? FOR NO KEY UPDATE SKIP LOCKED';
+  const BOOKING_WAIT = 'SELECT 1 FROM "Booking" WHERE "id" = ? FOR NO KEY UPDATE';
 
   it("takes the captured bookings in one SKIP LOCKED statement and releases the attempt only after the Member rows, with no lock bound (#4860)", async () => {
     const { db, statements } = mergeParticipantDb([2, 3]);

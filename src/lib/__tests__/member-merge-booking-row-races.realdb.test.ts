@@ -23,6 +23,9 @@
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { lockCapturedLoserOwnedBookings } from "@/lib/member-merge-booking-lock";
+import { isPostgresLockNotAvailable } from "@/lib/prisma-errors";
+
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { backendPid, isBlocking, RACE_TRANSACTION_BUDGET, untilBlockedChain } from "./support/race-lock-waits";
 import {
@@ -68,6 +71,7 @@ function gate() {
 }
 
 async function clean() {
+  await prisma.bookingGuest.deleteMany({ where: { bookingId: { in: [EARLIER, LATER] } } });
   await prisma.booking.deleteMany({ where: { id: { in: [EARLIER, LATER] } } });
   await prisma.lodge.deleteMany({ where: { id: LODGE } });
   await prisma.member.deleteMany({ where: { id: { in: [ADMIN, MASTER, LOSER] } } });
@@ -194,6 +198,44 @@ async function expectBothRepointed() {
     });
     expectNoDeadlock(written, merged);
     await expectBothRepointed();
+  });
+
+  it("MUTATION: while merge holds the captured bookings, a child row's foreign key to one commits without waiting, and a sibling writer's row lock is still refused (#5004)", async () => {
+    // Merge holds these rows from the Booking.member arm to its commit, across
+    // its own later waits. At `FOR UPDATE` they blocked every guest or payment
+    // insert on the duplicate's bookings (FK `KEY SHARE`) until then, which hung
+    // the hosting-queue race that commits a loser-linked guest mid-merge.
+    const held = gate();
+    const release = gate();
+    const holding = prisma.$transaction(async (tx) => {
+      await lockCapturedLoserOwnedBookings(tx as never, [EARLIER, LATER]);
+      held.open();
+      await release.opened;
+    }, RACE_TRANSACTION_BUDGET);
+    await held.opened;
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('lock_timeout', '2000', true)`;
+        await tx.bookingGuest.create({
+          data: {
+            id: `${PREFIX}guest`, bookingId: EARLIER, memberId: LOSER, firstName: "Late", lastName: "Guest",
+            ageTier: "ADULT", isMember: true, stayStart: CHECK_IN, stayEnd: CHECK_OUT, priceCents: 100,
+          },
+        });
+      });
+      let siblingError: unknown;
+      try {
+        await prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT 1 FROM "Booking" WHERE "id" = ${LATER} FOR NO KEY UPDATE NOWAIT`;
+        });
+      } catch (error) {
+        siblingError = error;
+      }
+      expect(isPostgresLockNotAvailable(siblingError), String(siblingError)).toBe(true);
+    } finally {
+      release.open();
+      await holding;
+    }
   });
 
   it("MUTATION: two sessions locking those two bookings in crossed order still deadlock", async () => {

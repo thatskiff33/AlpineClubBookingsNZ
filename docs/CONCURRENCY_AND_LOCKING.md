@@ -2907,7 +2907,7 @@ lockAdultMemberHostingPolicySet(tx)                              policy config
         prefix never locked is still #2672 drift on the first attempt)
         then null self-cycles, resolve collisions, applyMoves
              (at the Booking.member arm, the captured loser bookings are
-              one sorted `FOR UPDATE SKIP LOCKED` inside this attempt;
+              one sorted `FOR NO KEY UPDATE SKIP LOCKED` inside this attempt;
               a shortfall rolls the attempt back and waits for that one
               booking while holding no rows, #4860)
   → master/loser/ancillary `Member … FOR UPDATE`, all at once:     member rows
@@ -3710,8 +3710,8 @@ savepoint.
 
 So the rule is the Member-row rule, on the captured set. Inside the attempt, at
 the `Booking.member` arm and not before it, merge try-locks those ids with one
-sorted `SELECT 1 … ORDER BY "id" FOR UPDATE SKIP LOCKED`, counted rather than
-read (`INV-OPS-001`). The id sort only makes "first skipped" stable. It does
+sorted `SELECT 1 … ORDER BY "id" FOR NO KEY UPDATE SKIP LOCKED`, counted rather
+than read (`INV-OPS-001`). The id sort only makes "first skipped" stable. It does
 not have to match any writer. An empty captured set issues no statement.
 Uncontended, the count equals the captured length, this transaction holds every
 row, and the existing `updateMany` re-points `memberId` without waiting. A
@@ -3720,11 +3720,21 @@ savepoint rolls back — that releases every booking the try-lock took and every
 row this attempt already wrote — and only then does merge wait for that one
 booking, under its own savepoint (`member_merge_booking_wait`),
 `set_config('lock_timeout', <what is left of the 10s>, true)`, then
-`SELECT 1 FROM "Booking" WHERE "id" = … FOR UPDATE`, then roll that savepoint
+`SELECT 1 FROM "Booking" WHERE "id" = … FOR NO KEY UPDATE`, then roll that savepoint
 back so the row and the timeout are both gone before the retry. The deadline
 is the same monotonic clock as the Member waits
 (`MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS`). There is not a second 10 seconds.
 Advisory keys taken before the attempt stay held during the wait.
+
+Every booking lock here is `FOR NO KEY UPDATE`, the strength the `memberId`
+update takes anyway (`memberId` is in no unique index). It conflicts with the
+sibling writers' `FOR NO KEY UPDATE`, which is the cycle, but not with the
+`FOR KEY SHARE` a child insert's foreign-key check takes on the booking (a
+late `BookingGuest`, a `Payment`). `FOR UPDATE` would block every such insert
+until merge commits, while merge may be waiting on its own later locks, and
+would skip any booking a child insert had just touched. The hosting-queue
+race that commits a loser-linked guest between the moves and the participant
+locks hung on exactly that (#5004).
 
 On the successful attempt the booking locks are held through the Member
 `FOR UPDATE` and on to commit, which keeps #4840 (booking rows before the

@@ -1262,6 +1262,7 @@ describe("review finding source/schema contracts", () => {
         "MUTATION: while that writer holds only the later-inserted booking, the merge waits on it and does not hold the earlier one",
         "a writer holding the earlier-inserted booking and then updating the later one never deadlocks with the merge: both commit",
         "MUTATION: two sessions locking those two bookings in crossed order still deadlock",
+        "MUTATION: while merge holds the captured bookings, a child row's foreign key to one commits without waiting, and a sibling writer's row lock is still refused (#5004)",
       ],
     },
   ])("runs the $suite race suite against the same dedicated PostgreSQL ($issue)", ({ issue, stepName, file, cases }) => {
