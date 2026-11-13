@@ -125,6 +125,9 @@ vi.mock("@/lib/prisma", () => {
 
 vi.mock("@/lib/stripe", () => ({
   findCheckoutSessionForPaymentIntent: async () => null,
+}));
+
+vi.mock("@/lib/stripe-charge", () => ({
   getChargePaymentIntentId: (...args: unknown[]) => mocks.getChargePaymentIntentId(...args),
 }));
 

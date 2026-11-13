@@ -120,3 +120,24 @@ export function disputedCaptureRefusal(error: unknown): DisputedCaptureRefundRef
   }
   return null;
 }
+
+/**
+ * #4911 (`INV-PAY-153`): the disputes on these payments, newest first, keyed by
+ * payment - Finance -> Payments' dispute marker. A display read, not the hold.
+ */
+export async function readDisputesByPaymentId(
+  db: DisputeReader,
+  paymentIds: string[],
+): Promise<Map<string, Array<{ stripeDisputeId: string; status: StripeDisputeStatus; amountCents: number }>>> {
+  const byPayment = new Map<string, Array<{ stripeDisputeId: string; status: StripeDisputeStatus; amountCents: number }>>();
+  if (paymentIds.length === 0) return byPayment;
+  const disputes = await db.stripeDispute.findMany({
+    where: { paymentId: { in: paymentIds } },
+    select: { paymentId: true, stripeDisputeId: true, status: true, amountCents: true },
+    orderBy: [{ stripeCreatedAt: "desc" }, { stripeDisputeId: "asc" }],
+  });
+  for (const { paymentId, ...dispute } of disputes) {
+    if (paymentId) byPayment.set(paymentId, [...(byPayment.get(paymentId) ?? []), dispute]);
+  }
+  return byPayment;
+}

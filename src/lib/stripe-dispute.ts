@@ -46,7 +46,7 @@ import type { StripeDisputeAlertFields } from "@/lib/email-templates/admin-strip
 import { emailClubDateTime } from "@/lib/email-templates-club-time";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { getChargePaymentIntentId } from "@/lib/stripe";
+import { getChargePaymentIntentId } from "@/lib/stripe-charge";
 import { STRIPE_DISPUTE_NEXT_STEP, STRIPE_DISPUTE_STATUS_LABEL } from "@/lib/stripe-dispute-note";
 import {
   UNRECOGNISED_ALERT_IN_FLIGHT_MS,

@@ -31,6 +31,7 @@ import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { prisma } from "@/lib/prisma";
 import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoice-evidence";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { readDisputesByPaymentId } from "@/lib/stripe-dispute-hold";
 import {
   endOfDateOnlyForTimeZone,
   parseDateOnly,
@@ -642,19 +643,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         })
       : [];
 
-    // #4911 (`INV-PAY-153`): the disputes on the page's payments, newest first, for the payment's dispute marker.
-    const disputes = pageIds.length
-      ? await prisma.stripeDispute.findMany({
-          where: { paymentId: { in: pageIds } },
-          select: { paymentId: true, stripeDisputeId: true, status: true, amountCents: true },
-          orderBy: [{ stripeCreatedAt: "desc" }, { stripeDisputeId: "asc" }],
-        })
-      : [];
-    const disputesByPaymentId = new Map<string, Array<Omit<(typeof disputes)[number], "paymentId">>>();
-    for (const { paymentId, ...dispute } of disputes) {
-      if (!paymentId) continue;
-      disputesByPaymentId.set(paymentId, [...(disputesByPaymentId.get(paymentId) ?? []), dispute]);
-    }
+    const disputesByPaymentId = await readDisputesByPaymentId(prisma, pageIds); // #4911 (`INV-PAY-153`): the dispute marker
 
     const dataById = new Map(data.map((payment) => [payment.id, payment]));
     const orderedData = pageIds

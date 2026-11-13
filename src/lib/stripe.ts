@@ -215,9 +215,7 @@ export async function findOrCreateCustomer({
   });
 }
 
-/**
- * Process a refund based on cancellation policy.
- */
+/** Every card refund passes here, and a disputed capture is refused first (#4911, `INV-PAY-153`). */
 export async function processRefund({
   paymentIntentId,
   amountCents,
@@ -234,8 +232,6 @@ export async function processRefund({
   /** #4510 (`INV-PAY-147`): also send `idempotencyKey` as the refund's `refundSliceKey` evidence. */
   stampRefundSliceKey?: boolean;
 }): Promise<Stripe.Refund> {
-  // #4911 (`INV-PAY-153`): every card refund passes here, so no door refunds a
-  // capture the cardholder is disputing, or has won back from the club.
   await assertCaptureNotDisputed(paymentIntentId);
   const stripe = await getStripe();
   const params = {
@@ -250,18 +246,6 @@ export async function processRefund({
   }
 
   return stripe.refunds.create(params);
-}
-
-/**
- * #4911: the PaymentIntent behind a charge, for a dispute event whose own
- * `payment_intent` is empty. Bounded, no retries: a webhook's read.
- */
-export async function getChargePaymentIntentId(chargeId: string, timeoutMs: number): Promise<string | null> {
-  const stripe = await getStripe();
-  const charge = await stripe.charges.retrieve(chargeId, {}, boundedStripeRequest(timeoutMs));
-  const intent = charge.payment_intent;
-  if (!intent) return null;
-  return typeof intent === "string" ? intent : intent.id;
 }
 
 export async function listRefundsForCharge(chargeId: string): Promise<Stripe.Refund[]> {
@@ -514,9 +498,9 @@ export async function stampPaymentIntentMetadata(
 /**
  * One request's bound, with no retries - the #3641 shape: the client sets no timeout
  * (stripe-node's ~80s and its retries), so a caller that must not wait that long says so.
- * The one spelling (#4693 review): every bounded read and write in this module takes it.
+ * The one spelling (#4693 review): every bounded Stripe read and write takes it.
  */
-function boundedStripeRequest(timeoutMs: number): Stripe.RequestOptions {
+export function boundedStripeRequest(timeoutMs: number): Stripe.RequestOptions {
   return { timeout: timeoutMs, maxNetworkRetries: 0 };
 }
 

@@ -19,9 +19,9 @@ import {
   type HostingCoverageOverridePromptData,
 } from "@/lib/hosting-coverage-override-client";
 import { formatCents } from "@/lib/utils";
-import { disputedRefundSentence, type OrganiserRefundMethod, type OwnCardRefundMethod } from "@/lib/booking-modified-email-copy";
+import type { OrganiserRefundMethod, OwnCardRefundMethod } from "@/lib/booking-modified-email-copy";
 import { useClubFormat } from "@/components/club-format-provider";
-import { CardRefundShortfallRows, CardRefundShortfallSentence, cardShortfallOptionLabel, ForcedRefundNote, NoRefundablePaymentNote, OrganiserRefundConfirmation, OwnCardRefundConfirmation } from "@/components/cancel-booking-payment-notes";
+import { CardRefundShortfallRows, CardRefundShortfallSentence, cardShortfallOptionLabel, ForcedRefundNote, HandBackRefundConfirmation, HandBackRefundNote, NoRefundablePaymentNote, OrganiserRefundConfirmation, OwnCardRefundConfirmation } from "@/components/cancel-booking-payment-notes";
 import type { CancelCardRefundSplit } from "@/lib/cancel-card-refund-shortfall";
 
 interface CancelPreview {
@@ -40,11 +40,7 @@ interface CancelPreview {
    * the club hands the refund back directly. The figures are unchanged.
    */
   manualRefund?: boolean;
-  /**
-   * #4911 (`INV-PAY-153`): the card payment is disputed by the cardholder, so the
-   * cancel hands the refund to the treasurer on the credit tier, as `manualRefund`
-   * does - no card refund and no account credit.
-   */
+  /** #4911 (`INV-PAY-153`): disputed by the cardholder, so handed to the treasurer as `manualRefund` is. */
   refundDisputed?: boolean;
   /**
    * The refund method the cancel will use whatever is chosen — "credit" for an
@@ -363,16 +359,8 @@ export function CancelBookingButton({
             refund to and mints no account credit — the club hands the money
             back directly. The plan-forbidden sentence ("processed to your
             original payment method") must never render for this outcome. */}
-        {refund > 0 && result?.refundMethod === "manual" && result.refundDisputed ? (
-          <p className="text-sm text-success-11">
-            {disputedRefundSentence(formatCents(refund, format), onBehalfOfMember ? "the member's" : "your")}
-          </p>
-        ) : refund > 0 && result?.refundMethod === "manual" && !result.organiserRefund ? (
-          <p className="text-sm text-success-11">
-            {onBehalfOfMember
-              ? `The club will arrange the member's refund of ${formatCents(refund, format)} directly — they'll hear from the club about how it will be paid back.`
-              : `The club will arrange your refund of ${formatCents(refund, format)} directly — you'll hear from them about how it will be paid back.`}
-          </p>
+        {refund > 0 && result?.refundMethod === "manual" && (result.refundDisputed || !result.organiserRefund) ? (
+          <HandBackRefundConfirmation disputed={result.refundDisputed === true} amountCents={refund} format={format} onBehalfOfMember={onBehalfOfMember} />
         ) : result?.organiserRefund ? (
           <OrganiserRefundConfirmation organiserRefund={result.organiserRefund} format={format} emailNote={emailNote} />
         ) : refund > 0 && isCredit ? (
@@ -479,27 +467,8 @@ export function CancelBookingButton({
             {/* Refund method selection — only meaningful when a card/bank slice
                 can be refunded. A credit-only cancel (#1164) has no card slice,
                 so the radios are hidden and only the restored-credit row shows. */}
-            {preview.refundDisputed && hasCardRefund && (
-              <p className="text-sm text-muted-foreground">
-                {onBehalfOfMember ? "The member's" : "Your"} card payment for this booking is disputed with{" "}
-                {onBehalfOfMember ? "their" : "your"} card issuer, so no card refund or account credit is issued.
-                The refund of{" "}
-                <span className="font-medium text-success-11">
-                  {formatCents(preview.creditRefundAmountCents, format)}
-                </span>{" "}
-                goes to the club&apos;s treasurer, who will be in touch.
-              </p>
-            )}
-            {preview.manualRefund && !preview.refundDisputed && hasCardRefund && (
-              <p className="text-sm text-muted-foreground">
-                This booking was paid in cash or by bank transfer, so there is no
-                card payment to reverse and no account credit is added. The club
-                will arrange{" "}
-                <span className="font-medium text-success-11">
-                  {formatCents(preview.creditRefundAmountCents, format)}
-                </span>{" "}
-                back to {onBehalfOfMember ? "the member" : "you"} directly.
-              </p>
+            {handBack && hasCardRefund && (
+              <HandBackRefundNote disputed={preview.refundDisputed === true} amountCents={preview.creditRefundAmountCents} format={format} onBehalfOfMember={onBehalfOfMember} />
             )}
             {!handBack && hasCardRefund && preview.refundMethodForced && (
               <ForcedRefundNote preview={preview} forced={preview.refundMethodForced} format={format} />

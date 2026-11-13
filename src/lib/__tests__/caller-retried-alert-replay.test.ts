@@ -236,6 +236,9 @@ vi.mock("@/lib/email-admin-alert-escalation", () => ({
 
 vi.mock("@/lib/stripe", () => ({
   findCheckoutSessionForPaymentIntent: async () => null,
+}));
+
+vi.mock("@/lib/stripe-charge", () => ({
   getChargePaymentIntentId: async () => null,
 }));
 
