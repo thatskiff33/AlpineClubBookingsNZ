@@ -1131,7 +1131,7 @@ const DATE_FNS_RESTRICTIONS = [...NO_DATE_FNS];
  * relative-duration hints and chart tick labels.
  */
 const DATE_FNS_ADAPTER_FILES = [
-  "src/app/(admin)/admin/members/_components/xero-groups-refresh-hint.tsx",
+  "src/app/(admin)/admin/membership/members/_components/xero-groups-refresh-hint.tsx",
   "src/app/(admin)/admin/finance/reports/_components/report-charts.tsx",
   "src/components/admin/member-password-action-button.tsx",
   "src/lib/admin-dataset-reset-state.ts",
@@ -1140,7 +1140,7 @@ const DATE_FNS_ADAPTER_FILES = [
 
 export const DATE_FNS_ADAPTERS = [
   {
-    file: "src/app/(admin)/admin/members/_components/xero-groups-refresh-hint.tsx",
+    file: "src/app/(admin)/admin/membership/members/_components/xero-groups-refresh-hint.tsx",
     uses: "formatDistanceToNow",
     reason:
       "A relative DURATION (\"3 hours ago\") for a refresh hint, which is zone-independent: it is the gap between two instants and no civil date is derived from it.",
@@ -3204,6 +3204,11 @@ const eslintConfig = defineConfig([
   },
   {
     files: ["**/*.{jsx,tsx}"],
+    settings: {
+      "jsx-a11y": {
+        components: { TableRow: "tr", TableCell: "td", TableHead: "th", Button: "button" },
+      },
+    },
     rules: jsxA11y.flatConfigs.recommended.rules,
   },
   {
@@ -3212,6 +3217,7 @@ const eslintConfig = defineConfig([
     rules: {
       "accessibility/minimum-text-size": "error",
       "accessibility/no-nested-interactive": "error",
+      "accessibility/no-mouse-only-table-row": "error",
     },
   },
   {
