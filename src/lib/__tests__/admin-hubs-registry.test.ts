@@ -2110,6 +2110,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/rules/fee-configuration/page.tsx": "C6: it redirects to the fee console's adminHref",
     "src/lib/__tests__/fee-configuration-redirect.test.ts":
       "C6: pins the Fee Configuration stub's redirect to the fee console's adminHref",
+    "src/app/(admin)/admin/rules/fees/_components/finance-fees-sections.tsx":
+      "#4496: the Subscription Categories links are adminHref",
     "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx": "C6: the Seasons link is adminHref",
     "src/app/(admin)/admin/rules/seasons/page.tsx": "C6: the Fees link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/mappings-panel.tsx":

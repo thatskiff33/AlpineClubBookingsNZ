@@ -1084,7 +1084,7 @@ describe("the Members hub keeps each page's own admission (C9 #4806)", () => {
   });
 
   it("names every page of the hub, each moved, on ordinary membership admission", () => {
-    expect(ADMIN_PAGES.filter((page) => page.hub === "members")).toHaveLength(15);
+    expect(ADMIN_PAGES.filter((page) => page.hub === "members")).toHaveLength(16);
     expect(
       ADMIN_PAGES.filter((page) => page.hub === "members").map((page) => [
         page.id,
