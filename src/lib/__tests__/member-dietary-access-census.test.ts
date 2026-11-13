@@ -158,13 +158,13 @@ const DIETARY_REACH: Readonly<Record<string, CensusEntry>> = {
   "src/lib/admin-member-detail-service.ts":
     "membership-admin detail reader and editor writer",
   "src/lib/admin-member-edit-groups.ts": "admin Contact group form/payload",
-  "src/app/(admin)/admin/members/[id]/_types.ts": "admin detail DTO type",
-  "src/app/(admin)/admin/members/[id]/_components/member-contact-group.tsx":
+  "src/app/(admin)/admin/membership/members/[id]/_types.ts": "admin detail DTO type",
+  "src/app/(admin)/admin/membership/members/[id]/_components/member-contact-group.tsx":
     "admin Contact group display/editor",
   "src/lib/admin-members-service.ts": "membership-admin create writer",
-  "src/app/(admin)/admin/members/_types.ts": "admin create form type",
-  "src/app/(admin)/admin/members/_utils.ts": "admin create form default",
-  "src/app/(admin)/admin/members/_components/member-editor-dialog.tsx":
+  "src/app/(admin)/admin/membership/members/_types.ts": "admin create form type",
+  "src/app/(admin)/admin/membership/members/_utils.ts": "admin create form default",
+  "src/app/(admin)/admin/membership/members/_components/member-editor-dialog.tsx":
     "admin create (never edit-from-list, whose DTO has no value)",
   "src/lib/member-csv-import.ts": "member CSV import parser",
   "src/app/api/admin/members/import/route.ts":
