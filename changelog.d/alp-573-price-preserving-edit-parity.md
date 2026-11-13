@@ -1,0 +1,2 @@
+- **Correcting a guest's name, or changing only how account credit is used, can no longer change what a booking costs.**
+  The booking-edit preview and the save now decide the same way whether an edit moves money. Before this, a name correction that re-sent the stored name was repriced at today's rates on save, after the preview had shown no change. A booking whose stored price had drifted from its own total could also have that difference settled on save. Both edits now keep the stored price exactly as the preview showed it.
