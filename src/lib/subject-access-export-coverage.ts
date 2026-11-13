@@ -224,6 +224,8 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   MemberMoneySourcePosting: SHARED,
   MemberMoneyRefundReservation: SHARED,
   MemberMoneyRefundReservationRelease: SHARED,
+  // #4520: Stripe's own balance transaction, keyed by a payment intent rather than a member.
+  StripeBalanceTransactionEvidence: OPERATIONAL,
 } as const satisfies Record<PersonalModel, Placement>;
 
 /** The models that have their own list under `additionalRecords`. */
