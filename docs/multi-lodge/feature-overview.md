@@ -51,15 +51,15 @@ not to a lodge.
 
 Almost nothing changes for the member. Multi-lodge is core (ADR-005 — no
 module flag), but with a single lodge no lodge dimension appears in the
-member-facing UI beyond one exception: no selector, and no lodge names in
-emails or booking lists. The exception is the screens where a member checks
-or pays for one booking — the booking wizard's review step, the booking
-page (its Stay Details card and arrival card) and the payment link. They
-always name the lodge (#2701, `INV-CAP-039`), so a member can see it is the
-right one. The Lodges admin page exists (a one-item list with **Add
-lodge**), but until a second active lodge exists every other member screen
-shows exactly what a single-lodge club always saw. This is the permanent
-default for upstream and every single-lodge fork, not a transition state.
+member-facing UI: no selector, and no lodge names in emails or booking
+lists. There is one exception: the screens where a member checks or pays
+for one booking — the booking wizard's review step, the booking page (its
+Stay Details card and arrival card) and the payment link. They always name
+the lodge (#2701, `INV-CAP-039`), so a member can see it is the right one.
+The Lodges admin page exists (a one-item list with **Add lodge**), but
+until a second active lodge exists every other member screen shows exactly
+what a single-lodge club always saw. This is the permanent default for
+upstream and every single-lodge fork, not a transition state.
 
 ### Members (once a second lodge exists)
 
