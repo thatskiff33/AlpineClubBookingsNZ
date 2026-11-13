@@ -109,9 +109,8 @@ The officers' email and the [audit log](audit-log.md) (under **Payment**) say
 which, and name the Stripe refund. Check the booking and the Stripe refunds,
 then settle anything still owed with **Paid another way**. One exception: if
 the refund the email names has since failed - it then shows here as a refund
-Stripe failed later, a row of its own - do **not** close this one with **Paid
-another way**. The two may be the same money, and that row asks for it again,
-so ask a developer to reconcile them (#4492).
+Stripe failed later, a row of its own - **Paid another way** is not offered on
+this row until that refund has gone back to the card. The row says why (#4492).
 
 **A refund Stripe refused** (#4083, #4096). When a booking change or a
 cancellation refunds a card and Stripe answers straight away that the refund
@@ -389,12 +388,15 @@ could pay the member more than they are owed:
   refund Stripe failed later that is not asked for again, or the rest of a
   part close that is still owed;
 - a refund Stripe failed later is on the same payment, whether it is still
-  owed or has since been sent again. The two may be the same money, so check
-  what the member is owed and settle it with **Paid another way**.
+  owed or has since been sent again. The two may be the same money, so **Paid
+  another way** is not offered either, and the row says why (#4492). The same
+  is true of a refund that replaces a superseded payment while that failed
+  refund has not gone back to the card, and of a failed refund that died
+  because the superseded charge was already sent back.
 
-Where **Paid another way** cannot close the refund either - a refund that
-replaces a superseded payment whose charge no longer holds exactly what it
-owes - the row says to ask a developer instead.
+Where **Paid another way** cannot close the refund for a different reason - a
+refund that replaces a superseded payment whose charge no longer holds exactly
+what it owes - the row says to ask a developer instead.
 
 If the list changes while the dialog is open, for example someone else
 settles the refund, the request is refused and the list refreshes.
