@@ -35,9 +35,9 @@ The reason may not contain a `|`, even inside backticks (cells are split on pipe
 | ID | Ceiling | Deciding issue | Reason |
 | --- | ---: | --- | --- |
 
-There are no approved exceptions yet. Candidates are proposed on #2789 as the
-compaction waves reach them; until the owner approves one, an oversize entry is
-migration debt below.
+There are no approved exceptions yet. Candidates are proposed on each entry's
+deciding issue as the compaction waves (#4990) reach them; until the owner
+approves one, an oversize entry is migration debt below.
 
 ## Migration ratchet
 
@@ -53,7 +53,7 @@ settle-time re-price rule, written on `main` where this register does not exist
 and therefore never measured against a budget. The sync gave it its own id
 rather than leaving it stacked under `INV-MOD-038`, whose own 263 words it had
 pushed to 1420 while they were sharing a heading. Nothing was reworded to fit:
-compacting an owner-decided rule is a compaction-wave job on #2789, not
+compacting an owner-decided rule is a compaction-wave job on #4990, not
 something a conflict resolution should do. The fifth sync added `INV-MONEY-029`
 the same way, at 667 words: #3276's promo build-up rule, also written on `main`.
 The sixth added two more from #3340 — `INV-PAY-047` at 1211 and `INV-ADDPAY-023`
@@ -77,18 +77,22 @@ none listed), and an amendment the owner decides is new rule text, not drift to
 be compacted. When the last row goes, delete this section's table; the file
 stays for the agent-doc ceilings below.
 
+The waves that empty it are owned by #4990, which carries the wave plan. Wave 1
+compacted the ten largest rows; none reached 300 without semantic damage, so
+each stays here at its new count while its exception is proposed.
+
 | ID | Words |
 | --- | ---: |
-| `INV-MOD-025` | 4579 |
-| `INV-ADDPAY-037` | 2705 |
-| `INV-SSOT-004` | 2653 |
-| `INV-HOST-050` | 2220 |
-| `INV-PRIV-012` | 2086 |
-| `INV-CONFIG-005` | 1742 |
-| `INV-HOST-046` | 1726 |
-| `INV-HOST-045` | 1680 |
-| `INV-ADDPAY-039` | 1570 |
-| `INV-SSOT-001` | 1531 |
+| `INV-MOD-025` | 1722 |
+| `INV-ADDPAY-037` | 1417 |
+| `INV-SSOT-004` | 472 |
+| `INV-HOST-050` | 899 |
+| `INV-PRIV-012` | 857 |
+| `INV-CONFIG-005` | 676 |
+| `INV-HOST-046` | 764 |
+| `INV-HOST-045` | 727 |
+| `INV-ADDPAY-039` | 931 |
+| `INV-SSOT-001` | 410 |
 | `INV-PRIV-016` | 1512 |
 | `INV-HOST-051` | 1443 |
 | `INV-HOST-053` | 1434 |

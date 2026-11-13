@@ -27,140 +27,49 @@ are permanent: never renumbered, never reused.
 ## INV-SSOT-001
 
 - **One canonical definition per concept.** A constant, helper, formatter, type,
-  validation rule or configuration value has exactly one home, and every other
-  place that needs it imports from that home. If two places now need the same
-  fact, move it to one module and import it — never copy it.
-- **The test is a change, not an appearance.** Two functions that happen to
-  contain similar lines are not a violation; two places that must both be edited
-  to change one fact are. If you are changing a fact and cannot change it in one
-  place, that is the defect, and the fix is the move rather than the second edit.
+  validation rule or configuration value has exactly one home, which every
+  other place imports. If two places need the same fact, move it to one module
+  — never copy it.
+- **The test is a change, not an appearance.** Similar lines are not a
+  violation; two places that must both be edited to change one fact are, and
+  the fix is the move, not the second edit.
 - **A second FORM of one fact is not a second source of truth — a second
-  DEFINITION is.** Where two callers legitimately need the same fact shaped
-  differently, the answer is one definition with two derivations from it, not a
-  forced single output that neither caller wanted. Routing everything through
-  one shared helper is the usual remedy and not a universal one: a helper
-  contorted to serve two shapes becomes the thing nobody may change, which is
-  the same failure at one remove. The question to ask is _where is this fact
-  DEFINED_, not _how many functions mention it_.
-- **A per-site exclusion list is itself a source of truth, and it lives with the
-  fact it excludes** — one list, in the module that owns the fact, not a copy in
-  each guard that consults it. An exclusion list that shrinks is a ratchet;
-  publish what makes it shrink, so the next lane can tell a live exclusion from
-  a stale one.
-- **The preferred remedy is structural, not procedural.** A required argument
-  beats a lint rule; one exported symbol beats an allowlist; a deleted default
-  parameter beats a counted ratchet. Reach for a guard when the structural
-  option is genuinely unavailable, and say which one you rejected and why.
-- Worked example, in this codebase: #3123 deleted the six `= APP_TIME_ZONE`
-  defaults from `src/lib/date-only.ts`. A defect that had needed a counted
-  census, lowered by hand in the same commit as every migration, became a
-  compile error. Every part of that census existed because the default did. The
-  figures live once, in `club-time-escape-hatch-census.test.ts`, and are not
-  restated here — a number repeated in prose is a number that drifts.
-- A duplicated age rule that still carried a bug its canonical copy had been
-  fixed for is the shape this rule exists to prevent; #3123 measured it.
-- Second worked example, and the one that shows the drift happening rather than
-  its consequence: #3131 found the rule deciding which guests a promotional code
-  covers on an existing booking written out **five** times across the
-  booking-modification and guest-removal paths, and one of the five had already
-  diverged in shape. It is now `src/lib/promo-stored-guest-targets.ts`, reading
-  the field it turns on through the one definition of that field's meaning in
-  `promo-guest-scope.ts`. Two details worth carrying forward: the issue was filed
-  saying "four" after a grep of three `src/lib` files plus one route, so the
-  missed copy was the member-facing one; and no census guards against a sixth,
-  because the remedy is structural and because that module's docblock quotes the
-  old spelling to explain what replaced it — which a raw-source scanner would
-  report as the defect itself (`INV-SSOT-004`). The convergence covers every
-  server-side scope decision; the admin promo-codes client still reads the same
-  default inline twice, which is recorded in `promo-guest-scope.ts` rather than
-  left silent, and waits on the server/client boundary work in #2850/#2851.
-- **The sixth instance, and the decision to keep it.** #3163 found the same
-  index-to-id mapping a sixth time, on the booking-**create** path
-  (`getPromoTargetBookingGuestIds` in `booking-create-promo.ts`). The two bodies
-  are the same algorithm and differ in exactly one thing: which key the index is
-  read through — `BookingGuest.id` on the create path,
-  `guestNightRates[].bookingGuestId` on the modification path. The call was to
-  **keep both and cross-reference them**, over two alternatives.
+  DEFINITION is.** Callers needing one fact shaped differently get one
+  definition with two derivations. A shared helper is the usual remedy, not a
+  universal one: one contorted to serve two shapes is the same failure. Ask
+  _where is this fact DEFINED_, not _how many functions mention it_.
+- **A per-site exclusion list is itself a source of truth**: one list, in the
+  module owning the fact it excludes. A shrinking list is a ratchet; publish
+  what makes it shrink.
+- **Prefer a structural remedy.** A required argument beats a lint rule; one
+  exported symbol beats an allowlist; a deleted default parameter beats a
+  counted ratchet. Use a guard only when no structural option exists, and say
+  which one you rejected and why.
+- **An accepted exception lasts only while its reason is alive; retiring one
+  needs a measurement, not an argument.** A convergence onto one home changes
+  an identity, which is proved rather than reasoned about: pins against the
+  separate copies, mutation-verified, come FIRST and pass the convergence
+  unchanged (`stable-digest.test.ts`, #3218).
+- Recorded homes: `promo-stored-guest-targets.ts` (#3131), `stable-digest.ts`
+  (#3218), `hasIssuedPrimaryXeroInvoice` (#3200) — no bookings API route
+  decides it from `Payment.xeroInvoiceId` (one display read is allowlisted),
+  the home takes `xeroInvoiceId` as a REQUIRED field, and the set of files
+  reaching `applyPaymentAdjustments` is pinned
+  (`issued-primary-xero-invoice-one-home.test.ts`).
+- **Known exceptions.** The admin promo-codes client reads the guest-scope
+  default inline twice (recorded in `promo-guest-scope.ts`, pending
+  #2850/#2851). `getPromoTargetBookingGuestIds` repeats the stored-guest
+  index-to-id mapping through another key (#3163): two definitions, not two
+  FORMS, cross-referenced as mitigation, not a fix. That agent-taken default
+  stands until the owner overturns it; unifying them needs no further
+  permission than that.
+- **No canonical-homes registry** (owner, 26 Aug 2026): a second copy of a
+  helper or constant is not caught mechanically and stays on human review,
+  narrowed by `INV-SSOT-003` and the review lens in
+  [`SUBAGENT_GUIDE.md`](../agents/SUBAGENT_GUIDE.md).
 
-  _Unifying through a key accessor_ was rejected as the contortion this rule
-  warns about: a helper reshaped to serve two callers becomes the thing nobody
-  may change. _Normalising the input at the call site_ — mapping
-  `BookingGuest[]` into `{ bookingGuestId }` rows, an idiom already used at
-  `waitlist.ts` and `booking-batch-modification-service.ts` — is **not** a
-  contortion and was not rejected as one. It was judged not worth the churn: it
-  costs an allocation and a shape-shim on the booking-create money path, and it
-  moves the difference between the two rather than removing it. That is a
-  weaker reason than the first, and it is recorded as the weaker reason it is.
-
-  **This is a deliberate exception, not the general rule, and not the carve-out
-  two bullets above.** That carve-out permits one definition with two
-  derivations from it. Here there is no single definition either function
-  derives from — there are two definitions of one fact, which is the very shape
-  `INV-SSOT-001` names as the failure ("two places that must both be edited to
-  change one fact"). The duplication survives and a cross-reference is a
-  reminder rather than a structure, which this repository normally rejects. The
-  two sites point at each other so a future editor of one meets the other; that
-  is mitigation, not a fix.
-
-  **On the provenance of this decision:** it was the recommended default, taken
-  by an orchestrator session under the owner's 30 Aug 2026 instruction to
-  proceed autonomously and record decisions for later review. There is no owner
-  comment on #3163 to read at source. It stands until the owner overturns it,
-  and anyone wanting to unify these later needs no further permission than that.
-
-- **An accepted exception is only accepted while its reason is alive, and
-  retiring one needs a measurement rather than an argument.** #3030 split
-  deterministic identity across two modules — canonicalisation in a client-safe
-  `stable-json.ts`, sha256 in a server-only `stable-digest.ts` — so that
-  `computeProposalHash` could keep the single `INV-OPS-013` allowlist edge it
-  then needed. That left `"sha256 of stable JSON"` written twice, recorded in
-  both docblocks as a deliberate exception. #2851 removed the client reach; the
-  reason expired without the exception noticing, which is the normal way an
-  exception outlives its cause. #3218 collapsed the two back into
-  `src/lib/stable-digest.ts` and retired the exception.
-
-  The transferable part is the ORDER. That digest is stored on
-  `BookingExceptionRequest` rows and recompared before execution, so a collapse
-  that silently changed it would have failed every waiting request as tampered,
-  months later and unexplainably. Both docblocks said it was "pinned by
-  fixed-digest tests"; a caller-level pin existed, the shared machinery
-  underneath had none, and the claim named no test that could be looked up. So
-  the pins were written and mutation-verified FIRST
-  (`src/lib/__tests__/stable-digest.test.ts`), against the two separate modules,
-  and passed the collapse unchanged. **A convergence onto one home is a change
-  to an identity, and an identity is proved rather than reasoned about.**
-
-- **Third worked example, and the one where the copy was written from the wrong
-  neighbour.** "Has this booking's main Xero invoice already been raised?" decides
-  whether an edit that raises the price is billed as a supplementary invoice or is
-  treated as an edit to a booking nobody has invoiced yet. Its one home is
-  `hasIssuedPrimaryXeroInvoice` in `src/lib/booking-payment-state.ts`: a settled
-  booking status AND a payment row carrying the invoice id. Three of the four edit
-  doors — the batch edit, the date change and the single-guest removal — reach it
-  through `applyPaymentAdjustments`. The fourth, the guest add, does its own
-  settlement arithmetic and re-stated the rule inline, copying its status list from
-  its OWN eligibility gate a few hundred lines above rather than from the shared
-  rule — so it omitted `COMPLETED` and answered "no invoice raised" where the other
-  three answered "invoice issued" (#3200). Two things are worth carrying forward.
-  The copy was plausible precisely because a nearby list was the wrong list, which
-  no amount of care at the copy site would have caught; and the divergence was
-  unreachable — that door's gate refuses a finished stay outright — so it was found
-  by reading rather than by anything failing, and correcting it changed no
-  behaviour. `issued-primary-xero-invoice-one-home.test.ts` now refuses a direct
-  read of `Payment.xeroInvoiceId` anywhere under `src/app/api/bookings/**` — a
-  measured population, not the four doors by name — and pins the set of files
-  reaching `applyPaymentAdjustments`, so a fifth door is visible whichever way it
-  arrives. The one home's parameter takes `xeroInvoiceId` as a REQUIRED field, so
-  a caller loading a payment without that column fails to compile rather than
-  being told "no invoice" for ever.
-- **Deliberately not enforced by a registry.** A canonical-homes registry
-  (concept → owning module, checked by a census test) was considered and
-  **declined by the owner on 26 Aug 2026**: too much ongoing maintenance for the
-  value, and every future pull request adding a shared concept would carry one
-  more file to update. The cost of that choice is stated plainly — a second copy
-  of a helper or a constant is **not** caught mechanically and stays on human
-  review, which is what `INV-SSOT-003` and the standing review lens in
-  [`SUBAGENT_GUIDE.md`](../agents/SUBAGENT_GUIDE.md) narrow rather than close.
+History, measurements and rejected alternatives: #3126 (and #3123, #3131,
+#3163, #3218, #3200).
 
 ## INV-SSOT-002
 
@@ -282,229 +191,57 @@ are permanent: never renumbered, never reused.
 ## INV-SSOT-004
 
 - **Two instruments that claim independence must measure the same way, or they
-  are one instrument and a rubber stamp.** Where a guard and a census, or a lint
-  arm and a contract test, are described as cross-checking each other, they must
-  normalise their input identically. A pair that reads the same tree by two
-  different methods agrees where both are blind.
-- **In this repository the specific hazard is comments**, because the house style
-  documents each defect at the site where it was removed. A scanner reading RAW
-  source therefore misfires worst on the files that were cleaned most. The
-  corroborated instance is the `member-guest-delegate-page.ts` false green,
-  recorded where it was found — `club-time-boundary-guard.test.ts` and the
-  docblock of `support/strip-comments.ts`. An earlier draft of this entry
-  claimed "four measured cases" with a two-green/two-red breakdown; only one is
-  evidenced in the tree, so the count is not restated here. Cite the record, not
-  the tally.
-- **`adult-member-hosting-coverage-lock.ts` mints BOTH coverage lock families
-  through one blocking and one fail-fast statement (#3039).** The per-owner and
-  per-trip keys differ in exactly two facts — the namespace constant, and the label a
-  decode failure is reported under — so `lockCoverageKeys` and `tryLockCoverageKeys`
-  are parameterised on those and nothing else. Written out per family that would be
-  four statements, and a family whose statement drifted to the session-scoped
-  `pg_advisory_lock(` spelling would leak a lock on a pooled connection with every
-  other test green. It is also what keeps the file at two entries in
-  `GLOBAL_LOCK_SITE_REGISTRY`'s scoped inventory rather than four, and one in
-  `RAW_READ_INVENTORY` rather than two.
-- **`acquireHostingCoverageGroupKey` is the ONLY place the per-trip key is
-  acquired (#3039).** The try-then-take protocol was written twice — there, and
-  inline in `lockAndVerifyGroupTripCoverageDependents`, whose comment pointed the
-  reader at the other copy while duplicating it. Two copies of a fail-fast protocol
-  is two places to delete half of one, and the behavioural order tests cannot see
-  the deletion because they read the FIRST acquisition of the sequence and the other
-  copy still supplies it. `adult-member-hosting-coverage-lock.test.ts` censuses both
-  the protocol's own shape and the absence of any other acquisition site.
-- **One plan-versus-verify comparison for every bounded coverage set (#3039).**
-  `coverageBookingSetFingerprint` is the single definition; the Group Trip fan-out
-  and `enqueueHostingCoverageReevaluationForMember` both use it. They previously
-  answered the same hazard two ways — an ordered string fingerprint and a length
-  check plus a `Map`-keyed field loop — so a fix to one left the other behind. The
-  ORDER-SENSITIVE form was kept because it is the stricter of the two and both
-  reads apply the same `orderBy`.
-- **One split-pair sibling read (#3039).** `loadHostingSiblingIds` delegates to the
-  batched `loadHostingCoverageSplitSiblingIds`, so `hostingSiblingWhere` has one
-  reader rather than two hand-written ones. The mutation path gains a bounded,
-  ordered read where it previously had neither `take` nor `orderBy`, which is an
-  improvement under `INV-OPS` rather than a cost.
-- **One `select` for the `CoverageOwnerFacts` columns (#3039).** Four reads spelled
-  the five columns out and cast the result `as CoverageOwnerFacts`; a cast is not a
-  check, and a dropped `checkOut` would have produced a zero-night queue item with a
-  green typecheck. `COVERAGE_OWNER_FACTS_BASE_SELECT` is spread by all of them,
-  including the two wider selects that add their own fields.
-- **`src/lib/__tests__/support/hosting-fake-booking-store.ts` is the one
-  hosting-coverage booking double (#3039).** #3037 wrote it, #3038 copied it and
-  #3039 copied it again, and by the third copy they had already diverged: `guestRow`
-  took a member id in one and a whole member row in another, and only one modelled
-  the `some` relation filter. These are the doubles that decide whether a coverage
-  predicate is exercised at all, so a copy missing a clause answers "not related"
-  for a booking the production query relates and the suite goes green. Each suite
-  keeps its own `makeStore` — the recording differences are what each file is for.
-- **`src/lib/__tests__/support/race-db-url.ts` is the one race-database safety
-  guard (#3039).** It was restated per suite on the reasoning that an import going
-  missing could point a suite at a real database; a missing import is a module-load
-  error, so that is fail-closed and not a reachable failure. Twelve copies of one
-  `INV-OPS` fact is the real risk, because the eleventh nobody tightened is the one
-  that connects to something real. This change converged its own caller only.
+  are one instrument and a rubber stamp.** A guard and a census, or a lint arm
+  and a contract test, that cross-check each other normalise their input
+  identically, and the test says which method both share. Adding the second,
+  check what the first normalises and **prefer the broader instrument**:
+  over-reporting is visible; a shared blind spot reads as corroboration.
+- **Here the hazard is comments**: defects are documented where they were
+  removed, so a scanner reading RAW source misfires worst on the cleanest
+  files. The record is in `club-time-boundary-guard.test.ts` and the
+  stripper's docblock; cite it, not a tally.
+- **A population measured by NAME is not the population.** Key a sweep on what
+  code DOES, and classify its matches rather than converging every hit.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 169 test files, six test
-  helpers and one CI script import it, and `ssot/no-local-comment-stripper` in
-  `eslint.config.mjs` reports a second scanner as it is written rather than
-  twelve minutes later in CI. **Use it; do not write a second.** The figure was
-  published as 48 while the module's own docblock said 53 and the tree said 53,
-  which is this ID applied to its own entry: two statements of one fact, and
-  nothing comparing them. It was re-measured at #3180; at #3196 it was
-  INCREMENTED rather than measured — one added for the single file that lane
-  converged, on top of a figure that was itself one high; and #3191 then added
-  two importers of its own. **Something compares them now**:
-  `ssot-comment-stripper-guard.test.ts` counts the importers in the tree and
-  requires both this sentence and the module's own docblock to state that
-  number, so the next drift fails a test instead of waiting for a reviewer.
-- **Count that figure by IMPORT SPECIFIER, not by path text**, which is what the
-  pin does — the two statements of it can only agree if they are measured the
-  same way, which is this ID applied to itself again. The module is reached
-  through four spellings (`@/lib/__tests__/support/strip-comments`,
-  `./support/strip-comments`, `./strip-comments`, and the CI script's relative
-  path with its `.ts` extension), and two further files name that path as DATA
-  rather than importing it: `eslint.config.mjs` inside the rule's own message
-  and `ssot-comment-stripper-guard.test.ts` as the lint target it feeds ESLint.
-  A grep for the path text counts both, and the module's own docblock as well.
+  `stripComments`. Use it; do not write a second.**
+  169 test files, six test helpers and one CI script import it.
+  `ssot-comment-stripper-guard.test.ts` requires that sentence and the module's
+  docblock to state the count it measures by IMPORT SPECIFIER, not path text.
   **Measure it; never increment it.**
-- **A population measured by NAME is not the population**, and the count above
-  is the evidence. #3132 converged the copies spelled `stripComments` and closed;
-  seven more were alive that day under the name `withoutComments`, and #3164
-  found twenty-one more again with no name at all — an inline `.replace()` chain
-  inside a census, which no symbol sweep can see. That is why the rule keys on
-  what a function DOES: it names a JavaScript block-comment delimiter, or
-  compares characters against a slash and a star. Two of those seven were not
-  JavaScript strippers at all (one SQL, one dotenv), and converging either would
-  have BROKEN its census — so a behaviour sweep has to classify, not just match.
-- **The lists that say what is not a copy live in `eslint.config.mjs`, and there
-  are two of them on purpose.** `COMMENT_STRIPPER_ALLOWLIST` is permanent: a
-  different concept the canonical helper cannot express — SQL comments, a comment
-  EXTRACTOR, and the guard's own fixture file. `UNCONVERGED_COMMENT_SCANNERS` is
-  a **ratchet**, whose length is pinned in
-  `ssot-comment-stripper-guard.test.ts`, so the list can shrink and cannot grow.
-  It held five, then four, then one, and since #3196 holds **none**. An empty
-  ratchet is not a dead list: it is what makes "there is no second scanner" a
-  checked fact rather than a claim, and the pin is now an equality, so the next
-  file that would need an entry cannot get one.
-- **The canonical module holds five FORMS, and a claim made about a whole list
-  has to be true of every entry on it.** `stripComments` removes comments and
-  keeps strings; `stripCommentsAndStrings` also blanks string CONTENTS, which is
-  what a rule needs when its own subject is discussed in prose; `stripCssComments`
-  handles the one other language sharing the block delimiter; `blankLiterals`
-  (#3180) returns text of the **same length**, so a caller that reports a line
-  number, slices by index, or compares one match's position against another's
-  still points at what it named; and `blankLiteralsWithSpans` (#3196) is that
-  same blanking with the runs it blanked reported back. #3164 moved the
-  second form out of `xero-provider-date-boundary-census.test.ts`, where the
-  #2869 review had written it — one of two instruments reading the same tree by
-  different methods is exactly this ID, and a second form no other file could
-  import is why a ratchet entry could not converge onto it.
+- **`ssot/no-local-comment-stripper`** (`eslint.config.mjs`) reports any
+  function naming a JavaScript block-comment delimiter or comparing characters
+  against a slash and a star — and, at module scope, code naming BOTH block
+  delimiters. Its failure message states what it cannot catch; measured
+  false-positive classes stay as fixtures. `COMMENT_STRIPPER_ALLOWLIST` is
+  permanent, for different concepts (SQL comments, a comment extractor, the
+  guard suite's own fixtures — the suite proves the listing silences them);
+  `UNCONVERGED_COMMENT_SCANNERS` is a ratchet, kept though empty and pinned at
+  zero by equality, so it cannot grow.
+- **The module holds five FORMS**, the choice stated once in its docblock, with
+  the scanner's known gaps; each form's docblock points there. `stripComments`
+  keeps strings; `stripCommentsAndStrings` blanks their contents too;
+  `stripCssComments` serves CSS, not allowlist entries; `blankLiterals`
+  preserves length; `blankLiteralsWithSpans` also reports the blanked runs,
+  only for a caller hunting what blanking removes. A restore policy stays at
+  the caller. A claim about a whole list must hold for every entry.
+- **Hosting coverage, one home per fact (#3039).**
+  `adult-member-hosting-coverage-lock.ts` mints both lock families through one
+  blocking and one fail-fast statement (`lockCoverageKeys`,
+  `tryLockCoverageKeys`), parameterised only on namespace and decode-failure
+  label; `acquireHostingCoverageGroupKey` is the ONLY per-trip key acquisition
+  (`adult-member-hosting-coverage-lock.test.ts` censuses its shape and that no
+  other site exists); `coverageBookingSetFingerprint` is the one
+  plan-versus-verify comparison for every bounded coverage set,
+  order-sensitive over one shared `orderBy`; `loadHostingSiblingIds` delegates
+  to `loadHostingCoverageSplitSiblingIds`, so `hostingSiblingWhere` has one
+  reader; every `CoverageOwnerFacts` read
+  spreads `COVERAGE_OWNER_FACTS_BASE_SELECT`; `hosting-fake-booking-store.ts`
+  is the one booking double (each suite keeps its `makeStore`);
+  `race-db-url.ts` is the one race-database safety guard; suites that still
+  restate it are unconverged (#3039 converged its own caller only).
 
-  **The fifth form was a cost taken knowingly (#3196), and what pays for it is a
-  docblock.** A module whose value is that there is one obvious choice per job
-  gets worse with every export, so the five-way choice is stated **once**, in the
-  module's own docblock, one sentence each, and a form's own docblock says what
-  it is and points there rather than restating the other four. Reach for
-  `blankLiteralsWithSpans` only when some of what blanking removes is the very
-  thing you are hunting: `advisory-lock-guard.test.ts` hunts raw SQL, which lives
-  inside string literals, while the prose it must ignore lives inside string
-  literals too. **The restore stays at the caller.** A `SELECT`-shaped carve-out
-  is one census's policy about SQL, not a fact about JavaScript, and a helper
-  reshaped to carry another caller's policy is the contortion `INV-SSOT-001`
-  names — so the module gained a capability and not a rule.
-
-- **The ratchet's preamble claimed a property two of its five entries did not
-  have, and that is the correction worth recording.** It said none produced
-  reduced text and all reported original-text offsets. Measured, that was false
-  twice: `family-group-role-retirement.test.ts`'s `codeOnly` really did reduce,
-  and has been converged onto the second form with **no change to what its
-  census reports** — `member-merge.ts` comes back without `maxFamilyRole` either
-  way, and the canonical form is the stricter of the two, since it keeps
-  `obj["maxFamilyRole"]` as the property read it is where the local one erased
-  it. `advisory-lock-guard.test.ts`'s works a line at a time and reduces too; it
-  stays, for its own accurate reason — a `SELECT` carve-out, because the raw SQL
-  it hunts for lives inside the double-quoted literals it otherwise blanks.
-  Three of the remaining four shared the offset-preserving property; the fourth
-  was named as the exception rather than covered by the sentence. #3180 wrote
-  the blanker and converged those three, leaving the named exception alone.
-- **Converging the three walkers found a live blind spot, and that is the
-  argument for converging at all.** Two of the three re-measured **byte-identical**
-  — every span, line number and derived population unchanged. The third did not.
-  None of the three private copies recognised a **regex literal**, so
-  `xero-contacts.ts`'s `.replace(/\//g, "")` was read as a line comment,
-  desynchronised `xero-object-url-write-guard.test.ts` for the rest of that file,
-  and hid a real `prisma.xeroSyncOperation.update(...)` from a census whose whole
-  job is to see every direct write to that model. The write-site population went
-  from **58 to 59** on conversion. The recovered site carries no `xeroObjectUrl`
-  today, so the guard was passing rather than wrong — **live but latent**, one
-  added property from being otherwise. That is the same shape #3155 removed from
-  the shared scanner, still alive in copies nobody had reason to re-read.
-- **What the guard cannot catch is stated in its own failure message**, which is
-  the honest form for an inexact rule: a stripper that handles only line
-  comments (indistinguishable from the URL patterns this tree is full of), one
-  whose delimiters are computed at runtime, one written for another language,
-  and — at module top level only — one that names a single block delimiter
-  rather than the pair. Three false-positive classes were measured and closed on
-  the way in — a quantifier before an escaped slash (`/<br\s*\/?>/`, two
-  HTML-to-text converters), a single slash/star pair (a glob compiler, and
-  `endsWith("/*")`, whose margin is one character comparison and is pinned as a
-  fixture for that reason), and `diagnostics/tools/define.ts`'s module-level SQL
-  banlist. All are kept as fixtures so a later widening reopens them loudly.
-- **CSS is the one other language sharing JavaScript's block delimiter, and its
-  strip is a second FORM in the canonical module rather than three allowlist
-  entries.** `placeholder-styling-contract`, `app-theme-layout-contract` and
-  `print-light-palette-contract` each wrote the identical one-line `replaceAll`
-  at five call sites between them; since #3164 they import `stripCssComments`.
-  The reason CSS cannot simply use `stripComments` was also wrong where it was
-  first written, and the correction matters because the old one is not
-  reproducible: the JavaScript scanner does **not** read the slash in
-  `url(a/b)` as opening a regex and eat the line — a regex literal is copied
-  through verbatim, and `url(a/b.png)` and `url(/images/hero.png)` both come back
-  byte for byte. What it really eats is the LINE delimiter that CSS does not
-  have: `url(https://cdn.example/x.png)` unquoted loses everything from the
-  double slash onward. No stylesheet here writes one today, so the hazard is
-  **latent, not live** — the first unquoted absolute URL would silently shrink
-  whichever contract read that file.
-- **The rule reads the module body as well as every function, and the bar out
-  there is higher.** Its first form recorded evidence only against a literal's
-  enclosing function, so a stripper written beside a census's imports was
-  invisible while the identical chain one scope further in was reported — an
-  accidental limit, and an undeclared one. It now reads module scope too,
-  requiring BOTH block delimiters rather than either, because one escaped opener
-  at module level is the `define.ts` banlist entry above and a guard that is
-  wrong when it fires teaches its reader to switch it off. That reach is what put
-  `ssot-comment-stripper-guard.test.ts` on the allowlist: its fixtures are
-  module-level constants, and the suite proves the LISTING is what silences it,
-  by linting the file's own text at a fixture path and requiring a report.
-- **What converging measured is the argument for the rule, not a footnote.** The
-  sixteen copies #3132 removed fell into five behaviour classes, and they
-  disagreed where it mattered: six tracked no string literals at all, so a `//`
-  inside `"https://x"` opened a comment and ate the rest of the line; one was the
-  two-regex strip that drops newlines. Worse, the canonical itself read `.replace(/\//g, "_")` — two
-  adjacent slashes inside a regex literal — as a line comment and deleted real
-  code in a dozen files, a defect the #2869 review had already found and fixed in
-  `xero-provider-date-boundary-census.test.ts` **alone**. One of two instruments
-  repaired is this rule stated as a defect; the predicate now lives with the
-  scanner and that census imports it. Where the remaining gaps are, and why
-  neither the scanner nor a full TypeScript parse dominates the other, is in the
-  canonical module's docblock rather than restated here.
-- **#3164 re-measured that argument against the copies #3132 left behind, and it
-  is larger than the original.** Across `src/`, the two-regex strip with a
-  line-start guard deletes 100,390 characters of real code that the canonical
-  scanner keeps, in 58 files; the colon-guarded variant 104,254 in 157 files; the
-  space-blanking variant 205,978 in 671 files. The worst single case is not the
-  escaped slash at all: `rooms-beds-manager.tsx` contains a LINE comment quoting
-  the glob `/api/admin/bed-allocation/*`, whose block-comment opener runs 464
-  lines to the next closer and takes 23% of the file with it. None of the
-  converged censuses' own patterns lived in the deleted regions, so no census
-  result moved — the defect was live and latent, which is the state a guard is
-  for and an incident is not.
-- When you add the second instrument to a guard, check what the first one
-  normalises before writing the second, and say in the test which method both
-  share. **Prefer the broader instrument for the second one**: over-reporting is
-  visible and gets fixed, while a second instrument blind in the same place as
-  the first is a rubber stamp that reads as corroboration.
+History, measurements and rejected alternatives: #3126 (and #3039, #3132,
+#3164, #3180, #3191, #3196).
 
 ## INV-SSOT-005
 
