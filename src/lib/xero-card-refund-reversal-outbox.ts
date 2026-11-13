@@ -5,6 +5,7 @@
  * type and reads the payload, so the shared outbox payload module stays
  * inside its line budget.
  */
+import type { Prisma } from "@prisma/client";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 
 // Anchored on the Payment; the close record is in the payload and the
@@ -17,9 +18,14 @@ export const CARD_REFUND_REVERSAL_PAYMENT_ROLE = "CARD_REFUND_REVERSAL_PAYMENT";
  * An invoice create on a Payment that bills the member. A reversal invoice is
  * not one of those (`INV-PAY-151`): readers that treat any invoice create on
  * the Payment as the booking's bill exclude it with this.
+ *
+ * #5017 review: null-safe. `queueType` is nullable and a plain
+ * `NOT: { queueType: X }` is SQL `NOT (queueType = X)`, which also drops every
+ * row with no queue type - an older booking-invoice create among them. The
+ * `not: null` keeps those rows: `NOT (queueType = X AND queueType IS NOT NULL)`.
  */
 export const NOT_CARD_REFUND_REVERSAL_INVOICE = {
-  NOT: { queueType: XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE },
+  NOT: { queueType: { equals: XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE, not: null } },
 } as const;
 
 /** The same exclusion on an invoice link, which is named by role rather than queue type. */
@@ -41,6 +47,45 @@ export function liveCardRefundReversalCents(metadata: unknown): number {
   if (CANCELLED_CARD_REFUND_REVERSAL_STATUSES.has(status)) return 0;
   const cents = record?.amountCents;
   return typeof cents === "number" && Number.isInteger(cents) && cents > 0 ? cents : 0;
+}
+
+/**
+ * #5017 review (money M1, `INV-PAY-151`): THE REVERSALS A CLOSE HAS QUEUED
+ * THAT HAVE NOT REACHED XERO YET. Coverage subtracts only a linked reversal
+ * (`liveCardRefundReversalCents`), so a later close sizing its cover would
+ * count a queued, sending or FAILED one's card note as still standing and
+ * reverse it again. This is the payload amount of each of the payment's
+ * reversal rows that is not CANCELLED and whose close has no reversal link
+ * yet, active or retired. A linked one is coverage's to count; a voided one
+ * reverses nothing. A row whose payload cannot be read counts nothing, as the
+ * worker would raise nothing from it.
+ */
+export async function readPendingCardRefundReversalCents(
+  db: Pick<Prisma.TransactionClient, "xeroSyncOperation" | "xeroObjectLink">,
+  paymentId: string,
+): Promise<number> {
+  const rows = await db.xeroSyncOperation.findMany({
+    where: {
+      direction: "OUTBOUND",
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: paymentId,
+      queueType: XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE,
+      status: { not: "CANCELLED" },
+    },
+    select: { requestPayload: true },
+  });
+  if (rows.length === 0) return 0;
+  const links = await db.xeroObjectLink.findMany({
+    where: { localModel: "Payment", localId: paymentId, xeroObjectType: "INVOICE", role: CARD_REFUND_REVERSAL_INVOICE_ROLE },
+    select: { metadata: true },
+  });
+  const linkedCloses = new Set(links.map((link) => readString(asRecord(link.metadata)?.closeTaskId)).filter(Boolean));
+  return rows.reduce((sum, row) => {
+    const payload = readCardRefundReversalInvoicePayload(row.requestPayload);
+    return payload && !linkedCloses.has(payload.closeTaskId) ? sum + payload.amountCents : sum;
+  }, 0);
 }
 
 /**

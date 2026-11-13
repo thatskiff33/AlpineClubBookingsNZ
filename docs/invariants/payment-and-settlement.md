@@ -4146,11 +4146,12 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
   payment the next open day and keeps the close day in the reference. A voided
   or deleted one is not raised again.
 - Coverage subtracts a reversal only once its invoice link is active and not
-  voided or deleted. One still queued changes nothing. Paying back less than
-  the card note leaves the over-coverage the reconciliation report already
-  lists. While the reversal is linked and the bank note is only queued, the
+  voided or deleted. Paying back less than the card note leaves the
+  over-coverage the reconciliation report already lists. While the reversal is linked and the bank note is only queued, the
   gap is the close's own uncovered cents, and card-note sizing raises no
   Stripe note for it.
+- A later close's cover counts earlier closes' unlinked bank notes and
+  live unlinked reversals as posted, so worker order never changes it.
 - The close does not store `paidAnotherWayCardNoteCover`. A capacity-race
   shortfall still does.
 - Both rows go in the close's transaction, after the record and the money
@@ -4159,5 +4160,6 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
 - Proven by `card-refund-paid-another-way-xero.test.ts`,
   `card-refund-paid-another-way.test.ts`,
   `xero-card-refund-reversal-invoice.test.ts`,
-  `card-refund-reversal-coverage.test.ts` and
-  `card-refund-paid-another-way.realdb.test.ts`.
+  `card-refund-reversal-coverage.test.ts`,
+  `card-refund-reversal-readers.test.ts` and both `.realdb` suites
+  (`card-refund-paid-another-way`, `xero-deleted-payment-links`).

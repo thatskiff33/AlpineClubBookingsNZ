@@ -44,6 +44,16 @@ vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
 vi.mock("@/lib/refund-note-eligible-cash", () => ({
   resolveRefundNoteEligibleCash: async () => ({ eligibleCashCents: await mocks.noteEligibleCashCents() }),
 }));
+// #5017 review (money M1): the cover also reads earlier closes' unlinked notes and unlinked reversals.
+// No earlier close here, so both are nothing; `card-refund-paid-another-way-xero.test.ts` drives them.
+vi.mock("@/lib/card-refund-paid-another-way-cash", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  readPaidAnotherWayUncoveredCents: async () => 0,
+}));
+vi.mock("@/lib/xero-card-refund-reversal-outbox", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  readPendingCardRefundReversalCents: async () => 0,
+}));
 
 // #4516 (M4c): the close's journal posting runs on PostgreSQL (`member-money-refunds.realdb.test.ts`); here, its
 // call, its order and what it is told.

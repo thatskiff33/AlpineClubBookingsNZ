@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => ({
   coveredCents: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 0),
   unreadable: vi.fn((): string[] => []),
   eligibleCashCents: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 0),
+  // #5017 review (money M1): earlier closes' bank notes not yet linked, and reversals not yet linked.
+  closesUnnotedCents: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 0),
+  pendingReversalCents: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 0),
   lateCaptureIntent: vi.fn<(...args: unknown[]) => Promise<string | null>>(async () => null),
   receipt: vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ kind: "recorded", invoiceId: "inv-receipt" })),
   enqueueNote: vi.fn<(...args: unknown[]) => Promise<{ queueOperationId: string | null; message?: string }>>(async () => ({ queueOperationId: "xop-1" })),
@@ -43,6 +46,13 @@ vi.mock("@/lib/xero-operation-outbox", () => ({ enqueueXeroRefundCreditNoteOpera
 vi.mock("@/lib/xero-card-refund-reversal-invoice", () => ({
   enqueueCardRefundReversalInvoiceOperation: (...args: unknown[]) => mocks.enqueueReversal(...args),
 }));
+vi.mock("@/lib/card-refund-paid-another-way-cash", () => ({
+  readPaidAnotherWayUncoveredCents: (...args: unknown[]) => mocks.closesUnnotedCents(...args),
+}));
+vi.mock("@/lib/xero-card-refund-reversal-outbox", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  readPendingCardRefundReversalCents: (...args: unknown[]) => mocks.pendingReversalCents(...args),
+}));
 
 import {
   paidAnotherWayXeroPlan,
@@ -71,6 +81,8 @@ beforeEach(() => {
   mocks.unreadable.mockReturnValue([]);
   mocks.coveredCents.mockResolvedValue(0);
   mocks.eligibleCashCents.mockResolvedValue(0);
+  mocks.closesUnnotedCents.mockResolvedValue(0);
+  mocks.pendingReversalCents.mockResolvedValue(0);
   mocks.enqueueNote.mockResolvedValue({ queueOperationId: "xop-1" });
   mocks.enqueueReversal.mockResolvedValue({
     queueOperationId: "rev-1",
@@ -205,6 +217,30 @@ describe("a failed-later row closed as paid another way (#4104, money 2; delta M
     expect(await queue(xeroPlan, 7_000)).toBe("stripe-reversal-and-bank-note");
     expect(mocks.enqueueReversal).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 7_000 }));
     expect(noteCents()).toBe(7_000);
+  });
+
+  // #5017 review (money M1): a second close is sized as if the first close's
+  // documents had all reached Xero, whichever worker ran first.
+  it("MUTATION (#5017 M1): an earlier close's reversal linked but its bank note not yet: the rest is still reversed", async () => {
+    // $80 failed later with its $80 card note. Close 1 paid $50 (reversal $50 linked; bank note FAILED); closing the $30 rest.
+    // Coverage 80 - 50 = 30, eligible 50, close 1's unlinked note 50: excess 30, not 0.
+    mocks.coveredCents.mockResolvedValue(3_000);
+    mocks.eligibleCashCents.mockResolvedValue(5_000);
+    mocks.closesUnnotedCents.mockResolvedValue(5_000);
+    const rest = { ...failedLater, amountCents: 3_000 };
+    expect(await plan(rest)).toEqual({ xeroRefundNote: "now", cardNoteCoversCents: 3_000 });
+    expect(mocks.closesUnnotedCents).toHaveBeenCalledWith(db, "p-1");
+  });
+
+  it("MUTATION (#5017 M1): an earlier close's bank note linked but its reversal not yet: nothing is reversed twice", async () => {
+    // R1 $30 with its card note, R2 $20 failed later with none. Close R1 queued a $30 reversal (FAILED) and a $30
+    // bank note (linked). Closing R2: coverage 60, eligible 30, the pending reversal 30: excess 0, not 20.
+    mocks.coveredCents.mockResolvedValue(6_000);
+    mocks.eligibleCashCents.mockResolvedValue(3_000);
+    mocks.pendingReversalCents.mockResolvedValue(3_000);
+    const r2 = { ...failedLater, idempotencyKey: "card_refund_failed_later_re_2", amountCents: 2_000 };
+    expect(await plan(r2)).toEqual({ xeroRefundNote: "now" });
+    expect(mocks.pendingReversalCents).toHaveBeenCalledWith(db, "p-1");
   });
 
   it("a close with no invoice to credit queues nothing, card note or not", async () => {

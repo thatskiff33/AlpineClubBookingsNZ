@@ -25,6 +25,8 @@ import { lockKeptCaptureAnchor } from "@/lib/kept-late-capture-change-receipt";
 import { paidAnotherWayReceiptRetryInstruction } from "@/lib/paid-another-way-receipt-retry-wording";
 import { enqueueXeroRefundCreditNoteOperation } from "@/lib/xero-operation-outbox";
 import { enqueueCardRefundReversalInvoiceOperation } from "@/lib/xero-card-refund-reversal-invoice";
+import { readPendingCardRefundReversalCents } from "@/lib/xero-card-refund-reversal-outbox";
+import { readPaidAnotherWayUncoveredCents } from "@/lib/card-refund-paid-another-way-cash";
 import { xeroDocumentDateFromInstant } from "@/lib/xero-provider-dates";
 
 /**
@@ -277,7 +279,16 @@ export async function failedLaterCardNoteCoverCents(
   if (resolved.unreadableOperationIds.length > 0) return 0;
   const coveredCents = await sumRefundCreditNoteCoverageCents(paymentId, resolved, db);
   const { eligibleCashCents } = await resolveRefundNoteEligibleCash(payment, db);
-  return Math.min(failedCents, Math.max(0, coveredCents - eligibleCashCents));
+  // #5017 review (money M1): sized as if every earlier close's documents had
+  // reached Xero, so the answer never depends on which worker ran first.
+  // Eligible cash counts a `now` close once it commits, but coverage counts its
+  // bank note only once linked: add back what the closes' own notes do not yet
+  // cover. Coverage subtracts a reversal only once linked: take off those still
+  // queued, sending or FAILED.
+  const closesUnnotedCents = await readPaidAnotherWayUncoveredCents(db, paymentId);
+  const pendingReversalCents = await readPendingCardRefundReversalCents(db, paymentId);
+  const excessCents = coveredCents + closesUnnotedCents - eligibleCashCents - pendingReversalCents;
+  return Math.min(failedCents, Math.max(0, excessCents));
 }
 
 /**

@@ -23,7 +23,11 @@ vi.mock("@/lib/xero-sync", () => ({
   sumCoveredRefundCreditNoteCents: async () => state.grossLinkedCents,
 }));
 
-import { CARD_REFUND_REVERSAL_INVOICE_ROLE, liveCardRefundReversalCents } from "@/lib/xero-card-refund-reversal-outbox";
+import {
+  CARD_REFUND_REVERSAL_INVOICE_ROLE,
+  liveCardRefundReversalCents,
+  readPendingCardRefundReversalCents,
+} from "@/lib/xero-card-refund-reversal-outbox";
 import { sumRefundCreditNoteCoverageCents } from "@/lib/xero-resolved-in-xero-fences";
 
 const resolved = { coveredCents: 0, correlationKeys: [], operationIds: [], unreadableOperationIds: [] };
@@ -84,5 +88,60 @@ describe("net refund-note coverage after a Stripe reversal (#4369)", () => {
     const cardAsk = uncovered - Math.min(uncovered, closeUncovered);
     expect(uncovered).toBe(closeUncovered);
     expect(cardAsk).toBe(0);
+  });
+});
+
+// #5017 review (money M1): what a later close's cover takes off for reversals
+// queued but not yet in Xero. Coverage counts only a linked one, so these are
+// the rest.
+describe("reversals queued but not yet in Xero (#5017 M1)", () => {
+  const payload = (closeTaskId: string, amountCents: number) => ({
+    queueType: "CARD_REFUND_REVERSAL_INVOICE",
+    bookingId: "b-1",
+    paymentId: "pay-1",
+    closeTaskId,
+    amountCents,
+    closedOn: "2026-07-01",
+  });
+  const store = (rows: unknown[], links: unknown[]) => {
+    const calls: unknown[] = [];
+    return {
+      calls,
+      db: {
+        xeroSyncOperation: { findMany: async (args: unknown) => (calls.push(args), rows) },
+        xeroObjectLink: { findMany: async () => links },
+      } as never,
+    };
+  };
+
+  it("MUTATION: counts each unlinked reversal's queued cents, and none whose close already has a link, active or voided", async () => {
+    const { db } = store(
+      [
+        { requestPayload: payload("close-1", 3_000) },
+        { requestPayload: payload("close-2", 2_000) },
+        { requestPayload: payload("close-3", 1_000) },
+      ],
+      [
+        { metadata: { closeTaskId: "close-2", amountCents: 2_000 } },
+        { metadata: { closeTaskId: "close-3", amountCents: 1_000, status: "VOIDED" } },
+      ],
+    );
+    expect(await readPendingCardRefundReversalCents(db, "pay-1")).toBe(3_000);
+  });
+
+  it("MUTATION: reads only this payment's live reversal creates, and an unreadable payload counts nothing", async () => {
+    const { db, calls } = store([{ requestPayload: { queueType: "CARD_REFUND_REVERSAL_INVOICE" } }], []);
+    expect(await readPendingCardRefundReversalCents(db, "pay-1")).toBe(0);
+    expect(calls[0]).toMatchObject({
+      where: {
+        localModel: "Payment",
+        localId: "pay-1",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        queueType: "CARD_REFUND_REVERSAL_INVOICE",
+        status: { not: "CANCELLED" },
+      },
+    });
+    expect(await readPendingCardRefundReversalCents(store([], []).db, "pay-1")).toBe(0);
   });
 });

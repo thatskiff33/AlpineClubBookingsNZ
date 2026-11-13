@@ -96,6 +96,8 @@ let recordStripeRefundsAgainstTransaction: (typeof import("@/lib/payment-transac
 let realElapsedMs: (typeof import("@/lib/__tests__/helpers/clock"))["realElapsedMs"];
 let resolveRefundNoteEligibleCash: (typeof import("@/lib/refund-note-eligible-cash"))["resolveRefundNoteEligibleCash"];
 let readRefundCreditNoteGap: (typeof import("@/lib/xero-admin-health"))["readRefundCreditNoteGap"];
+let failedLaterCardNoteCoverCents: (typeof import("@/lib/card-refund-paid-another-way-xero"))["failedLaterCardNoteCoverCents"];
+let readPendingCardRefundReversalCents: (typeof import("@/lib/xero-card-refund-reversal-outbox"))["readPendingCardRefundReversalCents"];
 let getRefundsMissingXeroCreditNotes: (typeof import("@/lib/xero-admin-health"))["getRefundsMissingXeroCreditNotes"];
 let enqueueXeroRefundCreditNoteOperation: (typeof import("@/lib/xero-operation-outbox"))["enqueueXeroRefundCreditNoteOperation"];
 let createXeroKeptLateCaptureInvoice: (typeof import("@/lib/xero-kept-late-capture-invoice"))["createXeroKeptLateCaptureInvoice"];
@@ -165,6 +167,8 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       ({ enqueueXeroRefundCreditNoteOperation } = await import("@/lib/xero-operation-outbox"));
       ({ createXeroKeptLateCaptureInvoice } = await import("@/lib/xero-kept-late-capture-invoice"));
       ({ resolveCardRefundPaidTwice, listCardRefundsPaidTwice } = await import("@/lib/card-refund-paid-twice"));
+      ({ failedLaterCardNoteCoverCents } = await import("@/lib/card-refund-paid-another-way-xero"));
+      ({ readPendingCardRefundReversalCents } = await import("@/lib/xero-card-refund-reversal-outbox"));
       const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([
         import("@prisma/client"),
         import("@/lib/prisma-adapter"),
@@ -547,6 +551,114 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       expect(gap.uncoveredCents).toBe(REFUND_CENTS);
       expect(gap.paidAnotherWayUncoveredCents).toBe(REFUND_CENTS);
       expect(gap.uncoveredCents - gap.paidAnotherWayUncoveredCents).toBe(0);
+    });
+
+    it("MUTATION (#5017 review M1): a later close's cover does not depend on which of the first close's documents reached Xero", async () => {
+      await prisma.paymentRecoveryOperation.update({
+        where: { id: OPERATION_ID },
+        data: {
+          allocationPlan: [{ paymentTransactionId: TRANSACTION_ID, amountCents: REFUND_CENTS, failedRefundIds: ["re_race_5017"] }],
+        },
+      });
+      await prisma.xeroObjectLink.create({
+        data: {
+          localModel: "Payment",
+          localId: PAYMENT_ID,
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_race_5017_card",
+          role: "REFUND_CREDIT_NOTE",
+          active: true,
+          metadata: { amountCents: REFUND_CENTS },
+        },
+      });
+      expect((await close()).xeroQueued).toBe("stripe-reversal-and-bank-note");
+      const record = await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: BOOKING_ID } });
+      const rows = await prisma.xeroSyncOperation.findMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
+      const reversal = rows.find((row) => row.queueType === "CARD_REFUND_REVERSAL_INVOICE")!;
+      const note = rows.find((row) => row.queueType === "REFUND_CREDIT_NOTE")!;
+
+      // Another failed-later row on the same payment, its card note long since
+      // answered: once the first close's documents all post, the card note is
+      // reversed in full and nothing is left over for it.
+      const another = { idempotencyKey: "card_refund_failed_later_re_race_5017_other", amountCents: REFUND_CENTS };
+      const cover = () => failedLaterCardNoteCoverCents(prisma as never, another, PAYMENT_ID);
+
+      // Both queued, neither in Xero.
+      expect(await readPendingCardRefundReversalCents(prisma, PAYMENT_ID)).toBe(REFUND_CENTS);
+      expect(await cover()).toBe(0);
+
+      // The bank note reached Xero; the reversal FAILED. Before the fix this
+      // read coverage 2x against 1x cash and reversed the card note twice.
+      await prisma.xeroSyncOperation.update({ where: { id: reversal.id }, data: { status: "FAILED" } });
+      await prisma.xeroSyncOperation.update({ where: { id: note.id }, data: { status: "SUCCEEDED", xeroObjectId: "cn_race_5017_bank" } });
+      await prisma.xeroObjectLink.create({
+        data: {
+          localModel: "Payment",
+          localId: PAYMENT_ID,
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_race_5017_bank",
+          role: "REFUND_CREDIT_NOTE",
+          active: true,
+          metadata: { amountCents: REFUND_CENTS },
+        },
+      });
+      expect(await cover()).toBe(0);
+
+      // The reverse: the reversal reached Xero and the bank note did not.
+      await prisma.xeroObjectLink.updateMany({ where: { localId: PAYMENT_ID, xeroObjectId: "cn_race_5017_bank" }, data: { active: false } });
+      await prisma.xeroSyncOperation.update({ where: { id: note.id }, data: { status: "FAILED", xeroObjectId: null } });
+      await prisma.xeroSyncOperation.update({ where: { id: reversal.id }, data: { status: "SUCCEEDED" } });
+      await prisma.xeroObjectLink.create({
+        data: {
+          localModel: "Payment",
+          localId: PAYMENT_ID,
+          xeroObjectType: "INVOICE",
+          xeroObjectId: "inv_race_5017_reversal",
+          role: CARD_REFUND_REVERSAL_INVOICE_ROLE,
+          active: true,
+          metadata: { closeTaskId: record.id, amountCents: REFUND_CENTS, bookingId: BOOKING_ID },
+        },
+      });
+      expect(await readPendingCardRefundReversalCents(prisma, PAYMENT_ID)).toBe(0);
+      expect(await cover()).toBe(0);
+
+      // Cancelled, the reversal is no longer pending: the card note stands again.
+      await prisma.xeroObjectLink.deleteMany({ where: { localId: PAYMENT_ID, xeroObjectId: "inv_race_5017_reversal" } });
+      await prisma.xeroSyncOperation.update({ where: { id: reversal.id }, data: { status: "CANCELLED" } });
+      expect(await readPendingCardRefundReversalCents(prisma, PAYMENT_ID)).toBe(0);
+    });
+
+    it("MUTATION (#5017 review): the reversal filter drops only the reversal, never a create with no queue type", async () => {
+      const { NOT_CARD_REFUND_REVERSAL_INVOICE } = await import("@/lib/xero-card-refund-reversal-outbox");
+      const { findResolvedBookingInvoiceCreate } = await import("@/lib/xero-resolved-in-xero-fences");
+      const create = (key: string, queueType: string | null, createdAt: string, manuallyResolvedAt: Date | null) =>
+        prisma.xeroSyncOperation.create({
+          data: {
+            direction: "OUTBOUND",
+            entityType: "INVOICE",
+            operationType: "CREATE",
+            localModel: "Payment",
+            localId: PAYMENT_ID,
+            status: "SUCCEEDED",
+            idempotencyKey: `race-5017-${key}`,
+            queueType,
+            createdAt: new Date(createdAt),
+            manuallyResolvedAt,
+          },
+        });
+      // An older booking-invoice create with no queue type, resolved by hand in
+      // Xero; one with a queue type; and a later reversal on the same payment.
+      await create("legacy", null, "2026-06-01T00:00:00.000Z", new Date("2026-06-02T00:00:00.000Z"));
+      await create("booking", "BOOKING_INVOICE", "2026-05-01T00:00:00.000Z", null);
+      await create("reversal", "CARD_REFUND_REVERSAL_INVOICE", "2026-06-20T00:00:00.000Z", null);
+
+      const kept = await prisma.xeroSyncOperation.findMany({
+        where: { localModel: "Payment", localId: PAYMENT_ID, ...NOT_CARD_REFUND_REVERSAL_INVOICE },
+        select: { idempotencyKey: true },
+      });
+      expect(kept.map((row) => row.idempotencyKey).sort()).toEqual(["race-5017-booking", "race-5017-legacy"]);
+      // The latest booking-invoice create is the hand-resolved one, not the reversal after it.
+      expect(await findResolvedBookingInvoiceCreate(PAYMENT_ID, prisma)).not.toBeNull();
     });
 
     it("a refund still being retried is refused and nothing is written", async () => {
