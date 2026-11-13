@@ -12,10 +12,13 @@ import {
   isDietaryRequirementsWithinLimit,
   normalizeImportedDietaryRequirements,
 } from "@/lib/member-dietary-field";
+import { ADMIN_FAMILY_GROUP_MAX_MEMBERS } from "@/lib/admin-family-group-create";
 
 export const MEMBER_IMPORT_MAX_ROWS = 500;
 export const MEMBER_IMPORT_COMMENTS_MAX_LENGTH = 4000;
 export const MEMBER_IMPORT_OCCUPATION_MAX_LENGTH = 100;
+export const MEMBER_IMPORT_MEMBERSHIP_TYPE_MAX_LENGTH = 200;
+export const MEMBER_IMPORT_FAMILY_KEY_MAX_LENGTH = 100;
 
 /** Maximum lengths for the structured street address import fields. */
 export const MEMBER_IMPORT_ADDRESS_MAX_LENGTHS = {
@@ -90,6 +93,8 @@ interface MemberImportRowPayload {
   lifeMemberDate?: string;
   comments?: string;
   role?: string;
+  membershipType?: string;
+  familyKey?: string;
   sourceLineNumber?: number;
   sourceColumnLabels?: Record<string, string>;
 }
@@ -278,6 +283,36 @@ export const MEMBER_IMPORT_FIELD_DEFINITIONS = [
     label: "Role",
     required: false,
     aliases: ["role", "memberrole"],
+  },
+  {
+    // #4988: matched by name against the club's active membership types; the
+    // match gets a current-season assignment. Bare "type" is not an alias: a
+    // legacy file's "Type" column is as often an age group or a role.
+    key: "membershipType",
+    label: "Membership Type",
+    required: false,
+    aliases: [
+      "membershiptype",
+      "membertype",
+      "membershipcategory",
+      "membershipclass",
+    ],
+  },
+  {
+    // #4988: rows sharing a key become one family group. "family" and
+    // "familyname" stay lastName aliases; none here collides with them.
+    key: "familyKey",
+    label: "Family Key",
+    required: false,
+    aliases: [
+      "familykey",
+      "familyid",
+      "familycode",
+      "familygroup",
+      "household",
+      "householdkey",
+      "householdid",
+    ],
   },
 ] as const;
 
@@ -623,6 +658,8 @@ function createEmptyMemberImportColumnMapping(): MemberImportColumnMapping {
     lifeMemberDate: null,
     comments: null,
     role: null,
+    membershipType: null,
+    familyKey: null,
   };
 }
 
@@ -879,6 +916,74 @@ function getColumnContext(
   return label ? ` (column ${label})` : "";
 }
 
+/** How a membership type name compares: case, spacing and ends ignored. */
+export function normalizeMemberImportMembershipTypeName(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+export type MemberImportMembershipTypeMatch<T extends { name: string }> =
+  | { ok: true; type: T }
+  | { ok: false; error: string };
+
+/**
+ * Match one imported Membership Type value against the club's ACTIVE types by
+ * name (#4988). The browser preview and the server both call this; the server
+ * passes the types it read itself, so its answer is the authoritative one.
+ */
+export function matchMemberImportMembershipType<T extends { name: string }>(
+  value: string,
+  activeTypes: readonly T[],
+): MemberImportMembershipTypeMatch<T> {
+  const wanted = normalizeMemberImportMembershipTypeName(value);
+  const matches = activeTypes.filter(
+    (type) => normalizeMemberImportMembershipTypeName(type.name) === wanted,
+  );
+  const [only] = matches;
+  if (only && matches.length === 1) return { ok: true, type: only };
+  if (matches.length > 1) {
+    return {
+      ok: false,
+      error: `matches ${matches.length} active membership types named "${value}"; rename one in Membership Types first`,
+    };
+  }
+  return {
+    ok: false,
+    error: `"${value}" is not the name of an active membership type`,
+  };
+}
+
+/** How a family key compares: case, spacing and ends ignored. */
+export function normalizeMemberImportFamilyKey(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/**
+ * The family-key refusal shared by the preview and the server (#4988): a key
+ * shared by more rows than one family group may hold blocks every one of
+ * those rows. Returns the message for each offending key.
+ */
+export function findOversizedMemberImportFamilyKeys(
+  familyKeys: readonly (string | undefined)[],
+): Map<string, string> {
+  const counts = new Map<string, number>();
+  for (const value of familyKeys) {
+    if (!value) continue;
+    const key = normalizeMemberImportFamilyKey(value);
+    if (!key) continue;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const oversized = new Map<string, string>();
+  for (const [key, count] of counts) {
+    if (count > ADMIN_FAMILY_GROUP_MAX_MEMBERS) {
+      oversized.set(
+        key,
+        `is shared by ${count} rows; a family group holds at most ${ADMIN_FAMILY_GROUP_MAX_MEMBERS} members`,
+      );
+    }
+  }
+  return oversized;
+}
+
 export function buildMemberImportPreview(
   csv: MemberImportCsvData,
   mapping: MemberImportColumnMapping,
@@ -896,7 +1001,15 @@ export function buildMemberImportPreview(
    * While false the column is dropped from the preview rows and its length is
    * not judged, exactly as the server discards it; default false, fail closed.
    */
-  options: { importsDietaryRequirements?: boolean } = {},
+  options: {
+    importsDietaryRequirements?: boolean;
+    /**
+     * #4988: the club's active membership type names, read by the dialog. A
+     * mapped Membership Type value that names none of them blocks its row.
+     * Left out, the preview cannot judge the column and the server decides.
+     */
+    activeMembershipTypeNames?: readonly string[];
+  } = {},
 ): MemberImportPreview {
   const resolvedDateFormats: MemberImportDateFormatMapping = {
     ...createDefaultMemberImportDateFormatMapping(),
@@ -975,6 +1088,8 @@ export function buildMemberImportPreview(
     const streetPostalCode = getValue(record, "streetPostalCode");
     const lifeMemberDate = getValue(record, "lifeMemberDate");
     const comments = getValue(record, "comments");
+    const membershipType = getValue(record, "membershipType");
+    const familyKey = getValue(record, "familyKey");
 
     if (fullName) values.fullName = fullName;
     if (title) values.title = title;
@@ -996,6 +1111,8 @@ export function buildMemberImportPreview(
     if (streetPostalCode) values.streetPostalCode = streetPostalCode;
     if (lifeMemberDate) values.lifeMemberDate = lifeMemberDate;
     if (comments) values.comments = comments;
+    if (membershipType) values.membershipType = membershipType;
+    if (familyKey) values.familyKey = familyKey;
     values.role = role || roleInput.trim().toUpperCase();
 
     const errors: string[] = [];
@@ -1083,6 +1200,26 @@ export function buildMemberImportPreview(
     if (roleInput && !role) {
       errors.push(`Role must be one of ${MEMBER_IMPORT_ROLE_LABEL}`);
     }
+    if (membershipType.length > MEMBER_IMPORT_MEMBERSHIP_TYPE_MAX_LENGTH) {
+      errors.push(
+        `Membership Type${getColumnContext(sourceColumnLabels, "membershipType")} must be ${MEMBER_IMPORT_MEMBERSHIP_TYPE_MAX_LENGTH} characters or fewer`,
+      );
+    } else if (membershipType && options.activeMembershipTypeNames) {
+      const match = matchMemberImportMembershipType(
+        membershipType,
+        options.activeMembershipTypeNames.map((name) => ({ name })),
+      );
+      if (!match.ok) {
+        errors.push(
+          `Membership Type${getColumnContext(sourceColumnLabels, "membershipType")} ${match.error}`,
+        );
+      }
+    }
+    if (familyKey.length > MEMBER_IMPORT_FAMILY_KEY_MAX_LENGTH) {
+      errors.push(
+        `Family Key${getColumnContext(sourceColumnLabels, "familyKey")} must be ${MEMBER_IMPORT_FAMILY_KEY_MAX_LENGTH} characters or fewer`,
+      );
+    }
 
     return {
       lineNumber: record.lineNumber,
@@ -1107,6 +1244,21 @@ export function buildMemberImportPreview(
       );
     } else {
       seenIdentities.set(identityKey, row.lineNumber);
+    }
+  }
+
+  const oversizedFamilyKeys = findOversizedMemberImportFamilyKeys(
+    rows.map((row) => row.values.familyKey),
+  );
+  for (const row of rows) {
+    const familyKey = row.values.familyKey;
+    const message =
+      familyKey &&
+      oversizedFamilyKeys.get(normalizeMemberImportFamilyKey(familyKey));
+    if (message) {
+      row.errors.push(
+        `Family Key${getColumnContext(sourceColumnLabels, "familyKey")} "${familyKey}" ${message}`,
+      );
     }
   }
 

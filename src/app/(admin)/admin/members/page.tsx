@@ -593,6 +593,7 @@ export default function MembersPage() {
         onOpenChange={setImportDialogOpen}
         onImported={handleImported}
         onError={setError}
+        membershipTypes={membershipTypes}
       />
       </div>
     </div>
