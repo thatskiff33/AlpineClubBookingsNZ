@@ -13,7 +13,7 @@
  * Xero payment to record here — it is always emailed and reconciled on payment.
  */
 
-import { Invoice, LineAmountTypes } from "xero-node";
+import { Invoice } from "xero-node";
 import { GroupBookingStatus, type Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -47,6 +47,7 @@ import {
   releaseUninvoiceableGroupSettlement,
 } from "./xero-group-settlement-invoice-lines";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { xeroDocumentDatesFromColumnAndInstant } from "@/lib/xero-provider-dates";
 import {
   enqueueXeroGroupSettlementInvoiceAbandonVoidOperation,
@@ -263,15 +264,13 @@ export async function createXeroInvoiceForGroupSettlement(
 
   const organiserMemberId = settlement.groupBooking.organiserMemberId;
 
-  // #3642 (`INV-SSOT-002`): built from exactly the committed children, and
-  // never raised unless it totals the settlement.
-  const lines = await buildGroupSettlementInvoiceLines(
-    settlement.groupBooking.organiserBookingId
-  );
+  // #3642 (`INV-SSOT-002`): built from exactly the committed children, and never raised unless it totals the
+  // settlement. #4632: the combined document carries the organiser's booking's tax treatment.
+  const organiserBookingId = settlement.groupBooking.organiserBookingId;
+  const taxRendering = await resolveXeroTaxRendering({ kind: "booking", bookingId: organiserBookingId });
+  const lines = await buildGroupSettlementInvoiceLines(organiserBookingId, taxRendering);
   if (lines.childCount === 0) {
-    throw new Error(
-      `No settleable children found for group settlement: ${settlementId}`
-    );
+    throw new Error(`No settleable children found for group settlement: ${settlementId}`);
   }
   if (lines.childrenCents !== settlement.amountCents) {
     // The group moved since the settle: the next settle replaces the request.
@@ -317,7 +316,7 @@ export async function createXeroInvoiceForGroupSettlement(
     dueDate,
     reference: `Group settlement ${settlement.groupBooking.id.slice(0, 8)}`,
     status: Invoice.StatusEnum.AUTHORISED,
-    lineAmountTypes: LineAmountTypes.Inclusive,
+    lineAmountTypes: taxRendering.lineAmountTypes,
   });
 
   // #3642: keyed by attempt, so a retry of this attempt is deduplicated by Xero

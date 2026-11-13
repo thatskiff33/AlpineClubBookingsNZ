@@ -1,3 +1,4 @@
+export { ClubTaxCard } from "./club-tax-card"
 export { ConnectionStatusPanel } from "./connection-status-panel"
 export { ContactSyncPanel } from "./contact-sync-panel"
 export { ErasedMemberContactsPanel } from "./erased-member-contacts-panel"

@@ -109,17 +109,24 @@ and subscription component rounding. Section 10 asks how the journal's tax and
 recognition settings should cover clubs with different accounting policies.
 
 M3a ([#4626](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4626))
-delivered D3's setting and split. `ClubTaxSettings` records GST registration,
-the rate in basis points and the date it applies from. With no row, the club
-is registered at 1500 basis points from 1 October 2010, which is the
-GST-inclusive 15% treatment the Xero documents already render.
+delivered D3's setting and split; [#4632](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4632)
+made every fresh revenue leg resolve it the same way Xero's own documents do.
+`ClubTaxSettings` is a schedule of dated periods — GST registration, the rate
+in basis points and the Xero tax type each applies from — with one writer
+behind Full Admin (`club-tax-settings-write.ts`) and append-only history: a
+change only ever adds a period starting in the future. With no row beyond the
+baseline, the club is registered at 1500 basis points from 1 October 2010,
+which is the GST-inclusive 15% treatment the Xero documents already render.
 `splitTaxInclusiveGross` derives tax = round-half-up(gross × rate ÷ (10000 +
 rate)) and net = gross − tax, in integer arithmetic only. An unregistered club
-posts revenue with no tax fields and no GST leg. A date before the setting
-starts has no treatment. Only a revenue leg that needs a fresh split refuses
-that; a receipt, a refund, a correction or a zero event posts as usual. A
-correction never re-splits at today's rate: it repeats the split its component
-was posted with (section 3).
+posts revenue with no tax fields and no GST leg. Each fresh split takes the
+period in force on its own charge's anchor date — a booking's creation date,
+the same anchor its Xero documents use (`xero-tax-anchors.ts`) — never the
+date it posts, so a booking keeps the treatment it was made under for its
+whole life (owner decision A). A date the schedule does not cover refuses only
+a revenue leg that needs a fresh split; a receipt, a refund, a correction or a
+zero event posts as usual. A correction never re-splits at today's rate: it
+repeats the split its component was posted with (section 3).
 
 ## 3. Journal model and enforcement
 
@@ -768,14 +775,15 @@ scope still excludes GST returns and does not assume every adopting club is
 GST-registered. Not taken: a new universal tax or recognition basis.
 Delivered for future charges by M3a (#4626): section 2 describes the setting
 and the split. Back-posting history by the rate in force on each charge date
-remains with M9. Until the Xero tax-type issue
-([#4632](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4632)) makes
-Xero's renders read the setting, nothing may write it, because the renderers
-hard-code the inclusive OUTPUT2 code and the two would disagree
-(`club-tax-settings-writer-census.test.ts`, `INV-CONFIG-007`). So M3b (#4627)
-posts every club's charges at the default treatment, which is what Xero renders
-today. A club that is not GST-registered needs that surface before its journal's
-tax legs can be right; no reader uses them yet.
+remains with M9. The Xero tax-type issue
+([#4632](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4632))
+closed the gap this section originally flagged: Xero's own renders now read
+the same schedule, through the same reader and renderer as the journal
+(`docs/xero/ARCHITECTURE.md#tax-treatment`, `INV-CONFIG-007`), so the two can
+no longer disagree, and `club-tax-settings-write.ts` is the one writer a Full
+Admin reaches to schedule a future change (`club-tax-settings-one-writer-census.test.ts`
+holds every other path to reads). A club that is not GST-registered can now
+have that recorded from the admin card on `/admin/finance/xero`.
 
 ### D4. Member merge: transfer open balances explicitly
 

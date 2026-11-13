@@ -271,7 +271,8 @@ choice of whether it is prorated for a mid-year joiner.
   `MembershipSubscriptionChargeComponent` per line (the immutable-charge invariant
   extends to these rows). The invoice builder emits one line per component in
   stable order; the adoption guard compares the full line array (count + per-line
-  amount/account/item/OUTPUT2 tax) plus total, reference, contact, due interval,
+  amount/account/item/resolved tax type, see [`xero/ARCHITECTURE.md`](xero/ARCHITECTURE.md#tax-treatment))
+  plus total, reference, contact, due interval,
   type, line-amount type and status — **line description is not compared**, and
   neither does invoice lookup use it (that matches on the charge's immutable
   `Reference`). A legacy charge minted before the backfill still reproduces its

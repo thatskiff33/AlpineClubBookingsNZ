@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  538
+row-producing sites:  540
 uncategorised:        0
-category values: admin 112, booking 109, xero 51, family 35, payment 71,
+category values: admin 114, booking 109, xero 51, family 35, payment 71,
                  lodge 68, account 19, security 25, privacy 22,
                  communication 21, system 4
 ```
@@ -903,6 +903,13 @@ refund writes when the journal refused to reserve its slice and Stripe was not a
 `booking-payment.card-refund.reservation-released-by-operator`, an owner's release of a
 reservation nothing could answer. Both filed `payment` beside the other card refund rows;
 nobody's readership changes.
+
+#4632 then added two (`admin` 112 -> 114, 538 -> 540, MEASURED with
+`pnpm run audit:census`): `CLUB_TAX_TREATMENT_SCHEDULED` and
+`CLUB_TAX_TREATMENT_SCHEDULE_CANCELLED`, the rows the club tax treatment's one writer
+(`club-tax-settings-write.ts`) writes when a Full Admin schedules or cancels a GST change.
+Filed `admin` like `CLUB_FORMAT_UPDATED`: they record installation configuration and who
+changed it, never a member's affairs, so readable with `support:view` alone by design.
 
 #4680 then added one (`xero` 49 -> 50, 531 -> 532, MEASURED with
 `pnpm run audit:census`): `xero.organiser_adjustment_note.run_stood_down`, the row an

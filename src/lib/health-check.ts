@@ -4,6 +4,7 @@ import {
 } from "@/lib/environment-role-declaration";
 import { prisma } from "@/lib/prisma";
 import { readXeroConnection } from "@/lib/xero-connection";
+import { readXeroTaxHealth } from "@/lib/xero-tax-health";
 import { getRuntimeConfigCheck } from "@/lib/runtime-config";
 import { countExhaustedPaymentRecoveryOperations } from "@/lib/payment-recovery-health";
 import { PAYMENT_RECOVERY_CLAIMABLE_LATER_WHERE } from "@/lib/payment-recovery-constants";
@@ -168,6 +169,12 @@ async function checkXero(): Promise<CheckResult> {
         latencyMs: Date.now() - start,
         error: "Token expired",
       };
+    }
+    // #4632: the tax code in force must still be usable in Xero. A read that
+    // fails or times out says nothing about tax, so it leaves the check ok.
+    const tax = await withTimeout(readXeroTaxHealth(), CHECK_TIMEOUT_MS).catch(() => null);
+    if (tax && tax.problems.length > 0) {
+      return { status: "error", latencyMs: Date.now() - start, error: tax.problems.join(" ") };
     }
     return { status: "ok", latencyMs: Date.now() - start };
   } catch (err) {

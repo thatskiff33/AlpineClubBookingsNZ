@@ -6,8 +6,8 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { CLUB_TAX_SETTINGS_DEFAULTS } from "@/lib/club-tax-settings";
-import { requireClubTimeZone, requireInstant } from "@/lib/club-time";
+import { CLUB_TAX_SETTINGS_DEFAULTS, DEFAULT_CLUB_TAX_SCHEDULE } from "@/lib/club-tax-settings";
+import { requireCalendarDate, requireClubTimeZone, requireInstant } from "@/lib/club-time";
 import {
   memberMoneyEventKeys,
   MemberMoneyPlanError,
@@ -97,7 +97,7 @@ describe("member-money event keys", () => {
 
 describe("resolveMemberMoneyPostingContext", () => {
   const input = { effectiveAt: requireInstant(FROZEN_TEST_CLOCK_BASE_ISO), zone: requireClubTimeZone("Pacific/Auckland"),
-    policyVersion: "p", codingVersion: "c", taxSettings: CLUB_TAX_SETTINGS_DEFAULTS };
+    policyVersion: "p", codingVersion: "c", taxSchedule: DEFAULT_CLUB_TAX_SCHEDULE };
 
   it("takes the currency through the rule card charges use", () => {
     expect(resolveMemberMoneyPostingContext({ ...input, format: CLUB_FORMAT_TEST }).currency).toBe("NZD");
@@ -108,15 +108,15 @@ describe("resolveMemberMoneyPostingContext", () => {
       .toThrow(UnsupportedChargeCurrencyError);
   });
 
-  it("records an unavailable tax treatment instead of refusing the context", () => {
-    expect(context.tax).toEqual({ status: "known", treatment: { registered: true, rateBasisPoints: 1500, taxCode: "GST_INCLUSIVE_1500BP" } });
-    expect(unavailable.tax).toEqual({ status: "unavailable", effectiveFrom: "2027-04-01" });
+  it("carries the whole schedule, even one that does not cover its own date, instead of refusing the context (#4632)", () => {
+    expect(context.tax).toEqual({ status: "known", schedule: [CLUB_TAX_SETTINGS_DEFAULTS] });
+    expect(unavailable.tax).toEqual({ status: "known", schedule: [{ ...CLUB_TAX_SETTINGS_DEFAULTS, effectiveFrom: "2027-04-01" }] });
   });
 
   it("is a branded type: a literal context does not compile", () => {
     // @ts-expect-error only resolveMemberMoneyPostingContext makes a context
     const literal: Parameters<typeof buildMemberMoneyBatch>[0] = { effectiveAt: new Date(), effectiveDate: "2026-07-01",
-      currency: "NZD", policyVersion: "p", codingVersion: "c", tax: { status: "known", treatment: { registered: false } } };
+      currency: "NZD", policyVersion: "p", codingVersion: "c", tax: { status: "known", schedule: DEFAULT_CLUB_TAX_SCHEDULE } };
     expect(literal.currency).toBe("NZD");
   });
 });
@@ -189,6 +189,35 @@ describe("buildMemberMoneyBatch", () => {
 
     it("refuses a revenue leg that needs a fresh split", () => {
       expect(problems(charge(), unavailable).join("\n")).toMatch(/needs a fresh tax split, but the club's tax setting starts on 2027-04-01/);
+    });
+  });
+
+  describe("on the charge's anchor date, not the posting date (#4632, owner decision A)", () => {
+    const anchored = (taxAnchorDate: string) => bookingChargePlan({ eventKey: memberMoneyEventKeys.bookingCharge("b1"), debtor: MEMBER,
+      grossCents: 11500, booking: { bookingId: "b1", lodgeId: "l1" }, taxAnchorDate: requireCalendarDate(taxAnchorDate) });
+    // Registered at 15% until 2026-08-01, then not registered: the context's own date (2026-07-01) is not what decides.
+    const changing = memberMoneyTestContext({ taxSchedule: [CLUB_TAX_SETTINGS_DEFAULTS,
+      { gstRegistered: false, taxRateBasisPoints: 0, xeroTaxType: null, effectiveFrom: requireCalendarDate("2026-08-01") }] });
+
+    it("splits a charge made before a change under the old treatment, and one made after under the new", () => {
+      expect(legsOf(buildMemberMoneyBatch(changing, anchored("2026-07-31")).lines).slice(1))
+        .toEqual([["BOOKING_REVENUE", "CREDIT", 10000, 10000, 1500], ["GST_PAYABLE", "CREDIT", 1500, null, null]]);
+      expect(legsOf(buildMemberMoneyBatch(changing, anchored("2026-08-01")).lines).slice(1))
+        .toEqual([["BOOKING_REVENUE", "CREDIT", 11500, null, null]]);
+    });
+
+    it("replays an event retried across a scheduled change identically: the anchor, not the retry, fixes the split", () => {
+      const before = memberMoneyTestContext();
+      expect(buildMemberMoneyBatch(changing, anchored("2026-07-01")).event.payloadHash)
+        .toBe(buildMemberMoneyBatch(before, anchored("2026-07-01")).event.payloadHash);
+    });
+
+    it("refuses a fresh split with no anchor date, never falling back to the posting date", () => {
+      const plan = charge();
+      const unanchored: Partial<Extract<typeof plan.legs[number], { type: "revenue" }>> =
+        { ...(plan.legs[1] as Extract<typeof plan.legs[number], { type: "revenue" }>) };
+      delete unanchored.taxAnchorDate;
+      expect(problems({ ...plan, legs: [plan.legs[0]!, unanchored as typeof plan.legs[number]] }).join("\n")).toMatch(/names no tax anchor date/);
     });
   });
 

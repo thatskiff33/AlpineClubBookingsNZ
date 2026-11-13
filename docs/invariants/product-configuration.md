@@ -502,24 +502,33 @@ home for that explanation and is not repeated here.
 
 ## INV-CONFIG-007
 
-- **The club's GST treatment is one setting, with today's treatment as its
-  default.** `ClubTaxSettings` (id `"default"`) records whether the club is
-  GST-registered, the rate in basis points, and the club civil date it applies
-  from (#4626, decision D3 in
+- **The club's GST treatment is a schedule of dated periods, not one flag.**
+  `ClubTaxSettings` holds the periods — whether the club is GST-registered, the
+  rate in basis points, and the Xero tax type its revenue carries — each one
+  naming the club civil date it starts from (#4626/#4632, decision D3 in
   [`member-money-ledger.md`](../design/member-money-ledger.md#d3-tax-and-recognition-keep-each-charges-actual-treatment)).
-  It is read through `loadClubTaxSettings` in
-  [`club-tax-settings.ts`](../../src/lib/club-tax-settings.ts). An absent row
-  means registered at 1500 basis points from 2010-10-01, which is the
-  GST-inclusive 15% treatment the Xero documents already render. Prices are
-  GST-inclusive, so "inclusive" is the treatment itself, not a setting.
-- **A date before the setting starts has no treatment.** A posting that needs a
-  fresh tax split on such a date is refused, never guessed. Postings that need
-  no split go ahead.
-- **Nothing writes the row yet.** The Xero renderers still hard-code the
-  inclusive OUTPUT2 code (#4632), so a second answer must not appear until Xero
-  reads this setting. `club-tax-settings-writer-census.test.ts` fails on any
-  writer. So the journal (M3b, #4627) posts every club's charges at the default
-  treatment; a non-registered club's tax legs are wrong until #4632, and no
-  reader uses them yet.
+  `loadClubTaxSchedule` in
+  [`club-tax-settings.ts`](../../src/lib/club-tax-settings.ts) is the one
+  reader. An absent `"default"` row means registered at 1500 basis points,
+  Xero code `OUTPUT2`, from 2010-10-01 — the GST-inclusive 15% treatment every
+  Xero document already rendered. Prices are GST-inclusive everywhere, so
+  "inclusive" is the treatment itself, not a setting.
+- **One reader, one renderer, one answer.** The member-money journal and every
+  Xero document resolve the same schedule through the same helpers
+  ([`xero-tax-rendering.ts`](../../src/lib/xero-tax-rendering.ts),
+  [`xero-tax-anchors.ts`](../../src/lib/xero-tax-anchors.ts)), never a
+  hard-coded tax code.
+- **Which period a charge takes is fixed by its own anchor, never the render
+  or post date** (owner decision A, 11 Nov 2026): a booking's anchor is its own
+  `createdAt`, so it keeps the treatment in force when made for its whole life.
+  A date the schedule does not cover refuses only a fresh split, never a guess.
+- **The one writer is behind Full Admin, audited:**
+  `scheduleClubTaxChange`/`cancelScheduledClubTaxChange`
+  ([`club-tax-settings-write.ts`](../../src/lib/club-tax-settings-write.ts)),
+  reached through `PUT`/`DELETE /api/admin/club-tax`. History is append-only —
+  a change only ever adds a period starting from a future club date, checked
+  against Xero's own tax-rate list before it saves — and a period already in
+  force or already rendered is never edited.
+  `club-tax-settings-one-writer-census.test.ts` holds every other path to reads.
 - **It is instance-local:** a legal fact about this club, excluded from config
   transfer.

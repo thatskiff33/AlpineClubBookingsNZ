@@ -7,7 +7,7 @@ import type {
   MemberMoneySide,
   MemberMoneySourceKind,
 } from "@prisma/client";
-import type { ClubTaxTreatment } from "../../club-tax-settings";
+import { ClubTaxTreatmentUnavailableError, clubTaxTreatmentOn, type ClubTaxSchedule } from "../../club-tax-settings";
 import { isCalendarDate, type CalendarDate, type Instant, type ClubTimeZone } from "../../club-time";
 import { MAX_INTEGER_CENTS } from "../../money-input";
 import { stableDigest, stableStringify } from "../../stable-digest";
@@ -44,18 +44,20 @@ export interface MemberMoneySource {
 }
 
 /**
- * The tax treatment in force on the context's date, or the fact that the club's
- * setting starts later. Only a revenue leg that needs a fresh split refuses an
- * unavailable treatment; every other posting goes ahead (D3).
+ * The club's tax schedule, read before the transaction (#4632). Each fresh
+ * revenue leg takes the treatment in force on its own anchor date (the date its
+ * charge was made), never the context's date, so a booking keeps the treatment
+ * it was made under for its whole life (owner decision A). Only a revenue leg
+ * that needs a fresh split refuses a date the schedule does not cover; every
+ * other posting goes ahead (D3).
  */
 export type MemberMoneyTaxContext =
-  | { status: "known"; treatment: ClubTaxTreatment }
-  | { status: "unavailable"; effectiveFrom: CalendarDate }
+  | { status: "known"; schedule: ClubTaxSchedule }
   /**
-   * #4627: the setting could not be read before the transaction. Like
-   * "unavailable", only a fresh split refuses it, inside the door's transaction,
-   * so the door's business change rolls back with it; a correction repeats its
-   * posted split and needs no setting at all. Never a guess (D3).
+   * #4627: the setting could not be read before the transaction. Only a fresh
+   * split refuses it, inside the door's transaction, so the door's business
+   * change rolls back with it; a correction repeats its posted split and needs
+   * no setting at all. Never a guess (D3).
    */
   | { status: "unreadable"; reason: string };
 
@@ -108,8 +110,9 @@ export interface MemberMoneyAmountLeg extends LegDimensions {
  * A revenue component at its GST-inclusive gross.
  *
  * On revenue's normal side (CREDIT) it is a fresh charge: the builder splits it
- * under the context's treatment into net revenue and a GST leg on the same side,
- * or repeats a `frozenTax` split (a back-post of a historical charge).
+ * under the treatment in force on its `taxAnchorDate` into net revenue and a GST
+ * leg on the same side, or repeats a `frozenTax` split (a back-post of a
+ * historical charge).
  *
  * On the other side (DEBIT) it is a CORRECTION of a posted component, named by
  * `chargeIdentity`, and repeats that component's posted split exactly, never
@@ -124,6 +127,12 @@ export interface MemberMoneyRevenueLeg extends LegDimensions {
   account: TaxedRevenueAccount;
   grossCents: number;
   frozenTax?: MemberMoneyTaxSplit | "untaxed";
+  /**
+   * The club date the charge was made (#4632): a booking's own creation date,
+   * for every charge on it. A fresh split takes the treatment in force on this
+   * date, and is refused without one; a correction or a frozen split ignores it.
+   */
+  taxAnchorDate?: CalendarDate;
 }
 
 export type MemberMoneyLegPlan = MemberMoneyAmountLeg | MemberMoneyRevenueLeg;
@@ -473,13 +482,23 @@ export function buildMemberMoneyBatch(context: MemberMoneyPostingContext, plan: 
       let split: MemberMoneyTaxSplit | null;
       if (leg.frozenTax === "untaxed") split = null;
       else if (leg.frozenTax) split = leg.frozenTax;
-      else if (context.tax.status === "unavailable") {
-        problems.push(`${label} needs a fresh tax split, but the club's tax setting starts on ${context.tax.effectiveFrom}`);
-        return;
-      } else if (context.tax.status === "unreadable") {
+      else if (context.tax.status === "unreadable") {
         problems.push(`${label} needs a fresh tax split, but the club's tax setting could not be read (${context.tax.reason})`);
         return;
-      } else split = splitTaxInclusiveGross(leg.grossCents, context.tax.treatment);
+      } else if (!leg.taxAnchorDate || !isCalendarDate(leg.taxAnchorDate)) {
+        problems.push(`${label} needs a fresh tax split, but names no tax anchor date (the date its charge was made)`);
+        return;
+      } else {
+        let treatment;
+        try {
+          treatment = clubTaxTreatmentOn(context.tax.schedule, leg.taxAnchorDate);
+        } catch (error) {
+          if (!(error instanceof ClubTaxTreatmentUnavailableError)) throw error;
+          problems.push(`${label} needs a fresh tax split, but the club's tax setting starts on ${error.effectiveFrom}`);
+          return;
+        }
+        split = splitTaxInclusiveGross(leg.grossCents, treatment);
+      }
       if (split && split.netCents <= 0) {
         problems.push(`${label} leaves no net revenue after tax`);
         return;

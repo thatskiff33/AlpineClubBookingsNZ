@@ -336,6 +336,31 @@ says what it would have done.
    invalidates any prior dry-run. For the full cutover procedure, follow the
    [Xero member grouping runbook](../XERO_MEMBER_GROUPING_RUNBOOK.md).
 
+### Change the club's GST treatment
+
+The **GST / tax treatment** card on **Finance → Xero** shows how the club's
+prices are taxed on Xero documents and in the member-money journal: whether the
+club is GST-registered, the rate, and the Xero tax code. Prices members pay
+never change; only how much of each price is GST does.
+
+1. A Full Admin chooses **Edit**, sets the new treatment and a **Takes effect
+   from** date (tomorrow at the earliest), ticks the confirmation, and saves.
+   Other officers see the card read-only.
+2. A GST-registered treatment is checked against Xero's tax rates before it is
+   saved, so the tax code must be active in Xero and usable on revenue. If Xero
+   cannot be read, the change waits until the connection works.
+3. Bookings, subscriptions and entrance fees made on or after the date use the
+   new treatment. A booking already made keeps the treatment in force when it
+   was made for its whole life, including later edits, credit notes and
+   refunds; the card counts how many have nights after the date. Nothing
+   already in Xero or the journal changes.
+4. A scheduled change can be cancelled before it starts. Saving and cancelling
+   are both in the audit log.
+
+The Xero health check warns if the tax code in force is missing or inactive in
+Xero, its rate differs, or Xero's GST registration disagrees with the card. How
+it works: [Tax treatment](../xero/ARCHITECTURE.md#tax-treatment).
+
 ## Settings reference
 
 | Area | What it does | Notes / constraints |
@@ -346,6 +371,7 @@ says what it would have done.
 | Xero Operations | Filter and page outbound work; retry / reset / mark non-replayable / resolve it | Dataset Reset keeps the section and Inbound state; write actions need finance edit and are idempotent |
 | Inbound Events | Filter and page stored webhooks; replay an event | Dataset Reset keeps the section and Operations state; Replay needs finance edit |
 | Xero Setup → Mappings | Account/item code mappings and hut/joining fee item codes | Finance edit; joining-fee amounts live in [Fees](fees.md) |
+| GST / tax treatment | Schedule a change to GST registration, rate or Xero tax code from a future date | Full Admin only; checked against Xero; bookings already made keep their treatment |
 | Member grouping | Grouping mode + rules, dry-run, bulk re-sync | Finance edit; never auto-re-groups; runbook-driven cutover |
 | Members with no Xero contact | Dry run over unlinked members, then create or link in small batches | Finance edit to create; needs a Contact Sync first; schools and ambiguous rows are never acted on; the batch size is shown on the button |
 | API budget / Usage | Daily call volume, rate limits, recent failures | Read-only meter |

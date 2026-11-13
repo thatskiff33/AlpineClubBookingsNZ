@@ -1,3 +1,4 @@
+import type { CalendarDate } from "../../club-time";
 import type { LedgerLineKind, LedgerSide, MemberMoneyOrigin } from "@prisma/client";
 import { compareOrdinal } from "@/lib/ordinal-order";
 import { formatCentsPlain } from "../../utils";
@@ -231,6 +232,8 @@ export interface BookingChargePlanInput {
   lines: readonly LegacyChargeLine[];
   /** Every live charge component the booking's journal carries now, read under `lock(1)`. */
   liveComponents: ReadonlyArray<BookingChargeComponent & { liveGrossCents: number }>;
+  /** The club date the booking was made: its fresh charges' tax treatment (#4632, `readBookingTaxAnchorDate`). */
+  taxAnchorDate: CalendarDate;
 }
 
 type Moved = { component: BookingChargeComponent; live: number; after: number; lines: LegacyChargeLine[] };
@@ -329,7 +332,7 @@ export function planBookingChargeEvent(input: BookingChargePlanInput): MemberMon
   }
   rebalance(moved, bookingChargeIdentity(input.bookingId), problems);
   // `rebalance` has already refused a batch that leaves a component negative.
-  legs.push(...componentMovementLegs(booking, identity.rule, [...moved.values()].filter((entry) => entry.after >= 0).map(
+  legs.push(...componentMovementLegs(booking, identity.rule, input.taxAnchorDate, [...moved.values()].filter((entry) => entry.after >= 0).map(
     ({ lines: touching, ...entry }) => ({ ...entry, ...(touching.length === 1 ? { source: lineSource(touching[0]!) } : {}) }))));
   if (problems.length > 0) throw new MemberMoneyPlanError(problems);
 
@@ -361,12 +364,14 @@ export interface ComponentMove {
 /**
  * The revenue legs that move each component from its live gross to `after`,
  * the one rule every booking charge batch uses (`INV-SSOT-001`): a correction
- * takes the WHOLE live component, and what remains is charged afresh. A
- * component left where it was posts nothing.
+ * takes the WHOLE live component, and what remains is charged afresh, under
+ * the tax treatment in force on the booking's anchor date (#4632). A component
+ * left where it was posts nothing.
  */
 export function componentMovementLegs(
   booking: { bookingId: string; lodgeId: string },
   rule: string,
+  taxAnchorDate: CalendarDate,
   moves: readonly ComponentMove[],
 ): MemberMoneyLegPlan[] {
   const legs: MemberMoneyLegPlan[] = [];
@@ -375,7 +380,7 @@ export function componentMovementLegs(
     const shared = { account: component.account, booking, chargeIdentity: component.chargeIdentity,
       ...(source ? { source } : {}) } as const;
     if (live > 0) legs.push({ type: "revenue", ...shared, side: "DEBIT", grossCents: live, evidence: { rule, correction: true } });
-    if (after > 0) legs.push({ type: "revenue", ...shared, side: "CREDIT", grossCents: after, evidence: { rule } });
+    if (after > 0) legs.push({ type: "revenue", ...shared, side: "CREDIT", grossCents: after, taxAnchorDate, evidence: { rule } });
   }
   return legs;
 }

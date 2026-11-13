@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   events: [] as string[],
 }));
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },

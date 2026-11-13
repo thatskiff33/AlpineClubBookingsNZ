@@ -8,6 +8,7 @@ import { adminHref, servedAdminPathname } from "@/lib/admin-hubs"
 import { useClubIdentity } from "@/components/club-identity-provider"
 import { buildPathWithSearch } from "@/lib/internal-return-path"
 import {
+  ClubTaxCard,
   ConnectionStatusPanel,
   ContactSyncPanel,
   ErasedMemberContactsPanel,
@@ -116,6 +117,9 @@ export default function XeroPage() {
       <WebhookHealthPanel />
 
       <ConnectionStatusPanel status={status} onConnect={handleConnect} onDisconnect={handleDisconnect} />
+
+      {/* Shown connected or not: the club's tax treatment is read without Xero, and a change checks its code against Xero (#4632). */}
+      <ClubTaxCard />
 
       {connected && (
         <>

@@ -509,6 +509,18 @@ const REVIEWED_PERMISSION_DIVERGENCES: Divergence[] = [
     why: "STRICTER than the map (#3563, INV-CONFIG-006). The installation's currency and locale decide how every amount of money in the product is denominated and written, so CHANGING them is Full Admin and not a support level - the same ground /api/admin/club-time-zone below is on. #3596 widened the read beside it and left this unchanged.",
   },
   {
+    pathname: "/api/admin/club-tax",
+    method: "PUT",
+    gate: "Full Admin only",
+    why: "STRICTER than the map's finance:edit (#4632, INV-CONFIG-007). Scheduling a change to the club's GST registration, rate or Xero tax code changes the tax on every new Xero document and journal leg from that date, so it is Full Admin, the #3596 precedent for how a club's money is recorded. The read stays finance:view.",
+  },
+  {
+    pathname: "/api/admin/club-tax",
+    method: "DELETE",
+    gate: "Full Admin only",
+    why: "STRICTER than the map, same reason as the PUT above: cancelling a scheduled change is the same decision undone.",
+  },
+  {
     pathname: "/api/admin/club-time-zone",
     method: "GET",
     gate: "Full Admin only",

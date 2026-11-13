@@ -3,7 +3,7 @@ import logger from "../../logger";
 import { lockMemberMoneyPayment, readMemberMoneyApplicationState } from "./application-read";
 import { memberMoneyApplicationTotals } from "./application-state";
 import { refundCloseOutIdentity } from "./booking-charges";
-import { eventPosted, readBookingLiveChargeCents } from "./booking-journal-read";
+import { eventPosted, readBookingLiveChargeCents, readBookingTaxAnchorDate } from "./booking-journal-read";
 import { lineDebtor, ownedBy, receiptFactContext } from "./booking-receipts";
 import { isBookingJournalInactive, type BookingJournalContext } from "./journal-activity";
 import { memberMoneyApplicationKeys, memberMoneyEventKeys } from "./keys";
@@ -152,7 +152,7 @@ async function postCloseOut(tx: Db, context: Parameters<typeof writeWithLiveChar
     legs: [
       { type: "amount", account: "REFUND_PAYABLE", side: "DEBIT", amountCents: input.restCents, debtor: lineDebtor(tip), booking, obligationKey: tip.key, evidence },
       { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: input.restCents, booking,
-        chargeIdentity: refundCloseOutIdentity(booking.bookingId, input.recordId), evidence },
+        taxAnchorDate: await readBookingTaxAnchorDate(tx, booking.bookingId, context.zone), chargeIdentity: refundCloseOutIdentity(booking.bookingId, input.recordId), evidence },
     ],
     applications }, { liveChargeCents: liveAfter });
   return 1;

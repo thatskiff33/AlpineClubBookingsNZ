@@ -13,8 +13,8 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Client } from "pg";
-import { CLUB_TAX_SETTINGS_DEFAULTS, type ClubTaxSettings } from "@/lib/club-tax-settings";
-import { requireClubTimeZone, requireInstant } from "@/lib/club-time";
+import { CLUB_TAX_SETTINGS_DEFAULTS, type ClubTaxPeriod, type ClubTaxSchedule } from "@/lib/club-tax-settings";
+import { clubCalendarDateOf, requireClubTimeZone, requireInstant, type CalendarDate } from "@/lib/club-time";
 import { buildDatabaseRolesSql } from "@/lib/database-roles";
 import {
   resolveMemberMoneyPostingContext,
@@ -30,24 +30,39 @@ import { assertSafeRaceDbUrl } from "./race-db-url";
 
 export const MEMBER_MONEY_JOURNAL_MIGRATION = "prisma/migrations/20261127010000_member_money_journal/migration.sql";
 
-/** A context resolved as a door resolves it before its transaction, on the frozen test clock. */
+const TEST_ZONE = requireClubTimeZone("Pacific/Auckland");
+
+/** The frozen clock's club date: the tax anchor of every fixture booking charge unless a test names another (#4632). */
+export const MEMBER_MONEY_TEST_TAX_ANCHOR: CalendarDate = clubCalendarDateOf(requireInstant(FROZEN_TEST_CLOCK_BASE_ISO), TEST_ZONE);
+
+/**
+ * A context resolved as a door resolves it before its transaction, on the frozen
+ * test clock. `taxSettings` overrides the one baseline period; `taxSchedule`
+ * gives a whole schedule instead (#4632).
+ */
 export function memberMoneyTestContext(
-  overrides: { taxSettings?: Partial<ClubTaxSettings>; effectiveAt?: string } = {},
+  overrides: { taxSettings?: Partial<ClubTaxPeriod>; taxSchedule?: ClubTaxSchedule; effectiveAt?: string } = {},
 ): MemberMoneyPostingContext {
   return resolveMemberMoneyPostingContext({
     effectiveAt: requireInstant(overrides.effectiveAt ?? FROZEN_TEST_CLOCK_BASE_ISO),
-    zone: requireClubTimeZone("Pacific/Auckland"),
+    zone: TEST_ZONE,
     format: CLUB_FORMAT_TEST,
     policyVersion: "policy-test-1",
     codingVersion: "coding-test-1",
-    taxSettings: { ...CLUB_TAX_SETTINGS_DEFAULTS, ...overrides.taxSettings },
+    taxSchedule: overrides.taxSchedule ?? [{
+      ...CLUB_TAX_SETTINGS_DEFAULTS,
+      // An unregistered period names no Xero code (the schema's CHECK).
+      ...(overrides.taxSettings?.gstRegistered === false ? { xeroTaxType: null } : {}),
+      ...overrides.taxSettings,
+    }],
   });
 }
 
 /**
  * A booking charge as R01 posts one: Dr receivable for the total against a new
  * charge obligation, Cr booking revenue for each component at its gross (split
- * by the context's tax treatment into net revenue and GST).
+ * by the treatment in force on its tax anchor, the frozen clock's date unless
+ * given, into net revenue and GST).
  */
 export function bookingChargePlan(input: {
   eventKey: MemberMoneyEventKey;
@@ -58,6 +73,7 @@ export function bookingChargePlan(input: {
   booking?: { bookingId: string; lodgeId: string };
   source?: MemberMoneySource;
   additionalSources?: MemberMoneySource[];
+  taxAnchorDate?: CalendarDate;
 }): Extract<MemberMoneyPlan, { legs: unknown }> {
   const components = input.components ?? [{ chargeIdentity: `${input.eventKey}:nights`, grossCents: input.grossCents }];
   const obligationKey = `${input.eventKey}:obligation`;
@@ -77,7 +93,8 @@ export function bookingChargePlan(input: {
       },
       ...components.map(({ chargeIdentity, grossCents }) => ({
         type: "revenue" as const, account: "BOOKING_REVENUE" as const, side: "CREDIT" as const, grossCents,
-        booking: input.booking, chargeIdentity, source: revenueSource, evidence: { test: "nights" },
+        booking: input.booking, chargeIdentity, source: revenueSource,
+        taxAnchorDate: input.taxAnchorDate ?? MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: { test: "nights" },
       })),
     ],
   };

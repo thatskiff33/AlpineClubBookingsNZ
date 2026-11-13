@@ -39,8 +39,11 @@ vi.mock("@/lib/xero-sync", () => ({
   completeXeroSyncOperation: (...args: unknown[]) => mocks.complete(...args),
   failXeroSyncOperation: (...args: unknown[]) => mocks.fail(...args),
 }));
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/logger", () => ({ default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
 
+import { LineAmountTypes } from "xero-node";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import {
   cardRefundReversalDocumentDate,
   cardRefundReversalReference,
@@ -98,6 +101,15 @@ beforeEach(() => {
 });
 
 describe("the failed-card-refund reversal invoice (#4369)", () => {
+  it("carries the booking's tax treatment, so it undoes the note under the treatment that note used (#4632)", async () => {
+    vi.mocked(resolveXeroTaxRendering).mockResolvedValueOnce({ lineAmountTypes: LineAmountTypes.NoTax });
+    await createXeroCardRefundReversalInvoice({ syncOperation: xeroClaim("op-1") }, providers() as never);
+    expect(resolveXeroTaxRendering).toHaveBeenCalledWith({ kind: "booking", bookingId: PAYLOAD.bookingId });
+    const invoice = invoiceFrom(mocks.createInvoices.mock.calls[0]!);
+    expect(invoice.lineAmountTypes).toBe("NoTax");
+    expect((invoice.lineItems as Array<Record<string, unknown>>)[0]).not.toHaveProperty("taxType");
+  });
+
   it("is an inclusive hut-fee-refunds invoice, paid into Stripe, not emailed and not allocated", async () => {
     await createXeroCardRefundReversalInvoice({ syncOperation: xeroClaim("op-1") }, providers() as never);
     expect(mocks.createInvoices).toHaveBeenCalledTimes(1);

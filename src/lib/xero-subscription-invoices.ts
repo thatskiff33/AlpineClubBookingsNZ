@@ -2,7 +2,6 @@ import { XERO_ACTIVE_OPERATION_STATUSES } from "./xero-active-operation-statuses
 import type { Prisma } from "@prisma/client";
 import {
   Invoice,
-  LineAmountTypes,
   type XeroClient,
 } from "xero-node";
 import logger from "@/lib/logger";
@@ -15,6 +14,8 @@ import {
   parseDateOnly,
 } from "@/lib/date-only";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroDocumentCarriesTax, xeroLineTax, type XeroTaxRendering } from "@/lib/xero-tax-rendering";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import {
   xeroCalendarDate,
   xeroDocumentDateForClubToday,
@@ -129,8 +130,11 @@ function lineCents(
 
 // Adoption/idempotency guard (#1932, E6): the immutable charge now snapshots one
 // component per invoice line, so the match compares the FULL line array in order
-// (count, per-line amount + account + item + OUTPUT2 tax) plus the invoice-level
-// total, reference, contact, due interval, type, line-amount type and status.
+// (count, per-line amount + account + item) plus the invoice-level total,
+// reference, contact, due interval, type and status, and the charge's tax
+// treatment (#4632): the line-amount type and each line's tax type, as
+// `xeroDocumentCarriesTax` reads them, so a document raised under another
+// treatment is never adopted as this charge's.
 // A legacy single-line invoice adopts against a backfilled single-component
 // charge because that charge reproduces exactly one line. Line description is
 // deliberately NOT compared — it is derived at build time and must not make a
@@ -142,8 +146,9 @@ export function subscriptionInvoiceMatchesSnapshot(input: {
   lines: SubscriptionInvoiceLine[];
   dueDays: number;
   reference: string;
+  taxRendering: XeroTaxRendering;
 }) {
-  const { invoice, contactId, amountCents, lines, dueDays, reference } = input;
+  const { invoice, contactId, amountCents, lines, dueDays, reference, taxRendering } = input;
   const invoiceLines = invoice.lineItems ?? [];
   return invoice.reference === reference
     && invoice.contact?.contactID === contactId
@@ -156,12 +161,11 @@ export function subscriptionInvoiceMatchesSnapshot(input: {
       return invoiceLine !== undefined
         && lineCents(invoiceLine) === line.amountCents
         && invoiceLine.accountCode === line.accountCode
-        && (invoiceLine.itemCode ?? null) === line.itemCode
-        && invoiceLine.taxType === "OUTPUT2";
+        && (invoiceLine.itemCode ?? null) === line.itemCode;
     })
+    && xeroDocumentCarriesTax(invoice, taxRendering)
     && invoiceDueIntervalDays(invoice) === dueDays
     && invoice.type === Invoice.TypeEnum.ACCREC
-    && invoice.lineAmountTypes === LineAmountTypes.Inclusive
     && invoice.status === Invoice.StatusEnum.AUTHORISED;
 }
 
@@ -395,6 +399,9 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
         description: `${charge.membershipTypeName} membership ${seasonYearsLabel(charge.seasonYear, await refreshFinancialYearConfig())} (${charge.coveredMonths} month${charge.coveredMonths === 1 ? "" : "s"})`,
       }];
 
+  // #4632: the treatment in force when the charge was made, for its lines and its adoption test.
+  const taxRendering = await resolveXeroTaxRendering({ kind: "subscription-charge", chargeId: charge.id });
+
   let invoiceId = charge.xeroInvoiceId;
   let invoiceNumber = charge.xeroInvoiceNumber;
   let adopted = charge.xeroInvoiceAdopted;
@@ -413,7 +420,7 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
       if (!subscriptionInvoiceMatchesSnapshot({
         invoice: existing[0], contactId, amountCents: charge.chargedAmountCents,
         lines: componentLines.map(({ amountCents, accountCode: code, itemCode }) => ({ amountCents, accountCode: code, itemCode })),
-        dueDays: charge.dueDays, reference: charge.invoiceReference,
+        dueDays: charge.dueDays, reference: charge.invoiceReference, taxRendering,
       })) {
         await prisma.membershipSubscriptionCharge.updateMany({
           where: liveChargeWhere(charge.id),
@@ -451,13 +458,13 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
           accountCode: line.accountCode,
           ...(line.itemCode ? { itemCode: line.itemCode } : {}),
           description: line.description,
-          taxType: "OUTPUT2",
+          ...xeroLineTax(taxRendering),
         })),
         date: issueDate,
         dueDate,
         reference: charge.invoiceReference,
         status: Invoice.StatusEnum.AUTHORISED,
-        lineAmountTypes: LineAmountTypes.Inclusive,
+        lineAmountTypes: taxRendering.lineAmountTypes,
       };
       const idempotencyKey = buildXeroIdempotencyKey("membership-charge", charge.id, "invoice", "v1");
       const response = await callXeroApi(

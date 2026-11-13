@@ -23,13 +23,14 @@
  * No provider call runs in the close's transaction. This worker runs after
  * the outbox claim, the same claim every other queue type uses.
  */
-import { Invoice, LineAmountTypes, type LineItem } from "xero-node";
+import { Invoice, type LineItem } from "xero-node";
 import type { Prisma } from "@prisma/client";
 import { addCalendarDays, requireCalendarDate } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
 import logger from "@/lib/logger";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hutFeeRefundLine } from "@/lib/xero-hut-fee-line-codes";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   buildXeroIdempotencyKey,
@@ -269,7 +270,9 @@ export async function createXeroCardRefundReversalInvoice(
         createdByMemberId: params.createdByMemberId,
       });
       const refunds = await providers.getResolvedAccountMapping("hutFeeRefunds");
-      const line: LineItem = hutFeeRefundLine(cardRefundReversalDescription(bookingId), amountCents, refunds);
+      // #4632: the reversal undoes a note raised under the booking's treatment, so it carries the same one.
+      const taxRendering = await resolveXeroTaxRendering({ kind: "booking", bookingId });
+      const line: LineItem = hutFeeRefundLine(cardRefundReversalDescription(bookingId), amountCents, refunds, taxRendering);
       const buildInvoice = (resolvedContactId: string, documentDate: string): Invoice => ({
         type: Invoice.TypeEnum.ACCREC,
         contact: { contactID: resolvedContactId },
@@ -278,7 +281,7 @@ export async function createXeroCardRefundReversalInvoice(
         dueDate: documentDate,
         reference,
         status: Invoice.StatusEnum.AUTHORISED,
-        lineAmountTypes: LineAmountTypes.Inclusive,
+        lineAmountTypes: taxRendering.lineAmountTypes,
       });
       const send = (documentDate: string) =>
         providers.retryXeroWriteWithContactRepair({

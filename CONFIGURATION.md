@@ -2636,32 +2636,34 @@ Existing env-configured deployments upgrading past #2079 must re-enter Xero
 credentials in-app and reconnect Xero — see the **upgrade runbook** in
 `DEPLOYMENT.md`.
 
-## GST treatment (member-money ledger)
+## GST treatment (member-money ledger and Xero)
 
 The club's GST treatment is a database setting, `ClubTaxSettings`
-(`INV-CONFIG-007`, #4626). It records three things: whether the club is
-GST-registered, the rate in basis points (1500 is 15%), and the club date it
-applies from. There is no environment variable and, for now, no screen.
+(`INV-CONFIG-007`, #4626/#4632). It is a schedule of dated periods, each
+recording whether the club is GST-registered, the rate in basis points (1500
+is 15%), the Xero tax type its revenue carries, and the club date it applies
+from. There is no environment variable.
 
-- **Default.** With no row, the club is GST-registered at 15% from 1 October
-  2010, with GST included in every price. That is the treatment the Xero
-  invoices already show (the inclusive `OUTPUT2` code), so a deployment that
-  never sets it records charges exactly as it invoices them.
-- **Who reads it.** Only the member-money ledger, which splits tax out of each
-  charge in whole cents. Xero does not read it yet: its documents still
-  hard-code the inclusive 15% code until #4632.
-- **Nothing writes it yet,** on purpose. Changing it before Xero reads it would
-  give the ledger and the invoices two different answers, so a census fails on
-  any code that writes the row.
-- **Charges are already recorded.** Since M3b (#4627), the journal records each
-  booking door's charge lines for every club whose currency can be charged by
-  card. Until #4632 provides the tax screen, it uses the default GST-inclusive
-  15% treatment, matching the Xero invoices. A club that is not GST-registered
-  should expect its booking charges to be recorded with that same default tax
-  split in the meantime. That split does not match its real position until the
-  #4632 screen lets it change the setting, and no screen or Xero document uses
-  those tax figures yet. A journal refusal stops the booking or payment change
-  rather than being ignored
+- **Default.** With no row beyond the baseline, the club is GST-registered at
+  15% from 1 October 2010, Xero code `OUTPUT2`, with GST included in every
+  price. That is the treatment every Xero document and the member-money
+  ledger already rendered, so a deployment that never schedules a change
+  records and invoices charges exactly as it always did.
+- **Who reads it.** The member-money ledger and every Xero document resolve
+  the same schedule through the same reader and renderer
+  (`docs/xero/ARCHITECTURE.md#tax-treatment`), never a hard-coded tax code.
+  Which period a charge takes is fixed by its own anchor — a booking's or
+  charge's creation date — never the day it is rendered or posted, so a
+  booking keeps the treatment it was made under for its whole life.
+- **Who writes it.** A Full Admin schedules a change from the "GST / tax
+  treatment" card on `/admin/finance/xero`, or `PUT`/`DELETE
+  /api/admin/club-tax` directly. A change only ever adds a period that starts
+  after the club's today, so no document already rendered changes, and is
+  refused when Xero's own tax-rate list does not carry the chosen code,
+  active and usable on revenue, at the chosen rate.
+- **Charges are recorded.** Since M3b (#4627), the journal records each
+  booking door's charge lines under the schedule above. A journal refusal
+  stops the booking or payment change rather than being ignored
   ([`INV-MONEY-044`](docs/invariants/money.md#inv-money-044)).
 
 ## Finance dashboard

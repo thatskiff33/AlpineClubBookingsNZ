@@ -3,10 +3,11 @@
  * credit row (#4431). The outbox calls this. Approval only queues the row.
  */
 import { CreditType } from "@prisma/client";
-import { CreditNote, LineAmountTypes } from "xero-node";
+import { CreditNote } from "xero-node";
 import { ADMIN_GRANT_CREDIT_NOTE_ROLE } from "@/lib/admin-grant-credit-note";
 import type { AdminGrantCreditNotePayload } from "@/lib/admin-grant-credit-note-payload";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { prisma } from "@/lib/prisma";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { codeMintLine, mintLineItems } from "@/lib/xero-applied-credit-mint-accounts";
@@ -137,14 +138,16 @@ export async function createAdminGrantCreditNote(input: {
 
     const mapping = await getResolvedAccountMappingWithFallback(payload.mappingKey);
     const description = `Account credit granted: ${credit.description}`;
-    const lineItems = mintLineItems([codeMintLine(mapping, payload.amountCents)], description);
+    // #4632: a grant has no charge behind it, so its anchor is its operation's creation.
+    const taxRendering = await resolveXeroTaxRendering({ kind: "xero-operation", operationId: syncOperation.id });
+    const lineItems = mintLineItems([codeMintLine(mapping, payload.amountCents)], description, taxRendering);
     const noteDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
     const reference = `Admin credit ${credit.id.slice(0, 8)}`;
     const buildCreditNote = (resolvedContactId: string): CreditNote => ({
       type: CreditNote.TypeEnum.ACCRECCREDIT,
       contact: { contactID: resolvedContactId },
       date: noteDate,
-      lineAmountTypes: LineAmountTypes.Inclusive,
+      lineAmountTypes: taxRendering.lineAmountTypes,
       lineItems,
       reference,
       status: CreditNote.StatusEnum.AUTHORISED,

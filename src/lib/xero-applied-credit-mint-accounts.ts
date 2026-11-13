@@ -12,6 +12,7 @@
  */
 import { CreditType } from "@prisma/client";
 import type { LineItem } from "xero-node";
+import { xeroLineTax, type XeroTaxRendering } from "./xero-tax-rendering";
 import type { ResolvedAccountMappingWithFallback } from "./xero-mappings";
 
 /**
@@ -138,6 +139,8 @@ export function codeMintLine(
 export function mintLineItems(
   codings: readonly MintLineCoding[],
   description: string,
+  /** The note's tax treatment (#4632), resolved from its anchor by the caller. */
+  taxRendering: XeroTaxRendering,
 ): LineItem[] {
   const merged: MintLineCoding[] = [];
   for (const coding of codings) {
@@ -157,7 +160,7 @@ export function mintLineItems(
       description,
       quantity: 1,
       unitAmount: coding.amountCents / 100,
-      taxType: "OUTPUT2",
+      ...xeroLineTax(taxRendering),
     };
     if (coding.itemCode) {
       lineItem.itemCode = coding.itemCode;

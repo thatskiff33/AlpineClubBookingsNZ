@@ -144,6 +144,9 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   // AuditLog row for CLUB_FORMAT_UPDATED is the full trail; this column is the
   // settings row's own last-writer note.
   "ClubFormatSettings.updatedByMemberId",
+  // #4632: who scheduled a club tax treatment period, the same last-writer note;
+  // CLUB_TAX_TREATMENT_SCHEDULED is the full trail.
+  "ClubTaxSettings.updatedByMemberId",
 
   // #2243 review sweep — bespoke-named FK-less member-id columns the detector
   // cannot see (their names appear nowhere in the schema as a Member FK column),

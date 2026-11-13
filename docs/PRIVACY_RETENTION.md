@@ -143,6 +143,7 @@ see [backups](guides/backups.md), the
 | `ClubIdentitySettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `ClubTimeSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `ClubFormatSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
+| `ClubTaxSettings` | Club tax schedule and the officer who scheduled each period | While the period can render a Xero document; keep attribution for the tax record | Keep |
 | `LoginSecuritySetting` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `AnalyticsSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `EmailTemplateOverride` | Published / configured content and editor attribution | While published / configured and for content administration | Keep |

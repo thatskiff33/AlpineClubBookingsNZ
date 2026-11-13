@@ -10,6 +10,7 @@ import { getTodaysXeroUsageSummary } from "@/lib/xero-api-usage";
 import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoice-evidence";
 import { getXeroContactLinkMismatchSnapshot } from "@/lib/xero-contact-link-mismatches";
 import { findCreditNotesSpentOutsideApp } from "@/lib/xero-credit-note-spent-outside-flag";
+import { readXeroTaxHealth, type XeroTaxHealth } from "@/lib/xero-tax-health";
 import {
   findResolvedBookingInvoiceCreate,
   readResolvedRefundCreditNoteCoverage,
@@ -122,6 +123,8 @@ export interface XeroAdminHealthSnapshot {
   };
   /** #4220: credit notes Xero shows spent outside the app while bookings wait to draw on them; derived, no Xero call. */
   creditNotesSpentOutsideApp: { count: number };
+  /** #4632: whether Xero still carries the club's tax treatment in force today; not checked when Xero cannot be read. */
+  taxTreatment: XeroTaxHealth;
   apiBudget: {
     status: "healthy" | "warning" | "critical" | "exhausted" | "unknown";
     usagePercent: number | null;
@@ -431,6 +434,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     contactGroupMismatches,
     contactLinkMismatches,
     creditNotesSpentOutside,
+    taxTreatment,
     usageSummaryResult,
   ] = await Promise.all([
     prisma.member.count({
@@ -470,6 +474,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     getXeroMemberGroupingSnapshot({ limit: 1 }),
     getXeroContactLinkMismatchSnapshot({ limit: 1 }),
     findCreditNotesSpentOutsideApp(prisma),
+    readXeroTaxHealth().catch(() => ({ checked: false, problems: [] })),
     getTodaysXeroUsageSummary()
       .then((summary) => ({
         status: summary.today.budgetStatus,
@@ -532,6 +537,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
       cacheReady: contactLinkMismatches.cacheReady,
     },
     creditNotesSpentOutsideApp: { count: creditNotesSpentOutside.length },
+    taxTreatment,
     apiBudget: usageSummaryResult,
   };
 }
