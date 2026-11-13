@@ -223,6 +223,19 @@ on the least-privilege roles both need no provisioning step: the migration
 narrows its own two tables. If the deploy's grants check ever names one of
 them, re-run `pnpm run db:provision-roles --apply` and deploy again.
 
+### Stripe balance evidence tables (#4520)
+
+**What changes.** Migration `20261211010000_stripe_balance_evidence` adds two
+empty tables: an insert-only record of a Stripe balance transaction, and a
+payout row whose status can change. Nothing in the running app reads or writes
+them yet. Bookings, payments, refunds and Xero are unchanged.
+
+**What you do.** Nothing beyond the normal deploy. Single-role clubs and clubs
+on the least-privilege roles both need no provisioning step: the migration
+narrows the insert-only table itself. The payout table stays ordinary, because
+its status changes. If the deploy's grants check ever names the evidence table,
+re-run `pnpm run db:provision-roles --apply` and deploy again.
+
 ### Nightly backups stream to a disk-backed spool volume (#4487)
 
 **What changes.** The nightly backup no longer holds the whole `pg_dump` output in
