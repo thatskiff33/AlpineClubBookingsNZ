@@ -4155,7 +4155,8 @@ Xero note mints one when spent).
 - **When spent in Xero**, the note minted for an opening-credit lot is coded
   as the member's own money (`hutFeeRefunds`), never as a goodwill write-off.
 - **Reversal is whole-batch** and only while every credit is wholly free: its
-  lot untouched, the balance covering it, no deduction since posting, and no
+  lot untouched, the balance covering it, an unchanged negative-row count
+  captured under posting locks (transaction timestamps cannot order spends), and no
   Xero-noted credit consumed. It claims the batch with a `reversedAt`-guarded
   `updateMany`, then posts one negative row per credit. One spent credit
   refuses it and writes nothing. A reversed batch's credits are no longer lots

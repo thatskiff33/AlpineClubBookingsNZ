@@ -169,6 +169,43 @@ let observerClient: import("@prisma/client").PrismaClient;
     expect(await credit.getMemberCreditBalance(MEMBER_B)).toBe(750);
   });
 
+  it("refuses a deduction committed after posting by a transaction that began before it", async () => {
+    await seed();
+    // Extra noteless funds keep the balance above the opening credit, so the
+    // balance and allocation guards cannot mask a missed deduction.
+    await prisma.memberCredit.createMany({ data: [
+      { memberId: MEMBER_B, amountCents: 2000, type: "ADMIN_ADJUSTMENT", description: "Other funds" },
+      { memberId: MEMBER_B, amountCents: -100, type: "ADMIN_ADJUSTMENT", description: "Prior deduction" },
+    ] });
+    const input = await previewed();
+    const started = deferred();
+    const spend = deferred();
+    const spending = lockHolderClient.$transaction(async (tx) => {
+      // Force the real PostgreSQL transaction to begin before the batch posts.
+      await tx.$queryRaw`SELECT CURRENT_TIMESTAMP`;
+      started.resolve();
+      await spend.promise;
+      await credit.lockMemberCreditLedger(MEMBER_B, tx);
+      return tx.memberCredit.create({ data: {
+        memberId: MEMBER_B, amountCents: -500, type: "ADMIN_ADJUSTMENT", description: "Later deduction, older transaction" },
+      });
+    }, { timeout: 30_000, maxWait: 10_000 });
+    await started.promise;
+    let posted: Awaited<ReturnType<typeof batches.postOpeningCreditBatch>>;
+    try {
+      posted = await batches.postOpeningCreditBatch(input);
+    } finally {
+      spend.resolve();
+    }
+    const deducted = await spending;
+    expect(deducted.createdAt.getTime()).toBeLessThan(posted.postedAt.getTime());
+    expect(await credit.getMemberCreditBalance(MEMBER_B)).toBe(2650);
+    expect(await prisma.openingCreditBatch.findUnique({ where: { id: posted.batchId }, select: { negativeCreditCountAtPost: true } })).toEqual({ negativeCreditCountAtPost: 1 });
+    await expect(batches.reverseOpeningCreditBatch({ batchId: posted.batchId, reason: "wrong file", adminId: ADMIN_ID })).rejects.toMatchObject({ status: 409 });
+    expect(await prisma.memberCredit.count({ where: { openingCreditBatchId: posted.batchId, amountCents: { lt: 0 } } })).toBe(0);
+    expect(await prisma.openingCreditBatch.findUnique({ where: { id: posted.batchId }, select: { reversedAt: true } })).toEqual({ reversedAt: null });
+  });
+
   it("reverses a batch left whole, once, when two officers reverse it at the same moment", async () => {
     await seed();
     const posted = await batches.postOpeningCreditBatch(await previewed());

@@ -12,3 +12,6 @@
   way to carry over stays that are already paid, and the totals to check
   against the old records. Importing future bookings is coming separately
   (#5005).
+
+- Refuse opening-credit reversal after a later deduction even when its database
+  transaction began before the batch posted.

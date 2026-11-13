@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const db = vi.hoisted(() => ({
   member: { findMany: vi.fn() },
   openingCreditBatch: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
-  memberCredit: { createMany: vi.fn(), findMany: vi.fn() },
+  memberCredit: { createMany: vi.fn(), findMany: vi.fn(), count: vi.fn() },
   $transaction: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: db }));
@@ -65,6 +65,7 @@ beforeEach(() => {
   db.openingCreditBatch.create.mockResolvedValue({ id: "batch-1", postedAt: new Date("2026-07-01T00:00:00Z") });
   db.memberCredit.createMany.mockImplementation(async ({ data }) => ({ count: data.length }));
   db.memberCredit.findMany.mockResolvedValue([]);
+  db.memberCredit.count.mockResolvedValue(0);
   db.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
     fn({ openingCreditBatch: db.openingCreditBatch, memberCredit: db.memberCredit }),
   );
@@ -177,6 +178,9 @@ describe("postOpeningCreditBatch (#4988)", () => {
     expect(db.openingCreditBatch.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ totalCents: 5250, rowCount: 2, postedById: "officer-1" }) }),
     );
+    expect(db.openingCreditBatch.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ negativeCreditCountAtPost: 0 }),
+    }));
     expect(audit).toHaveBeenCalledTimes(1);
     expect(audit.mock.calls[0]?.[0]).toMatchObject({ action: "member.credit.opening_batch.post", category: "payment", entityId: "batch-1" });
   });
@@ -231,8 +235,9 @@ describe("reverseOpeningCreditBatch (#4988)", () => {
   ];
 
   beforeEach(() => {
-    db.openingCreditBatch.findUnique.mockResolvedValue({ id: "batch-1", totalCents: 5250, postedAt: POSTED_AT, reversedAt: null, credits });
+    db.openingCreditBatch.findUnique.mockResolvedValue({ id: "batch-1", totalCents: 5250, negativeCreditCountAtPost: 3, reversedAt: null, credits });
     db.openingCreditBatch.updateMany.mockResolvedValue({ count: 1 });
+    db.memberCredit.count.mockResolvedValue(3);
     lots.mockResolvedValue(
       new Map(credits.map((credit) => [credit.memberId, { lots: [{ memberCreditId: credit.id, remainingCents: credit.amountCents }] }])),
     );
@@ -257,21 +262,15 @@ describe("reverseOpeningCreditBatch (#4988)", () => {
     expect(lots.mock.invocationCallOrder[0]).toBeLessThan(db.openingCreditBatch.updateMany.mock.invocationCallOrder[0] ?? 0);
   });
 
-  it("refuses when a member has had any credit deducted since the batch posted, though the balance covers it", async () => {
-    db.memberCredit.findMany.mockResolvedValue([{ memberId: "m-a" }]);
+  it("refuses a new deduction regardless of its transaction timestamp", async () => {
+    db.memberCredit.count.mockResolvedValue(4);
     await expect(reverseOpeningCreditBatch({ batchId: "batch-1", reason: "r", adminId: "o" })).rejects.toMatchObject({
       status: 409,
-      message: expect.stringContaining("Al Adams"),
+      message: expect.stringContaining("credit deducted"),
     });
-    expect(db.memberCredit.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          amountCents: { lt: 0 },
-          createdAt: { gte: POSTED_AT },
-          OR: [{ openingCreditBatchId: null }, { openingCreditBatchId: { not: "batch-1" } }],
-        }),
-      }),
-    );
+    expect(db.memberCredit.count).toHaveBeenCalledWith({
+      where: { memberId: { in: ["m-a", "m-b"] }, amountCents: { lt: 0 } },
+    });
     expect(db.openingCreditBatch.updateMany).not.toHaveBeenCalled();
     expect(db.memberCredit.createMany).not.toHaveBeenCalled();
   });

@@ -257,15 +257,20 @@ export async function postOpeningCreditBatch(input: {
 
   try {
     const batch = await prisma.$transaction(async (tx) => {
-      // The claim: a second confirm of the same file waits here on the unique
-      // index, then fails with P2002 once this one commits.
-      const created = await tx.openingCreditBatch.create({
-        data: { batchKey, totalCents: preview.totalCents, rowCount: credits.length, postedById: input.adminId },
-        select: { id: true, postedAt: true },
-      });
       for (const credit of credits) {
         await lockMemberCreditLedger(credit.memberId, tx);
       }
+      // Credit rows are insert-only. Counting deductions under the locks records
+      // ledger order; createdAt records transaction start and can predate a post
+      // even when that transaction spends the credit after it.
+      const negativeCreditCountAtPost = await tx.memberCredit.count({
+        where: { memberId: { in: credits.map((credit) => credit.memberId) }, amountCents: { lt: 0 } },
+      });
+      // The unique key claims the file before any credit or audit side effect.
+      const created = await tx.openingCreditBatch.create({
+        data: { batchKey, totalCents: preview.totalCents, rowCount: credits.length, negativeCreditCountAtPost, postedById: input.adminId },
+        select: { id: true, postedAt: true },
+      });
       // Re-read under the locks: another batch may have credited a member since
       // the preview. This batch's own row is not yet a holder.
       const holders = await membersHoldingOpeningCredit(
@@ -342,7 +347,7 @@ export async function reverseOpeningCreditBatch(input: {
       select: {
         id: true,
         totalCents: true,
-        postedAt: true,
+        negativeCreditCountAtPost: true,
         reversedAt: true,
         credits: {
           where: { amountCents: { gt: 0 } },
@@ -366,21 +371,15 @@ export async function reverseOpeningCreditBatch(input: {
     // reversed batch's credits are no longer lots): what each member holds now.
     const memberIds = batch.credits.map((credit) => credit.memberId);
     const lots = await loadFreeCreditLots(tx, memberIds);
-    // Any deduction since posting may have drawn on the opening credit, even
-    // where the balance still covers it; the guide says to reverse before then.
-    const deductedSincePost = new Set(
-      (
-        await tx.memberCredit.findMany({
-          where: {
-            memberId: { in: memberIds },
-            amountCents: { lt: 0 },
-            createdAt: { gte: batch.postedAt },
-            OR: [{ openingCreditBatchId: null }, { openingCreditBatchId: { not: batch.id } }],
-          },
-          select: { memberId: true },
-        })
-      ).map((row) => row.memberId),
-    );
+    // Under the same member locks as posting and spending, any new negative
+    // row means some credit may have been used. Do not infer order from dates:
+    // PostgreSQL CURRENT_TIMESTAMP is the transaction's start, before its locks.
+    const negativeCreditCount = await tx.memberCredit.count({
+      where: { memberId: { in: memberIds }, amountCents: { lt: 0 } },
+    });
+    if (negativeCreditCount !== batch.negativeCreditCountAtPost) {
+      throw new ApiError("This batch cannot be reversed because a member has had credit deducted since it posted", 409);
+    }
     const spent: string[] = [];
     for (const credit of batch.credits) {
       const name = memberName(credit.member);
@@ -389,8 +388,7 @@ export async function reverseOpeningCreditBatch(input: {
       if (
         !lot ||
         lot.remainingCents !== credit.amountCents ||
-        balance < credit.amountCents ||
-        deductedSincePost.has(credit.memberId)
+        balance < credit.amountCents
       ) {
         spent.push(`${name}: some of the ${formatCents(credit.amountCents, format)} has been used`);
         continue;

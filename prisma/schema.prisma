@@ -7649,6 +7649,8 @@ model MemberCredit {
 /// key). Reversal stamps `reversedAt` once and posts negative rows linked here;
 /// nothing is deleted (`INV-PAY-151`).
 model OpeningCreditBatch {
+  /// Negative ledger row count for the batch members, captured under their locks.
+  negativeCreditCountAtPost Int @default(0)
   id             String    @id @default(cuid())
   batchKey       String    @unique
   totalCents     Int

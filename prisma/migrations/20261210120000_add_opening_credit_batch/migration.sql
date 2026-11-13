@@ -7,6 +7,7 @@ CREATE TABLE "OpeningCreditBatch" (
     "batchKey" TEXT NOT NULL,
     "totalCents" INTEGER NOT NULL,
     "rowCount" INTEGER NOT NULL,
+    "negativeCreditCountAtPost" INTEGER NOT NULL DEFAULT 0,
     "postedById" TEXT,
     "postedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "reversedAt" TIMESTAMP(3),

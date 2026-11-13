@@ -102,6 +102,11 @@ or emailed. It needs one approval, not the second admin a normal credit
 adjustment needs, because you check the whole file against its total before it
 posts.
 
+Before posting, finish the release upgrade and drain the old app and workers.
+After any opening credit posts, a rollback must retain opening-credit lot and
+accounting support; an older release can spend reversed lots or use the wrong
+account.
+
 1. Make a CSV with one row per member:
    - **Member ID** or **Email** to find the member. Add **First Name** and
      **Last Name** where two members share an email.
