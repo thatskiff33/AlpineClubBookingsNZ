@@ -947,11 +947,12 @@ export async function register() {
         const auditRetention = await runStep("audit-retention", () =>
           runAuditLogRetentionJob(),
         );
-        const { runPersonalDataPruneJob, runFormerMemberAnonymisationJob, runRecordedPrivacyRetentionJob } = await import("./lib/privacy-retention-jobs");
-        const { PRIVACY_DATA_PRUNE_JOB_NAME, FORMER_MEMBER_ANONYMISATION_JOB_NAME } = await import("./lib/privacy-retention-shared");
+        const { runPersonalDataPruneJob, runFormerMemberAnonymisationJob, runBookingDietaryClearJob, runRecordedPrivacyRetentionJob } = await import("./lib/privacy-retention-jobs");
+        const { PRIVACY_DATA_PRUNE_JOB_NAME, FORMER_MEMBER_ANONYMISATION_JOB_NAME, BOOKING_DIETARY_CLEAR_JOB_NAME } = await import("./lib/privacy-retention-shared");
         for (const [jobName, work] of [
           [PRIVACY_DATA_PRUNE_JOB_NAME, runPersonalDataPruneJob],
           [FORMER_MEMBER_ANONYMISATION_JOB_NAME, runFormerMemberAnonymisationJob],
+          [BOOKING_DIETARY_CLEAR_JOB_NAME, runBookingDietaryClearJob],
         ] as const) {
           await runStep(jobName, () => runRecordedPrivacyRetentionJob(jobName, work));
         }
