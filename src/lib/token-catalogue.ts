@@ -345,6 +345,14 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     contexts: ["page-content-body", "lodge-instructions"],
   },
   {
+    token: "email-log-retention",
+    kind: "text",
+    description: "Inserts the club's current email-log retention policy, including whether automatic deletion is switched on.",
+    example: "Email logs: {{email-log-retention}}.",
+    allowsLegacySingleBrace: false,
+    contexts: ["page-content-body"],
+  },
+  {
     token: "facebook-url",
     kind: "text",
     description:
