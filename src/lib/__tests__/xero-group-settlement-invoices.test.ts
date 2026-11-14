@@ -643,6 +643,65 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
       );
     });
 
+    // MUTATION (#5083 review): another lock(1) holder (assignBedRange runs on a
+    // 30 s timeout) or an exhausted pool outlasts the fence's 10 s budget, so
+    // Prisma rejects the fence with P2028 before the start guard can run. That
+    // is the heaviest late start: owed and re-drivable, never a PARTIAL that
+    // an operator cannot retry for this queue type.
+    it.each([
+      ["P2028 (the wait outlasted the transaction timeout)", "P2028"],
+      ["P2034 (a write conflict)", "P2034"],
+    ])("owes the email when the fence is refused with %s", async (_label, code) => {
+      const ordinary = mocks.transaction.getMockImplementation()!;
+      mocks.transaction.mockImplementation(async (callback, options) => {
+        if (options === undefined) return ordinary(callback, options);
+        throw Object.assign(new Error("Transaction API error"), { code });
+      });
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+      ).rejects.toBeInstanceOf(GroupSettlementInvoiceEmailDeferredError);
+
+      expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
+      expectOwed();
+    });
+
+    it("records any other fence failure before a send as PARTIAL with its error", async () => {
+      const ordinary = mocks.transaction.getMockImplementation()!;
+      mocks.transaction.mockImplementation(async (callback, options) => {
+        if (options === undefined) return ordinary(callback, options);
+        throw new Error("database unavailable");
+      });
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+      ).resolves.toBe("inv-1");
+
+      expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
+      expect(mocks.opUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.completeSync.mock.calls.at(-1)?.[1]).toMatchObject({
+        status: "PARTIAL",
+        responsePayload: { invoiceSendAccepted: false, deferredInvoiceSend: null },
+      });
+    });
+
+    // A status-less transport failure (no HTTP response) is not classed as
+    // owed: the fence does not guess at Node or axios error codes. It keeps
+    // the pre-#4919 PARTIAL outcome, and the docs name only the owed cases.
+    it("records a status-less transport failure as PARTIAL, not owed", async () => {
+      mocks.accountingApi.emailInvoice.mockRejectedValue(
+        Object.assign(new Error("socket hang up"), { code: "ECONNRESET" })
+      );
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+      ).resolves.toBe("inv-1");
+
+      expect(mocks.accountingApi.emailInvoice).toHaveBeenCalledTimes(1);
+      expect(mocks.opUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.completeSync.mock.calls.at(-1)?.[1].status).toBe("PARTIAL");
+    });
+
     // The suite's sanitizeForJson is a pass-through; the stored row is not. A
     // key with "email" in it is redacted, and a redacted marker is never read.
     it("keeps the owed-email marker readable through the real payload redactor", async () => {

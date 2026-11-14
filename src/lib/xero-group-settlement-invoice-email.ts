@@ -10,6 +10,7 @@
 
 import { GroupBookingStatus } from "@prisma/client";
 import { prisma } from "./prisma";
+import { isTransactionContention } from "@/lib/prisma-errors";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import {
@@ -72,7 +73,8 @@ export async function finishGroupSettlementInvoiceEmail(params: {
   // won first, the replayable VOID is queued in the same tx and the email is
   // suppressed. If the email won first, cancellation waits and then commits its
   // own durable VOID debt; no HTTP attempt can start after a cancellation
-  // commits. A deadline, rate limit or transient error leaves the email OWED:
+  // commits. A deadline, a 429, a 408/5xx, a provider cooldown, a late start or
+  // a lock wait that outlasts the timeout leaves the email OWED:
   // the outbox asks again later through this same fence, with the same
   // idempotency key, so a request Xero did receive is not sent twice.
   let invoiceEmailResponseBody: unknown = null;
@@ -323,7 +325,19 @@ export async function finishGroupSettlementInvoiceEmail(params: {
   } catch (error) {
     // #4919: a commit that fails after Xero accepted the email cannot turn it
     // into a failed send, and one after a deferral leaves the email owed.
-    if (!invoiceEmailAccepted && !invoiceEmailDeferredError) invoiceEmailError = error;
+    // Contention (P2028/P2034) before Xero accepted it is a late start too: the
+    // wait for lock(1) or a pooled connection outlasted the fence's timeout, so
+    // the email is owed, not failed. The re-drive reuses the idempotency key.
+    if (
+      !invoiceEmailAccepted &&
+      !invoiceEmailDeferredError &&
+      !invoiceEmailError &&
+      isTransactionContention(error)
+    ) {
+      invoiceEmailDeferredError = error;
+    } else if (!invoiceEmailAccepted && !invoiceEmailDeferredError) {
+      invoiceEmailError = error;
+    }
     logger.warn(
       { err: error, settlementId, invoiceId: createdInvoice.invoiceID },
       invoiceEmailAccepted

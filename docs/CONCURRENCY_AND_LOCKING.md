@@ -5903,7 +5903,10 @@ attempt with zero in-lock retries (no rate-limit sleep under the lock) and a
 3 s client deadline, in a transaction with an explicit 10 s timeout. Prisma's
 timeout counts the wait for `lock(1)`, so the send starts only while the
 deadline plus a 2 s commit margin still fits; otherwise it is not attempted.
-A deadline, rate limit or transient failure leaves the email owed: the fence
+If the wait for `lock(1)` or a connection outlasts the 10 s timeout itself
+(another holder on a longer budget), Prisma refuses the fence with P2028 and
+nothing is attempted either. A missed deadline, a 429, a 408 or 5xx, a provider
+cooldown, a late start or that contention leaves the email owed: the fence
 commits at once, the CREATE row keeps an owed marker in `responsePayload` and
 returns to PENDING under `GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED`, and the
 outbox asks again a minute later through the same fence, re-running every
