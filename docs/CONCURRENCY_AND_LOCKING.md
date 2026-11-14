@@ -2150,6 +2150,35 @@ mispricing a booking.
   would be worse than one that is momentarily stale. Where they do disagree the
   edit panel shows the SAVE's sentence before it closes, so the member reads the
   outcome that was actually applied rather than the one that was previewed.
+- **Cancellation promo releases (#4909, `INV-MONEY-005`).** Every transaction
+  that writes a booking `CANCELLED` releases that booking's promo redemptions
+  through `releaseBookingPromoRedemptions` (`promo.ts`) in the same
+  transaction, once, after its guarded claim. The release updates `PromoCode`
+  rows in promo-code-id order, so the promo row is a new participant that
+  joins after every key the transaction already holds:
+  - `internet-banking-payment-cron.ts` hold expiry, the
+    `payment-reconciliation.ts` capacity void and the
+    `xero-inbound/invoice-paid-effects.ts` late-capacity cancel: global ->
+    lodge -> member-credit (member-owned bookings) -> promo rows. The hosting
+    seam, and with it the coverage keys, stays after the release.
+  - `booking-cancel.ts`, every claim: global -> lodge -> member-credit -> the
+    `Payment` row where the branch takes it -> promo rows, through
+    `cleanupPromoRedemption(tx, ...)`, which skips a booking with no code.
+  - `group-cancel.ts`, each child's own transaction: global -> promo rows (no
+    lodge key; its bed reconcile runs under the global key).
+  - `cron-waitlist.ts` past-date waitlist expiry and the admin review route's
+    legacy-draft rejection: global -> lodge -> promo rows. Approval never
+    cancels, so it never releases.
+
+  A later `restoreCreditFromBooking` re-takes the member-credit key the
+  transaction already holds, so it never waits. Writers whose booking cannot
+  carry a code are listed with the reason in
+  `cancelled-booking-promo-release-census.test.ts`, which also fails if any
+  advisory-lock call follows the release in its function. No key is minted or
+  reordered (`INV-LOCK-001`..`INV-LOCK-003`). Draft cleanup, hard delete,
+  modification and confirm-pending keep their existing releases. No
+  post-commit step of a cancel reads the redemptions: emails use the stored
+  booking and payment, and invoice clearing queues an amount.
 - `bed-allocation-bunk-pairing.ts` locks the owning `LodgeRoom` row with
   `FOR UPDATE` before checking and changing one room's bunk-group membership.
   This protocol is independent of the booking/capacity/credit lock cluster.
