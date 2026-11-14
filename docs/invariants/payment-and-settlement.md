@@ -1469,7 +1469,7 @@ preview).
     lock, naming the next step by its state), and `check` only after `bank`.
     Its `BANK_REFUND` posts on the card payment (`INV-MONEY-035`) and it takes
     ONE Xero note of its own, keyed on the task. Where the ledger holds nothing
-    for it, the refusal says to dismiss it.
+    for it, the refusal says to leave it open (#4516).
   - **The booking and payment-link pages name each part and where it stands**,
     from the CANCELLED snapshot and live status.
   - Proven by `booking-cancel.test.ts`, `cancel-card-refund-shortfall.test.ts`,
@@ -2757,8 +2757,8 @@ _Legacy: settles tasks raised before #4317._
     owed (`openCardRefundOwedCents`, #4124), read under `lock(1)` and the
     Payment row. None moves `refundedAmountCents`. Edits and cancels exclude
     the cancellation's own task.
-  - **Dismissal stays open**, unlike an edit's after a cancel: an appeal
-    exists only on a cancelled booking, so the cancel never counted it.
+  - **Dismissal is refused for now** (#4516, owner 14 Nov 2026), as for
+    every journal hand-back (`isJournalHandBackTask`): mark paid or leave open.
   - **A cash-settled payment is still refused**: a dismissed cancellation
     hand-back reads refundable again, so an appeal could re-promise it.
   - **The member is told the club WILL refund by bank transfer**

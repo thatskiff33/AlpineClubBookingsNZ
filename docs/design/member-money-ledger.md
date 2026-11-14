@@ -927,8 +927,9 @@ that completion placed the money on. Cash is never refused for a cap: the
 applied part trims to what the debt still has open, and the rest debits the
 owner's receivable. A task raised before this milestone has no debt in the
 journal, so its payment posts unapplied (Dr receivable, Cr bank or cash).
-Dismissing the task withdraws that debt; the task closes, and the money is not
-left owed. A late capture the treasurer keeps closes the capture-return debt,
+Dismissing such a task is refused for now, so its debt stays open until it is
+paid (owner decision, 14 Nov 2026, #4516); a four-way dismissal that records
+why follows in its own change. A late capture the treasurer keeps closes the capture-return debt,
 then records the keep: collected against the booking for the cents an invoice
 already bills, and a retained component (`kept-capture:<intent>`) for the rest.
 Approving that keep later reverses the component before the return posts. The

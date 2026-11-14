@@ -10,13 +10,14 @@ import {
   isPartPaymentReviewTask,
 } from "@/lib/manual-refund-task-settlement-rules";
 import { lockMemberCreditLedger, requireMemberCreditRecipient } from "@/lib/member-credit";
-import { postHandBackPayment, postRefundObligation, withdrawRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
+import { postHandBackPayment, postRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 
 /**
  * #4516 (Ledger M4d): WHICH MANUAL REFUND TASKS THE MEMBER-MONEY JOURNAL RECORDS AS A HAND-BACK DEBT, and the
  * journal steps `resolveManualRefundTask` takes for them. The raise posts the debt (R05, scope `hand-back`); a
- * completion pays it (R14); a dismissal withdraws it. Split out of `manual-refund-task-resolution.ts` and
+ * completion pays it (R14). A dismissal is refused for now (owner decision, 14 Nov 2026), so the debt stays open
+ * until the task is paid. Split out of `manual-refund-task-resolution.ts` and
  * `manual-refund-task-settlement-rules.ts` so neither crosses its size budget; the lock order is unchanged.
  */
 
@@ -39,8 +40,8 @@ export function isOrganiserExtraRacedHandBackTask(task: Pick<HandBackFacts, "kin
 
 /**
  * A hand-back the member-money journal records as a refund debt (R05, scope `hand-back`). Exactly the tasks a
- * raise posts and a dismissal withdraws: a cancellation's cash hand-back, a card shortfall's bank or cheque part,
- * an edit hand-back, a refund request's bank part, and an organisation's late cash. Not a part-payment review, a
+ * raise posts and whose dismissal the door refuses: a cancellation's cash hand-back, a card shortfall's bank or
+ * cheque part, an edit hand-back, a refund request's bank part, and an organisation's late cash. Not a part-payment review, a
  * group organiser's hand-back, a paid-another-way close, a bank-refund void follow-up, organiser-extra raced cash,
  * or a late capture's own question (including a legacy row whose only mark is its reason). A legacy row with no
  * kind and any other reason is a cancellation's hand-back.
@@ -77,23 +78,6 @@ export async function lockCancellationHandBackBeforeClaim(tx: Prisma.Transaction
     await lockMemberCreditLedger(requireMemberCreditRecipient(input.ownerMemberId()), tx);
   }
   await lockPaymentForRefundedTotal(tx, route.paymentId);
-}
-
-/**
- * Dismissing a hand-back means the club is not paying it. The refund debt raised with the task is withdrawn with
- * the claim, so a lost claim leaves the debt. A debt already paid cannot be withdrawn.
- */
-export async function withdrawDismissedHandBackDebt(tx: Prisma.TransactionClient, journal: BookingJournalContext, input: {
-  task: HandBackFacts & { id: string; bookingId: string };
-  resolution: "completed" | "dismissed";
-  actingMemberId: string;
-}): Promise<void> {
-  const { task } = input;
-  if (input.resolution !== "dismissed" || !isJournalHandBackTask(task)) return;
-  await withdrawRefundObligation(tx, journal, {
-    bookingId: task.bookingId, scope: "hand-back", id: task.id, actorMemberId: input.actingMemberId,
-    reason: "Hand-back dismissed: the club is not paying it back", senderKeyPrefix: `hand-back-dismiss:${task.id}`,
-  });
 }
 
 /**

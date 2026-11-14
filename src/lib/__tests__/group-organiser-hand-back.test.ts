@@ -466,6 +466,10 @@ describe("the finance queue payload marks it for the card's own sentence", () =>
     const payload = toOpenManualRefundTaskPayload(row, null, []);
     expect(payload).toMatchObject({ groupOrganiserHandBack: true, editRefundHandBack: false, refundRequestHandBack: false, memberName: "Olive Organiser" });
     expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null }, null, []).groupOrganiserHandBack).toBe(false);
+    // #4516 (owner decision, 14 Nov 2026): the queue hides Dismiss on a journal hand-back. An organiser's is not
+    // one (M6, it has its own refusal); a cash cancellation's hand-back on the same row is.
+    expect(payload.journalHandBack).toBe(false);
+    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null }, null, []).journalHandBack).toBe(true);
     // Its shares are kept in reviewContext: never read as unreadable review evidence.
     const withShares = toOpenManualRefundTaskPayload({ ...row, reviewContext: { groupOrganiserHandBack: { settlementId: "settle-1", shares: [] } } }, null, []);
     expect(withShares).toMatchObject({ reviewEvidence: null, reviewEvidenceUnreadable: false });

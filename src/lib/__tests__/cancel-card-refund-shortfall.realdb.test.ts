@@ -23,8 +23,9 @@
  *   inline.
  * - A zero plan (the payment's ledger reads the card refunded, its record does
  *   not): no Stripe call, the whole refund raised as owed. It cannot be marked
- *   paid back against a ledger with nothing left on it, so the treasurer
- *   dismisses it with a note, and it stops being owed.
+ *   paid back against a ledger with nothing left on it, and (#4516, owner
+ *   decision 14 Nov 2026) cannot be dismissed for now, so it stays owed; a row
+ *   dismissed before that stops being owed.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -343,7 +344,7 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
       expect(await cardNoteGapNow()).toEqual({ cardCents: CARD_CENTS, bankCents: BANK_CENTS });
     });
 
-    it("a zero plan: no card refund, the whole refund owed; with nothing left on the ledger it is dismissed with a note, and owed no more", async () => {
+    it("a zero plan: no card refund, the whole refund owed; with nothing left on the ledger it cannot be marked paid or (for now, #4516) dismissed, and stays owed", async () => {
       // The ledger reads the charge refunded; the payment record does not.
       await prisma.paymentTransaction.create({
         data: { id: CARD_TXN, paymentId: PAYMENT_ID, kind: "PRIMARY", source: "STRIPE", stripePaymentIntentId: INTENT, amountCents: PRICE_CENTS, refundedAmountCents: PRICE_CENTS, status: "REFUNDED", createdAt: new Date("2026-05-01T00:00:00.000Z") },
@@ -366,12 +367,17 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
       expect(task).toMatchObject({ status: "OPEN", amountCents: PRICE_CENTS });
       expect((await refundsOwedNow()) - owedBefore).toBe(PRICE_CENTS);
 
-      // Nothing on the ledger to record it against: refused, still OPEN, and told to dismiss it.
-      await expect(resolve("completed", task.id)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/dismiss this task with a note/) });
+      // Nothing on the ledger to record it against: refused, still OPEN, and told to leave it open (#4516).
+      await expect(resolve("completed", task.id)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/leave this task open for now, because it cannot be dismissed yet/) }); // #4516
       expect(await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: task.id }, select: { status: true } })).toEqual({ status: "OPEN" });
 
-      await resolve("dismissed", task.id, "Refunded in the Stripe dashboard on 2 July.");
-      expect(await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: task.id }, select: { status: true } })).toEqual({ status: "DISMISSED" });
+      // #4516 (owner decision, 14 Nov 2026): dismissing it is refused for now, so it stays OPEN and owed.
+      const { JOURNAL_HAND_BACK_DISMISS_REFUSAL } = await import("@/lib/manual-refund-task-copy");
+      await expect(resolve("dismissed", task.id, "Refunded in the Stripe dashboard on 2 July.")).rejects.toMatchObject({ status: 409, message: JOURNAL_HAND_BACK_DISMISS_REFUSAL });
+      expect(await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: task.id }, select: { status: true } })).toEqual({ status: "OPEN" });
+      expect((await refundsOwedNow()) - owedBefore).toBe(PRICE_CENTS);
+      // A row dismissed before that (an earlier release, or the old colour mid-deploy) is owed no more.
+      await prisma.manualRefundTask.update({ where: { id: task.id }, data: { status: "DISMISSED", note: "Refunded in the Stripe dashboard on 2 July.", completedAt: new Date() } });
       expect(await refundsOwedNow()).toBe(owedBefore);
     });
 

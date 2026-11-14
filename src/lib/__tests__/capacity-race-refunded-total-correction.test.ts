@@ -389,7 +389,7 @@ describe("a capacity race's charge corrected for its hand-back (#4154, INV-PAY-1
       for (const store of [world(), world({ charges: [{ id: "txn-race", amountCents: 20_000, refundedAmountCents: 14_000, createdAt: at(2_000) }] })]) {
         await expect(run(store, { stripe: { readable: true, refundedCents: 14_001 } })).rejects.toMatchObject({
           status: 409,
-          message: "Stripe shows $140.01 of this card charge refunded, but the app has recorded only $140.00: a refund made in Stripe may not have reached the app yet. Try again in a few minutes, and do not pay it until the app accepts. If the member was refunded in Stripe, dismiss this task with a note saying how.",
+          message: "Stripe shows $140.01 of this card charge refunded, but the app has recorded only $140.00: a refund made in Stripe may not have reached the app yet. Try again in a few minutes, and do not pay it until the app accepts. If the member was refunded in Stripe, leave this task open for now, because it cannot be dismissed yet.", // #4516
         });
       }
       nothingWritten();

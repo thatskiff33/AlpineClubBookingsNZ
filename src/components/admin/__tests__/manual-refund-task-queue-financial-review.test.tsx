@@ -19,6 +19,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
 }));
 
 import { ManualRefundTaskQueue } from "@/components/admin/manual-refund-task-queue";
+import { JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
 
 /**
  * #3033 (epic #2797) — the finance queue told every admin the wrong thing about
@@ -183,7 +184,9 @@ describe("a cancel's card refund shortfall has its own sentence (#4097, `INV-PAY
     });
     const intro = screen.getByTestId("manual-refund-task-card-shortfall-check-intro");
     expect(intro.textContent).toMatch(/Check Stripe and\s+the bank before paying anything, then contact the member with what you found/);
-    expect(intro.textContent).toMatch(/dismiss it with a note/);
+    // #4516 (owner decision, 14 Nov 2026): a journal hand-back is not dismissed for now, so the sentence never says to.
+    expect(intro.textContent).toMatch(/leave it open for now: it cannot be dismissed yet/);
+    expect(intro.textContent).not.toMatch(/dismiss it with a note/);
     // Paying it is only the answer once the check shows it is owed - and (#4154 review M3) only after the
     // app has accepted the mark: mark first, then pay, on every surface.
     expect(intro.textContent).toMatch(/If it really is owed, mark it\s+paid\s+back first/);
@@ -300,6 +303,23 @@ describe("a group organiser's Internet Banking hand-back has its own sentence (#
   it("a cancellation's hand-back does not print it", async () => {
     await renderQueue({ tasks: [HAND_BACK_TASK], viewerCanViewBookings: true });
     expect(screen.queryByTestId("manual-refund-task-group-organiser-intro")).not.toBeInTheDocument();
+  });
+});
+
+describe("a journal hand-back offers no Dismiss for now (#4516, owner decision 14 Nov 2026)", () => {
+  it("prints the server's refusal where the Dismiss button would be, and keeps Mark paid back", async () => {
+    await renderQueue({ tasks: [{ ...HAND_BACK_TASK, journalHandBack: true }], viewerCanViewBookings: true });
+
+    expect(screen.queryByRole("button", { name: /^dismiss$/i })).not.toBeInTheDocument();
+    expect(screen.getByTestId("manual-refund-task-dismiss-unavailable").textContent).toBe(JOURNAL_HAND_BACK_DISMISS_REFUSAL);
+    expect(screen.getByRole("button", { name: /paid back/i })).toBeInTheDocument();
+  });
+
+  it("CONTROL: a row the journal does not hold keeps its Dismiss and prints no refusal", async () => {
+    await renderQueue({ tasks: [HAND_BACK_TASK], viewerCanViewBookings: true });
+
+    expect(screen.getByRole("button", { name: /^dismiss$/i })).toBeInTheDocument();
+    expect(screen.queryByTestId("manual-refund-task-dismiss-unavailable")).not.toBeInTheDocument();
   });
 });
 

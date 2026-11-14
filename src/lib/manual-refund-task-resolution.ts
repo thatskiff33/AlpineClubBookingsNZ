@@ -31,11 +31,11 @@ import { settlementWriteRefusal } from "@/lib/manual-refund-task-settlement-refu
 import { prisma } from "@/lib/prisma";
 import { clubToday } from "@/lib/club-time";
 import { lockBookingRowForOwnerRead, postRefundObligation, resolveBookingDoorClock, reverseKeptCapture } from "@/lib/member-money/doors";
-import { lockCancellationHandBackBeforeClaim, postHandBackCompletion, takesHandBackJournalLocksFirst, withdrawDismissedHandBackDebt } from "@/lib/manual-refund-task-hand-back-journal";
+import { isJournalHandBackTask, lockCancellationHandBackBeforeClaim, postHandBackCompletion, takesHandBackJournalLocksFirst } from "@/lib/manual-refund-task-hand-back-journal";
 // #3195: the $0 refusal is said by the settle SCREEN as well as thrown here, and
 // this module is `server-only` - so the sentence lives in a client-safe home and
 // both read it (`INV-SSOT`).
-import { editRefundHandBackDismissAfterCancelMessage, zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
+import { editRefundHandBackDismissAfterCancelMessage, JOURNAL_HAND_BACK_DISMISS_REFUSAL, zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
 import { recordBankRefundVoidAnswerInTransaction } from "@/lib/bank-refund-void-answer";
 import { isBankRefundVoidFollowUpTask } from "@/lib/bank-refund-void-follow-up-key";
 import { isCancelCardShortfallTask, isEditRefundHandBackTask, isNonCancellationHandBackTask, refundRequestIdOfHandBack,
@@ -91,7 +91,9 @@ import {
  * member-facing event log would be a claim nothing backs — see `recordedRefund`
  * below. DISMISSED exists for
  * "the member declined it" / "settled another way" and requires a note; it
- * moves no money and writes no allocation. For an `EDIT_FINANCIAL_REVIEW` task
+ * moves no money and writes no allocation. A bank or cash hand-back the
+ * journal holds as a debt (`isJournalHandBackTask`) is refused it for now
+ * (#4516, owner decision 14 Nov 2026). For an `EDIT_FINANCIAL_REVIEW` task
  * DISMISSED carries its #2797 meaning: reviewed, and THIS SYSTEM MOVED NO MONEY
  * for that occurrence — which is a real decision, and is why it is not the same
  * thing as an unknown amount. The required note is what says which decision it
@@ -200,6 +202,8 @@ export async function resolveManualRefundTask(
       throw new ManualBookingPaymentError(editRefundHandBackDismissAfterCancelMessage(task.booking), 409); // #3949: names the organiser on a group child
     }
     const groupRefusal = groupOrganiserHandBackRefusal(task, resolution, confirmedAmountCents, format); if (groupRefusal) throw new ManualBookingPaymentError(groupRefusal, 409); // #4042
+    // #4516 (owner decision, 14 Nov 2026): a bank or cash hand-back the journal holds as a debt is not dismissed until the four-way dismissal ships. Refused under lock(1) and the booking row, before the claim, so nothing is written.
+    if (resolution === "dismissed" && isJournalHandBackTask(task)) throw new ManualBookingPaymentError(JOURNAL_HAND_BACK_DISMISS_REFUSAL, 409);
     const laterRemoval = resolution === "completed" && input.refuseIfGuestRemovedSinceRaised === true ? await editReviewLaterRemovalRefusal(tx, task, resolution) : null; if (laterRemoval) throw new ManualBookingPaymentError(laterRemoval, 409); // #4343: the clean-up's opt-in, under lock(1), which a consent removal also holds; an officer is warned instead (owner, 24 Oct)
     const isEditReview = task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW;
 
@@ -376,7 +380,6 @@ export async function resolveManualRefundTask(
     if (claimed.count === 0) {
       throw new ManualBookingPaymentError("This refund task changed while you were closing it — refresh and try again.", 409);
     }
-    await withdrawDismissedHandBackDebt(tx, journal, { task, resolution, actingMemberId }); // #4516 (M4d): with the claim, so a lost claim leaves the debt
     let handBackFunding: readonly string[] = [];
     if (settlement && settlementRoute) {
       // #3835: the credit part goes back FIRST: member ledger lock before any Payment row (INV-LOCK-002).

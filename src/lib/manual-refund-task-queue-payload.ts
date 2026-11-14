@@ -14,6 +14,7 @@ import {
 } from "@/lib/manual-refund-task-settlement-rules";
 import { isBankRefundVoidFollowUpTask } from "@/lib/bank-refund-void-follow-up-key";
 import { isGroupOrganiserHandBackTask } from "@/lib/group-organiser-hand-back-rules";
+import { isJournalHandBackTask } from "@/lib/manual-refund-task-hand-back-journal";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { isGroupSettlementMirrorHandBackKind, reviewRefundGoesToGroupOrganiser } from "@/lib/group-settlement-mirror-kinds";
 import { readBankRefundVoidFollowUpContext } from "@/lib/bank-refund-void-follow-up-copy";
@@ -199,6 +200,8 @@ export type OpenManualRefundTaskPayload = {
    * cancel already booked those refunds, so the cash sentence does not fit it.
    */
   groupOrganiserHandBack: boolean;
+  /** #4516 (owner decision, 14 Nov 2026): a bank or cash hand-back the journal holds as a debt; its dismissal is refused for now. */
+  journalHandBack: boolean;
   /**
    * #4097 (`INV-PAY-129`): a card cancellation whose card refund carried less
    * than the refund due. `cardShortfallHandBack`: the part the payment's
@@ -325,6 +328,7 @@ export function toOpenManualRefundTaskPayload(
         ? reviewRefundGoesToGroupOrganiser(task) // review round 3: the chooser's own test
         : isGroupSettlementMirrorHandBackKind(task) && paidByOrganiserInternetBanking(task.booking),
     groupOrganiserHandBack: groupHandBack,
+    journalHandBack: isJournalHandBackTask(task),
     cardShortfallHandBack: cancelCardShortfallPart(task) === "bank",
     cardShortfallCheck: cancelCardShortfallPart(task) === "check",
     bankRefundVoidFollowUp: followUp

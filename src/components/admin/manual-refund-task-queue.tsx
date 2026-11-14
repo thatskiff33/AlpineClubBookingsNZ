@@ -37,7 +37,7 @@ import {
   type ClubDateFormat,
 } from "@/lib/club-time";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
-import { reviewGuestRemovedSinceRaisedWarning, zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
+import { JOURNAL_HAND_BACK_DISMISS_REFUSAL, reviewGuestRemovedSinceRaisedWarning, zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
 // #3213: whether a row may be closed as money that moved is decided ONCE, in a
 // client-safe home, and the completion door throws on the same answer
 // (`manual-refund-task-resolution.ts`, `INV-SSOT`). Deciding it again here is
@@ -112,6 +112,8 @@ interface ManualRefundTask {
   paidToGroupOrganiser?: boolean; // #3949: either of those two, paid back to the group organiser
   /** #4042: an organiser's Internet Banking group cancel, repaid to the organiser. Optional, as above. */
   groupOrganiserHandBack?: boolean;
+  /** #4516: a bank or cash hand-back whose dismissal the server refuses for now. Optional, as above. */
+  journalHandBack?: boolean;
   /** #4097: what a card cancellation's card refund could not carry - by bank transfer, or checked first. Optional, as above. */
   cardShortfallHandBack?: boolean;
   cardShortfallCheck?: boolean;
@@ -1703,7 +1705,7 @@ export function ManualRefundTaskQueue() {
                 its dates filled up during the card payment. The member is told only that the club will be in
                 touch: on their booking page, and for a cancellation by email unless emails were turned off.
                 Check Stripe and the bank before paying anything, then contact the member with what you found.
-                If they were refunded, dismiss it with a note saying how. If it really is owed, mark it paid
+                If they were refunded, leave it open for now: it cannot be dismissed yet. If it really is owed, mark it paid
                 back first, once any bank-transfer part and the card refund are done, and pay it by bank
                 transfer straight after the app accepts; if it refuses, follow what it says.
               </p>
@@ -1986,8 +1988,12 @@ export function ManualRefundTaskQueue() {
                               : "Mark paid back"}
                       </ViewOnlyActionButton>
                       ) : null}
-                      {/* #4042: a group organiser's hand-back is paid, never dismissed. */}
-                      {task.groupOrganiserHandBack === true ? null : (
+                      {/* #4042: a group organiser's hand-back is paid, never dismissed. #4516: nor, for now, a journal hand-back; its row says why. */}
+                      {task.groupOrganiserHandBack === true ? null : task.journalHandBack === true ? (
+                        <p className="text-xs text-muted-foreground" data-testid="manual-refund-task-dismiss-unavailable">
+                          {JOURNAL_HAND_BACK_DISMISS_REFUSAL}
+                        </p>
+                      ) : (
                       <ViewOnlyActionButton
                         canEdit={canEdit}
                         type="button"

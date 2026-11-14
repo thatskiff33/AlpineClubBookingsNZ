@@ -146,7 +146,7 @@ describe("the capacity race's refund shortfall task (#4154, INV-PAY-135)", () =>
     expect(capacityRaceShortfallIntentId({ kind: "EDIT_FINANCIAL_REVIEW", occurrenceKey: CHECK_KEY, bookingId: "booking-1" })).toBeNull();
     // The officer is told it is records drift to check first, and how to close it either way.
     expect(task.reason).toContain("only $80.00 of the $100.00 charge refundable");
-    expect(task.reason).toContain("Check Stripe and the bank before paying: dismiss this with a note if it was refunded.");
+    expect(task.reason).toContain("Check Stripe and the bank before paying; if it was refunded, leave this open."); // #4516: never dismissed for now
     // #4154 review (M3): mark first, then pay - one order on every officer surface.
     expect(task.reason).toContain("If it is owed, mark this paid back first, once the card refund has gone through, then pay it by bank transfer straight after the app accepts");
     expect(task.reason).not.toMatch(/pay it by bank transfer and mark/i);
@@ -196,7 +196,7 @@ describe("the capacity race's refund shortfall task (#4154, INV-PAY-135)", () =>
   it("MUTATION: the alert names the task to check once it is raised, and only then", () => {
     const raised = capacityRaceRefundShortfallMessage({ chargedCents: 10000, plannedRefundCents: 8000 }, CLUB_FORMAT_TEST, true);
     expect(raised).toContain("It is under Money to settle on the payments board, as a task to check");
-    expect(raised).toContain("dismiss the task with a note saying how");
+    expect(raised).toContain("If the member has had it, leave the task open for now, because it cannot be dismissed yet."); // #4516
     // #4154 review (M3, M4): mark first, then pay; and no Xero promise for a booking with no invoice.
     expect(raised).toContain("If it really is owed, mark the task paid back first, once the card refund has gone through: the app first checks it can record it");
     expect(raised).toContain("Pay the $20.00 by bank transfer straight after it accepts; if it refuses, follow what it says.");

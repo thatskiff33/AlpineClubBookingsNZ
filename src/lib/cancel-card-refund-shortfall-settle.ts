@@ -70,7 +70,7 @@ export const CARD_SHORTFALL_BANK_PART_FIRST_MESSAGE =
 
 /** #4154 review (M3): an officer marks first and pays after, so a refusal says what to do with money still owed. */
 export const CARD_SHORTFALL_NOTHING_TO_ALLOCATE_MESSAGE =
-  "The payment's records show nothing left to refund for this - it may already have gone back. Check Stripe and the bank: if the member has been refunded, dismiss this task with a note saying how. If it really is owed, the app cannot record it here: refund it by bank transfer, dismiss this task with a note saying when and how much, and raise its refund credit note in Xero by hand if the booking has a Xero invoice.";
+  "The payment's records show nothing left to refund for this - it may already have gone back. Check Stripe and the bank: if the member has been refunded, leave this task open for now, because it cannot be dismissed yet. If it really is owed, take it to the treasurer before paying anything: the app cannot record it, and this task cannot be dismissed yet.";
 
 /**
  * #4154 review (M10): a capacity race's card refund that failed. Never "close
@@ -83,7 +83,7 @@ export const CAPACITY_RACE_CARD_AWAITING_RETRY_MESSAGE =
   "The card refund for this booking failed and is waiting to retry: wait for its retry to go through, then mark this. If its retries run out, the app will say what to do then.";
 
 export function capacityRaceCardStoppedMessage(xero: CapacityRaceXero): string {
-  return `The card refund for this booking has stopped retrying, so the app cannot record this part as paid back. Check Stripe and the bank. Close the card refund as Paid another way on the Stuck States page once the member has had that money back another way. If this part is really owed too, refund it by bank transfer and dismiss this task with a note saying when and how much. ${CAPACITY_RACE_XERO_SENTENCE[xero]}`;
+  return `The card refund for this booking has stopped retrying, so the app cannot record this part as paid back. Check Stripe and the bank. Close the card refund as Paid another way on the Stuck States page once the member has had that money back another way. If this part is really owed too, take it to the treasurer before paying anything: the app cannot record it, and this task cannot be dismissed yet. ${CAPACITY_RACE_XERO_SENTENCE[xero]}`;
 }
 
 /**

@@ -69,7 +69,7 @@ export function capacityRaceRefundShortfallMessage(figures: ShortfallFigures, fo
   const remainder = formatCents(figures.chargedCents - figures.plannedRefundCents, format);
   const lead = "The dates filled up while this card payment was going through, so the booking was cancelled.";
   const todo = taskRaised
-    ? `It is under Money to settle on the payments board, as a task to check: the records may be wrong, and it may already have gone back. Check Stripe and the bank first. If the member has had it, dismiss the task with a note saying how. If it really is owed, mark the task paid back first, once the card refund has gone through: the app first checks it can record it, only on that card charge, correcting the charge's records first where it safely can. Pay the ${remainder} by bank transfer straight after it accepts; if it refuses, follow what it says. Accepted, it queues the Xero refund credit note itself, but a booking with no Xero invoice to credit gets no note.`
+    ? `It is under Money to settle on the payments board, as a task to check: the records may be wrong, and it may already have gone back. Check Stripe and the bank first. If the member has had it, leave the task open for now, because it cannot be dismissed yet. If it really is owed, mark the task paid back first, once the card refund has gone through: the app first checks it can record it, only on that card charge, correcting the charge's records first where it safely can. Pay the ${remainder} by bank transfer straight after it accepts; if it refuses, follow what it says. Accepted, it queues the Xero refund credit note itself, but a booking with no Xero invoice to credit gets no note.`
     : `Check the payment and refund the member the ${remainder} by hand if it has not already gone back.`;
   return `${lead} ${refundedSentence(figures, format)} ${todo} The member's booking page says the club will be in touch about it.`;
 }
@@ -81,7 +81,7 @@ export function capacityRaceRefundShortfallMessage(figures: ShortfallFigures, fo
  * task's own column, so it is not repeated here.
  */
 export function capacityRaceShortfallTaskReason(figures: ShortfallFigures, format: ClubFormat): string {
-  return `Cancelled because the dates filled up while this card payment was going through. ${refundedSentence(figures, format)} Check Stripe and the bank before paying: dismiss this with a note if it was refunded. If it is owed, mark this paid back first, once the card refund has gone through, then pay it by bank transfer straight after the app accepts (#4154).`;
+  return `Cancelled because the dates filled up while this card payment was going through. ${refundedSentence(figures, format)} Check Stripe and the bank before paying; if it was refunded, leave this open. If it is owed, mark this paid back first, once the card refund has gone through, then pay it by bank transfer straight after the app accepts (#4154).`;
 }
 
 /**

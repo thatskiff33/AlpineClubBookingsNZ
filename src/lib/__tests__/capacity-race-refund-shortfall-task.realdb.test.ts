@@ -488,7 +488,12 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
       expect(await corrections()).toEqual([]);
       expect(await prisma.bookingLedgerLine.count({ where: { bookingId: BOOKING_ID, kind: "BANK_REFUND" } })).toBe(0);
 
-      await resolve("dismissed", task.id, "Refunded in the Stripe dashboard on 2 July.");
+      // #4516 (owner decision, 14 Nov 2026): the officer cannot dismiss it for now; it stays OPEN, writing nothing.
+      const { JOURNAL_HAND_BACK_DISMISS_REFUSAL } = await import("@/lib/manual-refund-task-copy");
+      await expect(resolve("dismissed", task.id, "Refunded in the Stripe dashboard on 2 July.")).rejects.toMatchObject({ status: 409, message: JOURNAL_HAND_BACK_DISMISS_REFUSAL });
+      expect(await checkTask()).toMatchObject({ status: "OPEN" });
+      // A row dismissed before that (an earlier release, or the old colour mid-deploy) still reads as closed.
+      await prisma.manualRefundTask.update({ where: { id: task.id }, data: { status: "DISMISSED", note: "Refunded in the Stripe dashboard on 2 July.", completedAt: new Date() } });
       expect(await checkTask()).toMatchObject({ status: "DISMISSED" });
       expect(await taskRefundNotes()).toEqual([]);
       const page = await memberPage();
