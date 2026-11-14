@@ -137,6 +137,8 @@ export interface ExceptionRequestSubmitResult {
 }
 
 export interface RequestOfficerApprovalCardProps {
+  /** An in-page link target, on the card in both its states (#4945). */
+  id?: string;
   source: MemberExceptionRequestSource;
   /** The server-confirmed offer. The caller renders nothing when this is null. */
   offer: ExceptionOffer;
@@ -198,6 +200,7 @@ function describeGuestStay(
 }
 
 export function RequestOfficerApprovalCard({
+  id,
   source,
   offer,
   proposal,
@@ -268,7 +271,8 @@ export function RequestOfficerApprovalCard({
     const frozen = submitted.proposal;
     return (
       <div
-        className="space-y-3 rounded-md border border-success-6 bg-success-3 p-4 text-sm text-success-11"
+        id={id}
+        className="scroll-mt-24 space-y-3 rounded-md border border-success-6 bg-success-3 p-4 text-sm text-success-11"
         data-testid="exception-request-sent"
       >
         <p className="text-base font-semibold">Request sent</p>
@@ -326,7 +330,8 @@ export function RequestOfficerApprovalCard({
 
   return (
     <div
-      className="space-y-4 rounded-md border border-info-6 bg-info-3 p-4 text-sm text-info-11"
+      id={id}
+      className="scroll-mt-24 space-y-4 rounded-md border border-info-6 bg-info-3 p-4 text-sm text-info-11"
       data-testid="request-officer-approval"
     >
       <div className="space-y-1">

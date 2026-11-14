@@ -23,6 +23,7 @@ export async function getPrivacyRetentionSettings(
       emailLogRetentionYears: true, rejectedApplicationRetentionYears: true,
       formerMemberRetentionYears: true, pruneLogsAndApplicationsEnabled: true,
       anonymiseMembersEnabled: true, sentryReplayEnabled: true,
+      bookingDietaryRetentionDays: true, bookingDietaryClearEnabled: true,
     },
   });
   return privacyRetentionSettingsSchema.parse(row ?? DEFAULT_PRIVACY_RETENTION_SETTINGS);

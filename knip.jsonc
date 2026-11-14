@@ -36,7 +36,10 @@
     "scripts/theme/vendor/generate-radix-colors.tsx",
     // Named by `vitest.configFile` in stryker.config.mjs (#4459), a string in a
     // config knip's Stryker plugin does not follow, so nothing imports it.
-    "vitest.stryker.config.mts"
+    "vitest.stryker.config.mts",
+    // Loaded by the fixture's index.html, which the Vite server in
+    // scripts/e2e-contracts/dialog-viewport.pw.ts serves (#4967); never imported.
+    "scripts/e2e-contracts/fixtures/dialog-viewport/main.tsx"
     // NOTE: the five documented operator CLIs listed here until #2850 —
     // xero-booking-repair, xero-refund-note-link-repair,
     // backfill-orphaned-applied-credits, audit-ib-hold-clearing and

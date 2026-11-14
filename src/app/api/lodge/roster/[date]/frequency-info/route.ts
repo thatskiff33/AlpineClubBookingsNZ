@@ -3,9 +3,7 @@ import { checkLodgeAuth, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
-import { z } from "zod";
-
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 /**
  * GET /api/lodge/roster/[date]/frequency-info
@@ -27,7 +25,7 @@ export async function GET(
       { status: authResult.status! },
     );
   }
-  if (!dateSchema.safeParse(dateStr).success) {
+  if (!dateOnlyStringSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }
 

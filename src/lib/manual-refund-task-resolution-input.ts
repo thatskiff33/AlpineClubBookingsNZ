@@ -102,6 +102,16 @@ export type ManualRefundTaskResolution =
        * `prepareBankRefundVoidAnswer`). Refused on any other task.
        */
       bankRefundVoidAnswer?: ResolvedBankRefundVoidAnswer | null;
+      /**
+       * #4343: refuse this `EDIT_FINANCIAL_REVIEW` completion, under the
+       * resolver's `lock(1)`, when a guest the review names was removed after
+       * it was raised (`editReviewLaterRemovalRefusal`). Only the wave-B
+       * clean-up sets it: that removal already credited the guest, and the
+       * script then dismisses the review instead (owner, 24 Oct 2026). An
+       * officer's completion leaves it unset and is warned in the queue, as
+       * that decision chose. Ignored on every other kind.
+       */
+      refuseIfGuestRemovedSinceRaised?: boolean;
     }
   | {
       taskId: string;
@@ -127,4 +137,6 @@ export type ManualRefundTaskResolution =
       handedBackInCash?: never;
       /** #4162: "the club keeps it" IS the dismissal; it carries no answer. */
       bankRefundVoidAnswer?: never;
+      /** #4343: a dismissal moves no money, so it is never refused for a later removal. */
+      refuseIfGuestRemovedSinceRaised?: never;
     };

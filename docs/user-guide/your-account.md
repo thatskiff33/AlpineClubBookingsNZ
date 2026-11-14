@@ -50,7 +50,8 @@ set a password, never at login.
 In the **Change Email** section, enter your **New email** and click **Request
 Email Change**. A verification link is sent to the **new** address; the change
 only takes effect after you click that link. Your current email keeps working
-until then.
+until then. While the link is waiting to be clicked, the section names the new
+address and when the link expires; requesting another change replaces it.
 
 ### Two-factor authentication (2FA)
 
@@ -58,10 +59,11 @@ In the **Security** section, **Two-factor authentication** shows whether it is
 enabled and by which method (for example "Authenticator app"). Depending on your
 club's policy you may be required to set it up on first sign-in.
 
-- **Authenticator app (TOTP):** you scan a setup key into an authenticator app
-  and enter the 6-digit code to enrol. You are shown **recovery codes** — save
-  them somewhere safe; they are your way back in if you lose the app. Use
-  **Regenerate codes** to issue a fresh set (the old ones stop working).
+- **Authenticator app (TOTP):** you scan the QR code with an authenticator app
+  (or type the setup key shown under it) and enter the 6-digit code to enrol.
+  You are shown **recovery codes** — save them somewhere safe; they are your
+  way back in if you lose the app. Use **Regenerate codes** to issue a fresh
+  set (the old ones stop working).
 - **Email code:** where the club uses email-based 2FA, a code is emailed to you
   at sign-in.
 
@@ -126,7 +128,9 @@ The **Privacy & Data** section gives you two rights:
   account. This is **irreversible** and an admin reviews it first; on approval
   you are anonymised, your future bookings are cancelled, and your login is
   deactivated. You always receive a final privacy receipt when a deletion is
-  approved.
+  approved. While your request is waiting for review, the section shows the
+  date you asked instead of the button, so you can see it was received. If an
+  admin declines it, the button comes back.
 
 ## What to expect
 

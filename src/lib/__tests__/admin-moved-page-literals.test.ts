@@ -42,6 +42,7 @@ const ALLOWED: Record<string, { literals: readonly string[]; why: string }> = {
       '"/admin/booking-requests"',
       '"/admin/waitlist"',
       '"/admin/bed-allocation"',
+      '"/admin/members"',
     ],
     why:
       "a diagnostics row is matched against the help widget's canonicalAdminPathname, " +

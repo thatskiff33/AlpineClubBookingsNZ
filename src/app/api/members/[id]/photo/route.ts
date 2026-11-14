@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { isNotModified, opaqueEtag } from "@/lib/http-validators";
 import { auth } from "@/lib/auth";
 import { requireAdmin, requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -215,16 +215,15 @@ export async function GET(
     // 304 revalidation. The ETag is an opaque digest — never the raw
     // `photoImageId` — so the internal MediaImage id is not disclosed to
     // anonymous clients (defence in depth alongside the /api/images kind gate).
-    const etag = `"${createHash("sha256")
-      .update(`${member.photoImageId}:${member.photoUpdatedAt?.toISOString() ?? ""}`)
-      .digest("hex")
-      .slice(0, 32)}"`;
+    const etag = opaqueEtag(
+      `${member.photoImageId}:${member.photoUpdatedAt?.toISOString() ?? ""}`,
+    );
     const headers = {
       ...baseHeaders,
       "Cache-Control": "public, max-age=300, must-revalidate",
       ETag: etag,
     };
-    if (request.headers.get("if-none-match") === etag) {
+    if (isNotModified(request.headers, { etag })) {
       return new Response(null, { status: 304, headers });
     }
     return new Response(image.data, { status: 200, headers });

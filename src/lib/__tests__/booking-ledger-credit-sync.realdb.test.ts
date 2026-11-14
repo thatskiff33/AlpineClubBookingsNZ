@@ -204,7 +204,7 @@ async function clean(): Promise<void> {
     });
 
     it("posts a cancellation credit against its own row", async () => {
-      await credit.createCancellationCredit(MEMBER_ID, 4_500, BOOKING_ID);
+      await prisma.$transaction((tx) => credit.createCancellationCredit(tx, MEMBER_ID, 4_500, BOOKING_ID));
       const [row] = await prisma.memberCredit.findMany({ where: { sourceBookingId: BOOKING_ID }, select: { id: true } });
       expect(await lines()).toEqual([
         expect.objectContaining({ kind: "CREDIT_ISSUED", amountCents: -4_500, anchorKind: "MEMBER_CREDIT", anchorId: row?.id, postingKey: `credit:${row?.id}` }),
