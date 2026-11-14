@@ -1,6 +1,4 @@
-import { randomBytes } from "crypto";
-import { hash } from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
+import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import {
   AgeTier,
   BookingRequestPricingMode,
@@ -1822,7 +1820,7 @@ export async function holdBookingRequestSlots(input: {
     throw new BookingRequestQuoteError("Create a quote before holding capacity", 409);
   }
 
-  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
+  const placeholderPasswordHash = UNUSABLE_PLACEHOLDER_PASSWORD_HASH;
   // MG4-D-b (#2309). Read BEFORE the transaction opens — the ordering rule in
   // `member-guest-add-policy.ts`: a settings read under the per-lodge capacity
   // lock is a second query held across the whole hold, for nothing.

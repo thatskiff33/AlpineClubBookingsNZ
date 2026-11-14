@@ -123,12 +123,10 @@ vi.mock("next-auth", () => {
   return { default: mockNextAuth, CredentialsSignin };
 });
 
-vi.mock("bcryptjs", () => ({
-  default: {
-    compare: mockBcryptCompare,
-    hash: vi.fn().mockResolvedValue("$2b$12$hashed"),
-  },
-}));
+vi.mock("@/lib/password-hashing", async (importOriginal) => {
+  const { passwordHashingModuleMock } = await import("@/lib/__tests__/helpers/password-hashing-mock");
+  return passwordHashingModuleMock(await importOriginal(), { verifyPassword: mockBcryptCompare, hashPassword: vi.fn().mockResolvedValue("$2b$12$hashed") });
+});
 
 // Partial: `admin-modules` re-exports other members of this module at load time.
 vi.mock("@/lib/module-settings", async (importOriginal) => ({

@@ -2,9 +2,7 @@ import { z } from "zod";
 import { AGE_TIER_VALUES, ageTierEnum } from "@/lib/age-tier-schema";
 import { genderEnum, titleEnum } from "@/lib/member-enums-schema";
 import type { AgeTier, Prisma } from "@prisma/client";
-import { hash } from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
-import { randomBytes } from "crypto";
+import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import { prisma } from "@/lib/prisma";
 import { exactContains, exactPrefix } from "@/lib/prisma-exact-prefix";
 import {
@@ -1562,8 +1560,8 @@ export async function createAdminMember(
     }
   }
 
-  // Random unguessable password
-  const placeholderHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
+  // No usable password until the member completes the screened setup flow.
+  const placeholderHash = UNUSABLE_PLACEHOLDER_PASSWORD_HASH;
 
   const postalAddress = data.postalSameAsPhysical
     ? copyStreetAddressToPostal({

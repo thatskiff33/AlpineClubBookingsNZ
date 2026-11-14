@@ -123,10 +123,6 @@ vi.mock("@/lib/admin-modules", () => ({
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
-// bcrypt at cost 13 runs on some of these paths before the guard under test;
-// the placeholder hash itself is irrelevant here and real bcrypt would add
-// seconds per case.
-vi.mock("bcryptjs", () => ({ hash: vi.fn().mockResolvedValue("hashed") }));
 
 const guards = vi.hoisted(() => ({ requireAdmin: vi.fn() }));
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: guards.requireAdmin }));

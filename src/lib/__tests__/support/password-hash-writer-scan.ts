@@ -51,7 +51,7 @@ import ts from "typescript";
 // Each property writer also carries the SOURCE of the value it writes
 // (`traceWrittenValue`): the expression is followed back through `const`
 // bindings in the enclosing scopes and through a `bcrypt.hash(...)` call to the
-// hash's input. An exempt writer must trace to random bytes, the erased-account
+// hash's input. An exempt writer must trace to random bytes, the imported placeholder, the erased-account
 // sentinel or a fixed literal, so swapping a placeholder's input for a typed
 // password fails the census. A raw-SQL writer is a fixed literal only when the
 // literal has no template holes, no `$n` or `?` placeholders and no bind
@@ -72,6 +72,7 @@ export type PasswordHashWriterKind = "property" | "sql";
 /**
  * Where a written value comes from. `random`: a hash of `randomBytes` or
  * `randomUUID` output. `deleted-sentinel`: `DELETED_ACCOUNT_PASSWORD_HASH`.
+ * `placeholder`: the imported UNUSABLE_PLACEHOLDER_PASSWORD_HASH.
  * `literal`: a fixed string, or the hash of one, or a raw-SQL literal with no
  * holes, placeholders or bind arguments. `parameter`: a parameter of the enclosing function (or a property of
  * one), so the caller decides. `copy`: the `passwordHash` of an object built in
@@ -83,6 +84,7 @@ export type PasswordHashWriterKind = "property" | "sql";
 export type PasswordHashValueSource =
   | "random"
   | "deleted-sentinel"
+  | "placeholder"
   | "literal"
   | "parameter"
   | "copy"
@@ -92,6 +94,7 @@ export type PasswordHashValueSource =
 export const GENERATED_PASSWORD_HASH_SOURCES: ReadonlySet<PasswordHashValueSource> = new Set([
   "random",
   "deleted-sentinel",
+  "placeholder",
   "literal",
 ]);
 
@@ -1024,7 +1027,7 @@ function referenceOf(node: ts.Expression): Reference | null {
 }
 
 const MAX_TRACE_DEPTH = 8;
-const HASH_FUNCTIONS = new Set(["hash", "hashSync"]);
+const HASH_FUNCTIONS = new Set(["hash", "hashSync", "hashPassword", "hashPin"]);
 const HASH_MODULES = new Set(["bcrypt", "bcryptjs"]);
 const RANDOM_FUNCTIONS = new Set(["randomBytes", "randomUUID"]);
 
@@ -1256,6 +1259,21 @@ function traceWrittenValue(node: ts.Expression, depth = 0): TracedValue {
   if (ts.isIdentifier(value)) {
     if (value.text === "DELETED_ACCOUNT_PASSWORD_HASH") return { ...UNTRACED, source: "deleted-sentinel" };
     const binding = resolveBinding(value.text, value);
+    // Only the imported constant is exempt; a local/parameter with this name
+    // must trace normally, so shadowing cannot hide a typed password.
+    if (value.text === "UNUSABLE_PLACEHOLDER_PASSWORD_HASH" && !binding) {
+      const imported = value.getSourceFile().statements.some((statement) =>
+        ts.isImportDeclaration(statement) &&
+        ts.isStringLiteral(statement.moduleSpecifier) &&
+        /(?:^@\/lib\/|(?:\.\.\/)+src\/lib\/|^\.\/|^\.\.\/)password-hashing$/.test(statement.moduleSpecifier.text) &&
+        statement.importClause?.namedBindings &&
+        ts.isNamedImports(statement.importClause.namedBindings) &&
+        statement.importClause.namedBindings.elements.some((element) =>
+          element.name.text === value.text && !element.propertyName,
+        ),
+      );
+      if (imported) return { ...UNTRACED, source: "placeholder" };
+    }
     if (binding?.kind === "const") return traceWrittenValue(binding.initializer, depth + 1);
     return binding?.kind === "parameter" ? { ...UNTRACED, source: "parameter" } : UNTRACED;
   }

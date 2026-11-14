@@ -138,7 +138,8 @@ This file holds only the rules.
   returning, before the write in an enclosing block — nor listed as exempt
   with its reason: a generated or deliberately unusable hash (placeholders,
   imports, erasure, the demo seed, SQL fixtures). An exempt writer's value
-  must trace to random bytes, the erased-account sentinel or an inline
+  must trace to random bytes, the imported unusable-placeholder constant,
+  the erased-account sentinel or an inline
   literal; a stored parameter or copied hash, to the screened or generated
   writer its `valueFrom` names. A copy is refused if its object is changed;
   an alias or call that changes the screened object voids a screen. Only the
@@ -286,3 +287,21 @@ This file holds only the rules.
   their own step-up, never themselves. The officer is emailed and their
   sessions end. The operator command is the way back when that Full Admin is
   the only one.
+
+## INV-AUTH-013
+
+- **Password and PIN hashing and verification go through one server-only module**:
+  [`password-hashing.ts`](../../src/lib/password-hashing.ts). Its asynchronous
+  native bcrypt calls run off the main event loop, including refused sign-ins'
+  dummy comparison. Runtime code, operator scripts and seeds never import a
+  bcrypt library elsewhere; the password-writer census enforces this boundary.
+- **Accounts awaiting a password store the shared precomputed unusable bcrypt
+  hash**, never a freshly computed throwaway hash or a non-bcrypt marker.
+  `UNUSABLE_PLACEHOLDER_PASSWORD_HASH` is distinct from `DUMMY_PASSWORD_HASH`;
+  both encode `PASSWORD_BCRYPT_COST`, as new account passwords do. The cost is
+  checked against a real hash by the parity test. A placeholder later granted
+  login still spends a full comparison until the screened setup/reset flow
+  supplies its real password.
+- **Stored bcrypt hashes retain their verification behaviour**, including byte
+  truncation and Unicode. PINs keep their separate cost policy; no hash is
+  rewritten merely by deploying the module.

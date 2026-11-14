@@ -79,7 +79,7 @@ vi.mock("@/lib/xero-contact-groups", () => ({
 vi.mock("@/lib/xero-sync", () => ({
   upsertXeroObjectLink: mocks.upsertXeroObjectLink,
 }));
-vi.mock("bcryptjs", () => ({ hash: vi.fn(async () => "placeholder-hash") }));
+
 
 import {
   importMembersFromXeroGroups,

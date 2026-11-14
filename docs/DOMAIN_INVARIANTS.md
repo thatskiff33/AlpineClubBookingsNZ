@@ -1055,3 +1055,4 @@ headings the index keeps verbatim.
 | `INV-AUTH-010` | Listed admin routes require a fresh proof first |
 | `INV-AUTH-011` | Address sign-in limits exempt signout/session; refusals show a network wait |
 | `INV-AUTH-012` | Officers use an app or passkey after grace |
+| `INV-AUTH-013` | Password work leaves the event loop; placeholders use one unusable hash |

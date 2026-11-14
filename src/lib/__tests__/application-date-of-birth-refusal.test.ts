@@ -75,7 +75,7 @@ vi.mock("@/lib/induction", () => ({ createMemberInduction: vi.fn() }));
 vi.mock("@/lib/logger", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
-vi.mock("bcryptjs", () => ({ hash: vi.fn().mockResolvedValue("hashed") }));
+
 vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: vi.fn().mockResolvedValue(null),
   rateLimiters: { membershipApplication: {} },

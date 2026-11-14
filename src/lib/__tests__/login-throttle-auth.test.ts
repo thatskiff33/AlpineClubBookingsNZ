@@ -89,9 +89,10 @@ vi.mock("next-auth", () => {
     CredentialsSignin,
   };
 });
-vi.mock("bcryptjs", () => ({
-  default: { compare: mockBcryptCompare, hash: vi.fn().mockResolvedValue("new-hash") },
-}));
+vi.mock("@/lib/password-hashing", async (importOriginal) => {
+  const { passwordHashingModuleMock } = await import("@/lib/__tests__/helpers/password-hashing-mock");
+  return passwordHashingModuleMock(await importOriginal(), { verifyPassword: mockBcryptCompare, hashPassword: vi.fn().mockResolvedValue("new-hash") });
+});
 vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: vi.fn().mockResolvedValue(null),
 }));
@@ -127,7 +128,7 @@ import { FROZEN_TEST_CLOCK_BASE_ISO } from "@/lib/__tests__/helpers/clock";
 import { authConfig } from "@/lib/auth";
 import { POST as changePassword } from "@/app/api/auth/change-password/route";
 import { requireActiveSessionUser } from "@/lib/session-guards";
-import bcrypt from "bcryptjs";
+import { hashPassword } from "@/lib/password-hashing";
 import { NextResponse, type NextRequest } from "next/server";
 import {
   LOGIN_THROTTLE_DEGRADED_FREE_FAILURES,
@@ -428,7 +429,7 @@ describe("change-password shares sign-in's account budget (#4640)", () => {
       });
     }
     expect(mockBcryptCompare).toHaveBeenCalledTimes(compares);
-    expect(bcrypt.hash).not.toHaveBeenCalled();
+    expect(hashPassword).not.toHaveBeenCalled();
     expect(member.update).not.toHaveBeenCalled();
     expect(rows.get(loginAccountKey(OFFICER_EMAIL))?.failureCount).toBe(5);
   });

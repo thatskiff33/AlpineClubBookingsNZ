@@ -41,9 +41,10 @@ vi.mock("@/lib/login-throttle", () => ({
   claimPasswordAttempt: mockClaim,
   clearPasswordAttempts: mockClear,
 }));
-vi.mock("bcryptjs", () => ({
-  default: { compare: mockCompare },
-}));
+vi.mock("@/lib/password-hashing", async (importOriginal) => {
+  const { passwordHashingModuleMock } = await import("@/lib/__tests__/helpers/password-hashing-mock");
+  return passwordHashingModuleMock(await importOriginal(), { verifyPassword: mockCompare });
+});
 
 import { LOGIN_THROTTLED_CODE } from "@/lib/login-throttle-policy";
 import {

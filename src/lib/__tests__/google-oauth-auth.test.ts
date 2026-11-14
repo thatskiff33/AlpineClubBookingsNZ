@@ -63,9 +63,10 @@ vi.mock("next-auth/providers/google", () => ({
   default: vi.fn((config) => ({ id: "google", type: "oidc", ...config })),
 }));
 
-vi.mock("bcryptjs", () => ({
-  default: { compare: vi.fn().mockResolvedValue(true) },
-}));
+vi.mock("@/lib/password-hashing", async (importOriginal) => {
+  const { passwordHashingModuleMock } = await import("@/lib/__tests__/helpers/password-hashing-mock");
+  return passwordHashingModuleMock(await importOriginal(), { verifyPassword: vi.fn().mockResolvedValue(true) });
+});
 
 vi.mock("next-auth", () => {
   class CredentialsSignin extends Error {

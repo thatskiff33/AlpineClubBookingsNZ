@@ -269,6 +269,11 @@ BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
   login into dashboard latency. Rerun all four scenarios from a freshly reset
   stack after these corrections. Keep the published thresholds unchanged and
   attach the k6 summaries to #1884.
+- **Password CPU profile (#4934):** password and PIN hashing now uses native
+  bcrypt on libuv workers; imports and placeholder creation do no per-account
+  hashing. Earlier sign-in baselines used main-thread `bcryptjs`. A rerun is a
+  new resource profile, not evidence that the old run passed. Keep cost 13 and
+  the published thresholds; record worker-pool settings alongside CPU limits.
 - **Deployment profile remains evidence, not a code workaround:** the measured
   stack was CPU-bound while the app container was limited below one CPU. A
   follow-up run may profile roughly 2 app CPUs, but it must be reported as a

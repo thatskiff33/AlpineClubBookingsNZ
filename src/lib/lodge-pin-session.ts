@@ -1,4 +1,4 @@
-import bcrypt from "bcryptjs";
+import { hashPin, verifyPassword } from "./password-hashing";
 import { createHmac, randomInt, timingSafeEqual } from "crypto";
 import { HUT_LEADER_PIN_LENGTH } from "@/lib/hut-leader-pin";
 import { cookies } from "next/headers";
@@ -226,7 +226,7 @@ export function generateHutLeaderPin(): string {
 }
 
 export async function hashHutLeaderPin(pin: string): Promise<string> {
-  return bcrypt.hash(pin, HUT_LEADER_PIN_BCRYPT_ROUNDS);
+  return hashPin(pin, HUT_LEADER_PIN_BCRYPT_ROUNDS);
 }
 
 /**
@@ -278,7 +278,7 @@ export async function findActiveHutLeaderAssignmentByPin(
       continue;
     }
 
-    if (await bcrypt.compare(pin, assignment.hutLeaderPin)) {
+    if (await verifyPassword(pin, assignment.hutLeaderPin)) {
       return assignment;
     }
   }
@@ -328,7 +328,7 @@ export async function verifyHutLeaderPinForAssignment(
   if (!assignment || !assignment.hutLeaderPin || !assignment.member.active) {
     return null;
   }
-  if (!(await bcrypt.compare(pin, assignment.hutLeaderPin))) {
+  if (!(await verifyPassword(pin, assignment.hutLeaderPin))) {
     return null;
   }
   return assignment;
