@@ -11,6 +11,7 @@ import { OPEN_HAND_BACKS_FOR_REFUND_APPEAL_SELECT, refundAppealCeilingParts } fr
 import { netCollectedCardRefundSelect } from "@/lib/additional-ledger-gap";
 import { organiserCardAppealCeilingFor } from "@/lib/organiser-child-refund";
 import { readApprovedAppealOutcomes } from "@/lib/refund-appeal-outcome";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 
 const querySchema = z.object({
   status: z.enum(["PENDING", "APPROVED", "REJECTED", "ALL"]).optional().default("PENDING"),
@@ -115,7 +116,9 @@ export async function GET(req: NextRequest) {
       // card refund still owed that it netted (`appealCardRefundOwedCents`, the
       // screen's "Less ... not yet made" line) - never the rows.
       const { payment: loadedPayment, ...bookingRest } = listed.booking;
-      const ceiling = refundAppealCeilingParts(loadedPayment, listed.booking.creditsFromCancellation);
+      // #4872 (`INV-PAY-150`): less a live superseded capture's hold-back, which the approval nets too.
+      const heldBackCents = loadedPayment ? (await readSupersededCaptureHeldBack(prisma, loadedPayment.id)).totalCents : 0;
+      const ceiling = refundAppealCeilingParts(loadedPayment, listed.booking.creditsFromCancellation, heldBackCents);
       // The payment's own columns only, named: never its hand-back or card-refund rows.
       const screenPayment = loadedPayment && {
         id: loadedPayment.id,

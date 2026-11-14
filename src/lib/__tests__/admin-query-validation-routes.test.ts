@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
+  readSupersededCaptureHeldBack: vi.fn().mockResolvedValue({ byTransaction: new Map(), totalCents: 0 }),
   auth: vi.fn(),
   requireActiveSessionUser: vi.fn(),
   refundRequestFindMany: vi.fn(),
@@ -22,6 +23,11 @@ const mocks = vi.hoisted(() => ({
   emailLogFindMany: vi.fn(),
   parseApplicationAddress: vi.fn(),
   parseApplicationFamilyMembers: vi.fn(),
+}));
+
+// #4872: the superseded-capture hold-back read; none unless a test says.
+vi.mock("@/lib/superseded-capture-hold-back", () => ({
+  readSupersededCaptureHeldBack: (...args: unknown[]) => mocks.readSupersededCaptureHeldBack(...args),
 }));
 
 vi.mock("@/lib/auth", () => ({

@@ -4,6 +4,7 @@ import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { adminHref } from "@/lib/admin-hubs";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -190,7 +191,7 @@ export interface PolicyExceptionRequestsPanelProps {
 }
 
 export function PolicyExceptionRequestsPanel({
-  basePath = "/admin/booking-requests?tab=exceptions",
+  basePath = `${adminHref("booking-requests")}?tab=exceptions`,
   showHeading = false,
   canEdit = true,
 }: PolicyExceptionRequestsPanelProps) {
@@ -789,7 +790,7 @@ export function PolicyExceptionRequestsPanel({
                       {item.requestedBy ? (
                         <Link
                           href={buildHrefWithReturnTo(
-                            `/admin/members/${item.requestedBy.id}`,
+                            `${adminHref("member-detail", { id: item.requestedBy.id })}`,
                             basePath,
                           )}
                           className="text-info-11 hover:underline"

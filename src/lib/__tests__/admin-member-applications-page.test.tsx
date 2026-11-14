@@ -32,7 +32,7 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(navigation.search),
 }));
 
-import MemberApplicationsPage from "@/app/(admin)/admin/member-applications/page";
+import MemberApplicationsPage from "@/app/(admin)/admin/membership/member-applications/page";
 
 const fetchMock = vi.fn();
 

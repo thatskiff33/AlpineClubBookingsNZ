@@ -34,7 +34,15 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/payment-recovery-alert", () => ({ alertPaymentRecoveryOfficers: h.alertPaymentRecoveryOfficers }));
-vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+vi.mock("@/lib/prisma", () => {
+  const prisma = {
+    $executeRaw: vi.fn(async () => 1),
+    paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
+    payment: { findUnique: vi.fn(async () => null) },
+    paymentTransaction: { findMany: vi.fn(async () => []) },
+  };
+  return { prisma: { ...prisma, $transaction: async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma) } };
+});
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));

@@ -1,4 +1,6 @@
+import type { BookingStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
+import { editDoorBooking } from "./support/edit-door-booking";
 
 import {
   classifyFinishedStayChangeFeeRule,
@@ -34,8 +36,8 @@ function day(value: string): Date {
 
 const TODAY = day("2026-07-01");
 
-function makeBooking(status = "COMPLETED"): LoadedBookingForModify {
-  return {
+function makeBooking(status: BookingStatus = "COMPLETED"): LoadedBookingForModify {
+  return editDoorBooking({
     status,
     checkIn: day("2026-06-10"),
     checkOut: day("2026-06-14"),
@@ -43,7 +45,7 @@ function makeBooking(status = "COMPLETED"): LoadedBookingForModify {
       { id: "g1", stayStart: day("2026-06-10"), stayEnd: day("2026-06-14") },
       { id: "g2", stayStart: day("2026-06-10"), stayEnd: day("2026-06-14") },
     ],
-  } as unknown as LoadedBookingForModify;
+  });
 }
 
 function resolve(input: BatchModifyInput, booking = makeBooking()) {
@@ -268,11 +270,11 @@ describe("resolveTargetDates — finished-stay correction window (#3750)", () =>
   });
 
   it("does not report the mode for a stay that has not finished", () => {
-    const booking = {
+    const booking = editDoorBooking({
       ...makeBooking("PAID"),
       checkIn: day("2026-06-29"),
       checkOut: day("2026-07-03"),
-    } as LoadedBookingForModify;
+    });
     const dates = resolve({}, booking);
     expect(dates.isFinishedStayCorrection).toBe(false);
     expect(dates.isInProgressEdit).toBe(true);
