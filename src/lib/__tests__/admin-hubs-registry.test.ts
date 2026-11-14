@@ -1,5 +1,6 @@
 import ts from "typescript";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { NextConfig } from "next";
@@ -1142,13 +1143,16 @@ describe("tabs and anchors", () => {
   });
 
   /**
-   * Follow static value imports/re-exports within the page's directory, including
-   * relative and @/ paths and index barrels. An unimported sibling is not page
-   * source. This proves import reachability, not conditional rendering; shared
-   * components outside this directory still need COMPONENT_ANCHORS below.
+   * Follow static value imports/re-exports within the entry file's directory,
+   * including relative and @/ paths and index barrels. An unimported sibling is
+   * not page source. This proves import reachability, not conditional rendering;
+   * shared components outside this directory still need COMPONENT_ANCHORS below.
+   * An anchor whose element id is minted by a helper, rather than written as a
+   * string literal, is deliberately not supported: the census looks for the
+   * literal, so such an anchor fails until its element writes the id out.
    */
-  function pageSources(page: AdminHubPage): string {
-    const file = path.resolve(PAGE_FILE_BY_PATH.get(diskPath(page))!);
+  function reachableSources(entry: string): string {
+    const file = path.resolve(entry);
     const dir = path.dirname(file);
     const sources = new Map<string, string>();
     function visit(file: string) {
@@ -1175,11 +1179,42 @@ describe("tabs and anchors", () => {
     return [...sources.values()].join("\n");
   }
 
-  it("excludes the mappings element in Xero Sync's unimported sibling component", () => {
-    const element = 'id={xeroSectionId("mappings")}';
-    const sibling = fs.readFileSync("src/app/(admin)/admin/finance/xero/_components/mappings-panel.tsx", "utf8");
-    expect(sibling).toContain(element);
-    expect(pageSources(getAdminPage("xero"))).not.toContain(element);
+  /** The page's own file, and what it reaches by static imports in its directory. */
+  function pageSources(page: AdminHubPage): string {
+    return reachableSources(PAGE_FILE_BY_PATH.get(diskPath(page))!);
+  }
+
+  it("follows a page's static imports and no unimported sibling, on a fixture tree", () => {
+    // A fixture, not a production page: the census logic is proved without
+    // depending on which real components a page happens to import today.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "page-sources-"));
+    const dir = path.join(root, "app");
+    try {
+      fs.mkdirSync(path.join(dir, "_components"), { recursive: true });
+      const write = (name: string, body: string) => fs.writeFileSync(path.join(dir, name), body);
+      write("page.tsx", [
+        'import { Used } from "./_components/used";',
+        'import { Barreled } from "./_components/barrel";',
+        'import type { TypeOnly } from "./_components/type-only";',
+        'import { Outside } from "../outside";',
+        'export default function Page() { return <Used id="page-literal" />; }',
+      ].join("\n"));
+      write("_components/used.tsx", 'import { Page } from "../page";\nexport const Used = "reached-used";');
+      write("_components/barrel.ts", 'export * from "./deep";');
+      write("_components/deep.tsx", 'export const Barreled = "reached-deep";');
+      write("_components/type-only.tsx", 'export type TypeOnly = "skipped-type-only";');
+      write("_components/unimported.tsx", 'export const Sibling = "skipped-sibling";');
+      fs.writeFileSync(path.join(root, "outside.tsx"), "export const Outside = 1;");
+      const reached = reachableSources(path.join(dir, "page.tsx"));
+      expect(reached).toContain("page-literal");
+      expect(reached).toContain("reached-used");
+      expect(reached).toContain("reached-deep");
+      expect(reached).not.toContain("skipped-type-only");
+      expect(reached).not.toContain("skipped-sibling");
+      expect(reached).not.toContain("Outside = 1");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("has each tabbed page render the shared tab shell for itself, with every tab", () => {
@@ -1917,7 +1952,7 @@ describe("the registry is inert", () => {
   /** Every file outside the registry that may import it, and why. */
   const IMPORTERS: Record<string, string> = {
     "src/app/(admin)/admin/booking-desk/bed-allocation/page.tsx": "#4972: the empty-lodge alert links to Lodges",
-    "src/app/(admin)/admin/finance/xero/setup/xero-setup-wizard.tsx": "#4972: shares the mapping step id with shortcuts",
+    "src/app/(admin)/admin/finance/xero/setup/xero-setup-wizard.tsx": "#4972: shares the step parameter and the webhooks and mapping step ids with the shortcuts",
     "src/lib/admin-permissions.ts":
       "C2: the route map's page half, the admission paths and the landing page are generated",
     "src/config/feature-routes.ts": "C2: the admin page module gates are generated",
@@ -1974,7 +2009,7 @@ describe("the registry is inert", () => {
     "src/components/admin/membership-cancellation-blocker-notice.tsx":
       "S1: the settings link is the queue's Settings tab",
     "src/lib/setup-readiness.ts":
-      "S1: the cancellation step links the Settings tab; C5: Xero setup, and the mappings anchor and label; " +
+      "S1: the cancellation step links the Settings tab; C5: Xero setup and its label; #4972: the mappings step opens Xero Setup at its mapping step; " +
       "C6: the booking policies, age tier and seasons steps; C7: the System Health steps; " +
       "C9: the members step",
     "src/lib/__tests__/admin-feature-search-index.test.ts":
@@ -2031,7 +2066,7 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/finance/xero/_components/health-diagnostics-panel.tsx":
       "C5: the member-grouping link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/webhook-amber-badge.tsx":
-      "C5: the webhook setup link is adminHref",
+      "C5: the webhook setup link is adminHref; #4972: it is built by the shared Xero Setup step helper",
     "src/app/(admin)/admin/finance/xero/_components/xero-setup-page-client.tsx":
       "C5: its back link is adminHref",
     "src/app/(admin)/admin/finance/xero/setup/xero-completion-steps.tsx":
@@ -2040,7 +2075,7 @@ describe("the registry is inert", () => {
       "C5: the Xero setup card is adminHref; C7: and the backup setup and AI assistant cards",
     "src/app/(admin)/admin/modules/page.tsx": "C5: the Xero module setup link is adminHref",
     "src/app/(admin)/admin/setup/finance/page.tsx":
-      "C5: the Xero cards are adminHref and the mappings card adminAnchorHref",
+      "C5: the Xero cards are adminHref; #4972: the mappings card opens Xero Setup at its mapping step",
     "src/app/(admin)/admin/stripe/setup/page.tsx": "C5: the payments link is adminHref",
     "src/components/admin/booking-requests/booking-approvals-panel.tsx":
       "C5: the refunds link is adminHref; C10: the booking record and the changes tab",
@@ -2103,6 +2138,8 @@ describe("the registry is inert", () => {
       "C5: no production code spells a moved page's old URL as a literal",
     "src/lib/__tests__/xero-oauth-return-path.test.ts":
       "C5: the OAuth return-path check accepts both Xero landing pages at either place",
+    "src/lib/__tests__/xero-setup-links.test.ts":
+      "#4972: the Xero Setup step shortcuts open the mapping and webhooks steps",
     "src/app/(admin)/admin/rules/booking-policies/page.tsx": "C6: its cards link with adminHref",
     "src/app/(admin)/admin/rules/booking-policies/adult-member-hosting/page.tsx":
       "C6: its back link is adminLink",

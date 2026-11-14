@@ -3,7 +3,11 @@
 import { useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { XERO_MAPPING_STEP_ID, XERO_SETUP_STEP_PARAM } from "@/lib/admin-hubs/xero-setup";
+import {
+  XERO_MAPPING_STEP_ID,
+  XERO_SETUP_STEP_PARAM,
+  XERO_WEBHOOKS_STEP_ID,
+} from "@/lib/admin-hubs/xero-setup";
 import { IntegrationWizard } from "@/components/admin/integration-wizard";
 import type { WizardStepConfig } from "@/components/admin/integration-wizard";
 import {
@@ -64,7 +68,7 @@ export function XeroSetupWizard({
         render: (ctx, helpers) => <ConnectStep context={ctx} helpers={helpers} />,
       },
       {
-        id: "webhooks",
+        id: XERO_WEBHOOKS_STEP_ID,
         title: "Webhooks",
         summary: "Real-time updates (optional)",
         // Optional/skippable (epic decision 5): passes when verified OR skipped;
