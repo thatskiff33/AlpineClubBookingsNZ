@@ -311,6 +311,23 @@ describe("resolveBookingNarrative", () => {
     expect(result.message).not.toContain("was refunded");
   });
 
+  it("describes the officer's hand-back after a rolled-back credit attempt (#4913)", () => {
+    // The failed attempt leaves no CREDITED fact; only the later cancel commits.
+    const result = resolveBookingNarrative({
+      club: CLUB,
+      booking: booking({ status: "CANCELLED" }),
+      events: [
+        event(BookingEventType.MEMBER_PAID, "2026-05-02T00:00:00.000Z", { amountCents: 12000 }),
+        event(BookingEventType.CANCELLED, "2026-05-06T00:00:00.000Z", {
+          snapshot: { policySummary: "manual hand-back", refundMethod: "manual", refundPercentage: 75,
+            paidAmountCents: 12000, settledAmountCents: 9000, retainedAmountCents: 3000, changeFeeCents: 0 },
+        }),
+      ],
+    }, CLUB_FORMAT_TEST);
+    expect(result.message).toContain("$90.00 is being refunded to you by the club directly");
+    expect(result.message).not.toContain("added to your account credit");
+  });
+
   it("describes a credit refund as account credit rather than a card refund", () => {
     const result = resolveBookingNarrative({
       club: CLUB,

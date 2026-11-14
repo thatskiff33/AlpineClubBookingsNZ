@@ -17,6 +17,12 @@
 /** The `CredentialsSignin` code a throttled attempt answers with. */
 export const LOGIN_THROTTLED_CODE = "LOGIN_THROTTLED";
 
+/** Shared-address refusal; distinct from the per-account password wait. */
+export const ADDRESS_THROTTLED_CODE = "ADDRESS_THROTTLED";
+// next-auth's signIn result does not expose Retry-After, so use the fallback.
+export const ADDRESS_THROTTLED_MESSAGE =
+  "Too many sign-in attempts from this network. Please wait a few minutes and try again.";
+
 /** Counted attempts allowed before the first wait. */
 export const LOGIN_THROTTLE_FREE_FAILURES = 5;
 /** An hour with no counted attempt forgets the count. */

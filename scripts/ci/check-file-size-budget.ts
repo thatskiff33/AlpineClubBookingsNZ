@@ -6,6 +6,12 @@
  * `pnpm run quality:budget --base <ref>`    compare against a different ref
  * `pnpm run quality:budget --report`        print the whole tree's debt
  *
+ * The same run also judges FUNCTION length (#4927): the function-length ratchet
+ * in `scripts/lib/function-length-ratchet.ts`, against the same base, with the
+ * same allowance directory. It is a second phase of this command rather than a
+ * command of its own so that the CI step, the epic-sync census and every lane's
+ * pre-push habit run it without anybody wiring it in.
+ *
  * `--base` is not only a diagnostic. CI passes it on a `push` to `main`, where
  * the default of `origin/main` IS the commit being tested and would make this
  * gate vacuous — see the step comment in `.github/workflows/ci.yml`.
@@ -58,6 +64,11 @@ import {
   readSizeAllowances,
   type SizeAllowance,
 } from "../lib/file-size-allowances";
+import {
+  FUNCTION_LENGTH_LIMIT,
+  evaluateFunctionLengthRatchet,
+  findLongFunctions,
+} from "../lib/function-length-ratchet";
 import { DEFAULT_BASE_REF } from "../lib/budget-base-ref.mjs";
 import { isMainModule } from "../lib/is-main-module.mjs";
 
@@ -69,7 +80,13 @@ const SEVERITY_HEADINGS = {
   regression: "REGRESSION — new or growing size debt",
 } as const;
 
-export function renderFinding(finding: ComputedFinding): string {
+/** The fields both ratchets' findings share, which is all rendering reads. */
+type RenderableFinding = Pick<
+  ComputedFinding,
+  "severity" | "file" | "budget" | "previous" | "current" | "problem" | "action"
+>;
+
+export function renderFinding(finding: RenderableFinding): string {
   const lines: string[] = [`  ${finding.file ?? "(the comparison itself)"}`];
   lines.push(`      problem:  ${finding.problem}`);
   if (finding.budget) lines.push(`      budget:   ${finding.budget}`);
@@ -88,25 +105,26 @@ export function renderFinding(finding: ComputedFinding): string {
  */
 export function renderAppliedAllowances(
   applied: readonly SizeAllowance[],
+  unit: "file" | "function" = "file",
 ): string {
   if (applied.length === 0) return "";
   return [
     "",
-    `ALLOWED GROWTH — ${applied.length} file(s) grew because this change said so out loud`,
+    `ALLOWED GROWTH — ${applied.length} ${unit}(s) grew because this change said so out loud`,
     "",
     ...applied.flatMap((allowance) => [
-      `  ${allowance.file}  ->  ${allowance.lines} LOC`,
+      `  ${allowance.file}  ->  ${allowance.lines} ${unit === "file" ? "LOC" : "lines"}`,
       `      declared: ${allowance.source}`,
       `      reason:   ${allowance.reason}`,
       "",
     ]),
     "  Each entry is one-shot. Once this merges the new length IS the base ref, so",
-    `  the file needs no allowance next time and the ${ALLOWANCE_DIR}/ file is inert.`,
+    `  the ${unit} needs no allowance next time and the ${ALLOWANCE_DIR}/ file is inert.`,
     "",
   ].join("\n");
 }
 
-export function renderReport(findings: readonly ComputedFinding[]): string {
+export function renderReport(findings: readonly RenderableFinding[]): string {
   const out: string[] = [];
   for (const severity of ["unusable", "regression"] as const) {
     const group = findings.filter((finding) => finding.severity === severity);
@@ -226,9 +244,19 @@ const EMPTY_SCAN_FINDING: ComputedFinding = {
 };
 
 export function run(root: string, argv: readonly string[]): number {
-  if (argv.includes("--report")) return runReport(root);
+  if (argv.includes("--report")) {
+    return Math.max(runReport(root), runFunctionLengthReport(root));
+  }
   if (argv.includes("--update")) return explainRemovedUpdateMode();
+  const fileSize = runFileSizeRatchet(root, argv);
+  // Run even when the file-size phase failed, so one push shows both answers.
+  // A base that cannot be resolved is reported by both phases, which is noisy
+  // but honest: neither has evidence for a pass.
+  const functionLength = runFunctionLengthRatchet(root, baseRefFrom(argv));
+  return Math.max(fileSize, functionLength);
+}
 
+function runFileSizeRatchet(root: string, argv: readonly string[]): number {
   // The scan is no longer where the comparison comes from — it is here for the
   // scope audit, which asks a question about the WHOLE tree rather than about
   // this change: is there a tracked `src/` file no budget covers? A scope hole
@@ -315,6 +343,83 @@ export function run(root: string, argv: readonly string[]): number {
     ].join("\n"),
   );
   return 1;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Function length (#4927)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The function-length phase: the same rule one level down, against the same
+ * base. Malformed allowance files are not reported again here — the file-size
+ * phase reads the same directory and has already said so.
+ */
+function runFunctionLengthRatchet(root: string, baseRef: string): number {
+  const declared = readSizeAllowances(root);
+  const result = evaluateFunctionLengthRatchet({
+    root,
+    baseRef,
+    isProductionFile,
+    allowances: declared.functionAllowances,
+  });
+  const applied = result.allowancesApplied.map((a) => ({ ...a, file: a.key }));
+  const against =
+    result.baseSha === null
+      ? `\`${baseRef}\``
+      : `\`${baseRef}\` (merge base \`${result.baseSha.slice(0, 12)}\`)`;
+
+  if (result.findings.length === 0) {
+    process.stdout.write(
+      `Function-length ratchet: OK — no function in the ${result.checkedFiles} ` +
+        `production file(s) changed since ${against} crossed ` +
+        `${FUNCTION_LENGTH_LIMIT} lines or grew beyond its previous length` +
+        `${applied.length === 0 ? "" : " except the declared growth below"}.\n`,
+    );
+    process.stdout.write(renderAppliedAllowances(applied, "function"));
+    return 0;
+  }
+
+  process.stderr.write(
+    `Function-length ratchet: FAILED — ${result.findings.length} finding(s) ` +
+      `against ${against}.\n`,
+  );
+  process.stderr.write(renderReport(result.findings));
+  process.stderr.write(renderAppliedAllowances(applied, "function"));
+  process.stderr.write(
+    [
+      "",
+      `The rule: no function may cross ${FUNCTION_LENGTH_LIMIT} lines, and one already`,
+      "over it may not grow. See docs/MAINTENANCE.md -> \"Function-length ratchet\".",
+      "Split along the seams the function already has: each step a named function",
+      "with a typed input and a typed result.",
+      "",
+    ].join("\n"),
+  );
+  return 1;
+}
+
+/** Every over-limit function in the tree, on demand — a report, never a gate. */
+function runFunctionLengthReport(root: string): number {
+  const scan = scanRepository(root);
+  if (scan.gitError !== null) return 1;
+  const long = findLongFunctions(
+    root,
+    scan.productionStats.map((stat) => stat.file),
+  );
+  const debt = long.reduce((sum, fn) => sum + fn.lines - FUNCTION_LENGTH_LIMIT, 0);
+  process.stdout.write(
+    [
+      `Function-length report — ${long.length} function(s) are over ` +
+        `${FUNCTION_LENGTH_LIMIT} lines, carrying ${debt} lines of debt.`,
+      "",
+      "  Longest ten:",
+      ...long
+        .slice(0, 10)
+        .map((fn) => `    ${String(fn.lines).padStart(5)}  ${fn.file}#${fn.name}`),
+      "",
+    ].join("\n"),
+  );
+  return 0;
 }
 
 if (isMainModule(import.meta.url)) {

@@ -43,11 +43,13 @@ import {
 } from "@/lib/payment-recovery-keys";
 import { prisma } from "@/lib/prisma";
 import {
+  lockPaymentForRefundedTotal,
   planStripeRefundAllocation,
   type RefundAllocationSlice,
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import {
   createPaymentIntent,
   findOrCreateCustomer,
@@ -240,9 +242,21 @@ export async function executeBookingModificationRefund({
 
   let plan: RefundAllocationSlice[] | undefined;
   try {
-    // #3984: freeze before Stripe; a webhook may record an unrecorded refund
-    // before recovery runs, but must never shift its slice amount and key.
-    const planned = await planStripeRefundAllocation({ paymentId, amountCents: result.pendingRefundAmountCents });
+    // #3984 (`INV-PAY-146`): freeze before Stripe; a webhook may record an
+    // unrecorded refund before recovery runs, but must never shift its slice
+    // amount and key. #4872: the freeze and the superseded-capture hold-back
+    // share one short transaction under the Payment row. It commits before
+    // Stripe is asked. No provider call runs inside it.
+    const planned = await prisma.$transaction(async (tx) => {
+      await lockPaymentForRefundedTotal(tx, paymentId);
+      const heldBack = await readSupersededCaptureHeldBack(tx, paymentId);
+      return planStripeRefundAllocation({
+        paymentId,
+        amountCents: result.pendingRefundAmountCents,
+        store: tx,
+        heldBackByTransaction: heldBack.byTransaction,
+      });
+    });
     if (planned.plannedAmountCents < result.pendingRefundAmountCents) {
       throw new Error(STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE);
     }
