@@ -5,12 +5,14 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { servedAdminPathname } from "@/lib/admin-hubs"
 import { AlertTriangle, CheckCircle2 } from "lucide-react"
 import { useConfirm } from "@/components/confirm-dialog"
+import { FocusedActionError } from "@/components/focused-action-error"
 import { Button } from "@/components/ui/button"
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button"
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
+import { useActionFailure } from "@/hooks/use-action-failure"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint"
 import { Input } from "@/components/ui/input"
@@ -92,7 +94,8 @@ export function OperationsPanel({
     ].some((key) => searchParams.has(key))
   const [operations, setOperations] = useState<XeroOperation[]>([])
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState("")
+  const [loadError, setLoadError] = useState("")
+  const { error: actionError, attentionKey, fail: failAction, clear: clearActionError } = useActionFailure()
   const [statusFilter, setStatusFilter] = useState(searchParams.get("opStatus") || "all")
   const [entityFilter, setEntityFilter] = useState(searchParams.get("opEntityType") || "all")
   const [localModelFilter, setLocalModelFilter] = useState(searchParams.get("opLocalModel") || "all")
@@ -208,7 +211,7 @@ export function OperationsPanel({
 
   const fetchOperations = useCallback(async () => {
     setLoading(true)
-    setError("")
+    setLoadError("")
     try {
       const params = new URLSearchParams({
         status: statusFilter,
@@ -229,7 +232,7 @@ export function OperationsPanel({
       setTotal(data.total ?? 0)
       setHiddenFailedCount(data.hiddenFailedCount ?? 0)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load Xero operation history")
+      setLoadError(err instanceof Error ? err.message : "Failed to load Xero operation history")
       setHiddenFailedCount(0)
     } finally {
       setLoading(false)
@@ -249,7 +252,8 @@ export function OperationsPanel({
 
   const { resolveOperation, resolveWithNoteDialog } = useResolveOperation({
     prompt,
-    setError,
+    failAction,
+    clearActionError,
     onMessage,
     setResolvingOperationId,
     fetchOperations,
@@ -266,7 +270,7 @@ export function OperationsPanel({
 
   const retryOperation = async (operationId: string) => {
     setRetryingOperationId(operationId)
-    setError("")
+    clearActionError()
     onMessage("")
     try {
       const data = await postJson<{ message?: string }>(`/api/admin/xero/operations/${operationId}/retry`, undefined, "Failed to retry Xero operation")
@@ -274,7 +278,7 @@ export function OperationsPanel({
       await fetchOperations()
       onRefreshDiagnostics()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to retry Xero operation")
+      failAction(err instanceof Error ? err.message : "Failed to retry Xero operation")
     } finally {
       setRetryingOperationId(null)
     }
@@ -290,7 +294,7 @@ export function OperationsPanel({
     })
     if (reason === null) return
     setMarkingNonReplayableOperationId(operationId)
-    setError("")
+    clearActionError()
     onMessage("")
     try {
       const data = await postJson<{ message?: string }>(
@@ -302,7 +306,7 @@ export function OperationsPanel({
       await fetchOperations()
       onRefreshDiagnostics()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to mark Xero operation non-replayable")
+      failAction(err instanceof Error ? err.message : "Failed to mark Xero operation non-replayable")
     } finally {
       setMarkingNonReplayableOperationId(null)
     }
@@ -310,7 +314,7 @@ export function OperationsPanel({
 
   const retryAllFailed = async () => {
     setRetryingAllFailed(true)
-    setError("")
+    clearActionError()
     onMessage("")
     try {
       const data = await postJson<{ message?: string }>("/api/admin/xero/operations/retry-all", undefined, "Failed to queue failed Xero operations")
@@ -318,7 +322,7 @@ export function OperationsPanel({
       await fetchOperations()
       onRefreshDiagnostics()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to queue failed Xero operations")
+      failAction(err instanceof Error ? err.message : "Failed to queue failed Xero operations")
     } finally {
       setRetryingAllFailed(false)
     }
@@ -335,7 +339,7 @@ export function OperationsPanel({
     })
     if (reason === null) return
     setMarkingFailedOperationId(operationId)
-    setError("")
+    clearActionError()
     onMessage("")
     try {
       const data = await postJson<{ message?: string }>(
@@ -347,7 +351,7 @@ export function OperationsPanel({
       await fetchOperations()
       onRefreshDiagnostics()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to mark Xero operation failed")
+      failAction(err instanceof Error ? err.message : "Failed to mark Xero operation failed")
     } finally {
       setMarkingFailedOperationId(null)
     }
@@ -355,7 +359,7 @@ export function OperationsPanel({
 
   const resetStaleRunning = async () => {
     setResettingStale(true)
-    setError("")
+    clearActionError()
     onMessage("")
     try {
       const data = await postJson<{ message?: string }>("/api/admin/xero/operations/reset-stale-running", undefined, "Failed to reset stale running Xero operations")
@@ -363,7 +367,7 @@ export function OperationsPanel({
       await fetchOperations()
       onRefreshDiagnostics()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to reset stale running Xero operations")
+      failAction(err instanceof Error ? err.message : "Failed to reset stale running Xero operations")
     } finally {
       setResettingStale(false)
     }
@@ -390,6 +394,10 @@ export function OperationsPanel({
   return (
     <div>
       {viewOnlyBanner}
+      {/* Outside the card's body, which unmounts while the section is collapsed:
+          Retry Active Failed and Reset stale running sit in its always-visible
+          header, so their failure needs somewhere to land. */}
+      <FocusedActionError id="xero-operations-action-error" className="mb-4" error={actionError} attentionKey={attentionKey} />
     <SectionCard
       id={xeroSectionId("operations")}
       title="Xero Operations"
@@ -413,7 +421,7 @@ export function OperationsPanel({
       <div className="space-y-4">
         {confirmDialog}
         {resolveWithNoteDialog}
-        {error ? <p className="text-sm text-danger">{error}</p> : null}
+        {loadError ? <p className="text-sm text-danger">{loadError}</p> : null}
         <details className="rounded-md border bg-muted p-3 text-xs text-muted-foreground">
           <summary className="cursor-pointer font-medium text-foreground">What do these statuses mean?</summary>
           <ul className="mt-2 space-y-1">

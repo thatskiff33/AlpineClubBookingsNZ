@@ -5,6 +5,7 @@ import { RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -21,6 +22,7 @@ import {
   useAdminAreaEditAccess,
   useAdminAreaViewAccess,
 } from "@/hooks/use-admin-area-edit-access";
+import { useActionFailure } from "@/hooks/use-action-failure";
 import { formatAgeTierName } from "@/lib/use-age-tier-options";
 import { canonicalizeAgeTiers } from "@/lib/age-tier-schema";
 import { loadAdminXeroContactGroups } from "@/lib/admin-xero-contact-groups";
@@ -129,7 +131,11 @@ export default function XeroMemberGroupingPage() {
   const canEdit = useAdminAreaEditAccess("finance");
   const canView = useAdminAreaViewAccess("finance");
   const [config, setConfig] = useState<Config | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Reading the configuration and refreshing the group cache are GETs, so their
+  // failures are a passive notice. A mode, rule, dry-run or re-sync request is
+  // an action, and its failure takes focus (#4975).
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const { error: actionError, attentionKey, fail: failAction, clear: clearActionError } = useActionFailure();
   const [busy, setBusy] = useState(false);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   // The persisted dry-run this UI is authorised against — threaded into the bulk
@@ -154,13 +160,13 @@ export default function XeroMemberGroupingPage() {
   const [refreshStatus, setRefreshStatus] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setError(null);
+    setLoadError(null);
     try {
       const res = await fetch("/api/admin/xero/member-grouping");
       if (!res.ok) throw new Error("Failed to load configuration");
       setConfig(await res.json());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load");
+      setLoadError(err instanceof Error ? err.message : "Failed to load");
     }
   }, []);
 
@@ -176,7 +182,7 @@ export default function XeroMemberGroupingPage() {
   // invalidates. Inline status callbacks — no toast lib (#2093, D-B3).
   const refreshFromXero = useCallback(async () => {
     setRefreshing(true);
-    setError(null);
+    setLoadError(null);
     setRefreshStatus(null);
     try {
       const result = await loadAdminXeroContactGroups({ refreshFromXero: true });
@@ -187,7 +193,7 @@ export default function XeroMemberGroupingPage() {
           : "Refreshed from Xero. No active contact groups were returned.",
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to refresh from Xero");
+      setLoadError(err instanceof Error ? err.message : "Failed to refresh from Xero");
     } finally {
       setRefreshing(false);
     }
@@ -196,18 +202,18 @@ export default function XeroMemberGroupingPage() {
   const run = useCallback(
     async (body: unknown, after?: (json: unknown) => void) => {
       setBusy(true);
-      setError(null);
+      clearActionError();
       try {
         const json = await api(body);
         if (after) after(json);
         else setConfig(json);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Request failed");
+        failAction(err instanceof Error ? err.message : "Request failed");
       } finally {
         setBusy(false);
       }
     },
-    [],
+    [clearActionError, failAction],
   );
 
   const groupName = useCallback(
@@ -229,11 +235,11 @@ export default function XeroMemberGroupingPage() {
   const runBulkResync = useCallback(
     async (afterMemberId?: string) => {
       if (!dryRunId) {
-        setError("Run the dry-run and review the diff before re-syncing.");
+        failAction("Run the dry-run and review the diff before re-syncing.");
         return;
       }
       setBusy(true);
-      setError(null);
+      clearActionError();
       try {
         const json = await api({
           action: "bulk-resync",
@@ -250,7 +256,7 @@ export default function XeroMemberGroupingPage() {
         });
         void load();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Request failed");
+        failAction(err instanceof Error ? err.message : "Request failed");
         // A server-side dry-run freshness rejection (stale/absent dry-run, or a
         // rule/cache change since review) carries a `reason`. Invalidate the
         // reviewed diff so the admin must re-run the dry-run before retrying.
@@ -263,7 +269,7 @@ export default function XeroMemberGroupingPage() {
         setBusy(false);
       }
     },
-    [dryRunId, load],
+    [clearActionError, dryRunId, failAction, load],
   );
 
   /*
@@ -294,7 +300,7 @@ export default function XeroMemberGroupingPage() {
         {viewOnlyBanner}
         <div className="space-y-4">
           <AdminPageHeader title="Xero member grouping" description="Loading…" />
-          {error ? <p className="text-sm text-danger">{error}</p> : null}
+          {loadError ? <p className="text-sm text-danger">{loadError}</p> : null}
         </div>
       </div>
     );
@@ -331,7 +337,8 @@ export default function XeroMemberGroupingPage() {
         </span>
       </div>
       {refreshStatus ? <p className="text-sm text-success">{refreshStatus}</p> : null}
-      {error ? <p className="text-sm text-danger">{error}</p> : null}
+      {loadError ? <p className="text-sm text-danger">{loadError}</p> : null}
+      <FocusedActionError id="xero-member-grouping-action-error" error={actionError} attentionKey={attentionKey} />
 
       <Card>
         <CardHeader>

@@ -47,10 +47,12 @@ import { Loader2, RefreshCw, Search } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { FocusedActionError } from "@/components/focused-action-error"
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
+import { useActionFailure } from "@/hooks/use-action-failure"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { useClubTime } from "@/components/club-time-provider"
 import { requireInstant } from "@/lib/club-time"
@@ -180,11 +182,12 @@ export function ErasedMemberContactsPanel({
   const [check, setCheck] = useState<StatusCheckSummary | null>(null)
   const [loading, setLoading] = useState(false)
   const [checking, setChecking] = useState(false)
-  const [error, setError] = useState("")
+  const [loadError, setLoadError] = useState("")
+  const { error: actionError, attentionKey, fail: failAction, clear: clearActionError } = useActionFailure()
 
   const load = useCallback(async () => {
     setLoading(true)
-    setError("")
+    setLoadError("")
     try {
       const data = await fetchJson<{ review: ErasedMemberXeroContactReview }>(
         "/api/admin/xero/erased-member-contacts",
@@ -193,7 +196,7 @@ export function ErasedMemberContactsPanel({
       )
       setReview(data.review)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not read the erased-member contact review.")
+      setLoadError(err instanceof Error ? err.message : "Could not read the erased-member contact review.")
     } finally {
       setLoading(false)
     }
@@ -208,7 +211,7 @@ export function ErasedMemberContactsPanel({
   */
   const runCheck = useCallback(async () => {
     setChecking(true)
-    setError("")
+    clearActionError()
     try {
       const data = await postJson<{
         review: ErasedMemberXeroContactReview
@@ -221,25 +224,34 @@ export function ErasedMemberContactsPanel({
       setReview(data.review)
       setCheck(data.check)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not check these contacts in Xero.")
+      failAction(err instanceof Error ? err.message : "Could not check these contacts in Xero.")
     } finally {
       setChecking(false)
     }
-  }, [])
+  }, [clearActionError, failAction])
 
   // Loads itself the first time the section is opened. Safe to do without a
   // button, unlike its missing-contact sibling: this read touches the retired
   // link ledger rather than the whole member table, it creates nothing, and it
   // asks Xero nothing.
   useEffect(() => {
-    if (open && review === null && !loading && !error) void load()
-  }, [open, review, loading, error, load])
+    if (open && review === null && !loading && !loadError) void load()
+  }, [open, review, loading, loadError, load])
 
   const busy = loading || checking
   const nothingLeftBehind =
     review !== null && review.needsReview === 0 && review.alreadyRetiredInXero === 0
 
   return (
+    <>
+    {/* Outside the card's body, which unmounts while the section is collapsed:
+        "Check these in Xero" sits in its always-visible header. */}
+    <FocusedActionError
+      id="erased-member-contacts-action-error"
+      className="mb-4"
+      error={actionError}
+      attentionKey={attentionKey}
+    />
     <SectionCard
       id="erased-member-contacts"
       title="Erased members with a Xero contact"
@@ -311,7 +323,7 @@ export function ErasedMemberContactsPanel({
           and usable either way.
         </p>
 
-        {error ? <p className="text-sm text-danger">{error}</p> : null}
+        {loadError ? <p className="text-sm text-danger">{loadError}</p> : null}
 
         {loading && review === null ? (
           <p className="text-sm text-muted-foreground">Reading...</p>
@@ -419,5 +431,6 @@ export function ErasedMemberContactsPanel({
         ) : null}
       </div>
     </SectionCard>
+    </>
   )
 }

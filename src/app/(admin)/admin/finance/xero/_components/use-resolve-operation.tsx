@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react"
 import type { PromptOptions } from "@/components/confirm-dialog"
+import type { ActionFailure } from "@/hooks/use-action-failure"
 import { useClubFormat } from "@/components/club-format-provider"
 import { formatCents } from "@/lib/utils"
 import { postJson } from "./api"
@@ -19,20 +20,21 @@ import type { XeroOperation } from "./types"
  */
 export function useResolveOperation(input: {
   prompt: (options: PromptOptions) => Promise<string | null>
-  setError: (message: string) => void
+  failAction: ActionFailure["fail"]
+  clearActionError: ActionFailure["clear"]
   onMessage: (message: string) => void
   setResolvingOperationId: (operationId: string | null) => void
   fetchOperations: () => Promise<void>
   onRefreshDiagnostics: () => void
 }): { resolveOperation: (operation: XeroOperation) => Promise<void>; resolveWithNoteDialog: ReactNode } {
-  const { prompt, setError, onMessage, setResolvingOperationId, fetchOperations, onRefreshDiagnostics } = input
+  const { prompt, failAction, clearActionError, onMessage, setResolvingOperationId, fetchOperations, onRefreshDiagnostics } = input
   const { openResolveWithNote, resolveWithNoteDialog } = useResolveWithNoteDialog()
   const clubFormat = useClubFormat()
 
   /** Sends one resolve; resolves to the route's refusal, or null once it is marked. */
   const send = async (operationId: string, body: { reason: string; creditNoteNumber?: string }): Promise<string | null> => {
     setResolvingOperationId(operationId)
-    setError("")
+    clearActionError()
     onMessage("")
     try {
       const data = await postJson<{ message?: string }>(
@@ -55,7 +57,7 @@ export function useResolveOperation(input: {
     // #4421: a row the route will refuse says why before anything is typed.
     if (operation.resolveRefusal) {
       onMessage("")
-      setError(operation.resolveRefusal)
+      failAction(operation.resolveRefusal)
       return
     }
     // #4421: the route checks and records the note while the dialog stays
@@ -76,7 +78,7 @@ export function useResolveOperation(input: {
     })
     if (reason === null) return
     const refused = await send(operation.id, { reason })
-    if (refused !== null) setError(refused)
+    if (refused !== null) failAction(refused)
   }
 
   return { resolveOperation, resolveWithNoteDialog }

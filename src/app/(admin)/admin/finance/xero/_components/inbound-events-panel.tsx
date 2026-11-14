@@ -4,11 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { servedAdminPathname } from "@/lib/admin-hubs"
 import { Button } from "@/components/ui/button"
+import { FocusedActionError } from "@/components/focused-action-error"
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button"
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
+import { useActionFailure } from "@/hooks/use-action-failure"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint"
 import { Input } from "@/components/ui/input"
@@ -88,7 +90,8 @@ export function InboundEventsPanel({
   const clubTime = useClubTime()
   const [events, setEvents] = useState<XeroInboundEvent[]>([])
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState("")
+  const [loadError, setLoadError] = useState("")
+  const { error: actionError, attentionKey, fail: failAction, clear: clearActionError } = useActionFailure()
   const [statusFilter, setStatusFilter] = useState(searchParams.get("inStatus") || "all")
   const [categoryFilter, setCategoryFilter] = useState(
     xeroInboundCategoryFilterValue(searchParams.get("inEventCategory")),
@@ -189,7 +192,7 @@ export function InboundEventsPanel({
 
   const fetchEvents = useCallback(async () => {
     setLoading(true)
-    setError("")
+    setLoadError("")
     try {
       const params = new URLSearchParams({
         status: statusFilter,
@@ -208,7 +211,7 @@ export function InboundEventsPanel({
       setEvents(data.data ?? [])
       setTotal(data.total ?? 0)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load Xero inbound events")
+      setLoadError(err instanceof Error ? err.message : "Failed to load Xero inbound events")
     } finally {
       setLoading(false)
     }
@@ -234,7 +237,7 @@ export function InboundEventsPanel({
 
   const replay = async (eventId: string) => {
     setReplayingEventId(eventId)
-    setError("")
+    clearActionError()
     onMessage("")
     try {
       const data = await postJson<{ message?: string }>(`/api/admin/xero/inbound-events/${eventId}/replay`, undefined, "Failed to replay Xero inbound event")
@@ -243,7 +246,7 @@ export function InboundEventsPanel({
       onRefreshOperations()
       onRefreshDiagnostics()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to replay Xero inbound event")
+      failAction(err instanceof Error ? err.message : "Failed to replay Xero inbound event")
     } finally {
       setReplayingEventId(null)
     }
@@ -275,7 +278,8 @@ export function InboundEventsPanel({
     >
       {viewOnlyBanner}
       <div className="space-y-4">
-        {error ? <p className="text-sm text-danger">{error}</p> : null}
+        {loadError ? <p className="text-sm text-danger">{loadError}</p> : null}
+        <FocusedActionError id="xero-inbound-action-error" error={actionError} attentionKey={attentionKey} />
         <details className="rounded-md border bg-muted p-3 text-xs text-muted-foreground">
           <summary className="cursor-pointer font-medium text-foreground">What do these statuses mean?</summary>
           <ul className="mt-2 space-y-1">
