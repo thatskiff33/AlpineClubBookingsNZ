@@ -4182,6 +4182,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
       paymentId: "pay_1",
       amountCents: 3750,
       store: tx,
+      // #4872: no live superseded capture here, so nothing is held back.
+      heldBackByTransaction: new Map(),
     });
 
     await Promise.resolve();

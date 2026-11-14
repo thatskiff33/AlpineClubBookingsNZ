@@ -18,7 +18,7 @@ The area list is each registered admin page's top-level URL directory, taken
 from the [hub registry](../src/lib/admin-hubs/index.ts), whose own census ties
 every entry to its page on disk, so it is exhaustive and will not silently miss a
 surface. A hub's directory under `src/app/(admin)/admin/` (such as `website/`,
-`finance/`, `rules/`, `system/`, `messages/` or `booking-desk/`) is not an area: it holds areas. An area keeps
+`finance/`, `rules/`, `system/`, `messages/`, `booking-desk/` or `membership/`) is not an area: it holds areas. An area keeps
 its row, and its URL, when its pages move under a hub (epic #4468): the Website
 hub's areas live in `website/` (C4 #4801), the Finance hub's areas
 (`internet-banking`, `payments`, `refund-requests`, `reports`,
@@ -33,7 +33,12 @@ Messages & email hub's areas (`booking-messages`, `communications`,
 `notification-rules`, `notifications`) in `messages/` (C8 #4805), and the
 Bookings hub's areas (`bed-allocation`, `book`, `booking-approvals`,
 `booking-change-requests`, `booking-requests`, `bookings`, `waitlist`) in
-`booking-desk/` (C10 #4807). The
+`booking-desk/` (C10 #4807), and the Members hub's areas (`committee`,
+`deletion-requests`, `family-groups`, `induction`, `member-applications`,
+`member-fields`, `members`, `membership-cancellations`, `membership-setup`,
+`membership-types`, `subscription-lockout`) in `membership/` (C9 #4806). Member
+detail, member merge, induction print and induction settings are not areas; they
+live under `members/` and `induction/`. The
 count that used to stand here said 70 and was measured once; it had already
 drifted from the table below by the time #2989 added a row, so it is stated as a
 rule rather than as a figure nobody re-measures.
@@ -130,7 +135,7 @@ For what an officer sees and does on each screen, use the
 | `notifications` | support | email registry, `ARCHITECTURE.md` (email) | [guide](guides/notifications.md) | 4 |
 | `page-content` | content | `PUBLIC_PAGE_CONTENT_TOKENS.md` | [guide](guides/page-content.md) | 4 |
 | `payments` | finance | `ARCHITECTURE.md` (Stripe), `finance-dashboard/README.md` | [guide](guides/payments.md) | 1 |
-| `privacy-retention` | support (settings); membership:view additionally for application/member previews | [retention schedule](PRIVACY_RETENTION.md) | [retention schedule and controls](PRIVACY_RETENTION.md) | — (#4457) |
+| `privacy-retention` | support (settings); membership:view additionally for application/member previews; bookings:edit additionally for the after-stay dietary period and switch | [retention schedule](PRIVACY_RETENTION.md) | [retention schedule and controls](PRIVACY_RETENTION.md) | — (#4457, #4916) |
 | `promo-codes` | bookings | `ARCHITECTURE.md` (promo codes / redemptions) | [guide](guides/promo-codes.md) | 1 |
 | `refund-requests` | finance | `CANCELLATIONS.md`, `ARCHITECTURE.md` (refund recovery) | [guide](guides/refund-requests.md) | 2 |
 | `reports` | finance | `finance-dashboard/README.md` | [guide](guides/reports.md) | 1 |
@@ -154,7 +159,7 @@ For what an officer sees and does on each screen, use the
 
 ## Summary
 
-- **83** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
+- **83** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`, `membership`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
 - **2** areas are already served by a **feature hub** (`display` → lobby-display,
   `lodges` → multi-lodge). #2050 should extend, not duplicate, those hubs.
 - **13** areas have **no reference coverage** beyond their operator guide

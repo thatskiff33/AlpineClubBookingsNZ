@@ -11,6 +11,7 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { paymentHasCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
 import { sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
@@ -192,6 +193,7 @@ function releaseOneHold(
         bookingId: fresh.bookingId,
         db: tx,
       });
+      await releaseBookingPromoRedemptions(tx, fresh.bookingId);
 
       // #1547: a hold-expiry release IS a cancel, and an IB booking can be
       // partly (or fully) credit-covered — booking-create applies credit for

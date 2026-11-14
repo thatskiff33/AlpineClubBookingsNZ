@@ -2976,8 +2976,10 @@ Stated limits:
 - **A dashboard refund that settles a row Stripe gave up on is noted in
   full.** A re-send that failed too is owed by a row raised dead
   (`raised-dead`), which is never sent again; the treasurer is told to pay the
-  member another way and close it as "Paid another way", whose note is sized
-  against the failed refund's card note. A refund made in the Stripe dashboard
+  member another way and close it as "Paid another way". A close no card note
+  covers is sized by the task less its own notes. When the failed refund's
+  card note covers some of the close, the close queues a Stripe reversal for
+  the covered cents and a bank note for the whole amount (`INV-PAY-151`). A refund made in the Stripe dashboard
   instead is linked to nothing the app made, so it gets its own note and the
   failed refund's note still stands: Xero credits that amount twice until an
   officer voids one (owner decision, 25 Oct 2026). #4361 plans the automated
@@ -3061,7 +3063,10 @@ when its records hold neither; #3001/#3467) and
 refunds missing credit notes (flagged when the provider-backed CASH refund
 evidence — never the refunded-amount mirror, #2902/INV-PAY-050 — still exceeds
 the cents already covered by active refund credit notes, so multi-note refunds
-are handled and account-credit-only cancellations are excluded), and
+are handled and account-credit-only cancellations are excluded; one set-based
+read first drops payments whose active links' recorded amounts, less any live
+card-refund reversal invoice (`INV-PAY-151`), already cover the refunded
+mirror, so the per-payment reader runs only on open or unclear gaps, #4936), and
 per-record activity shows the ledger for one booking/payment/member.
 
 Owner-substitution alert (operator runbook): when a booking request's held owner
