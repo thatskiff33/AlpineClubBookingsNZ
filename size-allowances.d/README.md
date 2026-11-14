@@ -96,8 +96,10 @@ reason: the guard belongs inside the claim it protects until #4516 splits the
   to its closing one, leading comment excluded.
 - `reason:` — as for a file.
 
-Every rule below applies to it as to a file: it may let a function already over
+The rules below apply to it as to a file: it may let a function already over
 300 lines grow, never a new function or one crossing 300 for the first time.
+The hard ceiling is the exception: it is a file rule (#4926), and a function
+allowance has no upper bound of its own.
 
 ## What an allowance may and may not do
 
@@ -109,7 +111,7 @@ It may **not**:
 - let a file **renamed into** the budgeted scope — from `prisma/`, `scripts/`,
   or a `__tests__/` path — inherit a ceiling from outside it;
 - carry a file **over its budget for the first time**. A module still inside its
-  budget has the cheapest split available to it, so it should take it.
+  budget has the cheapest split available to it, so it should take it;
 - take a file past its **hard ceiling** of three times its budget — 2,100 lines
   for a domain module, 750 for a route handler, 1,500 for a page shell (owner
   decision, 11 Nov 2026,
