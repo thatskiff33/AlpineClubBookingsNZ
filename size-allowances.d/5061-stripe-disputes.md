@@ -45,7 +45,7 @@ reason: the four charge.dispute.* cases in the one dispatcher the event
   dispute, beside their existing holds for the other refusals.
 
 file: src/app/(admin)/admin/finance/payments/page.tsx
-lines: 1439
+lines: 1501
 reason: the dispute marker chip in the payment row's existing chip list,
   beside the other status chips it is read with; the row type gains the
   field the service returns. The chips themselves render in DisputeChips,
@@ -79,6 +79,6 @@ reason: one batched dispute read for the page's bookings and the field on
   and before they are shaped, which is inside this function.
 
 function: src/app/(admin)/admin/finance/payments/page.tsx#PaymentsPage
-lines: 1024
+lines: 1080
 reason: one line, the DisputeChips element in the row's existing chip list;
   the chips render in their own component.
