@@ -610,6 +610,45 @@ free guessing oracle.
 - **During a blue/green cutover the old slot has no stamp and no check.** The
   migration only adds the challenge table. Draining code never reads it.
 
+## Officer two-factor (#4618)
+
+Audience: Operator, Developer.
+
+**The threat.** An officer who can move money or change security settings
+signs in with a password, or a password and an emailed code. A phished
+password plus a compromised mailbox is the whole account.
+
+**The rule (`INV-AUTH-012`).** Full Admins, and officers whose role can edit
+Finance or Support & System, must hold an authenticator app or a passkey. A
+role editor's **Two-factor** choice can add a role (**Required**) or drop it
+(**Not required**); Full Admin stays required whatever a role says. Nothing
+changes until #4620 sets `OFFICER_SIGN_IN_ENFORCED`. Until then the card, the
+report, the reset button and both routes are absent or answer 404.
+
+**Grace.** The first refresh that finds an officer required without an app or
+passkey stamps `twoFactorGraceStartedAt` once, with the database clock. Grace
+is a club setting, 0 to 60 days (14 by default), counted in club days. After
+it, the officer reaches only the enrolment pages, the profile security card
+and sign-out. A required officer cannot delete their last passkey; the check
+runs under their member row lock.
+
+**Lost factor.** Another Full Admin opens the member and resets it after
+confirming it is them (step-up, `INV-AUTH-010`). They cannot reset
+themselves. One transaction clears the authenticator, recovery and emailed
+codes and every passkey, ends the member's sessions and stamps
+`factorsResetAt`; the audit row names the admin. The member is emailed after
+commit. Resetting a required officer never starts a new grace period (the
+reset writes a missing grace stamp with its own time); a member reset before
+the rule reached them still gets their first grace period. An enrolment from a
+session older than the reset is refused with 409. A club whose only Full
+Admin lost their factor runs, on the server,
+`pnpm run auth:reset-factors -- --member <email>`; its audit row names the
+`officer-factor-reset` system actor.
+
+**Stated limits.** The report lists who is required and not yet enrolled; it
+is a Full Admin view only. An emailed code still signs a member in where the
+club-wide module allows it; it just does not meet this rule.
+
 ## Data-encryption key ring (#4456)
 
 Audience: Operator, Developer.

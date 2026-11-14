@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
 import { useQrDataUrl } from "@/hooks/use-qr-data-url";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
@@ -78,7 +79,17 @@ function RecoveryCodes({
   );
 }
 
-export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
+/**
+ * `appOnly` hides the emailed-code option for a required officer sent here by
+ * the officer gate: an emailed code never satisfies that rule (#4618).
+ */
+export function TwoFactorEnrollPanel({
+  callbackUrl,
+  appOnly = false,
+}: {
+  callbackUrl: string;
+  appOnly?: boolean;
+}) {
   const [method, setMethod] = useState<EnrollMethod>("TOTP");
   const [totpSetup, setTotpSetup] = useState<TotpSetup | null>(null);
   const [totpCode, setTotpCode] = useState("");
@@ -203,11 +214,7 @@ export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
       </CardHeader>
       <form noValidate onSubmit={submitEnroll}>
         <CardContent className="space-y-5">
-          {error ? (
-            <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-              {error}
-            </div>
-          ) : null}
+          <FocusedActionError id="two-factor-enroll-error" error={error} />
 
           <OptionCardGroup label="Verification method">
             <OptionCard
@@ -216,12 +223,14 @@ export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
               selected={method === "TOTP"}
               onSelect={() => setMethod("TOTP")}
             />
-            <OptionCard
-              icon={Mail}
-              title="Email"
-              selected={method === "EMAIL"}
-              onSelect={() => setMethod("EMAIL")}
-            />
+            {appOnly ? null : (
+              <OptionCard
+                icon={Mail}
+                title="Email"
+                selected={method === "EMAIL"}
+                onSelect={() => setMethod("EMAIL")}
+              />
+            )}
           </OptionCardGroup>
 
           {method === "TOTP" ? (
@@ -423,11 +432,7 @@ export function TwoFactorVerifyPanel({
       </CardHeader>
       <form noValidate onSubmit={submitVerify}>
         <CardContent className="space-y-5">
-          {error ? (
-            <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-              {error}
-            </div>
-          ) : null}
+          <FocusedActionError id="two-factor-verify-error" error={error} />
 
           {recoveryCodesRetired ? (
             <RetiredRecoveryCodesNotice>

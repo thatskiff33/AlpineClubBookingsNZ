@@ -12,6 +12,7 @@ import {
 import { isFullAdmin } from "@/lib/access-roles";
 import {
   accessRolePermissionsSchema,
+  accessRoleRequiresTwoFactorSchema,
   definitionLevelDataFromPermissions,
 } from "@/lib/access-role-definition-routes";
 import { prisma } from "@/lib/prisma";
@@ -28,6 +29,7 @@ const patchSchema = z
     description: z.string().trim().max(1000).optional(),
     permissions: accessRolePermissionsSchema.optional(),
     sortOrder: z.number().int().min(0).max(100000).optional(),
+    requiresTwoFactor: accessRoleRequiresTwoFactorSchema,
   })
   .strict();
 
@@ -111,6 +113,9 @@ export async function PATCH(
   }
   if (parsed.data.sortOrder !== undefined) {
     data.sortOrder = parsed.data.sortOrder;
+  }
+  if (parsed.data.requiresTwoFactor !== undefined) {
+    data.requiresTwoFactor = parsed.data.requiresTwoFactor;
   }
   if (parsed.data.permissions !== undefined) {
     Object.assign(

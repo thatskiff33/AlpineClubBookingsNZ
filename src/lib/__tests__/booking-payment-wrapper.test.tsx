@@ -64,13 +64,11 @@ vi.mock("@/components/stripe/StripeProvider", () => ({
 
 vi.mock("@/components/stripe/PaymentForm", () => ({
   default: function MockPaymentForm({
-    onError,
     onSuccess,
     chargedAmountCents,
     isSplit,
     deferredGuestAmountCents,
   }: {
-    onError: (error: string) => void;
     onSuccess: (paymentIntentId: string) => void;
     chargedAmountCents?: number | null;
     isSplit?: boolean | null;
@@ -88,9 +86,6 @@ vi.mock("@/components/stripe/PaymentForm", () => ({
         <div data-testid="deferred-amount">
           {String(deferredGuestAmountCents)}
         </div>
-        <button type="button" onClick={() => onError("Card declined")}>
-          trigger-error
-        </button>
         <button
           type="button"
           onClick={() => {
@@ -119,11 +114,10 @@ describe("BookingPaymentWrapper", () => {
     });
   });
 
-  it("keeps the payment form mounted after a recoverable payment error", async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ clientSecret: "cs_test" }),
-    });
+  // #4949: "Preparing payment..." is silent to a screen reader unless it sits in
+  // a status region.
+  it("says it is preparing payment through a status region while the payment is set up", async () => {
+    fetchMock.mockReturnValueOnce(new Promise(() => undefined));
 
     render(
       <BookingPaymentWrapper
@@ -135,12 +129,7 @@ describe("BookingPaymentWrapper", () => {
       />
     );
 
-    await waitFor(() => expect(screen.queryByText("payment-form")).not.toBeNull());
-
-    fireEvent.click(screen.getByText("trigger-error"));
-
-    expect(screen.queryByText("payment-form")).not.toBeNull();
-    expect(screen.queryByText("Payment Error")).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent("Preparing payment...");
   });
 
   it("shows generic copy and never renders the raw provider error when init fails", async () => {

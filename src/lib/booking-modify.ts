@@ -5,18 +5,15 @@
 // - booking-modify-plan: the in-transaction modify pipeline (guest plan,
 //   repricing, promo changes, change fee, guest/chore writes)
 // - booking-modify-settlement: settlement handoff and lifecycle transitions
+// - booking-modify-quote-priced: the booking-request-origin fences (#4924 split
+//   it out of booking-modify-validation)
 
 export {
   assertBookingModifiable,
-  assertBookingNotQuotePriced,
   BookingModifyReviewJustificationRequiredError,
   GUEST_MEMBER_LINK_IN_PROGRESS_MESSAGE,
-  GUEST_MEMBER_LINK_MEMBER_WHOLE_LODGE_ONLY_MESSAGE,
   hasOutstandingAdditionalPayment,
   isBookingFullyPaidForGuestNameEdits,
-  isMemberWholeLodgeBooking,
-  isQuotePricedBooking,
-  QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
   resolveTargetDates,
   type BatchModifyInput,
   type BookingModificationSettlementMethod,
@@ -24,6 +21,13 @@ export {
   type LoadedBookingForModify,
   type ResolvedTargetDates,
 } from "@/lib/booking-modify-validation";
+export {
+  assertBookingNotQuotePriced,
+  GUEST_MEMBER_LINK_MEMBER_WHOLE_LODGE_ONLY_MESSAGE,
+  isMemberWholeLodgeBooking,
+  isQuotePricedBooking,
+  QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
+} from "@/lib/booking-modify-quote-priced";
 export {
   applyChoreCleanup,
   applyGuestChanges,

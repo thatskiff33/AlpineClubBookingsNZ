@@ -541,7 +541,7 @@ function getAttemptWhere(
 const START_OPERATION_INSERT_ATTEMPTS = 3;
 
 export async function startXeroSyncOperation(
-  input: XeroSyncOperationInput & { store?: Prisma.TransactionClient }
+  input: XeroSyncOperationInput & { store?: Prisma.TransactionClient; shareActiveOperation?: false }
 ) {
   // When a caller passes an in-flight transaction client the operation row is
   // written inside that transaction so it commits atomically with the caller's
@@ -592,12 +592,11 @@ export async function startXeroSyncOperation(
         },
       });
     } catch (error) {
-      // #1354: the partial unique index (one ACTIVE operation per correlation key)
-      // turns a lost concurrent-enqueue race into a unique violation here. Resolve
-      // it as the findFirst fast-path dedup would: return the winner's active row.
-      // Not on a caller's transaction (the root client is none): the violation has
-      // aborted it, so no read can follow (#4338).
-      if (!isPrismaUniqueConstraintError(error) || !input.correlationKey || db !== prisma) throw error;
+      // #1354: one ACTIVE operation per correlation key turns a lost enqueue race
+      // into a unique violation; return the winner's active row, as the fast path
+      // would. Not on a caller's transaction: the violation aborted it (#4338).
+      // `shareActiveOperation: false` (`INV-INT-038`) rethrows: no other attempt's row.
+      if (!isPrismaUniqueConstraintError(error) || !input.correlationKey || db !== prisma || input.shareActiveOperation === false) throw error;
       const { correlationKey } = input;
       const existing = await db.xeroSyncOperation.findFirst({
         where: { correlationKey, status: { in: [...XERO_ACTIVE_OPERATION_STATUSES] } },

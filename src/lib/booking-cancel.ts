@@ -68,7 +68,8 @@ import {
   recordBookingCancellationRefundRecoveryInlineError,
 } from "@/lib/payment-recovery";
 import { paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
-import { cancellationHandBackReason } from "@/lib/manual-refund-task-copy";
+import { cancellationHandBackReason, disputedCancellationHandBackReason } from "@/lib/manual-refund-task-copy";
+import { disputedCaptureCents, paymentCaptureIntentIds } from "@/lib/stripe-dispute-hold";
 import { runOrganiserChildRefundDebtNow } from "@/lib/organiser-child-refund-executor";
 import {
   findGroupCancellationChildDebt,
@@ -117,7 +118,7 @@ import {
 import type { ClubFormat } from "@/lib/club-format";
 import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
 import { cancelRefundDisposition } from "@/lib/cancel-refund-method";
-import { ownCardRefundWithShortfallSentence, type OrganiserRefundMethod, type OwnCardRefundMethod } from "@/lib/booking-modified-email-copy";
+import { disputedRefundSentence, ownCardRefundWithShortfallSentence, type OrganiserRefundMethod, type OwnCardRefundMethod } from "@/lib/booking-modified-email-copy";
 import { alertCancelCardShortfall, cancelRaisesCardShortfall, raiseCancelCardShortfallHandBack, type CancelCardShortfall } from "@/lib/cancel-card-refund-shortfall";
 import { foldMirrorRefundIntoLedger } from "@/lib/mirror-refund-fold";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
@@ -155,6 +156,8 @@ interface CancelBookingResult {
   creditRestoredCents?: number;
   stripeRefundId?: string;
   manualRefundTaskId?: string;
+  /** #4911 (`INV-PAY-154`): a "manual" refund handed to the treasurer because the card payment is disputed. */
+  refundDisputed?: true;
   /** #3973: a refund that is the group organiser's (`refundMethod` stays "card"), as its email words it, for the confirmation screen. */
   organiserRefund?: { method: OrganiserRefundMethod; amountCents: number };
   /** #4084: a refund to the member's own card, made or not yet (`refundMethod` stays "card"), for the confirmation screen.
@@ -1623,8 +1626,12 @@ async function performBookingCancellation(
     // #3949 (owner decision, 22 Oct 2026): one the organiser paid for by Internet Banking is refunded to the organiser
     // by bank transfer - a hand-back task (the manual branch), tiered as every refund to the organiser is. The method
     // and disposition come from their one home, shared with the preview (`cancelRefundDisposition`).
+    // #4911 (`INV-PAY-154`): an OPEN or LOST dispute on any of its captures, read under the claim's locks - a capture
+    // the bank has taken back is handed to the treasurer, never refunded to the card or held as credit.
+    const disputeHold = await disputedCaptureCents(tx, await paymentCaptureIntentIds(tx, payment));
+    const disputed = disputeHold.cents > 0;
     const disposition = cancelRefundDisposition({ paymentSource: payment.source, organiserCard: organiserCard !== null,
-      organiserByBank: paidByOrganiserInternetBanking({ ...fresh, payment }), manuallyMarkedPaid: Boolean(payment.manuallyMarkedPaidAt), requested: refundMethod });
+      organiserByBank: paidByOrganiserInternetBanking({ ...fresh, payment }), manuallyMarkedPaid: Boolean(payment.manuallyMarkedPaidAt), disputed, requested: refundMethod });
     const organiserByHand = disposition.forced === "organiser_by_hand";
     refundMethod = disposition.refundMethod;
 
@@ -1895,7 +1902,9 @@ async function performBookingCancellation(
           // this task's amount is not admin-amendable — it was fixed at creation.
           kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
           raisedAmountCents: refundAmountCents,
-          reason: cancellationHandBackReason({ bookingId, refundPercentage, payee: organiserByHand ? "organiser" : "member", organiserName }).slice(0, MANUAL_REFUND_TASK_REASON_MAX),
+          reason: (disputed && !organiserByHand
+            ? disputedCancellationHandBackReason({ bookingId, refundPercentage, disputes: disputeHold.disputes })
+            : cancellationHandBackReason({ bookingId, refundPercentage, payee: organiserByHand ? "organiser" : "member", organiserName })).slice(0, MANUAL_REFUND_TASK_REASON_MAX),
         },
         select: { id: true },
       });
@@ -2040,6 +2049,7 @@ async function performBookingCancellation(
       organiserName,
       clearingOperationId,
       branch,
+      disputes: disputed ? disputeHold.disputes : [],
       organiserChildDebtId,
       groupCancellationDebt,
     };
@@ -2074,6 +2084,7 @@ async function performBookingCancellation(
     organiserName,
     clearingOperationId,
     branch,
+    disputes,
     organiserChildDebtId,
     groupCancellationDebt,
   } = claim;
@@ -2133,19 +2144,24 @@ async function performBookingCancellation(
   if (branch === "manual") {
     // #3949 (owner decision, 22 Oct 2026): a joiner's place the organiser paid for by Internet Banking - the hand-back is the organiser's.
     const toOrganiser = paidByOrganiserInternetBanking({ ...fresh, payment });
+    // #4911 (`INV-PAY-154`): handed to the treasurer because the cardholder disputes the card payment.
+    const disputed = disputes.length > 0 && !toOrganiser;
+    const disputeIds = disputes.map((dispute) => dispute.stripeDisputeId);
 
     logBookingCancellationAudit({
       booking: fresh,
       bookingId,
       sessionUserId,
-      details:
-        payment.changeFeeCents > 0
+      details: disputed
+        ? `Card payment disputed (${disputeIds.join(", ")}): no card refund or account credit; manual refund task for ${refundPercentage}% = ${formatCents(refundAmountCents, format)} handed to the treasurer`
+        : payment.changeFeeCents > 0
           ? `Manual refund task for ${refundPercentage}% of ${formatCents(refundableBaseCents, format)} (excluding ${formatCents(payment.changeFeeCents, format)} change fee) = ${formatCents(refundAmountCents, format)}`
           : `Manual refund task for ${refundPercentage}% = ${formatCents(refundAmountCents, format)}`,
       ipAddress,
       metadata: {
         refundMethod: "manual",
         ...(toOrganiser ? { refundTo: "organiser" } : {}),
+        ...(disputed ? { stripeDisputeIds: disputeIds } : {}),
         refundAmountCents,
         refundPercentage,
         refundableBaseCents,
@@ -2169,7 +2185,7 @@ async function performBookingCancellation(
         fresh.checkOut,
         refundAmountCents,
         format,
-        toOrganiser ? "organiser_by_hand" : "manual",
+        toOrganiser ? "organiser_by_hand" : disputed ? "disputed" : "manual",
         creditRestoredCents,
         fresh.lodgeId
       ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
@@ -2189,7 +2205,9 @@ async function performBookingCancellation(
       bookingId,
       reason: toOrganiser
         ? `${joinerName} cancelled their own place in the group ${days} day(s) before check-in; ${refundPercentage}% on the card refund tiers goes back to the group organiser by bank transfer.`
-        : `Cash/manual settlement cancelled ${days} day(s) before check-in (${refundPercentage}% under the policy in effect at the time).`,
+        : disputed
+          ? `Booking cancelled ${days} day(s) before check-in while its card payment is disputed by the cardholder (Stripe dispute ${disputeIds.join(", ")}). No card refund or account credit was issued: check the dispute in Stripe before refunding any of the ${refundPercentage}% due.`
+          : `Cash/manual settlement cancelled ${days} day(s) before check-in (${refundPercentage}% under the policy in effect at the time).`,
       ...(toOrganiser ? { situation: "joiner-cancel-organiser" as const } : {}),
     }, format).catch((err) =>
       logger.error(
@@ -2211,8 +2229,11 @@ async function performBookingCancellation(
         ...(toOrganiser ? { organiserRefund: { method: "organiser_by_hand" as const, amountCents: refundAmountCents } } : {}),
         creditRestoredCents: creditRestoredCents || undefined,
         manualRefundTaskId: manualRefundTaskId ?? undefined,
+        ...(disputed ? { refundDisputed: true as const } : {}),
         message: toOrganiser
           ? `Booking cancelled. The group organiser paid for this booking, so the club will refund ${formatCents(refundAmountCents, format)} to the organiser by bank transfer.`
+          : disputed
+          ? `Booking cancelled. ${disputedRefundSentence(formatCents(refundAmountCents, format))}`
           : `Booking cancelled. This booking was settled in cash, so a manual refund task for ${formatCents(refundAmountCents, format)} has been raised for an admin to pay back by hand.`,
       },
     };

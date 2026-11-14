@@ -204,7 +204,9 @@ vi.mock("@/lib/member-credit", () => ({
   },
 }));
 
-vi.mock("@/lib/xero-applied-credit-operation-serialization", () => ({
+vi.mock("@/lib/xero-applied-credit-operation-serialization", async (importOriginal) => ({
+  // #4919: the group invoice worker checks for its own deferred-email error.
+  ...((await importOriginal()) as typeof import("@/lib/xero-applied-credit-operation-serialization")),
   assertNoAppliedCreditDeallocationFence: mocks.assertNoAppliedCreditDeallocationFence,
   // #3809: an edit's note waits on a deallocation; none is on its way here.
   findUnconvergedAppliedCreditDeallocation: async () => null,

@@ -22,6 +22,7 @@ import {
   createRequestPromoFields,
 } from "@/components/promo-code-list-client";
 import { useWorkingBeeDiscount } from "./use-working-bee-discount";
+import { useSelectionCancellationSchedule } from "./use-selection-cancellation-schedule";
 import {
   getBookingErrorPaymentTargets,
   type BookingErrorPaymentTarget,
@@ -319,6 +320,10 @@ export function useBookingWizard() {
   // (#2474), never a local-midnight `Date`.
   const [checkIn, setCheckIn] = useState<string | null>(null);
   const [checkOut, setCheckOut] = useState<string | null>(null);
+  // #4946: refund terms for the selection the policy check answered; shown
+  // only while that lodge and check-in are still the ones on screen.
+  const { cancellationSchedule, recordCancellationSchedule, clearCancellationSchedule } =
+    useSelectionCancellationSchedule(scopedLodgeId, checkIn);
   const [guests, setGuests] = useState<GuestData[]>([]);
   const [notes, setNotes] = useState("");
   const [priceQuote, setPriceQuote] = useState<PriceQuote | null>(null);
@@ -544,6 +549,7 @@ export function useBookingWizard() {
     setStep("dates");
     setCheckIn(null);
     setCheckOut(null);
+    clearCancellationSchedule();
     setError("");
     setGuestProfileBlocks([]);
     setAppliedPromos([]);
@@ -1400,6 +1406,7 @@ export function useBookingWizard() {
     };
     setCheckIn(ci);
     setCheckOut(co);
+    clearCancellationSchedule();
     setError("");
     setGuestProfileBlocks([]);
     setMemberNightConflicts([]);
@@ -1450,6 +1457,7 @@ export function useBookingWizard() {
       if (policyRes.ok) {
         const policyData = await policyRes.json();
         if (lostSelectionOwnership()) return;
+        recordCancellationSchedule(requestedLodgeId, ci, policyData.cancellationSchedule);
         if (!policyData.valid) {
         // #2562: the date precheck must not strand a member before they can
         // describe the party that the officer would review. Reuse the ONE
@@ -2438,6 +2446,7 @@ export function useBookingWizard() {
     handleLodgeChange,
     selectedLodge,
     lodgeLabel,
+    cancellationSchedule,
     waitlistAlternateLodgeIds,
     setWaitlistAlternateLodgeIds,
   };
