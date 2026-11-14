@@ -23,6 +23,14 @@ Payment** card (`/bookings/<id>`). The payment states are in
 
 ![My Bookings showing stay statuses and amounts before opening a booking to pay](../images/public/member-bookings.png)
 
+### Check which lodge before you pay
+
+The booking page's **Stay Details** card starts with the **Lodge** the booking
+is at, and a payment link the club emails a guest shows **Lodge:** above the
+dates. If your club has more than one lodge, check it before paying: a booking
+at the wrong lodge has to be moved or cancelled later, and that can mean a
+refund. If the lodge is wrong, contact the club instead of paying.
+
 ### Pay by card (Stripe)
 
 1. On the **Pay** step of the wizard, or the **Complete Payment** card on your

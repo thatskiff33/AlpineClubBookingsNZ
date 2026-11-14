@@ -249,7 +249,7 @@ contracts, and records the relevant PR numbers in the PR lock-impact section.
 ## Sekreton sandbox checks
 
 The isolated Sekreton sandbox uses [`.sekreton/config.toml`](../../.sekreton/config.toml)
-for setup and the quick lint/knip checks. Setup reads the Node version from
+for setup and its pre-ship checks. Setup reads the Node version from
 `.nvmrc` and pnpm spec from `package.json`, installs frozen dependencies, and
 generates Prisma with a placeholder database URL. A failed Node download stops
 setup before extraction. The provider must put `SETUP_TOOL_DIR/bin` on `PATH`;
@@ -261,20 +261,22 @@ migration and E2E gates before merge. What a Sekreton lane owns on GitHub, from
 its claim to the merge, is in
 [`COORDINATION.md`](COORDINATION.md#lanes-and-assignments) (#4392).
 
-The `kept-change-realdb` sandbox check installs the distribution’s declared `postgresql`
-package and runs `bash scripts/ci/kept-change-realdb.sh` against a fresh,
-loopback-only disposable database. It runs the kept-change, superseded-invoice
-carry, change-receipt, primary-invoice race and unpaid-edit change-fee
-(#4661) suites serially, then checks the
-Vitest JSON report with `unexercisedRealdbFiles`: every named suite must pass
-and none may skip. The script stops its database on exit. When the check runs
-as root, only PostgreSQL commands run as the package's unprivileged `postgres`
-account, which owns the fresh cluster directory; migrations and tests retain
-the caller's checkout permissions. Non-root checks use their own account.
-The script discovers the installed server tools under `/usr/lib/postgresql/*/bin`.
-A missing PostgreSQL binary fails explicitly; unit-shard success is not database evidence. The
-broader `realdb-all` job's discovery and no-skip check on GitHub remain advisory,
-so cite that job's actual result separately before making the PR ready.
+The PostgreSQL checks use the declared `postgresql` package and a fresh,
+loopback-only cluster that `scripts/ci/disposable-postgres.sh` starts and stops
+(its header covers root and tool discovery). A missing binary fails explicitly;
+unit-shard success is not database evidence. `kept-change-realdb` runs
+`bash scripts/ci/kept-change-realdb.sh`: the kept-change, superseded-invoice
+carry, change-receipt, primary-invoice race and unpaid-edit change-fee (#4661)
+suites, serially, then `unexercisedRealdbFiles` on the Vitest report: every
+suite must pass and none may skip. `migrations` runs
+`bash scripts/ci/sekreton-migration-checks.sh`: the data-migration coverage gate
+always, then, when the change can move CI's migration jobs, drift and the
+data-migration suites with the same no-skip check (its header has the rule).
+`typecheck` runs `scripts/ci/sekreton-typecheck.sh` (production project only,
+skipped under 6 GiB); PR CI keeps the rest.
+`fast-censuses` runs `pnpm run ci:fast-censuses` against a fetched `origin/main`.
+The `realdb-all` job on GitHub remains advisory, so cite its actual result
+separately before making the PR ready.
 
 ## Checking `main` after a merge
 

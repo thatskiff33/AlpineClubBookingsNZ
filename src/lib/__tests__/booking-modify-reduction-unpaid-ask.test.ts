@@ -1,5 +1,6 @@
-import { PaymentSource, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { PaymentRecoveryOperationType, PaymentSource, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { editDoorBooking } from "./support/edit-door-booking";
 
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import { REISSUED_ASK_REASON } from "@/lib/payment-recovery-keys";
@@ -211,6 +212,25 @@ const xeroUpdateMany = vi.fn();
 const recoveryUpdateMany = vi.fn();
 // #4217: the Payment row lock (`lockPaymentForRefundedTotal`), the retire's and the reconcile's.
 const executeRaw = vi.fn(async () => 0);
+/**
+ * Every fixture recovery is an additional-ask row (`CREATE_ADDITIONAL_PAYMENT_INTENT`,
+ * keyed by `buildAdditionalIntentRecoveryIdempotencyKey`), so a read filtered to other
+ * types or key prefixes - the #4872 superseded-capture hold-back's - sees none, as it
+ * would on a real table. Only `type` and an `idempotencyKey` prefix are matched.
+ */
+type RecoveryClause = { type?: unknown; idempotencyKey?: unknown };
+function recoveriesOfType(where?: RecoveryClause & { OR?: RecoveryClause[] }): unknown[] {
+  const askType = PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT;
+  const typeMatches = (type: unknown): boolean =>
+    type === undefined || type === askType ||
+    (typeof type === "object" && type !== null && "in" in type && (type as { in: unknown[] }).in.includes(askType));
+  const keyMatches = (key: unknown): boolean =>
+    typeof key !== "object" || key === null || !("startsWith" in key) ||
+    (state.recoveries as { idempotencyKey?: string }[]).some((row) =>
+      row.idempotencyKey?.startsWith((key as { startsWith: string }).startsWith));
+  const clauseMatches = (clause: RecoveryClause): boolean => typeMatches(clause.type) && keyMatches(clause.idempotencyKey);
+  return clauseMatches(where ?? {}) && (where?.OR ?? [{}]).some(clauseMatches) ? state.recoveries : [];
+}
 const tx = {
   $executeRaw: executeRaw,
   payment: { update: paymentUpdate, updateMany: paymentUpdateMany, findUnique: paymentFindUnique },
@@ -221,7 +241,8 @@ const tx = {
   },
   bookingModification: { findMany: vi.fn(async () => state.modifications) },
   paymentRecoveryOperation: {
-    findMany: vi.fn(async () => state.recoveries),
+    findMany: vi.fn(async (args?: { where?: { type?: unknown; OR?: { type?: unknown }[] } }) =>
+      recoveriesOfType(args?.where)),
     updateMany: recoveryUpdateMany,
   },
   // #3954 decision A: the parked invoices the retire cancels are read first,
@@ -252,7 +273,7 @@ function askRow(overrides: Partial<Row> = {}): Row {
  * account credit, the same $50 asked of the card.
  */
 function grownBooking({ creditPaid = false, xeroInvoiceId = null as string | null } = {}) {
-  return {
+  return editDoorBooking({
     id: "booking_3954",
     status: "PAID",
     checkIn: new Date("2026-08-01T00:00:00.000Z"),
@@ -276,7 +297,7 @@ function grownBooking({ creditPaid = false, xeroInvoiceId = null as string | nul
       additionalPaymentIntentId: ASK_INTENT,
       xeroInvoiceId,
     },
-  } as unknown as LoadedBookingForModify;
+  });
 }
 
 async function adjust(
