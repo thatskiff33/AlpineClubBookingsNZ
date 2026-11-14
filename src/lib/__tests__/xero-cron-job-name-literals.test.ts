@@ -6,8 +6,13 @@ import { XERO_CRON_JOB_NAMES } from "@/lib/xero-cron-jobs";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 // ---------------------------------------------------------------------------
-// No production code spells a Xero cron job name as a string literal (#4922
-// review, INV-SSOT).
+// No code under `src/` outside `__tests__` spells one of the ten Xero cron
+// runner job names as a string literal (#4922 review, INV-SSOT). That is the
+// tasks of `xero-cron-runner.ts` only: the payments cycle's jobs, such as
+// `xero-waiting-invoice-reaper`, are named in `payments-cron-runner.ts` and
+// `admin-cron-health.ts` and are not covered here. Test support files under
+// `src/test/` (the fakes, not the `*.test.ts` files) are scanned too, on
+// purpose: a fake that copied a name would go stale the same way.
 //
 // The runner records and claims each run under its `XERO_CRON_JOB_NAMES`
 // entry; the scheduler logs and checks in to Sentry under the same name, and
@@ -15,6 +20,8 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
 // raw copy keeps matching until the name is renamed, then cron health shows
 // the job as never run and the Sentry monitor stops matching, with nothing
 // failing. So every literal is refused outside `xero-cron-jobs.ts`.
+// `xero-cron-jobs.ts` itself imports nothing, because `instrumentation.node.ts`
+// loads it at boot; the last test holds it to that.
 //
 // What counts: the whole name between `"`, `'` or `` ` `` quotes, in code with
 // its comments removed. `"admin-xero-reconciliation-report"` (an email
@@ -24,12 +31,12 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
 const ROOT = process.cwd();
 const HOME = "src/lib/xero-cron-jobs.ts";
 
-/** Every production `.ts`/`.tsx` file under `src/`, tests left out. */
-function productionFiles(dir: string): string[] {
+/** Every `.ts`/`.tsx` file under `src/` outside `__tests__` and `*.test.*`. */
+function scannedFiles(dir: string): string[] {
   return fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true }).flatMap((entry) => {
     const rel = `${dir}/${entry.name}`;
     if (entry.isDirectory()) {
-      return entry.name === "__tests__" || entry.name === "node_modules" ? [] : productionFiles(rel);
+      return entry.name === "__tests__" || entry.name === "node_modules" ? [] : scannedFiles(rel);
     }
     if (!/\.tsx?$/.test(entry.name) || /\.(test|spec)\.tsx?$/.test(entry.name)) return [];
     return [rel];
@@ -52,7 +59,7 @@ function findJobNameLiterals(file: string, source: string): string[] {
   });
 }
 
-describe("Xero cron job names have one spelling (INV-SSOT)", () => {
+describe("The ten Xero cron runner job names have one spelling (INV-SSOT)", () => {
   it("finds a raw job name, and ignores one in a comment or a longer literal", () => {
     const source = [
       `logger.info({ job: "xero-inbound-reconcile" });`,
@@ -67,8 +74,8 @@ describe("Xero cron job names have one spelling (INV-SSOT)", () => {
     ]);
   });
 
-  it("spells every name in xero-cron-jobs.ts and nowhere else in production code", () => {
-    const files = productionFiles("src");
+  it("spells every name in xero-cron-jobs.ts and nowhere else under src/", () => {
+    const files = scannedFiles("src");
     expect(files).toContain(HOME);
 
     const homeLiterals = findJobNameLiterals(HOME, fs.readFileSync(path.join(ROOT, HOME), "utf8"));
@@ -78,5 +85,13 @@ describe("Xero cron job names have one spelling (INV-SSOT)", () => {
       .filter((file) => file !== HOME)
       .flatMap((file) => findJobNameLiterals(file, fs.readFileSync(path.join(ROOT, file), "utf8")));
     expect(elsewhere).toEqual([]);
+  });
+
+  it("keeps xero-cron-jobs.ts free of imports, so booting the scheduler pulls in nothing else", () => {
+    const code = stripComments(fs.readFileSync(path.join(ROOT, HOME), "utf8"));
+    // Static `import ... from`, bare `import "x"`, `export ... from`, a dynamic
+    // `import(` and `require(` are all a way to pull another module in.
+    const pullsIn = /^\s*(import|export)\b[^;]*?\bfrom\s*["'`]|^\s*import\s*["'`(]|\brequire\s*\(|\bimport\s*\(/m;
+    expect(code).not.toMatch(pullsIn);
   });
 });
