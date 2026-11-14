@@ -757,7 +757,6 @@ describe("starter privacy audit-retention update migration (#4031)", () => {
   it("bumps the header's Last updated date only where the header is still the starter one", () => {
     // 17 Oct 2026 decision: the starter header (written once, by the policy
     // backfill) moves to the seed's header; any other header is kept.
-    const page = starterPageContent.find((p) => p.slug === "privacy");
     const policyPagesSql = readFileSync(POLICY_PAGES_MIGRATION_PATH, "utf8");
     const previousHeader = privacyHeaderOn("1 April 2026");
     expect(policyPagesSql).toContain(sqlQuote(previousHeader));
@@ -979,7 +978,7 @@ describe("starter privacy policy versus the recipient register (#5007)", () => {
   });
 
   it("links each provider to the privacy notice the register records", () => {
-    const registerUrls = new Set(memberFacing.map(([, r]) => r.privacyUrl));
+    const registerUrls = new Set<string>(memberFacing.map(([, r]) => r.privacyUrl));
     for (const [id, item] of Object.entries(STARTER_PRIVACY_RECIPIENT_ITEMS)) {
       for (const [, href] of item.matchAll(/href="([^"]+)"/g)) {
         expect(registerUrls.has(href!), `${id} links ${href}, which no register entry records`).toBe(true);
