@@ -1,6 +1,7 @@
 "use client";
 
-import type { PaymentStatus } from "@prisma/client";
+import type { PaymentStatus, StripeDisputeStatus } from "@prisma/client";
+import { STRIPE_DISPUTE_STATUS_LABEL, disputeHoldsCapture } from "@/lib/stripe-dispute-note";
 import { RefundsAndCreditsOwedList } from "@/components/admin/refunds-and-credits-owed";
 import { useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
@@ -232,6 +233,8 @@ interface PaymentRow {
     latestOperationAt: string | null;
   };
   settlementKind: string;
+  /** #4911: the cardholder disputes on this payment, newest first. */
+  disputes?: Array<{ stripeDisputeId: string; status: StripeDisputeStatus; amountCents: number }>;
   booking: {
     id: string;
     status: string;
@@ -402,6 +405,18 @@ function SummaryCard({
       </CardContent>
     </Card>
   );
+}
+
+/** #4911 (`INV-PAY-154`): each cardholder dispute, by Stripe's dispute id. */
+function DisputeChips({ disputes }: { disputes: PaymentRow["disputes"] }) {
+  const format = useClubFormat();
+  return (disputes ?? []).map((dispute) => (
+    <span key={dispute.stripeDisputeId} title={`Stripe dispute ${dispute.stripeDisputeId} for ${formatCents(dispute.amountCents, format)}`}>
+      <MiniChip tone={disputeHoldsCapture(dispute.status) ? "warning" : "neutral"} icon={AlertTriangle}>
+        Disputed by cardholder - {STRIPE_DISPUTE_STATUS_LABEL[dispute.status]}
+      </MiniChip>
+    </span>
+  ));
 }
 
 export default function PaymentsPage() {
@@ -1344,6 +1359,7 @@ export default function PaymentsPage() {
                       {p.source === "STRIPE" && (
                         <MiniChip tone="info" icon={CreditCard}>Stripe</MiniChip>
                       )}
+                      <DisputeChips disputes={p.disputes} />
                       {/* #2378 D11 — the payment's own id, beside the status the
                           operator is asking about ("why is this still pending?").
                           Renders nothing unless the widget says Diagnostics is

@@ -189,7 +189,7 @@ export default function PayByLinkPage() {
   if (loading) {
     return (
       <Card className="w-full max-w-lg">
-        <CardContent className="py-8 text-center text-muted-foreground">Loading...</CardContent>
+        <CardContent role="status" className="py-8 text-center text-muted-foreground">Loading...</CardContent>
       </Card>
     );
   }
@@ -433,7 +433,6 @@ export default function PayByLinkPage() {
               // intent an edit superseded) going back with a fresh one to pay.
               onSuccess={confirmed("succeeded")}
               onProcessing={confirmed("processing")}
-              onError={() => undefined}
             />
           </StripeProvider>
         ) : (
@@ -446,11 +445,7 @@ export default function PayByLinkPage() {
             ) : (
               <CardPaymentUnavailableNotice />
             )}
-            {intentError ? (
-              <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {intentError}
-              </div>
-            ) : null}
+            <FocusedActionError id="payment-link-intent-error" error={intentError ?? ""} />
 
             {payable.internetBankingReference ? (
               <div className="rounded-md border border-border p-3 text-sm">

@@ -29,6 +29,7 @@ import {
   withCredentialTransaction,
 } from "@/lib/integration-credentials";
 import { XERO_PROVIDER } from "@/lib/xero-config";
+import { xeroTestClientOverride } from "./xero-test-client-override";
 import {
   isConnectedTenant,
   readXeroConnection,
@@ -443,9 +444,11 @@ export async function releaseXeroTokenRefreshLease(lease: XeroRefreshLease): Pro
 }
 
 /**
- * Check if Xero is currently connected (a connection row that names a tenant).
+ * Check if Xero is currently connected (a connection row that names a tenant),
+ * or a test has installed an in-memory Xero session (#4908).
  */
 export async function isXeroConnected(): Promise<boolean> {
+  if (xeroTestClientOverride()) return true;
   return isConnectedTenant(await readXeroConnection());
 }
 

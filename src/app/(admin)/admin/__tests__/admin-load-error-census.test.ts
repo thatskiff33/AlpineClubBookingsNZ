@@ -43,8 +43,10 @@ const SITES: ReadonlyArray<{ file: string; guards: ReadonlyArray<{ gate: string;
     ],
   },
   {
-    file: "src/app/(admin)/admin/messages/communications/page.tsx",
-    guards: [{ gate: "historyLoadError ? (", empty: "No bulk communications sent yet." }],
+    // #4964 moved the Send History card, and so its failed-load branch, out of
+    // the page into its own component.
+    file: "src/app/(admin)/admin/messages/communications/_components/send-history-card.tsx",
+    guards: [{ gate: "loadError ? (", empty: "No bulk communications sent yet." }],
   },
 ];
 

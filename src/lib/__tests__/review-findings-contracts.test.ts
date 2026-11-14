@@ -4185,6 +4185,30 @@ describe("review finding source/schema contracts", () => {
     // no-refund message instead.
     expect(routeSurface).toContain("originalPaymentCaptured");
     expect(routeSurface).toContain("cancellationHasNoPayment");
+
+    // #4946: the paid booking's schedule is ON THE PAGE, not only in the help
+    // widget, and it is the booking's own lodge's schedule — the one the cancel
+    // settles with — rather than the club default lodge's.
+    expect(routeSurface).toContain("<CancellationScheduleBlock");
+    expect(routeSurface).toContain(
+      "loadCancellationPolicy(booking.checkIn, booking.lodgeId)",
+    );
+  });
+
+  it("shows the cancellation schedule on the review step, before the primary button (#4946)", () => {
+    // Terms that bind money belong on the screen where the member commits. The
+    // block is unconditional, so it shows for card, internet banking, credit
+    // and split paths alike, and sits above the Confirm / Continue button.
+    const reviewStep = stripComments(
+      readRepoFile("src/app/(authenticated)/book/_components/review-step.tsx"),
+    );
+    const block = reviewStep.indexOf("<CancellationScheduleBlock");
+    expect(block).toBeGreaterThan(-1);
+    expect(block).toBeLessThan(reviewStep.indexOf('"Continue to Payment"'));
+    expect(block).toBeLessThan(reviewStep.indexOf('"Confirm Booking"'));
+    // Phrased as what happens once paid (PR #1389 owner rule), and as the club's
+    // CURRENT schedule, because the terms are read live at cancel time.
+    expect(reviewStep).toContain("If you pay and later cancel, the club's current");
   });
 
   it("removes the E2E ride-through allowances for the two fixed races (F28)", () => {

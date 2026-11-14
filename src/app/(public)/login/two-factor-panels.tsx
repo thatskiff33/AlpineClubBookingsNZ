@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
 import { useQrDataUrl } from "@/hooks/use-qr-data-url";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
@@ -213,11 +214,7 @@ export function TwoFactorEnrollPanel({
       </CardHeader>
       <form noValidate onSubmit={submitEnroll}>
         <CardContent className="space-y-5">
-          {error ? (
-            <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-              {error}
-            </div>
-          ) : null}
+          <FocusedActionError id="two-factor-enroll-error" error={error} />
 
           <OptionCardGroup label="Verification method">
             <OptionCard
@@ -435,11 +432,7 @@ export function TwoFactorVerifyPanel({
       </CardHeader>
       <form noValidate onSubmit={submitVerify}>
         <CardContent className="space-y-5">
-          {error ? (
-            <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-              {error}
-            </div>
-          ) : null}
+          <FocusedActionError id="two-factor-verify-error" error={error} />
 
           {recoveryCodesRetired ? (
             <RetiredRecoveryCodesNotice>

@@ -987,10 +987,10 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-001",
   },
   {
-    site: "createXeroInvoiceForGroupSettlement#2",
+    site: "runGroupInvoiceEmailFence#1",
     tier: "GLOBAL",
     reason:
-      "The email gate re-reads the settlement under the same fence, so an invoice for a group cancelled in the meantime, or one the settlement no longer points at (#3642), is never emailed.",
+      "The email gate re-reads the settlement under the same fence, so an invoice for a group cancelled in the meantime, or one the settlement no longer points at (#3642), is never emailed. #4919: the fence transaction was split out of finishGroupSettlementInvoiceEmail unchanged; it is still that function's only lock(1) site.",
     invariant: "INV-LOCK-001",
   },
   {
@@ -1793,6 +1793,12 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // other lock and no advisory key. See docs/CONCURRENCY_AND_LOCKING.md, "An
   // allocation Xero no longer lists (#4447)".
   "src/lib/xero-inbound/retire-unlisted-credit-note-allocations.ts": 1,
+  // #4911 (`INV-PAY-154`): a dispute event locks its own StripeDispute row
+  // (`SELECT 1 … FOR NO KEY UPDATE`), re-reads it and merges the event, so two
+  // deliveries of one dispute serialise. It holds no other lock and no advisory
+  // key; the refund and cancel doors only read the row. See
+  // docs/CONCURRENCY_AND_LOCKING.md, "A Stripe dispute's record (#4911)".
+  "src/lib/stripe-dispute.ts": 1,
 };
 
 const CAPACITY_LOCK_MINT = "src/lib/lodge-capacity-lock.ts";
