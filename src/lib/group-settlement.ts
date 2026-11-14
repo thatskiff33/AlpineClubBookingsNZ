@@ -1326,7 +1326,7 @@ async function settleConfirmedChildrenAndNotify(
     );
 
     return settledIds;
-  }, LOCK1_HOLDER_TRANSACTION_BUDGET); // #4627: each child's R01 adds journal round trips (`INV-LOCK-005`).
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET); // #4627: each child's R01 adds journal round trips (`INV-LOCK-006`).
 
   if (settled === "refunded") {
     logger.warn(

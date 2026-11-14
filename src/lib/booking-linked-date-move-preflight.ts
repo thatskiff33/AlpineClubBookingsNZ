@@ -102,7 +102,7 @@ export async function prepareLinkedMovePreTransaction(
  */
 /**
  * The interactive-transaction budget: the shared lock(1) budget
- * (`LOCK1_HOLDER_TRANSACTION_BUDGET`, `INV-LOCK-005`). This transaction is roughly
+ * (`LOCK1_HOLDER_TRANSACTION_BUDGET`, `INV-LOCK-006`). This transaction is roughly
  * two of them - the global wait, the per-lodge key and two full
  * `modifyBookingBatch` bodies - so on Prisma's defaults an ordinary cancel or bed
  * assignment holding `lock(1)` would abort it. NOTHING IS COMMITTED WHEN IT DOES

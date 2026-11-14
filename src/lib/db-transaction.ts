@@ -24,7 +24,7 @@ export type PrismaTransactionClient = Omit<
 
 /**
  * The interactive-transaction budget of every writer that waits for the global
- * key `pg_advisory_xact_lock(1)` (`INV-LOCK-005`) - the one definition.
+ * key `pg_advisory_xact_lock(1)` (`INV-LOCK-006`) - the one definition.
  *
  * Prisma counts the wait for that key against `maxWait` / `timeout`, and its
  * defaults (2 s / 5 s) lose to any legitimate holder that runs longer: bed-range

@@ -86,7 +86,7 @@ bed-range assignment and group settlement are each allowed 30 s. The loser rolls
 back cleanly, but before #4933 booking create then answered a member with a 400
 "Failed to create booking", which reads as "your request was wrong".
 
-The rule (`INV-LOCK-005`): a transaction that waits for lock(1) passes
+The rule (`INV-LOCK-006`): a transaction that waits for lock(1) passes
 `LOCK1_HOLDER_TRANSACTION_BUDGET` (`src/lib/db-transaction.ts`, `maxWait` 10 s /
 `timeout` 30 s) - the one definition, so a writer can outlast the longest holder
 it queues behind - and its route maps P2028 / P2034 through

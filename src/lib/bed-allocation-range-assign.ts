@@ -617,7 +617,7 @@ export async function assignBedRange(
 
   // The scan, the writes and the audit row share one transaction so the refusal
   // report, the rows written from it and the record of both describe the same
-  // instant. It runs on the shared lock(1) budget (`INV-LOCK-005`) rather than
+  // instant. It runs on the shared lock(1) budget (`INV-LOCK-006`) rather than
   // the default 5s interactive timeout because the statement
   // count is fixed (see runAssignBedRangeAttempt) but a 366-night createMany is
   // a big single statement — generous headroom, not a licence to grow the
