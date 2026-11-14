@@ -1,0 +1,2 @@
+- **The admin booking calendar now colours each booking status the same way as My Bookings, the dashboards and the booking editor.**
+  The calendar kept its own status colours, which disagreed with those pages: Pending, Payment Pending and Bumped bookings all shared one amber, and Completed and Waitlisted bookings looked identical. The calendar's filter pills, booking bars and legend now take the same colour for each status as those pages do, so every status on the calendar has its own colour. The status chips in the bookings list are unchanged, and so are all labels.

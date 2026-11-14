@@ -762,7 +762,10 @@ export const AUDIT_CENSUS_TOTALS = {
   // save in `/api/admin/privacy-hosting`, `tx.auditLog.create` inside the upsert's
   // transaction, `admin` like the sibling club-identity and page-content writers.
   // RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 542,
+  // 542 -> 543 (#4618): `LOGIN_SECURITY_OFFICER_TWO_FACTOR_UPDATED`, the officer
+  // two-factor policy save, `tx.auditLog.create` in the route's transaction like the
+  // password-policy writer beside it, `security`. RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 543,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -1029,7 +1032,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // not list, in the same form as the registry's update.
     // 76 -> 77 (#4918): the privacy hosting disclosure save, same form as the
     // club-identity writer.
-    "auditLog.create": { total: 77, uncategorised: 0 },
+    // 77 -> 78 (#4618): the officer two-factor policy save, in its route's
+    // transaction, the same form as the password-policy writer.
+    "auditLog.create": { total: 78, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -1425,7 +1430,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // through that same one site, so no site is added and the support:view
     // total does not move. Each names the member and carries booleans and, for
     // a retirement, the COUNT of codes retired, never a secret or a code.
-    security: 25,
+    // 25 -> 26 (#4618): the officer two-factor policy save. A club security
+    // setting, so `security`, readable with `support:view` alone like the
+    // password-policy save: the weakest-gate total moves 141 -> 142, a deliberate
+    // widening of one site. The row carries the policy flag and grace days only.
+    security: 26,
     // 16 -> 18 (#2595): the two reviewed-move writes. `lodge` is the category
     // every other bed-allocation write already uses, and it is not one of the
     // three (`admin`, `security`, `system`) readable with support:view alone —

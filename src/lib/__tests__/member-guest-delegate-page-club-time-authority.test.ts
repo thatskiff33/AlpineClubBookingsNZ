@@ -39,7 +39,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-vi.mock("@/lib/booking-modify-validation", () => ({
+vi.mock("@/lib/booking-modify-quote-priced", () => ({
   isQuotePricedBooking: (...args: unknown[]) => mockIsQuotePricedBooking(...args),
 }));
 
