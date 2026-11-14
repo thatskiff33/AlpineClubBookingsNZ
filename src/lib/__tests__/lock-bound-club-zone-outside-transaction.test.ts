@@ -255,6 +255,10 @@ const PURE_CALLEES = [
   // the nightly follow-up's transaction under `lock(1)` and the Payment row
   // (`withStoreTransaction`). It resolves no club day.
   "src/lib/refund-allocation-unwind.ts",
+  // #4872: the booking-modification credit writes the credit, its ledger lines and
+  // the Payment allocation in one `withStoreTransaction` - the caller's when it holds
+  // one, under `lock(1)` - so it resolves no club day.
+  "src/lib/member-credit.ts",
 ] as const;
 
 /**
