@@ -1952,6 +1952,10 @@ handles every event of. Today that is:
 - `setup_intent.canceled`
 - `charge.refunded`
 - `refund.failed` (#4104)
+- `charge.dispute.created` (#4911)
+- `charge.dispute.funds_withdrawn` (#4911)
+- `charge.dispute.funds_reinstated` (#4911)
+- `charge.dispute.closed` (#4911)
 
 **Upgrading to #4104: add `refund.failed` to an existing endpoint.** In Stripe
 open Workbench → Webhooks (Developers → Webhooks), select the endpoint, choose
@@ -2003,6 +2007,38 @@ one apart from a refund Stripe refused outright (which its door already asked
 for again). In the Stripe dashboard, list the refunds that failed in the last
 few months, and for any the member is still owed, pay them another way and
 record it in Xero by hand.
+
+**Upgrading to #4911: add the four `charge.dispute.*` events to an existing
+endpoint.** In Stripe open Workbench → Webhooks, select the endpoint, choose
+**Edit destination** and add `charge.dispute.created`,
+`charge.dispute.funds_withdrawn`, `charge.dispute.funds_reinstated` and
+`charge.dispute.closed`. Add them once the new release alone serves: an older
+release acknowledges an event it does not know and drops it. With them the app
+keeps one record per cardholder dispute (chargeback), emails Finance when a
+dispute opens and when it closes, shows "Disputed by cardholder" on the
+booking and on **Finance → Payments**, and, while a dispute is open or lost,
+issues no card refund or account credit for that payment: a cancel is handed to
+the treasurer instead (`INV-PAY-154`). Disputes opened before the upgrade are
+not back-filled, so check Stripe's **Disputes** page once after adding the
+events and handle any open dispute by hand.
+
+**Recording a lost dispute in Xero (treasurer, by hand).** The app posts
+nothing to Xero for a dispute. When the Finance alert says a dispute was lost:
+
+1. In Stripe, open the dispute and note the disputed amount, Stripe's dispute
+   fee and the payout that carried the withdrawal.
+2. In Xero, record a spend money transaction from the Stripe clearing account
+   (the account the Stripe payouts reconcile through) for the disputed amount,
+   coded to the account the club uses for refunds or bad debts and referencing
+   the booking and the Stripe dispute id, and a second for the dispute fee,
+   coded to bank fees.
+3. Reconcile both against the Stripe payout that carried them.
+4. Do not refund or credit the member: the bank has already returned their
+   money. Resolve the cancellation's treasurer task, if one was raised, by
+   dismissing it with the dispute id as the reason.
+
+A won dispute needs no Xero entry unless the withdrawal was recorded by hand
+before the win; then record its reversal the same way.
 
 If Stripe webhook delivery was missed while the endpoint, DNS, TLS, or the
 signing secret stored under **Admin > Integrations > Stripe** was wrong (it is

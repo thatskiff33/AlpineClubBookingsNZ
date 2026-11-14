@@ -5,6 +5,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import {
   bookingCancelledRefundMade,
   bookingCancelledRefundSentence,
+  disputedRefundSentence,
   type OrganiserRefundMethod,
   organiserByHandRefundSentence,
   ownCardRefundPendingSentence,
@@ -17,6 +18,7 @@ import type { CancelCardRefundSplit } from "@/lib/cancel-card-refund-shortfall";
  * confirmations of an organiser-paid refund (#3973) and of an own-card refund
  * not made yet (#4084), split out of `cancel-booking-button.tsx` for size.
  * #4119: the preview's card line when the card refund plan is short.
+ * #4911: the hand-back lines of a manual settlement and of a disputed card payment.
  */
 
 /** No payment the app can refund: none taken, or one settled by hand (DECISION 2). */
@@ -250,4 +252,64 @@ export function CardRefundShortfallSentence({
     onBehalfOfMember ? "the member's" : "your",
   );
   return <p className="text-sm text-info-11" data-testid="cancel-preview-card-shortfall">{sentence}</p>;
+}
+
+/**
+ * B5 (#2262) and #4911 (`INV-PAY-154`): the preview's line for a refund the club
+ * hands back by hand - a cash or off-Xero settlement, or a card payment the
+ * cardholder disputes, which goes to the treasurer. Neither has a card refund
+ * or account credit; the figure is the credit tier's.
+ */
+export function HandBackRefundNote({
+  disputed,
+  amountCents,
+  format,
+  onBehalfOfMember,
+}: {
+  disputed: boolean;
+  amountCents: number;
+  format: ClubFormat;
+  onBehalfOfMember: boolean;
+}) {
+  const amount = <span className="font-medium text-success-11">{formatCents(amountCents, format)}</span>;
+  return disputed ? (
+    <p className="text-sm text-muted-foreground">
+      {onBehalfOfMember ? "The member's" : "Your"} card payment for this booking is disputed with{" "}
+      {onBehalfOfMember ? "their" : "your"} card issuer, so no card refund or account credit is issued.
+      The refund of {amount} goes to the club&apos;s treasurer, who will be in touch.
+    </p>
+  ) : (
+    <p className="text-sm text-muted-foreground">
+      This booking was paid in cash or by bank transfer, so there is no
+      card payment to reverse and no account credit is added. The club
+      will arrange {amount} back to {onBehalfOfMember ? "the member" : "you"} directly.
+    </p>
+  );
+}
+
+/**
+ * B5 (#2262): a manual settlement's confirmation never says "processed to your
+ * original payment method"; #4911: a disputed one says the treasurer has it.
+ */
+export function HandBackRefundConfirmation({
+  disputed,
+  amountCents,
+  format,
+  onBehalfOfMember,
+}: {
+  disputed: boolean;
+  amountCents: number;
+  format: ClubFormat;
+  onBehalfOfMember: boolean;
+}) {
+  const amount = formatCents(amountCents, format);
+  return (
+    <p className="text-sm text-success-11">
+      {disputed
+        ? disputedRefundSentence(amount, onBehalfOfMember ? "the member's" : "your")
+        : onBehalfOfMember
+          ? `The club will arrange the member's refund of ${amount} directly — they'll hear from the club about how it will be paid back.`
+          : `The club will arrange your refund of ${amount} directly — you'll hear from them about how it will be paid back.`}
+    </p>
+  );
 }
