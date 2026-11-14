@@ -51,7 +51,7 @@ export interface LoadVolumeOptions {
 
 export const LOAD_VOLUME_DEFAULTS = {
   seed: 4940,
-  memberCount: 2000,
+  memberCount: 3000,
   seasonsBack: 5,
   targetOccupancy: 0.6,
   maxNights: 4,

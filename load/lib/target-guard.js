@@ -106,19 +106,24 @@ function assertLocalHost(host, bareHost, label) {
 
 /**
  * Validate the target described by an env object (pass k6's `__ENV`).
- * Returns the normalised base URL (no trailing slash) or throws.
+ * `name` is the env key holding the URL (BASE_URL unless the caller guards
+ * another, such as STRIPE_STUB_URL), so a refusal names the variable the
+ * operator actually set. Returns the normalised URL (no trailing slash) or
+ * throws.
  */
-export function assertSafeTarget(env) {
-  const raw = (env && env.BASE_URL ? String(env.BASE_URL) : "").trim();
+export function assertSafeTarget(env, name) {
+  const key = name || "BASE_URL";
+  const raw = (env && env[key] ? String(env[key]) : "").trim();
   if (!raw) {
-    throw guardError("BASE_URL is not set. There is no default target.");
+    throw guardError(key + " is not set. There is no default target.");
   }
 
   // Check the raw string first so a database URL pasted by mistake is
   // refused even if it would not parse as http.
   if (raw.indexOf(":5432") !== -1) {
     throw guardError(
-      "BASE_URL contains :5432 — that is the live production Postgres " +
+      key +
+        " contains :5432 — that is the live production Postgres " +
         "port. The harness talks HTTP to the app only, never to a database."
     );
   }
@@ -126,7 +131,8 @@ export function assertSafeTarget(env) {
   if (!env || String(env.LOAD_TEST_CONFIRM_TARGET) !== "1") {
     throw guardError(
       "LOAD_TEST_CONFIRM_TARGET=1 is not set. Set it only after confirming " +
-        "BASE_URL points at a throwaway local stack."
+        key +
+        " points at a throwaway local stack."
     );
   }
 
@@ -137,7 +143,7 @@ export function assertSafeTarget(env) {
   );
   if (!match) {
     throw guardError(
-      'BASE_URL "' + raw + '" is not a plain http(s) URL the guard can parse.'
+      key + ' "' + raw + '" is not a plain http(s) URL the guard can parse.'
     );
   }
 
@@ -147,10 +153,10 @@ export function assertSafeTarget(env) {
     host.charAt(0) === "[" ? host.slice(1, host.length - 1) : host;
 
   if (Number(port) === 5432) {
-    throw guardError("BASE_URL targets port 5432 (live production Postgres).");
+    throw guardError(key + " targets port 5432 (live production Postgres).");
   }
 
-  assertLocalHost(host, bareHost, "BASE_URL");
+  assertLocalHost(host, bareHost, key);
 
   return raw.replace(/\/+$/, "");
 }

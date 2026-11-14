@@ -35,6 +35,20 @@ export function utcDayOf(epochMs) {
   return new Date(epochMs).toISOString().slice(0, 10);
 }
 
+/**
+ * Days after the run's UTC day that the booking-contention night falls when
+ * CONTENTION_CHECKIN names none. +116 sits between the last seeded fixture
+ * window (+111..+112, two lodges) and the mixed-writes window (+120), so the
+ * UTC run day being one behind the club's day still lands on an empty night
+ * (#4002 lists the seeded windows).
+ */
+export const CONTENTION_OFFSET_DAYS = 116;
+
+/** The default booking-contention night for a run started at `epochMs`. */
+export function contentionCheckIn(epochMs) {
+  return addDaysIso(utcDayOf(epochMs), CONTENTION_OFFSET_DAYS);
+}
+
 /** Nights `[from, toExclusive)`, in order. */
 export function nightsBetween(from, toExclusive) {
   const end = requireDateOnly(toExclusive, "toExclusive");

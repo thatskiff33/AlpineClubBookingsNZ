@@ -17,7 +17,7 @@ import { ensureMemberAccessRolesFromCompatibilityFields } from "../src/lib/membe
 
 export const DEMO_MEMBER_NIGHTLY_CENTS = 4500;
 
-/** The one password every demo persona shares; `.env.staging.example` documents it. */
+/** The one password every demo persona shares; `DEMO_SEED_PASSWORD` overrides it (CONFIGURATION.md). */
 export function demoSeedPassword(
   env: { DEMO_SEED_PASSWORD?: string } = { DEMO_SEED_PASSWORD: process.env.DEMO_SEED_PASSWORD },
 ): string {

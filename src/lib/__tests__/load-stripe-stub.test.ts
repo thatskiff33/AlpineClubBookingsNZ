@@ -11,6 +11,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import Stripe from "stripe";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { composeServices, readRepoFile } from "@/lib/__tests__/helpers/compose";
 import {
   createStripeStub,
   parseStripeForm,
@@ -136,5 +137,21 @@ describe("load Stripe stub (#4940)", () => {
       flags: ["z"],
     });
     expect(signStripePayload("{}", "whsec_x", 1)).toMatch(/^t=1,v1=[0-9a-f]{64}$/);
+  });
+});
+
+describe("the stub's container image (#4940)", () => {
+  // The stub is a third copy of the Dockerfile's Node pin, in a compose file no
+  // image build reads. Nothing else ties them together, so a Dockerfile bump
+  // would leave the stub on the old runtime without anyone noticing.
+  it("runs the same digest-pinned Node image the app is built on", () => {
+    const dockerfileImages = [...readRepoFile("Dockerfile").matchAll(/^FROM (node:\S+)/gm)].map(
+      (match) => match[1],
+    );
+    expect(dockerfileImages.length, "the Dockerfile's node stages").toBeGreaterThan(0);
+    const stubBody = composeServices("load/compose.stripe-stub.yml").get("stripe-stub");
+    const stubImage = /^\s+image:\s*(\S+)\s*$/m.exec(stubBody ?? "")?.[1];
+    expect(stubImage, "the stub's image line").toMatch(/^node:[^@\s]+@sha256:[0-9a-f]{64}$/);
+    for (const image of dockerfileImages) expect(image).toBe(stubImage);
   });
 });

@@ -72,7 +72,9 @@ services:
       - ./scripts/lib/is-main-module.mjs:/scripts/lib/is-main-module.mjs:ro
       - ./.artifacts/load-stub/tls:/load-stub:ro
     ports:
-      - "127.0.0.1:${STRIPE_STUB_CONTROL_PORT:-12111}:12111"
+      # Fixed at 12111, the port STRIPE_STUB_URL defaults to in k6 (load/lib/config.js):
+      # a variable here would let the stub move without the harness knowing.
+      - "127.0.0.1:12111:12111"
     networks:
       default:
         aliases:

@@ -3,7 +3,7 @@
 //
 // Gives the throwaway load-test stack a club-sized history, so admin lists,
 // reports and member reads are measured against thousands of rows instead of
-// the demo seed's handful. By default: 2,000 members and five years of the
+// the demo seed's handful. By default: 3,000 members and five years of the
 // club's seasons of past bookings, with member and non-member guests,
 // per-night price rows, card and Internet Banking payments, cancellations
 // refunded to card or credited to the member's account. Every volume member
@@ -27,7 +27,7 @@
 // with a booking). It refuses a database that already holds volume members
 // rather than doubling them; reset the stack to re-seed.
 //
-// Tunables (all optional): LOAD_VOLUME_MEMBERS (2000), LOAD_VOLUME_SEASONS
+// Tunables (all optional): LOAD_VOLUME_MEMBERS (3000), LOAD_VOLUME_SEASONS
 // (5 years back), LOAD_VOLUME_SEED (4940).
 // ---------------------------------------------------------------------------
 import { PrismaClient } from "@prisma/client";
@@ -117,7 +117,7 @@ async function seed(prisma: PrismaClient) {
   if (existing > 0) {
     throw new Error(
       `Refusing to seed volume: ${existing} volume member(s) already exist. ` +
-        "Reset the stack (pnpm run test:e2e:down && pnpm run test:e2e:prepare) first.",
+        "Reset the load stack (bash scripts/load-stack.sh down, then prepare) first.",
     );
   }
 

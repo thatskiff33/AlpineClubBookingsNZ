@@ -1,6 +1,10 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   addDaysIso,
+  CONTENTION_OFFSET_DAYS,
+  contentionCheckIn,
   mixedWriteNights,
   mixedWriteStay,
   monthsTouched,
@@ -15,6 +19,26 @@ describe("load stay window (#4940)", () => {
     expect(addDaysIso("2026-12-31", 1)).toBe("2027-01-01");
     expect(addDaysIso("2027-03-01", -1)).toBe("2027-02-28");
     expect(utcDayOf(Date.parse("2026-07-01T00:00:00.000Z"))).toBe("2026-07-01");
+  });
+
+  it("defaults the contention night relative to the run day, clear of the other windows", () => {
+    const runDay = Date.parse("2026-11-14T10:00:00.000Z");
+    expect(CONTENTION_OFFSET_DAYS).toBe(116);
+    expect(contentionCheckIn(runDay)).toBe("2027-03-10");
+    // Moves with the clock instead of staying on a fixed date that goes stale.
+    expect(contentionCheckIn(Date.parse("2027-01-01T00:00:00.000Z"))).toBe("2027-04-27");
+    // Between the last seeded fixture window (+111..+112) and the mixed-writes
+    // default start (+120), so the contention night is neither.
+    expect(CONTENTION_OFFSET_DAYS).toBeGreaterThan(112);
+    expect(CONTENTION_OFFSET_DAYS).toBeLessThan(120);
+  });
+
+  it("has no fixed calendar date left as the contention default in the config", () => {
+    // A literal date goes stale: 2026-08-18 was in the past by November 2026 and
+    // made the documented standalone run answer 400 "Cannot book in the past".
+    const config = readFileSync(path.resolve(__dirname, "../../../load/lib/config.js"), "utf8");
+    expect(config).toMatch(/env\.CONTENTION_CHECKIN \|\| contentionCheckIn\(Date\.now\(\)\)/);
+    expect(config).not.toMatch(/"\d{4}-\d{2}-\d{2}"/);
   });
 
   it("refuses a malformed or impossible date rather than guessing", () => {

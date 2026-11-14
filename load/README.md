@@ -35,8 +35,8 @@ Layout:
 
 The extended kit adds `mixed-writes.js`, `payment-path.js`, `admin-reads.js`
 and `cron-overlap.js`. The coverage table and limits live in the full guide.
-Prepare the isolated two-lodge stack with a local Stripe stub and five seasons
-of synthetic history, then run the advisory 10-VU smoke profile:
+Prepare the isolated two-lodge stack with a local Stripe stub and five years
+of seasons of synthetic history, then run the advisory 10-VU smoke profile:
 
 ```bash
 cp .env.staging.example .env.staging
@@ -48,8 +48,8 @@ bash scripts/load-stack.sh down
 The weekly/manual advisory workflow runs the same profile and uploads summaries
 and the resource profile. Full 100-VU runs require the owner. The volume seeder
 (`pnpm run load:seed-volume`) requires both target guards; never run it on a
-shared database. It defaults to 2,000 members; `LOAD_VOLUME_MEMBERS`,
-`LOAD_VOLUME_SEASONS` and `LOAD_VOLUME_SEED` configure the history.
+shared database. It defaults to 3,000 members; `LOAD_VOLUME_MEMBERS`,
+`LOAD_VOLUME_SEASONS` (years back) and `LOAD_VOLUME_SEED` configure the history.
 
 Basic read-only quick start against the throwaway staging stack:
 

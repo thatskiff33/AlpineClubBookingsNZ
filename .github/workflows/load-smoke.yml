@@ -36,7 +36,7 @@ jobs:
           echo 'deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main' | sudo tee /etc/apt/sources.list.d/k6.list
           sudo apt-get update
           sudo apt-get install -y k6
-      - name: Prepare isolated stack and five seasons of volume
+      - name: Prepare isolated stack and five years of seasons of volume
         run: |
           bash scripts/ci/write-e2e-staging-env.sh .env.load-smoke
           bash scripts/load-stack.sh prepare

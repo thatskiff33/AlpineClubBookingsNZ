@@ -7,8 +7,12 @@
 #   scripts/load-stack.sh logs      # app and stub logs
 #   scripts/load-stack.sh down      # stop the stack, remove its volumes and keys
 #
-# It is the E2E stack (scripts/e2e-stack.sh, same compose project and ports:
-# app on http://localhost:3001, Postgres on 5433) with three additions:
+# Read-outs the smoke run uses, so it keeps no second copy of any of them:
+# base-url, demo-password, volume-members, cron-secret, profile.
+#
+# It is the E2E stack (scripts/e2e-stack.sh) run as its own compose project,
+# load-issue4940, on the same default ports (app on http://localhost:3001,
+# Postgres on 5433), so it cannot run beside the E2E stack. It adds three things:
 #
 #  - a club-sized history from prisma/load-volume-seed.ts, behind the load
 #    harness's own database guard;
@@ -21,8 +25,8 @@
 # with the three Stripe values replaced, written to .artifacts/load-stub/
 # (gitignored). Live Stripe keys in the source file are refused outright.
 #
-# Safety: the same isolated compose project as the E2E stack. It never touches
-# the production compose project or port 5432, and no live provider is called.
+# Safety: only a compose project named load-* is accepted, so it never touches
+# the E2E or production projects, or port 5432, and no live provider is called.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -141,6 +145,17 @@ container_cpus() {
   if [[ "$nano" == "0" ]]; then echo '"uncapped"'; else node -e "console.log($nano / 1e9)"; fi
 }
 
+# Volume members the seeder wrote, counted in this stack's own database. The
+# profile records this figure and the smoke run sizes its member pool from it,
+# so neither repeats the seeder's default. The pattern comes from the same two
+# constants the seeder and k6 use, so it matches exactly the accounts they name.
+volume_member_count() {
+  local pattern
+  pattern="$(pnpm exec tsx -e 'import { DEMO_SEED_DOMAIN } from "./src/lib/demo-seed-guard"; import { LOAD_VOLUME_EMAIL_PREFIX } from "./load/lib/volume-users.js"; console.log(LOAD_VOLUME_EMAIL_PREFIX + "%@" + DEMO_SEED_DOMAIN)')"
+  stub_compose exec -T postgres psql -U tac -d tacbookings -tA -v ON_ERROR_STOP=1 \
+    -c "SELECT count(*) FROM \"Member\" WHERE email LIKE '${pattern}'"
+}
+
 case "${1:-}" in
   prepare)
     prepare
@@ -168,19 +183,39 @@ case "${1:-}" in
   profile)
     require_prepared
     # Values from the actual running containers, without emitting the database URL.
-    stub_compose exec -T -e LOAD_VOLUME_USERS="${LOAD_VOLUME_USERS:-2000}" -e PEAK_VUS="${PEAK_VUS:-}" \
+    # volumeMembers is the count in the database, whatever the seeder was told.
+    # Read first, so a failed count stops the profile rather than recording 0.
+    volume_members="$(volume_member_count)"
+    stub_compose exec -T -e VOLUME_MEMBERS="$volume_members" -e PEAK_VUS="${PEAK_VUS:-}" \
       -e APP_CPUS="$(container_cpus app)" -e POSTGRES_CPUS="$(container_cpus postgres)" app node -e '
       const os = require("node:os");
       const pool = new URL(process.env.DATABASE_URL).searchParams.get("connection_limit");
       console.log(JSON.stringify({ cores: os.availableParallelism(), pool: pool ? Number(pool) : "pg default",
         appCpus: JSON.parse(process.env.APP_CPUS), postgresCpus: JSON.parse(process.env.POSTGRES_CPUS),
-        vus: Number(process.env.PEAK_VUS) || "unset", volumeMembers: Number(process.env.LOAD_VOLUME_USERS || 2000) }, null, 2));
+        vus: Number(process.env.PEAK_VUS) || "unset", volumeMembers: Number(process.env.VOLUME_MEMBERS) }, null, 2));
     '
     ;;
   cron-secret)
     require_prepared
     read_compose_env_file "$LOAD_ENV_FILE"
     printf '%s' "$CRON_SECRET"
+    ;;
+  base-url)
+    require_prepared
+    # The port the app was published on, as `prepare` guarded it.
+    read_compose_env_file "$LOAD_ENV_FILE"
+    printf 'http://localhost:%s' "${STAGING_HTTP_PORT:-3001}"
+    ;;
+  demo-password)
+    require_prepared
+    # The password the seeders hashed: the stack env file overrides the caller's
+    # shell, as it does for them, then the seeders' own default applies.
+    read_compose_env_file "$LOAD_ENV_FILE"
+    pnpm exec tsx --conditions=react-server -e 'import { demoSeedPassword } from "./prisma/demo-seed-writers"; process.stdout.write(demoSeedPassword())'
+    ;;
+  volume-members)
+    require_prepared
+    volume_member_count
     ;;
   logs)
     require_prepared
@@ -194,7 +229,7 @@ case "${1:-}" in
     rm -rf "$STUB_DIR"
     ;;
   *)
-    echo "Usage: $0 {prepare|cron-on|cron-off|require-running|profile|cron-secret|logs|down}" >&2
+    echo "Usage: $0 {prepare|cron-on|cron-off|require-running|profile|cron-secret|base-url|demo-password|volume-members|logs|down}" >&2
     exit 1
     ;;
 esac

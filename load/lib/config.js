@@ -5,6 +5,7 @@
  */
 
 import { assertSafeTarget } from "./target-guard.js";
+import { contentionCheckIn } from "./stay-window.js";
 import { volumeUserPool } from "./volume-users.js";
 
 function intEnv(env, name, fallback) {
@@ -85,7 +86,8 @@ export function loadConfig(env) {
     // Empty → the scenario books the member's first bookable lodge
     // (`bookableLodgeIds`); booking create never picks one itself.
     lodgeId: env.LODGE_ID || "",
-    contentionCheckIn: env.CONTENTION_CHECKIN || "2026-08-18",
+    // Relative to the run's day, so the default never drifts into the past.
+    contentionCheckIn: env.CONTENTION_CHECKIN || contentionCheckIn(Date.now()),
     contentionCheckOut: env.CONTENTION_CHECKOUT || "",
     contentionAttempts: intEnv(env, "CONTENTION_ATTEMPTS", 1),
     contentionP95Ms: intEnv(env, "CONTENTION_P95_MS", 5000),
@@ -123,10 +125,13 @@ export function loadConfig(env) {
 
     // The local Stripe stub's control port (load/stripe-stub/server.mjs),
     // under the same guard as BASE_URL: a local address, never :5432.
-    stripeStubUrl: assertSafeTarget({
-      BASE_URL: env.STRIPE_STUB_URL || "http://127.0.0.1:12111",
-      LOAD_TEST_CONFIRM_TARGET: env.LOAD_TEST_CONFIRM_TARGET,
-    }),
+    stripeStubUrl: assertSafeTarget(
+      {
+        STRIPE_STUB_URL: env.STRIPE_STUB_URL || "http://127.0.0.1:12111",
+        LOAD_TEST_CONFIRM_TARGET: env.LOAD_TEST_CONFIRM_TARGET,
+      },
+      "STRIPE_STUB_URL"
+    ),
   };
 }
 

@@ -5,6 +5,7 @@
 // this in step with the `.js`.
 export declare function assertSafeTarget(
   env: Readonly<Record<string, string | undefined>>,
+  name?: string,
 ): string;
 export declare function assertSafeDatabaseTarget(
   env: Readonly<Record<string, string | undefined>>,

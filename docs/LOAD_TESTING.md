@@ -102,10 +102,12 @@ internal network and k6 runs on the host. Mail goes to Mailpit,
 Xero remains disconnected, and the volume seeder refuses a stored Xero
 connection. No real provider credentials belong in the source env file.
 
-The fixture defaults to **2,000 members and five past seasons**, with
+The fixture defaults to **3,000 members and five years of seasons**, with
 multi-night stays, members and non-member guests, card and bank payment rows,
-credits and card refund rows. `LOAD_VOLUME_MEMBERS`, `LOAD_VOLUME_SEASONS` and
-`LOAD_VOLUME_SEED` change the history size and deterministic random seed.
+credits and card refund rows. Each lodge's current seasons are repeated for each
+of the five years before them, so a lodge with a winter and a summer season
+gets ten past windows. `LOAD_VOLUME_MEMBERS`, `LOAD_VOLUME_SEASONS` (years back)
+and `LOAD_VOLUME_SEED` change the history size and deterministic random seed.
 The volume entry point reuses the demo booking and settlement writers; it
 creates historical fixture rows, without contacting providers. This gives
 queries realistic row counts; it does **not** load-test bank settlement or
@@ -139,9 +141,9 @@ manual dispatch, with read-only repository permission, no secrets, a 60-minute
 limit and unconditional stack cleanup. It is advisory and has no PR trigger;
 it is not a required check. It uploads k6 JSON summaries, stack logs and
 `profile.json` for 14 days. The profile records the running app's available
-cores, actual `connection_limit`, the app and Postgres CPU limits and the VU
-count; the default uncapped app currently uses
-pool **5**. Compare runs only within a labelled resource profile. Full 100-VU
+cores, actual `connection_limit`, the app and Postgres CPU limits, the VU
+count and the volume members counted in the database; the default uncapped app
+currently uses pool **5**. Compare runs only within a labelled resource profile. Full 100-VU
 evidence remains owner-gated, and the historical pool-10 results below are a
 separate profile. A threshold failure is evidence to investigate, not permission
 to weaken budgets, bcrypt cost or CPU constraints.
@@ -182,7 +184,7 @@ performance or thresholds.
 | `MAX_ERROR_RATE` | no | `0.01` | Failure-rate threshold shared by all scenarios. |
 | `THINK_TIME` | no | `1` | Seconds of sleep between requests in an iteration. |
 | `LODGE_ID` | no | — | Lodge to book/read; empty lets the app resolve the default lodge. |
-| `CONTENTION_CHECKIN` | no | `2026-08-18` | The single night everyone fights over. Must be a bookable (in-season, future) date on the seeded stack. |
+| `CONTENTION_CHECKIN` | no | the run's day + 116 days | The single night everyone fights over. Must be a bookable (in-season, future) date on the seeded stack. The default keeps clear of the seeded and mixed-writes windows (`load/lib/stay-window.js`). |
 | `CONTENTION_CHECKOUT` | no | check-in + 1 day | Override only for multi-night contention. |
 | `CONTENTION_ATTEMPTS` | no | `1` | Booking attempts per VU. The default makes `PEAK_VUS` equal the number of write attempts. |
 | `CONTENTION_P95_MS` | no | `5000` | p95 budget for the serialised booking write. |
@@ -194,20 +196,23 @@ Additional knobs for the volume scenarios:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `LOAD_VOLUME_USERS` / `LOAD_VOLUME_DOMAIN` | `0` / required when positive | First N volume member accounts; smoke obtains the domain from the demo guard and uses the pool for login/dashboard too. |
+| `LOAD_VOLUME_USERS` / `LOAD_VOLUME_DOMAIN` | `0` / required when positive | First N volume member accounts. Smoke counts the members in the stack's database for N and takes the domain from the demo guard, and gives login and dashboard the first `PEAK_VUS` of them (`LOAD_USERS`). |
 | `LOAD_ADMIN_EMAIL` / `LOAD_ADMIN_PASSWORD` | seeded E2E admin / member password | Admin API persona. |
 | `STAY_OFFSET_DAYS` / `MIXED_NIGHT_SPREAD` | `120` / `3` | Future mixed-write window, relative to the run's UTC date. |
 | `MIXED_ITERATIONS` | `5` | Create/change/cancel cycles per worker; smoke uses 4. |
 | `PAYMENT_ITERATIONS` / `PAYMENT_OFFSET_DAYS` | `3` / `30` | Paid stays per worker and their offset beyond the mixed window. |
-| `STRIPE_STUB_URL` | `http://127.0.0.1:12111` | Local control/signing endpoint, checked by the HTTP target guard. |
+| `STRIPE_STUB_URL` | `http://127.0.0.1:12111` | Local control/signing endpoint, checked by the HTTP target guard. The stub publishes 12111 on loopback only, and the port is fixed, so leave this at its default. |
 | `CRON_SECRET` | required for cron overlap | Disposable stack's cron secret, read by smoke from its generated env file. |
 
 ## Scenarios
 
 All eight live in `load/scenarios/` and share `load/lib/` (guard, config,
-login helper). Convenience wrappers exist in `package.json` (`pnpm run
-load:public` etc.) — they only pass through to `k6 run` and abort on the
-guard unless the env above is set.
+login helper). Entries 1 to 4 are the original read and booking-hold profiles;
+entries 5 to 8 are the #4940 scenarios that need the volume-seeded load stack
+(`scripts/load-stack.sh prepare`). Convenience wrappers exist in `package.json`
+(`pnpm run load:public` etc.) for the original four — they only pass through
+to `k6 run` and abort on the guard unless the env above is set. `pnpm run
+load:smoke` runs all eight in order.
 
 ### 1. Public browse — `load/scenarios/public-browse.js`
 
@@ -251,14 +256,17 @@ BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
 
 **The core scaling evidence.** `PEAK_VUS` members stampede
 `POST /api/bookings` for **one lodge + one night**
-(`CONTENTION_CHECKIN`). Booking create takes the global advisory lock
+(`CONTENTION_CHECKIN`). A draft or confirmed booking create
+(`createDraftBooking`, `createConfirmedBooking`) takes the global advisory lock
 `pg_advisory_xact_lock(1)` first and then the per-lodge capacity key from
 `acquireLodgeCapacityLock` (`INV-LOCK-001` for the tier, `INV-LOCK-002` for the
 global-before-lodge order — see
 [`CONCURRENCY_AND_LOCKING.md`](CONCURRENCY_AND_LOCKING.md) and
-[`CAPACITY_MODEL.md`](CAPACITY_MODEL.md)). Every booking create in the app
-therefore queues behind one key, whichever lodge it books, so this scenario
-measures the whole app's booking-write throughput, not one lodge's. Race losers
+[`CAPACITY_MODEL.md`](CAPACITY_MODEL.md)). Those creates therefore queue behind
+one key, whichever lodge they book, so this scenario measures the whole app's
+booking-write throughput, not one lodge's. A waitlist create
+(`createWaitlistedBooking`) is the one create that takes only the lodge key;
+no scenario here drives it. Race losers
 block on the lock,
 re-check capacity, and receive the app's normal sold-out answer, so the
 scenario asserts on the **outcome distribution**, not just 200s:
@@ -290,7 +298,7 @@ CONTENTION_ATTEMPTS)`. A single missing capacity hold fails
 
 ```bash
 BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
-  LOAD_USER_PASSWORD=<demo seed password> CONTENTION_CHECKIN=2026-08-18 \
+  LOAD_USER_PASSWORD=<demo seed password> \
   k6 run load/scenarios/booking-contention.js
 ```
 
@@ -298,8 +306,9 @@ Bookings use a non-member child guest plus an explicit review justification.
 That follows the real child-only policy into `AWAITING_REVIEW`, a
 capacity-holding state, and **touches no payment provider**. It can enqueue an
 admin-review email, which the throwaway stack captures in Mailpit. Reset the
-stack (`pnpm run test:e2e:down && pnpm run test:e2e:prepare`) between contention
-runs so each run starts from a known-empty night.
+stack between contention runs so each run starts from a known-empty night:
+`pnpm run test:e2e:down && pnpm run test:e2e:prepare` for the E2E stack, or
+`bash scripts/load-stack.sh down` and then `prepare` for the load stack.
 
 ### 4. Member dashboard — `load/scenarios/member-dashboard.js`
 
@@ -322,6 +331,86 @@ storm and stop measuring dashboard reads.
 BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
   LOAD_USER_PASSWORD=<demo seed password> \
   k6 run load/scenarios/member-dashboard.js
+```
+
+Entries 5 to 8 need the load stack. After `bash scripts/load-stack.sh prepare`,
+`BASE_URL`, `LOAD_USER_PASSWORD`, `LOAD_VOLUME_USERS` and `CRON_SECRET` can be
+read with `load-stack.sh base-url`, `demo-password`, `volume-members` and
+`cron-secret`, and `LOAD_VOLUME_DOMAIN` is the seeder's demo domain
+(`DEMO_SEED_DOMAIN`, `demo.alpineclub.test`). `scripts/load-smoke.sh` reads them
+all and is the supported way to run these scenarios. The commands below run a
+single scenario by hand.
+
+### 5. Mixed writes — `load/scenarios/mixed-writes.js`
+
+Each VU logs in as its **own** volume-seeded member and repeats a booking cycle
+on a lodge and night chosen from its VU id: create a self-booking, extend it by
+one night, cancel it, and on the first iteration also hold a bed with a
+child-only review request. Neighbouring VUs land on different lodges and
+nights, so writers queue on the global key and on more than one lodge key at
+once. Teardown reads every night the run could touch and `capacity_ceiling`
+fails the run if any lodge is over capacity. Needs `LOAD_VOLUME_USERS` at least
+`PEAK_VUS` and `LOAD_VOLUME_DOMAIN`. It makes at most `MIXED_ITERATIONS + 1`
+creates per VU, inside the 20 creates per hour per client IP limit.
+
+```bash
+BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
+  LOAD_USER_PASSWORD=<demo seed password> \
+  LOAD_VOLUME_USERS=100 LOAD_VOLUME_DOMAIN=<seeder domain> \
+  k6 run load/scenarios/mixed-writes.js
+```
+
+### 6. Admin reads — `load/scenarios/admin-reads.js`
+
+One seeded admin session (`LOAD_ADMIN_EMAIL`, default the E2E admin; its
+password is `LOAD_ADMIN_PASSWORD`, else `LOAD_USER_PASSWORD`) reads the admin
+bookings list for the current month, the annual report for the past 365 days
+and the bed board for the next week, against the volume history. Each response
+must be JSON, not a sign-in redirect. This measures read cost on a club-sized
+history, not browser rendering or officer writes.
+
+```bash
+BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
+  LOAD_USER_PASSWORD=<demo seed password> \
+  k6 run load/scenarios/admin-reads.js
+```
+
+### 7. Payment path — `load/scenarios/payment-path.js`
+
+Needs the Stripe stub, so only the load stack. Each VU creates a card booking,
+asks the app for a payment intent, has the stub sign a succeeded-payment event,
+posts that event to `/api/webhooks/stripe` twice (the second is the replay), and
+then reads the booking's status through an admin session: it must be `PAID`.
+The stub answers for `api.stripe.com` inside the compose network, accepts only
+its own generated test key and signs with a generated secret. No Stripe
+credential enters k6, and the real Stripe API is not reachable from the app by
+name. It measures the app's payment and webhook handling, not Stripe's latency
+or card behaviour. Needs `LOAD_VOLUME_USERS` at least `PEAK_VUS`,
+`LOAD_VOLUME_DOMAIN` and a reachable `STRIPE_STUB_URL`. The admin session reuses
+`LOAD_USER_PASSWORD` unless `LOAD_ADMIN_PASSWORD` is set.
+
+```bash
+BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
+  LOAD_USER_PASSWORD=<demo seed password> \
+  LOAD_VOLUME_USERS=100 LOAD_VOLUME_DOMAIN=<seeder domain> \
+  k6 run load/scenarios/payment-path.js
+```
+
+### 8. Cron overlap — `load/scenarios/cron-overlap.js`
+
+Runs the dashboard scenario and the mixed-writes scenario together with one
+worker calling `POST /api/cron` with the stack's `CRON_SECRET`, so the real
+general cron runner executes while members read and write. Run it with the
+scheduler on, as the smoke run does: `bash scripts/load-stack.sh cron-on` first
+and `cron-off` after. It fails unless every cron call returns `success: true` and at least one
+completes. Needs `LOAD_VOLUME_USERS` at least `2 * PEAK_VUS + 1`, because
+dashboard and write workers each use distinct members.
+
+```bash
+BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
+  LOAD_USER_PASSWORD=<demo seed password> CRON_SECRET=<stack cron secret> \
+  LOAD_VOLUME_USERS=100 LOAD_VOLUME_DOMAIN=<seeder domain> \
+  k6 run load/scenarios/cron-overlap.js
 ```
 
 ## Reading the output

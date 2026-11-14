@@ -18,6 +18,8 @@ import { randomBytes } from "node:crypto";
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { LOAD_VOLUME_EMAIL_PREFIX } from "../../../load/lib/volume-users.js";
+import { DEMO_SEED_DOMAIN } from "../demo-seed-guard";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -99,6 +101,13 @@ async function rows<T>(sql: string): Promise<T[]> {
         (SELECT count(*) FROM "PaymentRefund" WHERE "stripeRefundId" LIKE 're_load_%') AS refunds,
         (SELECT count(*) FROM "MemberCredit" c JOIN "Member" m ON m.id = c."memberId" WHERE m.email LIKE 'load-%') AS credits`);
     expect(Number(written?.members)).toBe(60);
+    // The count `scripts/load-stack.sh volume-members` records in profile.json
+    // and sizes the smoke run's pool from: the seeder's prefix and domain, the
+    // same two constants k6 expands, select exactly the members it wrote.
+    const [counted] = await rows<{ n: string }>(
+      `SELECT count(*) AS n FROM "Member" WHERE email LIKE '${LOAD_VOLUME_EMAIL_PREFIX}%@${DEMO_SEED_DOMAIN}'`,
+    );
+    expect(Number(counted?.n)).toBe(60);
     expect(Number(written?.bookings)).toBeGreaterThan(100);
     expect(Number(written?.refunds) + Number(written?.credits)).toBeGreaterThan(0);
 

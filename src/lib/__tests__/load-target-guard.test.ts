@@ -120,6 +120,43 @@ describe("assertSafeTarget", () => {
       /LOAD_TEST_CONFIRM_TARGET/,
     );
   });
+
+  it("names the variable it was asked to check, not always BASE_URL", () => {
+    const stub = (STRIPE_STUB_URL: string) => ({
+      STRIPE_STUB_URL,
+      LOAD_TEST_CONFIRM_TARGET: "1",
+    });
+    expect(assertSafeTarget(stub("http://127.0.0.1:12111/"), "STRIPE_STUB_URL")).toBe(
+      "http://127.0.0.1:12111",
+    );
+    // Every refusal path reports STRIPE_STUB_URL in its reason (the first line;
+    // the generic usage footer below it legitimately lists BASE_URL).
+    for (const [url, pattern] of [
+      ["http://stub.example.com", /STRIPE_STUB_URL hostname/],
+      ["http://localhost:5432", /STRIPE_STUB_URL (contains :5432|targets port 5432)/],
+      ["stub.local", /STRIPE_STUB_URL ".*" is not a plain http\(s\) URL/],
+      ["https://bookings.tokoroa.org.nz", /STRIPE_STUB_URL hostname/],
+    ] as const) {
+      let message = "";
+      try {
+        assertSafeTarget(stub(url), "STRIPE_STUB_URL");
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message, url).toMatch(pattern);
+      expect(message.split("\n")[0], url).not.toMatch(/BASE_URL/);
+    }
+    expect(() =>
+      assertSafeTarget({ LOAD_TEST_CONFIRM_TARGET: "1" }, "STRIPE_STUB_URL"),
+    ).toThrow(/STRIPE_STUB_URL is not set/);
+    expect(() =>
+      assertSafeTarget({ STRIPE_STUB_URL: "http://localhost:12111" }, "STRIPE_STUB_URL"),
+    ).toThrow(/LOAD_TEST_CONFIRM_TARGET=1 is not set.*STRIPE_STUB_URL/);
+    // A BASE_URL set alone does not satisfy a check on another variable.
+    expect(() =>
+      assertSafeTarget(target("http://localhost:3001"), "STRIPE_STUB_URL"),
+    ).toThrow(/STRIPE_STUB_URL is not set/);
+  });
 });
 
 describe("the volume seeder entry point (prisma/load-volume-seed.ts)", () => {

@@ -8,6 +8,8 @@ export interface LoadStay {
 }
 export declare function addDaysIso(dateOnly: string, days: number): string;
 export declare function utcDayOf(epochMs: number): string;
+export declare const CONTENTION_OFFSET_DAYS: number;
+export declare function contentionCheckIn(epochMs: number): string;
 export declare function nightsBetween(from: string, toExclusive: string): string[];
 export declare function monthsTouched(
   nights: readonly string[],
