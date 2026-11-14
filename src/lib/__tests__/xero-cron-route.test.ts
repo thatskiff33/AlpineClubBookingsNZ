@@ -62,7 +62,6 @@ vi.mock("@/lib/bank-refund-void-follow-up", () => ({
 
 vi.mock("@/lib/xero-credit-sync-checker", () => ({
   reconcileXeroCreditSync: mocks.reconcileXeroCreditSync,
-  XERO_CREDIT_SYNC_JOB_NAME: "xero-credit-sync-check",
 }));
 
 // #4270: the credit-note mirror's backstop sweep.

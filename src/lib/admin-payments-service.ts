@@ -31,6 +31,7 @@ import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { prisma } from "@/lib/prisma";
 import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoice-evidence";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { readDisputesByBookingId } from "@/lib/stripe-dispute-hold";
 import {
   endOfDateOnlyForTimeZone,
   parseDateOnly,
@@ -642,6 +643,8 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         })
       : [];
 
+    const disputesByBookingId = await readDisputesByBookingId(prisma, data.map((payment) => payment.bookingId)); // #4911 (`INV-PAY-154`): the dispute marker
+
     const dataById = new Map(data.map((payment) => [payment.id, payment]));
     const orderedData = pageIds
       .map((id) => dataById.get(id))
@@ -665,6 +668,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         settlementKind:
           filteredCandidateById.get(payment.id)?.settlementKind ??
           "none",
+        disputes: disputesByBookingId.get(payment.bookingId) ?? [],
       }));
 
     // #3372: "Net Collected" (once gross "Total Revenue", #773) is net over

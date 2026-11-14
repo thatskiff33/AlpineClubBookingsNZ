@@ -13,6 +13,8 @@
  * applies by hand, while approving a policy exception EXECUTES the reviewed
  * proposal.
  */
+import { adminHref } from "@/lib/admin-hubs";
+
 export const BOOKING_REQUESTS_TABS = [
   "approvals",
   "changes",
@@ -43,5 +45,5 @@ export function buildBookingRequestsHref(
     }
   }
 
-  return `/admin/booking-requests?${params.toString()}`;
+  return `${adminHref("booking-requests")}?${params.toString()}`;
 }

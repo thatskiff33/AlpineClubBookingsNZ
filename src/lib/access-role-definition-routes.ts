@@ -19,6 +19,12 @@ export const accessRolePermissionsSchema = z
   })
   .strict();
 
+/**
+ * The role editor's two-factor choice (#4618): null is Default, true is
+ * Required, false is Not required. Optional, so an older page still saves.
+ */
+export const accessRoleRequiresTwoFactorSchema = z.boolean().nullable().optional();
+
 const LEVEL_TO_DB = {
   none: "NONE",
   view: "VIEW",

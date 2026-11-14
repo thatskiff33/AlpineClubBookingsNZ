@@ -111,7 +111,7 @@ function settledChild(source: "STRIPE" | "INTERNET_BANKING"): { row: BookingLedg
       modifications: [],
       recoveryOperations: [],
       cancellation: null,
-      groupSettlement: { id: "gs1", source, status: "SUCCEEDED", amountCents: 4_500, stripePaymentIntentId: source === "STRIPE" ? PI : null, refundPlan: null, refundRecoveryInFlight: false },
+      groupSettlement: { id: "gs1", source, status: "SUCCEEDED", amountCents: 4_500, stripePaymentIntentId: source === "STRIPE" ? PI : null, refundPlan: null, refundRecoveryInFlight: false, refundPaidByBank: false },
       appeals: [],
       groupChild: null,
       lines: toLines([...charges, ...share]),
@@ -120,9 +120,13 @@ function settledChild(source: "STRIPE" | "INTERNET_BANKING"): { row: BookingLedg
 }
 
 /** The organiser cancel under a mirror plan: the refund beside the mirror, the stay reversed, the rest kept. */
-function cancelledUnderPlan(source: "STRIPE" | "INTERNET_BANKING", options: { refundPosted: boolean }): BookingLedgerCensusRow {
+function cancelledUnderPlan(
+  source: "STRIPE" | "INTERNET_BANKING",
+  options: { refundPosted: boolean; refundPaidByBank?: boolean },
+): BookingLedgerCensusRow {
   const { row, settlement } = settledChild(source);
-  const refund = planGroupSettlementRefundLine({ settlement, bookingId: B, lodgeId: "l1", refundCents: 2_250 });
+  const refundPaidByBank = options.refundPaidByBank ?? false;
+  const refund = planGroupSettlementRefundLine({ settlement: { ...settlement, refundPaidByBank }, bookingId: B, lodgeId: "l1", refundCents: 2_250 });
   const cancellation = planCancellationChargeLines({
     bookingId: B,
     lodgeId: "l1",
@@ -137,7 +141,7 @@ function cancelledUnderPlan(source: "STRIPE" | "INTERNET_BANKING", options: { re
     ...row,
     booking: { ...row.booking, status: "CANCELLED" },
     payment: { ...row.payment!, status: "PARTIALLY_REFUNDED", refundedAmountCents: options.refundPosted ? 2_250 : 0 },
-    groupSettlement: { ...row.groupSettlement!, refundPlan: { [B]: 2_250 }, refundRecoveryInFlight: !options.refundPosted },
+    groupSettlement: { ...row.groupSettlement!, refundPlan: { [B]: 2_250 }, refundRecoveryInFlight: !options.refundPosted, refundPaidByBank },
     lines: [...row.lines, ...toLines([...(options.refundPosted && refund ? [refund] : []), ...cancellation.postings])],
   };
 }
@@ -165,6 +169,18 @@ describe("the census on a group-settled child (#3854)", () => {
     const subject = cancelledUnderPlan("INTERNET_BANKING", { refundPosted: true });
     expect(statuses(subject)).toMatchObject({ PRICE: "AGREE", CAPTURED: "AGREE", REFUNDED: "AGREE" });
     expect(integrity(subject)).toEqual([]);
+  });
+
+  it("#4851: a card plan closed on Stuck States as paid by bank posts BANK_REFUND, which agrees; CARD_REFUND there is SOURCE_DRIFT", () => {
+    const paidByBank = cancelledUnderPlan("STRIPE", { refundPosted: true, refundPaidByBank: true });
+    expect(paidByBank.lines.filter((line) => line.anchorKind === "GROUP_SETTLEMENT" && line.sign === -1).map((line) => line.kind)).toEqual(["BANK_REFUND"]);
+    expect(statuses(paidByBank)).toMatchObject({ PRICE: "AGREE", CAPTURED: "AGREE", REFUNDED: "AGREE" });
+    expect(integrity(paidByBank)).toEqual([]);
+    // The same bank line without the close's note, or a card line with it, misstates the method.
+    expect(integrity({ ...paidByBank, groupSettlement: { ...paidByBank.groupSettlement!, refundPaidByBank: false } })).toContain("SOURCE_DRIFT");
+    const card = cancelledUnderPlan("STRIPE", { refundPosted: true });
+    expect(integrity(card)).toEqual([]);
+    expect(integrity({ ...card, groupSettlement: { ...card.groupSettlement!, refundPaidByBank: true } })).toContain("SOURCE_DRIFT");
   });
 
   it("a plan refund line that disagrees with the frozen plan is SOURCE_DRIFT", () => {
@@ -381,7 +397,7 @@ describe("K2: a share's evidence is that the settlement captured, a REFUNDED one
   it("a child of a settlement an organiser cancel refunded in full agrees, live and back-posted", () => {
     // Live (or back-posted, the same lines): the share and the plan's whole refund beside it, nothing kept.
     const { row, settlement } = settledChild("INTERNET_BANKING");
-    const refund = planGroupSettlementRefundLine({ settlement, bookingId: B, lodgeId: "l1", refundCents: 4_500 })!;
+    const refund = planGroupSettlementRefundLine({ settlement: { ...settlement, refundPaidByBank: false }, bookingId: B, lodgeId: "l1", refundCents: 4_500 })!;
     const cancellation = planCancellationChargeLines({
       bookingId: B,
       lodgeId: "l1",
@@ -430,7 +446,7 @@ describe("sync lens F1: a refund appeal approved after the organiser cancel leav
   // The lens's probe: a $45 Internet Banking child settled before #3854, its
   // organiser cancel's 50% plan mirrored ($22.50 back, $22.50 kept). The member
   // then appeals and the admin approves $10, which goes back by bank transfer.
-  const settlement = { id: "gs1", source: "INTERNET_BANKING" as const, amountCents: 4_500, stripePaymentIntentId: null, refundPlan: { [B]: 2_250 } };
+  const settlement = { id: "gs1", source: "INTERNET_BANKING" as const, amountCents: 4_500, stripePaymentIntentId: null, refundPlan: { [B]: 2_250 }, refundPaidByBank: false };
   const child = { id: B, lodgeId: "l1", status: "CANCELLED" as const, cancelledWithoutSnapshot: true };
   const siblings = [{ id: B, lodgeId: "l1", payment: { amountCents: 4_500, status: "PARTIALLY_REFUNDED", source: "INTERNET_BANKING" as const } }];
   const task = (status: "OPEN" | "COMPLETED" | "DISMISSED", occurrenceKey: string | null, amountCents: number, kind: "CANCELLED_BOOKING_HAND_BACK" | "EDIT_FINANCIAL_REVIEW" = "CANCELLED_BOOKING_HAND_BACK") => ({
@@ -564,7 +580,7 @@ describe("#3956: an appeal refunded to the organiser's card leaves the planned k
   // A $45 card child under #3653's per-child plan: the organiser cancel's 50%
   // debt refunded $22.50 and the club kept $22.50. The joiner then appeals and
   // the admin approves $10, refunded out of the combined payment by its own debt.
-  const settlement = { id: "gs1", source: "STRIPE" as const, amountCents: 4_500, stripePaymentIntentId: PI, refundPlan: { perChildRefunds: { [B]: 2_250 } } };
+  const settlement = { id: "gs1", source: "STRIPE" as const, amountCents: 4_500, stripePaymentIntentId: PI, refundPlan: { perChildRefunds: { [B]: 2_250 } }, refundPaidByBank: false };
   const child = { id: B, lodgeId: "l1", status: "CANCELLED" as const, cancelledWithoutSnapshot: true };
   const siblings = [{ id: B, lodgeId: "l1", payment: { amountCents: 4_500, status: "PARTIALLY_REFUNDED", source: "STRIPE" as const } }];
   const debt = (idempotencyKey: string, amountCents: number, status: string) => ({

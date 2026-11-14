@@ -233,7 +233,6 @@ export function AdditionalPaymentCard({
                   amountCents={askAmountCents}
                   returnUrl={returnUrl}
                   onSuccess={handlePaymentSuccess}
-                  onError={(err) => setError(err)}
                 />
               </StripeProvider>
             )}

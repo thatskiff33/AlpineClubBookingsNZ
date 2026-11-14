@@ -1,0 +1,1 @@
+- **The hourly status board now warns when it is not set up (#4905).** Until the repository owner sets `STATUS_BOARD_ISSUE`, the job's run shows a warning and a job-summary note instead of a quiet notice, and agent guidance points to `pnpm run status` while the hosted board is not live. The job still writes nothing.

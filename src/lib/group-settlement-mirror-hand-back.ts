@@ -290,17 +290,26 @@ export async function readGroupChildMirrorForPlanReplay(
  * the refund, the organiser and the combined invoice, to credit by hand and
  * record the bank refund against. Best-effort, after the commit; never throws -
  * the completed task and its audit row are the durable record.
+ *
+ * #4851: Stuck States' bank close of a dead refund out of the organiser's
+ * combined CARD payment sends the same alert. `paidBy` says which way the
+ * group paid, and `reference` names the record the officer can find (a
+ * refund task, or the given-up refund row of an old whole-group refund).
  */
 export async function alertGroupMirrorRefundXeroByHand({
   bookingId,
   taskId,
   refundCents,
   format,
+  paidBy = "internet banking",
+  reference = `refund task ${taskId}`,
 }: {
   bookingId: string;
   taskId: string;
   refundCents: number;
   format: ClubFormat;
+  paidBy?: "internet banking" | "card";
+  reference?: string;
 }): Promise<void> {
   try {
     const child = await prisma.booking.findUnique({
@@ -319,7 +328,7 @@ export async function alertGroupMirrorRefundXeroByHand({
     await sendAdminXeroSyncErrorAlert({
       errorType: "GROUP_ORGANISER_REFUND_NOTE_BY_HAND",
       operation: `Refund credit note for booking ${bookingId} (paid back to the group organiser)`,
-      errorMessage: `${formatCents(refundCents, format)} was paid back by bank transfer to the group organiser (${name(group?.organiserMember, "the organiser")}) for ${name(child ? bookingOwner(child).member : null, "a joiner")}'s place in a group the organiser paid for by internet banking (refund task ${taskId}). Until automatic Xero notes are added, the app does not raise this refund's Xero credit note: that booking has no invoice of its own, and the money was taken on the group's ${invoice}. In Xero, raise a credit note for ${formatCents(refundCents, format)} to the organiser against that invoice and record the bank refund against it.`,
+      errorMessage: `${formatCents(refundCents, format)} was paid back by bank transfer to the group organiser (${name(group?.organiserMember, "the organiser")}) for ${name(child ? bookingOwner(child).member : null, "a joiner")}'s place in a group the organiser paid for by ${paidBy} (${reference}). Until automatic Xero notes are added, the app does not raise this refund's Xero credit note: that booking has no invoice of its own, and the money was taken on the group's ${invoice}. In Xero, raise a credit note for ${formatCents(refundCents, format)} to the organiser against that invoice and record the bank refund against it.`,
       timestamp: new Date(),
     });
   } catch (err) {

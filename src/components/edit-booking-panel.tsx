@@ -4,14 +4,7 @@ import type { AgeTier } from "@prisma/client";
 import { useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import { bookingOwner } from "@/lib/booking-owner";
 import { mergeChangeRequestGuests } from "@/lib/booking-change-request-input";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
@@ -59,6 +52,11 @@ import {
   renamedGuestsForDependantCheck,
 } from "@/lib/booking-dependant-identity-doors";
 import { PriceSummaryCard } from "@/components/edit-booking/price-summary-card";
+import {
+  editPriceChangedMessage,
+  readEditPriceChangedFigures,
+} from "@/components/edit-booking/edit-price-changed";
+import { useClubFormat } from "@/components/club-format-provider";
 import { hasSeveralPromoCodes, PromoCodeCard } from "@/components/edit-booking/promo-code-card";
 import {
   FinishedStayPromoCorrectionCard,
@@ -241,6 +239,7 @@ export function EditBookingPanel({
   // Quote state. Declared before the payload builder because the builder reads
   // the current quote (through `desiredElectionCents`); the debounced fetch that
   // writes it is armed further down, once the payload exists.
+  const format = useClubFormat();
   const quoteState = useModificationQuoteState();
   const { quote, quoteLoading, quoteError } = quoteState;
   // Other Lodges epic: the reciprocal other-club rate election. Offered only when
@@ -799,7 +798,7 @@ export function EditBookingPanel({
       ? exceptionOfferState.offer
       : null;
 
-  useDebouncedModificationQuote({
+  const { requote, quoteIsFor } = useDebouncedModificationQuote({
     bookingId: booking.id,
     modificationPayloadJson,
     setQuote: quoteState.setQuote,
@@ -1303,6 +1302,14 @@ export function EditBookingPanel({
       setSaveError("Choose a refund or account credit before saving");
       return;
     }
+    // #4924 (`INV-MOD-062`): Save pressed inside the quote's debounce would
+    // carry the PREVIOUS edit's figures and be refused for a price nobody
+    // changed. Price this edit now instead; the member saves what it shows.
+    if (quote?.quotedFigures && !quoteIsFor(modificationPayloadJson)) {
+      setSaveError("Updating the price for your latest change. Check it, then save again.");
+      requote();
+      return;
+    }
     if (saveInFlightRef.current) return;
     saveInFlightRef.current = true;
     setSaving(true);
@@ -1313,6 +1320,13 @@ export function EditBookingPanel({
       const body = buildSavePayload(notifyMemberChoice);
       const refusedHostingProposalSignature =
         hostingCoverageMutationSignature(body);
+      // #4924 (`INV-MOD-062`): the figures the member is looking at, sent back
+      // unchanged so the save refuses rather than settle a different amount.
+      // Added after the signature, like the linked-move answers below: a
+      // re-priced preview is not a different proposal and must not retire an
+      // open prompt. No preview, no figures — the save then prices as before.
+      const previewedFigures = quote?.quotedFigures ?? null;
+      if (previewedFigures) body.quotedFigures = previewedFigures;
       if (overrideState) {
         body.hostingCoverageOverride = {
           acknowledged: true,
@@ -1356,6 +1370,14 @@ export function EditBookingPanel({
 
       const data = await res.json();
       if (!res.ok) {
+        // #4924: the price moved since the preview, so nothing was saved. Say
+        // what changed, keep the edit open and price it again.
+        const freshFigures = readEditPriceChangedFigures(data);
+        if (freshFigures) {
+          setSaveError(editPriceChangedMessage(previewedFigures, freshFigures, format));
+          requote();
+          return;
+        }
         // #3232, BEFORE the officer's override prompt: a linked-move offer is
         // raised for the BOOKING'S OWN MEMBER, admin or not, so it must not be
         // gated on `actingAsAdmin` the way the override prompt is. The two bodies
@@ -2075,53 +2097,57 @@ export function EditBookingPanel({
           #2259: with the booking's "No emails" switch on there is no choice to
           make — the mailer withholds the change notification either way — so
           the dialog states that and offers only the send-nothing action. */}
-      <Dialog
+      <NotifyChoiceDialog
         open={notifyDialogOpen}
-        onOpenChange={(open) => !saving && setNotifyDialogOpen(open)}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {noEmailsOn
-                ? "Save this change?"
-                : "Email the member about this change?"}
-            </DialogTitle>
-            <DialogDescription>
-              {noEmailsOn
-                ? "The booking will be updated."
-                : "The booking will be updated either way. Choose whether the member receives the standard change-notification email — your choice is recorded in the audit log."}
-            </DialogDescription>
-          </DialogHeader>
-          {noEmailsOn && <BookingNoEmailsNotice />}
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              disabled={saving}
-              onClick={() => {
-                setNotifyDialogOpen(false);
-                // #2259 H1: with the switch on, send NO choice rather than
-                // notifyMember:false. `false` makes the route skip the send, so
-                // the mailer's gate never runs and no withheld row is recorded —
-                // the banner would then omit the very change just made.
-                void handleSave(noEmailsOn ? undefined : false);
-              }}
-            >
-              {noEmailsOn ? "Save changes" : "Save without emailing"}
-            </Button>
-            {!noEmailsOn && (
-              <Button
-                disabled={saving}
-                onClick={() => {
-                  setNotifyDialogOpen(false);
-                  void handleSave(true);
-                }}
-              >
-                Save and email member
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        onOpenChange={setNotifyDialogOpen}
+        submitting={saving}
+        title={
+          noEmailsOn ? "Save this change?" : "Email the member about this change?"
+        }
+        description={
+          noEmailsOn
+            ? "The booking will be updated."
+            : "The booking will be updated either way. Choose whether the member receives the standard change-notification email — your choice is recorded in the audit log."
+        }
+        notice={noEmailsOn ? <BookingNoEmailsNotice /> : null}
+        actions={
+          noEmailsOn
+            ? {
+                kind: "single",
+                action: {
+                  label: "Save changes",
+                  variant: "outline",
+                  onSelect: () => {
+                    setNotifyDialogOpen(false);
+                    // #2259 H1: with the switch on, send NO choice rather than
+                    // notifyMember:false. `false` makes the route skip the
+                    // send, so the mailer's gate never runs and no withheld row
+                    // is recorded — the banner would then omit the very change
+                    // just made.
+                    void handleSave(undefined);
+                  },
+                },
+              }
+            : {
+                kind: "choice",
+                withoutEmail: {
+                  label: "Save without emailing",
+                  variant: "outline",
+                  onSelect: () => {
+                    setNotifyDialogOpen(false);
+                    void handleSave(false);
+                  },
+                },
+                withEmail: {
+                  label: "Save and email member",
+                  onSelect: () => {
+                    setNotifyDialogOpen(false);
+                    void handleSave(true);
+                  },
+                },
+              }
+        }
+      />
     </div>
   );
 }
