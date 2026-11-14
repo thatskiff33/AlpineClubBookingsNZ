@@ -26,12 +26,15 @@
  *
  * Plain Node with no dependencies, so the pinned Node image runs it as-is and
  * `src/lib/__tests__/load-stripe-stub.test.ts` drives it with the real SDK.
+ * The one repo file it imports is `scripts/lib/is-main-module.mjs` (Node
+ * built-ins only; the tree's single "was this run directly" check, #4598), which
+ * the compose overlay mounts at the same relative path inside the container.
  */
 import { createHmac, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
-import { pathToFileURL } from "node:url";
+import { isMainModule } from "../../scripts/lib/is-main-module.mjs";
 
 // Only labels the signed event; neither `constructEvent` nor the app's
 // handlers read it.
@@ -354,6 +357,6 @@ function main(env) {
     );
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
+if (isMainModule(import.meta.url)) {
   main(process.env);
 }

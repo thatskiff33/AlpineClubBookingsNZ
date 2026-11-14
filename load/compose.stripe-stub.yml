@@ -40,8 +40,9 @@ services:
         condition: service_healthy
 
   # Runs only load/stripe-stub/server.mjs, which imports nothing but Node
-  # built-ins and no application code, so it is listed in
-  # NON_APP_COMPOSE_SERVICES (src/lib/__tests__/helpers/compose.ts).
+  # built-ins and the built-ins-only scripts/lib/is-main-module.mjs, and no
+  # application code, so it is listed in NON_APP_COMPOSE_SERVICES
+  # (src/lib/__tests__/helpers/compose.ts).
   stripe-stub:
     image: node:24.17-alpine@sha256:156b55f92e98ccd5ef49578a8cea0df4679826564bad1c9d4ef04462b9f0ded6
     user: node
@@ -66,6 +67,9 @@ services:
       STUB_CONTROL_HOST: 0.0.0.0
     volumes:
       - ./load/stripe-stub:/stub:ro
+      # server.mjs imports ../../scripts/lib/is-main-module.mjs, which from
+      # /stub/server.mjs resolves to this path. The one file, not scripts/.
+      - ./scripts/lib/is-main-module.mjs:/scripts/lib/is-main-module.mjs:ro
       - ./.artifacts/load-stub/tls:/load-stub:ro
     ports:
       - "127.0.0.1:${STRIPE_STUB_CONTROL_PORT:-12111}:12111"
