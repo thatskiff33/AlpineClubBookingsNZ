@@ -384,10 +384,10 @@ export function resolveGuestNameUpdates({
   allowWhenFullyPaid = false,
   allowTypoFixWhenFullyPaid = false,
 }: {
-  booking: Pick<
-    LoadedBookingForModify,
-    "guests" | "status" | "finalPriceCents" | "payment"
-  >;
+  // Renames read guest identity only, so callers need not load night sets.
+  booking: Pick<LoadedBookingForModify, "status" | "finalPriceCents" | "payment"> & {
+    guests: BookingGuest[];
+  };
   input: Pick<BatchModifyInput, "guestUpdates" | "removeGuestIds">;
   /**
    * Quoted (booking-request) bookings are exempt from the paid-name lock
@@ -519,7 +519,7 @@ export function resolveGuestMemberLinks({
   input,
   role,
 }: {
-  booking: Pick<LoadedBookingForModify, "guests" | "wholeLodgeHold">;
+  booking: Pick<LoadedBookingForModify, "wholeLodgeHold"> & { guests: BookingGuest[] };
   input: Pick<
     BatchModifyInput,
     "linkGuestToMember" | "removeGuestIds" | "guestUpdates"
