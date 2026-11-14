@@ -62,7 +62,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", () => ({
     "Your admin role can view this area but cannot make changes.",
 }));
 
-import AdminLodgesPage from "@/app/(admin)/admin/lodges/page";
+import AdminLodgesPage from "@/app/(admin)/admin/lodge-ops/lodges/page";
 import { LodgeDetailsPanel } from "@/components/admin/lodge-details-panel";
 
 afterEach(() => {

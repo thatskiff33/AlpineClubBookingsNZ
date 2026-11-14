@@ -35,7 +35,7 @@ const sections: AdminHubSection[] = [
     icon: Puzzle,
   },
   {
-    href: "/admin/lodges",
+    href: adminHref("lodges"),
     title: "Lodges",
     description:
       "Create and maintain lodge records used by multi-lodge configuration.",

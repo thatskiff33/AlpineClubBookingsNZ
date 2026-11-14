@@ -83,11 +83,11 @@ describe("the sidebar's active link over a moved hub", () => {
     stubPendingCounts();
   });
 
-  it("PREMISE: the Finance, Website, Rules, Help & system, Messages & email, Bookings and Members hubs have moved, and nothing else has", () => {
+  it("PREMISE: the Finance, Website, Rules, Help & system, Messages & email, Bookings and Members hubs and the Lodge hub's Lobby Display and Lodges pages have moved, and nothing else has", () => {
     const moved = ADMIN_PAGES.filter((page) => page.moved);
     expect(moved.length).toBeGreaterThan(0);
     expect(new Set(moved.map((page) => page.hub))).toEqual(
-      new Set(["finance", "website", "rules", "system", "messages", "bookings", "members"]),
+      new Set(["finance", "website", "rules", "system", "messages", "bookings", "members", "lodge-ops"]),
     );
     expect(moved.find((page) => page.id === "payments")?.hubPath).toBe(
       "/admin/finance/payments",
@@ -139,9 +139,9 @@ describe("the sidebar's active link over a moved hub", () => {
   });
 
   it("leaves an unmoved page's highlight as it was", async () => {
-    await expect(activeLabels("/admin/lodges")).resolves.toEqual(["Lodges"]);
-    // Lodges has not moved, so its hub path is served by nothing and lights nothing.
-    await expect(activeLabels("/admin/lodge-ops/lodges")).resolves.toEqual([]);
+    await expect(activeLabels("/admin/lodge-instructions")).resolves.toEqual(["Lodge Instructions"]);
+    // Lodge Instructions has not moved, so its hub path is served by nothing and lights nothing.
+    await expect(activeLabels("/admin/lodge-ops/lodge-instructions")).resolves.toEqual([]);
   });
 
   it("highlights nothing at the hub's own root, which is no page yet (C13)", async () => {

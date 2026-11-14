@@ -192,12 +192,12 @@ describe("every admin page is registered exactly once", () => {
   });
 
   it("expects a moved page at its hub path, not its old path", () => {
-    // A page that has not moved yet, played against a synthetic tree. Members
-    // (C9) and Bookings (C10) have moved, so the specimen is Lodges.
+    // A page that has not moved yet, played against a synthetic tree. Lodges
+    // moved in C11 part 1 (#4808), so the specimen is Chores.
     const pages = ADMIN_PAGES.map((page) =>
-      page.id === "lodges" ? { ...page, moved: true } : page,
+      page.id === "chores" ? { ...page, moved: true } : page,
     );
-    const specimen = pages.find((page) => page.id === "lodges")!;
+    const specimen = pages.find((page) => page.id === "chores")!;
     const afterMove = ON_DISK_PAGE_PATHS.filter((p) => p !== specimen.oldPath).concat(
       specimen.hubPath,
     );
@@ -207,12 +207,12 @@ describe("every admin page is registered exactly once", () => {
     // old path is unregistered.
     expect(diskCensus(pages, ON_DISK_PAGE_PATHS)).toEqual([
       `${PAGE_FILE_BY_PATH.get(specimen.oldPath)} (${specimen.oldPath}) has no registry entry`,
-      `lodges is moved, but no page.tsx serves ${specimen.hubPath}`,
+      `chores is moved, but no page.tsx serves ${specimen.hubPath}`,
     ]);
     // Moved on disk, but the registry was not told.
     expect(diskCensus(ADMIN_PAGES, afterMove)).toEqual([
       `${specimen.hubPath} (${specimen.hubPath}) has no registry entry`,
-      `lodges is not moved, but no page.tsx serves ${specimen.oldPath}`,
+      `chores is not moved, but no page.tsx serves ${specimen.oldPath}`,
     ]);
   });
 
@@ -680,6 +680,42 @@ describe("the hub prefix census", () => {
     expect(unowned).toMatch(/the route-map prefix \/admin\/booking-desk\/bookings sits under it/);
   });
 
+  it("lets the Lodge hub own Lobby Display and Lodges, and none of its unmoved pages (C11 part 1 #4808)", () => {
+    // C11 part 1 moved the Lodges and Lobby Display trees under `/admin/lodge-ops`.
+    // The prefix is not `lodge`: `/admin/lodge` is the kiosk page and a kiosk
+    // module prefix. The other eleven Lodge pages wait for part 2.
+    const owned = ownedPagePaths("lodge-ops");
+    expect(owned).toEqual([
+      "/admin/lodge-ops/lodges",
+      "/admin/lodge-ops/lodges/[id]",
+      "/admin/lodge-ops/lodges/[id]/central-lodge",
+      "/admin/lodge-ops/lodges/[id]/display",
+      "/admin/lodge-ops/lodges/[id]/roster",
+      "/admin/lodge-ops/lodges/[id]/setup",
+      "/admin/lodge-ops/display",
+      "/admin/lodge-ops/display/builder",
+      "/admin/lodge-ops/display/devices",
+      "/admin/lodge-ops/display/layouts",
+      "/admin/lodge-ops/display/preview",
+      "/admin/lodge-ops/display/reference",
+      "/admin/lodge-ops/display/settings",
+      "/admin/lodge-ops/display/setup",
+      "/admin/lodge-ops/display/templates",
+    ]);
+    expect(owned).not.toContain("/admin/lodge-ops");
+    for (const page of ADMIN_PAGES.filter((entry) => entry.hub === "lodge-ops" && !entry.moved)) {
+      expect(owned).not.toContain(page.hubPath);
+    }
+    expect(owned).not.toContain("/admin/lodge-ops/rooms-beds");
+    expect(owned).not.toContain("/admin/lodge-ops/lodge");
+    expect(hubPrefixCollisions("lodge-ops", ownedBy("lodge-ops"))).toEqual([]);
+    expect(adminHubOwnedPaths("lodge-ops")).not.toContain("/admin/lodge-ops");
+    expect(TODAYS_SOURCES.routeMapPrefixes).not.toContain("/admin/lodge-ops");
+    const unowned = hubPrefixCollisions("lodge-ops").join("\n");
+    expect(unowned).toMatch(/the existing page \/admin\/lodge-ops\/display sits under it/);
+    expect(unowned).toMatch(/the existing page \/admin\/lodge-ops\/lodges sits under it/);
+  });
+
   /**
    * A rule that sits only BELOW the root, where a probe of the root cannot see
    * it. Today's tree has no such case, so each source is given one.
@@ -737,7 +773,7 @@ describe("the entries' shape", () => {
     expect(roots).toEqual(["dashboard"]);
   });
 
-  it("has moved the Website, Finance, Fees & booking rules, Help & system, Messages & email, Bookings and Members hubs, and nothing else (C4 #4801, C5 #4802, C6 #4803, C7 #4804, C8 #4805, C9 #4806, C10 #4807)", () => {
+  it("has moved the Website, Finance, Fees & booking rules, Help & system, Messages & email, Bookings and Members hubs, Lobby Display and Lodges, and nothing else (C4 #4801, C5 #4802, C6 #4803, C7 #4804, C8 #4805, C9 #4806, C10 #4807, C11 part 1 #4808)", () => {
     expect(
       ADMIN_PAGES.filter((page) => page.moved)
         .map((page) => page.id)
@@ -770,6 +806,15 @@ describe("the entries' shape", () => {
       "committee",
       "communications",
       "deletion-requests",
+      "display",
+      "display-builder",
+      "display-devices",
+      "display-layouts",
+      "display-preview",
+      "display-reference",
+      "display-settings",
+      "display-setup",
+      "display-templates",
       "email-deliverability",
       "email-messages",
       "family-groups",
@@ -782,6 +827,12 @@ describe("the entries' shape", () => {
       "induction-settings",
       "internet-banking",
       "issue-reports",
+      "lodge-central-lodge",
+      "lodge-detail",
+      "lodge-display",
+      "lodge-roster",
+      "lodge-setup",
+      "lodges",
       "member-applications",
       "member-detail",
       "member-fields",
@@ -818,14 +869,31 @@ describe("the entries' shape", () => {
       "xero-setup",
     ]);
     expect(new Set(ADMIN_PAGES.filter((page) => page.moved).map((page) => page.hub))).toEqual(
-      new Set(["website", "finance", "rules", "messages", "system", "bookings", "members"]),
+      new Set(["website", "finance", "rules", "messages", "system", "bookings", "members", "lodge-ops"]),
     );
-    // Each of those hubs moved whole: no page of theirs was left behind.
+    // Each of those hubs but Lodge moved whole: no page of theirs was left behind.
     expect(
       ADMIN_PAGES.filter((page) => ["website", "finance", "rules", "messages", "system", "bookings", "members"].includes(page.hub) && !page.moved).map(
         (page) => page.id,
       ),
     ).toEqual([]);
+    // Lodge is part-moved (C11 part 1 #4808): Lobby Display and Lodges have
+    // moved; these eleven wait for part 2.
+    expect(
+      ADMIN_PAGES.filter((page) => page.hub === "lodge-ops" && !page.moved).map((page) => page.id),
+    ).toEqual([
+      "rooms-beds",
+      "lodge-kiosk",
+      "hut-leaders",
+      "roster",
+      "roster-print",
+      "chores",
+      "work-parties",
+      "lodge-instructions",
+      "maintenance-reports",
+      "lockers",
+      "calendar",
+    ]);
   });
 
   /**
@@ -984,9 +1052,9 @@ describe("adminHref", () => {
   });
 
   it("links the hub path only when the switch is on AND the page has moved", () => {
-    // Lodges has not moved, so the switch alone does not send it to its hub
+    // Chores has not moved, so the switch alone does not send it to its hub
     // path. The member page has (C9), so it does once the switch is on.
-    const page = ADMIN_PAGES.find((candidate) => candidate.id === "lodges")!;
+    const page = ADMIN_PAGES.find((candidate) => candidate.id === "chores")!;
     const moved = { ...page, moved: true };
     expect(page.moved).toBe(false);
     expect(resolveAdminHref(page, true)).toBe(page.oldPath);
@@ -1601,14 +1669,14 @@ async function walkRegistry(
 }
 
 describe("buildAdminUrlRules", () => {
-  it("returns the retired redirects and the Website, Finance, Rules, Help & system, Messages, Bookings and Members pages' move rules", () => {
+  it("returns the retired redirects and the Website, Finance, Rules, Help & system, Messages, Bookings, Members, Lobby Display and Lodges pages' move rules", () => {
     // C4 (#4801) moved the Website pages under `/admin/website`, C5 (#4802)
     // the Finance pages under `/admin/finance`, C6 (#4803) the Fees & booking
     // rules pages under `/admin/rules`, C7 (#4804) the Help & system pages
     // under `/admin/system`, C8 (#4805) the Messages & email pages under
-    // `/admin/messages`, C9 (#4806) the Members pages under `/admin/membership`
-    // and C10 (#4807) the Bookings pages under
-    // `/admin/booking-desk`. Off: each hub URL redirects to the old URL, and a
+    // `/admin/messages`, C9 (#4806) the Members pages under `/admin/membership`,
+    // C10 (#4807) the Bookings pages under `/admin/booking-desk` and C11 part 1
+    // (#4808) the Lobby Display and Lodges pages under `/admin/lodge-ops`. Off: each hub URL redirects to the old URL, and a
     // beforeFiles rewrite serves the old URL from the moved file. On: the old
     // URL redirects to the hub URL, and there are no rewrites. Retired pages
     // still come first. Bookings Setup, System Health, and the three retired
@@ -1680,6 +1748,15 @@ describe("buildAdminUrlRules", () => {
       ["/admin/committee", "/admin/membership/committee"],
       ["/admin/communications", "/admin/messages/communications"],
       ["/admin/deletion-requests", "/admin/membership/deletion-requests"],
+      ["/admin/display", "/admin/lodge-ops/display"],
+      ["/admin/display/builder", "/admin/lodge-ops/display/builder"],
+      ["/admin/display/devices", "/admin/lodge-ops/display/devices"],
+      ["/admin/display/layouts", "/admin/lodge-ops/display/layouts"],
+      ["/admin/display/preview", "/admin/lodge-ops/display/preview"],
+      ["/admin/display/reference", "/admin/lodge-ops/display/reference"],
+      ["/admin/display/settings", "/admin/lodge-ops/display/settings"],
+      ["/admin/display/setup", "/admin/lodge-ops/display/setup"],
+      ["/admin/display/templates", "/admin/lodge-ops/display/templates"],
       ["/admin/email-deliverability", "/admin/system/email-deliverability"],
       ["/admin/email-messages", "/admin/messages/email-messages"],
       ["/admin/family-groups", "/admin/membership/family-groups"],
@@ -1691,6 +1768,7 @@ describe("buildAdminUrlRules", () => {
       ["/admin/induction/settings", "/admin/membership/induction/settings"],
       ["/admin/internet-banking", "/admin/finance/internet-banking"],
       ["/admin/issue-reports", "/admin/system/issue-reports"],
+      ["/admin/lodges", "/admin/lodge-ops/lodges"],
       ["/admin/member-applications", "/admin/membership/member-applications"],
       ["/admin/member-fields", "/admin/membership/member-fields"],
       ["/admin/members", "/admin/membership/members"],
@@ -1723,6 +1801,9 @@ describe("buildAdminUrlRules", () => {
       ["/admin/xero/setup", "/admin/finance/xero/setup"],
     ] as const;
     const inductionPrint = ["/admin/induction/[id]/print", "/admin/membership/induction/[id]/print"] as const;
+    const lodgePages = (["", "/central-lodge", "/display", "/roster", "/setup"] as const).map(
+      (rest) => [`/admin/lodges/[id]${rest}`, `/admin/lodge-ops/lodges/[id]${rest}`] as const,
+    );
     const memberDetail = ["/admin/members/[id]", "/admin/membership/members/[id]"] as const;
     const memberMerge = ["/admin/members/[id]/merge", "/admin/membership/members/[id]/merge"] as const;
     const noticeDetail = ["/admin/notices/[id]", "/admin/messages/notices/[id]"] as const;
@@ -1735,13 +1816,18 @@ describe("buildAdminUrlRules", () => {
         .map((page) => [page.oldPath, page.hubPath])
         .sort((a, b) => a[0].localeCompare(b[0])),
     ).toEqual(
-      [...staticMoves, inductionPrint, memberDetail, memberMerge, noticeDetail, xeroRecord].sort((a, b) =>
+      [...staticMoves, inductionPrint, ...lodgePages, memberDetail, memberMerge, noticeDetail, xeroRecord].sort((a, b) =>
         a[0].localeCompare(b[0]),
       ),
     );
     const moves = [
       ...staticMoves,
       ["/admin/induction/:id/print", "/admin/membership/induction/:id/print"],
+      ["/admin/lodges/:id", "/admin/lodge-ops/lodges/:id"],
+      ["/admin/lodges/:id/central-lodge", "/admin/lodge-ops/lodges/:id/central-lodge"],
+      ["/admin/lodges/:id/display", "/admin/lodge-ops/lodges/:id/display"],
+      ["/admin/lodges/:id/roster", "/admin/lodge-ops/lodges/:id/roster"],
+      ["/admin/lodges/:id/setup", "/admin/lodge-ops/lodges/:id/setup"],
       ["/admin/members/:id", "/admin/membership/members/:id"],
       ["/admin/members/:id/merge", "/admin/membership/members/:id/merge"],
       ["/admin/notices/:id", "/admin/messages/notices/:id"],
@@ -1911,7 +1997,8 @@ describe("the registry is inert", () => {
   const IMPORTERS: Record<string, string> = {
     "src/lib/admin-permissions.ts":
       "C2: the route map's page half, the admission paths and the landing page are generated",
-    "src/config/feature-routes.ts": "C2: the admin page module gates are generated",
+    "src/config/feature-routes.ts":
+      "C2: the admin page module gates are generated; C11 part 1 (#4808): the Display Setup exemption is its registry old path",
     "src/lib/__tests__/admin-hubs-registry.test.ts": "this suite",
     "src/lib/__tests__/admin-hub-route-parity.test.ts":
       "C2's census: each page's old and hub path answer as main's hand-written map did",
@@ -1929,7 +2016,8 @@ describe("the registry is inert", () => {
       "C7: the Help & system links and the Issue Reports badge are adminLink and adminHref; " +
       "C8: the Messages & email links are adminLink; " +
       "C9: the Members links and badges are adminLink and adminHref; " +
-      "C10: the Bookings links and the Booking Requests badge are adminLink and adminHref",
+      "C10: the Bookings links and the Booking Requests badge are adminLink and adminHref; " +
+      "C11 part 1 (#4808): the Lobby Display and Lodges links are adminLink",
     "src/components/admin-sidebar-controls.tsx":
       "C14: the role menu lists one link per hub, in registry order, at the hub root",
     "src/lib/admin-page-revalidation.ts": "C3: revalidateAdminPage revalidates a page's file path",
@@ -1972,6 +2060,8 @@ describe("the registry is inert", () => {
       "S2: the palette census and its fail-closed property over every grid and seeded role",
     "src/lib/__tests__/contextual-help.test.ts":
       "#4878: the Member notices help title is the page's registry label",
+    "src/lib/__tests__/display-builder-csp-static.test.ts":
+      "C11 part 1 (#4808): reads the builder and preview addresses and treats their adminHref as a hard-navigation entry point",
     "src/app/(admin)/admin/messages/notifications/__tests__/hub-card-labels.test.tsx":
       "#4878: the Delivery Rules and Recipients cards show the registry labels",
     "src/lib/__tests__/admin-palette-lodge-scoped-pages.test.tsx":
@@ -2003,7 +2093,7 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/website/mountain-conditions/page.tsx":
       "C4: its back link is adminLink",
     "src/app/(admin)/admin/setup/foundations/page.tsx":
-      "C4: the Club Identity card links with adminHref; C7: and the System Health card",
+      "C4: the Club Identity card links with adminHref; C7: and the System Health card; C11 part 1 (#4808): and the Lodges card",
     "src/app/(admin)/admin/rules/booking-policies/cancellation/page.tsx":
       "C4: the public-pages link is adminHref; C6: its back link is adminLink",
     "src/lib/analytics-privacy-policy.ts": "C4: the privacy-policy editor link is adminHref",
@@ -2111,10 +2201,12 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/rules/seasons/page.tsx": "C6: the Fees link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/mappings-panel.tsx":
       "C6: the fee console link is adminHref",
-    "src/app/(admin)/admin/lodges/[id]/page.tsx":
-      "C6: the Seasons & Rates card's link, and the fees and seasons permission checks, are adminHref",
-    "src/app/(admin)/admin/lodges/[id]/setup/page.tsx": "C6: the seasons link is adminHref",
-    "src/app/(admin)/admin/lodges/_components/other-lodge-season-rates.tsx": "C6: the Fees link is adminHref",
+    "src/app/(admin)/admin/lodge-ops/lodges/[id]/page.tsx":
+      "C6: the Seasons & Rates card's link, and the fees and seasons permission checks, are adminHref; " +
+      "C11 part 1 (#4808): its back links and the setup, display, roster and central lodge links are adminHref",
+    "src/app/(admin)/admin/lodge-ops/lodges/[id]/setup/page.tsx":
+      "C6: the seasons link is adminHref; C11 part 1 (#4808): its back links and lodge links are adminHref",
+    "src/app/(admin)/admin/lodge-ops/lodges/_components/other-lodge-season-rates.tsx": "C6: the Fees link is adminHref",
     "src/app/(admin)/admin/membership/membership-types/page.tsx": "C6: the age tier settings link is adminHref",
     "src/app/(admin)/admin/rooms-beds/page.tsx": "C6: its back link is adminLink",
     "src/lib/contextual-help/admin/rates-and-policies.ts":
@@ -2240,6 +2332,37 @@ describe("the registry is inert", () => {
       "C17: the on-state hub specs are generated from ADMIN_PAGES, ADMIN_RETIRED_PAGES and ADMIN_HUBS_LIVE",
     "src/lib/__tests__/admin-url-census.test.ts":
       "C17: pins adminUrlPattern against the registry in both switch states",
+    "src/app/(admin)/admin/alpine-server/setup/alpine-server-setup.tsx": "C11 part 1 (#4808): the Lodges link is adminHref",
+    "src/app/(admin)/admin/lodge-ops/display/page.tsx": "C11 part 1 (#4808): the hub's cards are adminHref",
+    "src/app/(admin)/admin/lodge-ops/display/builder/page.tsx":
+      "C11 part 1 (#4808): its back link is adminLink, the Advanced mode links adminHref",
+    "src/app/(admin)/admin/lodge-ops/display/devices/page.tsx": "C11 part 1 (#4808): its back link is adminLink",
+    "src/app/(admin)/admin/lodge-ops/display/layouts/page.tsx":
+      "C11 part 1 (#4808): its back link is adminLink, the builder's hard link adminHref",
+    "src/app/(admin)/admin/lodge-ops/display/preview/page.tsx": "C11 part 1 (#4808): its back link is adminLink",
+    "src/app/(admin)/admin/lodge-ops/display/reference/page.tsx": "C11 part 1 (#4808): its back link is adminLink",
+    "src/app/(admin)/admin/lodge-ops/display/settings/page.tsx": "C11 part 1 (#4808): it redirects to Display Devices' adminHref",
+    "src/app/(admin)/admin/lodge-ops/display/setup/display-wizard-state.ts":
+      "C11 part 1 (#4808): DISPLAY_WIZARD_HREF is Display Setup's adminHref",
+    "src/app/(admin)/admin/lodge-ops/display/setup/display-wizard-steps.tsx":
+      "C11 part 1 (#4808): the builder, preview, Devices and lodge display links are adminHref",
+    "src/app/(admin)/admin/lodge-ops/display/setup/page.tsx": "C11 part 1 (#4808): its back link is adminLink",
+    "src/app/(admin)/admin/lodge-ops/display/templates/page.tsx":
+      "C11 part 1 (#4808): its back link is adminLink, the preview and builder window.open targets adminHref",
+    "src/app/(admin)/admin/lodge-ops/lodges/page.tsx": "C11 part 1 (#4808): a new lodge opens its setup at adminHref",
+    "src/app/(admin)/admin/lodge-ops/lodges/[id]/central-lodge/page.tsx": "C11 part 1 (#4808): its back link is adminHref",
+    "src/app/(admin)/admin/lodge-ops/lodges/[id]/display/page.tsx": "C11 part 1 (#4808): its back link is adminHref",
+    "src/app/(admin)/admin/lodge-ops/lodges/[id]/roster/page.tsx": "C11 part 1 (#4808): its back link is adminHref",
+    "src/app/(admin)/admin/lodge-ops/lodges/_components/lodge-properties-card.tsx":
+      "C11 part 1 (#4808): each lodge's Configure link is adminHref",
+    "src/components/admin/lodge-capacity-settings-link.ts":
+      "C11 part 1 (#4808): the capacity field link starts from the lodge page's adminHref",
+    "src/lib/contextual-help/admin/lodge-operations.ts":
+      "C11 part 1 (#4808): the Lobby Display help is keyed by its registry old path",
+    "src/lib/__tests__/admin-display-settings-redirect.test.ts":
+      "C11 part 1 (#4808): pins the Display Settings stub's redirect to Display Devices' adminHref",
+    "src/lib/csp.ts":
+      "C11 part 1 (#4808): the preview and builder CSP allowlists hold each page's old path and hub path",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;

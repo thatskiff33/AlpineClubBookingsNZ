@@ -6,6 +6,7 @@
  * both are lodge assets managed on the ground rather than menu entries.
  */
 import { entry, help, type HelpEntry } from "../types";
+import { getAdminPage } from "@/lib/admin-hubs";
 
 export const adminLodgeOperationsHelpEntries: HelpEntry[] = [
   entry(
@@ -255,7 +256,7 @@ export const adminLodgeOperationsHelpEntries: HelpEntry[] = [
   // club replacing a TV a year later still needs to find the wizard, and the
   // Help panel is the one affordance present on all of those pages.
   entry(
-    "/admin/display",
+    getAdminPage("display").oldPath,
     help(
       "Lobby Display",
       "Lobby Display pairs the TVs in your lodges and authors the boards they show. Three words, two of them stored: a Layout is the skeleton, a Template is a Layout filled in, and a board is what a screen actually shows.",

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { ADMIN_PAGES, getAdminPage } from "@/lib/admin-hubs";
 import { FRAME_SRC_SELF_PATHS, TIGHT_IMG_SRC_PATHS } from "@/lib/csp";
 
 /**
@@ -25,8 +26,19 @@ const RELAXED_PATHS = [
   ...new Set([...FRAME_SRC_SELF_PATHS, ...TIGHT_IMG_SRC_PATHS]),
 ].sort();
 
+/**
+ * The registered admin pages served at a relaxed path. A link reaches them
+ * through `adminHref(id)`, which is no literal of either path (C11 part 1
+ * #4808), so the scans below treat that call as targeting both of the page's
+ * addresses. Each page must therefore be relaxed at its old path AND its hub
+ * path, or the hub URL would open without the relaxation once the switch is on.
+ */
+const RELAXED_PAGE_IDS = ADMIN_PAGES.filter(
+  (page) => RELAXED_PATHS.includes(page.oldPath) || RELAXED_PATHS.includes(page.hubPath),
+).map((page) => page.id);
+
 const REPO_ROOT = process.cwd();
-const BUILDER_SOURCE = "src/app/(admin)/admin/display/builder/display-builder.tsx";
+const BUILDER_SOURCE = "src/app/(admin)/admin/lodge-ops/display/builder/display-builder.tsx";
 const HUB_RENDERER = "src/components/admin-hub-page.tsx";
 
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx"]);
@@ -77,12 +89,29 @@ function targetsRelaxedPath(raw: string) {
   return RELAXED_PATHS.includes(normalised);
 }
 
-/** Every `href=` / `href:` literal in a source file, with its offset. */
+/** An `adminHref("id")` call, bare or opening a template literal. */
+const ADMIN_HREF_CALL = /^(?:`\$\{\s*)?adminHref\(\s*["']([^"']+)["']/;
+
+/**
+ * Does a link EXPRESSION, as written from its first character, target a relaxed
+ * route? Either a string literal whose path is relaxed, or `adminHref` of a
+ * page served at a relaxed path (on its own or leading a template literal).
+ */
+function targetsRelaxedTarget(expression: string) {
+  const call = ADMIN_HREF_CALL.exec(expression);
+  if (call) return RELAXED_PAGE_IDS.includes(call[1]);
+  const literal = /^[`"']([^`"']*)/.exec(expression);
+  return literal !== null && targetsRelaxedPath(literal[1]);
+}
+
+/**
+ * Every `href=` / `href:` in a source file, with its offset. `value` is the
+ * rest of the line from the expression's first character; `text` stops before
+ * it, so a caller reading on from `index + text.length` still sees the rest of
+ * the object the href sits in.
+ */
 function hrefLiterals(source: string, form: "jsx" | "descriptor") {
-  const pattern =
-    form === "jsx"
-      ? /href=\{?[`"']([^`"']*)/g
-      : /href:\s*[`"']([^`"']*)/g;
+  const pattern = form === "jsx" ? /href=\{?\s*(?=([^\n]*))/g : /href:\s*(?=([^\n]*))/g;
   return [...source.matchAll(pattern)].map((match) => ({
     value: match[1],
     index: match.index,
@@ -131,16 +160,35 @@ describe("routes with a scoped CSP relaxation are entered by a HARD navigation (
     expect(RELAXED_PATHS.length).toBeGreaterThan(0);
   });
 
+  it("relaxes each admin page it relaxes at both of its addresses (C11 part 1 #4808)", () => {
+    expect([...RELAXED_PAGE_IDS].sort()).toEqual(["display-builder", "display-preview"]);
+    for (const id of RELAXED_PAGE_IDS) {
+      const page = ADMIN_PAGES.find((candidate) => candidate.id === id)!;
+      expect(RELAXED_PATHS).toContain(page.oldPath);
+      expect(RELAXED_PATHS).toContain(page.hubPath);
+    }
+  });
+
+  it("reads adminHref of a relaxed page as a relaxed target, and nothing else", () => {
+    expect(targetsRelaxedTarget(`adminHref("display-builder")`)).toBe(true);
+    expect(targetsRelaxedTarget("`${adminHref(\"display-preview\")}?templateId=${id}`")).toBe(true);
+    expect(targetsRelaxedTarget(`"/admin/lodge-ops/display/preview?x=1"`)).toBe(true);
+    expect(targetsRelaxedTarget(`adminHref("display-templates")`)).toBe(false);
+    expect(targetsRelaxedTarget(`adminHref("display-builder-x")`)).toBe(false);
+    expect(targetsRelaxedTarget(`"/admin/lodge-ops/display/builder/extra"`)).toBe(false);
+    expect(targetsRelaxedTarget(`"/admin/lodge-ops/display/templates"`)).toBe(false);
+  });
+
   it("routes no client-side router push/replace at a relaxed path", () => {
     // `router.push`/`router.replace` are soft for the same reason a <Link> is.
-    const routerNavigation = /\.(?:push|replace)\(\s*[`"']([^`"']*)/g;
+    const routerNavigation = /\.(?:push|replace)\(\s*(?=([^\n]*))/g;
     const offenders: string[] = [];
 
     for (const file of sourceFiles) {
       const source = fs.readFileSync(file, "utf8");
       for (const match of source.matchAll(routerNavigation)) {
-        if (targetsRelaxedPath(match[1])) {
-          offenders.push(`${path.relative(REPO_ROOT, file)}: ${match[0]}`);
+        if (targetsRelaxedTarget(match[1])) {
+          offenders.push(`${path.relative(REPO_ROOT, file)}: ${match[0]}${match[1]}`);
         }
       }
     }
@@ -161,24 +209,40 @@ describe("routes with a scoped CSP relaxation are entered by a HARD navigation (
      */
     const offenders: string[] = [];
     let sites = 0;
+    let adminHrefSites = 0;
 
     for (const file of sourceFiles) {
       const source = fs.readFileSync(file, "utf8");
       for (const { value, index, text } of hrefLiterals(source, "jsx")) {
-        if (!targetsRelaxedPath(value)) continue;
+        if (!targetsRelaxedTarget(value)) continue;
         sites += 1;
+        if (ADMIN_HREF_CALL.test(value)) adminHrefSites += 1;
         const tag = enclosingJsxTag(source, index);
         if (tag !== "a") {
-          offenders.push(`${path.relative(REPO_ROOT, file)}: <${tag ?? "?"} ${text}…`);
+          offenders.push(`${path.relative(REPO_ROOT, file)}: <${tag ?? "?"} ${text}${value}…`);
         }
       }
     }
 
     expect(offenders).toEqual([]);
-    // Positive control: a scan that matched nothing would pass silently. Two
-    // sites exist today — the Layouts page's builder link and the Devices page's
-    // per-device /display preview.
-    expect(sites).toBeGreaterThanOrEqual(2);
+    // Positive control: a scan that matched nothing would pass silently. Five
+    // sites exist today — the Layouts page's builder link, the Devices page's
+    // per-device /display preview, and the setup wizard's two builder links and
+    // its preview link. All but the /display one are adminHref calls.
+    expect(sites).toBeGreaterThanOrEqual(5);
+    expect(adminHrefSites).toBeGreaterThanOrEqual(4);
+  });
+
+  it("never spreads adminLink of a relaxed page into a component", () => {
+    // `adminLink` feeds back links and menu items, which are soft. The relaxed
+    // pages are linked with `adminHref` on a plain <a> or a hardNavigate card.
+    const relaxedLink = new RegExp(
+      `adminLink\\(\\s*["'](?:${RELAXED_PAGE_IDS.join("|")})["']`,
+    );
+    const offenders = sourceFiles
+      .filter((file) => relaxedLink.test(fs.readFileSync(file, "utf8")))
+      .map((file) => path.relative(REPO_ROOT, file));
+    expect(offenders).toEqual([]);
   });
 
   it("marks every hub/nav descriptor pointing at a relaxed path hardNavigate", () => {
@@ -195,7 +259,7 @@ describe("routes with a scoped CSP relaxation are entered by a HARD navigation (
     for (const file of sourceFiles) {
       const source = fs.readFileSync(file, "utf8");
       for (const { value, index, text } of hrefLiterals(source, "descriptor")) {
-        if (!targetsRelaxedPath(value)) continue;
+        if (!targetsRelaxedTarget(value)) continue;
         descriptors += 1;
         // The rest of the object literal this href belongs to: up to its closing
         // `},` — or the next descriptor's `href:`, whichever comes first. Both
@@ -209,13 +273,14 @@ describe("routes with a scoped CSP relaxation are entered by a HARD navigation (
             .concat(rest.length),
         );
         if (!/hardNavigate:\s*true/.test(rest.slice(0, end))) {
-          offenders.push(`${path.relative(REPO_ROOT, file)}: ${text}`);
+          offenders.push(`${path.relative(REPO_ROOT, file)}: ${text}${value}`);
         }
       }
     }
 
     expect(offenders).toEqual([]);
-    // Positive control, as above: the Lobby Display hub's Visual builder card.
+    // Positive control, as above: the Lobby Display hub's Visual builder card,
+    // an adminHref call since C11 part 1 (#4808).
     expect(descriptors).toBeGreaterThanOrEqual(1);
   });
 
@@ -247,11 +312,15 @@ describe("Visual builder renders no authored markup itself (#161, #2246)", () =>
    * failing, the fix is not to delete it: either keep the preview inside the
    * sandboxed frame, or add the builder to TIGHT_IMG_SRC_PATHS and re-review.
    */
-  it("keeps the builder out of the tightened img-src allowlist", () => {
+  it("keeps the builder out of the tightened img-src allowlist, at both of its addresses", () => {
     // The premise of the assertion below. If the builder is ever added to
     // TIGHT_IMG_SRC_PATHS this test should be re-reviewed, not silently kept.
-    expect(TIGHT_IMG_SRC_PATHS).not.toContain("/admin/display/builder");
-    expect(FRAME_SRC_SELF_PATHS).toContain("/admin/display/builder");
+    const builder = getAdminPage("display-builder");
+    for (const address of [builder.oldPath, builder.hubPath]) {
+      expect(TIGHT_IMG_SRC_PATHS).not.toContain(address);
+      expect(FRAME_SRC_SELF_PATHS).toContain(address);
+    }
+    expect(builder.hubPath).toBe("/admin/lodge-ops/display/builder");
   });
 
   it("uses no HTML-injection sink in the builder component", () => {

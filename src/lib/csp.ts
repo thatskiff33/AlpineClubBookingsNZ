@@ -1,3 +1,7 @@
+// Relative, not `@/`: not every loader that can reach a module beside the
+// registry resolves the alias (see `src/lib/admin-hubs/release.ts`).
+import { getAdminPage, type AdminPageId } from "./admin-hubs";
+
 export const CSP_HEADER = "Content-Security-Policy";
 // test seam
 export const CSP_REPORT_ONLY_HEADER = "Content-Security-Policy-Report-Only";
@@ -95,14 +99,27 @@ export function setSecurityHeaders(headers: Headers, pathname?: string) {
 }
 
 /**
+ * An admin page's two addresses, old path then hub path, from the hub registry
+ * (C11 #4808). Both are listed whatever `ADMIN_HUBS_LIVE` says: the page is
+ * served at one and redirected from the other, and the redirect response is
+ * itself on this pathname. Each stays a single exact path.
+ */
+function bothAdminPaths(id: AdminPageId): readonly string[] {
+  const page = getAdminPage(id);
+  return [page.oldPath, page.hubPath];
+}
+
+/**
  * Admin pages that EMBED the sandboxed /display iframe, and so need
  * `frame-src 'self'`: the Templates preview host (LTV-036, ADR-003 §5) and the
- * Visual builder's Live preview (ADR-004 §7, issue #2246).
+ * Visual builder's Live preview (ADR-004 §7, issue #2246). Each is listed at its
+ * old path and its hub path under `/admin/lodge-ops`.
  *
  * Matched by EXACT equality against `normalisePathname(pathname)`, never by
  * prefix — a prefix match would silently hand `frame-src 'self'` to
- * `/admin/display/templates` and every future `/admin/display/*` page, which is
- * precisely the blanket relaxation the scoped design avoids.
+ * `/admin/display/templates` (or `/admin/lodge-ops/display/templates`) and
+ * every future display page, which is precisely the blanket relaxation the
+ * scoped design avoids.
  *
  * Exported as a test seam: `display-builder-csp-static.test.ts` drives its
  * hard-navigation guard from these lists, so adding a path here automatically
@@ -110,8 +127,8 @@ export function setSecurityHeaders(headers: Headers, pathname?: string) {
  */
 // test seam
 export const FRAME_SRC_SELF_PATHS: readonly string[] = [
-  "/admin/display/preview",
-  "/admin/display/builder",
+  ...bothAdminPaths("display-preview"),
+  ...bothAdminPaths("display-builder"),
 ];
 
 /**
@@ -120,7 +137,8 @@ export const FRAME_SRC_SELF_PATHS: readonly string[] = [
  * img-src otherwise allows any https host — an authoring admin could exfiltrate
  * the display's own token values (config, occupancy, …) via an image-beacon
  * `src`. These are the routes that RENDER authored display markup: /display
- * itself, and the minimal preview host whose whole body is that iframe.
+ * itself, and the minimal preview host whose whole body is that iframe, at its
+ * old path and its hub path.
  *
  * Deliberately NOT the Visual builder: it is a full admin page inside the admin
  * chrome (avatars, uploaded images, the rest of the admin UI), not a sandboxed
@@ -133,7 +151,7 @@ export const FRAME_SRC_SELF_PATHS: readonly string[] = [
 // test seam
 export const TIGHT_IMG_SRC_PATHS: readonly string[] = [
   "/display",
-  "/admin/display/preview",
+  ...bothAdminPaths("display-preview"),
 ];
 
 export function buildContentSecurityPolicy(nonce: string, options: CspOptions = {}) {
