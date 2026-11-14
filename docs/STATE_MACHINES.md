@@ -1785,7 +1785,11 @@ answers 409 `SUPERSEDED_CARD_PAYMENT_REFUNDING`, also for a captured intent of
 the booking its pointer has moved past. Neither reuse arm hands out an intent
 a superseded row still names; one being paid answers `PAYMENT_PROCESSING` in
 its own words. After a card success the `/pay` link asks the server what it
-did and never shows the pay buttons again.
+did and never shows the pay buttons again, whether the confirmation resolved in
+the page or a redirect method returned the payer to the link with
+`payment_intent` and `redirect_status` in the address (#4955). The door's 410
+for a booking already paid carries `BOOKING_ALREADY_PAID`, which the link reads
+as paid (the webhook settled first); its other 410s stay unconfirmed.
 
 Saved-card provenance (#3269, `INV-PAY-053`). Two writers put a
 `stripePaymentMethodId` on a `Payment` row and only one of them saves a card:
@@ -4160,6 +4164,10 @@ worker finds the operation must wait (busy) -> RUNNING -> PENDING: returns
   createdAt -> FAILED for a person (an operator's retry raises it unwaited)
   it waits only when its edit expected an own note; a note the repair pass
   queues reads that from the edit's history row (#4049)
+  group invoice raised and bound but its email owed (#4919): code
+  GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED, the owed marker kept in
+  responsePayload, rechecked every minute; the re-drive only asks Xero to
+  email it, under lock(1), and an operator's retry of a FAILED row does too
 supplementary invoice WAITING_PAYMENT on a card ask's intent (INV-PAY-104;
   an officer's or the repair tool's own actions on it are not drawn here)
   -> that intent captured and the money kept -> the others naming it billed
@@ -4189,6 +4197,11 @@ supplementary invoice WAITING_PAYMENT on a card ask's intent (INV-PAY-104;
      row on the anchor it holds; while a supersede's cancel of that intent is still in
      flight the reaper keeps it, and the cancel's last step moves it, #4665)
 inbound webhook/event recorded -> reconciliation worker processes event
+  its WEBHOOK_RECONCILE row is this attempt's own (INV-INT-038): an INBOUND
+  row left RUNNING past the stale threshold by a dead attempt is re-claimed
+  in place under a fresh startedAt (one guarded write, one winner; the dead
+  attempt's late outcome refused); a live one fails this attempt as in
+  flight -> event FAILED, retried after its backoff
 failure -> retry/backoff/admin visibility
 FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
   never retried, requeued or re-minted beside (INV-INT-025)
@@ -5140,6 +5153,35 @@ refused and a failed proof counts), `session-reauth.realdb.test.ts` (two
 concurrent consumes, one success), `confirm-its-you-dialog.test.tsx` (the
 replay is once, body unchanged), and `webauthn.realdb.test.ts` (one of two
 challenge claims, and one of two counter updates).
+
+## Officer two-factor (#4618)
+
+Who must hold an authenticator app or a passkey (`INV-AUTH-012`). The
+requirement is recomputed on every session refresh. Nothing here runs until
+#4620 sets `OFFICER_SIGN_IN_ENFORCED`.
+
+```text
+not required -> required: becomes Full Admin, gains a role that requires it, or the club turns the policy on
+required, no app or passkey, no grace stamp -> in grace (twoFactorGraceStartedAt = NOW(), set once)
+in grace -> gated: club midnight after (first club date + grace days); 0 days gates at once
+gated -> only /login/enroll, /login/verify, /profile, sign-out and the enrolment APIs answer
+in grace or gated -> enrolled: authenticator app or passkey saved (an emailed code does not count)
+enrolled -> enrolled: removing the last app or passkey is refused with 400
+enrolled -> reset: another Full Admin after step-up, or `auth:reset-factors`
+  factors cleared, sessions ended, factorsResetAt = NOW(), member emailed;
+  a required officer's missing grace stamp is set to the same NOW()
+reset -> gated: the next sign-in of a required officer; no new grace period
+reset -> in grace: a member reset before the rule reached them, on first exposure
+reset -> enrolled: enrolment from a session issued after the reset; an older session gets 409
+required -> not required: the role or policy goes, or the member can no longer sign in
+```
+
+To verify: `officer-two-factor-required.test.ts` (who is required, grace on the
+club calendar at 0, 14 and 60 days, no grace after a reset, first grace for a
+member reset before promotion),
+`officer-two-factor-gate-callers.test.ts` (the allowlist and every gate
+caller), `officer-factor-reset-route.test.ts` (each refusal of the reset
+route), and `webauthn.test.ts` (the last passkey is kept, under the member lock).
 
 ## Password Sign-In Throttle (#4609)
 

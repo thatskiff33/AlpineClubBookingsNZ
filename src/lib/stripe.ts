@@ -10,6 +10,7 @@ import "server-only";
 
 import Stripe from "stripe";
 import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
+import { stripeTestClientOverride } from "@/lib/stripe-test-client-override";
 import type { ClubFormat } from "@/lib/club-format";
 import {
   refuseBelowStripeMinimum,
@@ -30,15 +31,14 @@ let _stripe: Stripe | null = null;
 let _stripeKey: string | null = null;
 
 export async function getStripe(): Promise<Stripe> {
+  const testClient = stripeTestClientOverride(); // test-only seam (#4908)
+  if (testClient) return testClient;
   const key = await getOperationalStripeSecretKey();
   if (!key) {
     throw new Error("Stripe secret key is not configured");
   }
   if (!_stripe || _stripeKey !== key) {
-    _stripe = new Stripe(key, {
-      apiVersion: Stripe.API_VERSION,
-      typescript: true,
-    });
+    _stripe = new Stripe(key, { apiVersion: Stripe.API_VERSION, typescript: true });
     _stripeKey = key;
   }
   return _stripe;
