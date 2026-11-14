@@ -141,6 +141,7 @@ describe("reviewed bed-allocation removal route", () => {
     ["duplicate categories", { scope: allocationScope, categories: ["AUTO_DRAFT", "AUTO_DRAFT"] }],
     ["unknown category", { scope: allocationScope, categories: ["EVERYTHING"] }],
     ["invalid calendar date", { scope: { type: "WINDOW", lodgeId: "lodge-1", from: "2026-02-30", to: "2026-03-02" }, categories: ["AUTO_DRAFT"] }],
+    ["stayDate day that does not exist", { scope: { ...allocationScope, stayDate: "2026-02-30" }, categories: ["AUTO_DRAFT"] }],
     ["reversed window", { scope: { type: "WINDOW", lodgeId: "lodge-1", from: "2026-08-03", to: "2026-08-01" }, categories: ["AUTO_DRAFT"] }],
     ["oversized window", { scope: { type: "WINDOW", lodgeId: "lodge-1", from: "2026-08-01", to: "2026-09-02" }, categories: ["AUTO_DRAFT"] }],
   ])("rejects %s at the preview DTO boundary", async (_label, body) => {
