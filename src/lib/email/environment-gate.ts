@@ -54,9 +54,9 @@
  * live sign-in link, a door code or a payment link must not sit at rest. The
  * retry cron only selects rows that still hold a body, so those rows were never
  * replayed; and `attempts` defaults to 1 while the operator review queue selects
- * `attempts >= 3`, so they surfaced in NO queue either. Silently, permanently
- * lost, while this file and six other places told the operator it would go out by
- * itself.
+ * `attempts >= EMAIL_RETRY_MAX_ATTEMPTS`, so they surfaced in NO queue either.
+ * Silently, permanently lost, while this file and six other places told the
+ * operator it would go out by itself.
  *
  * So such a row is written at the retry CEILING, which drops it out of the retry
  * query and lands it in the email-failure review queue — the retry cron's own
@@ -216,7 +216,8 @@ export async function resolveEmailEnvironmentGate(params: {
                 A ROW NOTHING CAN REPLAY IS PUT WHERE A PERSON WILL SEE IT
                 (#3035 review). Left at `attempts: 1` such a row surfaced
                 NOWHERE: the retry cron requires a retained body, and the
-                operator review queue selects `attempts >= 3`. So the message was
+                operator review queue selects
+                `attempts >= EMAIL_RETRY_MAX_ATTEMPTS`. So the message was
                 silently and permanently lost, while seven places in this
                 codebase told the operator it would go out by itself.
 

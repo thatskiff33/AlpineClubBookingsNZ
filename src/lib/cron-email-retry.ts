@@ -345,12 +345,12 @@ export async function retryFailedEmails(): Promise<{
     if (!emailLog.bookingId) {
       if (ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES.has(emailLog.templateName)) {
         // Retire the row TERMINALLY rather than leaving it as found. Leaving it
-        // at attempts < 3 would have been the worst of both worlds: the row is
-        // below the >=3 threshold the operator review queue reads, so it would
+        // below EMAIL_RETRY_MAX_ATTEMPTS would have been the worst of both worlds:
+        // the row is below the operator review queue's threshold, so it would
         // surface NOWHERE; and it stays inside this cron's selection window
-        // (status FAILED, attempts < MAX, retained body) forever, so once fifty
-        // such rows exist the batch of 50 is refilled with the same stuck rows
-        // every run and retry dies for every newer email behind them.
+        // (status FAILED, attempts below the ceiling, retained body) forever, so
+        // once fifty such rows exist the batch of 50 is refilled with the same
+        // stuck rows every run and retry dies for every newer email behind them.
         // Pushing attempts to EMAIL_RETRY_MAX_ATTEMPTS drops it out of the query
         // and lands it in the review queue, which is what the operator needs.
         await prisma.emailLog

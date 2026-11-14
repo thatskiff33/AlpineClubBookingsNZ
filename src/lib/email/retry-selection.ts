@@ -4,12 +4,14 @@ import type { Prisma } from "@prisma/client";
  * The email retry ceiling: the cron replays a `FAILED` row only while
  * `attempts` is below it, and at it the row enters the operator's
  * email-failure review queue. The environment gate writes a body-less blocked
- * row straight to it, and a waitlist offer's email reads as exhausted at it.
+ * row straight to it, a waitlist offer's email reads as exhausted at it, and the
+ * waitlist page's "retrying (n/max)" label shows it to the officer.
  *
  * One number for all of them, so a row cannot leave the retry query without
  * entering the review queue (#3035). It lives here, beside the retry selection
- * and free of runtime imports, so the mailer can import it without depending on
- * the cron that depends on the mailer.
+ * and free of runtime imports (a type-only Prisma import is erased), so the
+ * mailer and a client component can import it without depending on the cron
+ * that depends on the mailer.
  */
 export const EMAIL_RETRY_MAX_ATTEMPTS = 3;
 
