@@ -40,7 +40,9 @@
  * `2026-07-01` read as itself is AFTER today, and read through Denver is
  * `2026-06-30`, which is not. One day decides whether the member is refused.
  */
+import type { BookingStatus } from "@prisma/client";
 import { describe, expect, it } from "vitest";
+import { editDoorBooking } from "./support/edit-door-booking";
 
 import {
   formatDateOnly,
@@ -73,16 +75,16 @@ const LEGACY_PROJECTION_ZONE = "America/Denver";
 const CLUB_TODAY = new Date("2026-06-30T00:00:00.000Z");
 
 function makeBooking(
-  status: string,
+  status: BookingStatus,
   checkIn: string,
   checkOut: string,
 ): LoadedBookingForModify {
-  return {
+  return editDoorBooking({
     status,
     checkIn: day(checkIn),
     checkOut: day(checkOut),
     guests: [{ id: "g1", stayStart: day(checkIn), stayEnd: day(checkOut) }],
-  } as unknown as LoadedBookingForModify;
+  });
 }
 
 /**

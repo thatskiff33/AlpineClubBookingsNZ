@@ -296,7 +296,7 @@ fix was needed.**
     old step's focus target unmounts and focus falls back to `<body>` — #1149
     deliberately **announces** the transition via `aria-live` rather than moving
     focus, so this is the accepted design, not a gap.
-- **Admin members table** (`src/app/(admin)/admin/members/_components/member-table.tsx`):
+- **Admin members table** (`src/app/(admin)/admin/membership/members/_components/member-table.tsx`):
   - The six sortable columns render real `<button>`s inside `<th aria-sort>`
     cells. They are keyboard-focusable with a visible focus-visible ring (2px
     `--ring` box-shadow). **Enter** toggles direction

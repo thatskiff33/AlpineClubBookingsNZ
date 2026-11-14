@@ -122,7 +122,11 @@ export function BookingStayPreferences({
       {memberArrivalInstructions ? (
         <Card id="directions" className="scroll-mt-20">
           <CardHeader>
-            <CardTitle headingLevel={2}>How to Get to the Lodge</CardTitle>
+            {/* INV-CAP-039: names THIS booking's lodge, whose own travel note
+                and door code are below. Read from the booking row, not from
+                `memberArrivalInstructions.lodgeName`, which falls back to the
+                club default when the lodge cannot be resolved (#2918). */}
+            <CardTitle headingLevel={2}>How to Get to {booking.lodge.name}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <p className="whitespace-pre-wrap">

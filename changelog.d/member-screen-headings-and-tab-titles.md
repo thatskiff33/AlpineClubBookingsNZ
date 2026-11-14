@@ -9,4 +9,4 @@
   — never a name, amount or token. Nothing looks different. A new census test
   stops any member-facing card title from leaving its heading level
   unclassified, and holds the remaining admin titles at a falling baseline
-  (`INV-PUB-004`).
+  (`INV-PUB-005`).
