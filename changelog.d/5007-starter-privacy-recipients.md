@@ -7,8 +7,8 @@
   the register records for each, and marks the optional ones "Only if the
   club turns it on". The host and the place your data is held come from
   **Where members' data is held** under Club Identity; until that is filled
-  in, the page tells members to ask your Privacy Officer. Backups move into section 5's list, and section 6
-  refers to the host described there.
+  in, the page tells members to ask your Privacy Officer. Backups move into
+  section 5's list, and section 6 refers to the host described there.
 
   A privacy page that still holds the unedited starter text is updated once on
   upgrade. A page your club edited is not changed: check its sections 5 and 6
