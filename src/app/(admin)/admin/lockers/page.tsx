@@ -201,7 +201,11 @@ export default function LockersPage() {
     return () => controller.abort();
   }, [loadData]);
 
-  function failAction(message: string) {
+  function failAction(message: string, requestedScope: string | null) {
+    // A failure belongs to the lodge the action was taken on: after a switch a
+    // late refusal would land as a focus-taking alert about a lodge nobody is
+    // looking at. The success paths fence the same way.
+    if (activeScopeRef.current !== requestedScope) return;
     setActionError(message);
     setActionAttention((count) => count + 1);
   }
@@ -238,7 +242,7 @@ export default function LockersPage() {
         // Stale-tab / narrowed-permission save surfaces the persistent
         // forbidden-save reason in the action alert (#1940).
         if (response.status === 403) {
-          failAction(ADMIN_FORBIDDEN_SAVE_REASON);
+          failAction(ADMIN_FORBIDDEN_SAVE_REASON, requestedScope);
           return;
         }
         throw new Error(
@@ -271,6 +275,7 @@ export default function LockersPage() {
           : editingLockerId
             ? "Failed to update locker"
             : "Failed to create locker",
+        requestedScope,
       );
     } finally {
       setSaving(false);
@@ -326,7 +331,7 @@ export default function LockersPage() {
       const body = await response.json().catch(() => null);
       if (!response.ok) {
         if (response.status === 403) {
-          failAction(ADMIN_FORBIDDEN_SAVE_REASON);
+          failAction(ADMIN_FORBIDDEN_SAVE_REASON, requestedScope);
           return;
         }
         throw new Error(body?.error || "Failed to delete locker");
@@ -344,6 +349,7 @@ export default function LockersPage() {
         deleteError instanceof Error
           ? deleteError.message
           : "Failed to delete locker",
+        requestedScope,
       );
     } finally {
       setDeletingLockerId(null);
@@ -369,7 +375,7 @@ export default function LockersPage() {
       const body = await response.json();
       if (!response.ok) {
         if (response.status === 403) {
-          failAction(ADMIN_FORBIDDEN_SAVE_REASON);
+          failAction(ADMIN_FORBIDDEN_SAVE_REASON, requestedScope);
           return;
         }
         throw new Error(body.error || "Failed to create lockers");
@@ -382,6 +388,7 @@ export default function LockersPage() {
         bulkError instanceof Error
           ? bulkError.message
           : "Failed to create lockers",
+        requestedScope,
       );
     } finally {
       setBulkSaving(false);

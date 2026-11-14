@@ -210,6 +210,31 @@ describe("Chores action attention", () => {
     );
     expect(actionAlert("chores-action-error")).toBeEmptyDOMElement();
   });
+
+  it("focuses a refused save and does not position at the top", async () => {
+    handler = (url, method) => {
+      if (!url.startsWith("/api/admin/chores")) return undefined;
+      if (method === "POST") return { status: 403, body: {} };
+      return { status: 200, body: [] };
+    };
+    render(<ChoresPage />, { container: scrollHost });
+    fireEvent.click(await screen.findByRole("button", { name: /Add Chore/i }));
+    fireEvent.change(screen.getByLabelText("Chore Name"), {
+      target: { value: "Breakfast dishes" },
+    });
+    scrollTo.mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: /Create Chore/i }));
+
+    const alert = actionAlert("chores-action-error");
+    await waitFor(() =>
+      expect(alert).toHaveTextContent(ADMIN_FORBIDDEN_SAVE_REASON),
+    );
+    await expectRecoveryAlertToHoldFocus(alert);
+    // The form stays open for a retry, and nothing scrolled to the page top.
+    expect(screen.getByLabelText("Chore Name")).toHaveValue("Breakfast dishes");
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
 });
 
 describe("Lockers action attention", () => {
@@ -257,6 +282,30 @@ describe("Lockers action attention", () => {
     await expectRecoveryAlertToHoldFocus(alert);
     // An action failure leaves the list it was taken from on screen.
     expect(screen.getByText("Locker A1")).toBeVisible();
+  });
+
+  it("focuses a failed save and keeps the form for a retry", async () => {
+    handler = (url, method) => {
+      if (url === "/api/admin/lockers" && method === "POST") {
+        return { status: 409, body: { error: "That locker name is in use." } };
+      }
+      if (url.startsWith("/api/admin/lockers")) {
+        return { status: 200, body: { members: [], lockers: [] } };
+      }
+      return undefined;
+    };
+    render(<LockersPage />);
+    fireEvent.change(await screen.findByLabelText("Name"), {
+      target: { value: "Locker B2" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Create Locker" }));
+    const alert = actionAlert("lockers-action-error");
+    await waitFor(() =>
+      expect(alert).toHaveTextContent("That locker name is in use."),
+    );
+    await expectRecoveryAlertToHoldFocus(alert);
+    expect(screen.getByLabelText("Name")).toHaveValue("Locker B2");
   });
 
   it("puts a refused bulk create in the focused alert", async () => {
@@ -338,6 +387,21 @@ describe("Lodges action attention", () => {
     refocus(save);
     fireEvent.click(save);
     await expectRecoveryAlertToHoldFocus(alert);
+  });
+
+  it("dismisses a standing form failure when the form is cancelled", async () => {
+    handler = () => undefined;
+    render(<AdminLodgesPage />, { container: scrollHost });
+    fireEvent.click(await screen.findByRole("button", { name: /^Edit$/ }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: " " } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    const alert = actionAlert("lodges-page-error");
+    expect(alert).toHaveTextContent("Lodge name is required.");
+
+    fireEvent.click(screen.getByRole("button", { name: /^Cancel$/ }));
+
+    // The form the message was about is gone, so the message goes with it.
+    expect(alert).toBeEmptyDOMElement();
   });
 
   it("positions at the top of the page when an edit save lands", async () => {

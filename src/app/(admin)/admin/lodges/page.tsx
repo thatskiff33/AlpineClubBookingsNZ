@@ -37,6 +37,10 @@ import { OtherLodgesPanel } from "./_components/other-lodges-panel";
 const LODGE_DETAIL_FIELDS = ["address", "doorCode", "travelNote"] as const;
 type LodgeDetailField = (typeof LODGE_DETAIL_FIELDS)[number];
 
+// The action alert's own id, and the capacity field's `aria-describedby`
+// target: one literal, so renaming the alert cannot orphan the field's link.
+const ACTION_ERROR_ID = "lodges-page-error";
+
 type LodgeRecord = {
   id: string;
   name: string;
@@ -115,10 +119,10 @@ export default function AdminLodgesPage() {
   const canEdit = useAdminAreaEditAccess("lodge");
   const [lodges, setLodges] = useState<LodgeRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  // A failed READ is passive: it replaces the list and moves nothing. A failed
-  // save or (de)activation is the admin's own action, so it takes focus through
-  // the permanently mounted recovery alert, and `actionAttention` re-takes it
-  // when the same failure repeats.
+  // A failed READ is passive: it is shown above the form, hides the list and
+  // moves nothing. A failed save or (de)activation is the admin's own action,
+  // so it takes focus through the permanently mounted recovery alert, and
+  // `actionAttention` re-takes it when the same failure repeats.
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
   const [actionAttention, setActionAttention] = useState(0);
@@ -127,8 +131,9 @@ export default function AdminLodgesPage() {
   const [savesLanded, setSavesLanded] = useState(0);
   const pageRef = useRef<HTMLDivElement>(null);
   useActionAttention({
-    // `FocusedActionError` owns the failure focus; the error is passed only so
-    // a failure suppresses the success position.
+    // `FocusedActionError` owns the failure focus. The error is passed so a
+    // failure beats a landed save in one batch; no handler makes that batch
+    // today (a landed save clears the error first), so this is a guard only.
     error: actionError,
     errorTarget: null,
     success: savesLanded,
@@ -180,8 +185,9 @@ export default function AdminLodgesPage() {
     setEditingId(null);
     setCreating(false);
     setForm(emptyForm);
-    // A failure about a form the admin has closed no longer has anything to
-    // recover; leaving it standing would also hold the capacity field invalid.
+    // Cancel closes the form a standing failure such as "Lodge name is
+    // required." was about, so it dismisses the action failure. A failed
+    // Deactivate shown at the same time goes with it.
     setActionError("");
   }
 
@@ -352,7 +358,7 @@ export default function AdminLodgesPage() {
       ) : null}
 
       <FocusedActionError
-        id="lodges-page-error"
+        id={ACTION_ERROR_ID}
         error={actionError}
         attentionKey={actionAttention}
         className="scroll-mt-20"
@@ -385,7 +391,7 @@ export default function AdminLodgesPage() {
                 value={form.capacity}
                 onChange={(capacity) => setForm((prev) => ({ ...prev, capacity }))}
                 invalid={capacityInvalid && actionError !== ""}
-                errorId="lodges-page-error"
+                errorId={ACTION_ERROR_ID}
               />
             ) : null}
             <div className="space-y-2">

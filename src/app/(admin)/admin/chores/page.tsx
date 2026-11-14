@@ -70,9 +70,9 @@ export default function ChoresPage() {
   const canEdit = useAdminAreaEditAccess("lodge")
   const [chores, setChores] = useState<ChoreTemplate[]>([])
   const [loading, setLoading] = useState(true)
-  // A failed READ is passive: it is shown where the list would be and moves
-  // nothing. A failed save, delete or toggle is the admin's own action, so it
-  // takes focus through the permanently mounted recovery alert, and
+  // A failed READ is passive: it is shown in the quiet box above the form and
+  // moves nothing. A failed save, delete or toggle is the admin's own action,
+  // so it takes focus through the permanently mounted recovery alert, and
   // `actionAttention` re-takes it when the same failure repeats.
   const [loadError, setLoadError] = useState("")
   const [actionError, setActionError] = useState("")
@@ -82,8 +82,9 @@ export default function ChoresPage() {
   const [savesLanded, setSavesLanded] = useState(0)
   const pageRef = useRef<HTMLDivElement>(null)
   useActionAttention({
-    // `FocusedActionError` owns the failure focus; the error is passed only so
-    // a failure suppresses the success position.
+    // `FocusedActionError` owns the failure focus. The error is passed so a
+    // failure beats a landed save in one batch; no handler makes that batch
+    // today (a landed save clears the error first), so this is a guard only.
     error: actionError,
     errorTarget: null,
     success: savesLanded,
@@ -216,7 +217,11 @@ export default function ChoresPage() {
     setActionError("")
   }
 
-  function failAction(message: string) {
+  function failAction(message: string, requestedScope: string | null) {
+    // A failure belongs to the lodge the action was taken on: after a switch a
+    // late refusal would land as a focus-taking alert about a lodge nobody is
+    // looking at. The success paths fence the same way.
+    if (activeScopeRef.current !== requestedScope) return
     setActionError(message)
     setActionAttention((count) => count + 1)
   }
@@ -286,7 +291,7 @@ export default function ChoresPage() {
       })
       if (!res.ok) {
         if (res.status === 403) {
-          failAction(ADMIN_FORBIDDEN_SAVE_REASON)
+          failAction(ADMIN_FORBIDDEN_SAVE_REASON, requestedScope)
           return
         }
         const data = await res.json()
@@ -297,7 +302,7 @@ export default function ChoresPage() {
       setSavesLanded((count) => count + 1)
       fetchChores()
     } catch (err) {
-      failAction(err instanceof Error ? err.message : "Unknown error")
+      failAction(err instanceof Error ? err.message : "Unknown error", requestedScope)
     } finally {
       setSaving(false)
     }
@@ -312,7 +317,7 @@ export default function ChoresPage() {
       const res = await fetch(`/api/admin/chores/${id}`, { method: "DELETE" })
       if (!res.ok) {
         if (res.status === 403) {
-          failAction(ADMIN_FORBIDDEN_SAVE_REASON)
+          failAction(ADMIN_FORBIDDEN_SAVE_REASON, requestedScope)
           return
         }
         const data = await res.json()
@@ -321,7 +326,7 @@ export default function ChoresPage() {
       if (activeScopeRef.current !== requestedScope) return
       fetchChores()
     } catch (err) {
-      failAction(err instanceof Error ? err.message : "Unknown error")
+      failAction(err instanceof Error ? err.message : "Unknown error", requestedScope)
     }
   }
 
@@ -337,7 +342,7 @@ export default function ChoresPage() {
       })
       if (!res.ok) {
         if (res.status === 403) {
-          failAction(ADMIN_FORBIDDEN_SAVE_REASON)
+          failAction(ADMIN_FORBIDDEN_SAVE_REASON, requestedScope)
           return
         }
         const data = await res.json()
@@ -346,7 +351,7 @@ export default function ChoresPage() {
       if (activeScopeRef.current !== requestedScope) return
       fetchChores()
     } catch (err) {
-      failAction(err instanceof Error ? err.message : "Unknown error")
+      failAction(err instanceof Error ? err.message : "Unknown error", requestedScope)
     }
   }
 
