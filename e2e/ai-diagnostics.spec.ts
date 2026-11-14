@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "./helpers/accessibility";
+import { adminHref, adminUrlPattern } from "./helpers/admin-url";
 
 import { storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN } from "./helpers/fixtures";
@@ -186,8 +187,13 @@ test("the conversation survives a navigation but the chosen record does not", as
   // documented, owner-accepted Q5 cost ("do not silently introduce persistence
   // to avoid that UX cost") — the first cut of this test asserted D8 through a
   // reload and was testing Q5's cost instead.
+  //
+  // C18 (#4815): with the hubs on, the admin sidebar lists hubs ("Finance"), not
+  // pages, so no "Payments" link may exist here. The URL below is already right
+  // for either state; this click target is the one part that is not known to be.
+  // If C18's run fails here, move in-app through the Finance hub's page list.
   await page.getByRole("link", { name: "Payments" }).click();
-  await page.waitForURL("**/admin/payments");
+  await page.waitForURL(adminUrlPattern(adminHref("payments")));
   // No launcher click: the panel never closed. It is still on Diagnostics.
   await expect(page.getByTestId("diagnostics-input")).toBeVisible();
 
