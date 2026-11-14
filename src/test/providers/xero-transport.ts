@@ -1,6 +1,5 @@
-import { ObjectSerializer, type XeroClient } from "xero-node";
+import { LineAmountTypes, ObjectSerializer, type LineItem, type XeroClient } from "xero-node";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
-import { invoiceLineItemsTotalCents } from "@/lib/xero-modification-line-items";
 import { invoiceWire } from "./round-trip-harness";
 import { strictTestClient } from "./transport-client";
 import { XeroFake, XeroValidationError } from "./xero-fake";
@@ -15,7 +14,9 @@ import { XeroFake, XeroValidationError } from "./xero-fake";
  * `ObjectSerializer`, the same deserializer the SDK runs on an HTTP reply.
  * Invoices reuse `invoiceWire` (`INV-SSOT`). Lists page as Xero does: no
  * `page` returns everything, a `page` returns that slice of `pageSize`
- * (default 100). Not modelled: tax, currencies, auth, rate limits beyond what `failNext` injects, invoice edits,
+ * (default 100). Document totals are worked out here, line by line, not with
+ * the app's own totalling helper, so app and fake cannot agree by construction.
+ * Not modelled: tax, currencies, auth, rate limits beyond what `failNext` injects, invoice edits,
  * payment dates, the organisation record and email. Anything absent from the
  * method table throws, so the app's organisation read falls back as it does
  * when Xero is unreachable.
@@ -57,6 +58,23 @@ export function xeroTransport(fake: XeroFake) {
     const value = providerAmountToCents(amount);
     if (value === null) throw new XeroValidationError("Missing or invalid amount");
     return value;
+  };
+  // Xero's total of an Inclusive or NoTax document: each line's quantity x unit
+  // amount, rounded to the cent. Anything that would move the total off that sum
+  // (Exclusive tax, discounts, a bare lineAmount) is refused rather than ignored.
+  const linesTotalCents = (document: { lineAmountTypes?: LineAmountTypes; lineItems?: LineItem[] }) => {
+    const types = document.lineAmountTypes;
+    if (types !== LineAmountTypes.Inclusive && types !== LineAmountTypes.NoTax) {
+      throw new Error(`The Xero test transport models Inclusive and NoTax documents only, not ${String(types ?? "the Exclusive default")}`);
+    }
+    return (document.lineItems ?? []).reduce((sum, line) => {
+      if (line.discountRate != null || line.discountAmount != null) throw new Error("The Xero test transport does not model line discounts");
+      const unitCents = providerAmountToCents(line.unitAmount);
+      if (unitCents === null || line.quantity == null) throw new Error("The Xero test transport models lines with a quantity and unit amount only");
+      const lineCents = Math.round(line.quantity * unitCents);
+      if (line.lineAmount != null && providerAmountToCents(line.lineAmount) !== lineCents) throw new XeroValidationError("Line amount must equal quantity x unit amount");
+      return sum + lineCents;
+    }, 0);
   };
   const one = <T>(items: T[] | undefined): T => {
     const [item, ...rest] = items ?? [];
@@ -118,8 +136,9 @@ export function xeroTransport(fake: XeroFake) {
     createInvoices: (...[, body, , , idempotencyKey]: Args<"createInvoices">) => call("Invoices", () => {
       const input = one(body.invoices);
       if (String(input.type) !== "ACCREC" || String(input.status) !== "AUTHORISED") throw new Error("Only authorised ACCREC invoices are modelled");
-      const invoice = fake.createInvoice(key(idempotencyKey), input.contact?.contactID ?? "", invoiceLineItemsTotalCents(input.lineItems ?? []));
-      invoiceInputs.set(invoice.invoiceID, ObjectSerializer.serialize(input, "Invoice"));
+      const invoice = fake.createInvoice(key(idempotencyKey), input.contact?.contactID ?? "", linesTotalCents(input));
+      // A replay returns the original document, so only the first request's fields are kept.
+      if (!invoiceInputs.has(invoice.invoiceID)) invoiceInputs.set(invoice.invoiceID, ObjectSerializer.serialize(input, "Invoice"));
       return { Invoices: invoices().filter(i => i.InvoiceID === invoice.invoiceID) };
     }),
     getContact: (...[, id]: Args<"getContact">) =>
@@ -132,7 +151,7 @@ export function xeroTransport(fake: XeroFake) {
     createContacts: (...[, body, , idempotencyKey]: Args<"createContacts">) => call("Contacts", () => {
       const input = one(body.contacts);
       const contact = fake.createContact(key(idempotencyKey), input.name ?? "");
-      contactInputs.set(contact.contactID, ObjectSerializer.serialize(input, "Contact"));
+      if (!contactInputs.has(contact.contactID)) contactInputs.set(contact.contactID, ObjectSerializer.serialize(input, "Contact"));
       return { Contacts: contacts().filter(c => c.ContactID === contact.contactID) };
     }),
     updateContact: (...[, id, body]: Args<"updateContact">) => call("Contacts", () => {
@@ -152,7 +171,7 @@ export function xeroTransport(fake: XeroFake) {
       call("Payments", () => ({ Payments: fake.snapshot().payments.filter(p => p.paymentID === id).map(paymentWire) })),
     createCreditNotes: (...[, body, , , idempotencyKey]: Args<"createCreditNotes">) => call("CreditNotes", () => {
       const input = one(body.creditNotes);
-      const note = fake.createCreditNote(key(idempotencyKey), input.contact?.contactID ?? "", invoiceLineItemsTotalCents(input.lineItems ?? []));
+      const note = fake.createCreditNote(key(idempotencyKey), input.contact?.contactID ?? "", linesTotalCents(input));
       if (!noteInputs.has(note.creditNoteID)) noteInputs.set(note.creditNoteID, ObjectSerializer.serialize(input, "CreditNote"));
       return { CreditNotes: notes().filter(n => n.CreditNoteID === note.creditNoteID) };
     }),

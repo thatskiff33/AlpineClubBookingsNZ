@@ -2,7 +2,9 @@
  * NO PRODUCTION MODULE REACHES `src/test/` (#4908).
  *
  * The provider transports here stand in for Xero and Stripe through the
- * test-only client overrides in `xero-api-client.ts` and `stripe.ts`. That seam
+ * test-only client overrides in `xero-test-client-override.ts` and
+ * `stripe-test-client-override.ts`, read by `xero-api-client.ts`,
+ * `xero-token-store.ts` and `stripe.ts`. That seam
  * is safe only while nothing a deployment runs can load them, so this census
  * reads every non-test source file under `src/` and refuses any import,
  * re-export, dynamic `import()` or `require` whose specifier resolves into
@@ -57,8 +59,9 @@ function testImports(file: string, code: string): string[] {
 describe("production code never imports test code (#4908)", () => {
   it("finds no production import of the test tree", () => {
     const files = productionFiles(SRC_DIR);
-    // The walk is live: it reaches the modules holding the override seam.
-    expect(files).toEqual(expect.arrayContaining([join(SRC_DIR, "lib", "stripe.ts"), join(SRC_DIR, "lib", "xero-api-client.ts")]));
+    // The walk is live: it reaches the modules holding and reading the override seam.
+    const seamModules = ["test-only-override.ts", "xero-test-client-override.ts", "stripe-test-client-override.ts", "stripe.ts", "xero-api-client.ts", "xero-token-store.ts"];
+    expect(files).toEqual(expect.arrayContaining(seamModules.map((name) => join(SRC_DIR, "lib", name))));
     const offenders = files.flatMap((file) =>
       testImports(file, readFileSync(file, "utf8")).map((specifier) => `${relative(SRC_DIR, file)} -> ${specifier}`),
     );

@@ -6,6 +6,7 @@ import { StripeFake } from "./stripe-fake";
 import { XeroFake } from "./xero-fake";
 import { invoiceWire, invoiceWireDueCents } from "./round-trip-harness";
 import { scanForSecrets } from "@/lib/diagnostics/knowledge/secret-scan";
+import { EMAIL_ADDRESS_VALUE_PATTERNS } from "@/lib/email-address-patterns";
 
 /**
  * Where the pinned expectations came from (#4908). `synthetic` fixtures are
@@ -38,7 +39,8 @@ function provenanceProblems(file: { provenance: Provenance }): string[] {
   }
   // Public repository: a recording keeps no address, secret or provider-minted id.
   const text = JSON.stringify(file);
-  if (/[\w.+-]+@[\w-]+\.[\w.]+/.test(text)) problems.push("an email address");
+  // The redactor's own email rule, so a URL-encoded address (`%40`) is caught too.
+  if (EMAIL_ADDRESS_VALUE_PATTERNS.some((pattern) => pattern.test(text))) problems.push("an email address");
   // The bundle generator's scanner, plus prefixes it confirms by entropy but a fixture must never hold at all.
   if (scanForSecrets(text).length || /\b(?:sk|rk|pk)_(?:live|test)_|\bwhsec_|\bBearer\s|\beyJ[\w-]{8,}\.[\w-]{8,}\./i.test(text)) problems.push("a credential");
   if (/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i.test(text)) problems.push("a Xero GUID; replace it with a local alias");
@@ -74,6 +76,7 @@ it("provider fixture provenance is complete for its kind and carries nothing pri
   const withField = (value: string) => provenanceProblems({ provenance: synthetic.provenance as Provenance, value } as { provenance: Provenance });
   expect(withField("eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4eXoifQ.c2lnbmF0dXJl")).toEqual(["a credential"]);
   expect(withField(`ghp_${"aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5"}`)).toEqual(["a credential"]);
+  expect(withField("https://api.xero.com/x?where=EmailAddress%3D%22jane%40example.com%22")).toEqual(["an email address"]);
   for (const id of ["txn_1Q0abcdEFGH12345", "py_1Q0abcdEFGH12345", "seti_1Q0abcdEFGH12345"]) expect(withField(id)).toEqual(["a Stripe object id; replace it with a local alias"]);
 });
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Invoice } from "xero-node";
+import { Invoice, LineAmountTypes } from "xero-node";
 import Stripe from "stripe";
 import { xeroTransport } from "./xero-transport";
 import { stripeTransport } from "./stripe-transport";
@@ -13,7 +13,7 @@ import { isXeroConnected } from "@/lib/xero-token-store";
 import { getStripe, getPaymentIntent, processRefund } from "@/lib/stripe";
 import { setStripeClientForTests, resetStripeClientForTests } from "@/lib/stripe-test-client-override";
 
-const invoice = (contactID: string): Invoice => ({ type: Invoice.TypeEnum.ACCREC, status: Invoice.StatusEnum.AUTHORISED, contact: { contactID }, lineItems: [{ description: "Stay", quantity: 2, unitAmount: 40 }] });
+const invoice = (contactID: string): Invoice => ({ type: Invoice.TypeEnum.ACCREC, status: Invoice.StatusEnum.AUTHORISED, contact: { contactID }, lineAmountTypes: LineAmountTypes.Inclusive, lineItems: [{ description: "Stay", quantity: 2, unitAmount: 40 }] });
 afterEach(() => { resetXeroClientForTests(); resetXeroRateLimitStateForTests(); resetStripeClientForTests(); vi.unstubAllEnvs(); });
 
 describe("provider transport mapping", () => {
@@ -30,14 +30,36 @@ describe("provider transport mapping", () => {
     await xero.accountingApi.createPayment(tenantId, { invoice: { invoiceID: id }, amount: 50 }, "receipt-key");
     expect((await xero.accountingApi.getInvoice(tenantId, id)).body.invoices![0]).toMatchObject({ amountDue: 30, amountPaid: 50, payments: [{ amount: 50 }] });
     expect(fake.snapshot().payments).toHaveLength(1);
-    await xero.accountingApi.createInvoices(tenantId, { invoices: [invoice(c.contactID)] }, undefined, undefined, "invoice-key");
+    // A replay returns the original document: a rebuilt reference is not echoed.
+    await xero.accountingApi.createInvoices(tenantId, { invoices: [{ ...invoice(c.contactID), reference: "rebuilt" }] }, undefined, undefined, "invoice-key");
     expect(fake.snapshot().invoices).toHaveLength(1);
+    expect((await xero.accountingApi.getInvoice(tenantId, id)).body.invoices![0].reference).toBeUndefined();
+    const contact = await xero.accountingApi.createContacts(tenantId, { contacts: [{ name: "member-b", emailAddress: "first@example.invalid" }] }, undefined, "contact-key");
+    await xero.accountingApi.createContacts(tenantId, { contacts: [{ name: "member-b", emailAddress: "retry@example.invalid" }] }, undefined, "contact-key");
+    expect((await xero.accountingApi.getContact(tenantId, contact.body.contacts![0].contactID!)).body.contacts![0].emailAddress).toBe("first@example.invalid");
+  });
+
+  it("totals documents line by line and refuses what would move Xero's total", async () => {
+    const fake = new XeroFake(); const { xero, tenantId } = xeroTransport(fake); const api = xero.accountingApi;
+    const c = fake.createContact("contact", "member-a");
+    const create = (patch: Partial<Invoice>, lines = [{ quantity: 3, unitAmount: 33.33 }]) =>
+      api.createInvoices(tenantId, { invoices: [{ ...invoice(c.contactID), lineItems: lines, ...patch }] });
+    expect((await create({})).body.invoices![0].total).toBe(99.99);
+    expect((await create({ lineAmountTypes: LineAmountTypes.NoTax }, [{ quantity: 1, unitAmount: 10, lineAmount: 10 }])).body.invoices![0].total).toBe(10);
+    await expect(create({ lineAmountTypes: LineAmountTypes.Exclusive })).rejects.toThrow("Inclusive and NoTax documents only");
+    await expect(create({ lineAmountTypes: undefined })).rejects.toThrow("Inclusive and NoTax documents only");
+    await expect(create({}, [{ quantity: 1, unitAmount: 40, discountRate: 10 }])).rejects.toThrow("line discounts");
+    await expect(create({}, [{ quantity: 1, unitAmount: 40, discountAmount: 5 }])).rejects.toThrow("line discounts");
+    await expect(create({}, [{ quantity: 1, lineAmount: 40 }])).rejects.toThrow("quantity and unit amount only");
+    expect(getXeroErrorStatusCode(await create({}, [{ quantity: 1, unitAmount: 40, lineAmount: 45 }]).then(() => null, (e: unknown) => e))).toBe(400);
+    await expect(api.createCreditNotes(tenantId, { creditNotes: [{ contact: { contactID: c.contactID }, lineAmountTypes: LineAmountTypes.Exclusive, lineItems: [{ quantity: 1, unitAmount: 80 }] }] })).rejects.toThrow("Inclusive and NoTax documents only");
+    expect(fake.snapshot().invoices).toHaveLength(2);
   });
 
   it("maps credit notes and allocations and preserves Xero validation failures", async () => {
     const fake = new XeroFake(); const { xero, tenantId } = xeroTransport(fake); const api = xero.accountingApi;
     const c = fake.createContact("contact", "member-a"); const i = fake.createInvoice("invoice", c.contactID, 8000);
-    const note = await api.createCreditNotes(tenantId, { creditNotes: [{ contact: { contactID: c.contactID }, reference: "refund-ref", lineItems: [{ quantity: 1, unitAmount: 80 }] }] });
+    const note = await api.createCreditNotes(tenantId, { creditNotes: [{ contact: { contactID: c.contactID }, reference: "refund-ref", lineAmountTypes: LineAmountTypes.Inclusive, lineItems: [{ quantity: 1, unitAmount: 80 }] }] });
     const n = note.body.creditNotes![0].creditNoteID!;
     // The request's own fields come back, as Xero echoes them; the fake's money wins.
     expect(note.body.creditNotes![0]).toMatchObject({ reference: "refund-ref", lineItems: [{ quantity: 1, unitAmount: 80 }], total: 80, remainingCredit: 80 });

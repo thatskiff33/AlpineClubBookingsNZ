@@ -166,6 +166,8 @@ The test transports put the fakes behind the app's own provider clients (#4908),
 so production writers, inbound sync and webhook handlers run unmocked:
 
 ```ts
+import { setXeroClientForTests, resetXeroClientForTests } from "@/lib/xero-test-client-override";
+// Stripe: setStripeClientForTests from "@/lib/stripe-test-client-override"
 const fake = new XeroFake("race-1234-");
 setXeroClientForTests(xeroTransport(fake));
 await createXeroInvoiceForBooking(bookingId); // the production push
@@ -197,7 +199,8 @@ reports connected, so the journeys that check it first take their Xero path.
 
 `setXeroClientForTests` and `setStripeClientForTests` throw unless `NODE_ENV`
 is `test`, and every read re-checks it, so production cannot set
-the override. No environment variable reaches it.
+the override. Both seams are built from one rule,
+[`createTestOnlyOverride`](../src/lib/test-only-override.ts). No environment variable reaches it.
 [`production-import-census.test.ts`](../src/test/providers/production-import-census.test.ts)
 fails if any non-test file under `src/` imports test code: `src/test/`, a
 `__tests__` directory or a `*.test.*` / `*.spec.*` file. The existing

@@ -1,23 +1,13 @@
 import type Stripe from "stripe";
+import { createTestOnlyOverride } from "./test-only-override";
 
 // Test-only provider seam (#4908): a test can hand the app an in-memory Stripe
-// client (src/test/providers/stripe-transport.ts). No environment variable or
-// request can set it, and it refuses to serve outside NODE_ENV=test, so a
-// changed environment cannot retain it. Its own module, as the Xero seam is
+// client (src/test/providers/stripe-transport.ts). The guard is the shared
+// test-only override rule. Its own module, as the Xero seam is
 // (xero-test-client-override.ts), so `getStripe` reads it in one call.
-let testStripeClient: Stripe | null = null;
+const override = createTestOnlyOverride<Stripe>("Stripe client");
 
-export function setStripeClientForTests(client: Stripe | null): void {
-  if (process.env.NODE_ENV !== "test") throw new Error("Stripe client override is test-only");
-  testStripeClient = client;
-}
-
-export function resetStripeClientForTests(): void {
-  testStripeClient = null;
-}
-
+export const setStripeClientForTests = override.set;
+export const resetStripeClientForTests = override.reset;
 /** The installed test client, or null. Throws if one is somehow set outside a test. */
-export function stripeTestClientOverride(): Stripe | null {
-  if (testStripeClient && process.env.NODE_ENV !== "test") throw new Error("Stripe client override is test-only");
-  return testStripeClient;
-}
+export const stripeTestClientOverride = override.read;
