@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 /**
- * #4965 — a second tap on Mark Arrived must not undo the first, and a failure
- * must not vanish on a timer.
+ * #4965 — a second tap on Mark Arrived, Mark Departed or a chore must not undo
+ * the first, and a failure must not vanish on a timer.
  *
  * On slow lodge Wi-Fi nothing used to change while the request travelled, so a
  * hut leader tapped again; the server, a toggle, checked the guest in and then
@@ -31,8 +31,55 @@ vi.mock("@/components/club-identity-provider", () => ({
 
 const DAY = { dateKey: "2026-07-14", openLabel: "Open Tuesday, 14 July" };
 const ARRIVE_PATH = `/api/lodge/guests/${DAY.dateKey}/arrive`;
+const DEPART_PATH = `/api/lodge/guests/${DAY.dateKey}/depart`;
+const ROSTER_PATH = `/api/lodge/roster/${DAY.dateKey}`;
 
-function guestsPayload() {
+type GuestFixture = {
+  isArriving: boolean;
+  isDeparting: boolean;
+  canMarkArrived: boolean;
+  canMarkDeparted: boolean;
+  arrivedAt: string | null;
+  departedAt: string | null;
+};
+
+/** Sam as an arriving guest: Mark Arrived is offered, nothing recorded yet. */
+const ARRIVING_SAM: GuestFixture = {
+  isArriving: true,
+  isDeparting: false,
+  canMarkArrived: true,
+  canMarkDeparted: false,
+  arrivedAt: null,
+  departedAt: null,
+};
+
+/** Sam on the morning he leaves: Mark Departed is offered, nothing recorded. */
+const DEPARTING_SAM: GuestFixture = {
+  isArriving: false,
+  isDeparting: true,
+  canMarkArrived: false,
+  canMarkDeparted: true,
+  arrivedAt: "2026-07-12T02:00:00.000Z",
+  departedAt: null,
+};
+
+const CHORE_ASSIGNMENT = {
+  id: "chore-1",
+  choreTemplateId: "template-1",
+  choreTemplateName: "Dishes",
+  choreDescription: null,
+  choreSortOrder: 1,
+  choreTimeOfDay: "MORNING",
+  bookingGuestId: null,
+  guestName: "Pat Chore",
+  guestAgeTier: "ADULT",
+  bookingId: "booking-1",
+  status: "CONFIRMED",
+  completedAt: null,
+  completedVia: null,
+};
+
+function guestsPayload(guest: GuestFixture) {
   return {
     bookings: [
       {
@@ -47,13 +94,8 @@ function guestsPayload() {
             lastName: "Guest",
             ageTier: "ADULT",
             isMember: false,
-            isArriving: true,
-            isDeparting: false,
-            canMarkArrived: true,
-            canMarkDeparted: false,
-            arrivedAt: null,
-            departedAt: null,
             phone: null,
+            ...guest,
           },
         ],
       },
@@ -62,20 +104,45 @@ function guestsPayload() {
   };
 }
 
+type WriteAnswers = {
+  arrive?: () => Promise<Response>;
+  depart?: () => Promise<Response>;
+  chore?: () => Promise<Response>;
+};
+
 /**
- * Serves the page's reads, and answers each arrival write with `arrive`. Every
- * arrival request body is recorded.
+ * Serves the page's reads, and answers each write with the matching entry in
+ * `answers`. Every write's request body is recorded under its name.
  */
-function installFetchMock(arrive: () => Promise<Response>) {
-  const arrivalBodies: unknown[] = [];
+function installFetchMock(
+  answers: WriteAnswers,
+  fixture: { guest?: GuestFixture; assignments?: unknown[] } = {},
+) {
+  const bodies = {
+    arrive: [] as unknown[],
+    depart: [] as unknown[],
+    chore: [] as unknown[],
+  };
+  const guest = fixture.guest ?? ARRIVING_SAM;
+  const assignments = fixture.assignments ?? [];
+  const recordWrite = (
+    name: keyof WriteAnswers,
+    init: RequestInit | undefined,
+  ) => {
+    bodies[name].push(JSON.parse(String(init?.body)));
+    const answer = answers[name];
+    if (!answer) throw new Error(`Unexpected ${name} write`);
+    return answer();
+  };
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), "http://localhost");
       const path = url.pathname;
-      if (path === ARRIVE_PATH) {
-        arrivalBodies.push(JSON.parse(String(init?.body)));
-        return arrive();
+      if (path === ARRIVE_PATH) return recordWrite("arrive", init);
+      if (path === DEPART_PATH) return recordWrite("depart", init);
+      if (path === ROSTER_PATH && init?.method === "PUT") {
+        return recordWrite("chore", init);
       }
       if (path === "/api/lodge/access") {
         return Response.json({
@@ -102,15 +169,15 @@ function installFetchMock(arrive: () => Promise<Response>) {
         });
       }
       if (/^\/api\/lodge\/guests\/\d{4}-\d{2}-\d{2}$/.test(path)) {
-        return Response.json(guestsPayload());
+        return Response.json(guestsPayload(guest));
       }
       if (/^\/api\/lodge\/roster\/\d{4}-\d{2}-\d{2}$/.test(path)) {
-        return Response.json({ assignments: [] });
+        return Response.json({ assignments });
       }
       throw new Error(`Unexpected fetch ${url}`);
     }),
   );
-  return arrivalBodies;
+  return bodies;
 }
 
 async function openGuestRow(): Promise<HTMLElement> {
@@ -137,9 +204,9 @@ describe("kiosk attendance: a double tap cannot undo a check-in (#4965)", () => 
     // MUTATION PROBE: delete the in-flight guard in `useKioskRowActions().run`
     // and the second tap below sends a second request.
     let answer: (response: Response) => void = () => {};
-    const arrivalBodies = installFetchMock(
-      () => new Promise<Response>((resolve) => (answer = resolve)),
-    );
+    const { arrive: arrivalBodies } = installFetchMock({
+      arrive: () => new Promise<Response>((resolve) => (answer = resolve)),
+    });
     const row = await openGuestRow();
 
     const button = within(row).getByRole("button", { name: "Mark Arrived" });
@@ -172,15 +239,129 @@ describe("kiosk attendance: a double tap cannot undo a check-in (#4965)", () => 
     expect(arrived).toHaveAttribute("aria-busy", "false");
     expect(arrivalBodies).toHaveLength(1);
   });
+
+  it("sends one departed:true for a double tap on Mark Departed, busy until it answers", async () => {
+    // MUTATION PROBES: invert the wanted state in `toggleDeparture` (or drop the
+    // field, which falls back to the server's legacy toggle) and the body below
+    // is wrong; delete the in-flight guard and the second tap sends a second.
+    let answer: (response: Response) => void = () => {};
+    const { depart: departureBodies } = installFetchMock(
+      {
+        depart: () => new Promise<Response>((resolve) => (answer = resolve)),
+      },
+      { guest: DEPARTING_SAM },
+    );
+    const row = await openGuestRow();
+
+    const button = within(row).getByRole("button", { name: "Mark Departed" });
+    act(() => {
+      fireEvent.click(button);
+      fireEvent.click(button);
+    });
+
+    expect(departureBodies).toEqual([{ bookingGuestId: "sam", departed: true }]);
+    const busy = within(row).getByRole("button", { name: "Saving…" });
+    expect(busy).toBeDisabled();
+    expect(busy).toHaveAttribute("aria-busy", "true");
+    fireEvent.click(busy);
+    expect(departureBodies).toHaveLength(1);
+
+    await act(async () => {
+      answer(
+        Response.json({ success: true, departedAt: "2026-07-14T02:00:00.000Z" }),
+      );
+    });
+
+    const departed = await within(row).findByRole("button", { name: "Departed" });
+    expect(departed).toBeEnabled();
+    expect(departed).toHaveAttribute("aria-busy", "false");
+    expect(departureBodies).toHaveLength(1);
+  });
+
+  it("sends departed:false from a stale Departed card, then departed:true from the cleared one", async () => {
+    // MUTATION PROBE: send `departed: true` unconditionally and the first body
+    // below is wrong — the server would call it a repeat and change nothing, so
+    // a stale card from an earlier segment could never be cleared.
+    let departedAt: string | null = null;
+    const { depart: departureBodies } = installFetchMock(
+      {
+        depart: async () =>
+          Response.json({ success: true, departedAt }),
+      },
+      {
+        guest: {
+          ...DEPARTING_SAM,
+          departedAt: "2026-07-12T02:00:00.000Z",
+        },
+      },
+    );
+    const row = await openGuestRow();
+
+    fireEvent.click(within(row).getByRole("button", { name: "Departed" }));
+    expect(departureBodies).toEqual([{ bookingGuestId: "sam", departed: false }]);
+    const cleared = await within(row).findByRole("button", { name: "Mark Departed" });
+
+    departedAt = "2026-07-14T02:00:00.000Z";
+    fireEvent.click(cleared);
+    await within(row).findByRole("button", { name: "Departed" });
+    expect(departureBodies).toEqual([
+      { bookingGuestId: "sam", departed: false },
+      { bookingGuestId: "sam", departed: true },
+    ]);
+  });
+});
+
+describe("kiosk chore ticks: a double tap sends one request (#4965)", () => {
+  it("is busy, and refuses the second tap, until the server answers", async () => {
+    // MUTATION PROBES: delete the in-flight guard in `useKioskRowActions().run`
+    // and the second tap sends a second request; drop `disabled` or `aria-busy`
+    // from the chore button and the busy assertions fail.
+    let answer: (response: Response) => void = () => {};
+    const { chore: choreBodies } = installFetchMock(
+      {
+        chore: () => new Promise<Response>((resolve) => (answer = resolve)),
+      },
+      { assignments: [CHORE_ASSIGNMENT] },
+    );
+    await openGuestRow();
+
+    const button = await screen.findByRole("button", { name: /Pat Chore/ });
+    act(() => {
+      fireEvent.click(button);
+      fireEvent.click(button);
+    });
+
+    expect(choreBodies).toEqual([{ action: "complete", assignmentId: "chore-1" }]);
+    const busy = screen.getByRole("button", { name: /Pat Chore/ });
+    expect(busy).toBeDisabled();
+    expect(busy).toHaveAttribute("aria-busy", "true");
+    expect(within(busy).getByText("Saving…")).toBeInTheDocument();
+    fireEvent.click(busy);
+    expect(choreBodies).toHaveLength(1);
+
+    await act(async () => {
+      answer(Response.json({ success: true }));
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Pat Chore/ })).toBeEnabled(),
+    );
+    expect(screen.getByRole("button", { name: /Pat Chore/ })).toHaveAttribute(
+      "aria-busy",
+      "false",
+    );
+    expect(screen.queryByText("Saving…")).toBeNull();
+    expect(choreBodies).toHaveLength(1);
+  });
 });
 
 describe("kiosk attendance: a failure stays on screen (#4965)", () => {
   it("is still beside the row long after three seconds, as an alert", async () => {
     // MUTATION PROBE: put back a `setTimeout(..., 3000)` that clears the
     // message and this fails, because `setTimeout` is faked from the tap on.
-    installFetchMock(async () =>
-      Response.json({ error: "boom" }, { status: 500 }),
-    );
+    installFetchMock({
+      arrive: async () => Response.json({ error: "boom" }, { status: 500 }),
+    });
     const row = await openGuestRow();
 
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
