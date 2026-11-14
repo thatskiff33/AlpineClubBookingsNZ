@@ -345,7 +345,7 @@ are permanent: never renumbered, never reused.
   `INV-OPS` fact is the real risk, because the eleventh nobody tightened is the one
   that connects to something real. This change converged its own caller only.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 176 test files, seven test
+  `stripComments`, and since #3164 a lint rule enforces it.** 177 test files, seven test
   helpers and one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
   twelve minutes later in CI. **Use it; do not write a second.** The figure was
@@ -594,3 +594,29 @@ clears the previous query's rows and totals, and offers **Try again**. #4961.
 - **Not every page is covered yet.** The four pages from #4961 are; others
   join the census when they adopt the component. Its stated limits are in
   [`UX_FLOW_MAP.md`](../UX_FLOW_MAP.md#a-list-or-total-that-fails-to-load-4961).
+
+## INV-SSOT-008
+
+An officer work queue is defined once, in `ADMIN_WORK_QUEUES`
+(`src/lib/admin-work-queues.ts`), and counted once, in `getAdminPendingCounts`
+(`src/lib/admin-pending-counts.ts`). The admin dashboard's attention cards and
+the sidebar's Needs Attention section render that list and nothing else. #4962.
+
+- **Why one list.** Each surface used to count and link its queues by hand,
+  and they drifted: the dashboard missed queues the sidebar showed, and the two
+  summed Booking Requests from different terms. An officer could clear the
+  dashboard and still have work waiting.
+- **Visibility comes from the href.** Both surfaces show a queue only when its
+  module is on (`isFeatureHrefVisible`) and the viewer may open its page
+  (`canViewAdminHrefWithMatrix`), so no queue carries a second permission
+  field to fall out of step with its route.
+- **A census keeps it one.** `admin-work-queue-census.test.ts` reads the
+  dashboard page and the sidebar from disk and fails on a queue table counted
+  directly, a counter helper imported, a count read by name, a hand-wired Needs
+  Attention item, or a queue page or deep link built outside the registry. Its
+  allow-list names each other dashboard link to a queue page and why.
+- **Parity is pinned.** `admin-work-queues.test.tsx` renders both surfaces for
+  several viewer roles with every module on and off and expects the same queues
+  with the same numbers.
+- **A failed count is not zero.** Each counter settles on its own; a failure
+  is listed in `unavailable` and both surfaces say so.

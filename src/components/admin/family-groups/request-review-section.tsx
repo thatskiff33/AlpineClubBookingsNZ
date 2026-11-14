@@ -13,6 +13,7 @@ import {
   type FamilyGroupRequest,
   type RequestMemberMatch,
 } from "@/lib/admin-family-group-ui-helpers";
+import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 
 // #1789: only the CHILD_REQUEST and GROUP_CREATE decisions email the requester
 // (approve and reject alike), so only those actions open the notify-choice
@@ -400,6 +401,7 @@ export function FamilyGroupRequestReviewSection({
         );
       }
 
+      notifyAdminQueueChanged();
       await onReviewed();
     } finally {
       setRequestSubmittingId((current) => (current === request.id ? null : current));

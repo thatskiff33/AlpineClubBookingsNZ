@@ -152,9 +152,9 @@ Journey: Inspect diagnostic access and follow the deployment guide to provision 
 
 Screen: `/admin/dashboard`.
 
-Shows: Attention queues, headline statistics, recent bookings and quick-action links.
+Shows: Attention cards for the officer work queues the sidebar's Needs Attention section lists, with the same numbers; headline statistics; recent bookings and quick-action links. A count that failed to load is named above the cards.
 
-Journey: Scan attention cards, follow a queue, or use a quick action to open its screen.
+Journey: Scan attention cards, follow a queue, or use a quick action to open its screen. The sidebar's counts refresh on each admin page change, on returning to the tab and after a queue decision, and offer Retry when they fail.
 
 [Guide](guides/dashboard.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

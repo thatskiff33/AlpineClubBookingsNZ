@@ -60,6 +60,7 @@ import {
   sameSchoolGuestList,
   type SchoolChildTier,
 } from "@/lib/school-booking-constants";
+import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 
 const SCHOOL_CHILD_TIER_LABELS: Record<SchoolChildTier, string> = {
   INFANT: "Infants",
@@ -1363,6 +1364,7 @@ export function PublicBookingRequestsPanel({
       } else {
         toast.success("Request approved. A payment link has been emailed to the requester.");
       }
+      notifyAdminQueueChanged();
       await fetchRequests();
     } catch (err) {
       showActionError(err instanceof Error ? err.message : "Failed to approve request");
@@ -1421,6 +1423,7 @@ export function PublicBookingRequestsPanel({
             message: recoveryBase,
           });
           setRecoveryAttentionVersion((version) => version + 1);
+          notifyAdminQueueChanged();
           const refreshed = await fetchRequests();
           // The refresh outcome is folded into the durable recovery below; do
           // not duplicate it in the ordinary action region or steal focus.
@@ -1442,6 +1445,7 @@ export function PublicBookingRequestsPanel({
         "Request declined" +
           (notifyRequester ? "" : " The requester was not emailed."),
       );
+      notifyAdminQueueChanged();
       await fetchRequests();
     } catch (err) {
       showActionError(err instanceof Error ? err.message : "Failed to decline request");

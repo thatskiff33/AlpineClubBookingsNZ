@@ -59,12 +59,14 @@ run = "pnpm install --frozen-lockfile --prefer-offline && bash scripts/ci/kept-c
 run = "pnpm install --frozen-lockfile --prefer-offline && bash scripts/ci/sekreton-typecheck.sh"
 
 # The disk-reading censuses plus docs:indexcheck and the file-size ratchet
-# (quality:budget), both judged against origin/main, so fetch it first.
+# (quality:budget), both judged against origin/main. The base comes from the
+# origin remote, or from the sandbox's local main when there is no remote.
 [jobs.fast-censuses]
-run = "pnpm install --frozen-lockfile --prefer-offline && git fetch --no-tags origin main && pnpm run ci:fast-censuses"
+run = "pnpm install --frozen-lockfile --prefer-offline && bash scripts/ci/sekreton-prepare-base.sh && pnpm run ci:fast-censuses"
 
 # The data-migration coverage gate always; migration drift and the
 # data-migration realdb suites on a disposable cluster when the change can move
-# them (CHANGE_SCOPES.migrations), fetched against origin/main.
+# them (CHANGE_SCOPES.migrations), judged against origin/main from the origin
+# remote, or from the sandbox's local main when there is no remote.
 [jobs.migrations]
-run = "pnpm install --frozen-lockfile --prefer-offline && git fetch --no-tags origin main && bash scripts/ci/sekreton-migration-checks.sh"
+run = "pnpm install --frozen-lockfile --prefer-offline && bash scripts/ci/sekreton-prepare-base.sh && bash scripts/ci/sekreton-migration-checks.sh"

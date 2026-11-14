@@ -27,6 +27,7 @@ import { formatStayDateOrNull } from "@/lib/club-time";
 import { formatPolicyExceptionRequestAge } from "@/lib/booking-exception-request-shared";
 import type { PolicyExceptionReasonCode } from "@/lib/booking-policy-exceptions";
 import { HostingCoverageOverridePrompt } from "@/components/hosting-coverage-override-prompt";
+import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 
 /**
  * #2526 — the Booking Officer's booking-policy exception queue.
@@ -445,6 +446,7 @@ export function PolicyExceptionRequestsPanel({
             : "Request refused. The member keeps their existing booking.",
       );
       resetDecisionForm();
+      notifyAdminQueueChanged();
       await fetchItems();
     } catch (err) {
       setError(

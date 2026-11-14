@@ -10,10 +10,6 @@ import { formatNetCollectedBreakdown, summarizeCollectedCash } from "@/lib/payme
 import { readRefundsAndCreditsOwed } from "@/lib/refunds-and-credits-owed";
 import { RefundsAndCreditsOwedList } from "@/components/admin/refunds-and-credits-owed";
 import {
-  MemberLifecycleAction,
-  MemberLifecycleActionRequestStatus,
-} from "@prisma/client";
-import {
   Card,
   CardContent,
   CardDescription,
@@ -32,9 +28,6 @@ import {
   ArrowRight,
   DollarSign,
   UserCheck,
-  AlertTriangle,
-  UserX,
-  Trash2,
 } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
@@ -73,14 +66,9 @@ import {
 } from "@/lib/hut-leader-coverage";
 import { HutLeaderHandoversCard } from "@/components/admin/hut-leader-handovers-card";
 import { countActiveLodges } from "@/lib/lodges";
-import { OPEN_DELETION_REQUEST_STATUSES } from "@/lib/deletion-request-decision";
-import {
-  buildUnpaidFinishedStaysWhere,
-  buildUnsettledAdditionalFinishedStaysWhere,
-  buildUnsettledAdditionalUpcomingStaysWhere,
-} from "@/lib/unpaid-finished-stays";
-import { buildUnpaidFinishedStaysHref, buildUnsettledAdditionalStaysHref } from "@/lib/unpaid-finished-stays-hrefs";
 import { adminHref } from "@/lib/admin-hubs";
+import { getAdminPendingCounts } from "@/lib/admin-pending-counts";
+import { AdminWorkQueueCards } from "@/components/admin/admin-work-queue-cards";
 
 // #2264: the upcoming check-ins list renders its date range in a fixed-width
 // column, so it stays compact — day plus short month, no year. F3 (#3079)
@@ -117,7 +105,8 @@ async function getStats(permissionMatrix: Promise<AdminPermissionMatrix>) {
       .getTime() - 1,
   );
   const sevenDaysFromNow = dateOnlyInstantOf(addCalendarDays(todayKey, 7));
-  const bedAllocationEnabled = (await loadEffectiveModuleFlags()).bedAllocation;
+  const features = await loadEffectiveModuleFlags();
+  const bedAllocationEnabled = features.bedAllocation;
 
   const [
     totalMembers,
@@ -128,17 +117,8 @@ async function getStats(permissionMatrix: Promise<AdminPermissionMatrix>) {
     netCollectedResult,
     refundsAndCreditsOwed,
     upcomingCheckIns,
-    unpaidFinishedStays,
-    unsettledAdditionalFinishedStays,
-    unsettledAdditionalUpcomingStays,
     recentBookings,
-    pendingRefundAppeals,
-    pendingCreditApprovals,
-    pendingMembershipCancellations,
-    pendingMemberArchives,
-    pendingDeletionRequests,
-    pendingBookingReviews,
-    pendingBookingChangeRequests,
+    workQueueCounts,
     { unassignedDates: unassignedHutLeaderDates, handovers: hutLeaderHandovers },
     activeLodgeCount,
     rosterDaysNeedingChores,
@@ -191,28 +171,6 @@ async function getStats(permissionMatrix: Promise<AdminPermissionMatrix>) {
         checkIn: { gte: today, lte: sevenDaysFromNow },
       },
     }),
-    // Unpaid finished stays (#1709): PAYMENT_PENDING with check-out on or
-    // before NZ today — the stay is over but payment is still owing. The
-    // predicate is shared with the sidebar Needs Attention badge (#1731) via
-    // src/lib/unpaid-finished-stays.ts, and the card's deep link comes from
-    // src/lib/unpaid-finished-stays-hrefs.ts, so the two surfaces can never drift.
-    prisma.booking.count({
-      where: buildUnpaidFinishedStaysWhere(today),
-    }),
-    // Unsettled finished-stay additions (#1723 path 2): a settled (PAID /
-    // COMPLETED) stay that ended with an upward modification delta still
-    // uncollected — never PAYMENT_PENDING, so the card above can't see it.
-    // Predicate shared with the sidebar badge via unpaid-finished-stays.ts.
-    prisma.booking.count({
-      where: buildUnsettledAdditionalFinishedStaysWhere(today),
-    }),
-    // #2350: the same uncollected addition on a stay that has NOT finished.
-    // Counting only finished stays meant the club learned about the money after
-    // the guests had gone home; this half can still be chased (and the reminder
-    // cron is emailing the member about it). Disjoint from the count above.
-    prisma.booking.count({
-      where: buildUnsettledAdditionalUpcomingStaysWhere(today),
-    }),
     prisma.booking.findMany({
       where: { deletedAt: null },
       orderBy: { createdAt: "desc" },
@@ -230,38 +188,10 @@ async function getStats(permissionMatrix: Promise<AdminPermissionMatrix>) {
         _count: { select: { guests: true } },
       },
     }),
-    prisma.refundRequest.count({
-      where: { status: "PENDING" },
-    }),
-    prisma.adminCreditAdjustmentRequest.count({
-      where: { status: "PENDING" },
-    }),
-    prisma.membershipCancellationRequest.count({
-      where: {
-        status: "REQUESTED",
-        participants: {
-          some: {
-            status: "REQUESTED",
-            confirmedAt: { not: null },
-          },
-        },
-      },
-    }),
-    prisma.memberLifecycleActionRequest.count({
-      where: {
-        action: MemberLifecycleAction.ARCHIVE,
-        status: MemberLifecycleActionRequestStatus.REQUESTED,
-      },
-    }),
-    prisma.deletionRequest.count({
-      where: { status: { in: OPEN_DELETION_REQUEST_STATUSES } },
-    }),
-    prisma.booking.count({
-      where: { adminReviewStatus: "PENDING", deletedAt: null },
-    }),
-    prisma.bookingChangeRequest.count({
-      where: { status: "REQUESTED" },
-    }),
+    // Every officer work queue (#4962), from the one counter the sidebar's
+    // Needs Attention badges read, on this render's club day. The dashboard
+    // used to run its own copies of these queries and drifted from the sidebar.
+    getAdminPendingCounts({ today }),
     // `today` IS STILL PASSED, and the reason changed with #3123 —
     // `getUnassignedHutLeaderDates` no longer falls back to `getTodayDateOnly()`
     // and `APP_TIME_ZONE`, so this is no longer the difference between the
@@ -333,10 +263,9 @@ async function getStats(permissionMatrix: Promise<AdminPermissionMatrix>) {
     netCollectedThisMonth,
     refundsAndCreditsOwed,
     upcomingCheckIns,
-    unpaidFinishedStays,
-    unsettledAdditionalFinishedStays,
-    unsettledAdditionalUpcomingStays,
     recentBookings,
+    workQueueCounts,
+    features,
     // One entry per uncovered LODGE-night (#2917): two lodges uncovered on one
     // night is two pieces of work. The label names the lodge whenever the club
     // has more than one active lodge, per the Presentation Rule (ADR-002), so a
@@ -348,15 +277,6 @@ async function getStats(permissionMatrix: Promise<AdminPermissionMatrix>) {
     unassignedNamesLodges,
     hutLeaderHandovers,
     handoversNameLodges: coverageNeedsLodgeContext({ activeLodgeCount, rows: hutLeaderHandovers }),
-    pendingRefundAppeals,
-    pendingCreditApprovals,
-    pendingMembershipCancellations,
-    pendingMemberArchives,
-    pendingDeletionRequests,
-    pendingBookingReviews,
-    pendingBookingChangeRequests,
-    pendingMembershipReviews:
-      pendingMembershipCancellations + pendingMemberArchives,
     rosterDaysNeedingChores,
     bedGuestsAwaiting,
     bedAllocationEnabled,
@@ -436,48 +356,17 @@ export default async function AdminDashboardPage() {
     canViewBedAllocation;
   const showSecondaryRow = canViewMembers || canViewPayments;
 
-  // #2350: the two halves of the unsettled-additions queue are disjoint by
-  // construction (check-out before/after NZ today), so the total is a plain sum.
-  const unsettledAdditionsTotal =
-    stats.unsettledAdditionalFinishedStays +
-    stats.unsettledAdditionalUpcomingStays;
-
-  const hasPendingAdminReviews =
-    stats.pendingRefundAppeals > 0 || stats.pendingCreditApprovals > 0;
-  const pendingReviewSummary = [
-    stats.pendingRefundAppeals > 0
-      ? `${stats.pendingRefundAppeals} refund appeal${stats.pendingRefundAppeals === 1 ? "" : "s"}`
-      : null,
-    stats.pendingCreditApprovals > 0
-      ? `${stats.pendingCreditApprovals} manual credit approval${stats.pendingCreditApprovals === 1 ? "" : "s"}`
-      : null,
-  ].filter(Boolean) as string[];
-  const hasPendingBookingApprovals =
-    stats.pendingBookingReviews > 0 || stats.pendingBookingChangeRequests > 0;
-  const bookingRequestsHref =
-    stats.pendingBookingReviews > 0
-      ? `${adminHref("booking-requests")}?tab=approvals`
-      : `${adminHref("booking-requests")}?tab=changes`;
-  const bookingApprovalSummary = [
-    stats.pendingBookingReviews > 0
-      ? `${stats.pendingBookingReviews} new booking review${stats.pendingBookingReviews === 1 ? "" : "s"}`
-      : null,
-    stats.pendingBookingChangeRequests > 0
-      ? `${stats.pendingBookingChangeRequests} change request${stats.pendingBookingChangeRequests === 1 ? "" : "s"}`
-      : null,
-  ].filter(Boolean) as string[];
-  const pendingMembershipReviewSummary = [
-    stats.pendingMembershipCancellations > 0
-      ? `${stats.pendingMembershipCancellations} cancellation request${
-          stats.pendingMembershipCancellations === 1 ? "" : "s"
-        }`
-      : null,
-    stats.pendingMemberArchives > 0
-      ? `${stats.pendingMemberArchives} archive request${
-          stats.pendingMemberArchives === 1 ? "" : "s"
-        }`
-      : null,
-  ].filter(Boolean) as string[];
+  // The hut-leader card keeps its own wording: it names the uncovered nights.
+  // Its number is still the registry's (#4962); `getHutLeaderDashboardCoverage`
+  // reads the same predicate over the same window on the same club day.
+  const unassignedNightNoun = stats.unassignedNamesLodges ? "lodge-night" : "night";
+  const workQueueCardOverrides = {
+    "hut-leaders": {
+      title: `${stats.unassignedNamesLodges ? "Lodge-nights" : "Nights"} without a ${CLUB_HUT_LEADER_LABEL.toLowerCase()} who counts`,
+      describe: (count: number) =>
+        `${count} upcoming ${unassignedNightNoun}${count === 1 ? "" : "s"} with guests but no ${CLUB_HUT_LEADER_LABEL.toLowerCase()} who counts: ${unassignedDatesWithBookings.slice(0, 5).join("; ")}${unassignedDatesWithBookings.length > 5 ? ` and ${unassignedDatesWithBookings.length - 5} more` : ""}`,
+    },
+  };
 
   return (
     <div className="space-y-8">
@@ -488,148 +377,16 @@ export default async function AdminDashboardPage() {
         </p>
       </div>
 
-      {hasPendingAdminReviews && (
-        <Link href={adminHref("refund-requests")}>
-          <Card className="border-info-6 bg-info-3 hover:shadow-md transition-shadow cursor-pointer">
-            <CardContent className="flex items-start gap-3 pt-5">
-              <AlertTriangle className="h-5 w-5 text-info-11 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="font-medium text-info-11">Pending Review Queue</p>
-                <p className="text-sm text-info-11 mt-1">
-                  {pendingReviewSummary.join(" and ")} waiting for admin review.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </Link>
-      )}
-
-      {hasPendingBookingApprovals && (
-        <Link href={bookingRequestsHref}>
-          <Card className="border-warning-6 bg-warning-3 hover:shadow-md transition-shadow cursor-pointer">
-            <CardContent className="flex items-start gap-3 pt-5">
-              <AlertTriangle className="h-5 w-5 text-warning-11 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="font-medium text-warning-11">Booking Requests</p>
-                <p className="text-sm text-warning-11 mt-1">
-                  {bookingApprovalSummary.join(" and ")} waiting for admin decision.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </Link>
-      )}
-
-      {/* Unpaid finished stays (#1709): a stay that already ended but is
-          still PAYMENT_PENDING — flagged so it cannot silently linger. */}
-      {stats.unpaidFinishedStays > 0 && (
-        <Link href={buildUnpaidFinishedStaysHref(stats.todayKey)}>
-          <Card className="border-warning-6 bg-warning-3 hover:shadow-md transition-shadow cursor-pointer">
-            <CardContent className="flex items-start gap-3 pt-5">
-              <DollarSign className="h-5 w-5 text-warning-11 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="font-medium text-warning-11">
-                  Unpaid Finished Stays
-                </p>
-                <p className="text-sm text-warning-11 mt-1">
-                  {stats.unpaidFinishedStays} booking
-                  {stats.unpaidFinishedStays === 1 ? "" : "s"} still payment
-                  pending after check-out. Follow up on payment or settle the
-                  booking.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </Link>
-      )}
-
-      {/* Unsettled stay additions (#1723 path 2, widened by #2350): a settled
-          booking whose upward modification delta (admin recalculate / guest
-          add) was never collected on the card additional-payment flow. The
-          booking is not PAYMENT_PENDING, so the card above cannot count it.
-          Both halves are shown — upcoming stays can still be chased, finished
-          ones need a follow-up — behind one link to the owed filter. */}
-      {unsettledAdditionsTotal > 0 && (
-        <Link href={buildUnsettledAdditionalStaysHref()}>
-          <Card className="border-warning-6 bg-warning-3 hover:shadow-md transition-shadow cursor-pointer">
-            <CardContent className="flex items-start gap-3 pt-5">
-              <DollarSign className="h-5 w-5 text-warning-11 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="font-medium text-warning-11">
-                  Bookings With Unpaid Additions
-                </p>
-                <p className="text-sm text-warning-11 mt-1">
-                  {unsettledAdditionsTotal} confirmed booking
-                  {unsettledAdditionsTotal === 1 ? "" : "s"} with an additional
-                  payment still owing ({stats.unsettledAdditionalUpcomingStays}{" "}
-                  upcoming, {stats.unsettledAdditionalFinishedStays} finished).
-                  Collect the outstanding amount or adjust the
-                  booking.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </Link>
-      )}
-
-      {stats.pendingDeletionRequests > 0 && (
-        <Link href={`${adminHref("deletion-requests")}?status=PENDING`}>
-          <Card className="border-danger-6 bg-danger-3 hover:shadow-md transition-shadow cursor-pointer">
-            <CardContent className="flex items-start gap-3 pt-5">
-              <Trash2 className="h-5 w-5 text-danger-11 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="font-medium text-danger-11">
-                  Account Deletion Requests
-                </p>
-                <p className="text-sm text-danger-11 mt-1">
-                  {stats.pendingDeletionRequests} account deletion request
-                  {stats.pendingDeletionRequests === 1 ? "" : "s"} waiting for
-                  admin review.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </Link>
-      )}
-
-      {stats.pendingMembershipReviews > 0 && (
-        <Link href={adminHref("membership-cancellations")}>
-          <Card className="border-warning-6 bg-warning-3 hover:shadow-md transition-shadow cursor-pointer">
-            <CardContent className="flex items-start gap-3 pt-5">
-              <UserX className="h-5 w-5 text-warning-11 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="font-medium text-warning-11">
-                  Membership Lifecycle Review
-                </p>
-                <p className="text-sm text-warning-11 mt-1">
-                  {pendingMembershipReviewSummary.join(" and ")} waiting for admin review.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </Link>
-      )}
-
-      {/* Hut Leader warning */}
-      {unassignedDatesWithBookings.length > 0 && (
-        <Link href="/admin/hut-leaders">
-          <Card className="border-warning-6 bg-warning-3 hover:shadow-md transition-shadow cursor-pointer">
-            <CardContent className="flex items-start gap-3 pt-5">
-              <AlertTriangle className="h-5 w-5 text-warning-11 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="font-medium text-warning-11">{stats.unassignedNamesLodges ? "Lodge-nights" : "Nights"} without a {CLUB_HUT_LEADER_LABEL.toLowerCase()} who counts</p>
-                <p className="text-sm text-warning-11 mt-1">
-                  {unassignedDatesWithBookings.length} upcoming{" "}
-                  {stats.unassignedNamesLodges ? "lodge-night" : "night"}
-                  {unassignedDatesWithBookings.length !== 1 ? "s" : ""} with guests but no {CLUB_HUT_LEADER_LABEL.toLowerCase()} who counts:{" "}
-                  {unassignedDatesWithBookings.slice(0, 5).join("; ")}
-                  {unassignedDatesWithBookings.length > 5 ? ` and ${unassignedDatesWithBookings.length - 5} more` : ""}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </Link>
-      )}
+      {/* Attention cards (#4962): one per officer work queue with something
+          in it, from the registry the sidebar's Needs Attention section
+          renders, gated on the same "may this viewer open it" rule. */}
+      <AdminWorkQueueCards
+        counts={stats.workQueueCounts}
+        clubToday={stats.todayKey}
+        features={stats.features}
+        permissionMatrix={permissionMatrix}
+        overrides={workQueueCardOverrides}
+      />
 
       {canViewHutLeaders && (
         <HutLeaderHandoversCard handovers={stats.hutLeaderHandovers} nameLodges={stats.handoversNameLodges} format={money.format} />

@@ -10,11 +10,13 @@ list, and **Quick Actions** shortcuts. Find it at **Admin → Admin Dashboard**
 (`/admin/dashboard`).
 
 Everything on the dashboard is a link into the area that owns the detail — the
-dashboard never edits anything itself. The attention cards mirror the sidebar's
-**Needs Attention** section (see [`ARCHITECTURE.md`](../ARCHITECTURE.md) →
-Needs Attention / badges): a card appears only while its queue has something
-pending and disappears once the queue is clear, so it never implies work that
-isn't there.
+dashboard never edits anything itself. The attention cards and the sidebar's
+**Needs Attention** section are two views of one list of officer work queues
+(see [`ARCHITECTURE.md`](../ARCHITECTURE.md) → Needs Attention / badges): for
+the same admin they show the same queues with the same numbers. A queue appears
+only while it has something pending and only to an admin who can open its
+page with its module turned on, and it disappears once the queue is clear, so
+it never implies work that isn't there.
 
 ## When you'd use it
 
@@ -68,18 +70,44 @@ them, so you don't have to remember where a feature lives.
 
 ## Settings reference
 
-The dashboard has no settings — it is read-only. The cards it can show:
+The dashboard has no settings — it is read-only. The attention cards, in the
+order both the dashboard and the sidebar show them. Each appears only while its
+number is above zero and only to an admin who can open the page it links to:
 
 | Card | Appears when | Opens |
 | --- | --- | --- |
-| Pending Review Queue | Refund appeals or manual credit approvals are waiting | [Refunds & Credits](refund-requests.md) |
-| Booking Requests | New booking reviews or change requests are waiting | [Booking Requests](booking-requests.md) |
+| Silent Xero Webhook | Xero has not delivered a webhook event for longer than expected | [Xero](xero.md) |
+| Booking Requests | New booking reviews, change requests, new-booking policy exception requests or public booking requests are waiting; the number is all four together | [Booking Requests](booking-requests.md), on the first tab with something waiting |
 | Unpaid Finished Stays | A stay ended but is still payment-pending | [Bookings](bookings.md) (pre-filtered) |
-| Finished Stays With Unpaid Additions | A settled past stay has an upward change still uncollected | [Bookings](bookings.md) (pre-filtered) |
-| Account Deletion Requests | A member self-service deletion is pending | [Deletion Requests](deletion-requests.md) |
+| Bookings With Unpaid Additions | A settled booking, finished or upcoming, has an upward change still uncollected | [Bookings](bookings.md) (pre-filtered) |
+| Membership Applications | A membership application is waiting for approval | [Member Applications](member-applications.md) |
+| Family Group Requests | A family group request is waiting for review | [Family Groups](family-groups.md) |
+| Pending Review Queue | Refund appeals or manual credit approvals are waiting | [Refunds & Credits](refund-requests.md) |
+| Manual Refund Tasks | The club owes a member a refund by hand and the task is still open | [Payments](payments.md) |
 | Membership Lifecycle Review | A cancellation or archive request is waiting | [Cancellation Requests](membership-cancellations.md) |
-| Nights without a hut leader who counts | Upcoming nights have guests but no hut leader who is both assigned and staying that night — or, on a school group's night, none of a kind the lodge accepts for school bookings. An accepted school booking awaiting its invoice counts as guests; a quote the school has not accepted does not. Each entry gives the night and how many guests are on site. On a club with more than one active lodge this counts **lodge-nights** and names the lodge on every date, because each lodge needs its own leader — see [Hut Leaders](hut-leaders.md#what-counts-as-a-covered-night) | [Hut Leaders](hut-leaders.md) |
+| Account Deletion Requests | A member's self-service deletion or an admin-initiated member deletion is waiting; the number is both together | [Deletion Requests](deletion-requests.md) |
+| Issue Reports | An issue report is not yet resolved | [Issue Reports](issue-reports.md) |
+| Nights without a hut leader who counts | Upcoming nights have guests but no hut leader who is both assigned and staying that night — or, on a school group's night, none of a kind the lodge accepts for school bookings. An accepted school booking awaiting its invoice counts as guests; a quote the school has not accepted does not. Each entry gives the night and how many guests are on site. On a club with more than one active lodge this counts **lodge-nights** and names the lodge on every date, because each lodge needs its own leader — see [Hut Leaders](hut-leaders.md#what-counts-as-a-covered-night). Shown only when the Hut Leaders module is on | [Hut Leaders](hut-leaders.md) |
+| Stuck States | Something is stuck in payments, bookings, Xero, email or lodge operations. The number is the Stuck States page's headline, refreshed at most once a minute. Shown only to admins with Support access | [Stuck States](stuck-states.md) |
+
+Below the attention cards:
+
+| Card | Appears when | Opens |
+| --- | --- | --- |
 | Handovers this week | On one of the next seven days a hut leader finishes at midday and another is on duty from midday. Each line names the day, who finishes and who takes over (and the lodge, on a club with more than one). Shown, and read, only for admins who can open Hut Leaders | [Hut Leaders](hut-leaders.md) |
+
+If a queue's number could not be read, the dashboard says so above the cards
+("Couldn't load counts for …", naming the queue) instead of hiding the card as
+if the queue were empty. Reload the page to try again.
+
+### How the sidebar keeps its numbers current
+
+The sidebar loads its Needs Attention numbers when you open the admin area and
+again whenever you move to another admin page, come back to the browser window
+or tab, or finish a decision on a queue page (approving a request, closing a
+task and so on). If they cannot be loaded it shows **Couldn't load counts**
+with a **Retry** button, and keeps the last numbers it had; if only some
+failed it shows **Couldn't load some counts** and the rest as normal.
 
 Stat cards (each links to its detail area):
 
@@ -97,6 +125,9 @@ Stat cards (each links to its detail area):
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | An attention card vanished | Its queue is now empty | Nothing to do — the card only shows while work is pending |
+| A queue shows in the sidebar but not on the dashboard, or the reverse | They read the same counts, so one of them is out of date | Reload the dashboard; the sidebar refreshes when you change page or return to the tab |
+| "Couldn't load counts" | A count could not be read from the database | Click **Retry** in the sidebar, or reload the dashboard. If it persists, tell whoever runs the club's site |
+| A card another admin sees is missing for you | Cards follow the same permission and module rules as the pages they open | Ask a full admin to check your access role and [Modules](modules.md) |
 | Net Collected looks wrong for the month | It is **net of refunds and credits**, and it groups payments by the month their record was **created**, not the month the money arrived. A bank transfer paid this month on a booking made last month counts in last month; a refund made this month on last month's payment reduces last month, not this one. A cancelled booking counts only what the club kept of what was paid, account credit included; one never paid counts nothing | Use [Reports](reports.md) for a chosen date range, or [Payments](payments.md) for a filtered list |
 | A quick-action tile is missing | The related module is off (e.g. Chore Roster needs the `chores` module) | Enable it in [Modules](modules.md) |
 
@@ -104,7 +135,8 @@ Stat cards (each links to its detail area):
 
 - Back to the [documentation hub](../README.md).
 - Sibling queues: [Booking Requests](booking-requests.md),
-  [Refunds & Credits](refund-requests.md),
+  [Refunds & Credits](refund-requests.md), [Payments](payments.md),
+  [Issue Reports](issue-reports.md), [Stuck States](stuck-states.md),
   [Deletion Requests](deletion-requests.md),
   [Cancellation Requests](membership-cancellations.md).
 - Reference: the Needs Attention / badges model in

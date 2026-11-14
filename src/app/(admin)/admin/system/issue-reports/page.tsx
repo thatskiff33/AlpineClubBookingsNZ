@@ -49,6 +49,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 
 type IssueReportSummary = {
   id: string;
@@ -197,6 +198,7 @@ export default function AdminIssueReportsPage() {
       if (!response.ok) throw new Error(body.error || "Failed to update report");
       setSelectedReport(body.report);
       setResolutionNote(body.report?.resolutionNote ?? "");
+      notifyAdminQueueChanged();
       fetchReports();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to update report");
