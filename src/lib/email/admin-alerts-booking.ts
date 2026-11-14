@@ -27,7 +27,10 @@ import {
   composeOptionalEmailLine,
 } from "../email-message-notes";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
-import { buildBookingRequestsHref } from "@/lib/admin-booking-requests-path";
+import {
+  buildBookingRequestsHref,
+  buildPublicBookingRequestsHref,
+} from "@/lib/admin-booking-requests-path";
 import { sendToAdmins } from "./admin-alerts-shared";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
@@ -355,7 +358,7 @@ export async function sendAdminBookingRequestQuoteAcceptedEmail(data: {
   guestCount: number;
 }) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}${buildBookingRequestsHref("public", { filter: "ACCEPTED" })}`;
+  const reviewUrl = `${baseUrl}${buildPublicBookingRequestsHref("ACCEPTED")}`;
   await sendToAdmins({
     subject: `Quote accepted, ready for approval: ${data.requesterName}`,
     html: await renderEmailHtml(() => adminBookingRequestQuoteAcceptedTemplate({ ...data, reviewUrl })),

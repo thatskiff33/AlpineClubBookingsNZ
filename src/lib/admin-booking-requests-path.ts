@@ -47,3 +47,51 @@ export function buildBookingRequestsHref(
 
   return `${adminHref("booking-requests")}?${params.toString()}`;
 }
+
+/**
+ * The one query key that carries a booking-requests tab's status filter
+ * (#4960 follow-up). The panels read their opening filter from it and
+ * `buildBookingRequestDatasetPath` writes it, so a link that names the filter
+ * any other way — the quote-accepted email once sent `filter=ACCEPTED` —
+ * silently opens the default queue instead.
+ */
+export const BOOKING_REQUESTS_STATUS_PARAM = "status";
+
+/** The public-requests tab's filters; `QUEUE` is the default. */
+const PUBLIC_BOOKING_REQUEST_FILTERS = [
+  "QUEUE",
+  "NEW",
+  "VERIFIED",
+  "PRICED",
+  "QUOTED",
+  "QUOTE_SENT",
+  "QUERY_PENDING",
+  "MODIFICATION_REQUESTED",
+  "ACCEPTED",
+  "APPROVED",
+  "DECLINED",
+  "CANCELLED",
+  "CONVERTED",
+  "ALL",
+] as const;
+
+export type PublicBookingRequestFilter = (typeof PUBLIC_BOOKING_REQUEST_FILTERS)[number];
+
+export const DEFAULT_PUBLIC_BOOKING_REQUEST_FILTER: PublicBookingRequestFilter = "QUEUE";
+
+function isPublicBookingRequestFilter(value: string | null): value is PublicBookingRequestFilter {
+  return (PUBLIC_BOOKING_REQUEST_FILTERS as readonly (string | null)[]).includes(value);
+}
+
+/** Link to the public-requests tab opened on `status`. */
+export function buildPublicBookingRequestsHref(status: PublicBookingRequestFilter) {
+  return buildBookingRequestsHref("public", { [BOOKING_REQUESTS_STATUS_PARAM]: status });
+}
+
+/** The filter the public-requests tab opens on for these query params. */
+export function readPublicBookingRequestFilter(
+  searchParams: Pick<URLSearchParams, "get">,
+): PublicBookingRequestFilter {
+  const value = searchParams.get(BOOKING_REQUESTS_STATUS_PARAM);
+  return isPublicBookingRequestFilter(value) ? value : DEFAULT_PUBLIC_BOOKING_REQUEST_FILTER;
+}

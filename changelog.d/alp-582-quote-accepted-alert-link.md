@@ -1,0 +1,1 @@
+- **The "Quote accepted, ready for approval" email now opens the accepted requests.** Its review link used to land officers on the default **Queue** filter of **Booking Requests → Public**, so the request they were told about was not on screen. It now opens that tab on the **Accepted** filter.
