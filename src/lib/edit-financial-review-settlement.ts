@@ -33,11 +33,7 @@ import { assertByHandReviewRefundWithinUnpromisedCash } from "@/lib/edit-refund-
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { executeEditReviewCardRefund } from "@/lib/edit-financial-review-card-refund";
-import {
-  lockPaymentForRefundedTotal,
-  planStripeRefundAllocation,
-  type RefundAllocationSlice,
-} from "@/lib/payment-transactions";
+import { lockPaymentForRefundedTotal, planStripeRefundAllocation, type RefundAllocationSlice } from "@/lib/payment-transactions";
 import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import { dispatchEditReviewXeroSettlement, type EditReviewHandBackXeroFacts } from "@/lib/edit-financial-review-xero-leg";
 import {
@@ -438,17 +434,14 @@ export async function chooseEditReviewSettlementRoute({
     // transaction and before its claim. Once the cap has passed the planned total
     // cannot be short of it: the planner allocates newest-first across exactly
     // the transactions the cap totalled.
-    // #4879 (`INV-PAY-150`): a live superseded capture's charge is left to its own
-    // refund, read under the Payment row (after the caller's lock(1) and booking
-    // row), so a held-back charge shrinks the cap and a review that only fitted
-    // by taking it is refused with the task open.
+    // #4879 (`INV-PAY-150`): a live superseded capture's charge is left to its own refund,
+    // read under the Payment row (after lock(1) and the booking row); a review needing it is refused.
     await lockPaymentForRefundedTotal(store, settlementPayment.id);
-    const heldBack = await readSupersededCaptureHeldBack(store, settlementPayment.id);
     const { slices, totalRefundableCents } = await planStripeRefundAllocation({
       paymentId: settlementPayment.id,
       amountCents: refundCents,
       store,
-      heldBackByTransaction: heldBack.byTransaction,
+      heldBackByTransaction: (await readSupersededCaptureHeldBack(store, settlementPayment.id)).byTransaction,
     });
     if (refundCents > totalRefundableCents) {
       throw new ManualBookingPaymentError(REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE, 400);
