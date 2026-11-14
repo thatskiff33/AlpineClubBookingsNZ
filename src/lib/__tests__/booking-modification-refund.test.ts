@@ -38,7 +38,14 @@ vi.mock("@/lib/refused-card-refund-retry", async (importOriginal) => ({
 }));
 
 import { executeBookingModificationRefund, reserveModificationRefundDebts } from "@/lib/booking-modification-settlement";
+import logger from "@/lib/logger";
 import { NoRefundPaymentIntentError } from "@/lib/payment-recovery";
+import {
+  BOOKING_MODIFICATION_REFUND_DOORS,
+  type BookingModificationRefundDoor,
+  bookingModificationRefundReasonForKeyPrefix,
+  buildBookingModificationRefundMetadata,
+} from "@/lib/payment-recovery-keys";
 import { STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE } from "@/lib/payment-transaction-status";
 import { RefusedCardRefundError } from "@/lib/refused-card-refund-retry";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -124,7 +131,32 @@ describe("reserveModificationRefundDebts", () => {
     expect(ownCardRefund).toBeNull();
     expect(await execute(ownCardRefund)).toEqual({ stripeRefundId: undefined, refundDestination: "own_card_pending" });
     expect(h.refund).not.toHaveBeenCalled();
+    // Stripe was never asked and no debt row exists, so the door's
+    // "debt stays owed" failure message would point an operator the wrong way.
+    expect(vi.mocked(logger.error)).toHaveBeenLastCalledWith(
+      expect.anything(), expect.stringContaining("No card refund was reserved for this edit"));
+    expect(vi.mocked(logger.error)).not.toHaveBeenCalledWith(expect.anything(), "refund failed");
   });
+
+  // INV-SSOT (#4992): the runner replays the row under the prefix the reserve
+  // stored, so the inline attempt must send under exactly that prefix and the
+  // reason the runner rebuilds from it; a drift would make Stripe refund twice.
+  it.each(Object.keys(BOOKING_MODIFICATION_REFUND_DOORS) as BookingModificationRefundDoor[])(
+    "%s: the inline send uses the exact prefix and reason the reserve stored for the runner",
+    async (door) => {
+      const ownCardRefund = await reserveModificationRefundDebts(tx, { ...args(), door });
+      const stored = h.enqueue.mock.calls[0]![0].stripeKeyPrefix as string;
+      await executeBookingModificationRefund({
+        format: CLUB_FORMAT_TEST, bookingId: "booking-1", door, failureMessage: "refund failed",
+        result: { pendingRefundAmountCents: 4000, paymentId: "pay-1", bookingModificationId: "mod-1", organiserChildRefund: null, ownCardRefund } as never,
+      });
+      const inline = h.refund.mock.calls[0]![0];
+      expect(inline.idempotencyKeyPrefix).toBe(stored);
+      expect(inline.metadata).toEqual(
+        buildBookingModificationRefundMetadata("booking-1", bookingModificationRefundReasonForKeyPrefix(stored)));
+      expect(stored.startsWith(BOOKING_MODIFICATION_REFUND_DOORS[door].prefix)).toBe(true);
+    },
+  );
 });
 
 describe("executeBookingModificationRefund consumes the pre-persisted plan", () => {

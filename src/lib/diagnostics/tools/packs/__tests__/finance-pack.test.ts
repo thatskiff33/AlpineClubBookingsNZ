@@ -1191,6 +1191,7 @@ describe("AID-6C finance pack: the recovery scenario catalogue (#4076)", () => {
     buildBookingCancellationRefundMetadata: "Stripe metadata",
     buildBookingModificationRefundMetadata: "Stripe metadata",
     buildBookingModificationRefundKeyPrefix: "Stripe idempotency key prefix (#4992)",
+    buildBookingModificationRefundStripeKeyPrefix: "Stripe idempotency key prefix of one edit (#4992)",
     buildCapacityClaimFailedRefundStripeKeyPrefix: "Stripe idempotency key prefix",
     buildDuplicateCaptureRefundStripeKeyPrefix: "Stripe idempotency key prefix",
     buildEditFinancialReviewAdditionalIntentStripeKey: "Stripe idempotency key",

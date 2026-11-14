@@ -8,6 +8,7 @@
 // and its test fails when an export here is neither mapped to a scenario nor
 // declared not-a-recovery-key, so a new recovery key cannot land unlabelled.
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
+import { BOOKING_MODIFICATION_REFUND_DOORS } from "@/lib/booking-modification-refund-doors";
 import { CARD_REFUND_STILL_OWED_RECOVERY_PREFIX as STILL_OWED_PREFIX, CARD_REFUND_STILL_OWED_REASON as STILL_OWED_REASON } from "@/lib/card-refund-still-owed-keys";
 export const BOOKING_CANCELLATION_REFUND_RECOVERY_PREFIX = "booking_cancel_refund_recovery_";
 export const CAPACITY_CLAIM_FAILED_REFUND_RECOVERY_PREFIX = "capacity_claim_failed_refund_recovery_";
@@ -49,6 +50,7 @@ export function cardRefundFailedLaterRefundId(key: string): string | null {
 /** The Stripe `reason` metadata of that retry; a failed refund carrying it was itself a retry. */
 export const CARD_REFUND_FAILED_LATER_REASON = "card_refund_failed_later";
 export { CARD_REFUND_STILL_OWED_RECOVERY_PREFIX, CARD_REFUND_STILL_OWED_REASON, buildCardRefundStillOwedRecoveryKey, cardRefundStillOwedCloseRecordId } from "@/lib/card-refund-still-owed-keys"; // #4516: a part close's still-owed rest
+export { BOOKING_MODIFICATION_REFUND_DOORS, type BookingModificationRefundDoor, buildBookingModificationRefundKeyPrefix, buildBookingModificationRefundStripeKeyPrefix } from "@/lib/booking-modification-refund-doors"; // #4992
 
 export function buildBookingCancellationRefundIdempotencyKey(bookingId: string) {
   return `${BOOKING_CANCELLATION_REFUND_RECOVERY_PREFIX}${bookingId}`;
@@ -540,30 +542,6 @@ export function cardRefundOperationRefundMetadata(operation: {
     operation.bookingId,
     bookingModificationRefundReasonForKeyPrefix(operation.stripeKeyPrefix),
   );
-}
-
-// #1507, #4992: THE ONE HOME of a booking edit's card refund door - its Stripe
-// idempotency-key prefix and the Stripe metadata `reason` it maps to
-// (`INV-MOD-061`, #4101). The edit's transaction writes the prefix on its
-// pre-persisted row (`stripeKeyPrefix`, #1152), the inline attempt
-// (`executeBookingModificationRefund`) stamps the reason for it, and the
-// recovery replay rebuilds that reason from the stored prefix, so all three
-// send one request. A new door adds its row here; a caller of
-// `reserveModificationRefundDebts` naming no door here is refused by
-// `modification-refund-replay-reason.test.ts`. Legacy rows enqueued before
-// #1152 carry no stored prefix; they keep the historical recovery reason and
-// their operation-scoped key.
-export const BOOKING_MODIFICATION_REFUND_DOORS = {
-  dateChange: { prefix: "mod_dates_refund_", reason: "date_change_price_decrease" },
-  batchModify: { prefix: "mod_batch_refund_", reason: "batch_modification" },
-  guestRemoval: { prefix: "guest_remove_refund_", reason: "guest_removed_price_decrease" },
-  guestAcceptanceReprice: { prefix: "guest_accept_refund_", reason: "guest_accepted_promo_reprice" },
-} as const;
-
-export type BookingModificationRefundDoor = keyof typeof BOOKING_MODIFICATION_REFUND_DOORS;
-
-export function buildBookingModificationRefundKeyPrefix(door: BookingModificationRefundDoor, bookingId: string): string {
-  return `${BOOKING_MODIFICATION_REFUND_DOORS[door].prefix}${bookingId}`;
 }
 
 export function bookingModificationRefundReasonForKeyPrefix(

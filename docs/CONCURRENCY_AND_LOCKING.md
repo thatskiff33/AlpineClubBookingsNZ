@@ -7062,8 +7062,10 @@ Stripe call:
   already holds - global `pg_advisory_xact_lock(1)` and the lodge capacity key
   - so no new key or order. Since #4872 the freeze takes the Payment row
   (`lockPaymentForRefundedTotal`) and reads the superseded-capture hold-back
-  there; R05 already took that row on the edit doors' booking row -> Payment
-  edge, so the re-take waits on nothing. No provider call runs inside it. A
+  there. R05 usually took that row already; where it posted nothing (no
+  booking journal or charge yet) this is the edit's first take of it, the
+  documented booking row -> Payment edge under `lock(1)`, which every edit
+  door holds. No provider call runs inside it. A
   plan-less card-refund recovery derives its missing plan the same way after
   provider preflight (`processBookingModificationRefundOperation`). A manual
   hand-back reads the hold-back after its claim and after any credit

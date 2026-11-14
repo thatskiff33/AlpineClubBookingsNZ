@@ -39,7 +39,7 @@ import { runOrganiserChildRefundDebtNow } from "@/lib/organiser-child-refund-exe
 import type { BookingModifiedRefundDestination } from "@/lib/booking-modified-email-copy";
 import {
   buildAdditionalIntentRecoveryIdempotencyKey,
-  buildBookingModificationRefundKeyPrefix,
+  buildBookingModificationRefundStripeKeyPrefix,
   buildBookingModificationRefundRecoveryIdempotencyKey,
   type BookingModificationRefundDoor,
   bookingModificationRefundReasonForKeyPrefix,
@@ -178,8 +178,9 @@ async function reserveBookingModificationCardRefund(
   let plan: RefundAllocationSlice[] | null = null;
   try {
     // #4872 (`INV-PAY-150`): the freeze reads the superseded-capture hold-back
-    // under the Payment row. R05 already took that row on the edit doors'
-    // booking row -> Payment edge, so re-taking it here adds no lock edge.
+    // under the Payment row. R05 usually took that row already; where it posted
+    // nothing (no booking journal or charge yet), this is the edit's first take
+    // of it - the documented booking row -> Payment edge, under lock(1).
     await lockPaymentForRefundedTotal(tx, paymentId);
     const heldBack = await readSupersededCaptureHeldBack(tx, paymentId);
     const planned = await planStripeRefundAllocation({
@@ -198,7 +199,7 @@ async function reserveBookingModificationCardRefund(
   try {
     await enqueueBookingModificationRefundRecovery({
       bookingId, paymentId, bookingModificationId, amountCents: pendingRefundAmountCents,
-      stripeKeyPrefix: `${buildBookingModificationRefundKeyPrefix(door, bookingId)}_${bookingModificationId}`,
+      stripeKeyPrefix: buildBookingModificationRefundStripeKeyPrefix(door, bookingId, bookingModificationId),
       ...(plan ? { allocationPlan: plan } : {}),
       store: tx,
     });
@@ -286,13 +287,21 @@ export async function executeBookingModificationRefund({
     return { stripeRefundId: undefined, refundDestination: made ? "organiser_card" : "organiser_card_pending" };
   }
 
-  const plan = result.ownCardRefund?.plan;
+  if (!result.ownCardRefund) {
+    // The reserve wrote no row (the payment has no Stripe intent) and logged why;
+    // Stripe is not asked and no debt was persisted.
+    logger.error(
+      { bookingId, amountCents: result.pendingRefundAmountCents },
+      "No card refund was reserved for this edit; see the reserve's error (#4992)",
+    );
+    return { stripeRefundId: undefined, refundDestination: "own_card_pending" };
+  }
+  const plan = result.ownCardRefund.plan;
   if (!plan) {
     logger.error({ bookingId, amountCents: result.pendingRefundAmountCents }, failureMessage);
     return { stripeRefundId: undefined, refundDestination: "own_card_pending" };
   }
-  const idempotencyKeyPrefix = buildBookingModificationRefundKeyPrefix(door, bookingId);
-  const stripeKeyPrefix = `${idempotencyKeyPrefix}_${result.bookingModificationId}`;
+  const stripeKeyPrefix = buildBookingModificationRefundStripeKeyPrefix(door, bookingId, result.bookingModificationId);
   const idempotencyKey = buildBookingModificationRefundRecoveryIdempotencyKey(result.bookingModificationId);
   const paymentId = result.paymentId;
   try {
@@ -301,7 +310,7 @@ export async function executeBookingModificationRefund({
       paymentId,
       amountCents: result.pendingRefundAmountCents,
       allocation: plan,
-      metadata: buildBookingModificationRefundMetadata(bookingId, bookingModificationRefundReasonForKeyPrefix(idempotencyKeyPrefix)),
+      metadata: buildBookingModificationRefundMetadata(bookingId, bookingModificationRefundReasonForKeyPrefix(stripeKeyPrefix)),
       idempotencyKeyPrefix: stripeKeyPrefix,
       obligation: { scope: "modification", id: result.bookingModificationId },
     });

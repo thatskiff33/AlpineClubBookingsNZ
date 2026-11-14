@@ -143,8 +143,9 @@ export type GuestAcceptanceReprice =
       priceDiffCents: number;
       refundAmountCents: number;
       /** The Stripe slice of `refundAmountCents`, refunded after commit. */
-      ownCardRefund: BookingModificationPaymentContext["ownCardRefund"];
       pendingRefundAmountCents: number;
+      /** #4992: the own-card debt this transaction reserved, with its frozen plan; null when none was written. */
+      ownCardRefund: BookingModificationPaymentContext["ownCardRefund"];
       /**
        * #3653 (composed by #3829): non-null when that slice goes back to the
        * group organiser's card out of the combined payment; its debt is reserved

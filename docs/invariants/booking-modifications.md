@@ -109,7 +109,7 @@ second ask for the same money. Not recorded means not raised.
   other parameters (`idempotency_error`), so a refund Stripe made but the app
   never recorded recovers only if the replay sends the original body.
   Each edit door's prefix and reason are spelled once, in
-  `BOOKING_MODIFICATION_REFUND_DOORS` (`payment-recovery-keys.ts`, #4992); a
+  `BOOKING_MODIFICATION_REFUND_DOORS` (`booking-modification-refund-doors.ts`, #4992); a
   caller names its door, never a prefix. The edit's transaction stores the
   door's prefix on its recovery row, `executeBookingModificationRefund` stamps
   the reason `bookingModificationRefundReasonForKeyPrefix` gives that prefix,
