@@ -81,6 +81,19 @@ const modifyDatesSchema = z
     message: "At least one of checkIn or checkOut is required",
   });
 
+/**
+ * The move commits before its refund and additional-ask steps, so a contended
+ * lock(1) transaction (`INV-LOCK-006`) asks for a status check. The linked move
+ * answers its own LINKED_MOVE_CONTENDED 503 further down the route's catch.
+ */
+function dateModificationContended(err: unknown, bookingId: string): NextResponse | null {
+  return transactionContendedResponse(
+    err,
+    "Booking date modification contended for the lock(1) budget",
+    { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, context: { bookingId } },
+  );
+}
+
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -228,17 +241,8 @@ export async function PUT(
 
     return NextResponse.json(result);
   } catch (err) {
-    // The move commits before its refund and additional-ask steps, so a
-    // contended lock(1) transaction (INV-LOCK-006) asks for a status check.
-    // The linked move answers its own LINKED_MOVE_CONTENDED 503 below.
-    const contended = transactionContendedResponse(
-      err,
-      "Booking date modification contended for the lock(1) budget",
-      { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, context: { bookingId } },
-    );
-    if (contended) return contended;
-    const hostingRetry = hostingCoverageParticipantRetryResponse(err);
-    if (hostingRetry) return hostingRetry;
+    const retry = dateModificationContended(err, bookingId) ?? hostingCoverageParticipantRetryResponse(err);
+    if (retry) return retry;
     if (err instanceof OverCapacityConfirmationRequiredError) {
       return NextResponse.json(
         {

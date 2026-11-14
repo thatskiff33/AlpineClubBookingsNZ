@@ -63,6 +63,11 @@ async function loadPendingReviewUnderEligibilityLocks(
 // Approve/decline a booking request: a bookings write. Explicit bookings:edit
 // matches the area the route-area matrix already infers for /api/admin/bookings
 // (#1997), pairing the queue's view-only UI gating with a route-level guard.
+/** The claim found the review already decisioned: someone else got there first. */
+function alreadyReviewedResponse(): NextResponse {
+  return NextResponse.json({ error: "This booking has already been reviewed" }, { status: 409 });
+}
+
 /**
  * `INV-LOCK-006`: a review claim that ran out of its lock(1) budget rolled back
  * with nothing recorded, so it answers the shared retryable 503.
@@ -170,12 +175,7 @@ export async function PATCH(
     }, LOCK1_HOLDER_TRANSACTION_BUDGET).catch((err: unknown) => reviewClaimContended(err, bookingId));
     if (reviewedBooking instanceof NextResponse) return reviewedBooking;
 
-    if (!reviewedBooking) {
-      return NextResponse.json(
-        { error: "This booking has already been reviewed" },
-        { status: 409 },
-      );
-    }
+    if (!reviewedBooking) return alreadyReviewedResponse();
 
     // #1790: approve always emails the member unless the admin chose not to
     // notify (default is notify; the suppression is audited below).
@@ -263,12 +263,7 @@ export async function PATCH(
   }, LOCK1_HOLDER_TRANSACTION_BUDGET).catch((err: unknown) => reviewClaimContended(err, bookingId));
   if (reviewedBooking instanceof NextResponse) return reviewedBooking;
 
-  if (!reviewedBooking) {
-    return NextResponse.json(
-      { error: "This booking has already been reviewed" },
-      { status: 409 },
-    );
-  }
+  if (!reviewedBooking) return alreadyReviewedResponse();
 
   // Legacy PENDING+DRAFT rows are rejected and cancelled in the claim above;
   // every other status uses the shared cancellation/refund flow after commit.
