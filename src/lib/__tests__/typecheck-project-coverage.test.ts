@@ -150,6 +150,26 @@ const DECLARED_JAVASCRIPT_MODULES = [
     load: () => import("../../../load/lib/contention-invariant.js"),
   },
   {
+    module: "load/lib/stay-window.js",
+    declaration: "load/lib/stay-window.d.ts",
+    load: () => import("../../../load/lib/stay-window.js"),
+  },
+  {
+    module: "load/lib/target-guard.js",
+    declaration: "load/lib/target-guard.d.ts",
+    load: () => import("../../../load/lib/target-guard.js"),
+  },
+  {
+    module: "load/lib/volume-users.js",
+    declaration: "load/lib/volume-users.d.ts",
+    load: () => import("../../../load/lib/volume-users.js"),
+  },
+  {
+    module: "load/stripe-stub/server.mjs",
+    declaration: "load/stripe-stub/server.d.mts",
+    load: () => import("../../../load/stripe-stub/server.mjs"),
+  },
+  {
     module: "scripts/ci/check-allow-builds.mjs",
     declaration: "scripts/ci/check-allow-builds.d.mts",
     load: () => import("../../../scripts/ci/check-allow-builds.mjs"),

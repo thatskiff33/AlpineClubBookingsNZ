@@ -1,0 +1,58 @@
+name: Load smoke (advisory)
+
+# Explicitly requested by #4940; never a required merge check. No provider secrets.
+on:
+  schedule:
+    - cron: "23 16 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: load-smoke
+  cancel-in-progress: false
+jobs:
+  load-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      E2E_COMPOSE_PROJECT: load-issue4940
+      E2E_ENV_FILE: .env.load-smoke
+      # The target is the disposable stack this job prepares on its own runner.
+      LOAD_TEST_CONFIRM_TARGET: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install k6 from its signed package repository
+        run: |
+          curl --fail --silent --show-error https://dl.k6.io/key.gpg | gpg --dearmor > k6-keyring.gpg
+          sudo install -m 644 k6-keyring.gpg /usr/share/keyrings/k6-archive-keyring.gpg
+          rm k6-keyring.gpg
+          echo 'deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main' | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+      - name: Prepare isolated stack and five years of seasons of volume
+        run: |
+          bash scripts/ci/write-e2e-staging-env.sh .env.load-smoke
+          bash scripts/load-stack.sh prepare
+      - name: Run all scenarios at 10 VUs, then dashboard and mixed writes with cron
+        run: pnpm run load:smoke
+      - name: Capture stack diagnostics
+        if: always()
+        run: |
+          mkdir -p .artifacts/load
+          bash scripts/load-stack.sh logs > .artifacts/load/stack.log 2>&1
+      - name: Remove disposable database and stub credentials
+        if: always()
+        run: bash scripts/load-stack.sh down
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: load-smoke-summaries
+          path: .artifacts/load/
+          retention-days: 14

@@ -6,10 +6,10 @@ import { productionSourceFiles } from "./support/prisma-delegate-read-scan";
 
 // Every mutation is classified, including non-capturing ones: a computed data/status value cannot evade the inventory.
 const REVIEWED: Record<string, string> = {
+  "prisma/demo-seed-writers.ts|createDemoPrimaryPayment|create|payment.status|1": "synthetic demo and load seed only (#4940): the demo seed and load volume seeder share it",
   "prisma/demo-seed.ts|cleanup|deleteMany|dynamic-or-no-status|1": "synthetic demo teardown only",
   "prisma/demo-seed.ts|main|createMany|\"PENDING\",\"SUCCEEDED\"|1": "synthetic demo seed only",
-  "prisma/demo-seed.ts|main|create|\"FAILED\"|1": "synthetic demo seed only",
-  "prisma/demo-seed.ts|main|create|\"SUCCEEDED\"|6": "synthetic demo seed only",
+  "prisma/demo-seed.ts|main|create|\"SUCCEEDED\"|2": "synthetic demo seed only",
   "prisma/demo-seed.ts|seedNadiaPaidCardBooking|create|\"SUCCEEDED\"|1": "synthetic demo seed only",
   "src/app/api/payments/switch-to-internet-banking/route.ts|POST|recordInternetBankingPaymentTransaction|PaymentStatus.PENDING|1": "unpaid/failed request bookkeeping only; cannot introduce captured cash",
   "src/lib/additional-ask-reduction.ts|retireUnpaidAskChainUnderLocks|updateMany|PaymentStatus.FAILED,computed|1": "unpaid/failed request bookkeeping only; cannot introduce captured cash",

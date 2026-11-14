@@ -756,11 +756,16 @@ describe("every service that runs the app is given the declaration", () => {
 
 describe("EVERY compose file that runs the app declares the role", () => {
   it("finds the compose files by scanning, not from a list in this test", () => {
-    // The two that exist today. A new one appears here automatically, which is
-    // the point: it then has to satisfy the cases below or fail. A third,
-    // the measurement stack's own Compose file, was here until #3382 removed
-    // the tree whole.
-    expect(composeFiles).toEqual(["docker-compose.staging.yml", "docker-compose.yml"]);
+    // The four that exist today. A new one appears here automatically, which is
+    // the point: it then has to satisfy the cases below or fail. The two
+    // `load/` overlays are the load stack's (#4940); the measurement stack's
+    // own Compose file was here until #3382 removed the tree whole.
+    expect(composeFiles).toEqual([
+      "docker-compose.staging.yml",
+      "docker-compose.yml",
+      "load/compose.cron-on.yml",
+      "load/compose.stripe-stub.yml",
+    ]);
   });
 
   it("scans Compose's own modern default filenames too", () => {
@@ -829,18 +834,28 @@ describe("EVERY compose file that runs the app declares the role", () => {
     expect(appServiceNames()).toEqual(["app", "app_blue", "app_green"]);
   });
 
-  it("names exactly four services as not running app code", () => {
+  it("names exactly five services as not running app code", () => {
     // Widening this set excuses a service from declaring, so it is pinned. Every
-    // name in it must be a real service in the base file.
+    // name in it must be a real service in the base file, or in the one
+    // override that defines it.
     expect([...NON_APP_COMPOSE_SERVICES].sort()).toEqual([
       "caddy",
       "mailpit",
       "migrate",
       "postgres",
+      "stripe-stub",
     ]);
+    const overrideOnly: Record<string, string> = {
+      mailpit: "docker-compose.staging.yml",
+      "stripe-stub": "load/compose.stripe-stub.yml",
+    };
     const base = composeServices(BASE_COMPOSE);
     for (const name of NON_APP_COMPOSE_SERVICES) {
-      if (name === "mailpit") continue; // staging only
+      const home = overrideOnly[name];
+      if (home !== undefined) {
+        expect(composeServices(home).has(name), `${name} must be a real service in ${home}`).toBe(true);
+        continue;
+      }
       expect(base.has(name), `${name} must be a real service`).toBe(true);
     }
   });
@@ -986,9 +1001,9 @@ describe("non-production targets declare themselves", () => {
     /*
       Named rather than counted, the way the neighbouring censuses name their
       inputs: a job that stops calling the writer should say WHICH job, and a new
-      one should be added here deliberately. Three callers today — `e2e.yml`'s
+      one should be added here deliberately. Four callers today — `e2e.yml`'s
       seeded-database job, the `e2e-run` action every browser job uses (#4397),
-      and the dispatch-only rollover proof.
+      the dispatch-only rollover proof, and the scheduled load smoke (#4940).
     */
     const workflowFiles = readdirSync(path.join(ROOT, ".github/workflows"))
       .filter((name) => /\.ya?ml$/.test(name))
@@ -1014,6 +1029,7 @@ describe("non-production targets declare themselves", () => {
       ".github/actions/e2e-run/action.yml #1",
       ".github/workflows/e2e-rollover-proof.yml #1",
       ".github/workflows/e2e.yml #1",
+      ".github/workflows/load-smoke.yml #1",
     ]);
   });
 

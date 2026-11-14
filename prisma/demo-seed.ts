@@ -19,9 +19,7 @@
 // and connected to an empty or demo-only Member table.
 // ---------------------------------------------------------------------------
 import { createHash } from "node:crypto";
-import { type AgeTier, PrismaClient } from "@prisma/client";
-import bcrypt from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "../src/lib/password-hashing";
+import { type BookingStatus, type Prisma, PrismaClient } from "@prisma/client";
 import { ensureAccessRoleDefinitions } from "../src/lib/access-role-definitions";
 import { bookingFinalPriceCents } from "../src/lib/booking-final-price";
 import { assertDemoSeedMayRun, DEMO_SEED_DOMAIN } from "../src/lib/demo-seed-guard";
@@ -86,18 +84,28 @@ import {
   WAITLIST_OFFER_WINDOW,
   WAITLISTER,
 } from "./e2e-fixtures";
+import {
+  addDemoGuest,
+  createDemoMember,
+  createDemoBooking,
+  createDemoPrimaryPayment,
+  createDemoPaymentRefund,
+  createDemoCancellationCredit,
+  demoDate,
+  demoNightsBetween,
+  demoSeedPassword,
+  demoSeedPasswordHash,
+  DEMO_MEMBER_NIGHTLY_CENTS,
+} from "./demo-seed-writers";
 
 const prisma = new PrismaClient({ adapter: createPrismaPgAdapter() });
 
 const DEMO_DOMAIN = DEMO_SEED_DOMAIN;
-const DEMO_PASSWORD = process.env.DEMO_SEED_PASSWORD ?? "demo1234";
-const PWHASH = bcrypt.hashSync(DEMO_PASSWORD, PASSWORD_BCRYPT_COST);
+const PWHASH = demoSeedPasswordHash();
 const SEASON_YEAR = 2026;
 
 // Date-only helper (schema uses @db.Date for most date columns).
-function d(s: string): Date {
-  return new Date(`${s}T00:00:00.000Z`);
-}
+const d = demoDate;
 
 // The part of a demo fixture's email before "@", used as its login username.
 // `email.split("@")[0]` reads as `string | undefined` under
@@ -111,16 +119,7 @@ function emailLocalPart(email: string): string {
   return at === -1 ? email : email.slice(0, at);
 }
 // Nights actually slept = [checkIn, checkOut) — checkout day is not a night.
-function nightsBetween(checkIn: string, checkOut: string): string[] {
-  const out: string[] = [];
-  const cur = d(checkIn);
-  const end = d(checkOut);
-  while (cur < end) {
-    out.push(cur.toISOString().slice(0, 10));
-    cur.setUTCDate(cur.getUTCDate() + 1);
-  }
-  return out;
-}
+const nightsBetween = demoNightsBetween;
 
 async function assertDemoSeedSafety() {
   await assertDemoSeedMayRun({
@@ -244,79 +243,25 @@ function lockedPeriodRequestedChanges(
   };
 }
 
-async function makeMember(
+// The member and guest writers are shared with the load volume seeder (#4940,
+// INV-SSOT); these bind them to this seed's client and password hash.
+function makeMember(
   local: string,
   firstName: string,
   lastName: string,
-  extra: Record<string, unknown> = {},
+  extra: Partial<Prisma.MemberUncheckedCreateInput> = {},
 ): Promise<MemberRec> {
-  const member = await prisma.member.create({
-    data: {
-      email: `${local}@${DEMO_DOMAIN}`,
-      passwordHash: PWHASH,
-      firstName,
-      lastName,
-      role: "USER",
-      ageTier: "ADULT",
-      active: true,
-      canLogin: true,
-      emailVerified: true,
-      forcePasswordChange: false,
-      joinedDate: d("2024-05-01"),
-      ...extra,
-    },
-  });
-  await ensureMemberAccessRolesFromCompatibilityFields(prisma, {
-    memberId: member.id,
-    role: member.role,
-    financeAccessLevel: member.financeAccessLevel,
-    canLogin: member.canLogin,
-  });
-  return member;
+  return createDemoMember(prisma, PWHASH, local, firstName, lastName, extra);
 }
 
-async function addGuest(
+function addGuest(
   bookingId: string,
-  g: {
-    firstName: string;
-    lastName: string;
-    ageTier: AgeTier;
-    isMember?: boolean;
-    memberId?: string | null;
-    arrivedAt?: Date | null;
-    departedAt?: Date | null;
-  },
+  g: Parameters<typeof addDemoGuest>[2],
   checkIn: string,
   checkOut: string,
   nightlyCents: number,
 ) {
-  const nights = nightsBetween(checkIn, checkOut);
-  const guest = await prisma.bookingGuest.create({
-    data: {
-      bookingId,
-      firstName: g.firstName,
-      lastName: g.lastName,
-      ageTier: g.ageTier,
-      isMember: g.isMember ?? false,
-      memberId: g.memberId ?? null,
-      stayStart: d(checkIn),
-      stayEnd: d(checkOut),
-      priceCents: nightlyCents * nights.length,
-      arrivedAt: g.arrivedAt ?? null,
-      departedAt: g.departedAt ?? null,
-    },
-  });
-  for (const night of nights) {
-    await prisma.bookingGuestNight.create({
-      data: {
-        bookingGuestId: guest.id,
-        stayDate: d(night),
-        priceCents: nightlyCents,
-        priceSource: "SOLD",
-      },
-    });
-  }
-  return guest;
+  return addDemoGuest(prisma, bookingId, g, checkIn, checkOut, nightlyCents);
 }
 
 async function main() {
@@ -553,7 +498,7 @@ async function main() {
   // -------------------------------------------------------------------------
   // Bookings — one per BookingStatus, with guests, nights, events, payments.
   // -------------------------------------------------------------------------
-  const NIGHTLY = 4500; // $45/night member rate (demo)
+  const NIGHTLY = DEMO_MEMBER_NIGHTLY_CENTS;
 
   // Booking nights are RELATIVE to the run date (issue #2117): a fixed calendar
   // date silently turned CI red the day wall-clock reached it. Each window below
@@ -565,23 +510,20 @@ async function main() {
   // helper to create a booking shell
   async function makeBooking(
     member: MemberRec,
-    status: string,
+    status: BookingStatus,
     checkIn: string,
     checkOut: string,
-    over: Record<string, unknown> = {},
+    over: Partial<Prisma.BookingUncheckedCreateInput> = {},
   ) {
     const nights = nightsBetween(checkIn, checkOut).length;
     const total = NIGHTLY * nights;
-    return prisma.booking.create({
-      data: {
-        memberId: member.id,
-        status: status as never,
-        totalPriceCents: total,
-        finalPriceCents: total,
-        lodgeId,
-        ...over,
-        ...seededBookingDates(checkIn, checkOut),
-      },
+    return createDemoBooking(prisma, {
+      memberId: member.id,
+      status,
+      totalPriceCents: total,
+      lodgeId,
+      ...over,
+      ...seededBookingDates(checkIn, checkOut),
     });
   }
 
@@ -609,8 +551,7 @@ async function main() {
   //    Past stay (completed chores/allocations below reference these nights).
   const bConfirmed = await makeBooking(dave, "CONFIRMED", W.daveConfirmed.checkIn, W.daveConfirmed.checkOut);
   const daveGuest = await addGuest(bConfirmed.id, { firstName: "Dave", lastName: "Davis", ageTier: "ADULT", isMember: true, memberId: dave.id }, W.daveConfirmed.checkIn, W.daveConfirmed.checkOut, NIGHTLY);
-  const confirmedPayment = await prisma.payment.create({ data: { bookingId: bConfirmed.id, amountCents: bConfirmed.finalPriceCents, source: "INTERNET_BANKING", reference: "BANK-REF-7781", status: "SUCCEEDED", xeroInvoiceNumber: "INV-2201" } });
-  await prisma.paymentTransaction.create({ data: { paymentId: confirmedPayment.id, kind: "PRIMARY", source: "INTERNET_BANKING", amountCents: bConfirmed.finalPriceCents, status: "SUCCEEDED", reference: "BANK-REF-7781" } });
+  const { payment: confirmedPayment } = await createDemoPrimaryPayment(prisma, { bookingId: bConfirmed.id, amountCents: bConfirmed.finalPriceCents, source: "INTERNET_BANKING", reference: "BANK-REF-7781", status: "SUCCEEDED", xeroInvoiceNumber: "INV-2201" });
   // bedsA holds 6 beds (the fixed loop above) and daveConfirmed is a fixed
   // 3-night demo window (prisma/e2e-fixtures.ts), so this index is always
   // in range; `must` names that instead of widening bedId to `string | undefined`.
@@ -685,8 +626,7 @@ async function main() {
     },
   });
   const erinGuest = await addGuest(bPaid.id, { firstName: "Erin", lastName: "Evans", ageTier: "ADULT", isMember: true, memberId: erin.id }, W.erinPaid.checkIn, W.erinPaid.checkOut, NIGHTLY);
-  const paidPayment = await prisma.payment.create({ data: { bookingId: bPaid.id, amountCents: bPaid.finalPriceCents, source: "STRIPE", status: "SUCCEEDED", stripePaymentIntentId: "pi_demo_paid", stripeCustomerId: "cus_demo_erin", additionalPaymentIntentId: "pi_demo_paid_add", additionalAmountCents: 1500, additionalPaymentStatus: "SUCCEEDED" } });
-  await prisma.paymentTransaction.create({ data: { paymentId: paidPayment.id, kind: "PRIMARY", source: "STRIPE", amountCents: bPaid.finalPriceCents, status: "SUCCEEDED", stripePaymentIntentId: "pi_demo_paid" } });
+  const { payment: paidPayment } = await createDemoPrimaryPayment(prisma, { bookingId: bPaid.id, amountCents: bPaid.finalPriceCents, source: "STRIPE", status: "SUCCEEDED", stripePaymentIntentId: "pi_demo_paid", stripeCustomerId: "cus_demo_erin", additionalPaymentIntentId: "pi_demo_paid_add", additionalAmountCents: 1500, additionalPaymentStatus: "SUCCEEDED" });
   await prisma.paymentTransaction.create({ data: { paymentId: paidPayment.id, kind: "ADDITIONAL", source: "STRIPE", amountCents: 1500, status: "SUCCEEDED", stripePaymentIntentId: "pi_demo_paid_add", reason: "Added extra guest night" } });
   // Keep all four FREE_NIGHTS identities in the ordinary fixture aligned:
   // headline adjustment, redemption, beneficiary allocation and dated night
@@ -735,7 +675,7 @@ async function main() {
   const bBumped = await makeBooking(frank, "BUMPED", W.frankBumped.checkIn, W.frankBumped.checkOut);
   await addGuest(bBumped.id, { firstName: "Frank", lastName: "Foster", ageTier: "ADULT", isMember: true, memberId: frank.id }, W.frankBumped.checkIn, W.frankBumped.checkOut, NIGHTLY);
   const bumpedPayment = await prisma.payment.create({ data: { bookingId: bBumped.id, amountCents: bBumped.finalPriceCents, source: "STRIPE", status: "REFUNDED", refundedAmountCents: bBumped.finalPriceCents, stripePaymentIntentId: "pi_demo_bumped" } });
-  await prisma.paymentRefund.create({ data: { paymentId: bumpedPayment.id, stripeRefundId: "re_demo_bumped", amountCents: bBumped.finalPriceCents, currency: demoRefundCurrency, status: "succeeded", reason: "Bumped by capacity", stripeCreatedAt: d(relDateOnly(-30)) } });
+  await createDemoPaymentRefund(prisma, { paymentId: bumpedPayment.id, stripeRefundId: "re_demo_bumped", amountCents: bBumped.finalPriceCents, currency: demoRefundCurrency, reason: "Bumped by capacity", stripeCreatedAt: d(relDateOnly(-30)) });
   await prisma.paymentRecoveryOperation.create({ data: { type: "REFUND_SUPERSEDED_PAYMENT", status: "PROCESSING", bookingId: bBumped.id, paymentId: bumpedPayment.id, paymentIntentId: "pi_demo_bumped", amountCents: bBumped.finalPriceCents, idempotencyKey: "demo-recovery-bump-1", attempts: 1 } });
   await prisma.bookingEvent.create({ data: { bookingId: bBumped.id, type: "BUMPED", actorMemberId: admin.id, reason: "Capacity reached" } });
   await prisma.bookingEvent.create({ data: { bookingId: bBumped.id, type: "REFUNDED", amountCents: bBumped.finalPriceCents } });
@@ -744,8 +684,8 @@ async function main() {
   const bCancelled = await makeBooking(grace, "CANCELLED", W.graceCancelled.checkIn, W.graceCancelled.checkOut);
   await addGuest(bCancelled.id, { firstName: "Grace", lastName: "Green", ageTier: "ADULT", isMember: true, memberId: grace.id }, W.graceCancelled.checkIn, W.graceCancelled.checkOut, NIGHTLY);
   const cancelledPayment = await prisma.payment.create({ data: { bookingId: bCancelled.id, amountCents: bCancelled.finalPriceCents, source: "STRIPE", status: "PARTIALLY_REFUNDED", refundedAmountCents: Math.round(bCancelled.finalPriceCents / 2), stripePaymentIntentId: "pi_demo_cancelled" } });
-  await prisma.paymentRefund.create({ data: { paymentId: cancelledPayment.id, stripeRefundId: "re_demo_cancelled", amountCents: Math.round(bCancelled.finalPriceCents / 2), currency: demoRefundCurrency, status: "succeeded", reason: "50% cancellation refund" } });
-  const cancellationCredit = await prisma.memberCredit.create({ data: { memberId: grace.id, amountCents: Math.round(bCancelled.finalPriceCents / 2), type: "CANCELLATION_REFUND", description: "50% credit from cancelled booking", sourceBookingId: bCancelled.id } });
+  await createDemoPaymentRefund(prisma, { paymentId: cancelledPayment.id, stripeRefundId: "re_demo_cancelled", amountCents: Math.round(bCancelled.finalPriceCents / 2), currency: demoRefundCurrency, reason: "50% cancellation refund" });
+  const cancellationCredit = await createDemoCancellationCredit(prisma, { memberId: grace.id, amountCents: Math.round(bCancelled.finalPriceCents / 2), description: "50% credit from cancelled booking", sourceBookingId: bCancelled.id });
   await prisma.bookingEvent.create({ data: { bookingId: bCancelled.id, type: "CANCELLED", actorMemberId: grace.id, reason: "Change of plans" } });
   await prisma.bookingEvent.create({ data: { bookingId: bCancelled.id, type: "CREDITED", amountCents: cancellationCredit.amountCents } });
 
@@ -778,8 +718,7 @@ async function main() {
   // Failed-payment booking (covers PaymentStatus.FAILED + CANCEL_PAYMENT_INTENT recovery) — future
   const bFailed = await makeBooking(lars, "PENDING", W.larsFailed.checkIn, W.larsFailed.checkOut);
   await addGuest(bFailed.id, { firstName: "Lars", lastName: "Larsen", ageTier: "ADULT", isMember: true, memberId: lars.id }, W.larsFailed.checkIn, W.larsFailed.checkOut, NIGHTLY);
-  const failedPayment = await prisma.payment.create({ data: { bookingId: bFailed.id, amountCents: bFailed.finalPriceCents, source: "STRIPE", status: "FAILED", stripePaymentIntentId: "pi_demo_failed" } });
-  await prisma.paymentTransaction.create({ data: { paymentId: failedPayment.id, kind: "PRIMARY", source: "STRIPE", amountCents: bFailed.finalPriceCents, status: "FAILED", reason: "card_declined", stripePaymentIntentId: "pi_demo_failed" } });
+  const { payment: failedPayment } = await createDemoPrimaryPayment(prisma, { bookingId: bFailed.id, amountCents: bFailed.finalPriceCents, source: "STRIPE", status: "FAILED", stripePaymentIntentId: "pi_demo_failed" }, { reason: "card_declined" });
   await prisma.paymentRecoveryOperation.create({ data: { type: "CANCEL_PAYMENT_INTENT", status: "FAILED", bookingId: bFailed.id, paymentId: failedPayment.id, paymentIntentId: "pi_demo_failed", amountCents: bFailed.finalPriceCents, idempotencyKey: "demo-recovery-cancel-1", attempts: 3, lastError: "PaymentIntent already canceled" } });
 
   // Split booking: member parent (CONFIRMED) + non-member provisional child (PENDING) — past
@@ -831,8 +770,7 @@ async function main() {
   // effective date, no guests — which the officer enters the guests for.
   const crBooking = await makeBooking(heidi, "COMPLETED", CHANGE_REQUEST_FINISHED_WINDOW.checkIn, CHANGE_REQUEST_FINISHED_WINDOW.checkOut, { id: CHANGE_REQUEST_FINISHED_BOOKING_ID });
   const crGuest = await addGuest(crBooking.id, { firstName: "Heidi", lastName: "Hill", ageTier: "ADULT", isMember: true, memberId: heidi.id }, CHANGE_REQUEST_FINISHED_WINDOW.checkIn, CHANGE_REQUEST_FINISHED_WINDOW.checkOut, NIGHTLY);
-  const crPayment = await prisma.payment.create({ data: { bookingId: crBooking.id, amountCents: crBooking.finalPriceCents, source: "INTERNET_BANKING", reference: "BANK-REF-4030", status: "SUCCEEDED", xeroInvoiceId: "e2e-change-request-invoice", xeroInvoiceNumber: "INV-4030" } });
-  await prisma.paymentTransaction.create({ data: { paymentId: crPayment.id, kind: "PRIMARY", source: "INTERNET_BANKING", amountCents: crBooking.finalPriceCents, status: "SUCCEEDED", reference: "BANK-REF-4030" } });
+  await createDemoPrimaryPayment(prisma, { bookingId: crBooking.id, amountCents: crBooking.finalPriceCents, source: "INTERNET_BANKING", reference: "BANK-REF-4030", status: "SUCCEEDED", xeroInvoiceId: "e2e-change-request-invoice", xeroInvoiceNumber: "INV-4030" });
   await prisma.bookingChangeRequest.create({ data: { id: CHANGE_REQUEST_FREE_TEXT_ID, bookingId: crBooking.id, requestedByMemberId: heidi.id, status: "REQUESTED", requestedChanges: lockedPeriodRequestedChanges(CHANGE_REQUEST_FINISHED_WINDOW, [crGuest.id], { requestedEffectiveDate: CHANGE_REQUEST_FINISHED_WINDOW.checkIn, summary: `effective ${CHANGE_REQUEST_FINISHED_WINDOW.checkIn}` }), reason: "Can we add our two grandchildren to the booking? They came up with us." } });
 
   await prisma.refundRequest.create({ data: { bookingId: bCancelled.id, memberId: grace.id, reason: "Hospitalised — requesting full refund", requestedAmountCents: bCancelled.finalPriceCents, status: "PENDING" } });
@@ -1520,21 +1458,18 @@ async function main() {
     const NIGHTLY2 = 5000; // $50/night member rate at the second lodge (demo)
     async function makeSecondLodgeBooking(
       member: MemberRec,
-      status: string,
+      status: BookingStatus,
       checkIn: string,
       checkOut: string,
     ) {
       const nights = nightsBetween(checkIn, checkOut).length;
       const total = NIGHTLY2 * nights;
-      return prisma.booking.create({
-        data: {
-          memberId: member.id,
-          status: status as never,
-          totalPriceCents: total,
-          finalPriceCents: total,
-          lodgeId: lodge2Id,
-          ...seededBookingDates(checkIn, checkOut),
-        },
+      return createDemoBooking(prisma, {
+        memberId: member.id,
+        status,
+        totalPriceCents: total,
+        lodgeId: lodge2Id,
+        ...seededBookingDates(checkIn, checkOut),
       });
     }
 
@@ -1549,8 +1484,7 @@ async function main() {
 
     const b2Confirmed = await makeSecondLodgeBooking(bob, "CONFIRMED", b2ConfirmedWin.checkIn, b2ConfirmedWin.checkOut);
     await addGuest(b2Confirmed.id, { firstName: "Bob", lastName: "Brown", ageTier: "ADULT", isMember: true, memberId: bob.id }, b2ConfirmedWin.checkIn, b2ConfirmedWin.checkOut, NIGHTLY2);
-    const b2Payment = await prisma.payment.create({ data: { bookingId: b2Confirmed.id, amountCents: b2Confirmed.finalPriceCents, source: "INTERNET_BANKING", reference: "BANK-REF-8802", status: "SUCCEEDED", xeroInvoiceNumber: "INV-2301" } });
-    await prisma.paymentTransaction.create({ data: { paymentId: b2Payment.id, kind: "PRIMARY", source: "INTERNET_BANKING", amountCents: b2Confirmed.finalPriceCents, status: "SUCCEEDED", reference: "BANK-REF-8802" } });
+    await createDemoPrimaryPayment(prisma, { bookingId: b2Confirmed.id, amountCents: b2Confirmed.finalPriceCents, source: "INTERNET_BANKING", reference: "BANK-REF-8802", status: "SUCCEEDED", xeroInvoiceNumber: "INV-2301" });
     await prisma.bookingEvent.create({ data: { bookingId: b2Confirmed.id, type: "CREATED", actorMemberId: bob.id } });
     await prisma.bookingEvent.create({ data: { bookingId: b2Confirmed.id, type: "MEMBER_PAID", actorMemberId: bob.id, amountCents: b2Confirmed.finalPriceCents } });
 
@@ -1582,7 +1516,7 @@ async function main() {
   console.log(`  account credits:   ${credits} (every type)`);
   console.log(`  inductions:        ${inductions} (every status)`);
   console.log(`  booking requests:  ${requests} (every status)`);
-  const passwordHint = process.env.DEMO_SEED_PASSWORD ? "your DEMO_SEED_PASSWORD value" : DEMO_PASSWORD;
+  const passwordHint = process.env.DEMO_SEED_PASSWORD ? "your DEMO_SEED_PASSWORD value" : demoSeedPassword();
   console.log(`\nLogin: any demo member, e.g. alice@${DEMO_DOMAIN} / ${passwordHint}`);
 }
 

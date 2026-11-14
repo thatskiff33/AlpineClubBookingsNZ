@@ -1,9 +1,14 @@
 /**
  * Scenario: booking-hold contention on ONE lodge + ONE night — issue #1884.
  *
- * The core scaling concern: every booking write serialises on the per-lodge
- * Postgres advisory lock (`pg_advisory_xact_lock(hashtextextended(lodgeId,0))`,
- * src/lib/capacity.ts — see docs/CONCURRENCY_AND_LOCKING.md). This scenario
+ * The core scaling concern: a draft or confirmed booking create
+ * (`createDraftBooking`, `createConfirmedBooking`) takes the GLOBAL advisory
+ * lock `pg_advisory_xact_lock(1)` first and then the per-lodge capacity key
+ * (`acquireLodgeCapacityLock`, src/lib/lodge-capacity-lock.ts) — INV-LOCK-001
+ * (tier) and INV-LOCK-002 (global before lodge; see
+ * docs/CONCURRENCY_AND_LOCKING.md). So those creates, on any lodge, queue
+ * behind the one global key, not just this lodge's. A waitlist create
+ * (`createWaitlistedBooking`) takes only the lodge key. This scenario
  * stampedes PEAK_VUS members (default 100) at `POST /api/bookings` for the
  * same lodge and the same night. Losers of the race do NOT error out early:
  * they block on the lock, re-check capacity, and get the app's normal
@@ -35,8 +40,10 @@
  * Run (throwaway local stack ONLY — see docs/LOAD_TESTING.md):
  *   BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
  *     LOAD_USER_EMAIL=alice@demo.alpineclub.test LOAD_USER_PASSWORD=... \
- *     CONTENTION_CHECKIN=2026-08-18 \
  *     k6 run load/scenarios/booking-contention.js
+ *
+ * CONTENTION_CHECKIN defaults to a night 116 days after the run's day
+ * (load/lib/stay-window.js), so the command needs no date.
  */
 
 import http from "k6/http";
@@ -51,6 +58,7 @@ import {
   SCENARIO_IP_OFFSETS,
   vuHeaders,
 } from "../lib/session.js";
+import { bookableLodgeIds } from "../lib/app-api.js";
 import { evaluateContentionOccupancy } from "../lib/contention-invariant.js";
 
 const cfg = loadConfig(__ENV); // init-context guard: aborts unsafe targets
@@ -118,7 +126,13 @@ export function setup() {
   ) {
     throw new Error("Capacity baseline login failed");
   }
-  const baselineOccupied = occupiedBedsForCheckIn();
+  // Booking create refuses a request that names no lodge, so an empty
+  // LODGE_ID means the member's first bookable lodge, named explicitly on
+  // both the writes and the occupancy reads.
+  const lodgeId =
+    cfg.lodgeId ||
+    bookableLodgeIds(cfg, SCENARIO_IP_OFFSETS.bookingContention)[0];
+  const baselineOccupied = occupiedBedsForCheckIn(lodgeId);
   if (baselineOccupied !== cfg.contentionExpectedBaseline) {
     throw new Error(
       "Contention night baseline was " +
@@ -129,13 +143,14 @@ export function setup() {
     );
   }
   return {
+    lodgeId: lodgeId,
     baselineOccupied: baselineOccupied,
     writeBarrierAtMs:
       Date.now() + cfg.contentionAuthWarmupSeconds * 1000,
   };
 }
 
-function occupiedBedsForCheckIn() {
+function occupiedBedsForCheckIn(lodgeId) {
   const year = parseInt(checkIn.slice(0, 4), 10);
   const month = parseInt(checkIn.slice(5, 7), 10) - 1;
   const url =
@@ -144,7 +159,8 @@ function occupiedBedsForCheckIn() {
     year +
     "&month=" +
     month +
-    (cfg.lodgeId ? "&lodgeId=" + cfg.lodgeId : "");
+    "&lodgeId=" +
+    encodeURIComponent(lodgeId);
   const res = http.get(url, {
     headers: vuHeaders(SCENARIO_IP_OFFSETS.capacityProbe),
     responseCallback: http.expectedStatuses(200),
@@ -180,7 +196,7 @@ export function teardown(data) {
     capacityInvariant.add(false);
     return;
   }
-  const finalOccupied = occupiedBedsForCheckIn();
+  const finalOccupied = occupiedBedsForCheckIn(data && data.lodgeId);
   const baselineOccupied = Number(data && data.baselineOccupied);
   const result = evaluateContentionOccupancy({
     baseline: baselineOccupied,
@@ -244,10 +260,8 @@ export default function bookingContention(data) {
     notes: "k6 load harness #1884 — throwaway stack only",
     memberReviewJustification:
       "Load harness child-only request: hold capacity for contention verification",
+    lodgeId: data && data.lodgeId,
   };
-  if (cfg.lodgeId) {
-    body.lodgeId = cfg.lodgeId;
-  }
 
   const res = http.post(cfg.baseUrl + "/api/bookings", JSON.stringify(body), {
     headers: Object.assign(

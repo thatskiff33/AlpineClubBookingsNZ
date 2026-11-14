@@ -361,10 +361,13 @@ describe("email delivery boundary census (INV-CONFIG-004)", () => {
     expect(blocks.length, "no configuration blocks were discovered").toBeGreaterThan(6);
     expect(declaring).toEqual([
       ".env.staging.example",
-      // One writer, three callers, since #3221 — it was two copied workflow
-      // heredocs whose values were byte-identical while their comments had
-      // already drifted. A fourth block named here, the measurement stack's
-      // own Compose file, was removed whole by #3382.
+      // #4940: the load stack's Stripe-stub overlay restates the staging app
+      // block it is stacked on, capture declaration included.
+      "load/compose.stripe-stub.yml -> app",
+      // One writer since #3221 (four callers since #4940) — it was two copied
+      // workflow heredocs whose values were byte-identical while their
+      // comments had already drifted. A fourth block named here, the
+      // measurement stack's own Compose file, was removed whole by #3382.
       'scripts/ci/write-e2e-staging-env.sh -> "$OUT" #1',
     ]);
 

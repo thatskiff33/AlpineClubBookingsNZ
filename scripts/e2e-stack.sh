@@ -36,18 +36,10 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
-# Parse the compose-style env file (KEY=VALUE, no shell quoting): values may
-# contain spaces (e.g. cron schedules), and unquoted values may carry trailing
-# "  # comment" annotations, so plain `source` is not safe.
-while IFS= read -r line; do
-  [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
-  [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
-  key="${line%%=*}"
-  value="${line#*=}"
-  value="${value%%[[:space:]]\#*}" # strip inline comment
-  value="${value%"${value##*[![:space:]]}"}" # trim trailing whitespace
-  export "$key=$value"
-done < "$ENV_FILE"
+# Parse the compose-style env file (KEY=VALUE, no shell quoting).
+# shellcheck source=scripts/lib/compose-env-file.sh
+. scripts/lib/compose-env-file.sh
+read_compose_env_file "$ENV_FILE"
 
 if [[ "${STRIPE_SECRET_KEY:-}" == sk_live* || "${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:-}" == pk_live* ]]; then
   echo "Refusing to run: live Stripe keys found in $ENV_FILE. E2E is test-mode only." >&2
@@ -71,8 +63,16 @@ HOST_DATABASE_URL="postgresql://tac:${DB_PASSWORD}@localhost:${STAGING_POSTGRES_
 export E2E_DATABASE_URL="$HOST_DATABASE_URL"
 
 compose() {
-  docker compose --env-file "$ENV_FILE" -p "$COMPOSE_PROJECT" \
-    -f docker-compose.yml -f docker-compose.staging.yml "$@"
+  # scripts/load-stack.sh sets E2E_LOAD_STUB=1 so this stack also knows its
+  # Stripe stub (#4940). Each branch names its whole file list on one line:
+  # env-delivery-census.test.ts reads the combinations from these lines.
+  if [[ "${E2E_LOAD_STUB:-}" == "1" ]]; then
+    docker compose --env-file "$ENV_FILE" -p "$COMPOSE_PROJECT" \
+      -f docker-compose.yml -f docker-compose.staging.yml -f load/compose.stripe-stub.yml "$@"
+  else
+    docker compose --env-file "$ENV_FILE" -p "$COMPOSE_PROJECT" \
+      -f docker-compose.yml -f docker-compose.staging.yml "$@"
+  fi
 }
 
 # Postgres up, the schema empty, and this host's Prisma client generated.

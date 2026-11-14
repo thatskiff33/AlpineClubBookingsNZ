@@ -134,7 +134,8 @@ const ALLOWED_PREFIXES = [
 // configuration the `/.github/workflows/` pattern already owns, not a widened glob.
 // #4759 raised it to 42: #4464's `status-board.yml` is the same kind of owned
 // workflow, and merged beside #4459 without its count.
-const MAX_OWNED_OUTSIDE_SRC_LIB = 42;
+// #4940 raised it to 43: the advisory `load-smoke.yml` workflow, same kind.
+const MAX_OWNED_OUTSIDE_SRC_LIB = 43;
 
 /**
  * THE REVERSE CHECK: modules known to move money, which must stay owned. A

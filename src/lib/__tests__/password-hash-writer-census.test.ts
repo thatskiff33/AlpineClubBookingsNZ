@@ -55,7 +55,10 @@ type ReviewedWriter = {
 };
 
 /** The only exempt writers allowed an untraced value: local demo data. */
-const UNTRACED_EXEMPT_WRITERS = ["prisma/demo-seed.ts#makeMember", "prisma/demo-seed.ts#main"];
+const UNTRACED_EXEMPT_WRITERS = [
+  "prisma/demo-seed-writers.ts#createDemoMember",
+  "prisma/demo-seed.ts#main",
+];
 
 // A directory whose raw-SQL writers are exempt as a class: every SQL site
 // under it is covered, and a property writer there still needs its own entry.
@@ -225,13 +228,15 @@ const REVIEWED_PASSWORD_HASH_WRITERS: readonly ReviewedWriter[] = [
     valueFrom: "prisma/seed.ts#main",
   },
   {
-    file: "prisma/demo-seed.ts",
-    scope: "makeMember",
+    // Shared by prisma/demo-seed.ts and the load volume seeder (#4940).
+    file: "prisma/demo-seed-writers.ts",
+    scope: "createDemoMember",
     count: 1,
     classification: "exempt",
-    reason: "Local demo data with a published demo password; never a production account.",
+    reason: "Local demo and load-test data with a published demo password; never a production account.",
 
-    untracedValue: "DEMO_SEED_PASSWORD or its published default; the demo seed refuses to run without ALLOW_DEMO_SEED=1.",
+    untracedValue:
+      "demoSeedPasswordHash(): DEMO_SEED_PASSWORD or its published default; both callers refuse to run without ALLOW_DEMO_SEED=1.",
   },
   {
     file: "prisma/demo-seed.ts",

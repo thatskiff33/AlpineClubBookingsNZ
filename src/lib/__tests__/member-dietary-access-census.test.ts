@@ -306,6 +306,8 @@ const RAW_WILDCARD_EXEMPT: Readonly<Record<string, string>> = {
 const CONSTRUCTOR_EXEMPT: Readonly<Record<string, string>> = {
   "prisma/seed.ts": "seeds a fresh database; writes rows, returns none to anyone",
   "prisma/demo-seed.ts": "seeds demo data; writes rows, returns none to anyone",
+  "prisma/load-volume-seed.ts":
+    "seeds load-test history on a throwaway local database (#4940); writes rows, prints counts only",
   "scripts/rehearse-epic-deploy.ts":
     "rehearsal against a scratch database with the OLD generated client; reads " +
     "take:1 per model only to prove the columns resolve, and records counts",
