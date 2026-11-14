@@ -13,6 +13,7 @@ import { recordBookingEvent } from "@/lib/booking-events";
 import { recordManualRefundTaskClosureAudit } from "@/lib/manual-refund-task-audit";
 import { hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
 import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
+import { editReviewLaterRemovalRefusal } from "@/lib/edit-review-guest-removed-since-raised";
 import { chooseEditReviewSettlementRoute, executeEditReviewSettlement, queueEditReviewChargeInvoiceInTransaction, type EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { giveBackCancelledShareCredit, writeEditReviewAccountCredit, type EditReviewAccountCreditOutcome } from "@/lib/edit-financial-review-account-credit";
 import { cancelledBookingRefundInvoiceId, queueCancelledBookingHandBackNoteInTransaction, queueRefundRequestCreditNoteInTransaction, refundMethodForEditReviewRoute } from "@/lib/edit-financial-review-xero-leg";
@@ -22,7 +23,8 @@ import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manua
 import { requireMemberCreditRecipient } from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { enqueueEditFinancialReviewRefundRecovery } from "@/lib/payment-recovery";
-import { applyLocalRefundAllocation } from "@/lib/payment-transactions";
+import { applyLocalRefundAllocation, lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import { readCapacityRaceStripeRefundedForTask } from "@/lib/capacity-race-refunded-total-correction";
 // A settlement write's refusal, as the operator reads it (#3827 split it out).
 import { settlementWriteRefusal } from "@/lib/manual-refund-task-settlement-refusal";
@@ -35,14 +37,8 @@ import { lockBookingRowForOwnerRead, postRefundObligation, resolveBookingDoorClo
 import { editRefundHandBackDismissAfterCancelMessage, zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
 import { recordBankRefundVoidAnswerInTransaction } from "@/lib/bank-refund-void-answer";
 import { isBankRefundVoidFollowUpTask } from "@/lib/bank-refund-void-follow-up-key";
-import {
-  isCancelCardShortfallTask, isEditRefundHandBackTask,
-  isNonCancellationHandBackTask,
-  refundRequestIdOfHandBack,
-  isPartPaymentReviewTask,
-  nonCancellationHandBackCompletedSnapshot,
-  manualRefundTaskSettlementRefusal,
-} from "@/lib/manual-refund-task-settlement-rules";
+import { isCancelCardShortfallTask, isEditRefundHandBackTask, isNonCancellationHandBackTask, refundRequestIdOfHandBack,
+  isPartPaymentReviewTask, nonCancellationHandBackCompletedSnapshot, manualRefundTaskSettlementRefusal } from "@/lib/manual-refund-task-settlement-rules";
 import { groupOrganiserHandBackRefusal, isGroupOrganiserHandBackTask } from "@/lib/group-organiser-hand-back-rules";
 // #3498: what a settle MAY repair is the plan module's; the writes are the store's.
 import { planStoredNightPriceRepair } from "@/lib/stored-night-price-repair-plan";
@@ -67,8 +63,7 @@ import { recordReviewClosurePricing } from "@/lib/stored-night-price-repair-stor
  * the note-length rule and the error type, both of which have their own homes.
  * `INV-PAY-051` is the invariant these rules belong to.
  */
-export { ManualBookingPaymentError };
-export { MANUAL_PAYMENT_NOTE_MAX };
+export { ManualBookingPaymentError, MANUAL_PAYMENT_NOTE_MAX };
 
 export type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
 import type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
@@ -203,7 +198,7 @@ export async function resolveManualRefundTask(
       throw new ManualBookingPaymentError(editRefundHandBackDismissAfterCancelMessage(task.booking), 409); // #3949: names the organiser on a group child
     }
     const groupRefusal = groupOrganiserHandBackRefusal(task, resolution, confirmedAmountCents, format); if (groupRefusal) throw new ManualBookingPaymentError(groupRefusal, 409); // #4042
-
+    const laterRemoval = resolution === "completed" && input.refuseIfGuestRemovedSinceRaised === true ? await editReviewLaterRemovalRefusal(tx, task, resolution) : null; if (laterRemoval) throw new ManualBookingPaymentError(laterRemoval, 409); // #4343: the clean-up's opt-in, under lock(1), which a consent removal also holds; an officer is warned instead (owner, 24 Oct)
     const isEditReview = task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW;
 
     // #3030 (owner decision D2): work out the amount this completion closes at,
@@ -395,12 +390,17 @@ export async function resolveManualRefundTask(
       // Doing any of this at RAISE time would have the ledger claim a refund
       // before the club handed anything back, which is the whole reason the task
       // exists.
+      let heldBack: Awaited<ReturnType<typeof readSupersededCaptureHeldBack>> | null = null; // #4872: also names a refusal
       try {
         if (settlementRoute.kind === "local-allocation" && settlementRoute.refundCents > 0) {
+          // #4872: after the credit give-back (member ledger first); also covers a card-shortfall check part's fall-through.
+          await lockPaymentForRefundedTotal(tx, settlementRoute.paymentId);
+          heldBack = await readSupersededCaptureHeldBack(tx, settlementRoute.paymentId);
           await applyLocalRefundAllocation({
             paymentId: settlementRoute.paymentId,
             amountCents: settlementRoute.refundCents,
             store: tx, preferTransactionIds: settlementRoute.cardShortfall?.preferTransactionIds, onlyTransactionIds: settlementRoute.cardShortfall?.onlyTransactionIds, // #4097, #4154
+            heldBackByTransaction: heldBack.byTransaction,
           });
         }
         // `account-credit` is written by the closure's re-price below, once the
@@ -446,7 +446,7 @@ export async function resolveManualRefundTask(
           });
         }
       } catch (error) {
-        throw settlementWriteRefusal(error, settlementRoute);
+        throw settlementWriteRefusal(error, settlementRoute, heldBack?.totalCents ?? 0);
       }
       // #3599: the money the club handed back by hand, on the booking ledger.
       if (isBankTransferHandBackRoute(settlementRoute) && settlementRoute.refundCents > 0) {

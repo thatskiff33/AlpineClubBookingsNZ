@@ -1,0 +1,1 @@
+- **Merging two members no longer deadlocks with an edit of one of the duplicate's bookings that also updates its split sibling (#4860).**

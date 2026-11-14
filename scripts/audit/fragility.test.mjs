@@ -464,7 +464,7 @@ describe("proposed business areas", () => {
     for (const file of ["src/lib/roster-lock.ts", "src/lib/lodge-capacity-lock.ts", "src/lib/advisory-lock-guard.ts", "src/lib/locks/booking.ts", "src/lib/locking.ts", "scripts/ci/check-pr-concurrency-declaration.mjs"]) {
       expect({ file, matches: concurrency.files.test(file) }).toEqual({ file, matches: true });
     }
-    for (const file of ["src/lib/club-time/clock.ts", "src/app/display/display-header-clock.tsx", "src/components/admin/membership-cancellation-blocker-notice.tsx", "src/components/lodge-pin-relock-panel.tsx", "src/app/(admin)/admin/subscription-lockout/page.tsx", "src/app/api/admin/lockers/route.ts"]) {
+    for (const file of ["src/lib/club-time/clock.ts", "src/app/display/display-header-clock.tsx", "src/components/admin/membership-cancellation-blocker-notice.tsx", "src/components/lodge-pin-relock-panel.tsx", "src/app/(admin)/admin/membership/subscription-lockout/page.tsx", "src/app/api/admin/lockers/route.ts"]) {
       expect({ file, matches: concurrency.files.test(file) }).toEqual({ file, matches: false });
     }
   });

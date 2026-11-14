@@ -21,6 +21,7 @@ import {
   countStaleProcessingXeroInboundEvents,
   countStaleRunningXeroOperations,
 } from "@/lib/xero-stale-operations";
+import { adminHref } from "@/lib/admin-hubs";
 import { XERO_CRON_JOB_NAMES } from "@/lib/xero-cron-jobs";
 
 const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
@@ -489,7 +490,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     webhookHealth,
     unlinkedMembers: {
       count: unlinkedMemberCount,
-      href: "/admin/members?active=true&xeroLinked=false",
+      href: `${adminHref("members")}?active=true&xeroLinked=false`,
     },
     failedOperations: {
       count: failedOperationOverview.activeFailedCount,
