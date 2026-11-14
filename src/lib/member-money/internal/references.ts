@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 
 /**
  * Read-only: what a posted journal row retains (M2 #4514, decision D1 on #4482).
- * Neither function writes, and neither posts: the journal stays inert until M3.
+ * Neither function writes or posts; booking doors post since M3b (INV-MONEY-044).
  *
  * A leg names a booking through a RESTRICT key, so the database refuses to delete
  * that booking; `bookingIdsNamedByJournal` lets a hard-delete path skip it instead

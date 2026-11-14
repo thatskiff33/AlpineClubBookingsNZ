@@ -426,7 +426,7 @@ export function HealthAndDiagnosticsPanels({
             <Button asChild variant="outline" size="sm">
               <Link
                 href={buildHrefWithReturnTo(
-                  `/admin/members/${encodeURIComponent(linkRecovery.id)}`,
+                  `${adminHref("member-detail", { id: linkRecovery.id })}`,
                   currentXeroPath,
                 )}
                 aria-label={`Open affected member: ${linkRecovery.name}`}
@@ -492,7 +492,7 @@ function MissingInvoicesList({
                     too, and a school has no member page — its name is plain text
                     rather than a link to `/admin/members/null`. */}
                 {bookingOwner(booking).memberId ? (
-                  <a href={buildHrefWithReturnTo(`/admin/members/${bookingOwner(booking).memberId}`, currentXeroPath)} className="text-primary hover:underline">
+                  <a href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: bookingOwner(booking).memberId })}`, currentXeroPath)} className="text-primary hover:underline">
                     {booking.memberName}
                   </a>
                 ) : (
@@ -595,7 +595,7 @@ function ContactGroupMismatchPanel({
                   <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                     <div className="space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <a href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, currentXeroPath)} className="text-sm font-medium text-primary hover:underline">{mismatch.memberName}</a>
+                        <a href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: mismatch.memberId })}`, currentXeroPath)} className="text-sm font-medium text-primary hover:underline">{mismatch.memberName}</a>
                         <Badge variant="outline">{formatAgeTierName(mismatch.ageTier)}</Badge>
                         {mismatch.addGroupId ? <ToneChip tone="warning" icon={AlertTriangle}>Add {mismatch.managedGroup?.name ?? mismatch.addGroupId}</ToneChip> : null}
                         {mismatch.removeGroupIds.length > 0 ? <ToneChip tone="warning" icon={AlertTriangle}>{mismatch.removeGroupIds.length} to remove</ToneChip> : null}
@@ -694,7 +694,7 @@ function ContactLinkMismatchPanel({
                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                     <div className="space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <a href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, currentXeroPath)} className="text-sm font-medium text-primary hover:underline">{mismatch.memberName}</a>
+                        <a href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: mismatch.memberId })}`, currentXeroPath)} className="text-sm font-medium text-primary hover:underline">{mismatch.memberName}</a>
                         {mismatch.active ? (
                           <ToneChip tone="success" icon={CheckCircle2}>Active</ToneChip>
                         ) : (
@@ -706,7 +706,7 @@ function ContactLinkMismatchPanel({
                       <p className="text-xs text-warning">{mismatch.reasons.join(", ")}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <Button asChild variant="outline" size="sm"><a href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, currentXeroPath)}>Open Member</a></Button>
+                      <Button asChild variant="outline" size="sm"><a href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: mismatch.memberId })}`, currentXeroPath)}>Open Member</a></Button>
                       <Button asChild variant="outline" size="sm"><a href={buildXeroContactUrl(mismatch.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer">Open in Xero</a></Button>
                       <Button size="sm" variant="outline" onClick={() => void onUnlink(mismatch.memberId, mismatch.memberName)} disabled={recoveryActive || unlinkingMemberId === mismatch.memberId}>
                         {unlinkingMemberId === mismatch.memberId ? "Unlinking..." : "Unlink"}

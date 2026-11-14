@@ -65,8 +65,8 @@ function storeTwoFactor(email: string, data: StoredTwoFactor): void {
 
 // Each persona logs in from its own synthetic client IP (via x-forwarded-for,
 // which getClientIp trusts the same way it trusts the reverse proxy in real
-// deployments). Without this, the serial suite's ~20 logins from one runner IP
-// exhaust the per-IP login rate limit (10 per 15 min) and late specs stall on
+// deployments). Without this, the suite's repeated logins from one runner IP
+// can exhaust the per-IP login rate limit and late specs stall on
 // 429 retries. Deterministic per email so re-logins share their bucket.
 function syntheticClientIp(email: string): string {
   let hash = 0;
@@ -80,8 +80,8 @@ export async function submitLoginForm(
   password: string = DEMO_PASSWORD,
   // Override the synthetic client IP for this login. Every login for a given
   // email otherwise shares one deterministic IP bucket, and the login limiter
-  // allows only 10 per 15 min (rateLimiters.login). A persona reused by more
-  // than 10 specs in a single ~7-min suite run exhausts that bucket, so a spec
+  // uses rateLimiters.login. A heavily reused persona can exhaust that bucket
+  // within a suite run, so a spec
   // that would push a heavily-shared persona (E2E_ADMIN) past the ceiling can
   // pass its own IP to log in from a private bucket instead. Must stay outside
   // syntheticClientIp's 10.99.0.0/16 range to avoid colliding with a real one.
@@ -123,7 +123,7 @@ export async function submitLoginForm(
   await page.waitForURL((url) => url.pathname !== "/login", { timeout: 15_000 });
 }
 
-// Completes TOTP enrollment on /login/enroll: reads the on-page manual setup
+// Completes TOTP enrollment on /login/enroll: reads the on-page typed setup
 // key, answers with a generated authenticator code, and captures the recovery
 // codes. Leaves the browser on the post-login destination.
 export async function enrollTotp(page: Page, email: string): Promise<StoredTwoFactor> {
@@ -131,7 +131,7 @@ export async function enrollTotp(page: Page, email: string): Promise<StoredTwoFa
     page.getByRole("heading", { name: "Set up two-factor authentication" }),
   ).toBeVisible();
 
-  const setupKey = page.locator("div.font-mono").first();
+  const setupKey = page.getByLabel("Or type this setup key", { exact: true });
   await expect(setupKey).not.toHaveText(/Preparing setup key/);
   const secret = (await setupKey.innerText()).trim();
 
