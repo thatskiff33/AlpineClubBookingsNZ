@@ -82,7 +82,7 @@ means re-publishing never re-emails. The email:
 - is a **club notice** (#4987): it goes to every audience member except those
   who turned off **Club notices** on their profile, including members who never
   saved their preferences — the same rule as a Communications club notice
-  ([`INV-PRIV-023`](../invariants/analytics-and-privacy.md#inv-priv-023)), and
+  ([`INV-PRIV-025`](../invariants/analytics-and-privacy.md#inv-priv-025)), and
 - respects email suppression (bounces/complaints) automatically.
 
 The email is a short "new notice" message with a link back to the notice on the

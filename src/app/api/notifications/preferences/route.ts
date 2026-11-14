@@ -27,7 +27,7 @@ const MEMBER_NOTIFICATION_PREFERENCE_KEYS = [
   // #2284 (S2): the family-scope "you were added to a booking" FYI opt-out.
   "bookingAddedByFamily",
   "choreRoster",
-  // #4987: club-business bulk email, opt-out (INV-PRIV-023).
+  // #4987: club-business bulk email, opt-out (INV-PRIV-025).
   "clubNotices",
   "marketingEmails",
 ] as const;

@@ -1,5 +1,5 @@
 /**
- * Who a bulk email may reach (#4987, INV-PRIV-023).
+ * Who a bulk email may reach (#4987, INV-PRIV-025).
  *
  * Every bulk send — Admin → Messages → Communications and a Notice's "Also
  * email this notice to the audience" — declares one category, and each
@@ -13,7 +13,7 @@
  *    NOT receive it, and nothing here may change that.
  *
  * This module is the only place that rule is written. Both send paths and the
- * Communications recipient preview partition their audience through
+ * Communications pre-send count partition their audience through
  * `partitionBulkAudience`, so the count an admin sees and the members emailed
  * cannot drift apart. It is pure (no Prisma, no server-only imports) so the
  * compose page can share the category list and labels.

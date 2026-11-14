@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-// #4987: the Communications send route and its recipient preview resolve the
-// same audience through the shared bulk-email rule (INV-PRIV-023).
+// #4987: the Communications send route and its pre-send count (the GET on the
+// same route) resolve the same audience through the shared bulk-email rule
+// (INV-PRIV-025).
 const mocks = vi.hoisted(() => ({
   memberFindMany: vi.fn(),
   sendEmail: vi.fn(),
@@ -34,8 +35,7 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-import { POST } from "@/app/api/admin/communications/send/route";
-import { GET as previewGet } from "@/app/api/admin/communications/preview/route";
+import { GET, POST } from "@/app/api/admin/communications/send/route";
 import { NextRequest } from "next/server";
 
 const MEMBERS = [
@@ -139,18 +139,21 @@ describe("POST /api/admin/communications/send", () => {
   });
 });
 
-describe("GET /api/admin/communications/preview", () => {
-  function previewRequest(query: string) {
-    return new NextRequest(`http://x/api/admin/communications/preview?${query}`);
+describe("GET /api/admin/communications/send (the pre-send count)", () => {
+  function countRequest(query: string) {
+    return new NextRequest(
+      `http://x/api/admin/communications/send?${query}`,
+    );
   }
 
   it("returns the counts the send would use, and no addresses", async () => {
-    const res = await previewGet(
-      previewRequest("recipientFilter=all&category=newsletter"),
+    const res = await GET(
+      countRequest("recipientFilter=all&category=newsletter"),
     );
     const json = await res.json();
 
-    expect(json).toEqual({
+    expect(json).toMatchObject({
+      category: "newsletter",
       totalRecipients: 4,
       eligibleRecipients: 1,
       optedOut: 2,
@@ -161,14 +164,44 @@ describe("GET /api/admin/communications/preview", () => {
   });
 
   it("changes with the category", async () => {
-    const res = await previewGet(
-      previewRequest("recipientFilter=all&category=clubNotice"),
+    const res = await GET(
+      countRequest("recipientFilter=all&category=clubNotice"),
     );
-    expect(await res.json()).toMatchObject({ eligibleRecipients: 3, optedOut: 1 });
+    expect(await res.json()).toMatchObject({
+      category: "clubNotice",
+      eligibleRecipients: 3,
+      optedOut: 1,
+      neverOptedIn: 0,
+    });
   });
 
-  it("requires a category", async () => {
-    const res = await previewGet(previewRequest("recipientFilter=all"));
+  it("agrees with the send for each category", async () => {
+    for (const category of ["clubNotice", "newsletter"] as const) {
+      const count = await (
+        await GET(countRequest(`recipientFilter=all&category=${category}`))
+      ).json();
+      const sent = await (await POST(sendRequest({ category }))).json();
+      expect(sent).toMatchObject({
+        eligibleRecipients: count.eligibleRecipients,
+        optedOut: count.optedOut,
+        neverOptedIn: count.neverOptedIn,
+      });
+    }
+  });
+
+  it("counts an audience with no category as a newsletter, never wider", async () => {
+    const res = await GET(countRequest("recipientFilter=all"));
+    expect(await res.json()).toMatchObject({
+      category: "newsletter",
+      eligibleRecipients: 1,
+    });
+  });
+
+  it("rejects an unknown category", async () => {
+    const res = await GET(
+      countRequest("recipientFilter=all&category=everyone"),
+    );
     expect(res.status).toBe(400);
+    expect(mocks.memberFindMany).not.toHaveBeenCalled();
   });
 });

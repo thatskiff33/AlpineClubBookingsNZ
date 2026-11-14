@@ -50,7 +50,13 @@
 
 import { RequestEmpty } from "xero-node";
 
-import { callXeroApi } from "@/lib/xero-api-client";
+import {
+  callXeroApi,
+  isRetryableXeroTransientStatus,
+  XeroDailyLimitError,
+  XeroTransientOutageError,
+} from "@/lib/xero-api-client";
+import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 import {
   assertDeliveryClearanceWitness,
   describeDeliveryDecision,
@@ -58,6 +64,71 @@ import {
   type LiveProviderClearance,
 } from "@/lib/environment-delivery-policy";
 import type { EnvironmentSafetySettingsStore } from "@/lib/environment-role";
+
+/**
+ * #4919 (`INV-INT-003`, `INV-SSOT`): THE budget for a Xero call made while a
+ * lock is held. One HTTP attempt, no rate-limit or transient retry (so no
+ * `throttle` sleep can run inside the lock), and a client-side deadline. A
+ * single 5xx does not arm the process-wide outage breaker either: the email is
+ * owed and re-driven, so one slow answer must not stop every other Xero call.
+ */
+export const XERO_IN_LOCK_EMAIL_BUDGET = {
+  maxRetries: 0,
+  maxTransientRetries: 0,
+  armTransientBreaker: false,
+  deadlineMs: 3_000,
+} as const;
+
+/** Time kept between the deadline and the transaction timeout, for the commit. */
+const XERO_EMAIL_FENCE_COMMIT_MARGIN_MS = 2_000;
+
+/**
+ * The lock(1) email fence's transaction options. The timeout counts the wait
+ * for the advisory lock as well as the hold, so it is longer than the deadline
+ * plus the commit margin; `maxWait` matches the other lock(1) writers.
+ */
+export const XERO_EMAIL_FENCE_TRANSACTION_OPTIONS = {
+  maxWait: 10_000,
+  timeout: 10_000,
+} as const;
+
+/**
+ * The latest moment, measured from the start of the fence's transaction, at
+ * which the email may still be asked for. Later than this and the deadline
+ * plus the commit could outlive the transaction, so the email is owed instead.
+ */
+export const XERO_EMAIL_FENCE_LATEST_SEND_MS =
+  XERO_EMAIL_FENCE_TRANSACTION_OPTIONS.timeout -
+  XERO_IN_LOCK_EMAIL_BUDGET.deadlineMs -
+  XERO_EMAIL_FENCE_COMMIT_MARGIN_MS;
+
+/**
+ * The call ran out of its deadline. Xero may still have received the request,
+ * so a re-drive must reuse the same idempotency key.
+ */
+export class XeroCallDeadlineError extends Error {
+  constructor(deadlineMs: number) {
+    super(`Xero did not answer the invoice email request within ${deadlineMs} ms; the email is owed and will be asked for again`);
+    this.name = "XeroCallDeadlineError";
+  }
+}
+
+/**
+ * Whether an in-lock email error means "not sent, ask again later" rather than
+ * a failed send: the deadline, a rate limit, a transient Xero error, or a
+ * process-wide cooldown that refused the call.
+ */
+export function isDeferrableInLockEmailError(error: unknown): boolean {
+  if (
+    error instanceof XeroCallDeadlineError ||
+    error instanceof XeroDailyLimitError ||
+    error instanceof XeroTransientOutageError
+  ) {
+    return true;
+  }
+  const status = getXeroErrorStatusCode(error);
+  return status === 429 || isRetryableXeroTransientStatus(status);
+}
 
 /**
  * The narrowest shape of the Xero client this module needs.
@@ -241,17 +312,53 @@ export async function sendXeroInvoiceEmail(params: {
   idempotencyKey: string;
   workflow: string;
   context: string;
+  /** #4919: opt-in, for a call inside a lock. Unset keeps `callXeroApi`'s defaults. */
+  maxRetries?: number;
+  maxTransientRetries?: number;
+  armTransientBreaker?: boolean;
+  /** #4919: reject with `XeroCallDeadlineError` this long after the call starts. */
+  deadlineMs?: number;
+  /** #4919: usage writes held for the caller to run after its transaction. */
+  usageTasks?: Array<() => Promise<void>>;
 }): Promise<{ body: unknown }> {
   assertDeliveryClearanceWitness(params.clearance, "production");
+  const { deadlineMs } = params;
+  const startedAt = performance.now();
   const response = await callXeroApi(
-    () =>
-      params.xero.accountingApi.emailInvoice(
-        params.tenantId,
-        params.invoiceId,
-        new RequestEmpty(),
-        params.idempotencyKey,
-      ),
+    () => {
+      if (deadlineMs === undefined) {
+        return params.xero.accountingApi.emailInvoice(
+          params.tenantId,
+          params.invoiceId,
+          new RequestEmpty(),
+          params.idempotencyKey,
+        );
+      }
+      // xero-node's generated emailInvoice takes headers only: it passes no
+      // timeout or AbortSignal to its HTTP client. So the deadline is a race,
+      // timed from entry to this function, and no request starts once it has
+      // passed — not even after a slow pre-call check.
+      const remainingMs = deadlineMs - (performance.now() - startedAt);
+      if (remainingMs <= 0) return Promise.reject(new XeroCallDeadlineError(deadlineMs));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new XeroCallDeadlineError(deadlineMs)), remainingMs);
+      });
+      return Promise.race([
+        params.xero.accountingApi.emailInvoice(
+          params.tenantId,
+          params.invoiceId,
+          new RequestEmpty(),
+          params.idempotencyKey,
+        ),
+        deadline,
+      ]).finally(() => clearTimeout(timer));
+    },
     {
+      maxRetries: params.maxRetries,
+      maxTransientRetries: params.maxTransientRetries,
+      armTransientBreaker: params.armTransientBreaker,
+      usageTasks: params.usageTasks,
       operation: "emailInvoice",
       resourceType: "INVOICE",
       workflow: params.workflow,

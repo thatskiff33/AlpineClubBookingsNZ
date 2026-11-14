@@ -2,6 +2,8 @@ import { readdirSync, readFileSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
+import { parseWorkflowYaml } from "../../../scripts/ci/check-workflow-suite-checkout-depth.mjs";
+
 import { readAllowBuilds } from "../../../scripts/ci/check-allow-builds.mjs";
 
 /**
@@ -112,10 +114,24 @@ describe("deployment image contracts", () => {
     expect(workflow).toContain("target: builder");
   });
 
+  it("ties every CI PostgreSQL service to the compose image", () => {
+    const compose = readRepoFile("docker-compose.yml");
+    const postgres = compose.match(/^  postgres:\n([\s\S]*?)(?=^  \S|^\S)/m)?.[1];
+    const image = postgres?.match(/^    image: (\S+)$/m)?.[1];
+    expect(image).toMatch(/^postgres:16-alpine@sha256:[a-f0-9]{64}$/);
+    const jobs = parseWorkflowYaml(readRepoFile(".github/workflows/ci.yml")).jobs;
+    const images = Object.values(jobs).flatMap((job) => {
+      const services = job.services as Record<string, { image: string }> | undefined;
+      return Object.values(services ?? {}).map((service) => service.image).filter((ref) => ref.startsWith("postgres:"));
+    });
+    expect(images.length).toBeGreaterThanOrEqual(4);
+    for (const reference of images) expect(reference).toBe(image);
+  });
+
   it("pins scanner actions and images away from default branch refs", () => {
     const workflow = readRepoFile(".github/workflows/ci.yml");
 
-    expect(workflow).toContain("SEMGREP_IMAGE: semgrep/semgrep:1.161.0");
+    expect(workflow).toMatch(/^\s*SEMGREP_IMAGE: semgrep\/semgrep:1\.161\.0@sha256:[a-f0-9]{64}$/m);
     // The gitleaks pin moved OUT of this workflow in #2852, because the
     // scheduled sweep needs the same binary and a second copy of a version
     // string is how #2686's 8.24.3-versus-8.28.0 split happened. The

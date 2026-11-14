@@ -19,7 +19,8 @@ to read the queues and membership **edit** to approve or reject.
 ## When you'd use it
 
 - A member has asked (through their profile) to delete their account and you need
-  to review it.
+  to review it. Until you approve or reject it, the member's profile shows the
+  date they asked, in place of the request button.
 - A member record was created in error (a typo duplicate with no meaningful
   history) and an admin has raised a permanent hard-delete for a second admin to
   approve.
@@ -53,6 +54,8 @@ to read the queues and membership **edit** to approve or reject.
 3. **Reject** lets you choose **Reject without emailing** or **Reject and email
    member** (with an optional reason sent to the member). If the member has no
    email on file, it is a single **Reject Request** with no notification.
+   Either way the request button returns on the member's profile, so a member
+   you reject without emailing will see it come back and may ask you why.
 
 ### Approve or reject an admin-initiated hard-delete
 

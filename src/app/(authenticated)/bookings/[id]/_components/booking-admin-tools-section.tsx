@@ -1,6 +1,7 @@
 import { AdminBookingToolsCard } from "@/components/admin/admin-booking-tools-card";
 import { XeroSyncNowButton } from "@/components/admin/xero-sync-now-button";
 import { BookingWithheldEmailsBanner } from "@/components/admin/booking-withheld-emails-banner";
+import { BookingStripeDisputeNotice } from "@/components/admin/booking-stripe-dispute-notice";
 import { bookingOwner } from "@/lib/booking-owner";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
 import { savedCardChargeCents } from "@/lib/booking-payment-state";
@@ -50,10 +51,14 @@ export function BookingAdminToolsSection({
     storedNightPriceOffers,
     showReturnToWaitlist,
     exclusiveHoldConflicts,
+    stripeDisputes,
   } = adminTools;
   return (
     <>
       {modules.xeroIntegration && <XeroSyncNowButton target={{ scope: "booking", id: booking.id }} />}
+      {canSeeAdminTools && stripeDisputes.length > 0 && (
+        <BookingStripeDisputeNotice disputes={stripeDisputes} />
+      )}
       {canSeeAdminTools && (
         <AdminBookingToolsCard
           bookingId={booking.id}

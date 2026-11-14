@@ -69,6 +69,7 @@ const bookHelp: HelpPageContent = {
       title: "3. Review & Confirm",
       details: [
         "See your nights, party, and quote in dollars before you commit.",
+        "The Cancellation and refunds box above the Confirm button shows the club's current cancellation schedule for your lodge and check-in: how much of what you pay comes back if you later cancel.",
         "If your stay is far enough out under a Members First hold, your member places are booked and charged now while non-member guests are held provisionally — no bed is reserved for them yet, and their portion is auto-charged around the hold deadline if beds remain.",
         "The 'Only book if my guests can come' choice lets you avoid a member-only place if your guests might be bumped.",
       ],
@@ -106,6 +107,11 @@ const bookHelp: HelpPageContent = {
         label: "Open Family Group in your profile",
       },
       group: BOOK_STEP_GUESTS,
+    },
+    {
+      q: "What happens if I pay and then cancel?",
+      a: "The Review step shows the club's current cancellation schedule for your lodge and dates, just above the Confirm button. How much of what you have paid comes back depends on how close to check-in you cancel; the exact amount is shown when you start a cancellation.",
+      group: BOOK_STEP_REVIEW,
     },
     {
       q: "Why are my non-member guests shown as provisional?",
@@ -156,7 +162,7 @@ const bookingsListHelp: HelpPageContent = {
     },
     {
       q: "How do I change or cancel a booking?",
-      a: "Open the booking from this list. You can change its dates, guests, or promo code (some nights are locked close to check-in and may need club review), or cancel it — the booking's Page guide shows the refund schedule before you start.",
+      a: "Open the booking from this list. You can change its dates, guests, or promo code (some nights are locked close to check-in and may need club review), or cancel it — a paid booking shows its refund schedule beside the Cancel button.",
     },
   ],
 };
@@ -172,7 +178,7 @@ const bookingDetailHelp: HelpPageContent = {
   actions: [
     "Read the status badges to see where the booking and its payment stand.",
     "Use Complete Payment to pay by card or internet banking if money is still due.",
-    "Open this page's guide (Help → Page guide) before cancelling to see the refund schedule that applies to you.",
+    "Before cancelling a paid booking, read the Cancellation and refunds box beside the Cancel button for the refund schedule that applies to it.",
   ],
   sections: [
     {
@@ -182,7 +188,7 @@ const bookingDetailHelp: HelpPageContent = {
     {
       title: "Cancelling and refunds",
       details: [
-        "This page's guide shows the cancellation refund schedule once a payment has been captured, so you see the consequence before you start.",
+        "Once a payment has been captured, the Cancellation and refunds box beside the Cancel button (and this page's guide) shows the refund schedule for this booking's lodge, so you see the consequence before you start.",
         "Whether you get money back, and how much, depends on how close to check-in you cancel and your club's policy.",
         "A paid booking refunds to your card or as account credit per the schedule; an unpaid but cancellable booking simply shows 'no payment received, no refund'.",
       ],
@@ -211,7 +217,7 @@ const bookingDetailHelp: HelpPageContent = {
     },
     {
       q: "Will I get a refund if I cancel?",
-      a: "Open this page's guide (Help → Page guide) to see the refund schedule that applies before you cancel. A paid booking refunds to your card or as account credit depending on how close to check-in you cancel and your club's policy; an unpaid booking has nothing to refund.",
+      a: "A paid booking shows its refund schedule in the Cancellation and refunds box beside the Cancel button. A paid booking refunds to your card or as account credit depending on how close to check-in you cancel and your club's policy; an unpaid booking has nothing to refund.",
     },
     {
       q: "Do I get money back on my card or as account credit?",

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { partitionBulkAudience } from "@/lib/email/bulk-audience";
 
-// #4987, INV-PRIV-023: the one rule deciding who a bulk email reaches. A club
+// #4987, INV-PRIV-025: the one rule deciding who a bulk email reaches. A club
 // notice is opt-out; a newsletter is opt-in, and must stay opt-in for a member
 // who never saved preferences.
 const noRow = { id: "no-row", notificationPreference: null };

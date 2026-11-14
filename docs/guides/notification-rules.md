@@ -37,7 +37,8 @@ the list but the selector is disabled.
    automatically** — there is no separate Save button.
 3. A template shown as **Locked** cannot be changed here — its delivery is
    essential (for example a security or bearer-token email, or a money alert
-   such as *Bank transfer amount needs checking*, #3979) and is fixed by the
+   such as *Bank transfer amount needs checking*, #3979, or a card payment
+   dispute, #4911) and is fixed by the
    system. The always-on admin alerts are listed under
    [Recipients](notification-recipients.md#always-on-alerts).
 
@@ -56,13 +57,17 @@ the list but the selector is disabled.
 | Autosave | Selecting a mode PUTs immediately; a failed save reverts the row and shows an error toast |
 | Stale-rule notice | A banner appears if any delivery rules point at templates that no longer exist ("N stale delivery rules need database cleanup") |
 
+The **Your authenticator was reset** email (#4618) is account-security mail,
+like the password-reset and email-change notices. It goes to the member whose
+authenticator and passkeys were reset, and no booking flag withholds it.
+
 ### Bulk email categories
 
 Delivery rules govern automated emails. Bulk email that an admin sends —
 [Communications](communications.md) and a notice's
 [email on publish](member-notices.md#email-on-publish-optional) — is governed by
 the member's own preferences instead, according to its category (#4987,
-[`INV-PRIV-023`](../invariants/analytics-and-privacy.md#inv-priv-023)):
+[`INV-PRIV-025`](../invariants/analytics-and-privacy.md#inv-priv-025)):
 
 | Category | Member preference | A member who never saved preferences |
 | --- | --- | --- |

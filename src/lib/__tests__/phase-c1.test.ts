@@ -7,6 +7,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockPrisma = {
   // #3372 (owner, 7 Oct 2026): Refunds owed / Credits owed, as at today.
   manualRefundTask: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
+  // #4911: no payment on the page is disputed.
+  stripeDispute: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
   memberCredit: { groupBy: vi.fn(async (): Promise<unknown[]> => []) },
   // #3372 (7 Oct 2026): card refunds not yet paid, for "Refunds owed".
   paymentRecoveryOperation: { findMany: vi.fn(async (): Promise<unknown[]> => []) },

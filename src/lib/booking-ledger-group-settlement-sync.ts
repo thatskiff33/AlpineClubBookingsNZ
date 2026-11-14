@@ -39,6 +39,7 @@ import {
   planGroupSettlementRefundLine,
   planGroupSettlementShareLines,
   type GroupSettlementForPosting,
+  type GroupSettlementRefundSource,
 } from "@/lib/booking-ledger-group-settlement-posting";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { groupSettledChildKeptFrom } from "@/lib/booking-ledger-group-child-plan";
@@ -181,7 +182,7 @@ export async function postGroupSettlementRefundLedgerLine({
   refundCents,
 }: {
   store: Pick<Prisma.TransactionClient, "bookingLedgerLine">;
-  settlement: { id: string; source: PaymentSource };
+  settlement: GroupSettlementRefundSource;
   bookingId: string;
   lodgeId: string;
   refundCents: number;
@@ -289,7 +290,8 @@ export async function postGroupCancelChildLedgerLines(
   if (settlement && input.mirrorPlan && child.payment) {
     await postGroupSettlementRefundLedgerLine({
       store: tx,
-      settlement,
+      // The cancel writes the plan; no Stuck States close can have paid it by bank yet (#4851).
+      settlement: { ...settlement, refundPaidByBank: false },
       bookingId: child.id,
       lodgeId: child.lodgeId,
       refundCents: input.refundForChild,

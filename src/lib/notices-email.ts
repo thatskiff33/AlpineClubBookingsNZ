@@ -28,7 +28,7 @@ const BATCH_DELAY_MS = 1000;
  *
  * Preference + suppression handling mirrors the Communications bulk send:
  *  - a notice is club business, so recipients are partitioned under the
- *    `clubNotice` bulk-email category (#4987, INV-PRIV-023): every audience
+ *    `clubNotice` bulk-email category (#4987, INV-PRIV-025): every audience
  *    member is emailed unless they turned Club notices off, including members
  *    with no saved preferences;
  *  - EmailSuppression is enforced automatically inside sendEmail.

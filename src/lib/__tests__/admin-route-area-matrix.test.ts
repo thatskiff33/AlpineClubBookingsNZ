@@ -265,7 +265,6 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/committee/roles": "membership",
   "/api/admin/committee/roles/[id]": "membership",
   "/api/admin/communications/history": "membership",
-  "/api/admin/communications/preview": "membership",
   "/api/admin/communications/send": "membership",
   "/api/admin/notices": "membership",
   "/api/admin/notices/[id]": "membership",
@@ -460,6 +459,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // settle dialog before completing - a finance read, gated as the queue is.
   "/api/admin/payments/manual-refund-tasks/[id]/still-owed": "finance",
   "/api/admin/pending-counts": "overview",
+  "/api/admin/privacy-hosting": "content",
   "/api/admin/privacy-retention": "support",
   "/api/admin/promo-codes": "bookings",
   "/api/admin/promo-codes/[id]": "bookings",
@@ -478,7 +478,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // request-path header (absent header ⇒ full-ADMIN fallback, silently
   // excluding support-area admins). See admin-permissions.ts.
   "/api/admin/security/magic-link": "support",
+  "/api/admin/security/officer-two-factor": "support",
   "/api/admin/security/password-policy": "support",
+  "/api/admin/security/two-factor-reset/[memberId]": "support",
   "/api/admin/setup": "support",
   "/api/admin/setup/finance-report-mappings": "finance",
   "/api/admin/setup/finance-report-mappings/backfill": "finance",

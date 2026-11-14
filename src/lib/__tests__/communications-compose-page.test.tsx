@@ -1,12 +1,19 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // #4987: the compose page shows who a send will reach before Send is pressed,
-// per kind of message, and words the result without calling a member who
-// never chose "opted out".
+// per kind of message, and words the confirmation and the result without
+// calling a member who never chose "opted out". The count is the GET on the
+// send route, the same query the send uses.
 vi.mock("next-auth/react", () => ({
   useSession: () => ({
     data: {
@@ -35,6 +42,7 @@ const PREVIEW = {
 } as const;
 
 let sendBody: Record<string, unknown> | null = null;
+let countedUrls: string[] = [];
 
 function json(body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -45,18 +53,22 @@ function json(body: unknown) {
 
 beforeEach(() => {
   sendBody = null;
+  countedUrls = [];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/admin/communications/preview") {
-        const category = url.searchParams.get("category") as keyof typeof PREVIEW;
-        return json(PREVIEW[category]);
-      }
       if (url.pathname === "/api/admin/communications/send") {
         if (init?.method === "POST") {
           sendBody = JSON.parse(String(init.body));
           return json({ success: true, ...PREVIEW.newsletter, queued: 3 });
+        }
+        const category = url.searchParams.get("category") as
+          | keyof typeof PREVIEW
+          | null;
+        if (category) {
+          countedUrls.push(`${url.pathname}${url.search}`);
+          return json({ limit: 1, windowSeconds: 3600, ...PREVIEW[category] });
         }
         return json({ limit: 1, windowSeconds: 3600 });
       }
@@ -96,16 +108,20 @@ describe("Communications compose page (#4987)", () => {
     fireEvent.click(await screen.findByLabelText(/Club notice/i));
     await waitFor(() =>
       expect(preview()).toHaveTextContent(
-        "Will be sent to 398 of 400 members (2 opted out).",
+        "Will be sent to 398 of 400 people (2 opted out).",
       ),
     );
 
     fireEvent.click(screen.getByLabelText(/Club newsletter/i));
     await waitFor(() =>
       expect(preview()).toHaveTextContent(
-        "Will be sent to 3 of 400 members (397 never opted in).",
+        "Will be sent to 3 of 400 people (397 never opted in).",
       ),
     );
+    expect(countedUrls).toEqual([
+      "/api/admin/communications/send?recipientFilter=all&category=clubNotice",
+      "/api/admin/communications/send?recipientFilter=all&category=newsletter",
+    ]);
   });
 
   it("sends the chosen kind and reports never-opted-in members apart from opted-out ones", async () => {
@@ -119,9 +135,42 @@ describe("Communications compose page (#4987)", () => {
     fireEvent.click(screen.getByLabelText(/Club newsletter/i));
     fireEvent.click(screen.getByRole("button", { name: /Send to Members/i }));
 
+    // The confirmation names the kind of message and says who is left out,
+    // each group in its own words.
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Kind of message: Club newsletter.");
+    expect(dialog).toHaveTextContent("Not sent to: 397 never opted in.");
+    expect(sendBody).toBeNull();
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Send to 3 people" }),
+    );
+
     expect(
-      await screen.findByText("Sent to 3 members (397 never opted in)."),
+      await screen.findByText("Sent to 3 recipients (397 never opted in)."),
     ).toBeInTheDocument();
     expect(sendBody).toMatchObject({ category: "newsletter", recipientFilter: "all" });
+  });
+
+  it("asks for a fresh choice of kind once a message has been sent", async () => {
+    render(<CommunicationsPage />);
+    fireEvent.change(await screen.findByLabelText(/Subject/i), {
+      target: { value: "Winter newsletter" },
+    });
+    fireEvent.change(screen.getByLabelText(/Message Body/i), {
+      target: { value: "News" },
+    });
+    fireEvent.click(screen.getByLabelText(/Club newsletter/i));
+    fireEvent.click(screen.getByRole("button", { name: /Send to Members/i }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Send to 3 people",
+      }),
+    );
+
+    await screen.findByText(/^Sent to 3 recipients/);
+    expect(screen.getByLabelText(/Club newsletter/i)).not.toBeChecked();
+    expect(screen.getByLabelText(/Club notice/i)).not.toBeChecked();
+    expect(preview()).toHaveTextContent(/Choose the kind of message/i);
   });
 });

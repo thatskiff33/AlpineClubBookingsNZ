@@ -441,7 +441,7 @@ export async function getBookingProviderMismatches(
         label: "Waitlist offer email undelivered",
         description:
           "A place has been offered, but the offer email is missing, bounced, exhausted its retries, or was withheld because the booking is set to send no emails — the member may not know their offer is ticking down.",
-        href: "/admin/waitlist",
+        href: adminHref("waitlist"),
         linkLabel: "Open waitlist queue",
       });
     }
