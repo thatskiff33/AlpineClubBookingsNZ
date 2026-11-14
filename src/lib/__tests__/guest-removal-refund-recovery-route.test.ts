@@ -52,6 +52,8 @@ vi.mock("@/lib/payment-transactions", () => ({
   PartialRefundError: class PartialRefundError extends Error {
     completedRefundCents = 0;
   },
+  // #4872: the refund's plan is frozen under the Payment row before Stripe is asked.
+  lockPaymentForRefundedTotal: vi.fn(async () => undefined),
   planStripeRefundAllocation: mockPlanStripeRefundAllocation,
   refundPaymentTransactions: mocks.refundPaymentTransactions,
 }));
@@ -131,7 +133,12 @@ beforeEach(() => {
   mockPlanStripeRefundAllocation.mockImplementation(ownCardRefundPlan);
   mocks.auth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
   mocks.requireActiveSessionUser.mockResolvedValue(null);
-  mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) => cb({}));
+  mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) => cb({
+    $executeRaw: vi.fn(async () => 1),
+    paymentRecoveryOperation: { findMany: vi.fn(async () => []), findUnique: mocks.recoveryFindUnique },
+    payment: { findUnique: vi.fn(async () => null) },
+    paymentTransaction: { findMany: vi.fn(async () => []) },
+  }));
   mocks.memberFindUnique.mockResolvedValue({
     id: "m1",
     email: "m@example.com",
