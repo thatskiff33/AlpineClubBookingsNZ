@@ -2,12 +2,11 @@
 // card refund operation. Each scenario is the reviewer's, asserted in cents.
 import { describe, expect, it } from "vitest";
 
+import { compareCardRefundOperations, compareRecordedCardRefunds } from "@/lib/card-refund-tie-order";
 import {
   cardRefundSentAfterPaidAnotherWay,
   cardRefundSliceFilledBy,
   cardRefundSlicesByOperation,
-  compareCardRefundOperations,
-  compareRecordedCardRefunds,
   parseRefundAllocationPlan,
   isOwedCardRefundOperation,
   openCardRefundOwedByOperation,

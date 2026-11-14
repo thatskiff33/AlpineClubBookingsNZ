@@ -71,8 +71,8 @@ import { createAuditLog } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { cardRefundPaidAnotherWayClosesWhere } from "@/lib/manual-refund-task-settlement-rules";
 import { readMigrationFinishedAt } from "@/lib/migration-finished-at";
+import { CARD_REFUND_OPERATION_ORDER_BY, RECORDED_CARD_REFUND_ORDER_BY } from "@/lib/card-refund-tie-order";
 import {
-  CARD_REFUND_OPERATION_ORDER_BY,
   CARD_REFUND_OPERATION_WHERE,
   cardRefundPaymentBeforeFailure,
   carriesCardRefundOperationMetadata,
@@ -80,7 +80,6 @@ import {
   cardRefundSliceFilledBy,
   isOpenCardRefundOperationStatus,
   parseRefundAllocationPlan,
-  RECORDED_CARD_REFUND_ORDER_BY,
 } from "@/lib/open-card-refund-owed";
 import {
   isPaymentRecoveryOperationExhausted,
