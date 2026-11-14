@@ -2481,7 +2481,7 @@ admin-initiated member deletions; open manual refund tasks are a Payments
 entry; the Stuck States headline (`getStuckStateAffectedCount` in
 `src/lib/stuck-state-affected-count.ts`, the dashboard scan cached per
 process for 60 seconds, failures not cached) shows only with
-`support:view`. `INV-SSOT-007` and `admin-work-queue-census.test.ts` keep both
+`support:view`. `INV-SSOT-008` and `admin-work-queue-census.test.ts` keep both
 surfaces from counting or linking a queue around the registry.
 Unpaid finished stays (#1709/#1731) —
 `PAYMENT_PENDING` bookings whose check-out is on or before NZ today — badge an

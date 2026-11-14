@@ -10,7 +10,7 @@ import { requireCalendarDate } from "@/lib/club-time";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 /*
-  INV-SSOT-007 (#4962): the Admin Dashboard's attention cards and the sidebar's
+  INV-SSOT-008 (#4962): the Admin Dashboard's attention cards and the sidebar's
   Needs Attention section render officer work queues ONLY from
   `ADMIN_WORK_QUEUES`, and read their numbers ONLY from `getAdminPendingCounts`.
 
@@ -71,7 +71,7 @@ const DASHBOARD_QUEUE_LINKS_ALLOWED: Record<string, string> = {
     "the Net Collected revenue card, not the manual refund queue's card",
 };
 
-describe("officer work queue census (INV-SSOT-007)", () => {
+describe("officer work queue census (INV-SSOT-008)", () => {
   it("finds the counter's queue models and helpers to check against", () => {
     // A rename that empties these lists would pass every check below vacuously.
     expect(queueModels()).toEqual(
