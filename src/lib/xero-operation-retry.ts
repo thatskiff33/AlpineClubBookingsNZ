@@ -36,7 +36,10 @@ import {
   readAppliedCreditLedgerQueueType,
 } from "@/lib/xero-applied-credit-operation-serialization";
 import { asArray, asRecord, readNumber, readString } from "@/lib/xero-json";
-import { modificationNoteInvoiceRefusalRetryReason } from "@/lib/xero-modification-note-refusal";
+import {
+  modificationNoteCreateWasSent,
+  modificationNoteInvoiceRefusalRetryReason,
+} from "@/lib/xero-modification-note-refusal";
 import {
   parsePaymentCreditNoteRetryInput,
   readCashRefundMethod,
@@ -1392,6 +1395,11 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     if (queued?.queueType === XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE) {
       return { supported: true, reason: null };
     }
+    // #3993: an edit note's allocation row Xero refused as paid off is Resolved, not replayed.
+    if (operation.localModel === "BookingModification") {
+      const refusal = modificationNoteInvoiceRefusalRetryReason(operation);
+      if (refusal) return { supported: false, reason: refusal };
+    }
     return parseAllocationRetryInput(operation)
       ? { supported: true, reason: null }
       : { supported: false, reason: "Stored allocation payload is incomplete." };
@@ -2110,6 +2118,8 @@ export async function retryXeroSyncOperation(
         repairExistingLink: true,
         ...(modificationRefundMethod ? { refundMethod: modificationRefundMethod } : {}),
         ...(modificationNoteWording ? { noteWording: modificationNoteWording } : {}),
+        // #3993: a retried row that already sent its create may have a note in Xero.
+        ...(modificationNoteCreateWasSent(operation.requestPayload) ? { earlierCreateSent: true } : {}),
         format,
       });
       return { message: "Retried Xero modification credit note creation." };

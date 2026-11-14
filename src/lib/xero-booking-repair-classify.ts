@@ -88,7 +88,7 @@ import {
 } from "@/lib/xero-booking-repair-side-notes";
 import { addAppliedCreditFindings, waitForAppliedCreditWorkBeforeClearing } from "./xero-booking-repair-applied-credit";
 import { addBlockedNoteAllocationFinding, addResolvedNoteAllocationFinding, dispatchOwnNoteRow, reportModificationNoteInvoiceRefusal } from "./xero-booking-repair-own-note-row";
-import { isStripeCardRefundEdit, modificationNoteInvoiceRefusal } from "@/lib/xero-modification-note-refusal";
+import { isStripeCardRefundEdit, modificationNoteInvoiceRefusal, ownModificationNotePayload } from "@/lib/xero-modification-note-refusal";
 import { addKeptLateCaptureRefundByHandFinding, addLateCaptureCardRefundByHandFindings, addPaidAnotherWayReceiptFinding } from "./xero-booking-repair-paid-another-way";
 import { addKeptChangeCaptureFinding, addUnrecordedAdditionalCaptureFindings, keptInvoiceBillsChange } from "./xero-booking-repair-additional-capture";
 import { addRefundRequestNoteNotQueuedFindings, paidBackRefundRequestCents } from "./xero-booking-repair-request-notes";
@@ -1066,7 +1066,7 @@ export function classifyBookingContext(
             modificationId: modification.id,
             operationId: blockingRecord.id,
             operationStatus: blockingRecord.status,
-          });
+          }, blockingRecord.requestPayload);
         } else if (blockingOperation?.kind === "retryable") {
           const action = addAction(
             actionMap,
@@ -1281,7 +1281,7 @@ export function classifyBookingContext(
               modificationId: modification.id,
               creditNoteId: modificationCreditNote.objectId,
               operationId: allocationRecord.id,
-            });
+            }, ownModificationNotePayload(noteOperations, modificationCreditNote.objectId));
           } else if (blockingOperation?.kind === "retryable") {
             const action = addAction(
               actionMap,

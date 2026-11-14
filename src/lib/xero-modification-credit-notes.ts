@@ -60,7 +60,11 @@ import {
   readInvoiceAmountsDue,
   type ClearingAllocationTarget,
 } from "@/lib/xero-clearing-allocations";
-import { ModificationNoteExceedsInvoiceDueError } from "@/lib/xero-modification-note-refusal";
+import {
+  ModificationNoteExceedsInvoiceDueError,
+  ModificationNoteMayAlreadyExistError,
+  modificationNoteCreateWasSent,
+} from "@/lib/xero-modification-note-refusal";
 import type { ClubFormat } from "@/lib/club-format";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
@@ -86,6 +90,11 @@ export async function createXeroCreditNoteForModification(params: {
    * operation so an operator retry rebuilds the same keys.
    */
   reviewTaskId?: string;
+  /**
+   * #3993: an operator retry of a row whose earlier attempt already sent this
+   * note's create to Xero. An outbox run reads the same from its own row.
+   */
+  earlierCreateSent?: boolean;
   /**
    * The club's format (#3565), for any amount a line description renders (a
    * promotion delta reads "reduced by $20.00" on the Xero line). Resolved once
@@ -190,7 +199,22 @@ export async function createXeroCreditNoteForModification(params: {
     const [due] = await readInvoiceAmountsDue(xero, tenantId, [originalInvoiceId]);
     const owed = due?.amountDueCents ?? 0;
     if (owed < refundAmountCents) {
-      const error = new ModificationNoteExceedsInvoiceDueError(refundAmountCents, owed, params.format);
+      // An earlier attempt that reached the create (then died before
+      // completing) may have left this very note in Xero, allocated but not
+      // linked. That is not "nothing was created" (#3993 review M1).
+      const earlierCreateSent =
+        params.earlierCreateSent === true ||
+        (syncOperation
+          ? modificationNoteCreateWasSent(
+              (await prisma.xeroSyncOperation.findUnique({
+                where: { id: syncOperation.id },
+                select: { requestPayload: true },
+              }))?.requestPayload,
+            )
+          : false);
+      const error = earlierCreateSent
+        ? new ModificationNoteMayAlreadyExistError(refundAmountCents, owed, params.format)
+        : new ModificationNoteExceedsInvoiceDueError(refundAmountCents, owed, params.format);
       if (syncOperation) await failXeroSyncOperation(syncOperation, error);
       throw error;
     }

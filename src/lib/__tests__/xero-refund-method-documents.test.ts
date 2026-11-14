@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   xeroObjectLinkFindFirst: vi.fn(),
   xeroObjectLinkFindMany: vi.fn(),
   xeroSyncOperationUpdate: vi.fn(),
+  xeroSyncOperationFindUnique: vi.fn(),
   memberCreditUpdateMany: vi.fn(),
   startXeroSyncOperation: vi.fn(),
   completeXeroSyncOperation: vi.fn(),
@@ -68,7 +69,7 @@ vi.mock("@/lib/prisma", () => {
       update: mocks.xeroSyncOperationUpdate,
       // #4426: a refund note's record claims its row; no row here is resolved by hand.
       updateMany: async () => ({ count: 1 }),
-      findUnique: async () => null,
+      findUnique: mocks.xeroSyncOperationFindUnique,
       // #3791: the unconverged-deallocation read a review's note defers on.
       findFirst: (...a: unknown[]) => deallocationFence.findFirst(...a),
       // #4688: no unrecorded refund note fences these payments.
@@ -242,6 +243,7 @@ beforeEach(() => {
   mocks.xeroObjectLinkFindFirst.mockResolvedValue(null);
   mocks.xeroObjectLinkFindMany.mockResolvedValue([]);
   mocks.xeroSyncOperationUpdate.mockResolvedValue(undefined);
+  mocks.xeroSyncOperationFindUnique.mockResolvedValue(null);
   mocks.paymentUpdate.mockResolvedValue(undefined);
   mocks.memberCreditUpdateMany.mockResolvedValue({ count: 0 });
   mocks.bookingModificationFindUnique.mockResolvedValue({
@@ -1080,6 +1082,59 @@ describe("clearing-note allocation across the booking's invoices (#3535)", () =>
       bookingModificationId: "cmmodification01",
     });
     expect(mocks.retryXeroWriteWithContactRepair).toHaveBeenCalledTimes(1);
+  });
+
+  it("MUTATION (#3993 review M1): a re-run after an attempt that sent the create says the note may exist, never 'nothing was created'", async () => {
+    const { ModificationNoteExceedsInvoiceDueError, ModificationNoteMayAlreadyExistError, modificationNoteInvoiceRefusal } =
+      await import("@/lib/xero-modification-note-refusal");
+    // The first attempt created and allocated the note, then the worker died
+    // before completing: the invoice now owes nothing and the row holds the
+    // request it wrote just before calling Xero.
+    mocks.getInvoice.mockResolvedValue({ body: { invoices: [{ invoiceID: "inv_paid", status: "PAID", amountDue: 0 }] } });
+    mocks.bookingFindUnique.mockResolvedValue({ ...bookingRow(), payment: { id: PAYMENT_ID, xeroInvoiceId: "inv_paid" } });
+    mocks.xeroSyncOperationFindUnique.mockResolvedValue({
+      requestPayload: { invoiceId: "inv_paid", refundAmountCents: 2500, creditNotes: [{ reference: "earlier attempt" }] },
+    });
+
+    const rerun = createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 2500,
+      bookingModificationId: "cmmodification01",
+      syncOperation: xeroClaim("op-rerun"),
+    });
+    await expect(rerun).rejects.toBeInstanceOf(ModificationNoteMayAlreadyExistError);
+    await expect(rerun).rejects.not.toBeInstanceOf(ModificationNoteExceedsInvoiceDueError);
+    await expect(rerun).rejects.toThrow(/Check Xero for an existing note/);
+    expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+    const [[failedClaim, failure]] = mocks.failXeroSyncOperation.mock.calls;
+    expect(failedClaim).toEqual(expect.objectContaining({ id: "op-rerun" }));
+    // Not the refusal class: the repair tool and the retry screen do not say
+    // "nothing was created" or "a retry will not succeed" for it.
+    expect(modificationNoteInvoiceRefusal({ lastErrorMessage: (failure as Error).message })).toBeNull();
+
+    // Control: the same row before any attempt reached the create is the plain refusal.
+    mocks.failXeroSyncOperation.mockClear();
+    mocks.xeroSyncOperationFindUnique.mockResolvedValue({
+      requestPayload: { queueType: "MODIFICATION_CREDIT_NOTE", bookingId: BOOKING_ID, refundAmountCents: 2500 },
+    });
+    await expect(createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 2500,
+      bookingModificationId: "cmmodification01",
+      syncOperation: xeroClaim("op-first"),
+    })).rejects.toBeInstanceOf(ModificationNoteExceedsInvoiceDueError);
+
+    // An operator retry carries the same evidence from the row it retries.
+    await expect(createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 2500,
+      bookingModificationId: "cmmodification01",
+      earlierCreateSent: true,
+    })).rejects.toBeInstanceOf(ModificationNoteMayAlreadyExistError);
+    expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
   });
 });
 

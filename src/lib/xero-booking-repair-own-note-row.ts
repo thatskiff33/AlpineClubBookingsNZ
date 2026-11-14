@@ -195,8 +195,10 @@ export function reportModificationNoteInvoiceRefusal(
   bookingId: string,
   refusal: ModificationNoteInvoiceRefusal,
   details: Record<string, unknown>,
+  /** The note's own stored request: its method picks the remedy's wording. */
+  notePayload: unknown,
 ) {
-  const summary = modificationNoteRefusalSummary(refusal);
+  const summary = modificationNoteRefusalSummary(refusal, notePayload);
   const action = addAction(actionMap, buildManualReviewAction(bookingId, summary));
   addFinding(findings, {
     code: "MANUAL_REVIEW_REQUIRED",
@@ -238,7 +240,7 @@ export function dispatchOwnNoteRow(
           ...arm.retryDetails,
           creditNoteId: arm.creditNoteId,
           operationId: row.operation.id,
-        });
+        }, row.operation.requestPayload);
         return HANDLED;
       }
     }

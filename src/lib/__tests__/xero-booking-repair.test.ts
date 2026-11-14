@@ -4860,6 +4860,7 @@ describe("runBookingXeroRepair", () => {
         noteRow({
           id: "operation_paid_off",
           status: "PARTIAL",
+          requestPayload: { invoiceId: "inv_primary", refundAmountCents: 4000, refundMethod: "card" },
           responsePayload: { allocationError: "The invoice you are trying to allocate to has already been paid off" },
         }),
       ]);
@@ -4875,6 +4876,29 @@ describe("runBookingXeroRepair", () => {
       expect(transient.findings).toContainEqual(
         expect.objectContaining({ code: "MISSING_CREDIT_NOTE_ALLOCATION", safeToAutoApply: true }),
       );
+    });
+
+    it("MUTATION (#3993 review L1): a paid-off bank-transfer or method-less note is not told about a refund note", async () => {
+      for (const requestPayload of [
+        { invoiceId: "inv_primary", refundAmountCents: 4000, refundMethod: "internet-banking" },
+        { invoiceId: "inv_primary", refundAmountCents: 4000 },
+      ]) {
+        const paidOff = await classify([
+          noteRow({
+            id: "operation_paid_off_bank",
+            status: "PARTIAL",
+            requestPayload,
+            responsePayload: { allocationError: "The invoice you are trying to allocate to has already been paid off" },
+          }),
+        ]);
+        const text = JSON.stringify(paidOff.findings);
+        expect(paidOff.findings).toContainEqual(
+          expect.objectContaining({ code: "MANUAL_REVIEW_REQUIRED", safeToAutoApply: false }),
+        );
+        expect(text).toContain("already paid off");
+        expect(text).not.toContain("refund note");
+        expect(text).not.toContain("Stripe");
+      }
     });
 
     it("MUTATION: reports a PARTIAL row whose retry is running, and queues nothing beside it", async () => {

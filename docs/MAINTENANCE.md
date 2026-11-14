@@ -1484,8 +1484,14 @@ modification note only after confirming it has no allocations or refunds. On
 the Xero operations screen, Resolve the partial operation and its failed
 requeue and allocate rows. Do not mark the row non-replayable, which warns
 forever. Do not void the refund note: inbound sync would retire its link and
-the next nightly run would raise another. This change does not perform that
-remedy, and it uses no production Xero, Stripe, or database.
+the next nightly run would raise another. A paid-off note recorded with any
+other method (or none) names no refund note: check how the money went back
+before allocating, refunding or voiding it. If the invoice cannot take the note
+on a re-run whose earlier attempt already sent the create to Xero (a worker
+that died before completing), the row says so and stays retryable: check Xero
+for an existing note for that edit before treating it as not created. This
+change does not perform that remedy, and it uses no production Xero, Stripe,
+or database.
 Since #4762 the same holds for an invoice-clearing note whose operation the
 retry refuses: reported blocked with the reason and the invoices left to
 allocate by hand, never a fresh allocation of the whole note against the
