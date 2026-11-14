@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   writeFile: vi.fn(),
   rename: vi.fn(),
   unlink: vi.fn(),
+  stat: vi.fn(),
   writeImageDerivatives: vi.fn(),
 }));
 
@@ -44,11 +45,13 @@ vi.mock("fs/promises", () => ({
     writeFile: mocks.writeFile,
     rename: mocks.rename,
     unlink: mocks.unlink,
+    stat: mocks.stat,
   },
   mkdir: mocks.mkdir,
   writeFile: mocks.writeFile,
   rename: mocks.rename,
   unlink: mocks.unlink,
+  stat: mocks.stat,
 }));
 
 // The copy writer has its own suite (image-derivatives.test.ts) against real
@@ -167,6 +170,9 @@ function oversizeAggregateRequest(): NextRequest {
   } as ConstructorParameters<typeof NextRequest>[1] & { duplex: "half" });
 }
 
+// What `fs.stat` reports for the temporary file before its rename.
+const storedIdentity = { dev: 1, ino: 4935, size: 8, mtimeMs: 1_782_864_000_000 };
+
 describe("POST /api/admin/image-manager/upload", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -176,6 +182,7 @@ describe("POST /api/admin/image-manager/upload", () => {
     mocks.writeFile.mockResolvedValue(undefined);
     mocks.rename.mockResolvedValue(undefined);
     mocks.unlink.mockResolvedValue(undefined);
+    mocks.stat.mockResolvedValue(storedIdentity);
     mocks.writeImageDerivatives.mockResolvedValue([400, 800]);
   });
 
@@ -328,6 +335,23 @@ describe("POST /api/admin/image-manager/upload", () => {
     expect(bytes.equals(Buffer.from(mocks.writeFile.mock.calls[0][1]))).toBe(true);
     expect(absDir).toBe(path.join(IMAGES_ROOT, "gallery"));
     expect(fileName).toBe("holiday.jpg");
+  });
+
+  it("hands the copy writer the identity of ITS file, taken before the rename", async () => {
+    // Stat after the rename could name a concurrent upload's file instead,
+    // and then the writer's "is the original still mine?" check would pass
+    // for the wrong photo (#4935 review).
+    await POST(uploadRequest([pngFile("lodge.png")], "gallery"));
+
+    const [partPath] = mocks.writeFile.mock.calls[0] as [string];
+    expect(mocks.stat).toHaveBeenCalledWith(partPath);
+    expect(mocks.stat.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.rename.mock.invocationCallOrder[0] ?? 0,
+    );
+    const options = mocks.writeImageDerivatives.mock.calls[0]?.[3] as {
+      original?: unknown;
+    };
+    expect(options.original).toBe(storedIdentity);
   });
 
   it("still succeeds when no copy could be made (fail-open)", async () => {

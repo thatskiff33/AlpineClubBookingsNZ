@@ -28,6 +28,15 @@ function srcsetUrl(src: string): string {
 }
 
 /**
+ * A URL as a plain `src` or link `href`. Spaces and commas are fine there, but
+ * a `#` (which uploaded names may hold) still cuts the URL at a fragment, so a
+ * photo named `hut#2.jpg` would open a 404 in the lightbox (#5087 review).
+ */
+function attributeUrl(src: string): string {
+  return src.replace(/#/g, "%23");
+}
+
+/**
  * How one photo renders (#4935, INV-PUB-005). With copies: the thumbnail is a
  * `srcset` of them with the middle one as the fallback `src`, and the
  * full-size view opens the widest. Without: the original everywhere, exactly
@@ -37,21 +46,22 @@ function imageSources(image: PhotoGalleryImage) {
   const copies: PhotoGalleryImageCopy[] = image.copies ?? [];
   const widest = copies.at(-1);
   if (!widest) {
+    const src = attributeUrl(image.src);
     return {
-      thumbnailSrc: image.src,
+      thumbnailSrc: src,
       srcSet: undefined,
-      carouselSrc: image.src,
-      full: { src: image.src, width: image.width, height: image.height },
+      carouselSrc: src,
+      full: { src, width: image.width, height: image.height },
     };
   }
   const middle = copies[Math.floor(copies.length / 2)] ?? widest;
   return {
-    thumbnailSrc: middle.src,
+    thumbnailSrc: attributeUrl(middle.src),
     srcSet: copies
       .map((copy) => `${srcsetUrl(copy.src)} ${copy.width}w`)
       .join(", "),
-    carouselSrc: copies[0]?.src ?? widest.src,
-    full: widest,
+    carouselSrc: attributeUrl((copies[0] ?? widest).src),
+    full: { ...widest, src: attributeUrl(widest.src) },
   };
 }
 

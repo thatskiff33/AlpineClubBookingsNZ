@@ -14,10 +14,15 @@ const folder = `vitest-uploaded-${process.pid}`;
 const absDir = path.join(IMAGES_ROOT, folder);
 const BYTES = Buffer.from("\x89PNG pretend image bytes");
 
-function get(parts: string[], headers: Record<string, string> = {}) {
+function get(
+  parts: string[],
+  headers: Record<string, string> = {},
+  method: "GET" | "HEAD" = "GET",
+) {
   return GET(
     new NextRequest(`http://localhost/api/images/uploaded/${parts.join("/")}`, {
       headers,
+      method,
     }),
     { params: Promise.resolve({ path: parts }) },
   );
@@ -52,6 +57,27 @@ describe("GET /api/images/uploaded/[...path]", () => {
     );
     expect(Buffer.from(await response.arrayBuffer())).toEqual(BYTES);
     expect(readFile).not.toHaveBeenCalled();
+  });
+
+  // #5087 review: Next runs GET for a HEAD request and then ends the response
+  // without reading the body, so a stream opened for HEAD would hold its file
+  // handle until garbage collection.
+  it("answers HEAD with the headers, no body, and the file handle closed", async () => {
+    const realOpen = fs.open.bind(fs);
+    let close: ReturnType<typeof vi.fn> | undefined;
+    vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const handle = await realOpen(...(args as Parameters<typeof fs.open>));
+      close = vi.spyOn(handle, "close") as unknown as ReturnType<typeof vi.fn>;
+      return handle;
+    });
+
+    const response = await get([folder, "hut.png"], {}, "HEAD");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("image/png");
+    expect(response.headers.get("Content-Length")).toBe(String(BYTES.length));
+    expect(response.headers.get("ETag")).toMatch(/^"[0-9a-f]{32}"$/);
+    expect(response.body).toBeNull();
+    expect(close).toHaveBeenCalledTimes(1);
   });
 
   it("answers 304 with no body when If-None-Match carries the current tag", async () => {

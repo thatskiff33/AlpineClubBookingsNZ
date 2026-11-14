@@ -159,6 +159,42 @@ describe("writeImageDerivatives", () => {
     expect(await copiesOnDisk()).toEqual([]);
   });
 
+  // #5087 review: two uploads of one name interleave. A copied its photo but
+  // B replaced the original meanwhile, so A's copies would show the wrong
+  // photo beside B's. A must take every copy of the name with it.
+  it("removes its copies when the original was replaced while they were written", async () => {
+    const original = path.join(dir, "lodge.jpg");
+    const photoA = await solid(2000, 1500).jpeg().toBuffer();
+    await fs.writeFile(original, photoA);
+    const identityA = await fs.stat(original);
+    // B renames its photo over lodge.jpg: a new file, so a new inode.
+    const partB = path.join(dir, ".lodge.jpg.b.part");
+    await fs.writeFile(partB, await solid(1000, 750).jpeg().toBuffer());
+    await fs.rename(partB, original);
+
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(
+      await writeImageDerivatives(photoA, dir, "lodge.jpg", {
+        root: dir,
+        original: identityA,
+      }),
+    ).toEqual([]);
+    expect(await copiesOnDisk()).toEqual([]);
+  });
+
+  it("keeps its copies when the original is still the file it copied", async () => {
+    const original = path.join(dir, "lodge.jpg");
+    const bytes = await solid(2000, 1500).jpeg().toBuffer();
+    await fs.writeFile(original, bytes);
+    expect(
+      await writeImageDerivatives(bytes, dir, "lodge.jpg", {
+        root: dir,
+        original: await fs.stat(original),
+      }),
+    ).toEqual([400, 800, 1600]);
+    expect(await copiesOnDisk()).toHaveLength(3);
+  });
+
   it("leaves no temporary file behind", async () => {
     await writeImageDerivatives(await solid(900, 600).jpeg().toBuffer(), dir, "a.jpg", { root: dir });
     expect((await copiesOnDisk()).some((name) => name.endsWith(".part"))).toBe(false);

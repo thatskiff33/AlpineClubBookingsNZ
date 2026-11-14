@@ -61,9 +61,9 @@ environment, a credential, the backup region, the mail host or a cloud lookup.
 
 A public photo gallery never makes a visitor download an original it can
 replace with a smaller copy, and a copy never outlives or misrepresents its
-original. Decided on
+original. Built to
 [#4935](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4935)
-(Option A).
+(Option A, its build plan).
 
 - **Made at upload, or by the operator's backfill, only.** The Image Manager
   upload writes WebP copies at the fixed widths in `src/lib/image-derivatives.ts`
@@ -74,7 +74,8 @@ original. Decided on
 - **Re-encoded from the stored bytes**, under the same 50 MP decode ceiling as
   board images, with no metadata carried over.
 - **A copy is current only while at least as new as its original.** An older
-  one belongs to an earlier file of that name and is never served.
+  one belongs to an earlier file of that name and is never served. If its
+  original is replaced mid-write, the writer removes every copy.
 - **Copies follow their original.** Deleting an image deletes its copies, and
   a delete that cannot remove them says so rather than reporting success.
   Renaming or deleting a folder carries them. `.sizes` is never listed, never

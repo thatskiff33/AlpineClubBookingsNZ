@@ -227,6 +227,28 @@ describe("PhotoGalleryToken", () => {
     );
   });
 
+  // #5087 review: the lightbox link and the fallback src are URLs too.
+  it("escapes a # in the lightbox link and the src, with or without copies", () => {
+    const copy = { src: `${base}/.sizes/hut#2.jpg.400.webp`, width: 400, height: 300 };
+    const { container } = render(
+      <PhotoGalleryToken
+        galleryId="g"
+        variant="gallery"
+        images={[
+          { src: `${base}/hut#2.jpg`, alt: "Hut", width: 800, height: 600, copies: [copy] },
+          { src: `${base}/hut#3.gif`, alt: "Hut 3", width: 640, height: 480 },
+        ]}
+      />,
+    );
+    const [withCopy, without] = [...container.querySelectorAll("a")];
+    expect(withCopy!.getAttribute("href")).toBe(`${base}/.sizes/hut%232.jpg.400.webp`);
+    expect(withCopy!.querySelector("img")!.getAttribute("src")).toBe(
+      `${base}/.sizes/hut%232.jpg.400.webp`,
+    );
+    expect(without!.getAttribute("href")).toBe(`${base}/hut%233.gif`);
+    expect(without!.querySelector("img")!.getAttribute("src")).toBe(`${base}/hut%233.gif`);
+  });
+
   it("renders a photo with no copies exactly as before: the original, no srcset", () => {
     const { container } = render(
       <PhotoGalleryToken

@@ -5,6 +5,7 @@ import path from "path";
 import {
   ALLOWED_IMAGE_EXTS,
   IMAGE_DERIVATIVES_DIRECTORY,
+  isCurrentDerivative,
   imageContentTypeForExt,
   imagePublicUrl,
   listImageDerivatives,
@@ -488,7 +489,7 @@ async function currentGalleryCopies(
   }
   const copies: PhotoGalleryImageCopy[] = [];
   for (const derivative of derivatives) {
-    if (derivative.mtimeMs < originalMtimeMs) continue;
+    if (!isCurrentDerivative(derivative, originalMtimeMs)) continue;
     const copyPath = path.join(
       absDir,
       IMAGE_DERIVATIVES_DIRECTORY,

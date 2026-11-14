@@ -10,7 +10,10 @@ import {
   resolveAlbumPathInImagesRoot,
   storageUnavailableMessage,
 } from "@/lib/image-storage";
-import { writeImageDerivatives } from "@/lib/image-derivatives";
+import {
+  type StoredImageIdentity,
+  writeImageDerivatives,
+} from "@/lib/image-derivatives";
 import { readCappedMultipartFormData } from "@/lib/capped-multipart";
 import {
   detectImageContentType,
@@ -185,8 +188,13 @@ export async function POST(request: NextRequest) {
       // sent. The `.part` name is hidden and has no image extension, so no
       // listing or the serving route ever sees it.
       const partPath = `${absDir}${path.sep}.${safeName}.${randomUUID()}.part`;
+      let stored: StoredImageIdentity;
       try {
         await fs.writeFile(partPath, storable);
+        // Stat before the rename (which keeps inode, size and mtime), so this
+        // names THIS request's file even if another upload of the same name
+        // renames in straight after.
+        stored = await fs.stat(partPath);
         await fs.rename(partPath, filePath);
       } catch (err) {
         await fs.unlink(partPath).catch(() => undefined);
@@ -195,7 +203,9 @@ export async function POST(request: NextRequest) {
       // Website-sized WebP copies for the gallery (#4935, INV-PUB-005), made
       // from the bytes as stored. Fail-open: a photo that cannot be copied is
       // still a successful upload, served as the original.
-      await writeImageDerivatives(storable, absDir, safeName);
+      await writeImageDerivatives(storable, absDir, safeName, {
+        original: stored,
+      });
       results.push({ filename: safeName, ok: true });
     } catch (err) {
       const e = err as NodeJS.ErrnoException;

@@ -17,30 +17,15 @@ export const IMAGES_ROOT = path.join(process.cwd(), "public", "images");
 // on Next.js public-file startup indexing.
 const PUBLIC_URL_PREFIX = "/api/images/uploaded";
 
+// The content type each allowed extension is served and parsed as. This map IS
+// the allowlist: ALLOWED_IMAGE_EXTS and ALLOWED_IMAGE_MIME below are derived
+// from it, so an extension cannot be allowed without a type (the serving route
+// and the gallery's dimension read both use this).
+//
 // SVG is intentionally excluded: it is an XML dialect that can embed inline
 // <script> and event-handler attributes. Files under the images root are served
 // directly by Next.js/Caddy with no restrictive CSP, so an uploaded SVG opened
 // in-browser would execute in the site origin (stored XSS).
-export const ALLOWED_IMAGE_MIME = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "image/avif",
-]);
-
-export const ALLOWED_IMAGE_EXTS = new Set([
-  ".jpg",
-  ".jpeg",
-  ".png",
-  ".gif",
-  ".webp",
-  ".avif",
-]);
-
-// The content type each allowed extension is served and parsed as. Keyed by
-// exactly the ALLOWED_IMAGE_EXTS set, so an extension cannot be allowed without
-// a type (the serving route and the gallery's dimension read both use this).
 export const IMAGE_CONTENT_TYPE_BY_EXT = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -49,6 +34,14 @@ export const IMAGE_CONTENT_TYPE_BY_EXT = {
   ".webp": "image/webp",
   ".avif": "image/avif",
 } as const satisfies Record<string, string>;
+
+export const ALLOWED_IMAGE_EXTS: ReadonlySet<string> = new Set(
+  Object.keys(IMAGE_CONTENT_TYPE_BY_EXT),
+);
+
+export const ALLOWED_IMAGE_MIME: ReadonlySet<string> = new Set(
+  Object.values(IMAGE_CONTENT_TYPE_BY_EXT),
+);
 
 export function imageContentTypeForExt(
   ext: string,
@@ -100,6 +93,21 @@ export type ImageDerivative = {
   width: number;
   mtimeMs: number;
 };
+
+/**
+ * Whether a copy still belongs to its original: written no earlier than it.
+ * A copy older than its original was made from an earlier file of the same
+ * name (replaced by code that predates copies, during a blue/green cutover or
+ * after a rollback). The ONE statement of that rule: the gallery hides such a
+ * copy and the backfill refreshes it, so the two must never disagree
+ * (INV-PUB-005).
+ */
+export function isCurrentDerivative(
+  copy: Pick<ImageDerivative, "mtimeMs">,
+  originalMtimeMs: number,
+): boolean {
+  return copy.mtimeMs >= originalMtimeMs;
+}
 
 /**
  * Every copy in one directory's copies folder, grouped by the original's file

@@ -147,6 +147,22 @@ describe("Image Manager actions carry the copies", () => {
     expect(error).toHaveBeenCalled();
   });
 
+  // #5087 review: after a partial failure the photo has left the listing, so
+  // the only retry is the same DELETE. It must reach the copies again.
+  it("a repeated delete of a photo already gone still removes its copies", async () => {
+    await fs.rm(path.join(absDir, "album", "lodge.jpg"));
+    const res = await imagesRoute.DELETE(
+      request("DELETE", "/api/admin/image-manager/images", {
+        dir: `${folder}/album`,
+        filename: "lodge.jpg",
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await fs.readdir(path.join(absDir, "album", SIZES))).toEqual([
+      "other.jpg.400.webp",
+    ]);
+  });
+
   it("renaming a folder carries its copies", async () => {
     const res = await directoriesRoute.PATCH(
       request("PATCH", "/api/admin/image-manager/directories", {

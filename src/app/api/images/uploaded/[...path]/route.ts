@@ -80,6 +80,21 @@ export async function GET(
     return new NextResponse(null, { status: 304, headers: validatorHeaders });
   }
 
+  const contentHeaders = {
+    ...validatorHeaders,
+    "Content-Type": imageContentTypeForExt(ext) ?? "application/octet-stream",
+    "Content-Length": String(stat.size),
+  };
+
+  // Next answers HEAD by calling this GET and then ending the response without
+  // reading or cancelling its body. A stream opened here would hold the file
+  // handle (and its first buffered chunk) until garbage collection, one per
+  // anonymous HEAD request. So HEAD gets the headers and no stream (#5087).
+  if (request.method === "HEAD") {
+    await handle.close();
+    return new NextResponse(null, { status: 200, headers: contentHeaders });
+  }
+
   // A zero-byte file has no valid `end` offset; it still gets an empty 200.
   const body =
     stat.size === 0
@@ -93,12 +108,5 @@ export async function GET(
     await handle.close();
   }
 
-  return new NextResponse(body, {
-    status: 200,
-    headers: {
-      ...validatorHeaders,
-      "Content-Type": imageContentTypeForExt(ext) ?? "application/octet-stream",
-      "Content-Length": String(stat.size),
-    },
-  });
+  return new NextResponse(body, { status: 200, headers: contentHeaders });
 }

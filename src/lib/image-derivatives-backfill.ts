@@ -2,12 +2,14 @@ import fs from "fs/promises";
 import path from "path";
 
 import {
+  type StoredImageIdentity,
   plannedDerivativeWidthsFor,
   writeImageDerivatives,
 } from "@/lib/image-derivatives";
 import {
   ALLOWED_IMAGE_EXTS,
   IMAGE_DERIVATIVES_DIRECTORY,
+  isCurrentDerivative,
   isDerivativeDirectoryName,
   listImageDerivatives,
   removeImageDerivatives,
@@ -103,7 +105,7 @@ async function backfillDirectory(
     }
 
     const existing = derivatives.get(entry.name) ?? [];
-    const current = existing.every((copy) => copy.mtimeMs >= originalMtimeMs);
+    const current = existing.every((copy) => isCurrentDerivative(copy, originalMtimeMs));
     if (
       current &&
       sameWidths(
@@ -119,9 +121,20 @@ async function backfillDirectory(
       report.refreshed.push(label);
       continue;
     }
-    const bytes = await fs.readFile(filePath);
+    // Bytes and identity from one open handle, so an upload replacing the
+    // photo meanwhile is caught by the writer's re-check (INV-PUB-005).
+    const handle = await fs.open(filePath, "r");
+    let bytes: Buffer;
+    let original: StoredImageIdentity;
+    try {
+      original = await handle.stat();
+      bytes = await handle.readFile();
+    } finally {
+      await handle.close();
+    }
     const written = await writeImageDerivatives(bytes, absDir, entry.name, {
       root,
+      original,
     });
     if (sameWidths(written, planned)) {
       report.refreshed.push(label);

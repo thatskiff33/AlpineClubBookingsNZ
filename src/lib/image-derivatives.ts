@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import type { Stats } from "fs";
 import fs from "fs/promises";
 import path from "path";
 
@@ -84,6 +85,10 @@ export async function plannedDerivativeWidthsFor(
  * at widths not written now are removed, so a narrower replacement photo does
  * not keep serving the old photo's wider copies.
  *
+ * `original`, when given, is the identity of the stored file `bytes` were read
+ * from. Production callers always pass it: it is what lets two writers of the
+ * same name settle on one photo's copies (see the check at the end).
+ *
  * FAIL-OPEN, matching the upload route: any error (a corrupt image, one past
  * the pixel limit, a full disk) is logged, every copy of this name is removed
  * so the gallery falls back to the original, and the result is `[]`. It never
@@ -93,11 +98,35 @@ export async function plannedDerivativeWidthsFor(
  * upload route), and sharp drops all metadata unless `.withMetadata()` asks
  * for it — so no GPS reaches a copy. Do not add that call.
  */
+/**
+ * Which stored file a set of bytes was: its inode, size and modification
+ * time, as `stat` reports them. Taken BEFORE the original can be replaced (the
+ * upload stats its `.part` file before the rename, which keeps all three; the
+ * backfill stats the handle it reads from), so it names this writer's file,
+ * never a concurrent writer's.
+ */
+export type StoredImageIdentity = Pick<
+  Stats,
+  "dev" | "ino" | "size" | "mtimeMs"
+>;
+
+function sameStoredImage(a: StoredImageIdentity, b: StoredImageIdentity) {
+  return (
+    a.dev === b.dev &&
+    a.ino === b.ino &&
+    a.size === b.size &&
+    a.mtimeMs === b.mtimeMs
+  );
+}
+
 export async function writeImageDerivatives(
   bytes: Buffer,
   absDir: string,
   fileName: string,
-  { root = IMAGES_ROOT }: { root?: string } = {},
+  {
+    root = IMAGES_ROOT,
+    original,
+  }: { root?: string; original?: StoredImageIdentity } = {},
 ): Promise<number[]> {
   const sizesDir = path.resolve(absDir, IMAGE_DERIVATIVES_DIRECTORY);
   // The caller's containment, re-checked at the writes below: a folder outside
@@ -129,6 +158,26 @@ export async function writeImageDerivatives(
       keepWidths: widths,
       root,
     });
+    // Two writers of one name interleave their widths: A renames, B renames,
+    // B writes every width, then A overwrites some. Every copy is newer than
+    // B's original, so the mtime filter cannot catch it and the gallery would
+    // mix two photos. Each writer re-checks, after its last write, that the
+    // original is still the file it copied; if not, it removes every copy of
+    // the name. The later writer's own check then holds, and if any of its
+    // copies were removed the gallery serves its original (INV-PUB-005).
+    if (original) {
+      const current = await fs
+        .stat(path.join(absDir, fileName))
+        .catch(() => null);
+      if (!current || !sameStoredImage(current, original)) {
+        console.warn(
+          "image-derivatives: original replaced while copies were written; copies removed:",
+          fileName,
+        );
+        await removeImageDerivatives(absDir, fileName, { root });
+        return [];
+      }
+    }
     return widths;
   } catch (err) {
     console.warn(

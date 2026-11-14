@@ -122,11 +122,17 @@ export async function DELETE(request: NextRequest) {
 
   try {
     await fs.unlink(filePath);
-  } catch {
-    return NextResponse.json(
-      { error: "Failed to delete image" },
-      { status: 500 },
-    );
+  } catch (err) {
+    // Already gone is the outcome wanted, so a retry after "copies could not
+    // be removed" goes on to try the copies again rather than failing here
+    // (#5087 review). Any other error still fails before the copies are
+    // touched.
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      return NextResponse.json(
+        { error: "Failed to delete image" },
+        { status: 500 },
+      );
+    }
   }
 
   // Its website-sized copies go with it (#4935): a copy left behind would keep
@@ -154,7 +160,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "The image was deleted, but its resized website copies could not be removed. Check the image storage volume is writable by the app.",
+          "The image was deleted, but its resized website copies could not be removed. Check the image storage volume is writable by the app, then ask the operator to run the image backfill (images:backfill-sizes --apply) to remove them.",
       },
       { status: 500 },
     );
