@@ -112,13 +112,26 @@ const GENERICISE_LODGE_COPY_MIGRATION_PATH = join(
 );
 
 // Issue #4031: guarded update that corrects section 7's audit-log retention
-// schedule. It supersedes #1945 as the authoritative writer of the current
-// privacy seed text; #1945 still writes the current Terms and FAQ.
+// schedule. It superseded #1945 as the writer of the privacy seed text, until
+// #4914's 20261214010000 migration took over as the current privacy writer;
+// #1945 still writes the current Terms.
 const PRIVACY_AUDIT_RETENTION_MIGRATION_PATH = join(
   process.cwd(),
   "prisma",
   "migrations",
   "20261119010000_correct_starter_privacy_audit_retention",
+  "migration.sql",
+);
+
+// Follow-up to #4914: guarded update that makes the FAQ's personal-data answer
+// a summary of every category held, pointing to section 2 of the Privacy
+// Policy. It supersedes #1945 as the authoritative writer of the current FAQ
+// seed text.
+const FAQ_PERSONAL_DATA_MIGRATION_PATH = join(
+  process.cwd(),
+  "prisma",
+  "migrations",
+  "20261218070000_summarise_starter_faq_personal_data",
   "migration.sql",
 );
 
@@ -291,6 +304,10 @@ describe("starter page content backfill migration", () => {
     PRIVACY_AUDIT_RETENTION_MIGRATION_PATH,
     "utf8",
   );
+  const faqPersonalDataSql = readFileSync(
+    FAQ_PERSONAL_DATA_MIGRATION_PATH,
+    "utf8",
+  );
   // Comments stripped: #2431's header quotes the new hero in prose, and this
   // suite's job is to prove a STATEMENT writes each current seed value.
   const homeGuestCopySql = statementsOnly(
@@ -298,7 +315,7 @@ describe("starter page content backfill migration", () => {
   );
   const allInsertSql = `${insertSql}\n${backfill404Sql}\n${policyPagesSql}\n${bookingRequestsSql}\n${schoolBookingsSql}`;
   const privacyRetentionSql = readFileSync(join(process.cwd(), "prisma/migrations/20261214010000_correct_starter_privacy_retention_and_hosting/migration.sql"), "utf8");
-  const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}\n${genericiseLodgeCopySql}\n${privacyAuditRetentionSql}\n${homeGuestCopySql}\n${privacyRetentionSql}`;
+  const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}\n${genericiseLodgeCopySql}\n${privacyAuditRetentionSql}\n${faqPersonalDataSql}\n${homeGuestCopySql}\n${privacyRetentionSql}`;
 
   it("inserts exactly the starter pages defined for the seed", () => {
     const insertedIds = [
@@ -664,9 +681,11 @@ describe("starter lodge-copy genericise update migration (#1945)", () => {
   });
 
   it("writes the current club-agnostic, token-driven seed copy", () => {
-    // Privacy's current seed is written by the #4031 migration, which guards
-    // on exactly the privacy text this one writes (asserted there).
-    for (const slug of ["terms", "faq"]) {
+    // Privacy's current seed is written by #4914's
+    // 20261214010000_correct_starter_privacy_retention_and_hosting migration
+    // (it guards on the #4031 body) and the FAQ's by the #4914 follow-up; each
+    // guards on exactly the text its predecessor wrote (asserted there).
+    for (const slug of ["terms"]) {
       const page = starterPageContent.find((p) => p.slug === slug);
       expect(page, `expected starter page ${slug}`).toBeDefined();
       expect(sql).toContain(page!.contentHtml);
@@ -715,6 +734,109 @@ describe("starter privacy audit-retention update migration (#4031)", () => {
   });
 });
 
+describe("starter FAQ personal-data summary update migration (#4914 follow-up)", () => {
+  const sql = readFileSync(FAQ_PERSONAL_DATA_MIGRATION_PATH, "utf8");
+  const genericiseSql = readFileSync(GENERICISE_LODGE_COPY_MIGRATION_PATH, "utf8");
+  const faq = starterPageContent.find((p) => p.slug === "faq");
+
+  it("only updates the faq row, and never inserts or deletes", () => {
+    expect(statementsOnly(sql).match(/UPDATE\s+"PageContent"/g)).toHaveLength(1);
+    expect(sql).not.toMatch(/\bDELETE\b/i);
+    expect(sql).not.toMatch(/\bINSERT\b/i);
+    expect(statementsOnly(sql)).toContain(`"slug" = ${sqlQuote("faq")}`);
+  });
+
+  it("guards the update on the exact FAQ text #1945 wrote, so edited rows are untouched", () => {
+    const previous = sql.match(/\$previous\$([\s\S]*?)\$previous\$/)?.[1];
+    expect(previous).toBe(nthCmsBlock(genericiseSql, 3));
+    expect(statementsOnly(sql)).toContain(`AND "contentHtml" = $previous$`);
+  });
+
+  it("writes the current FAQ seed copy", () => {
+    expect(faq).toBeDefined();
+    expect(nthCmsBlock(sql, 1)).toBe(faq!.contentHtml);
+    expect(statementsOnly(sql)).toContain(`"updatedAt" = timezone('UTC', statement_timestamp())`);
+  });
+
+  it("sorts after the #1945 migration it corrects, so migrate deploy applies it second", () => {
+    const stamp = (path: string) => path.split("/").at(-2)!;
+    expect(stamp(FAQ_PERSONAL_DATA_MIGRATION_PATH) > stamp(GENERICISE_LODGE_COPY_MIGRATION_PATH)).toBe(true);
+  });
+});
+
+describe("the starter FAQ's personal-data answer", () => {
+  const faq = starterPageContent.find((p) => p.slug === "faq")!;
+  const answer = faq.contentHtml
+    .split("<summary>What personal data does the club hold about me?</summary>")[1]
+    ?.split("</details>")[0];
+
+  it("names the categories the summary promises", () => {
+    // The pre-fix answer lacked title, gender, occupation, addresses, photo,
+    // dietary or allergy information, family and membership history. The
+    // answer also names emails, guests and security logs, which this list does
+    // not pin; section 2 of the Privacy Policy is the full list.
+    expect(answer).toBeDefined();
+    for (const category of [
+      "name",
+      "title",
+      "gender",
+      "date of birth",
+      "occupation",
+      "email address",
+      "phone number",
+      "street and postal addresses",
+      "profile photo",
+      "dietary or allergy information",
+      "family group",
+      "membership history",
+      "bookings",
+      "payment records",
+      "chore assignments",
+    ]) {
+      expect(answer, `missing "${category}"`).toContain(category);
+    }
+  });
+
+  it("says it is a summary and points to section 2 of the Privacy Policy", () => {
+    expect(answer).toContain("This is a summary.");
+    expect(answer).toContain('Section 2 of our <a href="/privacy">Privacy Policy</a>');
+    const privacy = starterPageContent.find((p) => p.slug === "privacy")!;
+    expect(privacy.contentHtml).toContain("<h2>2. What Information We Collect</h2>");
+  });
+
+  it("only points to a section 2 that itself lists each category the summary names", () => {
+    // The answer says section 2 "lists everything the club collects", so the
+    // privacy seed's section 2 must name every category the summary names, in
+    // the words section 2 uses. Editing either copy without the other fails here.
+    const privacy = starterPageContent.find((p) => p.slug === "privacy")!;
+    const section2 = privacy.contentHtml
+      .split("<h2>2. What Information We Collect</h2>")[1]
+      ?.split("<h2>3.")[0];
+    expect(section2).toBeDefined();
+    for (const wording of [
+      "first and last name",
+      "Title",
+      "gender",
+      "date of birth",
+      "occupation",
+      "email address",
+      "phone number",
+      "street and postal addresses",
+      "Profile photos",
+      "dietary or allergy information",
+      "family relationships",
+      "membership dates and history",
+      "Dates of stay",
+      "guest names",
+      "Payment status",
+      "Chore assignments",
+      "Emails sent to you",
+      "IP addresses and request logs",
+    ]) {
+      expect(section2, `section 2 lacks "${wording}"`).toContain(wording);
+    }
+  });
+});
 
 describe("starter privacy retention census (#4914)", () => {
   const page = starterPageContent.find((p) => p.slug === "privacy")!;

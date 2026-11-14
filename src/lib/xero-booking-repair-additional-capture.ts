@@ -18,7 +18,12 @@
  * (an invoice raised before them) it is offered for an officer to apply: the
  * capture may be in the invoice's own payment already.
  */
-import { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-capture-receipt-payload";
+import {
+  readAdditionalCaptureReceiptPayload,
+  splitReceiptLegsSummary,
+  XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
+} from "@/lib/additional-capture-receipt-payload";
+import { linkedReceiptLegCount } from "@/lib/additional-capture-receipt-legs";
 import { ADDITIONAL_CAPTURE_PAYMENT_ROLE, captureChangeId } from "@/lib/additional-capture-receipt-link";
 import { ADDITIONAL_CAPTURE_RECEIPT_REFUSED_CODE } from "@/lib/additional-capture-xero-receipt";
 import { readPrimaryInvoiceFeeAtLink } from "@/lib/xero-primary-invoice-gap-anchors";
@@ -45,12 +50,41 @@ import { addAction, addFinding, buildManualReviewAction, buildRetryAction } from
 import { getBlockingOperation } from "./xero-booking-repair-object-resolution";
 import type { RepairDependencies } from "./xero-booking-repair-deps";
 
+/** Rows no worker will pick up again: whatever legs they left unlinked stay unsent. */
+const SETTLED_RECEIPT_STATUSES: ReadonlySet<string> = new Set(["SUCCEEDED", "CANCELLED"]);
+
+/**
+ * A part-sent split receipt: a stored plan with at least one leg linked and at
+ * least one not. Worker and repair both match links to each planned invoice,
+ * including on cancelled bookings. A plan with no leg linked is not part-sent:
+ * the unrecorded, retry and refused paths already name that capture once.
+ * `settled` says no worker will send the rest (the row completed or was
+ * withdrawn, for example an old release completing it on one link), so only an
+ * officer can; otherwise the row is queued, running or failed, and the
+ * ordinary retry and refused paths apply, the worker resending only unlinked legs.
+ */
+function partSentReceipt(
+  operations: readonly XeroOperationRecord[],
+  links: readonly { metadata: unknown }[],
+): { summary: string; settled: boolean } | undefined {
+  for (const operation of operations) {
+    const plan = readAdditionalCaptureReceiptPayload(operation.requestPayload)?.plan;
+    if (!plan) continue;
+    const linkedCount = linkedReceiptLegCount(plan.legs, links);
+    const summary = linkedCount > 0 ? splitReceiptLegsSummary(plan, linkedCount) : null;
+    if (summary) return { summary, settled: SETTLED_RECEIPT_STATUSES.has(operation.status) };
+  }
+  return undefined;
+}
+
 /** What the repair pass knows about one booking's change captures in Xero. */
 export type AdditionalCaptureReceiptEvidence = {
   /** The receipt rows, by the capture's ledger row. */
   operationsByTransactionId: Map<string, XeroOperationRecord[]>;
   /** Captures whose receipt's Xero payment is linked. */
   recordedTransactionIds: ReadonlySet<string>;
+  /** Active receipt links, matched to planned invoices when checking completeness. */
+  linksByTransactionId: ReadonlyMap<string, readonly { metadata: unknown }[]>;
   /**
    * Review round 1 (B): captures another writer records (`readCaptureRecorder`):
    * the primary's own payment, or a supplementary invoice for the change or
@@ -119,7 +153,7 @@ export async function loadAdditionalCaptureReceiptEvidence(
           role: ADDITIONAL_CAPTURE_PAYMENT_ROLE,
           active: true,
         },
-        select: { localId: true },
+        select: { localId: true, metadata: true },
       }),
       readPrimaryInvoiceFeeAtLink(booking.id, primaryInvoiceId, store),
     ]);
@@ -132,6 +166,10 @@ export async function loadAdditionalCaptureReceiptEvidence(
       ]);
     }
     const recordedTransactionIds = new Set(links.map((link) => link.localId));
+    const linksByTransactionId = new Map<string, { metadata: unknown }[]>();
+    for (const link of links) {
+      linksByTransactionId.set(link.localId, [...(linksByTransactionId.get(link.localId) ?? []), link]);
+    }
     const recordedElsewhereIntentIds = new Set<string>();
     const receiptModificationIds = new Set<string>();
     for (const capture of captures) {
@@ -163,6 +201,7 @@ export async function loadAdditionalCaptureReceiptEvidence(
     evidence.set(booking.id, {
       operationsByTransactionId,
       recordedTransactionIds,
+      linksByTransactionId,
       recordedElsewhereIntentIds,
       primaryCoverageKnown: figures?.atLink.paymentIntentIdsRecordedAtLink !== undefined,
       receiptModificationIds,
@@ -198,10 +237,26 @@ export function addUnrecordedAdditionalCaptureFindings({
   for (const capture of captures) {
     const paymentIntentId = capture.stripePaymentIntentId;
     if (capture.kind !== "ADDITIONAL" || !paymentIntentId || !capture.id) continue;
-    if (evidence.recordedTransactionIds.has(capture.id)) continue;
     if (evidence.recordedElsewhereIntentIds.has(paymentIntentId)) continue;
     const details = { paymentId, paymentIntentId, paymentTransactionId: capture.id, capturedCents: capture.amountCents };
+    const links = evidence.linksByTransactionId.get(capture.id) ?? [];
     const operations = evidence.operationsByTransactionId.get(capture.id) ?? [];
+    const partSent = partSentReceipt(operations, links);
+    if (partSent?.settled) {
+      const action = addAction(actionMap, buildManualReviewAction(booking.id, partSent.summary));
+      addFinding(findings, {
+        code: "ADDITIONAL_CAPTURE_NOT_RECORDED_IN_XERO",
+        severity: "manual_review",
+        summary: partSent.summary,
+        safeToAutoApply: false,
+        details,
+        actionKeys: [action.key],
+      });
+      continue;
+    }
+    // A part-sent row still in the worker's hands is not recorded yet: it
+    // takes the retry or refused path below rather than this skip.
+    if (!partSent && evidence.recordedTransactionIds.has(capture.id)) continue;
     if (operations.length > 0) {
       const blocking = getBlockingOperation(operations, "PAYMENT", "CREATE", {
         payloadQueueType: XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
@@ -302,6 +357,8 @@ export type KeptChangeCaptureRepairEvidence = {
   receiptOperations: XeroOperationRecord[];
   /** The receipt's Xero payment is linked. */
   receiptLinked: boolean;
+  /** Active links for checking each planned leg, rather than treating one as the whole receipt. */
+  receiptLinks: readonly { metadata: unknown }[];
   /** Another writer records the capture (`readKeptCaptureRecordedElsewhere`), read only where no receipt row exists. */
   recordedElsewhere: boolean;
   /** Review MF2: the cents of it another writer records, so the dry run lists what the apply records. */
@@ -332,7 +389,7 @@ export async function loadKeptChangeCaptureEvidence(
     const found = new Map<string, KeptChangeCaptureRepairEvidence>();
     for (const capture of captures) {
       const changeId = captureChangeId({ bookingModificationId: capture.bookingModificationId ?? null, reason: capture.reason ?? null });
-      const [evidence, receiptOperations, link] = await Promise.all([
+      const [evidence, receiptOperations, links] = await Promise.all([
         readKeptChangeCaptureEvidence(store, { paymentIntentId: capture.stripePaymentIntentId, changeId, bookingId: booking.id, primaryInvoiceId }),
         store.xeroSyncOperation.findMany({
           where: {
@@ -343,19 +400,19 @@ export async function loadKeptChangeCaptureEvidence(
           select: xeroOperationSelect,
           orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
         }) as Promise<XeroOperationRecord[]>,
-        store.xeroObjectLink.findFirst({
+        store.xeroObjectLink.findMany({
           where: {
             localModel: "PaymentTransaction",
             localId: capture.id,
             role: ADDITIONAL_CAPTURE_PAYMENT_ROLE,
             active: true,
           },
-          select: { id: true },
+          select: { metadata: true },
         }),
       ]);
       const hasReceiptRow = receiptOperations.some((operation) => operation.status !== "CANCELLED");
       const elsewhere =
-        hasReceiptRow || link !== null
+        hasReceiptRow || links.length > 0
           ? 0
           : await readKeptCaptureRecordedElsewhere(store, {
               bookingId: booking.id,
@@ -367,7 +424,8 @@ export async function loadKeptChangeCaptureEvidence(
         evidence,
         route: keptChangeCaptureRoute(evidence),
         receiptOperations,
-        receiptLinked: link !== null,
+        receiptLinked: links.length > 0,
+        receiptLinks: links,
         recordedElsewhere: elsewhere === "all",
         alreadyRecordedCents: elsewhere === "all" ? 0 : elsewhere,
         primaryInvoiceIdSynced: primaryInvoiceId !== null,
@@ -456,7 +514,9 @@ export function addKeptChangeCaptureFinding({
   };
   // Its receipt, whichever route the evidence reads now, is its record; and
   // (review M-F1) another writer's, the #4253 sweep's included, is too.
-  if (found?.receiptLinked || found?.recordedElsewhere) return;
+  const partSent = found && partSentReceipt(found.receiptOperations, found.receiptLinks);
+  if (partSent?.settled) return manualReview(partSent.summary);
+  if ((!partSent && found?.receiptLinked) || found?.recordedElsewhere) return;
   // Review D-F3: the booking counts as invoiced by its active link, but the
   // payment lacks the invoice's id, so nothing more can be read until it is synced.
   if (!found?.primaryInvoiceIdSynced) return payment.xeroInvoiceId ? undefined : manualReview(PRIMARY_INVOICE_ID_NOT_SYNCED_SUMMARY);
