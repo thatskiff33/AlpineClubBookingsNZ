@@ -17,26 +17,181 @@ export const IMAGES_ROOT = path.join(process.cwd(), "public", "images");
 // on Next.js public-file startup indexing.
 const PUBLIC_URL_PREFIX = "/api/images/uploaded";
 
+// The content type each allowed extension is served and parsed as. This map IS
+// the allowlist: ALLOWED_IMAGE_EXTS and ALLOWED_IMAGE_MIME below are derived
+// from it, so an extension cannot be allowed without a type (the serving route
+// and the gallery's dimension read both use this).
+//
 // SVG is intentionally excluded: it is an XML dialect that can embed inline
 // <script> and event-handler attributes. Files under the images root are served
 // directly by Next.js/Caddy with no restrictive CSP, so an uploaded SVG opened
 // in-browser would execute in the site origin (stored XSS).
-export const ALLOWED_IMAGE_MIME = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "image/avif",
-]);
+export const IMAGE_CONTENT_TYPE_BY_EXT = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
+} as const satisfies Record<string, string>;
 
-export const ALLOWED_IMAGE_EXTS = new Set([
-  ".jpg",
-  ".jpeg",
-  ".png",
-  ".gif",
-  ".webp",
-  ".avif",
-]);
+export const ALLOWED_IMAGE_EXTS: ReadonlySet<string> = new Set(
+  Object.keys(IMAGE_CONTENT_TYPE_BY_EXT),
+);
+
+export const ALLOWED_IMAGE_MIME: ReadonlySet<string> = new Set(
+  Object.values(IMAGE_CONTENT_TYPE_BY_EXT),
+);
+
+export function imageContentTypeForExt(
+  ext: string,
+): (typeof IMAGE_CONTENT_TYPE_BY_EXT)[keyof typeof IMAGE_CONTENT_TYPE_BY_EXT] | null {
+  return Object.hasOwn(IMAGE_CONTENT_TYPE_BY_EXT, ext)
+    ? IMAGE_CONTENT_TYPE_BY_EXT[ext as keyof typeof IMAGE_CONTENT_TYPE_BY_EXT]
+    : null;
+}
+
+// ---------------------------------------------------------------------------
+// Website-sized copies (#4935, INV-PUB-005).
+//
+// Every directory may hold one reserved hidden folder of width-bounded WebP
+// copies of its images, written at upload (src/lib/image-derivatives.ts) and by
+// the backfill script. A copy of `lodge.jpg` at 800 px is
+// `.sizes/lodge.jpg.800.webp`: the original's FULL name is kept so `lodge.jpg`
+// and `lodge.png` never share a copy. The folder lives beside the originals,
+// not in a separate tree, so a directory rename or recursive delete carries
+// its copies with it for free.
+//
+// The folder is invisible everywhere an officer or visitor sees a listing:
+// the Image Manager's image and directory lists, the photo-gallery listing,
+// and as a user-chosen folder name. The serving route needs no special case
+// — a copy is an ordinary .webp under IMAGES_ROOT.
+// ---------------------------------------------------------------------------
+
+export const IMAGE_DERIVATIVES_DIRECTORY = ".sizes";
+
+/** Whether a directory entry is the reserved copies folder. */
+export function isDerivativeDirectoryName(name: string): boolean {
+  // Case-insensitive: on a case-insensitive volume `.SIZES` IS the folder.
+  return name.toLowerCase() === IMAGE_DERIVATIVES_DIRECTORY;
+}
+
+/** Whether a client-supplied relative path reaches into a copies folder. */
+function pathReachesDerivativeDirectory(rel: string): boolean {
+  return rel.split(/[/\\]/).some(isDerivativeDirectoryName);
+}
+
+export function derivativeFileName(fileName: string, width: number): string {
+  return `${fileName}.${width}.webp`;
+}
+
+const DERIVATIVE_FILE_NAME = /^(.+)\.([1-9][0-9]*)\.webp$/;
+
+export type ImageDerivative = {
+  /** The copy's own file name inside the copies folder. */
+  fileName: string;
+  width: number;
+  mtimeMs: number;
+};
+
+/**
+ * Whether a copy still belongs to its original: written no earlier than it.
+ * A copy older than its original was made from an earlier file of the same
+ * name (replaced by code that predates copies, during a blue/green cutover or
+ * after a rollback). The ONE statement of that rule: the gallery hides such a
+ * copy and the backfill refreshes it, so the two must never disagree
+ * (INV-PUB-005).
+ */
+export function isCurrentDerivative(
+  copy: Pick<ImageDerivative, "mtimeMs">,
+  originalMtimeMs: number,
+): boolean {
+  return copy.mtimeMs >= originalMtimeMs;
+}
+
+/**
+ * Every copy in one directory's copies folder, grouped by the original's file
+ * name, narrowest first. One `readdir` per directory, so a gallery listing
+ * pays it once rather than once per photo. A missing folder is no copies.
+ *
+ * An unreadable folder is also no copies unless `strict`, which throws it
+ * instead: removal must not mistake "could not look" for "nothing there", or
+ * a deleted photo's copies would stay public while the delete reported done.
+ */
+export async function listImageDerivatives(
+  absDir: string,
+  {
+    strict = false,
+    root = IMAGES_ROOT,
+  }: { strict?: boolean; root?: string } = {},
+): Promise<Map<string, ImageDerivative[]>> {
+  const result = new Map<string, ImageDerivative[]>();
+  // Containment checked here, at the filesystem calls below, not only by the
+  // caller's resolver: CodeQL `js/path-injection` cannot follow a guard across
+  // a function boundary, and these helpers are reached from public routes.
+  const sizesDir = path.resolve(absDir, IMAGE_DERIVATIVES_DIRECTORY);
+  if (!sizesDir.startsWith(path.resolve(root) + path.sep)) {
+    throw new Error("image-storage: copies folder outside the images root");
+  }
+  let entries;
+  try {
+    entries = await fs.readdir(sizesDir, { withFileTypes: true });
+  } catch (err) {
+    if (strict && (err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    return result;
+  }
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const match = DERIVATIVE_FILE_NAME.exec(entry.name);
+    if (!match?.[1] || !match[2]) continue;
+    let mtimeMs: number;
+    try {
+      mtimeMs = (await fs.stat(path.join(sizesDir, entry.name))).mtimeMs;
+    } catch {
+      continue; // removed between readdir and stat
+    }
+    const list = result.get(match[1]) ?? [];
+    list.push({ fileName: entry.name, width: Number(match[2]), mtimeMs });
+    result.set(match[1], list);
+  }
+  for (const list of result.values()) list.sort((a, b) => a.width - b.width);
+  return result;
+}
+
+/**
+ * Remove every copy of one original, optionally keeping some widths. Missing
+ * files and a missing folder are not errors: the outcome wanted is "no copy of
+ * this image remains", and it already holds.
+ *
+ * `root` is the trusted images folder `absDir` must sit in: `IMAGES_ROOT`
+ * unless the operator backfill was pointed at another one. A folder outside it
+ * throws before anything is removed.
+ */
+export async function removeImageDerivatives(
+  absDir: string,
+  fileName: string,
+  {
+    keepWidths = [],
+    root = IMAGES_ROOT,
+  }: { keepWidths?: readonly number[]; root?: string } = {},
+): Promise<void> {
+  const sizesDir = path.resolve(absDir, IMAGE_DERIVATIVES_DIRECTORY);
+  if (!sizesDir.startsWith(path.resolve(root) + path.sep)) {
+    throw new Error("image-storage: copies folder outside the images root");
+  }
+  const copies =
+    (await listImageDerivatives(absDir, { strict: true, root })).get(
+      fileName,
+    ) ?? [];
+  for (const copy of copies) {
+    if (keepWidths.includes(copy.width)) continue;
+    try {
+      await fs.unlink(path.join(sizesDir, copy.fileName));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+  }
+}
 
 // Characters a directory name may never contain: path separators (which would
 // make one name into several) plus the Windows-reserved set and control
@@ -73,6 +228,9 @@ export function isSafeDirectoryName(name: string): boolean {
   if (name.length === 0) return false;
   if (UNSAFE_DIRECTORY_NAME_CHARS.test(name)) return false;
   if (DOT_ONLY_NAME.test(name)) return false;
+  // Reserved for website-sized copies (#4935): a user folder of that name
+  // would be hidden from every listing, and its photos with it.
+  if (isDerivativeDirectoryName(name)) return false;
   return true;
 }
 
@@ -93,6 +251,17 @@ export function resolveInImagesRoot(rel: string): string | null {
     return null;
   }
   return resolved;
+}
+
+/**
+ * `resolveInImagesRoot` for a path naming an album or a photo in one: also
+ * null for any path with a copies-folder segment. Every Image Manager endpoint
+ * and the gallery listing resolve client input through this, so copies are
+ * managed only through their original — never listed, uploaded into, renamed
+ * or deleted directly, and never an album (#4935, INV-PUB-005).
+ */
+export function resolveAlbumPathInImagesRoot(rel: string): string | null {
+  return pathReachesDerivativeDirectory(rel) ? null : resolveInImagesRoot(rel);
 }
 
 // Map an absolute path under IMAGES_ROOT to its public `/images/...` URL.
