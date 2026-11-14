@@ -57,6 +57,8 @@ sequencing):
 `PrivacyRetentionSettings` is a club-wide singleton (`id = "default"`). Email
 logs, applications and member identity are club-wide; retention previews and
 jobs cover all lodges while preserving booking and financial lodge references.
+The `{{email-log-retention}}` page token reads this same club-wide policy; it
+takes no lodge parameter.
 
 ## Member money journal (#4513)
 
@@ -930,6 +932,14 @@ When exactly one active lodge exists, member and admin UI must not show
 lodge selectors, lodge columns, or lodge names in flows where they would
 be redundant (ADR-002). APIs still require and return `lodgeId`; the rule
 is presentation-only.
+
+The exception is the screens where a member checks or pays for one booking.
+The booking wizard (`INV-CAP-034`) and, for an existing booking, the booking
+page, the arrival card and the public payment link (`INV-CAP-039`) always
+name the booking's own lodge, in a one-lodge club too: a screen that looks
+the same whether or not the lodge is right cannot warn anyone. Member
+booking lists still follow this rule, with the lodge named on any row at an
+archived lodge.
 
 Lodge management is core and always available (ADR-005 removed the former
 `multiLodge` Admin Module flag; the lodge routes are ungated). Runtime

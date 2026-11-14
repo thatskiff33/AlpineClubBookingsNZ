@@ -98,15 +98,15 @@ const NOT_BOOKING_BOUND: Record<string, string> = {
   // Membership / account / family lifecycle: keyed on a member, not a booking.
   // The switch is deliberately booking-keyed and never address-keyed, so it
   // does not and must not reach these.
-  "app/(admin)/admin/membership-cancellations/page.tsx":
+  "app/(admin)/admin/membership/membership-cancellations/page.tsx":
     "membership-scoped: reviews cancellation participants, not a booking",
-  "app/(admin)/admin/member-applications/page.tsx":
+  "app/(admin)/admin/membership/member-applications/page.tsx":
     "membership application review, not a booking",
-  "app/(admin)/admin/deletion-requests/deletion-requests-client.tsx":
+  "app/(admin)/admin/membership/deletion-requests/deletion-requests-client.tsx":
     "account deletion (privacy) request, not a booking",
-  "app/(admin)/admin/members/[id]/_components/member-lifecycle-card.tsx":
+  "app/(admin)/admin/membership/members/[id]/_components/member-lifecycle-card.tsx":
     "member archive/delete lifecycle, not a booking",
-  "app/(admin)/admin/members/[id]/_components/member-partner-link-card.tsx":
+  "app/(admin)/admin/membership/members/[id]/_components/member-partner-link-card.tsx":
     "member partner link, not a booking",
   "components/admin/family-groups/request-review-section.tsx":
     "family group request review, not a booking",

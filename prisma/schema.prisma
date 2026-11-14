@@ -9026,6 +9026,9 @@ model PrivacyRetentionSettings {
   pruneLogsAndApplicationsEnabled    Boolean  @default(false)
   anonymiseMembersEnabled            Boolean  @default(false)
   sentryReplayEnabled                Boolean  @default(false)
+  bookingDietaryRetentionDays        Int      @default(30)
+  bookingDietaryClearEnabled         Boolean  @default(true)
+  bookingDietaryClearStartedAt       DateTime?
   pruneStartedAt                    DateTime?
   anonymiseStartedAt                DateTime?
   updatedByMemberId                  String?
@@ -9110,7 +9113,8 @@ enum MemberMoneyDebtorKind {
   ORGANISATION
 }
 
-/// Inert M1 foundation. No production writer or reader is enabled.
+/// Journal header written through the member-money doors since M3b (#4627), in
+/// the door's own transaction (INV-MONEY-044). No screen or Xero document reads it yet.
 model MemberMoneyEvent {
   id String @id @default(cuid())
   eventKey String @unique

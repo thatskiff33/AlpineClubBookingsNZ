@@ -236,6 +236,17 @@ export function buildXeroIdempotencyKey(
 }
 
 /**
+ * A REFUND_CREDIT_NOTE link's own recorded `amountCents` (#1162), from its
+ * metadata alone; null when it records none. The first source
+ * `recoverRefundCreditNoteLinkAmountCents` reads, and the only one the bulk
+ * read below may use.
+ */
+function readRefundCreditNoteLinkRecordedCents(metadata: unknown): number | null {
+  const recorded = asRecord(metadata)?.amountCents;
+  return typeof recorded === "number" && Number.isFinite(recorded) ? Math.max(0, Math.round(recorded)) : null;
+}
+
+/**
  * The cents one REFUND_CREDIT_NOTE link contributes to a payment's covered
  * refund total (#1162): the link metadata's recorded `amountCents` when
  * present, else the create operation's persisted request payload
@@ -256,10 +267,9 @@ export async function recoverRefundCreditNoteLinkAmountCents(
   if (isRefundCreditNoteLinkCancelledInXero(link.metadata)) {
     return null;
   }
-  const metadata = asRecord(link.metadata);
-  const recorded = metadata?.amountCents;
-  if (typeof recorded === "number" && Number.isFinite(recorded)) {
-    return Math.max(0, Math.round(recorded));
+  const recorded = readRefundCreditNoteLinkRecordedCents(link.metadata);
+  if (recorded !== null) {
+    return recorded;
   }
   const operation = await db.xeroSyncOperation.findFirst({
     where: {
@@ -283,6 +293,24 @@ export async function recoverRefundCreditNoteLinkAmountCents(
 }
 
 /**
+ * The active REFUND_CREDIT_NOTE links of one payment, or of many (#4936). The
+ * one filter both `sumCoveredRefundCreditNoteCents` and its bulk lower bound
+ * `readActiveRefundNoteMetadataCentsByPayment` select by, so the bound can
+ * never read links the exact sum does not (`INV-SSOT`).
+ */
+function activeRefundCreditNoteLinksWhere(
+  localId: string | { in: string[] }
+): Prisma.XeroObjectLinkWhereInput {
+  return {
+    localModel: "Payment",
+    localId,
+    xeroObjectType: "CREDIT_NOTE",
+    role: "REFUND_CREDIT_NOTE",
+    active: true,
+  };
+}
+
+/**
  * Cents already covered by refund credit notes for a payment (#1162): the sum
  * of the active REFUND_CREDIT_NOTE links' recorded amounts. Links written
  * before amounts were recorded fall back to the create operation's persisted
@@ -301,11 +329,7 @@ export async function sumCoveredRefundCreditNoteCents(
   if (onlyNoteIds && onlyNoteIds.length === 0) return 0;
   const links = await db.xeroObjectLink.findMany({
     where: {
-      localModel: "Payment",
-      localId: paymentId,
-      xeroObjectType: "CREDIT_NOTE",
-      role: "REFUND_CREDIT_NOTE",
-      active: true,
+      ...activeRefundCreditNoteLinksWhere(paymentId),
       ...(onlyNoteIds ? { xeroObjectId: { in: [...onlyNoteIds] } } : {}),
     },
     select: { xeroObjectId: true, metadata: true },
@@ -317,6 +341,34 @@ export async function sumCoveredRefundCreditNoteCents(
       (await recoverRefundCreditNoteLinkAmountCents(paymentId, link, db)) ?? 0;
   }
   return coveredCents;
+}
+
+/**
+ * A cheap LOWER bound on each payment's active refund-note link coverage
+ * (#4936), in one query for many payments: the links' recorded metadata
+ * amounts only. A legacy link with no recorded amount, or one Xero voided,
+ * adds 0 rather than paying the per-link payload read
+ * `sumCoveredRefundCreditNoteCents` falls back to, so each figure here is never
+ * more than that function's answer for the same payment. A payment with no
+ * active link is absent from the map.
+ */
+export async function readActiveRefundNoteMetadataCentsByPayment(
+  paymentIds: readonly string[],
+  db: Pick<Prisma.TransactionClient, "xeroObjectLink"> = prisma
+): Promise<Map<string, number>> {
+  const centsByPayment = new Map<string, number>();
+  if (paymentIds.length === 0) return centsByPayment;
+  const links = await db.xeroObjectLink.findMany({
+    where: activeRefundCreditNoteLinksWhere({ in: [...paymentIds] }),
+    select: { localId: true, metadata: true },
+  });
+  for (const link of links) {
+    const cents = isRefundCreditNoteLinkCancelledInXero(link.metadata)
+      ? 0
+      : (readRefundCreditNoteLinkRecordedCents(link.metadata) ?? 0);
+    centsByPayment.set(link.localId, (centsByPayment.get(link.localId) ?? 0) + cents);
+  }
+  return centsByPayment;
 }
 
 export async function findCanonicalPaymentRefundCreditNote(

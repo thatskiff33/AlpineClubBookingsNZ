@@ -5,7 +5,7 @@ export { verifyMemberMoneyJournal } from "./internal/verify";
 export { bookingIdsNamedByJournal, journalRowsNamingDebtor } from "./internal/references";
 // M3a (#4626): the one posting command, its plan types, keys and tax split.
 // The booking doors reach it only through M3b's adapter in `./doors`
-// (`member-money-journal-inert-census.test.ts` admits exactly those callers).
+// (`member-money-journal-writer-census.test.ts` admits exactly those callers).
 export { memberMoneyEventKeys } from "./internal/keys";
 export {
   MemberMoneyPlanError,

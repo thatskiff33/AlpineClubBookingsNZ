@@ -12,7 +12,7 @@ decides what leaves this application for Google, the log/Sentry redactor and wha
 it strips out, or the `category` an audit writer records — which decides both the
 admin permissions a reader needs and whether the subject member sees the row.
 Read it too before anything reads, writes, exports or logs a member's
-dietary/allergy information (`INV-PRIV-022`).
+dietary/allergy information (`INV-PRIV-022`, `INV-PRIV-023`).
 
 Index: [`docs/DOMAIN_INVARIANTS.md`](../DOMAIN_INVARIANTS.md) — every `INV-*` ID
 with a one-line description of what it covers. ID scheme and allocation rules:
@@ -862,8 +862,8 @@ Decisions: 20 Sep 2026 on
 - **Booking audiences:** a DB-verified `bookings:view` admin (`bookings:edit` to
   change one row) and the kiosk's `admin` and `hut-leader` tiers, for that
   lodge's present guests that day, both while ON; the subject's export, for
-  their own rows. So an admin who adds a member as a guest sees that member's
-  current profile value there, audited. Grants never cross profile and booking.
+  their own rows. An admin adding a member as a guest sees their profile
+  value there, audited. Grants never cross profile and booking.
 - **Everyone else is denied, absent from the payload:** members (own booking,
   linked guests, the #2942 roster), family, other kiosk tiers and preview,
   rosters, the lobby, exports, reports, Xero, Stripe, analytics, notifications,
@@ -874,6 +874,41 @@ Decisions: 20 Sep 2026 on
 - **Records say THAT, never WHAT.** Audit rows name the field; the log redactor
   and audit sanitizer strip `dietary`/`allerg` values.
 - **Merge fills if blank.** **Erasure clears** the profile and the subject's
-  guest rows.
+  guest rows; every guest's stay value is cleared after the stay (`INV-PRIV-023`).
 - Proof: `member-dietary-access-census.test.ts`, a text scan (no data-flow
   tracing), plus privacy, kiosk, route and real-database tests.
+
+## INV-PRIV-023
+
+A stay's dietary value, `BookingGuest.dietaryRequirements`, is cleared a
+club-set number of days after the stay. The note serves the kitchen and the hut
+leader during the stay; a reason to keep the guest row (names, nights, prices)
+is not a reason to keep the health note. Decided 11 Nov 2026 on
+[#4916](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4916): a
+club setting, default 30 days, shipped ON.
+
+- **Who.** Every guest row, member or not, children included, on a booking of
+  any status. Nothing else on the row or the booking changes, and the profile
+  value `Member.dietaryRequirements` is never touched.
+- **When.** A row is cleared when its `stayEnd` envelope is strictly before the
+  club's civil date today, from `clubTime()`, minus
+  `bookingDietaryRetentionDays` (1 to 365). A stay ending today or within the
+  period, and any future or current stay, keeps its value, so the kiosk still
+  shows a guest departing today.
+- **Its own switch.** `bookingDietaryClearEnabled` is independent of the
+  dietary field: OFF still hides, never clears (`INV-PRIV-022`), and turning
+  the field off does not stop or start this job. Switched off, the job writes
+  nothing and the cron run records `SKIPPED`.
+- **How.** The `booking-dietary-clear` step of the nightly data-pruning cron
+  claims its lease column on `PrivacyRetentionSettings`, rechecks the switch in
+  every batch transaction and clears at most `RETENTION_BATCH_SIZE` rows per
+  batch through `clearExpiredStayDietaryValues`, the only writer, in the
+  booking write half. It takes no advisory lock (`INV-LOCK-001`). Each clearing
+  batch writes one `privacy` audit row holding its count, never a value, in the
+  same transaction.
+- **Re-entry.** A value an officer re-enters on a stay older than the period is
+  cleared the next night.
+- **Who may change it.** Support edit plus bookings edit.
+- Proof: `booking-dietary-retention.realdb.test.ts`,
+  `privacy-retention-dietary-cutoff.test.ts` (the club-date boundary) and
+  `privacy-retention.test.ts`.

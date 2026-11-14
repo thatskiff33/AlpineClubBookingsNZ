@@ -58,10 +58,11 @@ In the **Security** section, **Two-factor authentication** shows whether it is
 enabled and by which method (for example "Authenticator app"). Depending on your
 club's policy you may be required to set it up on first sign-in.
 
-- **Authenticator app (TOTP):** you scan a setup key into an authenticator app
-  and enter the 6-digit code to enrol. You are shown **recovery codes** — save
-  them somewhere safe; they are your way back in if you lose the app. Use
-  **Regenerate codes** to issue a fresh set (the old ones stop working).
+- **Authenticator app (TOTP):** you scan the QR code with an authenticator app
+  (or type the setup key shown under it) and enter the 6-digit code to enrol.
+  You are shown **recovery codes** — save them somewhere safe; they are your
+  way back in if you lose the app. Use **Regenerate codes** to issue a fresh
+  set (the old ones stop working).
 - **Email code:** where the club uses email-based 2FA, a code is emailed to you
   at sign-in.
 

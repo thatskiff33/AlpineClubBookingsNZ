@@ -555,4 +555,29 @@ describe("no edit door parks its money (#4317, INV-MOD-028)", () => {
       .map((file) => repoRelative(file.absolute));
     expect(found, "INV-MOD-028: PricingResult is priced-only").toEqual([]);
   });
+
+  it("lets only the review module create an EDIT_FINANCIAL_REVIEW row, and nothing moves one to OPEN", () => {
+    const allowed = "src/lib/edit-financial-review.ts";
+    const creators: string[] = [];
+    const reopeners: string[] = [];
+    for (const file of strippedSources()) {
+      const relative = repoRelative(file.absolute);
+      const structure = blankLiterals(file.code);
+      for (const match of file.code.matchAll(/manualRefundTask\.(?:create|createMany|upsert)\s*\(/g)) {
+        const open = file.code.indexOf("(", match.index ?? 0);
+        const argument = balancedBrackets(file.code, open, structure).text;
+        if (argument.includes("EDIT_FINANCIAL_REVIEW") && relative !== allowed) creators.push(relative);
+      }
+      for (const match of file.code.matchAll(/manualRefundTask\.(?:update|updateMany)\s*\(/g)) {
+        const open = file.code.indexOf("(", match.index ?? 0);
+        const argument = balancedBrackets(file.code, open, structure).text;
+        const opensTheReview =
+          argument.includes("EDIT_FINANCIAL_REVIEW") &&
+          /status:\s*(?:ManualRefundTaskStatus\.)?OPEN\b/.test(argument);
+        if (opensTheReview && relative !== allowed) reopeners.push(relative);
+      }
+    }
+    expect(creators, "a review is raised only by raiseEditFinancialReviewTask").toEqual([]);
+    expect(reopeners, "nothing puts an edit review back to OPEN").toEqual([]);
+  });
 });

@@ -175,7 +175,9 @@ vi.mock("@/lib/logger", () => ({
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/email", () => ({ sendAdminXeroSyncErrorAlert: vi.fn() }));
 vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: async () => false }));
-vi.mock("@/lib/xero-sync", () => ({
+vi.mock("@/lib/xero-sync", async (importOriginal) => {
+  const actualXeroSync = (await importOriginal()) as typeof import("@/lib/xero-sync");
+  return {
   buildXeroIdempotencyKey: (...parts: unknown[]) => parts.join(":"),
   sanitizeForJson: (value: unknown) => value,
   startXeroSyncOperation: async (input: Record<string, unknown>) => {
@@ -208,6 +210,11 @@ vi.mock("@/lib/xero-sync", () => ({
       .table("xeroObjectLink")
       .filter((l) => l.localModel === "Payment" && l.localId === paymentId && l.role === "REFUND_CREDIT_NOTE" && l.active)
       .reduce((sum, l) => sum + ((l.metadata as { amountCents: number }).amountCents ?? 0), 0),
+  // #4936: the same links' recorded cents, for many payments in one read. The
+  // real bulk read over this harness's tables, so a voided or unrounded link
+  // counts here exactly as it does in production (no hand-copied rule).
+  readActiveRefundNoteMetadataCentsByPayment: (paymentIds: readonly string[]) =>
+    actualXeroSync.readActiveRefundNoteMetadataCentsByPayment(paymentIds, h.db as never),
   findCanonicalPaymentRefundCreditNote: async () => null,
   upsertXeroObjectLink: async (link: Record<string, unknown>) => {
     h.writeLinks([link]);
@@ -216,7 +223,8 @@ vi.mock("@/lib/xero-sync", () => ({
     const row = h.table("xeroSyncOperation").find((r) => r.id === claim.id)!;
     row.status = "FAILED";
   },
-}));
+};
+});
 vi.mock("@/lib/xero-api-client", () => ({
   getAuthenticatedXeroClient: async () => ({
     tenantId: "tenant",

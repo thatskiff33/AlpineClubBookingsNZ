@@ -105,6 +105,7 @@ import {
   completeXeroSyncOperation,
   failXeroSyncOperation,
   findCanonicalPaymentRefundCreditNote,
+  readActiveRefundNoteMetadataCentsByPayment,
   recordXeroInboundEvent,
   sanitizeForJson,
   startXeroSyncOperation,
@@ -181,6 +182,29 @@ describe("sumCoveredRefundCreditNoteCents (#1162)", () => {
     // A cancelled note is excluded outright — never "recovered" from the
     // create-operation payload either.
     expect(mocks.operationFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("selects exactly the links its bulk lower bound reads (#4936)", async () => {
+    // The health check drops a payment when the bulk bound covers it, which is
+    // safe only while the bound never reads a link the exact sum leaves out.
+    mocks.linkFindMany.mockResolvedValue([]);
+    await sumCoveredRefundCreditNoteCents("payment_1");
+    await readActiveRefundNoteMetadataCentsByPayment(["payment_1", "payment_2"]);
+
+    const [exactWhere, bulkWhere] = mocks.linkFindMany.mock.calls.map(
+      (call) => (call[0] as { where: Record<string, unknown> }).where
+    );
+    const { localId: exactLocalId, ...exactFilter } = exactWhere;
+    const { localId: bulkLocalId, ...bulkFilter } = bulkWhere;
+    expect(exactLocalId).toBe("payment_1");
+    expect(bulkLocalId).toEqual({ in: ["payment_1", "payment_2"] });
+    expect(bulkFilter).toEqual(exactFilter);
+    expect(exactFilter).toEqual({
+      localModel: "Payment",
+      xeroObjectType: "CREDIT_NOTE",
+      role: "REFUND_CREDIT_NOTE",
+      active: true,
+    });
   });
 });
 

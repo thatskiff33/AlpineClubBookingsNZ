@@ -183,6 +183,8 @@ export type BookingLedgerCensusRow = {
     stripePaymentIntentId: string | null;
     refundPlan: unknown;
     refundRecoveryInFlight: boolean;
+    /** #4851: the plan's one refund row was closed on Stuck States as paid by bank (`legacyGroupRefundPaidByBank`). */
+    refundPaidByBank: boolean;
   } | null;
   /**
    * #3854 F1: what the group child planner needs to plan, in memory, the lines
