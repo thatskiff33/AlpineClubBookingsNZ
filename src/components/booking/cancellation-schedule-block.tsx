@@ -14,8 +14,11 @@ const CANCELLATION_SCHEDULE_FALLBACK =
  * server, so the tier wording has one source. The `lead` line is the caller's,
  * because only the caller knows whether anything has been paid yet: the PR #1389
  * owner rule says tier percentages must never read as a refund of money not yet
- * received. With no rows (the schedule could not be loaded) a neutral fallback
- * line shows instead, and booking is never blocked by it.
+ * received. With no rows a neutral fallback line shows instead, and booking is
+ * never blocked by it. "No rows" covers both a schedule that could not be
+ * loaded (null) and a lodge with no cancellation tiers configured ([]); the
+ * fallback copy is true for either. The booking page renders this block only
+ * for a non-empty schedule, because its Cancel flow shows the exact figure.
  *
  * The schedule is read live at cancel time rather than locked at booking, which
  * is why the copy says "current".
