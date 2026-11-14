@@ -41,6 +41,41 @@ Image Manager is edited under the **content** permission area.
    Rename and Delete appear beside the folder while it has keyboard focus or
    the pointer is over it. On touch screens these actions stay visible.
 
+### Website-sized copies
+
+When you upload a JPG, PNG or WebP photo, the app also saves smaller copies of
+it (400, 800 and 1600 pixels wide, never wider than the photo itself) in a
+hidden `.sizes` folder beside it. A
+[photo gallery](page-content.md) uses those copies, so a visitor's phone
+downloads a thumbnail-sized image rather than your full original. Nothing
+changes for you:
+
+- **Your original is kept** and its link is unchanged, so pages that already
+  use it keep working.
+- **The copies are invisible in Image Manager.** They are never listed, and you
+  cannot create, open or delete a `.sizes` folder.
+- **They follow the original.** Replacing a photo replaces its copies; deleting
+  it deletes them; renaming or deleting a folder carries them.
+- **GIF and AVIF files get no copies** (a GIF may be animated; AVIF is already
+  small), and neither does a photo that cannot be read. The gallery shows the
+  original instead.
+
+Photos uploaded before copies existed have none until an operator runs the
+backfill. From a checkout of the app on the server:
+
+1. Find the images folder. In the Docker deployment it is the `image_uploads`
+   volume: `docker volume inspect <project>_image_uploads` prints its
+   `Mountpoint`.
+2. Preview: `pnpm run images:backfill-sizes --root <Mountpoint>`. It lists
+   what it would do and writes nothing.
+3. Apply: `pnpm run images:backfill-sizes --root <Mountpoint> --apply`. Run as
+   root, it gives each copies folder the owner of the folder it sits in, so the
+   app can still replace and delete it.
+4. Run the preview again: it should report every photo up to date.
+
+It is safe to run again at any time, for example after restoring the images
+volume from a backup. It touches only the images folder.
+
 ## Settings reference
 
 | Control | What it does | Notes / constraints |
@@ -58,6 +93,8 @@ Image Manager is edited under the **content** permission area.
 | An upload is rejected | The file isn't an accepted format or exceeds 10 MB | Convert to JPG/PNG/GIF/WebP/AVIF and keep it under 10 MB |
 | An uploaded image doesn't show in the content editor | It's saved in a different folder, or the listing is stale | Check the folder and click **Refresh** |
 | I can't find an image I uploaded | It went to the folder shown in **Saving to** at upload time | Select that directory to view it |
+| A gallery still downloads full-size photos | Photos uploaded before copies existed, or restored from a backup, have none | Run the backfill in [Website-sized copies](#website-sized-copies) |
+| Deleting an image says its resized copies could not be removed | The image storage volume is not writable by the app | Fix the volume's ownership (uid 1001), then run the backfill with `--apply`: it removes copies whose original is gone |
 | Everything is read-only | Your admin role can view but not edit under the content area | Ask a full admin for content edit access |
 
 ## Related links
