@@ -298,6 +298,16 @@ describe("moving credentials (#4456 PR 2)", () => {
     expect(mocks.readIntegrationCredentialRow).not.toHaveBeenCalled();
     expect(mocks.setIntegrationCredentialInTransaction).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])("refuses before touching any row when a registered row sorts ahead of an unregistered one (dry run %s, #4918)", async (dryRun) => {
+    mocks.credentialRows = [
+      { provider: "google", key: "client_secret" },
+      { provider: "retired-provider", key: "api_key" },
+    ];
+    await expect(run({ dryRun })).rejects.toThrow('unregistered namespace "retired-provider"');
+    expect(mocks.readIntegrationCredentialRow).not.toHaveBeenCalled();
+    expect(mocks.setIntegrationCredentialInTransaction).not.toHaveBeenCalled();
+  });
 });
 
 describe("moving authenticator secrets (#4456 PR 2)", () => {

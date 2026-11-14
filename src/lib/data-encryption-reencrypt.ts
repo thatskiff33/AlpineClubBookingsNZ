@@ -430,6 +430,9 @@ export async function reencryptStoredData(options: ReencryptOptions): Promise<Re
     select: { provider: true, key: true },
     orderBy: [{ provider: "asc" }, { key: "asc" }],
   });
+  // Check every namespace before reading or moving any row, so an unregistered
+  // one refuses the whole run instead of stopping it partway (#4918).
+  for (const row of credentialRows) registeredNamespace(row.provider);
   const credentials = await inPasses(
     credentialRows,
     (row) => (options.dryRun ? inspectCredential(row) : moveCredential(row, target)),
