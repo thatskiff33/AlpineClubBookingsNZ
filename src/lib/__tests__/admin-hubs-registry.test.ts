@@ -1190,7 +1190,7 @@ describe("tabs and anchors", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "page-sources-"));
     const dir = path.join(root, "app");
     try {
-      fs.mkdirSync(path.join(dir, "_components"), { recursive: true });
+      fs.mkdirSync(path.join(dir, "_components", "barrel"), { recursive: true });
       const write = (name: string, body: string) => fs.writeFileSync(path.join(dir, name), body);
       write("page.tsx", [
         'import { Used } from "./_components/used";',
@@ -1200,7 +1200,7 @@ describe("tabs and anchors", () => {
         'export default function Page() { return <Used id="page-literal" />; }',
       ].join("\n"));
       write("_components/used.tsx", 'import { Page } from "../page";\nexport const Used = "reached-used";');
-      write("_components/barrel.ts", 'export * from "./deep";');
+      write("_components/barrel/index.ts", 'export * from "../deep";');
       write("_components/deep.tsx", 'export const Barreled = "reached-deep";');
       write("_components/type-only.tsx", 'export type TypeOnly = "skipped-type-only";');
       write("_components/unimported.tsx", 'export const Sibling = "skipped-sibling";');
