@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   enqueueXeroBookingInvoiceUpdateOperation: vi.fn(),
   enqueueXeroModificationAccountCreditNoteOperation: vi.fn(),
   enqueueXeroModificationCreditNoteOperation: vi.fn(),
+  enqueueXeroRefundCreditNoteOperation: vi.fn(),
   enqueueXeroSupplementaryInvoiceOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
   recordSkippedXeroBookingInvoiceUpdateOperation: vi.fn(),
@@ -31,6 +32,10 @@ vi.mock("@/lib/logger", () => ({
 const followForIntent = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock("@/lib/superseded-ask-invoice-carry", () => ({ followSupersededAskInvoicesForIntentSafely: followForIntent }));
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+import logger from "@/lib/logger";
 import { wouldQueueCheckInDatedInvoiceUpdate } from "@/lib/xero-booking-edit-conditions";
 import {
   classifyXeroBookingEditSettlement,
@@ -147,7 +152,7 @@ describe("classifyXeroBookingEditSettlement", () => {
     });
   });
 
-  it("uses modification credit notes for negative deltas", () => {
+  it("uses a refund credit note for a card reduction, the historical default included (#3993)", () => {
     const decision = classifyXeroBookingEditSettlement({
       hasIssuedXeroInvoice: true,
       originalPaymentStatus: "SUCCEEDED",
@@ -156,14 +161,40 @@ describe("classifyXeroBookingEditSettlement", () => {
     });
 
     expect(decision.financialAction).toEqual({
-      type: "modification-credit-note",
+      type: "refund-credit-note",
       refundAmountCents: 2000,
-      // `INV-PAY-101`: no method stated and no credit election reads as the
-      // card refund every such note was before #3529.
-      refundMethod: "card",
       allocatedGiveBackCents: 0,
-      reason: expect.stringContaining("modification credit note"),
+      reason: expect.stringContaining("refund credit note"),
     });
+  });
+
+  it("keeps an account-credit share on an allocated modification note when settlementMethod is card", () => {
+    const decision = classifyXeroBookingEditSettlement({
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: -5000,
+      settlementMethod: "card",
+      refundMethod: "account-credit",
+      settlementAmountCents: 5000,
+    });
+
+    expect(decision.financialAction).toMatchObject({
+      type: "modification-credit-note",
+      refundMethod: "account-credit",
+      refundAmountCents: 5000,
+    });
+  });
+
+  it("leaves an organiser child's card refund for the executor that raises the one note", () => {
+    const decision = classifyXeroBookingEditSettlement({
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: -2500,
+      refundedThroughStripe: true,
+      organiserChildRefundOwnsCreditNote: true,
+    });
+
+    expect(decision.financialAction.type).toBe("none");
   });
 
   it("carries an explicit bank-transfer refund method onto the modification credit note (INV-PAY-101)", () => {
@@ -199,7 +230,8 @@ describe("classifyXeroBookingEditSettlement", () => {
       refundMethod: "internet-banking",
     });
 
-    // MUTATION: a Stripe-captured payment reduced to card IS a card refund.
+    // MUTATION: a Stripe-captured payment reduced to card is a refund note, not
+    // a modification note worded as a card refund.
     expect(
       classifyXeroBookingEditSettlement({
         hasIssuedXeroInvoice: true,
@@ -209,7 +241,7 @@ describe("classifyXeroBookingEditSettlement", () => {
         settlementAmountCents: 2500,
         refundedThroughStripe: true,
       }).financialAction,
-    ).toMatchObject({ refundMethod: "card" });
+    ).toMatchObject({ type: "refund-credit-note", refundAmountCents: 2500 });
   });
 
   // #3536 (`INV-PAY-101`): an UNPAID pay-on-account invoice lowered by an edit
@@ -257,7 +289,7 @@ describe("classifyXeroBookingEditSettlement", () => {
         originalPaymentStatus: "PENDING",
         refundedThroughStripe: true,
       }).financialAction,
-    ).toMatchObject({ refundMethod: "card" });
+    ).toMatchObject({ type: "refund-credit-note", refundAmountCents: 2500 });
     const named = classifyXeroBookingEditSettlement({
       ...base,
       originalPaymentStatus: "PENDING",
@@ -368,6 +400,9 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
     mocks.enqueueXeroModificationCreditNoteOperation.mockResolvedValue({
       queueOperationId: "op-credit",
     });
+    mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({
+      queueOperationId: "op-refund",
+    });
     mocks.enqueueXeroModificationAccountCreditNoteOperation.mockResolvedValue({
       queueOperationId: "op-account-credit",
     });
@@ -469,7 +504,7 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
     expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
   });
 
-  it("queues a modification credit note for a negative delta on a paid booking", async () => {
+  it("queues a refund credit note for a card reduction, and nothing when the payment id is missing", async () => {
     const decision = await queueXeroBookingEditSettlement({
       bookingId: "booking_2",
       bookingModificationId: "mod_2",
@@ -478,21 +513,30 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
       originalPaymentStatus: "SUCCEEDED",
       priceDiffCents: -3000,
       datesChanged: false,
+      paymentId: "payment_2",
     });
 
-    expect(decision.financialAction.type).toBe("modification-credit-note");
-    expect(
-      mocks.enqueueXeroModificationCreditNoteOperation,
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        bookingId: "booking_2",
-        refundAmountCents: 3000,
-        bookingModificationId: "mod_2",
-        refundMethod: "card",
-      }),
-      expect.objectContaining({ createdByMemberId: "admin_1" }),
+    expect(decision.financialAction.type).toBe("refund-credit-note");
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
+      "payment_2",
+      3000,
+      expect.objectContaining({ refundMethod: "card", createdByMemberId: "admin_1" }),
     );
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
     expect(mocks.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+
+    mocks.enqueueXeroRefundCreditNoteOperation.mockClear();
+    await queueXeroBookingEditSettlement({
+      bookingId: "booking_2",
+      bookingModificationId: "mod_2",
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: -3000,
+      datesChanged: false,
+    });
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalled();
   });
 
   it("hands an explicit bank-transfer refund method to the modification credit note enqueue (INV-PAY-101)", async () => {
@@ -596,7 +640,7 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
     );
   });
 
-  it("MUTATION (#3809): a card refund beside applied credit given back queues two allocated notes, one per method, the second under its own key", async () => {
+  it("MUTATION (#3993): a card refund beside applied credit given back queues the refund note and the scoped give-back", async () => {
     await queueXeroBookingEditSettlement({
       bookingId: "booking_5",
       bookingModificationId: "mod_5",
@@ -609,17 +653,21 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
       refundedThroughStripe: true,
       appliedCreditGiveBackCents: 5000,
       datesChanged: false,
+      paymentId: "payment_5",
     });
 
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
+      "payment_5",
+      10000,
+      expect.objectContaining({ refundMethod: "card", createdByMemberId: "admin_1" }),
+    );
     const calls = mocks.enqueueXeroModificationCreditNoteOperation.mock.calls.map((call) => call[0]);
     expect(calls).toEqual([
-      expect.objectContaining({ refundAmountCents: 10000, refundMethod: "card" }),
       expect.objectContaining({ refundAmountCents: 5000, refundMethod: "account-credit", reviewTaskId: "applied-credit-give-back" }),
     ]);
-    expect(calls[0]).not.toHaveProperty("reviewTaskId");
   });
 
-  it("MUTATION (#3809 L1): a give-back beside a review task's note takes a scope of its own, never the review task's", async () => {
+  it("MUTATION (#3809 L1): a give-back beside a review task's card refund takes a scope of its own, never the review task's", async () => {
     await queueXeroBookingEditSettlement({
       bookingId: "booking_6",
       bookingModificationId: "mod_6",
@@ -631,10 +679,16 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
       settlementAmountCents: 5000,
       appliedCreditGiveBackCents: 5000,
       datesChanged: false,
+      paymentId: "payment_6",
     });
 
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
+      "payment_6",
+      5000,
+      expect.objectContaining({ refundMethod: "card", reviewTaskId: "task-9" }),
+    );
     const scopes = mocks.enqueueXeroModificationCreditNoteOperation.mock.calls.map((call) => call[0].reviewTaskId);
-    expect(scopes).toEqual(["task-9", "task-9:applied-credit-give-back"]);
+    expect(scopes).toEqual(["task-9:applied-credit-give-back"]);
   });
 
   it("MUTATION (#3809 delta H1): applied credit given back with nothing else returned is ONE note, under the give-back's own scope - never the edit's own", async () => {
@@ -705,5 +759,25 @@ describe("an invoice correction is decided from the bank receipt, not the aggreg
     });
 
     expect(receiptFindFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe("a card refund is recorded before its Xero note is queued (#3993)", () => {
+  it("each card-refund door awaits the Stripe refund, then queues the settlement", () => {
+    const repoRoot = resolve(__dirname, "../../..");
+    const doors: Array<[string, string, string]> = [
+      ["src/lib/booking-batch-modification-service.ts", "await executeBookingModificationRefund(", "queueXeroBookingEditSettlement({"],
+      ["src/lib/booking-date-modification-service.ts", "await executeBookingModificationRefund(", "queueXeroBookingEditSettlement({"],
+      ["src/app/api/bookings/[id]/guests/[guestId]/route.ts", "await executeBookingModificationRefund(", "queueGuestRemovalXeroSettlement("],
+      ["src/lib/booking-guest-acceptance-reprice.ts", "await executeBookingModificationRefund(", "queueXeroBookingEditSettlement({"],
+      ["src/lib/edit-financial-review-settlement.ts", "await executeEditReviewCardRefund(", "await dispatchEditReviewXeroSettlement("],
+    ];
+    for (const [file, earlier, later] of doors) {
+      const source = readFileSync(resolve(repoRoot, file), "utf8");
+      const earlierAt = source.indexOf(earlier);
+      const laterAt = source.indexOf(later);
+      expect(earlierAt, file).toBeGreaterThanOrEqual(0);
+      expect(laterAt, file).toBeGreaterThan(earlierAt);
+    }
   });
 });

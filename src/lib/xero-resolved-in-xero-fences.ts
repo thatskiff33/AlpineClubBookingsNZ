@@ -199,25 +199,58 @@ export async function sumRefundCreditNoteCoverageCents(
   // voided or deleted undoes that much of the card note. One still queued, or
   // one with no amount on the link, changes nothing.
   const reversals = await db.xeroObjectLink.findMany({
-    where: {
-      localModel: "Payment",
-      localId: paymentId,
-      xeroObjectType: "INVOICE",
-      role: CARD_REFUND_REVERSAL_INVOICE_ROLE,
-      active: true,
-    },
+    where: activeCardRefundReversalLinksWhere(paymentId),
     select: { role: true, metadata: true },
   });
-  // The role is on the row as well as in the query: a credit note also stores
-  // amountCents, and only this role undoes coverage (`INV-PAY-151`).
-  const reversed = reversals.reduce(
-    (sum, link) =>
-      link.role === CARD_REFUND_REVERSAL_INVOICE_ROLE
-        ? sum + liveCardRefundReversalCents(link.metadata)
-        : sum,
-    0,
-  );
-  return Math.max(0, gross - reversed);
+  return Math.max(0, gross - reversals.reduce((sum, link) => sum + reversalLinkCents(link), 0));
+}
+
+/**
+ * The active reversal-invoice links of one payment, or of many (#4936). The one
+ * filter `sumRefundCreditNoteCoverageCents` and its bulk counterpart
+ * `readCardRefundReversalCentsByPayment` select by (`INV-SSOT`).
+ */
+function activeCardRefundReversalLinksWhere(localId: string | { in: string[] }): Prisma.XeroObjectLinkWhereInput {
+  return {
+    localModel: "Payment",
+    localId,
+    xeroObjectType: "INVOICE",
+    role: CARD_REFUND_REVERSAL_INVOICE_ROLE,
+    active: true,
+  };
+}
+
+/**
+ * The cents one reversal link takes off coverage. The role is checked on the
+ * row as well as in the query: a credit note also stores amountCents, and only
+ * this role undoes coverage (`INV-PAY-151`).
+ */
+function reversalLinkCents(link: { role: string | null; metadata: unknown }): number {
+  return link.role === CARD_REFUND_REVERSAL_INVOICE_ROLE ? liveCardRefundReversalCents(link.metadata) : 0;
+}
+
+/**
+ * #4936 after #4369: what live reversal invoices take off each payment's
+ * coverage, in one query for many payments - exactly the `reversed` figure
+ * `sumRefundCreditNoteCoverageCents` subtracts for the same payment. The
+ * health check's link pre-filter subtracts it too, so its bound stays at or
+ * below that sum. A payment with no live reversal is absent from the map.
+ */
+export async function readCardRefundReversalCentsByPayment(
+  paymentIds: readonly string[],
+  db: Pick<Prisma.TransactionClient, "xeroObjectLink"> = prisma,
+): Promise<Map<string, number>> {
+  const centsByPayment = new Map<string, number>();
+  if (paymentIds.length === 0) return centsByPayment;
+  const links = await db.xeroObjectLink.findMany({
+    where: activeCardRefundReversalLinksWhere({ in: [...paymentIds] }),
+    select: { localId: true, role: true, metadata: true },
+  });
+  for (const link of links) {
+    const cents = reversalLinkCents(link);
+    if (cents > 0) centsByPayment.set(link.localId, (centsByPayment.get(link.localId) ?? 0) + cents);
+  }
+  return centsByPayment;
 }
 
 /**
