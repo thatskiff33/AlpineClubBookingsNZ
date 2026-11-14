@@ -4,4 +4,5 @@
   nothing at all, when the server or the web server in front of it answered
   with an error page. They now show the server's own reason when it gave one,
   and a plain "Failed to save" style message when it did not or the
-  connection dropped.
+  connection dropped. On **Work Parties** and **Family Groups** the message is
+  also announced to a screen reader.

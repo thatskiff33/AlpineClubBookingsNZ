@@ -729,7 +729,7 @@ function FamilyGroupsTab() {
                   </p>
                 </div>
 
-                {error && <p className="text-sm text-danger-11">{error}</p>}
+                {error && <p role="alert" className="text-sm text-danger-11">{error}</p>}
 
                 <div className="flex gap-2">
                   <ViewOnlyActionButton

@@ -109,6 +109,19 @@ describe("Family groups: a refused save says why", () => {
     expect(screen.queryByText(/JSON/)).not.toBeInTheDocument();
   });
 
+  it("announces a refused save in an alert region, so a screen reader hears it", async () => {
+    mockSave(
+      () =>
+        new Response("<html><body>Bad Gateway</body></html>", {
+          status: 502,
+          headers: { "content-type": "text/html" },
+        }),
+    );
+    await createGroup();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Failed to save");
+  });
+
   it("shows the fallback when the request never gets an answer", async () => {
     mockSave(() => Promise.reject(new TypeError("Failed to fetch")));
     await createGroup();
