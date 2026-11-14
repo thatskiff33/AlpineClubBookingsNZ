@@ -14,7 +14,7 @@ import { isTransactionContention } from "@/lib/prisma-errors";
  * rethrow so their own retry contract runs.
  */
 export const TRANSACTION_CONTENDED_CODE = "TRANSACTION_CONTENDED";
-export const TRANSACTION_CONTENDED_RETRY_AFTER_SECONDS = 2;
+const TRANSACTION_CONTENDED_RETRY_AFTER_SECONDS = 2;
 
 /** For an operation whose one transaction is all it writes: nothing was saved. */
 export const TRANSACTION_CONTENDED_MESSAGE =
@@ -35,6 +35,8 @@ export interface TransactionContendedOptions {
   readonly code?: string;
   /** Extra fields for the log line, such as the booking id. */
   readonly context?: Readonly<Record<string, unknown>>;
+  /** Extra fields for the response body, such as what already committed. */
+  readonly body?: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -52,6 +54,7 @@ export function transactionContendedResponse(
     {
       error: options.message ?? TRANSACTION_CONTENDED_MESSAGE,
       code: options.code ?? TRANSACTION_CONTENDED_CODE,
+      ...options.body,
     },
     {
       status: 503,

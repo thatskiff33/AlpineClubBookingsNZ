@@ -16,7 +16,6 @@ import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import {
-  TRANSACTION_CONTENDED_RETRY_AFTER_SECONDS,
   TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
   transactionContendedResponse,
 } from "@/lib/transaction-contended-response";
@@ -24,7 +23,6 @@ import { isDeletedAccountRecord } from "@/lib/deleted-account";
 import { DELETED_CONTACT_EMAIL_DOMAIN } from "@/lib/deleted-account-email";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "@/lib/prisma";
-import { isTransactionContention } from "@/lib/prisma-errors";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { createAuditLog, getAuditRequestContext, logAudit } from "@/lib/audit";
 import { recordErasureTwoFactorClear } from "@/lib/two-factor-audit";
@@ -467,25 +465,17 @@ export async function POST(
         // cannot act on. Scoped to this branch on purpose — the approval's own
         // transaction reports contention through its partial-cleanup contract,
         // which must not be replaced by a bare retry-later.
-        if (isTransactionContention(releaseError)) {
-          logger.warn(
-            { err: releaseError, requestId: id },
-            "Deletion approval release contended with a committing decision",
-          );
-          return NextResponse.json(
-            {
-              code: DELETION_REQUEST_RELEASE_CONTENDED_CODE,
-              error: DELETION_REQUEST_RELEASE_CONTENDED_MESSAGE,
-              retryAllowed: true,
-            },
-            {
-              status: 503,
-              headers: {
-                "Retry-After": String(TRANSACTION_CONTENDED_RETRY_AFTER_SECONDS),
-              },
-            },
-          );
-        }
+        const contended = transactionContendedResponse(
+          releaseError,
+          "Deletion approval release contended with a committing decision",
+          {
+            code: DELETION_REQUEST_RELEASE_CONTENDED_CODE,
+            message: DELETION_REQUEST_RELEASE_CONTENDED_MESSAGE,
+            context: { requestId: id },
+            body: { retryAllowed: true },
+          },
+        );
+        if (contended) return contended;
         throw releaseError;
       }
 

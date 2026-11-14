@@ -7,7 +7,10 @@ import { AdminReviewStatus, BookingStatus, type Prisma } from "@prisma/client";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-import { transactionContendedResponse } from "@/lib/transaction-contended-response";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 import { cancelBooking } from "@/lib/booking-cancel";
 import {
   sendBookingReviewApprovedEmail,
@@ -80,6 +83,42 @@ function reviewClaimContended(err: unknown, bookingId: string): NextResponse {
   );
   if (contended) return contended;
   throw err;
+}
+
+/**
+ * The rejection committed but the cancellation after it threw. A contended
+ * cancel claim (`INV-LOCK-006`) is a retryable 503 that still says the review
+ * landed; anything else is a 500 asking the officer to check before retrying.
+ */
+function rejectedCancellationFailedResponse(err: unknown, bookingId: string): NextResponse {
+  const hostingRetry = hostingCoverageParticipantRetryResponse(err, {
+    reviewRecorded: true,
+    cancellationPending: true,
+  });
+  if (hostingRetry) return hostingRetry;
+  const contended = transactionContendedResponse(
+    err,
+    "Rejected review committed but its cancellation contended for the lock(1) budget",
+    {
+      message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+      context: { bookingId },
+      body: { reviewRecorded: true, cancellationStatusUnconfirmed: true },
+    },
+  );
+  if (contended) return contended;
+  logger.error(
+    { err, bookingId },
+    "Rejected review committed but cancellation status could not be confirmed",
+  );
+  return NextResponse.json(
+    {
+      error:
+        "The rejection was recorded, but the booking's cancellation status could not be confirmed. Open the booking and check its status before retrying.",
+      reviewRecorded: true,
+      cancellationStatusUnconfirmed: true,
+    },
+    { status: 500 },
+  );
 }
 
 export async function PATCH(
@@ -279,24 +318,7 @@ export async function PATCH(
         "card",
       );
     } catch (err) {
-      const hostingRetry = hostingCoverageParticipantRetryResponse(err, {
-        reviewRecorded: true,
-        cancellationPending: true,
-      });
-      if (hostingRetry) return hostingRetry;
-      logger.error(
-        { err, bookingId },
-        "Rejected review committed but cancellation status could not be confirmed",
-      );
-      return NextResponse.json(
-        {
-          error:
-            "The rejection was recorded, but the booking's cancellation status could not be confirmed. Open the booking and check its status before retrying.",
-          reviewRecorded: true,
-          cancellationStatusUnconfirmed: true,
-        },
-        { status: 500 },
-      );
+      return rejectedCancellationFailedResponse(err, bookingId);
     }
 
     // A concurrent cancel won the single-flight claim (#1160): surface the 409
