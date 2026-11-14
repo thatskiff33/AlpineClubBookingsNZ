@@ -37,10 +37,6 @@ import { OtherLodgesPanel } from "./_components/other-lodges-panel";
 const LODGE_DETAIL_FIELDS = ["address", "doorCode", "travelNote"] as const;
 type LodgeDetailField = (typeof LODGE_DETAIL_FIELDS)[number];
 
-// The action alert's own id, and the capacity field's `aria-describedby`
-// target: one literal, so renaming the alert cannot orphan the field's link.
-const ACTION_ERROR_ID = "lodges-page-error";
-
 type LodgeRecord = {
   id: string;
   name: string;
@@ -126,6 +122,9 @@ export default function AdminLodgesPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
   const [actionAttention, setActionAttention] = useState(0);
+  // The alert's own id and the capacity field's `aria-describedby` target: one
+  // literal, so renaming the alert cannot orphan the field's link.
+  const actionErrorId = "lodges-page-error";
   // An edit save closes the form, taking the focused Save button with it, so
   // a landed save positions at the top of the page; failure still wins (#2934).
   const [savesLanded, setSavesLanded] = useState(0);
@@ -358,7 +357,7 @@ export default function AdminLodgesPage() {
       ) : null}
 
       <FocusedActionError
-        id={ACTION_ERROR_ID}
+        id={actionErrorId}
         error={actionError}
         attentionKey={actionAttention}
         className="scroll-mt-20"
@@ -391,7 +390,7 @@ export default function AdminLodgesPage() {
                 value={form.capacity}
                 onChange={(capacity) => setForm((prev) => ({ ...prev, capacity }))}
                 invalid={capacityInvalid && actionError !== ""}
-                errorId={ACTION_ERROR_ID}
+                errorId={actionErrorId}
               />
             ) : null}
             <div className="space-y-2">
