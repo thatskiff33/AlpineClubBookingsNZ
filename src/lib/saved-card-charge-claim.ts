@@ -144,9 +144,36 @@ export async function runSavedCardClaimRelease<T>(
 }
 
 /**
+ * The payment aggregates a stale claim may be recovered under: no money moved.
+ * PENDING is a charge that never finished; FAILED is a decline whose release
+ * then failed, which `payment_intent.payment_failed` reconciles onto the
+ * aggregate (`markPaymentIntentTransactionFailed`). PROCESSING is left alone:
+ * it may still capture, and its webhook ends it SUCCEEDED (the PAID settle
+ * clears the marker) or FAILED (recoverable here). One list for the query and
+ * the locked re-read, so they cannot drift (`INV-SSOT`).
+ */
+const RECOVERABLE_CLAIM_PAYMENT_STATUSES: PaymentStatus[] = [PaymentStatus.PENDING, PaymentStatus.FAILED];
+
+const recoverableClaimPaymentWhere = {
+  source: PaymentSource.STRIPE,
+  status: { in: RECOVERABLE_CLAIM_PAYMENT_STATUSES },
+} satisfies Prisma.PaymentWhereInput;
+
+/** The locked re-read's form of `recoverableClaimPaymentWhere`, plus the real money check: no captured row. */
+function isRecoverableClaimPayment(
+  payment: { source: PaymentSource; status: PaymentStatus; transactions: { status: PaymentStatus }[] } | null | undefined,
+): boolean {
+  return (
+    payment?.source === recoverableClaimPaymentWhere.source &&
+    recoverableClaimPaymentWhere.status.in.includes(payment.status) &&
+    !payment.transactions.some((row) => isCapturedTransactionStatus(row.status))
+  );
+}
+
+/**
  * Returns stale saved-card claims to PENDING (#4993). Population: CONFIRMED, a
- * marker older than the recovery age, a Stripe payment still PENDING with no
- * captured row. A CONFIRMED booking without a marker — Internet Banking holds,
+ * marker older than the recovery age, a Stripe payment that moved no money
+ * (`isRecoverableClaimPayment`). A CONFIRMED booking without a marker — Internet Banking holds,
  * group and school bookings, claims by older code — is never touched. No Stripe
  * call and no attempt-row write: the ordinary pass's `beginSavedCardChargeAttempt`
  * replays or refuses (`INV-PAY-089`). The hold becomes the marker time, so the
@@ -158,7 +185,7 @@ export async function recoverStaleSavedCardClaims(now: Date) {
     where: {
       status: BookingStatus.CONFIRMED,
       savedCardClaimAt: { lte: cutoff },
-      payment: { source: PaymentSource.STRIPE, status: PaymentStatus.PENDING },
+      payment: recoverableClaimPaymentWhere,
     },
     select: { id: true, lodgeId: true },
     orderBy: { savedCardClaimAt: "asc" },
@@ -185,9 +212,7 @@ export async function recoverStaleSavedCardClaims(now: Date) {
         !marker ||
         marker > cutoff ||
         booking.status !== BookingStatus.CONFIRMED ||
-        booking.payment?.source !== PaymentSource.STRIPE ||
-        booking.payment.status !== PaymentStatus.PENDING ||
-        booking.payment.transactions.some((row) => isCapturedTransactionStatus(row.status))
+        !isRecoverableClaimPayment(booking.payment)
       ) {
         return null;
       }

@@ -4501,8 +4501,12 @@ describe("Cron: Confirm Pending Bookings", () => {
       });
     }
 
-    /** The booking as the claim left it: CONFIRMED, marker stamped, hold cleared, Stripe payment pending. */
-    function strandedClaim(marker = STALE_MARKER) {
+    /**
+     * The booking as the claim left it: CONFIRMED, marker stamped, hold cleared.
+     * Its Stripe payment is PENDING, or FAILED once a decline's payment_failed
+     * webhook reconciled the aggregate from the FAILED row.
+     */
+    function strandedClaim(marker = STALE_MARKER, payment: { status: string; transactions: { status: string }[] } = { status: "PENDING", transactions: [] }) {
       mockStaleClaimFindMany.mockResolvedValue([{ id: "b1", lodgeId: "lodge-1" }]);
       const pendingRead = mockBookingFindUnique.getMockImplementation()!;
       let recovered = false;
@@ -4517,7 +4521,7 @@ describe("Cron: Confirm Pending Bookings", () => {
             savedCardClaimAt: marker,
             checkIn: new Date("2026-08-01T00:00:00.000Z"),
             checkOut: new Date("2026-08-03T00:00:00.000Z"),
-            payment: { source: "STRIPE", status: "PENDING", transactions: [] },
+            payment: { source: "STRIPE", ...payment },
           };
         }
         if (!recovered && args.select && Object.keys(args.select).join() === "status") {
@@ -4535,7 +4539,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       return mockAuditLogCreate.mock.calls.map(([call]) => (call as { data: { action: string } }).data.action);
     }
 
-    it("selects only CONFIRMED bookings whose marker is older than the recovery age and whose Stripe payment is still pending", async () => {
+    it("selects only CONFIRMED bookings whose marker is older than the recovery age and whose Stripe payment moved no money", async () => {
       mockPendingBookings([]);
 
       await confirmPendingBookings();
@@ -4544,7 +4548,7 @@ describe("Cron: Confirm Pending Bookings", () => {
         where: {
           status: "CONFIRMED",
           savedCardClaimAt: { lte: new Date(NOW.getTime() - 30 * 60 * 1000) },
-          payment: { source: "STRIPE", status: "PENDING" },
+          payment: { source: "STRIPE", status: { in: ["PENDING", "FAILED"] } },
         },
       }));
     });
@@ -4596,6 +4600,22 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(result.confirmedBookingIds).toEqual(["b1"]);
     });
 
+    it("stamps the cron's marker at the claim itself, not at the run's start, so a long run never ages a live claim", async () => {
+      const claimTime = new Date(NOW.getTime() + 20 * 60 * 1000);
+      mockPendingBookings([makePendingBooking("b1")]);
+      // The run has been going 20 minutes by the time this booking's capacity is checked.
+      mockCheckCapacityForGuestRanges.mockImplementation(async () => {
+        vi.setSystemTime(claimTime);
+        return { available: true, minAvailable: 10, nightDetails: [] };
+      });
+      mockChargePaymentMethod.mockResolvedValue({ id: "pi_late", status: "succeeded", amount: 10000, payment_method: "pm_b1" });
+
+      await confirmPendingBookings();
+
+      const claim = mockBookingUpdateMany.mock.calls.find(([call]) => call?.where?.status === "PENDING" && call?.data?.status === "CONFIRMED");
+      expect(claim?.[0].data.savedCardClaimAt).toEqual(claimTime);
+    });
+
     it("leaves a claim younger than the recovery age alone after the locked re-read", async () => {
       mockPendingBookings([]);
       strandedClaim(new Date(NOW.getTime() - 60 * 1000));
@@ -4645,7 +4665,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     it("after a definite decline marked the attempt FAILED and the release failed, the next run recovers the booking and starts a FRESH attempt", async () => {
       mockPendingBookings([makePendingBooking("b1")]);
       capacityAvailable();
-      strandedClaim();
+      strandedClaim(STALE_MARKER, { status: "FAILED", transactions: [{ status: "FAILED" }] });
       mockPaymentTransactionFindMany.mockImplementation(
         async (args: { where: { OR?: unknown } }) =>
           args.where.OR

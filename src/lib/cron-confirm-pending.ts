@@ -896,7 +896,7 @@ async function resolveHoldWindowUnderLock(
         // capacity-holding, payment-owed status; it is released back to PENDING
         // if the saved-card charge cannot complete.
         status: BookingStatus.CONFIRMED,
-        savedCardClaimAt: now,
+        savedCardClaimAt: new Date(), // the claim's own time, not the run's start, so its age is true (#4993)
         nonMemberHoldUntil: null,
       },
     });

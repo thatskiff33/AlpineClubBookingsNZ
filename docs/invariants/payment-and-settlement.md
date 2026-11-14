@@ -4266,8 +4266,11 @@ window), **`INV-LOCK-001`** to **`INV-LOCK-003`**.
 - **Recovery** (`recoverStaleSavedCardClaims`) runs first in each
   `confirmPendingBookings`. Under global `lock(1)` then the lodge key it
   re-reads, and hands back to PENDING only a booking still CONFIRMED whose
-  marker is older than 30 minutes, with a Stripe payment still PENDING and no
-  captured row. The hold becomes the marker time, beds are reconciled, the
+  marker is older than 30 minutes, with a Stripe payment that moved no money
+  (PENDING, or FAILED once a decline's `payment_failed` webhook reconciled it;
+  never PROCESSING) and no captured row. The hold becomes the marker time (the
+  original hold is not stored), so the ordinary pass treats it as an elapsed
+  hold, bump included. Beds are reconciled, the
   marker is cleared by a marker-guarded write. It calls no provider and writes
   no attempt row: the ordinary pass replays the attempt by its own key, or
   begins a fresh one after a definite failure. An unmarked CONFIRMED booking is

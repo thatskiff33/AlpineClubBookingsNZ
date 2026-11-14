@@ -51,9 +51,18 @@ describe("saved-card claim recovery", () => {
       where: {
         status: "CONFIRMED",
         savedCardClaimAt: { lte: new Date("2026-06-30T23:30:00.000Z") },
-        payment: { source: "STRIPE", status: "PENDING" },
+        payment: { source: "STRIPE", status: { in: ["PENDING", "FAILED"] } },
       },
     }));
+  });
+
+  it("recovers a declined claim whose payment_failed webhook already reconciled the aggregate to FAILED", async () => {
+    db.booking.findUnique.mockResolvedValue(booking({ payment: { source: "STRIPE", status: "FAILED", transactions: [{ status: "FAILED" }] } }));
+    expect(await recoverStaleSavedCardClaims(now)).toEqual({ recoveredBookingIds: ["booking"], failedBookingIds: [] });
+    expect(db.booking.updateMany).toHaveBeenCalledWith({
+      where: { id: "booking", status: "CONFIRMED", savedCardClaimAt: marker },
+      data: { status: "PENDING", nonMemberHoldUntil: marker, savedCardClaimAt: null },
+    });
   });
 
   it.each([
@@ -62,6 +71,9 @@ describe("saved-card claim recovery", () => {
     ["webhook already paid", { status: "PAID" }],
     ["captured money awaiting promotion", { payment: { source: "STRIPE", status: "PENDING", transactions: [{ status: "SUCCEEDED" }] } }],
     ["bank transfer", { payment: { source: "INTERNET_BANKING", status: "PENDING", transactions: [] } }],
+    ["charge still processing", { payment: { source: "STRIPE", status: "PROCESSING", transactions: [{ status: "PROCESSING" }] } }],
+    ["settled aggregate", { payment: { source: "STRIPE", status: "SUCCEEDED", transactions: [] } }],
+    ["refunded aggregate", { payment: { source: "STRIPE", status: "REFUNDED", transactions: [] } }],
   ])("does not release a %s after the locked re-read", async (_name, overrides) => {
     db.booking.findUnique.mockResolvedValue(booking(overrides));
     await recoverStaleSavedCardClaims(now);

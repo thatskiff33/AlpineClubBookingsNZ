@@ -5132,10 +5132,10 @@ its beds, with no writer left to hand it back. Each `confirmPendingBookings`
 run therefore begins with `recoverStaleSavedCardClaims`:
 
 ```text
-CONFIRMED + savedCardClaimAt older than 30 min + Stripe Payment PENDING
+CONFIRMED + savedCardClaimAt older than 30 min + Stripe Payment PENDING or FAILED
   -> lock(1) + lodge lock, re-read
-     no marker / young marker / not CONFIRMED / not Stripe / not PENDING
-       / any captured row                         -> left alone
+     no marker / young marker / not CONFIRMED / not Stripe
+       / Payment PROCESSING or settled / any captured row -> left alone
      otherwise -> PENDING, hold = marker time, beds reconciled,
                   marker cleared (guarded on the marker read)
                   -> critical `booking.saved_card_claim_recovered` audit row
@@ -5144,7 +5144,10 @@ CONFIRMED + savedCardClaimAt older than 30 min + Stripe Payment PENDING
         or begins a fresh row after a definite failure (`INV-PAY-089`)
 ```
 
-Recovery makes no Stripe call and writes no attempt row. A CONFIRMED booking
+A FAILED payment is a decline whose release then failed: Stripe's
+`payment_intent.payment_failed` reconciles the aggregate from the FAILED row.
+PROCESSING is left for its webhook, which ends it SUCCEEDED (the PAID settle
+clears the marker) or FAILED. Recovery makes no Stripe call and writes no attempt row. A CONFIRMED booking
 without a marker — an Internet Banking hold, a group booking, a claim made
 before the column existed — is never touched. A recovery that cannot commit is
 counted among the run's failed ids and retried next run. Racing the webhook's

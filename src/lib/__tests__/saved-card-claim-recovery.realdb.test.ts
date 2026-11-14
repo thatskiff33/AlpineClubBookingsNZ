@@ -198,6 +198,35 @@ function succeededEvent(paymentIntentId: string, sent: SentCharge, request: Stri
   } as unknown as Stripe.Event;
 }
 
+/** Stripe's `payment_intent.payment_failed` for a declined charge on that POST. */
+function paymentFailedEvent(paymentIntentId: string, sent: SentCharge): Stripe.Event {
+  sequence += 1;
+  return {
+    id: `${EVENT_PREFIX}${sequence}`,
+    object: "event",
+    type: "payment_intent.payment_failed",
+    livemode: false,
+    created: Date.parse("2026-06-30T20:00:00.000Z") / 1000,
+    request: null,
+    data: {
+      object: {
+        id: paymentIntentId,
+        object: "payment_intent",
+        amount: sent.amountCents,
+        amount_received: 0,
+        currency: "nzd",
+        created: Date.parse("2026-06-30T20:00:00.000Z") / 1000,
+        status: "requires_payment_method",
+        payment_method: CARD,
+        latest_charge: `ch_${paymentIntentId}`,
+        last_payment_error: { type: "card_error", code: "card_declined", message: "Your card was declined." },
+        description: null,
+        metadata: sent.metadata,
+      },
+    },
+  } as unknown as Stripe.Event;
+}
+
 async function deliver(event: Stripe.Event): Promise<number> {
   const result = await processStripeWebhookEvent(event);
   return result.init?.status ?? 200;
@@ -347,6 +376,15 @@ const AN_HOUR = 60 * 60 * 1000;
       expect(await adopt(sent, `${INTENT_PREFIX}captured`)).toMatchObject({ newlyCaptured: true });
       expect(await recoverStaleSavedCardClaims(new Date())).toEqual({ recoveredBookingIds: [], failedBookingIds: [] });
       expect(await bookingState()).toMatchObject({ status: "CONFIRMED", savedCardClaimAt: expect.any(Date) });
+    });
+
+    it("recovers a declined claim after payment_failed has reconciled the payment to FAILED", async () => {
+      const { sent } = await strandClaim(AN_HOUR);
+      expect(await deliver(paymentFailedEvent(`${INTENT_PREFIX}declined`, sent))).toBe(200);
+      expect(await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { status: true } })).toEqual({ status: "FAILED" });
+
+      expect(await recoverStaleSavedCardClaims(new Date())).toEqual({ recoveredBookingIds: [BOOKING_ID], failedBookingIds: [] });
+      expect(await bookingState()).toMatchObject({ status: "PENDING", savedCardClaimAt: null });
     });
 
     it("recovery racing the capture's adoption: one order or the other, never a second row or a refund, and the capture settles the booking once", async () => {
