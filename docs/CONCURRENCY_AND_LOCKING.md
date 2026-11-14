@@ -91,6 +91,20 @@ never deadlock. Writers that compose several *same-family* locks (multiple
 per-lodge locks, or multiple per-member locks) acquire them in **sorted key
 order** for the same reason. (`INV-LOCK-002`.)
 
+### Fresh reads after waiting on locks
+
+Lock, re-read, claim requires READ COMMITTED (`INV-LOCK-005`). Leave Prisma's
+`isolationLevel` unset on advisory-lock transactions: Serializable and Repeatable
+Read keep the snapshot from the first statement, including a settings read before
+lock acquisition. A credit, refund request or family link committed while the
+former-member anonymisation job waits must be visible to its blocker checks.
+The job retains global → lifecycle → credit → Member row order and its guarded
+claim; each failed member is logged and counted as blocked before continuing,
+and any such failure records the run FAILURE and reports it once (counts only).
+The lease is released in `finally`. Member merge relies on the same fresh-read
+rule. The isolation census shares the inventory's raw-lock matcher and derives
+helper reachability from source instead of keeping another list of lock names.
+
 ### Status-guarded claims (defense in depth)
 
 Every status-transition write in the cluster is a **status-guarded

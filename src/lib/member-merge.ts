@@ -2408,7 +2408,7 @@ export async function executeMemberMerge(params: {
     // advisory lock serialises concurrent lifecycle writers, so a long window
     // is safe here.
     //
-    // Do NOT add an `isolationLevel` here. The step-5 fresh read depends on READ
+    // INV-LOCK-005: Do NOT add an `isolationLevel` here. The step-5 fresh read depends on READ
     // COMMITTED's per-statement snapshots to see a writer that committed after
     // this transaction opened; under REPEATABLE READ it would re-read the same
     // stale values and the #2243 fix would silently stop working (#2243).
