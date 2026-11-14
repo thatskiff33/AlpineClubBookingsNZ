@@ -15,7 +15,7 @@ reason: the paid cancel reads the dispute hold inside its claim, under the
   moving them out would split the claim's one decision across two files.
 
 file: src/lib/email-message-registry.ts
-lines: 2503
+lines: 2509
 reason: the dispute alert's rows in the registry's own tables - admin
   template, locked delivery, required tokens, subject token, trigger
   metadata, sample values and approved tokens. The registry tests hold each
