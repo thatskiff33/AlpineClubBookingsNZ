@@ -34,6 +34,8 @@
  */
 import ts from "typescript";
 
+import { unwrap } from "./ts-unwrap";
+
 export type FunctionSpan = {
   /**
    * The name a person would search for: `name`, `Class.method`,
@@ -54,24 +56,6 @@ function scriptKindFor(file: string): ts.ScriptKind {
   if (/\.(tsx|jsx)$/.test(file)) return ts.ScriptKind.TSX;
   if (/\.(js|mjs|cjs)$/.test(file)) return ts.ScriptKind.JS;
   return ts.ScriptKind.TS;
-}
-
-/** Strip wrappers that change no shape: `(x)`, `x as T`, `x satisfies T`, `x!`. */
-function unwrap(expression: ts.Expression): ts.Expression {
-  let current = expression;
-  for (;;) {
-    if (
-      ts.isParenthesizedExpression(current) ||
-      ts.isAsExpression(current) ||
-      ts.isSatisfiesExpression(current) ||
-      ts.isNonNullExpression(current) ||
-      ts.isTypeAssertionExpression(current)
-    ) {
-      current = current.expression;
-      continue;
-    }
-    return current;
-  }
 }
 
 /**

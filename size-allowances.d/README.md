@@ -80,7 +80,7 @@ reason: the new sparse-night branch is four lines of policy inside an
 
 The same file carries `function:` entries for the function-length ratchet
 (#4927), which judges functions over 300 lines the way the file-size ratchet
-judges files:
+judges files (the figure below is illustrative):
 
 ```markdown
 function: src/lib/booking-cancel.ts#performBookingCancellation
@@ -90,8 +90,8 @@ reason: the guard belongs inside the claim it protects until #4516 splits the
 ```
 
 - `function:` — `<path>#<name>`, the name as `pnpm run quality:budget` prints it:
-  `name`, `Class.method`, or `default`; a repeated name in one file carries
-  ` (2)`. One entry per function.
+  `name`, `Class.method`, `Class.constructor`, `Class.get x`, `Class.set x`,
+  `Class.#private`, or `default`; a repeated name in one file carries ` (2)`. One entry per function.
 - `lines:` — the function's real length after this change, from its first token
   to its closing one, leading comment excluded.
 - `reason:` — as for a file.

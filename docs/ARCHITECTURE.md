@@ -911,7 +911,7 @@ Use these ownership boundaries when adding new code:
 | Business logic | `src/lib/` | Keep money in integer cents, dates as New Zealand date-only lodge nights, and external calls outside long database transactions where practical. |
 | Database | `prisma/schema.prisma`, `prisma/migrations/` | Schema changes must include deployable migrations and respect the blue/green migration policy. |
 | Operations | `scripts/`, `deploy/`, Compose files | Deployment helpers should be reusable by forks through environment overrides. |
-| Function length | every production file | A function over 300 lines may not appear or grow (`pnpm run quality:budget`, #4927); split a long function into typed top-level functions that read only what they are given. See docs/MAINTENANCE.md → "Function-length ratchet". |
+| Function length | every production file | A top-level function, const-assigned function or class member over 300 lines may not appear or grow (`pnpm run quality:budget`, #4927; object-literal methods are not measured); split a long function into typed top-level functions that read only what they are given. See docs/MAINTENANCE.md → "Function-length ratchet". |
 
 ### Bed-allocation preference resolution
 

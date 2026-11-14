@@ -1075,7 +1075,10 @@ top-level `function` declaration, a function or arrow assigned to a top-level
 or `memo(…)`, measured as the whole declaration), and a method, constructor, accessor or arrow-valued field of a
 top-level class (named `Class.member`). A function nested inside one of those is
 part of its length, not a unit of its own, so keeping a long function's phases
-as inner closures does not shorten it. A span runs from the first token to the
+as inner closures does not shorten it. Known limit: methods and function-valued
+properties of an object literal (such as `export const config = { jwt() {…} }`,
+or `wrap({ handler: async () => {…} })`) and namespace members are not measured,
+so a long function written in one of those shapes is not judged. A span runs from the first token to the
 closing token; the leading doc comment does not count. `scripts/lib/function-length.ts`
 is the measurement.
 
@@ -1098,7 +1101,7 @@ deletion plus a new function, so keep the name or split it while you are there.
 **When a function legitimately has to grow**, splitting it stays the preferred
 answer. Where the split is genuinely worse, declare it in this change's
 `size-allowances.d/` fragment, exactly as for a file, with `function:` naming
-`<path>#<name>`:
+`<path>#<name>` (the figure below is illustrative):
 
 ```markdown
 function: src/lib/booking-cancel.ts#performBookingCancellation

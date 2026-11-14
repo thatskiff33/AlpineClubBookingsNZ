@@ -15,8 +15,9 @@
  *
  * EVERYTHING ABOUT "BEFORE" IS THE FILE-SIZE RATCHET'S, reused rather than
  * copied: the base ref is resolved by `resolveBaseRef` (the merge base, failing
- * loudly when it cannot be read), the diff and its renames come from
- * `changedFilesSinceBase`, scope comes from the same `isProductionFile`, and an
+ * loudly when it cannot be read), the changed files, their renames and the
+ * in-scope-rename rule come from `changedFilesWithBasePaths` (the same helper
+ * `resolveBaseSizes` uses), scope comes from the same `isProductionFile`, and an
  * escape is a `function:` entry in the same `size-allowances.d/` fragment, with
  * the same one-shot rules. Only changed files are judged: an untouched function
  * cannot have grown.
@@ -42,21 +43,22 @@ import {
 } from "./file-size-allowances";
 import {
   baseContentOf,
-  changedFilesSinceBase,
+  type ComputedFinding,
+  changedFilesWithBasePaths,
   deletedFilesSinceBase,
   resolveBaseRef,
-  untrackedFiles,
 } from "./file-size-base";
 import { measureFunctions, type FunctionSpan } from "./function-length";
 
 /**
  * The one ceiling, in physical lines from a function's first token to its last.
  *
- * Why 300 (measured 12 Nov 2026 on `main`): 322 of 13,289 top-level functions
- * in `src/` are over it, a population small enough to read as a report, and
- * the length the cancellation door is to be split down to (#4927). At 200 the
- * report doubles to 523 and stops being something a person reads; at 500 it
- * waves through functions no reviewer holds in their head.
+ * Why 300: the population over it is small enough to read as a report, and it
+ * is the length the cancellation door is to be split down to (#4927). At 200
+ * the report roughly doubles and stops being something a person reads; at 500
+ * it waves through functions no reviewer holds in their head. The dated
+ * measurement lives once, in docs/MAINTENANCE.md; `quality:budget --report`
+ * prints today's.
  */
 export const FUNCTION_LENGTH_LIMIT = 300;
 
@@ -73,16 +75,9 @@ export type FunctionFindingKind =
   | "allowance-not-permitted"
   | "allowance-unused";
 
-export type FunctionFinding = {
-  severity: "regression" | "unusable";
+/** The file-size finding's shape, with `file` meaning `<file>#<name>`. */
+export type FunctionFinding = Omit<ComputedFinding, "kind"> & {
   kind: FunctionFindingKind;
-  /** `<file>#<name>`, the source of a bad allowance, or null. */
-  file: string | null;
-  budget: string | null;
-  previous: string | null;
-  current: string | null;
-  problem: string;
-  action: string;
 };
 
 export type FunctionRatchetResult = {
@@ -145,7 +140,9 @@ export function evaluateFunctionLengthRatchet(input: {
   }
 
   const base = resolveBaseRef(input.root, input.baseRef);
-  const diff = base.ok ? changedFilesSinceBase(input.root, base.sha) : base;
+  const diff = base.ok
+    ? changedFilesWithBasePaths(input.root, base.sha, input.isProductionFile)
+    : base;
   const gone = base.ok ? deletedFilesSinceBase(input.root, base.sha) : base;
   if (!base.ok || !diff.ok || !gone.ok) {
     const failed = [base, diff, gone].find((step) => !step.ok);
@@ -164,12 +161,7 @@ export function evaluateFunctionLengthRatchet(input: {
     return { findings, baseSha: null, checkedFiles: 0, allowancesApplied: [] };
   }
 
-  const changed = [
-    ...diff.changed,
-    ...untrackedFiles(input.root)
-      .filter((file) => !diff.changed.some((entry) => entry.file === file))
-      .map((file) => ({ file, renamedFrom: undefined })),
-  ];
+  const changed = diff.changed;
   const inDiff = new Set(changed.map((entry) => entry.file));
 
   // Base functions, keyed by where they lived on the base.
@@ -184,12 +176,9 @@ export function evaluateFunctionLengthRatchet(input: {
   // the file is new, or moved in from outside the budgeted scope).
   const current: Array<Measured & { basePath: string | null }> = [];
   let checkedFiles = 0;
-  for (const { file, renamedFrom } of changed) {
+  for (const { file, basePath } of changed) {
     if (!input.isProductionFile(file)) continue;
     checkedFiles += 1;
-    const basePath = renamedFrom
-      ? input.isProductionFile(renamedFrom) ? renamedFrom : null
-      : file;
     if (basePath) measureBase(basePath);
     for (const fn of measureText(file, readWorkingTree(input.root, file))) {
       current.push({ ...fn, basePath });
@@ -282,8 +271,9 @@ export function evaluateFunctionLengthRatchet(input: {
             : "the function grew past the limit",
         action:
           "split it into named functions that each take what they need as typed " +
-          "input. An allowance only lets a function ALREADY over the limit grow; " +
-          "a function inside it has the cheapest split available to it",
+          "input. An allowance cannot cover a new function or one crossing the " +
+          "limit for the first time: extract the longest nested block into its " +
+          "own top-level function",
       });
       continue;
     }

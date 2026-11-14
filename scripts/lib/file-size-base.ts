@@ -404,43 +404,79 @@ export function resolveBaseSizes(
   const base = resolveBaseRef(root, ref);
   if (!base.ok) return { ok: false, error: base.error };
 
-  const diff = changedFilesSinceBase(root, base.sha);
+  const diff = changedFilesWithBasePaths(root, base.sha, isProductionFile);
   if (!diff.ok) return { ok: false, error: diff.error };
 
   const sizes = new Map<string, BaseSize>();
-  for (const { file, renamedFrom } of diff.changed) {
-    if (renamedFrom) {
-      if (!isProductionFile(renamedFrom)) {
-        sizes.set(file, { kind: "absent", movedFrom: renamedFrom });
-        continue;
-      }
-      const previous = baseSizeOf(root, base.sha, renamedFrom);
-      sizes.set(
-        file,
-        previous.kind === "existed"
-          ? { kind: "existed", lines: previous.lines, from: renamedFrom }
-          : { kind: "absent", movedFrom: renamedFrom },
-      );
+  for (const { file, basePath, renamedFrom } of diff.changed) {
+    if (basePath === null) {
+      sizes.set(file, renamedFrom ? { kind: "absent", movedFrom: renamedFrom } : { kind: "absent" });
       continue;
     }
-    sizes.set(file, baseSizeOf(root, base.sha, file));
-  }
-
-  // Untracked files are new by definition, so they carry no previous length and
-  // must simply meet their budget. Added AFTER the diff, and guarded, so a file
-  // that is both tracked and modified keeps the length the diff found for it.
-  //
-  // The guard is belt-and-braces rather than a case anybody has reached: `git
-  // diff <commit>` reports only paths present in the base tree or the index,
-  // and `git ls-files --others` reports only paths in neither, so the two sets
-  // are disjoint by construction. It stays because the cost is one `Map.has`
-  // and the failure it would prevent — handing an oversized modified file a
-  // brand-new-file ceiling — is exactly the shape of bug this gate exists for.
-  for (const file of untrackedFiles(root)) {
-    if (!sizes.has(file)) sizes.set(file, { kind: "absent" });
+    const previous = baseSizeOf(root, base.sha, basePath);
+    if (!renamedFrom) {
+      sizes.set(file, previous);
+      continue;
+    }
+    sizes.set(
+      file,
+      previous.kind === "existed"
+        ? { kind: "existed", lines: previous.lines, from: renamedFrom }
+        : { kind: "absent", movedFrom: renamedFrom },
+    );
   }
 
   return { ok: true, ref: base.sha, sizes };
+}
+
+/** A changed file and where its previous version lived, if anywhere in scope. */
+export type ChangedFileWithBase = {
+  file: string;
+  /**
+   * The path to read the previous version from: the file itself, or its
+   * in-scope rename source. Null when the file is untracked, or was renamed
+   * in from outside the budgeted scope — either way it is judged as new.
+   */
+  basePath: string | null;
+  /** The old path when git reports a rename, in scope or not. */
+  renamedFrom?: string;
+};
+
+/**
+ * Every file changed since `baseSha` (the diff plus untracked files), each
+ * with the base path its ceiling may come from.
+ *
+ * The ONE statement of the in-scope-rename rule that `resolveBaseSizes`
+ * documents above, shared by the file-size and function-length ratchets
+ * (#4927) so the two gates cannot drift: a change that teaches the gate about
+ * copies (`-C`) changes this function and both gates follow.
+ *
+ * Untracked files come AFTER the diff, and guarded, so a file that is both
+ * tracked and modified keeps what the diff found for it. The guard is
+ * belt-and-braces rather than a case anybody has reached: `git diff <commit>`
+ * reports only paths present in the base tree or the index, and `git ls-files
+ * --others` only paths in neither, so the two sets are disjoint by
+ * construction. It stays because the failure it would prevent (handing an
+ * oversized modified file a brand-new-file ceiling) is exactly the shape of
+ * bug these gates exist for.
+ */
+export function changedFilesWithBasePaths(
+  root: string,
+  baseSha: string,
+  isProductionFile: (file: string) => boolean,
+): { ok: true; changed: ChangedFileWithBase[] } | { ok: false; error: string } {
+  const diff = changedFilesSinceBase(root, baseSha);
+  if (!diff.ok) return diff;
+  const changed: ChangedFileWithBase[] = diff.changed.map(({ file, renamedFrom }) =>
+    renamedFrom
+      ? { file, renamedFrom, basePath: isProductionFile(renamedFrom) ? renamedFrom : null }
+      : { file, basePath: file },
+  );
+  const seen = new Set(changed.map((entry) => entry.file));
+  for (const file of untrackedFiles(root)) {
+    if (!seen.has(file)) changed.push({ file, basePath: null });
+  }
+  return { ok: true, changed };
 }
 
 /* ------------------------------------------------------------------------- *

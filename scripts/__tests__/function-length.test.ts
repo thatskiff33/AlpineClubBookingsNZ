@@ -125,8 +125,20 @@ describe("measureFunctions", () => {
         "const go = () => 1;",
         "class A { go() {} }",
         "class B { go() {} }",
+        "class C { static go() {} go() {} }",
       ]).map((span) => span.name),
-    ).toEqual(["default", "go", "A.go", "B.go"]);
+    ).toEqual(["default", "go", "A.go", "B.go", "C.go", "C.go (2)"]);
+  });
+
+  it("looks through every shape-preserving wrapper on a const-assigned function", () => {
+    expect(
+      spans("src/a.ts", [
+        "const a = (() => 1) as unknown as () => number;",
+        "const b = (() => 1) satisfies () => number;",
+        "const c = (() => 1)!;",
+        "const d = <() => number>(() => 1);",
+      ]).map((span) => span.name),
+    ).toEqual(["a", "b", "c", "d"]);
   });
 
   it("parses JSX in a .tsx component", () => {
