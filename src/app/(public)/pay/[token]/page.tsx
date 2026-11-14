@@ -132,6 +132,7 @@ export default function PayByLinkPage() {
   async function startCardPayment() {
     setIntentLoading(true);
     setIntentError(null);
+    setRedirectFailed(false); // the returned failure is answered by this attempt
     try {
       const res = await fetch(`/api/pay/${encodeURIComponent(token)}/payment-intent`, {
         method: "POST",
@@ -166,8 +167,14 @@ export default function PayByLinkPage() {
     setCheckingPayment(true);
     const outcome = await checkCardSuccess(token, paidIntentId, confirmation);
     if (outcome.kind === "paid") {
-      if (outcome.context) setContext(outcome.context);
-      setPaymentComplete(true);
+      const settled = outcome.context;
+      if (settled) setContext(settled);
+      // #3194: a paid booking under review reads as its review state, and the
+      // server's narrative (the `!context.payable` branch) confirms the payment
+      // with the review beside it. Composing a card here would drop the amount.
+      const paidUnderReview =
+        settled?.financialReviewPending === true && !settled.payable && !settled.canRequestFreshLink;
+      if (!paidUnderReview) setPaymentComplete(true);
     } else if (outcome.kind === "fresh") {
       // The refreshed context: "Amount due" and the form match the new intent.
       if (outcome.context) setContext(outcome.context);

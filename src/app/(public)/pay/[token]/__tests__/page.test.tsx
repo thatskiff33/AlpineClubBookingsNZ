@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import PayByLinkPage from "../page";
 import {
+  BOOKING_ALREADY_PAID_CODE,
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_BODY,
   PAYMENT_PROCESSING_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
@@ -241,6 +242,19 @@ describe("#4300 (INV-PAY-138): a superseded earlier payment on the /pay link", (
     expect(screen.queryByRole("button", { name: "Pay by card" })).toBeNull();
     expect(document.body.textContent).not.toContain("BOOK-123");
     expect(document.body.textContent).not.toContain("already been used");
+  });
+
+  it("after a card success, the server's coded already-paid 410 reads as complete (#4955)", async () => {
+    installIntentSequence([
+      { status: 200, body: { clientSecret: "secret_fresh", paymentIntentId: "pi_fresh" } },
+      { status: 410, body: { error: "This payment link has already been used.", code: BOOKING_ALREADY_PAID_CODE } },
+    ]);
+    render(<PayByLinkPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pay by card" }));
+    fireEvent.click(await screen.findByRole("button", { name: "trigger-card-success" }));
+
+    expect(await screen.findByText(/your payment is complete/i)).toBeInTheDocument();
+    expect(screen.queryByText("Payment received - check booking status")).toBeNull();
   });
 
   it("after a card success the capacity-cancel 410 variant ends the same way", async () => {
@@ -1186,6 +1200,49 @@ describe("#4955: Stripe returns to the payment link", () => {
     expect(screen.getByText(/Your payment did not go through/)).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
     expect(window.location.search).toBe("");
+  });
+
+  it("clears that notice once the payer starts another attempt", async () => {
+    window.history.replaceState(null, "", "?payment_intent=pi_test&redirect_status=failed");
+    // The new attempt fails too: its own error stands alone, not under the old notice.
+    installIntentSequence([{ status: 500, body: { error: "Unable to start the payment. Please try again." } }]);
+    render(<PayByLinkPage />);
+    expect(await screen.findByText(/Your payment did not go through/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Pay by card" }));
+    expect(await screen.findByText("Unable to start the payment. Please try again.")).toBeInTheDocument();
+    expect(screen.queryByText(/Your payment did not go through/)).toBeNull();
+  });
+
+  /*
+    The webhook settled a booking under review before the payer came back: the
+    server refuses the intent as already paid, and the context reads as the
+    review's wording state with the server's paid narrative. That narrative is
+    the answer - the amount received and the review - not "could not confirm".
+  */
+  it("shows the server's paid narrative when a booking under review was settled before the return", async () => {
+    const paidUnderReview = {
+      ...payableContext,
+      state: "financial_review_pending",
+      narrative: {
+        state: "financial_review_pending",
+        headline: "Payment received",
+        message: `Thanks Riley - we've received your payment of $125.00 on 20 Jun 2026. ${FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE} ${FINANCIAL_REVIEW_WORKING_IT_OUT}`,
+        nextStep: `${FINANCIAL_REVIEW_NOTHING_TO_DO} ${FINANCIAL_REVIEW_WILL_BE_IN_TOUCH}`,
+      },
+      payable: null,
+      financialReviewPending: true,
+    };
+    window.history.replaceState(null, "", "?payment_intent=pi_test&redirect_status=succeeded");
+    installIntentSequence(
+      [{ status: 410, body: { error: "This payment link has already been used.", code: BOOKING_ALREADY_PAID_CODE } }],
+      [paidUnderReview],
+    );
+    render(<PayByLinkPage />);
+    expect(await screen.findByText(/we've received your payment of \$125\.00/)).toBeInTheDocument();
+    expect(document.body.textContent).toContain(FINANCIAL_REVIEW_WORKING_IT_OUT);
+    expect(screen.queryByText("Payment received - check booking status")).toBeNull();
+    expect(screen.queryByTestId("payment-link-financial-review")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Pay by card" })).toBeNull();
   });
 
   it.each(["", "bad", "pi_", "pi_%3Cscript%3E", "pi_bad%2Fpath"])("ignores an absent or malformed intent id (%s)", async (id) => {

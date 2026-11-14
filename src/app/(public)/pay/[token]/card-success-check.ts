@@ -9,9 +9,10 @@
  * paid; a fresh secret is the booking still owing, with the refreshed context
  * (so the amount shown is the one the new intent charges) and the going-back
  * notice exactly when the server says so; a known refusal is shown as such.
- * Anything else - a 410 because the webhook settled (or capacity-cancelled) the
- * booking in between, a 429, a network failure, the paid intent handed back as
- * if unpaid - reads the context once more (a webhook that has just settled it
+ * A 410 coded `BOOKING_ALREADY_PAID` is the server saying the booking is paid
+ * (the webhook settled it first): paid, with the context read once more.
+ * Anything else - an uncoded 410 (the booking capacity-cancelled, say), a 429,
+ * a network failure, the paid intent handed back as if unpaid - reads the context once more (a webhook that has just settled it
  * shows the paid page), else ends in "Payment received - check booking status",
  * never back at the pay buttons.
  *
@@ -23,6 +24,7 @@
  * "received" would claim more than Stripe has said.
  */
 import {
+  BOOKING_ALREADY_PAID_CODE,
   PAYMENT_PROCESSING_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
 } from "@/lib/payment-recovery-contract";
@@ -76,6 +78,11 @@ export async function checkCardSuccess(
     });
     const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok) {
+      // The webhook settled the booking first: the server's own "already paid".
+      // Read again so a paid booking under review shows the server's narrative.
+      if (response.status === 410 && data.code === BOOKING_ALREADY_PAID_CODE) {
+        return { kind: "paid", context: (await readContext(path)) ?? context };
+      }
       const recovery = response.status === 409 ? paymentRecoveryForRefusal(data) : null;
       return recovery ? { kind: "recovery", recovery } : settledMeanwhile();
     }
