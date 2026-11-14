@@ -293,8 +293,11 @@ export interface RecordedCardRefundRow {
  * answer the same every time, not "the one written first".
  *
  * The attribution sorts in memory with the comparators below, so it holds
- * whatever order its rows arrive in; the reads also ask PostgreSQL for the same
- * order (`CARD_REFUND_OPERATION_ORDER_BY`, `RECORDED_CARD_REFUND_ORDER_BY`).
+ * whatever order its rows arrive in; that sort is the guarantee. The reads also
+ * ask PostgreSQL for the same order (`CARD_REFUND_OPERATION_ORDER_BY`,
+ * `RECORDED_CARD_REFUND_ORDER_BY`) as defence in depth. PostgreSQL compares the
+ * keys by the database's collation, which can differ from code-unit order on
+ * mixed-case keys (Stripe's ids), so on such a tie the comparator decides.
  */
 export const CARD_REFUND_OPERATION_ORDER_BY = [
   { createdAt: "asc" },
