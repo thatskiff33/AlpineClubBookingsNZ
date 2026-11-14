@@ -9,9 +9,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //   1. when a lodgeId is passed, the lodge's OWN override rows are used and
 //      REPLACE the club-wide rows (never merged — ADR-001 resolved question 3),
 //      and the default-lodge lookup is NOT consulted; and
-//   2. when no lodgeId is passed, the club's default lodge is resolved (the
-//      pre-existing bridging behaviour the call sites without lodge context
-//      still rely on).
+//   2. when the caller passes null, the club's default lodge is resolved (the
+//      bridging behaviour for a caller with no lodge context); and
+//   3. the lodge cannot be left out at all: it is a required parameter
+//      (#4946), pinned by the @ts-expect-error below, which `pnpm typecheck`
+//      fails the moment the parameter becomes optional again.
 
 const mocks = vi.hoisted(() => ({
   cancellationFindMany: vi.fn(),
@@ -86,14 +88,22 @@ describe("loadCancellationPolicy resolves the booking's lodge policy", () => {
     expect(mocks.lodgeFindFirst).not.toHaveBeenCalled();
   });
 
-  it("resolves the club default lodge only when no lodgeId is supplied", async () => {
+  it("resolves the club default lodge only when the caller passes null", async () => {
     mocks.cancellationFindMany.mockResolvedValue([...CLUB_WIDE_RULES]);
 
-    await loadCancellationPolicy(checkIn);
+    await loadCancellationPolicy(checkIn, null);
 
     // The bridging behaviour: call sites without lodge context resolve the
     // default lodge (oldest active) rather than crashing.
     expect(mocks.lodgeFindFirst).toHaveBeenCalled();
+  });
+
+  it("refuses, at compile time, a call that leaves the lodge out (#4946)", async () => {
+    mocks.cancellationFindMany.mockResolvedValue([...CLUB_WIDE_RULES]);
+
+    // @ts-expect-error -- the lodge is required; a caller with a booking in hand
+    // passes the booking's lodge, never nothing.
+    await loadCancellationPolicy(checkIn);
   });
 
   it("prefers a matching BookingPeriod's rules over the policy table, scoped to the lodge", async () => {
