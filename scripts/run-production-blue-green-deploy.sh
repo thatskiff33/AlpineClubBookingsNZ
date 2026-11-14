@@ -475,7 +475,20 @@ validate_deploy_commit_is_release_tag() {
   local release_tags=""
   local refusal
 
-  if remote_tags="$(git -C "$SOURCE_REPO" ls-remote --tags origin 'refs/tags/v*' 2>/dev/null)"; then
+  local ls_remote_status=0
+  local ls_remote_error_file
+  local ls_remote_error
+
+  # git's stderr goes to its own file, so stdout stays pure ls-remote output
+  # and a failure can still show git's own reason (no such remote, an
+  # authentication failure, a network outage).
+  ls_remote_error_file="$(mktemp)"
+  remote_tags="$(git -C "$SOURCE_REPO" ls-remote --tags origin 'refs/tags/v*' 2>"$ls_remote_error_file")" \
+    || ls_remote_status=$?
+  ls_remote_error="$(cat "$ls_remote_error_file")"
+  rm -f "$ls_remote_error_file"
+
+  if [ "$ls_remote_status" -eq 0 ]; then
     while IFS=$'\t' read -r object_id ref; do
       case "$ref" in
         'refs/tags/'*'^{}') ;;
@@ -496,7 +509,7 @@ EOF
     fi
     refusal="Deploy commit ${RESOLVED_REF} is not a release: no annotated vX.Y.Z tag on origin points at it."
   else
-    refusal="Could not reach origin to confirm that deploy commit ${RESOLVED_REF} is a release, and a tag on this host alone does not count."
+    refusal="Could not reach origin to confirm that deploy commit ${RESOLVED_REF} is a release, and a tag on this host alone does not count. git said: ${ls_remote_error//$'\n'/ }"
   fi
 
   if ! env_flag_is_true "$ALLOW_UNTAGGED_DEPLOY_COMMIT"; then
@@ -927,8 +940,11 @@ if [ "$WRAPPER_MODE" = "build-and-push-images" ]; then
   WORKSPACE=""
 
   echo
-  echo "Built and pushed ${RESOLVED_REF}. Deploy it with:"
-  echo "  ./scripts/run-production-blue-green-deploy.sh"
+  # Print the commit that was built, not the bare command: that would resolve
+  # origin/main, which may be a different commit whose images were never built
+  # and which the release-tag check refuses (#4978).
+  echo "Built and pushed ${RESOLVED_REF}. Deploy exactly this commit with:"
+  echo "  DEPLOY_REF=${RESOLVED_REF} ./scripts/run-production-blue-green-deploy.sh"
   return 0
 fi
 

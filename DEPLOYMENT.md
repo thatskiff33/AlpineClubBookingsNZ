@@ -850,7 +850,7 @@ and [Adding a data-encryption key](#adding-a-data-encryption-key-4456).
    git clone https://github.com/<owner>/AlpineClubBookingsNZ.git AlpineClubBookingsNZ
    cd AlpineClubBookingsNZ
    git fetch --tags
-   git checkout -B main "$(git describe --abbrev=0 --match 'v[0-9]*' origin/main)"
+   git checkout -B main "$(git describe --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' origin/main)"
    git describe --exact-match   # prints the release you are on, e.g. v0.13.2
    cp .env.example .env
    ```
@@ -1114,10 +1114,13 @@ The better fix is to tag releases in the fork with `pnpm run release:cut`; see
 
 When CI cannot build the images — a depleted Actions budget, a registry you
 cannot reach from CI — build them on the deploy host with the supported mode
-rather than by hand:
+rather than by hand. Build the release you are about to deploy, not whatever
+`origin/main` is, because the deploy refuses a commit that is not a release
+(see [the release-tag refusal](#the-deploy-refuses-a-commit-that-is-not-a-release-4978)):
 
 ```bash
-./scripts/run-production-blue-green-deploy.sh --build-and-push-images
+git fetch origin tag v0.14.0
+DEPLOY_REF=v0.14.0 ./scripts/run-production-blue-green-deploy.sh --build-and-push-images
 ```
 
 **This mode pushes, so the host needs a GHCR token with `write:packages`** —
@@ -1141,10 +1144,12 @@ gate can no longer confirm it warmed the release being deployed (it warns
 instead), and the public website's per-release CSP nonce falls back to a
 per-build seed.
 
-Then deploy the pushed tags normally:
+Then deploy the same commit. The build prints the exact command, with
+`DEPLOY_REF` set to the commit it built; deploying the release tag is the same
+thing:
 
 ```bash
-./scripts/run-production-blue-green-deploy.sh
+DEPLOY_REF=v0.14.0 ./scripts/run-production-blue-green-deploy.sh
 ```
 
 ### A failed deploy leaves a record (#3539)

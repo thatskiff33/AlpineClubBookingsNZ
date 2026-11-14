@@ -220,6 +220,9 @@ describe("an untagged commit is refused unless somebody records why (#4978)", ()
     const refused = runGuard(repo, repo.head);
     expect(refused.code).not.toBe(0);
     expect(refused.stderr).toContain(`Could not reach origin to confirm that deploy commit ${repo.head} is a release`);
+    // git's own reason reaches the operator, so a missing remote or a failed
+    // login is not mistaken for an outage.
+    expect(refused.stderr).toMatch(/git said: fatal: .*gone\.git/);
 
     const overridden = runGuard(repo, repo.head, { [ALLOW]: "1", [REASON]: "GitHub outage" });
     expect(overridden.code, overridden.stderr).toBe(0);
@@ -302,6 +305,17 @@ describe("the guard runs before anything is resolved, built, pulled or migrated"
     expect(workspace).toBeGreaterThan(images);
   });
 
+  it("tells the operator to deploy the exact commit image-build mode just built", () => {
+    // The bare command would resolve origin/main, which may have moved past
+    // the release that was built and is then refused, or deploys images that
+    // were never built.
+    exactLine('  echo "  DEPLOY_REF=${RESOLVED_REF} ./scripts/run-production-blue-green-deploy.sh"');
+    const tail = code.slice(code.indexOf("Built and pushed ${RESOLVED_REF}"));
+    expect(tail.slice(0, tail.indexOf("return 0"))).not.toContain(
+      'echo "  ./scripts/run-production-blue-green-deploy.sh"',
+    );
+  });
+
   it("is called exactly twice, once per mode", () => {
     const calls = code.split("\n").filter((line) => line.trim() === GUARD);
     expect(calls).toHaveLength(2);
@@ -323,11 +337,14 @@ describe("the documents a club follows install a release, not main", () => {
       expect(clone, `${file} must have an install snippet`).toBeGreaterThan(-1);
       expect(lines[clone + 1]).toMatch(/^cd /);
       expect(lines[clone + 2]).toBe("git fetch --tags");
-      // `describe` without `--tags` sees annotated tags only, and `--match`
-      // keeps it to release names, so it finds the newest release on main.
+      // `describe` without `--tags` sees annotated tags only. `--match` keeps
+      // it to `v`-prefixed names and `--exclude` drops pre-release names such
+      // as `v1.3.0-rc1`, which the deploy's release-tag check would refuse.
+      // It is a glob, not the strict release pattern; `release:cut` only ever
+      // creates strict `vX.Y.Z` tags.
       expect(lines[clone + 3]).toMatch(/^git checkout /);
       expect(lines[clone + 3]).toContain(
-        `"$(git describe --abbrev=0 --match 'v[0-9]*' origin/main)"`,
+        `"$(git describe --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' origin/main)"`,
       );
     },
   );
