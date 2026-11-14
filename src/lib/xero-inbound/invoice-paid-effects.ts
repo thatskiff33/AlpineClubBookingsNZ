@@ -903,9 +903,11 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
               },
               select: { id: true },
             });
-            // #4516 (M4d): the organisation's late cash is a hand-back debt. This delivery holds lock(1).
+            // #4516 (M4d): the organisation's late cash is a hand-back debt. This delivery holds lock(1) and, by now,
+            // the Payment row, so the owner is read plainly (no Payment -> booking edge, INV-LOCK-002): this arm runs only
+            // for an organisation's booking, whose owner no member merge moves.
             if (journal) {
-              await postHandBackObligation(tx, journal, { bookingId: settlementPayment.bookingId, taskId: task.id, amountCents: handBackCents, origin: "XERO", debtorRead: "booking-row" });
+              await postHandBackObligation(tx, journal, { bookingId: settlementPayment.bookingId, taskId: task.id, amountCents: handBackCents, origin: "XERO", debtorRead: "plain" });
             }
           }
           logger.warn(

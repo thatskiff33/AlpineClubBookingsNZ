@@ -7256,7 +7256,10 @@ commit between the reads: this writer and every other refunded-total writer
 hold the Payment row. A cancellation hand-back's completion holds `lock(1)`,
 then the booking row, then the Payment row (#4516 M4d), so its cash posts
 against the owner. Every other hand-back writer and the late-cash mint hold
-`lock(1)`. Re-taking the row later in the same
+`lock(1)`. An organisation's late-cash hand-back (`invoice-paid-effects.ts`)
+posts its R05 after the delivery's Payment row, so it reads the owner plainly
+rather than taking the booking row: no Payment -> booking edge, and no member
+merge moves an organisation's booking (#4516 review C). Re-taking the row later in the same
 transaction (the approval's allocation) waits on nothing. The member's request,
 the review screen and the booking page read the same figure unlocked, as advice. The provider calls - the
 webhook's own Stripe payload, and the cron's read-back

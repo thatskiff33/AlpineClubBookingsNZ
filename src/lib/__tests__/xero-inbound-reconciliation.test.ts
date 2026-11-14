@@ -2742,7 +2742,7 @@ describe("processStoredXeroInboundEvents", () => {
     });
     // #4516 (M4d): and its refund debt posts with it, under this delivery's lock(1).
     expect(receiptDoors.postHandBackObligation).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
-      bookingId: "booking_ib_pl", taskId: "hand-back-school", amountCents: 12345, origin: "XERO", debtorRead: "booking-row",
+      bookingId: "booking_ib_pl", taskId: "hand-back-school", amountCents: 12345, origin: "XERO", debtorRead: "plain", // review C: no booking row after the Payment row
     });
     const reason = mocks.manualRefundTaskCreate.mock.calls[0]?.[0]?.data?.reason;
     expect(reason).toContain("organisation");
