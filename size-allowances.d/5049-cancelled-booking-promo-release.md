@@ -13,12 +13,12 @@ reason: the legacy-draft rejection must release the booking's promo uses in
   its own CANCELLED transaction; the route's transaction is where that write is.
 
 file: src/lib/group-cancel.ts
-lines: 1073
+lines: 1132
 reason: each child's cancel transaction must release that child's promo uses
   before it commits; the release sits inside the per-child claim.
 
 file: src/lib/payment-reconciliation.ts
-lines: 2892
+lines: 2901
 reason: the card capacity void must release the booking's promo uses in the
   same transaction that cancels it, before the hosting seam that stays last.
 
