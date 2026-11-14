@@ -487,6 +487,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-059` | A guest's dietary value is seeded once, then carried by identity |
 | `INV-MOD-060` | An ordinary price ask's door and replay send one Stripe request |
 | `INV-MOD-061` | An edit's card refund and its replay send one Stripe request |
+| `INV-MOD-062` | An edit settles only the figures its preview showed |
 
 ### Adult-member hosting
 
@@ -952,6 +953,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-035` | An unrecorded refund note holds its payment's refund notes until recorded |
 | `INV-INT-036` | An account-credit note stamps the one member credit it was raised for |
 | `INV-INT-037` | A manual grant queues one Xero note at approval |
+| `INV-INT-038` | An abandoned inbound reconcile row is taken over, never shared |
 
 ## Operations
 
@@ -1027,6 +1029,7 @@ ten pre-split domain headings the index keeps verbatim.
 | `INV-SSOT-004` | Two instruments claiming independence must measure the same way; `stripComments` lives once |
 | `INV-SSOT-005` | Who owns a booking is answered by `bookingOwner()` and nowhere else |
 | `INV-SSOT-006` | Id- or input-carrying Prisma `startsWith` prefixes go through `exactPrefix` |
+| `INV-SSOT-007` | A failed admin list load shows `AdminLoadError`, never the empty state |
 
 ## Authentication
 
@@ -1050,3 +1053,4 @@ headings the index keeps verbatim.
 | `INV-AUTH-009` | A passkey enrols; its challenge lasts two minutes |
 | `INV-AUTH-010` | Listed admin routes require a fresh proof first |
 | `INV-AUTH-011` | Address sign-in limits exempt signout/session; refusals show a network wait |
+| `INV-AUTH-012` | Officers use an app or passkey after grace |

@@ -400,6 +400,7 @@ async function quote(body: Record<string, unknown>) {
       newFinalPriceCents: number;
       priceDiffCents: number;
       changeFeeCents: number;
+      quotedFigures: Record<string, number>;
     };
   } finally {
     raceSession.current = null;
@@ -771,7 +772,14 @@ async function removeGuest(guestId: string) {
           .currentRedemptions;
 
         const quoted = await quote({ checkOut: scenario.newCheckOut });
-        const result = await batch({ checkOut: scenario.newCheckOut, settlementMethod: "card" });
+        expect(quoted.quotedFigures).toBeDefined();
+        // #4924 (`INV-MOD-062`): the save carries the route's own figures, so a
+        // drift between the two pricing paths would refuse it here.
+        const result = await batch({
+          checkOut: scenario.newCheckOut,
+          settlementMethod: "card",
+          quotedFigures: quoted.quotedFigures,
+        });
         const after = await booking();
 
         // Quote = save, and both are the carried code capped at what is left.
@@ -920,7 +928,8 @@ async function removeGuest(guestId: string) {
         const before = await booking();
 
         const quoted = await quote({ checkOut: "2026-07-02" });
-        const result = await batch({ checkOut: "2026-07-02", settlementMethod: "card" });
+        expect(quoted.quotedFigures).toBeDefined();
+        const result = await batch({ checkOut: "2026-07-02", settlementMethod: "card", quotedFigures: quoted.quotedFigures });
         const after = await booking();
 
         // Quote = save: the carried codes capped at the $100 left.
