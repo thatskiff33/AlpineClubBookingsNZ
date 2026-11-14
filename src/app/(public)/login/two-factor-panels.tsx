@@ -78,7 +78,17 @@ function RecoveryCodes({
   );
 }
 
-export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
+/**
+ * `appOnly` hides the emailed-code option for a required officer sent here by
+ * the officer gate: an emailed code never satisfies that rule (#4618).
+ */
+export function TwoFactorEnrollPanel({
+  callbackUrl,
+  appOnly = false,
+}: {
+  callbackUrl: string;
+  appOnly?: boolean;
+}) {
   const [method, setMethod] = useState<EnrollMethod>("TOTP");
   const [totpSetup, setTotpSetup] = useState<TotpSetup | null>(null);
   const [totpCode, setTotpCode] = useState("");
@@ -216,12 +226,14 @@ export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
               selected={method === "TOTP"}
               onSelect={() => setMethod("TOTP")}
             />
-            <OptionCard
-              icon={Mail}
-              title="Email"
-              selected={method === "EMAIL"}
-              onSelect={() => setMethod("EMAIL")}
-            />
+            {appOnly ? null : (
+              <OptionCard
+                icon={Mail}
+                title="Email"
+                selected={method === "EMAIL"}
+                onSelect={() => setMethod("EMAIL")}
+              />
+            )}
           </OptionCardGroup>
 
           {method === "TOTP" ? (
