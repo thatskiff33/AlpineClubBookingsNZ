@@ -74,8 +74,15 @@ export const CI_WORKFLOW_FILE = "ci.yml";
 /** That workflow's publishing job, by the display name GitHub's jobs API reports. */
 export const PUBLISH_IMAGES_JOB_NAME = "Publish GHCR images";
 
-/** The most runs or jobs one API page holds; a longer answer is refused rather than paged. */
+/** The most runs or jobs one API page holds. */
 const API_PAGE = 100;
+
+/**
+ * The most pages read for one answer. A run's jobs list counts every attempt's
+ * jobs (`filter=all`), so a run re-run several times outgrows one page; past
+ * this many pages the check refuses rather than reading on.
+ */
+const API_MAX_PAGES = 10;
 
 const RELEASE_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const BUMPS = ["patch", "minor", "major"];
@@ -595,8 +602,9 @@ function requireFirstParent(firstParent, sha) {
  */
 function requirePublishedImages(cmd, repo, sha) {
   const short = sha.slice(0, 12);
-  const api = (endpoint) => {
-    const args = ["api", "--hostname", repo.host, `repos/${repo.owner}/${repo.name}/${endpoint}`];
+  // One page of `endpoint`: its items and the total GitHub says the answer holds.
+  const page = (endpoint, number) => {
+    const args = ["api", "--hostname", repo.host, `repos/${repo.owner}/${repo.name}/${endpoint}${number > 1 ? `&page=${number}` : ""}`];
     const text = cmd.gh(
       args,
       `Nothing was created. GitHub could not say whether CI published images for ${short}; gh's login needs read access to ${repo.slug}'s ` +
@@ -614,9 +622,25 @@ function requirePublishedImages(cmd, repo, sha) {
       throw unexpected();
     }
     const list = answer?.[endpoint.startsWith("actions/workflows/") ? "workflow_runs" : "jobs"];
-    if (!Array.isArray(list) || !Number.isInteger(answer.total_count) || answer.total_count > list.length) throw unexpected();
+    if (!Array.isArray(list) || !Number.isInteger(answer.total_count)) throw unexpected();
     if (list.some((item) => !Number.isInteger(item?.id) || typeof item.status !== "string")) throw unexpected();
-    return list;
+    return { list, total: answer.total_count, unexpected };
+  };
+  // Every page of `endpoint`. A page shorter than a full one while GitHub
+  // promises more is an answer this cannot read, and refuses.
+  const api = (endpoint) => {
+    const items = [];
+    for (let number = 1; number <= API_MAX_PAGES; number += 1) {
+      const { list, total, unexpected } = page(endpoint, number);
+      items.push(...list);
+      if (items.length >= total) return items;
+      if (list.length < API_PAGE) throw unexpected();
+    }
+    throw new ReleaseCutError(
+      `GitHub's answer to repos/${repo.owner}/${repo.name}/${endpoint} holds more than ${API_MAX_PAGES} pages of ${API_PAGE}, ` +
+        `more than this script reads, so it cannot tell whether CI published images for ${short}.`,
+      `Nothing was created. A run re-run this many times is unusual: check the run on GitHub, and if its "${PUBLISH_IMAGES_JOB_NAME}" job succeeded, raise API_MAX_PAGES in scripts/release/cut-release.mjs.`,
+    );
   };
 
   const runs = api(`actions/workflows/${CI_WORKFLOW_FILE}/runs?head_sha=${sha}&event=push&branch=${MAIN_BRANCH}&per_page=${API_PAGE}`);

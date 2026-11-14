@@ -1136,7 +1136,7 @@ describe("release:cut publish asks GitHub whether CI published the commit's imag
     ["the answer is not JSON", { [GH_RUNS]: { status: 0, stdout: "<html>", stderr: "" } }, /answered in a shape this script does not read/],
     ["the runs list is missing", { [GH_RUNS]: json({ total_count: 0 }) }, /answered in a shape/],
     ["a run has no id", { [GH_RUNS]: json({ total_count: 1, workflow_runs: [{ status: "completed", conclusion: "success" }] }) }, /answered in a shape/],
-    ["the jobs answer is cut short by paging", { [GH_JOBS]: json({ total_count: 150, jobs: [ciJob(2, PUBLISH_IMAGES_JOB_NAME)] }) }, /answered in a shape/],
+    ["a jobs page is shorter than GitHub says the answer holds", { [GH_JOBS]: json({ total_count: 150, jobs: [ciJob(2, PUBLISH_IMAGES_JOB_NAME)] }) }, /answered in a shape/],
     ["the jobs call fails", { [GH_JOBS]: { status: 1, stdout: "", stderr: "HTTP 502" } }, /failed:\nHTTP 502/],
   ];
   for (const [label, stubs, pattern] of unreadable) {
@@ -1149,6 +1149,38 @@ describe("release:cut publish asks GitHub whether CI published the commit's imag
       expect(git(repo, "tag", "--list", "v0.13.3")).toBe("");
     });
   }
+
+  /** A full page of jobs that are not the publish job: what a run re-run several times fills the first pages with. */
+  const fullPage = (first) => Array.from({ length: 100 }, (_, index) => ({ ...ciJob(first + index, "Verify"), run_attempt: 1 }));
+
+  it("reads every page of a run's jobs, so a run re-run several times still counts", () => {
+    const { repo } = mergedReleaseFixture();
+    const published = { ...ciJob(9001, PUBLISH_IMAGES_JOB_NAME), run_attempt: 6 };
+    const run = fixtureRunner(repo, {
+      [GH_JOBS]: (line) => json({ total_count: 101, jobs: line.endsWith("&page=2") ? [published] : fullPage(1) }),
+    });
+    const log = silentLog();
+    publishRelease({ repoRoot: repo, run, log });
+    expect(log.text()).toContain("CI: ci.yml run 101 published its images");
+    expect(run.calls.filter((call) => call.startsWith(GH_JOBS))).toEqual([
+      `${GH_JOBS}101/jobs?filter=all&per_page=100`,
+      `${GH_JOBS}101/jobs?filter=all&per_page=100&page=2`,
+    ]);
+  });
+
+  it("refuses with its own message, not an API-change one, when an answer outgrows the pages it reads", () => {
+    const { repo } = mergedReleaseFixture();
+    const run = fixtureRunner(repo, { [GH_JOBS]: (line) => json({ total_count: 5000, jobs: fullPage(Number(/&page=(\d+)$/.exec(line)?.[1] ?? 1) * 100) }) });
+    const error = expectRefusal(
+      () => publishRelease({ repoRoot: repo, execute: true, run, writeNotes: notesWriter(), log: silentLog() }),
+      /runs\/101\/jobs\?filter=all&per_page=100 holds more than 10 pages of 100, more than this script reads/,
+    );
+    expect(error.recovery).toMatch(/^Nothing was created\. A run re-run this many times is unusual/);
+    expect(error.recovery).not.toContain("API has changed");
+    expect(run.calls.filter((call) => call.startsWith(GH_JOBS))).toHaveLength(10);
+    expect(run.sideEffects()).toEqual([]);
+    expect(git(repo, "tag", "--list", "v0.13.3")).toBe("");
+  });
 
   /** Origin holds v0.13.3 on the merged commit with no release, and main has moved to a commit CI has not published. */
   function resumeFixture() {
