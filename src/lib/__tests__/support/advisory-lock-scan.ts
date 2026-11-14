@@ -29,6 +29,8 @@ export interface AdvisoryLockSite {
   readonly rel: string;
   /** 1-based line. Reported in failures; NOT part of the identity. */
   readonly line: number;
+  /** Exact character offset of the lock call in the original source. */
+  readonly offset: number;
   /** Nearest enclosing top-level declaration. */
   readonly symbol: string;
   /** 1-based index of this site among the advisory sites of that symbol. */
@@ -200,6 +202,7 @@ export function collectAdvisoryLockSites(
       sites.push({
         rel,
         line: lineIndex + 1,
+        offset: index,
         symbol: siteSymbol,
         ordinal,
         tier,

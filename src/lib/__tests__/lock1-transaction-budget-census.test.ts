@@ -171,6 +171,17 @@ describe("the census's option classifier", () => {
 describe("tracing a lock wait to its transaction budget", () => {
   const lock = "await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;";
 
+  it("uses the global call's exact offset when separate transactions share a line", () => {
+    const result = scanLock1Transactions([{
+      rel: "src/lib/writer.ts",
+      text: "export async function run() { await prisma.$transaction(async tx => { await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('scoped'))`; }, LOCK1_HOLDER_TRANSACTION_BUDGET); await prisma.$transaction(async tx => { " + lock + " }); }",
+    }]);
+
+    expect(result.unreached).toEqual([]);
+    expect(result.openers).toHaveLength(1);
+    expect(result.openers[0]).toMatchObject({ opener: "$transaction", options: null });
+  });
+
   it("finds defaults through an imported helper and a named transaction callback", () => {
     const result = scanLock1Transactions([
       {

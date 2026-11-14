@@ -2,7 +2,6 @@ import path from "path";
 import ts from "typescript";
 
 import { collectAdvisoryLockSites } from "./advisory-lock-scan";
-import { ADVISORY_LOCK_CALL, maskedSource } from "./advisory-lock-source";
 
 // The reader behind `lock1-transaction-budget-census.test.ts` (`INV-LOCK-006`):
 // for every `pg_advisory_xact_lock(1)` site, the interactive transaction that
@@ -183,12 +182,6 @@ export function scanLock1Transactions(
     return file;
   };
 
-  const masked = new Map<string, string>();
-  const maskedOf = (file: ParsedFile): string => {
-    if (!masked.has(file.rel)) masked.set(file.rel, maskedSource(file.text));
-    return masked.get(file.rel)!;
-  };
-
   const openers: TransactionOpener[] = [];
   const joined = new Map<string, readonly string[]>();
   const unreached: string[] = [];
@@ -231,11 +224,7 @@ export function scanLock1Transactions(
   for (const site of collectAdvisoryLockSites(sources)) {
     if (site.tier !== "GLOBAL") continue;
     const file = parse(site.rel);
-    const lineStart = file.source.getPositionOfLineAndCharacter(site.line - 1, 0);
-    const lineEnd = file.text.indexOf("\n", lineStart);
-    const maskedLine = maskedOf(file).slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
-    const column = maskedLine.search(ADVISORY_LOCK_CALL);
-    walkOut(file, deepestNodeAt(file.source, lineStart + Math.max(column, 0)), [site.qualifiedKey]);
+    walkOut(file, deepestNodeAt(file.source, site.offset), [site.qualifiedKey]);
   }
 
   while (queue.length > 0) {
