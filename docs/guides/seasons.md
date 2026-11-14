@@ -99,8 +99,8 @@ Two things worth knowing:
 
 1. Use **Deactivate**/**Activate** on a card to toggle whether the season is
    live, or **Delete** to remove it. The confirmation names the season and
-   warns that its nightly rates are deleted with it; rates must be re-entered
-   before those nights can be priced.
+   warns that its nightly rates are deleted with it and that this cannot be
+   undone: the season and its rates would need to be set up again.
 
 ### Add a season or change rates
 

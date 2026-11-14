@@ -398,7 +398,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Keep the consequence warning in members/_components/member-bulk-dialog.tsx aligned.
+    // Keep the consequence warning in src/app/(admin)/admin/membership/members/_components/member-bulk-dialog.tsx aligned.
     // #1756: shared-double placements swept by a deactivate or an ORG grant that
     // leaves ADULT, collected inside the transaction and alerted on after commit.
     const sweptSharesByMember: Array<{
@@ -580,7 +580,7 @@ export async function POST(req: NextRequest) {
           }
         }
       }
-      // Remove family group memberships for deactivated members
+      // Remove family group memberships for deactivated members (the dialog's Deactivate sentence says so).
       if (action === "deactivate") {
         await tx.familyGroupMember.deleteMany({
           where: { memberId: { in: idsToUpdate } },

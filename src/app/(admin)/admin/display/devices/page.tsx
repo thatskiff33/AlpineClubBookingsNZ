@@ -233,13 +233,14 @@ export default function AdminDisplayDevicesPage() {
   }
 
   async function revoke(device: ClientDevice) {
-    setMessage(null);
     if (!(await confirm({
       title: `Revoke ${device.name}?`,
       description: "The screen will return to pairing and must be paired again at the lodge.",
       confirmLabel: "Revoke",
       destructive: true,
     }))) return;
+    // Cleared after the confirmation, so cancelling leaves an earlier status line alone.
+    setMessage(null);
     const response = await fetch(`/api/admin/display/devices/${device.id}/revoke`, {
       method: "POST",
     });

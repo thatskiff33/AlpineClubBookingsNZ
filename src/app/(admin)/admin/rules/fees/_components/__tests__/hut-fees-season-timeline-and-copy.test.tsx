@@ -623,6 +623,7 @@ describe("season deletion confirmation (#4973)", () => {
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("Winter 2026");
     expect(dialog).toHaveTextContent(/nightly rates.*deleted/i);
+    expect(dialog).toHaveTextContent(/cannot be undone.*season and its rates would need to be set up again/i);
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);

@@ -524,7 +524,7 @@ describe("admin member access-role UI", () => {
         open
         action="set-role"
         selectedIds={new Set(["member-1", "member-2"])}
-        selectedMembers={[{ id: "member-1", name: "Aroha Smith" }, { id: "member-2", name: "Bea Jones" }]}
+        memberNames={new Map([["member-1", "Aroha Smith"], ["member-2", "Bea Jones"]])}
         onOpenChange={vi.fn()}
         onUpdated={onUpdated}
         onError={vi.fn()}

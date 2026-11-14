@@ -30,7 +30,7 @@ import {
 } from "@/lib/admin-family-group-ui-helpers";
 import { useClubTime } from "@/components/club-time-provider";
 import { formatPayloadInstantDate } from "../../_lib/payload-instant";
-import { useRevealAttention } from "@/hooks/use-scroll-to-feedback";
+import { useActionAttention, useRevealAttention } from "@/hooks/use-scroll-to-feedback";
 
 import { adminHref } from "@/lib/admin-hubs";
 type PartnerInvite = {
@@ -92,8 +92,20 @@ function FamilyGroupsTab() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   // A failed delete is reported above the groups list, not inside the editor
-  // form, which may be closed when Delete is clicked on a row (#4973).
+  // form, which may be closed when Delete is clicked on a row (#4973). The row
+  // that was clicked can be screens below the alert, so a failure takes focus
+  // and scrolls the alert into view through the one attention home.
   const [deleteError, setDeleteError] = useState("");
+  // Counts failures so a second identical failure (the same 404 twice) still
+  // takes focus, even when the clear and the repeat land in one render.
+  const [deleteFailures, setDeleteFailures] = useState(0);
+  const deleteAlertRef = useRef<HTMLDivElement>(null);
+  useActionAttention({
+    error: deleteError,
+    errorTarget: deleteAlertRef,
+    errorBlock: "center",
+    attentionKey: deleteFailures,
+  });
   // #2256: the create/edit form renders in the anchor below the filter card and
   // the two queue cards (pending changes, outstanding partner invites), while
   // its triggers sit elsewhere — New Group in the page header, Edit on a row in
@@ -368,11 +380,17 @@ function FamilyGroupsTab() {
     }
   }
 
+  function reportDeleteFailure(message: string) {
+    setDeleteError(message);
+    setDeleteFailures((count) => count + 1);
+  }
+
   async function handleDelete(group: FamilyGroupSummary) {
     if (!canEditMembership) return;
     if (!(await confirm({
       title: `Delete ${group.name || "Unnamed Group"}?`,
-      description: "Members will be unlinked.",
+      description:
+        "Members will be unlinked. Each member's billing-family choice for this group is cleared. Its requests, partner invitations and any \"already invoiced\" season markers are deleted with it. This cannot be undone.",
       confirmLabel: "Delete group",
       destructive: true,
     }))) return;
@@ -381,12 +399,12 @@ function FamilyGroupsTab() {
       const res = await fetch(`/api/admin/family-groups/${group.id}`, { method: "DELETE" });
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
-        setDeleteError(data.error || "Failed to delete family group");
+        reportDeleteFailure(data.error || "Failed to delete family group");
         return;
       }
       fetchData();
     } catch {
-      setDeleteError("Failed to delete family group");
+      reportDeleteFailure("Failed to delete family group");
     }
   }
 
@@ -439,7 +457,9 @@ function FamilyGroupsTab() {
     <div>
       {confirmDialog}
       {viewOnlyBanner}
-      {deleteError && <Alert variant="error" className="mb-6">{deleteError}</Alert>}
+      {deleteError && (
+        <Alert ref={deleteAlertRef} variant="error" className="mb-6">{deleteError}</Alert>
+      )}
       <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-foreground">Groups</h2>

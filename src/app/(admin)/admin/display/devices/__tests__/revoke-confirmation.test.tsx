@@ -16,11 +16,14 @@ const device = {
 };
 beforeEach(() => {
   access.canEdit = true;
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("/revoke")) return Response.json({});
+    if (url === "/api/admin/display/devices" && init?.method === "POST") {
+      return Response.json({ error: "Name already used" }, { status: 409 });
+    }
     if (url === "/api/admin/display/devices") return Response.json({ devices: [device] });
     if (url === "/api/admin/display/templates") return Response.json({ templates: [] });
-    if (url === "/api/admin/lodges") return Response.json({ lodges: [] });
+    if (url === "/api/admin/lodges") return Response.json({ lodges: [{ id: "lodge-1", name: "Main Lodge" }] });
     throw new Error(url);
   }));
 });
@@ -37,6 +40,16 @@ describe("Revoke confirmation", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+  it("leaves an earlier status message alone when the officer cancels", async () => {
+    render(<DevicesPage />);
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Bar TV" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Create device" }));
+    expect(await screen.findByText("Name already used")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Revoke" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByText("Name already used")).toBeInTheDocument();
   });
   it("sends one revoke request after confirming", async () => {
     render(<DevicesPage />);

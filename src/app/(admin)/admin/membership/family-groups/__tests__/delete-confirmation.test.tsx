@@ -43,6 +43,9 @@ describe("family group deletion", () => {
     const dialog = await openDelete();
     expect(dialog).toHaveTextContent("Delete Kea Family?");
     expect(dialog).toHaveTextContent("Members will be unlinked.");
+    expect(dialog).toHaveTextContent(/billing-family choice.*cleared/i);
+    expect(dialog).toHaveTextContent(/requests, partner invitations and any "already invoiced" season markers.*deleted with it/i);
+    expect(dialog).toHaveTextContent(/cannot be undone/i);
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
@@ -56,8 +59,24 @@ describe("family group deletion", () => {
     failure = body;
     const dialog = await openDelete();
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete group" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(message);
+    // The row that was clicked can be screens below the alert, so the failure
+    // takes focus rather than leaving a sighted officer looking at an unchanged row.
+    await waitFor(() => expect(alert).toHaveFocus());
     expect(screen.getByRole("button", { name: "Delete Kea Family" })).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith("/api/admin/family-groups/g1", { method: "DELETE" });
+  });
+  it("takes focus again when the same failure repeats", async () => {
+    const dialog = await openDelete();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete group" }));
+    const alert = await screen.findByRole("alert");
+    await waitFor(() => expect(alert).toHaveFocus());
+    const row = screen.getByRole("button", { name: "Delete Kea Family" });
+    row.focus();
+    expect(alert).not.toHaveFocus();
+    fireEvent.click(row);
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Delete group" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveFocus());
   });
 });

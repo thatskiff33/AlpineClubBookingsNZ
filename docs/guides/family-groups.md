@@ -59,7 +59,10 @@ page — see [Family billing](#family-billing) below.
    outstanding partner invitations) rather than next to the button, so the page
    scrolls down to it for you.
 2. Use the edit icon on a group row to open the full editor, or the trash icon to
-   **Delete** it (members are unlinked, not deleted). The editor opens in that
+   **Delete** it (members are unlinked, not deleted; the confirmation names the
+   group and also says that billing-family choices for it are cleared, that its
+   requests, partner invitations and "already invoiced" season markers are
+   deleted with it, and that this cannot be undone). The editor opens in that
    same place — above the group list — so the page scrolls to it, and the row
    you are editing is highlighted and badged **Editing** until you close or
    save. When you opened the editor from this page, closing or saving puts the
@@ -157,7 +160,7 @@ Whether families are billed together is not set here — it is the club-level
 | Members | The members in the group | At least one required; primary active members. Each shows its calculated age (#2568) |
 | Approve / Reject (request queue) | Action a pending family-link request | Child/group-create approvals offer a member-email choice |
 | Revoke (partner invite) | Disable an unclaimed partner invitation link | Fails gracefully if just claimed |
-| Delete (group) | Remove the group and unlink its members | Members are not deleted |
+| Delete (group) | Remove the group, unlink its members and delete its requests, partner invitations and invoiced markers | Members are not deleted; cannot be undone |
 
 ## Troubleshooting
 

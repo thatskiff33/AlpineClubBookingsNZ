@@ -95,6 +95,10 @@ export default function MembersPage() {
   const [xeroRecoveryAttention, setXeroRecoveryAttention] = useState(0)
   const [xeroRecoveryMemberId, setXeroRecoveryMemberId] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  // The name of every member the list has shown this visit. A ticked member
+  // stays ticked across pages, searches and filters, so the bulk dialogs name a
+  // selection from here, not only from the page that is loaded now (#4973).
+  const [memberNames, setMemberNames] = useState<Map<string, string>>(() => new Map())
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false)
@@ -138,6 +142,13 @@ export default function MembersPage() {
       }
       const data = (await res.json()) as MembersResponse
       setMembers(data.members)
+      setMemberNames((seen) => {
+        const next = new Map(seen)
+        for (const member of data.members) {
+          next.set(member.id, `${member.firstName} ${member.lastName}`.trim() || member.email)
+        }
+        return next
+      })
       setTotal(data.total)
       setTotalPages(data.totalPages)
       return true
@@ -350,17 +361,6 @@ export default function MembersPage() {
     setBulkDialogOpen(true)
   }
 
-  const memberNames = useMemo(
-    () =>
-      new Map(
-        members.map((member) => [
-          member.id,
-          `${member.firstName} ${member.lastName}`.trim() || member.email,
-        ]),
-      ),
-    [members],
-  )
-
   const handleMembershipChanged = (changed: number) => {
     showSuccess(`Changed membership type for ${changed} member(s)`)
     setSelectedIds(new Set())
@@ -571,9 +571,7 @@ export default function MembersPage() {
         open={bulkDialogOpen}
         action={bulkAction}
         selectedIds={selectedIds}
-        selectedMembers={[...memberNames]
-          .filter(([id]) => selectedIds.has(id))
-          .map(([id, name]) => ({ id, name }))}
+        memberNames={memberNames}
         onOpenChange={setBulkDialogOpen}
         onUpdated={handleBulkUpdated}
         onError={setError}
