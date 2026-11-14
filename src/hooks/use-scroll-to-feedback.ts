@@ -82,6 +82,12 @@ import {
  * Telling an action's failure from a load's needs reading the handler, so the
  * list would again be mostly exemptions. The surfaces that remain are
  * converted page by page, each reading its own handlers.
+ *
+ * The message and the counter that feed `FocusedActionError` have one home,
+ * `useActionFailure` (`src/hooks/use-action-failure.ts`). The setup wizards use
+ * it; `chores/page.tsx`, `lockers/page.tsx`, `lodges/page.tsx` and
+ * `fees/_components/hut-fees-section.tsx` still keep the pair by hand and are
+ * unconverted, not excluded.
  */
 
 type ElementRef = RefObject<HTMLElement | null>;

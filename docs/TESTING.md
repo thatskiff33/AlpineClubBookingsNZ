@@ -1411,6 +1411,10 @@ the explanation appears elsewhere on the page. Nearly all use
 the current list); `policy-exception-requests-panel.tsx` and `roster-editor.tsx`
 call the same failure primitive directly through `useActionAttention`. Since #2934 every one of them focuses and scrolls through
 `src/hooks/use-scroll-to-feedback.ts` — see "Attention after an action" below.
+A component that holds its own failure takes the message and the counter that
+re-fires an identical repeat from `useActionFailure`
+(`src/hooks/use-action-failure.ts`); test a repeat by failing twice with the
+same message and asserting the alert holds focus each time.
 
 Assert that contract with the shared helper, never by hand:
 

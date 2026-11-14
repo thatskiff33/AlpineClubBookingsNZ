@@ -2,11 +2,13 @@
 
 file: src/app/(admin)/admin/lodges/[id]/setup/page.tsx
 lines: 969
-reason: moves this wizard's action failures (identity, rooms, lockers, season
-  and chore copy) onto the shared useActionFailure hook and a permanently
-  mounted FocusedActionError, which is four lines longer overall. The file was
-  already over its limit before this change, and splitting the wizard apart is
-  a refactor of its own, not part of this fix.
+reason: moves this wizard's action failures (identity, rooms, lockers, and a
+  season or chore copy that fails as a whole) onto the shared useActionFailure
+  hook and a permanently mounted FocusedActionError, which is four lines longer
+  overall. A copy where only some rows are refused still lists them in its
+  summary, as before. The file was already over its limit before this change,
+  and splitting the wizard apart is a refactor of its own, not part of this
+  fix.
 
 file: src/app/(admin)/admin/website/site-style/site-style-wizard.tsx
 lines: 1041

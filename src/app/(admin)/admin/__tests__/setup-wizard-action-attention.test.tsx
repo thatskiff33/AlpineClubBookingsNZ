@@ -1,10 +1,15 @@
 // @vitest-environment jsdom
 
 /*
-  #4975 (ALP-577) — the site-style and lodge setup wizards, and the Alpine
-  server's lodge download: a failed save, upload or download takes focus, and
-  takes it AGAIN when the same failure repeats word for word. The lodge
-  wizard's failed load stays passive and moves nothing.
+  #4975 (ALP-577) — the site-style and lodge setup wizards, and the lodge
+  download that follows saving the Alpine server API key: a failed save, upload
+  or download takes focus, and takes it AGAIN when the same failure repeats word
+  for word. The lodge wizard's failed load stays passive and moves nothing.
+
+  The Alpine server page's own buttons (Save, Save key, Enable or Disable,
+  Upload, Download) still report through its passive status line; only
+  `useLodgeLinkStep().run` is converted, so it is exercised through a harness
+  that stands in for the key save which calls it.
 */
 
 import "@testing-library/jest-dom/vitest";
@@ -200,13 +205,13 @@ describe("lodge setup wizard", () => {
   });
 });
 
-describe("Alpine server lodge download", () => {
+describe("Alpine server lodge download after a key save", () => {
   function LodgeLinkHarness() {
     const { run, statusLine } = useLodgeLinkStep();
     return (
       <>
         <button type="button" onClick={() => void run()}>
-          Download
+          Link lodges
         </button>
         {statusLine}
       </>
@@ -219,9 +224,9 @@ describe("Alpine server lodge download", () => {
     const alert = document.getElementById("lodge-link-error");
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const download = screen.getByRole("button", { name: "Download" });
-      refocus(download);
-      fireEvent.click(download);
+      const linkLodges = screen.getByRole("button", { name: "Link lodges" });
+      refocus(linkLodges);
+      fireEvent.click(linkLodges);
       await waitFor(() =>
         expect(alert).toHaveTextContent("The central server is unreachable."),
       );
