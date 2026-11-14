@@ -6,11 +6,13 @@ const {
   mockFindUnique,
   mockValidateMinimumStay,
   mockResolveOptionalActiveLodgeId,
+  mockLoadCancellationPolicy,
 } = vi.hoisted(() => ({
   mockAuth: vi.fn(),
   mockFindUnique: vi.fn(),
   mockValidateMinimumStay: vi.fn(),
   mockResolveOptionalActiveLodgeId: vi.fn(),
+  mockLoadCancellationPolicy: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -45,7 +47,30 @@ vi.mock("@/lib/lodges", () => ({
   resolveOptionalActiveLodgeId: mockResolveOptionalActiveLodgeId,
 }));
 
+vi.mock("@/lib/cancellation", () => ({
+  loadCancellationPolicy: mockLoadCancellationPolicy,
+}));
+
+vi.mock("@/lib/club-format-server", async () => {
+  const { bindClubFormat } = await import("@/lib/club-format-bound");
+  const { CLUB_FORMAT_TEST } = await import("./support/club-format-fixture");
+  return { clubFormat: async () => bindClubFormat(CLUB_FORMAT_TEST) };
+});
+
+vi.mock("@/lib/logger", () => ({ default: { error: vi.fn() } }));
+
 import { GET } from "@/app/api/booking-policies/check/route";
+
+// Two lodges, two schedules: the route must read the lodge it resolved.
+const DEFAULT_LODGE_RULES = [
+  { daysBeforeStay: 14, refundPercentage: 100 },
+  { daysBeforeStay: 0, refundPercentage: 0 },
+];
+const LODGE_B_RULES = [
+  { daysBeforeStay: 30, refundPercentage: 100, fixedFeeCents: 2500 },
+  { daysBeforeStay: 14, refundPercentage: 50, creditRefundPercentage: 100 },
+  { daysBeforeStay: 0, refundPercentage: 0 },
+];
 
 function request(url = "https://example.test/api/booking-policies/check?checkIn=2026-07-01&checkOut=2026-07-03") {
   return new NextRequest(url);
@@ -61,6 +86,10 @@ describe("booking policy check route", () => {
         lodgeId ?? "lodge-default",
     );
     mockValidateMinimumStay.mockResolvedValue({ valid: true, violations: [] });
+    mockLoadCancellationPolicy.mockImplementation(
+      async (_checkIn: Date, lodgeId: string) =>
+        lodgeId === "lodge-b" ? LODGE_B_RULES : DEFAULT_LODGE_RULES,
+    );
   });
 
   it("rejects unauthenticated callers", async () => {
@@ -106,6 +135,10 @@ describe("booking policy check route", () => {
       violations: [],
       exceptionReview: { violations: [], capacityMode: null },
       message: null,
+      cancellationSchedule: [
+        "14+ days before stay: 100% refund",
+        "Less than 14 days: 0% refund",
+      ],
     });
     expect(mockResolveOptionalActiveLodgeId).toHaveBeenCalledWith(
       expect.anything(),
@@ -201,6 +234,59 @@ describe("booking policy check route", () => {
       violations: [violation],
       exceptionReview: { violations: [violation], capacityMode: "HOLD" },
       message: "minimum stay violation",
+      cancellationSchedule: expect.any(Array),
+    });
+  });
+
+  it("returns the non-default lodge's own cancellation schedule for the check-in (#4946)", async () => {
+    mockResolveOptionalActiveLodgeId.mockResolvedValue("lodge-b");
+
+    const response = await GET(
+      request(
+        "https://example.test/api/booking-policies/check?checkIn=2026-07-01&checkOut=2026-07-03&lodgeId=lodge-b",
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    // Card vs credit and the fixed fee come through in the club's currency,
+    // exactly as the shared formatter writes them.
+    expect(body.cancellationSchedule).toEqual([
+      "30+ days before stay: 100% refund less $25.00 fee",
+      "14-29 days: 50% card / 100% credit",
+      "Less than 14 days: 0% refund",
+    ]);
+    expect(mockLoadCancellationPolicy).toHaveBeenCalledWith(
+      new Date("2026-07-01"),
+      "lodge-b",
+    );
+  });
+
+  it("does not read a schedule for a refused lodge", async () => {
+    mockResolveOptionalActiveLodgeId.mockResolvedValue(null);
+
+    const response = await GET(
+      request(
+        "https://example.test/api/booking-policies/check?checkIn=2026-07-01&checkOut=2026-07-03&lodgeId=unknown-lodge",
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockLoadCancellationPolicy).not.toHaveBeenCalled();
+  });
+
+  it("keeps the minimum-stay answer and returns a null schedule when the schedule cannot be read", async () => {
+    mockLoadCancellationPolicy.mockRejectedValue(new Error("db down"));
+
+    const response = await GET(request());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      valid: true,
+      violations: [],
+      exceptionReview: { violations: [], capacityMode: null },
+      message: null,
+      cancellationSchedule: null,
     });
   });
 });

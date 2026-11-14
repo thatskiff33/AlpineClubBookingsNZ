@@ -26,6 +26,7 @@
  */
 import { AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { StatusRegion } from "@/components/status-region";
 import {
   parseInstant,
   type BoundClubTime,
@@ -40,6 +41,13 @@ import {
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
   SUPERSEDED_CARD_PAYMENT_REFUNDING_LINK_MESSAGE,
 } from "@/lib/payment-recovery-contract";
+
+/**
+ * The page's one h1 on every screen that has no title of its own - the loading
+ * view, the "Checking your payment..." view and a link that will not load
+ * (#4951). One definition, so a rename cannot leave the three out of step.
+ */
+export const PAY_LINK_PAGE_HEADING = "Payment Link";
 
 export interface Narrative {
   state: string;
@@ -242,6 +250,37 @@ export function CardPaymentUnavailableNotice() {
       This booking is being paid by internet banking, so it can&apos;t be paid by
       card here. Use the bank-transfer details below.
     </p>
+  );
+}
+
+/** #4955: a redirect method came back declined or cancelled; shown above the pay options. */
+export function RedirectFailedNotice() {
+  return (
+    <div className="flex items-start gap-2 rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-sm text-warning-11">
+      <AlertTriangle className="h-5 w-5 shrink-0" />
+      <p>Your payment did not go through. You have not been charged. Choose how to pay below.</p>
+    </div>
+  );
+}
+
+/**
+ * The whole card while the server is asked what a payment did (#4300, #4955).
+ * It replaces the card form, or the page on a redirect return, so the status
+ * line takes the focus the form's Pay Now button held (#4949). One region serves
+ * both exits; it mounts already filled, a limit docs/STAGING_ACCESSIBILITY.md states.
+ */
+export function CheckingPaymentCard() {
+  return (
+    <Card className="w-full max-w-lg">
+      {/* This card replaces the whole page, so it carries the page's one h1
+          (#4951); the status line below is not a heading. */}
+      <h1 className="sr-only">{PAY_LINK_PAGE_HEADING}</h1>
+      <CardContent className="py-8 text-center">
+        <StatusRegion id="payment-link-check-status" visible visibleClassName="text-muted-foreground" outcomeKey>
+          Checking your payment...
+        </StatusRegion>
+      </CardContent>
+    </Card>
   );
 }
 

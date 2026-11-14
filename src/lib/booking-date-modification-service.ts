@@ -1,3 +1,5 @@
+import { assertEditQuotedFigures, unchangedPriceQuotedFigures } from "@/lib/edit-quoted-figures";
+import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
@@ -1679,6 +1681,8 @@ export async function adminShiftBookingDates({
    */
   hostingCoverageOverride?: HostingCoverageOverrideInput | null;
   input: {
+    /** #4924 (`INV-MOD-062`): the shift preview's figures; see `BatchModifyInput`. */
+    quotedFigures?: EditQuotedFigures;
     checkIn?: string;
     checkOut?: string;
     confirmOverCapacity?: boolean;
@@ -1915,6 +1919,14 @@ export async function adminShiftBookingDates({
       // the shift's edit-policy gate reads.
       today: clubTodayDateOnly,
     }, format);
+
+    // #4924 (`INV-MOD-062`): a shift moves no money, so the officer's preview
+    // can only go stale if the stored price moved since; checked on the
+    // post-lock re-read, before the first write below.
+    assertEditQuotedFigures(
+      input.quotedFigures,
+      unchangedPriceQuotedFigures(booking.finalPriceCents),
+    );
 
     // #3276: a shift moves every night by the same delta and no money moves, so
     // the recorded build-up moves with it — captured before the rewrite below

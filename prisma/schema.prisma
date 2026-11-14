@@ -529,6 +529,12 @@ model Member {
   // off. The token refresh refuses any session issued before it, the same way
   // it treats passwordChangedAt, so re-enabling login never revives one.
   sessionsRevokedAt       DateTime?
+  // #4618: the first time the officer requirement reached this member. Null
+  // until then. A reset does not clear it; a later factorsResetAt means grace
+  // is already over and is not started again.
+  twoFactorGraceStartedAt DateTime?
+  // #4618: when an administrator or the operator cleared this member's factors.
+  factorsResetAt          DateTime?
   lastLoginAt             DateTime?
   twoFactorEnabled        Boolean          @default(false)
   twoFactorMethod         TwoFactorMethod?
@@ -875,6 +881,10 @@ model AccessRoleDefinition {
   lodgeLevel      AdminPermissionLevel @default(NONE)
   contentLevel    AdminPermissionLevel @default(NONE)
   supportLevel    AdminPermissionLevel @default(NONE)
+  // #4618: null is Default (finance or support Edit requires an officer
+  // factor). true is Required. false is Not required, and drops only this
+  // role. Full Admin has no row here and cannot be exempted.
+  requiresTwoFactor Boolean?
   sortOrder       Int                  @default(0)
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
@@ -4916,6 +4926,64 @@ enum UnrecognisedStripePaymentReason {
   APP_INTENT_NOT_PRIMARY
 }
 
+// #4911 (`INV-PAY-154`): one row per Stripe dispute (chargeback), recorded from
+// the `charge.dispute.*` webhooks. A record and a hold, not money: no ledger,
+// journal or Xero write reads it, and `Payment.refundedAmountCents` never
+// counts it. While its status is OPEN or LOST a paid cancel of the disputed
+// capture issues no card refund or account credit (`disputedCaptureCents`).
+model StripeDispute {
+  id                    String              @id @default(cuid())
+  // The claim: one row per dispute, so a replayed delivery inserts nothing.
+  stripeDisputeId       String              @unique
+  stripeChargeId        String
+  // The disputed capture. Null only when Stripe's dispute names no intent and
+  // the charge read gave none either.
+  stripePaymentIntentId String?
+  // The matched capture, by `stripePaymentIntentId`; all three are null for a
+  // charge the app does not know. Plain ids, no foreign keys.
+  paymentTransactionId  String?
+  paymentId             String?
+  bookingId             String?
+  // Stripe's smallest currency unit: cents for every two-decimal currency.
+  amountCents           Int
+  // As Stripe gives it: lower-case ISO 4217.
+  currency              String
+  // Sums of the dispute's balance transactions Stripe reported: what it took
+  // from and gave back to the club's balance, fees included. Informational.
+  withdrawnCents        Int                 @default(0)
+  reinstatedCents       Int                 @default(0)
+  // Stripe's reason code, e.g. `fraudulent`.
+  reason                String
+  status                StripeDisputeStatus
+  // Stripe's own status string, as last applied.
+  stripeStatus          String
+  // When Stripe opened the dispute. An instant, not a lodge night.
+  stripeCreatedAt       DateTime
+  // The newest event applied: an older delivery never overwrites a newer one.
+  lastEventCreatedAt    DateTime
+  // The webhook event that first recorded it.
+  stripeEventId         String
+  // Set only after each Finance alert was sent (the once-ever sent marker).
+  openedAlertedAt       DateTime?
+  closedAlertedAt       DateTime?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  @@index([stripePaymentIntentId])
+  @@index([bookingId])
+}
+
+// #4911: a dispute's lifecycle. OPEN and LOST hold the capture's refunds.
+enum StripeDisputeStatus {
+  // Stripe: warning_needs_response, warning_under_review, needs_response,
+  // under_review.
+  OPEN
+  WON
+  LOST
+  // Stripe: warning_closed or prevented, closed with no funds taken.
+  CLOSED_OTHER
+}
+
 /// Stripe's payout status. An unrecognised value is not stored (#4520).
 enum StripePayoutStatus {
   PENDING
@@ -5915,6 +5983,12 @@ model LoginSecuritySetting {
   // (INV-AUTH-007). Default 7 days; the app clamps it to 8..720 hours
   // (normalizeLoginSecurityPolicy). The lodge kiosk keeps its own 30 days.
   sessionMaxAgeHours  Int      @default(168)
+  // #4618: officers who can move money or change system settings, and every
+  // Full Admin, must use an authenticator app or a passkey. Default on. The
+  // release constant keeps this inert until #4620 turns it on. Grace is whole
+  // days, 0 to 60, and an absent row reads as 14.
+  officerTwoFactorPolicy    Boolean @default(true)
+  officerTwoFactorGraceDays Int     @default(14)
   updatedByMemberId   String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @default(now()) @updatedAt

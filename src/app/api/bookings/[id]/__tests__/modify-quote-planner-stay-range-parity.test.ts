@@ -1436,6 +1436,13 @@ describe("#4197 re-rates, fees and rate recalculations add up too", () => {
     });
     expect(route.body.netChargeCents).toBe((route.body.priceDiffCents as number) + 1_500);
     expect(sumOfLines(route.body)).toBe(route.body.netChargeCents);
+    // #4924 (`INV-MOD-062`): the figures the save is bound to are the ones shown.
+    expect(route.body.quotedFigures).toEqual({
+      newFinalPriceCents: route.body.newFinalPriceCents,
+      priceDiffCents: route.body.priceDiffCents,
+      changeFeeCents: 1_500,
+      netChargeCents: route.body.netChargeCents,
+    });
   });
 
   it("an unpaid booking quotes no late-notice fee, even when the tier math would charge one", async () => {

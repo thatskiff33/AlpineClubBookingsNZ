@@ -6,19 +6,17 @@ import type { MemberGuestConsentGuestFields } from "@/lib/member-guest-add-polic
 import { nameField } from "@/lib/zod-helpers";
 import { GUEST_CHANGE_LIST_BOUND, BOOKING_PARTY_GUESTS_MAX, guestStayFieldsSchema } from "@/lib/booking-guest-stay-range-input";
 
-// The request contract for `POST /api/bookings/[id]/modify-quote`, split
-// verbatim out of that route (#3128) because none of it depends on a request:
-// the schema, the date-only override field list and the normalised added-guest
-// shape are static declarations that the handler reads, not code the handler
-// composes. Nothing is re-exported from the route; it imports these directly.
+// The request contract shared by `POST /api/bookings/[id]/modify-quote` (the
+// preview) and `PUT /api/bookings/[id]/modify` (the save). Split out of the
+// preview route (#3128); since #4924 the save's schema is THIS schema extended
+// with its save-only answers (`batchModifySchema` in
+// `booking-modify-request.ts`), so a field is declared once and both doors parse
+// it identically (`INV-SSOT-001`). The date-only override list and its
+// predicate are likewise the one copy both routes call.
 //
-// The three MOVE TOGETHER and must keep doing so.
-// `OVERRIDE_DATE_ONLY_QUOTE_FIELDS` is an `as const` tuple whose members index
-// `z.infer<typeof modifyQuoteSchema>` at the route's admin-override refusal, so
-// a field renamed in one and not the other is a compile error rather than a
-// silently skipped guard. Splitting them across two files would keep that
-// working but put the two halves of one contract where a reader can change one
-// without seeing the other.
+// `OVERRIDE_DATE_ONLY_FIELDS` is an `as const` tuple whose members index
+// `z.infer<typeof modifyQuoteSchema>`, so a field renamed in one and not the
+// other is a compile error rather than a silently skipped guard.
 
 /**
  * #3827: an edit's code list — every code the booking should carry afterwards,
@@ -128,7 +126,7 @@ export const modifyQuoteSchema = z.object({
     .optional(),
 });
 
-export const OVERRIDE_DATE_ONLY_QUOTE_FIELDS = [
+export const OVERRIDE_DATE_ONLY_FIELDS = [
   "addGuests",
   // #3451: an answer about an added guest is a guest change, never a date override.
   "dependantIdentityDeclarations",
@@ -148,6 +146,27 @@ export const OVERRIDE_DATE_ONLY_QUOTE_FIELDS = [
   // #1746: partner-shared flags ride guest changes, never a date override.
   "partnerSharedGuests",
 ] as const;
+
+/**
+ * Whether an admin date-only override (#1668) carries anything but dates. An
+ * empty list changes nothing, so it passes.
+ */
+export function isDateOnlyOverrideViolation(
+  data: Partial<Record<keyof z.infer<typeof modifyQuoteSchema>, unknown>>,
+): boolean {
+  return (
+    OVERRIDE_DATE_ONLY_FIELDS.some((field) => {
+      const value = data[field];
+      return Array.isArray(value) ? value.length > 0 : Boolean(value);
+    }) ||
+    // #2266: checked explicitly — `Boolean(0)` is false, so a credit election
+    // of 0 cents would otherwise slip past the date-only contract.
+    data.applyCreditCents !== undefined ||
+    // Same trap, same fix: `otherLodgeId: null` CLEARS the election and is
+    // falsy, so the list membership above would let it through.
+    data.otherLodgeId !== undefined
+  );
+}
 
 export type NormalizedAddGuest = MemberGuestConsentGuestFields & {
   firstName: string;

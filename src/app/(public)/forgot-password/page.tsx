@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FocusedActionError } from "@/components/focused-action-error";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -76,11 +77,7 @@ export default function ForgotPasswordPage() {
 
       <form onSubmit={handleSubmit}>
         <CardContent className="space-y-4">
-          {error && (
-            <div className="rounded-md bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
-              {error}
-            </div>
-          )}
+          <FocusedActionError id="forgot-password-error" error={error} />
 
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>

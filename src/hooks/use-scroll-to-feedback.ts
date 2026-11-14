@@ -71,6 +71,17 @@ import {
  * rejected: ten admin effects focus something, and six of them — a caret
  * restore, a combobox, the display builder — are not attention at all, so the
  * list would be ten exemptions enforcing nothing.
+ *
+ * Nor does it catch an action failure that never calls anything here at all —
+ * a save's error written into page state and shown as a plain box (the #4975
+ * follow-up that converted chores, lockers and lodges). A census for that was
+ * tried and rejected too: "sends a POST/PUT/PATCH/DELETE, sets an error, and
+ * imports no attention primitive" matches dozens of admin files, and a hand
+ * triage of a sample found many of them correct as they are — a passive-load
+ * error, an error shown inside the open dialog beside its Save, a toast.
+ * Telling an action's failure from a load's needs reading the handler, so the
+ * list would again be mostly exemptions. The surfaces that remain are
+ * converted page by page, each reading its own handlers.
  */
 
 type ElementRef = RefObject<HTMLElement | null>;

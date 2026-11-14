@@ -9,6 +9,7 @@ import {
 } from "@/lib/contextual-help/types";
 import type { CancellationScheduleRow } from "@/lib/cancellation-schedule";
 import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
+import { CANCELLATION_EXACT_AMOUNT_NOTE } from "@/components/booking/cancellation-schedule-block";
 import { useHelpWidgetExtras } from "@/components/help-widget/help-widget-context";
 
 const PROFILE_FAMILY_GROUP_RETURN_TO_BOOK = buildProfilePathWithReturnTo(
@@ -63,7 +64,7 @@ export function BookingHelpExtras({
       details: [
         "How much is refunded depends on how many days before your stay you cancel:",
         ...cancellationSchedule!.map((row) => row.description),
-        "The exact amount for your booking is shown when you start a cancellation.",
+        CANCELLATION_EXACT_AMOUNT_NOTE,
       ],
     });
   } else if (cancellationHasNoPayment) {

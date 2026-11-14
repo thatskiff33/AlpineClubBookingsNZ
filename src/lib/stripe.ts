@@ -10,6 +10,7 @@ import "server-only";
 
 import Stripe from "stripe";
 import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
+import { stripeTestClientOverride } from "@/lib/stripe-test-client-override";
 import type { ClubFormat } from "@/lib/club-format";
 import {
   refuseBelowStripeMinimum,
@@ -20,6 +21,7 @@ import {
   assertAppPaymentIntentMetadata,
   type AppPaymentIntentMetadata,
 } from "@/lib/stripe-app-intent-metadata";
+import { assertCaptureNotDisputed } from "@/lib/stripe-dispute-hold";
 
 // DB-only credential resolution (#2082): the secret key lives in the encrypted
 // IntegrationCredential store, so client construction is now ASYNC. We memoize
@@ -30,15 +32,14 @@ let _stripe: Stripe | null = null;
 let _stripeKey: string | null = null;
 
 export async function getStripe(): Promise<Stripe> {
+  const testClient = stripeTestClientOverride(); // test-only seam (#4908)
+  if (testClient) return testClient;
   const key = await getOperationalStripeSecretKey();
   if (!key) {
     throw new Error("Stripe secret key is not configured");
   }
   if (!_stripe || _stripeKey !== key) {
-    _stripe = new Stripe(key, {
-      apiVersion: Stripe.API_VERSION,
-      typescript: true,
-    });
+    _stripe = new Stripe(key, { apiVersion: Stripe.API_VERSION, typescript: true });
     _stripeKey = key;
   }
   return _stripe;
@@ -214,9 +215,7 @@ export async function findOrCreateCustomer({
   });
 }
 
-/**
- * Process a refund based on cancellation policy.
- */
+/** Every card refund passes here, and a disputed capture is refused first (#4911, `INV-PAY-154`). */
 export async function processRefund({
   paymentIntentId,
   amountCents,
@@ -233,6 +232,7 @@ export async function processRefund({
   /** #4510 (`INV-PAY-147`): also send `idempotencyKey` as the refund's `refundSliceKey` evidence. */
   stampRefundSliceKey?: boolean;
 }): Promise<Stripe.Refund> {
+  await assertCaptureNotDisputed(paymentIntentId);
   const stripe = await getStripe();
   const params = {
     payment_intent: paymentIntentId,
@@ -498,9 +498,9 @@ export async function stampPaymentIntentMetadata(
 /**
  * One request's bound, with no retries - the #3641 shape: the client sets no timeout
  * (stripe-node's ~80s and its retries), so a caller that must not wait that long says so.
- * The one spelling (#4693 review): every bounded read and write in this module takes it.
+ * The one spelling (#4693 review): every bounded Stripe read and write takes it.
  */
-function boundedStripeRequest(timeoutMs: number): Stripe.RequestOptions {
+export function boundedStripeRequest(timeoutMs: number): Stripe.RequestOptions {
   return { timeout: timeoutMs, maxNetworkRetries: 0 };
 }
 
