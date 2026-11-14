@@ -73,6 +73,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { prisma } from "./prisma";
+import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import { processRefund, cancelPaymentIntentIfCancellable, listRefundsForPaymentIntent } from "./stripe";
 import {
   calculateRefundAmount,
@@ -630,6 +631,7 @@ export async function settleGroupBookingOnOrganiserCancel(
           db: tx,
           previousRange: { checkIn: child.checkIn, checkOut: child.checkOut },
         });
+        await releaseBookingPromoRedemptions(tx, child.id);
         await revokePaymentLinksForBooking(child.id, tx);
         // #3854 F2: the payment re-read under lock(1) (an edit refund's completion takes it too), so the
         // mirror never overwrites a refund paid since the load, nor the kept figure over-state by it.
