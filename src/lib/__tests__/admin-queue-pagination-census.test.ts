@@ -15,6 +15,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { escapeRegExp } from "@/lib/escape-regexp";
+
 import { stripComments } from "./support/strip-comments";
 
 const ROOT = process.cwd();
@@ -71,7 +73,7 @@ function isClientFile(source: string): boolean {
 /** The capped routes a file names as a fetch target (the collection, not a record). */
 function cappedRoutesRead(code: string): string[] {
   return Object.keys(CAPPED_QUEUE_ROUTES).filter((route) =>
-    new RegExp(`${route.replace(/[/-]/g, "\\$&")}(?=[?"'\`])`).test(code),
+    new RegExp(`${escapeRegExp(route)}(?=[?"'\`])`).test(code),
   );
 }
 
@@ -110,8 +112,8 @@ describe("row-capped officer queues page through every row (INV-OPS-017)", () =>
     const lists = [...readers.keys()].filter((file) => !(file in NOT_A_QUEUE_LIST)).sort();
     expect(lists).toEqual([
       "src/app/(admin)/admin/finance/refund-requests/page.tsx",
-      "src/app/(admin)/admin/member-applications/page.tsx",
-      "src/app/(admin)/admin/membership-cancellations/page.tsx",
+      "src/app/(admin)/admin/membership/member-applications/page.tsx",
+      "src/app/(admin)/admin/membership/membership-cancellations/page.tsx",
       "src/components/admin/booking-requests/booking-approvals-panel.tsx",
       "src/components/admin/booking-requests/booking-change-requests-panel.tsx",
       "src/components/admin/booking-requests/policy-exception-requests-panel.tsx",
