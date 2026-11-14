@@ -19,7 +19,6 @@ import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { sendBookingConfirmedEmail, sendPreArrivalReminderEmail } from "@/lib/email";
 import type { EmailSendOutcome } from "@/lib/email/core";
-import { escapeHtml } from "@/lib/email-templates/escape";
 import {
   EMAIL_FAILURE_MAX_ATTEMPTS,
   archiveSupersededEmailFailures,
@@ -430,9 +429,10 @@ async function sendFreshConfirmation(
     booking.status === BookingStatus.CONFIRMED && !captured
       ? booking.payment?.source === PaymentSource.INTERNET_BANKING
         ? {
-            reference: escapeHtml(
+            // Raw: the sender escapes it on the HTML path and keeps it plain
+            // for the text body, as every other confirmation site passes it.
+            reference:
               booking.payment.reference ?? buildInternetBankingPaymentReference(booking.id),
-            ),
             invoiceEmailed: Boolean(booking.payment.xeroInvoiceId),
           }
         : { payOnline: true as const }

@@ -287,7 +287,8 @@ describe("fresh booking confirmation", () => {
 
     expect(mockSendBookingConfirmedEmail.mock.calls[0][8]).toEqual({
       lodgeId: "lodge-1",
-      paymentDue: { reference: "BK-&lt;1&gt;", invoiceEmailed: true },
+      // Raw: the sender escapes it for HTML and keeps it plain for text.
+      paymentDue: { reference: "BK-<1>", invoiceEmailed: true },
     });
   });
 
