@@ -20,38 +20,7 @@ import {
   parseMenuRoleCookie,
   resolveAdminMenu,
 } from "@/lib/admin-menu-role";
-
-const HUB_LABELS: Record<string, readonly string[]> = {
-  ADMIN: [
-    "Home",
-    "Bookings",
-    "Fees & booking rules",
-    "Finance",
-    "Members",
-    "Lodge",
-    "Website",
-    "Messages & email",
-    "Help & system",
-    "Club settings",
-  ],
-  ADMIN_READONLY: [
-    "Home",
-    "Bookings",
-    "Fees & booking rules",
-    "Finance",
-    "Members",
-    "Lodge",
-    "Website",
-    "Messages & email",
-    "Help & system",
-    "Club settings",
-  ],
-  ADMIN_BOOKINGS: ["Home", "Bookings", "Fees & booking rules", "Lodge"],
-  ADMIN_MEMBERSHIP: ["Home", "Members", "Lodge", "Messages & email"],
-  ADMIN_CONTENT: ["Home", "Website"],
-  FINANCE_ADMIN: ["Home", "Fees & booking rules", "Finance", "Club settings"],
-  FINANCE_USER: ["Fees & booking rules", "Finance", "Club settings"],
-};
+import { SEEDED_ROLE_HUB_LABELS } from "./support/admin-menu-role-hubs";
 
 function labels(keys: readonly string[]): string[] {
   const byKey = new Map<string, string>(
@@ -80,7 +49,7 @@ describe("hubs for each seeded admin role", () => {
       memberWith([{ role: "ADMIN" }]),
       null,
     );
-    expect(labels(menu.hubKeys)).toEqual(HUB_LABELS.ADMIN);
+    expect(labels(menu.hubKeys)).toEqual(SEEDED_ROLE_HUB_LABELS.ADMIN);
     expect(menu.roles.map((role) => role.label)).toEqual(["Full Admin"]);
   });
 
@@ -88,7 +57,7 @@ describe("hubs for each seeded admin role", () => {
     "pins the %s menu to the seeded table",
     (systemRole) => {
       const menu = resolveAdminMenu(definedRole(systemRole), null);
-      expect(labels(menu.hubKeys)).toEqual(HUB_LABELS[systemRole]);
+      expect(labels(menu.hubKeys)).toEqual(SEEDED_ROLE_HUB_LABELS[systemRole]);
     },
   );
 
@@ -110,7 +79,7 @@ describe("hubs for each seeded admin role", () => {
       finance: "view",
     };
     expect(labels(hubsForRoleMatrix(matrix))).toEqual(
-      HUB_LABELS.FINANCE_USER,
+      SEEDED_ROLE_HUB_LABELS.FINANCE_USER,
     );
     expect(labels(hubsForRoleMatrix(emptyAdminPermissionMatrix()))).toEqual([]);
   });
@@ -167,7 +136,7 @@ describe("no choice, a stale choice, and a Full Admin's cookie", () => {
 
   it("shows the chosen role's hubs, and a custom role under its own label", () => {
     const menu = resolveAdminMenu(both, "FINANCE_ADMIN");
-    expect(labels(menu.hubKeys)).toEqual(HUB_LABELS.FINANCE_ADMIN);
+    expect(labels(menu.hubKeys)).toEqual(SEEDED_ROLE_HUB_LABELS.FINANCE_ADMIN);
     expect(menu.selected).toBe("FINANCE_ADMIN");
 
     const roleDefinition = {
@@ -193,7 +162,7 @@ describe("no choice, a stale choice, and a Full Admin's cookie", () => {
       memberWith([{ role: "ADMIN" }, { role: "FINANCE_ADMIN" }]),
       "FINANCE_ADMIN",
     );
-    expect(labels(menu.hubKeys)).toEqual(HUB_LABELS.ADMIN);
+    expect(labels(menu.hubKeys)).toEqual(SEEDED_ROLE_HUB_LABELS.ADMIN);
     expect(menu.selected).toBeNull();
   });
 });

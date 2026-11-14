@@ -1,4 +1,5 @@
 import { type BrowserContext, expect, test } from "./helpers/accessibility";
+import { adminHref, adminUrlPattern } from "./helpers/admin-url";
 import { storageStatePath } from "./helpers/auth";
 import {
   overrideSingleLodgeAutoAllocation,
@@ -77,7 +78,7 @@ test("an admin approves a review-flagged booking then allocates a bed to its gue
   // /admin/booking-approvals redirects to /admin/booking-requests?tab=approvals;
   // the approvals panel defaults to the PENDING filter, where Ken's card sits.
   await page.goto("/admin/booking-approvals");
-  await expect(page).toHaveURL(/\/admin\/booking-requests/);
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("booking-requests")));
   const pendingKen = page.getByText("Ken King", { exact: true }).first();
   const needsBookingApproval = await pendingKen
     .waitFor({ state: "visible", timeout: 30_000 })

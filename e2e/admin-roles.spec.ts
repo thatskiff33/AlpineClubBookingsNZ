@@ -1,4 +1,5 @@
 import { expect, test } from "./helpers/accessibility";
+import { adminHref, adminUrlPattern } from "./helpers/admin-url";
 import { loginPersona } from "./helpers/auth";
 import { relDateOnly, ROLE_PERSONAS } from "./helpers/fixtures";
 
@@ -26,10 +27,10 @@ test("read-only admin views every area but cannot write", async ({
   await loginPersona(page, ROLE_PERSONAS.ADMIN_READONLY.email);
 
   // In-area: every admin area is view-level, so admin pages render.
-  await page.goto("/admin/members");
-  await expect(page).toHaveURL(/\/admin\/members/);
-  await page.goto("/admin/bookings");
-  await expect(page).toHaveURL(/\/admin\/bookings/);
+  await page.goto(adminHref("members"));
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("members")));
+  await page.goto(adminHref("bookings"));
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("bookings")));
 
   // Since the editable access-roles change (#1184), ADMIN_READONLY carries
   // finance: view, so the /finance workspace renders read-only rather than
@@ -60,12 +61,12 @@ test("booking officer manages bookings but is blocked from content", async ({
   await loginPersona(page, ROLE_PERSONAS.ADMIN_BOOKINGS.email);
 
   // In-area: bookings = edit.
-  await page.goto("/admin/bookings");
-  await expect(page).toHaveURL(/\/admin\/bookings/);
+  await page.goto(adminHref("bookings"));
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("bookings")));
 
   // Out-of-area: content = none → redirected to the overview dashboard.
-  await page.goto("/admin/page-content");
-  await expect(page).toHaveURL(/\/admin\/dashboard/);
+  await page.goto(adminHref("page-content"));
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("dashboard")));
 });
 
 test("membership officer manages members but is blocked from content", async ({
@@ -74,12 +75,12 @@ test("membership officer manages members but is blocked from content", async ({
   await loginPersona(page, ROLE_PERSONAS.ADMIN_MEMBERSHIP.email);
 
   // In-area: membership = edit.
-  await page.goto("/admin/members");
-  await expect(page).toHaveURL(/\/admin\/members/);
+  await page.goto(adminHref("members"));
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("members")));
 
   // Out-of-area: content = none → redirected to the overview dashboard.
-  await page.goto("/admin/page-content");
-  await expect(page).toHaveURL(/\/admin\/dashboard/);
+  await page.goto(adminHref("page-content"));
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("dashboard")));
 });
 
 test("content manager edits content but is blocked from membership", async ({
@@ -88,27 +89,27 @@ test("content manager edits content but is blocked from membership", async ({
   await loginPersona(page, ROLE_PERSONAS.ADMIN_CONTENT.email);
 
   // In-area: content = edit.
-  await page.goto("/admin/page-content");
-  await expect(page).toHaveURL(/\/admin\/page-content/);
+  await page.goto(adminHref("page-content"));
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("page-content")));
 
   // Out-of-area: membership = none, overview = view → redirected to dashboard.
-  await page.goto("/admin/members");
-  await expect(page).toHaveURL(/\/admin\/dashboard/);
+  await page.goto(adminHref("members"));
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("dashboard")));
 });
 
 test("treasurer edits finance but is blocked from content", async ({ page }) => {
   await loginPersona(page, ROLE_PERSONAS.FINANCE_ADMIN.email);
 
   // In-area: finance = edit (admin finance pages).
-  await page.goto("/admin/payments");
-  await expect(page).toHaveURL(/\/admin\/payments/);
+  await page.goto(adminHref("payments"));
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("payments")));
   // FINANCE_ADMIN is a finance manager, so the /finance workspace is reachable.
   await page.goto("/finance");
   await expect(page).toHaveURL(/\/finance/);
 
   // Out-of-area: content = none → redirected to the overview dashboard.
-  await page.goto("/admin/page-content");
-  await expect(page).toHaveURL(/\/admin\/dashboard/);
+  await page.goto(adminHref("page-content"));
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("dashboard")));
 });
 
 test("finance-only viewer reaches Subscriptions without member links", async ({
@@ -124,10 +125,10 @@ test("finance-only viewer reaches Subscriptions without member links", async ({
   // Subscriptions is finance-readable, but member detail is membership-gated.
   // FINANCE_USER is the bundled finance-only boundary: it can read this table
   // while each member stays plain text with no local member route.
-  await page.goto("/admin/subscriptions");
-  await expect(page).toHaveURL(/\/admin\/subscriptions/);
+  await page.goto(adminHref("subscriptions"));
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("subscriptions")));
   await expect(page.getByRole("table", { name: "Subscriptions" })).toBeVisible();
-  await expect(page.locator('a[href^="/admin/members/"]')).toHaveCount(0);
+  await expect(page.locator(`a[href^="${adminHref("members")}/"]`)).toHaveCount(0);
   const incrementalSync = page.getByRole("button", { name: "Incremental Sync" });
   const repairSync = page.getByRole("button", {
     name: "Repair Stale Linked Members",
@@ -147,8 +148,8 @@ test("finance-only viewer reaches Subscriptions without member links", async ({
   // an out-of-area admin page bounces to its first accessible admin page (the
   // finance-area /admin/payments), not the member dashboard. The boundary
   // proven: it cannot reach the members area itself.
-  await page.goto("/admin/members");
-  await expect(page).toHaveURL(/\/admin\/payments/);
+  await page.goto(adminHref("members"));
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("payments")));
 });
 
 test("lodge role reaches lodge operations but no admin portal", async ({
@@ -168,6 +169,6 @@ test("lodge role reaches lodge operations but no admin portal", async ({
   await expect(page).toHaveURL(/\/lodge\/roster\//);
 
   // Out-of-area: LODGE carries no admin bundle → admin pages bounce away.
-  await page.goto("/admin/members");
+  await page.goto(adminHref("members"));
   await expect(page).toHaveURL(/\/dashboard/);
 });
