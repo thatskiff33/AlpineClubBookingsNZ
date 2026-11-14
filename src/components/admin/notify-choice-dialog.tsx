@@ -48,7 +48,8 @@ const NOTIFY_CHOICE_BACK_LABEL = "Go back";
  * step before an irreversible action always offers a labelled way back, in the
  * usual dismiss position — first in the footer, outlined, as `useConfirm` does.
  * "Go back" only closes the dialog; it fires no action and leaves the page's
- * state alone.
+ * state alone. Its label is fixed on purpose (no prop): a caller cannot bring
+ * back a bare "Cancel" beside actions that also begin with "Cancel" (#4966).
  *
  * `submitting` disables every button and blocks every route out of the dialog
  * (Go back, the X, Escape, an outside click) while a request runs.
@@ -64,7 +65,6 @@ export function NotifyChoiceDialog({
   summary,
   notice,
   submitting = false,
-  backLabel = NOTIFY_CHOICE_BACK_LABEL,
   actions,
 }: {
   open: boolean;
@@ -76,7 +76,6 @@ export function NotifyChoiceDialog({
   /** Shown above the buttons, e.g. `BookingNoEmailsNotice`. */
   notice?: ReactNode;
   submitting?: boolean;
-  backLabel?: string;
   actions: NotifyChoiceActions;
 }) {
   const footerActions =
@@ -108,7 +107,7 @@ export function NotifyChoiceDialog({
             disabled={submitting}
             onClick={() => onOpenChange(false)}
           >
-            {backLabel}
+            {NOTIFY_CHOICE_BACK_LABEL}
           </Button>
           {footerActions.map((action, index) => (
             <Button

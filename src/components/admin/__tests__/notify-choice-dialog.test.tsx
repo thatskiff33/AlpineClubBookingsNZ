@@ -99,6 +99,21 @@ describe("NotifyChoiceDialog", () => {
     expect(screen.getByTestId("open-state").textContent).toBe("open");
   });
 
+  it("refuses the corner X while submitting", () => {
+    render(<Harness submitting />);
+
+    // The X is DialogContent's own button, so only the shared onOpenChange guard stops it.
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.getByTestId("open-state").textContent).toBe("open");
+  });
+
+  it("lets the corner X close the dialog when nothing is submitting", () => {
+    render(<Harness />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.getByTestId("open-state").textContent).toBe("closed");
+  });
+
   it("offers only Go back and the one action in the single-action (No emails) shape", () => {
     const onSingle = vi.fn();
     render(<Harness single onSingle={onSingle} />);
