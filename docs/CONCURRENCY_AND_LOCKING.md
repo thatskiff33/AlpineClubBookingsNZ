@@ -79,12 +79,14 @@ is what CI enforces and this page is the defect.
 
 ### The lock(1) transaction budget (#4933)
 
-Prisma counts the wait for `pg_advisory_xact_lock(1)` against an interactive
-transaction's budget, and its defaults are `maxWait` 2 s / `timeout` 5 s. A
-Tier-2 writer that keeps them loses to any legitimate holder that runs longer:
-bed-range assignment and group settlement are each allowed 30 s. The loser rolls
-back cleanly, but before #4933 booking create then answered a member with a 400
-"Failed to create booking", which reads as "your request was wrong".
+The wait for `pg_advisory_xact_lock(1)` happens inside an interactive
+transaction's callback, so it counts against its `timeout` (default 5 s).
+`maxWait` (default 2 s) limits only how long the transaction waits to start, for
+a pooled connection. A Tier-2 writer that keeps the defaults loses to any
+legitimate holder that runs longer: bed-range assignment and group settlement
+are each allowed 30 s. The loser rolls back cleanly, but before #4933 booking
+create then answered a member with a 400 "Failed to create booking", which reads
+as "your request was wrong".
 
 The rule (`INV-LOCK-006`): a transaction that waits for lock(1) passes
 `LOCK1_HOLDER_TRANSACTION_BUDGET` (`src/lib/db-transaction.ts`, `maxWait` 10 s /

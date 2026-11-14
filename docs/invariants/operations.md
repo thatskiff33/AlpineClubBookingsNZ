@@ -256,9 +256,9 @@ rules first written here. #2765 extended it with the measured-audience half.
 
 - **A transaction that waits for the global key states the shared lock(1)
   budget and answers contention as retryable (#4933).** Prisma counts the wait
-  for `pg_advisory_xact_lock(1)` against an interactive transaction's `maxWait`
-  and `timeout`, and its defaults (2 s / 5 s) lose to any legitimate holder that
-  runs longer. So a writer that opens such a transaction passes
+  for `pg_advisory_xact_lock(1)` against an interactive transaction's `timeout`
+  (`maxWait` only limits the wait to start it), and its defaults (2 s / 5 s)
+  lose to any legitimate holder that runs longer. So a writer that opens such a transaction passes
   `LOCK1_HOLDER_TRANSACTION_BUDGET` (`src/lib/db-transaction.ts`), the one
   definition of the lock(1) holders' budget, and never writes the numbers out.
   Leaving the defaults is a silent choice to lose to every long holder. A writer
@@ -275,7 +275,8 @@ rules first written here. #2765 extended it with the measured-audience half.
   ceiling of its own, such as a provider delivery timeout, may run tighter and
   says why at the site. Booking create, the linked date move, bed-range
   assignment and group settlement use the constant; other lock(1) writers still
-  on the defaults are a known gap tracked for follow-up, not a licence.
+  on the defaults, or on their own copy of the numbers, are a known gap tracked
+  by #5175, not a licence.
 
 ## INV-OPS-014
 

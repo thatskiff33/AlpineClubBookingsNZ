@@ -242,6 +242,10 @@ default timeout, which the shared budget now covers. Its p95 crossed the 5 s
 `CONTENTION_P95_MS` gate; dev-mode rendering is slower than a production
 build, so treat these latencies as an upper bound.
 
+The agent session that built #4933 recorded these figures. They were not
+reproduced when the change was reviewed, and no saved k6 output was found, so
+repeat the two-lodge run above before quoting them.
+
 ### 4. Member dashboard — `load/scenarios/member-dashboard.js`
 
 Each VU logs in once (round-robin across `LOAD_USERS` when supplied), then
