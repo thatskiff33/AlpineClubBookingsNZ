@@ -15,6 +15,7 @@ import { isFullAdmin } from "@/lib/access-roles";
 import {
   accessRoleDefinitionHolderCounts,
   accessRolePermissionsSchema,
+  accessRoleRequiresTwoFactorSchema,
   definitionLevelDataFromPermissions,
 } from "@/lib/access-role-definition-routes";
 import { prisma } from "@/lib/prisma";
@@ -27,6 +28,7 @@ const createSchema = z
     description: z.string().trim().max(1000).optional().default(""),
     permissions: accessRolePermissionsSchema,
     sortOrder: z.number().int().min(0).max(100000).optional(),
+    requiresTwoFactor: accessRoleRequiresTwoFactorSchema,
   })
   .strict();
 
@@ -96,6 +98,7 @@ export async function POST(request: Request) {
         label: parsed.data.label.trim(),
         description: parsed.data.description.trim(),
         sortOrder,
+        requiresTwoFactor: parsed.data.requiresTwoFactor ?? null,
         ...definitionLevelDataFromPermissions(parsed.data.permissions),
       },
       select: ACCESS_ROLE_DEFINITION_SELECT,

@@ -159,6 +159,10 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `processing` answers `PAYMENT_PROCESSING` in its own words.
 - **Retired** (`isCardIntentRetired`, through the doors' check) once the
   machinery owns it.
+- **The `/pay` link asks the server what a card success did**
+  (`checkCardSuccess`) at both exits: the resolved confirmation (`succeeded`
+  or `processing`) and the redirect return (#4955). It never shows the pay
+  buttons meanwhile; unsettled `processing` reads "being processed".
 - Proven on PostgreSQL by `superseded-intent-card-doors.realdb.test.ts`, and
   by `superseded-capture-ownership.test.ts`, `payment-recovery.test.ts`,
   `issue-1992-duplicate-capture-refund.test.ts` and the door suites.
@@ -1738,25 +1742,24 @@ release).
 - **Once.** Queued per capture under the per-anchor supplementary-invoice lock;
   never on an internet-banking or cancelled booking, save a kept capture
   (`INV-PAY-144`).
-- **Where.** The gap invoice billing its change, else an unpaid invoice naming
-  it or the change's own, else the primary less unallocated credit: the
-  capture net of other writers, capped at the room; the rest to an officer.
+- **Where.** Each dollar once (#4434): unpaid invoices naming it, oldest
+  first, then the change's gap, its own unpaid invoice, the primary less
+  unallocated credit, each to its room; the rest to an officer, never an
+  overpayment. A paying namer's billed cents count as recorded.
 - **Never twice.** One receipt plans per booking at a time, never during a
-  live create. Store decisions under the change's lock before Xero.
-  Match reference, receipt cents, and no active `CREDIT_RELEASE_PAYMENT`
-  link on that payment id (#4435); else the same per-invoice key or refuse.
+  live create, storing its ordered invoice list, pending too,
+  under the change's lock before Xero. A leg adopts only a payment with its
+  reference, cents and no active `CREDIT_RELEASE_PAYMENT` link (#4435),
+  else sends on its own key; a retry sends unlinked legs.
 - **Refused, never guessed.** Xero unreadable, nothing due, an uncertain
   recorder or changed figures: FAILED `ADDITIONAL_CAPTURE_RECEIPT_REFUSED`,
   an officer told.
-- **Refunds and repair.** A Stripe refund names the receipt's invoice. The
-  repair tool reports "card payment not recorded in Xero" and queues the
-  receipt; a missing or revived invoice goes unpaid where a receipt records it.
-- Pinned by `additional-capture-xero-receipt.test.ts`,
-  `additional-capture-recorder.test.ts`,
-  `additional-capture-receipt.realdb.test.ts`,
-  `additional-capture-receipt-unattributed.realdb.test.ts`,
-  `additional-capture-receipt-sweep-retry.realdb.test.ts` and
-  `xero-booking-repair.test.ts`.
+- **Refunds and repair.** A Stripe refund names leg 0's invoice. Repair
+  queues a missing receipt and flags unlinked legs; a missing or revived
+  invoice a receipt records goes unpaid.
+- Pinned by the `additional-capture-xero-receipt`,
+  `additional-capture-recorder` and `xero-booking-repair` unit tests and the
+  `additional-capture-receipt*` realdb suites.
 
 ## INV-PAY-140
 

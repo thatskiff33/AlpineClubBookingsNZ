@@ -1,6 +1,6 @@
 import { BookingStatus, type Prisma } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
-import { isQuotePricedBooking } from "@/lib/booking-modify-validation";
+import { isQuotePricedBooking } from "@/lib/booking-modify-quote-priced";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import type { MemberGuestConsentBlockedReason } from "@/lib/member-guest-consent-service";

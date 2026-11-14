@@ -131,30 +131,33 @@ export async function getNonMemberHoldDays(
 }
 
 /**
- * Load the cancellation policy for a given check-in date.
+ * Load the cancellation policy for a given check-in date at a lodge.
  * If the check-in falls within an active BookingPeriod, uses that period's rules.
  * Otherwise falls back to the default CancellationPolicy table.
+ *
+ * `lodgeId` is required on purpose (#4946): a caller holding a booking passes
+ * the booking's lodge, and only a caller with genuinely no lodge passes `null`
+ * for the club default. It was optional once, and one caller silently showed a
+ * member the default lodge's schedule for a booking at another lodge.
  */
 export async function loadCancellationPolicy(
-  checkIn?: Date,
-  lodgeId?: string | null,
+  checkIn: Date,
+  lodgeId: string | null,
   db: CancellationPolicyDb = prisma
 ): Promise<CancellationRule[]> {
   const effectiveLodgeId = lodgeId ?? (await getDefaultLodgeId(db));
-  if (checkIn) {
-    const period = await getBookingPeriodForDate(checkIn, effectiveLodgeId, db);
-    if (period) {
-      const rawRules = period.cancellationRules as unknown as Array<{
-        daysBeforeStay: number;
-        refundPercentage: number;
-        creditRefundPercentage?: number;
-        fixedFeeCents?: number;
-        creditFixedFeeCents?: number;
-      }>;
-      return rawRules
-        .map(normalizeCancellationRule)
-        .sort((a, b) => b.daysBeforeStay - a.daysBeforeStay);
-    }
+  const period = await getBookingPeriodForDate(checkIn, effectiveLodgeId, db);
+  if (period) {
+    const rawRules = period.cancellationRules as unknown as Array<{
+      daysBeforeStay: number;
+      refundPercentage: number;
+      creditRefundPercentage?: number;
+      fixedFeeCents?: number;
+      creditFixedFeeCents?: number;
+    }>;
+    return rawRules
+      .map(normalizeCancellationRule)
+      .sort((a, b) => b.daysBeforeStay - a.daysBeforeStay);
   }
 
   const allRules = await db.cancellationPolicy.findMany({
