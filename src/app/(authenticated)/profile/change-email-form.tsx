@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
@@ -8,11 +9,22 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
 
-interface ChangeEmailFormProps {
-  currentEmail: string;
+/** The member's unexpired email-change link, its expiry already in club time. */
+export interface PendingEmailChange {
+  newEmail: string;
+  expiresOn: string;
 }
 
-export function ChangeEmailForm({ currentEmail }: ChangeEmailFormProps) {
+interface ChangeEmailFormProps {
+  currentEmail: string;
+  pendingChange?: PendingEmailChange | null;
+}
+
+export function ChangeEmailForm({
+  currentEmail,
+  pendingChange = null,
+}: ChangeEmailFormProps) {
+  const router = useRouter();
   const [newEmail, setNewEmail] = useState("");
   const [loading, setLoading] = useState(false);
   // #2264 — the example address lives UNDER the field, folded into the note that
@@ -46,6 +58,8 @@ export function ChangeEmailForm({ currentEmail }: ChangeEmailFormProps) {
 
       toast.success(`Verification email sent to ${newEmail}`);
       setNewEmail("");
+      // #4956: re-read the pending change so the notice names the new address.
+      router.refresh();
     } catch {
       toast.error("An unexpected error occurred");
     } finally {
@@ -58,6 +72,13 @@ export function ChangeEmailForm({ currentEmail }: ChangeEmailFormProps) {
       <div className="space-y-2">
         <Label htmlFor="currentEmail">Current Email</Label>
         <Input id="currentEmail" value={currentEmail} disabled className="bg-muted" />
+        {pendingChange ? (
+          <p role="status" className="text-sm text-muted-foreground">
+            A change to <strong>{pendingChange.newEmail}</strong> is waiting for
+            you to click the link we sent. The link expires{" "}
+            {pendingChange.expiresOn}. Requesting again replaces it.
+          </p>
+        ) : null}
       </div>
 
       <div className="space-y-2">

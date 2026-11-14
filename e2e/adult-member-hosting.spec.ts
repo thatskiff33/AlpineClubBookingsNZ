@@ -630,7 +630,7 @@ test("same-owner cover can be removed with authority and restored by another act
       response.url().endsWith(`/api/bookings/${sourceBooking.id}/cancel`),
   );
   await officerPage
-    .getByRole("button", { name: "Cancel without emailing" })
+    .getByRole("button", { name: "Cancel booking, no email" })
     .click();
   const needsOverride = await needsOverridePromise;
   expect(needsOverride.status()).toBe(409);

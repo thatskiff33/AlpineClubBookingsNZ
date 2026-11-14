@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { FocusedActionError } from "@/components/focused-action-error";
 
 interface Preferences {
   bookingConfirmation: boolean;
@@ -213,11 +214,7 @@ export function NotificationPreferences() {
         ))}
       </div>
 
-      {error && (
-        <div className="rounded-md bg-danger-3 border border-danger-6 p-3 text-sm text-danger-11">
-          {error}
-        </div>
-      )}
+      <FocusedActionError id="notification-preferences-error" error={error ?? ""} />
 
       {editing && (
         <div className="flex gap-3 pt-2">
