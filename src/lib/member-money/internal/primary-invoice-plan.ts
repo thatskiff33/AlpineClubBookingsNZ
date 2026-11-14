@@ -12,6 +12,7 @@ import {
 } from "../../xero-promo-adjustment-lines";
 import { sanitizeForJson } from "../../xero-sync";
 import { stableDigest } from "../../stable-digest";
+import { compareOrdinal } from "@/lib/ordinal-order";
 import { bookingChargeIdentity } from "./booking-charges";
 import { liveComponentSplit, type PostedRevenueLeg } from "./components";
 
@@ -117,7 +118,7 @@ export function planPrimaryBookingInvoice(input: PrimaryInvoicePlanInput): Prima
         codeExplicitlyConfigured: input.hutFeeMapping.codeExplicitlyConfigured,
       },
       itemCodeMap: {
-        byKey: [...input.hutFeeItemCodeMap.byKey].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+        byKey: [...input.hutFeeItemCodeMap.byKey].sort(([a], [b]) => compareOrdinal(a, b)),
         fullTypeId: input.hutFeeItemCodeMap.fullTypeId,
         nonMemberTypeId: input.hutFeeItemCodeMap.nonMemberTypeId,
         legacyItemCode: input.hutFeeItemCodeMap.legacyItemCode,
