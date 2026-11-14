@@ -2,7 +2,7 @@
 /**
  * Runs the Docker-only first install exactly as `DEPLOYMENT.md` "First
  * Bootstrap" writes it, against an empty database, and proves it leaves a club
- * somebody can sign in to (#4977, INV-OPS-017).
+ * somebody can sign in to (#4977, INV-OPS-019).
  *
  * ## Why
  *

@@ -99,7 +99,7 @@ Joining fees and how they are charged are the club's decision; see
 | "Duplicate application" when you submit | An application already exists for your email | Contact the club office rather than submitting again |
 | A nominator says their confirmation link is invalid or expired | The single-use token has been used or has lapsed | Ask the club office to re-send it, or nominate a different member |
 | Your account-setup / invite email never arrived | It may be in spam, or the setup link has expired | Check spam, then use **Forgot password** on `/login` — it works even before your first sign-in |
-| You can sign in but cannot book yet | Your profile still needs confirming, or your subscription is not yet paid | Complete the "confirm member details" prompt; check your [subscription status](your-account.md#account-information) on your profile |
+| You can sign in but cannot book yet | Your profile still needs confirming, or your subscription is not yet paid | Complete the "confirm member details" prompt (its **Log out** button lets you leave and finish next time you sign in); check your [subscription status](your-account.md#account-information) on your profile |
 
 ## Related links
 

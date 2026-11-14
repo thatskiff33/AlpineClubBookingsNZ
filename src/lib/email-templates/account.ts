@@ -153,3 +153,14 @@ export function accountDeletionRejectedTemplate(
     ${supportContactMuted()}
   `);
 }
+
+/** An administrator cleared this member's authenticator and passkeys (#4618). */
+export function officerFactorResetTemplate(firstName: string): string {
+  return layout(`
+    ${heading("Your authenticator was reset")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ",")}
+    ${paragraph(`An administrator reset the authenticator app and passkeys on your ${escapeHtml(CLUB_NAME)} account.`)}
+    ${paragraph("Your open sessions have ended. The next time you sign in, you will be asked to set up an authenticator app or a passkey. This does not start a new grace period.")}
+    ${paragraph("If you did not expect this, contact the club.")}
+  `);
+}

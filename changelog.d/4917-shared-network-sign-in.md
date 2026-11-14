@@ -1,0 +1,1 @@
+- **Keep sign-out available on busy shared networks (#4917).** Sign-out and session updates no longer use the sign-in address budget. Sign-in allows 30 attempts per 15 minutes per address, alongside the existing per-account password throttle. Refused sign-ins show a network wait message, and an unused emailed sign-in link can be retried.

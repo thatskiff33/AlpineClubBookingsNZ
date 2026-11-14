@@ -36,6 +36,7 @@ const PAGE = join(
   "app",
   "(admin)",
   "admin",
+  "booking-desk",
   "bed-allocation",
   "page.tsx",
 );

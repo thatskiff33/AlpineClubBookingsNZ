@@ -189,8 +189,10 @@ function memberFindManyForTest(args: unknown) {
 }
 
 /**
- * #4855: merge's participant lock counts the rows its `SKIP LOCKED` attempt
- * took; uncontended, that is every id it named. Every other statement: 0.
+ * #4855 / #4860: merge's `SKIP LOCKED` attempts count the rows they took.
+ * Uncontended, that is every id the statement named — Member ids, or the
+ * captured booking ids. An empty captured booking set must not issue one.
+ * Every other statement: 0.
  */
 function uncontendedRawCount(sql: unknown): number {
   if (!rawStatement(sql).includes("SKIP LOCKED")) return 0;
@@ -859,13 +861,18 @@ describe("executeMemberMerge", () => {
     const bookingGuest = {
       ...defaultDelegate(),
       count: vi.fn().mockResolvedValue(0),
-      findMany: vi.fn(() => {
+      findMany: vi.fn((args: { select?: Record<string, unknown> }) => {
+        // The lodge derivation selects `booking.lodgeId`. It runs before the
+        // sweep, including again at the start of the attempt (#4876), so it
+        // must not see a guest that commits after the sweep, and it must not
+        // be handed a row with no booking. Those reads are not counted below.
+        if (args.select && "booking" in args.select) return Promise.resolve([]);
         guestRead += 1;
-        // Sample reads, then the move-id capture, all before the wait. The
+        // The id sample, then the move-id capture, both before the wait. The
         // residual read after the Member FOR UPDATE is the one that sees the
         // late row. Earlier reads stay empty so the capture cannot absorb it.
         return Promise.resolve(
-          guestRead <= 4
+          guestRead <= 2
             ? []
             : [{ id: "late-guest", bookingId: "already-planned-booking" }],
         );
@@ -940,6 +947,75 @@ describe("executeMemberMerge", () => {
     expect(
       (member as { delete: ReturnType<typeof vi.fn> }).delete,
     ).not.toHaveBeenCalled();
+    expectRefusedAudit(
+      (auditLog as { create: ReturnType<typeof vi.fn> }).create,
+      "merge_drift_in_transaction",
+    );
+  });
+
+  it("refuses with the booking-ownership 409 when a captured booking is gone after its one-row wait (#4860)", async () => {
+    // The captured booking is held elsewhere at the set try-lock and the probe,
+    // then is gone when merge waits for it alone. The wrapper raises its
+    // internal drift error; executeMemberMerge must map it to the public 409.
+    const booking = {
+      ...defaultDelegate(),
+      findMany: vi.fn(({ where }: { where: Record<string, unknown> }) =>
+        Promise.resolve(where.memberId === LOSER_ID ? [{ id: "booking-1" }] : []),
+      ),
+      count: vi.fn(({ where }: { where: Record<string, unknown> }) =>
+        Promise.resolve(where.memberId === LOSER_ID ? 1 : 0),
+      ),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    };
+    const { client, executeRaw, member, auditLog } = makeClient({ booking });
+    const bookingLocks: string[] = [];
+    executeRaw.mockImplementation(async (strings) => {
+      const statement = rawStatement(strings);
+      if (statement.includes('FROM "Booking"') && statement.includes("FOR NO KEY UPDATE")) {
+        // Set lock and probe (SKIP LOCKED) take nothing; the wait finds no row.
+        bookingLocks.push(statement.includes("SKIP LOCKED") ? "try" : "wait");
+        return 0;
+      }
+      return uncontendedRawCount(strings);
+    });
+    const core: MemberMergePreviewCore = {
+      fieldMerge: mergeMemberFields(
+        master as unknown as Record<string, unknown>,
+        loser as unknown as Record<string, unknown>,
+      ).diff,
+      relationMoves: [{ model: "Booking.member", count: 1 }],
+      collisions: [],
+      blockers: [],
+      warnings: [],
+    };
+
+    const refusal = await executeMemberMerge({
+      masterId: MASTER_ID,
+      loserId: LOSER_ID,
+      actorMemberId: ACTOR_ID,
+      previewToken: buildMemberMergePreviewToken(
+        MASTER_ID,
+        LOSER_ID,
+        master.updatedAt,
+        loser.updatedAt,
+        core,
+      ),
+      confirmationText: "MERGE Dup Person",
+      db: client as never,
+    }).catch((error: unknown) => error);
+
+    expect(refusal).toBeInstanceOf(MemberMergeError);
+    expect(refusal).toMatchObject({
+      statusCode: 409,
+      code: "merge_drift_in_transaction",
+      details: { driftFields: ["Booking.member"] },
+    });
+    // The path under test really ran: try-lock, probe, then the one-row wait.
+    expect(bookingLocks).toEqual(["try", "try", "wait"]);
+    expect(booking.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { memberId: MASTER_ID } }),
+    );
+    expect((member as { delete: ReturnType<typeof vi.fn> }).delete).not.toHaveBeenCalled();
     expectRefusedAudit(
       (auditLog as { create: ReturnType<typeof vi.fn> }).create,
       "merge_drift_in_transaction",

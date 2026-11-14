@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { SettledLodgeOptionScope } from "@/lib/lodge-option-scope";
 
 export function DatesStep({
-  subscriptionUnpaid,
+  bookingBlockedBySubscription,
   handleDateSelect,
   checkIn,
   checkOut,
@@ -20,7 +20,10 @@ export function DatesStep({
   handleLodgeChange,
   selectedLodge,
 }: {
-  subscriptionUnpaid: boolean | null;
+  // The consequence, not the fact (#4941): true only when the club's lockout
+  // mode is HARD_BLOCK and the subscription is unpaid. Under NON_MEMBER_PRICING
+  // and NO_BLOCK an unpaid member still picks dates.
+  bookingBlockedBySubscription: boolean;
   // Lodge nights are NZ date-only strings end-to-end (#2474).
   handleDateSelect: (ci: string, co: string) => void;
   checkIn: string | null;
@@ -50,7 +53,7 @@ export function DatesStep({
         <CardTitle>Select Your Dates</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {subscriptionUnpaid ? (
+        {bookingBlockedBySubscription ? (
           <p className="text-sm text-warning py-8 text-center">
             Booking is disabled until your subscription is paid.
           </p>

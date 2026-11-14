@@ -618,7 +618,7 @@ services:
       DATABASE_URL: postgresql://${MIGRATION_DB_USER:-tac}:${MIGRATION_DB_PASSWORD:-${DB_PASSWORD:?DB_PASSWORD is required}}@postgres:5432/tacbookings?connection_limit=2&pool_timeout=10&options=-c%20lock_timeout%3D${MIGRATION_LOCK_TIMEOUT_MS:-5000}
     command: ./node_modules/.bin/prisma migrate deploy
 
-  # FIRST INSTALL ONLY (#4977, INV-OPS-017). `docker compose run --rm seed`
+  # FIRST INSTALL ONLY (#4977, INV-OPS-019). `docker compose run --rm seed`
   # runs prisma/seed.ts once, after `run --rm migrate` and before the app
   # starts: it creates the first admin, the lodge kiosk account and the starter
   # data on an empty database. Nothing runs it on an upgrade, and the profile

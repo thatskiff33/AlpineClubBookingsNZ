@@ -1,5 +1,5 @@
 // The commands that run `prisma/seed.ts` on an empty database (#4977,
-// INV-OPS-017). The setup checklist names both; the deployment contract test
+// INV-OPS-019). The setup checklist names both; the deployment contract test
 // holds every operator doc and `docker-compose.yml` to the Docker one, and the
 // first-install smoke in CI runs it as `DEPLOYMENT.md` writes it.
 

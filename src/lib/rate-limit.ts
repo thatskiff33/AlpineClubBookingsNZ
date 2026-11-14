@@ -401,8 +401,8 @@ export async function applyMemberScopedRateLimit(
 
 // Pre-configured rate limiters for common routes
 export const rateLimiters = {
-  /** Login: 10 attempts per 15 minutes */
-  login: { id: "login", limit: 10, windowSeconds: 15 * 60, authSensitive: true } as RateLimitConfig,
+  /** Login per address: 30 per 15 minutes, a shared-network backstop to the per-account throttle */
+  login: { id: "login", limit: 30, windowSeconds: 15 * 60, authSensitive: true } as RateLimitConfig,
   /** Register: 5 attempts per hour */
   register: { id: "register", limit: 5, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
   /** Membership application: 3 submissions per hour */

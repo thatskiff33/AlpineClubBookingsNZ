@@ -48,6 +48,7 @@ import {
 import { authSecretWeaknessReason } from "@/lib/integration-crypto";
 import { DATA_ENCRYPTION_KEYS_ENV, DATA_ENCRYPTION_LEGACY_KEY_ENV } from "@/lib/data-encryption-key-material";
 import { buildDataEncryptionKeyCheck, type DataKeyRingSource, type DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
+import { buildDatabaseRoleCheck, type DatabaseRoleSnapshot } from "@/lib/setup-readiness-database-role";
 
 export const SETUP_STEP_IDS = [
   "club-config",
@@ -56,6 +57,7 @@ export const SETUP_STEP_IDS = [
   "runtime-env",
   "auth-secret-strength",
   "data-encryption-keys",
+  "database-role",
   "seed-admin",
   "feature-flags",
   "booking-policies",
@@ -228,6 +230,8 @@ export interface SetupDatabaseSnapshot {
   lodgesNotSetUpForBookings?: string[];
   /** Stored data by the key each row names (#4456). Undefined when not checked. */
   dataKeyUsage?: DataKeyUsageSnapshot;
+  /** Server-reported connection privileges, omitted when the read fails. */
+  databaseRole?: DatabaseRoleSnapshot;
 }
 
 /*
@@ -1317,7 +1321,7 @@ function buildSeedAdminCheck(
         details: [
           "Run setup:check again inside an environment with database access, or review /admin/setup after login.",
         ],
-        href: "/admin/members",
+        href: adminHref("members"),
       },
       progress,
     );
@@ -1340,7 +1344,7 @@ function buildSeedAdminCheck(
         adminCount > 0
           ? ["Admin login is available."]
           : [...SEED_COMMAND_DETAILS],
-      href: "/admin/members",
+      href: adminHref("members"),
     },
     progress,
   );
@@ -1677,7 +1681,7 @@ function buildKeyRateHolderCheck(
           ? "A built-in membership type needs repair. Open Membership Types to reactivate it or restore its booking behavior."
           : "Full and Non-Member membership types are ready.",
       details: db ? warnings : ["Check membership types after connecting the database."],
-      href: "/admin/membership-types",
+      href: adminHref("membership-types"),
     },
     progress,
   );
@@ -2169,6 +2173,7 @@ export function buildSetupReadiness(
       buildRuntimeEnvCheck(env, progress),
       buildAuthSecretStrengthCheck(env, progress),
       applyProgress(buildDataEncryptionKeyCheck(readEnv(env, DATA_ENCRYPTION_KEYS_ENV), input.database?.dataKeyUsage, readEnv(env, "AUTH_SECRET") ?? readEnv(env, "NEXTAUTH_SECRET"), readEnv(env, DATA_ENCRYPTION_LEGACY_KEY_ENV), input.dataKeySource ?? "shell"), progress),
+      applyProgress(buildDatabaseRoleCheck(input.database?.databaseRole), progress),
       buildSeedAdminCheck(input.database, progress),
       buildFeatureFlagCheck(input.database, progress),
     ],
@@ -2263,6 +2268,8 @@ export function renderSetupCheckReport(readiness: SetupReadiness): string {
 export function getSetupRequiredEnvNames(): string[] {
   return [
     ...REQUIRED_RUNTIME_ENV,
+    // Wizard reminder only; an unset ring remains valid at runtime.
+    DATA_ENCRYPTION_KEYS_ENV,
     "AUTH_SECRET or NEXTAUTH_SECRET",
     // Stripe credentials (secret/publishable keys, webhook signing secret) are
     // captured in-app now (#2082) — they are no longer required env.
