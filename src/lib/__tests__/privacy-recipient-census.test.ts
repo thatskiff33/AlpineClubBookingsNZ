@@ -39,6 +39,10 @@ function serverFiles(directory: string): string[] {
     if (entry.isDirectory()) return serverFiles(path);
     if (!/\.tsx?$/.test(entry.name) || /\.(test|spec)\.tsx?$/.test(entry.name)) return [];
     if (entry.name === "privacy-recipient-classification.ts") return [];
+    // Superseded starter privacy bodies (#5007), byte copies of migration guard
+    // text that config-transfer-cleaned-literals.test.ts pins to the SQL. Their
+    // links are old policy prose, not outbound calls, and cannot be reworded.
+    if (relative(root, path) === join("src", "lib", "config-transfer", "starter-privacy-cleaned-bodies.ts")) return [];
     const source = readFileSync(path, "utf8");
     const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
     if (file.statements.some((statement) => ts.isExpressionStatement(statement)
@@ -93,6 +97,16 @@ describe("privacy recipient register census", () => {
     expect(unclassified).toEqual([]);
     // Parses every server-capable file under src/; measured at 6-8s locally.
   }, 30_000);
+
+  it("keeps the exempt cleaned-bodies file to plain string constants (#5007)", () => {
+    // The host scan skips this file, so it must never grow code that could call out.
+    const path = join(root, "src", "lib", "config-transfer", "starter-privacy-cleaned-bodies.ts");
+    const file = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true);
+    const initialisers = file.statements.flatMap((statement) =>
+      ts.isVariableStatement(statement) ? statement.declarationList.declarations.map((d) => d.initializer) : [statement]);
+    expect(initialisers.length).toBeGreaterThan(0);
+    for (const initialiser of initialisers) expect(initialiser && ts.isStringLiteral(initialiser)).toBe(true);
+  });
 
   it("sees a new outbound host, including template URLs, and ignores prose comments", () => {
     expect([...outboundHosts('fetch("https://new-recipient.invalid/send");')]).toEqual(["new-recipient.invalid"]);
