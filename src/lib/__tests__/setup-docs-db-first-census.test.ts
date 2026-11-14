@@ -27,9 +27,9 @@ import { describe, expect, it } from "vitest";
   variables. It is not imported, because that module pulls in the credential
   store and Prisma, which need `DATABASE_URL` just to load. The last test ties
   the copy to the list by reading that file's text, so the name cannot leave the
-  list unnoticed. Only this one name is scanned for: the other retired names
-  are legitimately documented as live in places, for example the E2E app
-  container's `STRIPE_SECRET_KEY` in `docs/E2E_PLAYWRIGHT.md`.
+  list unnoticed. Only this one name is scanned for. The other retired names
+  would need their own exemptions: `docs/E2E_PLAYWRIGHT.md` still lists
+  `STRIPE_SECRET_KEY` as a runtime variable of the E2E stack.
 
   Scanned from disk, so `pnpm run test:related` cannot reach it from a doc
   edit: run it with `pnpm run test:named`.
