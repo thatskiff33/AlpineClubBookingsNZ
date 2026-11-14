@@ -1,4 +1,5 @@
 import { expect, test } from "./helpers/accessibility";
+import { adminHref, adminUrlPattern } from "./helpers/admin-url";
 import { loginPersona, storageStatePath } from "./helpers/auth";
 import {
   bookSelfToReviewStep,
@@ -65,7 +66,7 @@ test.describe("admin-only routing", () => {
     page,
   }) => {
     await page.goto("/book");
-    await expect(page).toHaveURL(/\/admin\/book/);
+    await expect(page).toHaveURL(adminUrlPattern(adminHref("book")));
     await expect(
       page.getByRole("heading", { name: "Book on Behalf of Member" }),
     ).toBeVisible();
