@@ -558,12 +558,13 @@ export async function dispatchEditReviewXeroSettlement({
     // or the party changed here would queue a second, redundant invoice update.
     datesChanged: false,
     guestIdentityChanged: false,
-    // `"credit"` picks the UNAPPLIED modification credit note and anything else
-    // picks the ordinary one, so this reads as a two-way discriminator rather
-    // than a claim about the instrument: an internet-banking hand-back is not a
-    // card refund, but the club DID return the money, so it takes the same
-    // ordinary credit note a card refund does.
+    // `"credit"` picks the UNAPPLIED modification credit note. A Stripe card
+    // refund is the payment's refund note (#3993), keyed on this task the way
+    // a cancelled booking's review is. An internet-banking hand-back is not a
+    // card refund: it keeps the allocated modification note, and must not take
+    // this task onto that note's key.
     settlementMethod: route?.kind === "account-credit" ? "credit" : "card",
+    ...(route?.kind === "stripe-refund" ? { paymentId: route.paymentId, reviewTaskId: taskId } : {}),
     // ...and this is the claim about the instrument, for the note's wording
     // (`INV-PAY-101`): the hand-settled route reads as a bank transfer.
     refundMethod: refundMethodForEditReviewRoute(route),

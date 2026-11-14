@@ -87,6 +87,7 @@ const mocks = vi.hoisted(() => ({
   notifyXeroSyncError: vi.fn(),
   accountingApi: {
     createInvoices: vi.fn(),
+    getInvoice: vi.fn(),
     getInvoices: vi.fn(),
     createPayments: vi.fn(),
     createCreditNoteAllocation: vi.fn(),
@@ -391,6 +392,10 @@ beforeEach(() => {
   });
   mocks.accountingApi.createCreditNoteAllocation.mockResolvedValue({ body: {} });
   mocks.accountingApi.getInvoices.mockResolvedValue({ body: { invoices: [] } });
+  // #3993: an edit's note first reads what its invoice still owes; it can take these.
+  mocks.accountingApi.getInvoice.mockResolvedValue({
+    body: { invoices: [{ invoiceID: "inv_1", status: "AUTHORISED", amountDue: 100 }] },
+  });
   mocks.accountingApi.createInvoices.mockResolvedValue({
     body: { invoices: [{ invoiceID: "inv_new", invoiceNumber: "INV-9" }] },
   });
