@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Invoice, LineAmountTypes } from "xero-node";
+import { Invoice, LineAmountTypes, type LineItem } from "xero-node";
 import Stripe from "stripe";
 import { xeroTransport } from "./xero-transport";
 import { stripeTransport } from "./stripe-transport";
@@ -42,7 +42,7 @@ describe("provider transport mapping", () => {
   it("totals documents line by line and refuses what would move Xero's total", async () => {
     const fake = new XeroFake(); const { xero, tenantId } = xeroTransport(fake); const api = xero.accountingApi;
     const c = fake.createContact("contact", "member-a");
-    const create = (patch: Partial<Invoice>, lines = [{ quantity: 3, unitAmount: 33.33 }]) =>
+    const create = (patch: Partial<Invoice>, lines: LineItem[] = [{ quantity: 3, unitAmount: 33.33 }]) =>
       api.createInvoices(tenantId, { invoices: [{ ...invoice(c.contactID), lineItems: lines, ...patch }] });
     expect((await create({})).body.invoices![0].total).toBe(99.99);
     expect((await create({ lineAmountTypes: LineAmountTypes.NoTax }, [{ quantity: 1, unitAmount: 10, lineAmount: 10 }])).body.invoices![0].total).toBe(10);
