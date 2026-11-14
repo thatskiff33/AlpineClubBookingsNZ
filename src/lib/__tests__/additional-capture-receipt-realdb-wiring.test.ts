@@ -39,6 +39,15 @@ describe("the change capture receipt proof stays wired into CI (#3953)", () => {
     );
     expect(sweepRetry).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
     expect(sweepRetry).toContain("a receipt retried after a crash sends its own payment beside the sweep's equal payment on the primary invoice");
+    // #4434: a receipt split across invoices, sent and retried leg by leg.
+    expect(harness).toContain('import "./additional-capture-receipt-legs.realdb.test";');
+    const legs = readFileSync(
+      resolve(REPO_ROOT, "src/lib/__tests__/additional-capture-receipt-legs.realdb.test.ts"),
+      "utf8",
+    );
+    expect(legs).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    expect(legs).toContain("the second leg refused: the Retry sends only the second leg, and a refund names the first leg's invoice");
+    expect(legs).toContain("a later leg never adopts the credit-release sweep's payment of the same reference and amount");
     // Round 7: a capture whose ledger row carries no change stamp.
     expect(harness).toContain('import "./additional-capture-receipt-unattributed.realdb.test";');
     const unattributed = readFileSync(
