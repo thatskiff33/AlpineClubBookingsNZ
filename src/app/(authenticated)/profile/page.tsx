@@ -12,7 +12,7 @@ import {
   ProfileDetailsProvider,
 } from "./profile-details-card";
 import { ProfileSectionCard } from "./profile-section-card";
-import { ChangeEmailForm } from "./change-email-form";
+import { ChangeEmailCard } from "./change-email-card";
 import { NotificationPreferences } from "./notification-preferences";
 import { PostLoginLandingPreference } from "./post-login-landing-preference";
 import { FamilyGroupSection } from "./family-group-section";
@@ -24,6 +24,7 @@ import { DeleteAccountButton } from "./delete-account-button";
 import { MembershipCancellationPanel } from "./membership-cancellation-panel";
 import { TwoFactorSecurityCard } from "./two-factor-security-card";
 import { GoogleAccountCard } from "./google-account-card";
+import { loadProfilePendingRequests } from "./pending-requests";
 import { googleCredentialsConfigured } from "@/lib/google-oauth";
 import { memberHoldsRetiredRecoveryCodes } from "@/lib/two-factor";
 import { AuditTimeline } from "@/components/audit-timeline";
@@ -52,8 +53,6 @@ import { getFirstAccessibleAdminHref } from "@/lib/admin-permissions";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { clubTime } from "@/lib/club-time/server";
-import { systemClubClock } from "@/lib/club-time";
-import { OPEN_DELETION_REQUEST_STATUSES } from "@/lib/deletion-request-decision";
 import { formatDateOnly } from "@/lib/date-only";
 import {
   grantSelfDietaryAccess,
@@ -238,40 +237,9 @@ export default async function ProfilePage({
   // meaningful choice, so the control is hidden.
   const canChooseLanding = getFirstAccessibleAdminHref(member) !== null;
 
-  // #4956: requests the member started that wait on someone else (an officer,
-  // or the member clicking a link) stay on the page, read from the server, until
-  // they resolve. Admins cannot self-delete, so their deletion read is skipped.
-  // Both are the member's own rows: this page only ever renders the signed-in
-  // member, never a family or delegated view.
-  const [openDeletionRequest, pendingEmailChangeToken] = await Promise.all([
-    isAdmin
-      ? null
-      : prisma.deletionRequest.findFirst({
-          where: {
-            memberId: member.id,
-            status: { in: OPEN_DELETION_REQUEST_STATUSES },
-          },
-          select: { createdAt: true },
-          orderBy: { createdAt: "desc" },
-        }),
-    prisma.emailChangeToken.findFirst({
-      where: {
-        memberId: member.id,
-        expiresAt: { gt: systemClubClock.nowInstant() },
-      },
-      select: { newEmail: true, expiresAt: true },
-      orderBy: { createdAt: "desc" },
-    }),
-  ]);
-  const pendingDeletionRequest = openDeletionRequest
-    ? { requestedOn: club.instantDate(openDeletionRequest.createdAt) }
-    : null;
-  const pendingEmailChange = pendingEmailChangeToken
-    ? {
-        newEmail: pendingEmailChangeToken.newEmail,
-        expiresOn: club.instantDateTime(pendingEmailChangeToken.expiresAt),
-      }
-    : null;
+  // #4956: a deletion request or email change still waiting on someone else.
+  const { pendingDeletionRequest, pendingEmailChange } =
+    await loadProfilePendingRequests({ memberId: member.id, isAdmin, club });
 
   const currentSub = member.subscriptions.find(
     (s) => s.seasonYear === currentSeasonYear,
@@ -670,21 +638,10 @@ export default async function ProfilePage({
         </ProfileSectionCard>
 
         {/* Change Email */}
-        <Card id="change-email" className="scroll-mt-20">
-          <CardHeader>
-            <CardTitle>Change Email</CardTitle>
-            <CardDescription>
-              Update your email address. You will need to verify the new
-              address.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ChangeEmailForm
-              currentEmail={member.email}
-              pendingChange={pendingEmailChange}
-            />
-          </CardContent>
-        </Card>
+        <ChangeEmailCard
+          currentEmail={member.email}
+          pendingChange={pendingEmailChange}
+        />
 
         <div id="personal-details" className="scroll-mt-20">
           <ProfileDetailsCard
