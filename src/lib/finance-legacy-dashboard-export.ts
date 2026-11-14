@@ -6,7 +6,11 @@ import {
 } from "@/lib/finance-booking-metrics";
 import { clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
-import { parseFinanceBookingMetricDate } from "@/lib/finance-booking-metric-calculations";
+import {
+  addUtcDays,
+  differenceInUtcDays,
+  parseFinanceBookingMetricDate,
+} from "@/lib/finance-booking-metric-calculations";
 import { prisma } from "@/lib/prisma";
 import { buildBookingDeletedWhere } from "@/lib/booking-delete-visibility";
 import { formatCentsPlain } from "@/lib/utils";
@@ -14,8 +18,6 @@ import {
   reconcileBookingMoney,
   type BookingMoneyReconciliationReason,
 } from "@/lib/booking-money-reconciliation";
-
-const MILLISECONDS_PER_DAY = 86_400_000;
 
 const legacyDashboardBookingExportSelect =
   Prisma.validator<Prisma.BookingSelect>()({
@@ -91,17 +93,6 @@ export interface LegacyDashboardBookingExportResult {
 
 function toIsoDate(value: Date): string {
   return formatDateOnly(value);
-}
-
-function addUtcDays(date: Date, days: number): Date {
-  return new Date(date.getTime() + days * MILLISECONDS_PER_DAY);
-}
-
-function differenceInUtcDays(start: Date, end: Date): number {
-  return Math.max(
-    Math.round((end.getTime() - start.getTime()) / MILLISECONDS_PER_DAY),
-    0
-  );
 }
 
 function allocateCentsEvenly(totalCents: number, parts: number): number[] {
