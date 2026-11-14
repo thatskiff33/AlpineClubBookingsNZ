@@ -73,6 +73,25 @@ button. Page Content is edited under the **content** permission area.
    security token, because they are where a visitor types the most personal
    information; a form you embed elsewhere follows the page it sits on.
 
+### Add a photo gallery
+
+Put `{{photo-gallery: <folder>}}` in a page's content to show every photo in an
+[Image Manager](image-manager.md) folder as a grid, alphabetically, with a
+full-screen viewer; `{{photo-slideshow: <folder>}}` shows the same photos as a
+slideshow. `<folder>` is the folder's path as Image Manager shows it, such as
+`{{photo-gallery: lodge/winter}}`. Without a folder (`{{photo-gallery}}`), the
+gallery uses the images placed in the page itself.
+
+Galleries do not make visitors download your full-size originals: a folder
+gallery shows the smaller copies Image Manager makes of each photo, sized for
+the visitor's screen, and the full-screen viewer opens the largest copy. A
+photo with no copies (a GIF, an AVIF, or one uploaded before copies existed and
+not yet backfilled) is shown as the original. See
+[Website-sized copies](image-manager.md#website-sized-copies).
+
+A gallery reads its folder when the page is built, and uploading, deleting or
+renaming in Image Manager refreshes it.
+
 ### Hosting disclosure on the privacy page
 
 You can add `{{data-hosting}}` to the Privacy page body. Set its values under
@@ -222,6 +241,7 @@ Manager and have their own delete, with its own warnings.
 | The delete confirmation says the footer or the **Book Now** setting "could not be checked just now" | The footer, or the **Book Now** setting, could not be read at that moment. Only the warning is affected; the delete itself is not | Look under **Site Content** (footer) or **Public fee and policy blocks** (Book Now) yourself before you confirm, or cancel, reload and try again |
 | After a delete, the message says the audit log copy is not complete | The page held something the audit log redacts (a secret-shaped link or key, or `password: ...`-style text), or was too large for the record to hold whole | The page is deleted. Save its wording now from wherever else you have it; the audit record cannot give it back in full |
 | A page I deleted is still linked from the footer | The footer's link lists are edited separately, under **Site Content**, so a delete cannot rewrite them for you. The confirmation names the footer section when it links the page you are deleting | Edit that footer section under **Site Appearance & Content → Site Content** and remove or repoint the link |
+| A photo gallery's pictures load slowly | Its photos were uploaded before Image Manager made smaller copies, so visitors download the originals | Ask your operator to run the backfill in [Website-sized copies](image-manager.md#website-sized-copies) |
 | Save is rejected | A field exceeds `PAGE_CONTENT_LIMITS`, or the slug is invalid/reserved | Fix the flagged field; keep slugs valid and non-reserved |
 | Everything is read-only | Your admin role can view but not edit under the content area | Ask a full admin for content edit access |
 
