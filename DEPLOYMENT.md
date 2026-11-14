@@ -862,8 +862,10 @@ and [Adding a data-encryption key](#adding-a-data-encryption-key-4456).
    `DB_PASSWORD`, then `APP_DB_PASSWORD`, `MIGRATION_DB_PASSWORD` and
    `AUDIT_RETENTION_DB_PASSWORD`. Hex passwords need no URL encoding in the
    connection strings below. Set a strong `AUTH_SECRET` too. **Leave `APP_DB_USER`, `MIGRATION_DB_USER` and
-   `AUDIT_RETENTION_DATABASE_URL` blank until step 6.** Set the live-site
-   declaration (see below for why):
+   `AUDIT_RETENTION_DATABASE_URL` blank until step 6.** Change the template's
+   existing `APP_ENVIRONMENT_ROLE=non-production` line to the live-site
+   declaration rather than adding a second line, which the step 3 check refuses
+   (see below for why):
 
    ```dotenv
    APP_ENVIRONMENT_ROLE=production

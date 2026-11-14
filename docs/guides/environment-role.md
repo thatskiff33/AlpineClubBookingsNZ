@@ -500,8 +500,13 @@ getting no email and Xero contact addresses are being replaced. Set
 APP_ENVIRONMENT_ROLE=production and restart." The checklist cannot know whether
 a copy is the right answer, and the likeliest way to reach that state on the
 live site is a `.env` copied from `.env.example`. On a real copy — staging, a
-restore rehearsal, a laptop — press **Acknowledge** on the step and it turns
-complete.
+restore rehearsal, a laptop — press **Acknowledge** on the step. It stays
+amber but is marked **Acknowledged** and no longer counts as unfinished setup.
+
+An acknowledgement belongs to the step, not to the role. One made earlier, even
+while the step was green, carries over, and so does one in a database restored
+from another site. If this step reads **Acknowledged** on a site you did not mean
+to mark as a copy, press **Reopen** to bring the warning back.
 
 A copy forced by the **safer override** stays complete without acknowledgement:
 an administrator switched that on, on purpose, inside this application, so it
