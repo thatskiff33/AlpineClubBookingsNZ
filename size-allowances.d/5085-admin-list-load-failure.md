@@ -40,3 +40,31 @@ reason: +61 lines over the base. Two separate load-error states (assignments and
   the Confirm preview carries a flag saying the overlap check had nothing to
   compare, and short comments record why the month overlay's read stays silent
   and why Loading never replaces the error.
+
+function: src/app/(admin)/admin/finance/payments/page.tsx#PaymentsPage
+lines: 1079
+reason: this change (Show admin list load failures as errors (#4961)) adds its
+  lines here; those lines sit inside the function `PaymentsPage`, which was
+  already over its limit before this change, and lifting it apart is a
+  refactor of its own, not part of this fix.
+
+function: src/app/(admin)/admin/finance/subscriptions/page.tsx#SubscriptionsPage
+lines: 659
+reason: this change (Show admin list load failures as errors (#4961)) adds its
+  lines here; those lines sit inside the function `SubscriptionsPage`, which
+  was already over its limit before this change, and lifting it apart is a
+  refactor of its own, not part of this fix.
+
+function: src/app/(admin)/admin/hut-leaders/_components/assignment-form.tsx#AssignmentForm
+lines: 358
+reason: this change (Show admin list load failures as errors (#4961)) adds its
+  lines here; those lines sit inside the function `AssignmentForm`, which was
+  already over its limit before this change, and lifting it apart is a
+  refactor of its own, not part of this fix.
+
+function: src/app/(admin)/admin/hut-leaders/page.tsx#HutLeadersPage
+lines: 1374
+reason: this change (Show admin list load failures as errors (#4961)) adds its
+  lines here; those lines sit inside the function `HutLeadersPage`, which was
+  already over its limit before this change, and lifting it apart is a
+  refactor of its own, not part of this fix.
