@@ -56,7 +56,7 @@ describe("enqueueMembershipSubscriptionChargeOperation ignores VOIDED charges (#
     expect(enqueueMocks.startOperation).toHaveBeenCalledTimes(1);
   });
 
-  // #4986 (INV-INT-038): the backstop for every caller — with Xero off the
+  // #4986 (INV-INT-039): the backstop for every caller — with Xero off the
   // charge is never read, flipped to QUEUED or handed to the outbox.
   it("refuses with Xero off and writes nothing (#4986)", async () => {
     enqueueMocks.chargeFindUnique.mockResolvedValue({

@@ -22,7 +22,6 @@ describe("PaymentForm split-vs-non-split amount display (#1976)", () => {
         amountCents={12500}
         returnUrl="http://localhost/return"
         onSuccess={noop}
-        onError={noop}
       />,
     );
 
@@ -39,7 +38,6 @@ describe("PaymentForm split-vs-non-split amount display (#1976)", () => {
         deferredGuestAmountCents={null}
         returnUrl="http://localhost/return"
         onSuccess={noop}
-        onError={noop}
       />,
     );
 
@@ -55,7 +53,6 @@ describe("PaymentForm split-vs-non-split amount display (#1976)", () => {
         deferredGuestAmountCents={8000}
         returnUrl="http://localhost/return"
         onSuccess={noop}
-        onError={noop}
       />,
     );
 
@@ -78,7 +75,6 @@ describe("PaymentForm split-vs-non-split amount display (#1976)", () => {
         deferredGuestAmountCents={8000}
         returnUrl="http://localhost/return"
         onSuccess={noop}
-        onError={noop}
       />,
     );
 
@@ -97,7 +93,6 @@ describe("PaymentForm split-vs-non-split amount display (#1976)", () => {
         deferredGuestAmountCents={null}
         returnUrl="http://localhost/return"
         onSuccess={noop}
-        onError={noop}
       />,
     );
 
@@ -114,7 +109,6 @@ describe("PaymentForm split-vs-non-split amount display (#1976)", () => {
         deferredGuestAmountCents={8000}
         returnUrl="http://localhost/return"
         onSuccess={noop}
-        onError={noop}
       />,
     );
 

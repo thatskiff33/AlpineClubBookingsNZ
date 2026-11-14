@@ -257,7 +257,7 @@ describe("membership subscription billing", () => {
    * is on 1 July, Denver still on 30 June. Any implementation that reads the
    * environment, the host, or the UTC clock answers 2026-07-01 and fails.
    */
-  // #4986 (INV-INT-038): approval billing writes charges that go out through the
+  // #4986 (INV-INT-039): approval billing writes charges that go out through the
   // Xero outbox. With the module off it builds nothing and says why, so the
   // approval can tell the officer to bill outside the app.
   it("approval billing with Xero off builds no preview, freezes no charge and reports it", async () => {

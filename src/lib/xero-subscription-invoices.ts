@@ -203,7 +203,7 @@ export async function enqueueMembershipSubscriptionChargeOperation(
   options?: { createdByMemberId?: string },
 ) {
   // #4986: the backstop for every caller. Confirm and approval refuse earlier,
-  // before their charges are frozen (`INV-INT-038`); this keeps any other
+  // before their charges are frozen (`INV-INT-039`); this keeps any other
   // route from writing work that would wait out a Xero pause.
   await assertSubscriptionInvoicingEnabled();
   const charge = await prisma.membershipSubscriptionCharge.findUnique({

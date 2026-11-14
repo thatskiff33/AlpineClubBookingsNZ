@@ -1,7 +1,7 @@
 # File-size allowances for #4986
 
 Five already-over-budget files grow by a few lines each. Every addition is the
-`INV-INT-038` check placed inside the writer it guards, or one call into a new
+`INV-INT-039` check placed inside the writer it guards, or one call into a new
 shared helper. The shared logic itself went into new, small modules
 (`xero-invoicing-guard.ts`, `xero-invoicing-off.ts`, `club-report-filename.ts`,
 `slug.ts`), so nothing here is a copy of it.

@@ -598,7 +598,6 @@ export function OrganiserGroupBookingCard({
                       amountCents={settleAmountCents}
                       returnUrl={typeof window !== "undefined" ? window.location.href : ""}
                       onSuccess={() => setSettleComplete(true)}
-                      onError={(msg) => setSettleError(msg)}
                     />
                   </StripeProvider>
                 )}

@@ -142,7 +142,7 @@ describe("subscription billing panel", () => {
     expect(screen.getByText("Open exceptions").nextSibling?.textContent).toBe("1");
   });
 
-  // #4986 (INV-INT-038): a club without Xero gets a plain notice, not a dead
+  // #4986 (INV-INT-039): a club without Xero gets a plain notice, not a dead
   // end pointing at the hidden mappings screen, and cannot queue invoices that
   // would wait for Xero and go out late.
   function xeroPayload(enabled: boolean, awaitingXeroCount: number) {

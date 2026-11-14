@@ -157,7 +157,7 @@ export async function enqueueAdditionalCaptureReceiptOperation(
     // A release losing another caller's refusal can say already-released.
     // Under this same anchor, require the recorder's live unpaid change target;
     // falling back to the primary would pay an invoice that never billed it.
-    if (options?.requireUnpaidChangeInvoice && recorder.target?.kind !== "CHANGE_INVOICE") {
+    if (options?.requireUnpaidChangeInvoice && recorder.targets[0]?.kind !== "CHANGE_INVOICE") {
       return { outcome: "not-eligible", reason: "no-unpaid-change-invoice" };
     }
     const operation = await startXeroSyncOperation({

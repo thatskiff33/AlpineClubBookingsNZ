@@ -256,7 +256,7 @@ let priorXeroModule: { xeroIntegration: boolean } | null = null;
       ({ prisma } = await import("@/lib/prisma"));
       billing = await import("@/lib/membership-subscription-billing");
       ({ closeAlreadyPaidSubscriptionCharge } = await import("@/lib/membership-subscription-charge-close"));
-      // #4986 (INV-INT-038): subscription invoicing refuses while Xero is off,
+      // #4986 (INV-INT-039): subscription invoicing refuses while Xero is off,
       // and the module defaults to off. Switch it on for this suite; restored after.
       priorXeroModule = await prisma.clubModuleSettings.findUnique({ where: { id: "default" }, select: { xeroIntegration: true } });
       await prisma.clubModuleSettings.upsert({

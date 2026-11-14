@@ -12,7 +12,7 @@ vi.mock("@/components/club-identity-provider", () => ({
 }));
 
 import { LoginForm } from "@/app/(public)/login/login-form";
-import { LOGIN_THROTTLED_CODE } from "@/lib/login-throttle-policy";
+import { ADDRESS_THROTTLED_CODE, ADDRESS_THROTTLED_MESSAGE, LOGIN_THROTTLED_CODE } from "@/lib/login-throttle-policy";
 
 function renderForm(props: Partial<React.ComponentProps<typeof LoginForm>> = {}) {
   return render(
@@ -61,5 +61,22 @@ describe("LoginForm — per-account throttle message (#4609)", () => {
     submit();
     expect(await screen.findByText(/invalid email or password/i)).toBeTruthy();
     expect(screen.queryByText(WAIT)).toBeNull();
+  });
+});
+
+describe("LoginForm — shared-address wait message (#4917)", () => {
+  it("shows a network wait without suggesting another method on the same network", async () => {
+    mockSignIn.mockResolvedValue({ error: ADDRESS_THROTTLED_CODE, code: ADDRESS_THROTTLED_CODE });
+    renderForm({ magicLinkEnabled: true, googleLoginEnabled: true });
+    submit();
+    expect(await screen.findByText(ADDRESS_THROTTLED_MESSAGE)).toBeTruthy();
+    expect(screen.queryByText(OTHER_WAY)).toBeNull();
+    expect(screen.queryByText(/invalid email or password|something went wrong/i)).toBeNull();
+  });
+
+  it("shows the same wait when a refused Google start redirects back with the code", () => {
+    // next-auth's redirecting signIn("google") follows the 429 body's url.
+    renderForm({ oauthError: ADDRESS_THROTTLED_CODE });
+    expect(screen.getByText(ADDRESS_THROTTLED_MESSAGE)).toBeTruthy();
   });
 });

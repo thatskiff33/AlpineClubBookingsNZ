@@ -222,6 +222,13 @@ describe("Stripe WebhookStep lists the events to send (#4104)", () => {
     const shown = Array.from(list.querySelectorAll("code")).map((code) => code.textContent);
     expect(shown).toEqual([...STRIPE_WEBHOOK_EVENT_TYPES]);
     expect(shown).toContain("refund.failed");
+    // #4911: the four dispute events, so an operator subscribes to them.
+    expect(shown).toEqual(expect.arrayContaining([
+      "charge.dispute.created",
+      "charge.dispute.funds_withdrawn",
+      "charge.dispute.funds_reinstated",
+      "charge.dispute.closed",
+    ]));
   });
 });
 

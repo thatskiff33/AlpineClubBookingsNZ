@@ -15,7 +15,7 @@ import {
   XeroInvoicingOffError,
 } from "@/lib/xero-invoicing-off";
 
-// #4986 (INV-INT-038): the suites that drive the writers replace this guard; this
+// #4986 (INV-INT-039): the suites that drive the writers replace this guard; this
 // pins that the real one asks the effective xeroIntegration module state.
 describe("xero invoicing guard (#4986)", () => {
   beforeEach(() => vi.clearAllMocks());

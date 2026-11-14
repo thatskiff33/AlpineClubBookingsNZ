@@ -342,7 +342,7 @@ export async function POST(request: Request) {
     }
     // CONFIRM_ANNUAL_BATCH. #4986: refused while Xero is off BEFORE the confirm
     // writes, because its charges are immutable and the enqueue below would be
-    // too late to stop them (`INV-INT-038`).
+    // too late to stop them (`INV-INT-039`).
     await assertSubscriptionInvoicingEnabled();
     if (!isDateOnlyString(parsed.data.decisionDate)) {
       return NextResponse.json({ error: "Decision date must be YYYY-MM-DD." }, { status: 400 });

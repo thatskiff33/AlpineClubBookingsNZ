@@ -423,6 +423,15 @@ Two consequences worth knowing before you edit one:
   themselves are `{{amount}}` (recorded), `{{paidAmount}}` (the cash Xero shows)
   and `{{amountOwing}}` (what the booking owes, or "as recorded"). The message is
   locked to always send.
+- **One card payment dispute message serves both of its alerts (#4911).** It
+  goes once when a cardholder disputes a payment and once when the dispute
+  closes, so the subject must keep `{{disputeSubjectLabel}}`, which says which
+  of the two it is and, once closed, how it ended. A subject typed by hand
+  would title a closed dispute as a new one. `{{disputeNextStep}}` is what the
+  treasurer does now (respond in Stripe, or record a lost dispute in Xero by
+  hand), `{{disputeHoldNote}}` says the app gives no card refund or account
+  credit for the payment while the dispute is open or lost, and `{{outcome}}`
+  is the dispute's status. The message is locked to always send.
 - **`{{refundMessage}}` on Booking Cancelled is the whole refund sentence.** It
   says where the refund went or is going: the member's original payment method,
   account credit, or a refund the club will arrange directly. Otherwise it says
@@ -564,6 +573,14 @@ Two consequences worth knowing before you edit one:
   Finally, if you invoice by hand because the Xero module is off, the
   "Whole-lodge booking needs a manual invoice" alert quotes the netted amount
   the member was asked for — invoice that, not the booking's price.
+
+### The authenticator reset notice
+
+**Your authenticator was reset** (`officer-factor-reset`, #4618) is sent after
+a Full Admin, or the operator command, clears a member's authenticator app and
+passkeys. `{{firstName}}` is required. Keep the sentences that say their
+sessions have ended and that no new grace period starts; both are true of
+every reset.
 
 ### Consent emails ignore a member's notification preferences
 

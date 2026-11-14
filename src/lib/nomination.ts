@@ -102,6 +102,10 @@ import {
 } from "@/lib/member-parent-partner-exclusivity";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
+// Deliberately NOT `dateOnlyStringSchema`: this is the READ schema
+// `parseApplicationFamilyMembers` runs over already-stored JSON, and a refusal
+// here would blank the nominating member's page. Write paths refuse a non-day
+// where it arrives (#3082; `member-application-date-of-birth.ts`).
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD format");
 
 const applicationAddressSchema = z.object({
@@ -1501,7 +1505,7 @@ export async function approveMemberApplication(
   // double-charged) unless the admin explicitly supplied a decision; the SKIP is
   // resolved here so the in-tx enqueue is simply never made.
   //
-  // #4986 (`INV-INT-038`): with Xero off the joining-fee row would wait in the
+  // #4986 (`INV-INT-039`): with Xero off the joining-fee row would wait in the
   // outbox and be invoiced unchecked the day Xero is switched back on, so the
   // module is read here, outside the transaction, and a CREATE becomes a
   // recorded SKIP with the plain warning below. The approval itself proceeds.

@@ -260,6 +260,7 @@ stored exceptions.
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | The billing panel and Actions column are read-only | Your finance role is view-only | Ask a finance-edit admin |
+| **Subscriptions could not be loaded** in place of the counts | The list could not be read: an outage or a dropped connection | Press **Try again**. If it keeps failing, tell your club administrator. The counts are hidden on purpose: zero Unpaid would not be a real answer |
 | A member stays "Not Invoiced" | They have no Xero contact link | Link or create a Xero contact in [Members](members.md), then run a refresh |
 | A charge stays **Queued** with no Xero invoice number long after it was confirmed | A fault before this release (#3971) stopped the invoice being raised. This page shows no error for it; the reason, "Membership subscription charge not found: [REDACTED]", is on the charge's **Failed** operation in **Xero → Operations** | Press **Retry in background** on that operation (see the [Xero Sync guide](xero.md#troubleshooting)), or press **Retry** on the charge here. Use one or the other: either raises the one invoice |
 | **Confirm and queue annual batch** and **Retry** are greyed out, with "Subscription invoicing needs Xero" | The Xero integration module is off, so nothing can be invoiced | Bill outside the app and record payments with **Mark as paid (manual)** where the member is listed, or switch Xero on in [Modules](modules.md) ([without Xero](#if-the-club-does-not-use-xero)) |
