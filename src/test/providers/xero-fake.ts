@@ -24,6 +24,9 @@ export class XeroValidationError extends Error {
 }
 
 export class XeroFake {
+  /** A prefix for minted ids, so a suite sharing a database owns distinct rows. */
+  constructor(private readonly idPrefix = "") {}
+
   private contacts = new Map<string, Contact>();
   private invoices = new Map<string, Invoice>();
   private payments = new Map<string, Payment>();
@@ -44,7 +47,7 @@ export class XeroFake {
   createContact(key: string, memberId: string) {
     return this.write(key, ["contact", memberId], () => {
       if (!memberId.trim()) throw new XeroValidationError("Contact name is required");
-      const contact = { contactID: `contact-${this.contacts.size + 1}`, memberId };
+      const contact = { contactID: `${this.idPrefix}contact-${this.contacts.size + 1}`, memberId };
       this.contacts.set(contact.contactID, contact);
       return contact;
     });
@@ -54,7 +57,7 @@ export class XeroFake {
     return this.write(key, ["invoice", contactID, totalCents], () => {
       this.get(this.contacts, contactID);
       if (!Number.isSafeInteger(totalCents) || totalCents < 0) throw new XeroValidationError("Invoice total must be non-negative integer cents");
-      const invoice: Invoice = { invoiceID: `invoice-${this.invoices.size + 1}`, contactID, totalCents, status: totalCents === 0 ? "PAID" : "AUTHORISED" };
+      const invoice: Invoice = { invoiceID: `${this.idPrefix}invoice-${this.invoices.size + 1}`, contactID, totalCents, status: totalCents === 0 ? "PAID" : "AUTHORISED" };
       this.invoices.set(invoice.invoiceID, invoice);
       return invoice;
     });
@@ -64,7 +67,7 @@ export class XeroFake {
     return this.write(key, ["credit", contactID, totalCents], () => {
       this.get(this.contacts, contactID);
       this.cents(totalCents);
-      const note: CreditNote = { creditNoteID: `credit-${this.creditNotes.size + 1}`, contactID, totalCents, status: "AUTHORISED" };
+      const note: CreditNote = { creditNoteID: `${this.idPrefix}credit-${this.creditNotes.size + 1}`, contactID, totalCents, status: "AUTHORISED" };
       this.creditNotes.set(note.creditNoteID, note);
       return note;
     });
@@ -94,7 +97,7 @@ export class XeroFake {
       const invoice = this.get(this.invoices, invoiceID);
       if (invoice.status !== "AUTHORISED") throw new XeroValidationError("Invoice not of valid status for payment");
       if (amountCents > invoice.totalCents - this.paid(invoiceID) - this.credited(invoiceID)) throw new XeroValidationError("Payment amount exceeds the amount outstanding on this document");
-      const payment: Payment = { paymentID: `payment-${this.payments.size + 1}`, invoiceID, amountCents, status: "AUTHORISED" };
+      const payment: Payment = { paymentID: `${this.idPrefix}payment-${this.payments.size + 1}`, invoiceID, amountCents, status: "AUTHORISED" };
       this.payments.set(payment.paymentID, payment);
       this.refresh(invoice);
       return payment;
@@ -109,8 +112,9 @@ export class XeroFake {
       if (invoice.status === "PAID") throw new XeroValidationError("The invoice you are trying to allocate to has already been paid off");
       if (invoice.status !== "AUTHORISED" || note.status !== "AUTHORISED") throw new XeroValidationError("Document not of valid status for allocation");
       if (invoice.contactID !== note.contactID) throw new XeroValidationError("Credit note and invoice must have the same contact");
-      if (amountCents > this.remaining(note) || amountCents > invoice.totalCents - this.paid(invoiceID) - this.credited(invoiceID)) throw new XeroValidationError("Credit Note cannot be allocated as amount is greater than amount outstanding");
-      const allocation = { allocationID: `allocation-${this.nextAllocation++}`, creditNoteID, invoiceID, amountCents };
+      if (amountCents > this.remaining(note)) throw new XeroValidationError("Credit Note cannot be allocated as the allocation amount is greater than the amount remaining on the Credit Note");
+      if (amountCents > invoice.totalCents - this.paid(invoiceID) - this.credited(invoiceID)) throw new XeroValidationError("Credit Note cannot be allocated as amount is greater than amount outstanding");
+      const allocation = { allocationID: `${this.idPrefix}allocation-${this.nextAllocation++}`, creditNoteID, invoiceID, amountCents };
       this.allocations.set(allocation.allocationID, allocation);
       if (this.remaining(note) === 0) note.status = "PAID";
       this.refresh(invoice);
@@ -126,7 +130,7 @@ export class XeroFake {
       const note = this.get(this.creditNotes, creditNoteID);
       if (note.status !== "AUTHORISED") throw new XeroValidationError("Credit note not of valid status for payment");
       if (amountCents > this.remaining(note)) throw new XeroValidationError("Payment amount exceeds the amount outstanding on this document");
-      const payment: Payment = { paymentID: `payment-${this.payments.size + 1}`, creditNoteID, amountCents, status: "AUTHORISED" };
+      const payment: Payment = { paymentID: `${this.idPrefix}payment-${this.payments.size + 1}`, creditNoteID, amountCents, status: "AUTHORISED" };
       this.payments.set(payment.paymentID, payment);
       if (this.remaining(note) === 0) note.status = "PAID";
       return payment;
