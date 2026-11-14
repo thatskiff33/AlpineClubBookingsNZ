@@ -45,8 +45,9 @@ environment, a credential, the backup region, the mail host or a cloud lookup.
   `src/lib/privacy-hosting.ts` builds the raw sentence for all four states; the
   renderer escapes the whole sentence once through `escapeHtmlText`, never the
   values first.
-- **Plain text only.** Each value is trimmed, one line, no control characters,
-  at most 120 characters; blank is stored as null.
+- **Plain text only.** Each value is trimmed, one line, no control characters
+  or bidi override and isolate controls, at most 120 characters; blank is
+  stored as null.
 - **Page bodies only.** The catalogue entry allows `page-content-body` and no
   other context.
 - **Release boundary.** A release that lacks a token publishes it verbatim, so

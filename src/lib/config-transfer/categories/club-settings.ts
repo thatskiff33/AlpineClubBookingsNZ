@@ -1,4 +1,4 @@
-import { privacyHostingSchema, PRIVACY_HOSTING_DEFAULTS } from "@/lib/privacy-hosting";
+import { privacyHostingSchema, PRIVACY_HOSTING_DEFAULTS, PRIVACY_HOSTING_TEXT_REFUSAL } from "@/lib/privacy-hosting";
 import { strToU8, strFromU8 } from "fflate";
 import { Prisma } from "@prisma/client";
 
@@ -585,7 +585,7 @@ export const SINGLETONS: SingletonSpec[] = [
     defaults: () => ({ ...PRIVACY_HOSTING_DEFAULTS }),
     // Each field is checked and normalised by its own admin-route schema.
     constraints: Object.fromEntries(Object.entries(privacyHostingSchema.shape).map(([field, schema]) => [field, {
-      validate: (value: unknown) => schema.safeParse(value).success ? null : "Use at most 120 characters on one line",
+      validate: (value: unknown) => schema.safeParse(value).success ? null : PRIVACY_HOSTING_TEXT_REFUSAL,
     }])),
     // Trim and blank-to-null like the admin save; a value that fails is left as
     // found so the constraint above refuses it.

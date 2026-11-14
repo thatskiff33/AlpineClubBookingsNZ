@@ -15,7 +15,7 @@ describe("privacy hosting disclosure", () => {
   it("trims and clears values", () => {
     expect(privacyHostingSchema.parse({ hostingProvider: "  Example  ", dataLocation: "  " })).toEqual({ hostingProvider: "Example", dataLocation: null });
   });
-  it.each(["a\nb", "a\rb", "a\tb", "a\u0000b", "a\u007fb", "a\u2028b", "a".repeat(121), "\nExample"])("rejects multiline, control or overlong values", value => {
+  it.each(["a\nb", "a\rb", "a\tb", "a\u0000b", "a\u007fb", "a\u2028b", "a\u202Eb", "a\u2066b", "a".repeat(121), "\nExample"])("rejects multiline, control or overlong values", value => {
     expect(privacyHostingSchema.safeParse({ hostingProvider: value, dataLocation: null }).success).toBe(false);
   });
   it("limits the token to page bodies", () => {

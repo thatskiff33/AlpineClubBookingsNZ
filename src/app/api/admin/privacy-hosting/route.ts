@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { buildStructuredAuditLogCreateArgs, getAuditRequestContext } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
-import { privacyHostingSchema, PRIVACY_HOSTING_DEFAULTS } from "@/lib/privacy-hosting";
+import { privacyHostingSchema, PRIVACY_HOSTING_DEFAULTS, PRIVACY_HOSTING_TEXT_REFUSAL } from "@/lib/privacy-hosting";
 import { getPrivacyHostingSettings, PRIVACY_HOSTING_SELECT } from "@/lib/privacy-hosting-settings";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import { requireAdmin } from "@/lib/session-guards";
@@ -19,7 +19,7 @@ export async function PUT(request: Request) {
   try { body = await request.json(); }
   catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const parsed = privacyHostingSchema.safeParse(body);
-  if (!parsed.success) return NextResponse.json({ error: "Use at most 120 characters on one line for each field." }, { status: 400 });
+  if (!parsed.success) return NextResponse.json({ error: `${PRIVACY_HOSTING_TEXT_REFUSAL} in each field.` }, { status: 400 });
   const settings = await prisma.$transaction(async tx => {
     const before = await tx.privacyHostingSettings.findUnique({ where: { id: "default" }, select: PRIVACY_HOSTING_SELECT });
     const saved = await tx.privacyHostingSettings.upsert({
