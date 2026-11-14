@@ -41,6 +41,10 @@ full booking state machine is in
    below it: **Available** (more than 15 beds free), **Filling** (6–15 beds),
    **Nearly full** (1–5 beds), and **Full**. A small season marker (e.g. "W
    Winter 2026") shows which season's rates apply — rates differ by season.
+   A night marked **?** has not loaded its availability yet. If a month could
+   not be loaded — usually a weak signal — the calendar says so above the dates
+   with a **Try again** button. You can still pick **?** nights; the lodge is
+   re-checked when you submit, and nothing is booked or charged until then.
 4. If the nights you want are **Full**, you can join the waitlist instead of
    booking — see [The waitlist & offers](waitlist-and-offers.md).
 
