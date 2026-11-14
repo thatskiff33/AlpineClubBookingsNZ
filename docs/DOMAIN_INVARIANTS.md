@@ -1050,3 +1050,4 @@ headings the index keeps verbatim.
 | `INV-AUTH-009` | A passkey enrols; its challenge lasts two minutes |
 | `INV-AUTH-010` | Listed admin routes require a fresh proof first |
 | `INV-AUTH-011` | Address sign-in limits exempt signout/session; refusals show a network wait |
+| `INV-AUTH-012` | Officers use an app or passkey after grace |
