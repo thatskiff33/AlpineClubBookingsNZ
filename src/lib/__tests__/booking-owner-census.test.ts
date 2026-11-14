@@ -486,18 +486,18 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/create-setup-intent/route.ts:59",
   "src/app/api/payments/switch-to-internet-banking/route.ts:127",
   "src/lib/adult-member-hosting-review.ts:3256",
-  "src/lib/booking-batch-modification-service.ts:1093",
+  "src/lib/booking-batch-modification-service.ts:1080",
   "src/lib/booking-cancel.ts:2527",
   "src/lib/booking-cancel.ts:567",
-  "src/lib/booking-date-modification-service.ts:413",
+  "src/lib/booking-date-modification-service.ts:392",
   "src/lib/booking-delete.ts:120",
   "src/lib/booking-delete.ts:69",
   "src/lib/booking-email-authority.ts:115",
-  "src/lib/booking-guest-removal-service.ts:448",
-  "src/lib/booking-guest-removal-service.ts:675",
+  "src/lib/booking-guest-removal-service.ts:426",
+  "src/lib/booking-guest-removal-service.ts:653",
   "src/lib/booking-linked-date-move-service.ts:245",
   "src/lib/booking-member-night-conflicts.ts:369",
-  "src/lib/booking-modify-validation.ts:611",
+  "src/lib/booking-modify-validation.ts:617",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
   "src/lib/group-booking.ts:276",
   "src/lib/kiosk-access.ts:230",
@@ -786,6 +786,12 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // as `include` to `bookingChangeRequest.findUnique`, and `organisation` sits
   // under its `booking` relation, which declares it.
   "src/lib/booking-change-request-admin-decision.ts:93",
+  // #4925: `EDIT_DOOR_BOOKING_INCLUDE`, the one include every edit door
+  // re-reads its booking with. Verified by hand: written
+  // `satisfies Prisma.BookingInclude` and read back through
+  // `Prisma.BookingGetPayload<{ include: typeof … }>`, so it is compile-checked
+  // against Booking, which declares `organisation`.
+  "src/lib/booking-modify-validation.ts:238",
   // #4042, #3949: the owner-name select, moved out of the organiser hand-back to
   // be shared with the joiner cancel's organiser name. Verified by hand: written
   // through `Prisma.validator<Prisma.BookingSelect>()` and spread into
