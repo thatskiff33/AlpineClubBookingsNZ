@@ -11,7 +11,9 @@ import type {
   BookingRepairRecord,
   XeroOperationRecord,
 } from "./xero-booking-repair-types";
+import { XERO_OUTBOX_BOOKING_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import {
+  isAdmissibleRepairOperation,
   isSuccessfulXeroOperation,
   readJsonArray,
   readJsonRecord,
@@ -174,7 +176,9 @@ export function hasSuccessfulPrimaryInvoiceCreateAfter(
       operation.entityType === "INVOICE" &&
       operation.operationType === "CREATE" &&
       isSuccessfulXeroOperation(operation) &&
-      operation.createdAt >= changedAt
+      operation.createdAt >= changedAt &&
+      // A reversal invoice on this payment is not a new booking invoice (`INV-PAY-151`).
+      isAdmissibleRepairOperation(operation, XERO_OUTBOX_BOOKING_INVOICE_TYPE)
   );
 }
 

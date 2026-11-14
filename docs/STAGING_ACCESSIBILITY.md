@@ -136,6 +136,22 @@ access. If a page depends on Stripe, Xero, SES, or finance data that is not
 configured in staging, record the dependency and use seeded or demo data instead
 of production credentials.
 
+### Dialogs at high zoom
+
+Every dialog built on the shared `DialogContent` caps its height to the viewport
+and scrolls inside, because the page behind it is locked (#4967). The command
+palette scrolls its own list instead, so its search box stays on screen. Side
+sheets (`sheet.tsx`) are separate and not covered. At 400% browser zoom (about
+320 × 256 CSS pixels), open a long confirmation, the manual-refund completion
+dialog and the admin command palette. Scroll each to its final button or item
+and activate it. Scroll back to the top to reach the close button, and check
+that dropdowns open fully and dialogs with their own height cap still fit.
+Dialogs that keep a fixed header and footer around an inner scrolling body
+(`flex max-h-[90vh] flex-col`) are unchanged by #4967, so look at each of
+those by hand: the body can get very little height at this size.
+`pnpm run test:e2e:a11y-fixture` checks the shared dialog, confirmation and
+command palette at 320 × 256 without a database.
+
 ## Shared Staging Notes
 
 When promoting this target from local staging to a shared host:
@@ -296,7 +312,7 @@ fix was needed.**
     old step's focus target unmounts and focus falls back to `<body>` — #1149
     deliberately **announces** the transition via `aria-live` rather than moving
     focus, so this is the accepted design, not a gap.
-- **Admin members table** (`src/app/(admin)/admin/members/_components/member-table.tsx`):
+- **Admin members table** (`src/app/(admin)/admin/membership/members/_components/member-table.tsx`):
   - The six sortable columns render real `<button>`s inside `<th aria-sort>`
     cells. They are keyboard-focusable with a visible focus-visible ring (2px
     `--ring` box-shadow). **Enter** toggles direction

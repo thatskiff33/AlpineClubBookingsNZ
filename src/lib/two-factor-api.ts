@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth, updateSession } from "@/lib/auth";
+import { FactorResetBlocksEnrolmentError } from "@/lib/officer-factor-reset";
 import { prisma } from "@/lib/prisma";
 import { isSecondFactorEnrolled } from "@/lib/second-factor-enrolment";
 import { memberHasStoredPasskey } from "@/lib/webauthn";
@@ -104,6 +105,22 @@ export async function markTwoFactorSessionVerified(
     // The extra token field is not part of the public Session shape, so the
     // literal needs an assertion to pass through unstable_update's typing.
   } as unknown as Parameters<typeof updateSession>[0]);
+}
+
+/** The session's issue time, for the reset-versus-enrolment check. */
+export function enrolmentSessionIssuedAt(session: {
+  user?: { sessionIssuedAt?: number | null } | null;
+}): Date | null {
+  const value = session.user?.sessionIssuedAt;
+  return typeof value === "number" && Number.isFinite(value) ? new Date(value) : null;
+}
+
+export function factorResetEnrolmentResponse(error: unknown): NextResponse | null {
+  if (!(error instanceof FactorResetBlocksEnrolmentError)) return null;
+  return NextResponse.json(
+    { error: "Sign in again before setting up a second factor." },
+    { status: 409 },
+  );
 }
 
 export function passwordChangeRequiredResponse() {

@@ -548,6 +548,7 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
     "joinerName", "changeSummary", "additionalAmount", "xeroInvoiceNumber",
   ],
   "password-reset": ["token"],
+  "officer-factor-reset": ["firstName"],
   "admin-password-reset": ["token"],
   "member-setup-invite": ["token"],
   // #2034: the tokenised /login/magic?token=<token> link is the essential body
@@ -886,6 +887,11 @@ const FORBIDDEN_SUBJECT_PHRASES: Partial<
 const TEMPLATE_TRIGGER_METADATA: Partial<
   Record<EmailAuditTemplateName, { triggerSummary: string; frequency: string }>
 > = {
+  "officer-factor-reset": {
+    triggerSummary:
+      "A Full Admin, or the operator break-glass command, cleared this member's authenticator app and passkeys",
+    frequency: "Each time that reset commits",
+  },
   "admin-daily-digest": {
     triggerSummary: "Scheduled admin alert summary",
     frequency: "Daily at the configured cron time",

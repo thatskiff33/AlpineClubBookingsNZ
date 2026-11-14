@@ -73,6 +73,7 @@ const REVIEWED_WRITERS = [
   "src/lib/group-booking.ts|bookingGuestNight|opaquePayload||1",
   "src/lib/group-cancel.ts|booking|opaquePayload||1",
   "src/lib/internet-banking-payment-cron.ts|booking|opaquePayload||1",
+  "src/lib/member-dietary-booking-writes.ts|bookingGuest|opaquePayload||1",
   "src/lib/member-guest-consent-service.ts|bookingGuest|opaquePayload||1",
   // #4317 review rounds 4 and 6: the restore's createMany also writes a capped in-progress promotion's rows scaled to the cap, or none for a code that cannot be scaled (scaleCappedCarriedRows via scaleSurvivors: INV-MONEY-029's one rule-derived amount, owner decision 24 Oct 2026 on #4302). No new site.
   "src/lib/night-adjustment-write.ts|bookingGuestNightAdjustment|createMany,deleteMany,opaquePayload|amountCents|4",
@@ -190,6 +191,17 @@ const REVIEWED_NON_MONEY_OPAQUE_WRITERS = new Map<
     {
       reason: "internet-banking expiry lifecycle only",
       sourceShape: /data:\s*\{[\s\S]*?status:\s*BookingStatus\.CANCELLED/,
+    },
+  ],
+  [
+    // #4916: the post-stay dietary clear (`INV-PRIV-023`). Opaque only because
+    // it spreads the dietary erasure patch, which holds `dietaryRequirements`
+    // alone; it writes no name and nothing that holds money.
+    "src/lib/member-dietary-booking-writes.ts|bookingGuest|opaquePayload||1",
+    {
+      reason: "post-stay clear: the dietary erasure patch only",
+      sourceShape:
+        /tx\.bookingGuest\.updateMany\(\{\s*where:\s*\{\s*\.\.\.where,\s*id:\s*\{\s*in:\s*rows\.map\(row\s*=>\s*row\.id\)\s*\}\s*\},\s*data:\s*\{\s*\.\.\.DIETARY_ERASURE_PATCH\s*\},?\s*\}\)/,
     },
   ],
   [

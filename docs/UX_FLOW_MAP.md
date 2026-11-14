@@ -44,7 +44,7 @@ rules belong in the linked references. See the [budget register](invariants/WORD
 
 Screen: `/`, `/login`.
 
-Journey: Browse club information, sign in, or follow account recovery. After sign-in, complete any required security or profile steps before opening the dashboard. When a passkey is saved, the second step can be that passkey beside the app or email code.
+Journey: Browse club information, sign in, or follow account recovery. After sign-in, complete any required security or profile steps before opening the dashboard. When a passkey is saved, the second step can be that passkey beside the app or email code. The required profile step is the **Confirm member details** pop-up: nothing dismisses it, but its **Log out** is available in every state except while the final confirmation is saving, and leaves the step for the next sign-in.
 
 [Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -60,7 +60,7 @@ Journey: Fill in personal details and nominators, submit the application, and fo
 
 Screen: `/dashboard`.
 
-Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay. The Lodge Kiosk card offers Open Kiosk and, while the roster module is on, Who's at the lodge.
+Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay. Next Stay, draft and Recent Bookings rows name a booking's lodge once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). The Lodge Kiosk card offers Open Kiosk and, while the roster module is on, Who's at the lodge.
 
 [Guide](user-guide/README.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -68,7 +68,7 @@ Journey: Read upcoming stays and account notices, then open a booking or choose 
 
 Screen: `/book`.
 
-Journey: Choose lodge and nights, add guests, review the price and rules, then confirm and follow the offered payment step. If a rule blocks the stay, use the available exception-request journey.
+Journey: Choose lodge and nights, add guests, review the price and rules, then confirm and follow the offered payment step. If a rule blocks the stay, use the available exception-request journey. A refused confirm, draft or waitlist join, or a Continue from the guests step that is stopped, moves the page and focus to the explanation above the steps, with any button that fixes it (or a link down to the Booking Officer request, when one is offered); a full lodge does the same with its waitlist offer.
 
 [Guide](user-guide/booking-a-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -76,15 +76,15 @@ Journey: Choose lodge and nights, add guests, review the price and rules, then c
 
 Screen: `/bookings`, `/bookings/[id]`.
 
-Journey: Find a stay and open its detail. Review status, guests and amounts before paying, requesting a change or cancelling. Pending consent appears on the booking for an eligible invited member.
+Journey: Find a stay and open its detail. Review lodge, status, guests and amounts before paying, requesting a change or cancelling. Stay Details always names the lodge; list rows do once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). Pending consent appears on the booking for an eligible invited member.
 
 [Guide](user-guide/changing-or-cancelling-a-booking.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Payment and booking outcome
 
-Screen: Booking detail and its payment action.
+Screen: Booking detail and its payment action, or an emailed payment link.
 
-Journey: Open the booking, inspect what is owed and choose an available payment method. Switching an unpaid card booking to internet banking asks for confirmation first, because the member cannot switch back to card. Read the resulting status before leaving; bank payments can remain pending while settlement is checked.
+Journey: Open the booking, check the lodge it names (`INV-CAP-039`), inspect what is owed and choose an available payment method. Switching an unpaid card booking to internet banking asks for confirmation first, because the member cannot switch back to card. Read the resulting status before leaving; bank payments can remain pending while settlement is checked.
 
 [Guide](user-guide/paying-for-your-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -108,7 +108,7 @@ Journey: Join the waitlist for full nights, open an offer, and accept before its
 
 Screen: `/profile`.
 
-Journey: Use the section rail to open personal details, sign-in security, notification preferences or privacy controls. Stage and save the relevant section. Sign-in security lists saved passkeys and can add or remove one without changing the authenticator-app or email enrolment.
+Journey: Use the section rail to open personal details, sign-in security, notification preferences or privacy controls. Stage and save the relevant section. Sign-in security lists saved passkeys and can add or remove one without changing the authenticator-app or email enrolment. A deletion request awaiting review, or an email change awaiting its link, stays shown in its section after a reload until it resolves.
 
 [Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -244,7 +244,7 @@ Journey: Choose a queue tab, open a request, inspect the proposed stay, and use 
 
 Screen: `/admin/bookings`.
 
-Shows: A filterable booking list; booking detail holds the stay, party, status and next actions.
+Shows: A filterable booking list and calendar with status pills; booking detail holds the stay, party, status and next actions.
 
 Journey: Filter the list, open a booking, and inspect its dates, guests and status before acting.
 
@@ -698,7 +698,7 @@ Journey: Inspect connection and operations status; open a failed item to follow 
 
 Screen: `/admin/appearance`.
 
-Shows: Theme presets and links to club identity controls.
+Shows: Theme presets and links to club identity controls. The Club Identity sub-page (`/admin/appearance/identity`) also holds **Where members' data is held**, the hosting provider and data location the `{{data-hosting}}` token publishes.
 
 Journey: Choose a preset or open the identity editor; preview before saving.
 
@@ -952,7 +952,7 @@ Journey: Open the relevant notification settings or delivery screen from the hub
 
 Screen: `/admin/privacy-retention`.
 
-Shows: Retention settings, eligible-record previews and cleanup actions.
+Shows: Retention settings, eligible-record previews, the count of stay dietary notes the next run clears, and cleanup actions.
 
 Journey: Preview eligible records before running the documented retention action.
 
@@ -965,6 +965,12 @@ Screen: `/admin/security`.
 Shows: Sign-in and account-security configuration.
 
 Journey: Inspect authentication controls and use the permitted security settings.
+
+Once #4620 switches officer sign-in on, the page also shows the **Officer
+two-factor** card (policy and grace days; Full Admin saves after confirming
+it is them) and, to a Full Admin, who has not set one up. A gated officer is
+sent to `/login/enroll`; during grace a banner names the deadline. A Full
+Admin resets a lost factor from the member's page.
 
 [Guide](guides/security.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -1065,7 +1071,7 @@ layer decides three things once, so no form has to:
 
 The committee page's **Add / Edit Role** form is the worked example: its
 schema module is `src/lib/forms/committee-role-schema.ts`, and its form is
-`src/app/(admin)/admin/committee/_components/committee-role-form.tsx`.
+`src/app/(admin)/admin/membership/committee/_components/committee-role-form.tsx`.
 
 ### Building a form
 
@@ -1175,6 +1181,46 @@ Each group's reason, recorded in `src/lib/route-group-boundaries.ts`:
 answers: it fails if a new route group arrives without an error screen and a
 loading decision, or if a group with a reason gains a `loading.tsx` (anywhere
 in the group, except the admin and member areas, whose per-page ones stay).
+
+### A list or total that fails to load (#4961)
+
+The screens above cover a whole page failing. A page that loads its own list
+on the client can also fail on one read while the page itself is fine. That
+failure is said in place, never shown as the list's empty state:
+
+- The shared `src/components/admin/admin-load-error.tsx` replaces the empty
+  state: a heading such as **Payments could not be loaded**, the reason, and
+  **Try again**, which re-runs that read. It is an error alert
+  (`role="alert"`), so a screen reader announces it. **Try again** keeps
+  keyboard focus while it runs, and a polite status says it is trying again
+  and, if it fails again, that the list still could not be loaded.
+- The previous query's rows and totals are cleared, and summary figures are
+  not drawn while the error shows, so no `$0.00` or zero count reads as a real
+  answer.
+- **Payments**: a refused filter (a 400 or 422) keeps its field message under
+  **More filters** and also says above the table to check the filters, so the
+  reason is visible with that panel closed. Any other failure is told above
+  the table only, and clears an older field message.
+- **Hut Leaders**: when the unassigned-nights check fails, the page says the
+  nights could not be checked, because no amber card means every night is
+  covered. While the assignments could not be loaded, the Confirm step says
+  its overlap check is unavailable.
+- **Subscriptions** and **Communications** send history follow the same rule.
+
+Stated limits of the rule as built in #4961:
+
+- Hut Leaders' per-month calendar overlay (red and covered nights) stays
+  silent when its own read fails. The amber card, or its "could not be
+  checked" error, is the page's statement about coverage.
+- While the Hut Leaders assignments could not be loaded, the overlap check in
+  the Confirm step has nothing to compare, so the step says it is unavailable.
+  The server still refuses an overlap when the assignment is made.
+- A 200 reply whose body is not the expected shape is the route's contract,
+  not a load failure, and is out of scope. So are other admin pages, which join
+  the rule when they adopt the shared component.
+
+The rule is `INV-SSOT-007` in
+[`invariants/single-source-of-truth.md`](invariants/single-source-of-truth.md#inv-ssot-007).
 
 ## Back-link convention (admin drill-down leaves) (#2046)
 

@@ -12,7 +12,10 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import { AdminLoadError } from "@/components/admin/admin-load-error";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { ADMIN_LOAD_FAILED_ERROR, ADMIN_LOAD_NETWORK_ERROR } from "@/lib/admin-query-error";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { useClubTime } from "@/components/club-time-provider";
 import { requireInstant } from "@/lib/club-time";
 import { Input } from "@/components/ui/input";
@@ -54,6 +57,9 @@ export default function CommunicationsPage() {
   } | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  // #4961: a failed history read is said, never shown as "No bulk
+  // communications sent yet."
+  const [historyLoadError, setHistoryLoadError] = useState<string | null>(null);
   const [bulkSendLimit, setBulkSendLimit] = useState<number>(1);
 
   useEffect(() => {
@@ -80,9 +86,16 @@ export default function CommunicationsPage() {
       if (res.ok) {
         const data = await res.json();
         setHistory(data.history);
+        setHistoryLoadError(null);
+      } else {
+        setHistory([]);
+        setHistoryLoadError(
+          await apiErrorMessageFromResponse(res, ADMIN_LOAD_FAILED_ERROR),
+        );
       }
     } catch {
-      // ignore
+      setHistory([]);
+      setHistoryLoadError(ADMIN_LOAD_NETWORK_ERROR);
     } finally {
       setLoadingHistory(false);
     }
@@ -245,6 +258,13 @@ export default function CommunicationsPage() {
         <CardContent>
           {loadingHistory ? (
             <p className="text-sm text-muted-foreground">Loading...</p>
+          ) : historyLoadError ? (
+            <AdminLoadError
+              title="Send history could not be loaded"
+              message={historyLoadError}
+              onRetry={fetchHistory}
+              data-testid="communications-history-load-error"
+            />
           ) : history.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               No bulk communications sent yet.

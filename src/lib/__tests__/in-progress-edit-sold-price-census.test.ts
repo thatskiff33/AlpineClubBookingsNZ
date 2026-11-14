@@ -158,7 +158,9 @@ const PLAN_CALL_SITES = [
     // 1 -> 2 (#3530): the second select is the AFTER-side re-read of the guest
     // rows the edit has just written, for the itemised lines the modification
     // row stores; it asks for `priceCents` for the same reason the loader does.
-    nightsSelects: 2,
+    // 2 -> 1 (#4925): the loader's own select moved into the shared
+    // `EDIT_DOOR_BOOKING_INCLUDE`, checked through SHARED_LOADER_INCLUDES.
+    nightsSelects: 1,
     planBuilderCalls: 0,
   },
   {
@@ -177,6 +179,15 @@ const PLAN_CALL_SITES = [
     nightsSelects: 0,
     planBuilderCalls: 1,
   },
+] as const;
+
+/**
+ * Files that hold a loader's include on its behalf (#4925): the batch door's
+ * re-read spreads `EDIT_DOOR_BOOKING_INCLUDE`, so its load-bearing `nights`
+ * select lives here rather than in the door. Checked like a loader's own.
+ */
+const SHARED_LOADER_INCLUDES = [
+  { file: "src/lib/booking-modify-validation.ts", nightsSelects: 1 },
 ] as const;
 
 describe("in-progress edit sold-price census (#2744)", () => {
@@ -205,7 +216,7 @@ describe("in-progress edit sold-price census (#2744)", () => {
   });
 
   it("keeps every loader asking for what each night was sold for", () => {
-    for (const site of PLAN_CALL_SITES) {
+    for (const site of [...PLAN_CALL_SITES, ...SHARED_LOADER_INCLUDES]) {
       const source = fs.readFileSync(
         path.resolve(process.cwd(), site.file),
         "utf8",
@@ -554,5 +565,30 @@ describe("no edit door parks its money (#4317, INV-MOD-028)", () => {
       .filter((file) => file.code.includes("financial_review_required"))
       .map((file) => repoRelative(file.absolute));
     expect(found, "INV-MOD-028: PricingResult is priced-only").toEqual([]);
+  });
+
+  it("lets only the review module create an EDIT_FINANCIAL_REVIEW row, and nothing moves one to OPEN", () => {
+    const allowed = "src/lib/edit-financial-review.ts";
+    const creators: string[] = [];
+    const reopeners: string[] = [];
+    for (const file of strippedSources()) {
+      const relative = repoRelative(file.absolute);
+      const structure = blankLiterals(file.code);
+      for (const match of file.code.matchAll(/manualRefundTask\.(?:create|createMany|upsert)\s*\(/g)) {
+        const open = file.code.indexOf("(", match.index ?? 0);
+        const argument = balancedBrackets(file.code, open, structure).text;
+        if (argument.includes("EDIT_FINANCIAL_REVIEW") && relative !== allowed) creators.push(relative);
+      }
+      for (const match of file.code.matchAll(/manualRefundTask\.(?:update|updateMany)\s*\(/g)) {
+        const open = file.code.indexOf("(", match.index ?? 0);
+        const argument = balancedBrackets(file.code, open, structure).text;
+        const opensTheReview =
+          argument.includes("EDIT_FINANCIAL_REVIEW") &&
+          /status:\s*(?:ManualRefundTaskStatus\.)?OPEN\b/.test(argument);
+        if (opensTheReview && relative !== allowed) reopeners.push(relative);
+      }
+    }
+    expect(creators, "a review is raised only by raiseEditFinancialReviewTask").toEqual([]);
+    expect(reopeners, "nothing puts an edit review back to OPEN").toEqual([]);
   });
 });

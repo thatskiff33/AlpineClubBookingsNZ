@@ -40,6 +40,7 @@ export function resolveBookingDetailPayment({
   access,
   party,
   amountOwed,
+  supersededHeldBackCents = 0,
 }: {
   booking: BookingDetailRecord;
   modules: FeatureFlags;
@@ -48,6 +49,8 @@ export function resolveBookingDetailPayment({
   party: BookingDetailLinkedParty;
   /** #3991: the page's one read of what is owed (`readBookingAmountOwed`, via the history loader). */
   amountOwed: BookingAmountOwed;
+  /** #4872: the payment's live superseded-capture hold-back (`loadSupersededHeldBackCents`); none by default. */
+  supersededHeldBackCents?: number;
 }) {
   const { canManageBooking, isBookingOwner, nonOwnerAdminViewer, canSeeOwnerCredit } = viewer;
   const { isDeleted } = access;
@@ -124,7 +127,7 @@ export function resolveBookingDetailPayment({
   // #3827 (`INV-PAY-118`): net of every hand-back still promised back by bank
   // transfer, of the credit minted from late cash and (#4124) of the card
   // refunds still owed - the figure the appeal route caps at.
-  const appealCeiling = refundAppealCeilingParts(booking.payment, booking.creditsFromCancellation);
+  const appealCeiling = refundAppealCeilingParts(booking.payment, booking.creditsFromCancellation, supersededHeldBackCents);
   const maxRefundableCents = appealCeiling.ceilingCents;
   // #4124: the card refund still owed that lowered it, for the appeal form's
   // "still being refunded to your card" line. Owner-only: the line is

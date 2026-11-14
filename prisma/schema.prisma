@@ -529,6 +529,12 @@ model Member {
   // off. The token refresh refuses any session issued before it, the same way
   // it treats passwordChangedAt, so re-enabling login never revives one.
   sessionsRevokedAt       DateTime?
+  // #4618: the first time the officer requirement reached this member. Null
+  // until then. A reset does not clear it; a later factorsResetAt means grace
+  // is already over and is not started again.
+  twoFactorGraceStartedAt DateTime?
+  // #4618: when an administrator or the operator cleared this member's factors.
+  factorsResetAt          DateTime?
   lastLoginAt             DateTime?
   twoFactorEnabled        Boolean          @default(false)
   twoFactorMethod         TwoFactorMethod?
@@ -875,6 +881,10 @@ model AccessRoleDefinition {
   lodgeLevel      AdminPermissionLevel @default(NONE)
   contentLevel    AdminPermissionLevel @default(NONE)
   supportLevel    AdminPermissionLevel @default(NONE)
+  // #4618: null is Default (finance or support Edit requires an officer
+  // factor). true is Required. false is Not required, and drops only this
+  // role. Full Admin has no row here and cannot be exempted.
+  requiresTwoFactor Boolean?
   sortOrder       Int                  @default(0)
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
@@ -4916,6 +4926,56 @@ enum UnrecognisedStripePaymentReason {
   APP_INTENT_NOT_PRIMARY
 }
 
+/// Stripe's payout status. An unrecognised value is not stored (#4520).
+enum StripePayoutStatus {
+  PENDING
+  IN_TRANSIT
+  PAID
+  FAILED
+  CANCELED
+}
+
+/// One Stripe balance transaction, stored once. Insert and select only
+/// (#4520, Ledger M8). A repeated insert of the same Stripe id is ignored;
+/// the row is never updated. When it was stored is not a column: the economic
+/// instant is `stripeCreatedAt`.
+model StripeBalanceTransactionEvidence {
+  /// Stripe's balance-transaction id (`txn_…`).
+  id                String   @id
+  type              String
+  reportingCategory String
+  amountCents       Int
+  feeCents          Int
+  netCents          Int
+  /// As Stripe sent it, including case.
+  currency          String
+  /// Frozen `fee_details` components. Not a tax split.
+  feeDetails        Json
+  sourceId          String?
+  paymentIntentId   String?
+  stripeRefundId    String?
+  payoutId          String?
+  stripeCreatedAt   DateTime
+
+  @@index([stripeCreatedAt])
+  @@index([paymentIntentId])
+  @@index([payoutId])
+}
+
+/// Mutable payout head. Its status can change. Balance-transaction rows are not.
+model StripePayout {
+  /// Stripe's payout id (`po_…`).
+  id                          String             @id
+  amountCents                 Int
+  currency                    String
+  status                      StripePayoutStatus
+  automatic                   Boolean
+  arrivalDate                 DateTime?          @db.Date
+  failureBalanceTransactionId String?
+  stripeCreatedAt             DateTime
+  updatedAt                   DateTime           @updatedAt
+}
+
 // ---------------------------------------------------------------------------
 // Webhook Delivery Monitoring (OBS-08)
 // ---------------------------------------------------------------------------
@@ -5865,6 +5925,12 @@ model LoginSecuritySetting {
   // (INV-AUTH-007). Default 7 days; the app clamps it to 8..720 hours
   // (normalizeLoginSecurityPolicy). The lodge kiosk keeps its own 30 days.
   sessionMaxAgeHours  Int      @default(168)
+  // #4618: officers who can move money or change system settings, and every
+  // Full Admin, must use an authenticator app or a passkey. Default on. The
+  // release constant keeps this inert until #4620 turns it on. Grace is whole
+  // days, 0 to 60, and an absent row reads as 14.
+  officerTwoFactorPolicy    Boolean @default(true)
+  officerTwoFactorGraceDays Int     @default(14)
   updatedByMemberId   String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @default(now()) @updatedAt
@@ -8976,6 +9042,9 @@ model PrivacyRetentionSettings {
   pruneLogsAndApplicationsEnabled    Boolean  @default(false)
   anonymiseMembersEnabled            Boolean  @default(false)
   sentryReplayEnabled                Boolean  @default(false)
+  bookingDietaryRetentionDays        Int      @default(30)
+  bookingDietaryClearEnabled         Boolean  @default(true)
+  bookingDietaryClearStartedAt       DateTime?
   pruneStartedAt                    DateTime?
   anonymiseStartedAt                DateTime?
   updatedByMemberId                  String?
@@ -9060,7 +9129,8 @@ enum MemberMoneyDebtorKind {
   ORGANISATION
 }
 
-/// Inert M1 foundation. No production writer or reader is enabled.
+/// Journal header written through the member-money doors since M3b (#4627), in
+/// the door's own transaction (INV-MONEY-044). No screen or Xero document reads it yet.
 model MemberMoneyEvent {
   id String @id @default(cuid())
   eventKey String @unique
@@ -9250,4 +9320,17 @@ model MemberMoneyRefundReservationRelease {
   reservation MemberMoneyRefundReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   application MemberMoneyApplication? @relation(fields: [applicationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   @@index([applicationId])
+}
+
+/// Privacy disclosure is its own domain singleton: branding saves must not
+/// replace its updater attribution. Club-wide; no hosting facts are inferred.
+model PrivacyHostingSettings {
+  id                String   @id @default("default")
+  hostingProvider   String?  @db.VarChar(120)
+  dataLocation      String?  @db.VarChar(120)
+  updatedByMemberId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now()) @updatedAt
+
+  @@index([updatedByMemberId])
 }

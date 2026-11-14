@@ -22,7 +22,6 @@ export {
   type BookingModificationSettlementMethod,
   type LoadedBookingForLifecycle,
   type LoadedBookingForModify,
-  type LoadedPromoRedemption,
   type ResolvedTargetDates,
 } from "@/lib/booking-modify-validation";
 export {

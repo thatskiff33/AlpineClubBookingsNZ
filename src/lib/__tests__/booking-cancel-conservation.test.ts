@@ -336,6 +336,10 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
             paymentTransaction: {
               findFirst: vi.fn().mockResolvedValue(null),
             },
+            // #4909: the claim releases the booking's promo uses on this tx.
+            promoRedemption: {
+              findFirst: mocks.promoRedemptionFindFirst,
+            },
             memberCredit: {
               aggregate: vi
                 .fn()

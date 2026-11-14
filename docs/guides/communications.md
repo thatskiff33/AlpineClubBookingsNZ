@@ -60,6 +60,7 @@ after preference filtering).
 | **Send to Members** is disabled | Your role has membership view, not edit (or subject/body is empty) | Fill both fields; ask a full admin for membership edit access |
 | Far fewer recipients than expected | Only members who opted in to marketing email receive it | Expected — the count shows how many were filtered by preference |
 | Send rejected as rate limited | You already sent within the hour window | Wait for the window to clear (default one send per hour) |
+| **Send history could not be loaded** | The history could not be read: an outage or a dropped connection. A send you just made is not undone by this | Press **Try again** before sending again, so you can see whether it went out. If it keeps failing, tell your club administrator |
 | A member says the formatting was lost | The body is plain text; HTML is escaped | Send plain text; use [Email Messages](email-messages.md) for templated system email |
 
 ## Related links

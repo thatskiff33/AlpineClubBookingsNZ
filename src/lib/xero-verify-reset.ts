@@ -5,6 +5,7 @@
  * the token store and the credential store.
  */
 
+import type { IntegrationCredentialNamespace } from "@/lib/integration-credential-namespaces";
 import type { Prisma } from "@prisma/client";
 
 import { withCredentialTransaction } from "@/lib/integration-credentials";
@@ -44,7 +45,7 @@ export async function withXeroVerifyReset<T>(
     /** The `provider:key` whose write causes the reset. A name, never a value. */
     causedByCredential: string;
     /** Providers whose cached credential rows the write touches. */
-    providers: readonly string[];
+    providers: readonly IntegrationCredentialNamespace[];
   },
   work: (tx: Prisma.TransactionClient) => Promise<T>,
 ): Promise<T> {

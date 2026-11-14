@@ -41,7 +41,7 @@ set -euo pipefail
 # --------------------------------------------------------------------------- #
 CONTAINER="acb-fire-drill-db"
 DRILL_PORT="55441"
-PG_IMAGE="postgres:16"
+PG_IMAGE="postgres:16@sha256:f9a7b9ebf6f56201f949db745e47bc423c0f0f8294bafe991cc10bf74b029657"
 SRC_DB="drill_source"
 RES_DB="drill_restore"
 FIDELITY_TABLES=(Member Booking Payment BookingGuest BookingGuestNight)
