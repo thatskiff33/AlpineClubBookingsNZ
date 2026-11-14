@@ -392,7 +392,7 @@ Screen: `/admin/member-applications`.
 
 Shows: Applications, nomination progress and officer decisions.
 
-Journey: Review an application and its nominations, then approve or decline. Action failures take focus and scroll into view; successes are announced and brought into view.
+Journey: Review an application and its nominations, then approve or reject. Action failures take focus and scroll into view; successes are announced and brought into view.
 
 [Guide](guides/member-applications.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -980,7 +980,7 @@ Screen: `/admin/setup`.
 
 Shows: The installation setup hub and configuration cards.
 
-Journey: Open a setup card or run a readiness check. Failed actions take focus and scroll into view; finishing setup announces completion.
+Journey: Open a setup card, run a provider test, or update a step. Failed provider tests and step or finish actions take focus and scroll into view; finishing setup announces completion.
 
 [Guide](guides/setup.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
