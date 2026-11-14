@@ -205,6 +205,40 @@ describe("callXeroApi is where it runs", () => {
   });
 });
 
+/*
+  #4919: a caller holding a lock passes `usageTasks`, and the usage row is not
+  written (on the global client, a second connection) until it runs them after
+  its transaction. Without the list the row is written in line, as before.
+*/
+describe("callXeroApi's usage row", () => {
+  it("is held for the caller when it passes usageTasks", async () => {
+    declareEnvironmentRole("production");
+    const usageTasks: Array<() => Promise<void>> = [];
+    await callXeroApi(vi.fn().mockResolvedValue("sent"), {
+      operation: "emailInvoice",
+      resourceType: "INVOICE",
+      workflow: "test",
+      usageTasks,
+    });
+    expect(mocks.recordXeroApiUsage).not.toHaveBeenCalled();
+    expect(usageTasks).toHaveLength(1);
+    await usageTasks[0]!();
+    expect(mocks.recordXeroApiUsage).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: "emailInvoice", success: true }),
+    );
+  });
+
+  it("is written in line otherwise", async () => {
+    declareEnvironmentRole("production");
+    await callXeroApi(vi.fn().mockResolvedValue("sent"), {
+      operation: "emailInvoice",
+      resourceType: "INVOICE",
+      workflow: "test",
+    });
+    expect(mocks.recordXeroApiUsage).toHaveBeenCalledTimes(1);
+  });
+});
+
 /**
  * The classifier is only as good as the names it is fed, so the names are
  * censused.
