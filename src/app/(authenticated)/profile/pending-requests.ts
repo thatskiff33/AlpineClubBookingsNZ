@@ -13,6 +13,11 @@ import type { PendingDeletionRequest } from "./delete-account-button";
  * Admins cannot self-delete, so their deletion read is skipped. "Open" is the
  * shared `OPEN_DELETION_REQUEST_STATUSES` list (INV-SSOT), "now" is the club
  * clock, and dates are formatted through the club-time kernel (INV-CONFIG-002).
+ *
+ * An email-change link is "live" here when `expiresAt` is after now. The confirm
+ * route refuses it when `expiresAt` is before now, so the two differ only at the
+ * exact expiry instant. The request route deletes older tokens, so the newest
+ * live row is the link in the member's latest email.
  */
 export async function loadProfilePendingRequests(args: {
   memberId: string;

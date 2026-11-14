@@ -637,10 +637,10 @@ export default async function ProfilePage({
           <NotificationPreferences />
         </ProfileSectionCard>
 
-        {/* Change Email */}
+        {/* Change Email: no pending notice once the link was refused as "taken" */}
         <ChangeEmailCard
           currentEmail={member.email}
-          pendingChange={pendingEmailChange}
+          pendingChange={emailChangeError === "taken" ? null : pendingEmailChange}
         />
 
         <div id="personal-details" className="scroll-mt-20">

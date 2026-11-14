@@ -195,8 +195,18 @@ type TokenRow = { memberId: string; newEmail: string; expiresAt: Date; createdAt
 let deletionRows: DeletionRow[] = [];
 let tokenRows: TokenRow[] = [];
 
-function newestFirst<T extends { createdAt: Date }>(rows: T[]) {
-  return [...rows].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+// Applies the page's OWN `orderBy`, so dropping `createdAt: "desc"` from the
+// query changes which row comes back (rows stay in insertion order without it).
+function ordered<T extends { createdAt: Date }>(
+  rows: T[],
+  orderBy?: { createdAt?: "asc" | "desc" },
+) {
+  const direction = orderBy?.createdAt;
+  if (!direction) return [...rows];
+  const sign = direction === "desc" ? -1 : 1;
+  return [...rows].sort(
+    (a, b) => sign * (a.createdAt.getTime() - b.createdAt.getTime()),
+  );
 }
 
 async function renderProfilePage(
@@ -220,23 +230,37 @@ describe("ProfilePage pending requests (#4956)", () => {
     mocks.loadEffectiveModuleFlags.mockResolvedValue(moduleFlags(false));
     mocks.memberHoldsRetiredRecoveryCodes.mockResolvedValue(false);
     mocks.deletionRequestFindFirst.mockImplementation(
-      async ({ where }: { where: { memberId: string; status: { in: DeletionRequestStatus[] } } }) =>
-        newestFirst(
+      async ({
+        where,
+        orderBy,
+      }: {
+        where: { memberId: string; status: { in: DeletionRequestStatus[] } };
+        orderBy?: { createdAt?: "asc" | "desc" };
+      }) =>
+        ordered(
           deletionRows.filter(
             (row) =>
               row.memberId === where.memberId &&
               where.status.in.includes(row.status),
           ),
+          orderBy,
         )[0] ?? null,
     );
     mocks.emailChangeTokenFindFirst.mockImplementation(
-      async ({ where }: { where: { memberId: string; expiresAt: { gt: Date } } }) =>
-        newestFirst(
+      async ({
+        where,
+        orderBy,
+      }: {
+        where: { memberId: string; expiresAt: { gt: Date } };
+        orderBy?: { createdAt?: "asc" | "desc" };
+      }) =>
+        ordered(
           tokenRows.filter(
             (row) =>
               row.memberId === where.memberId &&
               row.expiresAt.getTime() > where.expiresAt.gt.getTime(),
           ),
+          orderBy,
         )[0] ?? null,
     );
   });
@@ -260,6 +284,7 @@ describe("ProfilePage pending requests (#4956)", () => {
           "You asked for your account to be deleted on 29 Jun 2026.",
         );
         expect(html).not.toContain("Request Account Deletion");
+        expect(html).not.toContain("will contact you by email");
       },
     );
 
@@ -338,12 +363,68 @@ describe("ProfilePage pending requests (#4956)", () => {
       expect(html).not.toContain("waiting for you to click the link");
     });
 
-    it("does not show a pending change beside the email-changed banner", async () => {
-      // Confirming the change consumes the token, so no row is left to read.
+    it("names the newest link when the member has more than one unexpired row", async () => {
+      // The oldest row is listed first, so only the page's own newest-first
+      // `orderBy` brings the newer address back.
+      tokenRows = [
+        {
+          memberId: "member-1",
+          newEmail: "older-address@example.test",
+          expiresAt: new Date("2026-07-01T01:00:00.000Z"),
+          createdAt: new Date("2026-06-30T23:00:00.000Z"),
+        },
+        {
+          memberId: "member-1",
+          newEmail: "newer-address@example.test",
+          expiresAt: new Date("2026-07-01T01:30:00.000Z"),
+          createdAt: new Date("2026-06-30T23:30:00.000Z"),
+        },
+      ];
+
+      const html = await renderProfilePage();
+
+      expect(html).toContain("newer-address@example.test");
+      expect(html).not.toContain("older-address@example.test");
+    });
+
+    it("shows the email-changed banner alone when no link is left to read", async () => {
+      // The page only reads what is stored. That a confirmed change leaves no
+      // token behind is the confirm route's own `tx.emailChangeToken.delete`
+      // inside its success transaction, which this test does not exercise.
       const html = await renderProfilePage({ emailChanged: "true" });
 
       expect(html).toContain("Your email address has been updated successfully.");
       expect(html).not.toContain("waiting for you to click the link");
+    });
+
+    describe("when the confirm link was refused", () => {
+      const liveToken: TokenRow = {
+        memberId: "member-1",
+        newEmail: "new-address@example.test",
+        expiresAt: new Date("2026-07-01T00:30:00.000Z"),
+        createdAt: new Date("2026-06-30T22:30:00.000Z"),
+      };
+
+      it("shows no waiting-for-link notice beside the 'already in use' banner", async () => {
+        // The confirm route keeps the token when the address was taken in the
+        // meantime, so the row is still stored but its link can no longer work.
+        tokenRows = [liveToken];
+
+        const html = await renderProfilePage({ emailChangeError: "taken" });
+
+        expect(html).toContain("That email address is already in use.");
+        expect(html).not.toContain("waiting for you to click the link");
+        expect(html).not.toContain("new-address@example.test");
+      });
+
+      it("keeps the notice after a generic failure, where the link may still work", async () => {
+        tokenRows = [liveToken];
+
+        const html = await renderProfilePage({ emailChangeError: "error" });
+
+        expect(html).toContain("waiting for you to click the link");
+        expect(html).toContain("new-address@example.test");
+      });
     });
   });
 });

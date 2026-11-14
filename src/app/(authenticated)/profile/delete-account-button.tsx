@@ -64,14 +64,16 @@ export function DeleteAccountButton({
     }
   }
 
+  // "May", not "will": an admin can reject without emailing the member
+  // (`notifyMember: false`), and this notice now outlives the page view.
   if (pendingRequest) {
+    // Static, server-read content, not a live region: the `submitted`
+    // confirmation below is the one announced, and React can reuse its node
+    // here after the refresh, so a second `role="status"` could read it twice.
     return (
-      <p
-        role="status"
-        className="text-sm text-info-11 bg-info-3 border border-info-6 rounded-md px-3 py-2"
-      >
+      <p className="text-sm text-info-11 bg-info-3 border border-info-6 rounded-md px-3 py-2">
         You asked for your account to be deleted on {pendingRequest.requestedOn}.
-        An admin will review it and contact you by email.
+        An admin will review it and may contact you by email.
       </p>
     );
   }
@@ -83,7 +85,7 @@ export function DeleteAccountButton({
         className="text-sm text-success-11 bg-success-3 border border-success-6 rounded-md px-3 py-2"
       >
         Your deletion request has been submitted. An admin will review it and
-        contact you by email.
+        may contact you by email.
       </p>
     );
   }

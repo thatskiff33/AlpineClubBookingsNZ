@@ -20,9 +20,15 @@ describe("DeleteAccountButton", () => {
   it("shows the dated notice and no button while a request is open", () => {
     render(<DeleteAccountButton pendingRequest={{ requestedOn: "29 Jun 2026" }} />);
 
-    expect(screen.getByRole("status").textContent).toContain(
-      "You asked for your account to be deleted on 29 Jun 2026.",
-    );
+    // An admin can reject without emailing the member, so the notice must not
+    // promise an email; and it is static content, not a live region (the
+    // `submitted` confirmation is the one announced).
+    expect(
+      screen.getByText(
+        "You asked for your account to be deleted on 29 Jun 2026. An admin will review it and may contact you by email.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
     expect(
       screen.queryByRole("button", { name: /request account deletion/i }),
     ).toBeNull();
@@ -38,8 +44,8 @@ describe("DeleteAccountButton", () => {
     fireEvent.click(screen.getByRole("button", { name: /submit deletion request/i }));
 
     await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toContain(
-        "Your deletion request has been submitted.",
+      expect(screen.getByRole("status").textContent).toBe(
+        "Your deletion request has been submitted. An admin will review it and may contact you by email.",
       ),
     );
     expect(refresh).toHaveBeenCalledTimes(1);

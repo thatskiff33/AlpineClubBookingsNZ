@@ -129,7 +129,8 @@ The **Privacy & Data** section gives you two rights:
   you are anonymised, your future bookings are cancelled, and your login is
   deactivated. You always receive a final privacy receipt when a deletion is
   approved. While your request is waiting for review, the section shows the
-  date you asked instead of the button, so you can see it was received.
+  date you asked instead of the button, so you can see it was received. If an
+  admin declines it, the button comes back.
 
 ## What to expect
 

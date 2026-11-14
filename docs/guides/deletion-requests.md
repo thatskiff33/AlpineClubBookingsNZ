@@ -54,6 +54,8 @@ to read the queues and membership **edit** to approve or reject.
 3. **Reject** lets you choose **Reject without emailing** or **Reject and email
    member** (with an optional reason sent to the member). If the member has no
    email on file, it is a single **Reject Request** with no notification.
+   Either way the request button returns on the member's profile, so a member
+   you reject without emailing will see it come back and may ask you why.
 
 ### Approve or reject an admin-initiated hard-delete
 
