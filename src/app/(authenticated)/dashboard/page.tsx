@@ -637,9 +637,7 @@ export default async function DashboardPage() {
           </div>
           <p className="text-xs text-muted-foreground mt-1">
             {paymentOwed.totalCents > 0
-              ? paymentOwed.bookingIds.length === 1
-                ? "1 booking needs payment"
-                : `${paymentOwed.bookingIds.length} bookings need payment`
+              ? `${paymentOwed.bookingIds.length} ${paymentOwed.bookingIds.length === 1 ? "booking needs" : "bookings need"} payment`
               : "No payment due"}
           </p>
         </SummaryLinkCard>
