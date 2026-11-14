@@ -61,6 +61,7 @@ import type {
   RoomOption,
   WorkPartyEvent,
 } from "./types";
+import { BOOKING_EXCEPTION_REQUEST_ID, BOOKING_WIZARD_ERROR_ID } from "./types";
 
 export function ReviewStep({
   checkIn,
@@ -134,6 +135,7 @@ export function ReviewStep({
   exceptionOffer,
   replaceExceptionRequestId,
   submitExceptionRequest,
+  reviewReasonMissing = false,
 }: {
   // NZ date-only lodge nights (#2474).
   checkIn: string | null;
@@ -243,8 +245,12 @@ export function ReviewStep({
     memberMessage: string;
     supersedeRequestId: string | null;
   }) => Promise<ExceptionRequestSubmitResult>;
+  /** The wizard's error box holds the missing-reason refusal right now (#4945). */
+  reviewReasonMissing?: boolean;
 }) {
   const format = useClubFormat();
+  // The reason field is what the refusal is about until it is filled in.
+  const reasonRefused = reviewReasonMissing && !memberReviewJustification.trim();
   // The club's own age-tier labels, so the request card names a tier the way every
   // other member-facing screen does rather than echoing the raw enum.
   const ageTierOptions = useAgeTierOptions();
@@ -681,6 +687,8 @@ export function ReviewStep({
               </p>
               <Textarea
                 id="review-justification"
+                aria-invalid={reasonRefused || undefined}
+                aria-describedby={reasonRefused ? BOOKING_WIZARD_ERROR_ID : undefined}
                 value={memberReviewJustification}
                 onChange={(e) => setMemberReviewJustification(e.target.value)}
                 rows={3}
@@ -930,6 +938,8 @@ export function ReviewStep({
           member's next honest move is either to change the proposal or to ask. */}
       {exceptionOffer && bookingDateStrings ? (
         <RequestOfficerApprovalCard
+          // #4945: where the error box's "Go to the request" link lands.
+          id={BOOKING_EXCEPTION_REQUEST_ID}
           source="NEW_BOOKING"
           offer={exceptionOffer}
           replaceRequestId={replaceExceptionRequestId}

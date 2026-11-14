@@ -263,7 +263,13 @@ beforeEach(() => {
   vi.resetAllMocks();
 
   mocks.getAuthenticatedXeroClient.mockResolvedValue({
-    xero: { accountingApi: {} },
+    // #3993: an edit's note first reads what its invoice still owes. The
+    // invoice is open for more than these notes, so the contact path runs.
+    xero: {
+      accountingApi: {
+        getInvoice: async () => ({ body: { invoices: [{ status: "AUTHORISED", amountDue: 100 }] } }),
+      },
+    },
     tenantId: "tenant-1",
   });
   mocks.callXeroApi.mockImplementation((fn: () => unknown) => fn());
