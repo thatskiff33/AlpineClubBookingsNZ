@@ -27,6 +27,9 @@ import {
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { GROUP_SETTLEMENT_INVOICE_ROLE } from "@/lib/group-settlement-invoice-binding";
+import { GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CODE } from "@/lib/xero-operation-error-codes";
+import { asRecord } from "@/lib/xero-json";
+import { scanSpacesWaitCode } from "@/lib/xero-operation-wait-spacing";
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
@@ -228,4 +231,41 @@ export async function enqueueXeroGroupSettlementInvoiceOperation(
     queueOperationId: queuedOperation.id,
     message: "Xero settlement invoice queued for background processing.",
   };
+}
+
+/**
+ * #4919: the marker a CREATE row carries while its invoice's email is owed. It
+ * is written to `responsePayload`, which a claim keeps, so the re-driven run
+ * finds it; the invoice body is kept for the row's final record. No key has
+ * "email" in it: `sanitizeForJson` redacts any such key, marker and all.
+ */
+export const GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CAUSE = "INVOICE_EMAIL_DEFERRED";
+
+/** How long a row with an owed email waits before the outbox asks again. */
+export const GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_RECHECK_MS = 60 * 1000;
+
+/** The owed-email marker's payload, from the row a deferral returns to PENDING. */
+export function deferredGroupInvoiceEmailPayload(invoice: unknown, error: unknown) {
+  return {
+    invoice,
+    deferredInvoiceSend: GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CAUSE,
+    deferredReason: error instanceof Error ? error.message : String(error),
+  };
+}
+
+/** The stored invoice body when the row's email is owed, otherwise null. */
+export function readDeferredGroupInvoiceEmail(payload: unknown): { invoice: unknown } | null {
+  const record = asRecord(payload);
+  return record?.deferredInvoiceSend === GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CAUSE
+    ? { invoice: record.invoice ?? null }
+    : null;
+}
+
+/** Leave a row whose email is owed out of the scan until its recheck is due. */
+export function scanSpacesGroupInvoiceEmailsDeferred(now: Date) {
+  return scanSpacesWaitCode(
+    GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CODE,
+    GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_RECHECK_MS,
+    now,
+  );
 }

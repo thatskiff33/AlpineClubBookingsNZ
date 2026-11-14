@@ -1075,6 +1075,9 @@ modules split out in issue #1138 — `booking-modify-validation.ts`
 (the in-transaction guest/pricing/promo pipeline), and
 `booking-modify-settlement.ts` (settlement handoff and lifecycle
 transitions) — so importers keep using `@/lib/booking-modify` unchanged.
+`booking-modify-quote-priced.ts` (#4924) holds the booking-request-origin
+fences (the quote-priced edit block and the member whole-lodge test) behind
+the same barrel.
 
 `src/lib/booking-payment-cleanup.ts` queues superseded Stripe PaymentIntents
 when booking edits replace or zero out pending payment work.
@@ -1211,10 +1214,10 @@ figures rather than trusting a hand count: **107 components render a banner, and
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
 test currently pins, which is the only authority.) Those 336 split by WHICH rule
-covers them: **298** pass the literal
-`describeReason={false}` and are covered by a banner in the same file, and **38**
+covers them: **296** pass the literal
+`describeReason={false}` and are covered by a banner in the same file, and **40**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
-verified vouching parent — 33 by a parent's own JSX render site (#2168), 5 by the
+verified vouching parent — 35 by a parent's own JSX render site (#2168), 5 by the
 guided-setup shell (#2324); see *Vouching for a child's coverage* and *Vouching
 through the wizard shell* below. The
 remaining **55 controls across 30 files deliberately keep the per-button
