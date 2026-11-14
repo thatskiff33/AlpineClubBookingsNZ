@@ -2,9 +2,15 @@
  * The one reading of whether a Stripe intent is unpaid, for the currency re-issue
  * (`additional-intent-currency.ts`, #3567), an ordinary ask's refused replay
  * (`ordinary-ask-request.ts`, #4036) and a recovery replay's carried ask, which
- * it waits on unless this says `reissue` (`carriedAskPaymentWait`, #4015). A
+ * it waits on unless this says `reissue` (`carriedAskPaymentWait`, #4015) - or,
+ * for a bounded time, while the member is on their bank's page (below). A
  * module of its own so a pure caller need not import the re-issue's database
  * and Stripe writers.
+ *
+ * #4755: the replay alone also asks a narrower question before it cancels an
+ * unpaid ask - is the member on their bank's page right now
+ * (`isAwaitingMemberAuthentication`)? The other callers neither cancel a page in use nor need the answer, so
+ * `staleIntentAction` still reads `requires_action` as `reissue` for them.
  *
  * The member's pay door keeps its own list (`PROVIDER_CAPTURED_INTENT_STATUSES`
  * in `additional-payment-chase.ts`): identical on every documented status, it
@@ -40,4 +46,14 @@ export function staleIntentAction(intent: { status: string }): StaleIntentAction
   if (REISSUABLE_STATUSES.has(intent.status)) return "reissue";
   if (intent.status === "succeeded" || intent.status === "processing") return "in_flight";
   return "gone";
+}
+
+/**
+ * #4755: the member is on their bank's 3D Secure page for this intent right now
+ * (`requires_action`). Unpaid by `staleIntentAction`, but someone is paying it,
+ * so a recovery replay waits before it supersedes it (`carriedAskPaymentWait`,
+ * its one caller).
+ */
+export function isAwaitingMemberAuthentication(intent: { status: string }): boolean {
+  return intent.status === "requires_action";
 }

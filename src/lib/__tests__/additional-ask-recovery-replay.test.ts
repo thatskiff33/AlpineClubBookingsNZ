@@ -16,8 +16,10 @@ import type { AskRecoveryOperation } from "@/lib/additional-ask-pending-recoveri
 import { pendingAskRecoveries } from "@/lib/additional-ask-pending-recoveries";
 import type { AskTransaction } from "@/lib/additional-ask-reduction";
 import { ADDITIONAL_PAYABLE_BOOKING_STATUSES, resolveAdditionalPaymentDoor } from "@/lib/additional-payment-chase";
-import { staleIntentAction } from "@/lib/stale-intent-action";
+import { isAwaitingMemberAuthentication, staleIntentAction } from "@/lib/stale-intent-action";
 import {
+  CARRIED_ASK_CHALLENGE_RECHECK_MS,
+  CARRIED_ASK_CHALLENGE_WAIT_MS,
   CARRIED_ASK_PAYMENT_WAIT_MAX_MS,
   CarriedAskPaymentWaitExpiredError,
   carriedAskPaymentWait,
@@ -257,6 +259,7 @@ describe("carriedAskPaymentWait: a replay never supersedes an ask Stripe is taki
   const livePayment = { additionalAmountCents: 2_000, additionalPaymentStatus: "PENDING", additionalPaymentIntentId: "pi_e2" };
   const QUEUED = new Date("2026-06-29T00:00:00.000Z");
   const NOW = new Date("2026-07-01T00:00:00.000Z");
+  const CARRY = { kind: "carry", challenge: null };
   /** Stripe's answer: the intent created and charged the day the recovery was queued, unless a test says. */
   const answering = (status: string, began: { created?: Date; charged?: Date | null } = {}) => {
     const calls: string[] = [];
@@ -275,51 +278,52 @@ describe("carriedAskPaymentWait: a replay never supersedes an ask Stripe is taki
     "waits - never supersedes - while the carried ask is %s (an unknown status fails safe)",
     async (status) => {
       const stripe = answering(status);
-      const wait = await carriedAskPaymentWait(livePayment, stripe.retrieve, QUEUED, NOW);
-      expect(wait).toContain(`(pi_e2) is ${status} at Stripe`);
-      expect(wait).toContain("until that payment is recorded");
+      const wait = await carriedAskPaymentWait(livePayment, stripe.retrieve, QUEUED, null, NOW);
+      expect(wait).toMatchObject({ kind: "wait", recheckAt: null, challenge: null });
+      expect(wait.kind === "wait" && wait.message).toContain(`(pi_e2) is ${status} at Stripe`);
+      expect(wait.kind === "wait" && wait.message).toContain("until that payment is recorded");
       expect(stripe.calls).toEqual(["pi_e2"]);
     },
   );
 
-  it.each(["requires_payment_method", "requires_confirmation", "requires_action", "canceled"])(
+  it.each(["requires_payment_method", "requires_confirmation", "canceled"])(
     "lets the replay supersede an ask that is %s (unpaid by `staleIntentAction`, or cancelled)",
     async (status) => {
-      await expect(carriedAskPaymentWait(livePayment, answering(status).retrieve, QUEUED, NOW)).resolves.toBeNull();
+      await expect(carriedAskPaymentWait(livePayment, answering(status).retrieve, QUEUED, null, NOW)).resolves.toEqual(CARRY);
     },
   );
 
   it("stops for good once both the recovery and the payment are older than the cap, naming the intent and its status", async () => {
     const longAgo = new Date(NOW.getTime() - CARRIED_ASK_PAYMENT_WAIT_MAX_MS - 1000);
     const old = { created: longAgo, charged: longAgo };
-    const stopped = carriedAskPaymentWait(livePayment, answering("processing", old).retrieve, longAgo, NOW);
+    const stopped = carriedAskPaymentWait(livePayment, answering("processing", old).retrieve, longAgo, null, NOW);
     await expect(stopped).rejects.toBeInstanceOf(CarriedAskPaymentWaitExpiredError);
     await expect(stopped).rejects.toMatchObject({ paymentIntentId: "pi_e2", status: "processing" });
     // At the cap exactly it still waits.
     const atCap = new Date(NOW.getTime() - CARRIED_ASK_PAYMENT_WAIT_MAX_MS);
-    await expect(carriedAskPaymentWait(livePayment, answering("processing", { created: atCap, charged: atCap }).retrieve, atCap, NOW)).resolves.toContain("waiting");
+    await expect(carriedAskPaymentWait(livePayment, answering("processing", { created: atCap, charged: atCap }).retrieve, atCap, null, NOW)).resolves.toMatchObject({ kind: "wait" });
     // An unpaid ask past the cap is simply superseded.
-    await expect(carriedAskPaymentWait(livePayment, answering("requires_payment_method", old).retrieve, longAgo, NOW)).resolves.toBeNull();
+    await expect(carriedAskPaymentWait(livePayment, answering("requires_payment_method", old).retrieve, longAgo, null, NOW)).resolves.toEqual(CARRY);
   });
 
   it("REVIEW L-2: an OLD recovery meeting a payment that has just begun waits - the clock starts at the later of the two", async () => {
     const longAgo = new Date(NOW.getTime() - 30 * 86_400_000);
     // An old intent whose charge (a bank debit) began yesterday.
     const freshCharge = answering("processing", { created: longAgo, charged: new Date(NOW.getTime() - 86_400_000) });
-    await expect(carriedAskPaymentWait(livePayment, freshCharge.retrieve, longAgo, NOW)).resolves.toContain("(pi_e2) is processing at Stripe");
+    await expect(carriedAskPaymentWait(livePayment, freshCharge.retrieve, longAgo, null, NOW)).resolves.toMatchObject({ kind: "wait", message: expect.stringContaining("(pi_e2) is processing at Stripe") });
     // No charge yet (an unknown status, say): the intent's own creation is the start.
     const freshIntent = answering("some_future_status", { created: new Date(NOW.getTime() - 86_400_000), charged: null });
-    await expect(carriedAskPaymentWait(livePayment, freshIntent.retrieve, longAgo, NOW)).resolves.toContain("waiting");
+    await expect(carriedAskPaymentWait(livePayment, freshIntent.retrieve, longAgo, null, NOW)).resolves.toMatchObject({ kind: "wait" });
     // A charge that began past the cap, on an old recovery, stops.
     const staleCharge = answering("processing", { created: longAgo, charged: longAgo });
-    await expect(carriedAskPaymentWait(livePayment, staleCharge.retrieve, longAgo, NOW)).rejects.toBeInstanceOf(CarriedAskPaymentWaitExpiredError);
+    await expect(carriedAskPaymentWait(livePayment, staleCharge.retrieve, longAgo, null, NOW)).rejects.toBeInstanceOf(CarriedAskPaymentWaitExpiredError);
   });
 
   it("an intent Stripe has no record of is nothing being paid", async () => {
     const missing = async () => {
       throw Object.assign(new Error("No such payment_intent"), { code: "resource_missing" });
     };
-    await expect(carriedAskPaymentWait(livePayment, missing, QUEUED, NOW)).resolves.toBeNull();
+    await expect(carriedAskPaymentWait(livePayment, missing, QUEUED, null, NOW)).resolves.toEqual(CARRY);
   });
 
   it("asks Stripe nothing when there is no unpaid ask to carry", async () => {
@@ -329,7 +333,7 @@ describe("carriedAskPaymentWait: a replay never supersedes an ask Stripe is taki
       { ...livePayment, additionalPaymentIntentId: null },
     ]) {
       const stripe = answering("succeeded");
-      await expect(carriedAskPaymentWait(payment, stripe.retrieve, QUEUED, NOW)).resolves.toBeNull();
+      await expect(carriedAskPaymentWait(payment, stripe.retrieve, QUEUED, null, NOW)).resolves.toEqual(CARRY);
       expect(stripe.calls).toEqual([]);
     }
   });
@@ -338,7 +342,68 @@ describe("carriedAskPaymentWait: a replay never supersedes an ask Stripe is taki
     const outage = async () => {
       throw new Error("Request timed out");
     };
-    await expect(carriedAskPaymentWait(livePayment, outage, QUEUED, NOW)).rejects.toThrow("Request timed out");
+    await expect(carriedAskPaymentWait(livePayment, outage, QUEUED, null, NOW)).rejects.toThrow("Request timed out");
+  });
+});
+
+describe("carriedAskPaymentWait: a member on their bank's 3D Secure page can finish it (#4755)", () => {
+  const livePayment = { additionalAmountCents: 5_000, additionalPaymentStatus: "PENDING", additionalPaymentIntentId: "pi_e2" };
+  const QUEUED = new Date("2026-06-29T00:00:00.000Z");
+  const NOW = new Date("2026-07-01T00:00:00.000Z");
+  const seconds = (at: Date) => Math.floor(at.getTime() / 1000);
+  /** Stripe's answer for the carried ask; an intent from long ago, so only the challenge clock can matter. */
+  const answering = (status: string) => async () => ({ status, created: seconds(new Date("2026-01-01T00:00:00.000Z")), latest_charge: null });
+  const challenge = answering("requires_action");
+  const seenAgo = (ms: number, paymentIntentId = "pi_e2") => ({ paymentIntentId, seenAt: new Date(NOW.getTime() - ms) });
+
+  it("the first sighting waits, records the intent and now, and rechecks on the short interval", async () => {
+    const wait = await carriedAskPaymentWait(livePayment, challenge, QUEUED, null, NOW);
+    expect(wait).toMatchObject({
+      kind: "wait",
+      recheckAt: new Date(NOW.getTime() + CARRIED_ASK_CHALLENGE_RECHECK_MS),
+      challenge: { paymentIntentId: "pi_e2", seenAt: NOW },
+    });
+    expect(wait.kind === "wait" && wait.message).toContain("(pi_e2) is requires_action at Stripe");
+    expect(wait.kind === "wait" && wait.message).toContain("3D Secure");
+  });
+
+  it("a sighting younger than the timeout, or at it exactly, still waits and keeps its first time", async () => {
+    for (const age of [CARRIED_ASK_CHALLENGE_WAIT_MS / 2, CARRIED_ASK_CHALLENGE_WAIT_MS]) {
+      const seen = seenAgo(age);
+      await expect(carriedAskPaymentWait(livePayment, challenge, QUEUED, seen, NOW)).resolves.toMatchObject({ kind: "wait", challenge: seen });
+    }
+  });
+
+  it("past the timeout from the first sighting of the SAME intent, the abandoned challenge is carried - never the 7-day stop", async () => {
+    const seen = seenAgo(CARRIED_ASK_CHALLENGE_WAIT_MS + 1);
+    await expect(carriedAskPaymentWait(livePayment, challenge, QUEUED, seen, NOW)).resolves.toEqual({ kind: "carry", challenge: seen });
+    // A recovery and an intent far older than the in-flight cap are still carried, not stopped.
+    const ancient = new Date(NOW.getTime() - 2 * CARRIED_ASK_PAYMENT_WAIT_MAX_MS);
+    await expect(carriedAskPaymentWait(livePayment, challenge, ancient, seenAgo(2 * CARRIED_ASK_PAYMENT_WAIT_MAX_MS), NOW)).resolves.toMatchObject({ kind: "carry" });
+  });
+
+  it("an old sighting of ANOTHER intent is a first sighting: a new live ask is a fresh challenge", async () => {
+    const other = seenAgo(CARRIED_ASK_CHALLENGE_WAIT_MS * 3, "pi_e1");
+    await expect(carriedAskPaymentWait(livePayment, challenge, QUEUED, other, NOW)).resolves.toMatchObject({
+      kind: "wait",
+      challenge: { paymentIntentId: "pi_e2", seenAt: NOW },
+    });
+  });
+
+  it("any other status clears a recorded sighting: a failed challenge is carried at once, a finished one waits on the in-flight rule", async () => {
+    const seen = seenAgo(60_000);
+    await expect(carriedAskPaymentWait(livePayment, answering("requires_payment_method"), QUEUED, seen, NOW)).resolves.toEqual({ kind: "carry", challenge: null });
+    for (const status of ["succeeded", "processing"]) {
+      await expect(carriedAskPaymentWait(livePayment, answering(status), QUEUED, seen, NOW)).resolves.toMatchObject({ kind: "wait", recheckAt: null, challenge: null });
+    }
+  });
+
+  it("the shared reading is untouched: `staleIntentAction` still says reissue for a challenge, and only a challenge is one", () => {
+    expect(staleIntentAction({ status: "requires_action" })).toBe("reissue");
+    for (const status of ["requires_payment_method", "requires_confirmation", "processing", "succeeded", "requires_capture", "canceled", "some_future_status"]) {
+      expect(isAwaitingMemberAuthentication({ status })).toBe(false);
+    }
+    expect(isAwaitingMemberAuthentication({ status: "requires_action" })).toBe(true);
   });
 });
 
@@ -360,7 +425,7 @@ describe("REVIEW I-1: the pay door and `staleIntentAction` agree on every status
     "processing",
     "requires_capture",
     "succeeded",
-  ])("%s: the door refuses a second form exactly when the replay would not supersede", async (status) => {
+  ])("%s: the door refuses a second form exactly when `staleIntentAction` reads it paid or paying", async (status) => {
     const answer = await door(status);
     expect(answer.state === "captured-at-provider").toBe(staleIntentAction({ status }) !== "reissue");
     expect(answer.state).not.toBe("closed");

@@ -2828,10 +2828,10 @@ _Legacy: settles tasks raised before #4317._
 - **A declined card stays live** (#4052).
 - **Asks awaiting a failed mint's retry** count, sized as the replay would
   (none if one's frozen). Only its own row settles one, bar a frozen one's
-  replay (#4015). A claim under two minutes refuses the edit;
-  older ones close. A later increase folds a waiting re-issue, and a waiting
-  increase retry, into its own ask (#4744), recorded for replay,
-  and that retry's deferred invoice follows the new ask (`INV-PAY-140`).
+  replay (#4015). Replays await 3DS for an hour (#4755). A claim under two
+  minutes refuses the edit; older ones close. A later increase folds a waiting
+  re-issue or increase retry into its own ask (#4744), recorded for replay;
+  that retry's deferred invoice follows the new ask (`INV-PAY-140`).
   Both re-issue minters send one request (`planReissuedAskMint`).
 - **Only the member's price asks.** An officer's review charge is never set
   against. Financial-review settled refunds stay as the officer decided; the

@@ -68,7 +68,7 @@ import {
   planReissuedAskMint,
   resolveAskCustomerId,
 } from "@/lib/reissued-ask-mint";
-import { CARRIED_ASK_STRIPE_READ, carriedAskPaymentWait, findOwnRecoveryRow, isRecoveryReplaySettled, sizeRecoveryReplayAsk } from "@/lib/additional-ask-recovery-replay";
+import { CARRIED_ASK_STRIPE_READ, type CarriedAskChallengeSighting, carriedAskChallengeColumns, carriedAskPaymentWait, findOwnRecoveryRow, isRecoveryReplaySettled, sizeRecoveryReplayAsk, storedCarriedAskChallenge } from "@/lib/additional-ask-recovery-replay";
 import { mintOrdinaryAskIntent, refuseAdoptedIntentOnLedger } from "@/lib/ordinary-ask-mint";
 import { recoveryFailureAlertMessage, unretryableRecoveryCause } from "@/lib/recovery-unretryable-cause";
 import { ORDINARY_ASK_RECOVERY_REASON, planOrdinaryAskMint } from "@/lib/ordinary-ask-request";
@@ -1263,6 +1263,7 @@ async function markPaymentRecoveryOperationFailed({
   fromAttempts,
   format,
   handBackAttempt = false,
+  carriedAskChallenge,
 }: {
   operation: PaymentRecoveryOperation;
   /** Recorded verbatim on `lastError`, and quoted in the exhaustion alert. */
@@ -1309,6 +1310,11 @@ async function markPaymentRecoveryOperationFailed({
    * with `terminal: false`, which it can never make terminal.
    */
   handBackAttempt?: boolean;
+  /**
+   * #4755: the carried ask's 3D Secure sighting to leave on the row (`null` clears it), written in
+   * this same fenced write. Omitted: the columns are left as they are.
+   */
+  carriedAskChallenge?: CarriedAskChallengeSighting | null;
 }): Promise<PaymentRecoveryFailureOutcome> {
   // Both fences apply when both are given: each is its own clause, so neither
   // can overwrite the other's `processingStartedAt`.
@@ -1327,6 +1333,7 @@ async function markPaymentRecoveryOperationFailed({
       ...(terminal
         ? { nextRetryAt: null, attempts: Math.max(operation.attempts, MAX_PAYMENT_RECOVERY_ATTEMPTS) }
         : { nextRetryAt, ...(handBackAttempt ? { attempts: Math.max(operation.attempts - 1, 0) } : {}) }),
+      ...(carriedAskChallenge === undefined ? {} : carriedAskChallengeColumns(carriedAskChallenge)),
     },
   });
 
@@ -1673,19 +1680,52 @@ async function failPaymentRecoveryOperation(
  * Back to a non-terminal retry at the longest interval with its claim's attempt handed back, so a
  * wait never runs out of attempts, goes terminal or alerts by itself; the carried-ask wait's caller
  * caps it and then fails for good (`carriedAskPaymentWait`). One chokepoint, fenced on this attempt.
+ * #4755: a carried ask in a 3D Secure challenge comes back sooner (`nextRetryAt`) and records its
+ * sighting (`carriedAskChallenge`), both in the same fenced write.
  */
-async function waitPaymentRecoveryOperation(operation: PaymentRecoveryOperation, message: string, format: ClubFormat) {
+async function waitPaymentRecoveryOperation(
+  operation: PaymentRecoveryOperation,
+  message: string,
+  format: ClubFormat,
+  { nextRetryAt, carriedAskChallenge }: { nextRetryAt?: Date; carriedAskChallenge?: CarriedAskChallengeSighting | null } = {},
+) {
   return markPaymentRecoveryOperationFailed({
     operation,
     format,
     message,
     terminal: false,
     // The schedule's last (longest) step: the attempt index clamps to it.
-    nextRetryAt: nextRetryDate(MAX_PAYMENT_RECOVERY_ATTEMPTS),
+    nextRetryAt: nextRetryAt ?? nextRetryDate(MAX_PAYMENT_RECOVERY_ATTEMPTS),
     fromStatuses: NON_TERMINAL_PAYMENT_RECOVERY_STATUSES,
     fromAttempts: operation.attempts,
     handBackAttempt: true,
+    carriedAskChallenge,
   });
+}
+
+/**
+ * #4015 review: never supersede an ask Stripe is taking money on - wait, capped. #4755: nor one the
+ * member is confirming with their bank, for up to an hour from first sighting (`carriedAskPaymentWait`).
+ * True when the row waited. On a carry, a sighting it no longer stands on (the challenge failed, the
+ * ask changed) is cleared before the mint, fenced on this attempt's claim, so a mint that then fails
+ * cannot time out a later challenge on that intent early; a lost claim writes nothing.
+ */
+async function waitForCarriedAsk(
+  operation: PaymentRecoveryOperation,
+  payment: Parameters<typeof carriedAskPaymentWait>[0],
+  format: ClubFormat,
+): Promise<boolean> {
+  const stored = storedCarriedAskChallenge(operation);
+  const carried = await carriedAskPaymentWait(payment, (id) => getPaymentIntent(id, CARRIED_ASK_STRIPE_READ), operation.createdAt, stored);
+  if (carried.kind === "wait") {
+    const nextRetryAt = carried.recheckAt ?? undefined;
+    await waitPaymentRecoveryOperation(operation, carried.message, format, { nextRetryAt, carriedAskChallenge: carried.challenge });
+    return true;
+  }
+  if (stored && !carried.challenge) {
+    await prisma.paymentRecoveryOperation.updateMany({ where: heldPaymentRecoveryClaimWhere(operation), data: carriedAskChallengeColumns(null) });
+  }
+  return false;
 }
 
 async function claimPaymentRecoveryOperation(operationId: string) {
@@ -3072,9 +3112,7 @@ async function processCreateAdditionalPaymentIntentOperation(
     return "done";
   }
 
-  // #4015 review: never supersede an ask Stripe is taking money on - wait, capped (`carriedAskPaymentWait`).
-  const carriedAskBeingPaid = await carriedAskPaymentWait(payment, (paymentIntentId) => getPaymentIntent(paymentIntentId, CARRIED_ASK_STRIPE_READ), operation.createdAt);
-  if (carriedAskBeingPaid) return (await waitPaymentRecoveryOperation(operation, carriedAskBeingPaid, format), "waited");
+  if (await waitForCarriedAsk(operation, payment, format)) return "waited";
 
   // #3954 round 7: one resolution, shared with the door's re-issue mint, so
   // the two minters of one key send one request (`resolveAskCustomerId`).

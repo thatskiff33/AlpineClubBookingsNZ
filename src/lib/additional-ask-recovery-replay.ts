@@ -22,7 +22,7 @@ import {
   isEditFinancialReviewAdditionalIntentRecoveryKey,
 } from "@/lib/payment-recovery-keys";
 import { isCapturedTransactionStatus, isOpenIntentTransactionStatus } from "@/lib/payment-transaction-status";
-import { staleIntentAction } from "@/lib/stale-intent-action";
+import { isAwaitingMemberAuthentication, staleIntentAction } from "@/lib/stale-intent-action";
 import { recordedFoldedAskCents } from "@/lib/unpaid-ask-offset-marker";
 
 /** The `BookingModification` figures a failed mint's recovery re-derives from. */
@@ -311,29 +311,88 @@ export class CarriedAskPaymentWaitExpiredError extends Error {
 }
 
 /**
- * A REPLAY NEVER SUPERSEDES AN ASK STRIPE IS TAKING MONEY ON (#4015 review C1).
+ * #4755: how long a replay waits on a carried ask the member is confirming with
+ * their bank (3D Secure), counted from when the replay FIRST saw that intent's
+ * challenge (`CarriedAskChallengeSighting`). Long enough for a member working
+ * through a bank page; short enough that a forgotten page delays the increase
+ * by about an hour. Not counted from the intent's creation or the recovery's
+ * queue time, either of which would cut a fresh challenge on an old ask at once.
+ */
+export const CARRIED_ASK_CHALLENGE_WAIT_MS = 60 * 60 * 1000;
+
+/** #4755: how soon a replay waiting on a challenge looks again - not the 12-hour step. */
+export const CARRIED_ASK_CHALLENGE_RECHECK_MS = 15 * 60 * 1000;
+
+/**
+ * #4755: the carried ask the replay last saw in a 3D Secure challenge, and when
+ * it first saw it (`PaymentRecoveryOperation.carriedAskChallenge*`). Kept on the
+ * recovery row because every claim clears `lastError`.
+ */
+export type CarriedAskChallengeSighting = { paymentIntentId: string; seenAt: Date };
+
+/** #4755: the recovery row's columns for a sighting (`null`: none). */
+export function carriedAskChallengeColumns(sighting: CarriedAskChallengeSighting | null) {
+  return {
+    carriedAskChallengeIntentId: sighting?.paymentIntentId ?? null,
+    carriedAskChallengeSeenAt: sighting?.seenAt ?? null,
+  };
+}
+
+/** #4755: the sighting a recovery row holds, or null unless both columns are set. */
+export function storedCarriedAskChallenge(row: {
+  carriedAskChallengeIntentId: string | null;
+  carriedAskChallengeSeenAt: Date | null;
+}): CarriedAskChallengeSighting | null {
+  const { carriedAskChallengeIntentId: paymentIntentId, carriedAskChallengeSeenAt: seenAt } = row;
+  return paymentIntentId && seenAt ? { paymentIntentId, seenAt } : null;
+}
+
+/**
+ * What the replay does about the ask it would carry. Each answer names the
+ * challenge sighting the recovery row should hold afterwards (`null`: none).
+ *
+ * - `carry`: mint and supersede it.
+ * - `wait`: record `message`, hand the attempt back and look again at
+ *   `recheckAt` (`null`: the longest retry interval).
+ */
+export type CarriedAskPaymentWait =
+  | { kind: "carry"; challenge: CarriedAskChallengeSighting | null }
+  | { kind: "wait"; message: string; recheckAt: Date | null; challenge: CarriedAskChallengeSighting | null };
+
+/**
+ * A REPLAY NEVER SUPERSEDES AN ASK STRIPE IS TAKING MONEY ON (#4015 review C1),
+ * NOR ONE THE MEMBER IS CONFIRMING WITH THEIR BANK (#4755).
  *
  * A replay mints the edit's money plus the unpaid balance of the `Payment`'s
  * live ask, then cancels that ask. Since #4015 a later edit's ask no longer
  * settles a waiting increase, so the replay can now carry an ask the member has
  * just paid, or is paying, with the webhook not yet in. Cancelling it then
  * refunds a capture (`REFUND_SUPERSEDED_PAYMENT`) only to ask again. So, before
- * the mint and outside any transaction, Stripe's own state of that ask is read
- * through the one reading of whether an intent is unpaid (`staleIntentAction`):
+ * the mint and outside any transaction, Stripe's own state of that ask is read:
  *
- * - unpaid (`reissue`, `requires_action` included), cancelled or unknown to
- *   Stripe -> null: the replay carries and supersedes it. A member mid-3DS on
- *   that ask has their confirmation fail and pays the replay's ask instead.
+ * - in a 3D Secure challenge (`isAwaitingMemberAuthentication`) -> WAIT, looked
+ *   at again every `CARRIED_ASK_CHALLENGE_RECHECK_MS`, so the member can finish
+ *   the bank page. The first sighting of that intent is recorded; once
+ *   `CARRIED_ASK_CHALLENGE_WAIT_MS` has passed since it, the challenge counts as
+ *   abandoned and the replay carries and supersedes it. A sighting of another
+ *   intent is replaced: a new live ask is a fresh challenge. Never the 7-day
+ *   stop below.
+ * - otherwise unpaid (`staleIntentAction` says `reissue`), cancelled or unknown
+ *   to Stripe -> `carry`: the replay carries and supersedes it.
  * - anything else (`succeeded`, `processing`, `requires_capture`, a status
- *   this code does not know) -> the reason to WAIT, which the runner records
- *   with the attempt handed back (`waitPaymentRecoveryOperation`). Once the
- *   capture's webhook lands the retry carries none of that ask.
+ *   this code does not know) -> WAIT on the longest retry interval, the attempt
+ *   handed back (`waitPaymentRecoveryOperation`). Once the capture's webhook
+ *   lands the retry carries none of that ask.
  * - still so `CARRIED_ASK_PAYMENT_WAIT_MAX_MS` after the LATER of when this
  *   recovery was queued and when Stripe began taking that payment (its charge,
  *   else the intent's creation) -> throws `CarriedAskPaymentWaitExpiredError`.
  *   Counting from the payment too means a recovery that aged on its own (a
  *   currency refusal, #3567; one queued before this release) still waits for a
  *   payment that has only just begun, and never stops on its first sight of it.
+ *
+ * Every answer but a challenge's clears a recorded sighting, except a carry of
+ * the timed-out challenge itself, which keeps it so a mint that then fails does
+ * not restart that intent's hour.
  *
  * A window remains: a confirmation landing between this read and the hold's
  * cancel still takes the superseded-capture refund (`docs/STATE_MACHINES.md`,
@@ -343,15 +402,31 @@ export async function carriedAskPaymentWait(
   payment: AdditionalAskPayment & { additionalPaymentIntentId: string | null },
   retrieve: (paymentIntentId: string) => Promise<CarriedAskIntent>,
   recoveryCreatedAt: Date,
+  challengeSeen: CarriedAskChallengeSighting | null,
   now: Date = new Date(),
-): Promise<string | null> {
+): Promise<CarriedAskPaymentWait> {
   const liveAsk = payment.additionalPaymentIntentId;
-  if (!liveAsk || outstandingAdditionalAskCents(payment) <= 0) return null;
+  if (!liveAsk || outstandingAdditionalAskCents(payment) <= 0) return { kind: "carry", challenge: null };
   const intent = await readOpenProviderIntent(liveAsk, retrieve);
-  if (!intent || staleIntentAction(intent) === "reissue") return null;
+  if (intent && isAwaitingMemberAuthentication(intent)) {
+    const sighting = challengeSeen?.paymentIntentId === liveAsk ? challengeSeen : { paymentIntentId: liveAsk, seenAt: now };
+    if (now.getTime() - sighting.seenAt.getTime() > CARRIED_ASK_CHALLENGE_WAIT_MS) return { kind: "carry", challenge: sighting };
+    return {
+      kind: "wait",
+      message: `Additional intent recovery waiting: the unpaid ask it would carry (${liveAsk}) is requires_action at Stripe - waiting for the member to finish their bank's 3D Secure check, for up to ${CARRIED_ASK_CHALLENGE_WAIT_MS / 3_600_000} hour from when this recovery first saw it (${sighting.seenAt.toISOString()}), checked again every ${CARRIED_ASK_CHALLENGE_RECHECK_MS / 60_000} minutes`,
+      recheckAt: new Date(now.getTime() + CARRIED_ASK_CHALLENGE_RECHECK_MS),
+      challenge: sighting,
+    };
+  }
+  if (!intent || staleIntentAction(intent) === "reissue") return { kind: "carry", challenge: null };
   const waitingSinceMs = Math.max(recoveryCreatedAt.getTime(), paymentBeganAtMs(intent));
   if (now.getTime() - waitingSinceMs > CARRIED_ASK_PAYMENT_WAIT_MAX_MS) {
     throw new CarriedAskPaymentWaitExpiredError(liveAsk, intent.status);
   }
-  return `Additional intent recovery waiting: the unpaid ask it would carry (${liveAsk}) is ${intent.status} at Stripe; it is checked again on the longest retry interval until that payment is recorded, for up to ${CARRIED_ASK_PAYMENT_WAIT_MAX_MS / 86_400_000} days from when that payment began or this recovery was queued, whichever is later`;
+  return {
+    kind: "wait",
+    message: `Additional intent recovery waiting: the unpaid ask it would carry (${liveAsk}) is ${intent.status} at Stripe; it is checked again on the longest retry interval until that payment is recorded, for up to ${CARRIED_ASK_PAYMENT_WAIT_MAX_MS / 86_400_000} days from when that payment began or this recovery was queued, whichever is later`,
+    recheckAt: null,
+    challenge: null,
+  };
 }

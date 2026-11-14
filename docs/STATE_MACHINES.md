@@ -784,9 +784,20 @@ balance of the ask it supersedes.
 ```text
 a failed mint's replay, before it mints (#4015 review, outside any transaction)
   -> reads Stripe for the live ask it would carry and supersede (bounded read;
-       a timeout is an ordinary retry), through `staleIntentAction`
-       unpaid (requires_action / 3DS included), cancelled or unknown to Stripe
-         -> carried and superseded; a 3DS confirmation in progress then fails
+       a timeout is an ordinary retry)
+       requires_action: the member is on their bank's 3D Secure page (#4755,
+       `isAwaitingMemberAuthentication`)
+         -> WAIT: nothing minted or cancelled, the attempt handed back, checked
+            again every 15 minutes; the recovery row records that intent and
+            when the replay first saw its challenge
+         -> the member finishes: the arms below apply (a capture is waited on,
+            then carried none of); the bank declines: carried at once
+         -> still requires_action 1 hour after that first sighting of the SAME
+            intent: abandoned, carried and superseded as below (never the
+            7-day stop); a sighting of another intent starts a fresh hour
+       unpaid by `staleIntentAction` (requires_payment_method,
+       requires_confirmation), cancelled or unknown to Stripe
+         -> carried and superseded; a recorded sighting is cleared first
        succeeded, processing, requires_capture or an unrecognised status
          -> WAIT: nothing minted or cancelled, the attempt handed back, checked
             again on the longest retry interval; once the webhook lands it

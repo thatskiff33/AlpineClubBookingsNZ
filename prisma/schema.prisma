@@ -3504,6 +3504,12 @@ model PaymentRecoveryOperation {
   lastError            String?                        @db.Text
   processingStartedAt  DateTime?
   succeededAt          DateTime?
+  // #4755: the carried ask the replay last saw in a 3D Secure challenge, and
+  // when it first saw it; null when none. Only `CREATE_ADDITIONAL_PAYMENT_INTENT`
+  // rows set them (`carriedAskPaymentWait`): the replay waits up to an hour from
+  // that first sighting before it supersedes the ask the member is confirming.
+  carriedAskChallengeIntentId String?
+  carriedAskChallengeSeenAt   DateTime?
   createdAt            DateTime                       @default(now())
   updatedAt            DateTime                       @updatedAt
 

@@ -2458,6 +2458,125 @@ let webhookClient: PrismaClient;
         ]);
       });
 
+      describe("#4755: the member is on their bank's 3D Secure page for the ask E1's replay would carry", () => {
+        /** E2 saved before E1's mint failed, so nothing folded; E2's ask is live and the member is in its challenge. */
+        async function e1WaitingBehindChallenge() {
+          await e1DoorStillInFlight();
+          const e2 = await increaseBy(2_000);
+          const e1 = await failedMint(INCREASE_MOD_ID, 5_000, QUEUED_EARLY);
+          const stripe = fakeStripe();
+          const e2Intent = await doorAsk(stripe, e2.id, { amountCents: 2_000, carriedCents: 0 });
+          e2Intent.status = "requires_action";
+          return { e1, stripe, e2Intent };
+        }
+
+        const recoveryRow = (operationId: string) =>
+          prisma.paymentRecoveryOperation.findUniqueOrThrow({
+            where: { id: operationId },
+            select: { status: true, attempts: true, lastError: true, nextRetryAt: true, processingStartedAt: true, carriedAskChallengeIntentId: true, carriedAskChallengeSeenAt: true },
+          });
+
+        const supersededRefunds = () =>
+          prisma.paymentRecoveryOperation.findMany({ where: { bookingId: BOOKING_ID, type: "REFUND_SUPERSEDED_PAYMENT" }, select: { id: true } });
+
+        it("CASES 1-2: the replay waits - minting, cancelling and superseding nothing - and once the member's capture lands asks only E1's own 5000, refunding nothing", async () => {
+          const { e1, stripe, e2Intent } = await e1WaitingBehindChallenge();
+          const { attempts } = await recoveryRow(e1);
+
+          expect(await replay(e1)).toBe("succeeded");
+          expect(stripe.intents.size).toBe(1);
+          expect(await cancellationFor(e2Intent.id)).toEqual([]);
+          const waiting = await recoveryRow(e1);
+          const { CARRIED_ASK_CHALLENGE_RECHECK_MS } = await import("@/lib/additional-ask-recovery-replay");
+          expect(waiting).toMatchObject({
+            status: "FAILED",
+            attempts,
+            processingStartedAt: null,
+            carriedAskChallengeIntentId: e2Intent.id,
+            lastError: expect.stringContaining("3D Secure"),
+          });
+          // The short recheck from the first sighting, not the 12-hour step.
+          expect(waiting.nextRetryAt!.getTime() - waiting.carriedAskChallengeSeenAt!.getTime()).toBe(CARRIED_ASK_CHALLENGE_RECHECK_MS);
+          expect(recoveryAlerts.sent).toEqual([]);
+
+          // A second look inside the hour keeps the first sighting's time.
+          const firstSeen = waiting.carriedAskChallengeSeenAt;
+          expect(await replay(e1)).toBe("succeeded");
+          expect(await recoveryRow(e1)).toMatchObject({ status: "FAILED", attempts, carriedAskChallengeSeenAt: firstSeen });
+
+          // The member finishes the bank page; Stripe captures, and the webhook lands.
+          e2Intent.status = "succeeded";
+          const { upsertPaymentIntentTransaction } = await import("@/lib/payment-transactions");
+          await upsertPaymentIntentTransaction({ paymentId: PAYMENT_ID, kind: "ADDITIONAL", paymentIntentId: e2Intent.id, amountCents: 2_000, status: "SUCCEEDED", store: prisma });
+          expect(await replay(e1)).toBe("succeeded");
+          const e1Intent = [...stripe.intents.values()].find((intent) => intent.id !== e2Intent.id)!;
+          expect(e1Intent.amount).toBe(5_000);
+          expect(await liveAsks()).toEqual([expect.objectContaining({ stripePaymentIntentId: e1Intent.id, amountCents: 5_000, carriedAskCents: 0 })]);
+          expect(await cancellationFor(e2Intent.id)).toEqual([]);
+          expect(await supersededRefunds()).toEqual([]);
+          expect(await recoveryStatus(e1)).toBe("SUCCEEDED");
+        });
+
+        it("CASE 3: a challenge still open an hour after the first sighting is abandoned - the replay carries and supersedes it as before", async () => {
+          const { e1, stripe, e2Intent } = await e1WaitingBehindChallenge();
+          expect(await replay(e1)).toBe("succeeded");
+          const { CARRIED_ASK_CHALLENGE_WAIT_MS } = await import("@/lib/additional-ask-recovery-replay");
+          const { carriedAskChallengeSeenAt } = await recoveryRow(e1);
+          await prisma.paymentRecoveryOperation.update({
+            where: { id: e1 },
+            data: { carriedAskChallengeSeenAt: new Date(carriedAskChallengeSeenAt!.getTime() - CARRIED_ASK_CHALLENGE_WAIT_MS - 1) },
+          });
+
+          expect(await replay(e1)).toBe("succeeded");
+          const e1Intent = [...stripe.intents.values()].find((intent) => intent.id !== e2Intent.id)!;
+          expect(e1Intent.amount).toBe(7_000);
+          expect(await liveAsks()).toEqual([expect.objectContaining({ stripePaymentIntentId: e1Intent.id, amountCents: 7_000, carriedAskCents: 2_000 })]);
+          expect(await cancellationFor(e2Intent.id)).toEqual([{ paymentIntentId: e2Intent.id }]);
+          expect(await recoveryStatus(e1)).toBe("SUCCEEDED");
+          expect(recoveryAlerts.sent).toEqual([]);
+        });
+
+        it("a challenge that fails is carried at once, and the sighting is cleared before the mint", async () => {
+          const { e1, stripe, e2Intent } = await e1WaitingBehindChallenge();
+          expect(await replay(e1)).toBe("succeeded");
+          // The bank declined: Stripe hands the intent back for another card.
+          e2Intent.status = "requires_payment_method";
+          stripeRaceHooks.create = (async () => {
+            throw new Error("Stripe is down");
+          }) as never;
+
+          // The mint fails at Stripe: an ordinary retry, with no sighting left to time a later challenge from.
+          expect(await replay(e1)).toBe("failed");
+          expect(await recoveryRow(e1)).toMatchObject({ status: "FAILED", carriedAskChallengeIntentId: null, carriedAskChallengeSeenAt: null });
+          expect(stripe.intents.size).toBe(1);
+        });
+
+        it("a wait whose claim was lost while it read Stripe writes nothing: no sighting, no short recheck", async () => {
+          const { e1, stripe } = await e1WaitingBehindChallenge();
+          // The stale reaper gives up on this attempt while the replay is reading the carried ask.
+          const read = stripeRaceHooks.get!;
+          stripeRaceHooks.get = (async (id: string) => {
+            await prisma.paymentRecoveryOperation.update({ where: { id: e1 }, data: { processingStartedAt: null } });
+            return read(id);
+          }) as never;
+
+          await replay(e1);
+          expect(await recoveryRow(e1)).toMatchObject({ carriedAskChallengeIntentId: null, carriedAskChallengeSeenAt: null, nextRetryAt: QUEUED_LATER });
+          expect(stripe.intents.size).toBe(1);
+        });
+
+        it("CASE 4: a member edit folds the waiting recovery and closes it normally - the wait released its claim", async () => {
+          const { e1 } = await e1WaitingBehindChallenge();
+          expect(await replay(e1)).toBe("succeeded");
+          expect(await recoveryRow(e1)).toMatchObject({ status: "FAILED", processingStartedAt: null });
+
+          const later = await ordinaryIncrease(1_000);
+          expect(await recoveryStatus(e1)).toBe("SUCCEEDED");
+          const history = (await prisma.bookingModification.findUniqueOrThrow({ where: { id: later.id } })).newData;
+          expect(history).toMatchObject({ foldedIncreaseAsks: [expect.objectContaining({ modificationId: INCREASE_MOD_ID, askCents: 5_000 })] });
+        });
+      });
+
       it("REVIEW L5: the door's write committed but its reply was lost - the recovery it kept finishes on the door's own row by its edit stamp, asking once", async () => {
         // paid 10000; the $50 ask minted; E2 +1000 asks 6000, carrying it.
         await grownBooking("card", 1_000, 100, "minted", "primary-before-increase");
