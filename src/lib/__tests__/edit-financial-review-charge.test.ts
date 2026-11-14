@@ -54,7 +54,7 @@ const mocks = vi.hoisted(() => ({
   bookingUpdateMany: vi.fn(),
   bookingModificationCreate: vi.fn(),
   memberCreditFindUnique: vi.fn(),
-  applyLocalRefundAllocation: vi.fn(async () => [] as { transactionId: string; cents: number }[]), // #4516 (M4d): the receipts it consumed
+  applyLocalRefundAllocation: vi.fn(async (..._args: unknown[]) => [] as { transactionId: string; cents: number }[]), // #4516 (M4d): the receipts it consumed
   planStripeRefundAllocation: vi.fn(),
   refundPaymentTransactions: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
