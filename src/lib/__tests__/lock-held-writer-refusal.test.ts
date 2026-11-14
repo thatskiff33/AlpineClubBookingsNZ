@@ -86,7 +86,7 @@ interface Writer {
   name: string;
   run: (db: never) => Promise<unknown>;
   lookups: Record<string, Lookup>;
-  /** Lodges that hold the writer's rows; the unheld one must be refused. */
+  /** Lodges that hold the writer's rows; the unheld one must be refused. Empty: global tier only. */
   lodges: readonly string[];
   global?: boolean;
 }
@@ -183,6 +183,13 @@ const WRITERS: Writer[] = [
     lookups: {},
     lodges: ["lodge-scoped"],
   },
+  {
+    // Global only: it takes the lodge key itself, after this check.
+    name: "reconcileBedAllocationsForBookingWithGlobalLockHeld",
+    run: (db) => reconcileBedAllocationsForBookingWithGlobalLockHeld({ db, bookingId: "booking-1" } as never),
+    lookups: { "booking.findUnique": byId("booking-1", { lodgeId: "lodge-booking" }) },
+    lodges: [],
+  },
 ];
 
 describe("caller-held lock writers refuse an unlocked caller (#4929)", () => {
@@ -193,7 +200,7 @@ describe("caller-held lock writers refuse an unlocked caller (#4929)", () => {
     expect(fake.touched).toEqual([]);
   });
 
-  it.each(WRITERS)("$name checks every lodge its rows sit in and refuses the unheld one", async (writer) => {
+  it.each(WRITERS.filter((writer) => writer.lodges.length > 0))("$name checks every lodge its rows sit in and refuses the unheld one", async (writer) => {
     // Hold every lodge but the last, so a writer that skips one walks on.
     const unheld = writer.lodges.at(-1)!;
     const held = [DECOY, ...writer.lodges.slice(0, -1)];
@@ -203,12 +210,6 @@ describe("caller-held lock writers refuse an unlocked caller (#4929)", () => {
     expect(refused).toBeInstanceOf(LodgeCapacityLockNotHeldError);
     expect((refused as LodgeCapacityLockNotHeldError).lodgeId).toBe(unheld);
     expect([...new Set(fake.lodgeProbes)]).toEqual(writer.lodges);
-    expect(fake.touched).toEqual([]);
-  });
-
-  it("reconcile...WithGlobalLockHeld refuses without the global key before it takes the lodge key", async () => {
-    const fake = fakeDb({ globalHeld: false, heldLodges: [], lookups: { "booking.findUnique": byId("booking-1", { lodgeId: "lodge-booking" }) } });
-    await expect(reconcileBedAllocationsForBookingWithGlobalLockHeld({ db: fake.db, bookingId: "booking-1" } as never)).rejects.toBeInstanceOf(GlobalLockNotHeldError);
     expect(fake.touched).toEqual([]);
   });
 });

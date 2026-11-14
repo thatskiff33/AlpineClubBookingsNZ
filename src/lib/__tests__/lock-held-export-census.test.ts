@@ -42,7 +42,7 @@ function awaitsIn(node: ts.Node): ts.AwaitExpression[] {
   return found;
 }
 
-function violations(file: string, source: string): string[] {
+function violations(file: string, source: string, checked: string[] = []): string[] {
   const masked = blankLiterals(source);
   const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
   const failures: string[] = [];
@@ -83,6 +83,7 @@ function violations(file: string, source: string): string[] {
 
   const check = (name: string, fn: FunctionLike | undefined) => {
     if (!/Locks?Held$/.test(name) || INSPECTORS.get(file) === name) return;
+    checked.push(name);
     const fail = () => failures.push(`${file}: ${name} must begin with its required lock checks (INV-LOCK-003)`);
     const body = fn?.body;
     if (!fn || !body || !ts.isBlock(body)) return fail();
@@ -155,8 +156,15 @@ const GLOBAL = "await assertGlobalLockHeld(input.db, 'x');";
 describe("caller-held lock export census", () => {
   // Parses every source file; under shard load that outlasts vitest's 5s default.
   it("checks every non-test export, including newly added modules", { timeout: 90_000 }, () => {
-    const failures = sources("src").flatMap((file) => violations(file.split(path.sep).join("/"), fs.readFileSync(file, "utf8")));
+    const checked: string[] = [];
+    const failures = sources("src").flatMap((file) => violations(file.split(path.sep).join("/"), fs.readFileSync(file, "utf8"), checked));
     expect(failures).toEqual([]);
+    // The census pins each check's shape; the refusal test pins the lodge it
+    // checks, so every checked export must have a row there too.
+    const refusal = fs.readFileSync("src/lib/__tests__/lock-held-writer-refusal.test.ts", "utf8");
+    const rows = new Set([...refusal.matchAll(/^\s*name: "(\w+)/gm)].map((match) => match[1]));
+    expect(checked.length).toBeGreaterThan(0);
+    expect(checked.filter((name) => !rows.has(name)), "add each to lock-held-writer-refusal.test.ts").toEqual([]);
   });
   it.each([
     "export async function writerWithLocksHeld() { await read(); }",
