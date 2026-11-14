@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { getAuditRequestContext } from "@/lib/audit";
+import { authenticatorEnrolmentBlock } from "@/lib/second-factor-enrolment";
 import {
   enrollTwoFactor,
   recordTwoFactorFailure,
   verifyTotpCode,
 } from "@/lib/two-factor";
 import {
+  enrolmentSessionIssuedAt,
+  factorResetEnrolmentResponse,
   markTwoFactorSessionVerified,
   passwordChangeRequiredResponse,
   requireTwoFactorApiSession,
@@ -35,18 +38,16 @@ export async function POST(request: NextRequest) {
   const locked = twoFactorLockoutResponse(guard.member);
   if (locked) return locked;
 
-  if (!guard.session.user.twoFactorRequired) {
-    return NextResponse.json(
-      { error: "Two-factor authentication is not required" },
-      { status: 400 },
-    );
-  }
-
-  if (guard.member.twoFactorEnabled) {
-    return NextResponse.json(
-      { error: "Two-factor authentication is already enrolled" },
-      { status: 409 },
-    );
+  const blocked = authenticatorEnrolmentBlock({
+    twoFactorRequired: guard.session.user.twoFactorRequired,
+    twoFactorVerified: guard.session.user.twoFactorVerified,
+    officerTwoFactorRequired: guard.session.user.officerTwoFactorRequired,
+    twoFactorSatisfiesOfficer: guard.session.user.twoFactorSatisfiesOfficer,
+    twoFactorEnabled: guard.member.twoFactorEnabled,
+    twoFactorMethod: guard.member.twoFactorMethod,
+  });
+  if (blocked) {
+    return NextResponse.json({ error: blocked.error }, { status: blocked.status });
   }
 
   let body: unknown;
@@ -69,14 +70,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid code" }, { status: 400 });
   }
 
-  const recoveryCodes = await enrollTwoFactor({
-    memberId: guard.member.id,
-    method: "TOTP",
-    totpSecret: parsed.data.secret,
-    // The member is enrolling their own second factor (#3454).
-    actor: { kind: "member", memberId: guard.member.id },
-    request: getAuditRequestContext(request),
-  });
+  let recoveryCodes: string[];
+  try {
+    recoveryCodes = await enrollTwoFactor({
+      memberId: guard.member.id,
+      method: "TOTP",
+      totpSecret: parsed.data.secret,
+      // The member is enrolling their own second factor (#3454).
+      actor: { kind: "member", memberId: guard.member.id },
+      request: getAuditRequestContext(request),
+      sessionIssuedAt: enrolmentSessionIssuedAt(guard.session),
+    });
+  } catch (error) {
+    const reset = factorResetEnrolmentResponse(error);
+    if (reset) return reset;
+    throw error;
+  }
   await markTwoFactorSessionVerified("TOTP");
 
   return NextResponse.json({ ok: true, recoveryCodes });

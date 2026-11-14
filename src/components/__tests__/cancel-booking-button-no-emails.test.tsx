@@ -100,7 +100,7 @@ describe("CancelBookingButton — No emails honesty rule (#2259)", () => {
       name: "Cancel booking",
     });
     expect(
-      within(dialog).queryByRole("button", { name: "Cancel and email member" }),
+      within(dialog).queryByRole("button", { name: "Cancel booking and email member" }),
     ).toBeNull();
     expect(
       within(dialog).getByText(/Emails are off for this booking/i),
@@ -161,7 +161,7 @@ describe("CancelBookingButton — No emails honesty rule (#2259)", () => {
     await openPreview();
 
     expect(
-      await screen.findByRole("button", { name: "Cancel and email member" }),
+      await screen.findByRole("button", { name: "Cancel booking and email member" }),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Emails are off for this booking/i)).toBeNull();
   });
