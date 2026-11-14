@@ -4186,6 +4186,10 @@ worker finds the operation must wait (busy) -> RUNNING -> PENDING: returns
   createdAt -> FAILED for a person (an operator's retry raises it unwaited)
   it waits only when its edit expected an own note; a note the repair pass
   queues reads that from the edit's history row (#4049)
+  group invoice raised and bound but its email owed (#4919): code
+  GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED, the owed marker kept in
+  responsePayload, rechecked every minute; the re-drive only asks Xero to
+  email it, under lock(1), and an operator's retry of a FAILED row does too
 supplementary invoice WAITING_PAYMENT on a card ask's intent (INV-PAY-104;
   an officer's or the repair tool's own actions on it are not drawn here)
   -> that intent captured and the money kept -> the others naming it billed
