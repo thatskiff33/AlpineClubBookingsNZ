@@ -2582,7 +2582,11 @@ or the eleven status strings without pulling the corpus in (#2689). A
 page can inject extra sections/questions and a chip-ordering hint through
 `HelpWidgetProvider` + `useHelpWidgetExtras`/`useHelpWidgetHint`; the booking
 detail page uses this (`booking-help-extras.tsx`) to re-surface the booking status
-glossary and cancellation refund schedule (#1371). This widget replaced the
+glossary and cancellation refund schedule (#1371). The widget is not the only
+place the schedule appears: the page also renders it beside the Cancel action,
+and the booking wizard's Review step shows it before the member commits
+(`CancellationScheduleBlock`, #4946), all from `describeCancellationSchedule`
+over the booking's or selected lodge's policy. This widget replaced the
 retired per-shell `ContextualHelpButton` and the booking `BookingHelpDialog`
 (epic #2094 C2).
 
