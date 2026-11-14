@@ -1,5 +1,4 @@
 "use client";
-
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import {
@@ -9,6 +8,7 @@ import {
   type LodgeChangeSource,
 } from "@/components/lodge-select";
 import Link from "next/link";
+import { adminHref } from "@/lib/admin-hubs";
 import { useSearchParams } from "next/navigation";
 import {
   DndContext,
@@ -1540,8 +1540,8 @@ export default function AdminBedAllocationPage() {
       {lodgeScope.kind === "empty" ? (
         <Alert variant="warning" title="No active lodge">
           {NO_ACTIVE_LODGE_ALLOCATION_LOCK_REASON} Add or reactivate a lodge in{" "}
-          <Link className="underline" href="/admin/lodge">
-            Lodge settings
+          <Link className="underline" href={adminHref("lodges")}>
+            Lodges
           </Link>{" "}
           before allocating beds.
         </Alert>

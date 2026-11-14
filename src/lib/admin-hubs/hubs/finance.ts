@@ -51,9 +51,6 @@ export const FINANCE_HUB = defineHub({
       area: "finance",
       flags: ["xeroIntegration"],
       keywords: ["accounting", "invoices", "reconcile"],
-      // The mappings card, linked from Finance Setup and setup readiness. Its
-      // element id is `xeroSectionId("mappings")`, pinned equal in the registry test.
-      anchors: ["xero-section-mappings"],
       moved: true,
     },
     {

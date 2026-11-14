@@ -697,6 +697,7 @@ describe("bed-allocation board — a club with no active lodge (#2701)", () => {
 
     render(<AdminBedAllocationPage />);
     await screen.findByText("No active lodge");
+    expect(screen.getByRole("link", { name: "Lodges" })).toHaveAttribute("href", "/admin/lodges");
     await settle();
 
     // It is a terminal state, not a stuck one: no endless spinner, and no
