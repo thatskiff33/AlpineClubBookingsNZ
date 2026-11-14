@@ -275,8 +275,8 @@ data-migration suites with the same no-skip check (its header has the rule).
 `typecheck` runs `scripts/ci/sekreton-typecheck.sh` (production project only,
 skipped under 6 GiB); PR CI keeps the rest.
 `fast-censuses` runs `pnpm run ci:fast-censuses` against a fetched `origin/main`.
-The `realdb-all` job on GitHub remains advisory, so cite its actual result
-separately before making the PR ready.
+On GitHub, the broader `realdb-all` job runs every realdb file and its no-skip
+check; the required `verify` check fails unless it passed (#4907).
 
 ## Checking `main` after a merge
 

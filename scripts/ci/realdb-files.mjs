@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The real-PostgreSQL test files the advisory `realdb-all` CI job runs (#4458).
+// The real-PostgreSQL test files the `realdb-all` CI job runs (#4458).
 //
 // ONE SOURCE (INV-SSOT): this module is both the job's file list and what
 // `src/lib/__tests__/realdb-ci-coverage-census.test.ts` measures the job

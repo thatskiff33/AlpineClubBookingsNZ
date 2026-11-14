@@ -451,7 +451,7 @@ describe("this repository", () => {
     // #3431 moved CI's full suite to Vitest's four-file shards. The canary is
     // now the one unsharded run; require-test-shards.test.mjs pins the matrix
     // checkout depth and partition, so neither path can quietly lose coverage.
-    // The advisory realdb-all job (#4458) is the second: it passes its file list
+    // The realdb-all job (#4458) is the second: it passes its file list
     // as a shell array the gate cannot read, so the gate counts it as a whole
     // suite and holds it to fetch-depth: 0, which it has. The money-coverage
     // workflow's shards (#4459) are the third: they run the suite under

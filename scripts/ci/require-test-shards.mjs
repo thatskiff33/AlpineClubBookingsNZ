@@ -5,10 +5,11 @@ import { isMainModule } from "../lib/is-main-module.mjs";
 
 // #3431: this is the sole required-check bridge for independent jobs.
 // `verify` runs it with the unit-test shard defaults and, since #4425, names
-// its typecheck, lint and build jobs with `--job`, so one poll gates all
-// of them; `e2e.yml`'s required jobs run it with `--label`/`--count` for their
-// matrix (#4397). The workflow contract tests (require-test-shards.test.mjs)
-// check that these names match the jobs in both workflows.
+// its typecheck, lint and build jobs with `--job` (and, since #4907, the
+// real-PostgreSQL job), so one poll gates all of them; `e2e.yml`'s required
+// jobs run it with `--label`/`--count` for their matrix (#4397). The workflow
+// contract tests (require-test-shards.test.mjs) check that these names match
+// the jobs in both workflows.
 export const EXPECTED_SHARD_COUNT = 4;
 export const DEFAULT_SHARD_LABEL = "Test shard";
 const POLL_INTERVAL_MS = 15_000;
@@ -16,8 +17,12 @@ const MAX_WAIT_MS = 45 * 60_000;
 
 const PENDING_STATUSES = ["queued", "in_progress", "waiting", "pending", "requested"];
 
-/** A GitHub job name as `--upstream` and `--job` accept it. */
-export const UPSTREAM_JOB_NAME = /^[A-Za-z][\w -]*$/;
+/**
+ * A GitHub job name as `--upstream` and `--job` accept it. Parentheses are
+ * allowed for `Real-PostgreSQL suites (all)` (#4907); a name is only ever
+ * compared as an exact string, never built into a pattern or a command.
+ */
+export const UPSTREAM_JOB_NAME = /^[A-Za-z][\w ()-]*$/;
 
 /** `--max-wait-minutes`, shared by both waiting gates. */
 export function parseMaxWaitMinutes(value) {
