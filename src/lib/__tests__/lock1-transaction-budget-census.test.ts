@@ -234,6 +234,31 @@ describe("tracing a lock wait to its transaction budget", () => {
     ]);
   });
 
+  it("follows a caller that hands its own transaction to withOptionalTransaction", () => {
+    const result = scanLock1Transactions([
+      {
+        rel: "src/lib/batch.ts",
+        text: `export async function modify({ tx }) {
+            return withOptionalTransaction(tx, async inner => { ${lock.replace("tx.", "inner.")} }, LOCK1_HOLDER_TRANSACTION_BUDGET);
+          }`,
+      },
+      {
+        rel: "src/lib/route.ts",
+        text: `import { modify } from "@/lib/batch";
+          export async function direct() { return modify({}); }
+          export async function wrapped() { return prisma.$transaction(tx => modify({ tx })); }`,
+      },
+    ]);
+
+    // \`direct\` lets the wrapper open its own budgeted transaction, so reaching
+    // no opener past it is not a gap; \`wrapped\` waits on its defaults.
+    expect(result.unreached).toEqual([]);
+    expect(result.openers.map(({ rel, opener, options }) => ({ rel, opener, options }))).toEqual([
+      { rel: "src/lib/batch.ts", opener: "withOptionalTransaction", options: CONSTANT },
+      { rel: "src/lib/route.ts", opener: "$transaction", options: null },
+    ]);
+  });
+
   it("reports a joined writer with no caller instead of silently approving it", () => {
     const result = scanLock1Transactions([
       { rel: "src/lib/writer.ts", text: `export async function write(tx) { ${lock} }` },

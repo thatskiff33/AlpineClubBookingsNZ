@@ -15,7 +15,9 @@ starts from the INV-LOCK-003 site list (`advisory-lock-scan.ts`) and follows eac
 wait out to the call that opens the transaction: `$transaction`,
 `withOptionalTransaction` or `withStoreTransaction`. It follows named helpers and
 named callbacks into every module that calls them, so a writer that waits for the
-key inside a caller's transaction is charged to that caller's opener.
+key inside a caller's transaction is charged to that caller's opener. It also
+keeps walking past `withOptionalTransaction`, which opens a transaction only when
+its caller supplies none, so a caller that hands in its own `tx` is checked too.
 
 `lock1-transaction-budget-census.test.ts` now fails when any opener on the list
 passes anything other than:

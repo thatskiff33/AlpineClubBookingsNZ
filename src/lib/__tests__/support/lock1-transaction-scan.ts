@@ -20,7 +20,12 @@ import { collectAdvisoryLockSites } from "./advisory-lock-scan";
 //   inside whatever transaction its caller holds, so the reader follows every
 //   reference to it - a call, or the function handed to `$transaction` by name -
 //   in its own module and in every module that imports it, and walks out from
-//   each of those in turn.
+//   each of those in turn;
+// - `withOptionalTransaction` opens a transaction only when its caller supplies
+//   none, so it is recorded AND the reader keeps walking out: a caller that
+//   hands in its own `tx` is the transaction that really waits. Past that
+//   point a path that reaches no opener is fine (the wrapper opened one), so
+//   it is not reported as unreached.
 //
 // The census decides which options it accepts; this module only reads.
 
@@ -185,9 +190,17 @@ export function scanLock1Transactions(
   const openers: TransactionOpener[] = [];
   const joined = new Map<string, readonly string[]>();
   const unreached: string[] = [];
-  const queue: Array<{ rel: string; name: string; via: readonly string[] }> = [];
+  // A function first reached only past a `withOptionalTransaction` is followed
+  // again if a required path reaches it later.
+  const optionalOnly = new Set<string>();
+  const queue: Array<{ rel: string; name: string; via: readonly string[]; optional: boolean }> = [];
 
-  const walkOut = (file: ParsedFile, start: ts.Node, via: readonly string[]): void => {
+  const walkOut = (
+    file: ParsedFile,
+    start: ts.Node,
+    via: readonly string[],
+    optional = false,
+  ): void => {
     for (let node: ts.Node = start; !ts.isSourceFile(node); node = node.parent) {
       const parent = node.parent;
       if (ts.isCallExpression(parent) && parent.arguments.includes(node as ts.Expression)) {
@@ -203,22 +216,25 @@ export function scanLock1Transactions(
             options: options ? file.text.slice(options.getFullStart(), options.getEnd()).trim() : null,
             via,
           });
-          return;
+          if (opener !== "withOptionalTransaction") return;
+          optional = true;
         }
       }
       if (isFunctionNode(node)) {
         const name = nameOfFunction(node);
         if (name !== null) {
           const key = `${file.rel}::${name}`;
-          if (!joined.has(key)) {
-            joined.set(key, via);
-            queue.push({ rel: file.rel, name, via: [...via, key] });
+          if (!joined.has(key) || (optionalOnly.has(key) && !optional)) {
+            if (!joined.has(key)) joined.set(key, via);
+            if (optional) optionalOnly.add(key);
+            else optionalOnly.delete(key);
+            queue.push({ rel: file.rel, name, via: [...via, key], optional });
           }
           return;
         }
       }
     }
-    unreached.push(`${file.rel}::(module scope) via ${via.join(" <- ")}`);
+    if (!optional) unreached.push(`${file.rel}::(module scope) via ${via.join(" <- ")}`);
   };
 
   for (const site of collectAdvisoryLockSites(sources)) {
@@ -228,7 +244,7 @@ export function scanLock1Transactions(
   }
 
   while (queue.length > 0) {
-    const { rel, name, via } = queue.shift()!;
+    const { rel, name, via, optional } = queue.shift()!;
     let referenced = false;
     for (const candidate of sources) {
       // A cheap textual filter before parsing: a module that never spells the
@@ -239,11 +255,11 @@ export function scanLock1Transactions(
       for (const local of locals) {
         for (const reference of referencesTo(file, local)) {
           referenced = true;
-          walkOut(file, reference, via);
+          walkOut(file, reference, via, optional);
         }
       }
     }
-    if (!referenced) unreached.push(`${rel}::${name}`);
+    if (!referenced && !optional) unreached.push(`${rel}::${name}`);
   }
 
   return { openers, joinedFunctions: [...joined.keys()], unreached };
