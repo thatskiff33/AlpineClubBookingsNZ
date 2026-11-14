@@ -2,6 +2,7 @@ import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { chromiumSpecFiles } from "./e2e-spec-shard.mjs";
+import { PLAYWRIGHT_RESULTS_FILE } from "./summarise-playwright-flaky.mjs";
 
 afterEach(() => { vi.unstubAllEnvs(); vi.resetModules(); });
 
@@ -32,7 +33,7 @@ it("adds machine-readable results only in CI and retains the existing reporters"
   const { default: ci } = await import("../../playwright.config");
   expect(ci.reporter).toEqual([
     ["list"], ["html", { open: "never" }], ["github"],
-    ["json", { outputFile: ".artifacts/playwright-results.json" }],
+    ["json", { outputFile: PLAYWRIGHT_RESULTS_FILE }],
   ]);
   vi.resetModules();
   vi.stubEnv("CI", "");

@@ -478,7 +478,7 @@ A run used to take ~29 minutes: each of the two E2E jobs built the app image
 | `E2E shard (2/3)`, `(3/3)` | the other two thirds of the `chromium` spec files, each on its own stack |
 | `E2E multi-lodge` | **required check.** Runs the `multi-lodge` project itself, on the restored database plus the second-lodge seed |
 
-Every browser job runs one composite action, `.github/actions/e2e-run`: load the image, restore the dump (`E2E_DB_SNAPSHOT`, which also sets the snapshot's club day), prepare, run, report, tear down. The two required jobs may not use `needs:`: GitHub counts a skipped required check as passing. So they start at once and wait in a step for this run's two artifacts (`scripts/ci/wait-for-run-artifacts.mjs`), failing at once if the image or database job fails. They do not idle: an earlier layout had them only poll, which held two runners for the whole run and, under the account's concurrent-job cap, left shards queued for 25 minutes.
+Every browser job runs one composite action, `.github/actions/e2e-run`: load the image, restore the dump (`E2E_DB_SNAPSHOT`, which also sets the snapshot's club day), prepare, run, summarise flaky tests ([Flaky tests in CI](#flaky-tests-in-ci)), report, tear down. The two required jobs may not use `needs:`: GitHub counts a skipped required check as passing. So they start at once and wait in a step for this run's two artifacts (`scripts/ci/wait-for-run-artifacts.mjs`), failing at once if the image or database job fails. They do not idle: an earlier layout had them only poll, which held two runners for the whole run and, under the account's concurrent-job cap, left shards queued for 25 minutes.
 
 Each shard has its own stack and database, so `workers: 1` still means nothing
 interleaves on a database. Every shard runs `setup`. `pre-setup` runs only in
@@ -594,8 +594,11 @@ the required `Playwright E2E` test verdict stay unchanged. Once Playwright has
 run, missing, unreadable or malformed JSON fails the reporting step; absence of
 evidence is not a clean run. A job that failed before Playwright started skips
 the step. The CI-only JSON reporter writes `.artifacts/playwright-results.json`,
-separate from the HTML report and test attachments. Rollover `--list` probes
-use only the list reporter and are not summarised.
+separate from the HTML report and test attachments. That path is one constant,
+`PLAYWRIGHT_RESULTS_FILE` in `scripts/ci/summarise-playwright-flaky.mjs`: the
+config writes to it and the summariser reads it by default, so neither workflow
+step names the path. Rollover `--list` probes use only the list reporter and are
+not summarised.
 
 When a test appears, inspect the HTML report and retained retry evidence, then
 file an issue with its spec, project and run link. Check the Flake invariants

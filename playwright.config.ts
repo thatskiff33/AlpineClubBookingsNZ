@@ -10,6 +10,7 @@ import {
   parseE2eShard,
   shardTestMatch,
 } from "./scripts/ci/e2e-spec-shard.mjs";
+import { PLAYWRIGHT_RESULTS_FILE } from "./scripts/ci/summarise-playwright-flaky.mjs";
 
 // Browser E2E suite for the Critical journeys in docs/END_TO_END_TEST_MATRIX.md.
 // It drives the staging Docker Compose stack (docker-compose.staging.yml) seeded
@@ -84,7 +85,13 @@ export default defineConfig({
   // API request. Kept at 0 locally so a real failure surfaces immediately.
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI
-    ? [["list"], ["html", { open: "never" }], ["github"], ["json", { outputFile: ".artifacts/playwright-results.json" }]]
+    ? [
+        ["list"],
+        ["html", { open: "never" }],
+        ["github"],
+        // Read by scripts/ci/summarise-playwright-flaky.mjs (#4991).
+        ["json", { outputFile: PLAYWRIGHT_RESULTS_FILE }],
+      ]
     : [["list"], ["html", { open: "never" }]],
   timeout: 90_000,
   expect: { timeout: 15_000 },

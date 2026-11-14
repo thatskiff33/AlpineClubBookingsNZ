@@ -3,6 +3,14 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { isMainModule } from "../lib/is-main-module.mjs";
+import { workflowCommand } from "./dependency-mitigation.mjs";
+
+/**
+ * Where the CI-only JSON reporter writes and this script reads (#4991). It is
+ * defined once: playwright.config.ts imports it, and the workflow steps pass no
+ * path, so the writer and its readers cannot name different files.
+ */
+export const PLAYWRIGHT_RESULTS_FILE = ".artifacts/playwright-results.json";
 
 /** Extract flaky outcomes from Playwright's JSON reporter (not attempt statuses). */
 export function collectFlakyTests(report, workspace = process.cwd()) {
@@ -64,23 +72,16 @@ export function renderFlakySummary(tests) {
   ].join("\n");
 }
 
-// GitHub workflow-command data and properties have different escaping rules.
-function commandData(value) {
-  return value.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
-}
-
 if (isMainModule(import.meta.url)) {
   try {
-    const file = process.argv[2];
-    if (!file) throw new Error("Usage: node scripts/ci/summarise-playwright-flaky.mjs <report.json>");
+    const file = process.argv[2] ?? PLAYWRIGHT_RESULTS_FILE;
     const tests = collectFlakyTests(JSON.parse(readFileSync(file, "utf8")));
     const summary = renderFlakySummary(tests);
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
     else process.stdout.write(summary);
     for (const test of tests) {
-      const file = commandData(test.file).replaceAll(":", "%3A").replaceAll(",", "%2C");
-      const message = commandData(`[${test.project}] ${test.title}: ${test.failedAttempts} failed attempt(s) out of ${test.attempts}.`);
-      console.log(`::warning file=${file}::${message}`);
+      const message = `[${test.project}] ${test.title}: ${test.failedAttempts} failed attempt(s) out of ${test.attempts}.`;
+      console.log(workflowCommand("warning", "Flaky Playwright test", message, { file: test.file }));
     }
   } catch (error) {
     console.error(`Cannot summarise Playwright results: ${error.message}`);
