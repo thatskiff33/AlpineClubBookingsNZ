@@ -587,9 +587,11 @@ their purpose. Every other file is a root of exactly one project:
   and `.cts` test/spec file and `__tests__/` directory under `src/` and
   `scripts/`, plus `vitest.config.mts` and the two setup files. It supplies
   `vitest/globals` and Node's types.
-- **`tsconfig.e2e.json`** — the Playwright suite: `e2e/**/*.ts` and
-  `playwright.config.ts`, with Node's types and nothing from Vitest. Specs
-  reach application code through imports (`@/lib/...`), never by listing it.
+- **`tsconfig.e2e.json`** — the Playwright suite: `e2e/**/*.ts`,
+  `playwright.config.ts` and the contract specs and their React fixtures under
+  `scripts/e2e-contracts/` (`.ts` and `.tsx`), with Node's types and nothing
+  from Vitest. Specs reach application code through imports (`@/lib/...`),
+  never by listing it.
 
 Vitest also collects JavaScript test files. The `scripts/**/*.test.mjs`
 suites — each the test of a tool that runs under a bare `node`, so both stay
