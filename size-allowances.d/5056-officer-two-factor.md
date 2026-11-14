@@ -28,7 +28,7 @@ reason: the new officer-factor-reset message has to be registered in the
   one table by design and splitting it for one entry is worse.
 
 file: src/app/(authenticated)/profile/page.tsx
-lines: 712
+lines: 711
 reason: the profile page passes the officer requirement and the grace deadline
   label into the two-factor card it already renders. Building those props is
   delegated to officerTwoFactorCardProps in officer-two-factor-grace.ts; what
@@ -36,7 +36,7 @@ reason: the profile page passes the officer requirement and the grace deadline
   server component can supply.
 
 function: src/app/(authenticated)/profile/page.tsx#ProfilePage
-lines: 583
+lines: 581
 reason: two lines: the officerTwoFactorCardProps call and its spread into the
   security card the page already renders. The props are built outside the
   function; the card's other inputs are read in this body, so the call has to
