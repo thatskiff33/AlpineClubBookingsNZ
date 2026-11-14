@@ -662,7 +662,7 @@ describe("the booking wizard keeps the member's work in this tab (#4950)", () =>
   // A reply the browser cannot verify leaves the member in the wizard to try
   // again (#5035, #5036), so what they typed must still be there to try with.
   describe.each([
-    ["an unreadable body", () => ({ ok: true, status: 200, json: async () => { throw new Error("not json"); } }) as Response],
+    ["an unreadable body", () => ({ ok: true, status: 200, json: async () => { throw new Error("not json"); } }) as unknown as Response],
     ["a 200 with no booking id", () => jsonResponse({ status: "PENDING" })],
   ])("when the server answers with %s", (_name, reply) => {
     it.each([
