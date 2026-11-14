@@ -1,0 +1,5 @@
+# CADDY_LEGACY_ROUTES=off (the default): no `bookings.` or `dashboard.` site,
+# so Caddy requests no certificate for either and they need no DNS record.
+# This snippet adds nothing; it exists so the Caddyfile's
+# `import /etc/caddy/deploy/legacy-hosts-{$CADDY_LEGACY_ROUTES:off}.caddy`
+# resolves to a file in every mode. The alternative is `legacy-hosts-on.caddy`.

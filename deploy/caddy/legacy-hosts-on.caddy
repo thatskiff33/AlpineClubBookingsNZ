@@ -1,0 +1,30 @@
+# CADDY_LEGACY_ROUTES=on: the two old hostnames of an installation that still
+# runs a legacy finance dashboard. Imported at the top level of the Caddyfile
+# (each is a site of its own). Each needs a DNS record pointing at this host,
+# or Caddy cannot obtain its certificate and logs the failure on every retry.
+#
+#   bookings.<DOMAIN>   an old address of the booking site; its root goes to
+#                       /dashboard and every other path to the same path on
+#                       <DOMAIN>.
+#   dashboard.<DOMAIN>  the old dashboard address; redirects to
+#                       <DOMAIN>/finance-legacy, served by
+#                       `legacy-routes-on.caddy`.
+bookings.{$DOMAIN} {
+	@root path /
+	redir @root https://{$DOMAIN}/dashboard permanent
+	redir * https://{$DOMAIN}{uri} permanent
+}
+
+dashboard.{$DOMAIN} {
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		# Disabled: the legacy XSS auditor is removed from modern browsers and
+		# enabling it could introduce information leaks in older ones. CSP is the control.
+		X-XSS-Protection "0"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+	}
+	redir * https://{$DOMAIN}/finance-legacy{uri} permanent
+}

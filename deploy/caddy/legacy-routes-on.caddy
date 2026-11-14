@@ -1,0 +1,20 @@
+# CADDY_LEGACY_ROUTES=on: the `/finance-legacy*` route to a club's own legacy
+# finance dashboard, kept for an installation that still runs one. Imported
+# INSIDE the Caddyfile's `{$DOMAIN}` site, between the `/images/*` handler and
+# the active upstream, so the site's `header` directives — the eager
+# `X-Frame-Options "DENY"` and the deferred `@not_display` rewrite — cover it,
+# including the 502 Caddy writes when the dashboard is down. Do not move it to
+# a site of its own: that loses DENY on those error responses.
+#
+# The app checks each request first (an active finance viewer past two-factor
+# gets 204; everyone else is redirected), then Caddy forwards it to
+# CADDY_FINANCE_LEGACY_UPSTREAM, the dashboard's host:port as Caddy reaches it.
+# That setting has no usable default: unset, docker-compose.yml hands Caddy a
+# placeholder it rejects, and the deploy refuses `on` without a real value at
+# step 3. Its companion, `legacy-hosts-on.caddy`, adds the old hostnames.
+handle /finance-legacy* {
+	forward_auth app:3000 {
+		uri /api/finance/legacy-dashboard/auth
+	}
+	reverse_proxy {$CADDY_FINANCE_LEGACY_UPSTREAM}
+}

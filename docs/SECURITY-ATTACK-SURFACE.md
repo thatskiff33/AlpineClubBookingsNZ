@@ -1606,8 +1606,10 @@ to **any** scoped policy this app adds in future, not just these (#2279):
   case-sensitive and so mirrors the app's exact comparison; Caddy's `path`
   matcher is case-*in*sensitive and would have relaxed `/DISPLAY`). Every other
   path keeps a **guaranteed** `DENY` set at the edge, including
-  `/finance-legacy*` (a reverse-proxied third-party upstream) and `/images/*`,
-  neither of which the app's own middleware covers. Caddy's set-if-absent
+  `/images/*` and, on an installation that opts in with
+  `CADDY_LEGACY_ROUTES=on` (off by default, #4981), `/finance-legacy*` (a
+  reverse-proxied third-party upstream), neither of which the app's own
+  middleware covers. Caddy's set-if-absent
   `?X-Frame-Options` form was considered and rejected in review: it would
   downgrade a guaranteed edge control into an advisory one on every route, so
   any upstream emitting a permissive value would win.
@@ -1618,7 +1620,7 @@ to **any** scoped policy this app adds in future, not just these (#2279):
     `ALLOWALL` on one response). But that deferred rewrite lives in a
     `ResponseWriter` wrapper which is unwound when a handler returns an **error**,
     so Caddy's error chain writes the response without it: a 502 when an upstream
-    is down (including `/finance-legacy*`), the 413 from the `request_body` cap,
+    is down (including an opted-in `/finance-legacy*`), the 413 from the `request_body` cap,
     any 5xx. Those responses never reach Next either, so they carry no CSP and no
     `frame-ancestors` fallback. An **eager** unscoped `X-Frame-Options "DENY"`
     therefore stays in the shared `header { }` block as the floor; the deferred

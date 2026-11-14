@@ -1,0 +1,5 @@
+# CADDY_WWW_REDIRECT=off: no `www.<DOMAIN>` site, so Caddy requests no
+# certificate for it and it needs no DNS record. This snippet adds nothing; it
+# exists so the Caddyfile's
+# `import /etc/caddy/deploy/www-redirect-{$CADDY_WWW_REDIRECT:on}.caddy`
+# resolves to a file in every mode. The alternative is `www-redirect-on.caddy`.
