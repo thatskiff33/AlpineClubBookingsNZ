@@ -4,6 +4,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
+import { ADDRESS_THROTTLED_CODE, ADDRESS_THROTTLED_MESSAGE } from "@/lib/login-throttle-policy";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -76,20 +77,23 @@ async function resolveTwoFactorPath(): Promise<string | null> {
   return twoFactorStatus.enrolled ? "/login/verify" : "/login/enroll";
 }
 
-type Status = "verifying" | "error" | "password-change";
+type Status = "verifying" | "error" | "password-change" | "throttled";
 
 function MagicSignIn() {
   const searchParams = useSearchParams();
   const [status, setStatus] = useState<Status>("verifying");
-  // Strict-mode / re-render guard: the sign-in must fire exactly once, since the
-  // token is single-use — a second attempt would always fail as "already used".
-  const startedRef = useRef(false);
+  // Strict-mode / re-render guard: fire once per deliberate attempt.
+  // Only a refused address-budget attempt can be retried with this token.
+  const startedRef = useRef(-1);
+  const [attempt, setAttempt] = useState(0);
+  // Retain only in memory after scrubbing the URL, including on a refused attempt.
+  const tokenRef = useRef(searchParams.get("token") ?? "");
 
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
+    if (startedRef.current === attempt) return;
+    startedRef.current = attempt;
 
-    const token = searchParams.get("token") ?? "";
+    const token = tokenRef.current;
 
     // Remove the token from the visible URL / history so the single-use secret
     // does not linger in the address bar or the back/forward stack.
@@ -110,7 +114,9 @@ function MagicSignIn() {
         });
 
         if (!result || result.error) {
-          if (
+          if (result?.code === ADDRESS_THROTTLED_CODE) {
+            setStatus("throttled");
+          } else if (
             result?.code === "PASSWORD_CHANGE_REQUIRED" ||
             result?.error === "PASSWORD_CHANGE_REQUIRED"
           ) {
@@ -139,7 +145,7 @@ function MagicSignIn() {
     }
 
     void run();
-  }, [searchParams]);
+  }, [searchParams, attempt]);
 
   if (status === "verifying") {
     return (
@@ -152,6 +158,34 @@ function MagicSignIn() {
             Please wait while we verify your sign-in link.
           </CardDescription>
         </CardHeader>
+      </Card>
+    );
+  }
+
+  if (status === "throttled") {
+    return (
+      <Card className="w-full max-w-md">
+        <CardHeader className="space-y-1">
+          <CardTitle className="text-center text-2xl font-bold">
+            Sign-in temporarily paused
+          </CardTitle>
+          <CardDescription className="text-center" role="status">
+            {ADDRESS_THROTTLED_MESSAGE}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="text-center text-sm text-muted-foreground">
+            This attempt has not used your link. Wait, then try again.
+          </p>
+        </CardContent>
+        <CardFooter>
+          <Button className="w-full" onClick={() => {
+            setStatus("verifying");
+            setAttempt((value) => value + 1);
+          }}>
+            Try again
+          </Button>
+        </CardFooter>
       </Card>
     );
   }

@@ -155,6 +155,14 @@ accepted their place, your club only tells them, or an officer added them); you
 will then see them when you edit the booking. You only ever see a code and what
 it gives.
 
+**If the club can't take the booking as it stands**, pressing the button moves
+the page up to a message saying why, with a button to fix it where there is one
+(complete a guest's details, open the clashing booking, pay a subscription). If
+a Booking Officer could allow it, the message links down to the request form.
+If the lodge filled up while you were reviewing, you are taken to an offer to
+join the waitlist instead. The same happens when Continue is stopped on the
+guests step, for example because a guest has no name yet.
+
 ### 4. Pay (or wait for review)
 
 - If money is due and you are paying by card, the **Pay** step takes payment

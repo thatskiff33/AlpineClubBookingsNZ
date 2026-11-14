@@ -1,5 +1,12 @@
 "use client";
 
+import type { BookingStatus } from "@prisma/client";
+import { BOOKING_STATUSES_IN_LIFECYCLE_ORDER } from "@/lib/booking-status";
+import {
+  defaultHiddenCalendarStatuses,
+  readHiddenCalendarStatuses,
+  writeHiddenCalendarStatuses,
+} from "@/lib/admin-calendar-status-preference";
 import { adminHref } from "@/lib/admin-hubs";
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
@@ -33,7 +40,7 @@ interface CalendarBooking {
   memberName: string;
   checkIn: string;
   checkOut: string;
-  status: string;
+  status: BookingStatus;
   guestCount: number;
 }
 
@@ -45,7 +52,7 @@ interface CalendarBooking {
 // the categorical `bg-cat6-9` (#2218 — the same teal 6th scale its chip uses,
 // mode-consistent, distinct from WAITLISTED's cat1-9). The file no longer needs a
 // neutral- or teal-allowlist entry.
-export const STATUS_COLORS: Record<string, string> = {
+export const STATUS_COLORS: Record<BookingStatus, string> = {
   DRAFT: "bg-muted",
   PENDING: "bg-warning-9",
   PAYMENT_PENDING: "bg-warning-9",
@@ -56,6 +63,7 @@ export const STATUS_COLORS: Record<string, string> = {
   BUMPED: "bg-warning-9",
   WAITLISTED: "bg-cat1-9",
   WAITLIST_OFFERED: "bg-cat6-9",
+  AWAITING_REVIEW: "bg-cat2-9",
 };
 
 // The status filter pills and the bars carry TEXT, so they cannot sit on the step-9 fills
@@ -65,7 +73,7 @@ export const STATUS_COLORS: Record<string, string> = {
 // SAME scale's chip pair (step-3 tint, step-11 text), which the theme guarantee
 // sweep holds at AA for every scale in both modes (G2b), so each pill and bar
 // still reads as its status's colour family.
-const STATUS_CHIP_TONES: Record<keyof typeof STATUS_COLORS, ChipTone> = {
+export const STATUS_CHIP_TONES: Record<BookingStatus, ChipTone> = {
   DRAFT: "neutral",
   PENDING: "warning",
   PAYMENT_PENDING: "warning",
@@ -76,9 +84,10 @@ const STATUS_CHIP_TONES: Record<keyof typeof STATUS_COLORS, ChipTone> = {
   BUMPED: "warning",
   WAITLISTED: "cat1",
   WAITLIST_OFFERED: "cat6",
+  AWAITING_REVIEW: "cat2",
 };
 
-const ALL_STATUSES = Object.keys(STATUS_COLORS);
+const ALL_STATUSES = BOOKING_STATUSES_IN_LIFECYCLE_ORDER;
 
 
 // CELL_HEIGHT is the MINIMUM week-row height. Rows grow past it when a busy week
@@ -107,8 +116,6 @@ function getMonthDays(year: number, month: number) {
   const startDow = weekday === 0 ? 6 : weekday - 1;
   return { startDow, daysInMonth: daysInCalendarMonth(year, month + 1) };
 }
-
-const ENABLED_STATUSES_STORAGE_KEY = "admin-calendar-enabled-statuses";
 
 export function AdminBookingCalendar() {
   const router = useRouter();
@@ -141,37 +148,26 @@ export function AdminBookingCalendar() {
   const [openDay, setOpenDay] = useState<string | null>(null);
   // Cancelled bookings are hidden by default to reduce noise; the CANCELLED
   // toggle pill below re-enables them (filtering is purely client-side). The
-  // admin's last choice persists across visits (#1039 item 5).
-  const [enabledStatuses, setEnabledStatuses] = useState<Set<string>>(() => {
-    const defaults = ALL_STATUSES.filter((status) => status !== "CANCELLED");
-    if (typeof window === "undefined") return new Set(defaults);
+  // admin's last choice persists across visits (#1039 item 5) as the set of
+  // hidden statuses; every other status is shown.
+  const [hiddenStatuses, setHiddenStatuses] = useState<Set<BookingStatus>>(() => {
+    if (typeof window === "undefined") return defaultHiddenCalendarStatuses();
     try {
-      const stored = window.localStorage.getItem(ENABLED_STATUSES_STORAGE_KEY);
-      if (!stored) return new Set(defaults);
-      const parsed: unknown = JSON.parse(stored);
-      if (!Array.isArray(parsed)) return new Set(defaults);
-      const valid = parsed.filter(
-        (status): status is string =>
-          typeof status === "string" &&
-          (ALL_STATUSES as readonly string[]).includes(status)
-      );
-      return new Set(valid.length > 0 ? valid : defaults);
+      return readHiddenCalendarStatuses(window.localStorage);
     } catch {
-      return new Set(defaults);
+      return defaultHiddenCalendarStatuses();
     }
   });
+  const enabledStatuses = new Set(ALL_STATUSES.filter((status) => !hiddenStatuses.has(status)));
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(
-        ENABLED_STATUSES_STORAGE_KEY,
-        JSON.stringify([...enabledStatuses])
-      );
+      writeHiddenCalendarStatuses(window.localStorage, hiddenStatuses);
     } catch {
       // Storage unavailable (private mode, quota): the toggle still works
       // for the session, it just will not persist.
     }
-  }, [enabledStatuses]);
+  }, [hiddenStatuses]);
 
   const monthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
   const currentPageParams = new URLSearchParams(searchParams.toString());
@@ -232,8 +228,8 @@ export function AdminBookingCalendar() {
     else setMonth(month + 1);
   };
 
-  function toggleStatus(status: string) {
-    setEnabledStatuses((prev) => {
+  function toggleStatus(status: BookingStatus) {
+    setHiddenStatuses((prev) => {
       const next = new Set(prev);
       if (next.has(status)) next.delete(status);
       else next.add(status);
@@ -678,12 +674,12 @@ export function AdminBookingCalendar() {
 
       {/* Legend (click toggles above to filter) */}
       <div className="flex flex-wrap gap-4 px-3 py-2.5 border-t text-xs">
-        {Object.entries(STATUS_COLORS).map(([status, color]) => (
+        {ALL_STATUSES.map((status) => (
           // A hidden status dims its SWATCH and strikes its label through. The
           // whole item used to be at 30% opacity, which took the label to 1.53:1
           // (#4466); the label stays at full muted ink so it can still be read.
           <div key={status} className="flex items-center gap-1.5">
-            <div aria-hidden className={`w-3.5 h-2.5 rounded-sm ${color} ${enabledStatuses.has(status) ? "" : "opacity-30"}`} />
+            <div aria-hidden className={`w-3.5 h-2.5 rounded-sm ${STATUS_COLORS[status]} ${enabledStatuses.has(status) ? "" : "opacity-30"}`} />
             <span className={`text-muted-foreground ${enabledStatuses.has(status) ? "" : "line-through"}`}>
               {bookingStatusLabel(status)}
             </span>

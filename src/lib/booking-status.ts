@@ -390,30 +390,41 @@ export function capacityHoldingBookingFilter(): Prisma.BookingWhereInput {
 }
 
 /**
- * Lifecycle order of a booking, for sorting the admin list's status column by
- * lifecycle rather than alphabetically (Decision-menu D9a / #1215). Unknown or
- * future enum values rank LAST so adding a BookingStatus never throws and never
- * scatters rows unpredictably.
+ * Lifecycle order of a booking (Decision-menu D9a / #1215): the admin list's
+ * status sort, and the order of every admin status picker — the calendar's
+ * pills, the list's status dropdown and the calendar route's accepted values
+ * all derive from BOOKING_STATUSES_IN_LIFECYCLE_ORDER (INV-SSOT-001, #4923).
+ * Typed `Record<BookingStatus, number>` so a new enum value fails typecheck
+ * until it is ranked, rather than silently missing from those lists.
  */
-const BOOKING_STATUS_LIFECYCLE_ORDER: readonly BookingStatus[] = [
-  BookingStatus.DRAFT,
-  BookingStatus.PENDING,
-  BookingStatus.PAYMENT_PENDING,
-  BookingStatus.CONFIRMED,
-  BookingStatus.PAID,
-  BookingStatus.COMPLETED,
-  BookingStatus.WAITLISTED,
-  BookingStatus.WAITLIST_OFFERED,
-  BookingStatus.AWAITING_REVIEW,
-  BookingStatus.CANCELLED,
-  BookingStatus.BUMPED,
-];
+const BOOKING_STATUS_LIFECYCLE_RANK: Record<BookingStatus, number> = {
+  DRAFT: 0,
+  PENDING: 1,
+  PAYMENT_PENDING: 2,
+  CONFIRMED: 3,
+  PAID: 4,
+  COMPLETED: 5,
+  WAITLISTED: 6,
+  WAITLIST_OFFERED: 7,
+  AWAITING_REVIEW: 8,
+  CANCELLED: 9,
+  BUMPED: 10,
+};
 
-const bookingStatusRankByValue = new Map<string, number>(
-  BOOKING_STATUS_LIFECYCLE_ORDER.map((status, index) => [status, index])
-);
+/** Every booking status, in lifecycle order. */
+export const BOOKING_STATUSES_IN_LIFECYCLE_ORDER: readonly BookingStatus[] =
+  (Object.keys(BOOKING_STATUS_LIFECYCLE_RANK) as BookingStatus[]).sort(
+    (a, b) => BOOKING_STATUS_LIFECYCLE_RANK[a] - BOOKING_STATUS_LIFECYCLE_RANK[b]
+  );
 
-/** Lifecycle rank for sorting; unknown/future statuses rank last. */
+/** Narrows untrusted input (a query string, browser storage) to a booking status. */
+export function isBookingStatus(value: unknown): value is BookingStatus {
+  return typeof value === "string" && Object.hasOwn(BOOKING_STATUS_LIFECYCLE_RANK, value);
+}
+
+/** Lifecycle rank for sorting; values that are not a booking status rank last. */
 export function bookingStatusLifecycleRank(status: string): number {
-  return bookingStatusRankByValue.get(status) ?? BOOKING_STATUS_LIFECYCLE_ORDER.length;
+  return isBookingStatus(status)
+    ? BOOKING_STATUS_LIFECYCLE_RANK[status]
+    : BOOKING_STATUSES_IN_LIFECYCLE_ORDER.length;
 }

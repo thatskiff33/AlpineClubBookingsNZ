@@ -21,6 +21,7 @@
  * claim above is about what this code does, not a promise about the remote.
  */
 
+import type { IntegrationCredentialNamespace } from "@/lib/integration-credential-namespaces";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { normalizeBaseUrl } from "@/lib/servernz-base-url";
@@ -51,7 +52,7 @@ import {
   type ServerNzSettingsValues,
 } from "@/lib/servernz-settings";
 
-export const SERVERNZ_PROVIDER = "servernz";
+export const SERVERNZ_PROVIDER = "servernz" satisfies IntegrationCredentialNamespace;
 
 export const SERVERNZ_CREDENTIAL_KEYS = {
   apiKey: "api_key",

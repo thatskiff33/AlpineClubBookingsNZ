@@ -11,6 +11,8 @@ vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
 // no longer reads it). `publicUrl` is the fallback the token uses when no
 // facebook link is configured — as of C6 #1985 that too comes from the resolved
 // getClubIdentity().publicUrl (the bootstrap origin), NOT a static config const.
+const hostingState = vi.hoisted(() => ({ hostingProvider: null as string | null, dataLocation: null as string | null }));
+vi.mock("@/lib/privacy-hosting-settings", () => ({ getPrivacyHostingSettings: async () => ({ ...hostingState }) }));
 const identityState = vi.hoisted(() => ({
   facebookUrl: undefined as string | undefined,
   publicUrl: "https://club.example.org",
@@ -500,6 +502,20 @@ describe("deriveAltFromImageSrc (#1947)", () => {
   });
 });
 
+
+describe("hosting disclosure token", () => {
+  afterEach(() => { hostingState.hostingProvider = null; hostingState.dataLocation = null; });
+  it("escapes the entire disclosure once", async () => {
+    hostingState.hostingProvider = `Host & <script>"'`;
+    hostingState.dataLocation = `Region & <place>`;
+    const html = await resolveTextTokens("<p>{{data-hosting}}</p>", CLUB_FORMAT_TEST);
+    expect(html).toBe("<p>Host &amp; &lt;script&gt;&quot;&#39; hosts this System and its database; your information is held in Region &amp; &lt;place&gt;.</p>");
+  });
+  it("preserves unknown tokens verbatim, explaining the two-release boundary", async () => {
+    const html = "<p>{{future-unknown-hosting}}</p>";
+    expect(await resolveTextTokens(html, CLUB_FORMAT_TEST)).toBe(html);
+  });
+});
 
 describe("email-log-retention token", () => {
   beforeEach(() => {

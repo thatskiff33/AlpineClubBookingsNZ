@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { BookingStatus } from "@prisma/client";
 import { NextRequest } from "next/server";
 import { STATUS_COLORS } from "@/components/admin-booking-calendar";
 
@@ -68,12 +69,8 @@ describe("P1.1: Admin canModify override", () => {
 // local literal constrained nothing: it would have kept passing even if the
 // calendar itself lost or collided its waitlist swatches.
 describe("P1.4: Admin calendar status colors include waitlist statuses", () => {
-  it("has WAITLISTED color", () => {
-    expect(STATUS_COLORS.WAITLISTED).toBeDefined();
-  });
-
-  it("has WAITLIST_OFFERED color", () => {
-    expect(STATUS_COLORS.WAITLIST_OFFERED).toBeDefined();
+  it.each(Object.values(BookingStatus))("has a color for %s", (status) => {
+    expect(STATUS_COLORS[status]).toMatch(/^bg-/);
   });
 
   it("WAITLISTED and WAITLIST_OFFERED have different colors", () => {
@@ -119,7 +116,7 @@ import { GET as getAdminBookings } from "@/app/api/admin/bookings/route";
 
 const mockedAuth = vi.mocked(auth);
 
-describe("P1.5: Admin bookings API VALID_STATUSES", () => {
+describe("P1.5: Admin bookings API accepts every booking status", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
@@ -127,25 +124,11 @@ describe("P1.5: Admin bookings API VALID_STATUSES", () => {
     vi.mocked(prisma.booking.findMany).mockResolvedValue([] as never);
   });
 
-  it("accepts WAITLISTED status filter", async () => {
-    const req = new NextRequest(
-      "http://localhost/api/admin/bookings?calendarMonth=2026-04&status=WAITLISTED"
-    );
-    const res = await getAdminBookings(req);
+  it.each(Object.values(BookingStatus))("accepts %s status filter", async (status) => {
+    const res = await getAdminBookings(new NextRequest(
+      `http://localhost/api/admin/bookings?calendarMonth=2026-07&status=${status}`
+    ));
     expect(res.status).toBe(200);
-
-    const call = vi.mocked(prisma.booking.findMany).mock.calls[0][0] as any;
-    expect(call.where.status).toBe("WAITLISTED");
-  });
-
-  it("accepts WAITLIST_OFFERED status filter", async () => {
-    const req = new NextRequest(
-      "http://localhost/api/admin/bookings?calendarMonth=2026-04&status=WAITLIST_OFFERED"
-    );
-    const res = await getAdminBookings(req);
-    expect(res.status).toBe(200);
-
-    const call = vi.mocked(prisma.booking.findMany).mock.calls[0][0] as any;
-    expect(call.where.status).toBe("WAITLIST_OFFERED");
+    expect(vi.mocked(prisma.booking.findMany).mock.calls[0]?.[0]?.where?.status).toBe(status);
   });
 });

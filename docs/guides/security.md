@@ -21,6 +21,9 @@ check. It is off, so this page has nothing new to configure, and the five
 minutes is not a setting.
 See [Confirm it's you](../SECURITY.md#confirm-its-you-4616).
 
+Suspected exposure or account compromise? Follow the [privacy-incident
+procedure](privacy-incidents.md) for containment, evidence and notification.
+
 ## When you'd use it
 
 - You want to raise password strength requirements for the whole club.
