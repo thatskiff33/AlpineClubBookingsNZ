@@ -4851,10 +4851,10 @@ model ProcessedWebhookEvent {
   // an expired lease (a crashed prior attempt) is taken over and reprocessed.
   // Xero rows are plain dedup markers, never COMPLETED: the XeroInboundEvent
   // row holds that claim, and its stale-event takeover deletes the marker.
-  // This closes the two
-  // lost-event windows: (a) a crash between claim-insert and completion no
-  // longer ACKs every redelivery as a duplicate, and (b) a concurrent
-  // redelivery is no longer ACKed while the in-flight attempt later fails.
+  // This closes the two lost-event windows: (a) a crash between claim-insert
+  // and completion no longer ACKs every redelivery as a duplicate, and (b) a
+  // concurrent redelivery is no longer ACKed while the in-flight attempt
+  // later fails.
   //
   // Blue/green-safe: `status` defaults to "PROCESSING" so an old-colour insert
   // (which omits the column and never marks COMPLETED) is reprocessed by the
