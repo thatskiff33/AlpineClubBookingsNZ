@@ -3,6 +3,9 @@ import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 import {
+  changedTables,
+  FINGERPRINT_SQL,
+  REFRESHED_BY_DESIGN,
   fillPlaceholders,
   firstBootstrapBlocks,
   firstInstallSteps,
@@ -115,6 +118,16 @@ describe("the first-install seed service (#4977, INV-OPS-019)", () => {
     expect(url).toMatch(/connection_limit=2&pool_timeout=10$/);
   });
 
+  it("declares its role literally in the staging overlay, never from the live .env", () => {
+    // `run --rm seed` against docker-compose.staging.yml would otherwise read
+    // ${APP_ENVIRONMENT_ROLE} from the file of the deployment it must not touch
+    // (ENV-SAFETY 1). The generic override census only checks a service the
+    // overlay names, so deleting this block would pass it.
+    const staged = composeServices("docker-compose.staging.yml").get(SEED_COMPOSE_SERVICE);
+    expect(staged, "docker-compose.staging.yml overrides the seed service").toBeDefined();
+    expect(staged).toMatch(/^\s+APP_ENVIRONMENT_ROLE: non-production$/m);
+  });
+
   it("runs the same command as `pnpm run db:seed`", () => {
     const scripts = JSON.parse(readRepoFile("package.json")).scripts as Record<string, string>;
     expect(line(seed, "command")).toBe(`command: ./node_modules/.bin/${scripts["db:seed"]}`);
@@ -162,6 +175,37 @@ describe("the docs that tell an operator how to seed (#4977, INV-OPS-019)", () =
       /cannot fill/,
     );
     expect(firstBootstrapBlocks(readRepoFile("DEPLOYMENT.md")).length).toBeGreaterThanOrEqual(7);
+  });
+
+  it("holds the smoke's \"changes nothing\" check to row content, not only row counts", () => {
+    // Mutation probe on the readings themselves: a re-run that rewrote a row in
+    // place leaves every count as it was, so only a changed hash can name it.
+    expect(FINGERPRINT_SQL).toMatch(/md5\(/);
+    expect(FINGERPRINT_SQL).toMatch(/string_agg\(\(to_jsonb\(t\)/);
+    const before = "Lodge=1:aaa\nMember=2:bbb\nSetting=3:ccc";
+    expect(changedTables(before, before)).toEqual([]);
+    expect(changedTables(before, "Lodge=1:aaa\nMember=2:bbb\nSetting=3:ddd")).toEqual(["Setting"]);
+    expect(changedTables(before, "Lodge=1:aaa\nMember=3:eee\nSetting=3:ccc")).toEqual(["Member"]);
+    expect(changedTables(before, "Lodge=1:aaa\nMember=2:bbb")).toEqual(["Setting"]);
+  });
+
+  it("lets a second seed run move only what the seed rewrites by design", () => {
+    // The built-in lobby-display rows are refreshed from code on every run (#111,
+    // owner decision A), which moves their `updatedAt` and nothing else. Growing
+    // this list would let a real in-place rewrite through, so it is pinned to
+    // the code that justifies each entry.
+    expect(REFRESHED_BY_DESIGN).toEqual({
+      DisplayLayout: ["updatedAt"],
+      DisplayTemplate: ["updatedAt"],
+    });
+    expect(readRepoFile("src/lib/lodge-display/built-in-seeds.ts")).toMatch(
+      /REFRESHES its definition from code on every re-seed/,
+    );
+    const schema = readRepoFile("prisma/schema.prisma");
+    for (const model of Object.keys(REFRESHED_BY_DESIGN)) {
+      const body = new RegExp(`^model ${model} \\{[\\s\\S]*?^\\}`, "m").exec(schema)?.[0] ?? "";
+      expect(body, model).toMatch(/^\s+updatedAt\s+DateTime\s+@updatedAt/m);
+    }
   });
 
   it(".env.example gives Compose no empty value followed by a comment", () => {

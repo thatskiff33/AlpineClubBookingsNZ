@@ -813,5 +813,6 @@ comment as the value.
 - Enforced by `scripts/ci/first-install-smoke.mjs`, which reads the steps out of
   `DEPLOYMENT.md` and runs them on an empty database in the
   `docker-image-security` job. A missing `SEED_ADMIN_EMAIL` must fail with
-  nothing written; a second run must change nothing. Also enforced by
+  nothing written; a second run must change no seeded value (bar the built-in
+  displays' `updatedAt`, refreshed from code by design). Also enforced by
   `first-install-seed-contract.test.ts`.

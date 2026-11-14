@@ -971,8 +971,9 @@ from `prisma/seed.ts` (`docker compose run --rm seed` on a Docker-only install,
 `SEED_LODGE_PASSWORD`. The seeded admin can log in immediately and is forced
 to change password on first login; change all seed credentials before any
 shared environment is exposed. The seed is create-if-missing throughout, so
-re-running it against an existing database changes nothing; committee and
-chore placeholders are only inserted when those tables are empty.
+re-running it against an existing database adds nothing and changes no value
+you set; only the built-in lobby display designs are refreshed from code.
+Committee and chore placeholders are only inserted when those tables are empty.
 
 ## Routine Production Deploy
 

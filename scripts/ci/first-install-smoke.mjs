@@ -27,8 +27,10 @@
  *    naming the variable and write nothing.
  * 4. Runs the seed: exit 0, an active ADMIN member with SEED_ADMIN_EMAIL, and
  *    the lodge kiosk account at the NEXTAUTH_URL domain, not @example.org.
- * 5. Runs the seed again: exit 0, and every table's row count and both seeded
- *    password hashes unchanged.
+ * 5. Runs the seed again: exit 0, and every table's rows, content as well as
+ *    count, unchanged (the seeded password hashes are among them). The one
+ *    exception is the `updatedAt` of the built-in lobby-display rows, which the
+ *    seed refreshes from code by design (`REFRESHED_BY_DESIGN`).
  * 6. Fails if a seed password appears in anything the seed printed.
  *
  * It does not run the last step, which builds and starts the web slots and
@@ -239,21 +241,83 @@ function psql(sql) {
   return result.stdout.trim();
 }
 
-/** Every public table's row count plus the seeded accounts' password hashes. */
+/**
+ * Columns a second seed run rewrites by design, and so cannot be held to
+ * "unchanged". The seed re-writes the built-in lobby-display Layout and Template
+ * rows from code on every run, so improvements to the shipped designs reach
+ * existing installs (owner decision A on #111, `src/lib/lodge-display/
+ * built-in-seeds.ts`). The values are identical; Prisma's `@updatedAt` moves.
+ * Every other column of these tables, and every column of every other table, is
+ * still held. `first-install-seed-contract.test.ts` pins this list.
+ *
+ * @type {Readonly<Record<string, readonly string[]>>}
+ */
+export const REFRESHED_BY_DESIGN = {
+  DisplayLayout: ["updatedAt"],
+  DisplayTemplate: ["updatedAt"],
+};
+
+/**
+ * One line per public table: `<table>=<row count>:<md5 of every row's content>`.
+ * Hashing the rows, not only counting them, is what makes "a second seed run
+ * changes no seeded value" true to its words: a re-run that rewrote a name,
+ * reset a setting or bumped a timestamp in place leaves every count unchanged
+ * but moves a hash. The Member rows hold the seeded password hashes, so those
+ * are covered. The row is read as jsonb, less the columns the seed refreshes by
+ * design (`REFRESHED_BY_DESIGN`).
+ */
+export const FINGERPRINT_SQL = `
+  WITH refreshed(table_name, columns) AS (
+    VALUES ${Object.entries(REFRESHED_BY_DESIGN)
+      .map(([table, columns]) => `('${table}', '{${columns.join(",")}}'::text[])`)
+      .join(", ")}
+  )
+  SELECT per_table.table_name || '=' ||
+    (xpath('/row/c/text()', q))[1]::text || ':' ||
+    (xpath('/row/h/text()', q))[1]::text
+  FROM (
+    SELECT i.table_name, query_to_xml(
+      format(
+        'SELECT count(*) AS c, md5(coalesce(string_agg((to_jsonb(t) - %L::text[])::text, %L ORDER BY (to_jsonb(t) - %L::text[])::text), %L)) AS h FROM public.%I t',
+        coalesce(r.columns, '{}'::text[]), '|', coalesce(r.columns, '{}'::text[]), '', i.table_name
+      ), false, true, ''
+    ) AS q
+    FROM information_schema.tables i
+    LEFT JOIN refreshed r ON r.table_name = i.table_name
+    WHERE i.table_schema = 'public' AND i.table_type = 'BASE TABLE'
+  ) AS per_table
+  ORDER BY per_table.table_name
+`;
+
 function fingerprint() {
-  return psql(`
-    SELECT string_agg(
-      table_name || '=' || (xpath('/row/c/text()', query_to_xml(
-        format('SELECT count(*) AS c FROM public.%I', table_name), false, true, ''
-      )))[1]::text,
-      ',' ORDER BY table_name
-    ) || ';' || coalesce(
-      (SELECT string_agg("passwordHash", ',' ORDER BY email) FROM "Member" WHERE role IN ('ADMIN', 'LODGE')),
-      ''
-    )
-    FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-  `);
+  return psql(FINGERPRINT_SQL);
+}
+
+/**
+ * The tables whose fingerprint line differs between two readings.
+ *
+ * @param {string} before
+ * @param {string} after
+ */
+export function changedTables(before, after) {
+  const read = (/** @type {string} */ text) =>
+    new Map(text.split("\n").filter(Boolean).map((line) => [line.slice(0, line.indexOf("=")), line]));
+  const was = read(before);
+  const now = read(after);
+  return [...new Set([...was.keys(), ...now.keys()])]
+    .filter((table) => was.get(table) !== now.get(table))
+    .sort();
+}
+
+/**
+ * Fails, naming each table that moved, unless the database is as it was.
+ *
+ * @param {string} before
+ * @param {string} message what "unchanged" means here
+ */
+function checkUnchanged(before, message) {
+  const moved = changedTables(before, fingerprint());
+  check(moved.length === 0, moved.length === 0 ? message : `${message} (changed: ${moved.join(", ")})`);
 }
 
 /**
@@ -333,7 +397,7 @@ function main() {
       missing.output.includes("SEED_ADMIN_EMAIL is required"),
       "the failure names SEED_ADMIN_EMAIL",
     );
-    check(fingerprint() === migrated, "the failed seed wrote nothing");
+    checkUnchanged(migrated, "the failed seed wrote nothing");
 
     const first = run(seed);
     console.log(redact(first.output));
@@ -354,7 +418,7 @@ function main() {
     console.log(redact(second.output));
     seedOutput.push(second.output);
     check(second.status === 0, "a second seed run exits 0");
-    check(fingerprint() === seeded, "a second seed run changes nothing");
+    checkUnchanged(seeded, "a second seed run changes no seeded value");
 
     const printed = seedOutput.join("\n");
     check(

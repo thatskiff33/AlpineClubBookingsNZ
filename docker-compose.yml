@@ -623,7 +623,9 @@ services:
   # starts: it creates the first admin, the lodge kiosk account and the starter
   # data on an empty database. Nothing runs it on an upgrade, and the profile
   # keeps `docker compose up` from ever starting it. Every step is
-  # create-if-missing, so running it twice changes nothing.
+  # create-if-missing, so running it twice adds nothing and changes no value;
+  # only the built-in lobby display designs are refreshed from code, which moves
+  # their `updatedAt` (src/lib/lodge-display/built-in-seeds.ts).
   #
   # The app image cannot do this: the runner stage ships the compiled site and
   # no source, and the seed imports ~25 modules from src/. So it runs in the
