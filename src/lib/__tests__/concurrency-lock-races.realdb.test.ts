@@ -314,6 +314,11 @@ import "./refused-card-refund-retry.realdb.test";
 // write, the retry's fresh key, and a held row rolling the write back. Skipped
 // unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4104-` fixtures.
 import "./card-refund-failed-later.realdb.test";
+// #4284 reuses it to prove the card-refund owed figure reads a createdAt tie
+// the same in either physical order: the same tied rows written in opposite
+// orders, read through the real Net Collected select. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4284-` fixtures.
+import "./card-refund-owed-tie-order.realdb.test";
 // #4097 reuses it to prove an own-card cancel whose card refund plan carries
 // less than the refund due raises one hand-back task for the rest in its claim,
 // which "Refunds owed" counts until the treasurer pays it back (its BANK_REFUND

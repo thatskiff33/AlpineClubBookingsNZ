@@ -7,6 +7,7 @@ import {
   getRemainingRefundableCents,
   type BookingPaymentState,
 } from "@/lib/booking-payment-state";
+import { compareCardRefundOperations, compareRecordedCardRefunds } from "@/lib/card-refund-tie-order";
 import {
   cardRefundFailedLaterRefundId,
   cardRefundOperationRefundMetadata,
@@ -450,7 +451,10 @@ export function operationWindowTakes(
  * same transaction and amount included). A marked slice whose refund is not
  * recorded as made stays unfilled, and owed. Each other row fills at most one slice, and goes to the operation raised MOST
  * RECENTLY before it with a slice it fits - so a later operation's own refund,
- * open or closed, is never taken as an older open one's progress. Every card
+ * open or closed, is never taken as an older open one's progress. A tie on
+ * when rows were raised, or on when refunds were recorded, is broken by one
+ * fixed order (`compareCardRefundOperations`, `compareRecordedCardRefunds`,
+ * #4284), never by the order the rows arrive in. Every card
  * refund operation on the payment takes part, closed ones included, though only
  * open ones owe.
  *
@@ -467,7 +471,7 @@ export function cardRefundSlicesByOperation(
     return payment.recoveryOperations
       .filter(isOwedCardRefundOperation)
       .map((operation) => ({ operation, slices: operationSlices(operation) }))
-      .sort((left, right) => left.operation.createdAt.getTime() - right.operation.createdAt.getTime());
+      .sort((left, right) => compareCardRefundOperations(left.operation, right.operation));
   }
   return attributeRecordedRefunds(payment).operations;
 }
@@ -488,7 +492,7 @@ function attributeRecordedRefunds(
   const operations = payment.recoveryOperations
     .filter(isOwedCardRefundOperation)
     .map((operation) => ({ operation, slices: operationSlices(operation) }))
-    .sort((left, right) => left.operation.createdAt.getTime() - right.operation.createdAt.getTime());
+    .sort((left, right) => compareCardRefundOperations(left.operation, right.operation));
   const lateCentsByOperation = new Map<string, number>();
   const recorded = payment.refunds.filter(
     (refund) => refund.paymentTransactionId !== null && isRecordedRefundStatus(refund.status),
@@ -522,7 +526,7 @@ function attributeRecordedRefunds(
   }
   const refunds = recorded
     .filter((refund) => !claimed.has(refund))
-    .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+    .sort(compareRecordedCardRefunds);
   for (const refund of refunds) {
     let leftCents = Math.max(0, refund.amountCents);
     for (let index = operations.length - 1; index >= 0 && leftCents > 0; index -= 1) {

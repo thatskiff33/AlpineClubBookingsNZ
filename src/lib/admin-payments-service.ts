@@ -482,7 +482,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         },
         // #3372 (7 Oct 2026): card refunds not yet paid, and the refunds that net them.
         recoveryOperations: netCollectedCardRefundSelect.recoveryOperations,
-        refunds: { select: { updatedAt: true, ...netCollectedCardRefundSelect.refunds.select } },
+        refunds: { orderBy: netCollectedCardRefundSelect.refunds.orderBy, select: { updatedAt: true, ...netCollectedCardRefundSelect.refunds.select } },
         booking: {
           select: {
             id: true,

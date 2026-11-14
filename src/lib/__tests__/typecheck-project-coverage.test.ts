@@ -108,6 +108,7 @@ const JAVASCRIPT_VITEST_TESTS = [
   // #3513: the fast-census runner is a bare-node `.mjs` tool; its own suite
   // deliberately remains JavaScript under the same convention.
   "scripts/ci/run-fast-censuses.test.mjs",
+  "scripts/ci/sekreton-prepare-base.test.mjs",
   "scripts/ci/server-only-boundary-selftest.test.mjs",
   "scripts/ci/wait-for-run-artifacts.test.mjs",
   // ALP-4 (#4024): the fragility audit is a set of bare-node `.mjs` tools;
