@@ -13,12 +13,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
   closeCardRefundPaidAnotherWay: vi.fn(),
+  closeGroupCardRefundPaidAnotherWay: vi.fn(),
+  findUnique: vi.fn(),
 }));
 
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
+}));
+// #4851: the route reads the row's key to send a group organiser's refund to the group close.
+vi.mock("@/lib/prisma", () => ({
+  prisma: { paymentRecoveryOperation: { findUnique: mocks.findUnique } },
+}));
+vi.mock("@/lib/card-refund-group-paid-another-way", () => ({
+  closeGroupCardRefundPaidAnotherWay: mocks.closeGroupCardRefundPaidAnotherWay,
 }));
 vi.mock("@/lib/card-refund-paid-another-way", () => ({
   closeCardRefundPaidAnotherWay: mocks.closeCardRefundPaidAnotherWay,
@@ -34,7 +43,17 @@ vi.mock("@/lib/card-refund-paid-another-way", () => ({
 import { revalidatePath } from "next/cache";
 import type { NextRequest } from "next/server";
 import { CardRefundPaidAnotherWayError } from "@/lib/card-refund-paid-another-way";
+import {
+  BOOKING_CANCELLATION_REFUND_RECOVERY_PREFIX,
+  GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX,
+  ORGANISER_CHILD_REFUND_KEY_PREFIX,
+} from "@/lib/payment-recovery-keys";
 import { POST } from "../[id]/paid-another-way/route";
+
+// Built from the real prefixes, so the routing reads the keys the writers mint.
+const CHARGE_ROW = `${BOOKING_CANCELLATION_REFUND_RECOVERY_PREFIX}b-1`;
+const ORGANISER_CHILD_ROW = `${ORGANISER_CHILD_REFUND_KEY_PREFIX}c-1`;
+const LEGACY_GROUP_ROW = `${GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX}s-1`;
 
 function request(body: unknown) {
   return new Request("http://localhost/api/admin/payments/card-refunds/op-1/paid-another-way", {
@@ -55,6 +74,7 @@ const valid = {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireAdmin.mockResolvedValue({ ok: true, session: { user: { id: "treasurer-1" } } });
+  mocks.findUnique.mockResolvedValue({ idempotencyKey: CHARGE_ROW });
   mocks.closeCardRefundPaidAnotherWay.mockResolvedValue({
     operationId: "op-1",
     bookingId: "b-1",
@@ -83,6 +103,7 @@ describe("who may close a card refund as paid another way", () => {
 
     expect(response.status).toBe(403);
     expect(mocks.closeCardRefundPaidAnotherWay).not.toHaveBeenCalled();
+    expect(mocks.findUnique).not.toHaveBeenCalled();
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 });
@@ -158,5 +179,53 @@ describe("what the close needs", () => {
 
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toEqual({ error: "Could not close the card refund." });
+  });
+});
+
+describe("which close a row goes to (#4851)", () => {
+  it.each([
+    ["a joiner's refund out of the organiser's card", ORGANISER_CHILD_ROW],
+    ["a pre-#3653 whole-group refund", LEGACY_GROUP_ROW],
+  ])("sends %s to the group close, without the charge close's rest", async (_label, idempotencyKey) => {
+    mocks.findUnique.mockResolvedValue({ idempotencyKey });
+    mocks.closeGroupCardRefundPaidAnotherWay.mockResolvedValue({ operationId: "op-1" });
+
+    const response = await POST(request(valid), { params });
+
+    expect(response.status).toBe(200);
+    expect(mocks.findUnique).toHaveBeenCalledWith({ where: { id: "op-1" }, select: { idempotencyKey: true } });
+    expect(mocks.closeGroupCardRefundPaidAnotherWay).toHaveBeenCalledWith({
+      operationId: "op-1",
+      amountCents: 5_000,
+      paidBack: "full",
+      expectedOwedCents: 5_000,
+      note: "Bank transfer, ref 123",
+      actingMemberId: "treasurer-1",
+    });
+    expect(mocks.closeCardRefundPaidAnotherWay).not.toHaveBeenCalled();
+  });
+
+  it("sends a charge-backed row, and a row it cannot find, to the charge close", async () => {
+    await POST(request(valid), { params });
+    mocks.findUnique.mockResolvedValue(null);
+    await POST(request(valid), { params });
+
+    expect(mocks.closeCardRefundPaidAnotherWay).toHaveBeenCalledTimes(2);
+    expect(mocks.closeGroupCardRefundPaidAnotherWay).not.toHaveBeenCalled();
+  });
+
+  it("answers the group close's refusal with its own status and sentence", async () => {
+    mocks.findUnique.mockResolvedValue({ idempotencyKey: ORGANISER_CHILD_ROW });
+    mocks.closeGroupCardRefundPaidAnotherWay.mockRejectedValue(
+      new CardRefundPaidAnotherWayError("This refund is the organiser's and closes for the whole amount.", 400),
+    );
+
+    const response = await POST(request(valid), { params });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "This refund is the organiser's and closes for the whole amount.",
+    });
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 });

@@ -239,6 +239,7 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   "CalendarEvent.createdById",
   "CalendarEventSeries.createdById",
   "ClubIdentitySettings.updatedByMemberId",
+  "PrivacyHostingSettings.updatedByMemberId",
   "ClubModuleSettings.updatedByMemberId",
   // AI Diagnostics settings singleton (AID-2, #2371): records WHO last set the
   // deployment-local Diagnostics spend cap, a bare FK-less String exactly like

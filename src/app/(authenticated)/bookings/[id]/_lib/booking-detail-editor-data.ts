@@ -181,6 +181,7 @@ export async function buildBookingDetailEditorData({
   }
   const editorData: BookingEditorData = {
     id: booking.id,
+    lodgeName: booking.lodge.name,
     checkIn: formatDateOnly(new Date(booking.checkIn)),
     checkOut: formatDateOnly(new Date(booking.checkOut)),
     nights,

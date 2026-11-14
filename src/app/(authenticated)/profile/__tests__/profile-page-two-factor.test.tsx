@@ -37,6 +37,8 @@ vi.mock("@/lib/prisma", () => ({
     webAuthnCredential: {
       findMany: async () => [],
     },
+    deletionRequest: { findFirst: async () => null },
+    emailChangeToken: { findFirst: async () => null },
   },
 }));
 

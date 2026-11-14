@@ -112,7 +112,9 @@ you change a pool size, `max_connections`, or the replica count.
 
 Audience: Operator.
 
-By default every container connects as `tac`, the PostgreSQL superuser. Since
+New installations follow [First Bootstrap](#first-bootstrap) to provision the
+roles before the app starts. Existing installations use the switch-over below.
+Compose still defaults to `tac`, the PostgreSQL superuser for compatibility. Since
 #4453 a deployment can split that into roles that each hold only what their job
 needs. The application then cannot change a booking-ledger line or an audit entry,
 even if its credential leaks (owner decision, 27 Oct 2026). Deleting a booking
@@ -325,7 +327,7 @@ not a measurement of the headroom.
 
 ### Member money journal grants (M1)
 
-The journal is inert: this release changes no production money reader or writer.
+At M1 the journal was inert: that release changed no production money reader or writer.
 #4453's append-only treatment now covers `MemberMoneyEvent`, `MemberMoneyJournal`,
 `MemberMoneyLine`, `MemberMoneyObligation`, `MemberMoneyApplication`,
 `MemberMoneySourceLink` and `MemberMoneySourcePosting`: the migration role owns
@@ -842,18 +844,96 @@ Caddy binds privileged ports 80/443 and needs `NET_BIND_SERVICE`.
 
 ## First Bootstrap
 
-From the target host:
+Use these steps for a **new, empty installation**. They set a separate encryption
+key and restrict the application's database rights before anyone saves a
+credential. Existing deployments instead use [Switching a deployment over](#switching-a-deployment-over-bluegreen)
+and [Adding a data-encryption key](#adding-a-data-encryption-key-4456).
 
-```bash
-git clone https://github.com/<owner>/AlpineClubBookingsNZ.git AlpineClubBookingsNZ
-cd AlpineClubBookingsNZ
-cp .env.example .env
-# edit .env with your own values
-docker compose up -d --build postgres
-docker compose run --rm migrate
-docker compose up -d --build app app_blue app_green caddy
-docker compose ps
-```
+1. **Copy the configuration** on the target host:
+
+   ```bash
+   git clone https://github.com/<owner>/AlpineClubBookingsNZ.git AlpineClubBookingsNZ
+   cd AlpineClubBookingsNZ
+   cp .env.example .env
+   ```
+
+2. **Generate the secrets and edit `.env`** with your club's values. Generate a
+   separate data key with `openssl rand -base64 32` and set
+   `DATA_ENCRYPTION_KEYS=k2026:<that value>`. Nothing is stored yet, so no
+   re-encrypt is needed. Keep this key safe: after first use, never unset it or
+   roll back to a release without it; see the [key rollout and rollback notes](#adding-a-data-encryption-key-4456).
+   Generate four different passwords with `openssl rand -hex 24`: the operator's
+   `DB_PASSWORD`, then `APP_DB_PASSWORD`, `MIGRATION_DB_PASSWORD` and
+   `AUDIT_RETENTION_DB_PASSWORD`. Hex passwords need no URL encoding in the
+   connection strings below. Set a strong `AUTH_SECRET` too. **Leave `APP_DB_USER`, `MIGRATION_DB_USER` and
+   `AUDIT_RETENTION_DATABASE_URL` blank until step 6.**
+
+3. **Start only PostgreSQL**:
+
+   ```bash
+   docker compose up -d --build postgres
+   ```
+
+4. **Run the first migrations as the operator** (`tac`, whose password is
+   `DB_PASSWORD`; it replaces `<your-operator-password>` here and in step 5).
+   Override the container connection explicitly: the migration password chosen
+   in step 2 belongs to a role that does not exist yet. Provisioning needs these
+   migrations in place first:
+
+   ```bash
+   export DATABASE_URL="postgresql://tac:<your-operator-password>@postgres:5432/tacbookings"
+   docker compose --profile migrate run --rm -e DATABASE_URL migrate
+   unset DATABASE_URL
+   ```
+
+5. **Provision the roles before any app traffic.** See [Least-privilege database
+   roles](#least-privilege-database-roles) for what each role may do. Export the
+   same passwords you saved in step 2 in your private operator shell; Docker
+   reads the bare `-e` names rather than putting passwords on its command line.
+   Leave the role-name shell variables unset to use the documented defaults.
+
+   ```bash
+   export DB_ROLES_PROVISION_DATABASE_URL="postgresql://tac:<your-operator-password>@postgres:5432/tacbookings"
+   export MIGRATION_DB_PASSWORD=<your-migration-password> APP_DB_PASSWORD=<your-app-password> \
+     AUDIT_RETENTION_DB_PASSWORD=<your-retention-password>
+   docker compose --profile migrate run --rm --no-deps \
+     -e DB_ROLES_PROVISION_DATABASE_URL \
+     -e MIGRATION_DB_PASSWORD -e APP_DB_PASSWORD -e AUDIT_RETENTION_DB_PASSWORD \
+     -e APP_DB_USER -e MIGRATION_DB_USER -e AUDIT_RETENTION_DB_USER \
+     migrate ./node_modules/.bin/tsx scripts/provision-database-roles.ts --apply
+   unset DB_ROLES_PROVISION_DATABASE_URL MIGRATION_DB_PASSWORD APP_DB_PASSWORD AUDIT_RETENTION_DB_PASSWORD
+   ```
+
+   This is the container equivalent of `pnpm run db:provision-roles --apply`.
+   It transfers ownership and grants rights in one transaction. With no app
+   running, there is no app traffic to wait on its exclusive table locks.
+
+6. **Set all three switch variables together in `.env`** (the role passwords
+   are already there):
+
+   ```dotenv
+   APP_DB_USER=tac_app
+   MIGRATION_DB_USER=tac_migrator
+   AUDIT_RETENTION_DATABASE_URL=postgresql://tac_audit_retention:<your-retention-password>@postgres:5432/tacbookings?connection_limit=2&pool_timeout=10
+   ```
+
+   The app role cannot delete audit rows. The retention URL gives only the cron
+   leader the separate rights needed for nightly retention. If you also run
+   checkout tools such as `setup:check`, point their `DATABASE_URL` at the app
+   role, using the host/port reachable from that shell.
+
+7. **Start the web slots, Caddy and cron leader**:
+
+   ```bash
+   docker compose up -d --build app app_blue app_green caddy
+   docker compose ps
+   ```
+
+8. **Open Admin → Setup** after seeding the intended admin (below). Confirm
+   **Data Encryption Key** and **Database role** are complete before connecting
+   providers or enrolling authenticator apps. `pnpm run setup:check` shows the
+   same checks for its own shell connection; the database-role warning never
+   blocks an existing deployment.
 
 To validate the production image alone (without Compose), build it locally:
 
@@ -1872,6 +1952,10 @@ handles every event of. Today that is:
 - `setup_intent.canceled`
 - `charge.refunded`
 - `refund.failed` (#4104)
+- `charge.dispute.created` (#4911)
+- `charge.dispute.funds_withdrawn` (#4911)
+- `charge.dispute.funds_reinstated` (#4911)
+- `charge.dispute.closed` (#4911)
 
 **Upgrading to #4104: add `refund.failed` to an existing endpoint.** In Stripe
 open Workbench → Webhooks (Developers → Webhooks), select the endpoint, choose
@@ -1923,6 +2007,38 @@ one apart from a refund Stripe refused outright (which its door already asked
 for again). In the Stripe dashboard, list the refunds that failed in the last
 few months, and for any the member is still owed, pay them another way and
 record it in Xero by hand.
+
+**Upgrading to #4911: add the four `charge.dispute.*` events to an existing
+endpoint.** In Stripe open Workbench → Webhooks, select the endpoint, choose
+**Edit destination** and add `charge.dispute.created`,
+`charge.dispute.funds_withdrawn`, `charge.dispute.funds_reinstated` and
+`charge.dispute.closed`. Add them once the new release alone serves: an older
+release acknowledges an event it does not know and drops it. With them the app
+keeps one record per cardholder dispute (chargeback), emails Finance when a
+dispute opens and when it closes, shows "Disputed by cardholder" on the
+booking and on **Finance → Payments**, and, while a dispute is open or lost,
+issues no card refund or account credit for that payment: a cancel is handed to
+the treasurer instead (`INV-PAY-154`). Disputes opened before the upgrade are
+not back-filled, so check Stripe's **Disputes** page once after adding the
+events and handle any open dispute by hand.
+
+**Recording a lost dispute in Xero (treasurer, by hand).** The app posts
+nothing to Xero for a dispute. When the Finance alert says a dispute was lost:
+
+1. In Stripe, open the dispute and note the disputed amount, Stripe's dispute
+   fee and the payout that carried the withdrawal.
+2. In Xero, record a spend money transaction from the Stripe clearing account
+   (the account the Stripe payouts reconcile through) for the disputed amount,
+   coded to the account the club uses for refunds or bad debts and referencing
+   the booking and the Stripe dispute id, and a second for the dispute fee,
+   coded to bank fees.
+3. Reconcile both against the Stripe payout that carried them.
+4. Do not refund or credit the member: the bank has already returned their
+   money. Resolve the cancellation's treasurer task, if one was raised, by
+   dismissing it with the dispute id as the reason.
+
+A won dispute needs no Xero entry unless the withdrawal was recorded by hand
+before the win; then record its reversal the same way.
 
 If Stripe webhook delivery was missed while the endpoint, DNS, TLS, or the
 signing secret stored under **Admin > Integrations > Stripe** was wrong (it is
