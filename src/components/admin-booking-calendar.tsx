@@ -42,13 +42,20 @@ interface CalendarBooking {
 }
 
 // Colours come from the shared booking-status tones (INV-SSOT-001), so a status
-// looks the same here as on the bookings list. Anything carrying TEXT — the
-// status filter pills and the bars — takes the step-3/step-11 chip pair via
-// `bookingStatusClass`; the step-9 fill from `bookingStatusSwatchClass` is for
-// text-free marks only (legend swatches, the bars' status stripe, the day
-// dialog's dots), because white on warning-9 measured 2.16:1 (#4466).
+// has the same colour here as on My Bookings, the dashboards and the booking
+// editor. The admin bookings list beside this calendar renders `StatusChip`,
+// which keeps its own semantic tones and an icon (see `status-colors.ts`).
+// Anything carrying TEXT — the status filter pills and the bars — takes the
+// step-3/step-11 chip pair via `bookingStatusClass`; the step-9 fill from
+// `bookingStatusSwatchClass` is for text-free marks only (legend swatches, the
+// bars' status stripe, the day dialog's dots), because white on warning-9
+// measured 2.16:1 (#4466).
 //
 // The statuses the calendar offers as filter pills and legend entries.
+// AWAITING_REVIEW is left out on purpose for now: it has a tone in the shared
+// table, but its pill, bars and legend entry arrive with #4923, which replaces
+// this list with one exported lifecycle list. Delete this list then; do not
+// keep both.
 const ALL_STATUSES = [
   "DRAFT",
   "PENDING",

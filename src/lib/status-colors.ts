@@ -24,11 +24,18 @@ import {
 // distinct: step-11 accent text ΔE2000 ≥ 14.8 from every sibling). Meaning is
 // always carried by icon + label, never colour alone.
 //
-// This is the ONLY booking status -> colour definition (INV-SSOT-001, ALP-572):
-// the bookings list's chips, the admin calendar's pills and bars (step-3/step-11
-// chip pair) and its text-free step-9 swatches all derive from it, so a status
-// looks the same everywhere. Typed by the enum, so a new status fails typecheck
-// until it has a tone.
+// This is the only booking status -> per-status colour table (INV-SSOT-001,
+// ALP-572). `bookingStatusClass` (My Bookings, both dashboards, the booking
+// editor, the waitlist page, a member's history), the admin calendar's pills and
+// bars (step-3/step-11 chip pair) and the calendar's text-free step-9 swatches
+// all derive from it, so a status keeps one colour on each of those. Typed by the
+// enum, so a new status fails typecheck until it has a tone.
+//
+// One other table is deliberate, not a copy: the admin bookings list's
+// `StatusChip` (`BOOKING_TONES` in `ui/status-chip.tsx`, pinned by
+// `status-chip.test.tsx`) keeps five semantic tones plus an icon, so several
+// statuses share a tone there (see `chip-tones.ts`). The calendar's bars carry
+// no icon, so they take the per-status distinction this table gives instead.
 const BOOKING_STATUS_TONES: Record<BookingStatus, ChipTone> = {
   DRAFT:            "neutral",
   PENDING:          "cat5",
