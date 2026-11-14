@@ -586,6 +586,12 @@ import "./self-heal-bank-hand-back-sources.realdb.test";
 // a fresh card note under an after-void key. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4250-` fixtures.
 import "./resolved-voided-refund-note-coverage.realdb.test";
+// #4936 reuses it to prove the refund-note gap list's pre-filter drops only
+// payments their links' recorded amounts cover, lets legacy links without one
+// through to the exact reader, and lists exactly what that reader would.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4936-` fixtures.
+import "./refund-gap-prefilter.realdb.test";
 // #4256 reuses it to prove a PARTIAL invoice repair claims its row before it
 // writes or calls Xero: a resolve or a mark non-replayable committed while the
 // retry waits on its claim wins, two retries make one payment write, and a

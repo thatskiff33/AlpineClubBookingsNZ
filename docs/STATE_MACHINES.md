@@ -6,6 +6,14 @@ inventing certainty.
 
 ## Booking Lifecycle
 
+Every cancellation returns its promo uses in the transaction that writes
+`CANCELLED` (`INV-MONEY-005`, #4909). A lost claim releases nothing. The
+`cancelled-booking-promo-release-census.test.ts` census classifies every writer,
+including quote holds, split children and cross-lodge replacements that cannot
+carry codes. Member cancellations, bank hold expiry, card capacity voids, Xero
+late-capacity cancellations, organiser child cancellations, past-date waitlist
+expiry and legacy draft rejection use the shared transaction-bound release.
+
 Known schema statuses: `DRAFT`, `PENDING`, `PAYMENT_PENDING`, `CONFIRMED`,
 `PAID`, `BUMPED`, `CANCELLED`, `COMPLETED`, `WAITLISTED`,
 `WAITLIST_OFFERED`, `AWAITING_REVIEW`.
