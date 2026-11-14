@@ -5,8 +5,8 @@ network-failure branch. Moving one handler out of an oversized page to save
 those lines would scatter a page's own save logic, and splitting these pages
 is a refactor of its own.
 
-file: src/app/(admin)/admin/family-groups/page.tsx
-lines: 884
+file: src/app/(admin)/admin/membership/family-groups/page.tsx
+lines: 885
 reason: the create handler had no catch at all; the shared-reader import, the
   named fallback and the network-failure branch are the whole fix.
 
