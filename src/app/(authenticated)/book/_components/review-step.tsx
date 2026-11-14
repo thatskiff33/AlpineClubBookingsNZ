@@ -60,10 +60,7 @@ import type {
   RoomOption,
   WorkPartyEvent,
 } from "@/components/book/booking-wizard-types";
-import {
-  BOOKING_EXCEPTION_REQUEST_ID,
-  BOOKING_WIZARD_ERROR_ID,
-} from "@/components/book/booking-wizard-types";
+import { BOOKING_EXCEPTION_REQUEST_ID, BOOKING_WIZARD_ERROR_ID } from "@/components/book/booking-wizard-types";
 
 export function ReviewStep({
   checkIn,
