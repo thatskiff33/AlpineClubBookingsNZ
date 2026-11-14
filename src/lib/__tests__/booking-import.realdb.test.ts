@@ -348,6 +348,11 @@ async function existingBooking(ref: string, guests: Line[]) {
       const { createXeroInvoiceForBooking } = await import("@/lib/xero-booking-invoices");
       expect(await createXeroInvoiceForBooking(freeId)).toBeNull();
       expect(await prisma.xeroSyncOperation.count({ where: { localId: freeId } })).toBe(0);
+      // The admin health views agree with the fence: neither import is "missing" an invoice.
+      const { getMissingXeroInvoiceBookings } = await import("@/lib/xero-admin-health");
+      const missing = (await getMissingXeroInvoiceBookings({ limit: 500 })).bookings.map((row) => row.bookingId);
+      expect(missing).not.toContain(freeId);
+      expect(missing).not.toContain(bookingId);
       await expectCensusClean(bookingId);
     } finally {
       if (moduleBefore) await prisma.clubModuleSettings.update({ where: { id: "default" }, data: { xeroIntegration: moduleBefore.xeroIntegration } });
@@ -431,6 +436,24 @@ async function existingBooking(ref: string, guests: Line[]) {
     const resumed = await planner.planBookingImport(prisma, { lodgeId: LODGE, bookings, today: TODAY, format: FORMAT, batchId: result.batchId });
     expect(resumed.digest).toBe(preview.digest);
     expect(await heldBeds("2026-08-10", "2026-08-12")).toEqual([4, 4]);
+  }, 120_000);
+
+  it("leaves a gap night between two guests' stays out of the booking, so a full gap night refuses nothing and a resume keeps the digest", async () => {
+    // The lodge is full on 12 August only, a night this booking's guests do not stay.
+    await existingBooking("GAP0", [
+      { ref: "GAP0", member: PEOPLE.other, owner: PEOPLE.other, checkIn: "2026-08-12", checkOut: "2026-08-13", amount: "40" },
+      ...["Vic", "Wyn", "Xan"].map((first) => ({ ref: "GAP0", owner: PEOPLE.other, nonMember: { first, age: "Adult" }, checkIn: "2026-08-12", checkOut: "2026-08-13" })),
+    ]);
+    const { bookings, plan: preview } = await plan([
+      line({ ref: "GAP1", member: PEOPLE.owner, checkIn: "2026-08-10", checkOut: "2026-08-12", amount: "30" }),
+      line({ ref: "GAP1", nonMember: { first: "Yan", age: "Adult" }, checkIn: "2026-08-13", checkOut: "2026-08-14" }),
+    ]);
+    expect(preview.rows[0]).toMatchObject({ outcome: "IMPORT", refusals: [] });
+    expect(preview.rows[0]!.nights.map((night) => night.night)).toEqual(["2026-08-10", "2026-08-11", "2026-08-13"]);
+    const result = await writer.confirmBookingImport({ lodgeId: LODGE, bookings, digest: preview.digest, officerMemberId: OFFICER, today: TODAY, format: FORMAT });
+    if (result.outcome !== "completed") throw new Error(`confirm was ${result.outcome}`);
+    const resumed = await planner.planBookingImport(prisma, { lodgeId: LODGE, bookings, today: TODAY, format: FORMAT, batchId: result.batchId });
+    expect(resumed.digest).toBe(preview.digest);
   }, 120_000);
 
   it("refuses a night under an exclusive whole-lodge hold", async () => {

@@ -10,6 +10,7 @@ import {
   bookingImportBatchKey,
   bookingImportPlanDigest,
   joinBookingImportRefusals,
+  splitBookingImportRefusals,
   type BookingImportRowPlan,
 } from "@/lib/booking-import/plan";
 
@@ -82,6 +83,15 @@ describe("joinBookingImportRefusals", () => {
         { code: "SUPERVISION", message: "b" },
       ]),
     ).toBe("a\nb");
+  });
+
+  it("reads back through splitBookingImportRefusals, an unknown stored code as UNREADABLE", () => {
+    expect(splitBookingImportRefusals("a\nb", "HOSTING")).toEqual([
+      { code: "HOSTING", message: "a" },
+      { code: "HOSTING", message: "b" },
+    ]);
+    expect(splitBookingImportRefusals("a", "NOT_A_CODE")).toEqual([{ code: "UNREADABLE", message: "a" }]);
+    expect(splitBookingImportRefusals(null, null)).toEqual([]);
   });
 });
 

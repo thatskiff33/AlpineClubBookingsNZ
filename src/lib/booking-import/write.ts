@@ -31,11 +31,13 @@ import { recordAdultMemberHostingReviewForNewBooking } from "@/lib/adult-member-
 import { logAudit } from "@/lib/audit";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
 import {
+  BOOKING_IMPORT_HOSTING_REFUSAL,
   bookingImportBatchKey,
   checkImportBooking,
   emptyBookingImportFileState,
   joinBookingImportRefusals,
   planBookingImport,
+  splitBookingImportRefusals,
   type BookingImportPlan,
   type BookingImportRefusal,
   type ResolvedImportBooking,
@@ -203,13 +205,7 @@ export async function confirmBookingImport(input: {
         : {
             bookingRef: row.bookingRef,
             outcome: "REFUSED",
-            refusals: (row.refusalReason ?? "")
-              .split("\n")
-              .filter(Boolean)
-              .map((message) => ({
-                code: (row.refusalCode ?? "UNREADABLE") as BookingImportRefusal["code"],
-                message,
-              })),
+            refusals: splitBookingImportRefusals(row.refusalReason, row.refusalCode),
           },
     ),
   };
@@ -407,13 +403,7 @@ async function writeOneBooking(
   // here means the club's rule moved under the locks, so the row is refused.
   const hosting = await recordAdultMemberHostingReviewForNewBooking(created.id, tx, null);
   if (hosting.violation) {
-    throw new ImportRowRefused([
-      {
-        code: "HOSTING",
-        message:
-          "Breaks the club's rule that non-members stay with an adult member; enter this booking through Book on Behalf",
-      },
-    ]);
+    throw new ImportRowRefused([BOOKING_IMPORT_HOSTING_REFUSAL]);
   }
 
   await tx.bookingEvent.createMany({

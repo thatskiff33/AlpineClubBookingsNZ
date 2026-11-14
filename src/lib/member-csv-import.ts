@@ -586,7 +586,7 @@ export function parseMemberImportCsv(text: string): MemberImportCsvParseResult {
   };
 }
 
-function normalizeMemberImportHeader(header: string) {
+export function normalizeMemberImportHeader(header: string) {
   return header.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 

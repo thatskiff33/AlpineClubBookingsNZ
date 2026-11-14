@@ -181,7 +181,7 @@ describe("parseBookingImportCsv", () => {
     });
 
     const [wrongNights] = parseBookings([`${row()},5`], header);
-    expect(wrongNights?.refusals).toEqual(["Nights on line 2 is 5 but the dates give 2"]);
+    expect(wrongNights?.refusals).toEqual(["Nights on line 2 does not match the dates, which give 2"]);
 
     const [backwards] = parseBookings([row({ checkIn: "2026-08-12", checkOut: "2026-08-12" })]);
     expect(backwards?.refusals[0]).toMatch(/Check Out must be after Check In/);
@@ -229,6 +229,11 @@ describe("parseBookingImportCsv", () => {
     expect(parseBookingImportCsv(`${HEADER},Booking Ref\n${row()},B1`)).toEqual({
       ok: false,
       error: 'The column "Booking Ref" appears twice',
+    });
+    expect(parseBookingImportCsv([HEADER, row({ ref: "R".repeat(101) })].join("\n"))).toEqual({
+      ok: false,
+      error: "A Booking Ref is longer than 100 characters",
+      lineNumber: 2,
     });
     const tooMany = [HEADER, ...Array.from({ length: 501 }, () => row())].join("\n");
     expect(parseBookingImportCsv(tooMany)).toMatchObject({ ok: false });

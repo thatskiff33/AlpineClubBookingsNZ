@@ -5581,7 +5581,7 @@ model Lodge {
   rooms                    LodgeRoom[]
   lockers                  Locker[]
   seasons                  Season[]
-  bookingImportBatches BookingImportBatch[]
+  bookingImportBatches     BookingImportBatch[]
   bookings                 Booking[]
   bookingLedgerLines       BookingLedgerLine[]
   choreTemplates           ChoreTemplate[]

@@ -18,10 +18,14 @@ import {
   DEFAULT_MEMBER_IMPORT_DATE_FORMAT,
   MEMBER_IMPORT_MAX_ROWS,
   normalizeMemberImportDateValue,
+  normalizeMemberImportHeader,
   parseMemberImportCsv,
   type MemberImportDateFormat,
 } from "@/lib/member-csv-import";
 import { MAX_INTEGER_CENTS, parseDecimalDollarsToCents } from "@/lib/money-input";
+
+/** The longest Booking Ref the import stores; it is indexed, so it is bounded. */
+export const BOOKING_IMPORT_MAX_REF_LENGTH = 100;
 
 /** The longest stay a row may describe. A guard against a mistyped year. */
 export const BOOKING_IMPORT_MAX_NIGHTS = 366;
@@ -104,12 +108,9 @@ export type BookingImportParseResult =
   | { ok: true; bookings: ParsedImportBooking[]; rowCount: number }
   | { ok: false; error: string; lineNumber?: number };
 
-const normalizeHeader = (header: string) =>
-  header.toLowerCase().replace(/[^a-z0-9]/g, "");
-
 const COLUMN_KEY_BY_HEADER = new Map<string, BookingImportColumnKey>(
   BOOKING_IMPORT_COLUMNS.map((column) => [
-    normalizeHeader(column.label),
+    normalizeMemberImportHeader(column.label),
     column.key,
   ]),
 );
@@ -150,7 +151,7 @@ export function parseBookingImportCsv(
 
   const columnIndex = new Map<BookingImportColumnKey, number>();
   for (const [index, header] of headers.entries()) {
-    const key = COLUMN_KEY_BY_HEADER.get(normalizeHeader(header));
+    const key = COLUMN_KEY_BY_HEADER.get(normalizeMemberImportHeader(header));
     if (!key) continue;
     if (columnIndex.has(key)) {
       return { ok: false, error: `The column "${header}" appears twice` };
@@ -181,6 +182,13 @@ export function parseBookingImportCsv(
       return {
         ok: false,
         error: "Every row needs a Booking Ref",
+        lineNumber: record.lineNumber,
+      };
+    }
+    if (bookingRef.length > BOOKING_IMPORT_MAX_REF_LENGTH) {
+      return {
+        ok: false,
+        error: `A Booking Ref is longer than ${BOOKING_IMPORT_MAX_REF_LENGTH} characters`,
         lineNumber: record.lineNumber,
       };
     }
@@ -249,7 +257,7 @@ function readBooking(
   const drafts: GuestDraft[] = [];
   for (const row of group) {
     const line = row.lineNumber;
-    const guestType = normalizeHeader(row.cell("guestType"));
+    const guestType = normalizeMemberImportHeader(row.cell("guestType"));
     const isMember = MEMBER_GUEST_TYPES.has(guestType);
     if (!isMember && !NON_MEMBER_GUEST_TYPES.has(guestType)) {
       refuse(`Guest Type on line ${line} must be Member or Non-member`);
@@ -289,9 +297,9 @@ function readBooking(
       }
       const nightsText = row.cell("nights");
       if (nightsText && nights > 0 && nightsText !== String(nights)) {
-        refuse(
-          `Nights on line ${line} is ${nightsText} but the dates give ${nights}`,
-        );
+        // The cell is not echoed: a misaligned column could hold a name, and
+        // refusal text is stored (`INV-PRIV-011`).
+        refuse(`Nights on line ${line} does not match the dates, which give ${nights}`);
       }
     }
 

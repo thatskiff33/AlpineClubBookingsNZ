@@ -61,6 +61,12 @@ export type BookingImportRefusal = { code: BookingImportRefusalCode; message: st
 
 const BOOK_ON_BEHALF = "enter this booking through Book on Behalf";
 
+/** The hosting refusal, written by the planner and, under the locks, the writer. */
+export const BOOKING_IMPORT_HOSTING_REFUSAL: BookingImportRefusal = {
+  code: "HOSTING",
+  message: `Breaks the club's rule that non-members stay with an adult member; ${BOOK_ON_BEHALF}`,
+};
+
 export type ResolvedImportGuest = {
   lineNumber: number;
   firstName: string;
@@ -221,12 +227,7 @@ export async function checkImportBooking(
       stayEnd: guest.stayEnd,
     })),
   });
-  if (hosting) {
-    refusals.push({
-      code: "HOSTING",
-      message: `Breaks the club's rule that non-members stay with an adult member; ${BOOK_ON_BEHALF}`,
-    });
-  }
+  if (hosting) refusals.push(BOOKING_IMPORT_HOSTING_REFUSAL);
 
   // Every imported guest is present: a member guest is written as an officer
   // assignment (CONFIRMED) or consent-free, never as a pending request.
@@ -257,6 +258,12 @@ export async function checkImportBooking(
     const beds = booking.guests.filter(
       (guest) => guest.stayStart <= detail.date && detail.date < guest.stayEnd,
     ).length;
+    // A night inside the booking's span that none of its guests stays (a gap
+    // between two guests' stays) is not the booking's: it neither claims a bed
+    // nor is refused for that night being full or held. This also keeps the
+    // shape the parser's `nightDemand` has, which a resumed plan reports for a
+    // row already imported, so resuming cannot move the digest.
+    if (beds === 0) continue;
     nights.push({ night, beds });
     if (detail.wholeLodgeHeld) {
       held.push(night);
@@ -422,6 +429,21 @@ function isRefusalCode(value: string | null): value is BookingImportRefusalCode 
   return (BOOKING_IMPORT_REFUSAL_CODES as readonly string[]).includes(value ?? "");
 }
 
+/**
+ * Reads a stored refusal back: `joinBookingImportRefusals`'s inverse. Only the
+ * first reason's code is stored, so every line carries it.
+ */
+export function splitBookingImportRefusals(
+  reason: string | null,
+  code: string | null,
+): BookingImportRefusal[] {
+  const storedCode = isRefusalCode(code) ? code : "UNREADABLE";
+  return (reason ?? "")
+    .split("\n")
+    .filter(Boolean)
+    .map((message) => ({ code: storedCode, message }));
+}
+
 async function appRateCents(
   db: BookingImportDb,
   booking: ResolvedImportBooking,
@@ -506,12 +528,7 @@ export async function planBookingImport(
         ...base,
         outcome: imported ? "IMPORT" : "REFUSED",
         alreadyImported: imported,
-        refusals: imported
-          ? []
-          : (prior.refusalReason ?? "").split("\n").filter(Boolean).map((message) => ({
-              code: isRefusalCode(prior.refusalCode) ? prior.refusalCode : "UNREADABLE",
-              message,
-            })),
+        refusals: imported ? [] : splitBookingImportRefusals(prior.refusalReason, prior.refusalCode),
         appRateCents: rate,
         appRateDifferenceCents: rate === null ? null : booking.totalCents - rate,
         nights: booking.nightDemand,
