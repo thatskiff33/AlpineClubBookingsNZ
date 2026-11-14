@@ -14,7 +14,7 @@ import {
 } from "@/lib/image-storage";
 
 /**
- * Make the website-sized copies (#4935, INV-PUB-004) that images uploaded
+ * Make the website-sized copies (#4935, INV-PUB-005) that images uploaded
  * before copies existed never got, and tidy copies whose original is gone.
  *
  * Idempotent: an image whose current copies already match what it should have

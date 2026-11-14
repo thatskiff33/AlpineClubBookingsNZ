@@ -11,7 +11,7 @@ import {
 } from "@/lib/image-storage";
 
 /**
- * Website-sized copies of Image Manager uploads (#4935, INV-PUB-004).
+ * Website-sized copies of Image Manager uploads (#4935, INV-PUB-005).
  *
  * A phone photo is 3–8 MB, and before this a gallery thumbnail downloaded it
  * whole. Each JPEG/PNG/WebP upload now also gets WebP copies at the widths

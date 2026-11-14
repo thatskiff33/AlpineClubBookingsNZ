@@ -59,7 +59,7 @@ export function imageContentTypeForExt(
 }
 
 // ---------------------------------------------------------------------------
-// Website-sized copies (#4935, INV-PUB-004).
+// Website-sized copies (#4935, INV-PUB-005).
 //
 // Every directory may hold one reserved hidden folder of width-bounded WebP
 // copies of its images, written at upload (src/lib/image-derivatives.ts) and by
@@ -229,7 +229,7 @@ export function resolveInImagesRoot(rel: string): string | null {
  * null for any path with a copies-folder segment. Every Image Manager endpoint
  * and the gallery listing resolve client input through this, so copies are
  * managed only through their original — never listed, uploaded into, renamed
- * or deleted directly, and never an album (#4935, INV-PUB-004).
+ * or deleted directly, and never an album (#4935, INV-PUB-005).
  */
 export function resolveAlbumPathInImagesRoot(rel: string): string | null {
   return pathReachesDerivativeDirectory(rel) ? null : resolveInImagesRoot(rel);

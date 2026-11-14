@@ -40,6 +40,10 @@
  * a plaintext lives only between the read and the write of its own row.
  */
 
+import {
+  isIntegrationCredentialNamespace,
+  type IntegrationCredentialNamespace,
+} from "@/lib/integration-credential-namespaces";
 import type { Prisma } from "@prisma/client";
 
 import {
@@ -208,18 +212,33 @@ function olderRingKeyCodes(target: DataKey, options: ReencryptOptions): Prisma.T
   };
 }
 
+/**
+ * A stored row's namespace, narrowed to the registered list. A row outside it
+ * refuses the run rather than being skipped, so no row is left on a key the
+ * operator is about to remove.
+ */
+function registeredNamespace(provider: string): IntegrationCredentialNamespace {
+  if (!isIntegrationCredentialNamespace(provider)) {
+    throw new ReencryptRefusedError(
+      `Refused: the credential store holds a row in the unregistered namespace "${provider}".`,
+    );
+  }
+  return provider;
+}
+
 /** Move one credential row, claimed on the version read inside its transaction. */
 async function moveCredential(row: CredentialRow, target: DataKey): Promise<Outcome> {
+  const provider = registeredNamespace(row.provider);
   const targetSource = `${DATA_KEY_SOURCE_PREFIX}${target.id}`;
   try {
-    await withCredentialTransaction([row.provider], async (tx) => {
+    await withCredentialTransaction([provider], async (tx) => {
       if (
         row.provider === XERO_OAUTH_TOKEN_PROVIDER &&
         !(await fenceXeroTokenSetRewrite(tx))
       ) {
         throw new RowNotMoved("lost-claim");
       }
-      const stored = await readIntegrationCredentialRow(tx, row.provider, row.key);
+      const stored = await readIntegrationCredentialRow(tx, provider, row.key);
       if (stored.status === "not_configured") throw new RowNotMoved("gone");
       if (stored.status === "needs_reentry") throw new RowNotMoved("unreadable");
       if (stored.secretSource === targetSource) throw new RowNotMoved("already-current");
@@ -229,13 +248,13 @@ async function moveCredential(row: CredentialRow, target: DataKey): Promise<Outc
       // so a write landing between the two reads makes this move lose instead
       // of having its timestamp rolled back; a later one fails the claim.
       const stamp = await tx.integrationCredential.findUnique({
-        where: { provider_key: { provider: row.provider, key: row.key } },
+        where: { provider_key: { provider, key: row.key } },
         select: { ciphertext: true, iv: true, authTag: true, updatedAt: true },
       });
       if (!stamp || credentialVersionOf(stamp) !== stored.version) throw new RowNotMoved("lost-claim");
       await setIntegrationCredentialInTransaction({
         tx,
-        provider: row.provider,
+        provider,
         key: row.key,
         value: stored.value,
         actor: { kind: "system", actor: DATA_KEY_REENCRYPT_JOB_NAME },
@@ -254,7 +273,7 @@ async function moveCredential(row: CredentialRow, target: DataKey): Promise<Outc
 
 /** A dry run's verdict on a credential: readable now, or not. Writes nothing. */
 async function inspectCredential(row: CredentialRow): Promise<Outcome> {
-  const stored = await readIntegrationCredentialRow(prisma, row.provider, row.key);
+  const stored = await readIntegrationCredentialRow(prisma, registeredNamespace(row.provider), row.key);
   if (stored.status === "not_configured") return "gone";
   return stored.status === "configured" ? "moved" : "unreadable";
 }
@@ -373,7 +392,11 @@ async function checkTargetKey(
     take: KEY_CHECK_CANDIDATES,
   });
   for (const credential of credentials) {
-    const stored = await readIntegrationCredentialRow(prisma, credential.provider, credential.key);
+    const stored = await readIntegrationCredentialRow(
+      prisma,
+      registeredNamespace(credential.provider),
+      credential.key,
+    );
     if (stored.status === "needs_reentry") throw refuse();
     if (stored.status === "configured") return "a stored credential";
   }
@@ -407,6 +430,9 @@ export async function reencryptStoredData(options: ReencryptOptions): Promise<Re
     select: { provider: true, key: true },
     orderBy: [{ provider: "asc" }, { key: "asc" }],
   });
+  // Check every namespace before reading or moving any row, so an unregistered
+  // one refuses the whole run instead of stopping it partway (#4918).
+  for (const row of credentialRows) registeredNamespace(row.provider);
   const credentials = await inPasses(
     credentialRows,
     (row) => (options.dryRun ? inspectCredential(row) : moveCredential(row, target)),

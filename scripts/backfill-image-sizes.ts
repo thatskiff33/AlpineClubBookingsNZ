@@ -1,6 +1,6 @@
 /**
  * Make website-sized copies of Image Manager photos uploaded before copies
- * existed (#4935, INV-PUB-004), and remove copies whose original is gone.
+ * existed (#4935, INV-PUB-005), and remove copies whose original is gone.
  *
  * Touches only the images folder on disk: no database, no provider calls.
  * Idempotent — a second run reports everything up to date and writes nothing.

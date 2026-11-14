@@ -7,17 +7,12 @@ import type { DependantIdentityDeclaration } from "@/lib/booking-dependant-ident
 import {
   BookingStatus,
   type AgeTier,
-  type Booking,
-  type BookingGuest,
-  type BookingGuestNightPriceSource,
-  type Member,
   type Payment,
-  type PaymentTransaction,
   type Prisma,
-  type PromoCode,
-  type PromoRedemption,
   type Role,
 } from "@prisma/client";
+
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { isAdditionalAmountUncollected } from "@/lib/additional-payment-chase";
@@ -213,48 +208,59 @@ export function resolveStayRangesOrApiError<Guest extends LiveGuestStayRow>(args
   }
 }
 
-export type LoadedPromoRedemption = PromoRedemption & {
-  promoCode: PromoCode & {
-    assignments: Array<{ memberId: string }>;
-    lodges?: Array<{ lodgeId: string }>;
-  };
-  guestTargets?: Array<{ bookingGuestId: string }>;
-};
-
-export type LoadedBookingForModify = Booking & {
-  // Guests carry their explicit night set (issue #713) so an edit preserves the
-  // gaps of guests that are not being changed and re-syncs only edited guests.
-  guests: Array<
-    BookingGuest & {
-      // #3170: `priceCents` distinguishes three things and every reader has to
-      // keep them apart. `undefined` means the SELECT did not ask for the price;
-      // `null` means the row says the price is NOT KNOWN (a night a parked edit
-      // committed without valuing); a number is the stored sold price, and 0 is
-      // a real one (a comped night). `?? 0` on this field is prohibited.
-      nights?: {
-        stayDate: Date;
-        priceCents?: number | null;
-        priceSource: BookingGuestNightPriceSource;
-      }[];
-    }
-  >;
-  payment: Payment | null;
-  member: Member;
+/**
+ * #4925: the booking every edit door re-reads under its locks - the full edit,
+ * the date change, guest removal and the guest-acceptance re-price - and hands
+ * to the shared settlement and lifecycle code. It is the ONE home of that shape
+ * (`INV-SSOT-001`): the loaded types below are derived from it, so a field the
+ * shared code reads but a door does not load is a compile error rather than a
+ * cast that hides it. A field added here reaches all four doors.
+ *
+ * Guest order is deliberately absent: only the batch door orders guests, and it
+ * adds that `orderBy` over this include itself.
+ */
+export const EDIT_DOOR_BOOKING_INCLUDE = {
+  guests: {
+    include: {
+      // Each guest's explicit night set (issue #713), so an edit preserves the
+      // gaps of guests it does not change. #3170: `priceCents` is `null` when
+      // the row's price is NOT KNOWN and a number (0 included, a comped night)
+      // when it is the sold price; `?? 0` on it is prohibited.
+      nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
+    },
+  },
+  // #4019 review: with its transactions, oldest first (`INV-PAY-133`), because
+  // `isUnpaidConfirmedWholeLodge` reads them to tell an abandoned card attempt
+  // from a capture (`INV-PAY-143`).
+  payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
+  // #3369: the owner is a member OR an organisation; read it via bookingOwner().
+  member: true,
+  organisation: { select: { name: true, email: true } },
   // #3826: one redemption per promo code; read through booking-promo-redemptions.ts.
-  promoRedemptions: LoadedPromoRedemption[];
-};
+  promoRedemptions: {
+    include: {
+      guestTargets: { select: { bookingGuestId: true } },
+      promoCode: {
+        include: {
+          assignments: { select: { memberId: true } },
+          lodges: { select: { lodgeId: true } },
+        },
+      },
+    },
+  },
+} satisfies Prisma.BookingInclude;
+
+/** The booking an edit door hands `applyLifecycleTransitions`, ledger rows included. */
+export type LoadedBookingForLifecycle = Prisma.BookingGetPayload<{
+  include: typeof EDIT_DOOR_BOOKING_INCLUDE;
+}>;
 
 /**
- * #4019 review: the booking an edit door hands `applyLifecycleTransitions` -
- * its payment loaded WITH its transactions (oldest first,
- * `LEDGER_ROWS_OLDEST_FIRST`), because the clamp's `isUnpaidConfirmedWholeLodge`
- * reads them to tell an abandoned card attempt from a capture, and requires
- * them by type. Every door reaches this type through an `as unknown as` cast,
- * which no compiler checks, so `lifecycle-door-payment-transactions-census`
- * pins each door's include.
+ * The same snapshot for the quote and settlement readers, which never read the
+ * payment's ledger rows - so a caller holding a bare payment can still use them.
  */
-export type LoadedBookingForLifecycle = Omit<LoadedBookingForModify, "payment"> & {
-  payment: (Payment & { transactions: PaymentTransaction[] }) | null;
+export type LoadedBookingForModify = Omit<LoadedBookingForLifecycle, "payment"> & {
+  payment: Payment | null;
 };
 
 type BookingGuestNameEditPayment = Pick<

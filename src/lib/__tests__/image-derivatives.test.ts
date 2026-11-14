@@ -12,7 +12,7 @@ import {
 import { backfillImageDerivatives } from "@/lib/image-derivatives-backfill";
 import { IMAGE_DERIVATIVES_DIRECTORY } from "@/lib/image-storage";
 
-// #4935 (INV-PUB-004). Real sharp, real files in a temporary directory: the
+// #4935 (INV-PUB-005). Real sharp, real files in a temporary directory: the
 // properties that matter — which widths exist, that nothing is upscaled, that
 // no metadata survives — are properties of the bytes on disk.
 

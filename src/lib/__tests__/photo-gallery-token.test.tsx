@@ -173,7 +173,7 @@ describe("PhotoGalleryToken", () => {
     expect(window.cancelAnimationFrame).toHaveBeenCalledWith(1);
     expect(mocks.loadAndOpen).not.toHaveBeenCalled();
   });
-  // #4935 (INV-PUB-004): website-sized copies in srcset; full view opens the widest.
+  // #4935 (INV-PUB-005): website-sized copies in srcset; full view opens the widest.
   const base = "/api/images/uploaded/album";
   const withCopies = {
     src: `${base}/Ruapehu, summit.jpg`,

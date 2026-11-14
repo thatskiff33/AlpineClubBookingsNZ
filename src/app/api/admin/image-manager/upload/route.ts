@@ -192,7 +192,7 @@ export async function POST(request: NextRequest) {
         await fs.unlink(partPath).catch(() => undefined);
         throw err;
       }
-      // Website-sized WebP copies for the gallery (#4935, INV-PUB-004), made
+      // Website-sized WebP copies for the gallery (#4935, INV-PUB-005), made
       // from the bytes as stored. Fail-open: a photo that cannot be copied is
       // still a successful upload, served as the original.
       await writeImageDerivatives(storable, absDir, safeName);

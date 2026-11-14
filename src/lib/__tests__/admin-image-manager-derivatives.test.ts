@@ -24,7 +24,7 @@ import * as directoriesRoute from "@/app/api/admin/image-manager/directories/rou
 import * as imagesRoute from "@/app/api/admin/image-manager/images/route";
 import { IMAGES_ROOT, IMAGE_DERIVATIVES_DIRECTORY } from "@/lib/image-storage";
 
-// #4935 (INV-PUB-004): the Image Manager shows originals only, and every
+// #4935 (INV-PUB-005): the Image Manager shows originals only, and every
 // action on an original or a folder carries its website-sized copies. Real
 // files under a unique folder of the real (gitignored) images root.
 

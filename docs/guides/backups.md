@@ -51,6 +51,9 @@ each booking's guests for their stay. That is health-related personal
 information: keep the S3 bucket and any local copy private, and restrict who can
 download a backup, exactly as you already do for addresses and dates of birth.
 
+Suspected exposure or account compromise? Follow the [privacy-incident
+procedure](privacy-incidents.md) for containment, evidence and notification.
+
 ## When you'd use it
 
 - Setting up durable off-site (S3) backups for the first time.

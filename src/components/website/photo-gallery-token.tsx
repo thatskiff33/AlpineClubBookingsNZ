@@ -28,7 +28,7 @@ function srcsetUrl(src: string): string {
 }
 
 /**
- * How one photo renders (#4935, INV-PUB-004). With copies: the thumbnail is a
+ * How one photo renders (#4935, INV-PUB-005). With copies: the thumbnail is a
  * `srcset` of them with the middle one as the fallback `src`, and the
  * full-size view opens the widest. Without: the original everywhere, exactly
  * as before copies existed.

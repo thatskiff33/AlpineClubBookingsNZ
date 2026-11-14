@@ -92,6 +92,19 @@ not yet backfilled) is shown as the original. See
 A gallery reads its folder when the page is built, and uploading, deleting or
 renaming in Image Manager refreshes it.
 
+### Hosting disclosure on the privacy page
+
+You can add `{{data-hosting}}` to the Privacy page body. Set its values under
+**Site Appearance & Content → Club Identity → Where members' data is held**:
+**Hosting provider** and **Where your data is held**. Name both locations if the
+database and backups are held in different places. Blank fields use role-only
+fallback wording; the token publishes only the two values you enter, escaped as
+plain text. See the [token catalogue](../PUBLIC_PAGE_CONTENT_TOKENS.md) for all
+four states and the [incident guide](privacy-incidents.md) for the response path.
+This release does not insert it or change your published policy automatically;
+read the [upgrade note](../UPGRADING.md#privacy-incident-guide-and-hosting-disclosure-settings-4918)
+before editing a page you might later serve on older code.
+
 ### Hide a page, or delete it
 
 **Hide** is the reversible one. The page and everything you wrote stay exactly
