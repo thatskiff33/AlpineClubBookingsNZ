@@ -15,7 +15,7 @@ setup("sign in booking persona", async ({ page }) => {
 // Signs the E2E full admin in ONCE and saves its storage state so every admin
 // spec can reuse it via storageStatePath(E2E_ADMIN.email) instead of a fresh
 // UI login. That collapses ~10 per-spec admin logins to this single one, giving
-// rateLimiters.login (10 / 15 min, keyed per synthetic IP-per-email) ample
+// rateLimiters.login (keyed per synthetic IP-per-email) ample
 // headroom — the suite previously sat exactly at that ceiling and one extra
 // admin spec would 429-stall the tail spec's beforeAll (#1779).
 //

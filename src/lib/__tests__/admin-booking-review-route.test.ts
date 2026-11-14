@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   sendApprovedEmail: vi.fn(),
   sendRejectedEmail: vi.fn(),
   logAudit: vi.fn(),
+  releaseBookingPromoRedemptions: vi.fn(),
 }));
 
 vi.mock("@/lib/session-guards", () => ({
@@ -26,6 +27,10 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: mocks.bookingUpdateMany,
     },
   },
+}));
+
+vi.mock("@/lib/promo", () => ({
+  releaseBookingPromoRedemptions: mocks.releaseBookingPromoRedemptions,
 }));
 
 vi.mock("@/lib/capacity", () => ({
@@ -188,6 +193,8 @@ describe("PATCH /api/admin/bookings/[id]/review", () => {
       }),
     );
     expect(mocks.cancelBooking).not.toHaveBeenCalled();
+    // Approval moves toward payment, so the member keeps the code (#4909).
+    expect(mocks.releaseBookingPromoRedemptions).not.toHaveBeenCalled();
   });
 
   it("claims approval in global then lodge order before the authoritative re-read", async () => {
@@ -444,6 +451,12 @@ describe("PATCH /api/admin/bookings/[id]/review", () => {
       status: "CANCELLED",
       draftExpiresAt: null,
     });
+    // The draft's promo uses go back with CANCELLED, in the claim's tx (#4909).
+    expect(mocks.releaseBookingPromoRedemptions).toHaveBeenCalledTimes(1);
+    expect(mocks.releaseBookingPromoRedemptions).toHaveBeenCalledWith(
+      expect.objectContaining({ $executeRaw: mocks.executeRaw }),
+      "b1",
+    );
     expect(mocks.sendRejectedEmail).toHaveBeenCalled();
     expect(mocks.logAudit).toHaveBeenCalledWith(
       expect.objectContaining({ action: "booking.review.reject" }),
@@ -468,6 +481,7 @@ describe("PATCH /api/admin/bookings/[id]/review", () => {
     );
     expect(res.status).toBe(409);
     expect(mocks.cancelBooking).not.toHaveBeenCalled();
+    expect(mocks.releaseBookingPromoRedemptions).not.toHaveBeenCalled();
   });
 
   it("returns 409 if another admin already claimed the review (race)", async () => {
