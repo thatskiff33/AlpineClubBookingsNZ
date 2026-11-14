@@ -57,6 +57,7 @@ import PaymentsPage from "@/app/(admin)/admin/finance/payments/page";
 import SubscriptionsPage from "@/app/(admin)/admin/finance/subscriptions/page";
 import HutLeadersPage from "@/app/(admin)/admin/hut-leaders/page";
 import CommunicationsPage from "@/app/(admin)/admin/messages/communications/page";
+import { ADMIN_LOAD_FAILED_ERROR } from "@/lib/admin-query-error";
 
 const payment = {
   id: "payment", amountCents: 12345, refundedAmountCents: 0, status: "SUCCEEDED",
@@ -80,7 +81,9 @@ const history = { id: "history", subject: "Previous newsletter", sentAt: "2026-0
 function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
-type Failure = "server" | "network";
+// "bare" is a proxy's HTML error page: a failing status with no usable `error`
+// text, so the page falls back to the shared sentence.
+type Failure = "server" | "network" | "bare";
 let failure: Failure | null;
 let failUnassigned = false;
 let failAssignments = true;
@@ -88,6 +91,7 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
   const url = String(input);
   const fail = () => {
     if (failure === "network") throw new TypeError("Failed to fetch");
+    if (failure === "bare") return new Response("<html>Bad gateway</html>", { status: 502, headers: { "Content-Type": "text/html" } });
     return response({ error: "The list service is unavailable." }, 500);
   };
   if (init?.method && init.method !== "GET") return response({ eligibleRecipients: 1, filteredByPreference: 0 });
@@ -116,14 +120,19 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 async function assertFailure(testId: string, empty: string | RegExp, stale: string) {
   const alert = await screen.findByTestId(testId);
   expect(alert).toHaveAttribute("role", "alert");
-  expect(alert).toHaveTextContent(failure === "network" ? "Check your connection" : "The list service is unavailable.");
+  expect(alert).toHaveTextContent(
+    failure === "network" ? "Check your connection" : failure === "bare" ? ADMIN_LOAD_FAILED_ERROR : "The list service is unavailable.",
+  );
+  // Every one of these reads also re-runs after a successful write, where this
+  // sentence sits beside the page's own success message.
+  expect(alert).not.toHaveTextContent(/nothing was changed/i);
   expect(screen.queryByText(empty)).not.toBeInTheDocument();
   expect(screen.queryByText(stale)).not.toBeInTheDocument();
   expect(within(alert).getByRole("button", { name: "Try again" })).toBeEnabled();
   return alert;
 }
 
-for (const kind of ["server", "network"] as const) {
+for (const kind of ["server", "network", "bare"] as const) {
   describe(`${kind} failure`, () => {
     it("Payments clears the previous search's rows and totals and recovers", async () => {
       render(<PaymentsPage />);
@@ -221,6 +230,58 @@ it("Payments shows a 400 pointer while More filters is closed and keeps the fiel
   expect(screen.queryByTestId("payments-filter-error")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /More filters/ }));
   expect(screen.getByTestId("payments-filter-error")).toHaveTextContent("Search must be at most 100 characters.");
+});
+
+for (const kind of ["server", "network"] as const) {
+  it(`Payments drops a refused filter's field message when the next load fails by ${kind}`, async () => {
+    fetchMock.mockImplementationOnce(async () => response({ error: "Invalid query parameters", details: { formErrors: [], fieldErrors: { search: ["Search must be at most 100 characters."] } } }, 400));
+    render(<PaymentsPage />);
+    await screen.findByTestId("payments-load-error");
+    fireEvent.click(screen.getByRole("button", { name: /More filters/ }));
+    expect(screen.getByTestId("payments-filter-error")).toHaveTextContent("Search must be at most 100 characters.");
+
+    // An outage is not something the amount boxes caused: the old reason must
+    // not sit under them while the real cause is above the table.
+    failure = kind;
+    fireEvent.change(screen.getByLabelText("Member or reference"), { target: { value: "a shorter query" } });
+    await waitFor(() => expect(screen.getByTestId("payments-load-error")).toHaveTextContent(kind === "network" ? "Check your connection" : "The list service is unavailable."));
+    expect(screen.getByRole("button", { name: /More filters/ })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.queryByTestId("payments-filter-error")).not.toBeInTheDocument();
+    expect(screen.getByTestId("payments-load-error")).not.toHaveTextContent("Search must be at most 100 characters.");
+  });
+}
+
+it("Hut Leaders keeps the error and the focused Try again button in place while a retry runs", async () => {
+  failure = "server";
+  render(<HutLeadersPage />);
+  const alert = await screen.findByTestId("hut-leaders-assignments-load-error");
+  const button = within(alert).getByRole("button", { name: "Try again" });
+  button.focus();
+
+  // The retry's own read stays pending; the page must not swap to "Loading...".
+  let finish!: (reply: Response) => void;
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (input, init) => {
+    if (String(input) === "/api/admin/hut-leaders?lodgeId=lodge-1") return new Promise<Response>((resolve) => { finish = resolve; });
+    return original(input, init);
+  });
+  try {
+    fireEvent.click(button);
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    expect(screen.getByTestId("hut-leaders-assignments-load-error")).toBe(alert);
+    expect(screen.queryByText("Loading...")).not.toBeInTheDocument();
+    expect(button).toBeInTheDocument();
+    expect(button).toHaveFocus();
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText("Trying again.")).toBeInTheDocument();
+
+    // It fails again: same words, but the person is told, and focus is still there.
+    await act(async () => { finish(response({ error: "The list service is unavailable." }, 500)); });
+    await screen.findByText("Still could not be loaded.");
+    expect(screen.getByTestId("hut-leaders-assignments-load-error")).toBe(alert);
+    expect(button).toHaveFocus();
+    expect(button).not.toHaveAttribute("aria-disabled");
+  } finally { fetchMock.mockImplementation(original); }
 });
 
 it("ignores late failures from the previous lodge for both reads", async () => {

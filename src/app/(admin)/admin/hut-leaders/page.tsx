@@ -375,7 +375,12 @@ export default function HutLeadersPage() {
         }
       }
     } catch {
-      // non-essential overlay
+      // Non-essential overlay, and deliberately left silent (#4961 decision): a
+      // month whose read fails simply gets no red or covered shading. The
+      // authoritative "are the upcoming nights covered?" answer is the amber
+      // card (or its "could not be checked" error) from fetchUnassignedDates,
+      // which does say when it failed. Saying it here too would put one outage
+      // in two places for a month the officer has only scrolled to.
     }
     try {
       const res = await fetch(`/api/admin/occupancy?month=${monthKey}&lodgeId=${encodeURIComponent(requestedLodgeId)}`);
@@ -884,8 +889,12 @@ export default function HutLeadersPage() {
       nights,
       fills,
       conflicts,
+      // #4961: a failed assignments read leaves `assignments` empty, so the
+      // overlap check above finds nothing. Say so in the preview rather than
+      // let "no warning" read as "no clash"; the POST route still re-checks.
+      overlapCheckUnavailable: Boolean(assignmentsLoadError),
     };
-  }, [target, selection.startDate, selection.endDate, assignments, redDatesByMonth]);
+  }, [target, selection.startDate, selection.endDate, assignments, assignmentsLoadError, redDatesByMonth]);
 
   // The club's day decides whether a coverage block reads as active or past —
   // not the build's `NEXT_PUBLIC_TZ`, which is fixed at compile time rather than
@@ -1266,7 +1275,11 @@ export default function HutLeadersPage() {
         </Card>
       )}
 
-      {loading ? (
+      {/* #4961: "Loading..." never replaces a load error. Try again's own re-read
+          sets `loading`, and swapping the error for "Loading..." would unmount
+          its button and drop the keyboard focus on it. The error clears only
+          when a read succeeds. */}
+      {loading && !assignmentsLoadError ? (
         <div className="rounded-lg border border-border bg-card p-6 text-center text-muted-foreground">
           Loading...
         </div>

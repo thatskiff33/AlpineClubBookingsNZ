@@ -452,6 +452,12 @@ export function AssignmentForm({
                 ))}
               </div>
             )}
+            {summary.overlapCheckUnavailable && (
+              <p className="text-sm text-warning">
+                The overlap check is unavailable until the assignments load. The
+                server still checks for overlaps when you assign.
+              </p>
+            )}
             {error && !hasConflict && (
               <div className="rounded-md border border-danger/20 bg-danger-muted px-3 py-2 text-sm text-danger">
                 <p>{error.message}</p>

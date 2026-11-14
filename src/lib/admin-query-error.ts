@@ -39,8 +39,12 @@ export async function readAdminQueryErrorMessage(
  * The sentences an admin list shows when its read fails without a refusal to
  * quote (#4961), shared so the four pages that render `AdminLoadError` cannot
  * drift into four wordings of one outage.
+ *
+ * Neither sentence says anything about what was or was not saved. Each read is
+ * also re-run straight after a write (a send, a payment, a PIN reset), where a
+ * "nothing was changed" claim would sit beside the page's own success message.
  */
 export const ADMIN_LOAD_NETWORK_ERROR =
   "The server could not be reached. Check your connection, then try again.";
 export const ADMIN_LOAD_FAILED_ERROR =
-  "The server could not answer just now. Nothing was changed; try again.";
+  "The server could not answer just now. Try again.";

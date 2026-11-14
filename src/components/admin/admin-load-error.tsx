@@ -19,6 +19,14 @@ import { Button } from "@/components/ui/button";
  * or `@/lib/admin-query-error` — this component never reads a response itself.
  * It is an error `Alert`, so it carries `role="alert"` and is announced when it
  * appears.
+ *
+ * Try again keeps keyboard focus while it runs. The button is `aria-disabled`,
+ * never `disabled` (a disabled button drops focus and does not get it back),
+ * and a click on it is ignored. A failed retry leaves the alert's words
+ * unchanged, which a live region does not announce, so a separate polite status
+ * says "Trying again." and then that it still could not be loaded. A page must
+ * keep this mounted while its retry is in flight: it clears its error only when
+ * the read succeeds, and must not swap to a "Loading..." branch meanwhile.
  */
 export function AdminLoadError({
   title,
@@ -37,31 +45,40 @@ export function AdminLoadError({
   children?: ReactNode;
   "data-testid"?: string;
 }) {
-  const [retrying, setRetrying] = useState(false);
+  // "failed" is reached only when this is still mounted after the retry
+  // settled: on success the page clears its error and unmounts it.
+  const [retry, setRetry] = useState<"idle" | "running" | "failed">("idle");
+  const running = retry === "running";
 
-  async function retry() {
-    setRetrying(true);
+  async function handleRetry() {
+    if (running) return;
+    setRetry("running");
     try {
       await onRetry();
     } finally {
-      setRetrying(false);
+      setRetry("failed");
     }
   }
 
   return (
-    <Alert variant="error" title={title} data-testid={testId}>
-      <p>{message}</p>
-      {children}
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="mt-2"
-        disabled={retrying}
-        onClick={retry}
-      >
-        Try again
-      </Button>
-    </Alert>
+    <>
+      <Alert variant="error" title={title} data-testid={testId}>
+        <p>{message}</p>
+        {children}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="mt-2 aria-disabled:opacity-50"
+          aria-disabled={running || undefined}
+          onClick={handleRetry}
+        >
+          Try again
+        </Button>
+      </Alert>
+      <p role="status" aria-live="polite" className="sr-only">
+        {running ? "Trying again." : retry === "failed" ? "Still could not be loaded." : ""}
+      </p>
+    </>
   );
 }
