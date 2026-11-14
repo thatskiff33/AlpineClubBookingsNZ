@@ -261,6 +261,14 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     contexts: ["page-content-body"],
   },
   {
+    token: "data-hosting",
+    kind: "text",
+    description: "Hosting disclosure set in Club Identity > Where members' data is held; blank fields ask the Privacy Officer.",
+    example: "{{data-hosting}}",
+    allowsLegacySingleBrace: false,
+    contexts: ["page-content-body"],
+  },
+  {
     token: "club-name",
     kind: "text",
     description:
@@ -343,6 +351,14 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     example: "{{hut-leader-lower}}",
     allowsLegacySingleBrace: false,
     contexts: ["page-content-body", "lodge-instructions"],
+  },
+  {
+    token: "email-log-retention",
+    kind: "text",
+    description: "Inserts the club's current email-log retention policy, including whether automatic deletion is switched on.",
+    example: "Email logs: {{email-log-retention}}.",
+    allowsLegacySingleBrace: false,
+    contexts: ["page-content-body"],
   },
   {
     token: "facebook-url",

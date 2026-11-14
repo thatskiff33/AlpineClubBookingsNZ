@@ -1,7 +1,6 @@
 import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
-import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import {
   AdminReviewStatus,
   type AgeTier,
@@ -60,9 +59,9 @@ import {
   calculateModificationSettlementOptions,
   rateSnapshotUpdateForRepricedGuest,
   type BookingModificationSettlementMethod,
-  type LoadedBookingForLifecycle,
-  type LoadedBookingForModify,
 } from "@/lib/booking-modify";
+// Imported directly, not through the barrel: route tests mock the barrel whole.
+import { EDIT_DOOR_BOOKING_INCLUDE } from "@/lib/booking-modify-validation";
 import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
 import {
@@ -399,28 +398,7 @@ export async function removeBookingGuestInTransaction({
   // from this post-lock snapshot.
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
-    include: {
-      guests: {
-        include: {
-          nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
-        },
-      },
-      payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
-      member: true,
-      // #3369: the owner may be an Organisation; bookingOwner() reads both.
-      organisation: { select: { name: true, email: true } },
-        promoRedemptions: {
-          include: {
-            guestTargets: { select: { bookingGuestId: true } },
-            promoCode: {
-              include: {
-                assignments: { select: { memberId: true } },
-                lodges: { select: { lodgeId: true } },
-              },
-            },
-          },
-        },
-    },
+    include: EDIT_DOOR_BOOKING_INCLUDE,
   });
 
   if (!booking) {
@@ -809,7 +787,7 @@ export async function removeBookingGuestInTransaction({
   // options and the save, so a capture between two reads cannot split them.
   const reduction = await readReductionAgainstUnpaidAsk(tx, booking, priceDiffCents);
   const settlementOptions = await calculateModificationSettlementOptions({
-    booking: booking as unknown as LoadedBookingForModify,
+    booking,
     netChargeCents: priceDiffCents,
     reduction,
     db: tx, // locked transaction; see `CancellationPolicyDb`
@@ -828,7 +806,7 @@ export async function removeBookingGuestInTransaction({
     );
   }
   const paymentImpact = await applyPaymentAdjustments(tx, {
-    booking: booking as unknown as LoadedBookingForModify,
+    booking,
     priceDiffCents,
     changeFeeCents: 0,
     reduction,
@@ -846,7 +824,7 @@ export async function removeBookingGuestInTransaction({
   // paid/confirmed booking is flagged for the admin queue without a status
   // change (applyLifecycleTransitions enforces that).
   const lifecycle = await applyLifecycleTransitions(tx, {
-    booking: booking as unknown as LoadedBookingForLifecycle,
+    booking,
     bookingId,
     newCheckIn: booking.checkIn,
     newFinalPriceCents,

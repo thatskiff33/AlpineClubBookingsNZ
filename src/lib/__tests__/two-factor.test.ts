@@ -14,6 +14,7 @@ vi.mock("@/lib/club-identity-settings", () => ({
 const mockPrisma = vi.hoisted(() => ({
   // Both shapes: an array of operations, and (#3454, enrolment) an interactive
   // callback, which is handed this same double as its transaction client.
+  $executeRaw: vi.fn().mockResolvedValue(0),
   $transaction: vi.fn(
     async (operations: Array<Promise<unknown>> | ((tx: unknown) => Promise<unknown>)) =>
       typeof operations === "function"

@@ -5,7 +5,7 @@ running an epic or any multi-issue wave. The always-read rules — roles,
 reviews, the per-issue pipeline and the merge gate — are in
 [`AGENTS.md`](../../AGENTS.md) and are not restated here. Reading, claiming and
 writing issues is [`ISSUE_WORKFLOW.md`](ISSUE_WORKFLOW.md); what is running
-right now is on the generated status board
+now is `pnpm run status`, or the board once live
 ([`COORDINATION.md`](COORDINATION.md#the-status-board)).
 
 ## What qualifies as an epic

@@ -48,11 +48,13 @@ import {
 } from "@/lib/payment-recovery-keys";
 import { prisma } from "@/lib/prisma";
 import {
+  lockPaymentForRefundedTotal,
   planStripeRefundAllocation,
   type RefundAllocationSlice,
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import {
   createPaymentIntent,
   findOrCreateCustomer,
@@ -175,7 +177,17 @@ async function reserveBookingModificationCardRefund(
   if (pendingRefundAmountCents <= 0 || !paymentId || organiserChildRefund) return null;
   let plan: RefundAllocationSlice[] | null = null;
   try {
-    const planned = await planStripeRefundAllocation({ paymentId, amountCents: pendingRefundAmountCents, store: tx });
+    // #4872 (`INV-PAY-150`): the freeze reads the superseded-capture hold-back
+    // under the Payment row. R05 already took that row on the edit doors'
+    // booking row -> Payment edge, so re-taking it here adds no lock edge.
+    await lockPaymentForRefundedTotal(tx, paymentId);
+    const heldBack = await readSupersededCaptureHeldBack(tx, paymentId);
+    const planned = await planStripeRefundAllocation({
+      paymentId,
+      amountCents: pendingRefundAmountCents,
+      store: tx,
+      heldBackByTransaction: heldBack.byTransaction,
+    });
     if (planned.plannedAmountCents < pendingRefundAmountCents) throw new Error(STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE);
     plan = planned.slices;
   } catch (err) {
