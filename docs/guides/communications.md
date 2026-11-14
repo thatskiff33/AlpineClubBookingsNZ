@@ -82,6 +82,7 @@ after preference filtering).
 | *Nobody in "…" has opted in to marketing email* | No active account in the chosen audience has opted in to marketing email | Choose another audience, or check members' preferences |
 | *Could not check how many people would receive this email* | The recipient count could not be read, so the page would not send | Try again; nothing was sent and the hourly limit is untouched |
 | Send rejected as rate limited | You already sent within the hour window | Wait for the window to clear (default one send per hour) |
+| **Send history could not be loaded** | The history could not be read: an outage or a dropped connection. A send you just made is not undone by this | Press **Try again** before sending again, so you can see whether it went out. If it keeps failing, tell your club administrator |
 | A member says the formatting was lost | The body is plain text; HTML is escaped | Send plain text; use [Email Messages](email-messages.md) for templated system email |
 
 ## Related links

@@ -60,10 +60,7 @@
  * - An invalidated, unreadable or absent token gets the ordinary window.
  */
 import { getToken } from "next-auth/jwt";
-import {
-  isLodgeKioskAccount,
-  type AccountClassificationInput,
-} from "./member-roles";
+import { isKioskSessionMember } from "./member-roles";
 import {
   getTokenSessionIssuedAtMs,
   isRevokedMemberSession,
@@ -76,23 +73,9 @@ export const ACCOUNT_SESSION_IDLE_SECONDS = 8 * 60 * 60;
 /** Idle window of the lodge kiosk account's session, in seconds (#4612). */
 export const KIOSK_ACCOUNT_SESSION_IDLE_SECONDS = 30 * 24 * 60 * 60;
 
-/**
- * The `kioskAccount` claim the `jwt` callback stamps from the member row on
- * every refresh: login on, and the record IS the kiosk by the app's own
- * classification (`isLodgeKioskAccount`). Not "holds `LODGE`".
- */
-export function isKioskSessionMember(
-  member: AccountClassificationInput & { canLogin: boolean | null | undefined },
-): boolean {
-  return (
-    member.canLogin === true &&
-    isLodgeKioskAccount(
-      member.role,
-      member.accessRoles,
-      member.financeAccessLevel,
-    )
-  );
-}
+// Defined beside the classification it reads so client pages can share it
+// (#4618); the session code imports it from here as before.
+export { isKioskSessionMember } from "./member-roles";
 
 /**
  * A decoded session token. The decision reads `kioskAccount` and

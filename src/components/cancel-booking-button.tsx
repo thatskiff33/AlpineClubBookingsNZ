@@ -3,14 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice";
 import { HostingCoverageOverridePrompt } from "@/components/hosting-coverage-override-prompt";
 import {
@@ -73,8 +66,8 @@ export function CancelBookingButton({
   // the cancel endpoint and settlement logic are unchanged.
   onBehalfOfMember?: boolean;
   // Issue #1705 (#1698 pattern): when true, Confirm Cancellation first asks
-  // whether the member receives the cancellation email ("Cancel and email
-  // member" / "Cancel without emailing"). Pass viewerRole === "ADMIN" for the
+  // whether the member receives the cancellation email ("Cancel booking and
+  // email member" / "Cancel booking, no email", or "Go back"). Pass viewerRole === "ADMIN" for the
   // booking-management role (bookingManagementAuthorizationRole) — the same
   // role the cancel route resolves before honouring notifyMember — so the
   // dialog shows exactly when the server will honour the choice. A member
@@ -330,7 +323,7 @@ export function CancelBookingButton({
   if (step === "success") {
     const refund = result?.refundAmountCents || 0;
     const isCredit = result?.refundMethod === "credit";
-    // Issue #1705: when the admin chose "Cancel without emailing", the standard
+    // Issue #1705: when the admin chose "Cancel booking, no email", the standard
     // email-promise copy would be untrue — state the recorded choice instead.
     //
     // #2259: the switch has to count here too. Since H1 the suppressed path
@@ -639,54 +632,61 @@ export function CancelBookingButton({
             to make — the mailer withholds the cancellation email either way —
             so the dialog states that and offers only the send-nothing action.
             This is the case the acknowledgement dialog warns about by name. */}
-        <Dialog open={notifyDialogOpen} onOpenChange={setNotifyDialogOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>
-                {noEmailsSuppressesChoice
-                  ? "Cancel this booking?"
-                  : "Email the member about this cancellation?"}
-              </DialogTitle>
-              <DialogDescription>
-                {noEmailsSuppressesChoice
-                  ? "The booking will be cancelled and any refund or account credit applied as usual."
-                  : "The booking will be cancelled either way, and any refund or account credit is applied regardless. Choose whether the member receives the standard cancellation email — your choice is recorded in the audit log."}
-              </DialogDescription>
-            </DialogHeader>
-            {noEmailsSuppressesChoice && <BookingNoEmailsNotice />}
-            <DialogFooter className="gap-2 sm:gap-2">
-              <Button
-                variant={noEmailsSuppressesChoice ? "destructive" : "outline"}
-                onClick={() => {
-                  setNotifyDialogOpen(false);
-                  // #2259 H1: with the switch on, send NO choice rather than
-                  // notifyMember:false. `false` makes the route skip the send,
-                  // so the mailer's gate never runs and no withheld row is
-                  // recorded — the banner would then be silent about the very
-                  // cancellation the member most needs to be told about.
-                  void performCancel(
-                    noEmailsSuppressesChoice ? undefined : false,
-                  );
-                }}
-              >
-                {noEmailsSuppressesChoice
-                  ? "Cancel booking"
-                  : "Cancel without emailing"}
-              </Button>
-              {!noEmailsSuppressesChoice && (
-                <Button
-                  variant="destructive"
-                  onClick={() => {
-                    setNotifyDialogOpen(false);
-                    void performCancel(true);
-                  }}
-                >
-                  Cancel and email member
-                </Button>
-              )}
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <NotifyChoiceDialog
+          open={notifyDialogOpen}
+          onOpenChange={setNotifyDialogOpen}
+          title={
+            noEmailsSuppressesChoice
+              ? "Cancel this booking?"
+              : "Email the member about this cancellation?"
+          }
+          description={
+            noEmailsSuppressesChoice
+              ? "The booking will be cancelled and any refund or account credit applied as usual."
+              : "The booking will be cancelled either way, and any refund or account credit is applied regardless. Choose whether the member receives the standard cancellation email — your choice is recorded in the audit log."
+          }
+          notice={noEmailsSuppressesChoice ? <BookingNoEmailsNotice /> : null}
+          actions={
+            noEmailsSuppressesChoice
+              ? {
+                  kind: "single",
+                  action: {
+                    label: "Cancel booking",
+                    variant: "destructive",
+                    onSelect: () => {
+                      setNotifyDialogOpen(false);
+                      // #2259 H1: with the switch on, send NO choice rather than
+                      // notifyMember:false. `false` makes the route skip the send,
+                      // so the mailer's gate never runs and no withheld row is
+                      // recorded — the banner would then be silent about the very
+                      // cancellation the member most needs to be told about.
+                      void performCancel(undefined);
+                    },
+                  },
+                }
+              : {
+                  kind: "choice",
+                  // #4966: neither label starts with a bare "Cancel" — the
+                  // way out is the dialog's own "Go back".
+                  withoutEmail: {
+                    label: "Cancel booking, no email",
+                    variant: "outline",
+                    onSelect: () => {
+                      setNotifyDialogOpen(false);
+                      void performCancel(false);
+                    },
+                  },
+                  withEmail: {
+                    label: "Cancel booking and email member",
+                    variant: "destructive",
+                    onSelect: () => {
+                      setNotifyDialogOpen(false);
+                      void performCancel(true);
+                    },
+                  },
+                }
+          }
+        />
       </div>,
     );
   }

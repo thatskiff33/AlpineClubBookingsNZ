@@ -7,6 +7,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { AdminLoadError } from "@/components/admin/admin-load-error";
 import { useClubTime } from "@/components/club-time-provider";
 import { requireInstant } from "@/lib/club-time";
 import type { HistoryEntry } from "../_hooks/use-communications-data";
@@ -15,9 +16,14 @@ import type { HistoryEntry } from "../_hooks/use-communications-data";
 export function SendHistoryCard({
   history,
   loading,
+  loadError,
+  onRetry,
 }: {
   history: HistoryEntry[];
   loading: boolean;
+  /** Why the history could not be read, or null when it was (#4961). */
+  loadError: string | null;
+  onRetry: () => void;
 }) {
   // When a communication was sent — real INSTANTS, projected through the club's persisted zone rather
   // than the viewer's or the build's (CT-4, #2870; INV-CONFIG-002).
@@ -32,6 +38,13 @@ export function SendHistoryCard({
       <CardContent>
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading...</p>
+        ) : loadError ? (
+          <AdminLoadError
+            title="Send history could not be loaded"
+            message={loadError}
+            onRetry={onRetry}
+            data-testid="communications-history-load-error"
+          />
         ) : history.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             No bulk communications sent yet.

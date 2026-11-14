@@ -104,8 +104,13 @@ export default function CommunicationsPage() {
     message: string;
   } | null>(null);
   // The hourly limit and the send history, loaded on mount.
-  const { history, loadingHistory, bulkSendLimit, refreshHistory } =
-    useCommunicationsData();
+  const {
+    history,
+    loadingHistory,
+    historyLoadError,
+    bulkSendLimit,
+    refreshHistory,
+  } = useCommunicationsData();
   // Where focus goes once a cancelled confirmation has settled (below).
   const returnFocusTo = useRef<HTMLElement | null>(null);
 
@@ -333,7 +338,12 @@ export default function CommunicationsPage() {
       </Card>
 
       {/* History */}
-      <SendHistoryCard history={history} loading={loadingHistory} />
+      <SendHistoryCard
+        history={history}
+        loading={loadingHistory}
+        loadError={historyLoadError}
+        onRetry={refreshHistory}
+      />
       </div>
     </div>
   );

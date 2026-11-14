@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { ADMIN_LOAD_FAILED_ERROR, ADMIN_LOAD_NETWORK_ERROR } from "@/lib/admin-query-error";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 /** One row of the send history, as `/api/admin/communications/history` returns it. */
 export interface HistoryEntry {
@@ -16,12 +18,16 @@ export interface HistoryEntry {
 
 /**
  * What the Communications page loads on mount: the club's hourly bulk-send
- * limit (shown in the compose card and the confirmation) and the send history.
+ * limit (shown in the compose card and the confirmation) and the send history,
+ * with the message to show when that read fails (#4961).
  * `refreshHistory` re-reads the history after a send.
  */
 export function useCommunicationsData() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  // #4961: a failed history read is said, never shown as "No bulk
+  // communications sent yet."
+  const [historyLoadError, setHistoryLoadError] = useState<string | null>(null);
   const [bulkSendLimit, setBulkSendLimit] = useState<number>(1);
 
   useEffect(() => {
@@ -48,9 +54,16 @@ export function useCommunicationsData() {
       if (res.ok) {
         const data = await res.json();
         setHistory(data.history);
+        setHistoryLoadError(null);
+      } else {
+        setHistory([]);
+        setHistoryLoadError(
+          await apiErrorMessageFromResponse(res, ADMIN_LOAD_FAILED_ERROR),
+        );
       }
     } catch {
-      // ignore
+      setHistory([]);
+      setHistoryLoadError(ADMIN_LOAD_NETWORK_ERROR);
     } finally {
       setLoadingHistory(false);
     }
@@ -59,6 +72,7 @@ export function useCommunicationsData() {
   return {
     history,
     loadingHistory,
+    historyLoadError,
     bulkSendLimit,
     refreshHistory: fetchHistory,
   };

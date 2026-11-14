@@ -1206,12 +1206,12 @@ Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **106 components render a banner, and
- 335 of the 390 `ViewOnlyActionButton` call sites opt out** of the per-button
+figures rather than trusting a hand count: **107 components render a banner, and
+ 336 of the 391 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 335 split by WHICH rule
-covers them: **297** pass the literal
+test currently pins, which is the only authority.) Those 336 split by WHICH rule
+covers them: **298** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **38**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 33 by a parent's own JSX render site (#2168), 5 by the
@@ -1895,6 +1895,18 @@ both the members list and detail page, `member-serialization` centralises DTO
 shape, `member-lifecycle-actions` owns archive/delete request handling, and
 `membership-cancellation-*` owns the cancellation request, confirmation,
 approval, Xero, settings, and status-label flow.
+
+Officer two-factor (#4618) sits on the same layer. `/admin/security` adds
+`officer-two-factor-card`, a staged-edit section with its own
+`useSectionEditState` and its own `PUT /api/admin/security/officer-two-factor`,
+so it shares no whole-object PUT with a sibling. Non-Full-Admins see it
+view-only, with the section banner. The member detail page adds a Full Admin
+reset button that posts to `/api/admin/security/two-factor-reset/[memberId]`.
+Both writes go through `fetchWithRecentAuth` and are in `STEP_UP_ROUTES`. The
+rule lives in `second-factor-enrolment.ts`; the session claims in
+`officer-two-factor-claims.ts`; the gate in `two-factor-gate.ts`; the reset in
+`officer-factor-reset.ts`. All of it is inert while `OFFICER_SIGN_IN_ENFORCED`
+is false.
 
 Browser-facing API routes treat an unexpected exception as operator-only
 diagnostic data: the complete error is sent to the structured logger, while the

@@ -771,6 +771,11 @@ import "./session-reauth.realdb.test";
 // succeeds, and one of two concurrent counter updates. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4617-` member.
 import "./webauthn.realdb.test";
+// #4618 reuses it to prove one grace stamp from two concurrent refreshes, no
+// grace after a reset, and no factor left when a reset races an enrolment.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4618-` members.
+import "./officer-two-factor.realdb.test";
 // #4445 reuses it to prove two writers merging metadata onto one Xero link
 // (an existing row, or a missing one both create) both keep their keys, and
 // that the one-statement merge writes what the old spread wrote. Skipped
@@ -823,6 +828,11 @@ import "./unpaid-edit-change-fee-owed.realdb.test";
 // changed underneath it (no side effect, retried), and two writers forced to meet
 // at the claim. It owns and cleans its own `race-4456` credential rows.
 import "./data-encryption-key-ring.realdb.test";
+// INV-INT-038 (the #4921 prerequisite) reuses it to prove an abandoned inbound
+// Xero reconcile operation is recovered under a fresh claim: one winner among
+// racing takeovers or a racing Mark failed, and the abandoned attempt's late
+// outcome refused. It owns and cleans its own `race-alp546-` fixtures.
+import "./xero-inbound-abandoned-operation.realdb.test";
 // #4851 reuses it to prove Stuck States' settlement of a dead refund out of the
 // group organiser's card: a refund Stripe already holds is recorded and nobody is
 // paid again, a bank close raises the mirror and its no-Xero-note hand-back, a

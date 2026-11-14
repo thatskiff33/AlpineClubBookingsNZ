@@ -338,3 +338,26 @@ describe("2FA detour honours the family-invite return address (#2827, #2974)", (
     expect(element.props.callbackUrl).toBe("/dashboard");
   });
 });
+
+// #4618 review: the officer branch offers the authenticator app alone, because
+// an emailed code never satisfies the officer rule; the module branch keeps
+// both choices, because an emailed code does satisfy the club-wide module.
+describe("/login/enroll officer branch is app-only (#4618)", () => {
+  it("renders the app-only panel for a required officer with the module off", async () => {
+    mockAuth.mockResolvedValue(
+      sessionUser({
+        twoFactorRequired: false,
+        officerTwoFactorRequired: true,
+        twoFactorSatisfiesOfficer: false,
+      }),
+    );
+    const element = (await runEnroll()) as unknown as { props: { appOnly?: boolean } };
+    expect(element.props.appOnly).toBe(true);
+  });
+
+  it("keeps the emailed-code choice while the club-wide module is pending", async () => {
+    mockAuth.mockResolvedValue(sessionUser());
+    const element = (await runEnroll()) as unknown as { props: { appOnly?: boolean } };
+    expect(element.props.appOnly).toBeUndefined();
+  });
+});
