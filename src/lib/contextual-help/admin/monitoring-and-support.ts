@@ -188,7 +188,7 @@ export const adminMonitoringAndSupportHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/deletion-requests",
+    getAdminPage("deletion-requests").oldPath,
     help(
       "Deletion Requests",
       "Deletion Requests tracks member data deletion requests and operator follow-up.",

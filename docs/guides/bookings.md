@@ -414,6 +414,11 @@ members and non-members alike.
 - **It belongs to this stay.** A member changing their profile later does not
   change the booking, and changing the booking does not change their profile.
   Use it for a one-off trip requirement, or to record a non-member's needs.
+- **It is cleared after the stay.** By default every guest's value is removed
+  30 days after their stay ends, whatever the booking's status. The club sets
+  the period, or switches it off, under **Admin → Privacy retention**. A value
+  you type on a stay that ended longer ago than that is cleared again the next
+  night.
 - **Who sees it.** Booking officers with **bookings view** see the card;
   **bookings edit** adds an **Edit** button on each guest. The hut leader
   running the stay sees the values on the lodge kiosk. The member who made the
